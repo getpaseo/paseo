@@ -91,9 +91,13 @@ async function associateMarkdownWithPlugin(page: Page) {
 async function editMarkdownThroughPlugin(page: Page) {
   await page.getByRole("button", { name: "Edit Markdown through plugin", exact: true }).click();
 }
-async function selectSource(page: Page) {
+/** Opens the tab with Paseo's Markdown panel from "Open with…" and shows its Source view. */
+async function openBuiltinMarkdownSource(page: Page, name: string) {
+  await page.getByTestId(`workspace-tab-file_${name}`).first().click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Open with…" }).hover();
+  await page.getByRole("menuitem", { name: "Markdown — Paseo" }).click();
   await page
-    .getByTestId("file-panel-switcher")
+    .getByTestId("file-preview-mode")
     .filter({ visible: true })
     .getByRole("button", { name: "Source", exact: true })
     .click();
@@ -210,7 +214,7 @@ test("directory plugins render PDF bytes and write Markdown through the file han
     await page.getByRole("menuitem", { name: "Close", exact: true }).click();
     await expect.poll(() => closePrompt).toContain("discard");
 
-    await selectSource(page);
+    await openBuiltinMarkdownSource(page, "notes.md");
     await expect(
       page.getByTestId("file-source-editor").filter({ visible: true }).locator(".cm-content"),
     ).toHaveText("# Changed outside");

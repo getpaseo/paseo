@@ -209,7 +209,6 @@ export interface WorkspaceGitService {
   ): WorkspaceGitSubscription;
 
   onSnapshotUpdated(listener: WorkspaceGitSnapshotUpdatedListener): WorkspaceGitSubscription;
-  peekSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot | null;
   getCheckout(cwd: string): Promise<ProjectCheckoutLitePayload>;
   getSnapshot(
     cwd: string,
@@ -765,7 +764,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       worktreesRoot: this.worktreesRoot,
       logger: this.logger,
     });
-    const cached = this.peekSnapshot(normalizedCwd);
+    const cached = this.getCachedSnapshot(normalizedCwd);
     if (cached && cached.git.isGit !== status.isGit) {
       // A fresh checkout read discovered a repository transition. Keep the
       // shared snapshot current before exposing the new project capability.
@@ -795,7 +794,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     });
   }
 
-  peekSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot | null {
+  private getCachedSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot | null {
     cwd = resolve(cwd);
     return this.workspaceTargets.get(cwd)?.latestSnapshot ?? null;
   }
@@ -3518,9 +3517,6 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     if (!options?.notify || target.listeners.size === 0) {
       return;
     }
-    for (const listener of target.listeners) {
-      listener(snapshot);
-    }
     for (const listener of this.snapshotUpdatedListeners) {
       try {
         listener(snapshot);
@@ -3530,6 +3526,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           "Workspace git snapshot listener threw",
         );
       }
+    }
+    for (const listener of target.listeners) {
+      listener(snapshot);
     }
   }
 

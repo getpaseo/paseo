@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { Locator } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import {
   expandFolder,
@@ -55,10 +56,6 @@ async function openWorkspaceFile(page: Page, filename: string): Promise<void> {
   await expectFileTabOpen(page, filename);
 }
 
-function filePanelSwitcher(page: Page) {
-  return page.getByTestId("file-panel-switcher").filter({ visible: true });
-}
-
 function htmlPreview(page: Page) {
   return {
     host: page.getByTestId("file-html-preview"),
@@ -66,11 +63,30 @@ function htmlPreview(page: Page) {
   };
 }
 
-/** Switches the file tab to one of its panels from the bar's switcher. */
-async function selectFilePanel(page: Page, title: string): Promise<void> {
-  const option = filePanelSwitcher(page).getByRole("button", { name: title, exact: true });
+async function selectFileView(page: Page, view: "Preview" | "Source"): Promise<void> {
+  const option = page.getByTestId("file-panel-bar").getByRole("button", {
+    name: view,
+    exact: true,
+  });
   await option.click();
   await expect(option).toHaveAttribute("aria-selected", "true");
+}
+
+async function expectAbove(upper: Locator, lower: Locator): Promise<void> {
+  const [upperBox, lowerBox] = await Promise.all([upper.boundingBox(), lower.boundingBox()]);
+  expect(upperBox).not.toBeNull();
+  expect(lowerBox).not.toBeNull();
+  expect(upperBox!.y + upperBox!.height).toBeLessThanOrEqual(lowerBox!.y);
+}
+
+/** How many times the app has read the file's contents from the daemon. */
+function fileReadCount(
+  gate: Awaited<ReturnType<typeof installDaemonWebSocketGate>>,
+  fileName: string,
+): number {
+  return gate
+    .getClientRequests("file_explorer_request")
+    .filter((request) => request.mode === "file" && String(request.path).endsWith(fileName)).length;
 }
 
 async function expectMarkdownImageLoaded(page: Page, name: string): Promise<void> {
@@ -482,9 +498,9 @@ test.describe("CodeMirror workspace file editing", () => {
       relativePath,
     );
     await expect(page.getByTestId("file-panel-bar")).not.toContainText("visuals.md");
-    const modeControl = filePanelSwitcher(page);
+    const modeControl = page.getByTestId("file-preview-mode");
     await expect(modeControl).toBeVisible();
-    await selectFilePanel(page, "Source");
+    await selectFileView(page, "Source");
 
     const editorHost = page.getByTestId("file-source-editor");
     const content = editor(page);
@@ -546,7 +562,7 @@ test.describe("CodeMirror workspace file editing", () => {
     );
     await workspace.navigateTo();
     await openWorkspaceFile(page, "notes.md");
-    await selectFilePanel(page, "Source");
+    await selectFileView(page, "Source");
 
     const markdownScroller = page
       .getByTestId("file-source-editor")
@@ -582,6 +598,11 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect(page.getByTestId("file-source-editor")).toBeVisible();
     await expect(page.getByLabel(/File size/)).toBeVisible();
     await expect(page.getByLabel(/lines/)).toBeVisible();
+    await expect(page.getByTestId("file-preview-mode")).toHaveCount(0);
+    await expectAbove(
+      page.getByTestId("file-panel-bar").filter({ visible: true }),
+      page.getByTestId("file-source-editor").filter({ visible: true }),
+    );
 
     await replaceEditorText(page, "const autosaved = 2;\n");
     await expect(page.getByTestId("workspace-tab-modified-file_source.ts")).toBeVisible();
@@ -678,11 +699,12 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect(page.getByTestId("workspace-tab-modified-file_draft.ts")).toBeVisible();
   });
 
-  test("refreshes Markdown and images while switching between Markdown and Source", async ({
+  test("refreshes Markdown and images while preserving Preview and Source behavior", async ({
     page,
     withWorkspace,
   }) => {
     test.setTimeout(90_000);
+    const gate = await installDaemonWebSocketGate(page);
     const workspace = await withWorkspace({ prefix: "file-editing-preview-" });
     const markdownPath = path.join(workspace.repoPath, "notes.md");
     const imagePath = path.join(workspace.repoPath, "pixel.png");
@@ -692,17 +714,30 @@ test.describe("CodeMirror workspace file editing", () => {
     await openWorkspaceFile(page, "notes.md");
 
     const visibleFilePane = page.getByTestId("workspace-file-pane").filter({ visible: true });
+    const toolbar = page.getByTestId("file-panel-bar").filter({ visible: true });
     await expect(visibleFilePane.getByText("First heading", { exact: true })).toBeVisible();
-    await expect(filePanelSwitcher(page).getByRole("button", { name: "Markdown" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Preview", exact: true })).toBeVisible();
+    await expect(toolbar.getByLabel(/^File size/)).toBeVisible();
+    await expect(toolbar.getByLabel("2 lines")).toBeVisible();
     await writeFile(markdownPath, "# Updated heading\n", "utf8");
     await expect(visibleFilePane.getByText("Updated heading", { exact: true })).toBeVisible();
 
-    await selectFilePanel(page, "Source");
+    // Source shows the same read in the editor; the file is not read again.
+    const reads = fileReadCount(gate, "notes.md");
+    await selectFileView(page, "Source");
     await expect(page.getByTestId("file-source-editor")).toBeVisible();
+    await expect(editor(page)).toContainText("# Updated heading");
+    await expect(toolbar.getByLabel("Line 1, column 1")).toBeVisible();
+    expect(fileReadCount(gate, "notes.md")).toBe(reads);
+
+    // Preview shows the edits made in Source.
     await replaceEditorText(page, "# Saved from source\n");
-    await expect.poll(() => readFile(markdownPath, "utf8")).toBe("# Saved from source\n");
-    await selectFilePanel(page, "Markdown");
+    await expect(page.getByTestId("workspace-tab-modified-file_notes.md")).toBeVisible();
+    await selectFileView(page, "Preview");
     await expect(visibleFilePane.getByText("Saved from source", { exact: true })).toBeVisible();
+    await expect(toolbar.getByLabel("Line 1, column 1")).toHaveCount(0);
+    await expect.poll(() => readFile(markdownPath, "utf8")).toBe("# Saved from source\n");
+    await expect(page.getByTestId("workspace-tab-modified-file_notes.md")).not.toBeVisible();
 
     await openWorkspaceFile(page, "pixel.png");
     const image = visibleFilePane.locator("img");
@@ -784,10 +819,10 @@ test.describe("CodeMirror workspace file editing", () => {
     );
     await expect(preview.document.getByRole("heading", { name: "Updated plan" })).toBeVisible();
 
-    await selectFilePanel(page, "Source");
+    await selectFileView(page, "Source");
     await expect(page.getByTestId("file-source-editor")).toBeVisible();
     await expect(preview.host).toHaveCount(0);
-    await selectFilePanel(page, "HTML");
+    await selectFileView(page, "Preview");
     await expect(preview.host).toBeVisible();
   });
 

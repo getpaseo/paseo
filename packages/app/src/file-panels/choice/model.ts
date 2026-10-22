@@ -30,15 +30,13 @@ export interface FilePanelChoiceSnapshot<Candidate> {
   /** The panel picked for this tab open. Resolution prefers it over the association. */
   chosenPanelId: string | null;
   picker: FilePanelPickerState<Candidate> | null;
-  /** Present only when the file has more than one candidate; drives the bar's panel switcher. */
+  /** Present only when the file has more than one candidate; drives "Open with…". */
   openWith: FilePanelOpenWithState<Candidate> | null;
 }
 
 export interface FilePanelChoiceDeps {
   /** Writes (or clears, with null) the device-wide association for a selector key. */
   remember(selectorKey: string, panelId: string | null): void;
-  /** The panel a line target opens: Source, the panel that shows lines. */
-  linePanelId: string;
 }
 
 /** The tab choice that applies to `targetKey`; a choice never outlives its open. */
@@ -61,7 +59,8 @@ const EMPTY: FilePanelChoiceSnapshot<never> = {
  *
  * A tab open is one target in one tab: the picker is offered at most once per open, the first
  * time the tab is on screen with a plugin panel among several candidates and nothing remembered.
- * Built-in panels alone never ask. A line target opens the line panel the way "Open with…" does.
+ * Built-in panels alone never ask. A line target opens the file's built-in panel, which shows
+ * lines, the way "Open with…" does.
  * Retargeting the tab starts a new open. Choices made here apply to this tab; only "Don't ask me
  * again" and "Always use" write the association every later open reads.
  */
@@ -70,6 +69,8 @@ export class FilePanelChoiceModel<Candidate extends FilePanelCandidate> {
   private snapshot: FilePanelChoiceSnapshot<Candidate> = EMPTY;
   private asked = false;
   private openedLineNavigation: number | null = null;
+  /** A line target arrived before the file resolved; it opens the built-in once it does. */
+  private lineTargetPending = false;
 
   constructor(private readonly deps: FilePanelChoiceDeps) {}
 
@@ -85,11 +86,17 @@ export class FilePanelChoiceModel<Candidate extends FilePanelCandidate> {
     if (source.targetKey !== current.targetKey) {
       this.asked = false;
       this.openedLineNavigation = null;
+      this.lineTargetPending = false;
       current = { ...EMPTY, targetKey: source.targetKey };
     }
     if (source.lineNavigation !== null && source.lineNavigation !== this.openedLineNavigation) {
       this.openedLineNavigation = source.lineNavigation;
-      current = { ...current, chosenPanelId: this.deps.linePanelId, picker: null };
+      this.lineTargetPending = true;
+    }
+    if (this.lineTargetPending && source.resolution) {
+      this.lineTargetPending = false;
+      const builtin = source.resolution.candidates.find((candidate) => candidate.builtin);
+      if (builtin) current = { ...current, chosenPanelId: builtin.id, picker: null };
     }
     const openWith = stableOpenWith(current.openWith, openWithState(source.resolution));
     let picker = openWith ? current.picker : null;

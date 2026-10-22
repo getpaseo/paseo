@@ -30,17 +30,26 @@ async function openWithFromTabMenu(page: Page, name: string, option: string) {
   await page.getByRole("menuitem", { name: option }).click();
 }
 
-async function toggleAlwaysUseFromFileBar(page: Page) {
-  await page.getByTestId("file-panel-bar-menu").filter({ visible: true }).click();
-  await page.getByRole("menuitem", { name: "Always use for .md" }).click();
+async function toggleAlwaysUseFromTabMenu(page: Page, name: string) {
+  await openWithFromTabMenu(page, name, "Always use for .md");
 }
 
-function filePanelSwitcher(page: Page) {
-  return page.getByTestId("file-panel-switcher").filter({ visible: true });
+/** The built-in panel's toolbar control between its Preview and Source views. */
+function viewControl(page: Page) {
+  return page.getByTestId("file-preview-mode").filter({ visible: true });
 }
 
-async function expectSwitcherPanels(page: Page, titles: string[]) {
-  await expect(filePanelSwitcher(page).getByRole("button")).toHaveText(titles);
+async function selectFileView(page: Page, view: "Preview" | "Source") {
+  const option = viewControl(page).getByRole("button", { name: view, exact: true });
+  await option.click();
+  await expect(option).toHaveAttribute("aria-selected", "true");
+}
+
+async function expectNoOpenWith(page: Page, name: string) {
+  await page.getByTestId(`workspace-tab-file_${name}`).first().click({ button: "right" });
+  await expect(page.getByRole("menuitem", { name: "Close", exact: true })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Open with…" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
 }
 
 async function capture(page: Page, testInfo: TestInfo, name: string) {
@@ -49,7 +58,7 @@ async function capture(page: Page, testInfo: TestInfo, name: string) {
   await testInfo.attach(name, { path: file, contentType: "image/png" });
 }
 
-test("opens Markdown with the built-in panel and Source beside it without asking", async ({
+test("opens Markdown with the built-in panel and its Preview and Source without asking", async ({
   page,
 }, testInfo) => {
   const workspace = await seedWorkspace({
@@ -62,19 +71,20 @@ test("opens Markdown with the built-in panel and Source beside it without asking
     await openFileExplorer(page);
     await openMarkdown(page, "notes.md");
     await expectBuiltinMarkdown(page, "notes heading");
-    await expectSwitcherPanels(page, ["Markdown", "Source"]);
+    await expect(viewControl(page).getByRole("button")).toHaveText(["Preview", "Source"]);
     await expect(filePanelPicker(page)).toBeHidden();
+    await expectNoOpenWith(page, "notes.md");
     await capture(page, testInfo, "file-panel-builtins-wide");
 
-    await filePanelSwitcher(page).getByRole("button", { name: "Source", exact: true }).click();
+    await selectFileView(page, "Source");
     await expect(page.getByTestId("file-source-editor").filter({ visible: true })).toBeVisible();
-    await filePanelSwitcher(page).getByRole("button", { name: "Markdown", exact: true }).click();
+    await selectFileView(page, "Preview");
     await expectBuiltinMarkdown(page, "notes heading");
 
     await page.setViewportSize({ width: 390, height: 844 });
     await expectBuiltinMarkdown(page, "notes heading");
     await expect(
-      filePanelSwitcher(page).getByRole("button", { name: "Source", exact: true }),
+      viewControl(page).getByRole("button", { name: "Source", exact: true }),
     ).toBeInViewport({ ratio: 1 });
     await expect(filePanelPicker(page)).toBeHidden();
     await capture(page, testInfo, "file-panel-builtins-compact");
@@ -107,6 +117,7 @@ test("asks once which panel opens Markdown and remembers it when told to", async
     await expect(filePanelPicker(page)).toBeVisible();
     await expect(page.getByRole("radio", { name: BUILTIN_MARKDOWN_OPTION })).toBeChecked();
     await expect(page.getByRole("radio", { name: PLUGIN_MARKDOWN_OPTION })).not.toBeChecked();
+    await expect(page.getByRole("radio")).toHaveCount(2);
     await expectBuiltinMarkdown(page, "first heading");
     await capture(page, testInfo, "file-panel-picker-wide");
 
@@ -118,8 +129,8 @@ test("asks once which panel opens Markdown and remembers it when told to", async
     await expectPluginMarkdown(page, "second.md");
     await expect(filePanelPicker(page)).toBeHidden();
 
-    // Forgetting from the file bar keeps the tab on the plugin.
-    await toggleAlwaysUseFromFileBar(page);
+    // Forgetting from the tab menu keeps the tab on the plugin.
+    await toggleAlwaysUseFromTabMenu(page, "second.md");
     await expect.poll(() => storedFilePanelAssociations(page)).toEqual({});
     await expectPluginMarkdown(page, "second.md");
 
@@ -130,10 +141,14 @@ test("asks once which panel opens Markdown and remembers it when told to", async
     await expectPluginMarkdown(page, "third.md");
     expect(await storedFilePanelAssociations(page)).toEqual({});
 
-    // "Open with…" switches the open tab back to the built-in in place.
+    // "Open with…" switches the open tab back to the built-in in place, with its own views.
     await openWithFromTabMenu(page, "third.md", BUILTIN_MARKDOWN_OPTION);
     await expectBuiltinMarkdown(page, "third heading");
     await expectFileTabOpen(page, "third.md");
+    await selectFileView(page, "Source");
+    await expect(page.getByTestId("file-source-editor").filter({ visible: true })).toBeVisible();
+    await selectFileView(page, "Preview");
+    await expectBuiltinMarkdown(page, "third heading");
 
     // Dismissing keeps the built-in; reopening the tab after a reload asks again.
     await openMarkdown(page, "fourth.md");
