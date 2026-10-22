@@ -1,0 +1,8 @@
+Background workspaces, a new Markdown renderer with selection across paragraphs on phones, a reworked phone layout, and more than 120 fixes.
+
+Before upgrading: paseo run --background is deprecated in favor of --no-wait, and paseo permit allow and deny now exit non-zero when the daemon doesn't confirm within 15 seconds
+
+Added
+- Added background workspaces, hidden from the sidebar unless Show background is on
+
+Full notes: https://paseo.sh/changelog

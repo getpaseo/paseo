@@ -24,10 +24,16 @@ export function createRelayE2eeTransportFactory(args: {
   baseFactory: DaemonTransportFactory;
   daemonPublicKeyB64: string;
   logger: TransportLogger;
+  assertOutboundCapacity?: (wireBytes: number) => void;
 }): DaemonTransportFactory {
   return ({ url }) => {
     const base = args.baseFactory({ url });
-    return createEncryptedTransport(base, args.daemonPublicKeyB64, args.logger);
+    return createEncryptedTransport(
+      base,
+      args.daemonPublicKeyB64,
+      args.logger,
+      args.assertOutboundCapacity,
+    );
   };
 }
 
@@ -42,6 +48,7 @@ export function createEncryptedTransport(
   base: DaemonTransport,
   daemonPublicKeyB64: string,
   logger: TransportLogger,
+  assertOutboundCapacity: (wireBytes: number) => void = () => {},
 ): DaemonTransport {
   let channel: EncryptedChannel | null = null;
   let opened = false;
@@ -148,6 +155,9 @@ export function createEncryptedTransport(
       if (wireBytes > MAX_RELAY_WEBSOCKET_MESSAGE_BYTES) {
         throw messageTooLargeError(wireBytes, MAX_RELAY_WEBSOCKET_MESSAGE_BYTES);
       }
+      // Encryption and its transport handoff are synchronous up to send's first await.
+      // Reject capacity failures here so a routed sender loses only its own channel.
+      assertOutboundCapacity(wireBytes);
       void channel.send(payload).catch((error) => {
         emitError(error);
       });

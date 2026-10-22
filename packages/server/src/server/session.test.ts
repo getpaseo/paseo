@@ -1,3 +1,4 @@
+import { createAgentMessageDeliveryStub } from "./test-utils/session-stubs.js";
 import {
   createMessageReceiptsStub,
   createTestCreationService,
@@ -301,6 +302,7 @@ vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
 });
 
 interface SessionForTestOptions {
+  sendToSource?: SessionOptions["onMessageToSource"];
   clientId?: string;
   permissions?: readonly DaemonPermission[];
   agentManager?: { [K in keyof SessionOptions["agentManager"]]?: unknown };
@@ -381,6 +383,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
 
   const sessionOptions: SessionOptions = {
     messageReceipts: createMessageReceiptsStub(),
+    agentMessages: createAgentMessageDeliveryStub(),
     creationService: createTestCreationService(),
     clientId: options.clientId ?? "test-client",
     onMessage: (message) => messages.push(message),
@@ -454,6 +457,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     daemonRuntimeConfig: options.daemonRuntimeConfig,
     permissions: options.permissions ?? OWNER_PERMISSIONS,
   };
+  if (options.sendToSource) sessionOptions.onMessageToSource = options.sendToSource;
   return new Session(sessionOptions);
 }
 
@@ -4781,7 +4785,6 @@ describe("session paseo worktree creation handling", () => {
     await asSessionInternals(session).createPaseoWorktree({
       cwd: "/tmp/repo",
       worktreeSlug: "new-worktree",
-      runSetup: false,
     });
 
     expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/repo", {
@@ -5900,4 +5903,41 @@ test("provider snapshots preserve versionless visibility while capabilities upda
     "plugin-provider",
   ]);
   expect(references.compactSnapshot!.entries[0]!.modes![0]!.icon).toBe("ShieldCheck");
+});
+
+test("a failing direct source observes fire-and-forget file replies without unhandled rejections", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-send-failure-"));
+  writeFileSync(join(root, "readme.txt"), "source reply");
+  let attempts = 0;
+  const unhandled: unknown[] = [];
+  const collect = (error: unknown) => unhandled.push(error);
+  process.on("unhandledRejection", collect);
+  const session = createSessionForTest({
+    sendToSource: async () => {
+      attempts++;
+      throw new Error("Physical source closed during send");
+    },
+  });
+  try {
+    const source = {};
+    session.updateClientCapabilities(null, source);
+    await session.handleMessage(
+      {
+        type: "file_explorer_request",
+        requestId: "direct-file",
+        cwd: root,
+        path: "readme.txt",
+        mode: "file",
+        acceptBinary: false,
+      },
+      source,
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, 30));
+    expect(attempts).toBeGreaterThan(0);
+    expect(unhandled).toEqual([]);
+  } finally {
+    process.off("unhandledRejection", collect);
+    await session.cleanup();
+    rmSync(root, { recursive: true, force: true });
+  }
 });

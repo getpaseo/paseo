@@ -1,3 +1,8 @@
+import { execFileSync } from "node:child_process";
+import { copyFileSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { buildPaseoToolDetailSections } from "./index.js";
@@ -146,4 +151,76 @@ describe("Paseo tool-call detail presentation", () => {
   it("leaves non-Paseo tools alone", () => {
     expect(buildPaseoToolDetailSections("mcp__github__create_issue", {}, {})).toBeNull();
   });
+});
+
+describe("published Paseo tool-call detail entry", () => {
+  it("preserves the 0.11.4 runtime export and types at the old subpath", () => {
+    const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
+    const compiler = fileURLToPath(
+      new URL("../../../../node_modules/typescript/bin/tsc", import.meta.url),
+    );
+    const fixture = mkdtempSync(path.join(tmpdir(), "paseo-tool-call-detail-"));
+    try {
+      copyFileSync(path.join(packageRoot, "package.json"), path.join(fixture, "package.json"));
+      symlinkSync(
+        path.join(packageRoot, "../../node_modules"),
+        path.join(fixture, "node_modules"),
+        "junction",
+      );
+      execFileSync(
+        process.execPath,
+        [
+          compiler,
+          "-p",
+          path.join(packageRoot, "tsconfig.json"),
+          "--outDir",
+          path.join(fixture, "dist"),
+          "--incremental",
+          "false",
+        ],
+        { stdio: "pipe" },
+      );
+      writeFileSync(
+        path.join(fixture, "consumer.mts"),
+        `
+import { strict as assert } from "node:assert";
+import {
+  buildPaseoToolDetailSections,
+  type PaseoToolDetailField,
+  type PaseoToolDetailSection,
+} from "@getpaseo/protocol/paseo-tool-call-detail";
+import { buildPaseoToolDetailSections as current } from "@getpaseo/protocol/paseo-tool-presentation/index";
+const field: PaseoToolDetailField = { label: "Agent", value: "agt_123" };
+const sections: PaseoToolDetailSection[] = [
+  { kind: "prose", title: "Prompt", text: "Hello" },
+  { kind: "fields", title: "Details", fields: [field] },
+];
+const build: (toolName: string, input: unknown, output: unknown) => PaseoToolDetailSection[] | null = buildPaseoToolDetailSections;
+assert.equal(build, current);
+assert.deepEqual(build("mcp__paseo__send_agent_prompt", { prompt: "Hello", agentId: "agt_123" }, undefined), sections);
+`,
+      );
+      execFileSync(
+        process.execPath,
+        [
+          compiler,
+          path.join(fixture, "consumer.mts"),
+          "--module",
+          "NodeNext",
+          "--moduleResolution",
+          "NodeNext",
+          "--target",
+          "ES2020",
+          "--strict",
+          "--skipLibCheck",
+        ],
+        { stdio: "inherit" },
+      );
+      expect(
+        execFileSync(process.execPath, [path.join(fixture, "consumer.mjs")], { encoding: "utf8" }),
+      ).toBe("");
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

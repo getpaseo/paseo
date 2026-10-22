@@ -215,7 +215,7 @@ describe("daemon checkout PR merge loop", () => {
             baseBranch: "main",
             branchName: "merge-pr-squash",
           },
-          runSetup: true,
+
           paseoHome: ctx.daemon.paseoHome,
         });
         worktreePath = worktree.worktreePath;

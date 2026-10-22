@@ -3,8 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
+  # Every base branch, so stacked PRs and PRs into `next` get the same checks.
   pull_request:
-    branches: [main]
   merge_group:
   workflow_dispatch:
 
@@ -92,6 +92,10 @@ jobs:
       - name: Lint
         if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.quality != 'false') }}
         run: npm run lint
+
+      - name: Test lint rules
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.quality != 'false') }}
+        run: node --test scripts/oxlint/paseo-plugin.test.mjs
 
       - name: Build relay
         if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.relay != 'false') }}
@@ -412,6 +416,14 @@ jobs:
 
       - name: Run app unit tests
         run: npm run test --workspace=@getpaseo/app
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Run Android module tests
+        run: npm run test:android --workspace=@getpaseo/app
 
   playwright-1:
     name: playwright (shard 1/8)
