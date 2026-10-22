@@ -90,4 +90,40 @@ describe("bundled translation startup", () => {
       fallback: "English fallback",
     });
   });
+
+  it("loads Italian supplemental namespaces synchronously", () => {
+    const result = runStartupProbe(`
+      i18n.changeLanguage("it");
+      i18n.loadNamespaces([
+        "addProject",
+        "browserTools",
+        "workspaceSettings",
+        "terminalSettings",
+        "providerDescriptions",
+      ]);
+      const expected = [
+        ["addProject", "addProject", "Aggiungi progetto"],
+        ["browserTools", "title", "Strumenti del browser"],
+        ["workspaceSettings", "title", "Archivia gli ambienti dopo l’integrazione della PR"],
+        ["terminalSettings", "title", "Attiva il monitoraggio degli agenti nel terminale"],
+        [
+          "providerDescriptions",
+          "codex",
+          "Agente di OpenAI per gli ambienti di lavoro, con controlli della sandbox e accesso alla rete facoltativo",
+        ],
+      ];
+      for (const [ns, key, value] of expected) {
+        if (i18n.t(key, { ns }) !== value) {
+          throw new Error("Namespace " + ns + " was not loaded synchronously");
+        }
+      }
+    `);
+
+    expect(result).toMatchObject({
+      evaluated: ["en", "it"],
+      registered: ["en", "it"],
+      language: "it",
+      cancel: "Annulla",
+    });
+  });
 });
