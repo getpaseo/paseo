@@ -127,17 +127,9 @@ Schedules have the full list/inspect/update/pause/resume/run-once/log/delete sur
 
 ## Waiting
 
-Agents take time — 10–30+ minutes is routine. Favor asynchronous workflows.
-
-`create_agent` returns after startup. Agent-scoped `send_agent_prompt` returns after queue admission; provider dispatch follows after two quiet seconds. Top-level sends return after dispatch acknowledgement. Top-level callers have no parent callback; observe completion through status/activity tools or SDK/RPC subscriptions and wait APIs.
-
-For agent-scoped `create_agent` and `send_agent_prompt`, `notifyOnFinish` defaults to `true`. The caller receives the target’s completion, error, or permission report automatically, including its last response. Finish your turn with the result for automatic reporting. Paseo supplies caller identity for agent-scoped tools and CLI agent context; use that supplied identity.
-
-Completion notifications return across hosts without a reverse registration. Explicit cross-host `send_agent_prompt` messages need the recipient's host registered on the sender's daemon. Registering A → B does not let B address A over that connection; reverse connection reuse is not implemented. Before assigning explicit reporting with `notifyOnFinish: false`, have the sender check `list_hosts` for the recipient's server.
-
-Remote finish notifications report idle, not an exact turn. A caller-daemon restart or route loss ends the pending wait; query the child’s status or activity before deciding whether to send another prompt.
-
-With finish notifications enabled, don't poll `list_agents` or `get_agent_status` to "check on" a running agent. The notification will tell you.
+When you create or prompt a subagent, `notifyOnFinish` defaults to `true` and reports completion, errors, or permission requests, including across hosts.
+Finish your turn and wait for that notification instead of polling.
+If you want an explicit reply with `send_agent_prompt`, have the sender check `list_hosts` for the recipient’s server before setting `notifyOnFinish: false`.
 
 ## CLI semantics
 
