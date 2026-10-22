@@ -1,9 +1,11 @@
-import { createExternalProcessEnv } from "../../../paseo-env.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
 import { z } from "zod";
 
-import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import {
+  createProviderEnvSpec,
+  type ProviderRuntimeSettings,
+} from "../../provider-launch-config.js";
 import {
   JSONL_RPC_NO_TIMEOUT,
   JsonlRpcProcess,
@@ -76,13 +78,17 @@ export class OmpCliRuntime implements OmpRuntime {
       runtimeSettings: this.options.runtimeSettings,
       session: input,
     });
-    launch.env = createExternalProcessEnv(globalThis.process.env, launch.env ?? {});
+    const envSpec = createProviderEnvSpec({
+      runtimeSettings: this.options.runtimeSettings,
+      overlays: [input.env],
+    });
+    launch.env = envSpec.env;
     const [command, ...args] = launch.argv;
     const processLaunch: JsonlRpcLaunch = {
       command,
       args,
       cwd: launch.cwd,
-      env: launch.env,
+      ...envSpec,
     };
     const spawn = this.spawnProcess;
     const processOptions = {
