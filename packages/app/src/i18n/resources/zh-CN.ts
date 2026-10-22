@@ -1864,6 +1864,13 @@ export const zhCN: TranslationResources = {
     externalBrowser: "外部浏览器",
     dontAskAgain: "不再询问",
   },
+  linkPopover: {
+    openInNewTab: "在新标签页中打开",
+    openInDefaultBrowser: "在默认浏览器中打开",
+    copyLink: "复制链接",
+    click: "点击",
+    settings: "链接设置",
+  },
   downloads: {
     requestTokenFailed: "请求下载 token 失败。",
     hostUnavailable: "下载 Host 不可用。",
@@ -2223,6 +2230,11 @@ export const zhCN: TranslationResources = {
           steer: "引导",
           queue: "排队",
         },
+      },
+      linkPopover: {
+        label: "询问在何处打开链接",
+        description:
+          "适用于终端和聊天中的链接。{{paseoShortcut}} 始终在新标签页中打开，{{systemShortcut}} 在默认浏览器中打开。",
       },
       serviceUrls: {
         options: {

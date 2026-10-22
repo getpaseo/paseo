@@ -8,6 +8,8 @@ import {
   type PaneContextValue,
 } from "@/panels/pane-context";
 import { useStableEvent } from "@/hooks/use-stable-event";
+import { createWorkspaceBrowser } from "@/desktop/browser/store";
+import { ExternalLinkProvider } from "@/links/provider";
 import { getPanelRegistration } from "@/panels/panel-registry";
 import { ensurePanelsRegistered } from "@/panels/register-panels";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
@@ -104,6 +106,10 @@ export function WorkspacePaneContent({
   const setCurrentTabState = useStableEvent(paneContextValue.setCurrentTabState);
   const openFileInWorkspace = useStableEvent(paneContextValue.openFileInWorkspace);
   const openImportSheet = useStableEvent(paneContextValue.openImportSheet);
+  const openUrlInBrowserTab = useStableEvent((url: string) => {
+    const { browserId } = createWorkspaceBrowser({ initialUrl: url });
+    openTab({ kind: "browser", browserId });
+  });
   const stablePaneContextValue = useMemo(
     () => ({
       serverId: paneContextValue.serverId,
@@ -157,12 +163,14 @@ export function WorkspacePaneContent({
     >
       <PaneProvider value={stablePaneContextValue}>
         <PaneFocusProvider value={paneFocusValue}>
-          <ComposerEditingScope
-            tabId={paneContextValue.tabId}
-            targetKey={JSON.stringify(paneContextValue.target)}
-          >
-            <Component key={key} />
-          </ComposerEditingScope>
+          <ExternalLinkProvider onOpenInPaseoBrowser={openUrlInBrowserTab}>
+            <ComposerEditingScope
+              tabId={paneContextValue.tabId}
+              targetKey={JSON.stringify(paneContextValue.target)}
+            >
+              <Component key={key} />
+            </ComposerEditingScope>
+          </ExternalLinkProvider>
         </PaneFocusProvider>
       </PaneProvider>
     </RenderProfile>

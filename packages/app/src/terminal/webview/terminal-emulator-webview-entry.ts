@@ -343,7 +343,7 @@ class TerminalWebViewBridge {
           sendToNative({ type: "pendingModifiersConsumed", streamKey: message.streamKey }),
         onInputModeChange: (state) =>
           sendToNative({ type: "inputModeChange", streamKey: message.streamKey, state }),
-        onOpenExternalUrl: (url) =>
+        onExternalLinkClick: ({ url }) =>
           sendToNative({ type: "openExternalUrl", streamKey: message.streamKey, url }),
         onResolveLocalFileLink: (source) => this.requestLocalFileLinkResolution(source),
         onOpenLocalFileLink: (target, disposition) =>

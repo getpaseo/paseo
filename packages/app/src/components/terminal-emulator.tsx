@@ -35,7 +35,7 @@ import type {
 } from "../terminal/local-links/terminal-local-link-provider";
 import type { TerminalClipboardWriter } from "../terminal/native-renderer/terminal-selection";
 import type { TerminalRendererReadyChange } from "../utils/terminal-renderer-readiness";
-import { openExternalUrl } from "../utils/open-external-url";
+import type { ExternalLinkClick } from "../links/external-link-action";
 import { focusWithRetries } from "../utils/web-focus";
 import {
   extractTerminalDropPaths,
@@ -144,6 +144,7 @@ interface TerminalEmulatorProps {
     target: TerminalLocalFileLinkTarget,
     disposition: "main" | "side",
   ) => Promise<void> | void;
+  onExternalLinkClick?: (click: ExternalLinkClick) => Promise<void> | void;
   onRendererReadyChange?: (change: TerminalRendererReadyChange) => void;
   pendingModifiers?: PendingTerminalModifiers;
   focusRequestToken?: number;
@@ -190,6 +191,7 @@ export default function TerminalEmulator({
   onInputModeChange,
   onResolveLocalFileLink,
   onOpenLocalFileLink,
+  onExternalLinkClick,
   onRendererReadyChange,
   pendingModifiers = { ctrl: false, shift: false, alt: false },
   focusRequestToken = 0,
@@ -220,6 +222,7 @@ export default function TerminalEmulator({
     onInputModeChange,
     onResolveLocalFileLink,
     onOpenLocalFileLink,
+    onExternalLinkClick,
   });
   mountCallbacksRef.current = {
     onFindRequest,
@@ -231,6 +234,7 @@ export default function TerminalEmulator({
     onInputModeChange,
     onResolveLocalFileLink,
     onOpenLocalFileLink,
+    onExternalLinkClick,
   };
   const initialSnapshotRef = useRef(initialSnapshot);
   initialSnapshotRef.current = initialSnapshot;
@@ -467,12 +471,7 @@ export default function TerminalEmulator({
 
     const runtime = new TerminalEmulatorRuntime();
     runtimeRef.current = runtime;
-    runtime.setCallbacks({
-      callbacks: {
-        ...mountCallbacksRef.current,
-        onOpenExternalUrl: openExternalUrl,
-      },
-    });
+    runtime.setCallbacks({ callbacks: mountCallbacksRef.current });
     runtime.setPendingModifiers({ pendingModifiers: pendingModifiersRef.current });
     runtime.mount({
       root,
@@ -506,10 +505,11 @@ export default function TerminalEmulator({
         onInputModeChange,
         onResolveLocalFileLink,
         onOpenLocalFileLink,
-        onOpenExternalUrl: openExternalUrl,
+        onExternalLinkClick,
       },
     });
   }, [
+    onExternalLinkClick,
     onFindRequest,
     onFindResult,
     onInput,

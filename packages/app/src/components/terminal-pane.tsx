@@ -82,6 +82,7 @@ import type {
   TerminalLocalFileLinkSource,
   TerminalLocalFileLinkTarget,
 } from "@/terminal/local-links/terminal-local-link-provider";
+import { useOpenExternalLink } from "@/links/provider";
 import {
   normalizeWorkspaceFileLocation,
   type OpenFileDisposition,
@@ -945,6 +946,8 @@ export function TerminalPane({
     [onOpenWorkspaceFile],
   );
 
+  const openExternalLink = useOpenExternalLink();
+
   const toggleModifier = useCallback(
     (modifier: keyof ModifierState) => {
       setModifiers((current) => ({ ...current, [modifier]: !current[modifier] }));
@@ -1094,6 +1097,7 @@ export function TerminalPane({
             onSelectionChange={handleSelectionChange}
             onResolveLocalFileLink={handleResolveLocalFileLink}
             onOpenLocalFileLink={handleOpenLocalFileLink}
+            onExternalLinkClick={openExternalLink}
             onPendingModifiersConsumed={handlePendingModifiersConsumed}
             pendingModifiers={modifiers}
             focusRequestToken={focusRequestToken}

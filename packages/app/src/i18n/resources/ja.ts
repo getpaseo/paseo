@@ -1905,6 +1905,13 @@ export const ja: TranslationResources = {
     externalBrowser: "外部ブラウザ",
     dontAskAgain: "次回から確認しない",
   },
+  linkPopover: {
+    openInNewTab: "新しいタブで開く",
+    openInDefaultBrowser: "既定のブラウザで開く",
+    copyLink: "リンクをコピー",
+    click: "クリック",
+    settings: "リンクの設定",
+  },
   downloads: {
     requestTokenFailed: "ダウンロードトークンのリクエストに失敗しました。",
     hostUnavailable: "ダウンロードホストが利用できません。",
@@ -2268,6 +2275,11 @@ export const ja: TranslationResources = {
           steer: "指示",
           queue: "キュー",
         },
+      },
+      linkPopover: {
+        label: "リンクを開く場所を確認する",
+        description:
+          "ターミナルとチャットのリンクに適用されます。{{paseoShortcut}} は常に新しいタブで、{{systemShortcut}} は既定のブラウザで開きます。",
       },
       serviceUrls: {
         options: {

@@ -1,6 +1,7 @@
 import { page, userEvent } from "@vitest/browser/context";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TerminalInputModeState } from "@getpaseo/protocol/terminal-input-mode";
+import type { ExternalLinkClick } from "@/links/external-link-action";
 import { encodeTerminalOutput, TerminalEmulatorRuntime } from "./terminal-emulator-runtime";
 
 vi.mock("@xterm/addon-webgl", () => ({
@@ -40,7 +41,7 @@ interface MountedTerminal {
   sizes: TerminalSize[];
   terminalKeys: TerminalKeyRecord[];
   inputModeChanges: TerminalInputModeState[];
-  openedUrls: string[];
+  linkClicks: ExternalLinkClick[];
 }
 
 const mountedTerminals: MountedTerminal[] = [];
@@ -99,7 +100,7 @@ function createTerminalHost(input: CreateTerminalHostInput): MountedTerminal {
   const inputs: string[] = [];
   const terminalKeys: TerminalKeyRecord[] = [];
   const inputModeChanges: TerminalInputModeState[] = [];
-  const openedUrls: string[] = [];
+  const linkClicks: ExternalLinkClick[] = [];
   const runtime = new TerminalEmulatorRuntime(
     input.isMac === undefined ? undefined : { isMac: input.isMac },
   );
@@ -117,8 +118,8 @@ function createTerminalHost(input: CreateTerminalHostInput): MountedTerminal {
       onInputModeChange: (state) => {
         inputModeChanges.push(state);
       },
-      onOpenExternalUrl: (url) => {
-        openedUrls.push(url);
+      onExternalLinkClick: (click) => {
+        linkClicks.push(click);
       },
     },
   });
@@ -142,7 +143,7 @@ function createTerminalHost(input: CreateTerminalHostInput): MountedTerminal {
     sizes,
     terminalKeys,
     inputModeChanges,
-    openedUrls,
+    linkClicks,
   };
   mountedTerminals.push(mounted);
   return mounted;
@@ -232,7 +233,8 @@ async function clickTerminalLink(input: {
   host: HTMLElement;
   row: number;
   col: number;
-}): Promise<void> {
+  modifiers?: Array<"Control" | "Meta" | "Shift">;
+}): Promise<{ clientX: number; clientY: number }> {
   const terminal = getBrowserTerminal();
   const screen = input.host.querySelector<HTMLElement>(".xterm-screen");
   if (!screen) {
@@ -246,7 +248,9 @@ async function clickTerminalLink(input: {
   await waitFor({
     predicate: () => input.host.querySelector(".xterm-cursor-pointer") !== null,
   });
-  await userEvent.click(screen, { position });
+  await userEvent.click(screen, { position, modifiers: input.modifiers });
+  const bounds = screen.getBoundingClientRect();
+  return { clientX: bounds.left + position.x, clientY: bounds.top + position.y };
 }
 
 afterEach(() => {
@@ -676,7 +680,57 @@ describe("terminal emulator runtime in a real browser", () => {
     await clickTerminalLink({ host: mounted.host, row: 1, col: 4 });
     await clickTerminalLink({ host: mounted.host, row: 0, col: 2 });
 
-    expect(mounted.openedUrls).toEqual(["https://example.com/plain", "https://example.com/osc8"]);
+    expect(mounted.linkClicks.map((click) => click.url)).toEqual([
+      "https://example.com/plain",
+      "https://example.com/osc8",
+    ]);
     expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it("reports Cmd as the primary link modifier on macOS", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360, isMac: true });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    await writeLines(mounted, ["https://example.com/mac"]);
+
+    await clickTerminalLink({ host: mounted.host, row: 0, col: 2, modifiers: ["Meta", "Shift"] });
+    await clickTerminalLink({ host: mounted.host, row: 0, col: 2, modifiers: ["Control"] });
+
+    expect(
+      mounted.linkClicks.map(({ url, primaryModifier, shift }) => ({
+        url,
+        primaryModifier,
+        shift,
+      })),
+    ).toEqual([
+      { url: "https://example.com/mac", primaryModifier: true, shift: true },
+      { url: "https://example.com/mac", primaryModifier: false, shift: false },
+    ]);
+  });
+
+  it("reports Ctrl as the primary link modifier outside macOS", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360, isMac: false });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    await writeLines(mounted, ["https://example.com/other"]);
+
+    await clickTerminalLink({ host: mounted.host, row: 0, col: 2, modifiers: ["Control"] });
+    await clickTerminalLink({ host: mounted.host, row: 0, col: 2, modifiers: ["Meta"] });
+
+    expect(mounted.linkClicks.map(({ primaryModifier }) => primaryModifier)).toEqual([true, false]);
+  });
+
+  it("reports where a link was clicked", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    await writeLines(mounted, ["https://example.com/where"]);
+
+    const clicked = await clickTerminalLink({ host: mounted.host, row: 0, col: 4 });
+
+    // Mouse events report whole pixels; the pointer was placed at a fractional one.
+    expect(mounted.linkClicks).toHaveLength(1);
+    expect(mounted.linkClicks[0]?.clientX).toBe(Math.floor(clicked.clientX));
+    expect(mounted.linkClicks[0]?.clientY).toBe(Math.floor(clicked.clientY));
   });
 });

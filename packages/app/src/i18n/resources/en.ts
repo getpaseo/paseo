@@ -1911,6 +1911,13 @@ export const en = {
     externalBrowser: "External browser",
     dontAskAgain: "Don't ask again",
   },
+  linkPopover: {
+    openInNewTab: "Open in new tab",
+    openInDefaultBrowser: "Open in default browser",
+    copyLink: "Copy link",
+    click: "Click",
+    settings: "Link settings",
+  },
   downloads: {
     requestTokenFailed: "Failed to request download token.",
     hostUnavailable: "Download host is unavailable.",
@@ -2372,6 +2379,11 @@ export const en = {
           steer: "Steer",
           queue: "Queue",
         },
+      },
+      linkPopover: {
+        label: "Ask where to open links",
+        description:
+          "Applies to links in the terminal and chat. {{paseoShortcut}} always opens a new tab and {{systemShortcut}} the default browser.",
       },
       serviceUrls: {
         options: {
