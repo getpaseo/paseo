@@ -1,3 +1,4 @@
+import { TabletLayoutContext } from "@/constants/tablet-layout";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useIsExplorerSidebarOpen } from "@/workspace-tabs/explorer-sidebar";
@@ -994,6 +995,20 @@ function RootProviders({ children }: { children: ReactNode }) {
   );
 }
 
+function TabletLayoutProvider({ children }: { children: ReactNode }) {
+  const { settings } = useAppSettings();
+  const tabletLayout = useMemo(
+    () => ({
+      landscape: settings.tabletLandscapeLayout,
+      portrait: settings.tabletPortraitLayout,
+    }),
+    [settings.tabletLandscapeLayout, settings.tabletPortraitLayout],
+  );
+  return (
+    <TabletLayoutContext.Provider value={tabletLayout}>{children}</TabletLayoutContext.Provider>
+  );
+}
+
 function RootAppTree() {
   return (
     <GestureHandlerRootView style={flexStyle}>
@@ -1021,7 +1036,11 @@ export default function RootLayout() {
     return () => subscription.remove();
   }, []);
 
-  return <RootAppTree />;
+  return (
+    <TabletLayoutProvider>
+      <RootAppTree />
+    </TabletLayoutProvider>
+  );
 }
 
 const layoutStyles = StyleSheet.create((theme) => ({

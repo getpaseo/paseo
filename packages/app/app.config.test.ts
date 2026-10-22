@@ -59,3 +59,30 @@ describe("Android app config", () => {
     30_000,
   );
 });
+
+describe("Android tablet orientation", () => {
+  const localRequire = createRequire(import.meta.url);
+  const plugin = localRequire("./plugins/with-android-tablet-orientation.js");
+  it("allows tablet rotation while preserving portrait phones and repeated prebuilds", async () => {
+    const config = plugin({ name: "test", slug: "test" });
+    const input = {
+      modResults: { language: "kt", contents: "override fun onCreate() { super.onCreate(null) }" },
+      modRequest: {},
+    };
+    const result = await config.mods.android.mainActivity(input);
+    expect(result.modResults.contents).toContain("smallestScreenWidthDp >= 600");
+    expect(result.modResults.contents).toContain("SCREEN_ORIENTATION_UNSPECIFIED");
+    expect(result.modResults.contents).toContain("SCREEN_ORIENTATION_PORTRAIT");
+    const second = await config.mods.android.mainActivity(result);
+    expect(second.modResults.contents.match(/requestedOrientation =/g)).toHaveLength(1);
+  });
+  it.each([
+    { language: "java", contents: "super.onCreate(null)" },
+    { language: "kt", contents: "unsupported main activity" },
+  ])("rejects unsupported activity input: $language", async (modResults) => {
+    const config = plugin({ name: "test", slug: "test" });
+    await expect(
+      config.mods.android.mainActivity({ modResults, modRequest: {} }),
+    ).rejects.toThrow();
+  });
+});

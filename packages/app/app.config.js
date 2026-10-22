@@ -1,3 +1,4 @@
+const withAndroidTabletOrientation = require("./plugins/with-android-tablet-orientation");
 const fs = require("node:fs");
 const path = require("node:path");
 const pkg = require("./package.json");
@@ -148,6 +149,7 @@ export default {
       [withAndroidAsyncStorageSize, 64],
       ...buildProfile.cameraPlugins,
       withAndroidOptionalCamera,
+      withAndroidTabletOrientation,
       [
         "expo-splash-screen",
         {

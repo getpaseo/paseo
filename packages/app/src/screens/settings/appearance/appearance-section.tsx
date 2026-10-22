@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { Text, View } from "react-native";
+import { Platform, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Monitor, Moon, Sun } from "lucide-react-native";
 import {
@@ -435,6 +435,70 @@ interface SyntaxRowProps {
   onChange: (id: SyntaxThemeId) => void;
 }
 
+function TabletLayoutMenuItem({
+  mode,
+  selected,
+  onChange,
+}: {
+  mode: AppSettings["tabletLandscapeLayout"];
+  selected: boolean;
+  onChange: (mode: AppSettings["tabletLandscapeLayout"]) => void;
+}) {
+  const { t } = useTranslation();
+  const select = useCallback(() => onChange(mode), [mode, onChange]);
+  return (
+    <DropdownMenuItem selected={selected} onSelect={select}>
+      {t(`settings.appearance.layout.tabletLayoutOptions.${mode}`)}
+    </DropdownMenuItem>
+  );
+}
+
+function TabletLayoutRow({
+  orientation,
+  value,
+  onChange,
+}: {
+  orientation: "landscape" | "portrait";
+  value: AppSettings["tabletLandscapeLayout"];
+  onChange: (value: AppSettings["tabletLandscapeLayout"]) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <View style={settingsStyles.row}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>
+          {t(
+            `settings.appearance.layout.tablet${orientation === "landscape" ? "Landscape" : "Portrait"}`,
+          )}
+        </Text>
+        <Text style={settingsStyles.rowHint}>
+          {t("settings.appearance.layout.tabletLayoutHint")}
+        </Text>
+      </View>
+      <DropdownMenu>
+        <DropdownTrigger
+          accessibilityLabel={t(
+            `settings.appearance.layout.tablet${orientation === "landscape" ? "Landscape" : "Portrait"}`,
+          )}
+          testID={`tablet-${orientation}-layout-setting`}
+        >
+          {t(`settings.appearance.layout.tabletLayoutOptions.${value}`)}
+        </DropdownTrigger>
+        <DropdownMenuContent side="bottom" align="end" width={200}>
+          {(["desktop", "phone"] as const).map((mode) => (
+            <TabletLayoutMenuItem
+              key={mode}
+              mode={mode}
+              onChange={onChange}
+              selected={value === mode}
+            />
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </View>
+  );
+}
+
 function SyntaxRow({ value, onChange }: SyntaxRowProps) {
   const { t } = useTranslation();
   const selectedLabel = syntaxLabelForId(value);
@@ -525,6 +589,16 @@ export function AppearanceSection() {
     [updateSettings],
   );
 
+  const handleTabletLandscapeLayoutChange = useCallback(
+    (tabletLandscapeLayout: AppSettings["tabletLandscapeLayout"]) =>
+      void updateSettings({ tabletLandscapeLayout }),
+    [updateSettings],
+  );
+  const handleTabletPortraitLayoutChange = useCallback(
+    (tabletPortraitLayout: AppSettings["tabletPortraitLayout"]) =>
+      void updateSettings({ tabletPortraitLayout }),
+    [updateSettings],
+  );
   const handleSyntaxThemeChange = useCallback(
     (syntaxTheme: SyntaxThemeId) => {
       void updateSettings({ syntaxTheme });
@@ -696,6 +770,20 @@ export function AppearanceSection() {
             value={settings.contentMaxWidth}
             onChange={handleContentMaxWidthChange}
           />
+          {Platform.OS === "android" ? (
+            <>
+              <TabletLayoutRow
+                orientation="landscape"
+                value={settings.tabletLandscapeLayout}
+                onChange={handleTabletLandscapeLayoutChange}
+              />
+              <TabletLayoutRow
+                orientation="portrait"
+                value={settings.tabletPortraitLayout}
+                onChange={handleTabletPortraitLayoutChange}
+              />
+            </>
+          ) : null}
         </View>
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.syntax.title")}>

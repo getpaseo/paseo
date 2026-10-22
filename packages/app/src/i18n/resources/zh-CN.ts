@@ -2376,6 +2376,10 @@ export const zhCN: TranslationResources = {
         codeSizeAccessibility: "代码字号",
       },
       layout: {
+        tabletLandscape: "平板横屏样式",
+        tabletPortrait: "平板竖屏样式",
+        tabletLayoutHint: "横竖屏分别保存，旋转后自动切换。电脑样式支持在对话区左右滑动打开侧栏。",
+        tabletLayoutOptions: { desktop: "电脑样式", phone: "手机样式" },
         title: "布局",
         contentWidth: "内容宽度",
         contentWidthHint: "宽屏上聊天和 Markdown 文件的最大宽度",

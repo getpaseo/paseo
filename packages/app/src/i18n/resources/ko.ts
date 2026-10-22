@@ -2414,6 +2414,11 @@ export const ko: TranslationResources = {
         codeSizeAccessibility: "코드 글꼴 크기",
       },
       layout: {
+        tabletLandscape: "태블릿 가로 화면 레이아웃",
+        tabletPortrait: "태블릿 세로 화면 레이아웃",
+        tabletLayoutHint:
+          "화면 방향별로 저장하고 회전하면 전환합니다. 데스크톱 화면에서는 대화를 좌우로 밀어 사이드바를 엽니다.",
+        tabletLayoutOptions: { desktop: "데스크톱 화면", phone: "휴대폰 화면" },
         title: "레이아웃",
         contentWidth: "콘텐츠 너비",
         contentWidthHint: "와이드 화면에서 채팅과 Markdown 파일의 최대 너비",

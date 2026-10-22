@@ -2443,6 +2443,11 @@ export const ru: TranslationResources = {
         codeSizeAccessibility: "Размер шрифта кода",
       },
       layout: {
+        tabletLandscape: "Планшет: альбомная ориентация",
+        tabletPortrait: "Планшет: портретная ориентация",
+        tabletLayoutHint:
+          "Сохраняется отдельно для каждой ориентации. В настольном режиме боковые панели открываются свайпами в чате.",
+        tabletLayoutOptions: { desktop: "Настольный вид", phone: "Мобильный вид" },
         title: "Макет",
         contentWidth: "Ширина содержимого",
         contentWidthHint: "Максимальная ширина чата и файлов Markdown на широких экранах",

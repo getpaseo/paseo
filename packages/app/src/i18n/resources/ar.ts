@@ -2439,6 +2439,11 @@ export const ar: TranslationResources = {
         codeSizeAccessibility: "حجم خط الكود",
       },
       layout: {
+        tabletLandscape: "تخطيط الجهاز اللوحي الأفقي",
+        tabletPortrait: "تخطيط الجهاز اللوحي العمودي",
+        tabletLayoutHint:
+          "يُحفظ كل اتجاه على حدة. في تخطيط الكمبيوتر، اسحب المحادثة لفتح اللوحات الجانبية.",
+        tabletLayoutOptions: { desktop: "كمبيوتر", phone: "هاتف" },
         title: "التخطيط",
         contentWidth: "عرض المحتوى",
         contentWidthHint: "أقصى عرض للمحادثة وملفات Markdown على الشاشات العريضة",
