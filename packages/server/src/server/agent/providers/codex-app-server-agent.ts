@@ -3473,6 +3473,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private pendingReasoning = new Map<string, string[]>();
   private pendingCommandOutputDeltas = new Map<string, string[]>();
   private pendingFileChangeOutputDeltas = new Map<string, string[]>();
+  private pendingToolCallDetails = new Map<string, ToolCallTimelineItem["detail"]>();
   private pendingAssistantMessageBoundary = false;
   private terminalCommandByProcessId = new Map<string, string>();
   private pendingUnlabeledTerminalInteractions = new Map<
@@ -5032,6 +5033,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   async close(): Promise<void> {
     this.closed = true;
     this.clearPendingPermissions();
+    this.pendingToolCallDetails.clear();
     this.pendingSubAgentNotificationsByThreadId.clear();
     this.subscribers.clear();
     this.startupEvents = null;
@@ -6192,6 +6194,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.pendingReasoning.clear();
     this.pendingCommandOutputDeltas.clear();
     this.pendingFileChangeOutputDeltas.clear();
+    this.pendingToolCallDetails.clear();
     this.pendingAssistantMessageBoundary = false;
     this.warnedIncompleteEditToolCallIds.clear();
     this.pendingRootCompactionItemIds.clear();
@@ -6560,6 +6563,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (shouldIgnoreMirroredLifecycleItem(parsed.source, parsed.item)) {
       return;
     }
+    if (parsed.item.id) {
+      this.pendingToolCallDetails.delete(parsed.item.id);
+    }
     this.receiveAsyncQuestion(parsed.threadId, parsed.item);
     if (this.isUserMessageItem(parsed.item)) {
       this.handleUserMessageItem(parsed);
@@ -6746,6 +6752,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (!timelineItem || timelineItem.type !== "tool_call") {
       return;
     }
+    this.pendingToolCallDetails.set(timelineItem.callId, timelineItem.detail);
     const registeredChildThreadIds = this.registerSubAgentToolCall({
       timelineItem,
       rawItem: parsed.item,
@@ -7038,7 +7045,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       kind: "tool",
       title: "Apply file changes",
       description: parsed.reason ?? undefined,
-      detail: {
+      detail: this.pendingToolCallDetails.get(parsed.itemId) ?? {
         type: "unknown",
         input: {
           reason: parsed.reason ?? null,
