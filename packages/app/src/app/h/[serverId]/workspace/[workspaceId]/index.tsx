@@ -104,6 +104,8 @@ function HostWorkspaceRouteContent() {
     workspaceId?: string | string[];
   }>();
   const globalParams = useGlobalSearchParams<{
+    serverId?: string | string[];
+    workspaceId?: string | string[];
     open?: string | string[];
   }>();
   const serverId = getParamValue(params.serverId);
@@ -111,7 +113,10 @@ function HostWorkspaceRouteContent() {
   const workspaceId = workspaceValue
     ? (decodeWorkspaceIdFromPathSegment(workspaceValue) ?? "")
     : "";
-  const openValue = getParamValue(globalParams.open);
+  const ownsIntent =
+    getParamValue(globalParams.serverId) === serverId &&
+    getParamValue(globalParams.workspaceId) === workspaceValue;
+  const openValue = ownsIntent ? getParamValue(globalParams.open) : "";
   const hasHydratedWorkspaces = useHasHydratedWorkspaces(serverId);
   const workspaceExists = useWorkspaceExists(serverId, workspaceId);
   const openIntent = useMemo(() => parseWorkspaceOpenIntent(openValue), [openValue]);

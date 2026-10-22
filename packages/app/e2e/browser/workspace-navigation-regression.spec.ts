@@ -1,8 +1,4 @@
-import {
-  buildHostAgentDetailRoute,
-  buildHostWorkspaceOpenRoute,
-  buildHostWorkspaceRoute,
-} from "@/utils/host-routes";
+import { buildHostAgentDetailRoute, buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import {
@@ -96,7 +92,9 @@ async function closeFirstVisibleDraftTab(page: Page): Promise<void> {
 test.describe("Workspace navigation regression", () => {
   test.describe.configure({ timeout: 240_000 });
 
-  test("opens a notification's workspace on a different offline host", async ({ page }) => {
+  test("keeps an offline notification on the agent route until the host connects", async ({
+    page,
+  }) => {
     const target = {
       serverId: "notification-offline-host",
       workspaceId: "notification-workspace",
@@ -123,14 +121,11 @@ test.describe("Workspace navigation regression", () => {
       );
     }, target);
 
-    await expectAppRoute(
-      page,
-      buildHostWorkspaceOpenRoute(target.serverId, target.workspaceId, `agent:${target.agentId}`),
-      { timeout: 30_000 },
-    );
-    await expect(page.getByText("Connecting", { exact: true })).toBeVisible();
-    await expect(page.getByText("Notification Host", { exact: true })).toBeVisible();
-    await expect(page.getByText("Add a project", { exact: true })).toHaveCount(0);
+    await expectAppRoute(page, buildHostAgentDetailRoute(target.serverId, target.agentId), {
+      timeout: 30_000,
+    });
+    await expect(page.getByTestId("agent-route-waiting-for-host")).toBeVisible();
+    await expect(page.getByText(/Notification Host/).first()).toBeVisible();
   });
 
   test("shows the New launcher after returning from settings and closing the last agent draft tab", async ({
@@ -321,7 +316,7 @@ test.describe("Workspace navigation regression", () => {
     }
   });
 
-  test("sidebar navigation and reload keep workspace selection and tabs aligned", async ({
+  test("a stale notification workspace preserves retained workspace selection and tabs", async ({
     page,
   }) => {
     const serverId = getServerId();
@@ -435,7 +430,7 @@ test.describe("Workspace navigation regression", () => {
             }),
           );
         },
-        { agentId: secondAgent.id, serverId, workspaceId: secondWorkspace.workspaceId },
+        { agentId: secondAgent.id, serverId, workspaceId: firstWorkspace.workspaceId },
       );
       await waitForWorkspaceTabsVisible(page);
       await expect(page).toHaveURL(buildHostWorkspaceRoute(serverId, secondWorkspace.workspaceId), {
