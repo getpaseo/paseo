@@ -32,14 +32,16 @@ export function normalizeSlashes(value: string): string {
   if (!trimmed) {
     return "";
   }
+  const uncPrefix = trimmed.startsWith("//");
   const collapsed = trimmed.replace(/\/{2,}/g, "/");
-  if (collapsed === "/" || /^[A-Za-z]:\/$/.test(collapsed)) {
-    return collapsed;
+  const normalized = uncPrefix && collapsed !== "/" ? `/${collapsed}` : collapsed;
+  if (normalized === "/" || /^[A-Za-z]:\/$/.test(normalized)) {
+    return normalized;
   }
-  return collapsed.replace(/\/+$/, "");
+  return normalized.replace(/\/+$/, "");
 }
 
-function pathsEqual(left: string, right: string): boolean {
+export function pathsEqual(left: string, right: string): boolean {
   return isWindowsAbsolutePath(left) || isWindowsAbsolutePath(right)
     ? left.toLowerCase() === right.toLowerCase()
     : left === right;

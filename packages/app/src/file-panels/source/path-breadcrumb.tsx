@@ -12,6 +12,7 @@ import {
 import {
   dirnamePath,
   joinAbsolutePath,
+  pathsEqual,
   resolveFileBreadcrumb,
   toWorkspaceFileOpenPath,
   type FileBreadcrumbSegment,
@@ -151,7 +152,7 @@ function DirectoryMenu({
       items.push(
         <DropdownMenuItem
           key={`file:${entry.path || entry.name}`}
-          selected={absolutePath === currentAbsolutePath}
+          selected={pathsEqual(absolutePath, currentAbsolutePath)}
           onSelect={() => onOpenFile(toWorkspaceFileOpenPath(absolutePath, workspaceRoot))}
         >
           {entry.name}

@@ -75,6 +75,7 @@ describe("path helpers", () => {
   it("normalizes separators and trailing slashes", () => {
     expect(normalizeSlashes("C:\\repo\\\\src\\")).toBe("C:/repo/src");
     expect(normalizeSlashes("/repo///src/")).toBe("/repo/src");
+    expect(normalizeSlashes("//server/share/src/")).toBe("//server/share/src");
   });
 
   it("joins absolute paths at the filesystem root", () => {

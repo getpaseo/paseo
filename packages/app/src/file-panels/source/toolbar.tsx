@@ -65,7 +65,9 @@ export function TextFileToolbar({
                 openFileInWorkspace({ location: { path: openPath }, disposition: "main" })
               }
             />
-          ) : null}
+          ) : (
+            <View style={styles.breadcrumbPlaceholder} />
+          )}
           <View style={styles.metadata}>
             <Text
               numberOfLines={1}
@@ -148,6 +150,10 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[3],
     paddingHorizontal: theme.spacing[3],
+  },
+  breadcrumbPlaceholder: {
+    flex: 1,
+    minWidth: 0,
   },
   metadata: {
     flexShrink: 0,
