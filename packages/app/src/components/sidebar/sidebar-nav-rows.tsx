@@ -1,8 +1,9 @@
 import { router, usePathname } from "expo-router";
 import { CalendarClock, History, Plus, Search } from "lucide-react-native";
-import { memo, useCallback, useMemo, useRef, type ComponentType } from "react";
+import { memo, useCallback, useMemo, useRef, type ComponentType, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { View, type StyleProp, type ViewStyle } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { PluginSidebarItem } from "@/plugins/sidebar-items";
@@ -30,37 +31,49 @@ interface SidebarNavRowProps {
 interface SidebarNavRowsProps extends SidebarNavRowProps {
   /** Style for the group wrapper, which the sidebar owns. */
   style?: StyleProp<ViewStyle>;
+  /** Sits to the right of the first row, which shrinks to make room. */
+  firstRowTrailing?: ReactNode;
 }
 
 /**
  * Top-level sidebar navigation, ordered and filtered by the user's
  * `sidebarNavItems` preference. Renders nothing — not even the bordered group
- * wrapper — when every item is hidden.
+ * wrapper — when every item is hidden and there is no `firstRowTrailing`.
  */
-export function SidebarNavRows({ style, onBeforeNavigate }: SidebarNavRowsProps) {
+export function SidebarNavRows({ style, onBeforeNavigate, firstRowTrailing }: SidebarNavRowsProps) {
   const { items } = useSidebarNavItems("header");
   const visibleItems = useMemo(() => items.filter((item) => item.visible), [items]);
   const groupRef = useRef<View | null>(null);
 
-  if (visibleItems.length === 0) return null;
+  if (visibleItems.length === 0 && !firstRowTrailing) return null;
+
+  const [firstRow, ...restRows] = visibleItems.map((item) => {
+    if (item.kind === "plugin") {
+      return (
+        <PluginSidebarItem
+          key={item.key}
+          group={item.group}
+          section="header"
+          fallbackAnchorRef={groupRef}
+          onBeforeNavigate={onBeforeNavigate}
+        />
+      );
+    }
+    const Row = BUILTIN_ROWS[item.id];
+    return <Row key={item.key} onBeforeNavigate={onBeforeNavigate} />;
+  });
 
   return (
     <View ref={groupRef} collapsable={false} style={style}>
-      {visibleItems.map((item) => {
-        if (item.kind === "plugin") {
-          return (
-            <PluginSidebarItem
-              key={item.key}
-              group={item.group}
-              section="header"
-              fallbackAnchorRef={groupRef}
-              onBeforeNavigate={onBeforeNavigate}
-            />
-          );
-        }
-        const Row = BUILTIN_ROWS[item.id];
-        return <Row key={item.key} onBeforeNavigate={onBeforeNavigate} />;
-      })}
+      {firstRowTrailing ? (
+        <View style={styles.firstRow}>
+          <View style={styles.firstRowItem}>{firstRow}</View>
+          {firstRowTrailing}
+        </View>
+      ) : (
+        firstRow
+      )}
+      {restRows}
     </View>
   );
 }
@@ -179,3 +192,14 @@ const BUILTIN_ROWS: Record<BuiltinSidebarNavId, ComponentType<SidebarNavRowProps
   search: SidebarSearchRow,
   schedules: SidebarSchedulesRow,
 };
+
+const styles = StyleSheet.create({
+  firstRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  firstRowItem: {
+    flex: 1,
+    minWidth: 0,
+  },
+});

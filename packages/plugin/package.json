@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/plugin",
-  "version": "0.11.2",
+  "version": "0.13.0-beta.1",
   "description": "Paseo plugin SDK package",
   "files": [
     "dist",
@@ -62,28 +62,30 @@
     "build": "tsc -p tsconfig.json --incremental false",
     "build:clean": "npm run clean && npm run build",
     "prepack": "npm run build:clean",
-    "typecheck": "tsgo --noEmit && tsgo -p tsconfig.examples.json --noEmit",
-    "test": "vitest run"
+    "typecheck": "tsgo --noEmit && npm run typecheck:examples",
+    "test": "vitest run",
+    "typecheck:examples": "npm --prefix ../../plugin-examples/markdown-panel install --ignore-scripts --no-audit --no-fund && tsgo -p tsconfig.examples.json --noEmit"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.4.0",
+    "i18next": "^26.3.0",
     "use-sync-external-store": "^1.6.0"
   },
   "devDependencies": {
-    "@getpaseo/client": "0.11.2",
-    "@getpaseo/protocol": "0.11.2",
+    "@getpaseo/client": "0.13.0-beta.1",
+    "@getpaseo/protocol": "0.13.0-beta.1",
     "@types/node": "^20.9.0",
     "@types/react": "~19.2.0",
-    "react": "19.1.0",
-    "react-native": "0.81.5",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
     "typescript": "^5.9.3",
     "vitest": "^4.1.6",
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@getpaseo/client": "0.11.2",
-    "@getpaseo/protocol": "0.11.2",
-    "react": "~19.1.0",
+    "@getpaseo/client": "0.13.0-beta.1",
+    "@getpaseo/protocol": "0.13.0-beta.1",
+    "react": ">=19.1.0 <20",
     "react-native": ">=0.81.5",
     "zod": "^4.4.3"
   },

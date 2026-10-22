@@ -3,6 +3,7 @@ import {
   createAgentChatFromLauncher,
   createStandaloneTerminalFromLauncher,
   expectTerminalCwd,
+  submitAgentChatAndExpectCwd,
 } from "../support/helpers/workspace-lifecycle";
 
 test.describe("Workspace lifecycle", () => {
@@ -19,8 +20,9 @@ test.describe("Workspace lifecycle", () => {
     const workspace = await withWorkspace({ prefix: "lifecycle-main-" });
     await workspace.navigateTo();
 
-    await test.step("creates an agent chat", async () => {
+    await test.step("submitting a draft creates an agent in the project root", async () => {
       await createAgentChatFromLauncher(page);
+      await submitAgentChatAndExpectCwd(page, workspace);
     });
 
     await test.step("creates a terminal in the project root", async () => {

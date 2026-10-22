@@ -203,7 +203,8 @@ export async function expectOneLineTruncatedFileResult(
   expect(lineBox).not.toBeNull();
   expect(filenameBox).not.toBeNull();
   expect(pathBox).not.toBeNull();
-  expect(rowBox?.height).toBe(36);
+  // COMMAND_CENTER_LIST_METRICS.desktop.singleLineRow (list-metrics imports react-native).
+  expect(rowBox?.height).toBe(32);
   expect(Math.abs((filenameBox?.y ?? 0) - (pathBox?.y ?? 0))).toBeLessThanOrEqual(1);
   expect(overflow.scrollWidth).toBeGreaterThan(overflow.clientWidth);
   expect(overflow.overflow).toBe("hidden");

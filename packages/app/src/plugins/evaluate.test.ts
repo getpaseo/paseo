@@ -141,7 +141,7 @@ describe("evaluatePluginClientBundle", () => {
     Reflect.deleteProperty(globalThis, "__pluginRemovals");
   });
 
-  it("collects timeline transformers and renderers", () => {
+  it.each(["tool_call", "notification"])("collects %s transformers and renderers", (itemType) => {
     const plugin = evaluatePluginClientBundle(
       "reports",
       bundle(`
@@ -149,7 +149,7 @@ describe("evaluatePluginClientBundle", () => {
         const schema = { safeParse(value) { return { success: true, data: value }; } };
         plugin.addTimelineTransformer({
           id: "test-report",
-          query: { itemType: "tool_call" },
+          query: { itemType: "${itemType}" },
           transform() { return { items: [] }; },
         });
         plugin.addTimelineRenderer({
@@ -162,7 +162,7 @@ describe("evaluatePluginClientBundle", () => {
     );
 
     expect(plugin.timelineTransformers.map(({ id, query }) => ({ id, query }))).toEqual([
-      { id: "test-report", query: { itemType: "tool_call" } },
+      { id: "test-report", query: { itemType } },
     ]);
     expect(plugin.timelineRenderers.map(({ kind, version }) => ({ kind, version }))).toEqual([
       { kind: "test-report", version: 1 },
@@ -381,6 +381,72 @@ describe("evaluatePluginClientBundle", () => {
     ).toEqual([{ id: "open-review", title: "Open review", icon: "Scan", context: "agent" }]);
   });
 
+  it("registers inline SVG and component icons", () => {
+    const svg = '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h16v16H4z" /></svg>';
+    const plugin = evaluatePluginClientBundle(
+      "review",
+      bundle(`
+        function ReviewPanel() { return null; }
+        function BadgeIcon() { return null; }
+        plugin.addWorkspacePanel({
+          id: "review",
+          title: "Review",
+          icon: { svg: ${JSON.stringify(`  ${svg}\n`)} },
+          context: "workspace",
+          Component: ReviewPanel,
+        });
+        plugin.addCommandCenterItem({
+          id: "open-review",
+          title: "Open review",
+          icon: BadgeIcon,
+          context: "global",
+          onSelect() {},
+        });
+        plugin.addAttachmentSource({
+          id: "issues",
+          title: "Issues",
+          icon: { svg: ${JSON.stringify(svg)} },
+          pickerTitle: "Attach issue",
+          searchPlaceholder: "Search",
+          search: { name: "issues.search", input: {}, output: {} },
+        });
+      `),
+    );
+
+    expect(plugin.workspacePanels[0]?.icon).toEqual({ svg });
+    expect(plugin.commandCenterItems[0]?.icon).toHaveProperty("name", "BadgeIcon");
+    expect(plugin.attachmentSources[0]?.icon).toEqual({ svg });
+  });
+
+  it.each([
+    [
+      "workspace panel",
+      `plugin.addWorkspacePanel({ id: "review", title: "Review", icon: ICON, context: "workspace", Component() { return null; } })`,
+      "Workspace panel review has an invalid icon: script elements are not allowed",
+    ],
+    [
+      "Command Center item",
+      `plugin.addCommandCenterItem({ id: "review", title: "Review", icon: ICON, context: "global", onSelect() {} })`,
+      "Command Center item review has an invalid icon: script elements are not allowed",
+    ],
+    [
+      "settings screen",
+      `plugin.addSettingsScreen({ id: "review", title: "Review", icon: ICON, Component() { return null; } })`,
+      "Settings screen review has an invalid icon: script elements are not allowed",
+    ],
+    [
+      "attachment source",
+      `plugin.addAttachmentSource({ id: "review", title: "Review", icon: ICON, pickerTitle: "Pick", searchPlaceholder: "Search", search: { name: "issues.search", input: {}, output: {} } })`,
+      "Attachment source review has an invalid icon: script elements are not allowed",
+    ],
+  ])("fails the plugin when a %s registers an unsafe SVG", (_kind, registration, message) => {
+    const icon = JSON.stringify({ svg: "<svg><script>run()</script></svg>" });
+
+    expect(() =>
+      evaluatePluginClientBundle("review", bundle(registration.replace("ICON", icon))),
+    ).toThrow(message);
+  });
+
   it("normalizes and validates workspace panel locations", () => {
     const plugin = evaluatePluginClientBundle(
       "review",
@@ -580,11 +646,11 @@ describe("evaluatePluginClientBundle", () => {
     ).toThrow("must return a cleanup function");
   });
 
-  it("provides the host Icon component through @getpaseo/plugin/client/react-native", () => {
+  it("provides the host Icon component through @getpaseo/plugin/client/ui", () => {
     const plugin = evaluatePluginClientBundle(
       "example",
       `(function(require) {
-        const { Icon } = require("@getpaseo/plugin/client/react-native");
+        const { Icon } = require("@getpaseo/plugin/client/ui");
         const module = { exports: {} };
         module.exports.default = function(plugin) {
           plugin.addScreen({ id: "main", title: "Main", Component: function Surface() {
@@ -602,14 +668,14 @@ describe("evaluatePluginClientBundle", () => {
     expect(element).toMatchObject({ props: { size: 18, color: "#123456" } });
   });
 
-  it("provides Paseo UI through @getpaseo/plugin/client/react-native", () => {
+  it("provides Paseo UI through @getpaseo/plugin/client/ui", () => {
     const plugin = evaluatePluginClientBundle(
       "example",
       `(function(require) {
-        const { Icon, Modal, useToast } = require("@getpaseo/plugin/client/react-native");
+        const { Icon, Modal, useToast, SettingsSection, SidebarRow, StreamedText } = require("@getpaseo/plugin/client/ui");
         const module = { exports: {} };
         module.exports.default = function(plugin) {
-          if (typeof Icon !== "function" || typeof Modal !== "function" || typeof Modal.Content !== "function" || typeof useToast !== "function") {
+          if (typeof Icon !== "function" || typeof Modal !== "function" || typeof Modal.Content !== "function" || typeof useToast !== "function" || typeof SettingsSection !== "function" || typeof SidebarRow !== "function" || typeof StreamedText !== "function") {
             throw new Error("React Native plugin UI is incomplete");
           }
           plugin.addSurface("main", function Surface() { return null; });
@@ -629,9 +695,11 @@ describe("evaluatePluginClientBundle", () => {
         `(function(require) {
       const shared = require("@getpaseo/plugin");
       const client = require("@getpaseo/plugin/client");
-      const { ExternalLink } = require("@getpaseo/plugin/client/ui");
+      const { ExternalLink, Loading, Markdown } = require("@getpaseo/plugin/client/ui");
+      if (typeof Markdown !== "function") throw new Error("Markdown");
       if (typeof ExternalLink !== "function") throw new Error("ExternalLink");
-      for (const name of ["usePaseo", "useRpc", "useSettings", "useAgent", "useWorkspace", "openExternalUrl"]) {
+      if (typeof Loading !== "function") throw new Error("Loading");
+      for (const name of ["usePaseo", "useRpc", "useSettings", "useAgent", "useWorkspace", "openExternalUrl", "useFileText", "useFileBytes", "useFileUrl", "PluginFileConflictError", "PluginFileDeletedError"]) {
         if (name in shared || typeof client[name] !== "function") throw new Error(name);
       }
       if ("Icon" in shared || typeof shared.PluginAttachmentItemSchema.parse !== "function") throw new Error("shared exports");
@@ -745,4 +813,50 @@ it("binds imported getters to each originating installation across delayed callb
   ]);
   await first.cleanup();
   await second.cleanup();
+});
+
+describe("file panels", () => {
+  const panel =
+    '{ id: "pdf", title: "PDF", icon: "FileText", files: { extensions: ["pdf"] }, Component() { return null; } }';
+  it("registers a panel and removes it on cleanup", async () => {
+    const plugin = evaluatePluginClientBundle("files", bundle(`plugin.addFilePanel(${panel})`));
+    expect(plugin.filePanels.map(({ id, title, files }) => ({ id, title, files }))).toEqual([
+      { id: "pdf", title: "PDF", files: { extensions: ["pdf"] } },
+    ]);
+    await plugin.cleanup();
+    expect(plugin.filePanels).toEqual([]);
+  });
+  it.each([
+    ['files: { extensions: ["pdf"] }', 'files: { pattern: "*.pdf" }', "selector"],
+    ['files: { extensions: ["pdf"] }', 'files: { extensions: [".pdf"] }', "selector"],
+    ['files: { extensions: ["pdf"] }', 'files: { extensions: ["*"] }', "selector"],
+    ['files: { extensions: ["pdf"] }', 'files: { extensions: ["foo/bar"] }', "selector"],
+    ['files: { extensions: ["pdf"] }', "files: { extensions: [] }", "selector"],
+    ['files: { extensions: ["pdf"] }', 'files: { extensions: [], filenames: ["a/b"] }', "selector"],
+    ['id: "pdf"', 'id: "Bad"', "file panel id"],
+    ['title: "PDF"', 'title: " "', "title"],
+    ["Component() { return null; }", "Component: {}", "component"],
+    ['icon: "FileText"', 'icon: ""', "icon"],
+  ])("rejects invalid registration %s → %s", (from, to, error) => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "files",
+        bundle(`plugin.addFilePanel(${panel.replace(from, to)})`),
+      ),
+    ).toThrow(error);
+  });
+  it("accepts filename selectors and rejects duplicate IDs", () => {
+    const source = panel.replace(
+      'extensions: ["pdf"]',
+      'extensions: [], filenames: ["Dockerfile"]',
+    );
+    const plugin = evaluatePluginClientBundle("files", bundle(`plugin.addFilePanel(${source})`));
+    expect(plugin.filePanels[0]?.files).toEqual({ extensions: [], filenames: ["Dockerfile"] });
+    expect(() =>
+      evaluatePluginClientBundle(
+        "files",
+        bundle(`plugin.addFilePanel(${source}); plugin.addFilePanel(${source})`),
+      ),
+    ).toThrow("Duplicate file panel");
+  });
 });

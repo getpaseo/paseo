@@ -1,0 +1,23 @@
+npm notice run paseo@0.13.0-beta.1 lint
+npm notice run oxlint
+
+  x eslint-plugin-react-perf(jsx-no-new-function-as-prop): JSX attribute values should not contain functions created in the same scope.
+     ,-[packages/app/src/subagents/workflow-card.tsx:150:18]
+ 149 |       }
+ 150 |       onHoverIn={() => setHovered(true)}
+     :                  ^^^^^^^^^^^^^^^^^^^^^^
+ 151 |       onHoverOut={() => setHovered(false)}
+     `----
+  help: simplify props or memoize props in the parent component (https://react.dev/reference/react/memo#my-component-rerenders-when-a-prop-is-an-object-or-array).
+
+  x eslint-plugin-react-perf(jsx-no-new-function-as-prop): JSX attribute values should not contain functions created in the same scope.
+     ,-[packages/app/src/subagents/workflow-card.tsx:151:19]
+ 150 |       onHoverIn={() => setHovered(true)}
+ 151 |       onHoverOut={() => setHovered(false)}
+     :                   ^^^^^^^^^^^^^^^^^^^^^^^
+ 152 |       style={[styles.card, hovered && canOpen ? styles.cardHovered : null]}
+     `----
+  help: simplify props or memoize props in the parent component (https://react.dev/reference/react/memo#my-component-rerenders-when-a-prop-is-an-object-or-array).
+
+Found 0 warnings and 2 errors.
+Finished in 6.8s on 4873 files with 177 rules using 32 threads.

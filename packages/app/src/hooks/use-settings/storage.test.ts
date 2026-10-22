@@ -44,6 +44,33 @@ function makeDeps(
 }
 
 describe("loadAppSettingsFromStorage", () => {
+  it("persists file panel associations, including panels absent from this host", async () => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+    const filePanelAssociations = {
+      "ext:md": "builtin:markdown",
+      "name:Dockerfile": "plugin:absent/container",
+    };
+    await saveAppSettings({ queryClient, deps, updates: { filePanelAssociations } });
+    expect((await loadAppSettingsFromStorage(deps)).filePanelAssociations).toEqual(
+      filePanelAssociations,
+    );
+  });
+
+  it.each([undefined, null, [], "invalid", { "ext:md": 42 }])(
+    "defaults malformed file panel associations without discarding other settings: %j",
+    async (filePanelAssociations) => {
+      const deps = makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify({ filePanelAssociations, vimKeybindings: true }),
+        }),
+      });
+      const settings = await loadAppSettingsFromStorage(deps);
+      expect(settings.filePanelAssociations).toEqual({});
+      expect(settings.vimKeybindings).toBe(true);
+    },
+  );
+
   it("preserves a persisted steer send behavior", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({

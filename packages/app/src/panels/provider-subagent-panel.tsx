@@ -255,6 +255,7 @@ function ProviderSubagentPanel() {
       {subtitle ? <PaneSubtitle text={subtitle} testID="provider-subagent-pane-subtitle" /> : null}
       <AgentStreamView
         agentId={streamId}
+        providerParentAgentId={target.parentAgentId}
         serverId={serverId}
         context={streamContext}
         streamItems={timeline?.tail ?? EMPTY_STREAM_ITEMS}

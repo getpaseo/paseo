@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { highlightCode, highlightLine } from "../highlighter.js";
+import type { HighlightToken } from "../types.js";
+import { highlightCode, highlightCodeInSteps, highlightLine } from "../highlighter.js";
 
 describe("highlightCode", () => {
   it("highlights JavaScript code with correct token styles", () => {
@@ -340,6 +341,69 @@ const title = "Hello";
     }
   });
 });
+
+describe("highlightCodeInSteps", () => {
+  it("splits a large file into many bounded steps with the same result", () => {
+    const code = Array.from(
+      { length: 2000 },
+      (_, index) => `/* block ${index}\n comment */ export const item${index} = "${index}";`,
+    ).join("\n");
+    const steps = highlightCodeInSteps(code, "large.ts");
+    let count = 0;
+    let step = steps.next();
+    while (!step.done) {
+      count++;
+      step = steps.next();
+    }
+
+    expect(count).toBeGreaterThan(20);
+    expect(step.value).toEqual(highlightCode(code, "large.ts"));
+    expect(step.value[1]).toEqual([
+      { text: " comment */", style: "comment" },
+      { text: " ", style: null },
+      { text: "export", style: "keyword" },
+      { text: " ", style: null },
+      { text: "const", style: "keyword" },
+      { text: " ", style: null },
+      { text: "item0", style: "definition" },
+      { text: " ", style: null },
+      { text: "=", style: "operator" },
+      { text: " ", style: null },
+      { text: '"0"', style: "string" },
+      { text: ";", style: "punctuation" },
+    ]);
+  });
+
+  it("highlights the first lines first, then the whole file", () => {
+    const code = Array.from({ length: 1000 }, (_, index) => `const item${index} = ${index};`).join(
+      "\n",
+    );
+    const full = highlightCode(code, "large.ts");
+    const steps = highlightCodeInSteps(code, "large.ts", { firstLines: 100 });
+    const progress: HighlightToken[][][] = [];
+    let step = steps.next();
+    while (!step.done) {
+      if (step.value) progress.push(step.value);
+      step = steps.next();
+    }
+
+    expect(progress).toHaveLength(1);
+    expect(progress[0].slice(0, 100)).toEqual(full.slice(0, 100));
+    expect(progress[0][100]).toEqual([{ text: "const item100 = 100;", style: null }]);
+    expect(progress[0]).toHaveLength(1000);
+    expect(step.value).toEqual(full);
+  });
+
+  it("highlights the whole file at once when the first lines are most of it", () => {
+    const code = "const a = 1;\nconst b = 2;\nconst c = 3;";
+    const steps = [...iterate(highlightCodeInSteps(code, "small.ts", { firstLines: 2 }))];
+    expect(steps.filter(Boolean)).toEqual([]);
+  });
+});
+
+function* iterate<T>(steps: Generator<T, unknown, void>): Generator<T> {
+  for (let step = steps.next(); !step.done; step = steps.next()) yield step.value;
+}
 
 describe("highlightLine", () => {
   it("highlights a single line", () => {

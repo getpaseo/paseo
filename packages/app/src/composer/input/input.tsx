@@ -1295,7 +1295,12 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     // Read pointer capability when restoring, without making a pointer change itself
     // a focus trigger.
     useLayoutEffect(() => {
-      if (isPaneFocused && focusIntentRef.current && hasFinePointer()) {
+      const finePointer = hasFinePointer();
+      if (!isPaneFocused && isWeb && !finePointer) {
+        // Hiding a retained tab only blurs its editor after the browser renders.
+        // A quick return before that frame would otherwise keep touch focus.
+        textInputRef.current?.blur();
+      } else if (isPaneFocused && focusIntentRef.current && finePointer) {
         textInputRef.current?.focus();
       }
     }, [isPaneFocused]);
@@ -2226,7 +2231,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
   },
   // Lifts the composer off the chat it sits under on phones.
   inputWrapperCompact: {
-    boxShadow: "0px 4px 16px rgba(0, 0, 0, 0.2)",
+    ...theme.shadow.sm,
   },
   // Dotted says "this surface is the same box, but there is nothing to type
   // into it" without swapping the border colour, which reads as an error state.

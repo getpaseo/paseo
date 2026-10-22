@@ -1,11 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
-import {
-  Pressable,
-  Text,
-  View,
-  type LayoutChangeEvent,
-  type PressableStateCallbackType,
-} from "react-native";
+import { Text, View, type LayoutChangeEvent } from "react-native";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -15,8 +9,10 @@ import type {
   ProviderSubagentWorkflowAgentPayload,
 } from "@getpaseo/protocol/messages";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { isWeb } from "@/constants/platform";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { isNative, isWeb } from "@/constants/platform";
 import { useOptionalPaneContext } from "@/panels/pane-context";
 import type { Theme } from "@/styles/theme";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
@@ -127,6 +123,10 @@ function WorkflowCard({
 }): ReactElement {
   const { t } = useTranslation();
   const pane = useOptionalPaneContext();
+  const isCompact = useIsCompactFormFactor();
+  const [hovered, setHovered] = useState(false);
+  const onHoverIn = useCallback(() => setHovered(true), []);
+  const onHoverOut = useCallback(() => setHovered(false), []);
   const now = useNow(1000);
   const agents = descriptor?.workflowAgents ?? EMPTY_AGENTS;
   const cells = useMemo(() => agents.map((agent) => toCell(agent, now)), [agents, now]);
@@ -139,23 +139,20 @@ function WorkflowCard({
       "subagents",
     );
   }, [pane, parentAgentId, subagentId]);
-  const cardStyle = useCallback(
-    ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.card,
-      hovered && canOpen ? styles.cardHovered : null,
-    ],
-    [canOpen],
-  );
 
   return (
-    <Pressable
+    <PressHighlight
       onPress={open}
       disabled={!canOpen}
       accessibilityRole="button"
+      accessibilityHint={summarize(t, counts)}
       accessibilityLabel={
         title ? t("subagents.workflowCardOpen", { title }) : t("subagents.workflowCardOpenUntitled")
       }
-      style={cardStyle}
+      onHoverIn={onHoverIn}
+      onHoverOut={onHoverOut}
+      style={[styles.card, hovered && canOpen ? styles.cardHovered : null]}
+      highlightStyle={styles.cardHovered}
       testID="workflow-card"
     >
       <View style={styles.body}>
@@ -180,13 +177,16 @@ function WorkflowCard({
         <View style={styles.gridSlot}>
           <AgentCells cells={cells} counts={counts} />
         </View>
+        {isNative || isCompact ? (
+          <Text style={styles.metaLabel}>{summarize(t, counts)}</Text>
+        ) : null}
       </View>
       {canOpen ? (
         <View style={styles.chevron}>
           <ThemedChevronRight size={14} uniProps={chevronColorMapping} />
         </View>
       ) : null}
-    </Pressable>
+    </PressHighlight>
   );
 }
 
@@ -356,6 +356,8 @@ function summarize(t: TFunction, counts: CellCounts): string {
       done: counts.done,
       total: counts.total,
       stopped: counts.stopped,
+      running: counts.running,
+      stalled: counts.stalled,
       failed: counts.error,
     });
   }
@@ -486,13 +488,15 @@ const styles = StyleSheet.create((theme) => ({
   },
   title: {
     fontSize: theme.fontSize.base,
-    lineHeight: 20,
+    lineHeight: Math.ceil(theme.fontSize.base * 1.4),
     color: theme.colors.foreground,
   },
   meta: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    flexWrap: "wrap",
+    columnGap: 12,
+    rowGap: 2,
     minHeight: 20,
   },
   metaLabel: {

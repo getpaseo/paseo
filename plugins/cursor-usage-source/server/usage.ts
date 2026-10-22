@@ -1,4 +1,5 @@
 import type { UsageInput } from "../shared/input.js";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -211,6 +212,26 @@ async function readToken(input: UsageInput): Promise<string | undefined> {
   return token ?? undefined;
 }
 
+const CursorIdentitySchema = z.object({ sub: z.string().min(1) });
+
+function cursorAccount(token: string, input: UsageInput): UsageAccount {
+  const parts = token.split(".");
+  if (parts.length === 3) {
+    try {
+      const payload: unknown = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8"));
+      const identity = CursorIdentitySchema.safeParse(payload);
+      if (identity.success) {
+        const key = createHash("sha256").update(identity.data.sub).digest("hex");
+        return { key: `account-${key}`, input };
+      }
+    } catch {
+      // Non-JWT logins still have a usage card, isolated to their credential store.
+    }
+  }
+  const key = createHash("sha256").update(JSON.stringify(input)).digest("hex");
+  return { key: `store-${key}`, input };
+}
+
 export async function discover(): Promise<UsageAccount[]> {
   const home = homedir();
   const candidates: UsageInput[] = ["CURSOR_ACCESS_TOKEN", "CURSOR_TOKEN"].map((locator) => ({
@@ -237,12 +258,14 @@ export async function discover(): Promise<UsageAccount[]> {
     ].map((locator) => ({ store: "sqlite" as const, locator })),
     { store: "file", locator: join(home, ".config", "cursor", "auth.json") },
   );
-  for (const input of candidates) if (await readToken(input)) return [{ key: "default", input }];
+  for (const input of candidates) {
+    const token = await readToken(input);
+    if (token) return [cursorAccount(token, input)];
+  }
   return [];
 }
 
-// Resolves the login a cursor-agent session runs on. The key matches global discovery so
-// the session's login joins the host's Cursor card instead of adding a second one.
+// Account identity joins global and session logins without merging different users.
 export async function discoverSession(
   scope: Extract<UsageScope, { kind: "session" }>,
   platform: NodeJS.Platform = process.platform,
@@ -251,7 +274,8 @@ export async function discoverSession(
   const locator = cursorAgentAuthPath(scope.env, platform);
   if (!locator) return [];
   const input: UsageInput = { store: "file", locator };
-  return (await readToken(input)) ? [{ key: "default", input }] : [];
+  const token = await readToken(input);
+  return token ? [cursorAccount(token, input)] : [];
 }
 
 // Mirrors cursor-agent's credential store. Env credentials win over the stored login and

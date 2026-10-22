@@ -1,4 +1,4 @@
-import type { NativeHeadlessTerminal } from "./headless-terminal-state";
+import type { NativeHeadlessTerminal, NativeTerminalCell } from "./headless-terminal-state";
 import type { TerminalGridCellMetrics } from "./terminal-grid-metrics";
 
 export interface TerminalBufferCoordinate {
@@ -101,6 +101,10 @@ interface TerminalSelectionState {
 
 const TERMINAL_WORD_SEPARATORS = " ()[]{}',\"`";
 
+function isTerminalWordSeparator(cell: NativeTerminalCell): boolean {
+  return cell.width !== 0 && TERMINAL_WORD_SEPARATORS.includes(cell.char || " ");
+}
+
 function compareCoordinates(
   left: TerminalBufferCoordinate,
   right: TerminalBufferCoordinate,
@@ -183,8 +187,7 @@ export function resolveTerminalWordSelection(
   if (!cells || input.coordinate.col < 0 || input.coordinate.col >= cells.length) {
     return null;
   }
-  const target = cells[input.coordinate.col]?.char || " ";
-  if (TERMINAL_WORD_SEPARATORS.includes(target)) {
+  if (isTerminalWordSeparator(cells[input.coordinate.col])) {
     return {
       start: input.coordinate,
       end: input.coordinate,
@@ -195,13 +198,11 @@ export function resolveTerminalWordSelection(
   let startCol = input.coordinate.col;
   let endCol = input.coordinate.col;
   while (startCol > 0) {
-    const previous = cells[startCol - 1]?.char || " ";
-    if (TERMINAL_WORD_SEPARATORS.includes(previous)) break;
+    if (isTerminalWordSeparator(cells[startCol - 1])) break;
     startCol -= 1;
   }
   while (endCol + 1 < cells.length) {
-    const next = cells[endCol + 1]?.char || " ";
-    if (TERMINAL_WORD_SEPARATORS.includes(next)) break;
+    if (isTerminalWordSeparator(cells[endCol + 1])) break;
     endCol += 1;
   }
 
@@ -324,10 +325,17 @@ export function extractTerminalSelectedText(input: TerminalSelectedTextInput): s
     const cells = window.rows[offset] ?? [];
     const startsOnThisRow = row === selection.start.row;
     const endsOnThisRow = row === selection.end.row;
-    const startCol = startsOnThisRow ? selection.start.col : 0;
+    let startCol = Math.max(0, startsOnThisRow ? selection.start.col : 0);
+    // Selecting either half highlights the whole wide character, so copy its leading cell too.
+    if (startCol > 0 && cells[startCol]?.width === 0) {
+      startCol -= 1;
+    }
     const endCol = endsOnThisRow ? selection.end.col : cells.length - 1;
-    const selectedCells = cells.slice(Math.max(0, startCol), Math.max(0, endCol) + 1);
-    const line = selectedCells.map((cell) => cell.char || " ").join("");
+    const selectedCells = cells.slice(startCol, Math.max(0, endCol) + 1);
+    const line = selectedCells
+      .filter((cell) => cell.width !== 0)
+      .map((cell) => cell.char)
+      .join("");
     if (offset > 0 && window.wrappedRows[offset] !== true) {
       text += "\n";
     }

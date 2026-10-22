@@ -2,6 +2,9 @@ import { WebSocket } from "ws";
 import { z } from "zod";
 import type { WebSocketLike } from "../websocket-server.js";
 
+const SOCKET_PING_INTERVAL_MS = 10_000;
+const SOCKET_PONG_TIMEOUT_MS = 45_000;
+
 export interface HubEnrollment {
   daemonId: string;
   idempotencyKey: string;
@@ -171,13 +174,42 @@ export class DirectHubRelationshipRemote implements HubRelationshipRemote {
       },
     });
     let settled = false;
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    const stopHeartbeat = () => {
+      clearInterval(heartbeat);
+      heartbeat = undefined;
+    };
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      stopHeartbeat();
+      socket.terminate();
+      events.failed(error);
+    };
+    let lastPongAt = 0;
+    socket.on("pong", () => {
+      lastPongAt = Date.now();
+    });
     socket.once("upgrade", (response) => {
       if (response.headers["x-paseo-session-protocol"] === "1") {
         sessionProtocol = "session-v1";
       }
     });
     socket.once("open", () => {
-      if (!settled) events.connected(socket as WebSocketLike, sessionProtocol);
+      if (settled) return;
+      lastPongAt = Date.now();
+      heartbeat = setInterval(() => {
+        if (socket.readyState !== WebSocket.OPEN) return;
+        if (Date.now() - lastPongAt >= SOCKET_PONG_TIMEOUT_MS) {
+          fail(new Error("Hub WebSocket heartbeat timed out"));
+          return;
+        }
+        socket.ping(undefined, undefined, (error) => {
+          if (error) fail(error);
+        });
+      }, SOCKET_PING_INTERVAL_MS);
+      heartbeat.unref?.();
+      events.connected(socket as WebSocketLike, sessionProtocol);
     });
     socket.once("unexpected-response", (_request, response) => {
       if (settled) {
@@ -194,16 +226,12 @@ export class DirectHubRelationshipRemote implements HubRelationshipRemote {
       events.closed(1006);
     });
     socket.once("close", (code) => {
+      stopHeartbeat();
       if (settled) return;
       settled = true;
       events.closed(code);
     });
-    socket.once("error", (error) => {
-      if (settled) return;
-      settled = true;
-      socket.terminate();
-      events.failed(error);
-    });
+    socket.once("error", fail);
     return socket;
   }
 

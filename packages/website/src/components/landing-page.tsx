@@ -1,5 +1,6 @@
 import { PLUGINS_LINKED } from "~/plugins/launch";
 import * as React from "react";
+import { Trans, useTranslation } from "react-i18next";
 import {
   ArrowRight,
   Blocks,
@@ -73,6 +74,7 @@ import type { DesktopPlatform, MobilePlatform } from "~/platform";
 import { isMobilePlatform } from "~/platform";
 import { useRelease, useVisitorPlatform } from "~/routes/__root";
 import { HeroMockup } from "~/components/hero-mockup";
+import { useLocale, useLocalizePath } from "~/i18n";
 import {
   AntigravityIcon,
   ClaudeCodeIcon,
@@ -356,6 +358,7 @@ function SectionTitle({
 }
 
 function SocialProofWall() {
+  const { t } = useTranslation();
   return (
     <motion.section
       initial={FADE_IN_UP}
@@ -364,8 +367,8 @@ function SocialProofWall() {
       transition={EASE_OUT_05}
     >
       <SectionTitle
-        title="Loved by developers"
-        description="See what developers are saying about Paseo"
+        title={t("landing.socialProof.title")}
+        description={t("landing.socialProof.description")}
       />
 
       <div className="social-proof-marquee space-y-4 overflow-hidden">
@@ -403,6 +406,7 @@ function SocialProofRow({
 }
 
 function SocialProofCard({ tweet, inert }: { tweet: SocialProofTweet; inert?: boolean }) {
+  const { t } = useTranslation();
   return (
     <a
       href={tweet.url}
@@ -410,7 +414,7 @@ function SocialProofCard({ tweet, inert }: { tweet: SocialProofTweet; inert?: bo
       rel="noreferrer"
       tabIndex={inert ? -1 : undefined}
       className="group flex h-[154px] w-[320px] shrink-0 flex-col justify-between overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-colors hover:border-white/20 hover:bg-white/[0.05] md:w-[420px]"
-      aria-label={`Read ${tweet.name}'s original post`}
+      aria-label={t("landing.socialProof.readPost", { name: tweet.name })}
     >
       <div>
         <div className="flex min-w-0 items-center gap-3">
@@ -434,10 +438,12 @@ function SocialProofCard({ tweet, inert }: { tweet: SocialProofTweet; inert?: bo
 }
 
 function MultiProviderSection() {
+  const { t } = useTranslation();
+  const localize = useLocalizePath();
   return (
     <FeatureSection
-      title="Works with your tools"
-      description="Bring your subscriptions, skills and configuration"
+      title={t("landing.providers.title")}
+      description={t("landing.providers.description")}
     >
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-4">
         {FEATURED_AGENTS.map((agent) => (
@@ -452,10 +458,12 @@ function MultiProviderSection() {
           </div>
         ))}
         <a
-          href="/agents"
+          href={localize("/agents")}
           className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-white/10 bg-white/[0.01] px-3 py-3 text-white/50 hover:text-white/80 hover:border-white/20 hover:bg-white/[0.03] transition-colors sm:gap-3 sm:px-5 sm:py-4"
         >
-          <span className="text-sm font-medium sm:text-base">+{ADDITIONAL_AGENT_COUNT} more</span>
+          <span className="text-sm font-medium sm:text-base">
+            {t("common.more", { count: ADDITIONAL_AGENT_COUNT })}
+          </span>
         </a>
       </div>
     </FeatureSection>
@@ -463,38 +471,40 @@ function MultiProviderSection() {
 }
 
 function TurnkeySection() {
+  const { t } = useTranslation();
+  const localize = useLocalizePath();
   return (
     <FeatureSection
-      title="Run it anywhere"
-      description="Use Paseo locally, from another machine, or with a team"
+      title={t("landing.runAnywhere.title")}
+      description={t("landing.runAnywhere.description")}
     >
       <div className="space-y-8">
         <ProductLead
           icon={Monitor}
-          title="Desktop app"
-          description="The one click experience, download the app and it just works, no server required"
+          title={t("landing.runAnywhere.desktopTitle")}
+          description={t("landing.runAnywhere.desktopDescription")}
         />
         <div className="grid gap-4 md:grid-cols-3">
           <TurnkeyExtensionCard
             icon={Smartphone}
-            title="Mobile"
-            description="Full client and native, not a WebView"
-            ctaHref="/download"
-            ctaLabel="Download"
+            title={t("landing.runAnywhere.mobileTitle")}
+            description={t("landing.runAnywhere.mobileDescription")}
+            ctaHref={localize("/download")}
+            ctaLabel={t("landing.runAnywhere.mobileCta")}
           />
           <TurnkeyExtensionCard
             icon={Laptop}
-            title="Remote machines"
-            description="Run Paseo on a home lab, or a cloud machine"
-            ctaHref="/docs#server--cli"
-            ctaLabel="Docs"
+            title={t("landing.runAnywhere.remoteTitle")}
+            description={t("landing.runAnywhere.remoteDescription")}
+            ctaHref={localize("/docs#server--cli")}
+            ctaLabel={t("landing.runAnywhere.remoteCta")}
           />
           <TurnkeyExtensionCard
             icon={Users}
-            title="Teams and triggers"
-            description="Share access or start work from GitHub, Slack, and Discord"
-            ctaHref="/hub"
-            ctaLabel="Paseo Hub"
+            title={t("landing.runAnywhere.teamsTitle")}
+            description={t("landing.runAnywhere.teamsDescription")}
+            ctaHref={localize("/hub")}
+            ctaLabel={t("landing.runAnywhere.teamsCta")}
             showIntegrationIcons
           />
         </div>
@@ -601,43 +611,31 @@ type AutomationKind = "mcp" | "cli" | "sdk";
 const AUTOMATION_OPTIONS: Array<{
   kind: AutomationKind;
   label: string;
-  caption: string;
   icon: LucideIcon;
 }> = [
-  {
-    kind: "mcp",
-    label: "MCP",
-    caption: "From another agent",
-    icon: Bot,
-  },
-  {
-    kind: "cli",
-    label: "CLI",
-    caption: "From the terminal",
-    icon: Terminal,
-  },
-  {
-    kind: "sdk",
-    label: "SDK",
-    caption: "From code",
-    icon: Braces,
-  },
+  { kind: "mcp", label: "MCP", icon: Bot },
+  { kind: "cli", label: "CLI", icon: Terminal },
+  { kind: "sdk", label: "SDK", icon: Braces },
 ];
 
-const AUTOMATION_LINKS = [
-  { href: "/docs/mcp", label: "MCP docs" },
-  { href: "/docs/cli", label: "CLI docs" },
-  { href: "/docs/sdk", label: "SDK docs" },
-] as const;
-
 function AutomationSection() {
+  const { t } = useTranslation();
+  const localize = useLocalizePath();
   const [activeKind, setActiveKind] = React.useState<AutomationKind>("mcp");
+  const links = React.useMemo(
+    () =>
+      AUTOMATION_OPTIONS.map((option) => ({
+        href: localize(`/docs/${option.kind}`),
+        label: t(`landing.automation.${option.kind}Docs`),
+      })),
+    [localize, t],
+  );
 
   return (
     <FeatureSection
-      title="Built for automation"
-      description="Use MCP, the CLI, or the TypeScript SDK to automate Paseo"
-      links={AUTOMATION_LINKS}
+      title={t("landing.automation.title")}
+      description={t("landing.automation.description")}
+      links={links}
     >
       <div className="grid gap-4 md:grid-cols-[14rem_minmax(0,1fr)]">
         <div className="grid self-start gap-2" role="tablist">
@@ -665,6 +663,7 @@ function AutomationSelector({
   active: boolean;
   onSelect: (kind: AutomationKind) => void;
 }) {
+  const { t } = useTranslation();
   const Icon = option.icon;
   const handleClick = React.useCallback(() => onSelect(option.kind), [onSelect, option.kind]);
 
@@ -684,7 +683,9 @@ function AutomationSelector({
         <Icon className="h-3 w-3" strokeWidth={1.5} />
         <span className="text-[10px]">{option.label}</span>
       </div>
-      <p className="text-xs leading-snug text-white/85 md:text-sm">{option.caption}</p>
+      <p className="text-xs leading-snug text-white/85 md:text-sm">
+        {t(`landing.automation.${option.kind}Caption`)}
+      </p>
     </button>
   );
 }
@@ -703,25 +704,26 @@ function AutomationDetail({ kind }: { kind: AutomationKind }) {
 }
 
 function McpAutomationTranscript() {
+  const { t } = useTranslation();
   return (
     <div className="space-y-5">
       <div className="ml-auto w-fit max-w-xl rounded-xl rounded-tr-none bg-white/[0.07] px-4 py-3">
         <p className="text-sm leading-relaxed text-white/75">
-          Take the open GitHub issues labeled ready and fan them out to separate worktree agents.
+          {t("landing.automation.transcriptRequest")}
         </p>
       </div>
       <div className="flex items-start gap-3">
         <Bot className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.5} />
         <div className="min-w-0 flex-1 space-y-4">
           <p className="text-sm leading-relaxed text-white/55">
-            I found two ready issues. I will run each in its own worktree.
+            {t("landing.automation.transcriptPlan")}
           </p>
           <div className="space-y-2 font-mono text-[11px]">
             <McpAgentCall issue="#412" provider="claude/opus-4.6" />
             <McpAgentCall issue="#417" provider="codex/gpt-5.6-sol" />
           </div>
           <p className="text-sm leading-relaxed text-white/55">
-            Done, two agents are running. I will let you know when they finish.
+            {t("landing.automation.transcriptDone")}
           </p>
         </div>
       </div>
@@ -741,6 +743,7 @@ function McpAgentCall({ issue, provider }: { issue: string; provider: string }) 
 }
 
 function CliAutomationExample() {
+  const { t } = useTranslation();
   return (
     <div className="font-mono text-[11px] leading-5 text-white/60">
       <div className="space-y-6">
@@ -765,7 +768,7 @@ function CliAutomationExample() {
         </div>
 
         <div>
-          <div className="text-white/30"># Target another host</div>
+          <div className="text-white/30">{t("landing.automation.otherHostComment")}</div>
           <ShellPrompt>
             <span className="text-white">paseo ls</span>{" "}
             <span className="text-sky-300/75">--host</span>{" "}
@@ -832,20 +835,27 @@ function SdkAutomationExample() {
 }
 
 function ExtensibleSection() {
+  const { t } = useTranslation();
+  const pluginActions = React.useMemo(() => <PluginActions />, []);
   return (
     <FeatureSection
-      title="Extend it with plugins"
-      description="Add new panels and functionality that work in desktop, web and mobile"
+      title={t("landing.plugins.title")}
+      description={t("landing.plugins.description")}
     >
       <div className="space-y-8">
-        <ProductLead icon={Puzzle} title="Plugins" actions={PLUGIN_ACTIONS} />
+        <ProductLead icon={Puzzle} title={t("landing.plugins.lead")} actions={pluginActions} />
         <div className="grid gap-4 md:grid-cols-3">
           {PLUGIN_CAPABILITIES.map((capability) => (
-            <FeatureCard key={capability.title} {...capability} />
+            <FeatureCard
+              key={capability.key}
+              icon={capability.icon}
+              title={t(`landing.plugins.${capability.key}Title`)}
+              description={t(`landing.plugins.${capability.key}Description`)}
+            />
           ))}
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm text-white/45">Paseo is Apache 2.0.</p>
+          <p className="text-sm text-white/45">{t("landing.plugins.license")}</p>
           <a
             href="https://github.com/getpaseo/paseo"
             target="_blank"
@@ -853,7 +863,7 @@ function ExtensibleSection() {
             className="inline-flex shrink-0 items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
           >
             <GitFork className="h-4 w-4" strokeWidth={1.5} />
-            Fork the repo
+            {t("landing.plugins.fork")}
             <ExternalLink className="h-3.5 w-3.5 opacity-70" />
           </a>
         </div>
@@ -866,89 +876,59 @@ const PLUGINS_BROWSE = PLUGINS_LINKED
   ? { href: "/plugins", external: false }
   : { href: "https://paseo.cafe", external: true };
 
-const PLUGIN_ACTIONS = (
-  <>
-    <a
-      href={PLUGINS_BROWSE.href}
-      {...(PLUGINS_BROWSE.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-      className="inline-flex items-center gap-1.5 rounded-full bg-foreground px-3 py-1.5 text-xs text-background transition-colors hover:bg-foreground/90"
-    >
-      Browse plugins
-      <ArrowRight className="h-3.5 w-3.5" />
-    </a>
-    <a
-      href="/docs/plugins"
-      className="inline-flex items-center gap-1.5 rounded-full border border-white/12 px-3 py-1.5 text-xs text-white/80 transition-colors hover:bg-white/10"
-    >
-      Plugin docs
-    </a>
-  </>
-);
+function PluginActions() {
+  const { t } = useTranslation();
+  const localize = useLocalizePath();
+  return (
+    <>
+      <a
+        href={localize(PLUGINS_BROWSE.href)}
+        {...(PLUGINS_BROWSE.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+        className="inline-flex items-center gap-1.5 rounded-full bg-foreground px-3 py-1.5 text-xs text-background transition-colors hover:bg-foreground/90"
+      >
+        {t("landing.plugins.browse")}
+        <ArrowRight className="h-3.5 w-3.5" />
+      </a>
+      <a
+        href={localize("/docs/plugins")}
+        className="inline-flex items-center gap-1.5 rounded-full border border-white/12 px-3 py-1.5 text-xs text-white/80 transition-colors hover:bg-white/10"
+      >
+        {t("landing.plugins.docs")}
+      </a>
+    </>
+  );
+}
 
-const PLUGIN_CAPABILITIES: ReadonlyArray<{
-  icon: LucideIcon;
-  title: string;
-  description: string;
-}> = [
-  {
-    icon: LayoutPanelLeft,
-    title: "UI",
-    description: "Screens, workspace panels, sidebar items, slash commands, and themes",
-  },
-  {
-    icon: Workflow,
-    title: "Agent lifecycle",
-    description: "Change config and MCP servers, answer permissions, and follow up",
-  },
-  {
-    icon: Bot,
-    title: "Providers",
-    description: "Add a coding agent as a provider, used like the built-in ones",
-  },
-];
+const PLUGIN_CAPABILITIES = [
+  { icon: LayoutPanelLeft, key: "ui" },
+  { icon: Workflow, key: "lifecycle" },
+  { icon: Bot, key: "providers" },
+] as const;
 
-const PRINCIPLES: ReadonlyArray<{ icon: LucideIcon; title: string; description: string }> = [
-  {
-    icon: Lock,
-    title: "Private",
-    description: "No telemetry, tracking, or forced login. Code stays on your machine.",
-  },
-  {
-    icon: Compass,
-    title: "Independent",
-    description: "Paseo doesn't answer to investors. Its users guide what gets built.",
-  },
-  {
-    icon: Gem,
-    title: "Polished",
-    description: "Install the app and start working. No need to know what a daemon is.",
-  },
-  {
-    icon: Merge,
-    title: "Unified",
-    description: "Every coding agent, used the same way. Switch providers any time.",
-  },
-  {
-    icon: Blocks,
-    title: "Composable",
-    description: "Run agents on a laptop or a server, and connect from any device.",
-  },
-  {
-    icon: Puzzle,
-    title: "Extensible",
-    description: "If Paseo doesn't fit how you work, change it with a plugin or fork.",
-  },
-];
+const PRINCIPLES = [
+  { icon: Lock, key: "private" },
+  { icon: Compass, key: "independent" },
+  { icon: Gem, key: "polished" },
+  { icon: Merge, key: "unified" },
+  { icon: Blocks, key: "composable" },
+  { icon: Puzzle, key: "extensible" },
+] as const;
 
 function PhilosophySection() {
+  const { t } = useTranslation();
   return (
     <FeatureSection
-      title="Philosophy"
-      description="What Paseo stands for, and what every feature is built on"
+      title={t("landing.philosophy.title")}
+      description={t("landing.philosophy.description")}
     >
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {PRINCIPLES.map((principle) => (
-          <FeatureCard key={principle.title} {...principle} />
+          <FeatureCard
+            key={principle.key}
+            icon={principle.icon}
+            title={t(`landing.philosophy.${principle.key}Title`)}
+            description={t(`landing.philosophy.${principle.key}Description`)}
+          />
         ))}
       </div>
     </FeatureSection>
@@ -956,6 +936,8 @@ function PhilosophySection() {
 }
 
 function GetStarted() {
+  const { t } = useTranslation();
+  const localize = useLocalizePath();
   const platform = useVisitorPlatform();
   return (
     <div className="pt-10">
@@ -974,17 +956,17 @@ function GetStarted() {
         </div>
       </div>
       <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 pt-6">
-        <span className="text-xs text-muted-foreground">Supports</span>
+        <span className="text-xs text-muted-foreground">{t("landing.getStarted.supports")}</span>
         <div className="flex items-center gap-1">
           {FEATURED_AGENTS.map((agent) => (
             <AgentBadge key={agent.name} name={agent.name} Icon={agent.Icon} />
           ))}
         </div>
         <a
-          href="/agents"
+          href={localize("/agents")}
           className="whitespace-nowrap text-xs text-muted-foreground hover:text-foreground transition-colors"
         >
-          +{ADDITIONAL_AGENT_COUNT} more
+          {t("common.more", { count: ADDITIONAL_AGENT_COUNT })}
         </a>
       </div>
     </div>
@@ -997,23 +979,25 @@ const SECONDARY_CTA_CLASS =
   "inline-flex items-center justify-center gap-2 rounded-lg border border-white/12 px-3 py-2.5 text-sm text-white hover:bg-white/10 transition-colors";
 
 function DesktopDownloadButton({ platform }: { platform: DesktopPlatform }) {
-  const download = getDesktopDownload(useRelease(), platform);
+  const { t } = useTranslation();
+  const download = getDesktopDownload(useRelease(), platform, useLocale());
   const Icon = download.icon;
   return (
     <a href={download.href} className={PRIMARY_CTA_CLASS}>
       <Icon className="h-4 w-4" />
-      Download for {download.label}
+      {t("landing.getStarted.downloadFor", { platform: download.label })}
     </a>
   );
 }
 
 function StoreButton({ platform }: { platform: MobilePlatform }) {
+  const { t } = useTranslation();
   const store = MOBILE_STORES[platform];
   const Icon = store.icon;
   return (
     <a href={store.href} target="_blank" rel="noopener noreferrer" className={PRIMARY_CTA_CLASS}>
       <Icon className="h-4 w-4" />
-      Get the {store.label} app
+      {t("landing.getStarted.getStoreApp", { store: store.label })}
     </a>
   );
 }
@@ -1021,10 +1005,12 @@ function StoreButton({ platform }: { platform: MobilePlatform }) {
 // On a phone the desktop build is the secondary path, so it points at /download
 // instead of handing the visitor a .dmg they cannot open.
 function DesktopAppLink() {
+  const { t } = useTranslation();
+  const localize = useLocalizePath();
   return (
-    <a href="/download" className={SECONDARY_CTA_CLASS}>
+    <a href={localize("/download")} className={SECONDARY_CTA_CLASS}>
       <Monitor className="h-4 w-4" strokeWidth={1.5} />
-      Desktop app
+      {t("landing.getStarted.desktopApp")}
     </a>
   );
 }
@@ -1054,35 +1040,45 @@ function StoreIconLinks() {
   );
 }
 
-const SERVER_INSTALL_TRIGGER = (
-  <span
-    className="inline-flex items-center justify-center rounded-lg border border-white/12 px-3 py-2.5 text-white hover:bg-white/10 transition-colors"
-    aria-label="Install the daemon on a remote machine"
-  >
-    <TerminalIcon className="h-5 w-5" />
-  </span>
-);
-
-const SERVER_INSTALL_FOOTNOTE = (
-  <>
-    Requires Node.js 18+. Run <span className="font-mono text-white/40">paseo</span> to start the
-    daemon.
-  </>
-);
+const SERVER_INSTALL_FOOTNOTE_COMPONENTS = {
+  code: <span className="font-mono text-white/40" />,
+};
 
 function ServerInstallButton() {
+  const { t } = useTranslation();
+  const trigger = React.useMemo(
+    () => (
+      <span
+        className="inline-flex items-center justify-center rounded-lg border border-white/12 px-3 py-2.5 text-white hover:bg-white/10 transition-colors"
+        aria-label={t("landing.getStarted.serverInstallLabel")}
+      >
+        <TerminalIcon className="h-5 w-5" />
+      </span>
+    ),
+    [t],
+  );
+  const footnote = React.useMemo(
+    () => (
+      <Trans
+        i18nKey="landing.getStarted.serverInstallFootnote"
+        components={SERVER_INSTALL_FOOTNOTE_COMPONENTS}
+      />
+    ),
+    [],
+  );
   return (
     <CommandDialog
-      trigger={SERVER_INSTALL_TRIGGER}
-      title="Run agents on a remote machine"
-      description="For headless machines you want to connect to from the Paseo apps. The desktop app already includes a built-in daemon"
+      trigger={trigger}
+      title={t("landing.getStarted.serverInstallTitle")}
+      description={t("landing.getStarted.serverInstallDescription")}
       command="npm install -g @getpaseo/cli && paseo"
-      footnote={SERVER_INSTALL_FOOTNOTE}
+      footnote={footnote}
     />
   );
 }
 
 function PhoneShowcase() {
+  const { t } = useTranslation();
   const containerRef = React.useRef<HTMLDivElement>(null);
   const textInView = useInView(containerRef, { once: true, margin: "-80px" });
 
@@ -1142,10 +1138,10 @@ function PhoneShowcase() {
           <path d="M12 5v14M5 12l7 7 7-7" />
         </svg>
         <p className="max-w-md text-balance text-center text-lg text-white/80">
-          When you want to step away from your desk, you can.
+          {t("landing.showcase.heading")}
         </p>
         <p className="max-w-sm text-balance text-center text-sm text-white/50">
-          The native mobile app has full feature parity with desktop.
+          {t("landing.showcase.subheading")}
         </p>
       </motion.div>
 
@@ -1159,7 +1155,7 @@ function PhoneShowcase() {
           style={leftPhoneStyle}
           className="w-[160px] md:w-[240px] absolute"
           role="img"
-          aria-label="Paseo workspace drawer"
+          aria-label={t("landing.showcase.sidebarLabel")}
         >
           <PhoneFrame time="18:54" depth="right">
             <MobileSidebar />
@@ -1173,7 +1169,7 @@ function PhoneShowcase() {
           transition={EASE_OUT_06_DELAY_01}
           className="w-[220px] md:w-[240px] relative z-10"
           role="img"
-          aria-label="Paseo agent chat"
+          aria-label={t("landing.showcase.chatLabel")}
         >
           <PhoneFrame time="18:53">
             <MobileChat />
@@ -1185,7 +1181,7 @@ function PhoneShowcase() {
           style={rightPhoneStyle}
           className="w-[160px] md:w-[240px] absolute"
           role="img"
-          aria-label="Paseo diff view"
+          aria-label={t("landing.showcase.diffLabel")}
         >
           <PhoneFrame time="18:55" depth="left">
             <MobileDiff />
@@ -1196,7 +1192,41 @@ function PhoneShowcase() {
   );
 }
 
+const FAQ_ENTRIES = [
+  "free",
+  "code",
+  "agents",
+  "providers",
+  "desktop",
+  "voice",
+  "network",
+  "git",
+  "ban",
+  "worktrees",
+] as const;
+
+const FAQ_LINKS = {
+  relay: "/docs/security",
+  agents: "/agents",
+  muse: "/docs/muse-code",
+  voice: "/docs/voice",
+  configuration: "/docs/configuration",
+  worktrees: "/docs/worktrees",
+};
+
 function FAQ() {
+  const { t } = useTranslation();
+  const localize = useLocalizePath();
+  const links = React.useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(FAQ_LINKS).map(([name, href]) => [
+          name,
+          <a key={name} href={localize(href)} className="underline hover:text-white/80" />,
+        ]),
+      ),
+    [localize],
+  );
   return (
     <motion.div
       initial={FADE_IN_UP}
@@ -1205,78 +1235,13 @@ function FAQ() {
       transition={EASE_OUT_05}
       className="space-y-6"
     >
-      <h2 className="text-3xl font-medium">FAQ</h2>
+      <h2 className="text-3xl font-medium">{t("landing.faq.title")}</h2>
       <div className="space-y-6">
-        <FAQItem question="Is this free?">
-          Yes. Paseo is free and open source. You need agent providers installed with your own
-          credentials. Voice is local-first by default and can optionally use cloud speech providers
-          if you configure them.
-        </FAQItem>
-        <FAQItem question="Does my code leave my machine?">
-          Paseo doesn&apos;t send your code anywhere. Agents run locally and talk to their own APIs
-          as they normally would. For remote access, you can use the optional{" "}
-          <a href="/docs/security" className="underline hover:text-white/80">
-            end-to-end encrypted relay
-          </a>
-          , connect directly over your local network, or use your own tunnel.
-        </FAQItem>
-        <FAQItem question="What agents does it support?">
-          Paseo supports many providers. It has custom implementations for Claude, Codex, OpenCode,
-          Pi, OMP, Antigravity, and Muse Code, and supports many more via ACP. See the full list
-          here:{" "}
-          <a href="/agents" className="underline hover:text-white/80">
-            all supported providers
-          </a>
-          . See{" "}
-          <a href="/docs/muse-code" className="underline hover:text-white/80">
-            Muse Code setup and limitations
-          </a>
-          .
-        </FAQItem>
-        <FAQItem question="How does Paseo run providers?">
-          Paseo runs the providers installed on your machine as you&apos;d normally run them. Paseo
-          doesn&apos;t modify or change their behavior.
-        </FAQItem>
-        <FAQItem question="Do I need the desktop app?">
-          No. You can run the daemon headless and use any client to connect. The desktop app just
-          bundles the daemon with a UI.
-        </FAQItem>
-        <FAQItem question="How does voice work?">
-          Voice runs locally on your device by default. You talk, the app transcribes and sends it
-          to your agent as text. Optionally, you can configure OpenAI speech providers for
-          higher-quality transcription and text-to-speech. See the{" "}
-          <a href="/docs/voice" className="underline hover:text-white/80">
-            voice docs
-          </a>
-          .
-        </FAQItem>
-        <FAQItem question="Can I connect from outside my network?">
-          Yes. You can use the hosted relay (end-to-end encrypted, Paseo can&apos;t read your
-          traffic), set up your own tunnel (Tailscale, Cloudflare Tunnel, etc.), or expose the
-          daemon port directly. See{" "}
-          <a href="/docs/configuration" className="underline hover:text-white/80">
-            configuration
-          </a>
-          .
-        </FAQItem>
-        <FAQItem question="Do I need git or GitHub?">
-          No. Paseo works in any directory. Worktrees are optional and only relevant if you use git.
-          You can run agents anywhere you&apos;d normally work.
-        </FAQItem>
-        <FAQItem question="Can I get banned for using Paseo?">
-          Paseo is designed to use each provider&apos;s officially supported integration and does
-          not attempt to bypass its terms of service. It doesn&apos;t extract tokens or call
-          inference APIs directly.
-        </FAQItem>
-        <FAQItem question="How do worktrees work?">
-          When you launch an agent with the worktree option (from the app, desktop, or CLI), Paseo
-          creates a git worktree and runs the agent inside it. The agent works on an isolated branch
-          without touching your main working directory. See the{" "}
-          <a href="/docs/worktrees" className="underline hover:text-white/80">
-            worktrees docs
-          </a>
-          .
-        </FAQItem>
+        {FAQ_ENTRIES.map((entry) => (
+          <FAQItem key={entry} question={t(`landing.faq.${entry}Question`)}>
+            <Trans i18nKey={`landing.faq.${entry}Answer`} components={links} />
+          </FAQItem>
+        ))}
       </div>
     </motion.div>
   );

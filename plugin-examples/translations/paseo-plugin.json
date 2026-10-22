@@ -1,0 +1,12 @@
+{
+  "id": "translation-notes",
+  "name": "Workspace notes",
+  "description": "A bilingual notes example that keeps your draft while the app language changes.",
+  "translations": {
+    "zh-CN": {
+      "name": "工作区笔记",
+      "description": "跟随应用语言切换的双语笔记示例，切换时保留草稿。"
+    }
+  },
+  "requirements": { "paseo": ">=0.12.1" }
+}

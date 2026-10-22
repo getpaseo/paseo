@@ -5,6 +5,8 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import pino from "pino";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
 
 import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
@@ -129,6 +131,14 @@ async function timeline(client: DaemonClient, agentId: string): Promise<AgentTim
     projection: "canonical",
   });
   return result.entries.map((entry) => entry.item);
+}
+
+async function readAssistantText(harness: Harness, agentId: string): Promise<string> {
+  const items = await timeline(harness.client, agentId);
+  return items
+    .filter((item) => item.type === "assistant_message")
+    .map((item) => item.text)
+    .join("");
 }
 
 function compactionFiller(records = 1200): string {
@@ -257,8 +267,80 @@ async function contextWindowUsedTokens(client: DaemonClient, agentId: string) {
 
 describe("daemon E2E (real OMP)", () => {
   test(
-    "a prompt OMP rejects before its agent runs fails the turn with OMP's error",
+    "an idle out-of-band follow-up starts a turn",
     async () => {
+      const harness = await createHarness();
+      try {
+        const agent = await createAgent(harness, "idle-follow-up");
+        await harness.client.sendMessage(agent.id, "/follow-up Reply exactly IDLE_FOLLOWUP_OK");
+        await expect
+          .poll(() => readAssistantText(harness, agent.id), { timeout: 30_000 })
+          .toContain("IDLE_FOLLOWUP_OK");
+        const finish = await harness.client.waitForFinish(agent.id, TIMEOUT_MS);
+        expect(finish.status).toBe("idle");
+      } finally {
+        await closeHarness(harness);
+      }
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
+    "an agent-sent idle follow-up starts a turn and notifies its parent",
+    async () => {
+      const harness = await createHarness();
+      const mcp = new Client({ name: "idle-follow-up-test", version: "1.0.0" });
+      try {
+        const parent = await createAgent(harness, "follow-up-parent");
+        const child = await createAgent(harness, "follow-up-child");
+        await mcp.connect(
+          new StreamableHTTPClientTransport(
+            new URL(
+              `http://127.0.0.1:${harness.daemon.port}/mcp/agents?callerAgentId=${parent.id}`,
+            ),
+          ),
+        );
+        const response = await mcp.callTool({
+          name: "send_agent_prompt",
+          arguments: { agentId: child.id, prompt: "/follow-up Reply exactly MCP_IDLE_FOLLOWUP_OK" },
+        });
+        expect(response.isError).not.toBe(true);
+        expect(response.structuredContent).toMatchObject({
+          success: true,
+          disposition: "out_of_band",
+        });
+        await expect
+          .poll(() => readAssistantText(harness, child.id), { timeout: 30_000 })
+          .toContain("MCP_IDLE_FOLLOWUP_OK");
+        await expect
+          .poll(
+            async () => {
+              const items = await timeline(harness.client, parent.id);
+              let notifications = 0;
+              for (const item of items) {
+                if (
+                  item.type === "tool_call" &&
+                  item.agentMessage?.sender.id === child.id &&
+                  item.agentMessage.event === "finished"
+                )
+                  notifications++;
+              }
+              return notifications;
+            },
+            { timeout: 15_000 },
+          )
+          .toBe(1);
+      } finally {
+        await mcp.close();
+        await closeHarness(harness);
+      }
+    },
+    TIMEOUT_MS,
+  );
+
+  test.each(["Reply with ok.", "/follow-up Reply with ok."])(
+    "a rejected %s fails the turn with OMP's error",
+    async (prompt) => {
       const harness = await createHarness({ ompHome: createOfflineOmpHome() });
       try {
         const agent = await harness.client.createAgent({
@@ -268,7 +350,7 @@ describe("daemon E2E (real OMP)", () => {
           model: "anthropic/claude-haiku-4-5",
           modeId: "full",
         });
-        await harness.client.sendMessage(agent.id, "Reply with ok.");
+        await harness.client.sendMessage(agent.id, prompt);
         const finish = await harness.client.waitForFinish(agent.id, 60_000);
         expect(finish.status).toBe("error");
         expect(finish.error).toContain("No API key found for anthropic");
