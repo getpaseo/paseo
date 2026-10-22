@@ -1380,6 +1380,9 @@ describe("terminal MCP tools", () => {
         logger,
       });
 
+      // Every step is a round trip through a real PTY. A loaded Windows runner (ConPTY) has
+      // taken over 3 s to reach READY, so each step gets the same window rather than 1 s.
+      const roundTrip = { timeout: 5000 };
       let output = "";
       const unsubscribe = terminal.subscribe((message) => {
         if (message.type === "output") {
@@ -1387,16 +1390,13 @@ describe("terminal MCP tools", () => {
         }
       });
       try {
-        await vi.waitFor(
-          async () => {
-            const capture = await terminalManager.captureTerminal(terminal.id);
-            expect(capture.lines).toContain("READY");
-          },
-          { timeout: 5000 },
-        );
+        await vi.waitFor(async () => {
+          const capture = await terminalManager.captureTerminal(terminal.id);
+          expect(capture.lines).toContain("READY");
+        }, roundTrip);
         const tool = registeredTool(server, "send_terminal_keys");
         await tool.handler({ terminalId: terminal.id, keys: "application", literal: true });
-        await vi.waitFor(() => expect(output).toContain("APPLICATION_READY"));
+        await vi.waitFor(() => expect(output).toContain("APPLICATION_READY"), roundTrip);
         for (const [keys, hex] of [
           ["Down", "1b4f42"],
           ["Up", "1b4f41"],
@@ -1411,15 +1411,15 @@ describe("terminal MCP tools", () => {
           await vi.waitFor(async () => {
             const capture = await terminalManager.captureTerminal(terminal.id);
             expect(capture.lines.join("\n")).toContain(`HEX:${hex}`);
-          });
+          }, roundTrip);
         }
         await tool.handler({ terminalId: terminal.id, keys: "normal", literal: true });
-        await vi.waitFor(() => expect(output).toContain("NORMAL_READY"));
+        await vi.waitFor(() => expect(output).toContain("NORMAL_READY"), roundTrip);
         await tool.handler({ terminalId: terminal.id, keys: "Down" });
         await vi.waitFor(async () => {
           const capture = await terminalManager.captureTerminal(terminal.id);
           expect(capture.lines).toContain("HEX:1b5b42");
-        });
+        }, roundTrip);
       } finally {
         unsubscribe();
         await server.close();

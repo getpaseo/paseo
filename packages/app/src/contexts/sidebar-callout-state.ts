@@ -14,7 +14,7 @@ export interface SidebarCalloutOptions {
   priority?: number;
   onDismiss?: () => void;
   testID?: string;
-  /** Also shown in the iOS and Android sidebar. Callouts about the desktop app leave it unset. */
+  /** Also shown in the iOS and Android sidebar and every compact sidebar. Callouts about the desktop app leave it unset. */
   native?: boolean;
 }
 

@@ -143,7 +143,7 @@ export function useActiveSidebarCallout(
   );
 }
 
-/** The active callout. `nativeOnly` limits it to callouts marked `native`, for iOS and Android. */
+/** The active callout. `nativeOnly` limits it to callouts marked `native`, for native apps and compact sidebars. */
 export function SidebarCalloutViewport({ nativeOnly = false }: { nativeOnly?: boolean }) {
   const activeCallout = useActiveSidebarCallout({ nativeOnly });
   const api = useSidebarCallouts();

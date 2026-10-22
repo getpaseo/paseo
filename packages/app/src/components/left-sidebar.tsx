@@ -40,6 +40,7 @@ import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-heade
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { HEADER_INNER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
+import { isNative } from "@/constants/platform";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useImportSession } from "@/hooks/use-import-session";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
@@ -607,7 +608,7 @@ function MobileSidebar({
           />
         )}
 
-        <SidebarCalloutSlot />
+        <SidebarCalloutSlot nativeOnly />
 
         <SidebarFooter
           handleOpenProject={handleOpenProject}
@@ -785,7 +786,7 @@ function DesktopSidebar({
           />
         )}
 
-        <SidebarCalloutSlot />
+        <SidebarCalloutSlot nativeOnly={isNative} />
 
         <SidebarFooter
           handleOpenProject={handleOpenProject}
