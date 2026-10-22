@@ -4,7 +4,7 @@ import { buildAgentDeepLinkRoute } from "@getpaseo/protocol/agent-deep-link";
 type NullableString = string | null | undefined;
 const BASE64_WORKSPACE_ID_PREFIX = "b64_";
 
-function stripSearchAndHash(pathname: string): string {
+export function stripSearchAndHash(pathname: string): string {
   const hashIndex = pathname.indexOf("#");
   const queryIndex = pathname.indexOf("?");
   const end = [hashIndex, queryIndex]
@@ -41,7 +41,7 @@ function encodeSegment(value: string): string {
   return encodeURIComponent(value);
 }
 
-function decodeSegment(value: string): string {
+export function decodeSegment(value: string): string {
   try {
     return decodeURIComponent(value);
   } catch {

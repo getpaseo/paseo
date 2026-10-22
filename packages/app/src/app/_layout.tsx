@@ -44,6 +44,7 @@ import { WorkspacePinShortcutHandler } from "@/components/workspace-pin-shortcut
 import { WorkspaceRenameHost } from "@/components/workspace-rename-host";
 import { WorkspaceExplorerOpenGesture } from "@/mobile-panels/explorer-open-gesture";
 import { ProviderSettingsHost } from "@/components/provider-settings-host";
+import { SettingsChrome } from "@/screens/settings/settings-chrome";
 import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
 import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
 import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
@@ -835,7 +836,9 @@ function AppShell() {
         <AgentNavigationListener />
         <AppWithSidebar>
           <WorkspaceRouteNavigationBridge />
-          <RootStack />
+          <SettingsChrome>
+            <RootStack />
+          </SettingsChrome>
         </AppWithSidebar>
       </HorizontalScrollProvider>
     </MobilePanelsProvider>
