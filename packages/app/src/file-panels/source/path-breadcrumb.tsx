@@ -179,6 +179,7 @@ function BreadcrumbSegment({
   serverId,
   workspaceRoot,
   isLast,
+  showSeparator,
   onOpenFile,
 }: {
   segment: FileBreadcrumbSegment;
@@ -186,12 +187,13 @@ function BreadcrumbSegment({
   serverId: string;
   workspaceRoot: string;
   isLast: boolean;
+  showSeparator: boolean;
   onOpenFile: (openPath: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   return (
     <View style={styles.segment}>
-      {isLast ? null : <Text style={styles.separator}>›</Text>}
+      {showSeparator ? <Text style={styles.separator}>›</Text> : null}
       <DropdownMenu onOpenChange={setOpen}>
         <DropdownMenuTrigger
           accessibilityRole="button"
@@ -262,6 +264,7 @@ export function FilePathBreadcrumb({
             serverId={serverId}
             workspaceRoot={workspaceRoot}
             isLast={index === breadcrumb.segments.length - 1}
+            showSeparator={index > 0}
             onOpenFile={onOpenFile}
           />
         ))}
