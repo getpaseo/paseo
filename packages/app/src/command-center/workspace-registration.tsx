@@ -39,7 +39,7 @@ import { useWorkspaceDirectory, useWorkspaceFields } from "@/stores/session-stor
 import {
   collectAllTabs,
   findPaneById,
-  useWorkspaceLayoutStore,
+  useEffectiveWorkspaceLayout,
 } from "@/stores/workspace-layout-store";
 import { shouldShowWorkspaceSetup, useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { clearCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
@@ -169,9 +169,10 @@ export function useWorkspaceCommandCenterActions(): void {
   const workspaceId = selection?.workspaceId ?? null;
   const workspaceKey =
     serverId && workspaceId ? buildWorkspaceTabPersistenceKey({ serverId, workspaceId }) : null;
-  const layout = useWorkspaceLayoutStore((state) =>
-    workspaceKey ? (state.layoutByWorkspace[workspaceKey] ?? null) : null,
-  );
+  // The effective layout, not the persisted one: during an attention reveal the
+  // tab the user sees focused is the revealed one, and every gate, label, and
+  // index below is about the tab on screen.
+  const layout = useEffectiveWorkspaceLayout(workspaceKey);
   const focusedPane = layout ? findPaneById(layout.root, layout.focusedPaneId) : null;
   const focusedTabs = layout
     ? collectAllTabs(layout.root).filter((tab) => focusedPane?.tabIds.includes(tab.tabId))

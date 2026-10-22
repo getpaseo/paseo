@@ -43,7 +43,12 @@ function navigateDeps(): NavigateToWorkspaceDeps {
         callback();
         return;
       }
-      useWorkspaceLayoutStore.persist.onFinishHydration(callback);
+      // The store keeps its listeners for its lifetime; a held reveal settles
+      // once, so its listener retires itself instead of accumulating.
+      const unsubscribe = useWorkspaceLayoutStore.persist.onFinishHydration(() => {
+        unsubscribe();
+        callback();
+      });
     },
     openTab: (input) => useWorkspaceLayoutStore.getState().openTab(input),
     revealEphemeralTab: (input) =>

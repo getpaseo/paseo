@@ -4448,6 +4448,37 @@ describe("workspace-layout-store ephemeral attention focus", () => {
     ).toBeUndefined();
   });
 
+  it("clears the reveal when reconciliation closes the revealed agent's tab", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "agent-attention" },
+      intent: "new",
+    });
+    store.revealEphemeralTab(workspaceKey, { kind: "agent", agentId: "agent-attention" });
+
+    // The agent archives while the user is in the workspace; reconciliation
+    // closes its tab and the reveal must end with it, or a later background
+    // open of the same agent would snap it back to the front.
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: [],
+      standaloneTerminalIds: [],
+    });
+
+    const state = workspaceLayoutStore.getState();
+    expect(
+      collectAllTabs(state.layoutByWorkspace[workspaceKey].root).find(
+        (tab) => tab.target.kind === "agent" && tab.target.agentId === "agent-attention",
+      ),
+    ).toBeUndefined();
+    expect(state.ephemeralFocusTargetByWorkspace[workspaceKey]).toBeUndefined();
+  });
+
   it("drops the reveal when the workspace is purged", () => {
     const workspaceKey = createWorkspaceKey();
     const store = workspaceLayoutStore.getState();

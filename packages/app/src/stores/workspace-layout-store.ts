@@ -1317,6 +1317,9 @@ export function createWorkspaceLayoutStore(
             }
 
             return {
+              // Reconciliation can close the revealed tab itself — archived agent,
+              // gone terminal — and the reveal ends with its tab like any close.
+              ...withoutOrphanedEphemeralFocusTarget(state, normalizedWorkspaceKey, nextLayout),
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
                 [normalizedWorkspaceKey]: nextLayout,
