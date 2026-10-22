@@ -2,10 +2,12 @@ import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
+import type { Page } from "@playwright/test";
 import { test, expect } from "../support/fixtures";
 import {
   addProjectFlow,
   addProjectFlowBack,
+  addProjectFlowConfirmDirectory,
   addProjectFlowHost,
   addProjectFlowInput,
   addProjectFlowMethod,
@@ -35,6 +37,17 @@ import { getServerId } from "../support/helpers/server-id";
 const SECONDARY_HOST_ID = "add-project-flow-secondary";
 const SECONDARY_HOST_LABEL = "Secondary Host";
 
+function trackAddProjectRequests(page: Page): string[] {
+  const requests: string[] = [];
+  page.on("websocket", (socket) => {
+    socket.on("framesent", ({ payload }) => {
+      const frame = payload.toString();
+      if (frame.includes('"project.add.request"')) requests.push(frame);
+    });
+  });
+  return requests;
+}
+
 async function expectProjectDirectory(pathname: string): Promise<void> {
   await expect.poll(async () => (await stat(pathname)).isDirectory()).toBe(true);
 }
@@ -53,6 +66,37 @@ async function removeCreatedProject(
     if (projectId) await client.removeProject(projectId).catch(() => undefined);
   } finally {
     await client.close();
+  }
+}
+
+async function withProjectDirectory(
+  projectName: string,
+  runFlow: (directory: {
+    parent: string;
+    projectName: string;
+    projectPath: string;
+    rememberProjectId: (projectId: string) => void;
+  }) => Promise<void>,
+): Promise<void> {
+  const parent = await mkdtemp(path.join(tmpdir(), "paseo-e2e-project-directory-"));
+  const projectPath = path.join(parent, projectName);
+  let projectId: string | null = null;
+  try {
+    await mkdir(projectPath);
+    await runFlow({
+      parent,
+      projectName,
+      projectPath,
+      rememberProjectId: (openedProjectId) => {
+        projectId = openedProjectId;
+      },
+    });
+  } finally {
+    try {
+      await removeCreatedProject(projectPath, projectId);
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
   }
 }
 
@@ -271,7 +315,7 @@ test.describe("Add Project command-center flow", () => {
     }
   });
 
-  test("keyboard directory search adds the selected Project", async ({
+  test("keyboard directory search browses the selected directory before adding it", async ({
     page,
     projectPickerFixture,
   }) => {
@@ -286,6 +330,11 @@ test.describe("Add Project command-center flow", () => {
       timeout: 30_000,
     });
     await page.keyboard.press("Enter");
+    await expect(addProjectFlowInput(page)).toHaveValue(
+      `${projectPickerFixture.projectPath}${path.sep}`,
+    );
+    await expectAddProjectPage(page, "directory-search");
+    await page.keyboard.press("ControlOrMeta+Enter");
 
     const projectId = await expectOpenedProject(page, projectPickerFixture.projectName);
     projectPickerFixture.rememberProjectId(projectId);
@@ -296,6 +345,96 @@ test.describe("Add Project command-center flow", () => {
       projectPath: projectPickerFixture.projectPath,
     });
     await expectProjectHasNoWorkspaces(projectId);
+  });
+
+  test("an empty directory is added only by explicit shortcut confirmation", async ({ page }) => {
+    await withProjectDirectory(
+      "empty-project",
+      async ({ projectName, projectPath, rememberProjectId }) => {
+        const addRequests = trackAddProjectRequests(page);
+        await gotoAppShell(page);
+        await openAddProjectFlow(page);
+        await chooseAddProjectMethod(page, "directory-search");
+        await addProjectFlowInput(page).fill(`${projectPath}${path.sep}`);
+        await expect(page.getByTestId("add-project-flow-empty")).toBeVisible();
+        await page.keyboard.press("Enter");
+        await expectAddProjectPage(page, "directory-search");
+        expect(addRequests).toHaveLength(0);
+
+        await page.keyboard.press("ControlOrMeta+Enter");
+
+        const projectId = await expectOpenedProject(page, projectName);
+        rememberProjectId(projectId);
+        expect(addRequests).toHaveLength(1);
+        await expectNewWorkspaceForAddedProject(page, {
+          serverId: getServerId(),
+          projectId,
+          projectName,
+          projectPath,
+        });
+      },
+    );
+  });
+
+  test("an empty directory is added only by explicit focused button confirmation", async ({
+    page,
+  }) => {
+    await withProjectDirectory(
+      "empty-project",
+      async ({ projectName, projectPath, rememberProjectId }) => {
+        const addRequests = trackAddProjectRequests(page);
+        await gotoAppShell(page);
+        await openAddProjectFlow(page);
+        await chooseAddProjectMethod(page, "directory-search");
+        await addProjectFlowInput(page).fill(`${projectPath}${path.sep}`);
+        await expect(page.getByTestId("add-project-flow-empty")).toBeVisible();
+        await page.keyboard.press("Enter");
+        await expectAddProjectPage(page, "directory-search");
+        expect(addRequests).toHaveLength(0);
+
+        await page.keyboard.press("Tab");
+        await expect(addProjectFlowConfirmDirectory(page)).toBeFocused();
+        await page.keyboard.press("Enter");
+
+        const projectId = await expectOpenedProject(page, projectName);
+        rememberProjectId(projectId);
+        expect(addRequests).toHaveLength(1);
+        await expectNewWorkspaceForAddedProject(page, {
+          serverId: getServerId(),
+          projectId,
+          projectName,
+          projectPath,
+        });
+      },
+    );
+  });
+
+  test("browsing and adding preserves a literal trailing backslash in a POSIX directory", async ({
+    page,
+  }) => {
+    test.skip(process.platform === "win32", "Backslashes are directory separators on Windows");
+    await withProjectDirectory(
+      "team\\",
+      async ({ parent, projectName, projectPath, rememberProjectId }) => {
+        await mkdir(path.join(parent, "team"));
+        await gotoAppShell(page);
+        await openAddProjectFlow(page);
+        await chooseAddProjectMethod(page, "directory-search");
+        await addProjectFlowInput(page).fill(`${parent}${path.sep}`);
+        await addProjectFlow(page).getByText(projectPath, { exact: true }).click();
+        await expect(addProjectFlowInput(page)).toHaveValue(`${projectPath}${path.sep}`);
+        await addProjectFlowConfirmDirectory(page).click();
+
+        const projectId = await expectOpenedProject(page, projectName);
+        rememberProjectId(projectId);
+        await expectNewWorkspaceForAddedProject(page, {
+          serverId: getServerId(),
+          projectId,
+          projectName,
+          projectPath,
+        });
+      },
+    );
   });
 
   test("keyboard navigation keeps the selected row inside the visible results", async ({
@@ -338,6 +477,9 @@ test.describe("Add Project command-center flow", () => {
       await navigateAddProjectResults(page, "ArrowDown", 12);
       await expectAddProjectResultVisible(page, rowPath(11));
       await page.keyboard.press("Enter");
+      await expectAddProjectPage(page, "directory-search");
+      await expect(addProjectFlowInput(page)).toHaveValue(`${rowPath(11)}${path.sep}`);
+      await addProjectFlowConfirmDirectory(page).click();
       projectId = await expectOpenedProject(page, "scroll-probe-11");
       await expectNewWorkspaceForAddedProject(page, {
         serverId: getServerId(),
@@ -384,6 +526,7 @@ test.describe("Add Project command-center flow", () => {
       await gotoAppShell(page);
       await openAddProjectFlow(page);
       await chooseAddProjectMethod(page, "new-directory");
+      await expect(addProjectFlowInput(page)).toBeFocused();
 
       await page.keyboard.type(parentDirectory);
       await page.keyboard.press("Enter");

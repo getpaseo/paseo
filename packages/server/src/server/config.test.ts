@@ -14,6 +14,20 @@ describe("server config", () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
 
+  test("loads project search roots without changing omitted defaults", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-search-roots-"));
+    roots.push(paseoHome);
+    expect(loadConfig(paseoHome, { env: {} }).projectSearchRoots).toBeUndefined();
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({ projects: { searchRoots: ["~", "/Volumes/macport"] } }),
+    );
+    expect(loadConfig(paseoHome, { env: {} }).projectSearchRoots).toEqual([
+      "~",
+      "/Volumes/macport",
+    ]);
+  });
+
   test("records when the daemon is managed by Paseo Desktop", async () => {
     const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-desktop-managed-"));
     roots.push(paseoHome);

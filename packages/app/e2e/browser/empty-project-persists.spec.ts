@@ -3,7 +3,9 @@ import { existsSync } from "node:fs";
 import { test, expect, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import {
+  addProjectFlowConfirmDirectory,
   addProjectFlowInput,
+  addProjectFlowSelectedDirectory,
   chooseAddProjectMethod,
   openAddProjectFlow,
 } from "../support/helpers/add-project-flow";
@@ -57,7 +59,8 @@ async function addProjectFromPicker(page: Page, projectPath: string): Promise<st
 
   const input = addProjectFlowInput(page);
   await input.fill(projectPath);
-  await page.keyboard.press("Enter");
+  await expect(addProjectFlowSelectedDirectory(page)).toHaveText(projectPath);
+  await addProjectFlowConfirmDirectory(page).click();
 
   const projectRow = page
     .locator('[data-testid^="sidebar-project-row-"]')
@@ -93,6 +96,10 @@ test.describe("Project picker search", () => {
     const suggestion = page.getByText(projectPickerFixture.projectName, { exact: false }).first();
     await expect(suggestion).toBeVisible({ timeout: 30_000 });
     await suggestion.click();
+    await expect(addProjectFlowSelectedDirectory(page)).toHaveText(
+      `${projectPickerFixture.projectPath}${path.sep}`,
+    );
+    await addProjectFlowConfirmDirectory(page).click();
 
     const projectId = await expectOpenedProject(page, projectPickerFixture.projectName);
     projectPickerFixture.rememberProjectId(projectId);
