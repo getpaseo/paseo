@@ -1,3 +1,4 @@
+import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import os from "node:os";
 import path, { join } from "node:path";
@@ -334,6 +335,8 @@ describe("WorkspaceGitServiceImpl", () => {
 
   test("registerWorkspace returns a subscription without an initial snapshot contract", async () => {
     const service = createService();
+    const workspaceRuntimeStore = createWorkspaceRuntimeStore();
+    service.onSnapshotUpdated((snapshot) => workspaceRuntimeStore.set(snapshot));
 
     const listener = vi.fn();
     const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
@@ -341,10 +344,44 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(subscription).toEqual({ unsubscribe: expect.any(Function) });
     expect("initial" in subscription).toBe(false);
     expect(listener).not.toHaveBeenCalled();
-    expect(service.peekSnapshot(REPO_CWD)).toBeNull();
+    expect(workspaceRuntimeStore.get(REPO_CWD)).toBeNull();
 
     subscription.unsubscribe();
     service.dispose();
+  });
+
+  test("shared watches publish to the runtime store before listeners and retain data after teardown", async () => {
+    const subscribe = vi.fn(async () => createAsyncSubscription());
+    const getPullRequestStatus = vi.fn(async () => createPullRequestStatusResult());
+    const service = createService({ subscribe, getPullRequestStatus });
+    const store = createWorkspaceRuntimeStore();
+    service.onSnapshotUpdated((snapshot) => store.set(snapshot));
+    const observed: WorkspaceGitRuntimeSnapshot[] = [];
+    const listener = (snapshot: WorkspaceGitRuntimeSnapshot) => {
+      expect(store.get(REPO_CWD)).toBe(snapshot);
+      observed.push(snapshot);
+    };
+    const first = service.registerWorkspace({ cwd: REPO_CWD }, listener);
+    const second = service.registerWorkspace({ cwd: join(REPO_CWD, ".") }, (snapshot) =>
+      listener(snapshot),
+    );
+    await service.getSnapshot(REPO_CWD, { force: true, reason: "runtime-store" });
+    await flushPromises();
+    expect(observed.length).toBeGreaterThan(0);
+    expect(service.getMetrics().workspaceTargetCount).toBe(1);
+    const subscriptionCount = subscribe.mock.calls.length;
+    const snapshot = store.get(REPO_CWD);
+    expect(snapshot?.forge.pullRequest).not.toBeNull();
+    first.unsubscribe();
+    expect(service.getMetrics().workspaceListenerCount).toBe(1);
+    second.unsubscribe();
+    expect(service.getMetrics().workspaceTargetCount).toBe(0);
+    const pollCount = getPullRequestStatus.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(360_000);
+    expect(getPullRequestStatus).toHaveBeenCalledTimes(pollCount);
+    expect(subscribe).toHaveBeenCalledTimes(subscriptionCount);
+    expect(store.get(REPO_CWD)).toBe(snapshot);
+    await service.dispose();
   });
 
   test("onSnapshotUpdated emits only for observed workspace snapshots and can unsubscribe", async () => {
@@ -516,7 +553,6 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
     expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
     expect(resolveAbsoluteGitDir).toHaveBeenCalledTimes(0);
-    expect(service.peekSnapshot(REPO_CWD)).toEqual(createSnapshot(REPO_CWD));
 
     await expect(service.getSnapshot(REPO_CWD)).resolves.toEqual(createSnapshot(REPO_CWD));
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
@@ -834,13 +870,15 @@ describe("WorkspaceGitServiceImpl", () => {
       resolveAbsoluteGitDir,
       now: () => new Date(nowMs),
     });
+    const workspaceRuntimeStore = createWorkspaceRuntimeStore();
+    service.onSnapshotUpdated((snapshot) => workspaceRuntimeStore.set(snapshot));
 
     const subscription = service.registerWorkspace({ cwd: join(REPO_CWD, ".") }, vi.fn());
 
     await expect(service.getSnapshot(join(REPO_CWD, "."))).resolves.toEqual(
       createSnapshot(REPO_CWD),
     );
-    expect(service.peekSnapshot(REPO_CWD)).toEqual(createSnapshot(REPO_CWD));
+    expect(workspaceRuntimeStore.get(REPO_CWD)).toEqual(createSnapshot(REPO_CWD));
 
     nowMs += 3_000;
     await service.refresh(REPO_CWD);

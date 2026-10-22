@@ -1,3 +1,7 @@
+import {
+  createWorkspaceRuntimeStore,
+  type WorkspaceRuntimeStore,
+} from "./workspace-runtime-store/index.js";
 import { createAgentMessageDeliveryStub } from "./test-utils/session-stubs.js";
 import {
   createMessageReceiptsStub,
@@ -293,6 +297,7 @@ vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
 });
 
 interface SessionForTestOptions {
+  workspaceRuntimeStore?: WorkspaceRuntimeStore;
   sendToSource?: SessionOptions["onMessageToSource"];
   clientId?: string;
   permissions?: readonly DaemonPermission[];
@@ -306,7 +311,6 @@ interface SessionForTestOptions {
     getSnapshot?: ReturnType<typeof vi.fn>;
     suggestBranchesForCwd?: ReturnType<typeof vi.fn>;
     listStashes?: ReturnType<typeof vi.fn>;
-    peekSnapshot?: ReturnType<typeof vi.fn>;
     validateBranchRef?: ReturnType<typeof vi.fn>;
     hasLocalBranch?: ReturnType<typeof vi.fn>;
     resolveRepoRemoteUrl?: ReturnType<typeof vi.fn>;
@@ -359,7 +363,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     getSnapshot: vi.fn(),
     suggestBranchesForCwd: vi.fn(),
     listStashes: vi.fn(),
-    peekSnapshot: vi.fn(),
+
     validateBranchRef: vi.fn(),
     hasLocalBranch: vi.fn(),
     resolveRepoRemoteUrl: vi.fn(),
@@ -375,6 +379,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   const messages = options.messages ?? [];
 
   const sessionOptions: SessionOptions = {
+    workspaceRuntimeStore: options.workspaceRuntimeStore ?? createWorkspaceRuntimeStore(),
     messageReceipts: createMessageReceiptsStub(),
     agentMessages: createAgentMessageDeliveryStub(),
     creationService: createTestCreationService(),
@@ -3949,11 +3954,11 @@ describe("session checkout refresh handling", () => {
 describe("session checkout status handling", () => {
   test("returns checkout status from the workspace git service snapshot", async () => {
     const messages: unknown[] = [];
+    const workspaceRuntimeStore = { ...createWorkspaceRuntimeStore(), get: vi.fn() };
     const workspaceGitService = {
       getSnapshot: vi.fn().mockResolvedValue(createWorkspaceGitSnapshot("/tmp/service-worktree")),
-      peekSnapshot: vi.fn(),
     };
-    const session = createSessionForTest({ workspaceGitService, messages });
+    const session = createSessionForTest({ workspaceRuntimeStore, workspaceGitService, messages });
 
     await session.handleMessage({
       type: "checkout_status_request",
@@ -3989,6 +3994,7 @@ describe("session checkout status handling", () => {
 
   test("returns fresh service data on the first checkout status read for a cwd", async () => {
     const messages: unknown[] = [];
+    const workspaceRuntimeStore = { ...createWorkspaceRuntimeStore(), get: vi.fn(() => null) };
     const workspaceGitService = {
       getSnapshot: vi.fn().mockResolvedValue(
         createWorkspaceGitSnapshot("/tmp/cold-worktree", {
@@ -4001,9 +4007,8 @@ describe("session checkout status handling", () => {
           },
         }),
       ),
-      peekSnapshot: vi.fn(() => null),
     };
-    const session = createSessionForTest({ workspaceGitService, messages });
+    const session = createSessionForTest({ workspaceRuntimeStore, workspaceGitService, messages });
 
     await session.handleMessage({
       type: "checkout_status_request",
@@ -4011,7 +4016,7 @@ describe("session checkout status handling", () => {
       requestId: "request-cold-status",
     });
 
-    expect(workspaceGitService.peekSnapshot).not.toHaveBeenCalled();
+    expect(workspaceRuntimeStore.get).not.toHaveBeenCalled();
     expect(workspaceGitService.getSnapshot).toHaveBeenCalledTimes(1);
     expect(messages).toContainEqual({
       type: "checkout_status_response",
@@ -4051,15 +4056,9 @@ describe("session workspace descriptors", () => {
       archivedAt: null,
     };
     const session = createSessionForTest({
-      messages,
-      workspaceRegistry: { get: vi.fn(), list: vi.fn().mockResolvedValue([workspace]) },
-      projectRegistry: {
-        list: vi.fn().mockResolvedValue([project]),
-        get: vi.fn().mockResolvedValue(project),
-      },
-      workspaceGitService: {
-        getSnapshot: vi.fn(),
-        peekSnapshot: vi.fn(() =>
+      workspaceRuntimeStore: {
+        ...createWorkspaceRuntimeStore(),
+        get: vi.fn(() =>
           createWorkspaceGitSnapshot("/repo/app", {
             git: {
               remoteUrl: "https://github.com/acme/app.git",
@@ -4069,6 +4068,16 @@ describe("session workspace descriptors", () => {
             },
           }),
         ),
+      },
+      messages,
+      workspaceRegistry: { get: vi.fn(), list: vi.fn().mockResolvedValue([workspace]) },
+      projectRegistry: {
+        list: vi.fn().mockResolvedValue([project]),
+        get: vi.fn().mockResolvedValue(project),
+      },
+      workspaceGitService: {
+        getSnapshot: vi.fn(),
+
         registerWorkspace: vi.fn(() => () => {}),
       },
     });
@@ -4127,12 +4136,9 @@ describe("session workspace descriptors", () => {
       archivedAt: null,
     };
     const session = createSessionForTest({
-      messages,
-      workspaceRegistry: { get: vi.fn(), list: vi.fn().mockResolvedValue([workspace]) },
-      projectRegistry: { list: vi.fn().mockResolvedValue([project]), get: vi.fn() },
-      workspaceGitService: {
-        getSnapshot: vi.fn(),
-        peekSnapshot: vi.fn(() =>
+      workspaceRuntimeStore: {
+        ...createWorkspaceRuntimeStore(),
+        get: vi.fn(() =>
           createWorkspaceGitSnapshot("/repo/local", {
             git: {
               remoteUrl: null,
@@ -4142,6 +4148,13 @@ describe("session workspace descriptors", () => {
             },
           }),
         ),
+      },
+      messages,
+      workspaceRegistry: { get: vi.fn(), list: vi.fn().mockResolvedValue([workspace]) },
+      projectRegistry: { list: vi.fn().mockResolvedValue([project]), get: vi.fn() },
+      workspaceGitService: {
+        getSnapshot: vi.fn(),
+
         registerWorkspace: vi.fn(() => () => {}),
       },
     });
@@ -4178,16 +4191,19 @@ describe("session workspace descriptors", () => {
     });
   });
 
-  test("reads descriptor diff stat from the workspace git service snapshot", async () => {
-    const workspaceGitService = {
-      getSnapshot: vi.fn(),
-      peekSnapshot: vi.fn(() =>
+  test("reads descriptor diff stat from the workspace runtime store", async () => {
+    const workspaceRuntimeStore = {
+      ...createWorkspaceRuntimeStore(),
+      get: vi.fn(() =>
         createWorkspaceGitSnapshot("/tmp/workspace", {
           git: { diffStat: { additions: 7, deletions: 2 } },
         }),
       ),
     };
-    const session = createSessionForTest({ workspaceGitService });
+    const workspaceGitService = {
+      getSnapshot: vi.fn(),
+    };
+    const session = createSessionForTest({ workspaceRuntimeStore, workspaceGitService });
     checkoutGitMocks.getCachedCheckoutShortstat.mockReturnValue({
       additions: 99,
       deletions: 88,
@@ -4209,7 +4225,7 @@ describe("session workspace descriptors", () => {
       },
     );
 
-    expect(workspaceGitService.peekSnapshot).toHaveBeenCalledWith("/tmp/workspace");
+    expect(workspaceRuntimeStore.get).toHaveBeenCalledWith("/tmp/workspace");
     expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
     expect(checkoutGitMocks.getCachedCheckoutShortstat).not.toHaveBeenCalled();
     expect(checkoutGitMocks.warmCheckoutShortstatInBackground).not.toHaveBeenCalled();
@@ -4217,11 +4233,11 @@ describe("session workspace descriptors", () => {
   });
 
   test("does not cold-load git data while describing a workspace", async () => {
+    const workspaceRuntimeStore = { ...createWorkspaceRuntimeStore(), get: vi.fn(() => null) };
     const workspaceGitService = {
       getSnapshot: vi.fn().mockResolvedValue(createWorkspaceGitSnapshot("/tmp/workspace")),
-      peekSnapshot: vi.fn(() => null),
     };
-    const session = createSessionForTest({ workspaceGitService });
+    const session = createSessionForTest({ workspaceRuntimeStore, workspaceGitService });
 
     const descriptor = await asSessionInternals(session).describeWorkspaceRecordWithGitData(
       {
@@ -4239,7 +4255,7 @@ describe("session workspace descriptors", () => {
       },
     );
 
-    expect(workspaceGitService.peekSnapshot).toHaveBeenCalledWith("/tmp/workspace");
+    expect(workspaceRuntimeStore.get).toHaveBeenCalledWith("/tmp/workspace");
     expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
     expect(descriptor.diffStat).toBeNull();
     expect(descriptor.gitRuntime).toBeUndefined();
@@ -4249,14 +4265,15 @@ describe("session workspace descriptors", () => {
 describe("session branch validation", () => {
   test("validates branches through the workspace git service", async () => {
     const messages: unknown[] = [];
+    const workspaceRuntimeStore = { ...createWorkspaceRuntimeStore(), get: vi.fn() };
     const workspaceGitService = {
       getSnapshot: vi.fn(),
-      peekSnapshot: vi.fn(),
+
       validateBranchRef: vi
         .fn()
         .mockResolvedValue({ kind: "remote-only", name: "feature", remoteRef: "origin/feature" }),
     };
-    const session = createSessionForTest({ workspaceGitService, messages });
+    const session = createSessionForTest({ workspaceRuntimeStore, workspaceGitService, messages });
 
     await session.handleMessage({
       type: "validate_branch_request",
@@ -4294,12 +4311,17 @@ describe("session branch validation", () => {
       execSync("git tag v1", { cwd: repoDir });
 
       const messages: unknown[] = [];
+      const workspaceRuntimeStore = { ...createWorkspaceRuntimeStore(), get: vi.fn() };
       const workspaceGitService = {
         getSnapshot: vi.fn(),
-        peekSnapshot: vi.fn(),
+
         validateBranchRef: vi.fn().mockResolvedValue({ kind: "not-found" }),
       };
-      const session = createSessionForTest({ workspaceGitService, messages });
+      const session = createSessionForTest({
+        workspaceRuntimeStore,
+        workspaceGitService,
+        messages,
+      });
 
       await session.handleMessage({
         type: "validate_branch_request",
@@ -4374,11 +4396,11 @@ describe("session checkout switch branch handling", () => {
 describe("session checkout rename branch handling", () => {
   test("rejects invalid branch slugs without renaming", async () => {
     const messages: unknown[] = [];
+    const workspaceRuntimeStore = { ...createWorkspaceRuntimeStore(), get: vi.fn() };
     const workspaceGitService = {
       getSnapshot: vi.fn(),
-      peekSnapshot: vi.fn(),
     };
-    const session = createSessionForTest({ workspaceGitService, messages });
+    const session = createSessionForTest({ workspaceRuntimeStore, workspaceGitService, messages });
 
     await session.handleMessage({
       type: "checkout.rename_branch.request",
@@ -4407,11 +4429,11 @@ describe("session checkout rename branch handling", () => {
 
   test("reports null current branch when branch rename fails", async () => {
     const messages: unknown[] = [];
+    const workspaceRuntimeStore = { ...createWorkspaceRuntimeStore(), get: vi.fn() };
     const workspaceGitService = {
       getSnapshot: vi.fn(),
-      peekSnapshot: vi.fn(),
     };
-    const session = createSessionForTest({ workspaceGitService, messages });
+    const session = createSessionForTest({ workspaceRuntimeStore, workspaceGitService, messages });
     checkoutGitMocks.renameCurrentBranch.mockRejectedValue(new Error("branch already exists"));
 
     await session.handleMessage({
@@ -4425,7 +4447,7 @@ describe("session checkout rename branch handling", () => {
       "/tmp/repo",
       "feature/new-name",
     );
-    expect(workspaceGitService.peekSnapshot).not.toHaveBeenCalled();
+    expect(workspaceRuntimeStore.get).not.toHaveBeenCalled();
     expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
     expect(messages).toContainEqual({
       type: "checkout.rename_branch.response",
@@ -4445,6 +4467,14 @@ describe("session checkout rename branch handling", () => {
   test("forces workspace git refresh after renaming the current branch", async () => {
     const messages: unknown[] = [];
     const github = { invalidate: vi.fn() };
+    const workspaceRuntimeStore = {
+      ...createWorkspaceRuntimeStore(),
+      get: vi.fn(() =>
+        createWorkspaceGitSnapshot("/tmp/repo", {
+          git: { currentBranch: "feature/old-name" },
+        }),
+      ),
+    };
     const workspaceGitService = {
       getSnapshot: vi.fn().mockResolvedValue(
         createWorkspaceGitSnapshot("/tmp/repo", {
@@ -4454,13 +4484,13 @@ describe("session checkout rename branch handling", () => {
           },
         }),
       ),
-      peekSnapshot: vi.fn(() =>
-        createWorkspaceGitSnapshot("/tmp/repo", {
-          git: { currentBranch: "feature/old-name" },
-        }),
-      ),
     };
-    const session = createSessionForTest({ github, workspaceGitService, messages });
+    const session = createSessionForTest({
+      workspaceRuntimeStore,
+      github,
+      workspaceGitService,
+      messages,
+    });
     checkoutGitMocks.renameCurrentBranch.mockResolvedValue({
       previousBranch: "feature/old-name",
       currentBranch: "feature/new-name",
@@ -4579,12 +4609,12 @@ describe("session branch suggestions handling", () => {
     const branchDetails = [
       { name: "feature/service", committerDate: 10, hasLocal: true, hasRemote: false },
     ];
+    const workspaceRuntimeStore = { ...createWorkspaceRuntimeStore(), get: vi.fn() };
     const workspaceGitService = {
       getSnapshot: vi.fn(),
       suggestBranchesForCwd: vi.fn().mockResolvedValue(branchDetails),
-      peekSnapshot: vi.fn(),
     };
-    const session = createSessionForTest({ workspaceGitService, messages });
+    const session = createSessionForTest({ workspaceRuntimeStore, workspaceGitService, messages });
 
     await session.handleMessage({
       type: "branch_suggestions_request",
@@ -4623,12 +4653,12 @@ describe("session stash list handling", () => {
         isPaseo: true,
       },
     ];
+    const workspaceRuntimeStore = { ...createWorkspaceRuntimeStore(), get: vi.fn() };
     const workspaceGitService = {
       getSnapshot: vi.fn(),
       listStashes: vi.fn().mockResolvedValue(entries),
-      peekSnapshot: vi.fn(),
     };
-    const session = createSessionForTest({ workspaceGitService, messages });
+    const session = createSessionForTest({ workspaceRuntimeStore, workspaceGitService, messages });
 
     await session.handleMessage({
       type: "stash_list_request",
@@ -4774,8 +4804,8 @@ describe("session workspace script handling", () => {
         remoteUrl: "https://github.com/getpaseo/paseo.git",
       },
     });
+    const workspaceRuntimeStore = { ...createWorkspaceRuntimeStore(), get: vi.fn(() => snapshot) };
     const workspaceGitService = {
-      peekSnapshot: vi.fn(() => snapshot),
       getProjectSlug: vi.fn().mockResolvedValue("paseo"),
     };
     const workspaceRegistry = {
@@ -4789,6 +4819,7 @@ describe("session workspace script handling", () => {
       terminalId: "terminal-1",
     });
     const session = createSessionForTest({
+      workspaceRuntimeStore,
       workspaceGitService,
       workspaceRegistry,
       terminalManager: {

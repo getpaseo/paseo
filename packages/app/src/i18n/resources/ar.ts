@@ -615,6 +615,9 @@ export const ar: TranslationResources = {
       hostDisconnected: "Host غير متصل",
       updateHost: "حدّث المضيف لاستخدام عارض الطرفية الأصلي.",
       unableToSubscribe: "غير قادر على الاشتراك في المحطة",
+      fileUploaded: "تم رفع الملف",
+      pasteFileFailed: "تعذر لصق الملف: {{reason}}",
+      uploadingFile: "جارٍ رفع الملف…",
     },
     sheet: {
       openAsTab: "فتح كعلامة تبويب",
@@ -1191,6 +1194,12 @@ export const ar: TranslationResources = {
       showBackground: "إظهار مساحات العمل في الخلفية",
       trigger: "تفضيلات العرض",
       heading: "العرض",
+      sort: {
+        label: "الترتيب",
+        created: "تاريخ الإنشاء",
+        lastPrompt: "آخر طلب",
+        updateHost: "حدّث المضيفين لترتيب مساحات العمل",
+      },
       grouping: {
         label: "التجميع",
         project: "المشروع",
@@ -1956,7 +1965,6 @@ export const ar: TranslationResources = {
         alwaysUseExtension: "استخدام دائمًا لـ .{{extension}}",
         alwaysUseFilename: "استخدام دائمًا لـ {{filename}}",
         option: "{{title}} — {{owner}}",
-        actions: "إجراءات الملف",
         builtin: {
           owner: "Paseo",
           markdown: "Markdown",
@@ -1975,6 +1983,8 @@ export const ar: TranslationResources = {
       notFound: "الملف غير موجود",
       failedToLoadPreview: "فشل تحميل معاينة الملف",
       editor: {
+        preview: "معاينة",
+        source: "المصدر",
         fileSize: "حجم الملف {{size}}",
         lines: "{{count}} سطر",
         editorStatus: "حالة المحرر {{status}}",
@@ -2280,7 +2290,7 @@ export const ar: TranslationResources = {
       automaticHint: "يختار Paseo نموذجًا سريعًا متاحًا",
       preferredHint: "اختر النموذج الذي يستخدمه Paseo",
       model: "النموذج",
-      fallbackHint: "إذا لم يكن متاحًا، يستخدم Paseo نموذجًا آخر متاحًا",
+      modelHint: "يُستخدم هذا النموذج فقط. إذا فشل، لا يجرّب Paseo نموذجًا آخر",
       docs: "الوثائق",
       saveError: "تعذر تحديث إنشاء البيانات الوصفية",
     },
@@ -2356,11 +2366,6 @@ export const ar: TranslationResources = {
     },
     diagnostics: {
       title: "التشخيص",
-      legacyTerminalRenderer: {
-        label: "استخدام عارض الطرفية السابق",
-        description: "استخدام طرفية WebView السابقة بعد إعادة فتح الطرفية",
-        accessibilityLabel: "استخدام عارض الطرفية السابق",
-      },
       testAudio: "اختبار الصوت",
       playTest: "لعب الاختبار",
       playing: "جارٍ اللعب...",

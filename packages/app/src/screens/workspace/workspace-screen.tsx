@@ -94,6 +94,7 @@ import {
   type SheetTab,
   type WorkspaceTabPlacement,
   useWorkspaceLayoutStore,
+  usePendingWorkspaceOpen,
   useWorkspaceLayoutStoreHydrated,
 } from "@/stores/workspace-layout-store";
 import {
@@ -279,12 +280,10 @@ interface WorkspaceScreenProps {
   serverId: string;
   workspaceId: string;
   isRouteFocused?: boolean;
-  recoveryRequested?: boolean;
 }
 
 type WorkspaceScreenContentProps = WorkspaceScreenProps & {
   isRouteFocused: boolean;
-  recoveryRequested: boolean;
 };
 
 function trimNonEmpty(value: string | null | undefined): string | null {
@@ -427,7 +426,6 @@ export const WorkspaceScreen = memo(function WorkspaceScreen({
   serverId,
   workspaceId,
   isRouteFocused,
-  recoveryRequested,
 }: WorkspaceScreenProps) {
   const navigationFocused = useIsFocused();
   useEffect(() => {
@@ -441,7 +439,6 @@ export const WorkspaceScreen = memo(function WorkspaceScreen({
       serverId={serverId}
       workspaceId={workspaceId}
       isRouteFocused={isRouteFocused ?? navigationFocused}
-      recoveryRequested={recoveryRequested ?? false}
     />
   );
 });
@@ -756,9 +753,9 @@ function useResolvedWorkspaceRouteState(input: {
 function shouldInspectWorkspaceRecovery(
   hasHydratedWorkspaces: boolean,
   workspace: WorkspaceDescriptor | null,
-  recoveryRequested: boolean,
+  pendingOpenTarget: WorkspaceTabTarget | null,
 ): boolean {
-  return recoveryRequested && hasHydratedWorkspaces && workspace === null;
+  return pendingOpenTarget?.kind === "agent" && hasHydratedWorkspaces && workspace === null;
 }
 
 function WorkspaceScreenGateFrame({ children }: { children: ReactNode }) {
@@ -1023,7 +1020,6 @@ function WorkspaceScreenContent({
   serverId,
   workspaceId,
   isRouteFocused,
-  recoveryRequested,
 }: WorkspaceScreenContentProps) {
   const { t } = useTranslation();
   const _insets = useSafeAreaInsets();
@@ -1161,13 +1157,18 @@ function WorkspaceScreenContent({
   const hasHydratedWorkspaces = useSessionStore(
     (state) => state.sessions[normalizedServerId]?.hasHydratedWorkspaces ?? false,
   );
+  const pendingOpenTarget = usePendingWorkspaceOpen({
+    workspaceKey: persistenceKey,
+    hasHydratedWorkspaces,
+    workspaceExists: workspaceDescriptor !== null,
+  });
   const workspaceRecovery = useWorkspaceRecovery({
     serverId: normalizedServerId,
     workspaceId: normalizedWorkspaceId,
     enabled: shouldInspectWorkspaceRecovery(
       hasHydratedWorkspaces,
       workspaceDescriptor,
-      recoveryRequested,
+      pendingOpenTarget,
     ),
   });
 
@@ -3442,6 +3443,7 @@ function WorkspaceScreenContent({
           />
           <WorkspaceHeaderMenuMobile
             normalizedServerId={normalizedServerId}
+            normalizedWorkspaceId={normalizedWorkspaceId}
             launches={compactHeaderLaunches}
             scripts={compactHeaderScripts}
             currentBranchName={currentBranchName}

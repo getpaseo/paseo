@@ -1,3 +1,4 @@
+import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import {
   createAgentMessageDelivery,
   type AgentMessageDelivery,
@@ -113,6 +114,7 @@ import {
 } from "./lifecycle-reasons.js";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 
+import type { SecurityMode } from "@getpaseo/relay/e2ee";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import type { DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import { DirectorySyncService } from "./directory-sync/index.js";
@@ -134,6 +136,8 @@ export interface ExternalSocketMetadata {
   transport: "relay" | "hub";
   externalSessionKey?: string;
   relayConnectionId?: string;
+  /** Negotiated endpoint security for relay-carried sockets. */
+  securityMode?: SecurityMode;
   hubDaemonId?: string;
 }
 
@@ -161,6 +165,7 @@ interface WebSocketConnectionIdentity {
   userAgent?: string;
   remoteAddress?: string;
   relayConnectionId?: string;
+  securityMode?: SecurityMode;
   hubDaemonId?: string;
   clientId?: string;
   sessionId?: string;
@@ -243,7 +248,6 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
     onSnapshotUpdated: () => ({
       unsubscribe: () => {},
     }),
-    peekSnapshot: () => null,
     getCheckout: async (cwd: string) => ({
       cwd,
       isGit: false,
@@ -653,6 +657,7 @@ export class VoiceAssistantWebSocketServer {
     mcpBaseUrl: string | null,
     wsConfig: WebSocketServerConfig,
     workspaceAutoName: WorkspaceAutoName,
+    private readonly workspaceRuntimeStore: WorkspaceRuntimeStore,
     auth?: DaemonAuthConfig,
     speech?: SpeechService | null,
     terminalManager?: TerminalManager | null,
@@ -1626,6 +1631,7 @@ export class VoiceAssistantWebSocketServer {
       checkoutDiffManager: this.checkoutDiffManager,
       github: this.github,
       workspaceGitService: this.workspaceGitService,
+      workspaceRuntimeStore: this.workspaceRuntimeStore,
       workspaceAutoName: this.workspaceAutoName,
       daemonConfigStore: this.daemonConfigStore,
       pluginRuntime: this.pluginRuntime,
@@ -1963,6 +1969,8 @@ export class VoiceAssistantWebSocketServer {
       features: {
         connectedHosts: true,
         hostMultiplexing: true,
+        // COMPAT(relayProtectedSecurity): added in v0.13.0, remove gate after 2027-04-21.
+        relayProtectedSecurity: true,
         usageSources: true,
         ownedSubscriptions: true,
         agentRequestReceipts: true,
@@ -1977,6 +1985,7 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(workspaceSetupRun): added in v0.7.3, remove gate after 2027-09-02.
         workspaceSetupRun: true,
         workspaceSetupObservation: true,
+        workspaceSortTimes: true,
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.
         providersSnapshot: true,
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
@@ -3006,6 +3015,7 @@ function createWebSocketConnectionIdentity(
     ...(requestMetadata.userAgent ? { userAgent: requestMetadata.userAgent } : {}),
     ...(requestMetadata.remoteAddress ? { remoteAddress: requestMetadata.remoteAddress } : {}),
     ...(metadata?.relayConnectionId ? { relayConnectionId: metadata.relayConnectionId } : {}),
+    ...(metadata?.securityMode ? { securityMode: metadata.securityMode } : {}),
     ...(metadata?.hubDaemonId ? { hubDaemonId: metadata.hubDaemonId } : {}),
   };
 }
@@ -3024,6 +3034,7 @@ function toConnectionLogFields(identity: WebSocketConnectionIdentity): Record<st
     ...(identity.userAgent ? { userAgent: identity.userAgent } : {}),
     ...(identity.remoteAddress ? { remoteAddress: identity.remoteAddress } : {}),
     ...(identity.relayConnectionId ? { relayConnectionId: identity.relayConnectionId } : {}),
+    ...(identity.securityMode ? { securityMode: identity.securityMode } : {}),
     ...(identity.hubDaemonId ? { hubDaemonId: identity.hubDaemonId } : {}),
     ...(identity.clientId ? { clientId: identity.clientId } : {}),
     ...(identity.sessionId ? { sessionId: identity.sessionId } : {}),

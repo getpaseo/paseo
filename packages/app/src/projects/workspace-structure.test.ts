@@ -20,6 +20,8 @@ function project(input: {
 
 function workspace(id: string, projectId: string, root: string): WorkspaceDescriptor {
   return {
+    createdAt: null,
+    lastUserMessageAt: null,
     id,
     projectId,
     projectDisplayName: "acme/app",
@@ -173,4 +175,52 @@ describe("buildWorkspaceStructureProjects", () => {
       placementShapedKey,
     );
   });
+});
+
+test("sorts by creation or human prompt without changing picker name order", () => {
+  const old = {
+    ...workspace("old", "p", "/p"),
+    name: "A",
+    createdAt: new Date("2026-01-01"),
+    lastUserMessageAt: new Date("2026-03-01"),
+  };
+  const fresh = {
+    ...workspace("fresh", "p", "/p"),
+    name: "B",
+    createdAt: new Date("2026-02-01"),
+    lastUserMessageAt: null,
+  };
+  const sessions = [
+    {
+      serverId: "host",
+      projects: [project({ id: "p", key: "p", root: "/p" })],
+      workspaces: [old, fresh],
+    },
+  ];
+  expect(
+    buildWorkspaceStructureProjects({ sessions, workspaceSort: "created" })[0].workspaceKeys,
+  ).toEqual(["host:fresh", "host:old"]);
+  expect(
+    buildWorkspaceStructureProjects({ sessions, workspaceSort: "lastPrompt" })[0].workspaceKeys,
+  ).toEqual(["host:old", "host:fresh"]);
+  expect(buildWorkspaceStructureProjects({ sessions })[0].workspaceKeys).toEqual([
+    "host:old",
+    "host:fresh",
+  ]);
+});
+
+test("time ties use workspace identity so renaming cannot move Created rows", () => {
+  const a = { ...workspace("a", "p", "/p"), name: "Z", createdAt: new Date("2026-01-01") };
+  const b = { ...workspace("b", "p", "/p"), name: "A", createdAt: a.createdAt };
+  const sessions = [
+    { serverId: "h", projects: [project({ id: "p", key: "p", root: "/p" })], workspaces: [b, a] },
+  ];
+  expect(
+    buildWorkspaceStructureProjects({ sessions, workspaceSort: "created" })[0].workspaceKeys,
+  ).toEqual(["h:a", "h:b"]);
+  a.name = "A";
+  b.name = "Z";
+  expect(
+    buildWorkspaceStructureProjects({ sessions, workspaceSort: "created" })[0].workspaceKeys,
+  ).toEqual(["h:a", "h:b"]);
 });

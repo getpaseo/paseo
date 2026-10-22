@@ -1885,8 +1885,8 @@ Paseo owns tab focus, splitting, closing, persistence, query state, the API/RPC 
 
 Register a component that renders a file as the body of its file tab. Your component receives a
 handle to the file on the selected host, including remote hosts. It reads the file, shows its own
-loading state, and writes the file when the user edits it. The tab's bar shows the panel
-switcher, the overflow menu, and a dot while your panel reports unsaved changes.
+loading state, and writes the file when the user edits it. The tab shows a dot while your panel
+reports unsaved changes.
 
 ```tsx
 import type { PluginClientContext } from "@getpaseo/plugin/client";
@@ -1906,13 +1906,13 @@ export default function contribute(client: PluginClientContext) {
 `addFilePanel` takes a `PluginFilePanelContribution` and returns an idempotent cleanup function.
 Paseo also removes the registration when the client entry is unloaded.
 
-| Field       | Required | Meaning                                                                    |
-| ----------- | -------- | -------------------------------------------------------------------------- |
-| `id`        | Yes      | Plugin-local ID matching `^[a-z][a-z0-9-]*$`.                              |
-| `title`     | Yes      | Non-empty label in the panel switcher, the picker, and the Open with menu. |
-| `icon`      | Yes      | Lucide name, `{ svg }`, or component. See [Icons](#icons).                 |
-| `files`     | Yes      | `{ extensions: readonly string[]; filenames?: readonly string[] }`.        |
-| `Component` | Yes      | Component receiving `PluginFilePanelProps`.                                |
+| Field       | Required | Meaning                                                                  |
+| ----------- | -------- | ------------------------------------------------------------------------ |
+| `id`        | Yes      | Plugin-local ID matching `^[a-z][a-z0-9-]*$`.                            |
+| `title`     | Yes      | Non-empty label in the picker, the Open with menu, and Settings > Files. |
+| `icon`      | Yes      | Lucide name, `{ svg }`, or component. See [Icons](#icons).               |
+| `files`     | Yes      | `{ extensions: readonly string[]; filenames?: readonly string[] }`.      |
+| `Component` | Yes      | Component receiving `PluginFilePanelProps`.                              |
 
 Extensions have no leading dot and match without case sensitivity. Filenames match the exact
 basename, including case. Selectors contain no paths, globs, or wildcards. Use `extensions: []`
@@ -2002,8 +2002,8 @@ A panel that holds unsaved edits reads with `readText()` once, then handles `wat
 5. On `PluginFileConflictError`, show the same conflict.
 6. On `{ type: "deleted" }` or `PluginFileDeletedError`, tell the user the file is gone.
 
-Write pending edits before the component unmounts: switching panels or closing the tab unmounts
-it. Paseo asks before closing a tab whose panel reports unsaved changes. The
+Write pending edits before the component unmounts: opening the tab with another panel or closing
+the tab unmounts it. Paseo asks before closing a tab whose panel reports unsaved changes. The
 [Markdown panel](https://github.com/getpaseo/paseo/tree/main/plugin-examples/markdown-panel)
 example implements these steps.
 
@@ -2011,28 +2011,30 @@ example implements these steps.
 
 A plugin panel is a candidate for every file its selector matches, text or binary. The built-in
 panels require the host's file kind: Markdown, HTML, and **Source** open text files; Image opens
-images. Candidates are ordered: the built-in Markdown, HTML, and Image panels, then plugin panels
-in host catalog order, then **Source**, which every text file has. Source opens a file by default
-only when nothing else claims it.
+images. The Markdown and HTML panels each have a Preview and a Source view of the file, switched
+in their toolbar. **Source**, Paseo's editor, is the built-in panel for text files that no other
+built-in panel claims; it is never offered beside another built-in panel. Candidates are ordered:
+the built-in panel that claims the file, then plugin panels in host catalog order, then Source
+when no other built-in claims the file.
 
 A remembered association selects its panel when that panel is available on the current host.
 Otherwise Paseo opens the first candidate. When a plugin panel is among several candidates and no
-association applies, Paseo asks once per tab open, over the panel it already opened. Built-in
-panels alone never ask: a Markdown file opens with Markdown and offers Source in the switcher. With
-a Markdown plugin installed, the picker offers **Markdown — Paseo**, **Rich Markdown —
-markdown-panel**, and **Source — Paseo**. A plugin that claims a text extension competes with
-Source, so its first open asks; a plugin that alone claims a binary file opens without asking.
+association applies, Paseo asks once per tab open, over the panel it already opened. A file with
+one candidate never asks. With a Markdown plugin installed, the picker offers **Markdown — Paseo**
+and **Rich Markdown — markdown-panel**. A plugin that claims a text extension no built-in panel
+claims competes with Source, so its first open asks; a plugin that alone claims a binary file
+opens without asking.
 
 **Don't ask me again** remembers the choice on this device for the extension. When a candidate
 matches an exact filename, the choice applies to that basename instead. An unavailable association
 is ignored on that host and retained for hosts where its panel is installed.
 
-Users switch the current tab with the bar's panel switcher, which shows up to three panels side by
-side (two on a phone) and a menu beyond that, or with **Open with…** in the tab menu. That choice
-wins over the remembered association for this tab until it is retargeted. **Always use**, in the
-bar's overflow menu and in Open with, remembers the shown panel. Opening a file at a line, from a
-link or a search result, switches the tab to Source. Files with no candidate show **Binary preview
-unavailable**; binary files have no Source panel.
+Users choose a panel three ways: the picker on first open, **Open with…** in the tab menu, and
+**Settings > Files**. Open with switches the current tab and wins over the remembered association
+for this tab until it is retargeted; its **Always use** remembers the shown panel. Opening a file
+at a line, from a link or a search result, switches the tab to its built-in panel, which shows the
+line in its Source view. Files with no candidate show **Binary preview unavailable**; binary files
+have no Source panel.
 
 ### DocumentFrame
 
@@ -2190,8 +2192,10 @@ review.remove();
 ```
 
 Omit `label` for an icon-only header button. Menus and popovers show a chevron on wide layouts.
-Compact header buttons use icons without labels or chevrons. Paseo moves excess contributions
-into a shared overflow menu. Placement and overflow are host decisions.
+Paseo moves excess contributions into a shared overflow menu. On phones and narrow windows the
+header has no room for plugin buttons, so each one is a row of the workspace menu (`···`), with its
+icon and title; its menus and popovers open as pages of that sheet. Placement and overflow are host
+decisions.
 
 ## Composer pills
 
