@@ -26,13 +26,36 @@ const quotasSchema = z.object({
     .object({
       percentRemaining: z.number().finite().min(0).max(100),
       nextRegenAt: z.iso.datetime({ offset: true }).nullish(),
+      maxCredits: z.string().optional(),
+      remainingCredits: z.string().optional(),
+      nextRegenCredits: z.string().optional(),
     })
     .nullish(),
-  subscription: z.object({
-    limit: z.number().finite().nonnegative(),
-    requests: z.number().finite().nonnegative(),
-    renewsAt: z.iso.datetime({ offset: true }),
-  }),
+  subscription: z
+    .object({
+      limit: z.number().finite().nonnegative(),
+      requests: z.number().finite().nonnegative(),
+      renewsAt: z.iso.datetime({ offset: true }),
+    })
+    .nullish(),
+  search: z
+    .object({
+      hourly: z
+        .object({
+          limit: z.number().finite().nonnegative(),
+          requests: z.number().finite().nonnegative(),
+          renewsAt: z.iso.datetime({ offset: true }),
+        })
+        .nullish(),
+    })
+    .nullish(),
+  freeToolCalls: z
+    .object({
+      limit: z.number().finite().nonnegative(),
+      requests: z.number().finite().nonnegative(),
+      renewsAt: z.iso.datetime({ offset: true }),
+    })
+    .nullish(),
 });
 const openCodeKeySchema = z.object({ type: z.literal("key"), key: z.string().trim().min(1) });
 const legacyAuthSchema = z.object({
@@ -222,40 +245,110 @@ async function fetchQuotas(
 
 function reportFromQuotas(quotas: z.infer<typeof quotasSchema>): UsageReport {
   const rolling = quotas.rollingFiveHourLimit;
-  const requests = rolling
-    ? Math.round(Math.max(0, rolling.max - rolling.remaining) * 100) / 100
-    : quotas.subscription.requests;
-  const limit = rolling?.max ?? quotas.subscription.limit;
-  const usedPct = usedPctOf(requests, limit);
-  let fiveHourReset: string | null = null;
-  if (requests > 0) fiveHourReset = rolling?.nextTickAt ?? quotas.subscription.renewsAt;
-  const windows = [
-    windowFromUsedPct({
-      id: "five_hour",
-      label: "5 hours",
-      utilizationPct: usedPct,
-      resetsAt: fiveHourReset,
-      tone: toneFromUsedPct(usedPct),
-      summary: true,
-    }),
-  ];
+  const subscription = quotas.subscription;
+  const windows = [];
+  const details = [];
+
+  if (rolling) {
+    const requests = Math.max(0, rolling.max - rolling.remaining);
+    const usedPct = usedPctOf(requests, rolling.max);
+    windows.push(
+      windowFromUsedPct({
+        id: "five_hour",
+        label: "5 hours",
+        shortLabel: "5h",
+        utilizationPct: usedPct,
+        resetsAt: rolling.nextTickAt,
+        tone: toneFromUsedPct(usedPct),
+        summary: true,
+      }),
+    );
+    details.push({
+      id: "requests",
+      label: "Requests",
+      value: `${Math.round(requests * 100) / 100} / ${rolling.max}`,
+    });
+  } else if (subscription) {
+    // Older API responses expose the five-hour quota only through subscription.
+    const usedPct = usedPctOf(subscription.requests, subscription.limit);
+    windows.push(
+      windowFromUsedPct({
+        id: "five_hour",
+        label: "5 hours",
+        shortLabel: "5h",
+        utilizationPct: usedPct,
+        resetsAt: subscription.renewsAt,
+        tone: toneFromUsedPct(usedPct),
+        summary: true,
+      }),
+    );
+    details.push({
+      id: "requests",
+      label: "Requests",
+      value: `${subscription.requests} / ${subscription.limit}`,
+    });
+  }
+
   if (quotas.weeklyTokenLimit) {
     const weeklyUsedPct = 100 - quotas.weeklyTokenLimit.percentRemaining;
-    const resetsAt = weeklyUsedPct > 0 ? (quotas.weeklyTokenLimit.nextRegenAt ?? null) : null;
     windows.push(
       windowFromUsedPct({
         id: "weekly",
         label: "Weekly",
+        shortLabel: "wk",
         utilizationPct: weeklyUsedPct,
-        resetsAt,
+        resetsAt: quotas.weeklyTokenLimit.nextRegenAt ?? null,
         tone: toneFromUsedPct(weeklyUsedPct),
       }),
     );
+    if (quotas.weeklyTokenLimit.remainingCredits || quotas.weeklyTokenLimit.maxCredits) {
+      details.push({
+        id: "weekly_credits",
+        label: "Weekly credits",
+        value: `${quotas.weeklyTokenLimit.remainingCredits ?? "?"} remaining of ${quotas.weeklyTokenLimit.maxCredits ?? "?"}`,
+      });
+    }
   }
+
+  const search = quotas.search?.hourly;
+  if (search) {
+    const usedPct = usedPctOf(search.requests, search.limit);
+    windows.push(
+      windowFromUsedPct({
+        id: "search_hourly",
+        label: "Search · hourly",
+        shortLabel: "Search",
+        utilizationPct: usedPct,
+        resetsAt: search.renewsAt,
+        tone: toneFromUsedPct(usedPct),
+      }),
+    );
+  }
+
+  if (quotas.freeToolCalls) {
+    const usedPct = usedPctOf(quotas.freeToolCalls.requests, quotas.freeToolCalls.limit);
+    windows.push(
+      windowFromUsedPct({
+        id: "free_tool_calls",
+        label: "Free tool calls",
+        shortLabel: "Tools",
+        utilizationPct: usedPct,
+        resetsAt: quotas.freeToolCalls.renewsAt,
+        tone: toneFromUsedPct(usedPct),
+      }),
+    );
+  }
+
+  if (windows.length === 0)
+    return unavailable({
+      kind: "no_quota",
+      detail: "Synthetic returned no quota data for this account",
+    });
+
   return {
     status: "available",
     windows,
-    details: [{ id: "requests", label: "Requests", value: `${requests} / ${limit}` }],
+    ...(details.length > 0 ? { details } : {}),
   };
 }
 

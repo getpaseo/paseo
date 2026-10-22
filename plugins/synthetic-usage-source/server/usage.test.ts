@@ -82,6 +82,70 @@ describe("Synthetic usage source", () => {
     });
   });
 
+  test("reads Synthetic's current quota fields without requiring legacy subscription data", async () => {
+    process.env.SYNTHETIC_API_KEY = "synthetic-key";
+    const fetchApi = vi.fn(async () =>
+      Response.json({
+        rollingFiveHourLimit: {
+          nextTickAt: "2026-10-21T20:15:00Z",
+          tickPercent: 0.05,
+          remaining: 613.4,
+          max: 640,
+          limited: false,
+        },
+        weeklyTokenLimit: {
+          nextRegenAt: "2026-10-21T22:00:00Z",
+          percentRemaining: 87.5,
+          maxCredits: "$132.00",
+          remainingCredits: "$115.50",
+          nextRegenCredits: "$2.64",
+        },
+        search: {
+          hourly: {
+            limit: 250,
+            requests: 25,
+            renewsAt: "2026-10-21T21:00:00Z",
+          },
+        },
+        freeToolCalls: {
+          limit: 100,
+          requests: 5,
+          renewsAt: "2026-10-22T00:00:00Z",
+        },
+      }),
+    );
+
+    const [account] = await discover({ kind: "global" });
+    const report = await fetchUsage(account?.input, fetchApi);
+
+    expect(report).toMatchObject({
+      status: "available",
+      windows: [
+        { id: "five_hour", usedPct: expect.closeTo(4.15625, 5), resetsAt: "2026-10-21T20:15:00Z" },
+        { id: "weekly", usedPct: 12.5, resetsAt: "2026-10-21T22:00:00Z" },
+        { id: "search_hourly", usedPct: 10, resetsAt: "2026-10-21T21:00:00Z" },
+        { id: "free_tool_calls", usedPct: 5, resetsAt: "2026-10-22T00:00:00Z" },
+      ],
+      details: [
+        { id: "requests", value: "26.6 / 640" },
+        { id: "weekly_credits", value: "$115.50 remaining of $132.00" },
+      ],
+    });
+  });
+
+  test("reports no quota data when Synthetic returns an empty quota object", async () => {
+    process.env.SYNTHETIC_API_KEY = "synthetic-key";
+    const [account] = await discover({ kind: "global" });
+
+    await expect(fetchUsage(account?.input, async () => Response.json({}))).resolves.toMatchObject({
+      status: "unavailable",
+      problem: {
+        kind: "no_quota",
+        detail: "Synthetic returned no quota data for this account",
+      },
+    });
+  });
+
   test("reads OpenCode's selected v2 credential through a read-only database", async () => {
     const dataHome = join(homeDir, "xdg");
     const databasePath = join(dataHome, "opencode", "custom.db");
