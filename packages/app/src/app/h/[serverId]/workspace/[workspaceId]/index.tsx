@@ -117,7 +117,7 @@ function HostWorkspaceRouteContent() {
     stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit();
   }, [serverId, workspaceId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!openValue || !serverId || !workspaceId) return;
     const openIntent = parseWorkspaceOpenIntent(openValue);
     if (openIntent) {

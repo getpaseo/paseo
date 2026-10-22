@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { create } from "zustand";
 import { persist, type StateStorage } from "zustand/middleware";
 import type { z } from "zod";
@@ -2392,7 +2392,7 @@ export function usePendingWorkspaceOpen({
     workspaceKey ? state.pendingOpenByWorkspace[workspaceKey] : undefined,
   );
   const layoutHydrated = useWorkspaceLayoutStoreHydrated();
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (workspaceKey && workspaceReady && layoutHydrated && pending) {
       useWorkspaceLayoutStore.getState().consumePendingOpen(workspaceKey);
     }
