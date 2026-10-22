@@ -13,6 +13,7 @@ import type {
 } from "@getpaseo/plugin/server/provider";
 import { startDriver, selection, type Driver } from "./process.js";
 import { validateSelection } from "./catalog.js";
+import { getCommands } from "./commands.js";
 import { PromptFiles } from "./prompt.js";
 import { toolItem } from "./timeline.js";
 import { AntigravityError, diagnostic, type Frame, type Step } from "./wire.js";
@@ -50,6 +51,7 @@ export class Session {
   private firstMessage: boolean;
   private readonly promptFiles = new PromptFiles();
   private readonly reportedDenials = new Map<string, number>();
+  private knownCommands = new Set<string>();
 
   constructor(private readonly options: SessionOptions) {
     this.config = { ...options.config, mode: options.config.mode ?? "full-access" };
@@ -61,7 +63,11 @@ export class Session {
   }
 
   async open(requestId: string, capabilities: readonly string[]): Promise<void> {
-    await this.ensureDriver();
+    const [, commands] = await Promise.all([
+      this.ensureDriver(),
+      getCommands(this.options.launch, this.config),
+    ]);
+    this.knownCommands = new Set(commands.map((command) => command.name));
     this.emit({
       type: "session.opened",
       requestId,
@@ -74,7 +80,7 @@ export class Session {
     });
     this.publishFullAccessNotice();
     this.publishConfig();
-    this.emit({ type: "session.commands", sessionId: this.options.id, commands: [] });
+    this.emit({ type: "session.commands", sessionId: this.options.id, commands });
     this.emit({ type: "session.ready", requestId, sessionId: this.options.id });
   }
 
@@ -84,7 +90,10 @@ export class Session {
         "Antigravity already has an active turn; wait for it to finish",
         "TURN_ACTIVE",
       );
-    const { text, nativeText } = await this.promptFiles.encode(prompt);
+    const { text, nativeText, isSlashCommand } = await this.promptFiles.encode(
+      prompt,
+      this.knownCommands,
+    );
     await this.ensureDriver();
     if (this.state.type !== "idle") throw new AntigravityError("Antigravity session is not ready");
     const driver = this.state.driver;
@@ -114,10 +123,21 @@ export class Session {
       clientMessageId: prompt.clientMessageId,
       text,
     });
+    // Native slash-command expansion requires `/<name>` at index 0 of the message content.
+    // When the first turn invokes a known skill or command, place systemPrompt after it;
+    // when a message starts with an unknown `/` token (e.g. CLI-only `/help`, which `agy`
+    // checks after `strings.TrimSpace`), prefix U+200B so `agy` forwards it to the model
+    // instead of exiting with code 2.
+    let withSystemPrompt = nativeText;
+    if (this.firstMessage && this.config.systemPrompt) {
+      withSystemPrompt = isSlashCommand
+        ? `${nativeText}\n\n${this.config.systemPrompt}`
+        : `${this.config.systemPrompt}\n\n${nativeText}`;
+    }
     const driverText =
-      this.firstMessage && this.config.systemPrompt
-        ? `${this.config.systemPrompt}\n\n${nativeText}`
-        : nativeText;
+      !isSlashCommand && withSystemPrompt.trimStart().startsWith("/")
+        ? `\u200b${withSystemPrompt}`
+        : withSystemPrompt;
     try {
       await driver.prompt(driverText);
       this.firstMessage = false;
