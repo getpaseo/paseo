@@ -1,4 +1,3 @@
-import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { createAgentMessageDeliveryStub } from "./test-utils/session-stubs.js";
 import {
   createMessageReceiptsStub,
@@ -136,7 +135,7 @@ function createSessionForWorkspaceGitWatchTests(options?: {
   workspaces: Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>;
   workspaceGitService: WorkspaceGitService & {
     registerWorkspace: ReturnType<typeof vi.fn>;
-
+    peekSnapshot: ReturnType<typeof vi.fn>;
     getSnapshot: ReturnType<typeof vi.fn>;
     refresh: ReturnType<typeof vi.fn>;
     requestWorkingTreeWatch: ReturnType<typeof vi.fn>;
@@ -178,7 +177,7 @@ function createSessionForWorkspaceGitWatchTests(options?: {
         unsubscribe,
       };
     }),
-
+    peekSnapshot: vi.fn((cwd: string) => createWorkspaceRuntimeSnapshot(cwd)),
     getSnapshot: vi.fn(async (cwd: string) => createWorkspaceRuntimeSnapshot(cwd)),
     refresh: vi.fn(async () => {}),
     requestWorkingTreeWatch: vi.fn(async (cwd: string) => ({
@@ -190,7 +189,6 @@ function createSessionForWorkspaceGitWatchTests(options?: {
   };
 
   const session = new Session({
-    workspaceRuntimeStore: createWorkspaceRuntimeStore(),
     messageReceipts: createMessageReceiptsStub(),
     agentMessages: createAgentMessageDeliveryStub(),
     creationService: createTestCreationService(),
@@ -208,10 +206,7 @@ function createSessionForWorkspaceGitWatchTests(options?: {
       getAgent: () => null,
     }),
     agentStorage: createStub<SessionOptions["agentStorage"]>({
-      listAll: async () => [],
-      listActive: async () => [],
-      listByWorkspaces: async () => [],
-      lastUserMessageAtByWorkspace: async () => new Map<string, string>(),
+      list: async () => [],
       get: async () => null,
     }),
     projectRegistry: createStub<SessionOptions["projectRegistry"]>({
@@ -236,9 +231,7 @@ function createSessionForWorkspaceGitWatchTests(options?: {
       subscribeToMutations: () => () => {},
       initialize: async () => {},
       existsOnDisk: async () => true,
-      listAll: async () => Array.from(workspaces.values()),
-      listActive: async () =>
-        Array.from(workspaces.values()).filter((record) => !record.archivedAt),
+      list: async () => Array.from(workspaces.values()),
       get: async (workspaceId: string) => workspaces.get(workspaceId) ?? null,
       upsert: async (record: ReturnType<typeof createPersistedWorkspaceRecord>) => {
         workspaces.set(record.workspaceId, record);

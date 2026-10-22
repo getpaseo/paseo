@@ -1,23 +1,23 @@
-import { i18n } from "@/i18n/i18next";
 import type { SubscribeTerminalRequest } from "@getpaseo/protocol/messages";
+
+export const TERMINAL_VISIBLE_RESTORE_SCROLLBACK_LINES = 200;
 
 export interface ResolveTerminalRestoreOptionsInput {
   supportsTerminalRestoreModes: boolean;
-  scrollbackLines: number;
   canClaimSize: boolean;
   size: { rows: number; cols: number } | null;
 }
 
 export function resolveTerminalRestoreOptions(
   input: ResolveTerminalRestoreOptionsInput,
-): NonNullable<SubscribeTerminalRequest["restore"]> {
+): SubscribeTerminalRequest["restore"] | undefined {
   if (!input.supportsTerminalRestoreModes) {
-    throw new Error(i18n.t("workspace.terminal.restoreRequiresUpdate"));
+    return undefined;
   }
 
   return {
     mode: "visible-snapshot",
-    scrollbackLines: input.scrollbackLines,
+    scrollbackLines: TERMINAL_VISIBLE_RESTORE_SCROLLBACK_LINES,
     ...(input.canClaimSize && input.size ? { size: input.size } : {}),
   };
 }

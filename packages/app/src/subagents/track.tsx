@@ -18,8 +18,6 @@ import {
 import type { Theme } from "@/styles/theme";
 import { useAgentFactsLine } from "@/panels/agent-facts-line";
 import { getPanelManifest } from "@/panels/panel-manifest";
-import { useSheetPanePage } from "@/screens/workspace/sheet-pane";
-import type { SheetTab } from "@/stores/workspace-layout-store";
 import type { SubagentRow } from "./select";
 import type { ArchiveFinishedStatus } from "./use-archive-finished";
 import {
@@ -42,10 +40,10 @@ export interface SubagentsTrackProps {
   onOpenSubagent: (address: AgentAddress) => void;
   onOpenProviderSubagent: (parentAgentId: string, subagentId: string) => void;
   /**
-   * The sheet a row opens, or null when it opens as a tab. A sheet replaces the list in place and
-   * Back returns to it; a tab replaces the list's pane, so choosing it ends the list.
+   * Whether opening this row shows it in a sheet. A sheet stacks over the list and uncovers it on
+   * close, so the list stays open; a tab replaces the list's pane, so choosing it ends the list.
    */
-  sheetTabFor: (row: SubagentRow) => SheetTab | null;
+  opensInSheet: (row: SubagentRow) => boolean;
   onArchiveSubagent: (address: AgentAddress) => void;
   onArchiveFinished?: () => void;
   archiveFinishedStatus?: ArchiveFinishedStatus;
@@ -73,14 +71,13 @@ export function SubagentsTrack({
   rows,
   onOpenSubagent,
   onOpenProviderSubagent,
-  sheetTabFor,
+  opensInSheet,
   onArchiveSubagent,
   onArchiveFinished,
   archiveFinishedStatus = IDLE_ARCHIVE_FINISHED_STATUS,
   onDetachSubagent,
 }: SubagentsTrackProps): ReactElement | null {
   const { t } = useTranslation();
-  const sheetPanePage = useSheetPanePage();
 
   const isArchivingFinished = archiveFinishedStatus.kind === "archiving";
   const isArchiveFinishedFailed = archiveFinishedStatus.kind === "failed";
@@ -91,12 +88,9 @@ export function SubagentsTrack({
   const pill = buildSubagentPillPresentation(t, rows);
   const finishedCount = countFinishedSubagents(rows);
   const showArchiveFinished = finishedCount > 0 || isArchivingFinished || isArchiveFinishedFailed;
-  const sheets = rows.map(sheetTabFor);
-  const pages = sheets.flatMap((sheet) => (sheet ? [sheetPanePage(sheet)] : []));
 
   return (
     <ComposerTrackPill
-      pages={pages}
       testID="subagents-track-header"
       segments={pill.segments}
       accessibilityLabel={pill.accessibilityLabel}
@@ -111,14 +105,14 @@ export function SubagentsTrack({
           />
         </ComposerTrackActions>
       ) : null}
-      {rows.map((row, index) => (
+      {rows.map((row) => (
         <SubagentsTrackRow
           key={row.kind === "paseo" ? `${row.address.serverId}:${row.id}` : row.id}
           row={row}
           serverId={serverId}
           onOpenSubagent={onOpenSubagent}
           onOpenProviderSubagent={onOpenProviderSubagent}
-          sheetTabId={sheets[index]?.tab.tabId ?? null}
+          opensInSheet={opensInSheet(row)}
           onArchiveSubagent={onArchiveSubagent}
           onDetachSubagent={onDetachSubagent}
         />
@@ -190,8 +184,7 @@ interface SubagentsTrackRowProps {
   row: SubagentRow;
   onOpenSubagent: (address: AgentAddress) => void;
   onOpenProviderSubagent: (parentAgentId: string, subagentId: string) => void;
-  /** The sheet page the row opens in place of the list, when it opens in a sheet. */
-  sheetTabId: string | null;
+  opensInSheet: boolean;
   onArchiveSubagent: (address: AgentAddress) => void;
   onDetachSubagent?: (address: AgentAddress) => void;
 }
@@ -201,7 +194,7 @@ function SubagentsTrackRow({
   row,
   onOpenSubagent,
   onOpenProviderSubagent,
-  sheetTabId,
+  opensInSheet,
   onArchiveSubagent,
   onDetachSubagent,
 }: SubagentsTrackRowProps): ReactElement {
@@ -276,7 +269,7 @@ function SubagentsTrackRow({
     <ComposerTrackRow
       accessibilityLabel={displayLabel}
       testID={`subagents-track-row-${row.id}`}
-      opensPage={sheetTabId ?? undefined}
+      closeOnSelect={!opensInSheet}
       onPress={handlePress}
     >
       {renderRow}

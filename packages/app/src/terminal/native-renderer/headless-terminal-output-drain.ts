@@ -1,3 +1,5 @@
+import type { TerminalState } from "@getpaseo/protocol/messages";
+import { renderTerminalSnapshotToAnsi } from "../runtime/terminal-snapshot";
 import type { TerminalViewportState } from "./headless-terminal-state";
 import { nativeTerminalPerformanceNow } from "./terminal-performance";
 
@@ -12,9 +14,9 @@ export interface NativeTerminalParseSample {
 }
 
 export interface NativeTerminalOutputDrain {
-  replay(event: import("@getpaseo/client").TerminalReplayEvent): void;
   enqueueText(text: string): void;
-  resize(): void;
+  restoreText(text: string): void;
+  restoreSnapshot(snapshot: TerminalState): void;
   clear(): void;
   flush(): Promise<void>;
   dispose(): void;
@@ -23,8 +25,7 @@ export interface NativeTerminalOutputDrain {
 
 export interface NativeTerminalOutputDrainOptions {
   write: (chunk: string) => Promise<void>;
-  restoreSize: () => void;
-  reset: (size?: { rows: number; cols: number }) => void;
+  reset: () => void;
   getViewportState: () => TerminalViewportState | null;
   onPaint: (state: TerminalViewportState) => void;
   onParse?: (sample: NativeTerminalParseSample) => void;
@@ -67,22 +68,16 @@ export function createNativeTerminalOutputDrain(
   const chunkChars = options.chunkChars ?? NATIVE_TERMINAL_PARSE_CHUNK_CHARS;
   const chunksPerTurn = options.chunksPerTurn ?? NATIVE_TERMINAL_PARSE_CHUNKS_PER_TURN;
   const idleWaiters: Array<() => void> = [];
-  type Operation =
-    | { type: "write"; text: string }
-    | { type: "reset"; size?: { rows: number; cols: number } }
-    | { type: "restore-size" };
-  let operations: Operation[] = [];
-  let queuedChars = 0;
+  let pendingText = "";
   let drainScheduled = false;
   let draining = false;
   let disposed = false;
-  let replaying = false;
   let paintFrame: number | null = null;
   let generation = 0;
-  const replayDecoder = new TextDecoder();
+  let resetBeforeNextWrite = false;
 
   function resolveIdleIfReady(): void {
-    if (drainScheduled || draining || operations.length > 0) {
+    if (drainScheduled || draining || pendingText.length > 0) {
       return;
     }
     while (idleWaiters.length > 0) {
@@ -124,6 +119,15 @@ export function createNativeTerminalOutputDrain(
     });
   }
 
+  function replacePendingText(text: string): void {
+    generation += 1;
+    pendingText = text;
+    resetBeforeNextWrite = true;
+    cancelPendingPaint();
+    scheduleDrain();
+    resolveIdleIfReady();
+  }
+
   async function drainPending(): Promise<void> {
     if (disposed || draining) {
       return;
@@ -134,23 +138,16 @@ export function createNativeTerminalOutputDrain(
     let parsedChunks = 0;
 
     try {
-      while (operations.length > 0 && parsedChunks < chunksPerTurn) {
-        if (disposed || activeGeneration !== generation) return;
-        const operation = operations[0]!;
-        if (operation.type !== "write") {
-          operations.shift();
-          if (operation.type === "reset") options.reset(operation.size);
-          else {
-            options.restoreSize();
-            replaying = false;
-          }
-          requestPaint();
-          continue;
+      while (pendingText.length > 0 && parsedChunks < chunksPerTurn) {
+        if (disposed || activeGeneration !== generation) {
+          return;
         }
-        const chunk = operation.text.slice(0, chunkChars);
-        operation.text = operation.text.slice(chunk.length);
-        queuedChars -= chunk.length;
-        if (!operation.text) operations.shift();
+        if (resetBeforeNextWrite) {
+          options.reset();
+          resetBeforeNextWrite = false;
+        }
+        const chunk = pendingText.slice(0, chunkChars);
+        pendingText = pendingText.slice(chunk.length);
         const parseStart = nativeTerminalPerformanceNow();
         await options.write(chunk);
         if (disposed || activeGeneration !== generation) {
@@ -159,14 +156,14 @@ export function createNativeTerminalOutputDrain(
         options.onParse?.({
           durationMs: nativeTerminalPerformanceNow() - parseStart,
           parsedChars: chunk.length,
-          queuedChars,
+          queuedChars: pendingText.length,
         });
         requestPaint();
         parsedChunks += 1;
       }
     } finally {
       draining = false;
-      if (!disposed && operations.length > 0) {
+      if (!disposed && pendingText.length > 0) {
         scheduleDrain();
       }
       resolveIdleIfReady();
@@ -174,56 +171,38 @@ export function createNativeTerminalOutputDrain(
   }
 
   return {
-    replay(event): void {
-      if (disposed) return;
-      if (event.type === "begin") {
-        replaying = true;
-        generation++;
-        replayDecoder.decode();
-        operations = [
-          {
-            type: "reset",
-            size: event.rows && event.cols ? { rows: event.rows, cols: event.cols } : undefined,
-          },
-        ];
-        queuedChars = 0;
-        cancelPendingPaint();
-      } else if (event.type === "data") {
-        this.enqueueText(replayDecoder.decode(event.data, { stream: true }));
-      } else {
-        this.enqueueText(replayDecoder.decode());
-        operations.push({ type: "restore-size" });
-      }
-      scheduleDrain();
-    },
     enqueueText(text: string): void {
-      if (disposed || !text) return;
-      const last = operations.at(-1);
-      if (last?.type === "write") last.text += text;
-      else operations.push({ type: "write", text });
-      queuedChars += text.length;
+      if (disposed || text.length === 0) {
+        return;
+      }
+      pendingText += text;
       scheduleDrain();
     },
 
-    resize(): void {
-      if (disposed || replaying) return;
-      operations.push({ type: "restore-size" });
-      scheduleDrain();
+    restoreText(text: string): void {
+      if (disposed) {
+        return;
+      }
+      replacePendingText(text);
+    },
+
+    restoreSnapshot(snapshot: TerminalState): void {
+      if (disposed) {
+        return;
+      }
+      replacePendingText(renderTerminalSnapshotToAnsi(snapshot));
     },
 
     clear(): void {
-      if (disposed) return;
       generation += 1;
-      operations = [{ type: "restore-size" }, { type: "reset" }];
-      queuedChars = 0;
-      replayDecoder.decode();
+      pendingText = "";
+      resetBeforeNextWrite = false;
       cancelPendingPaint();
-      scheduleDrain();
       resolveIdleIfReady();
     },
 
     flush(): Promise<void> {
-      if (!drainScheduled && !draining && operations.length === 0) {
+      if (!drainScheduled && !draining && pendingText.length === 0) {
         return Promise.resolve();
       }
       scheduleDrain();
@@ -235,8 +214,8 @@ export function createNativeTerminalOutputDrain(
     dispose(): void {
       disposed = true;
       generation += 1;
-      operations = [];
-      queuedChars = 0;
+      pendingText = "";
+      resetBeforeNextWrite = false;
       cancelPendingPaint();
       while (idleWaiters.length > 0) {
         idleWaiters.shift()?.();
@@ -244,7 +223,7 @@ export function createNativeTerminalOutputDrain(
     },
 
     getQueuedChars(): number {
-      return queuedChars;
+      return pendingText.length;
     },
   };
 }

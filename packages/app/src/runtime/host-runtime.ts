@@ -1,6 +1,4 @@
-import { createHostPluginClientBundleStore } from "@/plugins/client-bundles";
 import { watchdog } from "@/watchdog";
-import { createHostLogger } from "./host-logger";
 import { createHostChannelTransport } from "@getpaseo/client/internal/hosts";
 import type { OwnedSubscription } from "@getpaseo/client";
 import type { HostDirectory } from "@getpaseo/protocol/hosts";
@@ -18,7 +16,6 @@ import {
   connectionFromListen,
   createRemoteSshHostConnection,
   normalizeStoredHostProfile,
-  pinRelayProtectedSecurityInProfiles,
   upsertHostConnectionInProfiles,
   registryHasConnection,
   relayConnectionFromOffer,
@@ -192,12 +189,6 @@ function hashForLog(value: string): string {
     hash = (hash * 31 + value.charCodeAt(index)) | 0;
   }
   return `h_${Math.abs(hash).toString(16)}`;
-}
-
-/** A daemon identity that negotiated protected relay security. */
-export interface RelaySecurityPin {
-  serverId: string;
-  daemonPublicKeyB64: string;
 }
 
 export interface HostRuntimeControllerDeps {
@@ -512,29 +503,6 @@ function buildConnectionCandidates(host: HostProfile): ConnectionCandidate[] {
   }));
 }
 
-/**
- * A pin learned from the active client is already enforced by that client, so
- * it keeps running. A pin that arrived from elsewhere (a strict offer) while
- * the active client is still legacy needs a client that enforces it.
- */
-function connectionNeedsNewClient(
-  previous: HostConnection,
-  next: HostConnection,
-  activeClient: DaemonClient | null,
-): boolean {
-  if (previous.type === "relay" && next.type === "relay") {
-    const { minimumSecurityMode: previousPin, ...previousRest } = previous;
-    const { minimumSecurityMode: nextPin, ...nextRest } = next;
-    if (!equal(previousRest, nextRest)) return true;
-    return (
-      nextPin === "protected" &&
-      previousPin !== "protected" &&
-      activeClient?.relaySecurityFloor !== "protected"
-    );
-  }
-  return !equal(previous, next);
-}
-
 function findConnectionById(host: HostProfile, connectionId: string | null): HostConnection | null {
   if (!connectionId) {
     return null;
@@ -590,9 +558,7 @@ function createDefaultDeps(
         runtimeGeneration,
         capabilities: appCapabilities,
         trace: createPerformanceTrace({ host: host.serverId, connection: connection.id }),
-        logger: createHostLogger(() => host.serverId),
         providerSnapshots: "wire",
-        createPluginClientBundleStore: createHostPluginClientBundleStore,
         ...(host.password ? { password: host.password } : {}),
         localCredential: () => readDesktopManagedLocalCredential(connection),
       } satisfies Omit<DaemonClientConfig, "url">;
@@ -650,9 +616,6 @@ function createDefaultDeps(
         e2ee: {
           enabled: true,
           daemonPublicKeyB64: connection.daemonPublicKeyB64,
-          ...(connection.minimumSecurityMode
-            ? { minimumMode: connection.minimumSecurityMode }
-            : {}),
         },
       });
     },
@@ -671,9 +634,7 @@ function createDefaultDeps(
             null,
           ),
           reconnect: { enabled: false },
-          logger: createHostLogger(() => host.serverId),
           appVersion: resolveAppVersion() ?? undefined,
-          createPluginClientBundleStore: createHostPluginClientBundleStore,
         });
         try {
           await client.connect();
@@ -690,7 +651,6 @@ function createDefaultDeps(
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
         capabilities: appCapabilities,
         trace: createPerformanceTrace({ host: host.serverId, connection: connection.id }),
-        createPluginClientBundleStore: createHostPluginClientBundleStore,
       });
     },
     getClientId: () => getOrCreateClientId(),
@@ -718,7 +678,6 @@ export class HostRuntimeController {
   private host: HostProfile;
   private deps: HostRuntimeControllerDeps;
   private onReconcileServerId: ((oldId: string, newId: string) => void) | null;
-  private onRelayProtectedSecurityNegotiated: ((input: RelaySecurityPin) => void) | null;
   private connectionMachineState: HostRuntimeConnectionMachineState;
   private connectionEpoch = 0;
   private snapshot: HostRuntimeSnapshot;
@@ -743,12 +702,10 @@ export class HostRuntimeController {
     host: HostProfile;
     deps?: HostRuntimeControllerDeps;
     onReconcileServerId?: (oldId: string, newId: string) => void;
-    onRelayProtectedSecurityNegotiated?: (input: RelaySecurityPin) => void;
   }) {
     this.host = input.host;
     this.deps = input.deps ?? createDefaultDeps();
     this.onReconcileServerId = input.onReconcileServerId ?? null;
-    this.onRelayProtectedSecurityNegotiated = input.onRelayProtectedSecurityNegotiated ?? null;
     this.connectionMachineState = {
       tag: "booting",
     };
@@ -850,12 +807,7 @@ export class HostRuntimeController {
       activeConnectionId &&
       previousActiveConnection &&
       nextActiveConnection &&
-      (connectionNeedsNewClient(
-        previousActiveConnection,
-        nextActiveConnection,
-        this.activeClient,
-      ) ||
-        passwordChanged)
+      (!equal(previousActiveConnection, nextActiveConnection) || passwordChanged)
     ) {
       this.connectionLastProbedAt.delete(activeConnectionId);
       await this.switchToConnection({ connectionId: activeConnectionId });
@@ -1024,9 +976,6 @@ export class HostRuntimeController {
       }
 
       const currentActiveConnectionId = this.snapshot.activeConnectionId;
-      if (currentActiveConnectionId) {
-        this.reconcileActiveProbeWithClient(currentActiveConnectionId, probeByConnectionId);
-      }
       const activeProbe = currentActiveConnectionId
         ? probeByConnectionId.get(currentActiveConnectionId)
         : null;
@@ -1063,46 +1012,37 @@ export class HostRuntimeController {
             expectedProbeVersion: requestVersion,
           });
         }
-        this.resetSwitchCandidate();
+        this.switchCandidateConnectionId = null;
+        this.switchCandidateHitCount = 0;
         return;
       }
 
-      // Adaptive switching counts fresh comparisons only. The probe map keeps the last known
-      // sample per connection for display and failover; a streak hit needs a candidate measured
-      // in this cycle and a heartbeat RTT from the socket that is active right now. Re-reading
-      // the cached map at every ten-second active tick turned one idle-probe sample into three
-      // "consecutive" wins, and a reconnected socket inherited its predecessor's RTT, so a
-      // working relay connection was replaced within seconds of coming online.
-      const sampledCandidates = connectionsToProbe.filter(
-        (connection) => connection.id !== currentActiveConnectionId,
-      );
-      if (sampledCandidates.length === 0) {
-        // An active-only tick carries no evidence about any candidate.
-        return;
-      }
-      const fastest =
-        sampledCandidates
-          .flatMap((connection) => {
-            const probe = probeByConnectionId.get(connection.id);
-            return probe?.status === "available"
-              ? [{ connectionId: connection.id, latencyMs: probe.latencyMs }]
-              : [];
-          })
-          .sort((left, right) => left.latencyMs - right.latencyMs)[0] ?? null;
-      if (!fastest) {
-        // Every candidate sampled this cycle failed: that breaks the streak.
-        this.resetSwitchCandidate();
+      if (!activeProbe || activeProbe.status !== "available") {
         return;
       }
 
-      const activeRttMs = this.currentActiveSocketRttMs();
-      if (activeRttMs === null) {
+      const available = Array.from(probeByConnectionId.entries())
+        .filter(
+          (entry): entry is [string, Extract<ConnectionProbeState, { status: "available" }>] =>
+            entry[1].status === "available",
+        )
+        .map(([connectionId, probe]) => ({
+          connectionId,
+          latencyMs: probe.latencyMs,
+        }))
+        .sort((left, right) => left.latencyMs - right.latencyMs);
+
+      const fastest = available[0] ?? null;
+      if (!fastest || fastest.connectionId === currentActiveConnectionId) {
+        this.switchCandidateConnectionId = null;
+        this.switchCandidateHitCount = 0;
         return;
       }
 
-      const improvement = activeRttMs - fastest.latencyMs;
+      const improvement = activeProbe.latencyMs - fastest.latencyMs;
       if (improvement < ADAPTIVE_SWITCH_THRESHOLD_MS) {
-        this.resetSwitchCandidate();
+        this.switchCandidateConnectionId = null;
+        this.switchCandidateHitCount = 0;
         return;
       }
 
@@ -1114,7 +1054,8 @@ export class HostRuntimeController {
       }
 
       if (this.switchCandidateHitCount >= ADAPTIVE_SWITCH_CONSECUTIVE_PROBES) {
-        this.resetSwitchCandidate();
+        this.switchCandidateConnectionId = null;
+        this.switchCandidateHitCount = 0;
         await this.switchToConnection({
           connectionId: fastest.connectionId,
           expectedProbeVersion: requestVersion,
@@ -1223,40 +1164,6 @@ export class HostRuntimeController {
         })();
       }
     });
-  }
-
-  // The client clears its heartbeat RTT when a socket connects, so a connected client's RTT
-  // describes the socket in use right now; a reconnecting client still carries the old one.
-  private currentActiveSocketRttMs(): number | null {
-    const client = this.snapshot.client;
-    if (!client || client.getConnectionState().status !== "connected") return null;
-    return client.getLastLivenessRttMs();
-  }
-
-  private resetSwitchCandidate(): void {
-    this.switchCandidateConnectionId = null;
-    this.switchCandidateHitCount = 0;
-  }
-
-  // The active connection is probed through its own client, which may still be
-  // reconnecting when the probe starts. A verdict taken then is stale if the client
-  // has since connected, so the decision uses the client's current state.
-  private reconcileActiveProbeWithClient(
-    connectionId: string,
-    probeByConnectionId: Map<string, ConnectionProbeState>,
-  ): void {
-    if (probeByConnectionId.get(connectionId)?.status !== "unavailable") return;
-    if (this.authRejectedConnectionIds.has(connectionId)) return;
-    const client = this.snapshot.client;
-    if (!client || client.getConnectionState().status !== "connected") return;
-    const rttMs = client.getLastLivenessRttMs();
-    probeByConnectionId.set(
-      connectionId,
-      rttMs === null
-        ? { status: "pending", latencyMs: null }
-        : { status: "available", latencyMs: rttMs },
-    );
-    this.updateSnapshot({ probeByConnectionId: new Map(probeByConnectionId) });
   }
 
   private isConnectionUnavailable(
@@ -1526,9 +1433,6 @@ export class HostRuntimeController {
           void failConnection(new DaemonAuthenticationError(client.authFailureReason));
           return;
         }
-        if (state.status === "connected") this.learnRelaySecurity(client, connection.id);
-        // Switch evidence belongs to the socket it was measured against.
-        if (state.status !== "connected") this.resetSwitchCandidate();
         this.applyConnectionEvent({ type: "client_state", state, lastError: client.lastError });
         this.updateSnapshot({
           ...toSnapshotConnectionPatch(this.connectionMachineState, this.connectionEpoch),
@@ -1540,25 +1444,6 @@ export class HostRuntimeController {
     } catch (error) {
       await failConnection(error);
     }
-  }
-
-  // The active client is the one place every connection path meets: clients
-  // created here and probe clients adopted from `connectToDaemon` both land in
-  // `switchToConnection`. A protected handshake observed here becomes the
-  // persisted pin for that daemon identity.
-  private learnRelaySecurity(client: DaemonClient, connectionId: string): void {
-    const connection = findConnectionById(this.host, connectionId);
-    if (
-      connection?.type !== "relay" ||
-      connection.minimumSecurityMode === "protected" ||
-      client.relaySecurityFloor !== "protected"
-    ) {
-      return;
-    }
-    this.onRelayProtectedSecurityNegotiated?.({
-      serverId: this.host.serverId,
-      daemonPublicKeyB64: connection.daemonPublicKeyB64,
-    });
   }
 
   adoptReconciledServerId(newServerId: string): void {
@@ -2109,6 +1994,39 @@ export class HostRuntimeStore {
     });
   }
 
+  private async upsertRelayConnection(input: {
+    serverId: string;
+    relayEndpoint: string;
+    useTls?: boolean;
+    daemonPublicKeyB64: string;
+    label?: string;
+    password?: string;
+  }): Promise<HostProfile> {
+    const relayEndpoint = normalizeHostPort(input.relayEndpoint);
+    const useTls = input.useTls ?? false;
+    const daemonPublicKeyB64 = input.daemonPublicKeyB64.trim();
+    if (!daemonPublicKeyB64) {
+      throw new Error("daemonPublicKeyB64 is required");
+    }
+    const explicitUseTls = input.useTls !== undefined;
+    const profile = await this.upsertHostConnection({
+      serverId: input.serverId,
+      label: input.label,
+      connection: {
+        id: useTls ? `relay:wss:${relayEndpoint}` : `relay:${relayEndpoint}`,
+        type: "relay",
+        relayEndpoint,
+        ...(explicitUseTls ? { useTls } : {}),
+        daemonPublicKeyB64,
+      },
+    });
+    if (input.password) {
+      await this.setHostPassword(profile.serverId, input.password);
+      return this.hosts.find((host) => host.serverId === profile.serverId) ?? profile;
+    }
+    return profile;
+  }
+
   // A pairing link (a URL, a QR code, or a pasted link) asks the user to
   // confirm when it adds a new host or changes a saved host's key, relay, or
   // TLS setting. The answer needs the saved hosts, so it waits for them to load.
@@ -2176,19 +2094,14 @@ export class HostRuntimeStore {
     password?: string,
   ): Promise<HostProfile> {
     const connection = relayConnectionFromOffer(offer);
-    if (!connection.daemonPublicKeyB64) {
-      throw new Error("daemonPublicKeyB64 is required");
-    }
-    const profile = await this.upsertHostConnection({
+    return this.upsertRelayConnection({
       serverId: offer.serverId,
+      relayEndpoint: connection.relayEndpoint,
+      useTls: connection.useTls,
+      daemonPublicKeyB64: connection.daemonPublicKeyB64,
       label,
-      connection,
+      password,
     });
-    if (password) {
-      await this.setHostPassword(profile.serverId, password);
-      return this.hosts.find((host) => host.serverId === profile.serverId) ?? profile;
-    }
-    return profile;
   }
 
   private async probeAndUpsertOffer(
@@ -2232,13 +2145,6 @@ export class HostRuntimeStore {
       label: input.hostname ?? undefined,
       connection,
     });
-  }
-
-  private async pinRelayProtectedSecurity(input: RelaySecurityPin): Promise<void> {
-    const next = pinRelayProtectedSecurityInProfiles({ profiles: this.hosts, ...input });
-    if (next === this.hosts) return;
-    this.setHostsAndSync(next);
-    await this.persistHosts();
   }
 
   private async updateHost(
@@ -2450,7 +2356,6 @@ export class HostRuntimeStore {
         host,
         deps: this.deps,
         onReconcileServerId: (oldId, newId) => this.reconcileServerId(oldId, newId),
-        onRelayProtectedSecurityNegotiated: (pin) => void this.pinRelayProtectedSecurity(pin),
       });
       this.controllers.set(host.serverId, controller);
       useSessionStore.getState().initializeSession(host.serverId, null);
@@ -2878,22 +2783,7 @@ export class HostRuntimeStore {
       replica,
       replaceDemandedAgentIds: (agentIds) => directory.setAgentRouteDemand(agentIds),
       drainQueuedAgentMessage: (agentId) => this.drainQueuedAgentMessage(serverId, agentId),
-      applyTurnLiveness: (agentId, transitions) =>
-        directory.applyAgentTurnLiveness(agentId, transitions),
-      ports: {
-        ...ports,
-        observe: (agentIds, cursors) => {
-          const keepAgents = directory.captureSubscribedAgents(agentIds);
-          const observation = ports.observe(agentIds, cursors);
-          return {
-            ready: observation.ready.then((answer) => {
-              if (answer?.agents) keepAgents(answer.agents);
-              return answer;
-            }),
-            release: () => observation.release(),
-          };
-        },
-      },
+      ports,
     });
   }
 

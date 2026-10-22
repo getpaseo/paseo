@@ -1,5 +1,3 @@
-import { useDisclosureHold } from "@/agent-stream/disclosure";
-import { MessagePreview, MessageSender } from "@/components/user-message";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
 import { AssistantForkMenu, type AssistantForkTarget } from "@/components/assistant-fork-menu";
@@ -28,7 +26,6 @@ import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
-import { useToolCallExpanded } from "@/tool-calls/expansion-context";
 import { useTargetAgentTitle } from "@/tool-calls/use-target-agent-title";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
@@ -92,7 +89,6 @@ export type { InlinePathTarget } from "@/assistant-file-links";
 export type { AssistantForkTarget };
 
 interface UserMessageProps {
-  sender?: AgentMessage["sender"];
   serverId?: string;
   agentId?: string;
   messageId?: string;
@@ -391,7 +387,6 @@ function UserMessageImagePill({ image, onOpen, accessibilityLabel }: UserMessage
 const MESSAGE_TEXT_DATASET = { messageText: "true" };
 
 export const UserMessage = memo(function UserMessage({
-  sender,
   serverId,
   agentId,
   messageId,
@@ -478,45 +473,42 @@ export const UserMessage = memo(function UserMessage({
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerLeave}
       >
-        {sender ? <MessageSender sender={sender} serverId={serverId} /> : null}
         <View style={userMessageStylesheet.bubble}>
-          <MessagePreview>
-            {hasImages ? (
-              <View style={imagePreviewContainerStyle}>
-                {images.map((image) => (
-                  <UserMessageImagePill
-                    key={image.id}
-                    image={image}
-                    onOpen={setLightboxMetadata}
-                    accessibilityLabel={t("composer.attachments.openImage")}
-                  />
-                ))}
-              </View>
-            ) : null}
-            {hasAttachments ? (
-              <View style={attachmentPreviewContainerStyle}>
-                {attachments.map((attachment, index) => {
-                  const content = getAgentAttachmentPillContent(attachment, t);
-                  return (
-                    <AttachmentFrame
-                      key={`${attachment.type}:${"number" in attachment ? attachment.number : index}`}
-                    >
-                      <AttachmentLabel
-                        icon={content.icon}
-                        title={content.title}
-                        subtitle={content.subtitle}
-                      />
-                    </AttachmentFrame>
-                  );
-                })}
-              </View>
-            ) : null}
-            {hasText ? (
-              <Text selectable style={userMessageStylesheet.text} dataSet={MESSAGE_TEXT_DATASET}>
-                {message}
-              </Text>
-            ) : null}
-          </MessagePreview>
+          {hasImages ? (
+            <View style={imagePreviewContainerStyle}>
+              {images.map((image) => (
+                <UserMessageImagePill
+                  key={image.id}
+                  image={image}
+                  onOpen={setLightboxMetadata}
+                  accessibilityLabel={t("composer.attachments.openImage")}
+                />
+              ))}
+            </View>
+          ) : null}
+          {hasAttachments ? (
+            <View style={attachmentPreviewContainerStyle}>
+              {attachments.map((attachment, index) => {
+                const content = getAgentAttachmentPillContent(attachment, t);
+                return (
+                  <AttachmentFrame
+                    key={`${attachment.type}:${"number" in attachment ? attachment.number : index}`}
+                  >
+                    <AttachmentLabel
+                      icon={content.icon}
+                      title={content.title}
+                      subtitle={content.subtitle}
+                    />
+                  </AttachmentFrame>
+                );
+              })}
+            </View>
+          ) : null}
+          {hasText ? (
+            <Text selectable style={userMessageStylesheet.text} dataSet={MESSAGE_TEXT_DATASET}>
+              {message}
+            </Text>
+          ) : null}
         </View>
         {hasText ? (
           <View
@@ -549,7 +541,7 @@ export const UserMessage = memo(function UserMessage({
 });
 
 interface AssistantTurnFooterProps {
-  getContent?: () => string;
+  getContent: () => string;
   completedAt?: Date;
   durationMs?: number | null;
   onFork?: (target: AssistantForkTarget) => Promise<void> | void;
@@ -557,15 +549,6 @@ interface AssistantTurnFooterProps {
 
 const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
   container: {
-    flex: 1,
-    minWidth: 0,
-    minHeight: 24,
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: theme.spacing[2],
-  },
-  actions: {
-    height: 24,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
@@ -577,24 +560,20 @@ const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
     marginTop: 0,
     marginLeft: -theme.spacing[1],
   },
-  labelButton: {
-    flex: 1,
-    minHeight: 24,
-    flexDirection: "row",
-    alignItems: "center",
-    minWidth: 0,
+  labelWrapper: {
+    position: "relative",
   },
-  label: {
-    width: "100%",
-    flexShrink: 0,
+  labelSizer: {
     color: theme.colors.foregroundMuted,
     fontSize: STREAM_METADATA_FONT_SIZE,
-  },
-  overlappingLabel: {
-    marginLeft: "-100%",
-  },
-  hiddenLabel: {
     opacity: 0,
+  },
+  labelOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    color: theme.colors.foregroundMuted,
+    fontSize: STREAM_METADATA_FONT_SIZE,
   },
 }));
 
@@ -662,51 +641,29 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
 
   return (
     <View style={assistantTurnFooterStylesheet.container}>
-      {getContent || canFork ? (
-        <View style={assistantTurnFooterStylesheet.actions}>
-          {getContent ? (
-            <TurnCopyButton
-              getContent={getContent}
-              containerStyle={assistantTurnFooterStylesheet.copyButton}
-            />
-          ) : null}
-          {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}
-        </View>
-      ) : null}
+      <TurnCopyButton
+        getContent={getContent}
+        containerStyle={assistantTurnFooterStylesheet.copyButton}
+      />
+      {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}
       {primaryLabel ? (
         <Pressable
-          style={assistantTurnFooterStylesheet.labelButton}
           onPress={handlePress}
           onHoverIn={handleHoverIn}
           onHoverOut={handleHoverOut}
           accessibilityRole={canSwap ? "button" : undefined}
           accessibilityLabel={canSwap ? `${durationLabel}, ended ${timestampLabel}` : primaryLabel}
         >
-          {/* Both labels participate in layout at the available width. Overlapping their
-              columns reserves the taller wrapped height without measuring text or characters. */}
-          <Text
-            testID={!showTimestamp ? "turn-footer-timing-label" : undefined}
-            aria-hidden={showTimestamp}
-            style={[
-              assistantTurnFooterStylesheet.label,
-              showTimestamp && assistantTurnFooterStylesheet.hiddenLabel,
-            ]}
-          >
-            {primaryLabel}
-          </Text>
-          {canSwap ? (
-            <Text
-              testID={showTimestamp ? "turn-footer-timing-label" : undefined}
-              aria-hidden={!showTimestamp}
-              style={[
-                assistantTurnFooterStylesheet.label,
-                assistantTurnFooterStylesheet.overlappingLabel,
-                !showTimestamp && assistantTurnFooterStylesheet.hiddenLabel,
-              ]}
-            >
-              {timestampLabel}
+          <View style={assistantTurnFooterStylesheet.labelWrapper}>
+            {/* Sizer reserves space for whichever label is longer so the
+                container width is stable across hover transitions. */}
+            <Text style={assistantTurnFooterStylesheet.labelSizer} aria-hidden>
+              {primaryLabel.length >= timestampLabel.length ? primaryLabel : timestampLabel}
             </Text>
-          ) : null}
+            <Text style={assistantTurnFooterStylesheet.labelOverlay}>
+              {showTimestamp ? timestampLabel : primaryLabel}
+            </Text>
+          </View>
         </Pressable>
       ) : null}
     </View>
@@ -1014,10 +971,6 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     borderBottomLeftRadius: 0,
     borderBottomRightRadius: 0,
   },
-  // Details that do not sit in a card leave the header as a lone highlighted pill.
-  pressableExpandedDetached: {
-    borderRadius: theme.borderRadius.full,
-  },
   detailWrapperBorderless: {
     borderWidth: 0,
   },
@@ -1233,7 +1186,6 @@ export const AssistantMessage = memo(function AssistantMessage({
     >
       <MarkdownRenderer
         text={revealedMessage}
-        agentCommands
         streaming={phase !== "complete" || revealedMessage.length < renderedMessage.text.length}
         client={client}
         workspaceRoot={workspaceRoot}
@@ -1517,9 +1469,9 @@ export const TodoListCard = memo(function TodoListCard({
     };
   }, [activity, t]);
 
-  const hold = useDisclosureHold();
-  const toggleExpanded = useCallback(() => setIsExpanded((prev) => !prev), []);
-  const handleToggle = useCallback(() => hold(toggleExpanded), [hold, toggleExpanded]);
+  const handleToggle = useCallback(() => {
+    setIsExpanded((prev) => !prev);
+  }, []);
 
   const renderDetails = useCallback(() => {
     return (
@@ -2096,10 +2048,7 @@ export const ExpandableBadge = memo(function ExpandableBadge({
       expandableBadgeStylesheet.pressable,
       isPressed && isInteractive ? expandableBadgeStylesheet.pressablePressed : null,
       isExpanded && expandableBadgeStylesheet.pressableExpanded,
-      isExpanded &&
-        (borderlessWhenExpanded
-          ? expandableBadgeStylesheet.pressableExpandedDetached
-          : expandableBadgeStylesheet.pressableExpandedAttached),
+      isExpanded && !borderlessWhenExpanded && expandableBadgeStylesheet.pressableExpandedAttached,
     ],
     [borderlessWhenExpanded, isExpanded, isInteractive, isPressed],
   );
@@ -2277,9 +2226,6 @@ interface ToolCallProps {
   defaultExpanded?: boolean;
   forceInline?: boolean;
   maxDetailHeight?: number;
-  itemId: string;
-  /** Shown as its own row rather than inside a tool call group. */
-  standalone?: boolean;
 }
 
 export const ToolCall = memo(function ToolCall({
@@ -2301,19 +2247,12 @@ export const ToolCall = memo(function ToolCall({
   defaultExpanded,
   forceInline = false,
   maxDetailHeight = 400,
-  itemId,
-  standalone = true,
 }: ToolCallProps) {
   const { openToolCall } = useToolCallSheet();
-  const { expanded: isExpanded, toggle: toggleExpanded } = useToolCallExpanded({
-    callId: itemId,
-    defaultExpanded: defaultExpanded ?? false,
-    standalone,
-  });
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded ?? false);
 
   const isMobile = useIsCompactFormFactor();
   const shouldRenderInline = !isMobile || forceInline;
-  const hold = useDisclosureHold();
 
   const effectiveDetail = useMemo<ToolCallDetail | undefined>(() => {
     if (detail) {
@@ -2365,12 +2304,10 @@ export const ToolCall = memo(function ToolCall({
         showLoadingSkeleton: presentation.isLoadingDetails,
       });
     } else {
-      hold(toggleExpanded);
+      setIsExpanded((prev) => !prev);
     }
   }, [
-    hold,
     shouldRenderInline,
-    toggleExpanded,
     openToolCall,
     toolName,
     presentation.detail,
@@ -2476,7 +2413,5 @@ function areToolCallPropsEqual(previous: ToolCallProps, next: ToolCallProps) {
   if (previous.defaultExpanded !== next.defaultExpanded) return false;
   if (previous.forceInline !== next.forceInline) return false;
   if (previous.maxDetailHeight !== next.maxDetailHeight) return false;
-  if (previous.itemId !== next.itemId) return false;
-  if (previous.standalone !== next.standalone) return false;
   return true;
 }

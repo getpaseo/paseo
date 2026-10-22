@@ -2,7 +2,7 @@ import { Terminal as HeadlessTerminal } from "@xterm/headless";
 import { Terminal as ClientTerminal } from "@xterm/xterm";
 import { describe, expect, it } from "vitest";
 
-import { SerializeAddon } from "@xterm/addon-serialize";
+import { renderTerminalSnapshotToAnsi } from "./terminal-snapshot";
 
 interface SnapshotCell {
   char: string;
@@ -122,7 +122,7 @@ function extractRow(terminal: ClientTerminal | HeadlessTerminal, row: number): S
 }
 
 describe("terminal-snapshot", () => {
-  it("replays upstream serialized ANSI into a client xterm with matching grid, scrollback, and cursor presentation", async () => {
+  it("replays extracted terminal state into a client xterm with matching grid, scrollback, and cursor presentation", async () => {
     const source = new HeadlessTerminal({
       rows: 4,
       cols: 12,
@@ -138,8 +138,6 @@ describe("terminal-snapshot", () => {
     await writeToTerminal(source, "\u001b[2 q");
     await writeToTerminal(source, "\u001b[?25l");
 
-    const serializer = new SerializeAddon();
-    source.loadAddon(serializer);
     const snapshot = extractState(source);
 
     const client = new ClientTerminal({
@@ -149,7 +147,7 @@ describe("terminal-snapshot", () => {
       scrollback: 100,
     });
 
-    await writeToTerminal(client, serializer.serialize() + "\x1b[2 q\x1b[?25l");
+    await writeToTerminal(client, renderTerminalSnapshotToAnsi(snapshot));
 
     expect(extractState(client)).toEqual(snapshot);
   });

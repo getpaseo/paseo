@@ -1,8 +1,6 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
   Fragment,
-  createContext,
-  useContext,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -49,7 +47,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/component
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
-import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
+import { buttonControlHeight } from "@/components/ui/control-geometry";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useWorkspaceTabLayout } from "@/screens/workspace/use-workspace-tab-layout";
@@ -84,7 +82,6 @@ import { buildWorkspaceKeyboardHandlerId } from "@/keyboard/handler-id";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import { WorkspaceNewTabMenuContent } from "@/screens/workspace/workspace-new-tab-menu";
 import {
-  paneContentToolbarIconSize,
   paneContentToolbarTrailingPadding,
   ToolbarButton,
   ToolbarControls,
@@ -118,8 +115,6 @@ const TAB_ICON_WIDTH = 14;
 const TAB_CONTENT_GAP = 4;
 const TAB_DROP_INDICATOR_WIDTH = 4;
 const TAB_MODIFIED_DOT_SIZE = 8;
-// The tab rail only renders in the wide layout, so the device alone picks its glyph size.
-const TAB_RAIL_GLYPH_SIZE = paneContentToolbarIconSize(false);
 const TAB_MIN_WIDTH = 64;
 const TAB_MAX_WIDTH = 160;
 const TAB_CLOSE_BUTTON_RESERVED_WIDTH = 0;
@@ -254,7 +249,7 @@ function WorkspaceNewTabButton({
         testID="workspace-new-tab-button"
         style={placement === "inline" ? styles.inlineNewTabButton : undefined}
       >
-        <ThemedPlus size={TAB_RAIL_GLYPH_SIZE} uniProps={extraMutedColorMapping} />
+        <ThemedPlus size={14} uniProps={extraMutedColorMapping} />
       </ToolbarButton>
       <WorkspaceNewTabMenuContent
         serverId={serverId}
@@ -303,11 +298,11 @@ function WorkspacePaneToolbarActions({
   const splitDownKeys = useShortcutKeys("workspace-pane-split-down");
   const splitActionsVisible = showSplitActions && Boolean(onSplitRight && onSplitDown);
   const splitRightLeading = useMemo(
-    () => <ThemedColumns2 size={TAB_RAIL_GLYPH_SIZE} uniProps={extraMutedColorMapping} />,
+    () => <ThemedColumns2 size={14} uniProps={extraMutedColorMapping} />,
     [],
   );
   const splitDownLeading = useMemo(
-    () => <ThemedRows2 size={TAB_RAIL_GLYPH_SIZE} uniProps={extraMutedColorMapping} />,
+    () => <ThemedRows2 size={14} uniProps={extraMutedColorMapping} />,
     [],
   );
   const splitRightTrailing = useMemo(
@@ -346,9 +341,9 @@ function WorkspacePaneToolbarActions({
           onPress={onTogglePaneMaximized}
         >
           {paneMaximized ? (
-            <ThemedMinimize size={TAB_RAIL_GLYPH_SIZE} uniProps={extraMutedColorMapping} />
+            <ThemedMinimize size={14} uniProps={extraMutedColorMapping} />
           ) : (
-            <ThemedMaximize size={TAB_RAIL_GLYPH_SIZE} uniProps={extraMutedColorMapping} />
+            <ThemedMaximize size={14} uniProps={extraMutedColorMapping} />
           )}
         </ToolbarButton>
       ) : null}
@@ -359,7 +354,7 @@ function WorkspacePaneToolbarActions({
             label={t("workspace.git.actions.moreActions")}
             testID="workspace-split-pane-menu"
           >
-            <ThemedEllipsis size={TAB_RAIL_GLYPH_SIZE} uniProps={extraMutedColorMapping} />
+            <ThemedEllipsis size={14} uniProps={extraMutedColorMapping} />
           </ToolbarButton>
           <DropdownMenuContent
             side="bottom"
@@ -414,7 +409,7 @@ function WorkspaceExitFocusModeButton({
         testID="workspace-exit-focus-mode"
         onPress={onPress}
       >
-        <ThemedX size={TAB_RAIL_GLYPH_SIZE} uniProps={mutedColorMapping} />
+        <ThemedX size={14} uniProps={mutedColorMapping} />
       </ToolbarButton>
     </View>
   );
@@ -488,13 +483,6 @@ interface WorkspaceTabLabel {
 interface WorkspaceTabLabelMeasurement {
   label: string;
   width: number;
-}
-
-const TabMeasurementCache = createContext<Map<string, WorkspaceTabLabelMeasurement> | null>(null);
-
-export function WorkspaceTabMeasurementScope({ children }: { children: React.ReactNode }) {
-  const cache = useMemo(() => new Map<string, WorkspaceTabLabelMeasurement>(), []);
-  return <TabMeasurementCache.Provider value={cache}>{children}</TabMeasurementCache.Provider>;
 }
 
 interface WorkspaceTabTrackSnapshot {
@@ -970,47 +958,6 @@ function TabChip({
   );
 }
 
-export function useWorkspaceNewTabKeyboardAction({
-  handlerName = "workspace-new-tab",
-  ownsKeyboardShortcuts,
-  normalizedServerId,
-  normalizedWorkspaceId,
-  paneId,
-  createNewTab,
-}: {
-  handlerName?: string;
-  ownsKeyboardShortcuts: boolean;
-  normalizedServerId: string;
-  normalizedWorkspaceId: string;
-  paneId?: string;
-  createNewTab: () => void;
-}) {
-  const handleNewTabKeyboardAction = useCallback(
-    (action: KeyboardActionDefinition): boolean => {
-      if (!ownsKeyboardShortcuts) return false;
-      if (action.id === "workspace.tab.menu.open") {
-        createNewTab();
-        return true;
-      }
-      return false;
-    },
-    [createNewTab, ownsKeyboardShortcuts],
-  );
-
-  useKeyboardActionHandler({
-    handlerId: buildWorkspaceKeyboardHandlerId({
-      name: handlerName,
-      serverId: normalizedServerId,
-      workspaceId: normalizedWorkspaceId,
-      paneId,
-    }),
-    actions: ["workspace.tab.menu.open"],
-    enabled: ownsKeyboardShortcuts,
-    priority: 200,
-    handle: handleNewTabKeyboardAction,
-  });
-}
-
 export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
   const [presentations, setPresentations] = useState(
     () => new Map<string, WorkspaceTabPresentation>(),
@@ -1112,13 +1059,9 @@ function ResolvedWorkspaceDesktopTabsRow({
   const tabsScrollRef = useRef<ScrollView>(null);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
   const tabScrollBoundary = useHorizontalScrollBoundary();
-  const measurementCache = useContext(TabMeasurementCache);
-  const [labelMeasurements, setLabelMeasurements] = useState(() => new Map(measurementCache ?? []));
-  useLayoutEffect(() => {
-    if (!measurementCache) return;
-    measurementCache.clear();
-    for (const [key, value] of labelMeasurements) measurementCache.set(key, value);
-  }, [measurementCache, labelMeasurements]);
+  const [labelMeasurements, setLabelMeasurements] = useState(
+    () => new Map<string, WorkspaceTabLabelMeasurement>(),
+  );
   const [trackSnapshot, setTrackSnapshot] = useState<WorkspaceTabTrackSnapshot | null>(null);
 
   const handleTabsContainerLayout = useCallback((event: LayoutChangeEvent) => {
@@ -1303,12 +1246,29 @@ function ResolvedWorkspaceDesktopTabsRow({
 
   const createNewTab = useCallback(() => onCreateNewTab({ paneId }), [onCreateNewTab, paneId]);
 
-  useWorkspaceNewTabKeyboardAction({
-    ownsKeyboardShortcuts,
-    normalizedServerId,
-    normalizedWorkspaceId,
-    paneId,
-    createNewTab,
+  const handleNewTabKeyboardAction = useCallback(
+    (action: KeyboardActionDefinition): boolean => {
+      if (!ownsKeyboardShortcuts) return false;
+      if (action.id === "workspace.tab.menu.open") {
+        createNewTab();
+        return true;
+      }
+      return false;
+    },
+    [createNewTab, ownsKeyboardShortcuts],
+  );
+
+  useKeyboardActionHandler({
+    handlerId: buildWorkspaceKeyboardHandlerId({
+      name: "workspace-new-tab",
+      serverId: normalizedServerId,
+      workspaceId: normalizedWorkspaceId,
+      paneId,
+    }),
+    actions: ["workspace.tab.menu.open"],
+    enabled: ownsKeyboardShortcuts,
+    priority: 200,
+    handle: handleNewTabKeyboardAction,
   });
 
   const rail: WorkspaceTabRailSurface = host === "explorer" ? "sidebar" : "surface";
@@ -1679,15 +1639,15 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[1],
   },
   inlineNewTabButton: {
-    width: CONTROL_HEIGHTS.sm,
-    height: CONTROL_HEIGHTS.sm,
+    width: buttonControlHeight.xs,
+    height: buttonControlHeight.xs,
   },
   paneSplitActions: {
     paddingHorizontal: PANE_SPLIT_ACTIONS_HORIZONTAL_PADDING,
     marginRight: PANE_SPLIT_ACTIONS_OUTER_MARGIN,
   },
   tab: {
-    height: CONTROL_HEIGHTS.sm,
+    height: buttonControlHeight.xs,
     paddingHorizontal: TAB_CHIP_HORIZONTAL_PADDING,
     borderRadius: theme.borderRadius.md,
     flexDirection: "row",

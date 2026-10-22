@@ -33,9 +33,7 @@ export async function fetchWorkspaceGitRemote(
   try {
     await run(["fetch", "origin", "--prune"], {
       cwd,
-      // Terminal prompting and graphical credential prompting have separate controls.
-      // Keep cached credentials available, but never start a login from a passive fetch.
-      envOverlay: { GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", GCM_INTERACTIVE: "0" },
+      envOverlay: { GIT_TERMINAL_PROMPT: "0" },
       timeout: 120_000,
     });
   } catch (caught) {

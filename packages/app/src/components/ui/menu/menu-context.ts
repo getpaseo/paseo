@@ -7,11 +7,9 @@ import {
   goBack as goBackPath,
   MENU_ROOT_PATH,
   openSubPage,
-  pruneMissingPages,
   type MenuPath,
 } from "./menu-navigation";
 import type { Rect } from "../anchor";
-import { useDismissibleOverlay } from "../overlay-dismissal";
 
 /**
  * How a menu draws itself once it is open.
@@ -42,10 +40,7 @@ export interface MenuContextValue {
   path: MenuPath;
   openSub: (sub: { id: string; depth: number }) => void;
   closeSub: (depth: number) => void;
-  /** Pops the open page. False at the root, where Back is the surface's to answer. */
-  goBack: () => boolean;
-  /** Closes any open page that no longer has a definition, falling back to its parent. */
-  prunePages: (hasPage: (id: string) => boolean) => void;
+  goBack: () => void;
 }
 
 const MenuContext = createContext<MenuContextValue | null>(null);
@@ -118,7 +113,6 @@ export function useMenuState({
 
   const [isOpen, setIsOpenState] = useControllableOpenState({ open, defaultOpen, onOpenChange });
   useDismissKeyboardOnOpen(isOpen);
-  useDismissibleOverlay(isOpen, () => setOpen(false));
 
   // A menu always reopens on its root page, against a freshly measured anchor. Keeping either
   // would reopen the surface three levels deep, or at the coordinates of the last right click.
@@ -166,13 +160,7 @@ export function useMenuState({
   }, []);
 
   const goBack = useCallback(() => {
-    if (path.length === 0) return false;
     setPath((current) => goBackPath(current));
-    return true;
-  }, [path.length]);
-
-  const prunePages = useCallback((hasPage: (id: string) => boolean) => {
-    setPath((current) => pruneMissingPages(current, hasPage));
   }, []);
 
   return useMemo(
@@ -188,19 +176,7 @@ export function useMenuState({
       openSub,
       closeSub,
       goBack,
-      prunePages,
     }),
-    [
-      isOpen,
-      setOpen,
-      selectItem,
-      anchorRect,
-      presentation,
-      path,
-      openSub,
-      closeSub,
-      goBack,
-      prunePages,
-    ],
+    [isOpen, setOpen, selectItem, anchorRect, presentation, path, openSub, closeSub, goBack],
   );
 }

@@ -1,7 +1,5 @@
 import { useCallback, useMemo, useState, type ReactElement, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
-import { GestureDetector } from "react-native-gesture-handler";
-import Animated from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 import {
   MENU_ITEM_HEIGHT,
@@ -10,19 +8,11 @@ import {
   MenuSurface,
   MenuTrigger,
   useMenuContext,
-  useMenuDepth,
-  type MenuPageDefinition,
   type MenuTriggerState,
 } from "@/components/ui/menu";
 import { StatusRing } from "@/components/status-ring";
-import { bySizing } from "@/components/ui/control-geometry";
-import {
-  HorizontalScrollBoundaryShades,
-  useHorizontalScrollBoundary,
-} from "@/components/ui/horizontal-scroll-boundary";
 import { STATUS_RING_HALO_INSET } from "@/components/status-ring/geometry";
 import { isWeb } from "@/constants/platform";
-import { usePanelAwareHorizontalScrollGesture } from "@/mobile-panels/gestures";
 import { getStatusDotColor } from "@/utils/status-dot-color";
 import { STATUS_INDICATOR_FILLED_DOT_SIZE } from "@/utils/status-indicator-geometry";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
@@ -37,41 +27,14 @@ import { COMPOSER_PILL_CLEARANCE, composerPillStyles } from "./pill-styles";
  * on every platform.
  *
  * The bar floats over the transcript with no background, so content remains visible underneath.
- * Its host gives the scroll viewport a small bottom inset for as long as the bar is mounted, with
- * or without pills: that keeps the final footer clear, and pills that come and go every turn do not
- * move the transcript.
+ * Its host gives the scroll viewport a small bottom inset only when the bar exists; that keeps
+ * the final footer clear without turning the overlay into a layout band.
  */
 export function ComposerTrackBar({ children }: { children: ReactNode }): ReactElement {
-  const scrollGesture = usePanelAwareHorizontalScrollGesture();
-  const scrollBoundary = useHorizontalScrollBoundary();
   return (
     <View style={styles.bar} pointerEvents="box-none">
-      <View style={styles.trackViewport} pointerEvents="box-none">
-        <GestureDetector gesture={scrollGesture}>
-          <Animated.ScrollView
-            testID="composer-track-scroll"
-            style={styles.trackScroller}
-            horizontal
-            keyboardShouldPersistTaps="handled"
-            showsHorizontalScrollIndicator={false}
-            onLayout={scrollBoundary.onLayout}
-            onContentSizeChange={scrollBoundary.onContentSizeChange}
-            onScroll={scrollBoundary.onScroll}
-            scrollEventThrottle={16}
-          >
-            <View style={styles.track} pointerEvents="box-none">
-              {children}
-            </View>
-          </Animated.ScrollView>
-        </GestureDetector>
-        <HorizontalScrollBoundaryShades
-          visible
-          backdrop="surface"
-          testIDPrefix="composer-track-scroll-shade"
-          bottomInset={0}
-          leftStyle={scrollBoundary.leftShadeStyle}
-          rightStyle={scrollBoundary.rightShadeStyle}
-        />
+      <View style={styles.track} pointerEvents="box-none">
+        {children}
       </View>
     </View>
   );
@@ -98,8 +61,6 @@ export interface ComposerTrackPillProps {
   accessibilityLabel?: string;
   /** Panel body. Rendered into a popover on wide screens and a sheet on compact ones. */
   children: ReactNode;
-  /** Pages a row can open in place of the list (`ComposerTrackRow` `opensPage`). */
-  pages?: readonly MenuPageDefinition[];
 }
 
 /**
@@ -124,7 +85,6 @@ export function ComposerTrackPill({
   testID,
   accessibilityLabel,
   children,
-  pages,
 }: ComposerTrackPillProps): ReactElement {
   return (
     <MenuRoot compactMode="sheet">
@@ -138,7 +98,6 @@ export function ComposerTrackPill({
         align="start"
         offset={PANEL_OFFSET}
         sheetTitle={panelTitle}
-        pages={pages}
         minWidth={PANEL_MIN_WIDTH}
         maxWidth={PANEL_MAX_WIDTH}
         maxHeight={PANEL_MAX_HEIGHT}
@@ -240,11 +199,6 @@ export interface ComposerTrackRowProps {
    * lands inside the panel is not.
    */
   closeOnSelect?: boolean;
-  /**
-   * A page of the panel this row opens in place of the list, instead of running `onPress`. The
-   * panel stays open: Back returns to the list.
-   */
-  opensPage?: string;
   disabled?: boolean;
   accessibilityLabel?: string;
   testID?: string;
@@ -266,27 +220,17 @@ export function ComposerTrackRow({
   children,
   onPress,
   closeOnSelect = true,
-  opensPage,
   disabled = false,
   accessibilityLabel,
   testID,
 }: ComposerTrackRowProps): ReactElement {
-  const { selectItem, openSub } = useMenuContext("ComposerTrackRow");
-  const depth = useMenuDepth();
+  const { selectItem } = useMenuContext("ComposerTrackRow");
   const [hovered, setHovered] = useState(false);
   const handlePointerEnter = useCallback(() => setHovered(true), []);
   const handlePointerLeave = useCallback(() => setHovered(false), []);
-  const handleSelect = useCallback(() => {
-    if (opensPage) {
-      selectItem(() => openSub({ id: opensPage, depth }), false);
-      return;
-    }
-    selectItem(onPress, closeOnSelect);
-  }, [closeOnSelect, depth, onPress, openSub, opensPage, selectItem]);
-
-  const itemDataSet = useMemo(
-    () => ({ menuItem: "true", menuDisabled: disabled ? "true" : "false" }),
-    [disabled],
+  const handleSelect = useCallback(
+    () => selectItem(onPress, closeOnSelect),
+    [closeOnSelect, onPress, selectItem],
   );
 
   const renderRow = useCallback(
@@ -302,15 +246,14 @@ export function ComposerTrackRow({
     [hovered, renderRow],
   );
 
-  if (!onPress && !opensPage) {
+  if (!onPress) {
     return <View accessibilityLabel={accessibilityLabel}>{renderRow(false)}</View>;
   }
 
   return (
     <View onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave}>
       <Pressable
-        accessibilityRole="menuitem"
-        dataSet={itemDataSet}
+        accessibilityRole="button"
         accessibilityLabel={accessibilityLabel}
         testID={testID}
         disabled={disabled}
@@ -333,11 +276,7 @@ export function ComposerTrackRow({
  * knockout for marks that sit on top of an icon, and nothing sits under this one, so it comes off
  * too — leaving every mark's visible edge on the same rail whatever state it is in.
  */
-export function ComposerTrackMark({
-  bucket,
-}: {
-  bucket: SidebarStateBucket | null;
-}): ReactElement | null {
+function ComposerTrackMark({ bucket }: { bucket: SidebarStateBucket | null }): ReactElement | null {
   if (!bucket) {
     return null;
   }
@@ -377,17 +316,16 @@ const styles = StyleSheet.create((theme) => {
   // The rail every panel row sits on: inset from the panel edge so the fill is a rounded block
   // inside it, and tall enough that revealing an action button cannot resize the row.
   //
-  // Touch and pointer sizing differ here and only here. A finger needs the row a menu row gets
-  // on touch (`MENU_ITEM_HEIGHT` is always its touch value at `xs`); a pointer does not, and the
-  // popover keeps its density.
+  // Compact and desktop differ here and only here. A finger needs the taller row a menu row gets
+  // on compact; a pointer does not, and the popover keeps its density.
   const trackRow = {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    minHeight: bySizing({ touch: MENU_ITEM_HEIGHT.xs, pointer: 32 }),
+    minHeight: { xs: MENU_ITEM_HEIGHT.xs, md: 32 },
     marginHorizontal: theme.spacing[1],
     paddingHorizontal: theme.spacing[2],
-    paddingVertical: bySizing({ touch: theme.spacing[2], pointer: theme.spacing[1] }),
+    paddingVertical: { xs: theme.spacing[2], md: theme.spacing[1] },
     borderRadius: theme.borderRadius.md,
   } as const;
 
@@ -404,21 +342,9 @@ const styles = StyleSheet.create((theme) => {
         md: COMPOSER_PILL_CLEARANCE.wide,
       },
     },
-    trackViewport: {
+    track: {
       width: "100%",
       maxWidth: theme.contentMaxWidth,
-      minWidth: 0,
-      flexGrow: 0,
-      flexShrink: 1,
-    },
-    // Only as wide as its pills, so the rest of the row passes touches to the transcript. The
-    // scroller can't use box-none for that: Android's horizontal ScrollView won't scroll with it.
-    trackScroller: {
-      alignSelf: "flex-start",
-      // Web sizes a flex-start scroller to its content, so without a cap it overflows the bar.
-      maxWidth: "100%",
-    },
-    track: {
       flexDirection: "row",
       alignItems: "center",
       gap: theme.spacing[1],

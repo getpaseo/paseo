@@ -1,4 +1,3 @@
-import { findMountedWindowStart } from "@/agent-stream/history-window";
 import { z } from "zod";
 import {
   AgentStatusSchema,
@@ -20,7 +19,6 @@ import {
   type AgentToolCallData,
   type StreamItem,
 } from "@/types/stream";
-import type { UnsettledTurn } from "@/timeline/turn-liveness";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { clearLegacyReplicaCache } from "./legacy-cleanup";
 import {
@@ -68,8 +66,6 @@ export interface CachedTimeline {
   items: StreamItem[];
   range: AgentTimelineCursorState | null;
   hasOlder: boolean;
-  /** Set when these messages were captured while a turn was open and not yet caught up. */
-  unsettledTurn?: UnsettledTurn;
 }
 
 const PERSIST_DELAY_MS = 1_000;
@@ -235,7 +231,6 @@ const StoredAgentSnapshotSchema = z.strictObject({
   updatedAt: IsoDateSchema,
   lastUserMessageAt: IsoDateSchema.nullable(),
   status: AgentStatusSchema,
-  backgroundWork: z.object({ count: z.number().int().nonnegative() }).optional(),
   activeTurn: z
     .strictObject({
       turnId: z.string(),
@@ -251,8 +246,6 @@ const StoredAgentSnapshotSchema = z.strictObject({
   lastError: z.string().optional(),
   title: z.string().nullable(),
   labels: z.record(z.string(), z.string()),
-  // Optional: clients without background_agents never received a background agent to cache.
-  background: z.boolean().optional(),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: IsoDateSchema.nullable().optional(),
@@ -303,10 +296,6 @@ const WorkspaceGitRuntimeSchema = z
   .optional();
 
 const StoredWorkspaceSchema = z.strictObject({
-  parentWorkspaceId: z.string().optional(),
-  // Require both keys: a cursor without these values would preserve the wrong sort on reconnect.
-  createdAt: IsoDateSchema.nullable(),
-  lastUserMessageAt: IsoDateSchema.nullable(),
   id: z.string(),
   projectId: z.string(),
   projectDisplayName: z.string(),
@@ -359,9 +348,6 @@ const StoredTimelineSchema = z.strictObject({
     })
     .nullable(),
   hasOlder: z.boolean(),
-  unsettledTurn: z
-    .strictObject({ turnId: z.string().nullable(), startedAt: IsoDateSchema.nullable() })
-    .optional(),
 });
 
 type StoredAgent = z.infer<typeof StoredAgentSchema>;
@@ -418,16 +404,6 @@ function deserializeTimeline(stored: StoredTimeline | null): CachedTimeline | nu
     items: stored.items.map(deserializeTimelineItem),
     range: stored.range,
     hasOlder: stored.hasOlder,
-    ...(stored.unsettledTurn
-      ? {
-          unsettledTurn: {
-            turnId: stored.unsettledTurn.turnId,
-            startedAt: stored.unsettledTurn.startedAt
-              ? new Date(stored.unsettledTurn.startedAt)
-              : null,
-          },
-        }
-      : {}),
   };
 }
 
@@ -521,9 +497,6 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         version: item.version,
         data: item.data,
       };
-    // A folded turn's summary row is presentation, not timeline.
-    case "turn_summary":
-      return null;
   }
 }
 
@@ -635,31 +608,6 @@ function serializeAgentTurn(agent: Agent): NonNullable<StoredAgent["turn"]> {
   };
 }
 
-function serializeAgentCapabilities(
-  capabilities: Agent["capabilities"],
-): StoredAgent["snapshot"]["capabilities"] {
-  return {
-    supportsStreaming: capabilities.supportsStreaming,
-    supportsSessionPersistence: capabilities.supportsSessionPersistence,
-    ...(capabilities.supportsSessionListing !== undefined
-      ? { supportsSessionListing: capabilities.supportsSessionListing }
-      : {}),
-    supportsDynamicModes: capabilities.supportsDynamicModes,
-    supportsMcpServers: capabilities.supportsMcpServers,
-    supportsReasoningStream: capabilities.supportsReasoningStream,
-    supportsToolInvocations: capabilities.supportsToolInvocations,
-    ...(capabilities.supportsRewindConversation !== undefined
-      ? { supportsRewindConversation: capabilities.supportsRewindConversation }
-      : {}),
-    ...(capabilities.supportsRewindFiles !== undefined
-      ? { supportsRewindFiles: capabilities.supportsRewindFiles }
-      : {}),
-    ...(capabilities.supportsRewindBoth !== undefined
-      ? { supportsRewindBoth: capabilities.supportsRewindBoth }
-      : {}),
-  };
-}
-
 function serializeAgent(agent: Agent): StoredAgent {
   const snapshot = {
     id: agent.id,
@@ -680,7 +628,26 @@ function serializeAgent(agent: Agent): StoredAgent {
           },
         }
       : {}),
-    capabilities: serializeAgentCapabilities(agent.capabilities),
+    capabilities: {
+      supportsStreaming: agent.capabilities.supportsStreaming,
+      supportsSessionPersistence: agent.capabilities.supportsSessionPersistence,
+      ...(agent.capabilities.supportsSessionListing !== undefined
+        ? { supportsSessionListing: agent.capabilities.supportsSessionListing }
+        : {}),
+      supportsDynamicModes: agent.capabilities.supportsDynamicModes,
+      supportsMcpServers: agent.capabilities.supportsMcpServers,
+      supportsReasoningStream: agent.capabilities.supportsReasoningStream,
+      supportsToolInvocations: agent.capabilities.supportsToolInvocations,
+      ...(agent.capabilities.supportsRewindConversation !== undefined
+        ? { supportsRewindConversation: agent.capabilities.supportsRewindConversation }
+        : {}),
+      ...(agent.capabilities.supportsRewindFiles !== undefined
+        ? { supportsRewindFiles: agent.capabilities.supportsRewindFiles }
+        : {}),
+      ...(agent.capabilities.supportsRewindBoth !== undefined
+        ? { supportsRewindBoth: agent.capabilities.supportsRewindBoth }
+        : {}),
+    },
     currentModeId: agent.currentModeId,
     availableModes: [],
     pendingPermissions: [],
@@ -688,9 +655,7 @@ function serializeAgent(agent: Agent): StoredAgent {
     ...(agent.lastError ? { lastError: agent.lastError } : {}),
     title: agent.title,
     labels: agent.labels,
-    ...(agent.background ? { background: true } : {}),
     requiresAttention: agent.requiresAttention ?? false,
-    backgroundWork: agent.backgroundWork,
     attentionReason: agent.attentionReason ?? null,
     attentionTimestamp: agent.attentionTimestamp?.toISOString() ?? null,
     archivedAt: agent.archivedAt?.toISOString() ?? null,
@@ -723,15 +688,8 @@ function deserializeAgent(serverId: string, stored: StoredAgent): Agent {
   };
 }
 
-function restoreWorkspace(stored: StoredWorkspace): WorkspaceDescriptor {
-  return normalizeWorkspaceDescriptor({ ...stored, createdAt: stored.createdAt ?? undefined });
-}
-
 function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
   return {
-    parentWorkspaceId: workspace.parentWorkspaceId,
-    createdAt: workspace.createdAt?.toISOString() ?? null,
-    lastUserMessageAt: workspace.lastUserMessageAt?.toISOString() ?? null,
     id: workspace.id,
     projectId: workspace.projectId,
     projectDisplayName: workspace.projectDisplayName,
@@ -784,58 +742,94 @@ function serializeProject(project: ProjectDescriptor): StoredProject {
   };
 }
 
-function isTimelineItemStoredLosslessly(item: StreamItem): boolean {
-  switch (item.kind) {
-    case "user_message":
-      return (item.images?.length ?? 0) === 0 && (item.attachments?.length ?? 0) === 0;
-    case "tool_call":
-      return item.payload.source === "agent";
-    default:
-      return true;
+// Whether the stored row renders the same as refetching it. User message images and attachments
+// are local presentation the daemon never returns, so dropping them matches a refetch.
+function isTimelineItemStoredAsRefetched(item: StreamItem): boolean {
+  return item.kind !== "tool_call" || item.payload.source === "agent";
+}
+
+interface CertifiedTimelineWindow {
+  start: number;
+  startSeq: number;
+  hasOlder: boolean;
+}
+
+// Finds the longest suffix of at most MAX_TIMELINE_ITEMS whose coverage the cache can certify.
+// An item's cursor is its projected seqEnd, not the seqStart anchor that `before startSeq`
+// paginates on, so a trimmed window may only start at a canonical user message: it is one source
+// row, so its cursor is its anchor. `before startSeq` then returns exactly the entries anchored
+// before it, and the reducer accepts that page as adjacent because it ends at startSeq - 1. Every
+// trimmed item must also end before that row, as a tail page certifies: a trimmed tool call that
+// updated later would leave a kept source row with no kept item.
+function selectCertifiedTimelineWindow(
+  items: readonly StreamItem[],
+  range: AgentTimelineCursorState,
+  hasOlder: boolean,
+): CertifiedTimelineWindow | null {
+  if (range.retainedRanges !== undefined) return null;
+  const seqs: number[] = [];
+  for (const item of items) {
+    const cursor = item.timelineCursor;
+    if (cursor?.epoch !== range.epoch || cursor.seq < range.startSeq || cursor.seq > range.endSeq) {
+      return null;
+    }
+    seqs.push(cursor.seq);
   }
+  const lastEndIndex = seqs.lastIndexOf(range.endSeq);
+  const firstStart = Math.max(
+    items.length - MAX_TIMELINE_ITEMS,
+    items.findLastIndex((item) => !isTimelineItemStoredAsRefetched(item)) + 1,
+  );
+  if (lastEndIndex < firstStart) return null;
+  if (firstStart === 0) return { start: 0, startSeq: range.startSeq, hasOlder };
+
+  const minSeqFrom = [...seqs];
+  for (let index = minSeqFrom.length - 2; index >= 0; index -= 1) {
+    minSeqFrom[index] = Math.min(minSeqFrom[index]!, minSeqFrom[index + 1]!);
+  }
+  let trimmedEndSeq = Math.max(...seqs.slice(0, firstStart));
+  for (let start = firstStart; start <= lastEndIndex; start += 1) {
+    const startSeq = seqs[start]!;
+    if (
+      items[start]?.kind === "user_message" &&
+      trimmedEndSeq < startSeq &&
+      minSeqFrom[start] === startSeq
+    ) {
+      return { start, startSeq, hasOlder: true };
+    }
+    trimmedEndSeq = Math.max(trimmedEndSeq, startSeq);
+  }
+  return null;
 }
 
 function serializeTimeline(timeline: CachedTimeline): StoredTimeline | null {
   const canonicalItems = timeline.items.filter(
     (item) => item.kind !== "user_message" || !isUnreconciledLocalUserMessage(item),
   );
-  const start = findMountedWindowStart({
-    items: canonicalItems,
-    minMountedCount: MAX_TIMELINE_ITEMS,
-  });
-  const items = canonicalItems
-    .slice(start)
-    .map(serializeTimelineItem)
-    .filter((item) => item !== null);
   const range = timeline.range;
-  const canPersistCoverage =
-    range !== null &&
-    range.retainedRanges === undefined &&
-    canonicalItems.length <= MAX_TIMELINE_ITEMS &&
-    items.length === canonicalItems.length &&
-    canonicalItems.every(
-      (item) =>
-        isTimelineItemStoredLosslessly(item) &&
-        item.timelineCursor?.epoch === range.epoch &&
-        item.timelineCursor.seq >= range.startSeq &&
-        item.timelineCursor.seq <= range.endSeq,
-    ) &&
-    canonicalItems.some((item) => item.timelineCursor?.seq === range.endSeq);
+  const certified = range
+    ? selectCertifiedTimelineWindow(canonicalItems, range, timeline.hasOlder)
+    : null;
+  if (range && certified) {
+    return {
+      agentId: timeline.agentId,
+      items: canonicalItems
+        .slice(certified.start)
+        .map(serializeTimelineItem)
+        .filter((item) => item !== null),
+      range: { epoch: range.epoch, startSeq: certified.startSeq, endSeq: range.endSeq },
+      hasOlder: certified.hasOlder,
+    };
+  }
+  // Display-only: these rows paint without granting synchronization authority.
   return {
     agentId: timeline.agentId,
-    items,
-    range: canPersistCoverage
-      ? { epoch: range.epoch, startSeq: range.startSeq, endSeq: range.endSeq }
-      : null,
-    hasOlder: canPersistCoverage ? timeline.hasOlder : false,
-    ...(timeline.unsettledTurn
-      ? {
-          unsettledTurn: {
-            turnId: timeline.unsettledTurn.turnId,
-            startedAt: timeline.unsettledTurn.startedAt?.toISOString() ?? null,
-          },
-        }
-      : {}),
+    items: canonicalItems
+      .map(serializeTimelineItem)
+      .filter((item) => item !== null)
+      .slice(-MAX_TIMELINE_ITEMS),
+    range: null,
+    hasOlder: false,
   };
 }
 
@@ -913,7 +907,7 @@ function applyDirectoryRow(
     case "workspace": {
       const stored = parseStoredPayload(StoredWorkspaceSchema, row.payload);
       if (stored.id !== row.id) throw new Error("Replica workspace row id mismatch");
-      result.workspaces.set(row.id, restoreWorkspace(stored));
+      result.workspaces.set(row.id, normalizeWorkspaceDescriptor(stored));
       return;
     }
     case "project": {
@@ -1003,7 +997,7 @@ export class ReplicaCache {
     try {
       const stored = parseStoredPayload(StoredWorkspaceSchema, workspaceRow.payload);
       if (stored.id !== workspaceRow.id) throw new Error("Replica workspace row id mismatch");
-      workspace = restoreWorkspace(stored);
+      workspace = normalizeWorkspaceDescriptor(stored);
     } catch {
       await this.deleteInvalidRow(workspaceRow);
       return undefined;

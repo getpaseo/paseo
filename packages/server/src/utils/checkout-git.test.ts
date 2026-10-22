@@ -14,7 +14,7 @@ import { join } from "path";
 import { win32 } from "node:path";
 import { tmpdir } from "os";
 import pino from "pino";
-import { base64EncryptedWireByteLength, maxSecuredPlaintextByteLength } from "@getpaseo/relay";
+import { base64EncryptedWireByteLength } from "@getpaseo/relay";
 import {
   __resetCheckoutShortstatCacheForTests,
   __resetPullRequestStatusCacheForTests,
@@ -32,7 +32,6 @@ import {
   getCheckoutStatus,
   checkoutResolvedBranch,
   listBranchSuggestions,
-  setCheckoutBaseBranch,
   mergeToBase,
   mergeFromBase,
   MergeConflictError,
@@ -262,56 +261,6 @@ describe("checkout git utilities", () => {
     __resetCheckoutShortstatCacheForTests();
     __resetPullRequestStatusCacheForTests();
     rmSync(tempDir, { recursive: true, force: true });
-  });
-
-  it("rejects changing the base of a local checkout without creating metadata", async () => {
-    await expect(setCheckoutBaseBranch({ cwd: repoDir, baseRef: "main" })).rejects.toThrow();
-    expect(existsSync(await getPaseoWorktreeMetadataPath(repoDir))).toBe(false);
-  });
-
-  it("changing a managed worktree base preserves its runtime and PR identity", async () => {
-    const worktree = await createLegacyWorktreeForTest({
-      cwd: repoDir,
-      branchName: "feature/base",
-      baseBranch: "main",
-      worktreeSlug: "base",
-      paseoHome,
-      runSetup: false,
-    });
-    const original = await readPaseoWorktreeMetadata(worktree.worktreePath);
-    execFileSync("git", ["branch", "release"], { cwd: repoDir });
-    await setCheckoutBaseBranch({
-      cwd: worktree.worktreePath,
-      baseRef: "release",
-      context: { paseoHome },
-    });
-    expect(await readPaseoWorktreeMetadata(worktree.worktreePath)).toEqual({
-      ...original,
-      baseRefName: "release",
-      baseRef: "refs/heads/release",
-    });
-    expect(await getCheckoutSnapshotFacts(worktree.worktreePath, { paseoHome })).toMatchObject({
-      storedBaseRef: "refs/heads/release",
-    });
-  });
-
-  it("lists exact local and all remote refs separately for the base picker", async () => {
-    execFileSync("git", ["branch", "release"], { cwd: repoDir });
-    execFileSync("git", ["update-ref", "refs/remotes/origin/release", "HEAD"], { cwd: repoDir });
-    execFileSync("git", ["update-ref", "refs/remotes/upstream/release", "HEAD"], { cwd: repoDir });
-    const suggestions = await listBranchSuggestions(repoDir, {
-      refMode: "exact",
-      query: "release",
-    });
-    expect(suggestions.map((entry) => entry.name).sort()).toEqual([
-      "refs/heads/release",
-      "refs/remotes/origin/release",
-      "refs/remotes/upstream/release",
-    ]);
-    expect(suggestions.find((entry) => entry.name === "refs/heads/release")).toMatchObject({
-      hasLocal: true,
-      hasRemote: false,
-    });
   });
 
   it("throws NotGitRepoError for non-git directories", async () => {
@@ -1640,15 +1589,19 @@ const x = 1;
   it("warms shortstat cache in the background without blocking listing callers", async () => {
     expect(getCachedCheckoutShortstat(repoDir)).toBeUndefined();
 
-    const warmed = new Promise<void>((resolve) => {
-      warmCheckoutShortstatInBackground(repoDir, undefined, resolve);
-    });
-    // The warm hands off to git and returns; listing callers see no value yet.
-    expect(getCachedCheckoutShortstat(repoDir)).toBeUndefined();
+    warmCheckoutShortstatInBackground(repoDir);
 
-    await warmed;
     // A repo with no origin/main computes to null, but null should still be cached.
-    expect(getCachedCheckoutShortstat(repoDir)).toBeNull();
+    for (let attempts = 0; attempts < 20; attempts += 1) {
+      const cached = getCachedCheckoutShortstat(repoDir);
+      if (cached !== undefined) {
+        expect(cached).toBeNull();
+        return;
+      }
+      await sleep(25);
+    }
+
+    throw new Error("shortstat background warm did not populate cache in time");
   });
 
   it("commits messages with quotes safely", async () => {
@@ -1705,14 +1658,9 @@ const x = 1;
       CHECKOUT_DIFF_MAX_STRUCTURED_BYTES + frameEnvelopeHeadroomBytes,
     );
 
-    // The cap is sized for the tighter of the legacy and protected relay framings.
-    expect(CHECKOUT_DIFF_MAX_STRUCTURED_BYTES).toBe(
-      maxSecuredPlaintextByteLength(relayFrameBytes) - frameEnvelopeHeadroomBytes,
-    );
-    expect(CHECKOUT_DIFF_MAX_STRUCTURED_BYTES).toBeLessThanOrEqual(24_117_208);
-    expect(CHECKOUT_DIFF_MAX_STRUCTURED_BYTES).toBeGreaterThan(24_000_000);
+    expect(CHECKOUT_DIFF_MAX_STRUCTURED_BYTES).toBe(24_117_208);
     expect(diffWireBytes).toBeLessThan(relayFrameBytes);
-    expect(maximumFrameWireBytes).toBeLessThanOrEqual(relayFrameBytes);
+    expect(maximumFrameWireBytes).toBe(relayFrameBytes);
   });
 
   it("marks tracked generated one-line diffs as too_large by content size", async () => {
@@ -1969,13 +1917,6 @@ const x = 1;
     expect(status.isPaseoOwnedWorktree).toBe(false);
     expect(realpathSync.native(status.mainRepoRoot ?? "")).toBe(realpathSync.native(repoDir));
     expect(status.currentBranch).toBe("feature/plain");
-  });
-
-  it("rejects merging a branch into its own same-named remote base", async () => {
-    execFileSync("git", ["update-ref", "refs/remotes/origin/main", "HEAD"], { cwd: repoDir });
-    await expect(mergeToBase(repoDir, { baseRef: "refs/remotes/origin/main" })).rejects.toThrow(
-      "Cannot merge a branch into itself",
-    );
   });
 
   it("merges the current branch into base from a worktree checkout", async () => {
@@ -2917,7 +2858,7 @@ const x = 1;
       execFileSync("git", ["worktree", "add", workspaceDir, "contributor/old-change"], {
         cwd: repoDir,
       });
-      await writePaseoWorktreeMetadata(workspaceDir, {
+      writePaseoWorktreeMetadata(workspaceDir, {
         baseRefName: "main",
         changeRequestLookupTarget: {
           headRef: "old-change",
@@ -2957,7 +2898,7 @@ const x = 1;
     const workspaceDir = join(paseoHome, "worktrees", "repo", "renamed-by-agent");
     mkdirSync(join(paseoHome, "worktrees", "repo"), { recursive: true });
     execFileSync("git", ["worktree", "add", workspaceDir, "placeholder"], { cwd: repoDir });
-    await writePaseoWorktreeMetadata(workspaceDir, {
+    writePaseoWorktreeMetadata(workspaceDir, {
       baseRefName: "main",
       changeRequestLookupTarget: {
         headRef: "placeholder",
@@ -2994,7 +2935,7 @@ const x = 1;
     const workspaceDir = join(paseoHome, "worktrees", "repo", "pinned-worktree");
     mkdirSync(join(paseoHome, "worktrees", "repo"), { recursive: true });
     execFileSync("git", ["worktree", "add", workspaceDir, "feature/pinned"], { cwd: repoDir });
-    await writePaseoWorktreeMetadata(workspaceDir, {
+    writePaseoWorktreeMetadata(workspaceDir, {
       baseRefName: "main",
       changeRequestLookupTarget: {
         headRef: "feature/pinned",
@@ -3033,7 +2974,7 @@ const x = 1;
     execFileSync("git", ["worktree", "add", workspaceDir, "contributor/old-change-1"], {
       cwd: repoDir,
     });
-    await writePaseoWorktreeMetadata(workspaceDir, {
+    writePaseoWorktreeMetadata(workspaceDir, {
       baseRefName: "main",
       changeRequestLookupTarget: {
         headRef: "old-change",
@@ -3055,7 +2996,7 @@ const x = 1;
     execFileSync("git", ["worktree", "add", workspaceDir, "contributor/old-change"], {
       cwd: repoDir,
     });
-    await writePaseoWorktreeMetadata(workspaceDir, {
+    writePaseoWorktreeMetadata(workspaceDir, {
       baseRefName: "main",
       changeRequestLookupTarget: {
         headRef: "old-change",
@@ -3120,7 +3061,7 @@ const x = 1;
     execFileSync("git", ["worktree", "add", workspaceDir, "mixedowner/old-change"], {
       cwd: repoDir,
     });
-    await writePaseoWorktreeMetadata(workspaceDir, {
+    writePaseoWorktreeMetadata(workspaceDir, {
       baseRefName: "main",
       changeRequestLookupTarget: {
         headRef: "old-change",
@@ -3172,7 +3113,7 @@ const x = 1;
     execFileSync("git", ["worktree", "add", workspaceDir, "feature/gitlab-mr"], {
       cwd: repoDir,
     });
-    await writePaseoWorktreeMetadata(workspaceDir, {
+    writePaseoWorktreeMetadata(workspaceDir, {
       baseRefName: "main",
       changeRequestLookupTarget: {
         headRef: "feature/gitlab-mr",
@@ -3186,9 +3127,7 @@ const x = 1;
     const forge = createGitHubServiceRecordingPullRequestTargets({ requestedTargets });
 
     await renameCurrentBranch(workspaceCwd, "feature/renamed");
-    expect(
-      (await readPaseoWorktreeMetadata(workspaceDir))?.changeRequestLookupTarget,
-    ).toMatchObject({
+    expect(readPaseoWorktreeMetadata(workspaceDir)?.changeRequestLookupTarget).toMatchObject({
       localBranchName: "feature/renamed",
     });
     const renamedFacts = await getCheckoutSnapshotFacts(workspaceDir, { paseoHome });
@@ -3224,7 +3163,7 @@ const x = 1;
     execFileSync("git", ["worktree", "add", workspaceDir, "feature/placeholder"], {
       cwd: repoDir,
     });
-    await writePaseoWorktreeMetadata(workspaceDir, {
+    writePaseoWorktreeMetadata(workspaceDir, {
       baseRefName: "main",
       changeRequestLookupTarget: {
         headRef: "feature/placeholder",
@@ -3234,7 +3173,7 @@ const x = 1;
 
     await renameCurrentBranch(workspaceDir, "feature/generated");
 
-    expect((await readPaseoWorktreeMetadata(workspaceDir))?.changeRequestLookupTarget).toEqual({
+    expect(readPaseoWorktreeMetadata(workspaceDir)?.changeRequestLookupTarget).toEqual({
       headRef: "feature/generated",
       localBranchName: "feature/generated",
     });
@@ -4011,7 +3950,7 @@ const x = 1;
       cwd: worktree.worktreePath,
     });
 
-    const metadataPath = await getPaseoWorktreeMetadataPath(worktree.worktreePath);
+    const metadataPath = getPaseoWorktreeMetadataPath(worktree.worktreePath);
     rmSync(metadataPath, { force: true });
 
     const baseDiff = await getCheckoutDiff(worktree.worktreePath, { mode: "base" }, { paseoHome });
@@ -4030,7 +3969,7 @@ const x = 1;
       paseoHome,
     });
 
-    const metadataPath = await getPaseoWorktreeMetadataPath(worktree.worktreePath);
+    const metadataPath = getPaseoWorktreeMetadataPath(worktree.worktreePath);
     rmSync(metadataPath, { force: true });
 
     const status = await getCheckoutStatus(worktree.worktreePath, { paseoHome });

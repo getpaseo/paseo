@@ -1,11 +1,5 @@
 export type {
   PluginHostProps,
-  PluginTab,
-  PluginPanelProps,
-  PluginWorkspacePanelParams,
-  PluginAgentPanelParams,
-  PluginFilePanelParams,
-  PluginAgentPanelContribution,
   PluginFilePanelContribution,
   PluginFilePanelProps,
   PluginSurfaceProps,
@@ -15,8 +9,6 @@ export type {
   PluginOpenScreenInput,
   PluginScreenLocation,
   PluginSidebarItemProps,
-  PluginSidebarViewProps,
-  PluginSidebarViewContribution,
   PluginSidebarItemContribution,
   PluginIcon,
   PluginPanelLocation,
@@ -60,6 +52,8 @@ export type {
   PluginFile,
   PluginFileBytesState,
   PluginFileEvent,
+  PluginFileLocation,
+  PluginFileTab,
   PluginFileTextState,
   PluginFileUrlState,
   PluginFileWriteOptions,
@@ -72,37 +66,8 @@ export {
   useFileUrl,
 } from "./file.js";
 export { usePaseo } from "./paseo-context.js";
-export {
-  useAgent,
-  useWorkspace,
-  useProject,
-  useTerminal,
-  useWorkspaces,
-  useAgents,
-  useProjects,
-  useTerminals,
-} from "./client-state.js";
-export { useComposer, useComposers } from "./composer.js";
-export type {
-  PluginComposer,
-  PluginComposerAttachment,
-  PluginComposerFocusOptions,
-  PluginComposerItemContribution,
-  PluginComposerItemProps,
-  PluginComposerSelector,
-} from "./composer.js";
-export { useNewWorkspace } from "./new-workspace.js";
-export type {
-  PluginNewWorkspace,
-  PluginNewWorkspaceItemContribution,
-  PluginNewWorkspaceItemProps,
-} from "./new-workspace.js";
-export { useRpc, useSubscription, type PluginSubscriptionState } from "./rpc-context.js";
-export type {
-  PluginSubscribeOptions,
-  PluginSubscriptionClosed,
-  PluginSubscriptionHandle,
-} from "../rpc.js";
+export { useAgent, useWorkspace } from "./client-state.js";
+export { useRpc } from "./rpc-context.js";
 import type { SettingsDefinition } from "../settings.js";
 import type { SettingsState } from "./contracts.js";
 import type { ZodType } from "zod";
@@ -126,10 +91,3 @@ export declare function openExternalUrl(url: string): Promise<void>;
 export { defineTranslations, useTranslation } from "./translations.js";
 export type { PluginI18n } from "./translations.js";
 export type { PluginText, PluginMessage, PluginTranslations } from "../text.js";
-
-export { useTabState } from "./tab.js";
-
-export type { WorkspaceRef, AgentRef, ProjectRef, TerminalRef } from "../refs.js";
-export type { Query, Group, GroupKey } from "./query.js";
-
-export type { PluginPaseoApi, PluginProjectHandle, PluginTerminalHandle } from "./reference-api.js";

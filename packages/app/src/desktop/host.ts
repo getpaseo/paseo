@@ -1,6 +1,6 @@
 import { Platform } from "react-native";
 import { getElectronHost } from "@/desktop/electron/host";
-import type { BrowserKeyboardPolicy } from "@/keyboard";
+import type { BrowserKeyboardPolicy } from "@/desktop/browser/shortcuts";
 import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 
 type BrowserAutomationExecuteRequest = Extract<
@@ -80,7 +80,7 @@ export interface DesktopEditorOpenTargetInput {
 }
 
 export interface DesktopEditorBridge {
-  listTargets?: (input?: { workspacePath?: string }) => Promise<DesktopEditorTargetDescriptor[]>;
+  listTargets?: () => Promise<DesktopEditorTargetDescriptor[]>;
   openTarget?: (input: DesktopEditorOpenTargetInput) => Promise<void>;
 }
 

@@ -1,5 +1,4 @@
 import { ACP_PROVIDER_ICON_SVGS } from "@/assets/acp-provider-icons";
-import type { HostFeatureName } from "@/runtime/host-features";
 
 export interface AcpProviderCatalogEntry {
   id: string;
@@ -9,7 +8,7 @@ export interface AcpProviderCatalogEntry {
   iconSvg: string | null;
   installLink: string;
   command: readonly [string, ...string[]];
-  bundledProvider?: { readonly hostFeature: HostFeatureName };
+  bundledProvider?: boolean;
   env?: Readonly<Record<string, string>>;
   params?: Readonly<Record<string, unknown>>;
 }
@@ -39,10 +38,10 @@ const CATALOG_DATA = [
     title: "Auggie CLI",
     description:
       "Augment Code's powerful software agent, backed by industry-leading context engine",
-    version: "0.36.0",
+    version: "0.33.0",
     iconId: "auggie",
     installLink: "https://www.augmentcode.com/",
-    command: ["npx", "-y", "@augmentcode/auggie@0.36.0", "--acp"],
+    command: ["npx", "-y", "@augmentcode/auggie@0.33.0", "--acp"],
     env: {
       AUGMENT_DISABLE_AUTO_UPDATE: "1",
     },
@@ -61,10 +60,10 @@ const CATALOG_DATA = [
     title: "Cline",
     description:
       "Autonomous coding agent CLI - capable of creating/editing files, running commands, using the browser, and more",
-    version: "3.0.73",
+    version: "3.0.46",
     iconId: "cline",
     installLink: "https://cline.bot/cli",
-    command: ["npx", "-y", "cline@3.0.73", "--acp"],
+    command: ["npx", "-y", "cline@3.0.46", "--acp"],
   },
   {
     id: "codebuddy-code",
@@ -124,10 +123,10 @@ const CATALOG_DATA = [
     id: "deepagents",
     title: "DeepAgents",
     description: "Batteries-included AI coding and general purpose agent powered by LangChain.",
-    version: "0.1.36",
+    version: "0.1.20",
     iconId: "deepagents",
     installLink: "https://docs.langchain.com/oss/javascript/deepagents/overview",
-    command: ["npx", "-y", "deepagents-acp@0.1.36"],
+    command: ["npx", "-y", "deepagents-acp@0.1.20"],
   },
   {
     id: "devin",
@@ -142,29 +141,29 @@ const CATALOG_DATA = [
     id: "dimcode",
     title: "DimCode",
     description: "A coding agent that puts leading models at your command.",
-    version: "0.5.21",
+    version: "0.2.36",
     iconId: "dimcode",
     installLink: "https://dimcode.dev/docs/acp.html",
-    command: ["npx", "-y", "dimcode@0.5.21", "acp"],
+    command: ["npx", "-y", "dimcode@0.2.36", "acp"],
   },
   {
     id: "dirac",
     title: "Dirac",
     description:
       "Reduces API costs by more than 50%, produces better and faster work. Uses Hash anchored parallel edits, AST manipulation and a whole lot of neat optimizations. Fully Open Source.",
-    version: "0.5.23",
+    version: "0.4.22",
     iconId: "dirac",
     installLink: "https://dirac.run",
-    command: ["npx", "-y", "dirac-cli@0.5.23", "--acp"],
+    command: ["npx", "-y", "dirac-cli@0.4.22", "--acp"],
   },
   {
     id: "factory-droid",
     title: "Factory Droid",
     description: "Factory Droid - AI coding agent powered by Factory AI",
-    version: "0.249.0",
+    version: "0.179.0",
     iconId: "factory-droid",
     installLink: "https://factory.ai/product/cli",
-    command: ["npx", "-y", "droid@0.249.0", "exec", "--output-format", "acp-daemon"],
+    command: ["npx", "-y", "droid@0.179.0", "exec", "--output-format", "acp-daemon"],
     env: {
       DROID_DISABLE_AUTO_UPDATE: "true",
       FACTORY_DROID_AUTO_UPDATE_ENABLED: "false",
@@ -175,29 +174,19 @@ const CATALOG_DATA = [
     id: "fast-agent",
     title: "fast-agent",
     description: "Code and build agents with comprehensive multi-provider support",
-    version: "0.10.47",
+    version: "0.9.22",
     iconId: "fast-agent",
     installLink: "https://fast-agent.ai/acp/",
-    command: ["uvx", "--from", "fast-agent-acp==0.10.47", "fast-agent-acp", "-x"],
-  },
-  {
-    id: "fx",
-    bundledProvider: { hostFeature: "fxProvider" },
-    title: "fx",
-    description: "Vercel Labs' tiny, open, native coding agent",
-    version: "manual",
-    iconId: "fx",
-    installLink: "https://fx.sh/docs/getting-started/installation",
-    command: ["fx", "acp"],
+    command: ["uvx", "--from", "fast-agent-acp==0.9.22", "fast-agent-acp", "-x"],
   },
   {
     id: "gemini",
     title: "Gemini CLI",
     description: "Google's official CLI for Gemini",
-    version: "0.65.0",
+    version: "0.52.0",
     iconId: "gemini",
     installLink: "https://geminicli.com",
-    command: ["npx", "-y", "@google/gemini-cli@0.65.0", "--acp"],
+    command: ["npx", "-y", "@google/gemini-cli@0.52.0", "--acp"],
   },
   {
     id: "gjc",
@@ -216,11 +205,11 @@ const CATALOG_DATA = [
     id: "glm-acp-agent",
     title: "GLM Agent",
     description:
-      "ACP agent powered by Zhipu AI's GLM Coding Plan models (glm-5.3, glm-5.3-flash, glm-5-turbo, glm-4.7). Supports streaming, tool calls, mid-session model switching, image input via Z.AI Coding Plan Vision MCP, and session load/fork/resume with on-disk persistence.",
-    version: "1.15.0",
+      "ACP agent powered by Zhipu AI's GLM Coding Plan models (glm-5.1, glm-5-turbo, glm-4.7, glm-4.5-air). Supports streaming, tool calls, mid-session model switching, image input via Z.AI Coding Plan Vision MCP, and session load/fork/resume with on-disk persistence.",
+    version: "1.3.0",
     iconId: "glm-acp-agent",
     installLink: "https://github.com/stefandevo/glm-acp-agent",
-    command: ["npx", "-y", "glm-acp-agent@1.15.0"],
+    command: ["npx", "-y", "glm-acp-agent@1.3.0"],
   },
   {
     id: "goose",
@@ -252,7 +241,7 @@ const CATALOG_DATA = [
   },
   {
     id: "hoplite",
-    bundledProvider: { hostFeature: "hopliteProvider" },
+    bundledProvider: true,
     title: "Hoplite",
     description: "Cloud coding agent through the local hoplite acp bridge",
     version: "manual",
@@ -300,23 +289,20 @@ const CATALOG_DATA = [
     id: "minimax-code",
     title: "MiniMax Code",
     description: "MiniMax's coding agent for the terminal",
-    version: "0.6.13",
+    version: "0.1.2",
     iconId: "minimax-code",
     installLink: "https://agent.minimax.io",
-    // `-p <pkg>` names the package and `mcode` names its binary. Without the
-    // explicit binary, npx resolves the executable from the unscoped package
-    // name (`code`), which this package does not publish.
-    command: ["npx", "-y", "-p", "@minimax-ai/code@0.6.13", "mcode", "acp"],
+    command: ["npx", "-y", "@minimax-ai/code@0.1.2", "acp"],
   },
   {
     id: "minion-code",
     title: "Minion Code",
     description:
       "An enhanced AI code assistant built on the Minion framework with rich development tools",
-    version: "0.1.45",
+    version: "0.1.44",
     iconId: "minion-code",
     installLink: "https://github.com/femto/minion-code",
-    command: ["uvx", "--from", "minion-code==0.1.45", "minion-code", "acp"],
+    command: ["uvx", "--from", "minion-code==0.1.44", "minion-code", "acp"],
   },
   {
     id: "mistral-vibe",
@@ -331,10 +317,10 @@ const CATALOG_DATA = [
     id: "nova",
     title: "Nova",
     description: "Nova by Compass AI - a fully-fledged software engineer at your command",
-    version: "1.1.59",
+    version: "1.1.29",
     iconId: "nova",
     installLink: "https://www.compassap.ai/portfolio/nova.html",
-    command: ["npx", "-y", "@compass-ai/nova@1.1.59", "acp"],
+    command: ["npx", "-y", "@compass-ai/nova@1.1.29", "acp"],
   },
   {
     id: "poolside",
@@ -349,19 +335,19 @@ const CATALOG_DATA = [
     id: "qoder",
     title: "Qoder CLI",
     description: "AI coding assistant with agentic capabilities",
-    version: "1.1.78",
+    version: "1.1.4",
     iconId: "qoder",
     installLink: "https://qoder.com",
-    command: ["npx", "-y", "@qoder-ai/qodercli@1.1.78", "--acp"],
+    command: ["npx", "-y", "@qoder-ai/qodercli@1.1.4", "--acp"],
   },
   {
     id: "qwen-code",
     title: "Qwen Code",
     description: "Alibaba's Qwen coding assistant",
-    version: "0.26.0",
+    version: "0.20.1",
     iconId: "qwen-code",
     installLink: "https://qwenlm.github.io/qwen-code-docs/en/users/overview",
-    command: ["npx", "-y", "@qwen-code/qwen-code@0.26.0", "--acp", "--experimental-skills"],
+    command: ["npx", "-y", "@qwen-code/qwen-code@0.20.1", "--acp", "--experimental-skills"],
   },
   {
     id: "sigit",

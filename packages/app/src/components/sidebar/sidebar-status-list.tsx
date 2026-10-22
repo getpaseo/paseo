@@ -147,7 +147,6 @@ export function SidebarStatusWorkspaceList({
   dragGestureHostActive,
 }: StatusWorkspaceListProps) {
   const { t } = useTranslation();
-  const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const collapsedWorkspaceGroupKeys = useSidebarCollapsedSectionsStore(
     (state) => state.collapsedWorkspaceGroupKeys,
   );
@@ -156,27 +155,23 @@ export function SidebarStatusWorkspaceList({
     (state) => state.togglePinnedCollapsed,
   );
   const {
-    leadingItem: leadingPinnedWorkspace,
     visibleItems: visiblePinnedWorkspaces,
     expanded: pinnedWorkspacesExpanded,
     canToggle: canTogglePinnedWorkspaces,
     toggleExpanded: togglePinnedWorkspacesExpanded,
-  } = useLimitedSidebarGroup({ items: pinnedWorkspaces, selection: activeWorkspaceSelection });
+  } = useLimitedSidebarGroup(pinnedWorkspaces);
 
   const statusShortcutIndex = showShortcutBadges
     ? shortcutIndexByWorkspaceKey
     : EMPTY_SHORTCUT_INDEX;
-  const renderPinnedWorkspaceRow = useCallback(
-    (
-      workspace: SidebarWorkspaceEntry,
-      input?: {
-        drag?: () => void;
-        isDragging?: boolean;
-        dragHandleProps?: DraggableListDragHandleProps;
-      },
-    ) => (
+  const renderPinnedWorkspace = useCallback(
+    ({
+      item: workspace,
+      drag,
+      isActive,
+      dragHandleProps,
+    }: DraggableRenderItemInfo<SidebarWorkspaceEntry>) => (
       <StatusWorkspaceRow
-        key={workspace.workspaceKey}
         workspace={workspace}
         {...buildStatusRowProjectPresentation({
           workspace,
@@ -189,9 +184,9 @@ export function SidebarStatusWorkspaceList({
         canPin={supportsPinningByServerId.get(workspace.serverId) === true}
         onToggleWorkspacePin={onToggleWorkspacePin}
         onWorkspacePress={onWorkspacePress}
-        drag={input?.drag}
-        isDragging={input?.isDragging}
-        dragHandleProps={input?.dragHandleProps}
+        drag={drag}
+        isDragging={isActive}
+        dragHandleProps={dragHandleProps}
       />
     ),
     [
@@ -203,20 +198,6 @@ export function SidebarStatusWorkspaceList({
       statusShortcutIndex,
       supportsPinningByServerId,
     ],
-  );
-  const renderPinnedWorkspace = useCallback(
-    ({
-      item: workspace,
-      drag,
-      isActive,
-      dragHandleProps,
-    }: DraggableRenderItemInfo<SidebarWorkspaceEntry>) =>
-      renderPinnedWorkspaceRow(workspace, {
-        drag,
-        isDragging: isActive,
-        dragHandleProps,
-      }),
-    [renderPinnedWorkspaceRow],
   );
   const content = (
     <>
@@ -230,7 +211,6 @@ export function SidebarStatusWorkspaceList({
           />
           {pinnedCollapsed ? null : (
             <>
-              {leadingPinnedWorkspace ? renderPinnedWorkspaceRow(leadingPinnedWorkspace) : null}
               <DraggableList
                 testID="sidebar-pinned-list"
                 data={visiblePinnedWorkspaces}
@@ -339,11 +319,6 @@ function StatusGroupList({
   );
 }
 
-const STATUS_GROUP_VISIBILITY = {
-  kind: "workspaces" as const,
-  getStatusBucket: (workspace: SidebarWorkspaceEntry) => workspace.statusBucket,
-};
-
 function StatusGroupRows({
   group,
   collapsed,
@@ -365,37 +340,12 @@ function StatusGroupRows({
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
-  const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const {
-    leadingItem: leadingWorkspace,
     visibleItems: visibleWorkspaces,
     expanded: workspacesExpanded,
     canToggle: canToggleWorkspaces,
     toggleExpanded: toggleWorkspacesExpanded,
-  } = useLimitedSidebarGroup({
-    items: group.rows,
-    selection: activeWorkspaceSelection,
-    policy: STATUS_GROUP_VISIBILITY,
-  });
-
-  function renderWorkspaceRow(workspace: SidebarWorkspaceEntry) {
-    return (
-      <StatusWorkspaceRow
-        key={workspace.workspaceKey}
-        workspace={workspace}
-        {...buildStatusRowProjectPresentation({
-          workspace,
-          projectIconByProjectViewKey,
-          hostBadgeByServerId,
-        })}
-        shortcutNumber={shortcutIndex.get(workspace.workspaceKey) ?? null}
-        showShortcutBadge={showShortcutBadges}
-        canPin={supportsPinningByServerId.get(workspace.serverId) === true}
-        onToggleWorkspacePin={onToggleWorkspacePin}
-        onWorkspacePress={onWorkspacePress}
-      />
-    );
-  }
+  } = useLimitedSidebarGroup(group.rows);
 
   return (
     <View style={collapsed ? undefined : styles.statusGroupBlockExpanded}>
@@ -405,8 +355,22 @@ function StatusGroupRows({
           style={styles.statusWorkspaceListContainer}
           testID={`sidebar-status-group-rows-${group.key}`}
         >
-          {leadingWorkspace ? renderWorkspaceRow(leadingWorkspace) : null}
-          {visibleWorkspaces.map(renderWorkspaceRow)}
+          {visibleWorkspaces.map((workspace) => (
+            <StatusWorkspaceRow
+              key={workspace.workspaceKey}
+              workspace={workspace}
+              {...buildStatusRowProjectPresentation({
+                workspace,
+                projectIconByProjectViewKey,
+                hostBadgeByServerId,
+              })}
+              shortcutNumber={shortcutIndex.get(workspace.workspaceKey) ?? null}
+              showShortcutBadge={showShortcutBadges}
+              canPin={supportsPinningByServerId.get(workspace.serverId) === true}
+              onToggleWorkspacePin={onToggleWorkspacePin}
+              onWorkspacePress={onWorkspacePress}
+            />
+          ))}
           {canToggleWorkspaces ? (
             <SidebarGroupToggleRow
               expanded={workspacesExpanded}
@@ -543,6 +507,7 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
   onToggleWorkspacePin,
   reserveIdleStatusIndicatorSpace = true,
   inStatusGroup = true,
+  onWorkspacePress,
   drag,
   isDragging = false,
   dragHandleProps,
@@ -573,8 +538,9 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
 
   const handlePress = useCallback(() => {
     if (!workspace.serverId) return;
+    onWorkspacePress?.();
     navigateToWorkspace({ serverId: workspace.serverId, workspaceId: workspace.workspaceId });
-  }, [workspace.serverId, workspace.workspaceId]);
+  }, [onWorkspacePress, workspace.serverId, workspace.workspaceId]);
 
   return (
     <StatusWorkspaceRowWithMenu
@@ -872,7 +838,6 @@ function StatusWorkspaceRowInnerContent({
         const {
           trailingPresentation,
           showKebab: showKebabInSlot,
-          showArchiveButton,
           showScrim,
           renderSlot,
           reserveSlotWidth,
@@ -952,7 +917,6 @@ function StatusWorkspaceRowInnerContent({
                     trailing={trailing}
                     trailingPresentation={trailingPresentation}
                     showKebab={showKebabInSlot}
-                    showArchiveButton={showArchiveButton}
                     showScrim={showScrim}
                     reserveSlotWidth={reserveSlotWidth}
                     isPinned={isPinned}
@@ -984,7 +948,6 @@ function StatusWorkspaceActionSlot({
   trailing,
   trailingPresentation,
   showKebab,
-  showArchiveButton,
   showScrim,
   reserveSlotWidth,
   isPinned,
@@ -1005,7 +968,6 @@ function StatusWorkspaceActionSlot({
   trailing: SidebarWorkspaceTrailing;
   trailingPresentation: SidebarWorkspaceTrailingPresentation;
   showKebab: boolean;
-  showArchiveButton: boolean;
   showScrim: boolean;
   reserveSlotWidth: boolean;
   isPinned?: boolean;
@@ -1030,8 +992,6 @@ function StatusWorkspaceActionSlot({
       <SidebarWorkspaceTrailingActionOverlay
         visible={kebab.showKebab}
         scrimBackdrop={showScrim ? backdrop : undefined}
-        workspaceKey={workspace.workspaceKey}
-        onArchiveButtonPress={showArchiveButton ? onArchive : undefined}
       >
         {kebab.showKebab && onArchive ? (
           <SidebarWorkspaceMenu

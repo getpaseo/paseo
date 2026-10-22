@@ -154,38 +154,27 @@ function appendReusableFileRows(candidate: {
 }): FileRowsResult {
   const reusedRows = candidate.model.rows.slice(candidate.file.rowStart, candidate.file.rowEnd);
   const retainsRowGeometry =
+    !candidate.input.wrapLines &&
     candidate.model.reviewGeometryKey === candidate.reviewGeometryKey &&
     candidate.file.top === candidate.fileTop &&
     candidate.file.fileIndex === candidate.fileIndex &&
     candidate.file.rowStart === candidate.rows.length;
   let top = candidate.bodyTop;
   for (const reusedRow of reusedRows) {
-    let nextRow =
-      retainsRowGeometry && reusedRow.top === top
-        ? reusedRow
-        : repositionReusedRow(reusedRow, candidate, top);
+    let nextRow = retainsRowGeometry ? reusedRow : repositionReusedRow(reusedRow, candidate, top);
     if (
       nextRow.kind === "line" &&
-      (intersectsMaterializationWindow(candidate.input, top, top + nextRow.height) ||
-        containsMaterializationAnchor(candidate.input, candidate.file.path, nextRow.cells)) &&
+      intersectsMaterializationWindow(candidate.input, top, top + nextRow.height) &&
       nextRow.cells.some((cell) => cell && cell.fragments.length === 0)
     ) {
-      const cells = materializeCells(
-        nextRow.cells,
-        candidate.file.file,
-        candidate.file.gutterWidth,
-        candidate.input,
-      );
       nextRow = {
         ...nextRow,
-        cells,
-        height:
-          Math.max(
-            candidate.input.typography.lineHeight,
-            ...cells.map(
-              (cell) => (cell?.fragments.length ?? 1) * candidate.input.typography.lineHeight,
-            ),
-          ) + nextRow.reviewHeight,
+        cells: materializeCells(
+          nextRow.cells,
+          candidate.file.file,
+          candidate.file.gutterWidth,
+          candidate.input,
+        ),
       };
     }
     candidate.rows.push(nextRow);
@@ -251,7 +240,6 @@ function appendNewFileRows(candidate: {
   const lines = geometryLines(
     lineSources(candidate.file, candidate.input.layout, false),
     candidate.input,
-    candidate.gutterWidth,
   );
   const fileBottom =
     candidate.bodyTop +
@@ -264,8 +252,8 @@ function appendNewFileRows(candidate: {
   let maximumHorizontalOverflow = 0;
   for (const line of lines) {
     const shouldMaterialize =
-      intersectsMaterializationWindow(candidate.input, top, top + line.height) ||
-      containsMaterializationAnchor(candidate.input, candidate.file.path, line.cells);
+      candidate.input.wrapLines ||
+      intersectsMaterializationWindow(candidate.input, top, top + line.height);
     const cells = shouldMaterialize
       ? materializeCells(line.cells, candidate.file, candidate.gutterWidth, candidate.input)
       : line.cells;
@@ -287,7 +275,7 @@ function appendNewFileRows(candidate: {
       candidate.input.typography.lineHeight,
       ...cells.map((cell) => (cell?.fragments.length ?? 1) * candidate.input.typography.lineHeight),
     );
-    const height = shouldMaterialize ? textHeight + line.reviewHeight : line.height;
+    const height = textHeight + line.reviewHeight;
     candidate.rows.push({
       kind: "line",
       index: candidate.rows.length,
@@ -424,14 +412,13 @@ function cellSource(line: SplitDiffDisplayLine | null, includeTokens: boolean): 
   };
 }
 
-function geometryCell(source: CellSource, estimatedWrapColumns: number): DiffCell {
+function geometryCell(source: CellSource): DiffCell {
   return {
     type: source.type,
     content: source.content,
     lineNumber: source.lineNumber,
     tokens: [],
     fragments: [],
-    estimatedWrapColumns,
     reviewTarget: source.reviewTarget,
     sourceIdentity: source.sourceIdentity,
   };
@@ -440,85 +427,18 @@ function geometryCell(source: CellSource, estimatedWrapColumns: number): DiffCel
 function geometryLines(
   sources: Array<[CellSource] | [CellSource | null, CellSource | null]>,
   input: BuildDiffDocumentModelInput,
-  gutterWidth: number,
 ): GeometryLine[] {
-  const characterWidth = input.wrapLines ? input.measureText.measure("M") : 0;
   return sources.map((sourceCells) => {
-    const columns = input.wrapLines
-      ? Math.max(
-          1,
-          Math.floor(
-            (input.viewportWidth / sourceCells.length - gutterWidth - CODE_HORIZONTAL_PADDING) /
-              characterWidth,
-          ),
-        )
-      : Infinity;
     const cells = sourceCells.map((source) =>
-      source ? geometryCell(source, columns) : null,
+      source ? geometryCell(source) : null,
     ) as DiffLineRow["cells"];
     const reviewHeight = reviewHeightForCells(cells, input);
     return {
       cells,
       reviewHeight,
-      // Unseen wrapped rows use a monospace estimate; materialization replaces
-      // it with the exact fragment count without changing source identity.
-      height:
-        input.typography.lineHeight *
-          Math.max(
-            1,
-            ...cells.map((cell) => {
-              return cell && input.wrapLines
-                ? Math.ceil(estimatedDisplayOffset(cell.content) / columns)
-                : 1;
-            }),
-          ) +
-        reviewHeight,
+      height: input.typography.lineHeight + reviewHeight,
     };
   });
-}
-
-// Use the same tab expansion and column count for estimated heights and anchors.
-function estimatedDisplayOffset(text: string): number {
-  return text.length + (text.match(/\t/g)?.length ?? 0) * 3;
-}
-
-function estimatedVisualLine(cell: DiffCell, sourceOffset: number): number {
-  return Math.floor(
-    estimatedDisplayOffset(cell.content.slice(0, sourceOffset)) /
-      (cell.estimatedWrapColumns ?? Infinity),
-  );
-}
-
-function estimatedFragment(cell: DiffCell, visualIndex: number, lineHeight: number) {
-  const columns = cell.estimatedWrapColumns ?? Infinity;
-  const lastIndex = Math.max(0, Math.ceil(estimatedDisplayOffset(cell.content) / columns) - 1);
-  const index = Math.min(visualIndex, lastIndex);
-  const displayOffset = index === 0 ? 0 : index * columns;
-  let start = Math.min(displayOffset, cell.content.length);
-  if (cell.content.includes("\t")) {
-    let offset = 0;
-    start = 0;
-    while (start < cell.content.length && offset < displayOffset) {
-      offset += cell.content[start] === "\t" ? 4 : 1;
-      start += 1;
-    }
-  }
-  return { start, top: index * lineHeight };
-}
-
-// A resize can move the anchor outside the old window. Measure that row in the
-// same pass: estimated columns cannot identify exact shaped-text fragments.
-function containsMaterializationAnchor(
-  input: BuildDiffDocumentModelInput,
-  path: string,
-  cells: DiffLineRow["cells"],
-): boolean {
-  const anchor = input.materializationAnchor;
-  return (
-    anchor?.kind === "text" &&
-    anchor.path === path &&
-    cells.some((cell) => cell && sameSourceIdentity(cell.sourceIdentity, anchor.sourceIdentity))
-  );
 }
 
 function intersectsMaterializationWindow(
@@ -875,27 +795,17 @@ export function captureScrollAnchor(
   }
   const textY = Math.max(0, Math.min(scrollTop - row.top, row.height - row.reviewHeight));
   const visualIndex = Math.max(0, Math.floor(textY / model.lineHeight));
-  let cellIndex = row.cells.findIndex(
-    (cell) =>
-      cell &&
-      (cell.fragments.length > 0
-        ? Boolean(cell.fragments[visualIndex])
-        : estimatedFragment(cell, visualIndex, model.lineHeight).top ===
-          visualIndex * model.lineHeight),
-  );
+  let cellIndex = row.cells.findIndex((cell) => Boolean(cell?.fragments[visualIndex]));
   if (cellIndex < 0) cellIndex = row.cells.findIndex((cell) => cell !== null);
   const cell = row.cells[cellIndex];
   if (!cell) return { kind: "header", path: file.path, viewportDelta: row.top - scrollTop };
-  const fragment =
-    cell.fragments.length > 0
-      ? cell.fragments[Math.min(cell.fragments.length - 1, visualIndex)]!
-      : estimatedFragment(cell, visualIndex, model.lineHeight);
-  const anchorY = row.top + fragment.top;
+  const fragment = cell.fragments[Math.min(cell.fragments.length - 1, visualIndex)];
+  const anchorY = row.top + (fragment?.top ?? 0);
   return {
     kind: "text",
     path: file.path,
     sourceIdentity: cell.sourceIdentity,
-    cellOffset: fragment.start,
+    cellOffset: fragment?.start ?? 0,
     viewportDelta: anchorY - scrollTop,
   };
 }
@@ -921,10 +831,8 @@ export function resolveScrollAnchor(model: DiffDocumentModel, anchor: DiffScroll
   const fragment =
     cell.fragments.find(
       (candidate) => candidate.start <= anchor.cellOffset && anchor.cellOffset < candidate.end,
-    ) ??
-    cell.fragments.at(-1) ??
-    estimatedFragment(cell, estimatedVisualLine(cell, anchor.cellOffset), model.lineHeight);
-  return Math.max(0, row.top + fragment.top - anchor.viewportDelta);
+    ) ?? cell.fragments.at(-1);
+  return Math.max(0, row.top + (fragment?.top ?? 0) - anchor.viewportDelta);
 }
 
 export function resolveRelayoutScrollTop(

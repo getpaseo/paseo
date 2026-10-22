@@ -41,7 +41,6 @@ import {
   normalizeLayout,
   removePaneFromTree,
   removeTabFromTree,
-  selectSheetTab,
   stripEphemeralTabsFromLayout,
   type SplitNode,
   type SplitPane,
@@ -79,39 +78,6 @@ function createDeterministicWorkspaceLayoutIds() {
 
 const workspaceLayoutIds = createDeterministicWorkspaceLayoutIds();
 const workspaceLayoutStore = createWorkspaceLayoutStore(workspaceLayoutIds);
-
-it("bumps panel params revision when the same tab is opened again", () => {
-  const storage = {
-    getItem: async () => null,
-    setItem: async () => {},
-    removeItem: async () => {},
-  };
-  const store = createWorkspaceLayoutStore(workspaceLayoutIds, storage);
-  const workspaceKey = "server-1:workspace-params";
-  const targets = [
-    { kind: "file" as const, path: "notes.md", lineStart: 3 },
-    {
-      kind: "plugin" as const,
-      pluginId: "notes",
-      panelId: "workspace",
-      context: "workspace" as const,
-    },
-    {
-      kind: "plugin" as const,
-      pluginId: "notes",
-      panelId: "agent",
-      context: "agent" as const,
-      agentId: "agent-1",
-    },
-  ];
-  for (const target of targets) {
-    const first = store.getState().openTab({ workspaceKey, target, intent: "reveal" })!;
-    const revision = store.getState().panelRevisionByWorkspace[workspaceKey][first];
-    const second = store.getState().openTab({ workspaceKey, target, intent: "reveal" });
-    expect(second).toBe(first);
-    expect(store.getState().panelRevisionByWorkspace[workspaceKey][first]).toBe(revision + 1);
-  }
-});
 
 it("observes open chats across unmounted workspaces until their tabs close", () => {
   const store = createWorkspaceLayoutStore(workspaceLayoutIds);
@@ -165,8 +131,6 @@ it("feeds restored layout to timeline sync as a release signal, not a subscripti
   const sync = createViewedTimelineSync({
     replaceDemandedAgentIds: () => undefined,
     prepare: async () => undefined,
-    canCheckFreshness: () => false,
-    applyCurrentTimeline: () => undefined,
     observe: (agentIds) => {
       observed.push(agentIds);
       return { ready: Promise.resolve(), release: async () => undefined };
@@ -176,8 +140,7 @@ it("feeds restored layout to timeline sync as a release signal, not a subscripti
     fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),
     onCatchUpEnded: () => undefined,
     reportError: () => undefined,
-    onCatchUpOwed: () => undefined,
-    onCatchUpSettled: () => undefined,
+    schedule: () => () => undefined,
   });
   // The edge session-context.tsx owns. Pointing it at subscription instead would resume every
   // agent behind a restored tab on the daemon.
@@ -4500,12 +4463,6 @@ describe("compact workspace sheet", () => {
     return store.getState().sheetsByWorkspace[workspaceKey]?.at(-1);
   }
 
-  function requireTopSheet(store: ReturnType<typeof createCompactStore>) {
-    const sheet = topSheet(store);
-    if (!sheet) throw new Error("Expected a sheet");
-    return sheet;
-  }
-
   function sheetTargets(store: ReturnType<typeof createCompactStore>) {
     return (store.getState().sheetsByWorkspace[workspaceKey] ?? []).map(
       (sheet) => sheet.tab.target,
@@ -4555,6 +4512,7 @@ describe("compact workspace sheet", () => {
             title: agent.id,
             cwd: "/repo",
             model: null,
+            features: undefined,
             thinkingOptionId: undefined,
             requiresAttention: false,
             attentionReason: null,
@@ -4569,24 +4527,6 @@ describe("compact workspace sheet", () => {
     );
   }
 
-  it("opens a subagent as a tab when a deferred request asks for one", () => {
-    const store = createCompactStore();
-    seedAgents([
-      { id: "parent", parentAgentId: null, workspaceId: "sheet-ws" },
-      { id: "child", parentAgentId: "parent", workspaceId: "sheet-ws" },
-    ]);
-
-    store.getState().deferOpenTab({
-      workspaceKey,
-      target: { kind: "agent", agentId: "child" },
-      intent: "reveal",
-      asTab: true,
-    });
-    store.getState().consumePendingOpen(workspaceKey);
-
-    expect(topSheet(store)).toBeUndefined();
-    expect(tabKinds(store)).toContain("agent");
-  });
   it("reveals a file in the sheet and leaves the tab strip unchanged", () => {
     const store = createCompactStore();
     const before = tabKinds(store);
@@ -4674,7 +4614,7 @@ describe("compact workspace sheet", () => {
       .getState()
       .openTab({ workspaceKey, target: { kind: "file", path: "src/other.ts" }, intent: "reveal" });
 
-    store.getState().openTabInFront(workspaceKey, requireTopSheet(store));
+    store.getState().openSheetAsTab(workspaceKey, nextTabId ?? "");
 
     expect(sheetTargets(store)).toEqual([]);
     expect(tabKinds(store)).toEqual(["terminal", "file"]);
@@ -4710,7 +4650,7 @@ describe("compact workspace sheet", () => {
     if (!sheetTabId) throw new Error("Expected a sheet tab");
     store.getState().setTabState(workspaceKey, sheetTabId, { scrollTop: 120 });
 
-    const tabId = store.getState().openTabInFront(workspaceKey, requireTopSheet(store));
+    const tabId = store.getState().openSheetAsTab(workspaceKey, sheetTabId);
 
     expect(tabId).toBe(sheetTabId);
     expect(topSheet(store)).toBeUndefined();
@@ -4814,40 +4754,6 @@ describe("compact workspace sheet", () => {
     expect(tabKinds(store)).toEqual(["terminal", "agent", "agent"]);
   });
 
-  it("describes the sheet a reveal would show without opening it, and opens it as a tab", () => {
-    seedAgents([
-      { id: "root", parentAgentId: null, workspaceId: "sheet-ws" },
-      { id: "child", parentAgentId: "root", workspaceId: "sheet-ws" },
-    ]);
-    const store = createCompactStore();
-    const rootTabId = store
-      .getState()
-      .openTab({ workspaceKey, target: { kind: "agent", agentId: "root" }, intent: "reveal" });
-
-    const sheet = selectSheetTab(store.getState(), {
-      workspaceKey,
-      target: { kind: "agent", agentId: "child" },
-      parentTabId: rootTabId ?? undefined,
-    });
-    expect(sheet?.parentTabId).toBe(rootTabId);
-    expect(
-      selectSheetTab(store.getState(), {
-        workspaceKey,
-        target: { kind: "agent", agentId: "root" },
-      }),
-    ).toBeNull();
-    expect(topSheet(store)).toBeUndefined();
-    if (!sheet) throw new Error("Expected a sheet tab");
-
-    const tabId = store.getState().openTabInFront(workspaceKey, sheet);
-
-    expect(tabId).toBe(sheet.tab.tabId);
-    expect(topSheet(store)).toBeUndefined();
-    const layout = store.getState().layoutByWorkspace[workspaceKey];
-    expect(findPaneById(layout.root, "main")?.focusedTabId).toBe(tabId);
-    expect(layout.parentTabIdByTabId?.[tabId ?? ""]).toBe(rootTabId);
-  });
-
   it("gives a sheet target opened from inside the sheet the sheet's own parent", () => {
     seedAgents([
       { id: "root", parentAgentId: null, workspaceId: "sheet-ws" },
@@ -4872,7 +4778,7 @@ describe("compact workspace sheet", () => {
     });
     expect(topSheet(store)?.parentTabId).toBe(rootTabId);
 
-    store.getState().openTabInFront(workspaceKey, requireTopSheet(store));
+    store.getState().openSheetAsTab(workspaceKey, fileSheetTabId ?? "");
     const layout = store.getState().layoutByWorkspace[workspaceKey];
     expect(layout.parentTabIdByTabId?.[fileSheetTabId ?? ""]).toBe(rootTabId);
   });
@@ -5264,37 +5170,4 @@ describe("pending workspace opens", () => {
     expect(store.getState().pinnedAgentIdsByWorkspace["server:beta"]).toEqual(new Set(["b"]));
     expect(store.getState().pendingOpenByWorkspace).toEqual({});
   });
-});
-
-it("records repeated deliberate focus even when the selected pane and tab do not change", () => {
-  const store = createWorkspaceLayoutStore(workspaceLayoutIds);
-  const workspaceKey = "server:focus";
-  const tabId = store
-    .getState()
-    .openTab({ workspaceKey, target: { kind: "agent", agentId: "agent" }, intent: "reveal" })!;
-  const paneId = store.getState().layoutByWorkspace[workspaceKey]!.focusedPaneId!;
-  for (const focus of [
-    () => store.getState().focusPane(workspaceKey, paneId),
-    () => store.getState().focusTab(workspaceKey, tabId),
-    () => store.getState().selectTabInPane(workspaceKey, paneId, tabId),
-  ]) {
-    focus();
-    const first = store.getState().focusRequest;
-    focus();
-    expect(store.getState().focusRequest).toEqual({ workspaceKey, tabId });
-    expect(store.getState().focusRequest).not.toBe(first);
-  }
-});
-
-it("reentering a workspace restores its suspended pane without choosing another tab", () => {
-  const store = createWorkspaceLayoutStore(workspaceLayoutIds);
-  const workspaceKey = "server:resume";
-  const tabId = store
-    .getState()
-    .openTab({ workspaceKey, target: { kind: "agent", agentId: "agent" }, intent: "reveal" })!;
-  const paneId = store.getState().layoutByWorkspace[workspaceKey]!.focusedPaneId;
-  store.getState().unfocusPane(workspaceKey);
-  store.getState().focusWorkspace(workspaceKey);
-  expect(store.getState().layoutByWorkspace[workspaceKey]!.focusedPaneId).toBe(paneId);
-  expect(store.getState().focusRequest).toEqual({ workspaceKey, tabId });
 });

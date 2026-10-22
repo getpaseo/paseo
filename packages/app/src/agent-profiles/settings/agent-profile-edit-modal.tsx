@@ -2,12 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } 
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
-import type { AgentOptionControl, ProviderOptions } from "@getpaseo/protocol/agent-types";
-import { readSelectOption, readToggleOption } from "@/agent-controls/option-controls";
+import type { AgentFeature } from "@getpaseo/protocol/agent-types";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
-import { type ControlSize } from "@/components/ui/control-geometry";
+import { type FieldControlSize } from "@/components/ui/control-geometry";
 import { Field, FormTextInput } from "@/components/ui/form-field";
 import {
   SelectField,
@@ -15,6 +14,7 @@ import {
   type SelectFieldOption,
 } from "@/components/ui/select-field";
 import { Switch } from "@/components/ui/switch";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { toErrorMessage } from "@/utils/error-messages";
 import { AgentProfileAppearanceField } from "./agent-profile-appearance-field";
 import type {
@@ -25,7 +25,7 @@ import type {
 } from "../internal/profile-form-model";
 import {
   useAgentProfileFormCatalog,
-  useAgentProfileFormControls,
+  useAgentProfileFormFeatures,
 } from "../internal/use-profile-form-inputs";
 import {
   useAgentProfileFormModel,
@@ -133,7 +133,7 @@ function OpenAgentProfileEditModal({
   onSave,
 }: AgentProfileEditModalProps & { onDismiss: () => void }): ReactElement {
   const { t } = useTranslation();
-  const controlSize: ControlSize = "md";
+  const controlSize: FieldControlSize = useIsCompactFormFactor() ? "md" : "sm";
   const snapshot = useMemo(
     () => ({ mode, ...(profile ? { profile } : {}), ...(seed ? { seed } : {}) }),
     [mode, profile, seed],
@@ -141,7 +141,7 @@ function OpenAgentProfileEditModal({
   const model = useAgentProfileFormModel(snapshot);
   const state = useAgentProfileFormState(model);
   useAgentProfileFormCatalog({ serverId, model });
-  useAgentProfileFormControls({ serverId, model, state });
+  useAgentProfileFormFeatures({ serverId, model, state });
 
   const sheetHeader = useMemo<SheetHeader>(
     () => ({
@@ -328,17 +328,16 @@ function OpenAgentProfileEditModal({
           />
         ) : null}
 
-        {state.disclosure.showControlsField ? (
+        {state.disclosure.showFeaturesField ? (
           <Field
             label={t("settings.host.agentProfiles.featuresLabel")}
             testID="agent-profile-features-field"
           >
             <View style={styles.featureCard} testID="agent-profile-features-card">
-              {state.controls.map((control, index) => (
-                <AgentProfileControlRow
-                  key={control.key}
-                  control={control}
-                  options={state.controlOptions}
+              {state.features.map((feature, index) => (
+                <AgentProfileFeatureRow
+                  key={feature.id}
+                  feature={feature}
                   isFirst={index === 0}
                   disabled={state.isSubmitting}
                   size={controlSize}
@@ -401,19 +400,17 @@ function OpenAgentProfileEditModal({
   );
 }
 
-function AgentProfileControlRow({
-  control,
-  options,
+function AgentProfileFeatureRow({
+  feature,
   isFirst,
   disabled,
   size,
   model,
 }: {
-  control: AgentOptionControl;
-  options: ProviderOptions;
+  feature: AgentFeature;
   isFirst: boolean;
   disabled: boolean;
-  size: ControlSize;
+  size: FieldControlSize;
   model: AgentProfileFormModel;
 }): ReactElement {
   const rowStyle = useMemo(
@@ -421,75 +418,74 @@ function AgentProfileControlRow({
     [isFirst],
   );
   const handleToggle = useCallback(
-    (value: boolean) => model.setOption(control.key, value),
-    [control.key, model],
+    (value: boolean) => model.setFeatureValue(feature.id, value),
+    [feature.id, model],
   );
   const handleSelect = useCallback(
-    (value: string) => model.setOption(control.key, value),
-    [control.key, model],
+    (value: string) => model.setFeatureValue(feature.id, value),
+    [feature.id, model],
   );
   const selectOptions = useMemo<SelectFieldOption<string>[]>(
     () =>
-      control.type === "select"
-        ? control.choices.map((choice) => ({
-            id: choice.value,
-            value: choice.value,
-            label: choice.label,
-            ...(choice.description ? { description: choice.description } : {}),
-            testID: `agent-profile-feature-option-${control.key}-${choice.value}`,
+      feature.type === "select"
+        ? feature.options.map((option) => ({
+            id: option.id,
+            value: option.id,
+            label: option.label,
+            ...(option.description ? { description: option.description } : {}),
+            testID: `agent-profile-feature-option-${feature.id}-${option.id}`,
           }))
         : [],
-    [control],
+    [feature],
   );
-  const selectedValue = control.type === "select" ? readSelectOption(control, options) : null;
   const selectedDisplay = useMemo<SelectFieldDisplay | null>(() => {
-    if (control.type !== "select" || !selectedValue) {
+    if (feature.type !== "select" || !feature.value) {
       return null;
     }
-    const choice = control.choices.find((candidate) => candidate.value === selectedValue);
-    return { label: choice?.label ?? selectedValue };
-  }, [control, selectedValue]);
+    const option = feature.options.find((candidate) => candidate.id === feature.value);
+    return { label: option?.label ?? feature.value };
+  }, [feature]);
 
-  if (control.type === "select") {
+  if (feature.type === "select") {
     return (
-      <View style={rowStyle} testID={`agent-profile-feature-row-${control.key}`}>
+      <View style={rowStyle} testID={`agent-profile-feature-row-${feature.id}`}>
         <SelectField
-          label={control.label}
-          value={selectedValue}
+          label={feature.label}
+          value={feature.value}
           selectedDisplay={selectedDisplay}
           options={selectOptions}
           onChange={handleSelect}
-          placeholder={control.label}
-          emptyText={control.label}
+          placeholder={feature.label}
+          emptyText={feature.label}
           disabled={disabled}
-          {...(control.description ? { hint: control.description } : {})}
-          title={control.label}
+          {...(feature.description ? { hint: feature.description } : {})}
+          title={feature.label}
           size={size}
-          testID={`agent-profile-feature-field-${control.key}`}
-          triggerTestID={`agent-profile-feature-trigger-${control.key}`}
+          testID={`agent-profile-feature-field-${feature.id}`}
+          triggerTestID={`agent-profile-feature-trigger-${feature.id}`}
         />
       </View>
     );
   }
 
   return (
-    <View style={rowStyle} testID={`agent-profile-feature-row-${control.key}`}>
+    <View style={rowStyle} testID={`agent-profile-feature-row-${feature.id}`}>
       <View style={styles.featureMeta}>
         <Text style={styles.featureLabel} numberOfLines={1}>
-          {control.label}
+          {feature.label}
         </Text>
-        {control.description ? (
+        {feature.description ? (
           <Text style={styles.featureDescription} numberOfLines={2}>
-            {control.description}
+            {feature.description}
           </Text>
         ) : null}
       </View>
       <Switch
-        value={readToggleOption(control, options)}
+        value={feature.value === true}
         onValueChange={handleToggle}
         disabled={disabled}
-        accessibilityLabel={control.label}
-        testID={`agent-profile-feature-switch-${control.key}`}
+        accessibilityLabel={feature.label}
+        testID={`agent-profile-feature-switch-${feature.id}`}
       />
     </View>
   );

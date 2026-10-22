@@ -262,8 +262,6 @@ describe("replaceFetchedAgentDirectory", () => {
             workspaceKind: "worktree",
             name: "repo",
             status: "done",
-            createdAt: null,
-            lastUserMessageAt: null,
             statusEnteredAt: null,
             archivingAt: null,
             diffStat: null,

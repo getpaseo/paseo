@@ -16,25 +16,11 @@ import type { ManagedProcessRegistry } from "../../../../managed-processes/manag
 import { resolveOpenCodeHomeDir } from "../paths.js";
 import { OpenCodeHttpError } from "../http-error.js";
 import { raceProviderRefreshAbort } from "../../../provider-refresh-deadline.js";
-import { resolveExternalOpenCodeServer, type ExternalOpenCodeServer } from "./external-server.js";
-import { selectOpenCodeService, type OpenCodeServiceSelection } from "./service-selection.js";
-import { bridgeBindings, connectSharedService } from "./shared-service.js";
-import {
-  hasManagedBridge,
-  openCodeConfigDirectory,
-  provisionLocalBridge,
-} from "./bridge-provisioning.js";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import type { OpenCodeBridge } from "../bridge.js";
 
 export interface V2Connection {
   client: V2Api;
   release(): Promise<void>;
   retain(): V2Connection;
-  bindSession(sessionId: string, cwd: string): Promise<void>;
-  unbindSession(sessionId: string, cwd: string): Promise<void>;
-  refreshLocation(cwd: string, signal?: AbortSignal): Promise<void>;
   readonly exited: Promise<Error>;
 }
 interface Generation {
@@ -42,17 +28,12 @@ interface Generation {
   users: number;
   stop(): Promise<void>;
   exited: Promise<Error>;
-  bindSession(sessionId: string, cwd: string): Promise<void>;
-  unbindSession(sessionId: string, cwd: string): Promise<void>;
-  refreshLocation(cwd: string, signal?: AbortSignal): Promise<void>;
 }
 export interface V2RuntimeOptions {
   logger: Logger;
   settings?: ProviderRuntimeSettings;
   managedProcesses?: ManagedProcessRegistry;
-  externalServer?: ExternalOpenCodeServer;
-  selection?: OpenCodeServiceSelection;
-  bridge?: OpenCodeBridge;
+  decorateEnv?: (env: Record<string, string>) => Promise<Record<string, string>>;
 }
 
 export interface V2RuntimeAcquireOptions {
@@ -68,36 +49,17 @@ export class V2Runtime {
   private generations = new Set<Generation>();
   private starts = new Set<Promise<Generation>>();
   private closed = false;
-  private readonly selection: Promise<OpenCodeServiceSelection>;
 
-  constructor(private readonly options: V2RuntimeOptions) {
-    this.selection = options.selection
-      ? Promise.resolve(options.selection)
-      : selectOpenCodeService({
-          explicit:
-            options.externalServer ??
-            resolveExternalOpenCodeServer({
-              ...globalThis.process.env,
-              ...options.settings?.env,
-            }),
-          env: options.settings?.env,
-        });
-  }
+  constructor(private readonly options: V2RuntimeOptions) {}
 
   async acquire(input: V2RuntimeAcquireOptions = {}): Promise<V2Connection> {
     if (this.closed) throw new Error("OpenCode runtime is closed");
     input.signal?.throwIfAborted();
-    this.assertBridgePort();
-    const selection = await raceProviderRefreshAbort(input.signal, this.selection);
     let pending: Promise<Generation>;
-    if (selection.kind !== "owned") {
-      this.assertSharedConfiguration(input, selection);
-      this.current ??= this.startTracked();
-      pending = this.current;
-    } else if (input.env || input.dedicated) {
+    if (input.env || input.dedicated) {
       pending = this.startTracked(input.env);
     } else {
-      if (!this.current) this.current = this.startTracked();
+      if (input.fresh || !this.current) this.current = this.startTracked();
       pending = this.current;
     }
     let generation: Generation;
@@ -135,39 +97,6 @@ export class V2Runtime {
     return connection;
   }
 
-  private assertBridgePort(): void {
-    const port = this.options.settings?.env?.PASEO_OPENCODE_BRIDGE_PORT;
-    if (!port || !this.options.bridge) return;
-    const actual = new URL(this.options.bridge.sharedV2Connection().baseUrl).port;
-    if (Number(port) !== Number(actual))
-      throw new Error("PASEO_OPENCODE_BRIDGE_PORT changed; restart Paseo to apply the bridge port");
-  }
-
-  private assertSharedConfiguration(
-    input: V2RuntimeAcquireOptions,
-    selection: OpenCodeServiceSelection,
-  ): void {
-    const connectionEnv = new Set([
-      "PASEO_OPENCODE_SERVER_URL",
-      "PASEO_OPENCODE_SERVER_PASSWORD",
-      "PASEO_OPENCODE_BRIDGE_URL",
-      "PASEO_OPENCODE_BRIDGE_PORT",
-    ]);
-    if (selection.kind === "discovered") {
-      connectionEnv.add("XDG_CONFIG_HOME");
-      connectionEnv.add("XDG_STATE_HOME");
-      connectionEnv.add("OPENCODE_CONFIG_DIR");
-    }
-    const processOverrides = Object.keys(this.options.settings?.env ?? {}).filter(
-      (key) => !connectionEnv.has(key),
-    );
-    if (input.env || input.dedicated || processOverrides.length) {
-      throw new Error(
-        `Custom OpenCode MCP servers or process environment require an isolated server and cannot be used with a shared OpenCode service${processOverrides.length ? `: ${processOverrides.join(", ")}` : ""}.`,
-      );
-    }
-  }
-
   private lease(generation: Generation, pending: Promise<Generation>): V2Connection {
     if (this.closed || !this.generations.has(generation))
       throw new Error("OpenCode helper server is no longer running");
@@ -178,7 +107,7 @@ export class V2Runtime {
       released = true;
       generation.users -= 1;
       if (generation.users !== 0) return;
-      if (this.current === pending) return;
+      if (this.current === pending) this.current = null;
       this.generations.delete(generation);
       await generation.stop();
     };
@@ -186,9 +115,6 @@ export class V2Runtime {
       client: generation.client,
       release,
       retain: () => this.lease(generation, pending),
-      bindSession: generation.bindSession,
-      unbindSession: generation.unbindSession,
-      refreshLocation: generation.refreshLocation,
       exited: generation.exited,
     };
   }
@@ -220,16 +146,6 @@ export class V2Runtime {
   }
 
   private async start(env: Record<string, string> = {}): Promise<Generation> {
-    const selection = await this.selection;
-    if (selection.kind !== "owned") {
-      const generation: Generation = {
-        ...(await connectSharedService(selection, this.options)),
-        users: 0,
-      };
-      this.generations.add(generation);
-      return generation;
-    }
-
     const { settings, managedProcesses, logger } = this.options;
     const launch = await resolveProviderLaunch({
       commandConfig: settings?.command,
@@ -244,20 +160,9 @@ export class V2Runtime {
       ...settings?.env,
       ...env,
     };
-    const bridge = this.options.bridge;
-    const plugin = bridge
-      ? await bridge.materializeV2Plugin()
-      : await materializeOpenCodeV2Plugin(resolvePaseoHome());
-    const globalConfig = openCodeConfigDirectory({ ...globalThis.process.env, ...configured });
-    const managed = await hasManagedBridge(globalConfig);
-    if (managed && bridge)
-      await provisionLocalBridge({
-        configDirectory: globalConfig,
-        artifact: path.join(fileURLToPath(plugin), "server.js"),
-      });
-    const decorated = managed
-      ? configured
-      : decorateOpenCodeV2Env(configured, plugin, bridge ? {} : { mode: "structured-only" });
+    const decorated = this.options.decorateEnv
+      ? await this.options.decorateEnv(configured)
+      : decorateOpenCodeV2Env(configured, await materializeOpenCodeV2Plugin(resolvePaseoHome()));
     const args = [...launch.args, "serve", "--hostname", "127.0.0.1", "--port", "0"];
     const process = spawnProcess(launch.command, args, {
       cwd,
@@ -348,13 +253,7 @@ export class V2Runtime {
         },
       });
       await client.server.info({ signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
-      const generation: Generation = {
-        client,
-        users: 0,
-        stop,
-        exited,
-        ...bridgeBindings(client, bridge),
-      };
+      const generation: Generation = { client, users: 0, stop, exited };
       this.generations.add(generation);
       process.once("exit", () => {
         this.generations.delete(generation);

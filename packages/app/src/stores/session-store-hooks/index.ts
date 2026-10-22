@@ -1,4 +1,3 @@
-import type { WorkspaceSort } from "@/projects/workspace-structure";
 import { useMemo } from "react";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
@@ -10,13 +9,13 @@ import {
   selectWorkspaceDirectoryServerIds,
   selectHasWorkspaces,
   selectProjectOrder,
-  selectProjectRootPaths,
   selectRecommendedProjectPaths,
   selectWorkspace,
   selectWorkspaceDirectory,
   selectWorkspaceExists,
   selectWorkspaceFields,
   selectWorkspaceKeys,
+  selectWorkspaceOrderByScope,
   selectWorkspaceStatusesForBadges,
   workspaceEqualityFns,
   type WorkspaceStructure,
@@ -100,13 +99,10 @@ export function useWorkspaceDirectory(
   );
 }
 
-export function useWorkspaceStructure(
-  serverIds: string[],
-  workspaceSort?: WorkspaceSort,
-): WorkspaceStructure {
+export function useWorkspaceStructure(serverIds: string[]): WorkspaceStructure {
   const selectProjects = useMemo(
-    () => createWorkspaceStructureProjectsSelector(serverIds, workspaceSort),
-    [serverIds, workspaceSort],
+    () => createWorkspaceStructureProjectsSelector(serverIds),
+    [serverIds],
   );
   const projects = useStoreWithEqualityFn(
     useSessionStore,
@@ -118,17 +114,20 @@ export function useWorkspaceStructure(
     (state) => selectProjectOrder(state),
     workspaceEqualityFns.deep,
   );
-  const workspaceOrderByProject = useSidebarOrderStore((state) =>
-    workspaceSort === "manual" ? state.workspaceOrderByProject : undefined,
+  const workspaceOrderByScope = useStoreWithEqualityFn(
+    useSidebarOrderStore,
+    (state) => selectWorkspaceOrderByScope(state),
+    workspaceEqualityFns.deep,
   );
+
   return useMemo(
     () =>
       composeWorkspaceStructure({
         projects,
         projectOrder,
-        workspaceOrderByProject,
+        workspaceOrderByScope,
       }),
-    [projectOrder, projects, workspaceOrderByProject],
+    [projectOrder, projects, workspaceOrderByScope],
   );
 }
 
@@ -144,14 +143,6 @@ export function useRecommendedProjectPaths(serverId: string | null): string[] {
   return useStoreWithEqualityFn(
     useSessionStore,
     (state) => selectRecommendedProjectPaths(state, serverId),
-    workspaceEqualityFns.deep,
-  );
-}
-
-export function useProjectRootPaths(serverId: string | null): string[] {
-  return useStoreWithEqualityFn(
-    useSessionStore,
-    (state) => selectProjectRootPaths(state, serverId),
     workspaceEqualityFns.deep,
   );
 }

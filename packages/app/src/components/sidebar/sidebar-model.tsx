@@ -50,16 +50,13 @@ const SidebarModelContext = createContext<SidebarModel | null>(null);
 
 export function SidebarModelProvider({
   active,
-  keyboardNavigationActive = false,
   children,
 }: {
   active?: boolean;
-  keyboardNavigationActive?: boolean;
   children: ReactNode;
 }) {
   const { t } = useTranslation();
-  const modelActive = active !== false || keyboardNavigationActive;
-  const list = useSidebarWorkspacesList({ enabled: modelActive });
+  const list = useSidebarWorkspacesList({ enabled: active });
   const showBackground = useSidebarViewStore((state) => state.showBackground);
   const groupMode = useSidebarViewStore((state) => state.groupMode);
   const labelFilter = useSidebarViewStore((state) => state.labelFilter);
@@ -101,11 +98,10 @@ export function SidebarModelProvider({
   // anything; the label filter reads `labels`, which only exists on an entry. Hydration opens a
   // live session-store subscription over every workspace on every visible host, so widening this
   // for a filter that does not need it costs a retained-but-inactive sidebar real work.
-  // Hardware keyboard navigation needs the same filtered targets while the sidebar is hidden.
   const needsWorkspaceEntries = groupMode !== "project" || hasActiveLabelFilter;
   const workspaceEntriesByKey = useSidebarWorkspaceEntries(
     list.workspacePlacements,
-    modelActive || needsWorkspaceEntries,
+    active !== false || needsWorkspaceEntries,
   );
   const filteredWorkspaceEntriesByKey = useMemo(() => {
     const byProject = filterWorkspacesByProjects({
@@ -138,7 +134,7 @@ export function SidebarModelProvider({
           visibleWorkspaceKeys.has(workspace.workspaceKey),
         );
         return workspaces.length > 0 || (!hasActiveLabelFilter && project.workspaces.length === 0)
-          ? [workspaces.length === project.workspaces.length ? project : { ...project, workspaces }]
+          ? [{ ...project, workspaces }]
           : [];
       });
     }

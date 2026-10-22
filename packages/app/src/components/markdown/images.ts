@@ -35,21 +35,11 @@ export interface MarkdownImageContext {
   filePath?: string;
 }
 
-export function useMarkdownSource(
-  text: string,
-  context: MarkdownImageContext,
-  links: { commandNames?: ReadonlySet<string>; forgeReferencePattern?: string } = {},
-) {
+export function useMarkdownSource(text: string, context: MarkdownImageContext) {
   const occurrenceKey = useId();
-  const { commandNames, forgeReferencePattern } = links;
   const prepared = useMemo(
-    () =>
-      prepareMarkdownSource(text, context.workspaceRoot, {
-        supportsSvg: isWeb,
-        commandNames,
-        forgeReferencePattern,
-      }),
-    [text, context.workspaceRoot, commandNames, forgeReferencePattern],
+    () => prepareMarkdownSource(text, context.workspaceRoot, { supportsSvg: isWeb }),
+    [text, context.workspaceRoot],
   );
   const sources = [...new Set(prepared.images.map((image) => image.source))];
   const acquisitions = sources.map((source) => {

@@ -13,11 +13,6 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
-import {
-  TOOLBAR_GLYPH_SIZES,
-  toolbarContentSlot,
-  type ToolbarGlyph,
-} from "@/components/ui/control-geometry";
 
 const EMPTY_COMBOBOX_OPTIONS: ComboboxOption[] = [];
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
@@ -65,7 +60,7 @@ interface CombinedModelSelectorProps {
    */
   triggerFill?: boolean;
   toolbar?: {
-    glyph: ToolbarGlyph;
+    glyphSize: number;
     showCaret: boolean;
   };
 }
@@ -257,13 +252,11 @@ export function CombinedModelSelector({
           chevron={toolbar?.showCaret === false ? null : undefined}
         >
           {selectedProvider.trim().length > 0 ? (
-            <View style={toolbar ? styles.toolbarGlyph : styles.glyph}>
+            <View style={toolbar?.glyphSize === 20 ? styles.toolbarGlyph20 : styles.toolbarGlyph16}>
               <ModelProviderGlyph
                 provider={selectedProvider}
                 serverId={serverId}
-                size={toolbar?.glyph.size ?? ICON_SIZE.md}
-                strokeWidth={toolbar?.glyph.strokeWidth}
-                tone={toolbar?.glyph.tone}
+                size={toolbar?.glyphSize ?? ICON_SIZE.md}
               />
             </View>
           ) : null}
@@ -299,30 +292,31 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: 0,
   },
   trigger: {
+    height: 28,
     minWidth: 0,
     flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "transparent",
     gap: theme.spacing[1],
-    ...toolbarContentSlot(),
-    borderRadius: theme.borderRadius.full,
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius["2xl"],
   },
   triggerHovered: {
     backgroundColor: theme.colors.surface2,
   },
-  glyph: {
-    width: ICON_SIZE.md,
-    height: ICON_SIZE.md,
+  toolbarGlyph16: {
+    width: 16,
+    height: 16,
     flexShrink: 0,
   },
-  toolbarGlyph: {
-    width: TOOLBAR_GLYPH_SIZES.label,
-    height: TOOLBAR_GLYPH_SIZES.label,
+  toolbarGlyph20: {
+    width: 20,
+    height: 20,
     flexShrink: 0,
   },
   triggerPressed: {
-    backgroundColor: theme.colors.surface2,
+    backgroundColor: theme.colors.surface0,
   },
   triggerDisabled: {
     opacity: 0.5,
@@ -334,7 +328,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
   },
-  // A custom trigger, such as a form field, owns its own box: none of the toolbar slot applies.
   customTriggerWrapper: {
     paddingHorizontal: 0,
     paddingVertical: 0,

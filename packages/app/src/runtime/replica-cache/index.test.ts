@@ -216,19 +216,6 @@ function timeline(text = "Cached") {
   };
 }
 
-it("keeps the unsettled turn with the cached messages", async () => {
-  const storage = new MemoryStorage();
-  const writer = createCache(storage);
-  const cached = {
-    ...timeline(),
-    unsettledTurn: { startedAt: new Date("2026-08-26T09:59:00.000Z"), turnId: "turn-1" },
-  };
-  writer.commitTimeline(SERVER_ID, "agent-1", cached);
-  await writer.flush();
-
-  expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toEqual(cached);
-});
-
 function commitDirectory(
   cache: ReplicaCache,
   serverId: string,
@@ -318,73 +305,50 @@ async function expectLegacyWorkspaceRefresh({
   expect(refreshed.checkpoint).toEqual(baseline.checkpoint);
 }
 
-describe("ReplicaCache", () => {
-  it("persists the complete newest turn beyond the cache item target", async () => {
-    const storage = new MemoryStorage();
-    const writer = createCache(storage);
-    const items = Array.from({ length: 60 }, (_, index) => ({
-      ...timelineItem(`item-${index}`),
-      id: `item-${index}`,
-      turnId: "long-run",
-    }));
-    writer.commitTimeline(SERVER_ID, "agent-1", { ...timeline(), items });
-    await writer.flush();
-    const restored = await createCache(storage).readTimeline(SERVER_ID, "agent-1");
-    expect(restored?.items.map((item) => item.id)).toEqual(items.map((item) => item.id));
-    expect(restored?.range).toBeNull();
-  });
-
-  it("preserves workspace parentage and its checkpoint across cache reopen", async () => {
-    const storage = new MemoryStorage();
-    const writer = createCache(storage);
-    const baseline = directory({ workspaces: { generation: "g", afterSeq: 8 } });
-    const workspace = normalizeWorkspaceDescriptor({
-      ...workspacePayload(),
-      parentWorkspaceId: "parent",
-    });
-    baseline.workspaces.set(workspace.id, workspace);
-    commitDirectory(writer, SERVER_ID, baseline);
-    await writer.flush();
-    const reader = createCache(storage);
-    const restored = await reader.readDirectory(SERVER_ID);
-    expect(restored.checkpoint).toEqual(baseline.checkpoint);
-    expect(restored.workspaces.get(workspace.id)?.parentWorkspaceId).toBe("parent");
-    expect((await reader.readWorkspace(SERVER_ID, workspace.id))?.workspace.parentWorkspaceId).toBe(
-      "parent",
+// Even seqs with a user message every ten items, at seq 10, 30, 50, ...
+function longTimelineItems(count: number, options: { prompts: boolean }): StreamItem[] {
+  const items: StreamItem[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const seq = index * 2 + 2;
+    const timestamp = new Date(Date.UTC(2026, 6, 18, 8, 0, index));
+    const timelineCursor = { epoch: "epoch-1", seq };
+    items.push(
+      options.prompts && index % 10 === 4
+        ? {
+            kind: "user_message",
+            id: `user-${seq}`,
+            messageId: `user-${seq}`,
+            text: `Prompt ${seq}`,
+            timestamp,
+            timelineCursor,
+          }
+        : {
+            kind: "assistant_message",
+            id: `assistant-${seq}`,
+            text: `Reply ${seq}`,
+            timestamp,
+            timelineCursor,
+          },
     );
+  }
+  return items;
+}
+
+async function persistAndRestoreLongTimeline(items: StreamItem[]) {
+  const storage = new MemoryStorage();
+  const writer = createCache(storage);
+  const endSeq = Math.max(...items.map((entry) => entry.timelineCursor?.seq ?? 0));
+  writer.commitTimeline(SERVER_ID, "agent-1", {
+    agentId: "agent-1",
+    items,
+    range: { epoch: "epoch-1", startSeq: 2, endSeq },
+    hasOlder: false,
   });
+  await writer.flush();
+  return await createCache(storage).readTimeline(SERVER_ID, "agent-1");
+}
 
-  it("preserves workspace sorting timestamps across cache reopen", async () => {
-    const storage = new MemoryStorage();
-    const writer = createCache(storage);
-    const baseline = directory();
-    const workspace = normalizeWorkspaceDescriptor({
-      ...workspacePayload(),
-      createdAt: "2026-07-18T08:00:00.000Z",
-      lastUserMessageAt: "2026-07-18T09:00:00.000Z",
-    });
-    baseline.workspaces.set(workspace.id, workspace);
-    commitDirectory(writer, SERVER_ID, baseline);
-    await writer.flush();
-    const reader = createCache(storage);
-    expect((await reader.readDirectory(SERVER_ID)).workspaces.get(workspace.id)).toEqual(workspace);
-    expect((await reader.readWorkspace(SERVER_ID, workspace.id))?.workspace).toEqual(workspace);
-  });
-
-  it.each(["createdAt", "lastUserMessageAt"])(
-    "refetches workspaces cached without %s",
-    async (field) => {
-      const cached = await cacheWithoutBackgroundVisibility();
-      const key = `${SERVER_ID}:workspace:workspace-1`;
-      const row = cached.storage.rows.get(key)!;
-      const payload = JSON.parse(row.payload);
-      payload.background = false;
-      delete payload[field];
-      cached.storage.rows.set(key, { ...row, payload: JSON.stringify(payload) });
-      await expectLegacyWorkspaceRefresh(cached);
-    },
-  );
-
+describe("ReplicaCache", () => {
   it.each([true, false, undefined])(
     "preserves background visibility (%s) when reopening a cached workspace",
     async (background) => {
@@ -544,23 +508,6 @@ describe("ReplicaCache", () => {
       { kind: "checkpoint", id: "singleton" },
     ]);
     expect(storage.changes[0]?.deletes).toEqual([]);
-  });
-
-  it("keeps a background agent background across cache reopen", async () => {
-    const storage = new MemoryStorage();
-    const writer = createCache(storage);
-    const helper = { ...agent("helper"), background: true };
-    const visible = agent("visible");
-    writer.commitDirectoryMutations(SERVER_ID, [
-      { kind: "agent", type: "upsert", id: helper.id, value: helper },
-      { kind: "agent", type: "upsert", id: visible.id, value: visible },
-    ]);
-    await writer.flush();
-
-    const restored = await createCache(storage).readDirectory(SERVER_ID);
-
-    expect(restored.agents.get("helper")?.background).toBe(true);
-    expect(restored.agents.get("visible")?.background).toBe(false);
   });
 
   it("round-trips identified and anonymous open turns without changing protocol status", async () => {
@@ -775,6 +722,87 @@ describe("ReplicaCache", () => {
     cache.commitTimeline(SERVER_ID, "agent-1", timeline("New"));
 
     expect((await cache.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([timelineItem("New")]);
+  });
+
+  describe("long timeline coverage", () => {
+    it("keeps a range re-derived from the kept items when trimming a long timeline", async () => {
+      const items = longTimelineItems(80, { prompts: true });
+
+      const restored = await persistAndRestoreLongTimeline(items);
+
+      // The newest 50 begin at index 30; the first user message at or after it is index 34.
+      expect(restored).toEqual({
+        agentId: "agent-1",
+        items: items.slice(34),
+        range: { epoch: "epoch-1", startSeq: 70, endSeq: 160 },
+        hasOlder: true,
+      });
+    });
+
+    it("moves the trim boundary past a trimmed item that updated inside the kept window", async () => {
+      const items = longTimelineItems(80, { prompts: true });
+      // A tool-like row anchored early whose latest update landed after the user rows at 70 and 90.
+      items[10] = { ...items[10]!, timelineCursor: { epoch: "epoch-1", seq: 95 } };
+
+      const restored = await persistAndRestoreLongTimeline(items);
+
+      expect(restored?.items).toEqual(items.slice(54));
+      expect(restored?.range).toEqual({ epoch: "epoch-1", startSeq: 110, endSeq: 160 });
+      expect(restored?.hasOlder).toBe(true);
+    });
+
+    it("keeps a display-only tail when no user message can start the kept window", async () => {
+      const items = longTimelineItems(80, { prompts: false });
+
+      const restored = await persistAndRestoreLongTimeline(items);
+
+      expect(restored).toEqual({
+        agentId: "agent-1",
+        items: items.slice(-50),
+        range: null,
+        hasOlder: false,
+      });
+    });
+
+    it("keeps coverage for a user message with images and attachments", async () => {
+      const prompt: StreamItem = {
+        kind: "user_message",
+        id: "client-1",
+        clientMessageId: "client-1",
+        messageId: "client-1",
+        text: "See screenshot",
+        timestamp: new Date("2026-07-18T08:01:00.000Z"),
+        timelineCursor: { epoch: "epoch-1", seq: 11 },
+        images: [
+          {
+            id: "image-1",
+            mimeType: "image/png",
+            storageType: "web-indexeddb",
+            storageKey: "image-1",
+            createdAt: 1,
+          },
+        ],
+        attachments: [{ type: "text", mimeType: "text/plain", text: "context" }],
+      };
+      const storage = new MemoryStorage();
+      const writer = createCache(storage);
+      writer.commitTimeline(SERVER_ID, "agent-1", {
+        agentId: "agent-1",
+        items: [prompt, timelineItem()],
+        range: { epoch: "epoch-1", startSeq: 11, endSeq: 12 },
+        hasOlder: true,
+      });
+      await writer.flush();
+
+      // The daemon never returns local images or attachments, so a refetch renders the same row.
+      const { images: _images, attachments: _attachments, ...refetchedPrompt } = prompt;
+      expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toEqual({
+        agentId: "agent-1",
+        items: [refetchedPrompt, timelineItem()],
+        range: { epoch: "epoch-1", startSeq: 11, endSeq: 12 },
+        hasOlder: true,
+      });
+    });
   });
 
   it("round-trips plugin timeline items", async () => {

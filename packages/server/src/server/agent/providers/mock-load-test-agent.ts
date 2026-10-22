@@ -3,7 +3,7 @@ import type { Logger } from "pino";
 import type {
   AgentCapabilityFlags,
   AgentClient,
-  AgentOptionControl,
+  AgentFeature,
   AgentLaunchContext,
   AgentMode,
   AgentModelDefinition,
@@ -18,7 +18,6 @@ import type {
   AgentRuntimeInfo,
   AgentSession,
   AgentSessionConfig,
-  AgentSlashCommand,
   AgentStreamEvent,
   AgentTimelineItem,
   FetchCatalogOptions,
@@ -36,13 +35,7 @@ import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest
 
 export const MOCK_LOAD_TEST_PROVIDER_ID = "mock";
 export const MOCK_LOAD_TEST_DEFAULT_MODEL_ID = "five-minute-stream";
-const MOCK_LOAD_TEST_COMMAND: AgentSlashCommand = {
-  name: "mock",
-  description: "Reply without starting a turn",
-  argumentHint: "handled-command",
-  kind: "command",
-};
-export const MOCK_LOAD_TEST_HANDLED_COMMAND = `/${MOCK_LOAD_TEST_COMMAND.name} ${MOCK_LOAD_TEST_COMMAND.argumentHint}`;
+export const MOCK_LOAD_TEST_HANDLED_COMMAND = "/mock handled-command";
 const MOCK_LOAD_TEST_MODE_ID = "load-test";
 const MOCK_LOAD_TEST_DURATION_MS = 5 * 60 * 1000;
 const MOCK_LOAD_TEST_INTERVAL_MS = 40;
@@ -230,7 +223,6 @@ interface LargeAgentStreamPayloadRequest {
 }
 
 interface AgentStreamStressRequest {
-  tools: boolean;
   count: number;
   coalesced: boolean;
 }
@@ -294,35 +286,6 @@ function parseMockQuestionPrompt(prompt: AgentPromptInput): MockQuestionPromptRe
   const text = promptToText(prompt);
   if (!/emit\s+(?:a\s+)?synthetic\s+questions?/i.test(text)) {
     return null;
-  }
-
-  if (/with\s+links/i.test(text)) {
-    return {
-      questions: [
-        {
-          question:
-            "Sign in at https://example.com/login, then follow [the setup guide](https://example.com/setup). Done?",
-          header: "signIn",
-          options: [
-            {
-              label: "Done",
-              description: "Logs are at https://example.com/logs if sign-in fails.",
-            },
-            { label: "Not yet, see [status](https://example.com/status)" },
-          ],
-          multiSelect: false,
-        },
-        {
-          question: "Which checks should run?",
-          header: "checks",
-          options: [
-            { label: "Lint", description: "Rules: https://example.com/lint" },
-            { label: "Typecheck" },
-          ],
-          multiSelect: true,
-        },
-      ],
-    };
   }
 
   if (/free[-\s]?write|freeform|text[-\s]?only/i.test(text)) {
@@ -462,7 +425,7 @@ function parseLargeAgentStreamPayloadPrompt(
 
 function parseAgentStreamStressPrompt(prompt: AgentPromptInput): AgentStreamStressRequest | null {
   const text = promptToText(prompt);
-  const match = /emit\s+(\d+)\s+(coalesced\s+|tool\s+)?agent stream updates/i.exec(text);
+  const match = /emit\s+(\d+)\s+(coalesced\s+)?agent stream updates/i.exec(text);
   if (!match) {
     return null;
   }
@@ -472,8 +435,7 @@ function parseAgentStreamStressPrompt(prompt: AgentPromptInput): AgentStreamStre
   }
   return {
     count: Math.min(count, 5_000),
-    coalesced: match[2]?.trim() === "coalesced",
-    tools: match[2]?.trim() === "tool",
+    coalesced: Boolean(match[2]),
   };
 }
 
@@ -787,7 +749,7 @@ function getConfiguredAssistantResponses(value: unknown): string[] {
 export class MockLoadTestAgentSession implements AgentSession {
   readonly provider: AgentProvider = MOCK_LOAD_TEST_PROVIDER_ID;
   readonly capabilities = CAPABILITIES;
-  readonly controls: AgentOptionControl[] = [];
+  readonly features: AgentFeature[] = [];
   readonly id: string;
   private readonly usageSessionKey = randomUUID();
 
@@ -812,18 +774,18 @@ export class MockLoadTestAgentSession implements AgentSession {
     this.modeId = options.config.modeId ?? MOCK_LOAD_TEST_MODE_ID;
     this.modelId = options.config.model ?? MOCK_LOAD_TEST_DEFAULT_MODEL_ID;
     this.assistantResponse =
-      typeof options.config.providerOptions?.mockAssistantResponse === "string"
-        ? options.config.providerOptions.mockAssistantResponse
+      typeof options.config.featureValues?.mockAssistantResponse === "string"
+        ? options.config.featureValues.mockAssistantResponse
         : null;
     this.assistantResponses = getConfiguredAssistantResponses(
-      options.config.providerOptions?.mockAssistantResponses,
+      options.config.featureValues?.mockAssistantResponses,
     );
     this.streamingAssistantResponse =
-      typeof options.config.providerOptions?.mockStreamingAssistantResponse === "string"
-        ? options.config.providerOptions.mockStreamingAssistantResponse
+      typeof options.config.featureValues?.mockStreamingAssistantResponse === "string"
+        ? options.config.featureValues.mockStreamingAssistantResponse
         : null;
     const requestedStreamingInterval =
-      options.config.providerOptions?.mockStreamingAssistantIntervalMs;
+      options.config.featureValues?.mockStreamingAssistantIntervalMs;
     this.streamingAssistantIntervalMs =
       typeof requestedStreamingInterval === "number" &&
       Number.isFinite(requestedStreamingInterval) &&
@@ -831,10 +793,10 @@ export class MockLoadTestAgentSession implements AgentSession {
         ? Math.min(requestedStreamingInterval, 1_000)
         : MOCK_LOAD_TEST_INTERVAL_MS;
     this.rewindError =
-      typeof options.config.providerOptions?.mockRewindError === "string"
-        ? options.config.providerOptions.mockRewindError
+      typeof options.config.featureValues?.mockRewindError === "string"
+        ? options.config.featureValues.mockRewindError
         : null;
-    const requestedPromptRejections = options.config.providerOptions?.mockPromptRejections;
+    const requestedPromptRejections = options.config.featureValues?.mockPromptRejections;
     this.remainingPromptRejections =
       typeof requestedPromptRejections === "number" &&
       Number.isSafeInteger(requestedPromptRejections) &&
@@ -842,7 +804,7 @@ export class MockLoadTestAgentSession implements AgentSession {
         ? requestedPromptRejections
         : 0;
     this.remainingSteerFailures = getPositiveFeatureInteger(
-      options.config.providerOptions?.mockSteerAmbiguousFailures,
+      options.config.featureValues?.mockSteerAmbiguousFailures,
     );
   }
 
@@ -990,10 +952,6 @@ export class MockLoadTestAgentSession implements AgentSession {
     userMessageTimer.unref?.();
     if (userMessageDelayMs === 0) scheduleTurn();
     return { turnId };
-  }
-
-  async listCommands(): Promise<AgentSlashCommand[]> {
-    return [MOCK_LOAD_TEST_COMMAND];
   }
 
   tryHandleOutOfBand(
@@ -1454,37 +1412,21 @@ export class MockLoadTestAgentSession implements AgentSession {
     this.emitTurnStarted(turn);
 
     for (let index = 0; index < stress.count; index += 1) {
-      let item: AgentTimelineItem;
-      if (stress.tools) {
-        item = {
-          type: "tool_call",
-          callId: `${turn.turnId}:stress:${index}`,
-          name: "Bash",
-          status: "completed",
-          error: null,
-          detail: { type: "shell", command: `echo stress-${index}`, output: `stress-${index}` },
-        };
-      } else if (stress.coalesced) {
-        item = {
-          type: "assistant_message",
-          text: `stress-update-${index}`,
-          messageId: turn.assistantMessageId,
-        };
-      } else {
-        item = {
-          type: "todo",
-          items: [{ text: `stress-update-${index}`, completed: index % 2 === 0 }],
-        };
-      }
-      this.emitTimeline(turn.turnId, item);
+      this.emitTimeline(
+        turn.turnId,
+        stress.coalesced
+          ? {
+              type: "assistant_message",
+              text: `stress-update-${index}`,
+              messageId: turn.assistantMessageId,
+            }
+          : {
+              type: "todo",
+              items: [{ text: `stress-update-${index}`, completed: index % 2 === 0 }],
+            },
+      );
     }
 
-    if (stress.tools)
-      this.emitTimeline(turn.turnId, {
-        type: "assistant_message",
-        text: `Completed ${stress.count} commands`,
-        messageId: turn.assistantMessageId,
-      });
     this.activeTurn = null;
     const usage = {
       inputTokens: 1,

@@ -30,7 +30,6 @@ function createPullRequest(
     state: "open",
     baseRefName: "main",
     headRefName: "feature",
-    headSha: "same-head",
     isMerged: true,
     ...overrides,
   };
@@ -47,7 +46,6 @@ function createSnapshot(overrides?: {
       repoRoot: "/tmp/repo",
       mainRepoRoot: "/tmp/repo",
       currentBranch: "feature",
-      headSha: "same-head",
       remoteUrl: "https://github.com/acme/repo.git",
       isPaseoOwnedWorktree: true,
       isDirty: false,
@@ -348,25 +346,6 @@ afterEach(() => {
 });
 
 describe("archiveIfSafe", () => {
-  test("denies archive when checkout facts do not establish safety", async () => {
-    for (const git of [{ headSha: undefined }, { behindOfOrigin: 1 }, { isDirty: null }]) {
-      const harness = createHarness({ snapshot: createSnapshot({ git }) });
-      await runArchiveIfSafe(harness);
-      expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
-    }
-    const harness = createHarness({
-      snapshot: createSnapshot({ pullRequest: createPullRequest({ headSha: undefined }) }),
-    });
-    await runArchiveIfSafe(harness);
-    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
-  });
-
-  test("keeps the workspace active when the merged PR head differs from checkout", async () => {
-    const harness = createHarness({ snapshot: createSnapshot({ git: { headSha: "local-head" } }) });
-    await runArchiveIfSafe(harness);
-    expect(harness.deps.archiveByScope).not.toHaveBeenCalled();
-  });
-
   beforeEach(() => {
     vi.clearAllMocks();
   });

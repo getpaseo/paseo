@@ -1,4 +1,4 @@
-import { useWorkspace, useFileUrl, type PluginFilePanelProps } from "@getpaseo/plugin/client";
+import { useFileUrl } from "@getpaseo/plugin/client";
 import { useCallback, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -7,28 +7,28 @@ import { useSessionStore } from "@/stores/session-store";
 import { FileHtmlPreview } from "./html-preview";
 import { FilePanelLoading } from "./loading";
 import { FileMarkdownPreview } from "./markdown-preview";
+import type { BuiltinFilePanelProps } from "./panels";
 import { TextFilePanel, type TextFilePreviewProps } from "./source/panel";
 import type { RenderingFilePanel, SourceFilePanel } from "./catalog";
 
 /** Source: the text file panel with no Preview, for text files no other built-in panel claims. */
-function SourcePanel(props: PluginFilePanelProps) {
+function SourcePanel(props: BuiltinFilePanelProps) {
   return <TextFilePanel {...props} />;
 }
 
 /** Markdown: the text file panel with the rendered document as its Preview. */
-function MarkdownPanel(props: PluginFilePanelProps) {
+function MarkdownPanel(props: BuiltinFilePanelProps) {
   return <TextFilePanel {...props} preview={MarkdownPreview} />;
 }
 
 /** HTML: the text file panel with the sandboxed page as its Preview. */
-function HtmlPanel(props: PluginFilePanelProps) {
+function HtmlPanel(props: BuiltinFilePanelProps) {
   return <TextFilePanel {...props} preview={HtmlPreview} />;
 }
 
 /** Shows Loading until the rendered Markdown has laid out once; later edits keep the content. */
-function MarkdownPreview({ text, params, workspaceId, host }: TextFilePreviewProps) {
-  const client = useSessionStore((state) => state.sessions[host.id]?.client ?? null);
-  const workspaceRoot = useWorkspace(workspaceId, (workspace) => workspace.directory);
+function MarkdownPreview({ text, target }: TextFilePreviewProps) {
+  const client = useSessionStore((state) => state.sessions[target.serverId]?.client ?? null);
   const [rendered, setRendered] = useState(false);
   const handleLayout = useCallback(() => setRendered(true), []);
   return (
@@ -37,10 +37,10 @@ function MarkdownPreview({ text, params, workspaceId, host }: TextFilePreviewPro
         <View onLayout={handleLayout}>
           <FileMarkdownPreview
             source={text}
-            filePath={params.path}
-            workspaceRoot={workspaceRoot ?? ""}
+            filePath={target.path}
+            workspaceRoot={target.workspaceRoot}
             client={client}
-            serverId={host.id}
+            serverId={target.serverId}
           />
         </View>
       </ScrollView>
@@ -58,7 +58,7 @@ function HtmlPreview({ text }: TextFilePreviewProps) {
   );
 }
 
-function ImagePanel({ file }: PluginFilePanelProps) {
+function ImagePanel({ file }: BuiltinFilePanelProps) {
   const url = useFileUrl(file);
   if (url.status === "loading") return <FilePanelLoading />;
   if (url.status === "error") return <FilePanelError message={url.error.message} />;
@@ -83,7 +83,7 @@ const components = {
 export function BuiltinFilePanelView({
   panel,
   ...props
-}: PluginFilePanelProps & { panel: RenderingFilePanel | SourceFilePanel }) {
+}: BuiltinFilePanelProps & { panel: RenderingFilePanel | SourceFilePanel }) {
   const Component = components[panel.id];
   return <Component {...props} />;
 }

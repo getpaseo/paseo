@@ -12,7 +12,7 @@ export interface MaterializedAgentProfile {
   modelId: string;
   modeId: string;
   thinkingOptionId: string;
-  options: Record<string, unknown>;
+  featureValues: Record<string, unknown>;
 }
 
 function trimmed(value: string | undefined): string {
@@ -25,7 +25,7 @@ export function materializeAgentProfile(profile: AgentProfile): MaterializedAgen
     modelId: trimmed(profile.model),
     modeId: trimmed(profile.modeId),
     thinkingOptionId: trimmed(profile.thinkingOptionId),
-    options: profile.options ?? {},
+    featureValues: profile.featureValues ?? {},
   };
 }
 
@@ -52,6 +52,8 @@ export function toAgentConfigApply(profile: MaterializedAgentProfile): AgentConf
     ...(profile.modelId ? { modelId: profile.modelId } : {}),
     ...(profile.modeId ? { modeId: profile.modeId } : {}),
     ...(profile.thinkingOptionId ? { thinkingOptionId: profile.thinkingOptionId } : {}),
-    ...(Object.keys(profile.options).length > 0 ? { options: profile.options } : {}),
+    ...(Object.keys(profile.featureValues).length > 0
+      ? { featureValues: profile.featureValues }
+      : {}),
   };
 }

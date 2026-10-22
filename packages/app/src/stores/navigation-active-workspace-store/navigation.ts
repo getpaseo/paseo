@@ -1,10 +1,14 @@
-import type { WorkspaceDescriptor } from "@/stores/session-store";
+import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
+import { pickAttentionAgent } from "@/utils/agent-attention";
 import {
   buildHostWorkspaceRoute,
   decodeWorkspaceIdFromPathSegment,
   parseHostWorkspaceRouteFromPathname,
 } from "@/utils/host-routes";
-import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
+import {
+  normalizeWorkspaceOpaqueId,
+  resolveWorkspaceMapKeyByIdentity,
+} from "@/utils/workspace-identity";
 import type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { prepareWorkspaceTab, type PrepareWorkspaceTabDeps } from "@/utils/prepare-workspace-tab";
@@ -25,17 +29,15 @@ export interface NavigateToWorkspaceInput {
   target?: WorkspaceTabTarget;
   pin?: boolean;
   placement?: WorkspaceTabPlacement;
-  asTab?: boolean;
 }
 
 export interface NavigateToWorkspaceDeps extends PrepareWorkspaceTabDeps {
   getSessionWorkspaces: (serverId: string) => Map<string, WorkspaceDescriptor> | null | undefined;
+  getSessionAgents: (serverId: string) => Iterable<Agent>;
   isWorkspaceLayoutHydrated: () => boolean;
   deferOpenTab: (input: OpenWorkspaceTabInput) => null;
   rememberLastWorkspace: (selection: ActiveWorkspaceSelection) => void;
   navigateToRoute: (route: string) => void;
-  revealTab: (workspaceKey: string, tabId: string | null) => void;
-  revealWorkspace: (workspaceKey: string) => void;
 }
 
 export interface NavigateToLastWorkspaceDeps extends NavigateToWorkspaceDeps {
@@ -91,16 +93,23 @@ export function navigateToWorkspace(
     workspaceId: input.workspaceId,
   });
   const shouldDeferOpen = !resolvedWorkspaceId || !deps.isWorkspaceLayoutHydrated();
-  const openTab: NavigateToWorkspaceDeps["openTab"] = (request) => {
-    if (shouldDeferOpen) return deps.deferOpenTab(request);
-    const tabId = deps.openTab(request);
-    deps.revealTab(request.workspaceKey, tabId);
-    return tabId;
-  };
   if (input.target) {
+    const openTab = shouldDeferOpen ? deps.deferOpenTab : deps.openTab;
     prepareWorkspaceTab({ ...input, target: input.target }, { openTab });
   } else {
-    deps.revealWorkspace(`${input.serverId}:${resolvedWorkspaceId ?? input.workspaceId}`);
+    const workspaceAgents = resolvedWorkspaceId
+      ? Array.from(deps.getSessionAgents(input.serverId)).filter(
+          (agent) => normalizeWorkspaceOpaqueId(agent.workspaceId) === resolvedWorkspaceId,
+        )
+      : [];
+    const attentionAgentId = pickAttentionAgent(workspaceAgents);
+    if (attentionAgentId && resolvedWorkspaceId) {
+      deps.openTab({
+        workspaceKey: `${input.serverId}:${resolvedWorkspaceId}`,
+        target: { kind: "agent", agentId: attentionAgentId },
+        intent: "reveal",
+      });
+    }
   }
 
   const route = buildHostWorkspaceRoute(input.serverId, input.workspaceId);

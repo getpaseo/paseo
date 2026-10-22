@@ -5,7 +5,7 @@ import type {
   ProviderSnapshotEntry,
 } from "@getpaseo/protocol/agent-types";
 import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
-import type { DraftCommandTarget } from "@/agent-commands";
+import type { DraftCommandTarget } from "@/hooks/use-agent-commands-query";
 import { i18n } from "@/i18n/i18next";
 import { compareMatchScores, scoreTextFields } from "@getpaseo/protocol/search/text-match";
 import { filterSelectableModels } from "./model-catalog";
@@ -312,7 +312,7 @@ export function buildDraftCommandTarget(input: {
   cwd: string;
   effectiveModelId: string;
   effectiveThinkingOptionId: string;
-  providerOptions?: Record<string, unknown>;
+  featureValues?: Record<string, unknown>;
 }): DraftCommandTarget {
   const cwd = input.cwd.trim();
   if (!cwd) {
@@ -332,7 +332,7 @@ export function buildDraftCommandTarget(input: {
     ...(input.effectiveThinkingOptionId
       ? { thinkingOptionId: input.effectiveThinkingOptionId }
       : {}),
-    ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
+    ...(input.featureValues ? { featureValues: input.featureValues } : {}),
   };
   return { status: "ready", config };
 }

@@ -8,20 +8,15 @@ import { ToolbarButton, paneContentToolbarIconSize } from "@/components/ui/pane-
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { SettingsRow, SettingsSwitch } from "@/components/settings";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
-import { Alert } from "@/components/ui/alert";
-import { useHosts } from "@/runtime/host-runtime";
 import { settingsStyles } from "@/styles/settings";
-import { useUsageSetting } from "./setting";
-import { useUsageDisplay } from "./display";
+import { useUsagePreferences } from "./display";
 import { useUsageInSidebar } from "./in-sidebar";
 import type { UsageDisplayAs } from "./preferences";
 
 const ThemedSettings = withUnistyles(Settings);
 
 /** The shared usage preferences, opened from a cog as a popover or compact sheet. */
-export function UsageOptions({ serverId }: { serverId: string | null }) {
-  const setting = useUsageSetting(serverId);
-  const hostLabel = useHosts().find((host) => host.serverId === serverId)?.label ?? serverId;
+export function UsageOptions() {
   const { t } = useTranslation();
   const displayAsOptions: SegmentedControlOption<UsageDisplayAs>[] = [
     { value: "used", label: t("providerUsage.displayUsed"), testID: "usage-display-used" },
@@ -32,7 +27,7 @@ export function UsageOptions({ serverId }: { serverId: string | null }) {
     },
   ];
   const compact = useIsCompactFormFactor();
-  const { display } = useUsageDisplay([]);
+  const { display } = useUsagePreferences();
   const { inSidebar, setInSidebar } = useUsageInSidebar();
   return (
     <DropdownMenu compactMode="sheet">
@@ -54,31 +49,20 @@ export function UsageOptions({ serverId }: { serverId: string | null }) {
         testID="usage-options-surface"
       >
         <View testID="usage-options-fields">
-          {setting.error ? <Alert variant="error" description={setting.error.message} /> : null}
-          {setting.supported ? (
-            <SettingsSwitch
-              label={t("providerUsage.checkUsage")}
-              hint={t("providerUsage.checkUsageHint", { host: hostLabel })}
-              disabled={!setting.ready}
-              value={setting.enabled}
-              onValueChange={setting.setEnabled}
-            />
-          ) : null}
-          <View style={setting.supported ? settingsStyles.rowBorder : undefined}>
-            <SettingsSwitch
-              label={t("providerUsage.showInSidebar")}
-              hint={t("providerUsage.showInSidebarHint")}
-              value={inSidebar}
-              onValueChange={setInSidebar}
-              testID="usage-show-in-sidebar"
-            />
-          </View>
+          <SettingsSwitch
+            label={t("providerUsage.showInSidebar")}
+            hint={t("providerUsage.showInSidebarHint")}
+            value={inSidebar}
+            onValueChange={setInSidebar}
+            testID="usage-show-in-sidebar"
+          />
           <View style={settingsStyles.rowBorder}>
             <SettingsRow label={t("providerUsage.displayAs")}>
               <SegmentedControl
                 options={displayAsOptions}
                 value={display.displayAs}
                 onValueChange={display.setDisplayAs}
+                size="sm"
                 testID="usage-display-as"
               />
             </SettingsRow>

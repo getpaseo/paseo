@@ -25,7 +25,7 @@ const OPTIONAL_AGENT_SESSION_METHOD_NAMES = [
   "listCommands",
   "setModel",
   "setThinkingOption",
-  "applyOptions",
+  "setFeature",
   "revertConversation",
   "revertFiles",
   "revertBoth",
@@ -152,8 +152,8 @@ class FakeSession implements AgentSession {
     this.recordedCalls.push("setThinkingOption");
   }
 
-  async applyOptions() {
-    this.recordedCalls.push("applyOptions");
+  async setFeature() {
+    this.recordedCalls.push("setFeature");
   }
 
   async revertConversation() {
@@ -193,7 +193,7 @@ describe("wrapSessionProvider", () => {
     await wrapped.listCommands?.();
     await wrapped.setModel?.("sonnet");
     await wrapped.setThinkingOption?.("high");
-    await wrapped.applyOptions?.({ "feature-1": true });
+    await wrapped.setFeature?.("feature-1", true);
     await wrapped.revertConversation?.({ messageId: "message-1" });
     await wrapped.revertFiles?.({ messageId: "message-1" });
     await wrapped.revertBoth?.({ messageId: "message-1" });
@@ -208,7 +208,7 @@ describe("wrapSessionProvider", () => {
       "listCommands",
       "setModel",
       "setThinkingOption",
-      "applyOptions",
+      "setFeature",
       "revertConversation",
       "revertFiles",
       "revertBoth",

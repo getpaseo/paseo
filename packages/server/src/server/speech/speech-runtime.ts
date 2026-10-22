@@ -2,10 +2,7 @@ import type { Logger } from "pino";
 
 import type { PaseoOpenAIConfig, PaseoSpeechConfig } from "../bootstrap.js";
 import type { LocalSpeechModelId } from "./providers/local/config.js";
-import {
-  LocalSpeechModelLibrary,
-  type LocalSpeechModelEntry,
-} from "./providers/local/model-library.js";
+import { ensureLocalSpeechModels, listMissingLocalSpeechModels } from "./providers/local/models.js";
 import { initializeLocalSpeechServices } from "./providers/local/runtime.js";
 import {
   getOpenAiSpeechAvailability,
@@ -95,7 +92,7 @@ function buildRealtimeVoiceReadiness(params: {
       enabled: false,
       available: false,
       reasonCode: "disabled",
-      message: "Voice mode is off. Turn it on in Settings > Voice.",
+      message: "Realtime voice is disabled in daemon config.",
       retryable: false,
       missingModelIds: [],
     };
@@ -150,7 +147,7 @@ function buildDictationReadiness(params: {
       enabled: false,
       available: false,
       reasonCode: "disabled",
-      message: "Dictation is off. Turn it on in Settings > Voice.",
+      message: "Dictation is disabled in daemon config.",
       retryable: false,
       missingModelIds: [],
     };
@@ -295,23 +292,6 @@ function resolveEffectiveProviderIds(params: {
   };
 }
 
-export interface LocalSpeechModelStatus extends LocalSpeechModelEntry {
-  // Selected by an enabled feature, so the runtime keeps it installed.
-  inUse: boolean;
-}
-
-export class LocalSpeechModelInUseError extends Error {
-  constructor(public readonly modelId: LocalSpeechModelId) {
-    super(`${modelId} is selected for dictation or voice mode. Choose another model first.`);
-    this.name = "LocalSpeechModelInUseError";
-  }
-}
-
-export interface SpeechServiceConfig {
-  openaiConfig?: PaseoOpenAIConfig;
-  speechConfig?: PaseoSpeechConfig;
-}
-
 export interface SpeechService {
   resolveStt: () => SpeechToTextProvider | null;
   resolveSttLanguage: () => string;
@@ -321,49 +301,37 @@ export interface SpeechService {
   resolveDictationSttLanguage: () => string;
   getReadiness: () => SpeechReadinessSnapshot;
   onReadinessChange: (listener: (snapshot: SpeechReadinessSnapshot) => void) => () => void;
-  // Applies new provider/model settings without restarting the daemon.
-  reconfigure: (config: SpeechServiceConfig) => void;
-  listLocalModels: () => Promise<LocalSpeechModelStatus[]>;
-  downloadLocalModel: (modelId: LocalSpeechModelId) => void;
-  deleteLocalModel: (modelId: LocalSpeechModelId) => Promise<void>;
   start: () => void;
   stop: () => Promise<void>;
   ready: Promise<void>;
 }
 
-export function createSpeechService(
-  params: SpeechServiceConfig & {
-    logger: Logger;
-  },
-): SpeechService {
+export function createSpeechService(params: {
+  logger: Logger;
+  openaiConfig?: PaseoOpenAIConfig;
+  speechConfig?: PaseoSpeechConfig;
+}): SpeechService {
   const logger = params.logger.child({ module: "speech-runtime" });
-  let speechConfig = params.speechConfig ?? null;
-  let openaiConfig = params.openaiConfig;
-  let providers = resolveRequestedSpeechProviders(speechConfig);
-  let requestedProviders = describeRequestedProviders(providers);
-  // The models directory is fixed for the daemon's lifetime; settings changes only pick
-  // which of its models are used.
-  const modelLibrary = speechConfig
-    ? new LocalSpeechModelLibrary(speechConfig.localModelsDir, logger)
-    : null;
+  const speechConfig = params.speechConfig ?? null;
+  const openaiConfig = params.openaiConfig;
+  const providers = resolveRequestedSpeechProviders(speechConfig);
+  const requestedProviders = describeRequestedProviders(providers);
 
-  const logReconciliationStart = (): void => {
-    validateOpenAiCredentialRequirements({
-      providers,
-      openaiConfig,
-      logger,
-    });
-    logger.info(
-      {
-        requestedProviders,
-        availability: {
-          openai: getOpenAiSpeechAvailability(openaiConfig),
-        },
+  validateOpenAiCredentialRequirements({
+    providers,
+    openaiConfig,
+    logger,
+  });
+
+  logger.info(
+    {
+      requestedProviders,
+      availability: {
+        openai: getOpenAiSpeechAvailability(openaiConfig),
       },
-      "Speech provider reconciliation started",
-    );
-  };
-  logReconciliationStart();
+    },
+    "Speech provider reconciliation started",
+  );
 
   let sttService: SpeechToTextProvider | null = null;
   let ttsService: TextToSpeechProvider | null = null;
@@ -378,11 +346,12 @@ export function createSpeechService(
 
   let missingLocalModelIds: LocalSpeechModelId[] = [];
   let backgroundDownloadInProgress = false;
+  let backgroundDownloadAbortController: AbortController | null = null;
   let backgroundDownloadPromise: Promise<void> | null = null;
   let backgroundDownloadError: string | null = null;
   let stopped = false;
   let monitorTimeout: ReturnType<typeof setTimeout> | null = null;
-  let reconcileQueue: Promise<void> = Promise.resolve();
+  let reconcileInFlight: Promise<void> | null = null;
   const readinessListeners = new Set<(snapshot: SpeechReadinessSnapshot) => void>();
   let lastReadinessFingerprint: string | null = null;
   let lastPublishedReadinessSnapshot: SpeechReadinessSnapshot | null = null;
@@ -476,10 +445,12 @@ export function createSpeechService(
   };
 
   const refreshMissingLocalModels = async (): Promise<void> => {
-    missingLocalModelIds =
-      localModelConfig && modelLibrary
-        ? await modelLibrary.listMissing(localModelConfig.defaultModelIds)
-        : [];
+    missingLocalModelIds = localModelConfig
+      ? await listMissingLocalSpeechModels({
+          modelsDir: localModelConfig.modelsDir,
+          modelIds: localModelConfig.defaultModelIds,
+        })
+      : [];
   };
 
   const reconcileServices = async (): Promise<void> => {
@@ -549,12 +520,16 @@ export function createSpeechService(
     }
   };
 
-  // Reconciles run one after another, and each starts after it was requested, so a
-  // reconfigure that lands mid-reconcile is applied instead of joining the stale run.
   const runReconcile = async (): Promise<void> => {
-    const next = reconcileQueue.catch(() => undefined).then(reconcileServices);
-    reconcileQueue = next;
-    await next;
+    if (reconcileInFlight) {
+      await reconcileInFlight;
+      publishReadinessIfChanged();
+      return;
+    }
+    reconcileInFlight = reconcileServices().finally(() => {
+      reconcileInFlight = null;
+    });
+    await reconcileInFlight;
     publishReadinessIfChanged();
   };
 
@@ -569,12 +544,12 @@ export function createSpeechService(
   };
 
   const startBackgroundDownload = (): void => {
-    if (stopped || backgroundDownloadInProgress || !modelLibrary) {
+    if (stopped || backgroundDownloadInProgress) {
       return;
     }
-    const modelsDir = modelLibrary.getModelsDir();
+    const modelsDir = localModelConfig?.modelsDir ?? null;
     const modelIds = [...missingLocalModelIds];
-    if (modelIds.length === 0) {
+    if (!modelsDir || modelIds.length === 0) {
       return;
     }
 
@@ -590,9 +565,16 @@ export function createSpeechService(
       "Starting background download for missing local speech models",
     );
 
+    const abortController = new AbortController();
+    backgroundDownloadAbortController = abortController;
     backgroundDownloadPromise = (async () => {
       try {
-        await Promise.all(modelIds.map((modelId) => modelLibrary.download(modelId)));
+        await ensureLocalSpeechModels({
+          modelsDir,
+          modelIds,
+          logger,
+          signal: abortController.signal,
+        });
         await runReconcile();
         backgroundDownloadError = null;
       } catch (error) {
@@ -606,6 +588,7 @@ export function createSpeechService(
           "Background local speech model download failed",
         );
       } finally {
+        backgroundDownloadAbortController = null;
         backgroundDownloadInProgress = false;
         await refreshMissingLocalModels().catch((error) => {
           logger.warn({ err: error }, "Failed to refresh local speech model status after download");
@@ -647,62 +630,6 @@ export function createSpeechService(
     }
   };
 
-  const reconcileAndFetchMissingModels = async (): Promise<void> => {
-    await runReconcile();
-    const snapshot = computeReadinessSnapshot();
-    if (snapshot.voiceFeature.enabled && !snapshot.voiceFeature.available) {
-      if (missingLocalModelIds.length > 0) {
-        startBackgroundDownload();
-      }
-      scheduleMonitor();
-    }
-  };
-
-  const reconfigure = (next: SpeechServiceConfig): void => {
-    speechConfig = next.speechConfig ?? null;
-    openaiConfig = next.openaiConfig;
-    providers = resolveRequestedSpeechProviders(speechConfig);
-    requestedProviders = describeRequestedProviders(providers);
-    // A failure for the previous selection must not block downloading the new one.
-    backgroundDownloadError = null;
-    logReconciliationStart();
-    if (!started || stopped) {
-      return;
-    }
-    void reconcileAndFetchMissingModels().catch((error) => {
-      logger.error({ err: error }, "Speech runtime failed to apply new configuration");
-    });
-  };
-
-  const requireModelLibrary = (): LocalSpeechModelLibrary => {
-    if (!modelLibrary) {
-      throw new Error("Local speech models are unavailable on this daemon");
-    }
-    return modelLibrary;
-  };
-
-  const listLocalModels = async (): Promise<LocalSpeechModelStatus[]> => {
-    const inUse = new Set(localModelConfig?.defaultModelIds ?? []);
-    const entries = await requireModelLibrary().list();
-    return entries.map(({ spec, state }) => ({ spec, state, inUse: inUse.has(spec.id) }));
-  };
-
-  const downloadLocalModel = (modelId: LocalSpeechModelId): void => {
-    void requireModelLibrary()
-      .download(modelId)
-      .then(() => runMonitorTick())
-      .catch((error) => {
-        logger.warn({ err: error, modelId }, "Local speech model download failed");
-      });
-  };
-
-  const deleteLocalModel = async (modelId: LocalSpeechModelId): Promise<void> => {
-    if (localModelConfig?.defaultModelIds.includes(modelId)) {
-      throw new LocalSpeechModelInUseError(modelId);
-    }
-    await requireModelLibrary().delete(modelId);
-  };
-
   const start = (): void => {
     if (started || stopped) {
       return;
@@ -710,7 +637,14 @@ export function createSpeechService(
     started = true;
     void (async () => {
       try {
-        await reconcileAndFetchMissingModels();
+        await runReconcile();
+        const snapshot = computeReadinessSnapshot();
+        if (snapshot.voiceFeature.enabled && !snapshot.voiceFeature.available) {
+          if (missingLocalModelIds.length > 0) {
+            startBackgroundDownload();
+          }
+          scheduleMonitor();
+        }
         if (!readySettled) {
           readySettled = true;
           resolveReady();
@@ -732,7 +666,7 @@ export function createSpeechService(
       monitorTimeout = null;
     }
     localCleanup();
-    await modelLibrary?.stop();
+    backgroundDownloadAbortController?.abort();
     await backgroundDownloadPromise?.catch(() => undefined);
     backgroundDownloadPromise = null;
   };
@@ -746,10 +680,6 @@ export function createSpeechService(
     resolveDictationSttLanguage: () => speechConfig?.sttLanguages?.dictation ?? "en",
     getReadiness: () => lastPublishedReadinessSnapshot ?? computeReadinessSnapshot(),
     onReadinessChange: subscribeSpeechReadiness,
-    reconfigure,
-    listLocalModels,
-    downloadLocalModel,
-    deleteLocalModel,
     start,
     stop,
     ready,

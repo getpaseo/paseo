@@ -154,7 +154,7 @@ export async function chooseCustomSkills(page: Page, selected: string[]): Promis
   await all.click();
   const keep = new Set(selected);
   for (const name of await listSkillChoices(page)) {
-    if (!keep.has(name)) await skillSwitch(page, name).click();
+    if (!keep.has(name)) await page.getByRole("checkbox", { name, exact: true }).click();
   }
   await expectSkillChoices(page, selected);
 }
@@ -176,7 +176,7 @@ export async function cancelSkillSelection(page: Page): Promise<void> {
 }
 
 export async function toggleSkill(page: Page, name: string): Promise<void> {
-  await skillSwitch(page, name).click();
+  await page.getByRole("checkbox", { name, exact: true }).click();
 }
 
 export function answerNextRemovalWarning(
@@ -222,21 +222,15 @@ export async function expectSkillFile(
 export async function expectSkillChoices(page: Page, selected: string[]): Promise<void> {
   const expected = new Set(selected);
   for (const name of await listSkillChoices(page)) {
-    await expect(skillSwitch(page, name)).toBeChecked({
+    await expect(page.getByRole("checkbox", { name, exact: true })).toBeChecked({
       checked: expected.has(name),
     });
   }
 }
 
-/** One bundled skill's switch in the picker; "All skills" sits outside the list. */
-function skillSwitch(page: Page, name: string) {
-  return page.getByTestId("skill-selection-list-card").getByRole("switch", { name, exact: true });
-}
-
 async function listSkillChoices(page: Page): Promise<string[]> {
   return page
-    .getByTestId("skill-selection-list-card")
-    .getByRole("switch")
+    .getByRole("checkbox")
     .evaluateAll((elements) =>
       elements
         .map((element) => element.getAttribute("aria-label") ?? "")

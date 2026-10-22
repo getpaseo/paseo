@@ -8,6 +8,7 @@ import {
   buildOpenProjectRoute,
   resolveKnownHostRoute,
   buildSessionsRoute,
+  buildSettingsAddHostRoute,
   buildProjectSettingsRoute,
   buildProjectsSettingsRoute,
   decodeFilePathFromPathSegment,
@@ -184,6 +185,14 @@ describe("workspace route parsing", () => {
 });
 
 describe("projects settings routes", () => {
+  it("buildSettingsAddHostRoute opens settings with the add-host flag", () => {
+    expect(buildSettingsAddHostRoute()).toBe("/settings/general?addHost=1");
+  });
+
+  it("buildSettingsAddHostRoute accepts a repeatable intent id", () => {
+    expect(buildSettingsAddHostRoute("retry 1")).toBe("/settings/general?addHost=retry%201");
+  });
+
   it("buildProjectsSettingsRoute scopes the list to a host", () => {
     expect(buildProjectsSettingsRoute("host a")).toBe("/settings/hosts/host%20a/projects");
   });

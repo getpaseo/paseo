@@ -45,17 +45,13 @@ export function parseClaudeWorkflowRun(contents: string): ClaudeWorkflowRun | nu
  * provider runtime was recreated, so replay terminalizes it as failed instead of resurrecting a
  * row that can never receive another update.
  */
-export async function observeReplayWorkflows(input: {
+export function observeReplayWorkflows(input: {
   workflows: readonly ClaudeWorkflowRun[];
-  parentEntries: Iterable<ClaudeWorkflowParentEntry> | AsyncIterable<ClaudeWorkflowParentEntry>;
-  /** Repeatable entries in chronological order, supplied by the transcript reader. */
-  entriesByRunId?: ReadonlyMap<
-    string,
-    Iterable<ClaudeReplayEntry> | AsyncIterable<ClaudeReplayEntry>
-  >;
-  convertEntry?: (entry: ClaudeReplayEntry) => AgentTimelineItem[] | Promise<AgentTimelineItem[]>;
-}): Promise<SubagentObservation[]> {
-  const toolCallIdByRunId = await readWorkflowLinks(input.parentEntries);
+  parentEntries: readonly ClaudeWorkflowParentEntry[];
+  entriesByRunId?: ReadonlyMap<string, readonly ClaudeReplayEntry[]>;
+  convertEntry?: (entry: ClaudeReplayEntry) => AgentTimelineItem[];
+}): SubagentObservation[] {
+  const toolCallIdByRunId = readWorkflowLinks(input.parentEntries);
   const observations: SubagentObservation[] = [];
 
   for (const workflow of input.workflows) {
@@ -82,15 +78,15 @@ export async function observeReplayWorkflows(input: {
       });
     }
 
-    for (const observation of await observeWorkflowTimeline({
-      id,
-      result: workflow.result,
-      entries: input.entriesByRunId?.get(workflow.runId) ?? [],
-      convertEntry: input.convertEntry,
-      finishedAt,
-    })) {
-      observations.push(observation);
-    }
+    observations.push(
+      ...observeWorkflowTimeline({
+        id,
+        result: workflow.result,
+        entries: input.entriesByRunId?.get(workflow.runId) ?? [],
+        convertEntry: input.convertEntry,
+        finishedAt,
+      }),
+    );
 
     const subtitle = buildClaudeSubagentSubtitle({
       title: "Workflow",
@@ -118,19 +114,20 @@ export async function observeReplayWorkflows(input: {
   return observations;
 }
 
-async function observeWorkflowTimeline(input: {
+function observeWorkflowTimeline(input: {
   id: string;
   result: unknown;
-  entries: Iterable<ClaudeReplayEntry> | AsyncIterable<ClaudeReplayEntry>;
-  convertEntry?: (entry: ClaudeReplayEntry) => AgentTimelineItem[] | Promise<AgentTimelineItem[]>;
+  entries: readonly ClaudeReplayEntry[];
+  convertEntry?: (entry: ClaudeReplayEntry) => AgentTimelineItem[];
   finishedAt?: string;
-}): Promise<SubagentObservation[]> {
+}): SubagentObservation[] {
   const observations: SubagentObservation[] = [];
   const replayedAssistantText = new Set<string>();
+  const entries = [...input.entries].sort(compareReplayTimestamps);
 
-  for await (const entry of input.entries) {
+  for (const entry of entries) {
     const timestamp = normalizeProviderReplayTimestamp(entry.timestamp);
-    const items = (await input.convertEntry?.(entry)) ?? [];
+    const items = input.convertEntry?.(entry) ?? [];
     for (const item of items) {
       if (item.type === "assistant_message") replayedAssistantText.add(item.text.trim());
       observations.push({
@@ -153,13 +150,20 @@ async function observeWorkflowTimeline(input: {
   return observations;
 }
 
-async function readWorkflowLinks(
-  entries: Iterable<ClaudeWorkflowParentEntry> | AsyncIterable<ClaudeWorkflowParentEntry>,
-): Promise<Map<string, string>> {
+function compareReplayTimestamps(a: ClaudeReplayEntry, b: ClaudeReplayEntry): number {
+  const aTimestamp = normalizeProviderReplayTimestamp(a.timestamp);
+  const bTimestamp = normalizeProviderReplayTimestamp(b.timestamp);
+  if (!aTimestamp && !bTimestamp) return 0;
+  if (!aTimestamp) return 1;
+  if (!bTimestamp) return -1;
+  return Date.parse(aTimestamp) - Date.parse(bTimestamp);
+}
+
+function readWorkflowLinks(entries: readonly ClaudeWorkflowParentEntry[]): Map<string, string> {
   const workflowToolCallIds = new Set<string>();
   const toolCallIdByRunId = new Map<string, string>();
 
-  for await (const entry of entries) {
+  for (const entry of entries) {
     const content = entry.message?.content;
     if (!Array.isArray(content)) continue;
     for (const value of content) {
@@ -170,7 +174,7 @@ async function readWorkflowLinks(
     }
   }
 
-  for await (const entry of entries) {
+  for (const entry of entries) {
     const content = entry.message?.content;
     if (!Array.isArray(content)) continue;
     for (const value of content) {

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./fixtures";
+import { expect, test, type Page } from "playwright/test";
 
 test("keeps unrelated agent artwork unchanged while adding the Hermes mark", async ({ page }) => {
   await openSupportedAgents(page);

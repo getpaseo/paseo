@@ -73,16 +73,12 @@ Use this table as the complete registration checklist.
 | `plugin.addSurface(id, Component)` in the old root entry                                      | `client.addScreen({ id, title, Component })` in `index.client.tsx`                                                          |
 | `plugin.addSidebarItem({ id, title, icon, surface })` in the old root entry                   | `client.addSidebarHeaderItem({ id, title, Component })` in `index.client.tsx`; see [sidebar items](reference#sidebar-items) |
 | New sidebar footer contribution                                                               | `client.addSidebarFooterItem({ id, title, Component })` in `index.client.tsx`                                               |
-| New sidebar replacement view                                                                  | `client.addSidebarView({ id, title, Component })` in `index.client.tsx`; see [sidebar views](sidebar-views)                 |
 | New file panel contribution                                                                   | `client.addFilePanel(panel)` in `index.client.tsx`                                                                          |
 | `plugin.addWorkspacePanel(panel)` in the old root entry                                       | `client.addWorkspacePanel(panel)` in `index.client.tsx`                                                                     |
-| Agent panel with `context: "agent"`                                                           | `client.addAgentPanel(panel)` in `index.client.tsx`; omit `context`                                                         |
 | `plugin.addCommandCenterItem(item)` in the old root entry                                     | `client.addCommandCenterItem(item)` in `index.client.tsx`                                                                   |
 | `plugin.addClientSlashCommand(command)` in the old root entry                                 | `client.addSlashCommand(command)` in `index.client.tsx`                                                                     |
 | `plugin.addClientSide(fn)` in the old root entry                                              | Delete the wrapper and move the body of `fn` into the default client entry function                                         |
 | `client.addComposerPill(pill)` inside the old client callback                                 | `client.addComposerPill(pill)` inside `index.client.tsx` or an imported `client/` function                                  |
-| New composer item contribution                                                                | `client.addComposerItem(item)` in `index.client.tsx`; see [composer items](reference#composer-items)                        |
-| New New workspace item contribution                                                           | `client.addNewWorkspaceItem(item)` in `index.client.tsx`; see [New workspace items](reference#new-workspace-items)          |
 | New header contribution                                                                       | `client.addHeaderButton({ id, workspaceId, button })`                                                                       |
 | `plugin.addAttachmentSource(source)` in the old root entry                                    | `client.addAttachmentSource(source)` in `index.client.tsx`                                                                  |
 | New settings screen contribution                                                              | `client.addSettingsScreen(screen)` in `index.client.tsx`; see [settings screens](reference#settings-screens)                |
@@ -99,22 +95,6 @@ working. A `/plugin/<plugin>/sidebar/<id>` link, and the older `/plugin/<plugin>
 Import `PluginClientContext` from `@getpaseo/plugin/client` and `PluginServerContext` from
 `@getpaseo/plugin/server`. Remove imports of the old context type. Client registrations return idempotent removal functions, except header buttons and composer pills, which return `{ update, remove }` handles. Preserve any remover the plugin calls before teardown; Paseo removes outstanding
 registrations after the entry cleanup runs.
-
-### Panel props in 0.13
-
-All panel kinds share [params, revision, and persisted tab state](./reference.md#workspace-panels).
-
-| Previous API                                                            | Replacement                                      |
-| ----------------------------------------------------------------------- | ------------------------------------------------ |
-| Workspace/agent `context` prop                                          | Select the kind at registration.                 |
-| Agent `agentId` prop                                                    | `params.agentId`                                 |
-| `addWorkspacePanel({ context: "workspace", ... })`                      | `addWorkspacePanel({ ... })`                     |
-| `addWorkspacePanel({ context: "agent", ... })`                          | `addAgentPanel({ ... })`                         |
-| Beta file `location.lineStart`, `location.lineEnd`, `location.revision` | `params.lineStart`, `params.lineEnd`, `revision` |
-| Beta `PluginFileTab`, `PluginFileLocation`                              | `PluginTab`, `PluginFilePanelParams`             |
-
-The 0.12 aliases remain available until removal after 2027-04-23. The beta file API changes
-outright. Declare `requirements.paseo` as `>=0.13.0` when adopting the new API.
 
 ### Composer pills
 
@@ -147,8 +127,8 @@ pill.remove();
 ```
 
 Move dynamic text from the former component into updates from your model or SDK subscription.
-Custom icon components may still use hooks. Composer pills always show icon and label; menus and
-popovers add a chevron. See [buttons](./reference.md#button-descriptor) for menus, popovers, and visibility.
+Custom icon components may still use hooks. Composer pills always show icon and label and never
+show chevrons. See [buttons](./reference.md#button-descriptor) for menus, popovers, and visibility.
 
 ## 4. Separate imports
 
@@ -179,33 +159,12 @@ its registration; that registration belongs in the client entry.
 
 ### UI imports in v0.13
 
-Use `/client/ui` for all Paseo UI components and UI hooks. The deprecated
-`/client/react-native` entry retains `useRevealedText(text, phase): string` for 0.12 plugins
-until removal after 2027-04-20. The hook is deprecated and is not exported from `/client/ui`.
+Use `/client/ui` for all Paseo UI components and UI hooks. The previous entry remains an
+undocumented compatibility alias until 2027-04-20.
 
 For paced timeline text, replace `useRevealedText(text, phase)` and the surrounding `Text` with
 `<StreamedText text={text} phase={phase} style={style} />` from `/client/ui`.
 Use `SettingsSection` for plugin settings headings; `SettingsGroup` is deprecated.
-
-### Provider options in v0.15
-
-A provider plugin has one configuration record, `providerOptions`, and describes which keys get a
-composer control. A provider that still reports `settings` keeps working through v0.15: Paseo reads each
-setting `id` as an option key and each `value` as that option, and sends changes in both
-`changes.providerOptions` and `changes.settings`. Remove `settings` before the shim is deleted after
-2027-05-01.
-
-| Previous API                                   | Replacement                                                                |
-| ---------------------------------------------- | -------------------------------------------------------------------------- |
-| `session.config` `settings: ProviderSetting[]` | `controls: ProviderOptionControl[]` plus `providerOptions`                 |
-| Setting `id`                                   | Control `key`                                                              |
-| Setting `value`                                | `providerOptions[key]`; the control holds no value                         |
-| Select setting `options: { label, value }[]`   | Select control `choices: { value, label, description? }[]`                 |
-| Setting with no icon or default                | Control `icon` (a Lucide name) and `defaultValue`                          |
-| `session.configure` `changes.settings`         | `changes.providerOptions`; `null` returns a key to its default             |
-| `session.open` `config.settings`               | `config.providerOptions`                                                   |
-| `ProviderSetting` type                         | `ProviderOptionControl`                                                    |
-| `agent.create.before` `config.featureValues`   | `config.providerOptions`; a returned `featureValues` edit is still applied |
 
 ## 5. Recognize half-migration errors
 

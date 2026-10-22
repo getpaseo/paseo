@@ -224,11 +224,9 @@ export function stripReadLineNumberGutter(
   return { content: stripped.join("\n"), startLine };
 }
 
-export const TOOL_CALL_DIFF_MAX_CHARS = 12_000;
-
 export function truncateDiffText(
   text: string | undefined,
-  maxChars: number = TOOL_CALL_DIFF_MAX_CHARS,
+  maxChars: number = 12_000,
 ): string | undefined {
   if (typeof text !== "string") {
     return undefined;

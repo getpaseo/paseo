@@ -85,7 +85,7 @@ describe("OMP tool call mapper", () => {
     expect(mapOmpToolDetail(parseToolArgs("todo", { op: "view" }), null)).toBeNull();
   });
 
-  test("takes the child session from the task transcript path", () => {
+  test("uses task result text and transcript path as the best static replay detail", () => {
     expect(
       mapOmpToolDetail(
         parseToolArgs("task", {
@@ -106,7 +106,7 @@ describe("OMP tool call mapper", () => {
       subAgentType: "explore",
       description: "Inspect the target files",
       childSessionId: "/tmp/omp-task-static/Explore.jsonl",
-      log: "",
+      log: "done\ntranscript: /tmp/omp-task-static/Explore.jsonl",
     });
   });
 

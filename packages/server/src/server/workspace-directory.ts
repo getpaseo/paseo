@@ -74,13 +74,9 @@ export interface WorkspaceDirectoryDeps {
     list(): Promise<PersistedProjectRecord[]>;
   };
   workspaceRegistry: {
-    listActive(): Promise<PersistedWorkspaceRecord[]>;
-    get(id: string): Promise<PersistedWorkspaceRecord | null>;
+    list(): Promise<PersistedWorkspaceRecord[]>;
   };
-  listAgentPayloads(workspaceIds?: Iterable<string>): Promise<AgentSnapshotPayload[]>;
-  workspaceLastUserMessageTimes(
-    workspaceIds?: Iterable<string>,
-  ): Promise<ReadonlyMap<string, string>>;
+  listAgentPayloads(): Promise<AgentSnapshotPayload[]>;
   listProviderSubagentActivity(): Promise<ProviderSubagentWorkspaceActivity[]>;
   listTerminalActivityContributions(): Promise<
     Array<{ cwd: string; workspaceId?: string; activity: TerminalActivity | null }>
@@ -220,24 +216,16 @@ export class WorkspaceDirectory {
     includeGitData: boolean;
     workspaceIds?: Iterable<string>;
   }): Promise<Map<string, WorkspaceDescriptorPayload>> {
-    const requestedIds = options.workspaceIds ? new Set(options.workspaceIds) : undefined;
     const [
       agents,
-      lastUserMessageTimes,
       providerSubagentActivity,
       persistedWorkspaces,
       persistedProjects,
       terminalContributions,
     ] = await Promise.all([
-      this.deps.listAgentPayloads(requestedIds),
-      this.deps.workspaceLastUserMessageTimes(requestedIds),
+      this.deps.listAgentPayloads(),
       this.deps.listProviderSubagentActivity(),
-      requestedIds
-        ? Promise.all(Array.from(requestedIds, (id) => this.deps.workspaceRegistry.get(id))).then(
-            (records) =>
-              records.filter((record): record is PersistedWorkspaceRecord => record !== null),
-          )
-        : this.deps.workspaceRegistry.listActive(),
+      this.deps.workspaceRegistry.list(),
       this.deps.projectRegistry.list(),
       this.deps.listTerminalActivityContributions(),
     ]);
@@ -249,7 +237,7 @@ export class WorkspaceDirectory {
     );
     const activeRecords = activeWorkspaceRecords(persistedWorkspaces, persistedProjects);
     const descriptorsByWorkspaceId = new Map<string, WorkspaceDescriptorPayload>();
-    const workspaceIds = requestedIds ? new Set(requestedIds) : null;
+    const workspaceIds = options.workspaceIds ? new Set(options.workspaceIds) : null;
     const activeWorkspaceIds = new Set(activeRecords.map((workspace) => workspace.workspaceId));
     const includedWorkspaces = activeRecords.filter(
       (workspace) => !workspaceIds || workspaceIds.has(workspace.workspaceId),
@@ -270,18 +258,12 @@ export class WorkspaceDirectory {
       const workspaceId = includedWorkspaces[i].workspaceId;
       descriptorsByWorkspaceId.set(workspaceId, {
         ...workspaceDescriptors[i],
-        createdAt: includedWorkspaces[i].createdAt,
-        lastUserMessageAt: lastUserMessageTimes.get(workspaceId) ?? null,
         archivingAt: this.archivingByWorkspaceId.get(workspaceId) ?? null,
       });
     }
 
-    // Background agents report to their creator; they never move the workspace's status.
     const activeAgents = agents.filter(
-      (agent) =>
-        !agent.archivedAt &&
-        !agent.background &&
-        this.deps.isProviderVisibleToClient(agent.provider),
+      (agent) => !agent.archivedAt && this.deps.isProviderVisibleToClient(agent.provider),
     );
     this.applyAgentBucketContributions({
       activeAgents,
@@ -392,7 +374,7 @@ export class WorkspaceDirectory {
         continue;
       }
       const isWorkspaceRoot = workspaceAgent.id === agent.id;
-      if (!isWorkspaceRoot && agent.status !== "running" && !agent.backgroundWork?.count) {
+      if (!isWorkspaceRoot && agent.status !== "running") {
         continue;
       }
       const bucket = isWorkspaceRoot
@@ -401,7 +383,6 @@ export class WorkspaceDirectory {
             pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
             requiresAttention: agent.requiresAttention,
             attentionReason: agent.attentionReason ?? null,
-            backgroundWork: agent.backgroundWork,
           })
         : "running";
 
@@ -551,7 +532,6 @@ export class WorkspaceDirectory {
           pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
           requiresAttention: agent.requiresAttention,
           attentionReason: agent.attentionReason ?? null,
-          backgroundWork: agent.backgroundWork,
         });
         return derived === winningBucket;
       })
@@ -581,7 +561,7 @@ export class WorkspaceDirectory {
     includeBackground?: boolean;
   }): Promise<WorkspaceProjectDescriptor[]> {
     const [persistedWorkspaces, persistedProjects] = await Promise.all([
-      this.deps.workspaceRegistry.listActive(),
+      this.deps.workspaceRegistry.list(),
       this.deps.projectRegistry.list(),
     ]);
     // A project whose only workspaces are hidden reads as empty to that caller.
@@ -612,7 +592,7 @@ export class WorkspaceDirectory {
     Pick<WorkspaceDescriptorPayload, "id" | "workspaceDirectory" | "workspaceKind">[]
   > {
     const [workspaces, projects] = await Promise.all([
-      this.deps.workspaceRegistry.listActive(),
+      this.deps.workspaceRegistry.list(),
       this.deps.projectRegistry.list(),
     ]);
     return activeWorkspaceRecords(workspaces, projects).map((workspace) => ({

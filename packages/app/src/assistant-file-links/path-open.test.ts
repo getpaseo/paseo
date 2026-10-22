@@ -64,17 +64,11 @@ it("ignores an older probe after a newer file link opens", async () => {
   const opened: string[] = [];
   const opener = createInlinePathOpener({
     workspaceRoot: "/repo",
-    client: {
-      listDirectory: () => pendingProbe,
-      getDirectorySuggestions: async () => ({ entries: [], error: null }),
-    },
+    client: { listDirectory: () => pendingProbe },
     openFile: (location) => {
       opened.push(location.path);
     },
     openDirectory: (directory) => {
-      opened.push(directory);
-    },
-    openOutsideDirectory: (directory) => {
       opened.push(directory);
     },
   });
@@ -94,17 +88,11 @@ it("ignores a pending probe when its view is left", async () => {
   const opened: string[] = [];
   const opener = createInlinePathOpener({
     workspaceRoot: "/repo",
-    client: {
-      listDirectory: () => pendingProbe,
-      getDirectorySuggestions: async () => ({ entries: [], error: null }),
-    },
+    client: { listDirectory: () => pendingProbe },
     openFile: (location) => {
       opened.push(location.path);
     },
     openDirectory: (directory) => {
-      opened.push(directory);
-    },
-    openOutsideDirectory: (directory) => {
       opened.push(directory);
     },
   });
@@ -113,68 +101,4 @@ it("ignores a pending probe when its view is left", async () => {
   resolveProbe({});
   await pending;
   expect(opened).toEqual([]);
-});
-
-it("sends folders outside the workspace away from the workspace Files panel", async () => {
-  const { createInlinePathOpener } = await import("./path-open");
-  const workspaceFolders: string[] = [];
-  const outsideFolders: string[] = [];
-  const opener = createInlinePathOpener({
-    workspaceRoot: "/Users/me/repo",
-    client: null,
-    openFile: () => {},
-    openDirectory: (directory) => {
-      workspaceFolders.push(directory);
-    },
-    openOutsideDirectory: (directory) => {
-      outsideFolders.push(directory);
-    },
-  });
-  for (const raw of ["~/Downloads/contracts/", "/tmp/reports/", "/Users/me/repo/docs/"]) {
-    await opener.open({ raw, path: raw }, "preferred");
-  }
-  expect(outsideFolders).toEqual(["~/Downloads/contracts", "/tmp/reports"]);
-  expect(workspaceFolders).toEqual(["docs"]);
-});
-
-it("keeps a later selection when an earlier nested-file lookup finishes last", async () => {
-  const { createInlinePathOpener } = await import("./path-open");
-  const lookup = Promise.withResolvers<{
-    entries: Array<{ path: string; kind: "file" }>;
-    error: null;
-  }>();
-  const queries: string[] = [];
-  const opened: string[] = [];
-  const opener = createInlinePathOpener({
-    workspaceRoot: "/repo",
-    resolveRelativeFiles: true,
-    client: {
-      listDirectory: async () => {
-        throw new Error("Not a directory");
-      },
-      getDirectorySuggestions: async ({ query }: { query: string }) => {
-        queries.push(query);
-        return lookup.promise;
-      },
-    },
-    openFile: (location) => {
-      opened.push(location.path);
-    },
-    openDirectory: (directory) => {
-      opened.push(directory);
-    },
-    openOutsideDirectory: (directory) => {
-      opened.push(directory);
-    },
-  });
-  const earlier = opener.open(
-    { raw: "schema/x.md:2", path: "/repo/schema/x.md", lineStart: 2 },
-    "side",
-  );
-  await Promise.resolve();
-  expect(queries).toEqual(["schema/x.md"]);
-  await opener.open({ raw: "./guide.md:2", path: "/repo/guide.md", lineStart: 2 }, "side");
-  lookup.resolve({ entries: [{ path: "repo-a/schema/x.md", kind: "file" }], error: null });
-  await earlier;
-  expect(opened).toEqual(["guide.md"]);
 });

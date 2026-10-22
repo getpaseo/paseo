@@ -1,4 +1,3 @@
-import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { createServer, type Server as HTTPServer } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -307,7 +306,6 @@ function createVoiceAssistantWebSocketServer(params: {
     null,
     { allowedOrigins: new Set(["*"]) },
     createWorkspaceAutoNameStub(),
-    createWorkspaceRuntimeStore(),
     undefined,
     undefined,
     undefined,

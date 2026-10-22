@@ -4,7 +4,6 @@ import type { CheckoutDiffCompare, CheckoutDiffResult } from "../utils/checkout-
 interface ActiveRead {
   promise: Promise<CheckoutDiffResult>;
   invalidated: boolean;
-  controller: AbortController;
 }
 
 interface CachedDiff {
@@ -18,7 +17,7 @@ interface CheckoutDiffReadInput {
   compare: CheckoutDiffCompare;
   force?: boolean;
   reason?: string;
-  load: (signal: AbortSignal) => Promise<CheckoutDiffResult>;
+  load: () => Promise<CheckoutDiffResult>;
 }
 
 /** Completed payloads are bounded; active work survives invalidation and eviction. */
@@ -52,7 +51,6 @@ export class CheckoutDiffCache {
     if (pending) {
       if (force) {
         pending.invalidated = true;
-        pending.controller.abort();
         this.values.delete(key);
       }
       if (!pending.invalidated) return pending.promise;
@@ -68,9 +66,8 @@ export class CheckoutDiffCache {
     // Defer load until ownership is installed, including synchronous invalidations.
     const read: ActiveRead = {
       invalidated: false,
-      controller: new AbortController(),
       promise: Promise.resolve()
-        .then(() => load(read.controller.signal))
+        .then(load)
         .then((value) => {
           // Never repopulate the cache with a snapshot invalidated during its build.
           if (!read.invalidated)
@@ -89,10 +86,7 @@ export class CheckoutDiffCache {
       if (cachedCwd !== cwd || (cachedMode !== mode && cachedMode !== "all")) continue;
       this.values.delete(key);
       const pending = this.active.get(key);
-      if (pending) {
-        pending.invalidated = true;
-        pending.controller.abort();
-      }
+      if (pending) pending.invalidated = true;
     }
   }
 }

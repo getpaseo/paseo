@@ -17,7 +17,6 @@ import {
   workspaceDeckEntryLocator,
 } from "./workspace-ui";
 import { getServerId } from "./server-id";
-import { revealSidebarProjectWorkspaces } from "./sidebar";
 import { WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES } from "@/screens/workspace/workspace-deck-retention";
 import type { installDaemonWebSocketGate } from "./daemon-websocket-gate";
 
@@ -283,7 +282,6 @@ export async function createCreationScenario(page: Page) {
         });
       }
       await expect(workspaceDeckEntryLocator(page, getServerId(), workspaceId)).toHaveCount(0);
-      await revealSidebarProjectWorkspaces(page, project.projectKey);
       await switchWorkspaceViaSidebar({ page, serverId: getServerId(), workspaceId });
       await page
         .getByTestId(draftTestId!)

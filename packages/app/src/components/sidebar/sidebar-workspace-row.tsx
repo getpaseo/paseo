@@ -41,6 +41,8 @@ import {
   type SidebarWorkspaceTrailing,
 } from "@/components/sidebar/workspace-trailing";
 
+function noop() {}
+
 interface SidebarWorkspaceRowProps {
   workspace: SidebarWorkspaceEntry;
   selected: boolean;
@@ -237,7 +239,7 @@ function WorkspaceRowBody({
   const trailing = useSidebarWorkspaceTrailing();
   const draggable = Boolean(drag);
   const interaction = useLongPressDragInteraction({
-    drag,
+    drag: drag ?? noop,
     menuController: null,
   });
   const {
@@ -404,7 +406,6 @@ function WorkspaceRowTrailingActions({
   const {
     trailingPresentation,
     showKebab: showKebabInSlot,
-    showArchiveButton,
     showScrim,
     renderSlot,
     reserveSlotWidth,
@@ -431,8 +432,6 @@ function WorkspaceRowTrailingActions({
           <SidebarWorkspaceTrailingActionOverlay
             visible={kebab.showKebab}
             scrimBackdrop={showScrim ? backdrop : undefined}
-            workspaceKey={workspace.workspaceKey}
-            onArchiveButtonPress={showArchiveButton ? onArchive : undefined}
           >
             {onArchive ? (
               <SidebarWorkspaceMenu

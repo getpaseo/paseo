@@ -9,7 +9,7 @@ import {
   expectHostInHostPicker,
   hostConfirmation,
   openPairingLink,
-  reopenPairingLinkWithSavedHosts,
+  saveLinkedHostBeforeLoad,
   type LinkedHost,
 } from "../support/helpers/host-confirmation";
 
@@ -20,9 +20,7 @@ const linkedHost: LinkedHost = {
   daemonPublicKeyB64: "bGlua0NvbmZpcm1hdGlvbktleQ",
 };
 
-test("a pairing link asks before saving a host and reconnects without asking again", async ({
-  page,
-}) => {
+test("a pairing link for a new host asks before saving it", async ({ page }) => {
   const link = buildPairingLink(linkedHost);
 
   await test.step("Cancel saves nothing and stays on the page", async () => {
@@ -41,10 +39,13 @@ test("a pairing link asks before saving a host and reconnects without asking aga
     await openSettings(page);
     await expectHostInHostPicker(page, linkedHost.serverId, "listed");
   });
+});
 
-  await test.step("reopening the saved host link connects without asking", async () => {
-    await reopenPairingLinkWithSavedHosts(page, link);
-    await expectAppRoute(page, "/open-project", { timeout: 30_000 });
-    await expect(hostConfirmation(page)).toHaveCount(0);
-  });
+test("a pairing link for a saved host connects without asking", async ({ page }) => {
+  await saveLinkedHostBeforeLoad(page, linkedHost);
+
+  await openPairingLink(page, buildPairingLink(linkedHost));
+
+  await expectAppRoute(page, "/open-project", { timeout: 30_000 });
+  await expect(hostConfirmation(page)).toHaveCount(0);
 });

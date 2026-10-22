@@ -68,13 +68,10 @@ my-plugin/
 | 新的侧边栏底部贡献                                                                            | `index.client.tsx` 中的 `client.addSidebarFooterItem({ id, title, Component })`                                        |
 | 新的文件面板贡献                                                                              | `index.client.tsx` 中的 `client.addFilePanel(panel)`                                                                   |
 | 旧根入口中的 `plugin.addWorkspacePanel(panel)`                                                | `index.client.tsx` 中的 `client.addWorkspacePanel(panel)`                                                              |
-| 带有 `context: "agent"` 的 Agent 面板                                                         | `index.client.tsx` 中的 `client.addAgentPanel(panel)`；省略 `context`                                                  |
 | 旧根入口中的 `plugin.addCommandCenterItem(item)`                                              | `index.client.tsx` 中的 `client.addCommandCenterItem(item)`                                                            |
 | 旧根入口中的 `plugin.addClientSlashCommand(command)`                                          | `index.client.tsx` 中的 `client.addSlashCommand(command)`                                                              |
 | 旧根入口中的 `plugin.addClientSide(fn)`                                                       | 删除这层包装，把 `fn` 的函数体移入默认的客户端入口函数                                                                 |
 | 旧客户端回调中的 `client.addComposerPill(pill)`                                               | `index.client.tsx` 或被导入的 `client/` 函数中的 `client.addComposerPill(pill)`                                        |
-| 新的编辑器项贡献                                                                              | `index.client.tsx` 中的 `client.addComposerItem(item)`;见[编辑器项](reference#composer-items)                          |
-| 新的“新建工作区”项贡献                                                                        | `index.client.tsx` 中的 `client.addNewWorkspaceItem(item)`;见[新建工作区项](reference#new-workspace-items)             |
 | 新的标题栏贡献                                                                                | `client.addHeaderButton({ id, workspaceId, button })`                                                                  |
 | 旧根入口中的 `plugin.addAttachmentSource(source)`                                             | `index.client.tsx` 中的 `client.addAttachmentSource(source)`                                                           |
 | 新的设置界面贡献                                                                              | `index.client.tsx` 中的 `client.addSettingsScreen(screen)`；见[设置界面](reference#settings-screens)                   |
@@ -87,22 +84,6 @@ my-plugin/
 用原 `addSidebarItem` 项的 `id` 注册替代它的界面，这样已保存的链接仍然有效。`/plugin/<plugin>/sidebar/<id>` 链接以及更早的 `/plugin/<plugin>/<id>` 链接，会打开具有该 `id` 的 `addSidebarItem`，否则打开具有该 `id` 的界面。
 
 从 `@getpaseo/plugin/client` 导入 `PluginClientContext`，从 `@getpaseo/plugin/server` 导入 `PluginServerContext`。删除对旧 context 类型的导入。客户端注册返回幂等的移除函数，但标题栏按钮和 Composer 标签除外，它们返回 `{ update, remove }` 句柄。保留插件在销毁之前调用的所有移除函数；入口的清理函数运行后，Paseo 会移除尚未移除的注册。
-
-### 0.13 的面板属性 {#panel-props-in-013}
-
-所有面板类型共享 [params、revision 和持久化的标签页状态](./reference.md#workspace-panels)。
-
-| 旧 API                                                                        | 替代方式                                         |
-| ----------------------------------------------------------------------------- | ------------------------------------------------ |
-| 工作区/Agent 面板的 `context` 属性                                            | 在注册时选择面板类型。                           |
-| Agent 面板的 `agentId` 属性                                                   | `params.agentId`                                 |
-| `addWorkspacePanel({ context: "workspace", ... })`                            | `addWorkspacePanel({ ... })`                     |
-| `addWorkspacePanel({ context: "agent", ... })`                                | `addAgentPanel({ ... })`                         |
-| Beta 文件面板的 `location.lineStart`、`location.lineEnd`、`location.revision` | `params.lineStart`、`params.lineEnd`、`revision` |
-| Beta 的 `PluginFileTab`、`PluginFileLocation`                                 | `PluginTab`、`PluginFilePanelParams`             |
-
-0.12 的别名会保留到 2027-04-23 之后移除。Beta 文件 API 直接替换。采用新 API 时，将
-`requirements.paseo` 声明为 `>=0.13.0`。
 
 ### Composer 标签 {#composer-pills}
 
@@ -153,22 +134,6 @@ pill.remove();
 所有 Paseo UI 组件和 UI hook 都从 `/client/ui` 导入。之前的入口作为未写入文档的兼容别名保留到 2027-04-20。
 
 对于逐步显示的时间线文本，把 `useRevealedText(text, phase)` 及其外层的 `Text` 换成 `/client/ui` 中的 `<StreamedText text={text} phase={phase} style={style} />`。插件设置的标题使用 `SettingsSection`；`SettingsGroup` 已弃用。
-
-### v0.15 中的 Provider 选项 {#provider-options-in-v015}
-
-Provider 插件只有一个配置记录 `providerOptions`，并用控件描述哪些键显示在 Composer 中。仍然报告 `settings` 的 Provider 在 v0.15 中继续可用：Paseo 把每个 setting 的 `id` 当作选项键，把 `value` 当作该选项的值，并同时在 `changes.providerOptions` 和 `changes.settings` 中发送修改。请在 2027-05-01 之后兼容层被删除之前移除 `settings`。
-
-| 之前的 API                                        | 替代方式                                                        |
-| ------------------------------------------------- | --------------------------------------------------------------- |
-| `session.config` 的 `settings: ProviderSetting[]` | `controls: ProviderOptionControl[]` 加 `providerOptions`        |
-| Setting 的 `id`                                   | 控件的 `key`                                                    |
-| Setting 的 `value`                                | `providerOptions[key]`；控件本身不保存值                        |
-| 选择类 setting 的 `options: { label, value }[]`   | 选择类控件的 `choices: { value, label, description? }[]`        |
-| 没有图标或默认值的 setting                        | 控件的 `icon`（Lucide 名称）和 `defaultValue`                   |
-| `session.configure` 的 `changes.settings`         | `changes.providerOptions`；`null` 表示恢复该键的默认值          |
-| `session.open` 的 `config.settings`               | `config.providerOptions`                                        |
-| `ProviderSetting` 类型                            | `ProviderOptionControl`                                         |
-| `agent.create.before` 的 `config.featureValues`   | `config.providerOptions`；返回的 `featureValues` 修改仍会被应用 |
 
 ## 5. 识别只迁移了一半的错误 {#5-recognize-half-migration-errors}
 

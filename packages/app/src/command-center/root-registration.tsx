@@ -1,4 +1,3 @@
-import { usesDesktopBindings } from "@/keyboard";
 import { useMemo } from "react";
 import { router, type Href } from "expo-router";
 import { useTranslation } from "react-i18next";
@@ -16,12 +15,12 @@ import {
   Settings,
 } from "lucide-react-native";
 import { withUnistyles } from "react-native-unistyles";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import { getIsElectronRuntime, useIsCompactFormFactor } from "@/constants/layout";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useImportSession } from "@/hooks/use-import-session";
 import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
-import { useHardwareKeyboardPresent } from "@/keyboard";
+import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
 import { resolveShortcutKeysForAction } from "@/keyboard/keyboard-shortcuts";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { usePanelStore } from "@/stores/panel-store";
@@ -112,7 +111,7 @@ export function CommandCenterRootActions() {
   const keyboardActionDispatcher = useKeyboardActionDispatcher();
   const { t } = useTranslation();
   const { overrides } = useKeyboardShortcutOverrides();
-  const shortcutsAvailable = useHardwareKeyboardPresent();
+  const shortcutsAvailable = useKeyboardShortcutsAvailable();
   const openAddProject = useOpenAddProject();
   const { open: openImportSession, sheet: importSessionSheet } = useImportSession();
   const settingsRoute = useMemo<Href>(() => buildSettingsRoute(), []);
@@ -129,7 +128,7 @@ export function CommandCenterRootActions() {
   const toggleDesktopAgentList = usePanelStore((state) => state.toggleDesktopAgentList);
   const toggleAgentList = isCompact ? toggleMobileAgentList : toggleDesktopAgentList;
   const shortcutPlatform = useMemo(
-    () => ({ isMac: getShortcutOs() === "mac", usesDesktopBindings }),
+    () => ({ isMac: getShortcutOs() === "mac", isDesktop: getIsElectronRuntime() }),
     [],
   );
   const actions = useMemo<CommandCenterContribution[]>(() => {

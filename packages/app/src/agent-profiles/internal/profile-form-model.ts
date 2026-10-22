@@ -1,14 +1,13 @@
 import type {
-  AgentOptionControl,
-  ProviderOptions,
+  AgentFeature,
   AgentMode,
   AgentModelDefinition,
   AgentSelectOption,
   ProviderSnapshotEntry,
 } from "@getpaseo/protocol/agent-types";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
-import { withoutLostControls } from "@/agent-controls/lost-controls";
 import { formatAgentModeLabel, formatThinkingOptionLabel } from "@/agent-controls/labels";
+import { applyFeatureValues, pruneFeatureValues } from "@/hooks/feature-preferences";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
 
 /**
@@ -58,15 +57,11 @@ export interface AgentProfileFormSnapshot {
 }
 
 /**
- * The inputs a controls listing needs. Controls are provider-scoped and change
- * with model/mode/thinking, so every one of those is part of the request. The
- * profile's own options ride along so the daemon can resolve them (a legacy
- * `service_tier: "fast"` is drawn as the model's Fast tier); they are the same
- * for the life of one provider, so they are not part of the key.
+ * The inputs a feature listing needs. Features are provider-scoped and change
+ * with model/mode/thinking, so every one of those is part of the request.
  */
-export interface AgentProfileControlsRequest {
+export interface AgentProfileFeatureRequest {
   provider: string;
-  providerOptions?: ProviderOptions;
   model?: string;
   modeId?: string;
   thinkingOptionId?: string;
@@ -78,7 +73,7 @@ export interface AgentProfileFormDisclosure {
   showModelField: boolean;
   showModeField: boolean;
   showThinkingField: boolean;
-  showControlsField: boolean;
+  showFeaturesField: boolean;
 }
 
 export interface AgentProfileFormState {
@@ -91,22 +86,13 @@ export interface AgentProfileFormState {
   modelId: string;
   modeId: string;
   thinkingOptionId: string;
-  /** The options the profile was opened with, including ones no control draws. */
-  options: ProviderOptions;
-  /** Changes made in this form, over `options`. */
-  optionEdits: ProviderOptions;
+  featureValues: Record<string, unknown>;
 
   providerOptions: AgentProfileFormOption[];
   modelOptions: AgentProfileFormOption[];
   modeOptions: AgentProfileFormOption[];
   thinkingOptions: AgentProfileFormOption[];
-  controls: AgentOptionControl[];
-  /** What the controls show: the options the daemon resolved from `options`, then the edits. */
-  controlOptions: ProviderOptions;
-  /** Every key an answer for this provider has drawn as a control. */
-  drawnControlKeys: ReadonlySet<string>;
-  /** The keys the latest answer draws as controls. */
-  answeredControlKeys: ReadonlySet<string>;
+  features: AgentFeature[];
 
   providerDisplay: AgentProfileFormDisplay | null;
   modelDisplay: AgentProfileFormDisplay | null;
@@ -114,9 +100,9 @@ export interface AgentProfileFormState {
   thinkingDisplay: AgentProfileFormDisplay | null;
 
   catalogResolution: AgentProfileResolutionStatus;
-  controlsResolution: AgentProfileResolutionStatus;
-  controlsRequest: AgentProfileControlsRequest | null;
-  controlsRequestKey: string | null;
+  featureResolution: AgentProfileResolutionStatus;
+  featureRequest: AgentProfileFeatureRequest | null;
+  featureRequestKey: string | null;
 
   disclosure: AgentProfileFormDisclosure;
   isSubmitting: boolean;
@@ -132,12 +118,9 @@ export interface AgentProfileFormModel {
   /** Late input: the host-scoped provider catalog. Never touches selections. */
   applyProviderCatalog: (entries: readonly ProviderSnapshotEntry[]) => void;
   /** Late input: the feature list for one request. Stale keys are ignored. */
-  applyControls: (
-    requestKey: string,
-    resolved: { controls: readonly AgentOptionControl[]; options: ProviderOptions },
-  ) => void;
+  applyFeatures: (requestKey: string, features: readonly AgentFeature[]) => void;
   /** Resolve a request that produced no usable features (provider error). */
-  applyControlsUnavailable: (requestKey: string) => void;
+  applyFeaturesUnavailable: (requestKey: string) => void;
   setName: (value: string) => void;
   setAppearance: (value: { icon: string; color: string }) => void;
   setNotes: (value: string) => void;
@@ -145,7 +128,7 @@ export interface AgentProfileFormModel {
   setModel: (modelId: string, display: AgentProfileFormDisplay | null) => void;
   setMode: (modeId: string, display: AgentProfileFormDisplay | null) => void;
   setThinking: (thinkingOptionId: string, display: AgentProfileFormDisplay | null) => void;
-  setOption: (key: string, value: unknown) => void;
+  setFeatureValue: (featureId: string, value: unknown) => void;
   setSubmitting: (value: boolean) => void;
   setSubmitError: (value: string | null) => void;
 }
@@ -329,39 +312,19 @@ function refineDisplay(
   return current ?? { label: selectedId };
 }
 
-function buildControlsRequest(state: AgentProfileFormState): AgentProfileControlsRequest | null {
+function buildFeatureRequest(state: AgentProfileFormState): AgentProfileFeatureRequest | null {
   if (!state.provider) {
     return null;
   }
-  const ownOptions = ownOptionsOf(state);
   return {
     provider: state.provider,
     ...(state.modelId ? { model: state.modelId } : {}),
     ...(state.modeId ? { modeId: state.modeId } : {}),
     ...(state.thinkingOptionId ? { thinkingOptionId: state.thinkingOptionId } : {}),
-    ...(Object.keys(ownOptions).length > 0 ? { providerOptions: ownOptions } : {}),
   };
 }
 
-/**
- * Everything the profile would save as its options; the daemon resolves them for the form. A
- * toggle the model in use does not draw is not saved (see `withoutLostControls`).
- */
-function ownOptionsOf(
-  state: Pick<
-    AgentProfileFormState,
-    "options" | "optionEdits" | "drawnControlKeys" | "answeredControlKeys"
-  >,
-): ProviderOptions {
-  return withoutLostControls(
-    { ...state.options, ...state.optionEdits },
-    state.drawnControlKeys,
-    state.answeredControlKeys,
-  );
-}
-
-/** The part of a request that decides which controls exist; options only change their values. */
-function buildControlsScopeKey(request: AgentProfileControlsRequest | null): string | null {
+export function buildFeatureRequestKey(request: AgentProfileFeatureRequest | null): string | null {
   if (!request) {
     return null;
   }
@@ -371,18 +334,6 @@ function buildControlsScopeKey(request: AgentProfileControlsRequest | null): str
     request.modeId ?? "",
     request.thinkingOptionId ?? "",
   ].join("|");
-}
-
-export function buildControlsRequestKey(
-  request: AgentProfileControlsRequest | null,
-): string | null {
-  if (!request) {
-    return null;
-  }
-  const scope = buildControlsScopeKey(request);
-  return request.providerOptions
-    ? `${scope}|${JSON.stringify(Object.entries(request.providerOptions).sort(([a], [b]) => a.localeCompare(b)))}`
-    : scope;
 }
 
 function buildSubmitValue(state: AgentProfileFormState): AgentProfileValue | null {
@@ -399,18 +350,16 @@ function buildSubmitValue(state: AgentProfileFormState): AgentProfileValue | nul
     ...(state.modelId ? { model: state.modelId } : {}),
     ...(state.modeId ? { modeId: state.modeId } : {}),
     ...(state.thinkingOptionId ? { thinkingOptionId: state.thinkingOptionId } : {}),
-    // Always sent, empty included: the daemon reads a write without `options` as one from an
-    // app that predates them and keeps the profile's stored options.
-    options: ownOptionsOf(state),
+    ...(Object.keys(state.featureValues).length > 0 ? { featureValues: state.featureValues } : {}),
     ...(notes ? { notes } : {}),
   };
 }
 
-function resolveControlsStatus(
-  controlsRequestKey: string | null,
+function resolveFeatureStatus(
+  featureRequestKey: string | null,
   featuresAreCurrent: boolean,
 ): AgentProfileResolutionStatus {
-  if (controlsRequestKey === null) {
+  if (featureRequestKey === null) {
     return "idle";
   }
   return featuresAreCurrent ? "complete" : "pending";
@@ -443,29 +392,25 @@ function buildInitialState(snapshot: AgentProfileFormSnapshot): AgentProfileForm
     modelId,
     modeId: profile.modeId ?? "",
     thinkingOptionId: profile.thinkingOptionId ?? "",
-    options: { ...profile.options },
-    optionEdits: {},
+    featureValues: { ...profile.featureValues },
     providerOptions: [],
     modelOptions: [],
     modeOptions: [],
     thinkingOptions: [],
-    controls: [],
-    controlOptions: {},
-    drawnControlKeys: new Set(),
-    answeredControlKeys: new Set(),
+    features: [],
     providerDisplay: seedDisplay(provider),
     modelDisplay: seedDisplay(modelId),
     modeDisplay: seedDisplay(profile.modeId),
     thinkingDisplay: seedDisplay(profile.thinkingOptionId),
     catalogResolution: "idle",
-    controlsResolution: "idle",
-    controlsRequest: null,
-    controlsRequestKey: null,
+    featureResolution: "idle",
+    featureRequest: null,
+    featureRequestKey: null,
     disclosure: {
       showModelField: false,
       showModeField: false,
       showThinkingField: false,
-      showControlsField: false,
+      showFeaturesField: false,
     },
     isSubmitting: false,
     submitError: null,
@@ -477,45 +422,28 @@ function buildInitialState(snapshot: AgentProfileFormSnapshot): AgentProfileForm
 export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentProfileFormModel {
   let entries: readonly ProviderSnapshotEntry[] = [];
   let catalogResolution: AgentProfileResolutionStatus = "idle";
-  let resolvedControlsKey: string | null = null;
-  let resolvedScopeKey: string | null = null;
-  let resolvedControls: AgentOptionControl[] = [];
-  let resolvedOptions: ProviderOptions = {};
-  let drawnKeys: ReadonlySet<string> = new Set();
-  let answeredKeys: ReadonlySet<string> = new Set();
+  let resolvedFeatureKey: string | null = null;
+  let resolvedFeatures: AgentFeature[] = [];
   let listeners = new Set<() => void>();
   let closed = false;
 
   function derive(incoming: AgentProfileFormState): AgentProfileFormState {
     const models = resolveModels(entries, incoming.provider);
     const modes = resolveModes(entries, incoming.provider);
-    const next: AgentProfileFormState = {
-      ...seedSelections(incoming, {
-        entry: findEntry(entries, incoming.provider),
-        models,
-        modes,
-      }),
-      drawnControlKeys: drawnKeys,
-      answeredControlKeys: answeredKeys,
-    };
+    const next = seedSelections(incoming, {
+      entry: findEntry(entries, incoming.provider),
+      models,
+      modes,
+    });
     const thinking = resolveThinkingOptions(entries, next.provider, next.modelId);
-    const controlsRequest = buildControlsRequest(next);
-    const controlsRequestKey = buildControlsRequestKey(controlsRequest);
-    const controlsScopeKey = buildControlsScopeKey(controlsRequest);
+    const featureRequest = buildFeatureRequest(next);
+    const featureRequestKey = buildFeatureRequestKey(featureRequest);
     const featuresAreCurrent =
-      controlsRequestKey !== null && controlsRequestKey === resolvedControlsKey;
-    // A toggle changes only the options, so the controls stay up while the daemon answers and the
-    // toggle shows over the last answer. A change of provider, model, mode or thinking draws none
-    // until its own answer arrives.
-    const controlsApply = controlsScopeKey !== null && controlsScopeKey === resolvedScopeKey;
-    const controls = controlsApply ? resolvedControls : [];
-    let controlOptions: ProviderOptions = next.options;
-    if (controlsApply) {
-      controlOptions = featuresAreCurrent
-        ? resolvedOptions
-        : { ...resolvedOptions, ...next.optionEdits };
-    }
-    const controlsResolution = resolveControlsStatus(controlsRequestKey, featuresAreCurrent);
+      featureRequestKey !== null && featureRequestKey === resolvedFeatureKey;
+    const features = featuresAreCurrent
+      ? applyFeatureValues(resolvedFeatures, next.featureValues)
+      : [];
+    const featureResolution = resolveFeatureStatus(featureRequestKey, featuresAreCurrent);
 
     const withOptions: AgentProfileFormState = {
       ...next,
@@ -523,8 +451,7 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       modelOptions: buildModelOptions(models),
       modeOptions: buildModeOptions(modes),
       thinkingOptions: buildThinkingOptions(thinking),
-      controls,
-      controlOptions,
+      features,
       providerDisplay: refineDisplay(
         next.providerDisplay,
         next.provider,
@@ -552,9 +479,9 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
         })(),
       ),
       catalogResolution,
-      controlsResolution,
-      controlsRequest,
-      controlsRequestKey,
+      featureResolution,
+      featureRequest,
+      featureRequestKey,
     };
 
     // A field appears once the catalog can populate it, and stays visible while
@@ -565,7 +492,7 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       showModeField: hasProvider && (modes.length > 0 || Boolean(withOptions.modeId)),
       showThinkingField:
         hasProvider && (thinking.length > 0 || Boolean(withOptions.thinkingOptionId)),
-      showControlsField: hasProvider && controls.length > 0,
+      showFeaturesField: hasProvider && features.length > 0,
     };
     const canSubmit =
       withOptions.name.trim().length > 0 &&
@@ -604,26 +531,23 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       catalogResolution = "complete";
       publish((current) => current);
     },
-    applyControls: (requestKey, resolved) => {
-      if (requestKey !== state.controlsRequestKey) {
+    applyFeatures: (requestKey, features) => {
+      if (requestKey !== state.featureRequestKey) {
         return;
       }
-      resolvedControlsKey = requestKey;
-      resolvedScopeKey = buildControlsScopeKey(state.controlsRequest);
-      resolvedControls = [...resolved.controls];
-      resolvedOptions = resolved.options;
-      answeredKeys = new Set(resolved.controls.map((control) => control.key));
-      drawnKeys = new Set([...drawnKeys, ...answeredKeys]);
-      publish((current) => current);
+      resolvedFeatureKey = requestKey;
+      resolvedFeatures = [...features];
+      publish((current) => ({
+        ...current,
+        featureValues: pruneFeatureValues(current.featureValues, resolvedFeatures),
+      }));
     },
-    applyControlsUnavailable: (requestKey) => {
-      if (requestKey !== state.controlsRequestKey) {
+    applyFeaturesUnavailable: (requestKey) => {
+      if (requestKey !== state.featureRequestKey) {
         return;
       }
-      resolvedControlsKey = requestKey;
-      resolvedScopeKey = buildControlsScopeKey(state.controlsRequest);
-      resolvedControls = [];
-      resolvedOptions = {};
+      resolvedFeatureKey = requestKey;
+      resolvedFeatures = [];
       publish((current) => current);
     },
     setName: (value) => publish((current) => ({ ...current, name: value })),
@@ -638,8 +562,6 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
         // Everything below the provider is provider-scoped: a model id, mode id,
         // thinking id or feature id from the old provider means nothing here.
         // Clearing them is enough — `derive` seeds the new provider's defaults.
-        drawnKeys = new Set();
-        answeredKeys = new Set();
         return {
           ...current,
           provider: providerId,
@@ -650,8 +572,7 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
           modeDisplay: null,
           thinkingOptionId: "",
           thinkingDisplay: null,
-          options: {},
-          optionEdits: {},
+          featureValues: {},
         };
       }),
     setModel: (modelId, display) =>
@@ -677,10 +598,10 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       publish((current) => ({ ...current, modeId, modeDisplay: display })),
     setThinking: (thinkingOptionId, display) =>
       publish((current) => ({ ...current, thinkingOptionId, thinkingDisplay: display })),
-    setOption: (key, value) =>
+    setFeatureValue: (featureId, value) =>
       publish((current) => ({
         ...current,
-        optionEdits: { ...current.optionEdits, [key]: value },
+        featureValues: { ...current.featureValues, [featureId]: value },
       })),
     setSubmitting: (value) => publish((current) => ({ ...current, isSubmitting: value })),
     setSubmitError: (value) => publish((current) => ({ ...current, submitError: value })),

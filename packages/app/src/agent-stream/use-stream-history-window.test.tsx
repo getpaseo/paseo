@@ -21,7 +21,7 @@ describe("useStreamHistoryWindow", () => {
     ]).flat();
 
     const { result } = renderHook(() =>
-      useStreamHistoryWindow({ items, loadRemoteOlder: vi.fn() }),
+      useStreamHistoryWindow({ agentId: "agent-1", items, loadRemoteOlder: vi.fn() }),
     );
 
     expect(result.current.start).toBe(2);
@@ -35,6 +35,7 @@ describe("useStreamHistoryWindow", () => {
     const loadRemoteOlder = vi.fn(async () => true);
     const { result } = renderHook(() =>
       useStreamHistoryWindow({
+        agentId: "agent-1",
         items: [
           message("u1", "user_message"),
           message("a1", "assistant_message"),
@@ -66,7 +67,8 @@ describe("useStreamHistoryWindow", () => {
       message("a2", "assistant_message"),
     ];
     const { result, rerender } = renderHook(
-      ({ history }) => useStreamHistoryWindow({ items: history, loadRemoteOlder: vi.fn() }),
+      ({ history }) =>
+        useStreamHistoryWindow({ agentId: "agent-1", items: history, loadRemoteOlder: vi.fn() }),
       { initialProps: { history: items } },
     );
 
@@ -89,7 +91,8 @@ describe("useStreamHistoryWindow", () => {
       message("a2", "assistant_message"),
     ];
     const { result, rerender } = renderHook(
-      ({ history }) => useStreamHistoryWindow({ items: history, loadRemoteOlder: vi.fn() }),
+      ({ history }) =>
+        useStreamHistoryWindow({ agentId: "agent-1", items: history, loadRemoteOlder: vi.fn() }),
       { initialProps: { history: items } },
     );
 
@@ -105,7 +108,8 @@ describe("useStreamHistoryWindow", () => {
       configurable: true,
     });
     const { result, rerender } = renderHook(
-      ({ history }) => useStreamHistoryWindow({ items: history, loadRemoteOlder: vi.fn() }),
+      ({ history }) =>
+        useStreamHistoryWindow({ agentId: "agent-1", items: history, loadRemoteOlder: vi.fn() }),
       {
         initialProps: {
           history: [
@@ -138,6 +142,7 @@ describe("useStreamHistoryWindow", () => {
     });
     const { result } = renderHook(() =>
       useStreamHistoryWindow({
+        agentId: "agent-1",
         items: [
           message("u1", "user_message"),
           message("a1", "assistant_message"),

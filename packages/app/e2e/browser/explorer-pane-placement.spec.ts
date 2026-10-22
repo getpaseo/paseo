@@ -105,9 +105,6 @@ function collectConsoleErrors(page: Page): string[] {
   return errors;
 }
 
-// These drag and tab-menu journeys need full rails beside the docked Explorer.
-test.use({ viewport: { width: 1900, height: 900 } });
-
 test.describe("explorer pane tab placement", () => {
   test("agents open in the main pane and New-tab splits keep the app usable", async ({
     page,

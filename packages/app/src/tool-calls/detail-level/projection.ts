@@ -1,4 +1,5 @@
 import type { StreamItem } from "@/types/stream";
+import type { ToolCallDetailLevel } from "@/hooks/use-settings/storage";
 import {
   groupLiveToolCalls,
   prepareGroupedHistory,
@@ -7,13 +8,11 @@ import {
 } from "./grouping";
 import { buildOverviewGroup, type OverviewToolCallGroup } from "./overview/model";
 
-/** Whether consecutive tool calls show one by one or as one summary row. */
-export type ToolCallDetailLevel = "overview" | "detailed";
+export type { ToolCallDetailLevel } from "@/hooks/use-settings/storage";
 export type ToolCallDetailGroup = OverviewToolCallGroup;
 
 export interface PreparedToolCallHistory {
   mode: "overview";
-  autoExpandReasoning: boolean;
   grouped: GroupedHistory<ToolCallDetailGroup>;
 }
 
@@ -42,18 +41,15 @@ function visibleToolCallItems(items: StreamItem[]): StreamItem[] {
 export function prepareToolCallHistory(
   level: ToolCallDetailLevel,
   tail: StreamItem[],
-  autoExpandReasoning = false,
 ): PreparedToolCallHistory | null {
   if (level === "detailed") {
     return null;
   }
   return {
     mode: "overview",
-    autoExpandReasoning,
     grouped: prepareGroupedHistory({
       tail: visibleToolCallItems(tail),
       buildGroup: buildOverviewGroup,
-      autoExpandReasoning,
     }),
   };
 }
@@ -78,7 +74,6 @@ export function projectToolCallDetailLevel(input: {
   }
   return groupLiveToolCalls({
     history: input.preparedHistory.grouped,
-    autoExpandReasoning: input.preparedHistory.autoExpandReasoning,
     head: visibleToolCallItems(input.head),
     isTurnActive: input.isTurnActive,
     buildGroup: buildOverviewGroup,

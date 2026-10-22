@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { useRevealedText } from "@/hooks/use-revealed-text";
 import { runPluginClientBundle, type PluginClientRuntime } from "./evaluate";
 
 const runtime = {
@@ -53,29 +52,6 @@ describe("evaluatePluginClientBundle", () => {
       ),
     ).toThrow("Setup failed");
     expect(active).toBe(0);
-  });
-
-  it("registers sidebar views without selecting one and removes them on cleanup", async () => {
-    const plugin = evaluatePluginClientBundle(
-      "sidebar",
-      bundle(`
-      plugin.addSidebarView({ id: "workspaces", title: "Workspaces", Component() { return null; } });
-    `),
-    );
-    expect(plugin.sidebarViews.map((view) => view.id)).toEqual(["workspaces"]);
-    await plugin.cleanup();
-    expect(plugin.sidebarViews).toEqual([]);
-  });
-  it("rejects duplicate sidebar view ids", () => {
-    expect(() =>
-      evaluatePluginClientBundle(
-        "sidebar",
-        bundle(`
-      const view = { id: "workspaces", title: "Workspaces", Component() { return null; } };
-      plugin.addSidebarView(view); plugin.addSidebarView(view);
-    `),
-      ),
-    ).toThrow("Duplicate sidebar view");
   });
 
   it("accepts memoized settings screens", () => {
@@ -405,23 +381,6 @@ describe("evaluatePluginClientBundle", () => {
     ).toEqual([{ id: "open-review", title: "Open review", icon: "Scan", context: "agent" }]);
   });
 
-  it("registers workspace and agent panels with stable aliases", () => {
-    const plugin = evaluatePluginClientBundle(
-      "panels",
-      bundle(`
-      const Component = () => null;
-      plugin.addWorkspacePanel({ id: "workspace", title: "Workspace", icon: "File", Component });
-      plugin.addAgentPanel({ id: "agent", title: "Agent", icon: "File", Component });
-      plugin.addWorkspacePanel({ id: "legacy", title: "Legacy", icon: "File", context: "agent", Component });
-    `),
-    );
-    expect(plugin.workspacePanels.map(({ id, context }) => ({ id, context }))).toEqual([
-      { id: "workspace", context: "workspace" },
-      { id: "agent", context: "agent" },
-      { id: "legacy", context: "agent" },
-    ]);
-  });
-
   it("registers inline SVG and component icons", () => {
     const svg = '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h16v16H4z" /></svg>';
     const plugin = evaluatePluginClientBundle(
@@ -552,38 +511,6 @@ describe("evaluatePluginClientBundle", () => {
         `),
       ),
     ).toThrow("Duplicate Command Center item: review");
-  });
-
-  it("collects composer items and releases an id on removal", () => {
-    const plugin = evaluatePluginClientBundle(
-      "review",
-      bundle(`
-        function Item() { return null; }
-        const remove = plugin.addComposerItem({ id: "flag", Component: Item });
-        remove();
-        plugin.addComposerItem({ id: "flag", Component: Item });
-      `),
-    );
-    expect(plugin.composerItems.map((item) => item.id)).toEqual(["flag"]);
-  });
-
-  it("rejects duplicate and non-component composer items", () => {
-    expect(() =>
-      evaluatePluginClientBundle(
-        "review",
-        bundle(`
-          function Item() { return null; }
-          plugin.addComposerItem({ id: "flag", Component: Item });
-          plugin.addComposerItem({ id: "flag", Component: Item });
-        `),
-      ),
-    ).toThrow("Duplicate composer item: flag");
-    expect(() =>
-      evaluatePluginClientBundle(
-        "review",
-        bundle(`plugin.addComposerItem({ id: "flag", Component: "nope" })`),
-      ),
-    ).toThrow("Composer item flag is not a component");
   });
 
   it("runs the client entry with the full runtime context", () => {
@@ -759,21 +686,6 @@ describe("evaluatePluginClientBundle", () => {
     );
 
     expect(plugin.surfaces.map((surface) => surface.id)).toEqual(["main"]);
-  });
-
-  it("keeps the host reveal hook on the deprecated client/react-native entry", () => {
-    const plugin = evaluatePluginClientBundle(
-      "legacy-reveal",
-      bundle(`
-        const legacy = require("@getpaseo/plugin/client/react-native");
-        const ui = require("@getpaseo/plugin/client/ui");
-        if (typeof legacy.useRevealedText !== "function") throw new Error("Missing legacy reveal hook");
-        if (legacy.StreamedText !== ui.StreamedText) throw new Error("Missing current UI exports");
-        if ("useRevealedText" in ui) throw new Error("Legacy hook leaked into current UI");
-        plugin.addScreen({ id: "reveal", title: "Reveal", Component: legacy.useRevealedText });
-      `),
-    );
-    expect(plugin.surfaces[0]?.Component).toBe(useRevealedText);
   });
 
   it("keeps shared and client runtime exports separate", () => {

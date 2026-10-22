@@ -15,4 +15,3 @@ export {
   isSyntaxThemeId,
   resolveSyntaxColors,
 } from "./themes.js";
-export { highlightCodeWithBudget, HIGHLIGHT_MAX_SOURCE_BYTES } from "./budgeted-highlighter.js";

@@ -2,7 +2,6 @@ import type pino from "pino";
 import type { ProviderAvailability } from "../../agent/agent-manager.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
 import { getPidLockInfo } from "../../pid-lock.js";
-import { readUnconfirmedTerminalCleanup } from "../../../terminal/terminal-worker-reaper.js";
 import { generateLocalPairingOffer } from "../../pairing-offer.js";
 import {
   collectDaemonDiagnostics,
@@ -25,7 +24,6 @@ export interface DaemonRuntimeConfig {
     publicEndpoint: string;
     useTls: boolean;
     publicUseTls: boolean;
-    requireProtectedSecurity?: boolean;
   } | null;
 }
 
@@ -36,7 +34,6 @@ export interface DaemonSessionHost {
     clientId: string;
     requestId: string;
     reason: string;
-    keepTerminals: boolean;
   }): void;
 }
 
@@ -51,13 +48,11 @@ export interface DaemonSessionOptions {
   listProjects: () => Promise<PersistedProjectRecord[]>;
   listWorkspaces: () => Promise<PersistedWorkspaceRecord[]>;
   listProviderAvailability: () => Promise<ProviderAvailability[]>;
-  /** Why this host's terminals cannot be served (held by a newer Paseo's worker), if so. */
-  getTerminalsUnavailable?: () => string | null;
   getWebSocketRuntimeMetrics?: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
   getObservationMetrics?: () => Record<string, number>;
   logger: pino.Logger;
   hubRelationships?: HubRelationshipManagement;
-  reloadConfig: () => Promise<DaemonConfigReloadResult>;
+  reloadConfig: () => DaemonConfigReloadResult;
 }
 
 /**
@@ -78,13 +73,12 @@ export class DaemonSession {
   private readonly listProjects: () => Promise<PersistedProjectRecord[]>;
   private readonly listWorkspaces: () => Promise<PersistedWorkspaceRecord[]>;
   private readonly listProviderAvailability: () => Promise<ProviderAvailability[]>;
-  private readonly getTerminalsUnavailable: () => string | null;
   private readonly getWebSocketRuntimeMetrics: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
   private readonly getObservationMetrics: DaemonSessionOptions["getObservationMetrics"];
   private readonly logger: pino.Logger;
   private readonly selfUpdate: DaemonSelfUpdateSessionController;
   private readonly hubRelationships: HubRelationshipManagement | null;
-  private readonly reloadConfig: () => Promise<DaemonConfigReloadResult>;
+  private readonly reloadConfig: () => DaemonConfigReloadResult;
 
   constructor(options: DaemonSessionOptions) {
     this.host = options.host;
@@ -97,7 +91,6 @@ export class DaemonSession {
     this.listProjects = options.listProjects;
     this.listWorkspaces = options.listWorkspaces;
     this.listProviderAvailability = options.listProviderAvailability;
-    this.getTerminalsUnavailable = options.getTerminalsUnavailable ?? (() => null);
     this.getWebSocketRuntimeMetrics = options.getWebSocketRuntimeMetrics ?? (() => null);
     this.getObservationMetrics = options.getObservationMetrics;
     this.logger = options.logger;
@@ -179,12 +172,6 @@ export class DaemonSession {
   async handleGetStatusRequest(
     msg: Extract<SessionInboundMessage, { type: "daemon.get_status.request" }>,
   ): Promise<void> {
-    // Read outside the degraded-status fallback below: a status that cannot say whether
-    // terminal cleanup finished must fail the request, not report that nothing is left.
-    const terminalCleanupUnconfirmed = (await readUnconfirmedTerminalCleanup(this.paseoHome)).map(
-      ({ pid, role, reason, detail }) => ({ pid, role, reason, detail }),
-    );
-    const terminalsUnavailable = this.getTerminalsUnavailable();
     try {
       const pidInfo = await getPidLockInfo(this.paseoHome);
       const providers = (await this.listProviderAvailability()).map((p) => ({
@@ -204,8 +191,6 @@ export class DaemonSession {
           listen: this.daemonRuntimeConfig?.listen ?? null,
           relay: this.daemonRuntimeConfig?.getRelayConfig() ?? null,
           providers,
-          terminalCleanupUnconfirmed,
-          ...(terminalsUnavailable ? { terminalsUnavailable } : {}),
         },
       });
     } catch (error) {
@@ -222,8 +207,6 @@ export class DaemonSession {
           listen: null,
           relay: null,
           providers: [],
-          terminalCleanupUnconfirmed,
-          ...(terminalsUnavailable ? { terminalsUnavailable } : {}),
         },
       });
     }
@@ -241,7 +224,6 @@ export class DaemonSession {
         relayPublicEndpoint: relay?.publicEndpoint,
         relayUseTls: relay?.useTls,
         relayPublicUseTls: relay?.publicUseTls,
-        relayRequireProtectedSecurity: relay?.requireProtectedSecurity ?? false,
         appBaseUrl: this.daemonRuntimeConfig?.appBaseUrl,
         includeQr: true,
         logger: this.logger,
@@ -268,13 +250,13 @@ export class DaemonSession {
     }
   }
 
-  async handleConfigReloadRequest(
+  handleConfigReloadRequest(
     msg: Extract<SessionInboundMessage, { type: "daemon.config.reload.request" }>,
-  ): Promise<void> {
+  ): void {
     try {
       this.host.emit({
         type: "daemon.config.reload.response",
-        payload: { requestId: msg.requestId, ...(await this.reloadConfig()) },
+        payload: { requestId: msg.requestId, ...this.reloadConfig() },
       });
     } catch (error) {
       this.logger.error({ err: error }, "Failed to reload daemon config");

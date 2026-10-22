@@ -3,14 +3,14 @@ import { type ReactNode, useMemo } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
-  ALERT_ICON_SIZE,
-  type AlertSize,
+  type ButtonControlSize,
+  buttonIconSize,
   createControlGeometry,
 } from "@/components/ui/control-geometry";
 import { hexColorWithAlpha } from "@/utils/color";
 
 export type AlertVariant = "default" | "info" | "success" | "warning" | "error";
-export type { AlertSize };
+export type AlertSize = ButtonControlSize;
 
 export interface AlertProps {
   title?: string;
@@ -46,7 +46,7 @@ export function Alert({
   const sized = resolveSizeStyles(size);
   const containerStyle = [styles.container, sized.container, { borderColor }];
   const titleStyle = [styles.title, sized.text, accentColor ? { color: accentColor } : null];
-  const iconSize = ALERT_ICON_SIZE[size];
+  const iconSize = buttonIconSize[size];
 
   const resolvedIcon = useMemo(() => {
     if (variant === "default") return null;

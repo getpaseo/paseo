@@ -6,7 +6,6 @@ import {
   seedLongMockAgentTimeline,
 } from "../support/helpers/timeline-pagination";
 import {
-  commitTimelineTurnsWhileDisconnected,
   disconnectViewedTimeline,
   restoreViewedTimelineWithHeldResponse,
 } from "../support/helpers/timeline-resume";
@@ -19,14 +18,11 @@ test.describe("Agent timeline sync retry", () => {
     const gate = await installDaemonWebSocketGate(page);
     const agent = await seedLongMockAgentTimeline({ turns: 2 });
     try {
-      gate.holdNextClientRequest("clear_agent_attention");
       await openAgentTimeline(page, agent);
       await expectTimelinePromptVisible(page, agent.newestPrompt);
-      await gate.waitForHeldClientRequest();
 
       gate.failTimelineResponses(agent.agentId);
       await disconnectViewedTimeline(page, gate);
-      await commitTimelineTurnsWhileDisconnected(agent, 1);
       await restoreViewedTimelineWithHeldResponse(page, gate);
 
       const callout = page.getByTestId("agent-timeline-sync-error");

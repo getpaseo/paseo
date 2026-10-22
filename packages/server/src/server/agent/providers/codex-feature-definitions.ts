@@ -1,4 +1,4 @@
-import type { AgentOptionControl, AgentOptionToggleControl } from "../agent-sdk-types.js";
+import type { AgentFeature, AgentFeatureToggle } from "../agent-sdk-types.js";
 
 import { z } from "zod";
 
@@ -9,47 +9,51 @@ export const CodexServiceTierSchema = z.object({
 });
 export type CodexServiceTier = z.infer<typeof CodexServiceTierSchema>;
 
-function buildCodexSpeedControl(tiers: CodexServiceTier[]): AgentOptionControl[] {
+function buildCodexSpeedFeature(tiers: CodexServiceTier[], value: string): AgentFeature[] {
   if (tiers.length === 0) return [];
   return [
     {
       type: "select",
-      key: "service_tier",
+      id: "service_tier",
       label: "Speed",
       description: "Choose processing speed. Faster tiers increase usage.",
       tooltip: "Select speed",
       icon: "zap",
       desktopTrigger: "icon",
-      defaultValue: "default",
-      choices: [
-        { value: "default", label: "Normal" },
-        ...tiers.map((tier) => ({ value: tier.id, label: tier.name })),
+      value,
+      options: [
+        { id: "default", label: "Normal", isDefault: true },
+        ...tiers.map((tier) => ({ id: tier.id, label: tier.name })),
       ],
     },
   ];
 }
 
-export const CODEX_PLAN_MODE_CONTROL: AgentOptionToggleControl = {
+export const CODEX_PLAN_MODE_FEATURE: Omit<AgentFeatureToggle, "value"> = {
   type: "toggle",
-  key: "plan_mode",
+  id: "plan_mode",
   label: "Plan",
   description: "Switch Codex into planning-only collaboration mode",
   tooltip: "Toggle plan mode",
   icon: "list-todo",
 };
 
-export function buildCodexControls(input: {
+export function buildCodexFeatures(input: {
   serviceTiers: CodexServiceTier[];
+  serviceTier: string;
+  planModeEnabled: boolean;
   planModeAvailable?: boolean;
-}): AgentOptionControl[] {
-  const controls = buildCodexSpeedControl(input.serviceTiers);
+}): AgentFeature[] {
+  const features = buildCodexSpeedFeature(input.serviceTiers, input.serviceTier);
   if (input.planModeAvailable !== false) {
-    controls.push({ ...CODEX_PLAN_MODE_CONTROL });
+    features.push({ ...CODEX_PLAN_MODE_FEATURE, value: input.planModeEnabled });
   }
-  return controls;
+  return features;
 }
 
-export function readCodexServiceTier(options: Record<string, unknown> | undefined): string | null {
-  const tier = options?.service_tier;
-  return typeof tier === "string" ? tier : null;
+export function readCodexServiceTier(values: Record<string, unknown> | undefined): string | null {
+  const tier = values?.service_tier;
+  if (typeof tier === "string") return tier;
+  // COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once saved Fast preferences have migrated.
+  return values?.fast_mode ? "fast" : null;
 }

@@ -1,4 +1,3 @@
-import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { createAgentMessageDeliveryStub } from "./test-utils/session-stubs.js";
 import {
   createMessageReceiptsStub,
@@ -114,10 +113,6 @@ class InMemoryAgentManager {
     };
   }
 
-  getAgentBackgroundWorkSummary() {
-    return undefined;
-  }
-
   fetchTimeline(_agentId: string, options?: AgentTimelineFetchOptions) {
     return this.timeline.fetch("agent-1", options);
   }
@@ -132,21 +127,12 @@ class InMemoryAgentManager {
 }
 
 class EmptyAgentStorage {
-  async listActive() {
+  async list() {
     return [];
   }
 
   async get() {
     return null;
-  }
-  async listByWorkspaces() {
-    return [];
-  }
-  async lastUserMessageAtByWorkspace() {
-    return new Map<string, string>();
-  }
-  async listAll() {
-    return [];
   }
 }
 
@@ -169,12 +155,6 @@ class EmptyProjectRegistry {
 }
 
 class EmptyWorkspaceRegistry {
-  listActive() {
-    return [];
-  }
-  listAll() {
-    return [];
-  }
   get() {
     return null;
   }
@@ -234,7 +214,6 @@ function createSessionForWireCompatTest(options?: {
   ];
 
   const session = new Session({
-    workspaceRuntimeStore: createWorkspaceRuntimeStore(),
     messageReceipts: createMessageReceiptsStub(),
     agentMessages: createAgentMessageDeliveryStub(),
     creationService: createTestCreationService(),
@@ -258,7 +237,7 @@ function createSessionForWireCompatTest(options?: {
     directorySync: options?.directorySync,
     scheduleService: {} as SessionOptions["scheduleService"],
     checkoutDiffManager: {
-      async scheduleRefreshForCwd() {},
+      scheduleRefreshForCwd() {},
       onWorkspaceStateMayHaveChanged() {},
     } as unknown as SessionOptions["checkoutDiffManager"],
     github: {
@@ -283,7 +262,9 @@ function createSessionForWireCompatTest(options?: {
       async listStashes() {
         return [];
       },
-
+      peekSnapshot() {
+        return null;
+      },
       async validateBranchRef() {
         return { ok: false, error: "not found" };
       },
@@ -772,7 +753,7 @@ test("setup observation includes a transition that happens during its initial re
         readStarted();
         return pendingRead;
       },
-      listActive: () => [],
+      list: () => [],
     } as unknown as SessionOptions["workspaceRegistry"],
   });
   session.updateClientCapabilities(

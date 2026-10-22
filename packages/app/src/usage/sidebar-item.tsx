@@ -16,11 +16,8 @@ import {
   type PressableStateCallbackType,
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { useRetainedPanelActive } from "@/components/retained-panel";
-import { useAppVisible } from "@/hooks/use-app-visible";
 import { builtinSidebarNavLabelKey } from "@/sidebar-nav/model";
-import { useUsageDisplay } from "./display";
-import { useUsageInSidebar } from "./in-sidebar";
+import { useUsagePreferences } from "./display";
 import { useUsageHostId } from "./hosts";
 import { useUsageHostReports } from "./queries";
 import { UsageSourceIcon } from "./source-icon";
@@ -36,18 +33,16 @@ import {
 import { UsageModal } from "./usage-modal";
 
 /** Each summary window with data on the usage host, under its source; empty while none has. */
-export function useUsageSummary(): readonly PinnedUsageSource[] {
+function useUsageSummary(): readonly PinnedUsageSource[] {
   const { t } = useTranslation();
-  const active = useRetainedPanelActive();
-  const isAppVisible = useAppVisible();
-  const { inSidebar } = useUsageInSidebar();
-  const serverId = useUsageHostId();
-  const reports = useUsageHostReports({
-    serverId: inSidebar ? serverId : null,
-    shouldPoll: active && inSidebar && isAppVisible,
-  });
-  const { preferences } = useUsageDisplay(reports);
+  const { preferences } = useUsagePreferences();
+  const reports = useUsageHostReports(useUsageHostId());
   return useMemo(() => resolvePinnedUsage(reports, preferences, t), [preferences, reports, t]);
+}
+
+/** Whether the sidebar Usage item has anything to show. */
+export function useHasUsageSummary(): boolean {
+  return useUsageSummary().length > 0;
 }
 
 /**
@@ -55,10 +50,11 @@ export function useUsageSummary(): readonly PinnedUsageSource[] {
  * while no summary window has data, since the footer's Usage icon already opens Usage.
  * Pressing it opens the Usage modal.
  */
-export function UsageSidebarItem({ sources }: { sources: readonly PinnedUsageSource[] }) {
+export function UsageSidebarItem() {
   const { t } = useTranslation();
   const label = t(builtinSidebarNavLabelKey("usage"));
   const openUsage = useOpenSidebarUsage();
+  const sources = useUsageSummary();
   if (sources.length === 0) return null;
   return <PinnedUsageTrigger label={label} sources={sources} onPress={openUsage} />;
 }
@@ -196,7 +192,12 @@ function PinnedUsageLine({
           <Fragment key={window.key}>
             {layout === "meters" ? (
               <View style={[styles.meterSlot, leadStyle]}>
-                <UsageMeter percent={window.percent} tone={window.tone} quiet />
+                <UsageMeter
+                  percent={window.percent}
+                  tone={window.tone}
+                  quiet
+                  style={styles.meter}
+                />
               </View>
             ) : null}
             <Text
@@ -267,6 +268,10 @@ const styles = StyleSheet.create((theme) => ({
     flexBasis: 0,
     minWidth: MIN_METER_WIDTH,
     marginRight: METER_GAP,
+  },
+  meter: {
+    height: 6,
+    borderRadius: 3,
   },
   percent: {
     flexShrink: 0,

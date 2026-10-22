@@ -357,16 +357,14 @@ describe("createGitLabService", () => {
     expect(calls[1]).toEqual(["mr", "view", "270", "-F", "json"]);
   });
 
-  it("keeps a merged MR when its remote head advances beyond the checkout", async () => {
+  it("does not attach the latest historical merge request after a reused branch advances", async () => {
     const stale = {
       ...OPEN_MR,
       state: "merged",
       source_branch: "dev",
       sha: "1111111111111111111111111111111111111111",
     };
-    const { service, calls } = makeService((args) =>
-      ok(JSON.stringify(args[1] === "list" ? [stale] : stale)),
-    );
+    const { service, calls } = makeService(() => ok(JSON.stringify([stale])));
 
     await expect(
       service.getCurrentPullRequestStatus({
@@ -374,8 +372,8 @@ describe("createGitLabService", () => {
         headRef: "dev",
         headSha: "2222222222222222222222222222222222222222",
       }),
-    ).resolves.toMatchObject({ state: "merged" });
-    expect(calls[0]).toEqual(currentMrListArgs("dev"));
+    ).resolves.toBeNull();
+    expect(calls).toEqual([currentMrListArgs("dev")]);
   });
 
   it("looks up a numeric current branch through the source-branch list filter", async () => {

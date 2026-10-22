@@ -44,14 +44,12 @@ test("a slow consumer cannot exceed the shared byte budget and close releases re
   socket.pause();
   await ready;
   const frame = new Uint8Array(1024 * 1024);
-  const writes = Array.from({ length: 4 }, () => transport.send(frame));
-  const drained = Promise.allSettled(writes);
+  for (let index = 0; index < 4; index++) transport.send(frame);
   expect(budget.bufferedBytes).toBe(4 * 1024 * 1024);
   expect(() => transport.send(frame)).toThrow("Connected host buffer limit reached");
   expect(budget.bufferedBytes).toBeLessThanOrEqual(budget.limit);
   transport.close();
   await expect.poll(() => budget.bufferedBytes).toBe(0);
-  await drained;
 });
 test("direct connector preserves 25 MiB binary frames in both directions", async () => {
   const server = await endpoint();
@@ -67,13 +65,12 @@ test("direct connector preserves 25 MiB binary frames in both directions", async
   await ready;
   const bytes = new Uint8Array(25 * 1024 * 1024).fill(173);
   const echoed = once(socket, "message");
-  const sending = transport.send(bytes);
+  transport.send(bytes);
   const [sent, binary] = await echoed;
   expect(binary).toBe(true);
   expect(Buffer.from(sent as Uint8Array).equals(bytes)).toBe(true);
   socket.send(bytes);
   expect(Buffer.from(await received).equals(bytes)).toBe(true);
-  await sending;
 });
 
 import {
@@ -127,29 +124,24 @@ test("encrypted connector rejects overload synchronously and preserves the physi
   });
   await new Promise<void>((resolve) => transport.onOpen(resolve));
   await ready;
-  expect(transport.maxFrameBytes).toBeLessThan(32 * 1024 * 1024);
   peer.pause();
   const frame = new Uint8Array(1024 * 1024).fill(173);
   let rejected: unknown;
-  const writes: (void | Promise<void>)[] = [];
   for (let index = 0; index < 8; index++) {
     try {
-      writes.push(transport.send(frame));
+      transport.send(frame);
     } catch (error) {
       rejected = error;
       break;
     }
   }
-  const drained = Promise.allSettled(writes);
   expect(rejected).toMatchObject({ code: "resource_limit" });
   expect(budget.bufferedBytes).toBeLessThanOrEqual(budget.limit);
   await new Promise<void>((resolve) => setImmediate(resolve));
   expect(errors).toEqual([]);
   expect(closed).toBe(false);
-  const sibling = transport.send("sibling control");
+  transport.send("sibling control");
   peer.resume();
-  await drained;
-  await sibling;
   await expect.poll(() => received.includes("sibling control")).toBe(true);
   expect(received.filter((data) => data instanceof ArrayBuffer).length).toBeGreaterThan(0);
   expect(
@@ -158,60 +150,4 @@ test("encrypted connector rejects overload synchronously and preserves the physi
       .every((data) => Buffer.from(data).equals(frame)),
   ).toBe(true);
   expect(server.wss.clients.size).toBe(1);
-});
-
-import { openDaemonSecureChannel } from "@getpaseo/relay/e2ee";
-test("encrypted connector refuses legacy endpoint security on a later attempt once protected was negotiated", async () => {
-  const server = await endpoint();
-  const keys = generateKeyPair();
-  const legacyReceived: unknown[] = [];
-  let connections = 0;
-  server.wss.on("connection", (socket) => {
-    connections += 1;
-    const wire: Transport = {
-      send: (data) => socket.send(data),
-      close: (code, reason) => socket.close(code, reason),
-      onmessage: null,
-      onclose: null,
-      onerror: null,
-    };
-    socket.on("message", (data, isBinary) => {
-      const bytes = Buffer.from(data as Buffer);
-      wire.onmessage?.({
-        data: isBinary
-          ? bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
-          : bytes.toString(),
-        isBinary,
-      });
-    });
-    socket.on("close", (code, reason) => wire.onclose?.(code, reason.toString()));
-    if (connections === 1) {
-      void openDaemonSecureChannel(wire, { daemonKeyPair: keys }).catch(() => {});
-    } else {
-      // The daemon behind the relay now only speaks the legacy construction.
-      void createDaemonChannel(wire, keys, {
-        onmessage: (data) => legacyReceived.push(data),
-      }).catch(() => {});
-    }
-  });
-  const port = new URL(server.url).port;
-  const factory = createHostTransportFactory(
-    `relay://127.0.0.1:${port}/srv_latch?key=${encodeURIComponent(exportPublicKey(keys.publicKey))}`,
-  );
-
-  const first = factory({ url: server.url });
-  cleanup.push(async () => first.close());
-  await new Promise<void>((resolve) => first.onOpen(resolve));
-  first.close();
-
-  const second = factory({ url: server.url });
-  cleanup.push(async () => second.close());
-  let opened = false;
-  second.onOpen(() => {
-    opened = true;
-  });
-  const closed = await new Promise<unknown>((resolve) => second.onClose(resolve));
-  expect(closed).toMatchObject({ code: 4002, reason: expect.stringContaining("legacy") });
-  expect(opened).toBe(false);
-  expect(legacyReceived).toEqual([]);
 });

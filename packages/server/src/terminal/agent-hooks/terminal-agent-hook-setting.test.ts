@@ -80,7 +80,7 @@ describe("applyTerminalAgentHookSetting", () => {
     expect(existsSync(paths.opencode)).toBe(true);
   });
 
-  it("installs on enable and removes hooks on disable when toggled live", async () => {
+  it("installs on enable and removes hooks on disable when toggled live", () => {
     const root = createTempDir("paseo-hook-setting-");
     const store = createStore(createTempDir("paseo-hook-setting-home-"), false);
     const paths = hookPaths(root);
@@ -88,11 +88,11 @@ describe("applyTerminalAgentHookSetting", () => {
     applyTerminalAgentHookSetting({ store, install: createInstallEnv(root) });
     expect(existsSync(paths.opencode)).toBe(false);
 
-    await store.patch({ enableTerminalAgentHooks: true });
+    store.patch({ enableTerminalAgentHooks: true });
     expect(existsSync(paths.codex)).toBe(true);
     expect(existsSync(paths.opencode)).toBe(true);
 
-    await store.patch({ enableTerminalAgentHooks: false });
+    store.patch({ enableTerminalAgentHooks: false });
     expect(existsSync(paths.opencode)).toBe(false);
   });
 });

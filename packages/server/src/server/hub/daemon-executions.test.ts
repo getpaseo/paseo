@@ -86,10 +86,7 @@ test("Hub MCP configuration reaches the provider alongside Paseo MCP without ent
     cwd: response.payload.agent.cwd,
   });
   expect(JSON.stringify(response.payload.agent)).not.toContain(bearer);
-  // Provider options are not secret and appear in the snapshot's `options`.
-  expect(response.payload.agent.options).toMatchObject({
-    sandbox_workspace_write: { writable_roots: ["/var/cache/private-build"] },
-  });
+  expect(JSON.stringify(response.payload.agent)).not.toContain("private-build");
   expect(JSON.stringify(response.payload.agent)).not.toContain("finish_execution");
 
   const update = hub.hubMessages().find((message) => message.type === "hub.execution.agent.update");
@@ -107,6 +104,7 @@ test("Hub MCP configuration reaches the provider alongside Paseo MCP without ent
     cwd: update.payload.agent.cwd,
   });
   expect(JSON.stringify(update.payload.agent)).not.toContain(bearer);
+  expect(JSON.stringify(update.payload.agent)).not.toContain("private-build");
   expect(JSON.stringify(update.payload.agent)).not.toContain("finish_execution");
 });
 

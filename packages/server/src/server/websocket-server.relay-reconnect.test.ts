@@ -1,4 +1,3 @@
-import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { SessionDelivery } from "./session/owned-subscriptions/index.js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Server as HTTPServer } from "http";
@@ -286,7 +285,6 @@ function createServer(options?: {
     null,
     { allowedOrigins: new Set(), startPaused: options?.startPaused },
     createWorkspaceAutoNameStub(),
-    createWorkspaceRuntimeStore(),
     options?.auth,
     speechReadiness
       ? {
@@ -541,7 +539,7 @@ describe("relay external socket reconnect behavior", () => {
       await server.close();
     }
   });
-  test("admits a relay hello password, but rejects a wrong or missing password", async () => {
+  test("admits a hello password and an old relay hello, but rejects a wrong password", async () => {
     const server = createServer({
       auth: {
         password: "$2b$12$OLxyuuP9uLK30Uzc4wQX0O6liuU/Q1t5P2b0Ebf36mULvpVK3DRZW",
@@ -563,8 +561,7 @@ describe("relay external socket reconnect behavior", () => {
       const legacySocket = new MockSocket();
       await server.attachExternalSocket(legacySocket, { transport: "relay" });
       legacySocket.emit("message", JSON.stringify(createHelloMessage("relay-legacy")));
-      await vi.waitFor(() => expect(legacySocket.readyState).toBe(3));
-      expect(sentServerInfoEnvelopes(legacySocket)).toHaveLength(0);
+      await vi.waitFor(() => expect(sentServerInfoEnvelopes(legacySocket)).toHaveLength(1));
 
       const wrongSocket = new MockSocket();
       await server.attachExternalSocket(wrongSocket, { transport: "relay" });
@@ -1153,12 +1150,10 @@ describe("relay external socket reconnect behavior", () => {
     expect(serverInfo.features?.canonicalSubmittedPrompts).toBe(true);
     expect(serverInfo.features?.providersSnapshotCwd).toBe(true);
     expect(serverInfo.features?.hopliteProvider).toBe(false);
-    expect(serverInfo.features?.fxProvider).toBe(false);
     expect(serverInfo.features?.pluginLogs).toBe(true);
     expect(serverInfo.features?.workspaceMarkUnread).toBe(true);
     expect(serverInfo.features?.["terminal-input-mode-replay"]).toBe(true);
     expect(serverInfo.features?.["terminal-size-ownership"]).toBe(true);
-    expect(serverInfo.features?.["terminal-grapheme-widths"]).toBe(true);
     expect(serverInfo.features?.agentTurnIdentity).toBeUndefined();
     expect(serverInfo.permissions).toEqual(DAEMON_PERMISSIONS);
     await server.close();
