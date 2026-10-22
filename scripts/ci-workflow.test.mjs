@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { relative as relativePath } from "node:path";
@@ -137,6 +137,43 @@ test("change gating allows superseded workflow runs to cancel", () => {
       /\$\{\{\s*always\(\)/,
       "always() keeps jobs alive after concurrency cancellation; use !cancelled() for fail-open gating",
     );
+  }
+});
+
+test("published npm packages declare and ship the repository license", () => {
+  const rootManifest = JSON.parse(readFileSync(new URL("package.json", repoRoot), "utf8"));
+  const workspaceArgs = rootManifest.scripts["release:publish"].match(/--workspace=\S+/g);
+  assert.notEqual(workspaceArgs, null, "release:publish must select public packages");
+  const packed = JSON.parse(
+    execFileSync("npm", ["pack", "--dry-run", "--ignore-scripts", "--json", ...workspaceArgs], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    }),
+  );
+  const manifests = new Map(
+    rootManifest.workspaces.map((workspace) => {
+      const directory = new URL(`${workspace}/`, repoRoot);
+      const manifest = JSON.parse(readFileSync(new URL("package.json", directory), "utf8"));
+      return [manifest.name, { directory, manifest }];
+    }),
+  );
+  const licenses = packed.map(({ name, files }) => ({
+    name,
+    license: manifests.get(name).manifest.license,
+    files: files.filter((file) => file.path === "LICENSE").map((file) => file.path),
+  }));
+  assert.deepEqual(
+    licenses,
+    workspaceArgs.map((workspace) => ({
+      name: workspace.slice("--workspace=".length),
+      license: "Apache-2.0",
+      files: ["LICENSE"],
+    })),
+  );
+  const repositoryLicense = readFileSync(new URL("LICENSE", repoRoot), "utf8");
+  for (const { name } of packed) {
+    const { directory } = manifests.get(name);
+    assert.equal(readFileSync(new URL("LICENSE", directory), "utf8"), repositoryLicense, name);
   }
 });
 
