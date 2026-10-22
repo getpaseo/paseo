@@ -8,21 +8,26 @@ import { FileHtmlPreview } from "./html-preview";
 import { FilePanelLoading } from "./loading";
 import { FileMarkdownPreview } from "./markdown-preview";
 import type { BuiltinFilePanelProps } from "./panels";
-import { SourcePanel, type SourcePreviewProps } from "./source/panel";
+import { TextFilePanel, type TextFilePreviewProps } from "./source/panel";
 import type { RenderingFilePanel, SourceFilePanel } from "./catalog";
 
-/** Markdown: the text panel with the rendered document as its Preview. */
-function MarkdownPanel(props: BuiltinFilePanelProps) {
-  return <SourcePanel {...props} preview={MarkdownPreview} />;
+/** Source: the text file panel with no Preview, for text files no other built-in panel claims. */
+function SourcePanel(props: BuiltinFilePanelProps) {
+  return <TextFilePanel {...props} />;
 }
 
-/** HTML: the text panel with the sandboxed page as its Preview. */
+/** Markdown: the text file panel with the rendered document as its Preview. */
+function MarkdownPanel(props: BuiltinFilePanelProps) {
+  return <TextFilePanel {...props} preview={MarkdownPreview} />;
+}
+
+/** HTML: the text file panel with the sandboxed page as its Preview. */
 function HtmlPanel(props: BuiltinFilePanelProps) {
-  return <SourcePanel {...props} preview={HtmlPreview} />;
+  return <TextFilePanel {...props} preview={HtmlPreview} />;
 }
 
 /** Shows Loading until the rendered Markdown has laid out once; later edits keep the content. */
-function MarkdownPreview({ text, target }: SourcePreviewProps) {
+function MarkdownPreview({ text, target }: TextFilePreviewProps) {
   const client = useSessionStore((state) => state.sessions[target.serverId]?.client ?? null);
   const [rendered, setRendered] = useState(false);
   const handleLayout = useCallback(() => setRendered(true), []);
@@ -45,7 +50,7 @@ function MarkdownPreview({ text, target }: SourcePreviewProps) {
 }
 
 /** The page owns its scrolling, so there is no ScrollView around it. */
-function HtmlPreview({ text }: SourcePreviewProps) {
+function HtmlPreview({ text }: TextFilePreviewProps) {
   return (
     <View style={styles.container}>
       <FileHtmlPreview html={text} testID="file-html-preview" />

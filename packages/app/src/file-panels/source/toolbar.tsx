@@ -12,13 +12,13 @@ import type { FileEditorStatus } from "./editor/model";
 const ThemedSpinner = withUnistyles(LoadingSpinner);
 const spinnerMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
-export type SourceView = "preview" | "source";
+export type TextFileView = "preview" | "source";
 
 /**
- * The text panel's toolbar: the file's size and lines, the save state, the vim mode and the
+ * The text file panel's toolbar: the file's size and lines, the save state, the vim mode and the
  * cursor, the Preview|Source control when the panel has a preview, and a conflict under it.
  */
-export function SourceToolbar({
+export function TextFileToolbar({
   size,
   lineCount,
   view,
@@ -30,8 +30,8 @@ export function SourceToolbar({
 }: {
   size: number;
   lineCount: number;
-  view?: SourceView;
-  onViewChange?(view: SourceView): void;
+  view?: TextFileView;
+  onViewChange?(view: TextFileView): void;
   editorStatus?: FileEditorStatus;
   cursor?: { line: number; column: number };
   vimMode?: string | null;
