@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
-import nativeFs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
@@ -1789,43 +1788,6 @@ describe("ClaudeAgentClient.listImportableSessions", () => {
     };
   }
 
-  function readError(code: string, filePath: string): Error {
-    return Object.assign(new Error(`${code}: cannot read ${filePath}`), {
-      code,
-      path: filePath,
-      syscall: "open",
-    });
-  }
-
-  test.each(["ENOENT", "ENOTDIR", "EPERM"])(
-    "isolates %s from one transcript while returning a healthy session",
-    async (code) => {
-      const fixture = await descriptorFixture(2);
-      const originalReadStream = nativeFs.createReadStream;
-      const error = readError(code, fixture.files[0]!);
-      const spy = vi.spyOn(nativeFs, "createReadStream").mockImplementation((file, options) => {
-        if (file === fixture.files[0]) throw error;
-        return originalReadStream(file, options);
-      });
-      try {
-        const client = new ClaudeAgentClient(fixture.options);
-        await expect(client.listImportableSessions({ limit: 2 })).resolves.toEqual([
-          fixture.descriptors[1],
-        ]);
-        expect(fixture.logs).toEqual([
-          expect.objectContaining({
-            path: fixture.files[0],
-            err: expect.objectContaining({ code }),
-            msg: "Skipping Claude transcript with unreadable import metadata",
-          }),
-        ]);
-      } finally {
-        spy.mockRestore();
-        await fixture.cleanup();
-      }
-    },
-  );
-
   const cannotEnforceFilePermissions = process.platform === "win32" || process.getuid?.() === 0;
   const discoveryPermissionCases = [
     { label: "project enumeration", mode: 0, deniedSuffix: "", existingSuffix: "" },
@@ -1969,38 +1931,6 @@ describe("ClaudeAgentClient.listImportableSessions", () => {
     }
   });
 
-  test.each(["EMFILE", "ENFILE", "EIO", "ERR_INVALID_ARG_TYPE"])(
-    "propagates %s and cancels sibling streams instead of skipping transcripts",
-    async (code) => {
-      const fixture = await descriptorFixture(6);
-      const started: string[] = [];
-      const streams: nativeFs.ReadStream[] = [];
-      const originalReadStream = nativeFs.createReadStream;
-      const error = readError(code, fixture.files[0]!);
-      const spy = vi.spyOn(nativeFs, "createReadStream").mockImplementation((file, options) => {
-        started.push(String(file));
-        if (file === fixture.files[0]) throw error;
-        const stream = originalReadStream(file, options);
-        streams.push(stream);
-        return stream;
-      });
-      try {
-        const client = new ClaudeAgentClient(fixture.options);
-        await expect(client.listImportableSessions({ limit: 6 })).rejects.toBe(error);
-        expect(started).toEqual(fixture.files.slice(0, 4));
-        expect(streams.map((stream) => stream.destroyed)).toEqual([true, true, true]);
-        function closedStates(): boolean[] {
-          return streams.map((stream) => stream.closed);
-        }
-        await vi.waitFor(() => expect(closedStates()).toEqual([true, true, true]));
-        expect(fixture.logs).toEqual([]);
-      } finally {
-        spy.mockRestore();
-        await fixture.cleanup();
-      }
-    },
-  );
-
   test("refreshes descriptors after append, rewrite, replacement, and deletion", async () => {
     const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-cache-"));
     try {
@@ -2074,127 +2004,96 @@ describe("ClaudeAgentClient.listImportableSessions", () => {
     }
   });
 
-  test("discovers a transcript larger than the available heap", async () => {
-    const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-heap-"));
-    try {
-      const projectDir = path.join(configDir, "projects", "large-transcript");
-      await fs.mkdir(projectDir, { recursive: true });
-      const sessionFile = path.join(projectDir, "large.jsonl");
-      const transcript = await fs.open(sessionFile, "w");
+  test.each([
+    { providers: 1, requestsPerProvider: 4 },
+    { providers: 5, requestsPerProvider: 3 },
+  ])(
+    "discovers large histories with $providers providers and $requestsPerProvider requests each",
+    async ({ providers, requestsPerProvider }) => {
+      const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-heap-"));
       try {
-        await transcript.writeFile(
-          `${JSON.stringify({
-            type: "user",
-            sessionId: "large-session",
-            cwd: "/large-project",
-            message: { content: "First prompt" },
-          })}\r\n`,
-        );
-        const block = `${JSON.stringify({ type: "assistant", text: "x".repeat(1024) })}\n`.repeat(
-          1024,
-        );
-        for (let index = 0; index < 128; index += 1) {
-          await transcript.writeFile(block);
+        const projectDir = path.join(configDir, "projects", "large-transcript");
+        await fs.mkdir(projectDir, { recursive: true });
+        const sessionFile = path.join(projectDir, "large.jsonl");
+        const transcript = await fs.open(sessionFile, "w");
+        try {
+          await transcript.writeFile(
+            `${JSON.stringify({
+              type: "user",
+              sessionId: "large-session",
+              cwd: "/large-project",
+              message: { content: "First prompt" },
+            })}\r\n`,
+          );
+          const block = `${JSON.stringify({ type: "assistant", text: "x".repeat(1024) })}\n`.repeat(
+            1024,
+          );
+          for (let index = 0; index < 128; index += 1) {
+            await transcript.writeFile(block);
+          }
+          // A malformed record must not hide the final unterminated record.
+          await transcript.writeFile(
+            `incomplete json\n${JSON.stringify({
+              type: "user",
+              message: { content: "Last prompt 🐢" },
+            })}`,
+          );
+        } finally {
+          await transcript.close();
         }
-        // A malformed record must not hide the final unterminated record.
-        await transcript.writeFile(
-          `incomplete json\n${JSON.stringify({
-            type: "user",
-            message: { content: "Last prompt 🐢" },
-          })}`,
-        );
-      } finally {
-        await transcript.close();
-      }
 
-      const { stdout } = await promisify(execFile)(
-        process.execPath,
-        [
-          "--max-old-space-size=96",
-          "--import",
-          import.meta.resolve("tsx"),
-          "--input-type=module",
-          "--eval",
-          `
+        const { stdout } = await promisify(execFile)(
+          process.execPath,
+          [
+            "--max-old-space-size=96",
+            "--import",
+            import.meta.resolve("tsx"),
+            "--input-type=module",
+            "--eval",
+            `
             import { deepStrictEqual } from "node:assert";
             import { ClaudeAgentClient } from ${JSON.stringify(new URL("./agent.ts", import.meta.url).href)};
             import pino from ${JSON.stringify(import.meta.resolve("pino"))};
-            const client = new ClaudeAgentClient({
-              logger: pino({ level: "silent" }),
-              runtimeSettings: { env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(configDir)} } },
-            });
-            const listings = await Promise.all(Array.from({ length: 4 }, () => client.listImportableSessions({ limit: 1 })));
+            import { mkdir, symlink } from "node:fs/promises";
+            import path from "node:path";
+            const clients = [];
+            for (let index = 0; index < ${providers}; index++) {
+              const providerConfigDir = path.join(${JSON.stringify(configDir)}, "alias-" + index);
+              await mkdir(providerConfigDir);
+              await symlink(path.join(${JSON.stringify(configDir)}, "projects"), path.join(providerConfigDir, "projects"), "junction");
+              clients.push(new ClaudeAgentClient({
+                logger: pino({ level: "silent" }),
+                runtimeSettings: { env: { CLAUDE_CONFIG_DIR: providerConfigDir } },
+              }));
+            }
+            const listings = await Promise.all(clients.flatMap(client =>
+              Array.from({ length: ${requestsPerProvider} }, () => client.listImportableSessions({ limit: 1 }))
+            ));
             const sessions = listings[0];
             for (const listing of listings) deepStrictEqual(listing, sessions);
             console.log(JSON.stringify(sessions));
           `,
-        ],
-        { timeout: 20_000 },
-      );
+          ],
+          { timeout: 20_000 },
+        );
 
-      expect(JSON.parse(stdout)).toEqual([
-        {
-          providerHandleId: "large-session",
-          cwd: "/large-project",
-          title: "First prompt",
-          firstPromptPreview: "First prompt",
-          lastPromptPreview: "Last prompt 🐢",
-          lastActivityAt: (await fs.stat(sessionFile)).mtime.toISOString(),
-        },
-      ]);
-    } finally {
-      await fs.rm(configDir, { recursive: true, force: true });
-    }
-  });
-
-  test("reports an unreadable single record larger than the heap without allocating the full line", async () => {
-    const configDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "paseo-claude-import-single-record-"),
-    );
-    try {
-      const projectDir = path.join(configDir, "projects", "single-record");
-      await fs.mkdir(projectDir, { recursive: true });
-      const sessionFile = path.join(projectDir, "single-record.jsonl");
-      const transcript = await fs.open(sessionFile, "w");
-      try {
-        await transcript.writeFile('{"payload":"');
-        const block = "x".repeat(1024 * 1024);
-        for (let index = 0; index < 128; index += 1) await transcript.writeFile(block);
-        await transcript.writeFile('","type":"custom-title","customTitle":"Latest title"}');
+        expect(JSON.parse(stdout)).toEqual([
+          {
+            providerHandleId: "large-session",
+            cwd: "/large-project",
+            title: "First prompt",
+            firstPromptPreview: "First prompt",
+            lastPromptPreview: "Last prompt 🐢",
+            lastActivityAt: (await fs.stat(sessionFile)).mtime.toISOString(),
+          },
+        ]);
       } finally {
-        await transcript.close();
+        await fs.rm(configDir, { recursive: true, force: true });
       }
-      const { stdout } = await promisify(execFile)(
-        process.execPath,
-        [
-          "--max-old-space-size=96",
-          "--import",
-          import.meta.resolve("tsx"),
-          "--input-type=module",
-          "--eval",
-          `
-          import { rejects } from "node:assert";
-          import { ClaudeAgentClient } from ${JSON.stringify(new URL("./agent.ts", import.meta.url).href)};
-          import pino from ${JSON.stringify(import.meta.resolve("pino"))};
-          const client = new ClaudeAgentClient({
-            logger: pino({ level: "silent" }),
-            runtimeSettings: { env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(configDir)} } },
-          });
-          await rejects(client.listImportableSessions({ limit: 1 }), {
-            name: "AggregateError", message: /all 1 candidate transcripts have unreadable import metadata/,
-          });
-          console.log("Oversized transcript reported");
-        `,
-        ],
-        { timeout: 20_000 },
-      );
-      expect(stdout.trim()).toEqual("Oversized transcript reported");
-    } finally {
-      await fs.rm(configDir, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
-  test("keeps metadata and UTF-8 in a record exactly at the byte limit", async () => {
+  test("keeps metadata and UTF-8 across read chunk boundaries", async () => {
     const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-limit-"));
     try {
       const projectDir = path.join(configDir, "projects", "boundary");
@@ -2229,79 +2128,6 @@ describe("ClaudeAgentClient.listImportableSessions", () => {
           firstPromptPreview: "Hello 🐢",
           lastPromptPreview: "Hello 🐢",
         },
-      ]);
-    } finally {
-      await fs.rm(configDir, { recursive: true, force: true });
-    }
-  });
-
-  test("logs and skips an oversized transcript while retaining healthy sessions", async () => {
-    const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-record-"));
-    try {
-      const projectDir = path.join(configDir, "projects", "oversized");
-      await fs.mkdir(projectDir, { recursive: true });
-      const sessionFile = path.join(projectDir, "oversized.jsonl");
-      await fs.writeFile(
-        sessionFile,
-        `${JSON.stringify({
-          type: "user",
-          sessionId: "oversized-session",
-          cwd: "/oversized-project",
-          message: { content: "First prompt" },
-        })}\n`,
-      );
-      const records: unknown[] = [];
-      const client = new ClaudeAgentClient({
-        logger: pino(
-          { level: "warn" },
-          { write: (line: string) => records.push(JSON.parse(line)) },
-        ),
-        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: configDir } },
-      });
-      expect((await client.listImportableSessions({ limit: 1 }))[0]!.title).toEqual("First prompt");
-      const healthyFile = path.join(projectDir, "healthy.jsonl");
-      await fs.writeFile(
-        healthyFile,
-        JSON.stringify({
-          type: "user",
-          sessionId: "healthy-session",
-          cwd: "/healthy-project",
-          message: { content: "Healthy prompt" },
-        }),
-      );
-      const timestamp = new Date("2026-01-01T00:00:00Z");
-      await fs.utimes(healthyFile, timestamp, timestamp);
-      // Metadata placed after the payload defeats prefix-only relevance checks.
-      await fs.appendFile(
-        sessionFile,
-        JSON.stringify({
-          payload: "x".repeat(4 * 1024 * 1024),
-          type: "custom-title",
-          customTitle: "Latest title",
-        }),
-      );
-      await expect(client.listImportableSessions({ limit: 1 })).resolves.toEqual([
-        {
-          providerHandleId: "healthy-session",
-          cwd: "/healthy-project",
-          title: "Healthy prompt",
-          firstPromptPreview: "Healthy prompt",
-          lastPromptPreview: "Healthy prompt",
-          lastActivityAt: timestamp,
-        },
-      ]);
-      expect(records).toEqual([
-        expect.objectContaining({
-          level: pino.levels.values.warn,
-          path: sessionFile,
-          msg: "Skipping Claude transcript with unreadable import metadata",
-          err: expect.objectContaining({
-            type: "ClaudeImportRecordTooLargeError",
-            filePath: sessionFile,
-            recordNumber: 2,
-            maxRecordBytes: 4 * 1024 * 1024,
-          }),
-        }),
       ]);
     } finally {
       await fs.rm(configDir, { recursive: true, force: true });

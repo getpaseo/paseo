@@ -1778,9 +1778,7 @@ export class ClaudeAgentClient implements AgentClient {
       descriptor = await parseClaudeSessionDescriptor(candidate.path, candidate.mtime, signal);
     } catch (error) {
       signal.throwIfAborted();
-      const isExpectedError =
-        error instanceof ClaudeImportRecordTooLargeError || isExpectedClaudeImportFileError(error);
-      if (!(error instanceof Error) || !isExpectedError) throw error;
+      if (!(error instanceof Error) || !isExpectedClaudeImportFileError(error)) throw error;
       this.logger.warn(
         { err: error, path: candidate.path },
         "Skipping Claude transcript with unreadable import metadata",
@@ -6779,19 +6777,6 @@ function applyClaudeSessionEntryToAccumulator(
   }
 }
 
-class ClaudeImportRecordTooLargeError extends Error {
-  constructor(
-    readonly filePath: string,
-    readonly recordNumber: number,
-    readonly maxRecordBytes: number,
-  ) {
-    super(
-      `Claude transcript ${filePath} record ${recordNumber} exceeds the ${maxRecordBytes}-byte import limit. Import metadata for this transcript was not loaded.`,
-    );
-    this.name = "ClaudeImportRecordTooLargeError";
-  }
-}
-
 async function parseClaudeSessionDescriptor(
   filePath: string,
   mtime: Date,
@@ -6807,15 +6792,11 @@ async function parseClaudeSessionDescriptor(
     lastPromptPreview: null,
   };
 
-  // Reject rather than skip: type/cwd/title can occur after a huge payload, so a
-  // prefix cannot establish that dropping the record preserves the descriptor.
-  const maxRecordBytes = 4 * 1024 * 1024;
-  const record = Buffer.allocUnsafe(maxRecordBytes);
-  let recordBytes = 0;
-  let recordNumber = 1;
+  // Keep only the current record, including image records larger than a read chunk.
+  const record: Buffer[] = [];
   const stream = fs.createReadStream(filePath, { highWaterMark: 64 * 1024, signal });
   function applyRecord(): void {
-    const line = record.toString("utf8", 0, recordBytes);
+    const line = Buffer.concat(record).toString("utf8");
     if (!line || !shouldParseClaudeSessionDescriptorLine(line, acc)) return;
     let entry: unknown;
     try {
@@ -6832,20 +6813,14 @@ async function parseClaudeSessionDescriptor(
       while (start < chunk.length) {
         const newline = chunk.indexOf(10, start);
         const end = newline === -1 ? chunk.length : newline;
-        const length = end - start;
-        if (recordBytes + length > maxRecordBytes) {
-          throw new ClaudeImportRecordTooLargeError(filePath, recordNumber, maxRecordBytes);
-        }
-        chunk.copy(record, recordBytes, start, end);
-        recordBytes += length;
+        record.push(chunk.subarray(start, end));
         if (newline === -1) break;
         applyRecord();
-        recordBytes = 0;
-        recordNumber += 1;
+        record.length = 0;
         start = newline + 1;
       }
     }
-    if (recordBytes > 0) applyRecord();
+    if (record.length > 0) applyRecord();
   } finally {
     stream.destroy();
   }
