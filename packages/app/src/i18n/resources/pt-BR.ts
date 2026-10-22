@@ -2438,6 +2438,11 @@ export const ptBR: TranslationResources = {
         codeSizeAccessibility: "Tamanho da fonte de código",
       },
       layout: {
+        tabletLandscape: "Tablet na horizontal",
+        tabletPortrait: "Tablet na vertical",
+        tabletLayoutHint:
+          "Cada orientação é salva separadamente. No modo computador, deslize a conversa para abrir os painéis laterais.",
+        tabletLayoutOptions: { desktop: "Computador", phone: "Celular" },
         title: "Layout",
         contentWidth: "Largura do conteúdo",
         contentWidthHint: "Largura máxima do chat e dos arquivos Markdown em telas largas",

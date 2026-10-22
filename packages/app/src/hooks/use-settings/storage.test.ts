@@ -1153,3 +1153,34 @@ describe("font family CSS safety", () => {
     },
   );
 });
+
+describe("tablet orientation layout persistence", () => {
+  it("defaults existing installs to landscape desktop and portrait phone", async () => {
+    const deps = makeDeps();
+    const settings = await loadAppSettingsFromStorage(deps);
+    expect(settings.tabletLandscapeLayout).toBe("desktop");
+    expect(settings.tabletPortraitLayout).toBe("phone");
+  });
+  it("saves and reloads each orientation without resetting the other", async () => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+    await saveAppSettings({ queryClient, updates: { tabletLandscapeLayout: "phone" }, deps });
+    await saveAppSettings({ queryClient, updates: { tabletPortraitLayout: "desktop" }, deps });
+    const settings = await loadAppSettingsFromStorage(deps);
+    expect(settings.tabletLandscapeLayout).toBe("phone");
+    expect(settings.tabletPortraitLayout).toBe("desktop");
+  });
+  it("falls back per orientation for malformed stored values", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          tabletLandscapeLayout: "broken",
+          tabletPortraitLayout: 1,
+        }),
+      }),
+    });
+    const settings = await loadAppSettingsFromStorage(deps);
+    expect(settings.tabletLandscapeLayout).toBe("desktop");
+    expect(settings.tabletPortraitLayout).toBe("phone");
+  });
+});

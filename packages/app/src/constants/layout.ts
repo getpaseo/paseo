@@ -1,3 +1,6 @@
+import { useContext } from "react";
+import { Dimensions, Platform, useWindowDimensions } from "react-native";
+import { TabletLayoutContext, resolveCompactLayout } from "./tablet-layout";
 import { useUnistyles } from "react-native-unistyles";
 import { isWeb } from "@/constants/platform";
 
@@ -44,7 +47,18 @@ export function isCompactBreakpoint(breakpoint: string | undefined): boolean {
  */
 export function useIsCompactFormFactor(): boolean {
   const { rt } = useUnistyles();
-  return isCompactBreakpoint(rt.breakpoint);
+  const { width, height } = useWindowDimensions();
+  const { landscape, portrait } = useContext(TabletLayoutContext);
+  return resolveCompactLayout({
+    compactBreakpoint: isCompactBreakpoint(rt.breakpoint),
+    screenWidth: Dimensions.get("screen").width,
+    screenHeight: Dimensions.get("screen").height,
+    android: Platform.OS === "android",
+    width,
+    height,
+    landscape,
+    portrait,
+  });
 }
 
 // SplitContainer relies on dnd-kit and DOM-backed accessibility helpers.

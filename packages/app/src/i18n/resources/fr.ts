@@ -2457,6 +2457,11 @@ export const fr: TranslationResources = {
         codeSizeAccessibility: "Taille de police du code",
       },
       layout: {
+        tabletLandscape: "Tablette en paysage",
+        tabletPortrait: "Tablette en portrait",
+        tabletLayoutHint:
+          "Chaque orientation est enregistrée séparément. En mode ordinateur, balayez la conversation pour ouvrir les panneaux latéraux.",
+        tabletLayoutOptions: { desktop: "Ordinateur", phone: "Téléphone" },
         title: "Mise en page",
         contentWidth: "Largeur du contenu",
         contentWidthHint:

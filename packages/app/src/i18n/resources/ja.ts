@@ -2424,6 +2424,11 @@ export const ja: TranslationResources = {
         codeSizeAccessibility: "コードフォントサイズ",
       },
       layout: {
+        tabletLandscape: "タブレットの横向きレイアウト",
+        tabletPortrait: "タブレットの縦向きレイアウト",
+        tabletLayoutHint:
+          "向きごとに保存し、回転時に切り替えます。デスクトップ表示では会話を左右にスワイプしてサイドバーを開けます。",
+        tabletLayoutOptions: { desktop: "デスクトップ表示", phone: "スマートフォン表示" },
         title: "レイアウト",
         contentWidth: "コンテンツ幅",
         contentWidthHint: "ワイド画面でのチャットと Markdown ファイルの最大幅",

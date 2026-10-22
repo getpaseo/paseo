@@ -2527,6 +2527,11 @@ export const en = {
         codeSizeAccessibility: "Code font size",
       },
       layout: {
+        tabletLandscape: "Tablet landscape layout",
+        tabletPortrait: "Tablet portrait layout",
+        tabletLayoutHint:
+          "Saved separately for each orientation. Desktop layout supports swiping in chat to open sidebars.",
+        tabletLayoutOptions: { desktop: "Desktop", phone: "Phone" },
         title: "Layout",
         contentWidth: "Content width",
         contentWidthHint: "Max width of chat and Markdown files on wide screens",

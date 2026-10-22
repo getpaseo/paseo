@@ -123,6 +123,12 @@ definition, no longer eligible to begin.
   Hidden chat content is suspended on web only, through `retained-chat-content.web.tsx`, where DOM
   nodes carry no Fabric ownership; the native file keeps the chat live.
 
+## Android tablet desktop layout
+
+Tablet landscape and portrait have independent phone/desktop layout preferences. The desktop layout keeps the ordinary independent sidebar button commands: both docks may be open, including in portrait. Rotation does not close either dock.
+
+Transcript swipes prioritize closing: rightward closes an open right dock before opening the left; leftward closes an open left dock before opening the right. One swipe performs one action, so gestures leave at most one dock open even after buttons opened both. Swiping inside a dock only closes that dock in its closing direction. Keep this policy in `tablet-sidebar-swipe-intent.ts`; do not enforce exclusivity in the panel store or a dimensions listener, since that would also change button behavior.
+
 ## Tests
 
 `packages/app/src/mobile-panels/model.test.ts` exercises command, drag, cancellation, interruption,

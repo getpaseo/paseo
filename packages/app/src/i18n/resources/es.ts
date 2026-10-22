@@ -2457,6 +2457,11 @@ export const es: TranslationResources = {
         codeSizeAccessibility: "Tamaño de fuente del código",
       },
       layout: {
+        tabletLandscape: "Tableta en horizontal",
+        tabletPortrait: "Tableta en vertical",
+        tabletLayoutHint:
+          "Se guarda por separado para cada orientación. En modo ordenador, desliza la conversación para abrir los paneles laterales.",
+        tabletLayoutOptions: { desktop: "Ordenador", phone: "Teléfono" },
         title: "Diseño",
         contentWidth: "Ancho del contenido",
         contentWidthHint: "Ancho máximo del chat y de los archivos Markdown en pantallas anchas",

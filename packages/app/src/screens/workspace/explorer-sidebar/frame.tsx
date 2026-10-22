@@ -1,3 +1,4 @@
+import { TabletSidebarCloseSurface } from "@/mobile-panels/tablet-sidebar-swipe";
 import { useCallback } from "react";
 import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -53,10 +54,12 @@ function ExplorerFrameBase({
           frameStyle={geometry.frameStyle}
           panelStyle={[{ backgroundColor: surfaceColor }, geometry.panelStyle]}
         >
-          <View style={styles.content}>
-            {resizeEnabled ? geometry.resizeHandle : null}
-            {children}
-          </View>
+          <TabletSidebarCloseSurface side="right">
+            <View style={styles.content}>
+              {resizeEnabled ? geometry.resizeHandle : null}
+              {children}
+            </View>
+          </TabletSidebarCloseSurface>
         </MobilePanelOverlay>
       </FileExplorerCloseGestureContext>
     </RetainedPanelActivity>
