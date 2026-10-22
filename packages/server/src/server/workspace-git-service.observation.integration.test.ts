@@ -1,5 +1,15 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { execFile, execFileSync } from "node:child_process";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
@@ -522,3 +532,44 @@ test("a late Git-ignored tree is pruned while tracked changes still notify consu
     rmSync(tempDir, { recursive: true, force: true });
   }
 }, 15_000);
+
+test("Git observation measurement separates startup from idle and reaches its degraded summary", async () => {
+  const script = fileURLToPath(
+    new URL("../../scripts/measure-git-observation.ts", import.meta.url),
+  );
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-measurement-test-")));
+  const actualTemp = path.join(root, "actual");
+  const aliasedTemp = path.join(root, "alias");
+  mkdirSync(actualTemp);
+  symlinkSync(actualTemp, aliasedTemp, "junction");
+  cleanup.push(async () => rmSync(root, { recursive: true, force: true }));
+  const { stdout } = await promisify(execFile)(process.execPath, ["--import", "tsx", script], {
+    env: { ...process.env, TMPDIR: aliasedTemp, TMP: aliasedTemp, TEMP: aliasedTemp },
+    timeout: 30_000,
+    maxBuffer: 1024 * 1024,
+  });
+  const summary = stdout
+    .split("\n")
+    .find((line) => line.startsWith("GIT_OBSERVATION_MEASUREMENT "));
+  expect(summary).toBeTypeOf("string");
+  const report = JSON.parse(summary!.slice("GIT_OBSERVATION_MEASUREMENT ".length));
+  expect(Object.keys(report.phases)).toEqual([
+    "bootstrap",
+    "legacyFullRefreshReference",
+    "idle",
+    "activeDiff",
+    "editBurst",
+    "ignoredStorm",
+    "degradedBootstrap",
+    "degradedWatcher",
+  ]);
+  expect(report.phases.idle.gitCommands).toBe(0);
+  expect(report.phases.ignoredStorm.gitCommands).toBe(0);
+  expect(report.phases.bootstrap.producers.structural).toBeGreaterThanOrEqual(1);
+  expect(report.phases.activeDiff.producers.worktree).toBeGreaterThanOrEqual(1);
+  expect(report.phases.editBurst.producers.worktree).toBeLessThanOrEqual(2);
+  expect(report.phases.degradedWatcher.producers.worktree).toBeGreaterThanOrEqual(1);
+  for (const phase of Object.values(report.phases) as Array<{ queueAfter: unknown }>) {
+    expect(phase.queueAfter).toEqual({ inFlight: 0, queued: 0 });
+  }
+}, 35_000);

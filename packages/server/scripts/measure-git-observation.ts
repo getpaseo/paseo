@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -12,6 +12,7 @@ import {
 import {
   startGitCommandMetrics,
   stopGitCommandMetrics,
+  waitForGitCommandMetricsIdle,
   type GitCommandMetricsSnapshot,
 } from "../src/utils/run-git-command.js";
 import { CheckoutDiffManager } from "../src/server/checkout-diff-manager.js";
@@ -160,6 +161,7 @@ async function measurePhase(input: {
         serviceMetrics.workspaceRefreshQueuedCount === 0
       );
     }, "observation queue to drain");
+    await waitForGitCommandMetricsIdle({ quietMs: 1_500, timeoutMs: 8_000 });
   } finally {
     metrics = stopGitCommandMetrics();
   }
@@ -189,7 +191,11 @@ async function closeMeasuredService(input: {
 }
 
 async function main(): Promise<void> {
-  const tempDir = mkdtempSync(path.join(tmpdir(), "paseo-git-observation-measurement-"));
+  // Git reports physical roots; keep watcher-failure injection in that same
+  // spelling when the system temporary directory is a symlink.
+  const tempDir = realpathSync(
+    mkdtempSync(path.join(tmpdir(), "paseo-git-observation-measurement-")),
+  );
   const repoDir = path.join(tempDir, "repo");
   const paseoHome = path.join(tempDir, "paseo-home");
   const trackedPath = path.join(repoDir, "tracked.txt");
@@ -243,7 +249,9 @@ async function main(): Promise<void> {
         healthy.watcher.subscriptions.size === 2,
       "healthy bootstrap",
     );
-    await sleep(250);
+    // Linux startup discovery schedules a one-second debounced refresh even
+    // after subscriptions are ready. Keep that work in the bootstrap phase.
+    await waitForGitCommandMetricsIdle({ quietMs: 1_500, timeoutMs: 8_000 });
     const bootstrapMetrics = stopGitCommandMetrics();
     const bootstrapServiceMetrics = healthy.service.getMetrics();
     phases.bootstrap = {
@@ -342,6 +350,7 @@ async function main(): Promise<void> {
     diffManager = null;
     await closeMeasuredService({
       service: healthy.service,
+      observer: healthy.watcher.observer,
       subscriptions: healthy.watcher.subscriptions,
     });
     healthy = null;
@@ -357,7 +366,9 @@ async function main(): Promise<void> {
         degraded.service.getMetrics().workspaceObservationSetupInFlightCount === 0,
       "degraded bootstrap",
     );
-    await sleep(250);
+    // Linux startup discovery schedules a one-second debounced refresh even
+    // after subscriptions are ready. Keep that work in the bootstrap phase.
+    await waitForGitCommandMetricsIdle({ quietMs: 1_500, timeoutMs: 8_000 });
     const degradedBootstrapMetrics = stopGitCommandMetrics();
     const degradedBootstrapServiceMetrics = degraded.service.getMetrics();
     phases.degradedBootstrap = {
