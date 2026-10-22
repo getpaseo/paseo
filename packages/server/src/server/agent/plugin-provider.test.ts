@@ -2612,3 +2612,61 @@ test("plugin provider import launches with runtime MCP servers and returns only 
     await registry.shutdown();
   }
 });
+
+test("plugin provider listCommands preserves skill kind and defaults command kind and argumentHint", async () => {
+  const harness = createProviderHarness({
+    openChildren: (rootSessionId, emit) => {
+      emit({
+        type: "session.commands",
+        sessionId: rootSessionId,
+        commands: [
+          {
+            name: "qa-marker",
+            description: "Run QA marker skill",
+            argumentHint: "[instructions]",
+            kind: "skill",
+          },
+          {
+            name: "plan",
+            description: "Plan a task",
+            argumentHint: "[task]",
+            kind: "command",
+          },
+          {
+            name: "compact",
+            description: "Compact context",
+          },
+        ],
+      });
+    },
+  });
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  const client = registry.clients()[harness.registration.id]!;
+  const session = await client.createSession({ provider: harness.registration.id, cwd: "/tmp" });
+  try {
+    expect(await session.listCommands!()).toEqual([
+      {
+        name: "qa-marker",
+        description: "Run QA marker skill",
+        argumentHint: "[instructions]",
+        kind: "skill",
+      },
+      {
+        name: "plan",
+        description: "Plan a task",
+        argumentHint: "[task]",
+        kind: "command",
+      },
+      {
+        name: "compact",
+        description: "Compact context",
+        argumentHint: "",
+        kind: "command",
+      },
+    ]);
+  } finally {
+    await session.close();
+    await registry.shutdown();
+  }
+});

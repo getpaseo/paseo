@@ -15,6 +15,7 @@ import { AntigravityError } from "./internal/wire.js";
 
 const capabilities = [
   "prompt.message",
+  "prompt.command",
   "prompt.image",
   "session.configure",
   "session.persistence",

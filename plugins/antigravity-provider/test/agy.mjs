@@ -26,6 +26,40 @@ if (args.includes("models")) {
   process.stdout.write(fixture("models-api-key").join("\n") + "\n");
   process.exit(0);
 }
+if (args.includes("/skills")) {
+  if (process.env.AGY_TEST_SKILLS === "invalid") {
+    process.stdout.write("not-json\n");
+    process.exit(0);
+  }
+  const skills = process.env.AGY_TEST_SKILLS
+    ? JSON.parse(process.env.AGY_TEST_SKILLS)
+    : [
+        {
+          name: "phase0-marker",
+          description: "Return the Phase 0 marker\nwhen requested",
+          path: "/workspace/.agents/skills/phase0-marker/SKILL.md",
+          builtin: false,
+          model_invocable: true,
+        },
+        {
+          name: "agy-customizations",
+          description: "Guide and reference for the Antigravity Customization System",
+          path: "/home/.gemini/antigravity-cli/builtin/skills/agy-customizations/SKILL.md",
+          builtin: true,
+          model_invocable: true,
+        },
+      ];
+  process.stdout.write(
+    JSON.stringify({
+      status: "SUCCESS",
+      command: {
+        name: "skills",
+        data: { skills },
+      },
+    }) + "\n",
+  );
+  process.exit(0);
+}
 if (process.env.AGY_TEST_STARTUP === "auth") {
   process.stderr.write(fixture("not-signed-in", "stderr").join("\n"));
   process.stdout.write(JSON.stringify(fixture("not-signed-in")[0]) + "\n");
@@ -65,7 +99,13 @@ lines.on("line", (line) => {
   const input = JSON.parse(line);
   record({ input });
   const text = input.message.content;
+  if (!args.includes("--disable-slash-commands") && /^\/help(?=\s|$)/.test(text.trim())) {
+    process.stderr.write(fixture("slash-enabled", "stderr").join("\n") + "\n");
+    emit(fixture("slash-enabled")[1]);
+    process.exit(2);
+  }
   let name = "text-turn";
+  if (/^\/phase0-marker(?=\s|$)/.test(text)) name = "project-skill";
   if (text.includes("Attached image: ")) name = "image-file-external";
   if (text.includes("TOOLS")) name = "tools-default";
   if (text.includes("DENIAL_REPLAY")) name = "denial-replay";

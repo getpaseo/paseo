@@ -41,7 +41,6 @@ function driverArgs(options: DriverOptions): string[] {
     "stream-json",
     "--add-dir",
     config.cwd,
-    "--disable-slash-commands",
     "--dangerously-skip-permissions",
   ];
   if (config.model) args.push("--model", config.model);
