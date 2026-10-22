@@ -23,6 +23,7 @@ import {
   updateComposerCapacity,
   type ComposerCapacity,
 } from "./internal/capacity";
+import { ComposerDockScope } from "./internal/scope";
 
 const ViewportSizing = createContext<SharedValue<ComposerCapacity | undefined> | null>(null);
 
@@ -211,7 +212,7 @@ export function ComposerDock({
                 : [dockStyles.composer, { paddingBottom: insets.bottom }]
             }
           >
-            {composer}
+            <ComposerDockScope.Provider value>{composer}</ComposerDockScope.Provider>
           </View>
         </ComposerViewportContent>
         {overlay}

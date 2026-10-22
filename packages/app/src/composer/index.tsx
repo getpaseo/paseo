@@ -12,6 +12,7 @@ import {
   View,
   Pressable,
   Text,
+  Platform,
   StyleSheet as RNStyleSheet,
   type PressableStateCallbackType,
 } from "react-native";
@@ -25,6 +26,7 @@ import {
   useMemo,
   useSyncExternalStore,
   useImperativeHandle,
+  useContext,
   memo,
   type ReactElement,
 } from "react";
@@ -66,7 +68,8 @@ import {
   type MessageInputRef,
 } from "./input/input";
 import type { ImageAttachment, MessagePayload, TextReplacement } from "./types";
-import { ICON_SIZE, type Theme } from "@/styles/theme";
+import { ICON_SIZE, SPACING, type Theme } from "@/styles/theme";
+import { ComposerDockScope } from "./dock/internal/scope";
 import type { DraftCommandTarget } from "@/hooks/use-agent-commands-query";
 import { encodeImages } from "@/utils/encode-images";
 import { focusWithRetries } from "@/utils/web-focus";
@@ -93,7 +96,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { AutocompletePopover } from "@/components/ui/autocomplete-popover";
-import type { AutocompleteOption } from "@/components/ui/autocomplete";
+import { Autocomplete, type AutocompleteOption } from "@/components/ui/autocomplete";
 import { useAgentAutocomplete } from "@/hooks/use-agent-autocomplete";
 import { usePluginClientSlashCommands } from "@/plugins/client-slash-commands";
 import {
@@ -631,9 +634,33 @@ function ComposerKeyboardRegistration({
   return null;
 }
 
-function ComposerAutocomplete(props: React.ComponentProps<typeof AutocompletePopover>) {
+function ComposerAutocomplete({
+  inline,
+  ...props
+}: React.ComponentProps<typeof AutocompletePopover> & { inline: boolean }) {
   const { isActiveComposer } = useComposerKeyboardScope();
-  return <AutocompletePopover {...props} visible={isActiveComposer && props.visible} />;
+  const visible = isActiveComposer && props.visible;
+  if (!inline) return <AutocompletePopover {...props} visible={visible} />;
+  if (!visible) return null;
+  if (props.options.length > 0 && props.selectedIndex < 0) return null;
+  // The dock viewport clips the card from the top, so the bottom (best) row stays visible.
+  return (
+    <View
+      testID="composer-autocomplete-inline"
+      pointerEvents="box-none"
+      style={inlineAutocompleteStyles.container}
+    >
+      <Autocomplete
+        options={props.options}
+        selectedIndex={props.selectedIndex}
+        onSelect={props.onSelect}
+        isLoading={props.isLoading}
+        errorMessage={props.errorMessage}
+        loadingText={props.loadingText}
+        emptyText={props.emptyText}
+      />
+    </View>
+  );
 }
 
 function resolveMessageInputPassthroughAction(
@@ -999,6 +1026,7 @@ function ComposerAutocompleteBinding({
   inputRef,
   anchorRef,
   show,
+  inline,
   ref,
 }: {
   text: ComposerTextSource;
@@ -1010,6 +1038,7 @@ function ComposerAutocompleteBinding({
   inputRef: React.RefObject<MessageInputRef | null>;
   anchorRef: React.RefObject<View | null>;
   show: boolean;
+  inline: boolean;
   ref: React.Ref<ComposerAutocompleteHandle>;
 }) {
   const userInput = useSyncExternalStore(text.subscribe, text.getSnapshot, text.getSnapshot);
@@ -1032,6 +1061,7 @@ function ComposerAutocompleteBinding({
   );
   return (
     <ComposerAutocomplete
+      inline={inline}
       visible={autocomplete.isVisible && show}
       anchorRef={anchorRef}
       options={autocomplete.options}
@@ -2339,6 +2369,8 @@ function ComposerContentImpl({
     [handleEditQueuedMessage, handleSendQueuedNow, queuedMessages, t],
   );
 
+  const isInChatDock = useContext(ComposerDockScope);
+  const inlineAutocomplete = Platform.OS === "ios" && isInChatDock;
   const autocompleteConfiguration = useMemo(
     () => ({
       setUserInput: replaceUserInput,
@@ -2348,6 +2380,7 @@ function ComposerContentImpl({
       canExecuteClientSlashCommand: buildOutgoingAttachments(attachments).length === 0,
       onClientSlashCommand: runClientSlashCommand,
       pluginClientSlashCommands,
+      compactCommandSuggestions: Platform.OS === "ios",
     }),
     [
       replaceUserInput,
@@ -2426,6 +2459,7 @@ function ComposerContentImpl({
                 inputRef={messageInputRef}
                 anchorRef={messageInputContainerRef}
                 show={mode.showAutocomplete && !isFullscreen}
+                inline={inlineAutocomplete}
                 ref={autocompleteRef}
                 configuration={autocompleteConfiguration}
               />
@@ -2515,6 +2549,16 @@ function ComposerContentImpl({
     </>
   );
 }
+
+const inlineAutocompleteStyles = RNStyleSheet.create({
+  container: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: "100%",
+    marginBottom: SPACING[3],
+  },
+});
 
 const animatedStaticStyles = RNStyleSheet.create({
   container: {

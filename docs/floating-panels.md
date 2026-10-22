@@ -14,6 +14,10 @@ canonical files and are trying to add or change one.
 | `components/ui/hover-card.tsx`           | Desktop-web hover card the pointer can move onto; Portal          |
 | `components/ui/autocomplete-popover.tsx` | Slash-command autocomplete anchored to the focused composer input |
 
+The iOS composer in a chat dock does not use this popover for slash commands. A
+measured popover put the best match under the keyboard and left the card
+untappable, so the picker is drawn inline above the input and moves with it.
+
 Each handles a different mix of concerns: combobox owns input focus, tooltip is
 non-interactive, hover-card is web-only desktop, autocomplete keeps the composer
 input focused while its scrollable list lives in a Portal. There is no shared
