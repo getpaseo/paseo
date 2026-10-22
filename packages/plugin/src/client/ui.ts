@@ -61,6 +61,29 @@ export type IconProps = Partial<PluginIconProps> &
 
 export declare const Icon: ComponentType<IconProps>;
 export declare const Modal: ModalComponent;
+
+export interface ScreenHeaderActionsProps {
+  children: ReactNode;
+}
+/**
+ * Moves its children into the header of the plugin screen that renders it, after the title:
+ * the actions island on compact layouts, before Close on wide ones. Render it anywhere in the
+ * screen's tree; it draws nothing in place, and nothing outside a plugin screen.
+ */
+export declare const ScreenHeaderActions: ComponentType<ScreenHeaderActionsProps>;
+
+export interface ScreenHeaderButtonProps {
+  icon: PluginIcon;
+  /** Accessibility label, and the tooltip on wide layouts. */
+  label: string;
+  onPress(): void;
+  /** Highlights the button, as for an open search or an applied filter. */
+  active?: boolean;
+  disabled?: boolean;
+  testID?: string;
+}
+/** An icon button drawn like Paseo's own header buttons. Render it in `ScreenHeaderActions`. */
+export declare const ScreenHeaderButton: ComponentType<ScreenHeaderButtonProps>;
 export declare function useToast(): ToastApi;
 export interface StreamedTextProps extends Omit<TextProps, "children"> {
   text: string;
