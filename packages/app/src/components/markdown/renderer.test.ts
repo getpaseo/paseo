@@ -106,6 +106,138 @@ it("preserves empty table cells while escaping spoilers in cell text", () => {
   );
 });
 
+it("renders a table directly after a paragraph through the library parser", async () => {
+  const source = "**Notes**\n| Item | Detail |\n| --- | --- |\n| A | one |\n| B | two |";
+  const separated = "**Notes**\n\n| Item | Detail |\n| --- | --- |\n| A | one |\n| B | two |";
+  const flags = { hardSoftBreaks: true, latexMath: false };
+  const expected = await parseMarkdown(separated, flags);
+  expect(expected.children?.map((node) => node.type)).toEqual(["Paragraph", "Table"]);
+  expect(await parseMarkdown(prepareMarkdownSource(source).render(), flags)).toEqual(expected);
+});
+
+it.each([
+  [
+    "a quote",
+    "> Notes\n> | Item |\n> | --- |\n> | A |",
+    "> Notes\n>\n> | Item |\n> | --- |\n> | A |",
+    ["Document", ["Blockquote", "Paragraph", "Table"]],
+  ],
+  [
+    "a list item",
+    "- Notes\n  | Item |\n  | --- |\n  | A |\n- Next",
+    "- Notes\n\n  | Item |\n  | --- |\n  | A |\n- Next",
+    ["Document", ["UnorderedList", ["ListItem", "Paragraph", "Table"], ["ListItem", "Paragraph"]]],
+  ],
+  [
+    "a quoted list item",
+    "> - Notes\n>   | Item |\n>   | --- |\n>   | A |",
+    "> - Notes\n>\n>   | Item |\n>   | --- |\n>   | A |",
+    ["Document", ["Blockquote", ["UnorderedList", ["ListItem", "Paragraph", "Table"]]]],
+  ],
+  [
+    "a quote inside a list item",
+    "- > Notes\n  > | Item |\n  > | --- |\n  > | A |",
+    "- > Notes\n  >\n  > | Item |\n  > | --- |\n  > | A |",
+    ["Document", ["UnorderedList", ["ListItem", ["Blockquote", "Paragraph", "Table"]]]],
+  ],
+  [
+    "aligned columns without outer pipes",
+    "Notes\nItem | Detail\n:--- | ---:\nA | one",
+    "Notes\n\nItem | Detail\n:--- | ---:\nA | one",
+    ["Document", "Paragraph", "Table"],
+  ],
+  [
+    "CRLF lines",
+    "Notes\r\n| Item |\r\n| --- |\r\n| A |",
+    "Notes\r\n\r\n| Item |\r\n| --- |\r\n| A |",
+    ["Document", "Paragraph", "Table"],
+  ],
+  [
+    "CR lines",
+    "Notes\r| Item |\r| --- |\r| A |",
+    "Notes\r\r| Item |\r| --- |\r| A |",
+    ["Document", "Paragraph", "Table"],
+  ],
+  [
+    "a quote with CRLF lines",
+    "> Notes\r\n> | Item |\r\n> | --- |\r\n> | A |",
+    "> Notes\r\n>\r\n> | Item |\r\n> | --- |\r\n> | A |",
+    ["Document", ["Blockquote", "Paragraph", "Table"]],
+  ],
+  [
+    "a list item with CRLF lines",
+    "- Notes\r\n  | Item |\r\n  | --- |\r\n  | A |\r\n- Next",
+    "- Notes\r\n\r\n  | Item |\r\n  | --- |\r\n  | A |\r\n- Next",
+    ["Document", ["UnorderedList", ["ListItem", "Paragraph", "Table"], ["ListItem", "Paragraph"]]],
+  ],
+  [
+    "a quote with CR lines",
+    "> Notes\r> | Item |\r> | --- |\r> | A |",
+    "> Notes\r>\r> | Item |\r> | --- |\r> | A |",
+    ["Document", ["Blockquote", "Paragraph", "Table"]],
+  ],
+  [
+    "a list item with CR lines",
+    "- Notes\r  | Item |\r  | --- |\r  | A |\r- Next",
+    "- Notes\r\r  | Item |\r  | --- |\r  | A |\r- Next",
+    ["Document", ["UnorderedList", ["ListItem", "Paragraph", "Table"], ["ListItem", "Paragraph"]]],
+  ],
+  [
+    "a non-interrupting ordered marker with tildes",
+    "Intro\n2. ~~~\n   Notes\n   | A |\n   | --- |\n   | x |",
+    "Intro\n2. ~~~\n   Notes\n\n   | A |\n   | --- |\n   | x |",
+    ["Document", "Paragraph", "Table"],
+  ],
+  [
+    "a non-interrupting ordered marker with backticks",
+    "Notes\n2. ```\n   | Item |\n   | --- |\n   | A |",
+    "Notes\n2. ```\n\n   | Item |\n   | --- |\n   | A |",
+    ["Document", "Paragraph", "Table"],
+  ],
+])("preserves tables after paragraphs in %s", async (_name, source, separated, expected) => {
+  const rendered = prepareMarkdownSource(source).render();
+  expect(rendered).toEqual(separated);
+  const flags = { hardSoftBreaks: true, latexMath: false };
+  function blocks(node: ASTNode): unknown {
+    if (node.type === "Paragraph" || node.type === "Table") return node.type;
+    return [node.type, ...(node.children ?? []).map(blocks)];
+  }
+  expect(blocks(await parseMarkdown(rendered, flags))).toEqual(expected);
+});
+
+it.each([
+  "```yaml\n---\nkey: value\n---\n```\n",
+  "~~~md\n| Item |\n| --- |\n| A |\n~~~\n",
+  "````md\n```\n| Item |\n| --- |\n```\n`````\n",
+  "> ```md\n> | Item |\n> | --- |\n> ```\n",
+  "> ```md\n> Code\n",
+  "- ```md\n  Code\n",
+  "    ```\n\n",
+  "```not`a-fence\n",
+])("renders a table after a fence without changing its code: %s", async (prefix) => {
+  const table = "| Item |\n| --- |\n| A |";
+  const rendered = prepareMarkdownSource(`${prefix}Notes\n${table}`).render();
+  expect(rendered).toEqual(`${prefix}Notes\n\n${table}`);
+  const tree = await parseMarkdown(rendered, { hardSoftBreaks: true, latexMath: false });
+  expect(tree.children?.slice(-2).map((node) => node.type)).toEqual(["Paragraph", "Table"]);
+});
+
+it.each([
+  "| Item | Detail |\n| --- | --- |\n" + "| A | one |\n".repeat(100),
+  "Notes\n\n| Item | Detail |\n| --- | --- |\n" + "| A | one |\n".repeat(100),
+  "Notes\n\n| Item |\n| --- |\n| A |",
+  "| Item |\n| --- |\n| A |",
+  "```md\nNotes\n| Item |\n| --- |\n| A |\n```",
+  "```yaml\n---\nkey: value\n---\n```",
+  "```yaml\n---\nkey: value",
+  "~~~md\n| Item |\n| --- |\n| A |\n~~~",
+  "````md\n```\n| Item |\n| --- |\n```\n````",
+  "    Notes\n    | Item |\n    | --- |\n    | A |",
+  "Notes\n| Item | Detail |\n| --- |\n| A |",
+])("leaves separated tables and table-like text unchanged: %s", (source) => {
+  expect(prepareMarkdownSource(source).render()).toEqual(source);
+});
+
 it.each([
   "src/components/message.tsx",
   "C:\\repo\\file.ts",
