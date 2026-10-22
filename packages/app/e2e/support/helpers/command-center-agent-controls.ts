@@ -18,6 +18,9 @@ export async function openCommandCenterForAgent(
   workspace: Pick<MockAgentWorkspace, "workspaceId" | "agentId">,
 ): Promise<Locator> {
   await openAgentRoute(page, { workspaceId: workspace.workspaceId, agentId: workspace.agentId });
+  await expect(
+    page.getByRole("button", { name: /^Select agent mode \(/ }).filter({ visible: true }),
+  ).toBeVisible({ timeout: 30_000 });
   const panel = await openCommandCenter(page);
   return panel.getByTestId("command-center-input");
 }
