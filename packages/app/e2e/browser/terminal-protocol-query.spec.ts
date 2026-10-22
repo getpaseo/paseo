@@ -73,8 +73,14 @@ function fileRead(bytes: Buffer, location: "upload" | "local"): string {
   return `FILE_READ:${digest}:${location}`;
 }
 
+// Inactive terminal tabs retain their surfaces, and another page opening a terminal in
+// the same workspace adds a tab here too. Only the selected tab's surface is visible.
+function terminalSurface(page: Page) {
+  return page.getByTestId("terminal-surface").filter({ visible: true });
+}
+
 function terminalInput(page: Page) {
-  return page.locator('[data-testid="terminal-surface"] .xterm-helper-textarea');
+  return terminalSurface(page).locator(".xterm-helper-textarea");
 }
 
 async function pasteImage(page: Page, bytes: Buffer): Promise<void> {
@@ -127,8 +133,7 @@ async function dropFiles(page: Page, files: DroppedFile[]): Promise<void> {
 
 /** The shared "Drop files here" overlay of the zone around the terminal. */
 function terminalDropOverlay(page: Page) {
-  return page
-    .getByTestId("terminal-surface")
+  return terminalSurface(page)
     .locator("xpath=ancestor::*[.//*[@data-testid='file-drop-backdrop']][1]")
     .getByTestId("file-drop-backdrop");
 }
