@@ -212,6 +212,12 @@ function parseAssistantInlinePathLink(
   };
 }
 
+function isSingleSegmentRootExtensionlessHref(value: string): boolean {
+  const path = value.split(/[?#]/, 1)[0] ?? value;
+  const match = path.match(/^\/(?!\/)([^/]+)$/);
+  return Boolean(match && !match[1].includes("."));
+}
+
 export function classifyAssistantFileLink(
   value: string,
   options: AssistantHrefParseOptions = {},
@@ -227,6 +233,12 @@ export function classifyAssistantFileLink(
       kind: "external",
       raw,
     };
+  }
+
+  // A bare root-level path such as /code-review is commonly a slash command or
+  // route, not a filesystem link. Keep named files and nested absolute paths linkable.
+  if (options.explicitLink && isSingleSegmentRootExtensionlessHref(trimmed)) {
+    return null;
   }
 
   if (/\s/.test(trimmed)) {
