@@ -618,6 +618,9 @@ export const it: TranslationResources = {
       hostDisconnected: "L'host non è connesso",
       updateHost: "Aggiorna l'host per usare il renderer nativo del terminale.",
       unableToSubscribe: "Impossibile sottoscrivere gli aggiornamenti del terminale",
+      fileUploaded: "File caricato",
+      pasteFileFailed: "Impossibile incollare il file: {{reason}}",
+      uploadingFile: "Caricamento del file…",
     },
     sheet: {
       openAsTab: "Apri come scheda",
@@ -1195,6 +1198,12 @@ export const it: TranslationResources = {
       showBackground: "Mostra ambienti di lavoro in background",
       trigger: "Preferenze di visualizzazione",
       heading: "Visualizzazione",
+      sort: {
+        label: "Ordina",
+        created: "Data di creazione",
+        lastPrompt: "Ultimo prompt",
+        updateHost: "Aggiorna gli host per ordinare gli ambienti di lavoro",
+      },
       grouping: {
         label: "Raggruppamento",
         project: "Progetto",
@@ -1992,7 +2001,6 @@ export const it: TranslationResources = {
         alwaysUseExtension: "Usa sempre per .{{extension}}",
         alwaysUseFilename: "Usa sempre per {{filename}}",
         option: "{{title}} — {{owner}}",
-        actions: "Azioni del file",
         builtin: {
           owner: "Paseo",
           markdown: "Markdown",
@@ -2011,6 +2019,8 @@ export const it: TranslationResources = {
       documentUnsupported: "I file {{type}} non possono essere visualizzati su questo dispositivo",
       notFound: "File non trovato",
       editor: {
+        preview: "Anteprima",
+        source: "Sorgente",
         fileSize: "Dimensione del file {{size}}",
         lines: "{{count}} righe",
         editorStatus: "Stato dell'editor {{status}}",
@@ -2388,7 +2398,7 @@ export const it: TranslationResources = {
       automaticHint: "Paseo sceglie un modello veloce disponibile",
       preferredHint: "Scegli il modello usato da Paseo",
       model: "Modello",
-      fallbackHint: "Se non è disponibile, Paseo usa un altro modello disponibile",
+      modelHint: "Viene usato solo questo modello. Se non funziona, Paseo non ne prova un altro",
       docs: "Documentazione",
       saveError: "Impossibile aggiornare la generazione dei metadati",
     },
@@ -2468,11 +2478,6 @@ export const it: TranslationResources = {
     },
     diagnostics: {
       title: "Diagnostica",
-      legacyTerminalRenderer: {
-        label: "Usa renderer precedente del terminale",
-        description: "Usa il precedente terminale WebView dopo aver riaperto un terminale",
-        accessibilityLabel: "Usa renderer precedente del terminale",
-      },
       testAudio: "Prova audio",
       playTest: "Riproduci prova",
       playing: "Riproduzione...",
