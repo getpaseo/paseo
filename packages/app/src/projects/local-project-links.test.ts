@@ -55,6 +55,8 @@ function workspace(input: {
       };
 
   return {
+    createdAt: null,
+    lastUserMessageAt: null,
     id: input.id,
     projectId: input.projectId,
     projectDisplayName: "acme/app",
