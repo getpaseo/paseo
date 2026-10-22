@@ -25,7 +25,6 @@ test("project and workspace kebabs open action sheets on compact layouts", async
     await page.getByTestId("sidebar-display-preferences-menu").click();
     await expect(page.getByRole("menuitem")).toHaveText([
       /^Grouping/,
-      /^Sort/,
       /^Title/,
       "Show",
       "Project",

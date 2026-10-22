@@ -1771,8 +1771,7 @@ for immediate controls, a draft editor with validation, custom content, and Comm
 
 ## Workspace panels
 
-Register workspace panels with `addWorkspacePanel` and agent panels with `addAgentPanel`.
-Both receive the same panel contract as [file panels](#file-panels).
+Register one panel for workspace or agent context:
 
 `client/review.tsx`:
 
@@ -1781,9 +1780,9 @@ import { type PluginAgentPanelProps, useAgent, useWorkspace } from "@getpaseo/pl
 import { useMemo } from "react";
 import { Text, View } from "react-native";
 
-export function ReviewPanel({ theme, layout, workspaceId, params }: PluginAgentPanelProps) {
+export function ReviewPanel({ theme, layout, workspaceId, agentId }: PluginAgentPanelProps) {
   const workspaceName = useWorkspace(workspaceId, (workspace) => workspace.name);
-  const agent = useAgent(params.agentId, ({ id, title }) => ({ id, title }));
+  const agent = useAgent(agentId, ({ id, title }) => ({ id, title }));
   const styles = useMemo(
     () => ({
       screen: {
@@ -1812,10 +1811,11 @@ import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { ReviewPanel } from "./client/review";
 
 export default function contribute(client: PluginClientContext) {
-  client.addAgentPanel({
+  client.addWorkspacePanel({
     id: "review",
     title: "Review",
     icon: "Scan",
+    context: "agent",
     locations: ["workspace", "explorer"],
     Component: ReviewPanel,
   });
@@ -1823,43 +1823,20 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-`addWorkspacePanel` and `addAgentPanel` fields:
+`addWorkspacePanel` fields:
 
 | Field       | Required | Meaning                                                       |
 | ----------- | -------- | ------------------------------------------------------------- |
 | `id`        | Yes      | Plugin-local panel ID.                                        |
 | `title`     | Yes      | Workspace-tab title.                                          |
 | `icon`      | Yes      | Lucide name, `{ svg }`, or component. See [Icons](#icons).    |
+| `context`   | Yes      | `workspace` or `agent`.                                       |
 | `locations` | No       | `workspace` and/or `explorer`. Defaults to `workspace`.       |
 | `Component` | Yes      | React Native component matching the selected context's props. |
 
-Every panel receives `PluginPanelProps<Params>` with `theme`, `host`, `layout`, `navigation`,
-`workspaceId`, read-only `params`, `revision`, and `tab`. Workspace panels have empty
-`PluginWorkspacePanelParams`; agent panels have `PluginAgentPanelParams` containing `agentId`.
-`revision` increments whenever params are re-sent to the same tab, including an identical request.
+A workspace panel receives `PluginWorkspacePanelProps`: `context: "workspace"`, `theme`, `host`, `layout`, and `workspaceId`. An agent panel receives `PluginAgentPanelProps`: `context: "agent"`, the same common fields and `workspaceId`, plus `agentId`.
 
-`tab.setModified(boolean)` marks unsaved work and asks before closing. `tab.state` is opaque
-persisted JSON, initially `undefined`; `tab.setState(value)` replaces it. Each tab owns its state.
-Paseo stores it without interpreting it. Validate it with `useTabState(tab, schema, defaultState)`:
-
-```tsx
-const schema = z.object({ view: z.enum(["preview", "source"]) });
-const [state, setState] = useTabState(tab, schema, { view: "preview" });
-// Missing or invalid persisted state returns the default.
-// In an event handler, call setState({ view: "source" }).
-```
-
-Import `useTabState` from `@getpaseo/plugin/client` and `z` from `zod`. The setter replaces the
-entire JSON value. State survives tab restoration and app reloads.
-
-The unified props, `addAgentPanel`, and `useTabState` require Paseo 0.13.0 or later.
-
-**Deprecated until removal after 2027-04-23:** the 0.12 panel `context` and flat `agentId` props,
-`addWorkspacePanel({ context: "workspace" })`, and `addWorkspacePanel({ context: "agent" })`
-continue to work. Omit workspace `context`, register agent panels with `addAgentPanel`, and read
-`params.agentId`.
-
-Read cached state with `useWorkspace(workspaceId, selector)` and `useAgent(params.agentId, selector)`. A selector is required. Paseo compares its result shallowly, so selecting `{ name, status }` does not re-render when unrelated fields change. Select every field the component renders in one call; do not select the whole snapshot.
+Read cached state with `useWorkspace(workspaceId, selector)` and `useAgent(agentId, selector)`. A selector is required. Paseo compares its result shallowly, so selecting `{ name, status }` does not re-render when unrelated fields change. Select every field the component renders in one call; do not select the whole snapshot.
 
 Both hooks return `null` when the record is unavailable. Otherwise they run synchronously against normalized client state. Snapshot DTOs and their nested values are deeply readonly and frozen at runtime. Do not call plugin RPC to discover the current workspace or agent. Fetch optional or vendor-specific enrichment after the component renders.
 
@@ -1946,13 +1923,12 @@ for a filename-only selector. At least one extension or filename is required.
 `PluginFilePanelProps` includes the common `theme`, `host`, `layout`, and optional `navigation`
 props described under [Theme and layout](#theme-and-layout), plus:
 
-| Prop          | Type                    | Meaning                                                                                             |
-| ------------- | ----------------------- | --------------------------------------------------------------------------------------------------- |
-| `workspaceId` | `string`                | Workspace containing the file tab.                                                                  |
-| `params`      | `PluginFilePanelParams` | Read-only `path`, `lineStart?`, and `lineEnd?` from the opener.                                     |
-| `revision`    | `number`                | Increments each time params are re-sent to this tab, even for the same line.                        |
-| `file`        | `PluginFile`            | File capability resolved from `params.path`, stable while the tab shows this file.                  |
-| `tab`         | `PluginTab`             | `setModified`, opaque persisted `state`, and `setState`. See [Workspace panels](#workspace-panels). |
+| Prop          | Type                 | Meaning                                                                         |
+| ------------- | -------------------- | ------------------------------------------------------------------------------- |
+| `workspaceId` | `string`             | Workspace containing the file tab.                                              |
+| `file`        | `PluginFile`         | Handle to the file. Stable while the tab shows this file.                       |
+| `tab`         | `PluginFileTab`      | `setModified(modified)` shows the tab's unsaved dot and confirms before close.  |
+| `location`    | `PluginFileLocation` | `lineStart?`, `lineEnd?`, and `revision`, which increments on every navigation. |
 
 Paseo mounts your panel once it knows the file exists and its size, without reading it. The
 `file` object is stable, and its stat fields hold the latest version Paseo knows. Read them while
@@ -2216,10 +2192,8 @@ review.remove();
 ```
 
 Omit `label` for an icon-only header button. Menus and popovers show a chevron on wide layouts.
-Paseo moves excess contributions into a shared overflow menu. On phones and narrow windows the
-header has no room for plugin buttons, so each one is a row of the workspace menu (`···`), with its
-icon and title; its menus and popovers open as pages of that sheet. Placement and overflow are host
-decisions.
+Compact header buttons use icons without labels or chevrons. Paseo moves excess contributions
+into a shared overflow menu. Placement and overflow are host decisions.
 
 ## Composer pills
 

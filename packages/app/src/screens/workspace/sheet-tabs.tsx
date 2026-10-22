@@ -37,7 +37,6 @@ import {
   type WorkspacePaneContentModel,
 } from "@/screens/workspace/workspace-pane-content";
 import { useWorkspaceLayoutStore, type SheetTab } from "@/stores/workspace-layout-store";
-import { useWorkspaceSheetEnvironment } from "./workspace-sheet-environment";
 
 const SNAP_POINTS = ["92%"];
 const NO_SHEETS: readonly SheetTab[] = [];
@@ -102,8 +101,8 @@ interface SheetTabSheetProps extends Omit<SheetTabsProps, "workspaceKey" | "onCl
 }
 
 /**
- * The workspace's sheet tabs, one sheet each, on the app-wide sheet stack. Their environment
- * crosses into the app overlay host so compact sheets cover both sidebars, and a
+ * The workspace's sheet tabs, one sheet each, on the app-wide sheet stack. They present from inside
+ * the workspace's `SheetHostScope`, so each panel keeps every context an ordinary pane has, and a
  * sheet opened from any other sheet (a subagent chosen from the subagents list, say) lands on top of
  * it and uncovers it on close. The shared sheet parts (`SheetBackground`, `SheetHandle`,
  * `SheetHeaderView`) keep them looking and dragging like every other sheet.
@@ -161,7 +160,6 @@ function SheetTabSheet({
   const { tab } = sheet;
   const sheetRef = useRef<IsolatedBottomSheetModalRef>(null);
   const isScreenFocused = useIsFocused();
-  const contextBridge = useWorkspaceSheetEnvironment();
   ensurePanelsRegistered();
   const registration = getPanelRegistration(tab.target.kind);
   if (!registration) {
@@ -238,7 +236,7 @@ function SheetTabSheet({
   return (
     <IsolatedBottomSheetModal
       ref={sheetRef}
-      contextBridge={contextBridge}
+      contextBridge={null}
       snapPoints={SNAP_POINTS}
       enableDynamicSizing={false}
       enablePanDownToClose

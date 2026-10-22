@@ -55,8 +55,6 @@ export interface StreamViewportHandle {
   focus?: () => void;
   scrollToBottom: (reason?: BottomAnchorLocalRequest["reason"]) => void;
   prepareForViewportChange: () => void;
-  /** Stop following output so the rows on screen stay put while rows below them open or close. */
-  holdReadingPosition: () => void;
   scrollToMessage?: (messageId: string, occurrence?: ScrollToMessageOccurrence) => void;
 }
 

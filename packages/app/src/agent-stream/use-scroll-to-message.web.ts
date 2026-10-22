@@ -1,7 +1,8 @@
 import type React from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import type { Virtualizer } from "@tanstack/react-virtual";
-import { getStreamItemMessageId, type StreamItem } from "@/types/stream";
+import type { StreamItem } from "@/types/stream";
+import { getStreamItemMessageId } from "./presentation";
 import { createPromptJumpSettleController, PROMPT_JUMP_TOP_INSET_PX } from "./prompt-jump-settle";
 import type { ScrollToMessageOccurrence } from "./strategy";
 

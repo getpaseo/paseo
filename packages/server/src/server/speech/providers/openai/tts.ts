@@ -67,9 +67,7 @@ export class OpenAITTS implements TextToSpeechProvider {
           | "pcm",
       });
 
-      // Prefetched speech can wait through playback of an earlier sentence. Consume
-      // the response here so fetch cannot collect it and cancel its unread body.
-      const audioStream = Readable.from([Buffer.from(await response.arrayBuffer())]);
+      const audioStream = response.body as unknown as Readable;
 
       const duration = Date.now() - startTime;
       this.logger.debug({ duration }, "Speech synthesis stream ready");

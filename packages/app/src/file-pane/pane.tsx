@@ -1,6 +1,5 @@
-import { usePaneContext } from "@/panels/pane-context";
 import { useEffect, useMemo, useState } from "react";
-import type { PluginFile, PluginTab } from "@getpaseo/plugin/client";
+import type { PluginFile, PluginFileTab } from "@getpaseo/plugin/client";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -70,9 +69,13 @@ export function FilePane({
     () => ({
       lineStart: location.lineStart,
       lineEnd: location.lineEnd,
-      path,
+      revision: navigationRevision,
     }),
-    [location.lineEnd, location.lineStart, path],
+    [location.lineEnd, location.lineStart, navigationRevision],
+  );
+  const panelTarget = useMemo(
+    () => ({ serverId, workspaceRoot: root, path }),
+    [path, root, serverId],
   );
 
   let body;
@@ -110,8 +113,8 @@ export function FilePane({
           key={`${panel.id}:${targetKey}`}
           panel={panel}
           file={handle.file}
-          params={panelLocation}
-          revision={navigationRevision}
+          location={panelLocation}
+          target={panelTarget}
           onModifiedChange={setModified}
         />
       </View>
@@ -128,27 +131,21 @@ export function FilePane({
 function MountedFilePanel({
   panel,
   file,
-  params,
-  revision,
+  location,
+  target,
   onModifiedChange,
 }: {
   panel: FilePanel;
   file: PluginFile;
-  params: { path: string; lineStart?: number; lineEnd?: number };
-  revision: number;
+  location: { lineStart?: number; lineEnd?: number; revision: number };
+  target: { serverId: string; workspaceRoot: string; path: string };
   onModifiedChange: (modified: boolean) => void;
 }) {
-  const { state, setCurrentTabState } = usePaneContext();
-  const tab = useMemo<PluginTab>(
-    () => ({
-      setModified: onModifiedChange,
-      state,
-      setState: setCurrentTabState,
-    }),
-    [onModifiedChange, state, setCurrentTabState],
-  );
+  const [tab] = useState<PluginFileTab>(() => ({
+    setModified: (modified) => onModifiedChange(modified),
+  }));
   useEffect(() => () => onModifiedChange(false), [onModifiedChange]);
-  return <FilePanelView panel={panel} file={file} tab={tab} params={params} revision={revision} />;
+  return <FilePanelView panel={panel} file={file} tab={tab} location={location} target={target} />;
 }
 
 const styles = StyleSheet.create((theme) => ({

@@ -296,9 +296,6 @@ const WorkspaceGitRuntimeSchema = z
   .optional();
 
 const StoredWorkspaceSchema = z.strictObject({
-  // Require both keys: a cursor without these values would preserve the wrong sort on reconnect.
-  createdAt: IsoDateSchema.nullable(),
-  lastUserMessageAt: IsoDateSchema.nullable(),
   id: z.string(),
   projectId: z.string(),
   projectDisplayName: z.string(),
@@ -691,14 +688,8 @@ function deserializeAgent(serverId: string, stored: StoredAgent): Agent {
   };
 }
 
-function restoreWorkspace(stored: StoredWorkspace): WorkspaceDescriptor {
-  return normalizeWorkspaceDescriptor({ ...stored, createdAt: stored.createdAt ?? undefined });
-}
-
 function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
   return {
-    createdAt: workspace.createdAt?.toISOString() ?? null,
-    lastUserMessageAt: workspace.lastUserMessageAt?.toISOString() ?? null,
     id: workspace.id,
     projectId: workspace.projectId,
     projectDisplayName: workspace.projectDisplayName,
@@ -865,7 +856,7 @@ function applyDirectoryRow(
     case "workspace": {
       const stored = parseStoredPayload(StoredWorkspaceSchema, row.payload);
       if (stored.id !== row.id) throw new Error("Replica workspace row id mismatch");
-      result.workspaces.set(row.id, restoreWorkspace(stored));
+      result.workspaces.set(row.id, normalizeWorkspaceDescriptor(stored));
       return;
     }
     case "project": {
@@ -955,7 +946,7 @@ export class ReplicaCache {
     try {
       const stored = parseStoredPayload(StoredWorkspaceSchema, workspaceRow.payload);
       if (stored.id !== workspaceRow.id) throw new Error("Replica workspace row id mismatch");
-      workspace = restoreWorkspace(stored);
+      workspace = normalizeWorkspaceDescriptor(stored);
     } catch {
       await this.deleteInvalidRow(workspaceRow);
       return undefined;

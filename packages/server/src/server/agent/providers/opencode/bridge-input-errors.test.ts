@@ -47,8 +47,8 @@ test("bridge preserves tool failure messages and classifies invalid requests as 
       logger,
     ),
     projectRegistry: new FileBackedProjectRegistry(path.join(paseoHome, "projects.json"), logger),
-    workspaceRuntimeStore: {
-      get: () => {
+    workspaceGitService: {
+      peekSnapshot: () => {
         throw new Error("Unexpected git lookup");
       },
     },

@@ -1,16 +1,15 @@
-import { useHostFeatureMap } from "@/runtime/host-features";
 import { useCallback, useEffect, useMemo } from "react";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceDirectoryServerIds } from "@/stores/session-store-hooks";
 import { workspaceEqualityFns } from "@/stores/session-store-hooks/selectors";
-import { useWorkspaceStructure } from "@/stores/session-store-hooks";
+import { useHostProjects } from "@/projects/host-projects";
 import { getHostRuntimeStore, useHostRegistryLoaded, useHosts } from "@/runtime/host-runtime";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import {
-  createSidebarWorkspacePlacementSelector,
+  buildSidebarWorkspacePlacementModel,
   computeSidebarOrderUpdates,
   createSidebarWorkspaceEntry,
   deriveProjectStatusBucket,
@@ -86,7 +85,6 @@ const EMPTY_WORKSPACES: SidebarWorkspacePlacement[] = [];
 const EMPTY_PROJECT_NAMES = new Map<string, string>();
 
 export interface SidebarWorkspacesListResult {
-  workspaceSortSupported: boolean;
   workspacePlacements: SidebarWorkspacePlacement[];
   projects: SidebarProjectEntry[];
   projectNamesByViewKey: Map<string, string>;
@@ -140,20 +138,14 @@ export function useSidebarWorkspacesList(options?: {
 
   const directoryServerIds = useWorkspaceDirectoryServerIds(serverIds);
 
-  const workspaceSort = useSidebarViewStore((state) => state.workspaceSort);
-  const groupMode = useSidebarViewStore((state) => state.groupMode);
-  const sortSupport = useHostFeatureMap(directoryServerIds, "workspaceSortTimes");
-  const workspaceSortSupported = [...sortSupport.values()].every(Boolean);
-  const sort =
-    groupMode === "project" && (workspaceSort === "manual" || workspaceSortSupported)
-      ? workspaceSort
-      : undefined;
-  const { projects: hostProjects } = useWorkspaceStructure(directoryServerIds, sort);
+  const hostProjects = useHostProjects(directoryServerIds);
 
-  const selectPlacements = useMemo(createSidebarWorkspacePlacementSelector, []);
   const sidebarModel = useMemo(
-    () => selectPlacements(hostProjects),
-    [hostProjects, selectPlacements],
+    () =>
+      buildSidebarWorkspacePlacementModel({
+        projects: hostProjects,
+      }),
+    [hostProjects],
   );
 
   const projects = sidebarModel.projects.length > 0 ? sidebarModel.projects : EMPTY_PROJECTS;
@@ -169,16 +161,17 @@ export function useSidebarWorkspacesList(options?: {
     const updates = computeSidebarOrderUpdates({
       projects,
       persistedProjectOrder,
-      getWorkspaceOrder: sort === "manual" ? orderStore.getWorkspaceOrder : undefined,
+      getWorkspaceOrder: (projectViewKey) =>
+        orderStore.workspaceOrderByProject[projectViewKey] ?? EMPTY_ORDER,
     });
 
     if (updates.projectOrder) {
       orderStore.setProjectOrder(updates.projectOrder);
     }
-    for (const update of updates.workspaceOrders) {
-      orderStore.setWorkspaceOrder(update.projectViewKey, update.order);
+    for (const { projectViewKey, order } of updates.workspaceOrders) {
+      orderStore.setWorkspaceOrder(projectViewKey, order);
     }
-  }, [persistedProjectOrder, projects, sort]);
+  }, [persistedProjectOrder, projects]);
 
   const refreshAll = useCallback(() => {
     if (!isActive) return;
@@ -200,7 +193,6 @@ export function useSidebarWorkspacesList(options?: {
   });
 
   return {
-    workspaceSortSupported,
     workspacePlacements,
     projects,
     projectNamesByViewKey,

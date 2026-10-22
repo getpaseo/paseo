@@ -27,24 +27,22 @@ describe("terminal paste encoding", () => {
   it("reads clipboard through the explicit paste adapter", async () => {
     const pasted: string[] = [];
 
-    const result = await pasteTerminalClipboard({
+    await pasteTerminalClipboard({
       clipboard: { readText: async () => "printf one\nprintf two" },
       terminal: { paste: (text) => pasted.push(text) },
     });
 
     expect(pasted).toEqual(["printf one\nprintf two"]);
-    expect(result).toBe(true);
   });
 
   it("does not dispatch terminal input when clipboard is empty", async () => {
     const pasted: string[] = [];
 
-    const result = await pasteTerminalClipboard({
+    await pasteTerminalClipboard({
       clipboard: { readText: async () => "" },
       terminal: { paste: (text) => pasted.push(text) },
     });
 
     expect(pasted).toEqual([]);
-    expect(result).toBe(false);
   });
 });

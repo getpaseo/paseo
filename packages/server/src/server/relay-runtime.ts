@@ -1,4 +1,5 @@
 import type pino from "pino";
+import type { KeyPair } from "@getpaseo/relay/e2ee";
 import type { ExternalSocketMetadata } from "./websocket-server.js";
 import {
   startRelayTransport,
@@ -19,6 +20,7 @@ interface RelayRuntimeOptions {
   logger: pino.Logger;
   attachSocket(ws: RelaySocketLike, metadata?: ExternalSocketMetadata): Promise<void>;
   serverId: string;
+  daemonKeyPair: KeyPair;
   startTransport?: typeof startRelayTransport;
 }
 
@@ -41,6 +43,7 @@ export function createRelayRuntime(options: RelayRuntimeOptions): RelayRuntime {
       relayEndpoint: config.endpoint,
       relayUseTls: config.useTls,
       serverId: options.serverId,
+      daemonKeyPair: options.daemonKeyPair,
     });
   }
 

@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { MAX_RELAY_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
 import { describe, expect, test, vi } from "vitest";
 import {
   createEncryptedTransport,
@@ -10,9 +11,17 @@ import {
   extractRelayMessage,
 } from "./daemon-client-transport.js";
 
+const createClientChannelMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@getpaseo/relay/e2ee", () => ({
+  createClientChannel: createClientChannelMock,
+}));
+
 describe("daemon-client transport helpers", () => {
   test("createEncryptedTransport closes handshake failures with browser-safe code", async () => {
-    // An unusable daemon key fails the handshake before any frame is sent.
+    createClientChannelMock.mockReset();
+    createClientChannelMock.mockRejectedValueOnce(new Error("handshake failed"));
+
     const connection: { open: (() => void) | null } = { open: null };
     const close = vi.fn();
 
@@ -32,7 +41,8 @@ describe("daemon-client transport helpers", () => {
         onError: () => () => {},
         onMessage: () => () => {},
       },
-      { daemonPublicKeyB64: "not-a-key", logger: { warn: vi.fn() } },
+      "daemon-public-key",
+      { warn: vi.fn() },
     );
 
     expect(connection.open).not.toBeNull();
@@ -41,6 +51,76 @@ describe("daemon-client transport helpers", () => {
     await vi.waitFor(() => {
       expect(close).toHaveBeenCalledWith(4001, "E2EE handshake failed");
     });
+  });
+
+  test("createEncryptedTransport sends compressed binary frames once deflatePayloads is negotiated", async () => {
+    const relay =
+      await vi.importActual<typeof import("@getpaseo/relay/e2ee")>("@getpaseo/relay/e2ee");
+    createClientChannelMock.mockReset();
+    createClientChannelMock.mockImplementation(relay.createClientChannel);
+    const daemonKeyPair = relay.generateKeyPair();
+    const sent: Array<string | ArrayBuffer> = [];
+    const handlers: {
+      open: (() => void) | null;
+      message: ((data: unknown, isBinary: boolean) => void) | null;
+    } = { open: null, message: null };
+
+    const transport = createEncryptedTransport(
+      {
+        send: (data) => {
+          sent.push(data as string | ArrayBuffer);
+        },
+        close: vi.fn(),
+        onOpen: (handler) => {
+          handlers.open = handler;
+          return () => {};
+        },
+        onClose: () => () => {},
+        onError: () => () => {},
+        onMessage: (handler) => {
+          handlers.message = handler;
+          return () => {};
+        },
+      },
+      relay.exportPublicKey(daemonKeyPair.publicKey),
+      { warn: vi.fn() },
+    );
+    const opened = vi.fn();
+    transport.onOpen(opened);
+    handlers.open?.();
+    await vi.waitFor(() => {
+      expect(sent).toHaveLength(1);
+    });
+    expect(JSON.parse(sent[0] as string)).toMatchObject({
+      type: "e2ee_hello",
+      capabilities: { binaryCiphertext: true, deflatePayloads: true },
+    });
+    handlers.message?.(
+      JSON.stringify({
+        type: "e2ee_ready",
+        capabilities: { binaryCiphertext: true, deflatePayloads: true },
+      }),
+      false,
+    );
+    await vi.waitFor(() => {
+      expect(opened).toHaveBeenCalled();
+    });
+
+    const page = JSON.stringify(
+      Array.from({ length: 2000 }, (_, seq) => ({ seq, type: "assistant_message", text: "ok" })),
+    );
+    transport.send(page);
+    await vi.waitFor(() => {
+      expect(sent).toHaveLength(2);
+    });
+    expect(sent[1]).toBeInstanceOf(ArrayBuffer);
+    expect((sent[1] as ArrayBuffer).byteLength).toBeLessThan(page.length / 4);
+
+    // The size check bounds the uncompressed payload, matching the receiver's inflate limit.
+    expect(() => transport.send("x".repeat(MAX_RELAY_WEBSOCKET_MESSAGE_BYTES))).toThrow(
+      "Message is too large to send",
+    );
+    expect(sent).toHaveLength(2);
   });
 
   test("createWebSocketTransportFactory forwards sends when socket is open", () => {

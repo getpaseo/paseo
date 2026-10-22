@@ -1,4 +1,3 @@
-import { usePanelStore } from "@/stores/panel-store";
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Modal,
@@ -82,13 +81,7 @@ export function useHostChooser() {
       );
 
       if (availableHosts.length === 0) {
-        (
-          input.onNoHosts ??
-          (() => {
-            usePanelStore.getState().showMobileAgent();
-            router.push(buildSettingsAddHostRoute(Date.now()));
-          })
-        )();
+        (input.onNoHosts ?? (() => router.push(buildSettingsAddHostRoute(Date.now()))))();
         return false;
       }
 

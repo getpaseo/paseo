@@ -103,7 +103,7 @@ export function createWorkspaceProvisioningService(deps: {
   serverId?: string;
   workspaceRegistry: WorkspaceRegistry;
   projectRegistry: ProjectRegistry;
-  workspaceGitService: Pick<WorkspaceGitService, "getCheckout" | "getSnapshot">;
+  workspaceGitService: Pick<WorkspaceGitService, "getCheckout" | "getSnapshot" | "peekSnapshot">;
   isDirectory: (path: string) => Promise<boolean>;
   logger: Logger;
   lifecycle?: PluginLifecycle;

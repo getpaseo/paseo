@@ -24,7 +24,6 @@ export interface DaemonRuntimeConfig {
     publicEndpoint: string;
     useTls: boolean;
     publicUseTls: boolean;
-    requireProtectedSecurity?: boolean;
   } | null;
 }
 
@@ -225,7 +224,6 @@ export class DaemonSession {
         relayPublicEndpoint: relay?.publicEndpoint,
         relayUseTls: relay?.useTls,
         relayPublicUseTls: relay?.publicUseTls,
-        relayRequireProtectedSecurity: relay?.requireProtectedSecurity ?? false,
         appBaseUrl: this.daemonRuntimeConfig?.appBaseUrl,
         includeQr: true,
         logger: this.logger,

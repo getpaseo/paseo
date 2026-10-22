@@ -53,6 +53,7 @@ let provisioning: WorkspaceProvisioningService;
 
 function gitService() {
   return createNoopWorkspaceGitService({
+    peekSnapshot: () => null,
     getSnapshot: async (cwd: string) => {
       const snapshot = createNoGitWorkspaceRuntimeSnapshot(cwd);
       if (!restoredMergedChangeRequestUrl) return snapshot;
@@ -241,6 +242,7 @@ test("persists manual worktree ownership separately from its workspace kind", as
     projectRegistry,
     isDirectory,
     workspaceGitService: createNoopWorkspaceGitService({
+      peekSnapshot: () => null,
       getCheckout: async () => ({
         cwd,
         isGit: true,
@@ -328,6 +330,7 @@ test("reopening archived exact-root records restores the fresh Git project", asy
     projectRegistry,
     isDirectory,
     workspaceGitService: createNoopWorkspaceGitService({
+      peekSnapshot: () => null,
       getCheckout: async () => ({
         cwd,
         isGit: true,
@@ -883,6 +886,7 @@ test("a failed import keeps an archived worktree's placement when its directory 
     logger,
     isDirectory,
     workspaceGitService: createNoopWorkspaceGitService({
+      peekSnapshot: () => null,
       getCheckout: async (cwd: string) => {
         const status = await getCheckoutStatus(cwd, { logger });
         return checkoutLiteFromGitSnapshot(
@@ -956,6 +960,7 @@ test("a directory that goes away while the git read is in flight keeps its place
     isDirectory,
     logger,
     workspaceGitService: createNoopWorkspaceGitService({
+      peekSnapshot: () => null,
       getCheckout: async (cwd: string) => {
         rmSync(repo, { recursive: true, force: true });
         return {

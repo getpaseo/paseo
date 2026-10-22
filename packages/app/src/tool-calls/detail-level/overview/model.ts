@@ -1,5 +1,4 @@
 import { isPaseoToolName } from "@getpaseo/protocol/tool-name-normalization";
-import type { ToolCallItem } from "@/types/stream";
 import { describeToolCall, type ToolCallRun } from "../grouping";
 
 const DIRECT_PASEO_TOOL_PREFIX = "paseo_";
@@ -29,18 +28,19 @@ function isSearchCall(name: string): boolean {
   return DIRECT_SEARCH_TOOL_SUFFIX_PATTERN.test(name);
 }
 
-/** Counts tool calls by what they did, for any summary of a stretch of agent work. */
-export function summarizeToolCalls(calls: readonly ToolCallItem[]): OverviewSummary {
+export function buildOverviewGroup(run: ToolCallRun): OverviewToolCallGroup {
   const editedFiles = new Set<string>();
   const readFiles = new Set<string>();
+  let isLoading = false;
   let commandCount = 0;
   let searchCount = 0;
   let otherToolCount = 0;
   let paseoCallCount = 0;
 
-  for (const call of calls) {
+  for (const call of run.calls) {
     const descriptor = describeToolCall(call);
     const normalizedName = descriptor.name.trim().toLowerCase();
+    isLoading ||= descriptor.status === "running" || descriptor.status === "executing";
     if (isPaseoCall(descriptor.name, normalizedName)) {
       paseoCallCount += 1;
     } else if (descriptor.detail.type === "edit" || descriptor.detail.type === "write") {
@@ -56,7 +56,7 @@ export function summarizeToolCalls(calls: readonly ToolCallItem[]): OverviewSumm
     }
   }
 
-  return {
+  const summary = {
     editedFileCount: editedFiles.size,
     commandCount,
     readFileCount: readFiles.size,
@@ -64,17 +64,10 @@ export function summarizeToolCalls(calls: readonly ToolCallItem[]): OverviewSumm
     otherToolCount,
     paseoCallCount,
   };
-}
-
-export function buildOverviewGroup(run: ToolCallRun): OverviewToolCallGroup {
-  const isLoading = run.calls.some((call) => {
-    const status = describeToolCall(call).status;
-    return status === "running" || status === "executing";
-  });
   return {
     mode: "overview",
     run,
     isLoading,
-    summary: summarizeToolCalls(run.calls),
+    summary,
   };
 }

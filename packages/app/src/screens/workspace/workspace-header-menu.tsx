@@ -31,7 +31,6 @@ import {
   useWorkspaceScriptsMenuPages,
   type UseWorkspaceScriptsMenuPagesInput,
 } from "@/screens/workspace/scripts";
-import { usePluginWorkspaceMenu } from "@/plugins";
 
 const ThemedEllipsis = withUnistyles(Ellipsis);
 const ThemedCopy = withUnistyles(Copy);
@@ -207,7 +206,6 @@ function HeaderMenuProfileItem({
 
 export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspaceActions {
   normalizedServerId: string;
-  normalizedWorkspaceId: string;
   scripts: UseWorkspaceScriptsMenuPagesInput;
   showCreateBrowserTab: boolean;
   createTerminalDisabled: boolean;
@@ -220,12 +218,10 @@ export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspace
  * the rarer launches stay here alongside the workspace actions.
  *
  * The header has no room for a scripts button either, so scripts are a page of this menu, and the
- * ⋯ carries a dot while a running service is unhealthy. Plugin header buttons are rows here for the
- * same reason.
+ * ⋯ carries a dot while a running service is unhealthy.
  */
 export function WorkspaceHeaderMenuMobile({
   normalizedServerId,
-  normalizedWorkspaceId,
   scripts,
   showCreateBrowserTab,
   createTerminalDisabled,
@@ -246,11 +242,6 @@ export function WorkspaceHeaderMenuMobile({
     router.push(buildSettingsHostSectionRoute(normalizedServerId, "terminals") as Href);
   }, [normalizedServerId, router]);
   const scriptsMenu = useWorkspaceScriptsMenuPages(scripts);
-  const pluginMenu = usePluginWorkspaceMenu(normalizedServerId, normalizedWorkspaceId);
-  const pages = useMemo(
-    () => [...scriptsMenu.pages, ...pluginMenu.pages],
-    [scriptsMenu.pages, pluginMenu.pages],
-  );
 
   return (
     <DropdownMenu compactMode="sheet">
@@ -275,12 +266,10 @@ export function WorkspaceHeaderMenuMobile({
         align="start"
         width={220}
         testID="workspace-header-menu"
-        pages={pages}
+        pages={scriptsMenu.pages}
         sheetTitle={t("workspace.header.actions.workspaceActions")}
       >
         {scriptsMenu.trigger}
-        {pluginMenu.rows}
-        {pluginMenu.rows.length > 0 ? <DropdownMenuSeparator /> : null}
         {showCreateBrowserTab ? (
           <DropdownMenuItem
             testID="workspace-header-new-browser"

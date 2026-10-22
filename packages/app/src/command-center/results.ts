@@ -55,8 +55,6 @@ export interface CommandCenterWorkspaceResult {
   id: string;
   title: string;
   subtitle: string;
-  serverId: string;
-  workspaceId: string;
   project: CommandCenterWorkspaceProject;
   /** PR/MR number backing this workspace, so a number query can match it exactly. */
   changeRequestNumber: number | null;

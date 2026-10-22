@@ -649,7 +649,6 @@ interface TerminalExit {
 }
 
 interface TerminalEntry {
-  running: boolean;
   id: string;
   child: ChildProcess;
   output: string;
@@ -2555,15 +2554,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
-  async canStopRuntime(): Promise<boolean> {
-    return (
-      this.activeForegroundTurnId === null &&
-      this.pendingPermissions.size === 0 &&
-      this.pendingUserMessage === null &&
-      !Array.from(this.terminalEntries.values()).some((terminal) => terminal.running)
-    );
-  }
-
   async close(): Promise<void> {
     if (this.closed) {
       return;
@@ -2599,14 +2589,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       }
     }
 
-    const terminalTerminations = Array.from(this.terminalEntries.values())
-      .filter((terminal) => terminal.running)
-      .map((terminal) =>
-        this.terminateProcess(terminal.child, {
-          gracefulTimeoutMs: 2_000,
-          forceTimeoutMs: 2_000,
-        }),
-      );
+    const terminalTerminations = Array.from(this.terminalEntries.values(), (terminal) =>
+      this.terminateProcess(terminal.child, {
+        gracefulTimeoutMs: 2_000,
+        forceTimeoutMs: 2_000,
+      }),
+    );
     await Promise.all(terminalTerminations);
     this.terminalEntries.clear();
 
@@ -2808,7 +2796,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     waitForExit.catch(() => undefined);
 
     const entry: TerminalEntry = {
-      running: true,
       id: terminalId,
       child,
       output: "",
@@ -2829,13 +2816,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     child.once("error", (error) => {
       const spawnError = error instanceof Error ? error : new Error(String(error));
       appendTerminalOutput(entry, `${spawnError.message}\n`);
-      // A failed spawn has no exit event. Other process errors do not prove exit.
-      if (child.pid === undefined) entry.running = false;
       rejectExit(spawnError);
     });
     child.once("exit", (code, signal) => {
       const exit = { exitCode: code, signal };
-      entry.running = false;
       entry.exit = exit;
       resolveExit(exit);
     });
@@ -2860,7 +2844,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   async releaseTerminal(params: { sessionId: string; terminalId: string }): Promise<void> {
     const entry = this.getTerminalEntry(params.terminalId);
-    if (entry.running) {
+    if (!entry.exit) {
       await this.terminateProcess(entry.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
     }
     this.terminalEntries.delete(params.terminalId);
@@ -2868,7 +2852,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   async killTerminal(params: KillTerminalRequest): Promise<Record<string, never>> {
     const entry = this.getTerminalEntry(params.terminalId);
-    if (entry.running) {
+    if (!entry.exit) {
       await this.terminateProcess(entry.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
     }
     return {};

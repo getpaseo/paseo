@@ -166,8 +166,9 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
   const { open: openImportSession, sheet: importSessionSheet } = useImportSession();
 
   const handleOpenProjectMobile = useCallback(() => {
+    showMobileAgent();
     void openProjectPicker();
-  }, [openProjectPicker]);
+  }, [showMobileAgent, openProjectPicker]);
 
   const handleOpenProjectDesktop = useCallback(() => {
     void openProjectPicker();
@@ -204,8 +205,9 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
   }, []);
 
   const handleImportSessionMobile = useCallback(() => {
+    showMobileAgent();
     openImportSession();
-  }, [openImportSession]);
+  }, [openImportSession, showMobileAgent]);
 
   const labels = useMemo(
     (): SidebarLabels => ({
@@ -719,11 +721,8 @@ function DesktopSidebar({
     [active, resizeAnimatedStyle],
   );
   const desktopSidebarBorderStyle = useMemo(
-    () => [
-      styles.desktopSidebarBorder,
-      { flex: 1, paddingTop: insetsTop, paddingBottom: insets.bottom },
-    ],
-    [insetsTop, insets.bottom],
+    () => [styles.desktopSidebarBorder, { flex: 1, paddingTop: insetsTop }],
+    [insetsTop],
   );
   const sidebarHeaderGroupStyle = useMemo(
     () => [styles.sidebarHeaderGroup, ownsTopLeft && styles.sidebarHeaderGroupBelowChrome],

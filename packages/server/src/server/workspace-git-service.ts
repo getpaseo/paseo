@@ -208,8 +208,8 @@ export interface WorkspaceGitService {
     listener: WorkspaceGitListener,
   ): WorkspaceGitSubscription;
 
-  /** Publishes computed snapshot changes independently of workspace UI subscriptions. */
   onSnapshotUpdated(listener: WorkspaceGitSnapshotUpdatedListener): WorkspaceGitSubscription;
+  peekSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot | null;
   getCheckout(cwd: string): Promise<ProjectCheckoutLitePayload>;
   getSnapshot(
     cwd: string,
@@ -335,6 +335,7 @@ interface WorkspaceGitRefreshRequest {
   includeForge: boolean;
   emitUnchanged?: boolean;
   reason: string;
+  notify: boolean;
   queueIfBusy: boolean;
   movedRemoteRefs: Set<string>;
 }
@@ -747,7 +748,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   ): Promise<WorkspaceGitRuntimeSnapshot> {
     this.assertNotDisposed();
     cwd = resolve(cwd);
-    const request = this.normalizeRefreshRequest(options, "getSnapshot");
+    const request = this.normalizeRefreshRequest(options, "getSnapshot", true);
     const target = this.ensureWorkspaceTarget(cwd);
     if (!request.force && target.latestSnapshot) {
       return target.latestSnapshot;
@@ -764,7 +765,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       worktreesRoot: this.worktreesRoot,
       logger: this.logger,
     });
-    const cached = this.getCachedSnapshot(normalizedCwd);
+    const cached = this.peekSnapshot(normalizedCwd);
     if (cached && cached.git.isGit !== status.isGit) {
       // A fresh checkout read discovered a repository transition. Keep the
       // shared snapshot current before exposing the new project capability.
@@ -794,7 +795,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     });
   }
 
-  private getCachedSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot | null {
+  peekSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot | null {
     cwd = resolve(cwd);
     return this.workspaceTargets.get(cwd)?.latestSnapshot ?? null;
   }
@@ -974,6 +975,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       refreshWorktree: true,
       includeForge: false,
       reason: "refresh",
+      notify: true,
       queueIfBusy: false,
       movedRemoteRefs: new Set(),
     });
@@ -1238,6 +1240,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         refreshWorktree: true,
         includeForge: true,
         reason: "initial",
+        notify: true,
         queueIfBusy: false,
         movedRemoteRefs: new Set(),
       });
@@ -1629,6 +1632,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
             refreshWorktree: true,
             includeForge: false,
             reason: "working-tree-watch-fallback",
+            notify: true,
             queueIfBusy: true,
             movedRemoteRefs: new Set(),
           });
@@ -2688,6 +2692,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
             includeForge: false,
             emitUnchanged: true,
             reason: "git-metadata-watch-fallback",
+            notify: true,
             queueIfBusy: true,
             movedRemoteRefs: new Set(),
           });
@@ -2820,6 +2825,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           this.rememberForgePrStatusSnapshot(
             target,
             buildForgeSnapshotFromStatus(status, resolution.forge),
+            {
+              notify: true,
+            },
           );
         },
         onError: (error) => {
@@ -2894,7 +2902,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         if (!closed && this.isActiveObservedWorkspaceTarget(target)) {
           latestStatus = status;
           consecutiveErrors = 0;
-          this.rememberForgePrStatusSnapshot(target, buildForgeSnapshotFromStatus(status, forge));
+          this.rememberForgePrStatusSnapshot(target, buildForgeSnapshotFromStatus(status, forge), {
+            notify: true,
+          });
         }
       } catch (error) {
         consecutiveErrors += 1;
@@ -3070,6 +3080,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private normalizeRefreshRequest(
     options: WorkspaceGitSnapshotOptions | undefined,
     defaultReason: string,
+    notify: boolean,
   ): WorkspaceGitRefreshRequest {
     if (options?.force && !options.reason) {
       throw new Error("WorkspaceGitService.getSnapshot force refresh requires a reason");
@@ -3082,6 +3093,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       refreshWorktree: true,
       includeForge: options?.includeForge ?? true,
       reason: options?.reason ?? defaultReason,
+      notify,
       queueIfBusy: false,
       movedRemoteRefs: new Set(),
     };
@@ -3110,6 +3122,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       includeForge: options?.includeForge ?? false,
       emitUnchanged: options?.emitUnchanged,
       reason: options?.reason ?? "watch",
+      notify: true,
       queueIfBusy: options?.queueIfBusy ?? true,
       movedRemoteRefs: new Set(options?.movedRemoteRefs),
     };
@@ -3148,6 +3161,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         upgradesMovedRefs
           ? request.reason
           : pending.reason,
+      notify: pending.notify || request.notify,
       queueIfBusy: pending.queueIfBusy || request.queueIfBusy,
       movedRemoteRefs,
     };
@@ -3168,6 +3182,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         target.latestSnapshot
       ) {
         this.rememberSnapshot(target, target.latestSnapshot, {
+          notify: request.notify,
           forceEmit: true,
         });
       }
@@ -3184,6 +3199,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         }
         snapshot = admittedSnapshot;
         this.rememberSnapshot(target, snapshot, {
+          notify: request.notify,
           forceEmit:
             request.force || (request.emitUnchanged === true && request.movedRemoteRefs.size > 0),
         });
@@ -3470,6 +3486,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private rememberForgePrStatusSnapshot(
     target: WorkspaceGitTarget,
     github: WorkspaceGitRuntimeSnapshot["forge"],
+    options?: { notify?: boolean },
   ): void {
     if (target.closed || this.workspaceTargets.get(target.cwd) !== target) {
       return;
@@ -3478,6 +3495,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     target.latestForge = github;
     target.latestForgeLoadedAtMs = this.deps.now().getTime();
     this.rememberSnapshot(target, this.combineSnapshot(target), {
+      notify: options?.notify,
       forceEmit: false,
     });
   }
@@ -3485,11 +3503,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private rememberSnapshot(
     target: WorkspaceGitTarget,
     snapshot: WorkspaceGitRuntimeSnapshot,
-    options?: { forceEmit?: boolean },
+    options?: { forceEmit?: boolean; notify?: boolean },
   ): void {
-    if (target.closed || this.workspaceTargets.get(target.cwd) !== target) {
-      return;
-    }
     target.latestSnapshot = snapshot;
     if (target.listeners.size > 0) {
       this.updateForgePrStatusPollForTarget(target);
@@ -3500,6 +3515,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return;
     }
     target.latestFingerprint = fingerprint;
+    if (!options?.notify || target.listeners.size === 0) {
+      return;
+    }
+    for (const listener of target.listeners) {
+      listener(snapshot);
+    }
     for (const listener of this.snapshotUpdatedListeners) {
       try {
         listener(snapshot);
@@ -3509,9 +3530,6 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           "Workspace git snapshot listener threw",
         );
       }
-    }
-    for (const listener of target.listeners) {
-      listener(snapshot);
     }
   }
 

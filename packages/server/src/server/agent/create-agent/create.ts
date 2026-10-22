@@ -1,5 +1,4 @@
-import type { FinishSubscriptions } from "../finish-subscriptions/index.js";
-import type { AgentPromptSource } from "../agent-messages/index.js";
+import type { AgentPromptSource, AgentMessageDelivery } from "../agent-messages/index.js";
 import type { Logger } from "pino";
 
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
@@ -16,7 +15,7 @@ import type { AgentPromptInput, AgentRunOptions, AgentSessionConfig } from "../a
 import type { AgentStorage } from "../agent-storage.js";
 import type { AgentOwner } from "../agent-owner.js";
 import type { ProviderSnapshotManager } from "../provider-snapshot-manager.js";
-import { startCreatedAgentInitialPrompt } from "../agent-prompt.js";
+import { setupFinishNotification, startCreatedAgentInitialPrompt } from "../agent-prompt.js";
 import { resolveCreateAgentTitles } from "../create-agent-title.js";
 import { buildAgentPrompt } from "../prompt-attachments.js";
 import { normalizeClientMessageId, resolveClientMessageId } from "../../client-message-id.js";
@@ -24,7 +23,7 @@ import { resolveRequiredProviderModel, type ResolvedProviderModel } from "../mcp
 import { resolveCreateAgentIntent } from "./intent.js";
 
 export interface CreateAgentCommandDependencies {
-  finishSubscriptions?: FinishSubscriptions;
+  agentMessages?: AgentMessageDelivery;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   logger: Logger;
@@ -176,29 +175,28 @@ export async function createAgentCommand(
   if (input.kind === "mcp") {
     input.onCreated?.({ agentId: snapshot.id, createdWorktree: resolved.createdWorktree ?? null });
   }
-  const notification =
+  const stopNotification =
     input.kind === "mcp" &&
     input.notifyOnFinish &&
     input.callerAgentId &&
     resolved.prompt !== undefined
-      ? await requireFinishSubscriptions(dependencies).register(
-          {
-            childAgentId: snapshot.id,
-            callerAgentId: input.callerAgentId,
-            requireParentOwnership: !(input.detached ?? false),
-          },
-          true,
-        )
+      ? setupFinishNotification({
+          agentMessages: requireAgentMessages(dependencies),
+          agentManager: dependencies.agentManager,
+          agentStorage: dependencies.agentStorage,
+          childAgentId: snapshot.id,
+          callerAgentId: input.callerAgentId,
+          // Detached agents have no parent label, but still notify their creator.
+          requireParentOwnership: !(input.detached ?? false),
+          logger: dependencies.logger,
+        })
       : undefined;
 
   if (resolved.prompt !== undefined) {
-    const sendResult = await sendInitialPrompt(dependencies, resolved, snapshot).catch(
-      async (error) => {
-        await notification?.reject();
-        throw error;
-      },
-    );
-    notification?.accept();
+    const sendResult = await sendInitialPrompt(dependencies, resolved, snapshot).catch((error) => {
+      stopNotification?.();
+      throw error;
+    });
     initialPromptStarted = sendResult.started;
     liveSnapshot = sendResult.liveSnapshot;
     initialPromptError = sendResult.error ?? null;
@@ -563,9 +561,7 @@ async function resolveMcpCwd(params: {
   };
 }
 
-function requireFinishSubscriptions(
-  dependencies: CreateAgentCommandDependencies,
-): FinishSubscriptions {
-  if (!dependencies.finishSubscriptions) throw new Error("Finish subscriptions are not configured");
-  return dependencies.finishSubscriptions;
+function requireAgentMessages(dependencies: CreateAgentCommandDependencies): AgentMessageDelivery {
+  if (!dependencies.agentMessages) throw new Error("Agent message delivery is not configured");
+  return dependencies.agentMessages;
 }

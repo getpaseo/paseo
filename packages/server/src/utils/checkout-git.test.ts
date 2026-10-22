@@ -14,7 +14,7 @@ import { join } from "path";
 import { win32 } from "node:path";
 import { tmpdir } from "os";
 import pino from "pino";
-import { base64EncryptedWireByteLength, maxSecuredPlaintextByteLength } from "@getpaseo/relay";
+import { base64EncryptedWireByteLength } from "@getpaseo/relay";
 import {
   __resetCheckoutShortstatCacheForTests,
   __resetPullRequestStatusCacheForTests,
@@ -1589,15 +1589,19 @@ const x = 1;
   it("warms shortstat cache in the background without blocking listing callers", async () => {
     expect(getCachedCheckoutShortstat(repoDir)).toBeUndefined();
 
-    const warmed = new Promise<void>((resolve) => {
-      warmCheckoutShortstatInBackground(repoDir, undefined, resolve);
-    });
-    // The warm hands off to git and returns; listing callers see no value yet.
-    expect(getCachedCheckoutShortstat(repoDir)).toBeUndefined();
+    warmCheckoutShortstatInBackground(repoDir);
 
-    await warmed;
     // A repo with no origin/main computes to null, but null should still be cached.
-    expect(getCachedCheckoutShortstat(repoDir)).toBeNull();
+    for (let attempts = 0; attempts < 20; attempts += 1) {
+      const cached = getCachedCheckoutShortstat(repoDir);
+      if (cached !== undefined) {
+        expect(cached).toBeNull();
+        return;
+      }
+      await sleep(25);
+    }
+
+    throw new Error("shortstat background warm did not populate cache in time");
   });
 
   it("commits messages with quotes safely", async () => {
@@ -1654,14 +1658,9 @@ const x = 1;
       CHECKOUT_DIFF_MAX_STRUCTURED_BYTES + frameEnvelopeHeadroomBytes,
     );
 
-    // The cap is sized for the tighter of the legacy and protected relay framings.
-    expect(CHECKOUT_DIFF_MAX_STRUCTURED_BYTES).toBe(
-      maxSecuredPlaintextByteLength(relayFrameBytes) - frameEnvelopeHeadroomBytes,
-    );
-    expect(CHECKOUT_DIFF_MAX_STRUCTURED_BYTES).toBeLessThanOrEqual(24_117_208);
-    expect(CHECKOUT_DIFF_MAX_STRUCTURED_BYTES).toBeGreaterThan(24_000_000);
+    expect(CHECKOUT_DIFF_MAX_STRUCTURED_BYTES).toBe(24_117_208);
     expect(diffWireBytes).toBeLessThan(relayFrameBytes);
-    expect(maximumFrameWireBytes).toBeLessThanOrEqual(relayFrameBytes);
+    expect(maximumFrameWireBytes).toBe(relayFrameBytes);
   });
 
   it("marks tracked generated one-line diffs as too_large by content size", async () => {

@@ -128,7 +128,6 @@ export type WorkspaceTabDestination =
   | { kind: "sheet"; tabId: string };
 
 interface WorkspaceLayoutStore {
-  panelRevisionByWorkspace: Record<string, Record<string, number>>;
   /** Published once by the app shell; callers never pass a form factor to open a tab. */
   layoutMode: WorkspaceLayoutMode;
   pendingOpenByWorkspace: Record<string, OpenWorkspaceTabInput>;
@@ -998,22 +997,6 @@ function createPersistedStateProjection() {
   };
 }
 
-function advancePanelRevision(
-  state: WorkspaceLayoutStore,
-  workspaceKey: string,
-  tabId: string,
-  target: WorkspaceTabTarget,
-) {
-  if (target.kind !== "file" && target.kind !== "plugin") return {};
-  const revisions = state.panelRevisionByWorkspace[workspaceKey] ?? {};
-  return {
-    panelRevisionByWorkspace: {
-      ...state.panelRevisionByWorkspace,
-      [workspaceKey]: { ...revisions, [tabId]: (revisions[tabId] ?? 0) + 1 },
-    },
-  };
-}
-
 export function createWorkspaceLayoutStore(
   ids: WorkspaceLayoutIdSource = defaultWorkspaceLayoutIds,
   storage: StateStorage = AsyncStorage,
@@ -1040,7 +1023,6 @@ export function createWorkspaceLayoutStore(
           }
           return tabId;
         },
-        panelRevisionByWorkspace: {},
         pendingOpenByWorkspace: {},
         deferOpenTab: (input) => {
           set((state) => ({
@@ -1113,15 +1095,7 @@ export function createWorkspaceLayoutStore(
                       ? [existing]
                       : [];
                   });
-            set((state) => ({
-              ...withSheets(state, normalizedWorkspaceKey, next),
-              ...advancePanelRevision(
-                state,
-                normalizedWorkspaceKey,
-                sheet.tab.tabId,
-                normalizedTarget,
-              ),
-            }));
+            set((state) => withSheets(state, normalizedWorkspaceKey, next));
             return sheet.tab.tabId;
           }
           const placement = getOpenTabPlacement(
@@ -1177,7 +1151,6 @@ export function createWorkspaceLayoutStore(
           const shouldPinAgent = input.pin === true && normalizedTarget.kind === "agent";
           set((state) => ({
             ...withoutFocusRestoration(state, normalizedWorkspaceKey),
-            ...advancePanelRevision(state, normalizedWorkspaceKey, result.tabId, normalizedTarget),
             // A tab brought to the front dismisses the sheet over it.
             ...(input.intent === "background" ? {} : dismissSheets(state, normalizedWorkspaceKey)),
             hiddenAgentIdsByWorkspace:
@@ -1557,15 +1530,7 @@ export function createWorkspaceLayoutStore(
               })),
             };
             if (policy) {
-              set((state) => ({
-                sheetsByWorkspace: next.sheetsByWorkspace,
-                ...advancePanelRevision(
-                  state,
-                  normalizedWorkspaceKey,
-                  normalizedTabId,
-                  normalizedTarget,
-                ),
-              }));
+              set({ sheetsByWorkspace: next.sheetsByWorkspace });
               return normalizedTabId;
             }
             // A target sheets do not host becomes the tab it would have opened as.
@@ -1583,7 +1548,6 @@ export function createWorkspaceLayoutStore(
           if (!result) return null;
           set((state) => ({
             ...withoutFocusRestoration(state, normalizedWorkspaceKey),
-            ...advancePanelRevision(state, normalizedWorkspaceKey, result.tabId, normalizedTarget),
             hiddenAgentIdsByWorkspace:
               normalizedTarget.kind !== "agent"
                 ? state.hiddenAgentIdsByWorkspace
@@ -2416,14 +2380,12 @@ interface PendingWorkspaceOpenReadiness {
   workspaceKey: string | null;
   hasHydratedWorkspaces: boolean;
   workspaceExists: boolean;
-  onOpened: (workspaceKey: string, tabId: string | null) => void;
 }
 
 export function usePendingWorkspaceOpen({
   workspaceKey,
   hasHydratedWorkspaces,
   workspaceExists,
-  onOpened,
 }: PendingWorkspaceOpenReadiness): WorkspaceTabTarget | null {
   const workspaceReady = hasHydratedWorkspaces && workspaceExists;
   const pending = useWorkspaceLayoutStore((state) =>
@@ -2432,8 +2394,8 @@ export function usePendingWorkspaceOpen({
   const layoutHydrated = useWorkspaceLayoutStoreHydrated();
   useLayoutEffect(() => {
     if (workspaceKey && workspaceReady && layoutHydrated && pending) {
-      onOpened(workspaceKey, useWorkspaceLayoutStore.getState().consumePendingOpen(workspaceKey));
+      useWorkspaceLayoutStore.getState().consumePendingOpen(workspaceKey);
     }
-  }, [workspaceKey, workspaceReady, layoutHydrated, pending, onOpened]);
+  }, [workspaceKey, workspaceReady, layoutHydrated, pending]);
   return pending ? pending.target : null;
 }

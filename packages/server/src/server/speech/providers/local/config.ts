@@ -29,7 +29,6 @@ export interface LocalSpeechProviderConfig {
 
 export interface ResolvedLocalSpeechConfig {
   local: LocalSpeechProviderConfig | undefined;
-  modelsDir: string;
   sttLanguages: LocalSpeechSttLanguageConfig;
 }
 
@@ -69,12 +68,12 @@ const LocalSpeechResolutionSchema = z.object({
 function persistedLocalFeatureModel(
   provider: RequestedSpeechProviders[keyof RequestedSpeechProviders]["provider"],
   enabled: boolean | undefined,
-  site: { provider: string; model?: string } | undefined,
+  model: string | undefined,
 ): string | undefined {
   if (provider !== "local" || enabled === false) {
     return undefined;
   }
-  return site?.provider === "local" ? site.model : undefined;
+  return model;
 }
 
 function shouldIncludeLocalProviderConfig(params: {
@@ -144,8 +143,6 @@ function buildLocalSpeechResolutionInput(params: {
   includeProviderConfig: boolean;
 }): Record<string, unknown> {
   const { paseoHome, env, persisted, providers, includeProviderConfig } = params;
-  const tts = persisted.features?.voiceMode?.tts;
-  const localTts = tts?.provider === "local" ? tts : undefined;
   return {
     includeProviderConfig,
     modelsDir: firstDefinedValue<string>([
@@ -158,7 +155,7 @@ function buildLocalSpeechResolutionInput(params: {
       persistedLocalFeatureModel(
         providers.dictationStt.provider,
         providers.dictationStt.enabled,
-        persisted.features?.dictation?.stt,
+        persisted.features?.dictation?.stt?.model,
       ),
       DEFAULT_LOCAL_STT_MODEL,
     ]),
@@ -167,7 +164,7 @@ function buildLocalSpeechResolutionInput(params: {
       persistedLocalFeatureModel(
         providers.voiceStt.provider,
         providers.voiceStt.enabled,
-        persisted.features?.voiceMode?.stt,
+        persisted.features?.voiceMode?.stt?.model,
       ),
       DEFAULT_LOCAL_STT_MODEL,
     ]),
@@ -176,18 +173,18 @@ function buildLocalSpeechResolutionInput(params: {
       persistedLocalFeatureModel(
         providers.voiceTts.provider,
         providers.voiceTts.enabled,
-        persisted.features?.voiceMode?.tts,
+        persisted.features?.voiceMode?.tts?.model,
       ),
       DEFAULT_LOCAL_TTS_MODEL,
     ]),
     ...buildLocalSpeechLanguageResolutionInput({ env, persisted }),
     voiceLocalTtsSpeakerId: firstDefinedValue<string | number>([
       env.PASEO_VOICE_LOCAL_TTS_SPEAKER_ID,
-      localTts?.speakerId,
+      persisted.features?.voiceMode?.tts?.speakerId,
     ]),
     voiceLocalTtsSpeed: firstDefinedValue<string | number>([
       env.PASEO_VOICE_LOCAL_TTS_SPEED,
-      localTts?.speed,
+      persisted.features?.voiceMode?.tts?.speed,
     ]),
   };
 }
@@ -203,10 +200,11 @@ export function resolveLocalSpeechConfig(params: {
     buildLocalSpeechResolutionInput({ ...params, includeProviderConfig }),
   );
 
-  const resolvedVoiceTtsSpeakerId = parsed.voiceLocalTtsSpeakerId ?? 0;
+  const resolvedVoiceTtsSpeakerId =
+    parsed.voiceLocalTtsSpeakerId ??
+    (parsed.voiceLocalTtsModel === "kokoro-en-v0_19" ? 0 : undefined);
 
   return {
-    modelsDir: parsed.modelsDir,
     sttLanguages: {
       dictation: parsed.dictationLanguage,
       voice: parsed.voiceLanguage,

@@ -5,7 +5,6 @@ import {
   applyCommandCenterAgentControls,
   chooseCommandCenterAgentControl,
   openCommandCenterForAgent,
-  searchAgentControls,
   expectCommandCenterAgentControlSelected,
   expectFocusedAgentControls,
   expectWorkspaceAgentConfiguration,
@@ -112,8 +111,8 @@ test.describe("Command Center agent controls", () => {
     });
     try {
       await workspace.client.setAgentMode(workspace.agentId, "approval-test");
-      await openCommandCenterForAgent(page, workspace);
-      await searchAgentControls(page, "load");
+      const input = await openCommandCenterForAgent(page, workspace);
+      await input.fill("load");
       await page.keyboard.press("Enter");
 
       await expectWorkspaceAgentConfiguration(workspace, {
@@ -185,7 +184,7 @@ test.describe("Command Center agent controls", () => {
     try {
       await workspace.client.setAgentMode(workspace.agentId, "approval-test");
       const input = await openCommandCenterForAgent(page, workspace);
-      await searchAgentControls(page, "loa");
+      await input.fill("loa");
       // Moves the highlight onto a model row, which still matches after the next keystroke.
       await page.keyboard.press("ArrowDown");
       await input.fill("load");

@@ -1,9 +1,7 @@
-import { useMemo, useRef, type ReactNode } from "react";
-import type { View, ViewProps } from "react-native";
+import type { ReactNode } from "react";
+import type { ViewProps } from "react-native";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
-import { KeyboardTranslationContext, useKeyboardShift } from "./context";
-import { useKeyboardTranslationScope } from "./measure";
-import { resolveKeyboardLift } from "./policy";
+import { useKeyboardShift } from "./context";
 
 interface KeyboardTranslateViewProps extends ViewProps {
   children: ReactNode;
@@ -20,18 +18,13 @@ export function KeyboardTranslateView({
   ...props
 }: KeyboardTranslateViewProps) {
   const { shift } = useKeyboardShift();
-  const frameRef = useRef<View>(null);
-  const translation = useMemo(() => ({ enabled, bottomClearance }), [bottomClearance, enabled]);
-  const scope = useKeyboardTranslationScope(frameRef, translation);
   const keyboardStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: -resolveKeyboardLift({ shift: shift.value, ...translation }) }],
+    transform: [{ translateY: enabled ? -Math.max(0, shift.value - bottomClearance) : 0 }],
   }));
 
   return (
-    <Animated.View ref={frameRef} style={[style, keyboardStyle]} {...props}>
-      <KeyboardTranslationContext.Provider value={scope}>
-        {children}
-      </KeyboardTranslationContext.Provider>
+    <Animated.View style={[style, keyboardStyle]} {...props}>
+      {children}
     </Animated.View>
   );
 }

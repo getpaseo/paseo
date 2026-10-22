@@ -8,25 +8,29 @@ import {
   SettingsSwitch,
 } from "@/components/settings";
 import { isNative } from "@/constants/platform";
-import { useAppSettings, type ChatDisplay } from "@/hooks/use-settings";
+import { useAppSettings, type AppSettings } from "@/hooks/use-settings";
 
-const CHAT_DISPLAYS: readonly ChatDisplay[] = ["full", "collapseToolCalls", "collapseTurns"];
+const TOOL_CALL_DETAIL_LEVELS: readonly AppSettings["toolCallDetailLevel"][] = [
+  "detailed",
+  "overview",
+];
 
 export function ChatSection() {
   const { t } = useTranslation();
   const { settings, updateSettings } = useAppSettings();
 
-  const chatDisplayOptions = useMemo(
+  const toolCallDetailOptions = useMemo(
     () =>
-      CHAT_DISPLAYS.map((value) => ({
+      TOOL_CALL_DETAIL_LEVELS.map((value) => ({
         value,
-        label: t(`settings.general.chatDisplay.options.${value}`),
+        label: t(`settings.general.toolCallDetail.options.${value}`),
       })),
     [t],
   );
 
-  const changeChatDisplay = useCallback(
-    (chatDisplay: ChatDisplay) => void updateSettings({ chatDisplay }),
+  const changeToolCallDetailLevel = useCallback(
+    (toolCallDetailLevel: AppSettings["toolCallDetailLevel"]) =>
+      void updateSettings({ toolCallDetailLevel }),
     [updateSettings],
   );
   const changeAutoExpandReasoning = useCallback(
@@ -49,11 +53,11 @@ export function ChatSection() {
             onValueChange={changeAutoExpandReasoning}
           />
           <SettingsSelect
-            label={t("settings.general.chatDisplay.label")}
-            hint={t("settings.general.chatDisplay.description")}
-            value={settings.chatDisplay}
-            options={chatDisplayOptions}
-            onValueChange={changeChatDisplay}
+            label={t("settings.general.toolCallDetail.label")}
+            hint={t("settings.general.toolCallDetail.description")}
+            value={settings.toolCallDetailLevel}
+            options={toolCallDetailOptions}
+            onValueChange={changeToolCallDetailLevel}
           />
           {isNative ? null : (
             <SettingsSwitch

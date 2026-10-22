@@ -11,15 +11,20 @@ import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 interface OpenWorkspaceFileFromExplorerInput {
   filePath: string;
   persistenceKey: string | null;
+  closeExplorerAfterOpen: boolean;
+  showMobileAgent: () => void;
   openWorkspaceTabInFocusedPane: (
     workspaceKey: string,
     target: WorkspaceTabTarget,
     placement?: WorkspaceTabPlacement,
   ) => string | null;
-  revealWorkspaceTab: (workspaceKey: string, tabId: string) => void;
+  focusWorkspaceTab: (workspaceKey: string, tabId: string) => void;
 }
 
 export function openWorkspaceFileFromExplorer(input: OpenWorkspaceFileFromExplorerInput): void {
+  if (input.closeExplorerAfterOpen) {
+    input.showMobileAgent();
+  }
   if (!input.persistenceKey) {
     return;
   }
@@ -33,6 +38,6 @@ export function openWorkspaceFileFromExplorer(input: OpenWorkspaceFileFromExplor
     FOCUSED_PANE_PLACEMENT,
   );
   if (tabId) {
-    input.revealWorkspaceTab(input.persistenceKey, tabId);
+    input.focusWorkspaceTab(input.persistenceKey, tabId);
   }
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { getStreamItemMessageId, type StreamItem } from "@/types/stream";
+import type { StreamItem } from "@/types/stream";
 import { findMountedWindowStart, getMountedRecentStreamItems } from "./history-window";
+import { getStreamItemMessageId } from "./presentation";
 
 // Callers reveal a message, not a row: an assistant message is several block rows and
 // the window has to open at the first of them.

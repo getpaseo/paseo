@@ -22,8 +22,6 @@ function descriptor(
 
 function workspace(id: string, projectId: string, root: string): WorkspaceDescriptor {
   return {
-    createdAt: null,
-    lastUserMessageAt: null,
     id,
     projectId,
     projectDisplayName: "acme/app",

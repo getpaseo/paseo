@@ -13,7 +13,6 @@ import {
   FileBackedWorkspaceRegistry,
   resolveWorkspaceDisplayName,
   resolveWorkspaceName,
-  type WorkspaceMutation,
 } from "./workspace-registry.js";
 
 describe("resolveWorkspaceName", () => {
@@ -431,10 +430,6 @@ describe("workspace registries", () => {
 
   test("creates, updates, archives, deletes, and lists workspace records", async () => {
     await workspaceRegistry.initialize();
-    const mutations: WorkspaceMutation[] = [];
-    workspaceRegistry.subscribeToMutations((mutation) => {
-      mutations.push(mutation);
-    });
     await workspaceRegistry.upsert(
       createPersistedWorkspaceRecord({
         workspaceId: "/tmp/repo",
@@ -465,11 +460,6 @@ describe("workspace registries", () => {
     expect(archived?.archivedAt).toBe("2026-03-03T00:00:00.000Z");
 
     await workspaceRegistry.remove("/tmp/repo");
-    expect(mutations.at(-1)).toEqual({
-      kind: "remove",
-      workspaceId: "/tmp/repo",
-      workspace: archived,
-    });
     expect(await workspaceRegistry.get("/tmp/repo")).toBeNull();
     expect(await workspaceRegistry.list()).toEqual([]);
   });

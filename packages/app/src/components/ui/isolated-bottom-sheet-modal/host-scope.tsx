@@ -32,12 +32,9 @@ import { useSharedValue } from "react-native-reanimated";
 export function SheetHostScope({
   children,
   style,
-  enabled = true,
 }: {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
-  /** Disabled scopes keep their mounted children and use the enclosing host. */
-  enabled?: boolean;
 }) {
   const parent = useBottomSheetModalInternal();
   const hostName = `sheet-host-${useId()}`;
@@ -72,14 +69,12 @@ export function SheetHostScope({
   );
 
   return (
-    <BottomSheetModalInternalProvider value={enabled ? value : parent}>
+    <BottomSheetModalInternalProvider value={value}>
       <View style={[styles.scope, style]}>
         {children}
-        {enabled ? (
-          <View ref={hostRef} style={styles.host} pointerEvents="box-none" onLayout={handleLayout}>
-            <PortalHost name={hostName} />
-          </View>
-        ) : null}
+        <View ref={hostRef} style={styles.host} pointerEvents="box-none" onLayout={handleLayout}>
+          <PortalHost name={hostName} />
+        </View>
       </View>
     </BottomSheetModalInternalProvider>
   );
@@ -92,6 +87,5 @@ const styles = StyleSheet.create({
   },
   host: {
     ...StyleSheet.absoluteFill,
-    zIndex: 1,
   },
 });

@@ -11,12 +11,6 @@ export function assertPluginTimelineDataSize(data: JsonValue): void {
   }
 }
 
-/** A sliced string can keep the entire provider output alive. Copy only the retained UTF-16
- * units, including an unmatched surrogate at the existing character limit. */
-function retainTextPrefix(text: string, length: number): string {
-  return Buffer.from(text.slice(0, length), "utf16le").toString("utf16le");
-}
-
 function limitFailedShellError(item: AgentTimelineItem): AgentTimelineItem {
   if (
     item.type !== "tool_call" ||
@@ -34,7 +28,7 @@ function limitFailedShellError(item: AgentTimelineItem): AgentTimelineItem {
     ...item,
     error: {
       ...item.error,
-      content: retainTextPrefix(item.error.content, TOOL_CALL_CONTENT_MAX_LENGTH),
+      content: item.error.content.slice(0, TOOL_CALL_CONTENT_MAX_LENGTH),
     },
   };
 }
@@ -53,8 +47,7 @@ function limitPlainText(item: AgentTimelineItem): AgentTimelineItem {
     ...item,
     detail: {
       ...item.detail,
-      text:
-        retainTextPrefix(item.detail.text, TOOL_CALL_CONTENT_MAX_LENGTH - notice.length) + notice,
+      text: item.detail.text.slice(0, TOOL_CALL_CONTENT_MAX_LENGTH - notice.length) + notice,
     },
   };
 }
@@ -76,7 +69,7 @@ export function limitAgentTimelineItemContent(item: AgentTimelineItem): AgentTim
     ...item,
     detail: {
       ...item.detail,
-      output: retainTextPrefix(item.detail.output, TOOL_CALL_CONTENT_MAX_LENGTH),
+      output: item.detail.output.slice(0, TOOL_CALL_CONTENT_MAX_LENGTH),
     },
   };
 }
