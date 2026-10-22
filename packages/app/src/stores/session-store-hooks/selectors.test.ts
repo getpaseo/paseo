@@ -261,21 +261,16 @@ describe("workspace replica authority", () => {
       primaryServerId,
       loadingServerId,
     ]);
-    const projects = selectWorkspaceStructureProjects(
-      state,
-      directoryServerIds,
-      undefined,
-      [
-        {
-          id: "local-link",
-          members: [
-            { serverId: primaryServerId, projectId: primaryProject.projectId },
-            { serverId: loadingServerId, projectId: "loading-project" },
-          ],
-          identity: { repository: "github.com/acme/app", subdirectory: "" },
-        },
-      ],
-    );
+    const projects = selectWorkspaceStructureProjects(state, directoryServerIds, undefined, [
+      {
+        id: "local-link",
+        members: [
+          { serverId: primaryServerId, projectId: primaryProject.projectId },
+          { serverId: loadingServerId, projectId: "loading-project" },
+        ],
+        identity: { repository: "github.com/acme/app", subdirectory: "" },
+      },
+    ]);
 
     expect(directoryServerIds).toEqual([primaryServerId]);
     expect(projects).toMatchObject([{ viewKey: projectKey, projectKey }]);
