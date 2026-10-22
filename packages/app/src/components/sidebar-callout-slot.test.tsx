@@ -49,9 +49,8 @@ vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
 import { SidebarCalloutProvider, useSidebarCallouts } from "@/contexts/sidebar-callout-context";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
-import { SidebarCalloutSlot as NativeSidebarCalloutSlot } from "./sidebar-callout-slot.native";
 
-function RegisterCallout({ native }: { native?: boolean }) {
+function RegisterCallout() {
   const callouts = useSidebarCallouts();
   useEffect(
     () =>
@@ -60,9 +59,8 @@ function RegisterCallout({ native }: { native?: boolean }) {
         title: "Update available",
         description: "v1 is ready.",
         testID: "slot-test-callout",
-        native,
       }),
-    [callouts, native],
+    [callouts],
   );
   return null;
 }
@@ -108,34 +106,6 @@ describe("SidebarCalloutSlot", () => {
       root?.render(
         <SidebarCalloutProvider>
           <SidebarCalloutSlot />
-        </SidebarCalloutProvider>,
-      );
-      await Promise.resolve();
-    });
-
-    expect(container?.querySelector('[data-testid="slot-test-callout"]')).toBeNull();
-  });
-
-  it("renders a callout marked native in the native sidebar", async () => {
-    await act(async () => {
-      root?.render(
-        <SidebarCalloutProvider>
-          <RegisterCallout native />
-          <NativeSidebarCalloutSlot />
-        </SidebarCalloutProvider>,
-      );
-      await Promise.resolve();
-    });
-
-    expect(container?.textContent).toContain("Update available");
-  });
-
-  it("leaves callouts not marked native out of the native sidebar", async () => {
-    await act(async () => {
-      root?.render(
-        <SidebarCalloutProvider>
-          <RegisterCallout />
-          <NativeSidebarCalloutSlot />
         </SidebarCalloutProvider>,
       );
       await Promise.resolve();

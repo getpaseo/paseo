@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { Worker } from "node:worker_threads";
 import { isPlatform } from "../test-utils/platform.js";
 import { currentBootId } from "../server/pid-lock.js";
 import {
@@ -138,6 +139,39 @@ function withSessionMember(input: {
       input.environmentUnreadable
         ? Promise.reject(new Error("permission denied"))
         : readEnvironment(pid),
+  };
+}
+
+// A record this process cannot open until another thread restores it, the way a worker's
+// rename over its record ends a Windows sharing violation. The thread waits for `release()`, then
+// restores the record while this thread is still inside the (synchronous) record read.
+async function unreadableUntilReleased(
+  recordPath: string,
+): Promise<{ release: () => void; restored: Promise<void> }> {
+  chmodSync(recordPath, 0);
+  const signal = new Int32Array(new SharedArrayBuffer(8));
+  const thread = new Worker(
+    `
+    const { parentPort, workerData } = require("node:worker_threads");
+    const signal = new Int32Array(workerData.signal);
+    parentPort.postMessage("ready");
+    Atomics.wait(signal, 0, 0);
+    Atomics.wait(signal, 1, 0, 30);
+    require("node:fs").chmodSync(workerData.recordPath, 0o600);
+    `,
+    { eval: true, workerData: { recordPath, signal: signal.buffer } },
+  );
+  await new Promise((resolve) => thread.once("message", resolve));
+  const restored = new Promise<void>((resolve, reject) => {
+    thread.once("exit", () => resolve());
+    thread.once("error", reject);
+  });
+  return {
+    release: () => {
+      Atomics.store(signal, 0, 1);
+      Atomics.notify(signal, 0);
+    },
+    restored,
   };
 }
 
@@ -495,5 +529,87 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
 
     await waitUntilGone(stubborn.pid!);
     expect(isAlive(stubborn.pid!)).toBe(false);
+  });
+
+  // chmod cannot make a file unreadable to root.
+  describe.skipIf(process.getuid?.() === 0)("a record that cannot be opened for a moment", () => {
+    it("still ends a live worker it names, then retires the record", async () => {
+      const home = makeHome();
+      const worker = spawn(
+        process.execPath,
+        ["-e", "setInterval(() => {}, 1e9)", "--", "--paseo-terminal-worker", "record-under-test"],
+        { detached: true, stdio: "ignore" },
+      );
+      children.push(worker);
+      const recordPath = writeRecord(home, {
+        pid: worker.pid!,
+        identity: {
+          startedAt: await birthOf(worker.pid!),
+          commandLine: "node -e --paseo-terminal-worker record-under-test",
+        },
+      });
+      const record = await unreadableUntilReleased(recordPath);
+
+      record.release();
+      const result = await reapTerminalWorkers({ paseoHome: home, inspector, gracefulMs: 0 });
+      await record.restored;
+
+      await waitUntilGone(worker.pid!);
+      expect(isAlive(worker.pid!)).toBe(false);
+      expect(result.signaled).toContain(worker.pid!);
+      expect(existsSync(recordPath)).toBe(false);
+    });
+
+    it("confirms the cleanup of a worker that already exited, then retires the record", async () => {
+      const home = makeHome();
+      const program = spawnIdle();
+      const recordPath = writeRecord(home, {
+        pid: await goneProcessPid(),
+        terminals: [{ id: "t1", pid: program.pid!, startedAt: await birthOf(program.pid!) }],
+      });
+      const record = await unreadableUntilReleased(recordPath);
+
+      record.release();
+      const result = await reapTerminalWorkers({ paseoHome: home, inspector, gracefulMs: 0 });
+      await record.restored;
+
+      await waitUntilGone(program.pid!);
+      expect(isAlive(program.pid!)).toBe(false);
+      expect(result.retired).toBe(1);
+      expect(existsSync(recordPath)).toBe(false);
+    });
+
+    it("still reports a record that stays unreadable, and signals nothing it names", async () => {
+      const home = makeHome();
+      const worker = spawn(
+        process.execPath,
+        ["-e", "setInterval(() => {}, 1e9)", "--", "--paseo-terminal-worker", "record-under-test"],
+        { detached: true, stdio: "ignore" },
+      );
+      children.push(worker);
+      const recordPath = writeRecord(home, {
+        pid: worker.pid!,
+        identity: {
+          startedAt: await birthOf(worker.pid!),
+          commandLine: "node -e --paseo-terminal-worker record-under-test",
+        },
+      });
+      chmodSync(recordPath, 0);
+
+      let caught: unknown;
+      try {
+        await reapTerminalWorkers({ paseoHome: home, inspector, gracefulMs: 0 });
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).toBeInstanceOf(TerminalCleanupNotConfirmedError);
+      expect((caught as TerminalCleanupNotConfirmedError).unreadableRecords).toEqual([
+        expect.objectContaining({ path: recordPath, error: expect.stringContaining("EACCES") }),
+      ]);
+      expect(isAlive(worker.pid!)).toBe(true);
+      chmodSync(recordPath, 0o600);
+      expect(existsSync(recordPath)).toBe(true);
+    });
   });
 });

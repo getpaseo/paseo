@@ -24,7 +24,7 @@ The worker writes `$PASEO_HOME/terminal-worker/<pid>.json` (owner-only) with its
 - Unix socket paths have a byte budget (103 on macOS, 107 on Linux). Dev homes under worktrees blow it, so `terminal-worker-socket-path.ts` tries `$PASEO_HOME/terminal-worker/sock/`, then `$TMPDIR/paseo-<uid>/`, then `/tmp/paseo-<uid>/`, and accepts an existing directory only if it is a real `0700` directory owned by you. It never chmods a shared root.
 - Cleanup signals a process only when its birth time matches the record. Birth times come from `ps -o lstart` with `LC_ALL=C` (it follows `LC_TIME` otherwise) and from `Win32_Process.CreationDate`. A missing birth time is "unknown", never matched by command text: a shell that ran `exec` keeps its pid and birth time but not its argv.
 - A kill cleanup that cannot confirm every process gone writes `closing-<recordId>.json` beside the worker record. The worker rewrites its own record whenever a terminal starts or exits, so the kill intent has to live in a file it never writes. A closing record is never adopted; the next stop or start retries it.
-- An unreadable record of either kind makes `daemon status` and a kill restart fail with its path: a kill cleanup that met it could not check what it names, and leaves nothing else behind.
+- An unreadable record of either kind makes `daemon status` and a kill restart fail with its path: a kill cleanup that met it could not check what it names, and leaves nothing else behind. A read that fails with `EPERM`, `EBUSY` or `EACCES` is retried for 250ms first: on Windows, opening a record while the worker renames its new copy over it fails that way for a moment.
 
 ## Protocol versions
 

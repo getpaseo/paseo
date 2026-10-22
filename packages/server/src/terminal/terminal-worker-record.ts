@@ -106,7 +106,29 @@ export function writeTerminalCleanupRecord(
 }
 
 export function readTerminalWorkerRecord(recordPath: string): TerminalWorkerRecord {
-  return TerminalWorkerRecordSchema.parse(JSON.parse(readFileSync(recordPath, "utf8")));
+  return TerminalWorkerRecordSchema.parse(JSON.parse(readRecordFile(recordPath)));
+}
+
+// A worker rewrites its record by renaming a new file over it. On Windows an open() that races
+// that rename fails with EPERM (or EBUSY) for a moment, so such an error is retried for a short
+// window before the record counts as unreadable. The wait is synchronous because every reader
+// is; it costs nothing unless a read fails, and a persistent error still fails after the window.
+const TRANSIENT_READ_ERRORS = new Set(["EPERM", "EBUSY", "EACCES"]);
+const TRANSIENT_READ_WINDOW_MS = 250;
+const TRANSIENT_READ_PAUSE_MS = 10;
+const readPause = new Int32Array(new SharedArrayBuffer(4));
+
+function readRecordFile(recordPath: string): string {
+  const deadline = Date.now() + TRANSIENT_READ_WINDOW_MS;
+  for (;;) {
+    try {
+      return readFileSync(recordPath, "utf8");
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (!code || !TRANSIENT_READ_ERRORS.has(code) || Date.now() >= deadline) throw error;
+      Atomics.wait(readPause, 0, 0, TRANSIENT_READ_PAUSE_MS);
+    }
+  }
 }
 
 const RECORD_ID_PATTERN = /^[A-Za-z0-9-]+$/;
