@@ -31,6 +31,30 @@ describe("sidebar callout state", () => {
     expect(selectActiveSidebarCallout(state)?.title).toBe("Set up scripts");
   });
 
+  it("selects only callouts marked native for the native sidebar", () => {
+    let state = createSidebarCalloutState();
+    state = showSidebarCallout(state, {
+      id: "desktop-update",
+      priority: 300,
+      title: "Update available",
+    }).state;
+    state = showSidebarCallout(state, {
+      id: "daemon-outdated",
+      priority: 250,
+      title: "Daemon out of date",
+      native: true,
+    }).state;
+
+    expect(selectActiveSidebarCallout(state)?.title).toBe("Update available");
+    expect(selectActiveSidebarCallout(state, { nativeOnly: true })?.title).toBe(
+      "Daemon out of date",
+    );
+
+    state = dismissSidebarCallout(state, "daemon-outdated").state;
+
+    expect(selectActiveSidebarCallout(state, { nativeOnly: true })).toBeNull();
+  });
+
   it("replaces a callout by id without duplicating the queue item", () => {
     let state = createSidebarCalloutState();
     state = showSidebarCallout(state, {
