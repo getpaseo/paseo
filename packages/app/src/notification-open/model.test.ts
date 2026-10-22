@@ -60,6 +60,7 @@ describe("notification open", () => {
     const source = new FakeSource(launch);
     const agents: unknown[] = [];
     const routes: string[] = [];
+    const terminals: unknown[] = [];
     let ready = () => {};
     const readiness = new Promise<void>((resolve) => {
       ready = resolve;
@@ -68,6 +69,9 @@ describe("notification open", () => {
       source,
       openAgent: (target) => {
         agents.push(target);
+      },
+      openTerminal: (target) => {
+        terminals.push(target);
       },
       openRoute: (route) => {
         routes.push(route);
@@ -99,7 +103,10 @@ describe("notification open", () => {
       { serverId: "host", agentId: "agent" },
       { serverId: "host", agentId: "second" },
     ]);
-    expect(routes).toEqual(["/h/host/workspace/ws?open=terminal%3Aterm", "/h/host"]);
+    expect(routes).toEqual(["/h/host"]);
+    expect(terminals).toEqual([
+      { kind: "terminal", serverId: "host", workspaceId: "ws", terminalId: "term" },
+    ]);
     expect(source.acknowledged).toEqual(["one", "two", "invalid", "terminal", "host"]);
     stopAgain();
   });

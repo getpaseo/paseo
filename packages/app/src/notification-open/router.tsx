@@ -1,7 +1,10 @@
 import { useEffect } from "react";
 import { router, usePathname, useRootNavigationState, type Href } from "expo-router";
 import { useHostRegistryStatus } from "@/runtime/host-runtime";
-import { useIsLastWorkspaceSelectionHydrated } from "@/stores/navigation-active-workspace-store";
+import {
+  navigateToWorkspace,
+  useIsLastWorkspaceSelectionHydrated,
+} from "@/stores/navigation-active-workspace-store";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { createNotificationOpenRouter } from "./model";
 import { createNotificationOpenSource } from "./source";
@@ -11,6 +14,12 @@ const waiters = new Set<() => void>();
 const notificationRouter = createNotificationOpenRouter({
   source: createNotificationOpenSource(),
   openAgent: (target) => navigateToAgent({ ...target, pin: true }),
+  openTerminal: ({ serverId, workspaceId, terminalId }) =>
+    navigateToWorkspace({
+      serverId,
+      workspaceId,
+      target: { kind: "terminal", terminalId },
+    }),
   openRoute: (route) => router.navigate(route as Href),
   whenReadyToNavigate: () =>
     ready

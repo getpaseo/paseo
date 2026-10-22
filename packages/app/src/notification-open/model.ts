@@ -1,4 +1,4 @@
-import { buildHostRootRoute, buildHostWorkspaceOpenRoute } from "@/utils/host-routes";
+import { buildHostRootRoute } from "@/utils/host-routes";
 import type { NotificationOpenSource, NotificationTap } from "./source";
 
 export const WEB_NOTIFICATION_CLICK_EVENT = "paseo:web-notification-click";
@@ -29,6 +29,7 @@ interface NotificationOpenRouterDeps {
   source: NotificationOpenSource;
   openAgent: (target: { serverId: string; agentId: string }) => void;
   openRoute: (route: string) => void;
+  openTerminal: (target: Extract<NotificationOpenTarget, { kind: "terminal" }>) => void;
   whenReadyToNavigate: () => Promise<void>;
 }
 
@@ -43,13 +44,7 @@ export function createNotificationOpenRouter(deps: NotificationOpenRouterDeps) {
     if (target?.kind === "agent") {
       deps.openAgent({ serverId: target.serverId, agentId: target.agentId });
     } else if (target?.kind === "terminal") {
-      deps.openRoute(
-        buildHostWorkspaceOpenRoute(
-          target.serverId,
-          target.workspaceId,
-          `terminal:${target.terminalId}`,
-        ),
-      );
+      deps.openTerminal(target);
     } else if (target?.kind === "host") {
       deps.openRoute(buildHostRootRoute(target.serverId));
     }

@@ -1,4 +1,8 @@
-import { buildHostAgentDetailRoute, buildHostWorkspaceRoute } from "@/utils/host-routes";
+import {
+  buildHostAgentDetailRoute,
+  buildHostWorkspaceOpenRoute,
+  buildHostWorkspaceRoute,
+} from "@/utils/host-routes";
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import {
@@ -7,6 +11,7 @@ import {
   expectWorkspaceTabVisible,
   openWorkspaceWithAgents,
 } from "../support/helpers/archive-tab";
+import { expectAgentAbsentFromWorkspaceLayout } from "../support/helpers/workspace-layout";
 import { clickNewChat } from "../support/helpers/launcher";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
@@ -89,6 +94,14 @@ async function closeFirstVisibleDraftTab(page: Page): Promise<void> {
   await closeButton.first().click();
 }
 
+async function openWorkspaceTabUrl(page: Page, route: string): Promise<void> {
+  await page.evaluate((url) => {
+    window.history.pushState(null, "", url);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, route);
+  await expectAppRoute(page, route.split("?")[0]);
+}
+
 test.describe("Workspace navigation regression", () => {
   test.describe.configure({ timeout: 240_000 });
 
@@ -126,6 +139,28 @@ test.describe("Workspace navigation regression", () => {
     });
     await expect(page.getByTestId("agent-route-waiting-for-host")).toBeVisible();
     await expect(page.getByText(/Notification Host/).first()).toBeVisible();
+  });
+
+  test("cold agent targets hydrate their workspace without opening the compact sidebar", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "notification-cold-compact-" });
+    try {
+      const agent = await createMockIdleAgent(workspace.client, {
+        cwd: workspace.repoPath,
+        workspaceId: workspace.workspaceId,
+        title: "Cold notification agent",
+      });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await gotoAppShell(page);
+      await page.goto(buildHostAgentDetailRoute(getServerId(), agent.id));
+      await expectAppRoute(page, buildHostWorkspaceRoute(getServerId(), workspace.workspaceId), {
+        timeout: 30_000,
+      });
+      await expectComposerVisible(page);
+    } finally {
+      await workspace.cleanup();
+    }
   });
 
   test("shows the New launcher after returning from settings and closing the last agent draft tab", async ({
@@ -457,6 +492,22 @@ test.describe("Workspace navigation regression", () => {
       await expect(secondDeckEntry).toBeAttached();
       await expect(secondDeckEntry).toBeHidden();
       await expectWorkspaceDeckEntryCount(page, 2);
+
+      await expectAgentAbsentFromWorkspaceLayout(page, {
+        serverId,
+        workspaceId: firstWorkspace.workspaceId,
+        agentId: secondAgent.id,
+      });
+      await openWorkspaceTabUrl(
+        page,
+        buildHostWorkspaceOpenRoute(serverId, firstWorkspace.workspaceId, `agent:${firstAgent.id}`),
+      );
+      await expectWorkspaceTabVisible(page, firstAgent.id);
+      await expectAgentAbsentFromWorkspaceLayout(page, {
+        serverId,
+        workspaceId: secondWorkspace.workspaceId,
+        agentId: firstAgent.id,
+      });
 
       await page.reload();
       await waitForSidebarHydration(page);
