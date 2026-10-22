@@ -152,6 +152,18 @@ describe("normalizeStoredHostProfile", () => {
     expect(profile?.appearance).toEqual({ color: "teal", badgeDisplay: "icon" });
   });
 
+  it("still loads a host that a device-local icon build stored an icon on", () => {
+    const profile = normalizeStoredHostProfile({
+      serverId: "srv_future",
+      appearance: { color: "teal", badgeDisplay: "icon", icon: "quantum-computer" },
+      connections: [
+        { id: "socket:/tmp/paseo.sock", type: "directSocket", path: "/tmp/paseo.sock" },
+      ],
+    });
+
+    expect(profile?.appearance).toEqual({ color: "teal", badgeDisplay: "icon" });
+  });
+
   it("normalizes stored Remote SSH connection parameters", () => {
     const profile = normalizeStoredHostProfile({
       serverId: "srv_ssh",
