@@ -1,4 +1,5 @@
 import { expect, test } from "../support/fixtures";
+import type { Page } from "@playwright/test";
 import { openAddProjectFlow, addProjectFlow } from "../support/helpers/add-project-flow";
 import { installUsageReportsFixture } from "../support/helpers/usage-reports";
 import {
@@ -30,6 +31,28 @@ import {
   setFooterItemVisible,
   setSidebarNavItemVisible,
 } from "../support/helpers/sidebar-nav-settings";
+
+async function showDeveloperToast(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    document.getElementById("error-toast")?.remove();
+    const toast = document.createElement("div");
+    toast.id = "error-toast";
+    toast.style.cssText = "position:fixed;inset:0;z-index:2147483647;background:white";
+    // Expo renders its unnamed dismiss button in an open shadow root.
+    const button = document.createElement("button");
+    button.style.cssText = "width:24px;height:24px";
+    button.addEventListener("click", () => toast.remove());
+    toast.attachShadow({ mode: "open" }).appendChild(button);
+    document.body.appendChild(toast);
+  });
+}
+
+test("developer toasts leave concurrent sidebar layout checks uninterrupted", async ({ page }) => {
+  await gotoAppShell(page);
+  await showDeveloperToast(page);
+  await expectSidebarOrder(page, ["new-workspace", "history", "search", "schedules"]);
+  await expect(page.locator("#error-toast")).toBeHidden();
+});
 
 test("fixed footer line keeps its five icons, Help and Settings at the end", async ({ page }) => {
   test.setTimeout(120_000);

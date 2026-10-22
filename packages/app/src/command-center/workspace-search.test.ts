@@ -7,21 +7,22 @@ function workspace(input: {
   title?: string;
   subtitle?: string;
   changeRequestNumber?: number | null;
+  activityAt?: Date | null;
 }): CommandCenterWorkspaceResult {
   return {
     kind: "workspace",
     id: input.id,
     title: input.title ?? input.id,
     subtitle: input.subtitle ?? "",
+    project: { viewKey: "project", name: "project", iconDataUri: null },
     changeRequestNumber: input.changeRequestNumber ?? null,
+    activityAt: input.activityAt ?? null,
     run: () => undefined,
   };
 }
 
 function ids(rows: readonly CommandCenterWorkspaceResult[], query: string): string[] {
-  return filterAndRankWorkspaces(rows, query, (left, right) => left.id.localeCompare(right.id)).map(
-    (row) => row.id,
-  );
+  return filterAndRankWorkspaces(rows, query).map((row) => row.id);
 }
 
 describe("filterAndRankWorkspaces", () => {
@@ -78,5 +79,19 @@ describe("filterAndRankWorkspaces", () => {
   it("ranks an exact change request above an ordinary text match", () => {
     const text = workspace({ id: "a-text", title: "Migration 42" });
     expect(ids([text, subject], "42")).toEqual(["payments", "a-text"]);
+  });
+
+  it("orders workspaces in the same match tier by recency", () => {
+    const older = workspace({
+      id: "older",
+      title: "Usage hover card",
+      activityAt: new Date("2026-10-01T00:00:00Z"),
+    });
+    const newer = workspace({
+      id: "newer",
+      title: "Deliver sidebar usage",
+      activityAt: new Date("2026-10-17T00:00:00Z"),
+    });
+    expect(ids([older, newer], "usage")).toEqual(["newer", "older"]);
   });
 });

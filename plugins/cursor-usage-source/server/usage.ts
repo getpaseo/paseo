@@ -1,4 +1,5 @@
 import type { UsageInput } from "../shared/input.js";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -11,6 +12,7 @@ import {
   type UsageAccount,
   type UsageReport,
   type UsageBalance,
+  type UsageScope,
 } from "@getpaseo/plugin/server/usage";
 
 const ApiNumberSchema = z.coerce.number().finite();
@@ -209,6 +211,27 @@ async function readToken(input: UsageInput): Promise<string | undefined> {
       : await readCursorTokenFromAuthJson(input.locator);
   return token ?? undefined;
 }
+
+const CursorIdentitySchema = z.object({ sub: z.string().min(1) });
+
+function cursorAccount(token: string, input: UsageInput): UsageAccount {
+  const parts = token.split(".");
+  if (parts.length === 3) {
+    try {
+      const payload: unknown = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8"));
+      const identity = CursorIdentitySchema.safeParse(payload);
+      if (identity.success) {
+        const key = createHash("sha256").update(identity.data.sub).digest("hex");
+        return { key: `account-${key}`, input };
+      }
+    } catch {
+      // Non-JWT logins still have a usage card, isolated to their credential store.
+    }
+  }
+  const key = createHash("sha256").update(JSON.stringify(input)).digest("hex");
+  return { key: `store-${key}`, input };
+}
+
 export async function discover(): Promise<UsageAccount[]> {
   const home = homedir();
   const candidates: UsageInput[] = ["CURSOR_ACCESS_TOKEN", "CURSOR_TOKEN"].map((locator) => ({
@@ -235,6 +258,36 @@ export async function discover(): Promise<UsageAccount[]> {
     ].map((locator) => ({ store: "sqlite" as const, locator })),
     { store: "file", locator: join(home, ".config", "cursor", "auth.json") },
   );
-  for (const input of candidates) if (await readToken(input)) return [{ key: "default", input }];
+  for (const input of candidates) {
+    const token = await readToken(input);
+    if (token) return [cursorAccount(token, input)];
+  }
   return [];
+}
+
+// Account identity joins global and session logins without merging different users.
+export async function discoverSession(
+  scope: Extract<UsageScope, { kind: "session" }>,
+  platform: NodeJS.Platform = process.platform,
+): Promise<UsageAccount[]> {
+  if (scope.provider !== "cursor") return [];
+  const locator = cursorAgentAuthPath(scope.env, platform);
+  if (!locator) return [];
+  const input: UsageInput = { store: "file", locator };
+  const token = await readToken(input);
+  return token ? [cursorAccount(token, input)] : [];
+}
+
+// Mirrors cursor-agent's credential store. Env credentials win over the stored login and
+// can't be named by an input. AGENT_CLI_CREDENTIAL_STORE picks "file" or "memory"; by
+// default macOS keeps the login in the Keychain and other platforms in auth.json.
+function cursorAgentAuthPath(env: Record<string, string>, platform: NodeJS.Platform) {
+  if (env.CURSOR_API_KEY || env.CURSOR_AUTH_TOKEN) return null;
+  const store = env.AGENT_CLI_CREDENTIAL_STORE;
+  if (store === "memory" || (platform === "darwin" && store !== "file")) return null;
+  const home = env.HOME || env.USERPROFILE || homedir();
+  if (platform === "win32")
+    return join(env.APPDATA || join(home, "AppData", "Roaming"), "Cursor", "auth.json");
+  if (platform === "darwin") return join(home, ".cursor", "auth.json");
+  return join(env.XDG_CONFIG_HOME || join(home, ".config"), "cursor", "auth.json");
 }

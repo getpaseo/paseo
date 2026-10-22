@@ -21,7 +21,12 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
   const navigations: string[] = [];
   const remembered: ActiveWorkspaceSelection[] = [];
   const openedTabs: RecordedTab[] = [];
+  const deferredTabs: unknown[] = [];
   const deps: NavigateToWorkspaceDeps = {
+    deferOpenTab: (input) => {
+      deferredTabs.push(input);
+      return null;
+    },
     getSessionWorkspaces: () => null,
     getSessionAgents: () => [] as Agent[],
     isWorkspaceLayoutHydrated: () => true,
@@ -33,7 +38,7 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
     navigateToRoute: (route) => navigations.push(route),
     ...overrides,
   };
-  return { deps, navigations, remembered, openedTabs };
+  return { deps, navigations, remembered, openedTabs, deferredTabs };
 }
 
 function createLastSelectionDeps(
@@ -139,7 +144,7 @@ describe("workspace navigation", () => {
   });
 
   it("defers an agent tab until a missing workspace is recovered", () => {
-    const { deps, navigations, openedTabs } = createFakeDeps({
+    const { deps, navigations, openedTabs, deferredTabs } = createFakeDeps({
       getSessionWorkspaces: () => new Map(),
     });
 
@@ -153,7 +158,8 @@ describe("workspace navigation", () => {
     );
 
     expect(openedTabs).toEqual([]);
-    expect(navigations).toEqual(["/h/server-1/workspace/workspace-a?open=agent%3Aagent-1"]);
+    expect(navigations).toEqual(["/h/server-1/workspace/workspace-a"]);
+    expect(deferredTabs).toHaveLength(1);
   });
 
   it("defers an agent tab until persisted workspace layout has hydrated", () => {
@@ -161,7 +167,7 @@ describe("workspace navigation", () => {
       id: "workspace-a",
       workspaceDirectory: "/repo/workspace-a",
     } as WorkspaceDescriptor;
-    const { deps, navigations, openedTabs } = createFakeDeps({
+    const { deps, navigations, openedTabs, deferredTabs } = createFakeDeps({
       getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
       isWorkspaceLayoutHydrated: () => false,
     });
@@ -177,7 +183,8 @@ describe("workspace navigation", () => {
     );
 
     expect(openedTabs).toEqual([]);
-    expect(navigations).toEqual(["/h/server-1/workspace/workspace-a?open=agent%3Aagent-1"]);
+    expect(navigations).toEqual(["/h/server-1/workspace/workspace-a"]);
+    expect(deferredTabs).toHaveLength(1);
   });
 
   it("reads the active workspace from the current route", () => {
