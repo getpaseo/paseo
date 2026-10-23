@@ -96,6 +96,13 @@ describe("applyMutableProviderConfigToOverrides", () => {
   });
 });
 
+function seedMetadataGeneration(paseoHome: string, metadataGeneration: unknown): void {
+  writeFileSync(
+    path.join(paseoHome, "config.json"),
+    `${JSON.stringify({ version: 1, agents: { metadataGeneration } }, null, 2)}\n`,
+  );
+}
+
 describe("DaemonConfigStore", () => {
   const tempDirs: string[] = [];
 
@@ -178,6 +185,106 @@ describe("DaemonConfigStore", () => {
     expect(changes).toEqual([false]);
     expect(store.get().promptSuggestions?.enabled).toBe(false);
     expect(loadPersistedConfig(paseoHome).agents?.promptSuggestions?.enabled).toBe(false);
+  });
+
+  // Greptile caught this: a shared-model write from Settings used to replace the
+  // whole object, deleting every per-kind override with it.
+  test("patch keeps per-kind metadata providers when the shared list changes", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    seedMetadataGeneration(paseoHome, {
+      providers: [{ provider: "claude", model: "haiku" }],
+      promptSuggestions: { providers: [{ provider: "opencode", model: "minimax-m3" }] },
+    });
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: {
+        providers: [{ provider: "claude", model: "haiku" }],
+        promptSuggestions: { providers: [{ provider: "opencode", model: "minimax-m3" }] },
+      },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+
+    store.patch({
+      metadataGeneration: { providers: [{ provider: "codex", model: "gpt-6-astra" }] },
+    });
+
+    const persisted = loadPersistedConfig(paseoHome).agents?.metadataGeneration;
+    expect(persisted?.providers).toEqual([{ provider: "codex", model: "gpt-6-astra" }]);
+    expect(persisted?.promptSuggestions?.providers).toEqual([
+      { provider: "opencode", model: "minimax-m3" },
+    ]);
+    expect(store.get().metadataGeneration?.promptSuggestions?.providers).toEqual([
+      { provider: "opencode", model: "minimax-m3" },
+    ]);
+  });
+
+  // Found live: Zod 4 applied the shared list's default inside the partial patch
+  // schema, so saving one kind's model wiped every other kind's.
+  test("patch that names only one kind keeps the shared list", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    seedMetadataGeneration(paseoHome, {
+      providers: [{ provider: "codex", model: "gpt-6-astra" }],
+    });
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [{ provider: "codex", model: "gpt-6-astra" }] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+
+    store.patch({
+      metadataGeneration: {
+        promptSuggestions: { providers: [{ provider: "claude", model: "haiku" }] },
+      },
+    });
+
+    const persisted = loadPersistedConfig(paseoHome).agents?.metadataGeneration;
+    expect(persisted?.providers).toEqual([{ provider: "codex", model: "gpt-6-astra" }]);
+    expect(persisted?.promptSuggestions?.providers).toEqual([
+      { provider: "claude", model: "haiku" },
+    ]);
+    expect(store.get().metadataGeneration?.providers).toEqual([
+      { provider: "codex", model: "gpt-6-astra" },
+    ]);
+  });
+
+  test("removing a provider drops it from the per-kind lists too", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    seedMetadataGeneration(paseoHome, {
+      providers: [{ provider: "opencode" }],
+      promptSuggestions: { providers: [{ provider: "opencode", model: "minimax-m3" }] },
+    });
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: {
+        providers: [{ provider: "opencode" }],
+        promptSuggestions: { providers: [{ provider: "opencode", model: "minimax-m3" }] },
+      },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+
+    store.patch({ removeProviders: ["opencode"] });
+
+    const persisted = loadPersistedConfig(paseoHome).agents?.metadataGeneration;
+    expect(persisted?.providers).toEqual([]);
+    expect(persisted?.promptSuggestions?.providers).toEqual([]);
   });
 
   test("patch round-trips agent profiles through the strictly-parsed persisted config", () => {
