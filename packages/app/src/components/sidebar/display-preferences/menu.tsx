@@ -58,6 +58,8 @@ import { SIDEBAR_ROW_ITEMS, type SidebarRowItem } from "./row-items";
 import { useWorkspaceLabelProjection } from "@/workspace-labels";
 import { WorkspaceLabelDot } from "@/workspace-labels/swatch";
 import { WorkspaceLabelManagerModal } from "@/workspace-labels/manager-modal";
+import { PluginIconView } from "@/plugins/icons";
+import type { PluginWorkspaceRowItemGroup } from "@/plugins/workspace-row-items";
 
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
@@ -65,6 +67,7 @@ const ThemedSettings2 = withUnistyles(Settings2);
 /** CI's mark: the subject of the checks row, and the shape the icon-only option leaves behind. */
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedCircle = withUnistyles(Circle);
+const ThemedPluginIconView = withUnistyles(PluginIconView);
 
 /** Fits the item's 16pt leading slot with a hair of room, matching the trailing check. */
 const OPTION_ICON_SIZE = 14;
@@ -614,6 +617,9 @@ function ShowPage({ preferences }: { preferences: Preferences }): ReactElement {
           testID={`sidebar-row-item-${item}`}
         />
       ))}
+      {preferences.pluginRowItems.map((item) => (
+        <PluginRowItemOption key={item.key} item={item} preferences={preferences} />
+      ))}
       <ChecksSubTrigger />
       <MenuSeparator />
       {TRAILING_CHOICES.map((choice) => (
@@ -629,6 +635,37 @@ function ShowPage({ preferences }: { preferences: Preferences }): ReactElement {
         />
       ))}
     </>
+  );
+}
+
+/** A plugin's workspace row item, toggled like the row's own. */
+function PluginRowItemOption({
+  item,
+  preferences,
+}: {
+  item: PluginWorkspaceRowItemGroup;
+  preferences: Preferences;
+}): ReactElement {
+  const handleSelect = useCallback(
+    () => preferences.togglePluginRowItem(item.key),
+    [item.key, preferences],
+  );
+  const leading = useMemo(
+    () => (
+      <ThemedPluginIconView icon={item.icon} size={OPTION_ICON_SIZE} uniProps={mutedIconMapping} />
+    ),
+    [item.icon],
+  );
+  return (
+    <MenuItem
+      selected={preferences.isPluginRowItemVisible(item.key)}
+      leading={leading}
+      closeOnSelect={false}
+      onSelect={handleSelect}
+      testID={`sidebar-row-item-plugin-${item.pluginId}-${item.itemId}`}
+    >
+      {item.title}
+    </MenuItem>
   );
 }
 

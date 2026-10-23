@@ -98,6 +98,7 @@ export class PluginRegistry {
           settingsScreens: [],
           sidebarItems: { header: [], footer: [] },
           legacySidebarItems: [],
+          workspaceRowItems: [],
           filePanels: [],
           workspacePanels: [],
           commandCenterItems: [],

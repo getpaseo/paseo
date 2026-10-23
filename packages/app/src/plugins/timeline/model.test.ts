@@ -23,6 +23,7 @@ function plugin(input: {
     surfaces: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
+    workspaceRowItems: [],
     filePanels: [],
     workspacePanels: [],
     commandCenterItems: [],

@@ -60,6 +60,7 @@ function installed(serverId: string, themes: PluginThemeContribution[]): Install
     surfaces: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
+    workspaceRowItems: [],
     filePanels: [],
     workspacePanels: [],
     commandCenterItems: [],
