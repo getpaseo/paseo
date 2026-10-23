@@ -466,6 +466,46 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
     );
   });
 
+  test("replays more child events than V8 permits in one spread call", async () => {
+    const childCount = 16;
+    const entriesPerChild = 10_000;
+    const children = Array.from({ length: childCount }, (_, index) => ({
+      agentId: `large-child-${index}`,
+      toolUseId: `large-task-${index}`,
+    }));
+    const parentLines = children.flatMap(({ agentId, toolUseId }) => [
+      parentEntry([{ type: "tool_use", id: toolUseId, name: "Task", input: {} }]),
+      JSON.stringify({
+        type: "user",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: toolUseId,
+              content: `agentId: ${agentId}\ndone`,
+            },
+          ],
+        },
+      }),
+    ]);
+    const subagentDir = writeParentSession(parentLines);
+    for (const { agentId, toolUseId } of children) {
+      writeSubagent({
+        subagentDir,
+        agentId,
+        meta: JSON.stringify({ toolUseId }),
+        sidechainLines: Array.from({ length: entriesPerChild }, () => sidechainEntry({ agentId })),
+      });
+    }
+
+    const events = await replayDescriptors();
+    const timelineCount = events.filter((event) => event.event.type === "timeline").length;
+    expect(timelineCount).toBe(childCount * entriesPerChild);
+    expect(upserts(events).filter((event) => event.status === "completed")).toHaveLength(
+      childCount,
+    );
+  }, 120_000);
+
   test("limits retained child shell output to the timeline's existing content limit", async () => {
     const output = "x".repeat(128 * 1024);
     writeSession({
