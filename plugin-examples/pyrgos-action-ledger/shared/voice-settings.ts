@@ -62,6 +62,10 @@ export function activeWordIndex(words: readonly TimedWord[], elapsedSeconds: num
   return words.findIndex((entry) => entry.start <= elapsedSeconds && elapsedSeconds <= entry.end);
 }
 
+export function heldWordIndex(words: readonly TimedWord[], elapsedSeconds: number): number {
+  return words.findLastIndex((entry) => entry.start <= elapsedSeconds);
+}
+
 export function parseLastUtterance(text: string): Utterance | null {
   const lines = text.split("\n").filter((line) => line.trim());
   for (let index = lines.length - 1; index >= 0; index -= 1) {

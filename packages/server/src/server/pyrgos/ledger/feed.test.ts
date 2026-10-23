@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, readFile, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -31,6 +31,9 @@ function item(text: string): LedgerItem {
     project: "p",
     doneCriteria: "d",
     transcriptRef: null,
+    launchId: "l1",
+    announcedAt: null,
+    launchedAt: null,
     launchError: null,
     dropReason: null,
     createdAt: "t",
@@ -125,6 +128,15 @@ describe("ReplyWatcher", () => {
     expect(await watcher.poll()).toEqual(["two"]);
   });
 
+  it("starts over when the file shrinks", async () => {
+    const path = join(dir, "t.replies.jsonl");
+    const watcher = new ReplyWatcher(path);
+    await appendFile(path, `${JSON.stringify({ ts: "t", text: "a long first reply" })}\n`);
+    expect(await watcher.poll()).toEqual(["a long first reply"]);
+    await writeFile(path, `${JSON.stringify({ text: "new" })}\n`);
+    expect(await watcher.poll()).toEqual(["new"]);
+  });
+
   it("skips malformed lines and keeps polling", async () => {
     const path = join(dir, "m.replies.jsonl");
     const watcher = new ReplyWatcher(path);
@@ -169,5 +181,25 @@ describe("ReplyPump", () => {
     expect(await pump.pump()).toEqual(["go ahead"]);
     expect(speak).toHaveBeenCalledWith("The overseer says: go ahead");
     expect(await pump.pump()).toEqual([]);
+  });
+
+  it("keeps a reply pending until speak succeeds, logging it once", async () => {
+    const session = createVoiceSession({ dir, session: "s6" });
+    await appendFile(session.repliesPath, `${JSON.stringify({ text: "retry me" })}\n`);
+    const speak = vi
+      .fn<(line: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error("tts down"))
+      .mockResolvedValue(undefined);
+    const pump = new ReplyPump({
+      watcher: new ReplyWatcher(session.repliesPath),
+      gate: new TurnGate(),
+      session,
+      speak,
+    });
+    await expect(pump.pump()).rejects.toThrow("tts down");
+    expect(await pump.pump()).toEqual(["retry me"]);
+    expect(speak).toHaveBeenCalledTimes(2);
+    const log = await readFile(session.path, "utf8");
+    expect(log.split("\n").filter((line) => line.includes("retry me"))).toHaveLength(1);
   });
 });

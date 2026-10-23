@@ -171,6 +171,51 @@ describe("ledger state machine", () => {
     expect(announce).toHaveBeenCalledTimes(1);
   });
 
+  it("gives launch a durable id that survives retries and reload", async () => {
+    const seen: (string | null)[] = [];
+    const launch = vi
+      .fn<(item: LedgerItem) => Promise<void>>()
+      .mockImplementationOnce(async (item) => {
+        seen.push(item.launchId);
+        throw new Error("lost ack");
+      })
+      .mockImplementation(async (item) => {
+        seen.push(item.launchId);
+      });
+    const { ledger, store } = makeLedger({ launch });
+    const { id } = ledger.propose({ item: "x" });
+    ledger.refine(id, COMPLETE);
+    await ledger.agree(id, { confirmed: true });
+    const reloaded = createLedger({ store, launch });
+    await reloaded.agree(id, { confirmed: true });
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).not.toBeNull();
+    expect(seen[1]).toBe(seen[0]);
+    await expect(reloaded.agree(id, { confirmed: true })).rejects.toMatchObject({
+      code: "bad_state",
+    });
+  });
+
+  it("rejects an overlapping agree while one is in flight", async () => {
+    let release: () => void = () => {};
+    const launch = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const { ledger } = makeLedger({ launch });
+    const { id } = ledger.propose({ item: "x" });
+    ledger.refine(id, COMPLETE);
+    const first = ledger.agree(id, { confirmed: true });
+    await expect(ledger.agree(id, { confirmed: true })).rejects.toMatchObject({
+      code: "bad_state",
+    });
+    release();
+    await first;
+    expect(launch).toHaveBeenCalledTimes(1);
+  });
+
   it("does not launch twice", async () => {
     const launch = vi.fn(async () => {});
     const { ledger } = makeLedger({ launch });

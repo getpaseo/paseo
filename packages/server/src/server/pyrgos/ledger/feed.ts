@@ -145,6 +145,7 @@ export class ReplyWatcher {
 
   async poll(): Promise<string[]> {
     const raw = await readFile(this.path, "utf8").catch(() => "");
+    if (raw.length < this.offset) this.offset = 0;
     const unread = raw.slice(this.offset);
     const end = unread.lastIndexOf("\n");
     if (end < 0) return [];
@@ -193,19 +194,23 @@ export interface ReplyPumpInput {
 }
 
 export class ReplyPump {
-  private readonly pending: string[] = [];
+  private readonly pending: { text: string; logged: boolean }[] = [];
 
   constructor(private readonly input: ReplyPumpInput) {}
 
   async pump(): Promise<string[]> {
-    this.pending.push(...(await this.input.watcher.poll()));
+    for (const text of await this.input.watcher.poll()) this.pending.push({ text, logged: false });
     const spoken: string[] = [];
     while (this.input.gate.idle()) {
-      const reply = this.pending.shift();
+      const reply = this.pending[0];
       if (reply === undefined) break;
-      await this.input.session.append("overseer", reply);
-      await this.input.speak(replyLine(reply));
-      spoken.push(reply);
+      if (!reply.logged) {
+        await this.input.session.append("overseer", reply.text);
+        reply.logged = true;
+      }
+      await this.input.speak(replyLine(reply.text));
+      this.pending.shift();
+      spoken.push(reply.text);
     }
     return spoken;
   }

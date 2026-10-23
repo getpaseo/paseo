@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 import {
   groupByState,
   missingFields,
@@ -24,8 +24,9 @@ export interface LedgerListProps {
 function useStyles(colors: LedgerListColors, compact: boolean) {
   return useMemo(
     () => ({
+      scroll: { flex: 1, backgroundColor: colors.background },
       screen: {
-        flex: 1,
+        flexGrow: 1,
         padding: compact ? 12 : 20,
         gap: 16,
         backgroundColor: colors.background,
@@ -84,10 +85,10 @@ export function LedgerList({ items, colors, compact }: LedgerListProps) {
   const styles = useStyles(colors, compact);
   const groups = useMemo(() => groupByState(items), [items]);
   return (
-    <View testID="ledger-list" style={styles.screen}>
+    <ScrollView testID="ledger-list" style={styles.scroll} contentContainerStyle={styles.screen}>
       {groups.map((group) => (
         <GroupSection key={group.state} group={group} styles={styles} />
       ))}
-    </View>
+    </ScrollView>
   );
 }

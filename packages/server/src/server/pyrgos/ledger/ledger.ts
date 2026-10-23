@@ -13,6 +13,9 @@ export const LedgerItemSchema = z.object({
   doneCriteria: z.string().nullable(),
   transcriptRef: z.string().nullable(),
   launchError: z.string().nullable(),
+  launchId: z.string().nullable().default(null),
+  announcedAt: z.string().nullable().default(null),
+  launchedAt: z.string().nullable().default(null),
   dropReason: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -86,6 +89,7 @@ export function createLedger(deps: LedgerDeps): Ledger {
   const now = deps.now ?? (() => new Date());
   const newId = deps.newId ?? (() => randomUUID().slice(0, 8));
   const items = new Map<string, LedgerItem>();
+  const inFlight = new Set<string>();
   for (const row of deps.store.load()) items.set(row.id, row);
 
   function save(next: LedgerItem): LedgerItem {
@@ -121,6 +125,9 @@ export function createLedger(deps: LedgerDeps): Ledger {
       doneCriteria: null,
       transcriptRef: input.transcriptRef ?? null,
       launchError: null,
+      launchId: null,
+      announcedAt: null,
+      launchedAt: null,
       dropReason: null,
       createdAt: stamp,
       updatedAt: stamp,
@@ -148,39 +155,48 @@ export function createLedger(deps: LedgerDeps): Ledger {
       throw new LedgerError("unconfirmed", `item ${id} needs explicit confirmation`, id);
     }
     const current = get(id);
-    const failures = current.state === "agreed" && current.launchError ? current.launchError : null;
-    if (current.state !== "refined" && failures === null) {
+    const outstanding = (item: LedgerItem) =>
+      (deps.announce !== undefined && item.announcedAt === null) ||
+      (deps.launch !== undefined && item.launchedAt === null);
+    const retry = current.state === "agreed" && outstanding(current);
+    if (current.state !== "refined" && !retry) {
       throw new LedgerError("bad_state", `item ${id} is ${current.state}, not refined`, id);
+    }
+    if (inFlight.has(id)) {
+      throw new LedgerError("bad_state", `item ${id} is already being agreed`, id);
     }
     const missing = MISSING_FIELDS.filter((field) => current[field] === null);
     if (missing.length > 0) {
       throw new LedgerError("incomplete", `item ${id} is missing ${missing.join(", ")}`, id);
     }
-    const agreed =
-      failures === null
-        ? save({ ...current, state: "agreed", updatedAt: now().toISOString() })
-        : current;
-    const parts = failures === null ? [] : failures.split("; ");
-    const announceDue = failures === null || parts.some((part) => part.startsWith(ANNOUNCE_FAILED));
-    const launchDue = failures === null || parts.some((part) => !part.startsWith(ANNOUNCE_FAILED));
-    const errors: string[] = [];
-    if (announceDue && deps.announce) {
-      try {
-        await deps.announce(agreed);
-      } catch (error) {
-        errors.push(`${ANNOUNCE_FAILED}${errorMessage(error)}`);
+    inFlight.add(id);
+    try {
+      let agreed = retry
+        ? current
+        : save({ ...current, state: "agreed", launchId: newId(), updatedAt: now().toISOString() });
+      const errors: string[] = [];
+      if (deps.announce && agreed.announcedAt === null) {
+        try {
+          await deps.announce(agreed);
+          agreed = save({ ...agreed, announcedAt: now().toISOString() });
+        } catch (error) {
+          errors.push(`${ANNOUNCE_FAILED}${errorMessage(error)}`);
+        }
       }
-    }
-    if (launchDue && deps.launch) {
-      try {
-        await deps.launch(agreed);
-      } catch (error) {
-        errors.push(errorMessage(error));
+      if (deps.launch && agreed.launchedAt === null) {
+        try {
+          await deps.launch(agreed);
+          agreed = save({ ...agreed, launchedAt: now().toISOString() });
+        } catch (error) {
+          errors.push(errorMessage(error));
+        }
       }
+      const launchError = errors.length > 0 ? errors.join("; ") : null;
+      if (launchError === agreed.launchError) return agreed;
+      return save({ ...agreed, launchError, updatedAt: now().toISOString() });
+    } finally {
+      inFlight.delete(id);
     }
-    const launchError = errors.length > 0 ? errors.join("; ") : null;
-    if (launchError === agreed.launchError) return agreed;
-    return save({ ...agreed, launchError, updatedAt: now().toISOString() });
   }
 
   function drop(id: string, reason?: string): LedgerItem {

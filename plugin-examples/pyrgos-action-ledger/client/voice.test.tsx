@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +12,9 @@ import {
   clampSettings,
   DEFAULT_CAPABILITIES,
   DEFAULT_SETTINGS,
+  heldWordIndex,
   parseLastUtterance,
+  type VoiceSettingsPatch,
 } from "../shared/voice-settings";
 import { VoiceSettingsForm } from "./voice-settings-form";
 import { WordHighlight } from "./word-highlight";
@@ -20,6 +24,13 @@ const colors = { foreground: "#fff", muted: "#888", accent: "#0af", surface: "#2
 const utterance = parseLastUtterance(fixture);
 const utteranceWords = utterance?.words ?? [];
 const noop = () => {};
+const sent: VoiceSettingsPatch[] = [];
+const record = (patch: VoiceSettingsPatch) => {
+  sent.push(patch);
+};
+const PITCH_CAPS = { speed: true, pitch: true, presets: ["warm"] };
+
+afterEach(cleanup);
 
 describe("activeWordIndex", () => {
   const words = utterance?.words ?? [];
@@ -38,6 +49,45 @@ describe("activeWordIndex", () => {
 
   it("is -1 in the gap between words", () => {
     expect(activeWordIndex(words, 0.62)).toBe(-1);
+  });
+});
+
+describe("heldWordIndex", () => {
+  const words = utteranceWords;
+
+  it("holds the last spoken word through gaps and after the end", () => {
+    expect(heldWordIndex(words, -1)).toBe(-1);
+    expect(heldWordIndex(words, 0.62)).toBe(1);
+    expect(heldWordIndex(words, 9)).toBe(5);
+  });
+
+  it("keeps the last word highlighted in the rendered output after the end", () => {
+    const html = renderToStaticMarkup(
+      <WordHighlight words={words} elapsedSeconds={9} colors={colors} />,
+    );
+    expect(html.match(/word-active/g)).toHaveLength(1);
+  });
+});
+
+describe("settings form", () => {
+  it("patches from the latest pending value, not the last render", () => {
+    sent.length = 0;
+    render(
+      <VoiceSettingsForm
+        settings={DEFAULT_SETTINGS}
+        capabilities={PITCH_CAPS}
+        colors={colors}
+        onChange={record}
+      />,
+    );
+    const faster = screen.getByLabelText("Increase Speed");
+    fireEvent.click(faster);
+    fireEvent.click(faster);
+    expect(sent).toEqual([{ speed: 1.1 }, { speed: 1.2 }]);
+    const higher = screen.getByLabelText("Increase Pitch");
+    fireEvent.click(higher);
+    fireEvent.click(higher);
+    expect(sent.slice(2)).toEqual([{ pitch: 1 }, { pitch: 2 }]);
   });
 });
 

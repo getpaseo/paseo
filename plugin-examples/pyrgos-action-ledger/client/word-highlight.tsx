@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Text } from "react-native";
-import { activeWordIndex, type TimedWord } from "../shared/voice-settings";
+import { heldWordIndex, type TimedWord } from "../shared/voice-settings";
 
 export interface WordHighlightColors {
   foreground: string;
@@ -15,7 +15,7 @@ export interface WordHighlightProps {
 }
 
 export function WordHighlight({ words, elapsedSeconds, colors }: WordHighlightProps) {
-  const active = activeWordIndex(words, elapsedSeconds);
+  const active = heldWordIndex(words, elapsedSeconds);
   const styles = useMemo(
     () => ({
       line: { color: colors.muted, fontSize: 18, lineHeight: 28 },

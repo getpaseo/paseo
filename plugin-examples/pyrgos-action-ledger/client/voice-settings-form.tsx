@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Pressable, Text, View } from "react-native";
 import {
   PITCH_MAX,
@@ -94,6 +94,14 @@ function PresetChip({ name, selected, onSelect, styles }: PresetChipProps) {
   );
 }
 
+function roundSpeed(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function definedOnly(patch: VoiceSettingsPatch): VoiceSettingsPatch {
+  return Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
+}
+
 export function VoiceSettingsForm({
   settings,
   capabilities,
@@ -101,23 +109,34 @@ export function VoiceSettingsForm({
   onChange,
 }: VoiceSettingsFormProps) {
   const styles = useFormStyles(colors);
+  const latest = useRef(settings);
+  useEffect(() => {
+    latest.current = settings;
+  }, [settings]);
+  const send = useCallback(
+    (patch: VoiceSettingsPatch) => {
+      latest.current = { ...latest.current, ...definedOnly(patch) };
+      onChange(patch);
+    },
+    [onChange],
+  );
   const slower = useCallback(
-    () => onChange({ speed: Math.max(SPEED_MIN, settings.speed - SPEED_STEP) }),
-    [onChange, settings.speed],
+    () => send({ speed: roundSpeed(Math.max(SPEED_MIN, latest.current.speed - SPEED_STEP)) }),
+    [send],
   );
   const faster = useCallback(
-    () => onChange({ speed: Math.min(SPEED_MAX, settings.speed + SPEED_STEP) }),
-    [onChange, settings.speed],
+    () => send({ speed: roundSpeed(Math.min(SPEED_MAX, latest.current.speed + SPEED_STEP)) }),
+    [send],
   );
   const lower = useCallback(
-    () => onChange({ pitch: Math.max(PITCH_MIN, settings.pitch - 1) }),
-    [onChange, settings.pitch],
+    () => send({ pitch: Math.max(PITCH_MIN, latest.current.pitch - 1) }),
+    [send],
   );
   const higher = useCallback(
-    () => onChange({ pitch: Math.min(PITCH_MAX, settings.pitch + 1) }),
-    [onChange, settings.pitch],
+    () => send({ pitch: Math.min(PITCH_MAX, latest.current.pitch + 1) }),
+    [send],
   );
-  const selectPreset = useCallback((name: string) => onChange({ preset: name }), [onChange]);
+  const selectPreset = useCallback((name: string) => send({ preset: name }), [send]);
   return (
     <View testID="voice-settings" style={styles.root}>
       <Stepper
