@@ -1,0 +1,13 @@
+npm run build:server
+npm run format
+npm run lint
+npm run typecheck
+cd packages/server
+npx vitest run src/server/bootstrap.test.ts --bail=1
+npx vitest run src/server/agent/agent-loading.test.ts --bail=1
+npx vitest run src/server/agent/agent-storage.test.ts --bail=1
+npx vitest run src/server/agent/agent-prompt.test.ts --bail=1
+npx vitest run src/server/agent/create-agent/create.test.ts --bail=1
+npx vitest run src/server/agent/agent-messages/delivery.test.ts --bail=1
+npx vitest run src/server/agent/mcp-server.test.ts --bail=1 -t 'notif|queued|follow-up'
+npx vitest run src/server/bootstrap.smoke.test.ts --bail=1 -t 'stale active|shutdown closes|closing agents'

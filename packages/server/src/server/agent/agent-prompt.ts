@@ -5,6 +5,7 @@ import {
   type AgentMessageDelivery,
 } from "./agent-messages/index.js";
 import type { Logger } from "pino";
+import { randomUUID } from "node:crypto";
 
 import type {
   AgentPermissionRequest,
@@ -455,7 +456,7 @@ interface FinishNotificationBodyInput {
   permissionRequest?: AgentPermissionRequest;
 }
 
-function formatFinishNotificationBody(params: FinishNotificationBodyInput): string {
+export function formatFinishNotificationBody(params: FinishNotificationBodyInput): string {
   const statusLine = `Agent ${params.childAgentId} (${params.title}) ${params.reason}.`;
   const sections = [statusLine];
   if (params.serverId) sections.push(`Server: ${params.serverId}`);
@@ -514,8 +515,15 @@ export function setupFinishWait(params: {
   wait(signal: AbortSignal): Promise<WaitForFinishResult>;
   afterPermission(requestId: string, signal: AbortSignal): Promise<void>;
   logger: Logger;
-}): () => void {
+}): FinishNotificationHandle {
   const controller = new AbortController();
+  const notificationId = randomUUID();
+  const ready = params.agentStorage.addFinishNotification(params.childAgentId, {
+    id: notificationId,
+    callerAgentId: params.callerAgentId,
+    childServerId: params.childServerId,
+    requireParentOwnership: true,
+  });
   const byManager =
     armedFinishNotifications.get(params.agentManager) ??
     new Map<string, Set<ArmedFinishNotification>>();
@@ -531,7 +539,16 @@ export function setupFinishWait(params: {
   byManager.set(key, registrations);
   let superseded = Promise.resolve(false);
   const stop = () => {
+    if (controller.signal.aborted) return;
     controller.abort();
+    void ready
+      .then(() => params.agentStorage.removeFinishNotification(params.childAgentId, notificationId))
+      .catch((err) =>
+        params.logger.error(
+          { err, childAgentId: params.childAgentId },
+          "Failed to remove finish wait",
+        ),
+      );
     registrations.delete(registration);
     if (registrations.size === 0 && byManager.get(key) === registrations) byManager.delete(key);
   };
@@ -584,7 +601,8 @@ export function setupFinishWait(params: {
       await params.afterPermission(permissionRequest.id, controller.signal);
     }
   }
-  void watch()
+  void ready
+    .then(watch)
     .catch((error) => {
       if (!controller.signal.aborted)
         params.logger.warn(
@@ -593,10 +611,17 @@ export function setupFinishWait(params: {
         );
     })
     .finally(stop);
-  return stop;
+  return Object.assign(stop, { ready });
 }
 
-export function setupFinishNotification(params: SetupFinishNotificationParams): () => void {
+export interface FinishNotificationHandle {
+  (): void;
+  ready: Promise<void>;
+}
+
+export function setupFinishNotification(
+  params: SetupFinishNotificationParams,
+): FinishNotificationHandle {
   const {
     agentManager,
     agentStorage,
@@ -612,6 +637,19 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
   const notifiedPermissionRequestIds = new Set<string>();
   let unsubscribe: (() => void) | null = null;
   let notificationQueue = Promise.resolve();
+  const notificationId = randomUUID();
+  const ready = agentStorage.addFinishNotification(childAgentId, {
+    id: notificationId,
+    callerAgentId,
+    childServerId: params.childServerId,
+    requireParentOwnership,
+  });
+  // Some callers observe a turn already in flight; keep the rejection observed
+  // while pre-dispatch callers await the durable registration through ready.
+  void ready.catch((err) =>
+    logger.error({ err, childAgentId }, "Failed to persist finish notification"),
+  );
+  const handle = Object.assign(stop, { ready });
 
   const armedByManager = armedFinishNotifications.get(agentManager) ?? new Map();
   armedFinishNotifications.set(agentManager, armedByManager);
@@ -651,8 +689,15 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
   }
 
   function stop(): void {
-    stopped = true;
-    unsubscribe?.();
+    if (!stopped) {
+      stopped = true;
+      unsubscribe?.();
+      void ready
+        .then(() => agentStorage.removeFinishNotification(childAgentId, notificationId))
+        .catch((err) =>
+          logger.error({ err, childAgentId }, "Failed to remove finish notification"),
+        );
+    }
     // Pending observations remain visible to overlapping sends until acknowledgement.
     if (!dispatchPending) {
       registrations.delete(registration);
@@ -813,11 +858,11 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
   const childSnapshot = agentManager.getAgent(childAgentId);
   if (!childSnapshot || childSnapshot.lifecycle === "closed") {
     stop();
-    return stop;
+    return handle;
   }
   if (childSnapshot.lifecycle === "running" && !waitForTurnStart) {
     hasSeenTurn = true;
     hasSeenRunning = true;
   }
-  return stop;
+  return handle;
 }

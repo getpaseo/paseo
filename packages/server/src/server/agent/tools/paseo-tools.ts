@@ -78,6 +78,7 @@ import {
   type PromptDispatchDisposition,
   sendPromptToAgent,
   setupFinishNotification,
+  type FinishNotificationHandle,
   setupFinishWait,
   waitForAgentRunStartWithTimeout,
 } from "../agent-prompt.js";
@@ -763,7 +764,7 @@ function createToolCatalog(
             childAgentId = input.agentId as string;
           }
           if (childAgentId && callerAgentId && input.notifyOnFinish !== false) {
-            setupFinishWait({
+            const finishWait = setupFinishWait({
               agentMessages: agentMessages(),
               agentManager,
               agentStorage,
@@ -779,6 +780,7 @@ function createToolCatalog(
                   waitForPermissionChange(host, childAgentId, requestId, signal),
                 ),
             });
+            await finishWait.ready;
           }
           return {
             ...response,
@@ -1966,13 +1968,13 @@ function createToolCatalog(
       notifyOnFinish = Boolean(callerAgentId),
       activeTurnBehavior = callerAgentId ? "steer" : "interrupt",
     }) => {
-      let stopNotification: (() => void) | undefined;
+      let stopNotification: FinishNotificationHandle | undefined;
       let acceptDispatch!: (result: PromptDispatchDisposition | false) => void;
       const dispatchResult = new Promise<PromptDispatchDisposition | false>((resolve) => {
         acceptDispatch = resolve;
       });
       const notifying = Boolean(callerAgentId && notifyOnFinish);
-      function prepareDispatch(): void {
+      async function prepareDispatch(): Promise<void> {
         if (!callerAgentId || !notifyOnFinish) return;
         stopNotification = setupFinishNotification({
           agentMessages: agentMessages(),
@@ -1985,6 +1987,7 @@ function createToolCatalog(
           dispatchResult,
           logger: childLogger,
         });
+        await stopNotification.ready;
       }
       function confirmDispatch(disposition: PromptDispatchDisposition): void {
         // A new turn must ignore outcomes from the displaced turn. Its iterator
@@ -1995,7 +1998,7 @@ function createToolCatalog(
         }
         acceptDispatch(disposition);
         if (!callerAgentId || !notifyOnFinish) return;
-        stopNotification?.();
+        const previousNotification = stopNotification;
         stopNotification = setupFinishNotification({
           agentMessages: agentMessages(),
           agentManager,
@@ -2006,6 +2009,11 @@ function createToolCatalog(
           waitForTurnStart: true,
           logger: childLogger,
         });
+        void stopNotification.ready
+          .then(() => previousNotification?.())
+          .catch((err) => {
+            childLogger.error({ err, agentId }, "Failed to rearm finish notification");
+          });
       }
 
       if (callerAgentId) {

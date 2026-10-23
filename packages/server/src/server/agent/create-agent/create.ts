@@ -193,10 +193,12 @@ export async function createAgentCommand(
       : undefined;
 
   if (resolved.prompt !== undefined) {
-    const sendResult = await sendInitialPrompt(dependencies, resolved, snapshot).catch((error) => {
-      stopNotification?.();
-      throw error;
-    });
+    const sendResult = await Promise.resolve(stopNotification?.ready)
+      .then(() => sendInitialPrompt(dependencies, resolved, snapshot))
+      .catch((error) => {
+        stopNotification?.();
+        throw error;
+      });
     initialPromptStarted = sendResult.started;
     liveSnapshot = sendResult.liveSnapshot;
     initialPromptError = sendResult.error ?? null;

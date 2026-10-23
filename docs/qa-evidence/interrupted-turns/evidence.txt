@@ -1,0 +1,13 @@
+Interrupted turns / finish notifications — automated QA, 2026-10-22
+
+Platform: macOS, Node 22.21.0. Tests use isolated temporary daemon homes and fake providers; the production daemon was not restarted.
+
+Startup: persist running/initializing agents, create the daemon, inspect stored status before opening provider sessions. Interrupted records become error with lastError and unread error attention. Archived records remain closed and do not start providers; idle records retain their status. Loading an errored session preserves the reason/attention.
+
+Notifications: persist requested local finish recipients before dispatch; simulate restart, fail a dispatch, reload storage and retry; acknowledge dispatch and verify no further replay. Old runtime cleanup cannot erase a callback marked interrupted. No missing historical recipient is fabricated; archived recipients are not unarchived.
+
+Shutdown: start a held turn, stop the isolated daemon, check interrupted state/callback survives close-time persistence. A turn that actually completes while shutting down is excluded. Separate smoke coverage checks a rejecting/stalled peer does not prevent closing the other provider process.
+
+Regression: initial restart test on the old implementation failed expecting error but receiving closed; reopening errored agents initially dropped lastError. Raw red outputs are included. Green outputs and exact test commands are included per suite.
+
+Not covered yet: human use with real providers, Windows/Linux runtime, remote child wait recovery. Older records without recipients cannot recover an old notifyOnFinish subscription. Cross-crash exactly-once delivery is not claimed.

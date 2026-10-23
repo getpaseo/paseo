@@ -1,0 +1,37 @@
+
+ RUN  v4.1.6 <checkout>/packages/server
+
+stdout | src/server/agent/agent-loading.test.ts
+[dotenv@17.3.1] injecting env (0) from .env.test -- tip: 🤖 agentic secret storage: https://dotenvx.com/as2
+[dotenv@17.3.1] injecting env (0) from ../.env -- tip: 🔐 encrypt with Dotenvx: https://dotenvx.com
+
+ ❯ src/server/agent/agent-loading.test.ts (4 tests | 1 failed | 3 skipped) 29ms
+   × opening an interrupted agent preserves its failure reason and attention 28ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/server/agent/agent-loading.test.ts > opening an interrupted agent preserves its failure reason and attention
+AssertionError: expected undefined to be 'Daemon restarted before the active tu…' // Object.is equality
+
+- Expected:
+"Daemon restarted before the active turn completed."
+
++ Received:
+undefined
+
+ ❯ src/server/agent/agent-loading.test.ts:35:30
+     33|       attentionReason: "error", attentionTimestamp: new Date().toISOSt…
+     34|     const loaded = await ensureAgentLoaded(agent.id, { agentManager: m…
+     35|     expect(loaded.lastError).toBe(lastError);
+       |                              ^
+     36|     expect(loaded.attention).toMatchObject({ requiresAttention: true, …
+     37|     await manager.flush();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 skipped (4)
+   Start at  10:05:40
+   Duration  1.39s (transform 818ms, setup 74ms, import 1.13s, tests 29ms, environment 0ms)
+

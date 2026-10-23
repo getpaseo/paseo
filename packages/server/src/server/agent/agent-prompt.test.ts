@@ -130,6 +130,8 @@ function createFinishNotificationScenario(
   });
 
   const agentStorage: AgentStorage = Object.create(AgentStorage.prototype);
+  Reflect.set(agentStorage, "addFinishNotification", async () => {});
+  Reflect.set(agentStorage, "removeFinishNotification", async () => {});
   Reflect.set(agentStorage, "get", async (agentId: string) => {
     if (agentId === "child-agent") {
       const parentAgentId =
@@ -531,6 +533,8 @@ it("does not notify archived callers", async () => {
     agentId === "caller-agent" ? { archivedAt: "2024-01-01" } : null,
   );
   const agentStorage: AgentStorage = Object.create(AgentStorage.prototype);
+  Reflect.set(agentStorage, "addFinishNotification", async () => {});
+  Reflect.set(agentStorage, "removeFinishNotification", async () => {});
   Reflect.set(agentStorage, "get", agentStorageGetSpy);
 
   setupFinishNotification({

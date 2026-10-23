@@ -1,4 +1,8 @@
 import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
+import {
+  recoverInterruptedAgentRecords,
+  deliverInterruptedFinishNotifications,
+} from "./agent/restart-recovery.js";
 import type { PluginRegistries } from "@getpaseo/protocol/plugin-registry";
 import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
 import express from "express";
@@ -133,7 +137,7 @@ import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.
 import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
-import { AgentStorage } from "./agent/agent-storage.js";
+import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import {
@@ -995,7 +999,7 @@ export async function createPaseoDaemon(
     agentStorage,
   );
   await agentStorage.initialize();
-  await closeStaleAgentRecords(agentStorage);
+  await recoverInterruptedAgentRecords(agentStorage, logger);
   logger.info({ elapsed: elapsed() }, "Agent storage initialized");
   await bootstrapWorkspaceRegistries({
     serverId,
@@ -1791,6 +1795,13 @@ export async function createPaseoDaemon(
             await pluginRuntime.start();
             providerSnapshotManager.settlePluginProviders();
             wsServer.beginAcceptingConnections();
+            void deliverInterruptedFinishNotifications({
+              storage: agentStorage,
+              agentMessages: wsServer.agentMessages,
+              logger,
+            }).catch((err) =>
+              logger.error({ err }, "Failed to recover interrupted turn notifications"),
+            );
             const relaySecurityLogger = logger.child({ module: "relay-security" });
             relayRuntime = createRelayRuntime({
               config: {
@@ -1876,7 +1887,25 @@ export async function createPaseoDaemon(
     wsServer?.prepareForShutdown();
     await wsServer?.agentMessages.close();
     agentManager.prepareForShutdown();
+    const completedDuringShutdown = new Set<string>();
+    const unsubscribeShutdown = agentManager.subscribe(
+      (event) => {
+        if (event.type === "agent_stream" && event.event.type === "turn_completed") {
+          completedDuringShutdown.add(event.agentId);
+        }
+      },
+      { replayState: false, includeInternal: true },
+    );
+    const interruptedRecords: StoredAgentRecord[] = [];
+    for (const agent of agentManager.listAgents()) {
+      if (agent.lifecycle !== "running" && agent.lifecycle !== "initializing") continue;
+      const record = await agentStorage.get(agent.id);
+      if (record)
+        interruptedRecords.push(Object.assign({}, record, { lastStatus: agent.lifecycle }));
+    }
+    logger.info({ interruptedAgentCount: interruptedRecords.length }, "Daemon shutting down");
     await closeAllAgents(logger, agentManager);
+    unsubscribeShutdown();
     await withTimeout({
       promise: pluginRuntime.drainEvents(),
       timeoutMs: AGENT_CLOSE_TIMEOUT_MS,
@@ -1885,6 +1914,11 @@ export async function createPaseoDaemon(
     await agentManager.flushForShutdown().catch(() => undefined);
     detachAgentStoragePersistence();
     await agentStorage.flush().catch(() => undefined);
+    await recoverInterruptedAgentRecords(
+      agentStorage,
+      logger,
+      interruptedRecords.filter((record) => !completedDuringShutdown.has(record.id)),
+    );
     await agentProviderRuntime.shutdown();
     await pluginRuntime.stopAllPlugins();
     terminalManager.killAll();
@@ -1925,16 +1959,6 @@ export async function createPaseoDaemon(
     getListenTarget: () => boundListenTarget,
     getServerId: () => serverId,
   };
-}
-
-async function closeStaleAgentRecords(agentStorage: AgentStorage): Promise<void> {
-  // No provider runtimes are loaded at startup. Repair interrupted
-  // shutdowns before any status consumer sees the persisted active states.
-  for (const record of await agentStorage.list()) {
-    if (record.lastStatus === "running" || record.lastStatus === "initializing") {
-      await agentStorage.upsert({ ...record, lastStatus: "closed" });
-    }
-  }
 }
 
 /**

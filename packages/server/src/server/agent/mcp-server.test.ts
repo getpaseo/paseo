@@ -271,6 +271,8 @@ function buildAgentManagerSpies() {
 
 function buildAgentStorageSpies() {
   return {
+    addFinishNotification: vi.fn().mockResolvedValue(undefined),
+    removeFinishNotification: vi.fn().mockResolvedValue(undefined),
     get: vi.fn().mockResolvedValue(null),
     setTitle: vi.fn().mockResolvedValue(undefined),
     upsert: vi.fn().mockResolvedValue(undefined),

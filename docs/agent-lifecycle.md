@@ -12,6 +12,10 @@ initializing → idle → running → idle (or error → closed)
 
 Each live agent in `AgentManager` carries a `lastStatus` of `initializing`, `idle`, `running`, or `error`. `closed` is the persisted, resumable state for an agent record that has no live provider runtime. State transitions persist to disk and stream to subscribed clients via WebSocket.
 
+An interrupted daemon turn persists as `error` without loading a provider runtime. Opening that
+agent restores the session and preserves its failure reason and unread attention. A restart must
+never turn unfinished work into an apparently successful idle agent.
+
 ## Runtime residency
 
 An unarchived agent may be `closed` without being deleted or archived. Closing releases its provider
@@ -80,6 +84,13 @@ Users can also detach an existing subagent from the subagents track. Detach is d
 Agent-originated messages and automatic notifications share a recipient-daemon delivery module. A queued receipt acknowledges admission before provider dispatch, allowing a child to report and finish in the same two-second quiet window. Human prompts dispatch directly. Conflicting explicit interruption or session-mode choices retain separate ordered dispatches.
 
 The pending window is in memory. Clean shutdown flushes it before closing agents; an abrupt crash can lose it. A durable send receipt remains pending until actual dispatch acknowledgment, so a lost window never becomes a completed receipt. Completion waits cover queued admission within their original timeout and cancellation scope.
+
+Local durable agents retain their requested finish-notification recipients across daemon restarts.
+Recovery marks interrupted turns as errors and delivers the failure to those recipients without
+unarchiving them. A failed dispatch stays pending for the next startup; successful dispatch removes
+that callback. Older agent records have no saved recipients, so recovery can report their error and
+attention state but cannot reconstruct a lost subscription. Routed waits for remote children still
+belong to the caller's live connection.
 
 Permission requests are notification checkpoints, not the end of that subscription. The caller is notified again after a permission response when the child finishes, errors, or requests another permission.
 The permission notification includes the normalized request plus the child and request IDs, so the caller can inspect it and respond without fetching agent status.

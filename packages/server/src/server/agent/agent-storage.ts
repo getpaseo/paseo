@@ -42,6 +42,15 @@ const PERSISTENCE_HANDLE_SCHEMA = z
   .nullable()
   .optional();
 
+const FINISH_NOTIFICATION_SCHEMA = z.object({
+  id: z.string(),
+  callerAgentId: z.string(),
+  childServerId: z.string().optional(),
+  requireParentOwnership: z.boolean(),
+  interruptedAt: z.string().optional(),
+});
+export type StoredFinishNotification = z.infer<typeof FINISH_NOTIFICATION_SCHEMA>;
+
 const STORED_AGENT_SCHEMA = z.object({
   id: z.string(),
   provider: z.string(),
@@ -75,6 +84,7 @@ const STORED_AGENT_SCHEMA = z.object({
   internal: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
   owner: AgentOwnerSchema.optional(),
+  finishNotifications: z.array(FINISH_NOTIFICATION_SCHEMA).optional(),
 });
 
 export type SerializableAgentConfig = Pick<
@@ -155,13 +165,48 @@ export class AgentStorage {
     await this.queueRecordWrite(record);
   }
 
+  async addFinishNotification(
+    agentId: string,
+    notification: StoredFinishNotification,
+  ): Promise<void> {
+    await this.load();
+    await this.queueRecordMutation(
+      agentId,
+      (record) =>
+        record && {
+          ...record,
+          finishNotifications: [...(record.finishNotifications ?? []), notification],
+        },
+    );
+  }
+
+  async removeFinishNotification(
+    agentId: string,
+    notificationId: string,
+    options?: { includeInterrupted?: boolean },
+  ): Promise<void> {
+    await this.load();
+    await this.queueRecordMutation(
+      agentId,
+      (record) =>
+        record && {
+          ...record,
+          finishNotifications: record.finishNotifications?.filter(
+            // An old runtime cannot acknowledge a callback handed to restart recovery.
+            ({ id, interruptedAt }) =>
+              id !== notificationId || Boolean(interruptedAt && !options?.includeInterrupted),
+          ),
+        },
+    );
+  }
+
   private queueRecordWrite(record: StoredAgentRecord): Promise<void> {
     return this.queueRecordMutation(record.id, () => record);
   }
 
   private queueRecordMutation(
     agentId: string,
-    mutate: (existing: StoredAgentRecord | null) => StoredAgentRecord,
+    mutate: (existing: StoredAgentRecord | null) => StoredAgentRecord | null,
   ): Promise<void> {
     const prev = this.pendingWrites.get(agentId) ?? Promise.resolve();
     const next = prev.then(async () => {
@@ -170,6 +215,7 @@ export class AgentStorage {
       }
 
       const record = mutate(this.cache.get(agentId) ?? null);
+      if (!record) return;
       await this.writeRecord(record);
       return undefined;
     });
@@ -259,6 +305,7 @@ export class AgentStorage {
       if (existing && existing.archivedAt !== undefined) {
         record.archivedAt = existing.archivedAt;
       }
+      if (existing?.finishNotifications) record.finishNotifications = existing.finishNotifications;
       return record;
     });
   }

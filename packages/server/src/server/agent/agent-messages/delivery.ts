@@ -12,7 +12,7 @@ interface Message {
   unarchive?: boolean;
   clearPendingPermissions?: boolean;
   activeTurnBehavior?: "steer" | "interrupt";
-  beforeDispatch?: () => void;
+  beforeDispatch?: () => void | Promise<void>;
   onDispatch?: (disposition: PromptDispatchDisposition) => void;
 }
 interface Receipt {
@@ -95,7 +95,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
       .catch(() => undefined)
       .then(async () => {
         try {
-          for (const message of messages) message.beforeDispatch?.();
+          for (const message of messages) await message.beforeDispatch?.();
           const disposition = await dependencies.dispatch(request);
           for (const message of messages) message.resolve(disposition);
           return undefined;
