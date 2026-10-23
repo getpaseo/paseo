@@ -35,6 +35,16 @@ function parentEntries(
 }
 
 describe("Claude workflow replay", () => {
+  it("does not read the parent transcript when there are no workflows", () => {
+    const entries: Iterable<ClaudeWorkflowParentEntry> = {
+      [Symbol.iterator](): Iterator<ClaudeWorkflowParentEntry> {
+        throw new Error("The parent transcript should not be read without workflows");
+      },
+    };
+
+    expect(observeReplayWorkflows({ workflows: [], parentEntries: entries })).toEqual([]);
+  });
+
   it("parses the persisted run summary observed from Claude Code 2.1.220", () => {
     expect(
       parseClaudeWorkflowRun(
