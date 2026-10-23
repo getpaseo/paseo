@@ -585,6 +585,15 @@
           },
           "additionalProperties": false
         },
+        "promptSuggestions": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
         "skills": {
           "type": "object",
           "properties": {

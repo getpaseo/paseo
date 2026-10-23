@@ -50,6 +50,8 @@ export interface StructuredTextGenerationRequest<T> {
   schema: z.ZodType<T>;
   schemaName: string;
   agentTitle: string;
+  // The last-resort model; defaults to whatever is focused for this cwd.
+  currentSelection?: ResolveStructuredGenerationProvidersOptions["currentSelection"];
 }
 
 interface GitMetadataLogger {
@@ -204,12 +206,12 @@ export function createAgentStructuredTextGeneration(deps: {
   logger: StructuredGenerationLogger;
 }): StructuredTextGeneration {
   return {
-    async generate({ cwd, prompt, schema, schemaName, agentTitle }) {
+    async generate({ cwd, prompt, schema, schemaName, agentTitle, currentSelection }) {
       const providers = await resolveStructuredGenerationProviders({
         cwd,
         providerSnapshotManager: deps.providerSnapshotManager,
         daemonConfig: deps.readDaemonConfig(),
-        currentSelection: deps.getFocusedSelection(cwd),
+        currentSelection: currentSelection ?? deps.getFocusedSelection(cwd),
       });
       return generateStructuredAgentResponseWithFallback({
         manager: deps.agentManager,

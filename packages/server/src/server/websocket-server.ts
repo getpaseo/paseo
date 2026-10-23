@@ -568,6 +568,8 @@ export class VoiceAssistantWebSocketServer {
   private readonly checkoutDiffManager: CheckoutDiffManager;
   private readonly github: ForgeService;
   private readonly workspaceGitService: WorkspaceGitService;
+  // Assigned after construction: the suggestion service needs this server first.
+  private promptSuggestionRequester: SessionOptions["requestPromptSuggestions"] = undefined;
   private readonly workspaceAutoName: WorkspaceAutoName;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly paseoHome: string;
@@ -1022,6 +1024,10 @@ export class VoiceAssistantWebSocketServer {
       return;
     }
     this.sendMessageToSockets(this.sessions.keys(), message);
+  }
+
+  public setPromptSuggestionRequester(requester: SessionOptions["requestPromptSuggestions"]): void {
+    this.promptSuggestionRequester = requester;
   }
 
   public listSessions(): Session[] {
@@ -1600,6 +1606,7 @@ export class VoiceAssistantWebSocketServer {
       worktreesRoot: this.worktreesRoot,
       agentManager: this.agentManager,
       agentStorage: this.agentStorage,
+      requestPromptSuggestions: this.promptSuggestionRequester ?? undefined,
       messageReceipts: this.messageReceipts,
       agentMessages: this.agentMessages,
       creationService: this.creationService,
@@ -2021,6 +2028,8 @@ export class VoiceAssistantWebSocketServer {
         agentTimelinePromptIndex: true,
         // COMPAT(agentHistorySearch): added in v0.3.0, remove gate after 2027-02-07.
         agentHistorySearch: true,
+        // COMPAT(promptSuggestions): added in v0.13.0, remove gate after 2027-04-23.
+        promptSuggestions: true,
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: true,
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97

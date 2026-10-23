@@ -25,7 +25,7 @@ import {
 } from "react";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import { ICON_SIZE, type Theme } from "@/styles/theme";
+import { FONT_SIZE, ICON_SIZE, type Theme } from "@/styles/theme";
 import { ArrowUp, Mic, MicOff, CornerDownLeft, Plus, Square } from "lucide-react-native";
 import { useDictation } from "@/hooks/use-dictation";
 import { hasFinePointer } from "@/hooks/use-fine-pointer";
@@ -56,7 +56,8 @@ import { useIosHardwareKeyboardSubmit } from "@/hooks/use-ios-hardware-keyboard-
 import { formatShortcut, type ShortcutKey } from "@/utils/format-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
-import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
+import { handleDesktopKeyPressImpl, type GhostSuggestion } from "@/composer/input/desktop-keys";
+import { ghostFitsOnOneLine, shouldShowFocusHint } from "@/composer/input/ghost-fit";
 import { isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
@@ -184,6 +185,8 @@ export interface MessageInputProps {
   textReplacement: TextReplacement;
   /** Replaces the submit icon with this label, still inside the composer's own toolbar row. */
   submitLabel?: string;
+  /** A guess at the next message, shown greyed in an empty composer. */
+  ghostSuggestion?: GhostSuggestion | null;
 }
 
 export interface MessageInputRef {
@@ -392,52 +395,6 @@ function SendButtonContent({
   return <ThemedArrowUp size={buttonIconSize} uniProps={iconAccentForegroundMapping} />;
 }
 
-interface DesktopKeyPressContext {
-  onKeyPressCallback: ((event: ComposerKeyPressEvent) => boolean) | undefined;
-  input: ComposerKeyPressEvent["input"];
-  submitOnEnter: boolean;
-  isAgentRunning: boolean;
-  onQueue: ((payload: MessagePayload) => void) | undefined;
-  isSubmitDisabled: boolean;
-  isSubmitLoading: boolean;
-  disabled: boolean;
-  handleAlternateSendAction: () => void;
-  handleDefaultSendAction: () => void;
-}
-
-function handleDesktopKeyPressImpl(
-  event: WebTextInputKeyPressEvent,
-  ctx: DesktopKeyPressContext,
-): void {
-  if (isImeComposingKeyboardEvent(event.nativeEvent)) return;
-
-  if (ctx.onKeyPressCallback) {
-    const handled = ctx.onKeyPressCallback({
-      key: event.nativeEvent.key,
-      preventDefault: () => event.preventDefault(),
-      input: ctx.input,
-    });
-    if (handled) return;
-  }
-
-  const { shiftKey, metaKey, ctrlKey } = event.nativeEvent;
-
-  if (event.nativeEvent.key !== "Enter") return;
-  if (!ctx.submitOnEnter) return;
-  if (shiftKey) return;
-
-  if ((metaKey || ctrlKey) && ctx.isAgentRunning && ctx.onQueue) {
-    if (ctx.isSubmitDisabled || ctx.isSubmitLoading || ctx.disabled) return;
-    event.preventDefault();
-    ctx.handleAlternateSendAction();
-    return;
-  }
-
-  if (ctx.isSubmitDisabled || ctx.isSubmitLoading || ctx.disabled) return;
-  event.preventDefault();
-  ctx.handleDefaultSendAction();
-}
-
 function getTextInputNativeElement(current: ComposerTextInputHandle | null): HTMLElement | null {
   if (!current) return null;
   const native = typeof current.getNativeRef === "function" ? current.getNativeRef() : current;
@@ -618,6 +575,8 @@ function FocusHint({
   );
 }
 
+export type { GhostSuggestion };
+
 interface ComposerTextSurfaceProps {
   readOnly: boolean;
   value: string;
@@ -643,6 +602,9 @@ interface ComposerTextSurfaceProps {
   focusHintVisible: boolean;
   focusInputKeys: ShortcutChord | null | undefined;
   focusHintLabel: string;
+  ghostSuggestion: GhostSuggestion | null;
+  ghostHintVisible: boolean;
+  onGhostRowWidth: (width: number) => void;
 }
 
 /**
@@ -713,6 +675,82 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
         focusInputKeys={props.focusInputKeys}
         label={props.focusHintLabel}
       />
+      <GhostSuggestionOverlay
+        suggestion={props.ghostSuggestion}
+        hintVisible={props.ghostHintVisible}
+        onRowWidth={props.onGhostRowWidth}
+      />
+    </View>
+  );
+}
+
+// The ghost replaces the placeholder rather than sitting on top of it, and only
+// ever shows over an empty input.
+function resolveGhostPresentation(input: {
+  ghostSuggestion: GhostSuggestion | null;
+  value: string;
+  placeholder: string;
+  isCompact: boolean;
+  rowWidth: number | null;
+  fontSize: number;
+}): {
+  suggestion: GhostSuggestion | null;
+  keySuggestion: GhostSuggestion | null;
+  placeholder: string;
+  hintVisible: boolean;
+} {
+  const suggestion = input.value ? null : input.ghostSuggestion;
+  const hintVisible = isWeb && !input.isCompact;
+  // A ghost the composer had to ellipsise is text the user has not read, so
+  // Enter puts it in the input to be read instead of sending it.
+  const fits =
+    suggestion !== null &&
+    ghostFitsOnOneLine({
+      text: suggestion.text,
+      rowWidth: input.rowWidth,
+      fontSize: input.fontSize,
+      hintVisible,
+    });
+  return {
+    suggestion,
+    keySuggestion: suggestion && !fits ? { ...suggestion, submit: suggestion.accept } : suggestion,
+    placeholder: suggestion ? "" : input.placeholder,
+    hintVisible,
+  };
+}
+
+function GhostSuggestionOverlay({
+  suggestion,
+  hintVisible,
+  onRowWidth,
+}: {
+  suggestion: GhostSuggestion | null;
+  hintVisible: boolean;
+  onRowWidth: (width: number) => void;
+}): React.ReactElement | null {
+  const { t } = useTranslation();
+  const handleLayout = useCallback(
+    (event: LayoutChangeEvent) => onRowWidth(event.nativeEvent.layout.width),
+    [onRowWidth],
+  );
+  if (!suggestion) return null;
+  return (
+    <View
+      style={styles.ghostSuggestionRow}
+      testID="composer-ghost-suggestion"
+      accessibilityLiveRegion="polite"
+      onLayout={handleLayout}
+    >
+      <Text
+        numberOfLines={1}
+        style={styles.ghostSuggestionText}
+        accessibilityLabel={t("composer.promptSuggestions.a11yLabel")}
+        onPress={suggestion.accept}
+        suppressHighlighting
+      >
+        {suggestion.text}
+      </Text>
+      {hintVisible ? <Text style={styles.ghostSuggestionHint}>{"\u21e5"}</Text> : null}
     </View>
   );
 }
@@ -1116,6 +1154,7 @@ interface ResolvedMessageInputProps {
   readOnly: boolean;
   textReplacement: TextReplacement;
   submitLabel: string | undefined;
+  ghostSuggestion: GhostSuggestion | null;
 }
 
 function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInputProps {
@@ -1163,6 +1202,7 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     readOnly: props.readOnly ?? false,
     textReplacement: props.textReplacement,
     submitLabel: props.submitLabel,
+    ghostSuggestion: props.ghostSuggestion ?? null,
   };
 }
 
@@ -1240,6 +1280,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       readOnly,
       textReplacement,
       submitLabel,
+      ghostSuggestion,
     } = resolveMessageInputProps(props);
     const { isPaneFocused } = useComposerKeyboardScope();
     const mode = resolveComposerInputMode(inputMode);
@@ -1274,6 +1315,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const [webTextArea, setWebTextArea] = useState<HTMLElement | null>(null);
     const appliedTextReplacementKeyRef = useRef(textReplacement.key);
     const webTextareaRef = useRef<HTMLElement | null>(null);
+    const [ghostRowWidth, setGhostRowWidth] = useState<number | null>(null);
+    const ghostKeyTargetRef = useRef<GhostSuggestion | null>(null);
     const updateLiveTextPresence = useCallback((text: string) => {
       const nextHasLiveText = text.trim().length > 0;
       if (hasLiveTextRef.current === nextHasLiveText) return;
@@ -1727,6 +1770,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       (event: WebTextInputKeyPressEvent) => {
         if (!shouldHandleWebKeyPress) return;
         handleDesktopKeyPressImpl(event, {
+          ghostSuggestion: ghostKeyTargetRef.current,
           onKeyPressCallback,
           input: getComposerInputSnapshot(
             textInputRef.current,
@@ -1939,6 +1983,22 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       [isDictating, isRealtimeVoiceForCurrentAgent, voice?.isMuted, buttonIconSize],
     );
 
+    const ghostPresentation = resolveGhostPresentation({
+      ghostSuggestion: isFullscreen || readOnly ? null : ghostSuggestion,
+      value: readOnly
+        ? value
+        : resolveComposerSurfaceText(
+            valueRef.current,
+            textReplacement,
+            appliedTextReplacementKeyRef.current,
+          ),
+      placeholder: placeholder ?? t("composer.placeholders.fallback"),
+      isCompact,
+      rowWidth: ghostRowWidth,
+      fontSize: FONT_SIZE.base,
+    });
+    ghostKeyTargetRef.current = ghostPresentation.keySuggestion;
+
     const sendButton = useMemo(
       () => (
         <PrimaryAction
@@ -1996,7 +2056,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             textInputRef={assignTextInput}
             textInputStyle={textInputStyle}
             readOnlyTextStyle={readOnlyTextStyle}
-            placeholder={placeholder ?? t("composer.placeholders.fallback")}
+            placeholder={ghostPresentation.placeholder}
             accessibilityLabel={t(mode.accessibilityLabelKey)}
             onChangeText={handleInputChange}
             onFocus={handleInputFocus}
@@ -2011,7 +2071,18 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             fullscreen={isFullscreen}
             compact={isCompact}
             onRenderedLinesChange={setRenderedLines}
-            focusHintVisible={!isFullscreen && isWeb && !isInputFocused && !value}
+            ghostSuggestion={ghostPresentation.suggestion}
+            ghostHintVisible={ghostPresentation.hintVisible}
+            onGhostRowWidth={setGhostRowWidth}
+            focusHintVisible={
+              !isFullscreen &&
+              shouldShowFocusHint({
+                isWeb,
+                isInputFocused,
+                hasValue: Boolean(value),
+                hasGhost: ghostPresentation.suggestion !== null,
+              })
+            }
             focusInputKeys={focusInputKeys}
             focusHintLabel={t("composer.input.focusHint", {
               shortcut: focusInputKeys ? formatShortcut(focusInputKeys[0], getShortcutOs()) : "",
@@ -2025,7 +2096,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         assignTextInput,
         textInputStyle,
         readOnlyTextStyle,
-        placeholder,
+        ghostPresentation.placeholder,
+        ghostPresentation.suggestion,
+        ghostPresentation.hintVisible,
         t,
         mode.accessibilityLabelKey,
         handleInputChange,
@@ -2266,6 +2339,26 @@ const styles = StyleSheet.create((theme: Theme) => ({
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     opacity: 0.5,
+  },
+  ghostSuggestionRow: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  ghostSuggestionText: {
+    flexShrink: 1,
+    color: theme.colors.surface4,
+    fontSize: theme.fontSize.content,
+    fontWeight: theme.fontWeight.normal,
+    ...(isWeb ? { lineHeight: theme.fontSize.content * 1.4 } : {}),
+  },
+  ghostSuggestionHint: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.surface4,
   },
   textInput: {
     // Preserve the controls when an ancestor constrains an overlong draft.

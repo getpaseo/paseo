@@ -486,6 +486,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     const feeds = client.observeEvents(
       [
         "agent_attention_required",
+        "agent_prompt_suggestions",
         "terminal_attention_required",
         "agent_permission_request",
         "agent_permission_resolved",
@@ -512,6 +513,14 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       if (notification.shouldNotify) {
         notifyAgentAttention(notification);
       }
+    });
+
+    const unsubPromptSuggestions = onFeed("agent_prompt_suggestions", (message) => {
+      if (message.type !== "agent_prompt_suggestions") return;
+      const { agentId, turnSeq, suggestions, generatedAt } = message.payload;
+      useSessionStore
+        .getState()
+        .setPromptSuggestions(serverId, { agentId, turnSeq, suggestions, generatedAt });
     });
 
     const unsubProviderSubagentUpdate = feeds.subscribe({
@@ -686,6 +695,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         .catch((error) => console.warn("[Session] Failed to release feeds", error));
       unsubProviderSubagentUpdate();
       unsubAgentAttention();
+      unsubPromptSuggestions();
       unsubCheckoutStatusUpdate();
       unsubStatus();
       unsubPermissionRequest();

@@ -320,6 +320,7 @@ function makeConfig(providers: MutableDaemonConfig["providers"] = {}): MutableDa
     browserTools: { enabled: false },
     providers,
     metadataGeneration: { providers: [] },
+    promptSuggestions: { enabled: true },
     autoArchiveAfterMerge: false,
     enableTerminalAgentHooks: false,
     appendSystemPrompt: "",

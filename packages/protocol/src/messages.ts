@@ -179,6 +179,12 @@ const MutableMetadataGenerationConfigSchema = z
   })
   .passthrough();
 
+const MutablePromptSuggestionsConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+  })
+  .passthrough();
+
 const MutableBrowserToolsConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
@@ -222,6 +228,7 @@ export const MutableDaemonConfigSchema = z
     browserTools: MutableBrowserToolsConfigSchema.default({ enabled: false }),
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
     metadataGeneration: MutableMetadataGenerationConfigSchema.default({ providers: [] }),
+    promptSuggestions: MutablePromptSuggestionsConfigSchema.default({ enabled: true }),
     autoArchiveAfterMerge: z.boolean().default(false),
     enableTerminalAgentHooks: z.boolean().default(false),
     appendSystemPrompt: z.string().default(""),
@@ -243,6 +250,7 @@ export const MutableDaemonConfigPatchSchema = z
       .optional(),
     removeProviders: z.array(z.string().min(1)).optional(),
     metadataGeneration: MutableMetadataGenerationConfigSchema.partial().optional(),
+    promptSuggestions: MutablePromptSuggestionsConfigSchema.partial().optional(),
     autoArchiveAfterMerge: z.boolean().optional(),
     enableTerminalAgentHooks: z.boolean().optional(),
     appendSystemPrompt: z.string().optional(),
@@ -1941,6 +1949,17 @@ export const SetAgentTimelineSubscriptionRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+// A client that opened a chat with an empty composer and holds no suggestion asks
+// for one; the suggestions themselves arrive as the usual agent_prompt_suggestions event.
+export const AgentPromptSuggestionsRequestMessageSchema = z.object({
+  type: z.literal("agent.prompt_suggestions.request"),
+  agentId: z.string(),
+  requestId: z.string(),
+});
+export type AgentPromptSuggestionsRequestMessage = z.infer<
+  typeof AgentPromptSuggestionsRequestMessageSchema
+>;
+
 export const AgentForkContextRequestMessageSchema = z.object({
   type: z.literal("agent.fork_context.request"),
   agentId: z.string(),
@@ -3183,6 +3202,7 @@ export const SessionEventSubscriptionSchema = z.enum([
   "project.update",
   "providers_snapshot_update",
   "agent_attention_required",
+  "agent_prompt_suggestions",
   "agent_permission_request",
   "agent_permission_resolved",
   "checkout_status_update",
@@ -3336,6 +3356,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProviderSubagentListRequestMessageSchema,
   ProviderSubagentTimelineRequestMessageSchema,
   SetAgentTimelineSubscriptionRequestMessageSchema,
+  AgentPromptSuggestionsRequestMessageSchema,
   AgentForkContextRequestMessageSchema,
   SetAgentModeRequestMessageSchema,
   SetAgentModelRequestMessageSchema,
@@ -3706,6 +3727,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentTimelinePromptIndex: z.boolean().optional(),
         // COMPAT(agentHistorySearch): added in v0.3.0, remove gate after 2027-02-07.
         agentHistorySearch: z.boolean().optional(),
+        // COMPAT(promptSuggestions): added in v0.13.0, remove gate after 2027-04-23.
+        promptSuggestions: z.boolean().optional(),
         // COMPAT(checkoutRefresh): added in v0.1.86, remove gate after 2026-11-29.
         checkoutRefresh: z.boolean().optional(),
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
@@ -4904,6 +4927,46 @@ export const AgentAttentionRequiredMessageSchema = z.object({
       .optional(),
   }),
 });
+
+// One suggestion is one line in the composer; the cap keeps a chatty model from
+// filling the input with a paragraph nobody will read before sending.
+export const PROMPT_SUGGESTION_MAX_CHARS = 160;
+export const PROMPT_SUGGESTION_MAX_COUNT = 3;
+
+export const PromptSuggestionSchema = z.object({
+  id: z.string().min(1),
+  text: z.string().min(1).max(PROMPT_SUGGESTION_MAX_CHARS),
+});
+export type PromptSuggestion = z.infer<typeof PromptSuggestionSchema>;
+
+export const AgentPromptSuggestionsMessageSchema = z.object({
+  type: z.literal("agent_prompt_suggestions"),
+  payload: z.object({
+    subscriptionId: z.string().optional(),
+    agentId: z.string(),
+    // The turn whose completion produced these; a payload that lost the race
+    // with a newer turn the client has seen is dropped.
+    turnSeq: z.number().int().nonnegative(),
+    suggestions: z.array(PromptSuggestionSchema).max(PROMPT_SUGGESTION_MAX_COUNT),
+    generatedAt: z.string(),
+  }),
+});
+export type AgentPromptSuggestionsMessage = z.infer<typeof AgentPromptSuggestionsMessageSchema>;
+
+export const AgentPromptSuggestionsResponseMessageSchema = z.object({
+  type: z.literal("agent.prompt_suggestions.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    // False when the host has the feature off, the agent has nothing to guess
+    // from, or a generation for it is already under way.
+    accepted: z.boolean(),
+    error: z.string().optional(),
+  }),
+});
+export type AgentPromptSuggestionsResponseMessage = z.infer<
+  typeof AgentPromptSuggestionsResponseMessageSchema
+>;
 
 export const AgentForkContextResponseMessageSchema = z.object({
   type: z.literal("agent.fork_context.response"),
@@ -7023,6 +7086,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProviderSubagentUpdateMessageSchema,
   SetAgentTimelineSubscriptionResponseMessageSchema,
   AgentAttentionRequiredMessageSchema,
+  AgentPromptSuggestionsMessageSchema,
+  AgentPromptSuggestionsResponseMessageSchema,
   AgentForkContextResponseMessageSchema,
   CancelAgentResponseMessageSchema,
   ClearAgentAttentionResponseMessageSchema,
@@ -7659,6 +7724,7 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.providerSnapshotReferences]: z.boolean().optional(),
       [CLIENT_CAPS.timelineReplacementInvalidation]: z.boolean().optional(),
       [CLIENT_CAPS.timelineNotifications]: z.boolean().optional(),
+      [CLIENT_CAPS.promptSuggestions]: z.boolean().optional(),
       [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
     })
     .passthrough()
