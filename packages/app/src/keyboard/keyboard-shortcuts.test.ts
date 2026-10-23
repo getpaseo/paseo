@@ -227,6 +227,20 @@ describe("keyboard-shortcuts", () => {
       payload: { delta: 1 },
     },
     {
+      name: "matches tab relative navigation on macOS desktop via Cmd+Shift+[",
+      event: { key: "{", code: "BracketLeft", metaKey: true, shiftKey: true },
+      context: { isMac: true, isDesktop: true },
+      action: "workspace.tab.navigate.relative",
+      payload: { delta: -1 },
+    },
+    {
+      name: "matches tab relative navigation on macOS desktop via Cmd+Shift+]",
+      event: { key: "}", code: "BracketRight", metaKey: true, shiftKey: true },
+      context: { isMac: true, isDesktop: true },
+      action: "workspace.tab.navigate.relative",
+      payload: { delta: 1 },
+    },
+    {
       name: "matches Mod+T to open new tab",
       event: { key: "t", code: "KeyT", metaKey: true },
       context: { isMac: true },
@@ -1304,6 +1318,17 @@ describe("unassigned shortcuts", () => {
 
       expect(findRow(sections, "workspace-tab-new")).not.toBeNull();
       expect(getBindingIdForAction("workspace-tab-new", desktopNonMac)).toBe(TAB_NEW_BINDING);
+    });
+
+    it("advertises Cmd+Shift+brackets for tab navigation on macOS desktop", () => {
+      const desktopMac = { isMac: true, isDesktop: true };
+
+      expect(getDefaultKeysForAction("workspace-tab-prev", desktopMac)).toEqual([
+        ["mod", "shift", "["],
+      ]);
+      expect(getDefaultKeysForAction("workspace-tab-next", desktopMac)).toEqual([
+        ["mod", "shift", "]"],
+      ]);
     });
 
     it("still lists the default keys when nothing is overridden", () => {

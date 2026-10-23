@@ -716,6 +716,30 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
 
   // --- Tab relative navigation ---
   {
+    id: "workspace-tab-navigate-relative-cmd-shift-left-mac",
+    action: "workspace.tab.navigate.relative",
+    combo: "Cmd+Shift+[",
+    when: { mac: true, desktop: true, commandCenter: false },
+    payload: { type: "delta", delta: -1 },
+    help: {
+      id: "workspace-tab-prev",
+      section: "tabs-panes",
+      label: "Previous tab",
+    },
+  },
+  {
+    id: "workspace-tab-navigate-relative-cmd-shift-right-mac",
+    action: "workspace.tab.navigate.relative",
+    combo: "Cmd+Shift+]",
+    when: { mac: true, desktop: true, commandCenter: false },
+    payload: { type: "delta", delta: 1 },
+    help: {
+      id: "workspace-tab-next",
+      section: "tabs-panes",
+      label: "Next tab",
+    },
+  },
+  {
     id: "workspace-tab-navigate-relative-alt-shift-left",
     action: "workspace.tab.navigate.relative",
     combo: "Alt+Shift+[",
