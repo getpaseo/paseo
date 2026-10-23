@@ -4,6 +4,9 @@ import type { AgentManagerEvent, AgentSubscriber } from "../agent-manager.js";
 import type { AgentStreamEvent, AgentTimelineItem } from "../agent-sdk-types.js";
 import { PromptSuggestionService, type PromptSuggestionGeneration } from "./service.js";
 import type { NewChatWorkspaceContext } from "./workspace-context.js";
+import { createAgentStructuredTextGeneration } from "../../session/checkout/git-metadata-generator.js";
+import { createStub } from "../../test-utils/class-mocks.js";
+import type { AgentManager } from "../agent-manager.js";
 
 interface FakeAgent {
   id: string;
@@ -55,6 +58,7 @@ function createHarness(
     maxConcurrent?: number;
     timeline?: AgentTimelineItem[];
     readWorkspaceContext?: (cwd: string) => Promise<NewChatWorkspaceContext | null>;
+    generation?: PromptSuggestionGeneration;
   } = {},
 ) {
   const agents: Record<string, FakeAgent> = overrides.agents ?? {
@@ -72,6 +76,7 @@ function createHarness(
     cwd: string;
     configKey?: string;
     currentSelection?: { provider?: string | null; model?: string | null };
+    selectionPolicy?: "configured-only";
   }> = [];
 
   const service = new PromptSuggestionService({
@@ -85,10 +90,19 @@ function createHarness(
       getAgent: ((id: string) => (agents[id] ?? null) as never) as never,
       getTimeline: (() => overrides.timeline ?? TIMELINE) as never,
     },
-    generation: {
-      generate: (({ prompt, cwd, currentSelection, configKey, schemaName }) =>
+    generation: overrides.generation ?? {
+      generate: (({ prompt, cwd, currentSelection, selectionPolicy, configKey, schemaName }) =>
         new Promise((resolve, reject) => {
-          pending.push({ resolve, reject, prompt, cwd, currentSelection, configKey, schemaName });
+          pending.push({
+            resolve,
+            reject,
+            prompt,
+            cwd,
+            currentSelection,
+            selectionPolicy,
+            configKey,
+            schemaName,
+          });
         })) as PromptSuggestionGeneration["generate"],
     },
     emit: (message) => emitted.push(message),
@@ -164,6 +178,7 @@ describe("PromptSuggestionService", () => {
     expect(harness.pending[0].prompt).toContain("stopped to ask the developer a question");
 
     expect(harness.pending[0].schemaName).toBe("QuestionAnswers");
+    expect(harness.pending[0].selectionPolicy).toBe("configured-only");
 
     harness.pending[0].resolve({
       answers: [{ question: 1, suggestions: ["Postgres, the one the API already uses"] }],
@@ -320,9 +335,7 @@ describe("PromptSuggestionService", () => {
     expect(harness.pending).toHaveLength(2);
   });
 
-  // Without it, a machine whose metadata chain has no usable model never gets a
-  // suggestion, even though the agent's own model is working.
-  it("offers the agent's own model as the last resort", async () => {
+  it("uses configured models without offering the agent model after a turn", async () => {
     const harness = createHarness({
       agents: {
         a1: {
@@ -337,10 +350,37 @@ describe("PromptSuggestionService", () => {
     harness.emitStream("a1", "turn_completed");
     await vi.advanceTimersByTimeAsync(400);
 
-    expect(harness.pending[0].currentSelection).toEqual({
-      provider: "codex",
-      model: "gpt-6-astra",
+    expect(harness.pending[0]).toMatchObject({
+      configKey: "promptSuggestions",
+      selectionPolicy: "configured-only",
     });
+    expect(harness.pending[0].currentSelection).toBeUndefined();
+  });
+
+  it("emits nothing and starts no model when the suggestion chain is empty", async () => {
+    const getProviderAvailability = vi.fn();
+    const generation = createAgentStructuredTextGeneration({
+      agentManager: createStub<AgentManager>({ getProviderAvailability }),
+      providerSnapshotManager: {
+        listProviders: async () => [
+          {
+            provider: "claude",
+            status: "ready" as const,
+            enabled: true,
+            models: [{ provider: "claude", id: "haiku", label: "Haiku" }],
+          },
+        ],
+      },
+      readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
+      getFocusedSelection: () => ({ provider: "codex", model: "gpt-6-astra" }),
+    });
+    const harness = createHarness({ generation });
+
+    harness.emitStream("a1", "turn_completed");
+    await vi.runAllTimersAsync();
+
+    expect(getProviderAvailability).not.toHaveBeenCalled();
+    expect(harness.emitted).toEqual([]);
   });
 
   it("debounces a burst of completions into one generation", async () => {
@@ -498,6 +538,7 @@ describe("PromptSuggestionService", () => {
 
       expect(harness.pending).toHaveLength(1);
       expect(harness.pending[0].configKey).toBe("newChatSuggestions");
+      expect(harness.pending[0].selectionPolicy).toBe("configured-only");
       expect(harness.pending[0].prompt).toContain("feat/prompt-suggestions");
       expect(harness.pending[0].prompt).toContain("prompt-suggestions/service.ts");
       expect(harness.pending[0].prompt).toContain("has typed nothing yet");
@@ -552,6 +593,7 @@ describe("PromptSuggestionService", () => {
       expect(reads).toEqual(["/repo"]);
       expect(harness.pending).toHaveLength(1);
       expect(harness.pending[0].configKey).toBe("newChatSuggestions");
+      expect(harness.pending[0].selectionPolicy).toBe("configured-only");
       expect(harness.pending[0].prompt).toContain("src/draft.ts");
 
       harness.pending[0].resolve({ suggestions: ["finish the draft path"] });

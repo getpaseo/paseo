@@ -2255,7 +2255,7 @@ export const ja: TranslationResources = {
       docs: "ドキュメント",
       saveError: "メタデータ生成を更新できません",
       suggestionSection: "メッセージの提案",
-      suggestionSharedHint: "提案にはメタデータ生成のモデルを使用します",
+      suggestionSharedHint: "ここまたはメタデータ生成でモデルを選ぶまでオフです",
       suggestionCustomHint: "提案、回答の下書き、新しいチャットの案にこのモデルを使用します",
       suggestionModelHint:
         "最初に試すモデルです。config.json に記載したフォールバックも引き続き使われます",
@@ -2669,7 +2669,7 @@ export const ja: TranslationResources = {
         },
         promptSuggestions: {
           title: "次のプロンプトを提案",
-          hint: "入力欄が空のときに、次に送る内容を提案します",
+          hint: "入力欄が空のときに、次に送る内容を提案します。メタデータでモデルの選択が必要です",
           accessibilityLabel: "次のプロンプトを提案",
         },
         systemPrompt: {

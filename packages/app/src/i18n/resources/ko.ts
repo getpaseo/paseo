@@ -2244,7 +2244,7 @@ export const ko: TranslationResources = {
       docs: "문서",
       saveError: "메타데이터 생성을 업데이트할 수 없습니다",
       suggestionSection: "메시지 제안",
-      suggestionSharedHint: "제안에 메타데이터 생성 모델을 사용합니다",
+      suggestionSharedHint: "여기 또는 메타데이터 생성에서 모델을 선택할 때까지 꺼져 있습니다",
       suggestionCustomHint: "제안, 답변 초안, 새 채팅 아이디어에 이 모델을 사용합니다",
       suggestionModelHint: "가장 먼저 시도합니다. config.json에 나열한 대체 모델도 계속 적용됩니다",
     },
@@ -2654,7 +2654,7 @@ export const ko: TranslationResources = {
         },
         promptSuggestions: {
           title: "다음 프롬프트 제안",
-          hint: "입력창이 비어 있을 때 다음에 보낼 내용을 제안합니다",
+          hint: "입력창이 비어 있을 때 다음에 보낼 내용을 제안합니다. 메타데이터에서 모델을 선택해야 합니다",
           accessibilityLabel: "다음 프롬프트 제안",
         },
         systemPrompt: {

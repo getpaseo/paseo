@@ -2268,7 +2268,8 @@ export const ru: TranslationResources = {
       docs: "Документация",
       saveError: "Не удалось обновить настройки генерации метаданных",
       suggestionSection: "Подсказки сообщений",
-      suggestionSharedHint: "Подсказки используют модель генерации метаданных",
+      suggestionSharedHint:
+        "Выключено, пока вы не выберете модель здесь или в разделе генерации метаданных",
       suggestionCustomHint:
         "Подсказки, черновики ответов и идеи для нового чата используют эту модель",
       suggestionModelHint:
@@ -2692,7 +2693,7 @@ export const ru: TranslationResources = {
         },
         promptSuggestions: {
           title: "Предлагать следующие сообщения",
-          hint: "Предлагать, что отправить, когда поле ввода пустое",
+          hint: "Предлагать, что отправить, когда поле ввода пустое. Нужна модель в разделе «Метаданные»",
           accessibilityLabel: "Предлагать следующие сообщения",
         },
         systemPrompt: {

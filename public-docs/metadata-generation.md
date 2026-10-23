@@ -27,7 +27,7 @@ When an agent finishes a turn and its composer is empty, Paseo proposes what you
 
 Suggestions are proposed at three moments: when an agent finishes a turn, when you open a chat that is holding none, and when an agent stops to ask you a question — those last ones appear in the question card, beside its answer box.
 
-The suggestion model only sees the recent user and assistant messages of that conversation. Tool calls, command output, sub-agent logs, and attachments are never included.
+Suggestions stay off until you choose a model: pick one in **Settings → Host → Metadata**, either in Manual mode for all metadata or in the **Prompt suggestions** section. The suggestion model only sees the recent user and assistant messages of that conversation. Tool calls, command output, sub-agent logs, and attachments are never included.
 
 A new chat, before you send anything, has no conversation to read, so its suggestions are built from the directory it will start in: the current branch name, the subjects of the last few commits, and the paths of uncommitted files. Only names and subjects are sent — never the contents of a file or a diff. If that directory is not a git repository, the new chat gets no suggestions.
 
@@ -91,7 +91,7 @@ The Settings screen replaces only the first entry and preserves the rest of a cu
 
 ## A different model per kind
 
-The list above is shared by every kind of metadata. To give one kind its own models, add an entry named after it next to `providers`. Its list replaces the shared one for that kind only; everything else, including the built-in defaults and the last-resort model, still applies.
+The list above is shared by every kind of metadata. To give one kind its own models, add an entry named after it next to `providers`. Its list replaces the shared one for that kind only. Prompt suggestions and new chat suggestions run only on configured models: they never fall back to the built-in defaults or the agent's own model, so with no usable configured model you get no suggestions.
 
 ```json
 {

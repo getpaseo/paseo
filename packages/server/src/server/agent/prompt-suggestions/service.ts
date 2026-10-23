@@ -32,6 +32,7 @@ export interface PromptSuggestionGeneration {
     schemaName: string;
     agentTitle: string;
     configKey?: "promptSuggestions" | "newChatSuggestions";
+    selectionPolicy: "configured-only";
     currentSelection?: { provider?: string | null; model?: string | null };
   }): Promise<T>;
 }
@@ -103,6 +104,7 @@ export class PromptSuggestionService {
   private readonly pendingQuestions = new Map<string, PendingQuestion>();
   private readonly drafts = new Map<string, DraftEntry>();
   private readonly queue: string[] = [];
+  private readonly draftQueue: string[] = [];
   private unsubscribe: (() => void) | null = null;
   private inFlight = 0;
 
@@ -153,6 +155,7 @@ export class PromptSuggestionService {
     this.pendingQuestions.clear();
     this.drafts.clear();
     this.queue.length = 0;
+    this.draftQueue.length = 0;
   }
 
   /**
@@ -217,7 +220,10 @@ export class PromptSuggestionService {
       if (oldest === undefined) break;
       this.drafts.delete(oldest);
     }
-    void this.generateDraft(draftKey, entry);
+    if (!this.draftQueue.includes(draftKey)) {
+      this.draftQueue.push(draftKey);
+    }
+    this.drain();
     return { accepted: true };
   }
 
@@ -249,6 +255,7 @@ export class PromptSuggestionService {
         schemaName: PROMPT_SUGGESTIONS_SCHEMA_NAME,
         agentTitle: "Prompt suggestions",
         configKey: "newChatSuggestions",
+        selectionPolicy: "configured-only",
       });
       const suggestions = normalizeSuggestions(response.suggestions);
       if (suggestions.length === 0 || !isCurrent()) {
@@ -265,6 +272,8 @@ export class PromptSuggestionService {
       this.options.logger.debug({ err: error, draftKey }, "prompt suggestions: draft failed");
     } finally {
       forget();
+      this.inFlight -= 1;
+      this.drain();
     }
   }
 
@@ -334,22 +343,36 @@ export class PromptSuggestionService {
     this.drain();
   }
 
+  // Agents and new-chat drafts share one budget. The slot is taken before any
+  // await, so slow workspace reads cannot let a burst past the cap.
   private drain(): void {
     const max = this.options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
-    while (this.inFlight < max && this.queue.length > 0) {
+    while (this.inFlight < max) {
       const agentId = this.queue.shift();
-      if (!agentId) {
+      if (agentId !== undefined) {
+        const entry = this.entries.get(agentId);
+        if (!entry) {
+          continue;
+        }
+        if (entry.generating) {
+          entry.requeue = true;
+          continue;
+        }
+        entry.generating = true;
+        this.inFlight += 1;
+        void this.generate(agentId, entry);
+        continue;
+      }
+      const draftKey = this.draftQueue.shift();
+      if (draftKey === undefined) {
         return;
       }
-      const entry = this.entries.get(agentId);
-      if (!entry) {
+      const draft = this.drafts.get(draftKey);
+      if (!draft || draft.payload) {
         continue;
       }
-      if (entry.generating) {
-        entry.requeue = true;
-        continue;
-      }
-      void this.generate(agentId, entry);
+      this.inFlight += 1;
+      void this.generateDraft(draftKey, draft);
     }
   }
 
@@ -420,7 +443,22 @@ export class PromptSuggestionService {
     return normalizeSuggestions(response.suggestions);
   }
 
+  // drain() has already reserved this agent's slot; every path releases it.
   private async generate(agentId: string, entry: AgentEntry): Promise<void> {
+    try {
+      await this.generateReserved(agentId, entry);
+    } finally {
+      entry.generating = false;
+      this.inFlight -= 1;
+      if (entry.requeue) {
+        entry.requeue = false;
+        this.queue.push(agentId);
+      }
+      this.drain();
+    }
+  }
+
+  private async generateReserved(agentId: string, entry: AgentEntry): Promise<void> {
     const token = entry.token;
     if (!this.shouldGenerate(agentId)) {
       return;
@@ -452,17 +490,13 @@ export class PromptSuggestionService {
       return;
     }
 
-    entry.generating = true;
-    this.inFlight += 1;
     try {
       const suggestions = await this.requestSuggestions(prepared, {
         cwd: agent.cwd,
         prompt: prepared.built.prompt,
         agentTitle: "Prompt suggestions",
         configKey: prepared.configKey,
-        // When the metadata chain has nothing usable, fall back to the agent's own
-        // model: it has already seen this conversation, so nothing new leaves.
-        currentSelection: { provider: agent.provider, model: agent.config?.model ?? null },
+        selectionPolicy: "configured-only",
       });
       if (entry.token !== token) {
         return;
@@ -484,14 +518,6 @@ export class PromptSuggestionService {
     } catch (error) {
       // A guess that did not arrive is not an event the user needs to know about.
       this.options.logger.debug({ err: error, agentId }, "prompt suggestions: generation failed");
-    } finally {
-      entry.generating = false;
-      this.inFlight -= 1;
-      if (entry.requeue) {
-        entry.requeue = false;
-        this.queue.push(agentId);
-      }
-      this.drain();
     }
   }
 }

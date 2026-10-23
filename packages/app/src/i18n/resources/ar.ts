@@ -2270,7 +2270,7 @@ export const ar: TranslationResources = {
       docs: "الوثائق",
       saveError: "تعذر تحديث إنشاء البيانات الوصفية",
       suggestionSection: "اقتراحات الرسائل",
-      suggestionSharedHint: "تستخدم الاقتراحات نموذج إنشاء البيانات الوصفية",
+      suggestionSharedHint: "متوقف حتى تختار نموذجًا هنا أو في إنشاء البيانات الوصفية",
       suggestionCustomHint:
         "تستخدم الاقتراحات والإجابات المقترحة وأفكار المحادثة الجديدة هذا النموذج",
       suggestionModelHint: "يُجرَّب أولًا؛ وتظل النماذج الاحتياطية المدرجة في config.json سارية",
@@ -2680,7 +2680,7 @@ export const ar: TranslationResources = {
         },
         promptSuggestions: {
           title: "اقتراح الرسائل التالية",
-          hint: "اقتراح ما يمكن إرساله كلما كان مربع الكتابة فارغًا",
+          hint: "اقتراح ما يمكن إرساله عندما يكون مربع الكتابة فارغًا. يتطلب نموذجًا في البيانات الوصفية",
           accessibilityLabel: "اقتراح الرسائل التالية",
         },
         systemPrompt: {

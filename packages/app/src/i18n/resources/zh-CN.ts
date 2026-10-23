@@ -2211,7 +2211,7 @@ export const zhCN: TranslationResources = {
       docs: "文档",
       saveError: "无法更新元数据生成设置",
       suggestionSection: "消息建议",
-      suggestionSharedHint: "建议使用元数据生成模型",
+      suggestionSharedHint: "在此处或元数据生成中选择模型前保持关闭",
       suggestionCustomHint: "建议、草拟回答和新对话提示都使用此模型",
       suggestionModelHint: "优先尝试此模型；config.json 中列出的备用模型仍然生效",
     },
@@ -2615,7 +2615,7 @@ export const zhCN: TranslationResources = {
         },
         promptSuggestions: {
           title: "建议下一条提示",
-          hint: "输入框为空时，建议接下来可以发送什么",
+          hint: "输入框为空时，建议接下来可以发送什么。需要在元数据中选择模型",
           accessibilityLabel: "建议下一条提示",
         },
         systemPrompt: {

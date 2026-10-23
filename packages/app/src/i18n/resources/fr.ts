@@ -2282,7 +2282,8 @@ export const fr: TranslationResources = {
       docs: "Documentation",
       saveError: "Impossible de mettre à jour la génération de métadonnées",
       suggestionSection: "Suggestions de messages",
-      suggestionSharedHint: "Les suggestions utilisent le modèle de génération de métadonnées",
+      suggestionSharedHint:
+        "Désactivé tant que vous n'avez pas choisi de modèle ici ou dans Génération de métadonnées",
       suggestionCustomHint:
         "Les suggestions, les réponses proposées et les idées de nouveau chat utilisent ce modèle",
       suggestionModelHint:
@@ -2704,7 +2705,7 @@ export const fr: TranslationResources = {
         },
         promptSuggestions: {
           title: "Suggérer les prochains messages",
-          hint: "Proposer quoi envoyer chaque fois que le champ de saisie est vide",
+          hint: "Proposer quoi envoyer quand le champ de saisie est vide. Nécessite un modèle dans Métadonnées",
           accessibilityLabel: "Suggérer les prochains messages",
         },
         systemPrompt: {

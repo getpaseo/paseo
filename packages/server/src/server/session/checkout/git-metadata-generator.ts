@@ -52,6 +52,7 @@ export interface StructuredTextGenerationRequest<T> {
   agentTitle: string;
   // The last-resort model; defaults to whatever is focused for this cwd.
   currentSelection?: ResolveStructuredGenerationProvidersOptions["currentSelection"];
+  selectionPolicy?: ResolveStructuredGenerationProvidersOptions["selectionPolicy"];
   configKey?: ResolveStructuredGenerationProvidersOptions["configKey"];
 }
 
@@ -209,13 +210,26 @@ export function createAgentStructuredTextGeneration(deps: {
   logger: StructuredGenerationLogger;
 }): StructuredTextGeneration {
   return {
-    async generate({ cwd, prompt, schema, schemaName, agentTitle, currentSelection, configKey }) {
+    async generate({
+      cwd,
+      prompt,
+      schema,
+      schemaName,
+      agentTitle,
+      currentSelection,
+      selectionPolicy,
+      configKey,
+    }) {
       const providers = await resolveStructuredGenerationProviders({
         cwd,
         providerSnapshotManager: deps.providerSnapshotManager,
         daemonConfig: deps.readDaemonConfig(),
         ...(configKey ? { configKey } : {}),
-        currentSelection: currentSelection ?? deps.getFocusedSelection(cwd),
+        selectionPolicy,
+        currentSelection:
+          selectionPolicy === "configured-only"
+            ? undefined
+            : (currentSelection ?? deps.getFocusedSelection(cwd)),
       });
       return generateStructuredAgentResponseWithFallback({
         manager: deps.agentManager,

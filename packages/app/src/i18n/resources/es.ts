@@ -2282,7 +2282,8 @@ export const es: TranslationResources = {
       docs: "Documentación",
       saveError: "No se pudo actualizar la generación de metadatos",
       suggestionSection: "Sugerencias de mensajes",
-      suggestionSharedHint: "Las sugerencias usan el modelo de generación de metadatos",
+      suggestionSharedHint:
+        "Desactivado hasta que elijas un modelo aquí o en Generación de metadatos",
       suggestionCustomHint:
         "Las sugerencias, las respuestas propuestas y las ideas para chats nuevos usan este modelo",
       suggestionModelHint:
@@ -2701,7 +2702,7 @@ export const es: TranslationResources = {
         },
         promptSuggestions: {
           title: "Sugerir próximos mensajes",
-          hint: "Sugerir qué enviar siempre que el campo de mensaje esté vacío",
+          hint: "Sugerir qué enviar cuando el campo de mensaje esté vacío. Requiere un modelo en Metadatos",
           accessibilityLabel: "Sugerir próximos mensajes",
         },
         systemPrompt: {

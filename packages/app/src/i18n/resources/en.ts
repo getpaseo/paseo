@@ -2359,7 +2359,7 @@ export const en = {
       docs: "Docs",
       saveError: "Unable to update metadata generation",
       suggestionSection: "Prompt suggestions",
-      suggestionSharedHint: "Suggestions use the metadata generation model",
+      suggestionSharedHint: "Off until you pick a model here or under Metadata generation",
       suggestionCustomHint: "Suggestions, drafted answers and new-chat ideas use this model",
       suggestionModelHint: "Tried first; fallbacks listed in config.json still apply",
     },
@@ -2770,7 +2770,7 @@ export const en = {
         },
         promptSuggestions: {
           title: "Suggest next prompts",
-          hint: "Suggest what to send next whenever your composer is empty",
+          hint: "Suggest what to send next when your composer is empty. Needs a model under Metadata",
           accessibilityLabel: "Suggest next prompts",
         },
         systemPrompt: {

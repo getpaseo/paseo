@@ -39,6 +39,7 @@ export interface ResolveStructuredGenerationProvidersOptions {
   // Which artifact is being generated; its own configured providers win over the
   // shared list. One call can produce two artifacts, so several keys are allowed.
   configKey?: MetadataConfigKey | MetadataConfigKey[];
+  selectionPolicy?: "configured-only";
   currentSelection?: {
     provider?: AgentProvider | null;
     model?: string | null;
@@ -77,20 +78,22 @@ export async function resolveStructuredGenerationProviders(
     return dedupeProviders(providers);
   }
 
-  for (const identifier of DEFAULT_STRUCTURED_GENERATION_PROVIDERS) {
-    const resolved = resolveByModelSubstring(modelEntries, identifier);
-    if (resolved) {
-      providers.push(resolved);
+  if (options.selectionPolicy !== "configured-only") {
+    for (const identifier of DEFAULT_STRUCTURED_GENERATION_PROVIDERS) {
+      const resolved = resolveByModelSubstring(modelEntries, identifier);
+      if (resolved) {
+        providers.push(resolved);
+      }
     }
-  }
 
-  const currentSelection = resolveCurrentSelection(
-    options.currentSelection,
-    modelEntries,
-    entriesByProvider,
-  );
-  if (currentSelection) {
-    providers.push(currentSelection);
+    const currentSelection = resolveCurrentSelection(
+      options.currentSelection,
+      modelEntries,
+      entriesByProvider,
+    );
+    if (currentSelection) {
+      providers.push(currentSelection);
+    }
   }
 
   return dedupeProviders(providers);

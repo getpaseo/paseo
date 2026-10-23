@@ -18,6 +18,87 @@ class ProviderSnapshots {
 }
 
 describe("resolveStructuredGenerationProviders", () => {
+  test("suggestion policy uses the per-kind chain while other manual metadata keeps the shared chain", async () => {
+    const snapshots = new ProviderSnapshots([
+      {
+        provider: "codex",
+        status: READY,
+        enabled: true,
+        models: [
+          { provider: "codex", id: "gpt-6-astra", label: "Astra" },
+          { provider: "codex", id: "gpt-5.4-mini", label: "Mini" },
+        ],
+      },
+    ]);
+    const common = {
+      cwd: "/tmp/repo",
+      providerSnapshotManager: snapshots,
+      daemonConfig: {
+        metadataGeneration: {
+          providers: [{ provider: "codex", model: "shared" }],
+          promptSuggestions: { providers: [{ provider: "codex", model: "cheap" }] },
+        },
+      },
+      currentSelection: { provider: "codex", model: "gpt-6-astra" },
+    };
+
+    const suggestions = await resolveStructuredGenerationProviders({
+      ...common,
+      configKey: "promptSuggestions",
+      selectionPolicy: "configured-only",
+    });
+    const commitMessage = await resolveStructuredGenerationProviders({
+      ...common,
+      configKey: "commitMessage",
+    });
+
+    expect(suggestions).toEqual([{ provider: "codex", model: "cheap" }]);
+    expect(commitMessage).toEqual([{ provider: "codex", model: "shared" }]);
+  });
+
+  test("suggestion policy uses the shared chain when its per-kind list is empty", async () => {
+    const providers = await resolveStructuredGenerationProviders({
+      cwd: "/tmp/repo",
+      providerSnapshotManager: new ProviderSnapshots([
+        {
+          provider: "claude",
+          status: READY,
+          enabled: true,
+          models: [{ provider: "claude", id: "haiku", label: "Haiku" }],
+        },
+      ]),
+      daemonConfig: {
+        metadataGeneration: {
+          providers: [{ provider: "codex", model: "shared" }],
+          newChatSuggestions: { providers: [] },
+        },
+      },
+      configKey: "newChatSuggestions",
+      selectionPolicy: "configured-only",
+    });
+
+    expect(providers).toEqual([{ provider: "codex", model: "shared" }]);
+  });
+
+  test("suggestion policy leaves an empty chain empty even when defaults are available", async () => {
+    const providers = await resolveStructuredGenerationProviders({
+      cwd: "/tmp/repo",
+      providerSnapshotManager: new ProviderSnapshots([
+        {
+          provider: "claude",
+          status: READY,
+          enabled: true,
+          models: [{ provider: "claude", id: "haiku", label: "Haiku" }],
+        },
+      ]),
+      configKey: "newChatSuggestions",
+      selectionPolicy: "configured-only",
+      currentSelection: { provider: "codex", model: "gpt-6-astra" },
+    });
+
+    expect(providers).toEqual([]);
+  });
+
   test("tries only the configured models when metadata generation is manual", async () => {
     const snapshots = new ProviderSnapshots([
       {
