@@ -71,6 +71,9 @@ it("ignores an older probe after a newer file link opens", async () => {
     openDirectory: (directory) => {
       opened.push(directory);
     },
+    openOutsideDirectory: (directory) => {
+      opened.push(directory);
+    },
   });
   const first = opener.open({ raw: "./first.md", path: "/repo/first.md" }, "preferred");
   await opener.open({ raw: "./second.md:2", path: "/repo/second.md", lineStart: 2 }, "preferred");
@@ -95,10 +98,35 @@ it("ignores a pending probe when its view is left", async () => {
     openDirectory: (directory) => {
       opened.push(directory);
     },
+    openOutsideDirectory: (directory) => {
+      opened.push(directory);
+    },
   });
   const pending = opener.open({ raw: "./docs", path: "/repo/docs" }, "preferred");
   opener.cancel();
   resolveProbe({});
   await pending;
   expect(opened).toEqual([]);
+});
+
+it("sends folders outside the workspace away from the workspace Files panel", async () => {
+  const { createInlinePathOpener } = await import("./path-open");
+  const workspaceFolders: string[] = [];
+  const outsideFolders: string[] = [];
+  const opener = createInlinePathOpener({
+    workspaceRoot: "/Users/me/repo",
+    client: null,
+    openFile: () => {},
+    openDirectory: (directory) => {
+      workspaceFolders.push(directory);
+    },
+    openOutsideDirectory: (directory) => {
+      outsideFolders.push(directory);
+    },
+  });
+  for (const raw of ["~/Downloads/contracts/", "/tmp/reports/", "/Users/me/repo/docs/"]) {
+    await opener.open({ raw, path: raw }, "preferred");
+  }
+  expect(outsideFolders).toEqual(["~/Downloads/contracts", "/tmp/reports"]);
+  expect(workspaceFolders).toEqual(["docs"]);
 });
