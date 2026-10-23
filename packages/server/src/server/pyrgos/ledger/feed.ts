@@ -88,11 +88,14 @@ export function createVoiceSession(input: CreateSessionInput): VoiceSession {
 
 export function announceLine({ item, ref }: { item: string; ref: string }): string {
   const text = item.split(/\s+/).filter(Boolean).join(" ");
-  const line = `[voice] ACTION: ${text} (transcript: ${ref})`;
+  const head = "[voice] ACTION: ";
+  const line = `${head}${text} (transcript: ${ref})`;
   if (line.length <= MAX_ANNOUNCE_CHARS) return line;
-  const tail = ` (transcript: ${ref})`;
-  const room = MAX_ANNOUNCE_CHARS - "[voice] ACTION: ".length - tail.length - 1;
-  return `[voice] ACTION: ${text.slice(0, Math.max(room, 0))}…${tail}`;
+  const maxRef = Math.floor(MAX_ANNOUNCE_CHARS / 2);
+  const shortRef = ref.length > maxRef ? `…${ref.slice(-(maxRef - 1))}` : ref;
+  const tail = ` (transcript: ${shortRef})`;
+  const room = MAX_ANNOUNCE_CHARS - head.length - tail.length - 1;
+  return `${head}${text.slice(0, Math.max(room, 0))}…${tail}`;
 }
 
 export type Exec = (file: string, args: string[]) => Promise<void>;
@@ -127,6 +130,14 @@ export function createAnnouncer(input: AnnouncerInput): (item: LedgerItem) => Pr
   };
 }
 
+function parseJsonLine(line: string): unknown {
+  try {
+    return JSON.parse(line);
+  } catch {
+    return null;
+  }
+}
+
 export class ReplyWatcher {
   private offset = 0;
 
@@ -141,7 +152,7 @@ export class ReplyWatcher {
     const replies: string[] = [];
     for (const line of unread.slice(0, end).split("\n")) {
       if (!line.trim()) continue;
-      const parsed = ReplyRowSchema.safeParse(JSON.parse(line));
+      const parsed = ReplyRowSchema.safeParse(parseJsonLine(line));
       const text = parsed.success ? parsed.data.text.trim() : "";
       if (text) replies.push(text);
     }

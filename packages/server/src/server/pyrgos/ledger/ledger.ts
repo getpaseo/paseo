@@ -48,7 +48,7 @@ export interface LedgerDeps {
   launch?: (item: LedgerItem) => Promise<void>;
 }
 
-export type LedgerErrorCode = "not_found" | "bad_state" | "incomplete" | "empty";
+export type LedgerErrorCode = "not_found" | "bad_state" | "incomplete" | "empty" | "unconfirmed";
 
 export class LedgerError extends Error {
   constructor(
@@ -71,6 +71,12 @@ export interface Ledger {
 }
 
 const MISSING_FIELDS = ["scope", "project", "doneCriteria"] as const;
+
+const ANNOUNCE_FAILED = "announce failed: ";
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 function clean(text: string): string {
   return text.split(/\s+/).filter(Boolean).join(" ");
@@ -137,25 +143,44 @@ export function createLedger(deps: LedgerDeps): Ledger {
     });
   }
 
-  async function agree(id: string, _input: AgreeInput): Promise<LedgerItem> {
+  async function agree(id: string, input: AgreeInput): Promise<LedgerItem> {
+    if (input?.confirmed !== true) {
+      throw new LedgerError("unconfirmed", `item ${id} needs explicit confirmation`, id);
+    }
     const current = get(id);
-    if (current.state !== "refined") {
+    const failures = current.state === "agreed" && current.launchError ? current.launchError : null;
+    if (current.state !== "refined" && failures === null) {
       throw new LedgerError("bad_state", `item ${id} is ${current.state}, not refined`, id);
     }
     const missing = MISSING_FIELDS.filter((field) => current[field] === null);
     if (missing.length > 0) {
       throw new LedgerError("incomplete", `item ${id} is missing ${missing.join(", ")}`, id);
     }
-    const agreed = save({ ...current, state: "agreed", updatedAt: now().toISOString() });
-    await deps.announce?.(agreed);
-    if (!deps.launch) return agreed;
-    try {
-      await deps.launch(agreed);
-      return agreed;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return save({ ...agreed, launchError: message, updatedAt: now().toISOString() });
+    const agreed =
+      failures === null
+        ? save({ ...current, state: "agreed", updatedAt: now().toISOString() })
+        : current;
+    const parts = failures === null ? [] : failures.split("; ");
+    const announceDue = failures === null || parts.some((part) => part.startsWith(ANNOUNCE_FAILED));
+    const launchDue = failures === null || parts.some((part) => !part.startsWith(ANNOUNCE_FAILED));
+    const errors: string[] = [];
+    if (announceDue && deps.announce) {
+      try {
+        await deps.announce(agreed);
+      } catch (error) {
+        errors.push(`${ANNOUNCE_FAILED}${errorMessage(error)}`);
+      }
     }
+    if (launchDue && deps.launch) {
+      try {
+        await deps.launch(agreed);
+      } catch (error) {
+        errors.push(errorMessage(error));
+      }
+    }
+    const launchError = errors.length > 0 ? errors.join("; ") : null;
+    if (launchError === agreed.launchError) return agreed;
+    return save({ ...agreed, launchError, updatedAt: now().toISOString() });
   }
 
   function drop(id: string, reason?: string): LedgerItem {

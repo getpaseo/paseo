@@ -12,6 +12,8 @@ All files live in the voice directory: `$ALCHEMIST_HARNESS/.agents/feedback/voic
 | `voice-settings.json` | panel (atomic tmp + rename) | provider, once per utterance | `{"speed":1.0,"pitch":0,"preset":null}`. Speed 0.5 to 2, pitch -6 to 6. Values are clamped to the capabilities. |
 | `<session>.words.jsonl` | provider, one row per utterance | panel (newest file, last valid row) | `{"id","text","words":[{"word","start","end"}],"startedAt"}`. `start` and `end` are seconds from utterance start; `startedAt` is epoch milliseconds when audio began. |
 
+An utterance expires 2 seconds after its last word's `end`; after that the panel shows "Nothing spoken yet". Settings writes are serialized and use a unique temp file per write.
+
 The panel polls playback every 500 ms and advances the highlight every 50 ms. Elapsed time is `(serverNow - startedAt)` plus local time since the response, so a phone with a skewed clock still highlights correctly.
 
 ## Run the tests

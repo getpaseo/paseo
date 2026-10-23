@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +16,7 @@ import {
 } from "../shared/voice-settings";
 
 const WORDS_SUFFIX = ".words.jsonl";
+const EXPIRY_GRACE_MS = 2000;
 
 export function voiceDir(): string {
   const harness = process.env.ALCHEMIST_HARNESS;
@@ -48,11 +50,25 @@ export async function writeSettings(
   patch: VoiceSettingsPatch,
   dir: string = voiceDir(),
 ): Promise<{ settings: VoiceSettings; capabilities: VoiceCapabilities }> {
+  const run = writeQueue.then(() => applyPatch(patch, dir));
+  writeQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+let writeQueue: Promise<void> = Promise.resolve();
+
+async function applyPatch(
+  patch: VoiceSettingsPatch,
+  dir: string,
+): Promise<{ settings: VoiceSettings; capabilities: VoiceCapabilities }> {
   const capabilities = await readCapabilities(dir);
   const settings = clampSettings(await readSettings(dir), patch, capabilities);
   await mkdir(dir, { recursive: true });
   const target = join(dir, "voice-settings.json");
-  const temp = `${target}.${process.pid}.tmp`;
+  const temp = `${target}.${randomUUID()}.tmp`;
   await writeFile(temp, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
   await rename(temp, target);
   return { settings, capabilities };
@@ -72,5 +88,10 @@ export async function readPlayback(
   );
   const newest = files.toSorted((a, b) => b.mtime - a.mtime)[0];
   const text = newest ? await readFile(newest.path, "utf8").catch(() => "") : "";
-  return { serverNow: Date.now(), utterance: parseLastUtterance(text) };
+  const serverNow = Date.now();
+  const utterance = parseLastUtterance(text);
+  const lastEnd = utterance?.words.at(-1)?.end ?? 0;
+  const finished =
+    utterance !== null && serverNow > utterance.startedAt + lastEnd * 1000 + EXPIRY_GRACE_MS;
+  return { serverNow, utterance: finished ? null : utterance };
 }

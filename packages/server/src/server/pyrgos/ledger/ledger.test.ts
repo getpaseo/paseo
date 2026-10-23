@@ -122,6 +122,55 @@ describe("ledger state machine", () => {
     expect(ledger.get(id).launchError).toBe("no lane");
   });
 
+  it("refuses to agree without confirmed: true", async () => {
+    const launch = vi.fn(async () => {});
+    const { ledger } = makeLedger({ launch });
+    const { id } = ledger.propose({ item: "x" });
+    ledger.refine(id, COMPLETE);
+    // @ts-expect-error confirmed must be literally true
+    await expect(ledger.agree(id, { confirmed: false })).rejects.toMatchObject({
+      code: "unconfirmed",
+    });
+    // @ts-expect-error input is required
+    await expect(ledger.agree(id, undefined)).rejects.toMatchObject({ code: "unconfirmed" });
+    expect(ledger.get(id).state).toBe("refined");
+    expect(launch).not.toHaveBeenCalled();
+  });
+
+  it("launches even when announce fails, and retries only the failed step", async () => {
+    const announce = vi
+      .fn<(item: LedgerItem) => Promise<void>>()
+      .mockRejectedValueOnce(new Error("surface gone"))
+      .mockResolvedValue(undefined);
+    const launch = vi.fn(async () => {});
+    const { ledger } = makeLedger({ announce, launch });
+    const { id } = ledger.propose({ item: "x" });
+    ledger.refine(id, COMPLETE);
+    const first = await ledger.agree(id, { confirmed: true });
+    expect(first).toMatchObject({ state: "agreed", launchError: "announce failed: surface gone" });
+    expect(launch).toHaveBeenCalledTimes(1);
+    const second = await ledger.agree(id, { confirmed: true });
+    expect(second.launchError).toBeNull();
+    expect(announce).toHaveBeenCalledTimes(2);
+    expect(launch).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a failed launch without re-announcing", async () => {
+    const announce = vi.fn(async () => {});
+    const launch = vi
+      .fn<(item: LedgerItem) => Promise<void>>()
+      .mockRejectedValueOnce(new Error("no lane"))
+      .mockResolvedValue(undefined);
+    const { ledger } = makeLedger({ announce, launch });
+    const { id } = ledger.propose({ item: "x" });
+    ledger.refine(id, COMPLETE);
+    await ledger.agree(id, { confirmed: true });
+    const retried = await ledger.agree(id, { confirmed: true });
+    expect(retried.launchError).toBeNull();
+    expect(launch).toHaveBeenCalledTimes(2);
+    expect(announce).toHaveBeenCalledTimes(1);
+  });
+
   it("does not launch twice", async () => {
     const launch = vi.fn(async () => {});
     const { ledger } = makeLedger({ launch });

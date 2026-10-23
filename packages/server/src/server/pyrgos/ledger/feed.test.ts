@@ -51,6 +51,13 @@ describe("announceLine", () => {
     expect(line).toContain("…");
     expect(line.endsWith("(transcript: a.jsonl#3)")).toBe(true);
   });
+
+  it("stays within 400 chars even when the ref is very long", () => {
+    const ref = `${"d/".repeat(300)}a.jsonl#3`;
+    const line = announceLine({ item: "ship it", ref });
+    expect(line.length).toBeLessThanOrEqual(400);
+    expect(line.endsWith("a.jsonl#3)")).toBe(true);
+  });
 });
 
 describe("VoiceSession", () => {
@@ -116,6 +123,15 @@ describe("ReplyWatcher", () => {
     expect(await watcher.poll()).toEqual([]);
     await appendFile(path, 'o"}\n');
     expect(await watcher.poll()).toEqual(["two"]);
+  });
+
+  it("skips malformed lines and keeps polling", async () => {
+    const path = join(dir, "m.replies.jsonl");
+    const watcher = new ReplyWatcher(path);
+    await appendFile(path, `not json\n${JSON.stringify({ ts: "t", text: "ok" })}\n`);
+    expect(await watcher.poll()).toEqual(["ok"]);
+    await appendFile(path, `${JSON.stringify({ ts: "t", text: "later" })}\n`);
+    expect(await watcher.poll()).toEqual(["later"]);
   });
 });
 

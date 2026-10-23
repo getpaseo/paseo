@@ -59,14 +59,7 @@ export function clampSettings(
 
 export function activeWordIndex(words: readonly TimedWord[], elapsedSeconds: number): number {
   if (elapsedSeconds < 0) return -1;
-  let found = -1;
-  for (let index = 0; index < words.length; index += 1) {
-    if (words[index].start <= elapsedSeconds) found = index;
-    else break;
-  }
-  const last = words.at(-1);
-  if (found === words.length - 1 && last && elapsedSeconds > last.end) return -1;
-  return found;
+  return words.findIndex((entry) => entry.start <= elapsedSeconds && elapsedSeconds <= entry.end);
 }
 
 export function parseLastUtterance(text: string): Utterance | null {

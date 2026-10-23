@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
@@ -31,9 +31,13 @@ describe("activeWordIndex", () => {
 
   it("follows the word whose start has passed", () => {
     expect(activeWordIndex(words, 0)).toBe(0);
-    expect(activeWordIndex(words, 0.62)).toBe(1);
+    expect(activeWordIndex(words, 0.5)).toBe(1);
     expect(activeWordIndex(words, 1.3)).toBe(4);
     expect(activeWordIndex(words, 1.9)).toBe(5);
+  });
+
+  it("is -1 in the gap between words", () => {
+    expect(activeWordIndex(words, 0.62)).toBe(-1);
   });
 });
 
@@ -117,9 +121,22 @@ describe("voice files", () => {
   });
 
   it("reads the latest utterance from the newest words file", async () => {
-    await writeFile(join(dir, "s.words.jsonl"), fixture);
+    const row = { ...utterance, startedAt: Date.now() };
+    await writeFile(join(dir, "s.words.jsonl"), `${JSON.stringify(row)}\n`);
     const playback = await readPlayback(dir);
     expect(playback.utterance?.id).toBe("u2");
     expect(playback.serverNow).toBeGreaterThan(0);
+  });
+
+  it("expires a finished utterance", async () => {
+    await writeFile(join(dir, "s.words.jsonl"), fixture);
+    expect((await readPlayback(dir)).utterance).toBeNull();
+  });
+
+  it("serializes concurrent settings writes", async () => {
+    await Promise.all([1.1, 1.2, 1.3, 1.4, 1.5].map((speed) => writeSettings({ speed }, dir)));
+    expect((await readSettings(dir)).speed).toBe(1.5);
+    const names = await readdir(dir);
+    expect(names.filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 });
