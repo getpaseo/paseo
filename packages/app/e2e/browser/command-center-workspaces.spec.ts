@@ -156,3 +156,74 @@ test.describe("Command center workspaces", () => {
     }
   });
 });
+
+test.describe("Compact sidebar inspection", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  async function openSidebar(page: import("@playwright/test").Page) {
+    await page.getByRole("button", { name: "Open menu", exact: true }).click();
+    await expect(page.getByTestId("sidebar-search")).toBeVisible();
+  }
+
+  async function expectSidebarPreserved(page: import("@playwright/test").Page) {
+    await expect(page.getByRole("button", { name: "Close menu", exact: true })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    await expect(page.getByTestId("sidebar-search")).toBeVisible();
+  }
+
+  test("canceling Search retains the compact sidebar", async ({ page }) => {
+    await gotoAppShell(page);
+    await openSidebar(page);
+    await openCommandCenter(page);
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("command-center-panel")).not.toBeVisible();
+    await expectSidebarPreserved(page);
+  });
+  test("canceling Import session retains the compact sidebar", async ({ page }) => {
+    await gotoAppShell(page);
+    await openSidebar(page);
+    await page
+      .getByTestId("sidebar-project-empty-state")
+      .getByRole("button", { name: "Import session", exact: true })
+      .click();
+    await expect(page.getByTestId("import-session-sheet")).toBeVisible();
+    await page.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(page.getByTestId("import-session-sheet")).not.toBeVisible();
+    await expectSidebarPreserved(page);
+  });
+
+  test("Search reveals the same workspace and a selected root agent", async ({ page }) => {
+    const seeded = await seedWorkspace({
+      repoPrefix: "compact-search-destination-",
+      title: "Compact destination",
+    });
+    try {
+      const agent = await createIdleAgent(seeded.client, {
+        cwd: seeded.repoPath,
+        workspaceId: seeded.workspaceId,
+        title: "Compact root agent",
+      });
+      await page.goto(buildHostWorkspaceRoute(getServerId(), seeded.workspaceId));
+      await openSidebar(page);
+      const search = await openCommandCenter(page);
+      await search.getByTestId("command-center-input").fill("Compact destination");
+      await search
+        .getByTestId(`command-center-workspace-${getServerId()}:${seeded.workspaceId}`)
+        .click();
+      await expect(page.getByRole("button", { name: "Open menu", exact: true })).toBeVisible();
+      await expectAppRoute(page, buildHostWorkspaceRoute(getServerId(), seeded.workspaceId));
+      await openSidebar(page);
+      const agentSearch = await openCommandCenter(page);
+      await agentSearch.getByTestId("command-center-input").fill("Compact root agent");
+      await agentSearch.getByTestId(`command-center-agent-${getServerId()}:${agent.id}`).click();
+      await expect(page.getByRole("button", { name: "Open menu", exact: true })).toBeVisible();
+      await expect(
+        page.getByRole("textbox", { name: "Message agent...", exact: true }),
+      ).toBeVisible();
+    } finally {
+      await seeded.cleanup();
+    }
+  });
+});

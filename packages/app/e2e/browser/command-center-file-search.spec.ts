@@ -202,3 +202,35 @@ test("manual scrolling cancels a pending file-search reveal and query editing re
     await seeded.cleanup();
   }
 });
+
+test.describe("Compact file search context", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+  test("a file result opens a sheet above the left sidebar", async ({ page }) => {
+    const seeded = await seedWorkspace({
+      repoPrefix: "compact-search-file-",
+      title: "Compact file lookup",
+      repo: { files: [{ path: "lookup.ts", content: "export const lookup = true;\n" }] },
+    });
+    try {
+      await page.goto(`/h/${process.env.E2E_SERVER_ID}/workspace/${seeded.workspaceId}`);
+      await page.getByRole("button", { name: "Open menu", exact: true }).click();
+      const search = await openCommandCenter(page);
+      await search.getByTestId("command-center-input").fill("lookup.ts");
+      await search.getByRole("button", { name: "lookup.ts", exact: true }).click();
+      await expect(page.getByTestId("sheet-tab-body")).toBeVisible();
+      await expect(page.getByTestId("sheet-tab-header")).toContainText("lookup.ts");
+      await page
+        .getByTestId("sheet-tab-header")
+        .getByRole("button", { name: "Close", exact: true })
+        .click();
+      await expect(page.getByTestId("sheet-tab-body")).not.toBeVisible();
+      await expect(page.getByRole("button", { name: "Close menu", exact: true })).toHaveAttribute(
+        "aria-expanded",
+        "true",
+      );
+      await expect(page.getByTestId("sidebar-search")).toBeVisible();
+    } finally {
+      await seeded.cleanup();
+    }
+  });
+});

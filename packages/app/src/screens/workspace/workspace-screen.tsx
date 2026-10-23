@@ -786,10 +786,11 @@ function WorkspacePanelSurface({
   children: ReactNode;
   tabIds: readonly string[];
 }) {
+  const isCompact = useIsCompactFormFactor();
   return (
     <WorkspaceComposerEditingSessionsProvider workspaceKey={workspaceKey} tabIds={tabIds}>
       <NewTabLauncherProvider value={launcher}>
-        <SheetHostScope>
+        <SheetHostScope enabled={!isCompact}>
           <View style={styles.threePaneRow} onLayout={onLayout}>
             {children}
           </View>
@@ -1138,6 +1139,7 @@ function WorkspaceScreenContent({
     (state) => state.sessions[normalizedServerId]?.hasHydratedWorkspaces ?? false,
   );
   const pendingOpenTarget = usePendingWorkspaceOpen({
+    onOpened: revealWorkspaceTab,
     workspaceKey: persistenceKey,
     hasHydratedWorkspaces,
     workspaceExists: workspaceDescriptor !== null,
@@ -1661,9 +1663,6 @@ function WorkspaceScreenContent({
       if (!normalizedLocation) {
         return;
       }
-      if (isMobile) {
-        showMobileAgent();
-      }
       if (!persistenceKey) {
         return;
       }
@@ -1676,12 +1675,10 @@ function WorkspaceScreenContent({
       }
     },
     [
-      isMobile,
       navigateToTabId,
       openWorkspaceTabFocused,
       revealWorkspaceChildTab,
       persistenceKey,
-      showMobileAgent,
     ],
   );
 
@@ -3533,7 +3530,7 @@ function WorkspaceScreenContent({
     composerFullscreen: useComposerTabFullscreen(workspacePanelKey, activeTabId),
   });
 
-  // Compact sheets use the shared workspace scope, above both center and Explorer.
+  // Compact sheets escape to the app overlay host, above both sidebars.
   const workspaceCenterColumn = isMobile ? (
     <View style={styles.centerColumn}>
       <FloatingHeaderLayout

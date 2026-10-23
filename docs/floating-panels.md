@@ -363,10 +363,10 @@ track phase.
 All sheets use the app-wide Gorhom modal provider through `IsolatedBottomSheetModal`, with no
 exceptions: one stack means a sheet opened from any sheet lands on top of it and uncovers it on
 close. This includes native centered dialogs: separate React Native Modals cannot present a
-root-owned sibling dialog over an existing iOS presenter. A sheet that must draw inside a subtree
-(the [sheet tabs](explorer-sidebar.md#sheets) draw inside the compact workspace column so their
-panels read the workspace providers) presents from inside a `SheetHostScope`, which moves the
-portal host and container measurement while the sheet still joins the same stack. That export is
+root-owned sibling dialog over an existing iOS presenter. `SheetHostScope` moves the portal host
+and container measurement while forwarding the same modal queue. Compact
+[workspace sheets](explorer-sidebar.md#sheets) use the app overlay host above both sidebars;
+wide layouts keep local geometry. That export is
 what `patches/@gorhom+bottom-sheet+*.patch` adds.
 
 A sheet whose owner may veto the close (unsaved work) passes `enableDismissOnClose={false}`. Every

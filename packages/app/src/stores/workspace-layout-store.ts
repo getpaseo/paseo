@@ -2416,12 +2416,14 @@ interface PendingWorkspaceOpenReadiness {
   workspaceKey: string | null;
   hasHydratedWorkspaces: boolean;
   workspaceExists: boolean;
+  onOpened: (workspaceKey: string, tabId: string | null) => void;
 }
 
 export function usePendingWorkspaceOpen({
   workspaceKey,
   hasHydratedWorkspaces,
   workspaceExists,
+  onOpened,
 }: PendingWorkspaceOpenReadiness): WorkspaceTabTarget | null {
   const workspaceReady = hasHydratedWorkspaces && workspaceExists;
   const pending = useWorkspaceLayoutStore((state) =>
@@ -2430,8 +2432,8 @@ export function usePendingWorkspaceOpen({
   const layoutHydrated = useWorkspaceLayoutStoreHydrated();
   useLayoutEffect(() => {
     if (workspaceKey && workspaceReady && layoutHydrated && pending) {
-      useWorkspaceLayoutStore.getState().consumePendingOpen(workspaceKey);
+      onOpened(workspaceKey, useWorkspaceLayoutStore.getState().consumePendingOpen(workspaceKey));
     }
-  }, [workspaceKey, workspaceReady, layoutHydrated, pending]);
+  }, [workspaceKey, workspaceReady, layoutHydrated, pending, onOpened]);
   return pending ? pending.target : null;
 }
