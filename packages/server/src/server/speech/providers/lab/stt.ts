@@ -135,10 +135,15 @@ export class LabSTT implements SpeechToTextProvider {
     const startFallback = async (): Promise<void> => {
       if (!options.fallback) throw new Error("lab STT unavailable and no fallback configured");
       const session = options.fallback.createSession(params);
+      // The replayed commit was already announced under the lab segment id; keep that id.
+      const idMap = new Map<string, string>();
       session.on("committed", (p) => {
-        if (!replayingCommit) emitter.emit("committed", p);
+        if (replayingCommit) idMap.set(p.segmentId, segmentId);
+        else emitter.emit("committed", p);
       });
-      session.on("transcript", (p) => emitter.emit("transcript", p));
+      session.on("transcript", (p) =>
+        emitter.emit("transcript", { ...p, segmentId: idMap.get(p.segmentId) ?? p.segmentId }),
+      );
       session.on("error", (e) => emitter.emit("error", e));
       await session.connect();
       delegate = session;

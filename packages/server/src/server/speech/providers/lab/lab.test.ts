@@ -1,4 +1,5 @@
 import pino from "pino";
+import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, test } from "vitest";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
@@ -381,6 +382,34 @@ describe("LabSTT", () => {
     session.commit();
     await connected;
     expect(calls).toEqual(["append", "commit"]);
+  });
+
+  test("fallback transcripts keep the segment id announced by the early commit", async () => {
+    const bus = new EventEmitter();
+    const delegate = {
+      requiredSampleRate: 16000,
+      connect: async () => {},
+      appendPcm16: () => {},
+      commit: () => {
+        bus.emit("committed", { segmentId: "fb-1", previousSegmentId: null });
+        bus.emit("transcript", { segmentId: "fb-1", transcript: "hi", isFinal: true });
+      },
+      clear: () => {},
+      close: () => {},
+      on: (event: string, handler: (...args: unknown[]) => void) => bus.on(event, handler),
+    };
+    const fallback = { createSession: () => delegate } as unknown as SpeechToTextProvider;
+    const stt = new LabSTT({ url: await deadUrl(), connectTimeoutMs: 500, fallback }, logger);
+    const session = stt.createSession({ logger });
+    const committed: string[] = [];
+    const transcripts: string[] = [];
+    session.on("committed", (e) => committed.push(e.segmentId));
+    session.on("transcript", (e) => transcripts.push(e.segmentId));
+    const connected = session.connect();
+    session.commit();
+    await connected;
+    expect(committed).toHaveLength(1);
+    expect(transcripts).toEqual(committed);
   });
 
   test("connect rejects when the lab is down and there is no fallback", async () => {
