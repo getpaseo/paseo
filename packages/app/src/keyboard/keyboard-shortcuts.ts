@@ -715,6 +715,8 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   },
 
   // --- Tab relative navigation ---
+  // macOS desktop uses Cmd+Shift+brackets; the browser owns those keys, so
+  // macOS web keeps Alt+Shift alongside every non-mac platform.
   {
     id: "workspace-tab-navigate-relative-cmd-shift-left-mac",
     action: "workspace.tab.navigate.relative",
@@ -743,7 +745,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "workspace-tab-navigate-relative-alt-shift-left",
     action: "workspace.tab.navigate.relative",
     combo: "Alt+Shift+[",
-    when: { commandCenter: false },
+    when: { mac: false, commandCenter: false },
     payload: { type: "delta", delta: -1 },
     help: {
       id: "workspace-tab-prev",
@@ -755,7 +757,31 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "workspace-tab-navigate-relative-alt-shift-right",
     action: "workspace.tab.navigate.relative",
     combo: "Alt+Shift+]",
-    when: { commandCenter: false },
+    when: { mac: false, commandCenter: false },
+    payload: { type: "delta", delta: 1 },
+    help: {
+      id: "workspace-tab-next",
+      section: "tabs-panes",
+      label: "Next tab",
+    },
+  },
+  {
+    id: "workspace-tab-navigate-relative-alt-shift-left-mac-web",
+    action: "workspace.tab.navigate.relative",
+    combo: "Alt+Shift+[",
+    when: { mac: true, desktop: false, commandCenter: false },
+    payload: { type: "delta", delta: -1 },
+    help: {
+      id: "workspace-tab-prev",
+      section: "tabs-panes",
+      label: "Previous tab",
+    },
+  },
+  {
+    id: "workspace-tab-navigate-relative-alt-shift-right-mac-web",
+    action: "workspace.tab.navigate.relative",
+    combo: "Alt+Shift+]",
+    when: { mac: true, desktop: false, commandCenter: false },
     payload: { type: "delta", delta: 1 },
     help: {
       id: "workspace-tab-next",

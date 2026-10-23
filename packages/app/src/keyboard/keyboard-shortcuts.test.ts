@@ -494,6 +494,11 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: false, usesDesktopBindings: true, focusScope: "terminal" },
     },
     {
+      name: "does not switch tabs with Alt+Shift+] on mac desktop (Cmd+Shift+] only)",
+      event: { key: "’", code: "BracketRight", altKey: true, shiftKey: true },
+      context: { isMac: true, isDesktop: true },
+    },
+    {
       name: "does not match Ctrl+T on mac (Cmd only)",
       event: { key: "t", code: "KeyT", ctrlKey: true },
       context: { isMac: true },
