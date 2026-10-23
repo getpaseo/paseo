@@ -49,6 +49,8 @@ import type {
   AgentSlashCommand,
   AgentStreamEvent,
   AgentTimelineItem,
+  ImportableProviderSession,
+  ListImportableSessionsOptions,
   ImportProviderSessionInput,
   ImportProviderSessionContext,
   ResolveAgentDefaultModeInput,
@@ -11089,6 +11091,216 @@ class RecordingPersistedAgentsClient implements AgentClient {
   }
 }
 
+interface PendingPersistedListing {
+  options: ListImportableSessionsOptions | undefined;
+  result: Deferred<ImportableProviderSession[]>;
+}
+
+class PendingPersistedAgentsClient extends RecordingPersistedAgentsClient {
+  readonly listings: PendingPersistedListing[] = [];
+
+  override listImportableSessions(options?: ListImportableSessionsOptions) {
+    const result = deferred<ImportableProviderSession[]>();
+    this.listings.push({ options, result });
+    return result.promise;
+  }
+}
+
+test("listImportableSessions shares identical in-flight provider listings across callers", async () => {
+  const client = new PendingPersistedAgentsClient("acp");
+  const manager = new AgentManager({ clients: { acp: client }, logger });
+  const options = { cwd: "/tmp/workspace", query: "", limit: 20, scanLimit: 60 };
+  const requests = [
+    manager.listImportableSessions(options),
+    manager.listImportableSessions({ ...options, providerFilter: new Set(["acp"]) }),
+    manager.listImportableSessions(options),
+  ];
+  const listingCount = client.listings.length;
+  const sessions = await new RecordingPersistedAgentsClient("acp").listImportableSessions();
+  for (const listing of client.listings) listing.result.resolve(sessions);
+  const results = await Promise.all(requests);
+
+  expect(listingCount).toBe(1);
+  expect(results).toEqual([
+    {
+      sessions: sessions.map((session) => Object.assign({}, session, { provider: "acp" })),
+      providerErrors: [],
+    },
+    results[0],
+    results[0],
+  ]);
+});
+
+test("listImportableSessions isolates provider arguments and never caches completed lists", async () => {
+  const client = new PendingPersistedAgentsClient("acp");
+  const manager = new AgentManager({ clients: { acp: client }, logger });
+  const options = { cwd: "/tmp/workspace", query: "", limit: 20, scanLimit: 60 };
+  const variants = [
+    options,
+    { ...options, cwd: "/tmp/other" },
+    { ...options, query: "search" },
+    { ...options, limit: 40 },
+    { ...options, scanLimit: 120 },
+    {},
+  ];
+  const requests = variants.map((variant) => manager.listImportableSessions(variant));
+  const listingCount = client.listings.length;
+  for (const listing of client.listings) listing.result.resolve([]);
+  await Promise.all(requests);
+  expect(listingCount).toBe(variants.length);
+  expect(client.listings.map((listing) => listing.options)).toEqual(variants);
+
+  const freshRequest = manager.listImportableSessions(options);
+  expect(client.listings).toHaveLength(variants.length + 1);
+  const sessions = await new RecordingPersistedAgentsClient("acp").listImportableSessions();
+  client.listings[variants.length]!.result.resolve(sessions);
+  await expect(freshRequest).resolves.toEqual({
+    sessions: sessions.map((session) => Object.assign({}, session, { provider: "acp" })),
+    providerErrors: [],
+  });
+});
+
+test("listImportableSessions shares provider failures and retries once they settle", async () => {
+  const client = new PendingPersistedAgentsClient("acp");
+  const manager = new AgentManager({ clients: { acp: client }, logger });
+  const requests = [manager.listImportableSessions(), manager.listImportableSessions()];
+  expect(client.listings).toHaveLength(1);
+  client.listings[0]!.result.reject(new Error("listing failed"));
+  const expected = {
+    sessions: [],
+    providerErrors: [{ provider: "acp", message: "listing failed" }],
+  };
+  await expect(Promise.all(requests)).resolves.toEqual([expected, expected]);
+
+  const retry = manager.listImportableSessions();
+  expect(client.listings).toHaveLength(2);
+  client.listings[1]!.result.resolve([]);
+  await expect(retry).resolves.toEqual({ sessions: [], providerErrors: [] });
+});
+
+test("listImportableSessions retries a permanently pending provider after the shared deadline", async () => {
+  const client = new PendingPersistedAgentsClient("acp");
+  const manager = new AgentManager({
+    clients: { acp: client },
+    rescueTimeouts: { importableSessionListMs: 0 },
+    logger,
+  });
+  const first = manager.listImportableSessions();
+  const joined = manager.listImportableSessions();
+  expect(client.listings).toHaveLength(1);
+  const timedOut = {
+    sessions: [],
+    providerErrors: [
+      {
+        provider: "acp",
+        message: "Timed out listing importable sessions for provider 'acp' after 0ms",
+      },
+    ],
+  };
+  await expect(Promise.all([first, joined])).resolves.toEqual([timedOut, timedOut]);
+
+  const retry = manager.listImportableSessions();
+  const attempts = client.listings.length;
+  client.listings[attempts - 1]!.result.resolve([]);
+  await expect(retry).resolves.toEqual({ sessions: [], providerErrors: [] });
+  expect(attempts).toBe(2);
+});
+
+test.each(["resolve", "reject"])(
+  "listImportableSessions preserves a retry when an expired provider call later %s",
+  async (settlement) => {
+    const client = new PendingPersistedAgentsClient("acp");
+    const manager = new AgentManager({
+      clients: { acp: client },
+      rescueTimeouts: { importableSessionListMs: 0 },
+      logger,
+    });
+    const first = await manager.listImportableSessions();
+    expect(first).toEqual({
+      sessions: [],
+      providerErrors: [
+        {
+          provider: "acp",
+          message: "Timed out listing importable sessions for provider 'acp' after 0ms",
+        },
+      ],
+    });
+
+    const retry = manager.listImportableSessions();
+    expect(client.listings).toHaveLength(2);
+    const expired = client.listings[0]!.result;
+    if (settlement === "resolve") expired.resolve([]);
+    else expired.reject(new Error("late failure"));
+    await expired.promise.catch(() => undefined);
+
+    const joinedRetry = manager.listImportableSessions();
+    expect(client.listings).toHaveLength(2);
+    client.listings[1]!.result.resolve([]);
+    await expect(Promise.all([retry, joinedRetry])).resolves.toEqual([
+      { sessions: [], providerErrors: [] },
+      { sessions: [], providerErrors: [] },
+    ]);
+  },
+);
+
+test.each(["registerClient", "updateProviderRegistry"])(
+  "listImportableSessions isolates replacement clients through %s",
+  async (method) => {
+    const previousClient = new PendingPersistedAgentsClient("acp");
+    const replacementClient = new PendingPersistedAgentsClient("acp");
+    const manager = new AgentManager({ clients: { acp: previousClient }, logger });
+    const oldRequest = manager.listImportableSessions();
+    if (method === "registerClient") manager.registerClient("acp", replacementClient);
+    else
+      manager.updateProviderRegistry({
+        clients: { acp: replacementClient },
+        providerDefinitions: {},
+      });
+    const newRequest = manager.listImportableSessions();
+    expect(previousClient.listings).toHaveLength(1);
+    expect(replacementClient.listings).toHaveLength(1);
+    previousClient.listings[0]!.result.resolve([]);
+    await oldRequest;
+    const joinedRequest = manager.listImportableSessions();
+    expect(replacementClient.listings).toHaveLength(1);
+    replacementClient.listings[0]!.result.resolve([]);
+    await expect(Promise.all([newRequest, joinedRequest])).resolves.toEqual([
+      { sessions: [], providerErrors: [] },
+      { sessions: [], providerErrors: [] },
+    ]);
+  },
+);
+
+test.each(["registerClient", "updateProviderRegistry"])(
+  "listImportableSessions preserves pending work for unchanged clients through %s",
+  async (method) => {
+    const client = new PendingPersistedAgentsClient("acp");
+    const manager = new AgentManager({ clients: { acp: client }, logger });
+    const oldRequest = manager.listImportableSessions();
+    if (method === "registerClient") manager.registerClient("acp", client);
+    else manager.updateProviderRegistry({ clients: { acp: client }, providerDefinitions: {} });
+    const newRequest = manager.listImportableSessions();
+    expect(client.listings).toHaveLength(1);
+    client.listings[0]!.result.resolve([]);
+    await expect(Promise.all([oldRequest, newRequest])).resolves.toEqual([
+      { sessions: [], providerErrors: [] },
+      { sessions: [], providerErrors: [] },
+    ]);
+  },
+);
+
+test("listImportableSessions isolates providers sharing a client without mutating descriptors", async () => {
+  const client = new PendingPersistedAgentsClient("acp");
+  const manager = new AgentManager({ clients: { acp: client, copilot: client }, logger });
+  const request = manager.listImportableSessions();
+  const sessions = await new RecordingPersistedAgentsClient("acp").listImportableSessions();
+  expect(client.listings).toHaveLength(2);
+  for (const listing of client.listings) listing.result.resolve(sessions);
+  const result = await request;
+  expect(result.sessions.map((session) => session.provider)).toEqual(["acp", "copilot"]);
+  expect(sessions[0]).not.toHaveProperty("provider");
+});
+
 test.each([
   [
     "disabled",
@@ -11186,51 +11398,46 @@ test("listImportableSessions skips providers that lack supportsSessionListing ev
 });
 
 test("listImportableSessions returns healthy rows alongside thrown and timed-out provider errors", async () => {
-  vi.useFakeTimers();
-  try {
-    const healthyClient = new RecordingPersistedAgentsClient("claude");
-    const failingClient = new RecordingPersistedAgentsClient("codex");
-    failingClient.listImportableSessions = async () => {
-      throw new Error("codex listing failed");
-    };
-    const hangingClient = new RecordingPersistedAgentsClient("pi");
-    hangingClient.listImportableSessions = async () => await new Promise(() => undefined);
-    const manager = new AgentManager({
-      clients: { claude: healthyClient, codex: failingClient, pi: hangingClient },
-      providerDefinitions: {
-        claude: { enabled: true, derivedFromProviderId: null },
-        codex: { enabled: true, derivedFromProviderId: null },
-        pi: { enabled: true, derivedFromProviderId: null },
+  const healthyClient = new RecordingPersistedAgentsClient("claude");
+  const failingClient = new RecordingPersistedAgentsClient("codex");
+  failingClient.listImportableSessions = async () => {
+    throw new Error("codex listing failed");
+  };
+  const hangingClient = new RecordingPersistedAgentsClient("pi");
+  hangingClient.listImportableSessions = async () => await new Promise(() => undefined);
+  const manager = new AgentManager({
+    clients: { claude: healthyClient, codex: failingClient, pi: hangingClient },
+    providerDefinitions: {
+      claude: { enabled: true, derivedFromProviderId: null },
+      codex: { enabled: true, derivedFromProviderId: null },
+      pi: { enabled: true, derivedFromProviderId: null },
+    },
+    rescueTimeouts: { importableSessionListMs: 0 },
+    logger,
+  });
+
+  const resultPromise = manager.listImportableSessions();
+
+  await expect(resultPromise).resolves.toEqual({
+    sessions: [
+      {
+        provider: "claude",
+        providerHandleId: "claude-session",
+        cwd: "/tmp/recent",
+        title: null,
+        lastActivityAt: new Date("2026-01-01T00:00:00Z"),
+        firstPromptPreview: null,
+        lastPromptPreview: null,
       },
-      logger,
-    });
-
-    const resultPromise = manager.listImportableSessions();
-    await vi.advanceTimersByTimeAsync(90_000);
-
-    await expect(resultPromise).resolves.toEqual({
-      sessions: [
-        {
-          provider: "claude",
-          providerHandleId: "claude-session",
-          cwd: "/tmp/recent",
-          title: null,
-          lastActivityAt: new Date("2026-01-01T00:00:00Z"),
-          firstPromptPreview: null,
-          lastPromptPreview: null,
-        },
-      ],
-      providerErrors: [
-        { provider: "codex", message: "codex listing failed" },
-        {
-          provider: "pi",
-          message: "Timed out listing importable sessions for provider 'pi' after 90000ms",
-        },
-      ],
-    });
-  } finally {
-    vi.useRealTimers();
-  }
+    ],
+    providerErrors: [
+      { provider: "codex", message: "codex listing failed" },
+      {
+        provider: "pi",
+        message: "Timed out listing importable sessions for provider 'pi' after 0ms",
+      },
+    ],
+  });
 });
 
 test("listImportableSessions searches every provider result before global ranking", async () => {
