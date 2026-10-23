@@ -2,11 +2,17 @@ import { expect, test } from "../support/fixtures";
 import { openCommandCenter } from "../support/helpers/command-center";
 import {
   delayDirectorySuggestionResponses,
+  holdDirectorySuggestionResponses,
   expectOneLineTruncatedFileResult,
   expectStableCommandCenterLayout,
   failDirectorySuggestionRequests,
   startCommandCenterLayoutObservation,
 } from "../support/helpers/command-center-file-search";
+import {
+  scrollCommandCenterAwayFromSelection,
+  expectCommandCenterScrollToStayAt,
+  expectKeyboardNavigationToResume,
+} from "../support/helpers/command-center-scroll";
 import { expectFileTabOpen } from "../support/helpers/file-explorer";
 import { gotoWorkspace } from "../support/helpers/launcher";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
@@ -135,5 +141,64 @@ test("unscoped command search keeps commands visible and reports file-search fai
     await expect(panel.getByText("No matches", { exact: true })).toHaveCount(0);
   } finally {
     await Promise.allSettled(seeded.map((workspace) => workspace.cleanup()));
+  }
+});
+
+test("manual scrolling cancels a pending file-search reveal and query editing restores it", async ({
+  page,
+}) => {
+  const seeded = await seedWorkspace({
+    repoPrefix: "command-center-delayed-scroll-",
+    title: "Delayed file search scroll",
+    repo: { files: paseoSizedFiles() },
+  });
+  try {
+    const responses = await holdDirectorySuggestionResponses(page);
+    await gotoWorkspace(page, seeded.workspaceId);
+    await page.keyboard.press("Meta+P");
+    const panel = page.getByTestId("command-center-panel");
+    await expect(panel).toBeVisible();
+    await panel.getByTestId("command-center-input").fill("index");
+    await expect(panel.getByTestId("command-center-file-search-loading")).toBeHidden();
+    await expect(
+      panel.getByRole("button", {
+        name: "index.ts packages/app/src/features/feature-000",
+        exact: true,
+      }),
+    ).toBeVisible();
+
+    responses.hold();
+    await panel.getByTestId("command-center-input").fill("index.");
+    await expect(panel.getByTestId("command-center-file-search-loading")).toBeVisible();
+    const offset = await scrollCommandCenterAwayFromSelection(page, panel);
+    await responses.release();
+    await expect(panel.getByTestId("command-center-file-search-loading")).toBeHidden();
+    await expectCommandCenterScrollToStayAt(panel, offset);
+    await expectKeyboardNavigationToResume(page, panel, offset);
+
+    const nextOffset = await scrollCommandCenterAwayFromSelection(page, panel);
+    await panel.getByTestId("command-center-input").fill("index.ts");
+    await expect(panel.getByTestId("command-center-file-search-loading")).toBeHidden();
+    await expect
+      .poll(() => panel.getByTestId("command-center-results").evaluate((el) => el.scrollTop))
+      .toBeLessThan(nextOffset);
+    await expect(
+      panel.getByRole("button", {
+        name: "index.ts packages/app/src/features/feature-000",
+        exact: true,
+      }),
+    ).toBeInViewport({ ratio: 1 });
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Meta+P");
+    await expect(panel.getByTestId("command-center-input")).toHaveValue("");
+    await panel.getByTestId("command-center-input").fill("index");
+    await expect(
+      panel.getByRole("button", {
+        name: "index.ts packages/app/src/features/feature-000",
+        exact: true,
+      }),
+    ).toBeInViewport({ ratio: 1 });
+  } finally {
+    await seeded.cleanup();
   }
 });
