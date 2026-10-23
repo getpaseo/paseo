@@ -21,6 +21,7 @@ import {
   showSidebarCallout,
   type SidebarCalloutEntry,
   type SidebarCalloutOptions,
+  type SidebarCalloutSelectionState,
   type SidebarCalloutState,
   unregisterSidebarCallout,
 } from "./sidebar-callout-state";
@@ -37,7 +38,7 @@ export interface SidebarCalloutsApi {
 const DISMISSED_CALLOUTS_STORAGE_KEY = "@paseo:sidebar-callout-dismissals";
 
 const SidebarCalloutApiContext = createContext<SidebarCalloutsApi | null>(null);
-const SidebarCalloutStateContext = createContext<SidebarCalloutEntry | null>(null);
+const SidebarCalloutStateContext = createContext<SidebarCalloutSelectionState | null>(null);
 
 function persistDismissedCalloutKeys(keys: ReadonlySet<string>): void {
   void AsyncStorage.setItem(
@@ -113,11 +114,10 @@ export function SidebarCalloutProvider({ children }: { children: ReactNode }) {
   });
 
   const api = useMemo<SidebarCalloutsApi>(() => ({ show, dismiss, clear }), [clear, dismiss, show]);
-  const activeCallout = useMemo(() => selectActiveSidebarCallout(state), [state]);
 
   return (
     <SidebarCalloutApiContext.Provider value={api}>
-      <SidebarCalloutStateContext.Provider value={activeCallout}>
+      <SidebarCalloutStateContext.Provider value={state}>
         {children}
       </SidebarCalloutStateContext.Provider>
     </SidebarCalloutApiContext.Provider>
@@ -132,12 +132,20 @@ export function useSidebarCallouts(): SidebarCalloutsApi {
   return api;
 }
 
-export function useActiveSidebarCallout(): SidebarCalloutEntry | null {
-  return useContext(SidebarCalloutStateContext);
+export function useActiveSidebarCallout(
+  options: { nativeOnly?: boolean } = {},
+): SidebarCalloutEntry | null {
+  const state = useContext(SidebarCalloutStateContext);
+  const nativeOnly = options.nativeOnly === true;
+  return useMemo(
+    () => (state ? selectActiveSidebarCallout(state, { nativeOnly }) : null),
+    [nativeOnly, state],
+  );
 }
 
-export function SidebarCalloutViewport() {
-  const activeCallout = useActiveSidebarCallout();
+/** The active callout. `nativeOnly` limits it to callouts marked `native`, for native apps and compact sidebars. */
+export function SidebarCalloutViewport({ nativeOnly = false }: { nativeOnly?: boolean }) {
+  const activeCallout = useActiveSidebarCallout({ nativeOnly });
   const api = useSidebarCallouts();
   if (!activeCallout) {
     return null;

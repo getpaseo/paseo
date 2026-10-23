@@ -67,7 +67,7 @@ import type { GeneratedWorkspaceName } from "../worktree-branch-name-generator.j
 import type { ForgeService } from "../../services/forge-service.js";
 import { areEquivalentPaths } from "../../utils/path.js";
 import { createTerminalManager, type TerminalManager } from "../../terminal/terminal-manager.js";
-import { createWorkerTerminalManager } from "../../terminal/worker-terminal-manager.js";
+import { startWorkerTerminalManager } from "../../terminal/worker-terminal-manager.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { PASEO_TOOL_NAMES } from "@getpaseo/protocol/paseo-tool-presentation/index";
 import { MutableDaemonConfigSchema, type AgentProfile } from "@getpaseo/protocol/messages";
@@ -1333,13 +1333,24 @@ describe("terminal MCP tools", () => {
   );
 
   it.each([
-    ["in-process", createTerminalManager],
-    ["worker", createWorkerTerminalManager],
+    ["in-process", async () => ({ manager: createTerminalManager(), home: null })],
+    [
+      "worker",
+      async () => {
+        const home = await mkdtemp(join(tmpdir(), "mcp-terminal-keys-home-"));
+        const manager = await startWorkerTerminalManager({
+          paseoHome: home,
+          paseoVersion: "0.0.0-test",
+          logger,
+        });
+        return { manager, home };
+      },
+    ],
   ] as const)(
     "delivers MCP key tokens through %s after terminal input modes change",
     async (_name, createManager) => {
       const { agentManager, agentStorage } = createTestDeps();
-      const terminalManager = createManager();
+      const { manager: terminalManager, home } = await createManager();
       const terminal = await terminalManager.createTerminal({
         cwd: process.cwd(),
         workspaceId: "ws-terminal-keys",
@@ -1369,6 +1380,9 @@ describe("terminal MCP tools", () => {
         logger,
       });
 
+      // Every step is a round trip through a real PTY. A loaded Windows runner (ConPTY) has
+      // taken over 3 s to reach READY, so each step gets the same window rather than 1 s.
+      const roundTrip = { timeout: 5000 };
       let output = "";
       const unsubscribe = terminal.subscribe((message) => {
         if (message.type === "output") {
@@ -1376,16 +1390,13 @@ describe("terminal MCP tools", () => {
         }
       });
       try {
-        await vi.waitFor(
-          async () => {
-            const capture = await terminalManager.captureTerminal(terminal.id);
-            expect(capture.lines).toContain("READY");
-          },
-          { timeout: 5000 },
-        );
+        await vi.waitFor(async () => {
+          const capture = await terminalManager.captureTerminal(terminal.id);
+          expect(capture.lines).toContain("READY");
+        }, roundTrip);
         const tool = registeredTool(server, "send_terminal_keys");
         await tool.handler({ terminalId: terminal.id, keys: "application", literal: true });
-        await vi.waitFor(() => expect(output).toContain("APPLICATION_READY"));
+        await vi.waitFor(() => expect(output).toContain("APPLICATION_READY"), roundTrip);
         for (const [keys, hex] of [
           ["Down", "1b4f42"],
           ["Up", "1b4f41"],
@@ -1400,20 +1411,21 @@ describe("terminal MCP tools", () => {
           await vi.waitFor(async () => {
             const capture = await terminalManager.captureTerminal(terminal.id);
             expect(capture.lines.join("\n")).toContain(`HEX:${hex}`);
-          });
+          }, roundTrip);
         }
         await tool.handler({ terminalId: terminal.id, keys: "normal", literal: true });
-        await vi.waitFor(() => expect(output).toContain("NORMAL_READY"));
+        await vi.waitFor(() => expect(output).toContain("NORMAL_READY"), roundTrip);
         await tool.handler({ terminalId: terminal.id, keys: "Down" });
         await vi.waitFor(async () => {
           const capture = await terminalManager.captureTerminal(terminal.id);
           expect(capture.lines).toContain("HEX:1b5b42");
-        });
+        }, roundTrip);
       } finally {
         unsubscribe();
         await server.close();
         await terminalManager.killTerminalAndWait(terminal.id);
         terminalManager.killAll();
+        if (home) await rm(home, { recursive: true, force: true });
       }
     },
   );
