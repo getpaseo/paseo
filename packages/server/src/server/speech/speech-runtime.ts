@@ -3,6 +3,7 @@ import type { Logger } from "pino";
 import type { PaseoOpenAIConfig, PaseoSpeechConfig } from "../bootstrap.js";
 import type { LocalSpeechModelId } from "./providers/local/config.js";
 import { ensureLocalSpeechModels, listMissingLocalSpeechModels } from "./providers/local/models.js";
+import { applyLabSpeechServices } from "./providers/lab/runtime.js";
 import { initializeLocalSpeechServices } from "./providers/local/runtime.js";
 import {
   getOpenAiSpeechAvailability,
@@ -471,10 +472,16 @@ export function createSpeechService(params: {
       logger,
     });
 
+    const nextSpeech = applyLabSpeechServices({
+      providers,
+      existing: nextOpenAiSpeech,
+      logger,
+    });
+
     const previousLocalCleanup = localCleanup;
-    turnDetectionService = nextOpenAiSpeech.turnDetectionService;
-    sttService = nextOpenAiSpeech.sttService;
-    ttsService = nextOpenAiSpeech.ttsService;
+    turnDetectionService = nextSpeech.turnDetectionService;
+    sttService = nextSpeech.sttService;
+    ttsService = nextSpeech.ttsService;
     dictationSttService = nextOpenAiSpeech.dictationSttService;
     localModelConfig = nextLocalSpeech.localModelConfig;
     localVoiceTtsProvider = nextLocalSpeech.localVoiceTtsProvider;
