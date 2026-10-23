@@ -176,7 +176,8 @@ export function createConversationAgent(deps: {
 export interface Feed {
   append(speaker: "user" | "assistant" | "overseer" | "system" | "action", text: string): { line: number; ref: string };
   announce(item: ActionItem): { ok: boolean; via: "surface" | "inbox"; line: string };
-  watchReplies(onReply: (reply: { ts: string; text: string }) => void): () => void;
+  watchReplies(onReply: (reply: { seq: number; ts: string; text: string }) => void): () => void;
+  ackReply(seq: number): void; // durable: advances ackedSeq in replies.cursor.json (atomic temp+rename) before returning
 }
 export function createFeed(opts: { dir: string; sessionId: string; clock?; exec?; home? }): Feed;
 ```
@@ -190,7 +191,8 @@ Direct ports of `voice_agent/feed.py` (pyrgos-voice-agent repo), same formats so
   Delivery: if env `PYRGOS_OVERSEER_SURFACE` is set, run the configured send command for that surface; otherwise append the line to the
   lab-side inbox file (`pc-inbox.md` in the home directory, name overridable by `PYRGOS_INBOX_FILE`). Env names only; values stay local.
 - Replies: the overseer appends `{ts, text}` lines to `<dir>/<sessionId>.replies.jsonl`. `watchReplies` tails it (poll about 1 s,
-  each line delivered once).
+  each line delivered once). `seq` is not written by the overseer: C assigns it as the 1-based line number in the replies file, so it is
+  stable across restarts and a rotated file restarts at 1 under a new `epoch` stored in the cursor file.
 - Dir: env `PYRGOS_FEED_DIR`; default a `pyrgos-feed` folder under the OS state dir.
 
 ### 4.4 Agent launcher (B uses, C owns the wiring to dispatch)
@@ -245,6 +247,12 @@ provider uses `lab`, a role without one keeps the stock `local` provider. Settin
 - Fallback: if the websocket does not connect within a short timeout, or drops mid-turn, the provider throws a typed
   `LabUnavailableError` and `speech-runtime.ts` (core change 1b) falls back to the stock `local` provider for that turn. A health probe
   at startup logs which one is active.
+- STT failover replay: the lab STT session keeps every PCM16 chunk sent for the current utterance in a bounded buffer (cap 60 s of audio,
+  about 1.9 MB at 16 kHz mono; past the cap it stops buffering and a failover reports an error instead of transcribing a partial
+  utterance). Buffering starts at the first chunk after `start` and is dropped when the utterance's final transcript is committed.
+  On `LabUnavailableError` mid-utterance, `speech-runtime.ts` opens the stock `local` session and replays the whole buffer in order,
+  then continues forwarding live chunks, so the local provider sees the full utterance, not the tail. A test sends chunks, kills the
+  fake lab socket mid-utterance and asserts the local fake received all chunks in order.
 - Tests: fake websocket servers in-process; no network, no GPU.
 
 ## 5. Turn flow, including a spoken overseer reply
@@ -287,13 +295,15 @@ cannot leave `bot` stuck); `llm` = a `ChatBrain.stream` is open. A queued overse
 utterance and is already aborted after any interruption. `speakStanding` makes VoiceSession mint a fresh `AbortController` linked to the
 session's own (`this.abortController`, as `registerVoiceBridgeForAgent` does at `:~1066`), and it is cancelled by the next
 `onUserSpeechStarted`. B appends the `overseer` transcript line after queuing and re-checks the gate before each further reply. Reply
-delivery uses a persisted cursor, not memory. C stores `{offset, lastSeq}` in a small file beside the replies file
-(`replies.cursor.json`, written atomically via temp file plus rename). `watchReplies` reads from the saved offset, so a restart neither
-repeats nor loses a reply. A reply is *read* when it is appended to a durable `replies.pending.jsonl` (the cursor advances only after
-that append), and *acked* when `speakStanding` resolves for it (the line is then removed from pending). On startup B reloads
-`replies.pending.jsonl` into the queue before tailing from the cursor. Replies that arrive while voice mode is off (`isVoiceMode`
-false) are read and parked in pending, then spoken at the next turn boundary after voice mode turns on. If the replies file shrinks
-(rotated or truncated) the offset resets to 0 and already-acked sequence numbers are skipped using `lastSeq`.
+delivery uses a persisted cursor, not memory, and the replies file itself is the durable queue (no second pending file). C stores
+`{epoch, ackedSeq}` in `replies.cursor.json` beside it. On start and on every poll `watchReplies` delivers each line with
+`seq > ackedSeq` that it has not already delivered this process, in order; B queues them in memory. Replies are spoken in `seq` order, so
+`ackedSeq` is a high-water mark. B calls `feed.ackReply(seq)` at the moment that reply's playback *starts* (`onPlaybackStarted` for the
+`speakStanding` call), before speech finishes. Contract: a reply not yet started is redelivered after a crash or restart (no loss);
+a reply whose playback started is never redelivered (no repeat). A crash mid-sentence drops the unspoken remainder of that one reply,
+which is the deliberate choice over repeating it. Replies that arrive while voice mode is off (`isVoiceMode` false) stay unacked in the
+file and are spoken at the next turn boundary after voice mode turns on, including after a restart. If the file shrinks or is replaced
+(size below the offset, or inode change) C bumps `epoch`, resets `ackedSeq` to 0 and re-reads from the start.
 
 ## 6. Client / UI
 
