@@ -1,3 +1,4 @@
+import { type WorkspaceRuntimeStore } from "../../workspace-runtime-store/index.js";
 import type pino from "pino";
 import type {
   ScriptStatusUpdateMessage,
@@ -10,7 +11,6 @@ import type { TerminalManager } from "../../../terminal/terminal-manager.js";
 import type { ServiceProxySubsystem } from "../../service-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "../../workspace-script-runtime-store.js";
 import type { ScriptHealthState } from "../../script-health-monitor.js";
-import type { WorkspaceGitService } from "../../workspace-git-service.js";
 import type {
   PersistedProjectRecord,
   PersistedWorkspaceRecord,
@@ -51,15 +51,13 @@ export interface WorkspaceScriptsService {
   start(request: StartWorkspaceScriptRequest): Promise<void>;
 }
 
-type WorkspaceScriptsGitSource = Pick<WorkspaceGitService, "peekSnapshot">;
-
 export function createWorkspaceScriptsService(deps: {
   serviceProxy: ServiceProxySubsystem | null;
   scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
   terminalManager: TerminalManager | null;
   workspaceRegistry: Pick<WorkspaceRegistry, "get">;
   projectRegistry: Pick<ProjectRegistry, "get">;
-  workspaceGitService: WorkspaceScriptsGitSource;
+  workspaceRuntimeStore: Pick<WorkspaceRuntimeStore, "get">;
   getDaemonTcpPort: (() => number | null) | null;
   getDaemonTcpHost: (() => string | null) | null;
   serviceProxyPublicBaseUrl: string | null;
@@ -78,7 +76,7 @@ export function createWorkspaceScriptsService(deps: {
     terminalManager,
     workspaceRegistry,
     projectRegistry,
-    workspaceGitService,
+    workspaceRuntimeStore,
     getDaemonTcpPort,
     getDaemonTcpHost,
     serviceProxyPublicBaseUrl,
@@ -95,7 +93,7 @@ export function createWorkspaceScriptsService(deps: {
     workspace: PersistedWorkspaceRecord,
     project: { projectId: string; rootPath: string } | null,
   ) {
-    const snapshot = workspaceGitService.peekSnapshot(workspace.cwd);
+    const snapshot = workspaceRuntimeStore.get(workspace.cwd);
     const currentBranch = snapshot?.git.currentBranch ?? workspace.branch ?? null;
     if (project) {
       return {

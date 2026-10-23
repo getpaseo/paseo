@@ -1,11 +1,17 @@
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { Locator } from "@playwright/test";
+import type { Locator, TestInfo } from "@playwright/test";
 import { test, expect, type Page } from "@playwright/test";
 import { gotoAppShell } from "./app";
 import { buildAgentRoute } from "./mock-agent";
 import { openCommandCenter } from "./command-center";
+import {
+  closeCompactWorkspaceMenu,
+  compactWorkspaceMenu,
+  goBackInMenu,
+  openCompactWorkspaceMenu,
+} from "./compact-workspace-scripts";
 import { connectNewWorkspaceDaemonClient } from "./new-workspace";
 import { seedWorkspace } from "./seed-client";
 import { pluginRequirements } from "./plugin-fixture";
@@ -60,7 +66,7 @@ export default function contribute(client) {
   let finishReview = () => {};
   let attempts = 0;
   const action = { kind: "action", async onPress() {
-    if (++attempts === 1) throw new Error("Deployment failed. Try again.");
+    if (++attempts % 2 === 1) throw new Error("Deployment failed. Try again.");
     await new Promise((resolve) => { finish = resolve; });
     deploy.update({ label: "Deployed" });
   } };
@@ -165,6 +171,13 @@ async function command(page: Page, title: string) {
   await expect(panel).not.toBeVisible();
 }
 
+/** The command center opens from the sidebar, which compact layouts keep closed. */
+async function commandFromCompact(page: Page, title: string) {
+  await page.setViewportSize(WIDE);
+  await command(page, title);
+  await page.setViewportSize(COMPACT);
+}
+
 async function expectSurfaceVisible(
   page: Page,
   subject: Locator = page.getByRole("toolbar", { name: "Workspace actions", exact: true }),
@@ -174,6 +187,61 @@ async function expectSurfaceVisible(
 
 async function expectDetails(page: Page) {
   await expect(page.getByText("All systems operational", { exact: true })).toBeInViewport();
+}
+
+function workspaceMenuRow(page: Page, title: string): Locator {
+  return compactWorkspaceMenu(page).getByRole("menuitem", { name: title, exact: true });
+}
+
+async function expectWorkspaceMenuRows(page: Page, titles: readonly string[]) {
+  const rows = compactWorkspaceMenu(page).getByRole("menuitem");
+  for (const [index, title] of titles.entries()) {
+    await expect(rows.nth(index)).toHaveAccessibleName(title);
+  }
+}
+
+async function chooseInWorkspaceMenu(page: Page, title: string) {
+  await workspaceMenuRow(page, title).click();
+}
+
+async function expectWorkspaceMenuClosed(page: Page) {
+  await expect(compactWorkspaceMenu(page)).toBeHidden({ timeout: 10_000 });
+}
+
+async function expectCompactDetails(page: Page) {
+  const menu = compactWorkspaceMenu(page);
+  await expect(menu.getByText("All systems operational", { exact: true })).toBeInViewport();
+  await expect(menu.getByText("Presentation: compact", { exact: true })).toBeVisible();
+}
+
+/** Resolves once `subject` renders the same pixels twice in a row: entering animations are done. */
+async function expectStill(subject: Locator) {
+  let previous: Buffer | null = null;
+  await expect
+    .poll(
+      async () => {
+        const current = await subject.screenshot();
+        const still = previous !== null && current.equals(previous);
+        previous = current;
+        return still;
+      },
+      { intervals: [150] },
+    )
+    .toBe(true);
+}
+
+/** Attaches the screen once per colour scheme, for review alongside the run. */
+async function captureSchemes(page: Page, info: TestInfo, name: string, subject: Locator) {
+  for (const colorScheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme });
+    await expectStill(subject);
+    const file = info.outputPath(`${name}-${colorScheme}.png`);
+    await info.attach(`${name}-${colorScheme}`, {
+      body: await page.screenshot({ path: file }),
+      contentType: "image/png",
+    });
+  }
+  await page.emulateMedia({ colorScheme: "light" });
 }
 
 async function expectHeaderTextTruncated(page: Page) {
@@ -204,10 +272,12 @@ async function expectHeaderTextTruncated(page: Page) {
 
 export async function withButtonShowcase(
   page: Page,
+  info: TestInfo,
   run: (buttons: {
     openWideMenusAndPopovers(): Promise<void>;
     runAndUpdateActions(): Promise<void>;
     openCompactSheets(): Promise<void>;
+    useCompactWorkspaceMenu(): Promise<void>;
     hideAndUnloadOpenButtons(): Promise<void>;
     verifyObservationLifetime(): Promise<void>;
   }) => Promise<void>,
@@ -284,6 +354,12 @@ export async function withButtonShowcase(
               .getByTestId("plugin-button-chevron"),
           ).toHaveCount(0);
           await expectSurfaceVisible(page);
+          await captureSchemes(
+            page,
+            info,
+            "desktop-wide-header",
+            page.getByRole("toolbar", { name: "Workspace actions", exact: true }),
+          );
           await press(page, "Header checks");
           await expect(
             page.getByRole("menuitem", { name: "Run checks", exact: true }),
@@ -303,6 +379,12 @@ export async function withButtonShowcase(
           await expect(
             page.getByRole("menuitem", { name: "Production locked", exact: true }),
           ).toBeDisabled();
+          await captureSchemes(
+            page,
+            info,
+            "desktop-overflow",
+            page.getByRole("menuitem", { name: "Production locked", exact: true }),
+          );
           await expectSurfaceVisible(
             page,
             page.getByRole("menuitem", { name: "Production locked", exact: true }),
@@ -372,7 +454,19 @@ export async function withButtonShowcase(
           await expectSurfaceVisible(page);
           await command(page, "Enable example buttons");
           await command(page, "Use icon-only header");
+          await expect(
+            page.getByRole("button", { name: "Deploy application", exact: true }),
+          ).toHaveText("");
           await expectSurfaceVisible(page);
+          await expect(
+            page.getByText("Deployment failed. Try again.", { exact: true }),
+          ).toHaveCount(0);
+          await captureSchemes(
+            page,
+            info,
+            "desktop-icon-only-header",
+            page.getByRole("toolbar", { name: "Workspace actions", exact: true }),
+          );
           await command(page, "Hide review button");
           await expect(page.getByRole("button", { name: "Run review", exact: true })).toHaveCount(
             0,
@@ -383,7 +477,7 @@ export async function withButtonShowcase(
           );
         }),
       openCompactSheets: () =>
-        test.step("compact header omits plugin actions while composer triggers open sheets", async () => {
+        test.step("compact header leaves plugin actions to the workspace menu while composer triggers open sheets", async () => {
           await page.setViewportSize(COMPACT);
           await expect(page.getByTestId("plugin-button-chevron")).toHaveCount(0);
           await expect(
@@ -422,6 +516,98 @@ export async function withButtonShowcase(
           );
           await choose(page, "Run checks");
         }),
+      useCompactWorkspaceMenu: () =>
+        test.step("compact workspace menu carries header buttons with their actions, menus, and content", async () => {
+          await openCompactWorkspaceMenu(page);
+          await expectWorkspaceMenuRows(page, [
+            "Deploy application",
+            "Header checks",
+            "Header status",
+            "Open deployment logs",
+            "Production locked",
+            "Copy workspace path",
+          ]);
+          await expect(workspaceMenuRow(page, "Production locked")).toBeDisabled();
+          // Deploy lost its label to "Use icon-only header" and logs never had one; rows read titles.
+          await expect(workspaceMenuRow(page, "Deploy application")).toHaveText(
+            "Deploy application",
+          );
+          await expect(workspaceMenuRow(page, "Open deployment logs")).toHaveText(
+            "Open deployment logs",
+          );
+          await captureSchemes(page, info, "compact-root-icon-only", compactWorkspaceMenu(page));
+
+          await showcase.setTitle("Compact checks");
+          await expect(workspaceMenuRow(page, "Deploy application")).toHaveCount(0);
+          await showcase.setTitle("Button showcase");
+          await expect(workspaceMenuRow(page, "Deploy application")).toBeVisible();
+
+          await chooseInWorkspaceMenu(page, "Deploy application");
+          await expectWorkspaceMenuClosed(page);
+          await expect(
+            page.getByText("Deployment failed. Try again.", { exact: true }),
+          ).toBeVisible();
+          await openCompactWorkspaceMenu(page);
+          await chooseInWorkspaceMenu(page, "Deploy application");
+          await expectWorkspaceMenuClosed(page);
+          await openCompactWorkspaceMenu(page);
+          await expect(workspaceMenuRow(page, "Deploy application")).toBeDisabled();
+          await captureSchemes(page, info, "compact-row-states", compactWorkspaceMenu(page));
+          await closeCompactWorkspaceMenu(page);
+          await commandFromCompact(page, "Finish deployment");
+          await openCompactWorkspaceMenu(page);
+          await expect(workspaceMenuRow(page, "Deploy application")).toBeEnabled();
+          await captureSchemes(page, info, "compact-root", compactWorkspaceMenu(page));
+
+          await chooseInWorkspaceMenu(page, "Header checks");
+          await expectWorkspaceMenuRows(page, ["Run checks", "Environment", "Deployment details"]);
+          await captureSchemes(page, info, "compact-header-checks", compactWorkspaceMenu(page));
+          await goBackInMenu(page);
+          await expect(workspaceMenuRow(page, "Header status")).toBeVisible();
+          await chooseInWorkspaceMenu(page, "Header checks");
+          await chooseInWorkspaceMenu(page, "Environment");
+          await expectWorkspaceMenuRows(page, ["Staging", "Production"]);
+          await expect(workspaceMenuRow(page, "Production")).toBeDisabled();
+          await captureSchemes(page, info, "compact-environment", compactWorkspaceMenu(page));
+          await goBackInMenu(page);
+          await expect(workspaceMenuRow(page, "Run checks")).toBeVisible();
+          await goBackInMenu(page);
+          await expect(workspaceMenuRow(page, "Header checks")).toBeVisible();
+
+          await chooseInWorkspaceMenu(page, "Header checks");
+          await chooseInWorkspaceMenu(page, "Deployment details");
+          await expectCompactDetails(page);
+          await captureSchemes(
+            page,
+            info,
+            "compact-deployment-details",
+            compactWorkspaceMenu(page),
+          );
+          await goBackInMenu(page);
+          await expect(workspaceMenuRow(page, "Run checks")).toBeVisible();
+          await chooseInWorkspaceMenu(page, "Deployment details");
+          await expectCompactDetails(page);
+          await press(page, "Close deployment details");
+          await expectWorkspaceMenuClosed(page);
+
+          await openCompactWorkspaceMenu(page);
+          await chooseInWorkspaceMenu(page, "Header status");
+          await expectCompactDetails(page);
+          await captureSchemes(page, info, "compact-header-status", compactWorkspaceMenu(page));
+          await press(page, "Fail button content");
+          await expect(
+            compactWorkspaceMenu(page).getByText("Plugin failed: Button content failed", {
+              exact: true,
+            }),
+          ).toBeVisible();
+          await goBackInMenu(page);
+          await expect(workspaceMenuRow(page, "Header status")).toBeVisible();
+          await chooseInWorkspaceMenu(page, "Open deployment logs");
+          await expectCompactDetails(page);
+          await captureSchemes(page, info, "compact-logs-popover", compactWorkspaceMenu(page));
+          await press(page, "Close deployment details");
+          await expectWorkspaceMenuClosed(page);
+        }),
       hideAndUnloadOpenButtons: () =>
         test.step("hiding an open button and unloading a plugin remove its surfaces", async () => {
           await page.setViewportSize(WIDE);
@@ -454,6 +640,12 @@ export async function withButtonShowcase(
             0,
           );
           await expect(page.getByText("All systems operational", { exact: true })).toHaveCount(0);
+          await page.setViewportSize(COMPACT);
+          await openCompactWorkspaceMenu(page);
+          await expect(workspaceMenuRow(page, "Header checks")).toHaveCount(0);
+          await expect(workspaceMenuRow(page, "Header status")).toHaveCount(0);
+          await closeCompactWorkspaceMenu(page);
+          await page.setViewportSize(WIDE);
           await showcase.setTitle("Healthy app after plugin unload");
           await expect(page.getByTestId("workspace-header-title")).toHaveText(
             "Healthy app after plugin unload",

@@ -1,6 +1,7 @@
 import equal from "fast-deep-equal";
 import {
   buildWorkspaceStructureProjects,
+  type WorkspaceSort,
   type WorkspaceStructure,
   type WorkspaceStructureProject,
 } from "@/projects/workspace-structure";
@@ -25,7 +26,6 @@ export interface SessionsSnapshot {
 
 export interface SidebarOrderSnapshot {
   projectOrder: string[];
-  workspaceOrderByProject: Record<string, string[]>;
 }
 
 const EMPTY_WORKSPACE_KEYS: string[] = [];
@@ -154,6 +154,7 @@ export function selectWorkspaceDirectoryServerIds(
 export function selectWorkspaceStructureProjects(
   state: SessionsSnapshot,
   serverIds: readonly string[],
+  workspaceSort?: WorkspaceSort,
 ): WorkspaceStructureProject[] {
   const sessions: Array<{
     serverId: string;
@@ -179,11 +180,12 @@ export function selectWorkspaceStructureProjects(
     return EMPTY_WORKSPACE_STRUCTURE.projects;
   }
 
-  return buildWorkspaceStructureProjects({ sessions });
+  return buildWorkspaceStructureProjects({ sessions, workspaceSort });
 }
 
 export function createWorkspaceStructureProjectsSelector(
   serverIds: readonly string[],
+  workspaceSort?: WorkspaceSort,
 ): (state: SessionsSnapshot) => WorkspaceStructureProject[] {
   let previousInputs: Array<{
     workspaces: Map<string, WorkspaceDescriptor> | undefined;
@@ -209,7 +211,12 @@ export function createWorkspaceStructureProjectsSelector(
     }
 
     previousInputs = inputs;
-    previousProjects = selectWorkspaceStructureProjects(state, serverIds);
+    const next = selectWorkspaceStructureProjects(state, serverIds, workspaceSort);
+    const previousByKey = new Map(previousProjects?.map((project) => [project.viewKey, project]));
+    previousProjects = next.map((project) => {
+      const previous = previousByKey.get(project.viewKey);
+      return previous && equal(previous, project) ? previous : project;
+    });
     return previousProjects;
   };
 }
@@ -244,31 +251,16 @@ export function selectProjectOrder(state: SidebarOrderSnapshot): string[] {
   return state.projectOrder ?? EMPTY_WORKSPACE_KEYS;
 }
 
-export function selectWorkspaceOrderByScope(state: SidebarOrderSnapshot): Record<string, string[]> {
-  return state.workspaceOrderByProject ?? {};
-}
-
 export function composeWorkspaceStructure(input: {
   projects: WorkspaceStructureProject[];
   projectOrder: readonly string[];
-  workspaceOrderByScope: Record<string, readonly string[]>;
 }): WorkspaceStructure {
   if (input.projects.length === 0) {
     return EMPTY_WORKSPACE_STRUCTURE;
   }
 
   const orderedProjects = applyStoredOrdering({
-    items: input.projects.map((project) => {
-      const workspaceOrder = input.workspaceOrderByScope[project.viewKey] ?? EMPTY_WORKSPACE_KEYS;
-      return {
-        ...project,
-        workspaceKeys: applyStoredOrdering({
-          items: project.workspaceKeys,
-          storedOrder: workspaceOrder,
-          getKey: (workspaceKey) => workspaceKey,
-        }),
-      };
-    }),
+    items: input.projects,
     storedOrder: input.projectOrder,
     getKey: (project) => project.viewKey,
   });

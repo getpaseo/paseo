@@ -34,7 +34,7 @@ export function FileDropBackdrop() {
   // non-animated children (applying themed Unistyles styles to an Animated.View crashes
   // on theme change — see docs/unistyles.md).
   return (
-    <Animated.View style={overlayStyle} pointerEvents="none">
+    <Animated.View style={overlayStyle} pointerEvents="none" testID="file-drop-backdrop">
       <View style={styles.backdrop} />
       <View style={styles.content}>
         <ThemedUpload size={32} uniProps={primaryIconColorMapping} />

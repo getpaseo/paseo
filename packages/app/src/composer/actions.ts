@@ -1,4 +1,5 @@
 import type { SelectedFile } from "@/attachments/selected-file";
+import { FILE_UPLOAD_MAX_BYTES } from "@/attachments/upload-limit";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 import type {
@@ -131,7 +132,7 @@ export async function uploadFileAttachments(input: {
 
   for (const file of input.files) {
     const bytes = await file.readBytes();
-    if (bytes.byteLength > 50 * 1024 * 1024) {
+    if (bytes.byteLength > FILE_UPLOAD_MAX_BYTES) {
       throw new Error(
         i18n.t("composer.errors.fileTooLarge", { size: "50MB", fileName: file.fileName }),
       );

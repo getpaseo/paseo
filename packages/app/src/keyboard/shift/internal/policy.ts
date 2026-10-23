@@ -52,6 +52,16 @@ export function resolveKeyboardShift(input: {
   return Math.max(0, input.rawKeyboardHeight - input.bottomInset);
 }
 
+/** Distance a KeyboardTranslateView lifts its content for a given keyboard shift. */
+export function resolveKeyboardLift(input: {
+  shift: number;
+  enabled: boolean;
+  bottomClearance: number;
+}): number {
+  "worklet";
+  return input.enabled ? Math.max(0, input.shift - input.bottomClearance) : 0;
+}
+
 export function shouldReconcileHiddenKeyboardEnd(input: {
   height: number;
   progress: number;

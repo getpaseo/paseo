@@ -194,6 +194,10 @@
             "enabled": {
               "type": "boolean"
             },
+            "requireProtectedSecurity": {
+              "description": "Admit only relay clients that negotiate protected endpoint security (replay protection). Defaults to false; older clients still connect while it is off.",
+              "type": "boolean"
+            },
             "endpoint": {
               "type": "string"
             },

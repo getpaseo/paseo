@@ -1,5 +1,11 @@
 export type {
   PluginHostProps,
+  PluginTab,
+  PluginPanelProps,
+  PluginWorkspacePanelParams,
+  PluginAgentPanelParams,
+  PluginFilePanelParams,
+  PluginAgentPanelContribution,
   PluginFilePanelContribution,
   PluginFilePanelProps,
   PluginSurfaceProps,
@@ -52,8 +58,6 @@ export type {
   PluginFile,
   PluginFileBytesState,
   PluginFileEvent,
-  PluginFileLocation,
-  PluginFileTab,
   PluginFileTextState,
   PluginFileUrlState,
   PluginFileWriteOptions,
@@ -91,3 +95,5 @@ export declare function openExternalUrl(url: string): Promise<void>;
 export { defineTranslations, useTranslation } from "./translations.js";
 export type { PluginI18n } from "./translations.js";
 export type { PluginText, PluginMessage, PluginTranslations } from "../text.js";
+
+export { useTabState } from "./tab.js";

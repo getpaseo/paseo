@@ -151,3 +151,59 @@ test("encrypted connector rejects overload synchronously and preserves the physi
   ).toBe(true);
   expect(server.wss.clients.size).toBe(1);
 });
+
+import { openDaemonSecureChannel } from "@getpaseo/relay/e2ee";
+test("encrypted connector refuses legacy endpoint security on a later attempt once protected was negotiated", async () => {
+  const server = await endpoint();
+  const keys = generateKeyPair();
+  const legacyReceived: unknown[] = [];
+  let connections = 0;
+  server.wss.on("connection", (socket) => {
+    connections += 1;
+    const wire: Transport = {
+      send: (data) => socket.send(data),
+      close: (code, reason) => socket.close(code, reason),
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    socket.on("message", (data, isBinary) => {
+      const bytes = Buffer.from(data as Buffer);
+      wire.onmessage?.({
+        data: isBinary
+          ? bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+          : bytes.toString(),
+        isBinary,
+      });
+    });
+    socket.on("close", (code, reason) => wire.onclose?.(code, reason.toString()));
+    if (connections === 1) {
+      void openDaemonSecureChannel(wire, { daemonKeyPair: keys }).catch(() => {});
+    } else {
+      // The daemon behind the relay now only speaks the legacy construction.
+      void createDaemonChannel(wire, keys, {
+        onmessage: (data) => legacyReceived.push(data),
+      }).catch(() => {});
+    }
+  });
+  const port = new URL(server.url).port;
+  const factory = createHostTransportFactory(
+    `relay://127.0.0.1:${port}/srv_latch?key=${encodeURIComponent(exportPublicKey(keys.publicKey))}`,
+  );
+
+  const first = factory({ url: server.url });
+  cleanup.push(async () => first.close());
+  await new Promise<void>((resolve) => first.onOpen(resolve));
+  first.close();
+
+  const second = factory({ url: server.url });
+  cleanup.push(async () => second.close());
+  let opened = false;
+  second.onOpen(() => {
+    opened = true;
+  });
+  const closed = await new Promise<unknown>((resolve) => second.onClose(resolve));
+  expect(closed).toMatchObject({ code: 4002, reason: expect.stringContaining("legacy") });
+  expect(opened).toBe(false);
+  expect(legacyReceived).toEqual([]);
+});

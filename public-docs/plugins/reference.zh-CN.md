@@ -1525,7 +1525,8 @@ if (current.status === "ready") {
 
 ## 工作区面板 {#workspace-panels}
 
-为工作区或 Agent 上下文注册一个面板：
+使用 `addWorkspacePanel` 注册工作区面板，使用 `addAgentPanel` 注册 Agent 面板。
+两者与[文件面板](#file-panels)使用相同的面板契约。
 
 `client/review.tsx`：
 
@@ -1534,9 +1535,9 @@ import { type PluginAgentPanelProps, useAgent, useWorkspace } from "@getpaseo/pl
 import { useMemo } from "react";
 import { Text, View } from "react-native";
 
-export function ReviewPanel({ theme, layout, workspaceId, agentId }: PluginAgentPanelProps) {
+export function ReviewPanel({ theme, layout, workspaceId, params }: PluginAgentPanelProps) {
   const workspaceName = useWorkspace(workspaceId, (workspace) => workspace.name);
-  const agent = useAgent(agentId, ({ id, title }) => ({ id, title }));
+  const agent = useAgent(params.agentId, ({ id, title }) => ({ id, title }));
   const styles = useMemo(
     () => ({
       screen: {
@@ -1565,11 +1566,10 @@ import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { ReviewPanel } from "./client/review";
 
 export default function contribute(client: PluginClientContext) {
-  client.addWorkspacePanel({
+  client.addAgentPanel({
     id: "review",
     title: "Review",
     icon: "Scan",
-    context: "agent",
     locations: ["workspace", "explorer"],
     Component: ReviewPanel,
   });
@@ -1577,20 +1577,42 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-`addWorkspacePanel` 的字段：
+`addWorkspacePanel` 和 `addAgentPanel` 的字段：
 
 | 字段        | 是否必填 | 含义                                                |
 | ----------- | -------- | --------------------------------------------------- |
 | `id`        | 是       | 插件内部的面板 ID。                                 |
 | `title`     | 是       | 工作区标签页的标题。                                |
 | `icon`      | 是       | Lucide 名称、`{ svg }` 或组件。参见[图标](#icons)。 |
-| `context`   | 是       | `workspace` 或 `agent`。                            |
 | `locations` | 否       | `workspace` 和/或 `explorer`。默认为 `workspace`。  |
 | `Component` | 是       | 与所选上下文的属性相匹配的 React Native 组件。      |
 
-工作区面板接收 `PluginWorkspacePanelProps`：`context: "workspace"`、`theme`、`host`、`layout` 和 `workspaceId`。Agent 面板接收 `PluginAgentPanelProps`：`context: "agent"`、相同的通用字段和 `workspaceId`，外加 `agentId`。
+每个面板都接收 `PluginPanelProps<Params>`，包含 `theme`、`host`、`layout`、`navigation`、
+`workspaceId`、只读的 `params`、`revision` 和 `tab`。工作区面板使用空的
+`PluginWorkspacePanelParams`；Agent 面板的 `PluginAgentPanelParams` 包含 `agentId`。
+每次向同一标签页重新发送 params 时，`revision` 都会递增，即使请求与上次相同。
 
-用 `useWorkspace(workspaceId, selector)` 和 `useAgent(agentId, selector)` 读取缓存的状态。selector 是必填的。Paseo 对它的结果做浅比较，因此选择 `{ name, status }` 时，无关字段的变化不会触发重新渲染。在一次调用中选择组件渲染的所有字段；不要选择整个快照。
+`tab.setModified(boolean)` 标记未保存的更改，并在关闭前询问。`tab.state` 是由面板定义的持久化
+JSON，初始为 `undefined`；`tab.setState(value)` 替换整个值。每个标签页拥有独立状态。
+Paseo 只保存状态，不解释其内容。用 `useTabState(tab, schema, defaultState)` 验证它：
+
+```tsx
+const schema = z.object({ view: z.enum(["preview", "source"]) });
+const [state, setState] = useTabState(tab, schema, { view: "preview" });
+// Missing or invalid persisted state returns the default.
+// In an event handler, call setState({ view: "source" }).
+```
+
+从 `@getpaseo/plugin/client` 导入 `useTabState`，从 `zod` 导入 `z`。setter 替换整个 JSON 值。
+标签页恢复和应用重新加载后，状态仍然保留。
+
+统一属性、`addAgentPanel` 和 `useTabState` 需要 Paseo 0.13.0 或更高版本。
+
+**已弃用，将在 2027-04-23 之后移除**：0.12 面板的 `context` 和顶层 `agentId` 属性、
+`addWorkspacePanel({ context: "workspace" })` 以及 `addWorkspacePanel({ context: "agent" })`
+仍然有效。省略工作区的 `context`，用 `addAgentPanel` 注册 Agent 面板，并读取 `params.agentId`。
+
+用 `useWorkspace(workspaceId, selector)` 和 `useAgent(params.agentId, selector)` 读取缓存的状态。selector 是必填的。Paseo 对它的结果做浅比较，因此选择 `{ name, status }` 时，无关字段的变化不会触发重新渲染。在一次调用中选择组件渲染的所有字段；不要选择整个快照。
 
 当记录不可用时，两个 hook 都返回 `null`。否则它们会针对规范化的客户端状态同步运行。快照 DTO 及其嵌套值都是深度只读的，并在运行时被冻结。不要调用插件 RPC 来获取当前的工作区或 Agent。可选的或特定于厂商的补充数据，请在组件渲染之后再获取。
 
@@ -1670,12 +1692,13 @@ export default function contribute(client: PluginClientContext) {
 
 `PluginFilePanelProps` 包含[主题和布局](#theme-and-layout)中介绍的通用属性 `theme`、`host`、`layout` 和可选的 `navigation`，另外还有：
 
-| 属性          | 类型                 | 含义                                                               |
-| ------------- | -------------------- | ------------------------------------------------------------------ |
-| `workspaceId` | `string`             | 包含该文件标签页的工作区。                                         |
-| `file`        | `PluginFile`         | 文件的句柄。标签页显示该文件期间保持不变。                         |
-| `tab`         | `PluginFileTab`      | `setModified(modified)` 会显示标签页的未保存圆点，并在关闭前确认。 |
-| `location`    | `PluginFileLocation` | `lineStart?`、`lineEnd?` 和 `revision`，后者在每次导航时递增。     |
+| 属性          | 类型                    | 含义                                                                                       |
+| ------------- | ----------------------- | ------------------------------------------------------------------------------------------ |
+| `workspaceId` | `string`                | 包含该文件标签页的工作区。                                                                 |
+| `params`      | `PluginFilePanelParams` | 打开请求提供的只读 `path`、`lineStart?` 和 `lineEnd?`。                                    |
+| `revision`    | `number`                | 每次向该标签页重新发送 params 时递增，即使是同一行。                                       |
+| `file`        | `PluginFile`            | 从 `params.path` 解析的文件能力；标签页显示该文件期间保持不变。                            |
+| `tab`         | `PluginTab`             | `setModified`、持久化的自定义 `state` 和 `setState`。参见[工作区面板](#workspace-panels)。 |
 
 Paseo 在知道文件存在及其大小后就会挂载你的面板，不会先读取文件。`file` 对象保持不变，它的 stat 字段保存 Paseo 已知的最新版本。请在渲染时读取这些字段；它们变化时不会重新渲染你的面板。面板要通过 `watch` 监听器，或 `useFileText`、`useFileBytes`、`useFileUrl` 引起的重新渲染，得知它们已变化：
 
@@ -1888,8 +1911,9 @@ review.update({ visible: true });
 review.remove();
 ```
 
-省略 `label` 即为只有图标的标题栏按钮。在宽布局中，菜单和弹出框会显示一个 V 形箭头。紧凑布局中的标题栏
-按钮只使用图标，没有标签和箭头。Paseo 会把多出来的贡献移入一个共享的溢出菜单。位置和溢出由宿主决定。
+省略 `label` 即为只有图标的标题栏按钮。在宽布局中，菜单和弹出框会显示一个 V 形箭头。Paseo 会把多出来的
+贡献移入一个共享的溢出菜单。在手机和较窄的窗口中，标题栏没有空间放置插件按钮，因此每个按钮都会成为工作区
+菜单（`···`）中的一行，显示它的图标和标题；它的菜单和弹出框以该底部面板中的页面打开。位置和溢出由宿主决定。
 
 ## Composer 胶囊 {#composer-pills}
 

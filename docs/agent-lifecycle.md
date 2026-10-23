@@ -79,7 +79,30 @@ Users can also detach an existing subagent from the subagents track. Detach is d
 
 Agent-originated messages and automatic notifications share a recipient-daemon delivery module. A queued receipt acknowledges admission before provider dispatch, allowing a child to report and finish in the same two-second quiet window. Human prompts dispatch directly. Conflicting explicit interruption or session-mode choices retain separate ordered dispatches.
 
-The pending window is in memory. Clean shutdown flushes it before closing agents; an abrupt crash can lose it. A durable send receipt remains pending until actual dispatch acknowledgment, so a lost window never becomes a completed receipt. Completion waits cover queued admission within their original timeout and cancellation scope.
+The pending message window is in memory. Clean shutdown flushes it before closing agents; an abrupt
+crash can lose queued prompts. A durable send receipt remains pending until actual dispatch
+acknowledgment, so a lost window never becomes a completed receipt. Completion waits cover queued
+admission within their original timeout and cancellation scope.
+
+Finish notification intent has a separate daemon-owned lifetime. The finish-subscriptions module
+persists caller, child, host, and ownership policy through an injectable store; its JSON adapter uses
+`$PASEO_HOME/finish-subscriptions.json`. Registration must commit before creation or queued-prompt
+acknowledgment promises a notification. A pending replacement retains its predecessor until dispatch
+accepts; rejected dispatch removes only the candidate. Recovery coalesces registrations for the same
+caller, child, and host into one watch.
+
+Bootstrap restores these watches after repairing stale running records to `closed` and before opening
+ingress. Reading a closed child's result does not load its provider. A finish notification reports that
+the child's run has settled; the parent decides whether its task is complete. Recovery never resumes
+child work. Archived or deleted parents suppress delivery; parent-owned creation watches also stop
+reporting after detachment.
+
+Intent remains stored until the parent's notification dispatch is acknowledged. Dispatch failure
+retries the captured notification; it does not change the child's reported outcome. Remote host loss
+follows the [connected-host observation policy](connected-hosts.md#delegating-agents). Shutdown stops observation before flushing message delivery, retaining
+outstanding intent. A crash after successful dispatch but before removal commits can repeat the
+notification. Clean shutdown can also flush an already queued callback while retaining its intent,
+so that callback can repeat after restart. This is an at-least-once wakeup, without turn attribution or exactly-once delivery.
 
 Permission requests are notification checkpoints, not the end of that subscription. The caller is notified again after a permission response when the child finishes, errors, or requests another permission.
 The permission notification includes the normalized request plus the child and request IDs, so the caller can inspect it and respond without fetching agent status.

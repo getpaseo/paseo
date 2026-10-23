@@ -44,10 +44,25 @@ connection candidates, including direct connections and routes discovered throug
 Adding a direct connection to a discovered host adds another candidate. If no candidate connects,
 the destination workspace keeps its existing disconnected or reconnecting behavior.
 
-Finish notifications use the existing idle wait, including a pending initial run or an already idle
-child. They name the server and agent. A daemon restart or route loss ends an outstanding notification
-wait; inspect or wait for the child again rather than resending its prompt. Concurrent prompts gain
-no additional turn attribution or delivery guarantee.
+Finish notifications name the destination server and child agent. The caller's daemon owns durable
+subscription intent and restores observation through the same routed wait and permission observation
+used during ordinary operation. Restarting the caller's daemon does not imply that a remote child
+stopped. Three failed remote observation attempts end the subscription with a notification that the
+child could not be observed and its status is unknown. This does not prove the host is offline: remote
+RPC failures also prevent observation. Attempts use capped backoff; a connection still
+in progress does not spend that budget. A confirmed removed registration reports host unavailability
+immediately through the same path. Neither notice claims the child finished. Intent remains stored
+until the parent accepts dispatch, then is consumed; reconnecting does not restore that watch. The
+parent decides whether to inspect the child or delegate again.
+
+A definitely unsent prompt returns a tool error and creates no notification. An ambiguous prompt
+response retains intent because the destination may have admitted it; observation then follows the
+same retry policy. A confirmed missing child reports unavailability.
+
+Remote creation and local subscription persistence are separate commits. A failed local write reports
+failure even if the destination already created the child; inspect it before retrying creation.
+See [finish notification lifetime](agent-lifecycle.md#relationships) for registration, acknowledgment,
+and duplicate-delivery semantics. Concurrent prompts gain no turn attribution.
 
 ## Connections and recovery
 

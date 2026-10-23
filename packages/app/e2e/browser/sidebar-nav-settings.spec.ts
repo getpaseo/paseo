@@ -6,6 +6,7 @@ import {
   claudeAndCodexReports,
   expectPinnedUsage,
   openCompactSidebar,
+  expectCompactSidebarOpen,
 } from "../support/helpers/usage-sidebar-item";
 import { gotoAppShell } from "../support/helpers/app";
 import { SHOWCASE_PLUGIN_ID, installSidebarPlugins } from "../support/helpers/plugin-sidebar-items";
@@ -90,12 +91,13 @@ test("fixed footer line keeps its five icons, Help and Settings at the end", asy
   await openAddProjectFlow(page);
   await page.keyboard.press("Escape");
   await expect(addProjectFlow(page)).toBeHidden();
+  await expectCompactSidebarOpen(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await openSidebarNavSettings(page);
   await setFooterItemVisible(page, "usage", true);
   await leaveSettings(page);
   await page.setViewportSize({ width: 390, height: 844 });
-  await openCompactSidebar(page);
+  await expectCompactSidebarOpen(page);
   await expectFooterSeparator(page, true);
   await expectFooterIconRow(page);
   await footerScreenshot(page, "footer-compact-with-rows");

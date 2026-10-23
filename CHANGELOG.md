@@ -33,6 +33,14 @@ paseo host add 'relay://...' --label laptop
 - Reduced app startup work by loading only the selected language's translations ([#7410](https://github.com/getpaseo/paseo/pull/7410) by [@colonelpanic8](https://github.com/colonelpanic8))
 - Removed repeated workspace layout saves when nothing changed ([#7358](https://github.com/getpaseo/paseo/pull/7358) by [@colonelpanic8](https://github.com/colonelpanic8))
 
+### Deprecated
+
+- Deprecated plugin panel `context` and flat `agentId` props, and `addWorkspacePanel`'s `context` field (including the agent registration alias). Removal after 2027-04-23; use `params.agentId` and `addAgentPanel`.
+
+### Changed
+
+- Changed beta file panel props to `workspaceId`, read-only `params`, `revision`, `file`, and `tab` with persisted per-tab state. Removed beta-only `location`, `PluginFileLocation`, and `PluginFileTab`.
+
 ### Plugins
 
 - Added [file panels](https://paseo.sh/docs/plugins/reference#file-panels), so a plugin can open matching files in the file tab, such as a PDF viewer or a rich Markdown editor ([#7411](https://github.com/getpaseo/paseo/pull/7411), [#7366](https://github.com/getpaseo/paseo/pull/7366))

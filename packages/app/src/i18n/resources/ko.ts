@@ -616,6 +616,9 @@ export const ko: TranslationResources = {
       hostDisconnected: "호스트가 연결되어 있지 않습니다",
       updateHost: "기본 터미널 렌더러를 사용하도록 호스트를 업데이트합니다.",
       unableToSubscribe: "터미널을 구독할 수 없습니다",
+      fileUploaded: "파일을 업로드했습니다",
+      pasteFileFailed: "파일을 붙여넣지 못했습니다: {{reason}}",
+      uploadingFile: "파일 업로드 중…",
     },
     sheet: {
       openAsTab: "탭으로 열기",
@@ -1170,6 +1173,12 @@ export const ko: TranslationResources = {
       showBackground: "백그라운드 표시",
       trigger: "표시 설정",
       heading: "표시",
+      sort: {
+        label: "정렬",
+        created: "생성일",
+        lastPrompt: "마지막 프롬프트",
+        updateHost: "작업 공간을 정렬하려면 호스트를 업데이트하세요",
+      },
       grouping: {
         label: "그룹화",
         project: "프로젝트",
@@ -2304,11 +2313,6 @@ export const ko: TranslationResources = {
     },
     diagnostics: {
       title: "진단",
-      legacyTerminalRenderer: {
-        label: "레거시 터미널 렌더러 사용",
-        description: "터미널을 다시 열 때 이전 WebView 터미널을 사용합니다.",
-        accessibilityLabel: "레거시 터미널 렌더러 사용",
-      },
       testAudio: "오디오 테스트",
       playTest: "테스트 재생",
       playing: "재생 중...",

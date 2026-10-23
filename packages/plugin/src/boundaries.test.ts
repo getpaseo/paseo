@@ -70,6 +70,26 @@ function boundaryViolations(entry: string, runtime: "shared" | "server" | "clien
   return violations;
 }
 
+function typeErrors(code: string): string[] {
+  const configPath = path.resolve(sourceDirectory, "../tsconfig.examples.json");
+  const { config } = ts.readConfigFile(configPath, ts.sys.readFile);
+  const { options } = ts.parseJsonConfigFileContent(config, ts.sys, path.dirname(configPath));
+  const file = path.resolve(
+    sourceDirectory,
+    "../../../plugin-examples/skill-example/client/example.tsx",
+  );
+  const host = ts.createCompilerHost(options);
+  const getSourceFile = host.getSourceFile;
+  host.getSourceFile = (name, language, ...rest) =>
+    path.resolve(name) === file
+      ? ts.createSourceFile(name, code, language)
+      : getSourceFile.call(host, name, language, ...rest);
+  host.fileExists = (name) => path.resolve(name) === file || ts.sys.fileExists(name);
+  const program = ts.createProgram([file], options, host);
+  return ts
+    .getPreEmitDiagnostics(program)
+    .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"));
+}
 describe("plugin SDK import boundaries", () => {
   it("publishes process capabilities without their Windows implementation helpers", () => {
     expect(Object.keys(server).sort()).toEqual(["execCommand", "spawnProcess", "terminateProcess"]);
@@ -140,5 +160,35 @@ describe("plugin example import boundaries", () => {
       }
     }
     expect(violations).toEqual([]);
+  });
+});
+
+describe("plugin panel SDK boundary", () => {
+  it("accepts uniform params and persisted tab state alongside 0.12 panels", () => {
+    expect(
+      typeErrors(`
+      import { type PluginClientContext, type PluginFilePanelProps, type PluginWorkspacePanelProps, type PluginAgentPanelProps, type PluginTab, useTabState } from "@getpaseo/plugin/client";
+      import { z } from "zod";
+      function FilePanel({ params, revision, tab, file }: PluginFilePanelProps) {
+        const [state, setState] = useTabState(tab, z.object({ view: z.enum(["preview", "source"]) }), { view: "preview" });
+        setState({ view: "source" });
+        tab.setState({ nested: [true, null, 3] });
+        // @ts-expect-error only JSON state crosses the host boundary
+        tab.setState(() => {});
+        // @ts-expect-error params belong to the opener
+        params.path = "other";
+        return null;
+      }
+      function OldWorkspace({ context, workspaceId }: PluginWorkspacePanelProps) { return null; }
+      function OldAgent({ context, workspaceId, agentId }: PluginAgentPanelProps) { return null; }
+      function Agent({ params }: PluginAgentPanelProps) { params.agentId.toUpperCase(); return null; }
+      function contribute(client: PluginClientContext) {
+        client.addWorkspacePanel({ id: "old-workspace", title: "Old", icon: "File", context: "workspace", Component: OldWorkspace });
+        client.addWorkspacePanel({ id: "old-agent", title: "Old", icon: "File", context: "agent", Component: OldAgent });
+        client.addWorkspacePanel({ id: "workspace", title: "Workspace", icon: "File", Component: OldWorkspace });
+        client.addAgentPanel({ id: "agent", title: "Agent", icon: "File", Component: Agent });
+      }
+    `),
+    ).toEqual([]);
   });
 });

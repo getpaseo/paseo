@@ -11,17 +11,9 @@ import {
   extractRelayMessage,
 } from "./daemon-client-transport.js";
 
-const createClientChannelMock = vi.hoisted(() => vi.fn());
-
-vi.mock("@getpaseo/relay/e2ee", () => ({
-  createClientChannel: createClientChannelMock,
-}));
-
 describe("daemon-client transport helpers", () => {
   test("createEncryptedTransport closes handshake failures with browser-safe code", async () => {
-    createClientChannelMock.mockReset();
-    createClientChannelMock.mockRejectedValueOnce(new Error("handshake failed"));
-
+    // An unusable daemon key fails the handshake before any frame is sent.
     const connection: { open: (() => void) | null } = { open: null };
     const close = vi.fn();
 
@@ -41,8 +33,7 @@ describe("daemon-client transport helpers", () => {
         onError: () => () => {},
         onMessage: () => () => {},
       },
-      "daemon-public-key",
-      { warn: vi.fn() },
+      { daemonPublicKeyB64: "not-a-key", logger: { warn: vi.fn() } },
     );
 
     expect(connection.open).not.toBeNull();
@@ -56,8 +47,6 @@ describe("daemon-client transport helpers", () => {
   test("createEncryptedTransport sends compressed binary frames once deflatePayloads is negotiated", async () => {
     const relay =
       await vi.importActual<typeof import("@getpaseo/relay/e2ee")>("@getpaseo/relay/e2ee");
-    createClientChannelMock.mockReset();
-    createClientChannelMock.mockImplementation(relay.createClientChannel);
     const daemonKeyPair = relay.generateKeyPair();
     const sent: Array<string | ArrayBuffer> = [];
     const handlers: {
@@ -65,10 +54,32 @@ describe("daemon-client transport helpers", () => {
       message: ((data: unknown, isBinary: boolean) => void) | null;
     } = { open: null, message: null };
 
+    const received: Array<string | ArrayBuffer> = [];
+    const daemonTransport: import("@getpaseo/relay/e2ee").Transport = {
+      send: (data) => {
+        setTimeout(() => handlers.message?.(data, data instanceof ArrayBuffer), 0);
+      },
+      close: vi.fn(),
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    const daemonPromise = relay.openDaemonSecureChannel(daemonTransport, {
+      daemonKeyPair,
+      events: { onmessage: (data) => received.push(data) },
+    });
     const transport = createEncryptedTransport(
       {
         send: (data) => {
           sent.push(data as string | ArrayBuffer);
+          setTimeout(
+            () =>
+              daemonTransport.onmessage?.({
+                data: data as string | ArrayBuffer,
+                isBinary: data instanceof ArrayBuffer,
+              }),
+            0,
+          );
         },
         close: vi.fn(),
         onOpen: (handler) => {
@@ -82,8 +93,10 @@ describe("daemon-client transport helpers", () => {
           return () => {};
         },
       },
-      relay.exportPublicKey(daemonKeyPair.publicKey),
-      { warn: vi.fn() },
+      {
+        daemonPublicKeyB64: relay.exportPublicKey(daemonKeyPair.publicKey),
+        logger: { warn: vi.fn() },
+      },
     );
     const opened = vi.fn();
     transport.onOpen(opened);
@@ -95,13 +108,8 @@ describe("daemon-client transport helpers", () => {
       type: "e2ee_hello",
       capabilities: { binaryCiphertext: true, deflatePayloads: true },
     });
-    handlers.message?.(
-      JSON.stringify({
-        type: "e2ee_ready",
-        capabilities: { binaryCiphertext: true, deflatePayloads: true },
-      }),
-      false,
-    );
+    const daemon = await daemonPromise;
+    expect(daemon.securityMode()).toBe("protected");
     await vi.waitFor(() => {
       expect(opened).toHaveBeenCalled();
     });
@@ -113,6 +121,7 @@ describe("daemon-client transport helpers", () => {
     await vi.waitFor(() => {
       expect(sent).toHaveLength(2);
     });
+    await vi.waitFor(() => expect(received).toEqual([page]));
     expect(sent[1]).toBeInstanceOf(ArrayBuffer);
     expect((sent[1] as ArrayBuffer).byteLength).toBeLessThan(page.length / 4);
 

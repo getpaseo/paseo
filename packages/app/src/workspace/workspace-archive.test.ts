@@ -32,6 +32,8 @@ function archivePayload(input: {
 
 function workspace(input?: Partial<WorkspaceDescriptor>): WorkspaceDescriptor {
   return {
+    createdAt: null,
+    lastUserMessageAt: null,
     id: "workspace-1",
     projectId: "project-1",
     projectDisplayName: "Project",

@@ -1,15 +1,8 @@
 /// <reference lib="dom" />
-import { EventEmitter } from "node:events";
 import { WebSocket } from "ws";
 import type pino from "pino";
-import {
-  createDaemonChannel,
-  type Transport as RelayTransport,
-  type KeyPair,
-} from "@getpaseo/relay/e2ee";
 import { buildRelayWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
 import type { ExternalSocketMetadata } from "./websocket-server.js";
-import { createEncryptedRelaySocket } from "./websocket/encrypted-relay-socket.js";
 
 export interface RelayTransportOptions {
   logger: pino.Logger;
@@ -17,7 +10,6 @@ export interface RelayTransportOptions {
   relayEndpoint: string; // "host:port"
   relayUseTls: boolean;
   serverId: string;
-  daemonKeyPair?: KeyPair;
   createWebSocket?: RelayWebSocketFactory;
 }
 
@@ -30,13 +22,12 @@ export interface RelaySocketLike {
   bufferedAmount?: number;
   send: (data: string | Uint8Array | ArrayBuffer, callback?: (error?: Error) => void) => void;
   close: (code?: number, reason?: string) => void;
-  terminate?: () => void;
+  terminate: () => void;
   on: (event: "message" | "close" | "error", listener: (...args: unknown[]) => void) => void;
   once: (event: "close" | "error", listener: (...args: unknown[]) => void) => void;
 }
 
 interface RelayWebSocketLike extends RelaySocketLike {
-  terminate: () => void;
   ping: () => void;
   on: (
     event: "open" | "message" | "close" | "error" | "pong",
@@ -118,7 +109,6 @@ export function startRelayTransport({
   relayEndpoint,
   relayUseTls,
   serverId,
-  daemonKeyPair,
   createWebSocket = createDefaultRelayWebSocket,
 }: RelayTransportOptions): RelayTransportController {
   const relayLogger = logger.child({ module: "relay-transport" });
@@ -385,17 +375,7 @@ export function startRelayTransport({
         externalSessionKey: `session:${connectionId}`,
         relayConnectionId: connectionId,
       };
-      if (daemonKeyPair) {
-        void attachEncryptedSocket(
-          socket,
-          daemonKeyPair,
-          relayLogger.child({ connectionId }),
-          attachSocket,
-          externalMetadata,
-        );
-      } else {
-        void attachSocket(socket, externalMetadata);
-      }
+      void attachSocket(socket, externalMetadata);
     });
 
     socket.on("close", (code, reason) => {
@@ -417,150 +397,4 @@ export function startRelayTransport({
   connectControl();
 
   return { stop };
-}
-
-async function attachEncryptedSocket(
-  socket: RelayWebSocketLike,
-  daemonKeyPair: KeyPair,
-  logger: pino.Logger,
-  attachSocket: (ws: RelaySocketLike, metadata?: ExternalSocketMetadata) => Promise<void>,
-  metadata?: ExternalSocketMetadata,
-): Promise<void> {
-  const handshakeTimeout = setTimeout(() => {
-    logger.warn("relay_e2ee_handshake_timeout_terminating");
-    socket.terminate();
-  }, 15_000);
-  try {
-    const relayTransport = createRelayTransportAdapter(socket, logger);
-    const emitter = new EventEmitter();
-    const pendingMessages: Array<string | ArrayBuffer> = [];
-    let attached = false;
-    const emitMessage = (data: string | ArrayBuffer) => {
-      if (attached) {
-        emitter.emit("message", data);
-        return;
-      }
-      pendingMessages.push(data);
-    };
-    const channel = await createDaemonChannel(relayTransport, daemonKeyPair, {
-      onmessage: emitMessage,
-      onclose: (code, reason) => emitter.emit("close", code, reason),
-      onerror: (error) => {
-        logger.warn({ err: error }, "relay_e2ee_error");
-        emitter.emit("error", error);
-      },
-    });
-    clearTimeout(handshakeTimeout);
-    const encryptedSocket = createEncryptedRelaySocket({
-      channel,
-      emitter,
-      getTransportBufferedAmount: () => socket.bufferedAmount,
-      terminateTransport: () => socket.terminate(),
-    });
-    await attachSocket(encryptedSocket, metadata);
-    attached = true;
-    for (const message of pendingMessages) {
-      emitter.emit("message", message);
-    }
-    pendingMessages.length = 0;
-  } catch (error) {
-    logger.warn({ err: error }, "relay_e2ee_handshake_failed");
-    try {
-      socket.close(1011, "E2EE handshake failed");
-    } catch {
-      // ignore
-    }
-  } finally {
-    clearTimeout(handshakeTimeout);
-  }
-}
-
-function createRelayTransportAdapter(
-  socket: RelayWebSocketLike,
-  logger: pino.Logger,
-): RelayTransport {
-  const relayTransport: RelayTransport = {
-    send: (data) =>
-      new Promise<void>((resolve, reject) => {
-        try {
-          socket.send(data, (error) => {
-            if (!error) {
-              resolve();
-              return;
-            }
-            logger.warn({ err: error }, "relay_socket_send_failed");
-            reject(error);
-          });
-        } catch (error) {
-          const err = error instanceof Error ? error : new Error(String(error));
-          logger.warn({ err }, "relay_socket_send_failed");
-          reject(err);
-        }
-      }),
-    close: (code?: number, reason?: string) => socket.close(code, reason),
-    onmessage: null,
-    onclose: null,
-    onerror: null,
-  };
-
-  socket.on("message", (data, isBinary) => {
-    const binary = isBinary === true;
-    relayTransport.onmessage?.({ data: normalizeMessageData(data, binary), isBinary: binary });
-  });
-  socket.on("close", (code, reason) => {
-    const closeCode = typeof code === "number" ? code : 1006;
-    relayTransport.onclose?.(closeCode, String(reason ?? ""));
-  });
-  socket.on("error", (err) => {
-    relayTransport.onerror?.(err instanceof Error ? err : new Error(String(err)));
-  });
-
-  return relayTransport;
-}
-
-function normalizeMessageData(data: unknown, isBinary: boolean): string | ArrayBuffer {
-  if (!isBinary) {
-    if (typeof data === "string") return data;
-    const buffer = bufferFromWsData(data);
-    if (buffer) return buffer.toString("utf8");
-    return String(data);
-  }
-
-  if (data instanceof ArrayBuffer) return data;
-
-  const buffer = bufferFromWsData(data);
-  if (buffer) {
-    const view = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-    const out = new Uint8Array(view.byteLength);
-    out.set(view);
-    return out.buffer;
-  }
-
-  return String(data);
-}
-
-function bufferFromWsData(data: unknown): Buffer | null {
-  if (Buffer.isBuffer(data)) return data;
-  if (Array.isArray(data)) {
-    const buffers: Buffer[] = [];
-    for (const part of data) {
-      if (Buffer.isBuffer(part)) {
-        buffers.push(part);
-      } else if (part instanceof ArrayBuffer) {
-        buffers.push(Buffer.from(part));
-      } else if (ArrayBuffer.isView(part)) {
-        buffers.push(Buffer.from(part.buffer, part.byteOffset, part.byteLength));
-      } else if (typeof part === "string") {
-        buffers.push(Buffer.from(part, "utf8"));
-      } else {
-        return null;
-      }
-    }
-    return Buffer.concat(buffers);
-  }
-  if (data instanceof ArrayBuffer) return Buffer.from(data);
-  if (ArrayBuffer.isView(data)) {
-    return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
-  }
-  return null;
 }

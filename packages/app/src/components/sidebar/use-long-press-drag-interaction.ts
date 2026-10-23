@@ -6,7 +6,7 @@ import { decideLongPressMove } from "@/utils/sidebar-gesture-arbitration";
 import type { useContextMenu } from "@/components/ui/context-menu";
 
 export function useLongPressDragInteraction(input: {
-  drag: () => void;
+  drag?: () => void;
   menuController: ReturnType<typeof useContextMenu> | null;
 }) {
   const { drag, menuController } = input;
@@ -59,7 +59,7 @@ export function useLongPressDragInteraction(input: {
 
   const armTimers = useCallback(() => {
     clearTimers();
-    if (platformIsWeb) {
+    if (platformIsWeb || !drag) {
       return;
     }
 

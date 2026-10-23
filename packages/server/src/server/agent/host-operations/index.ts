@@ -1,9 +1,11 @@
+import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import { parentAddressLabels } from "@getpaseo/protocol/agent-labels";
 import type { ActiveTurnBehavior, AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   DaemonClient,
+  DaemonConnectionError,
   type FetchWorkspacesEntry,
   type WaitForFinishResult,
 } from "@getpaseo/client/internal/daemon-client";
@@ -17,6 +19,18 @@ import { summarizeAgentActivity } from "../activity-curator.js";
 import { expandUserPath } from "../../path-utils.js";
 import type { PaseoToolExecutionContext, PaseoToolResult } from "../tools/types.js";
 
+export class HostOperationRejectedError extends Error {
+  readonly code: unknown;
+  constructor(error: unknown) {
+    super(error instanceof Error ? error.message : String(error), { cause: error });
+    this.name = "HostOperationRejectedError";
+    this.code = error instanceof Error && "code" in error ? error.code : undefined;
+  }
+}
+function isAmbiguousPromptFailure(error: unknown): boolean {
+  if (error instanceof DaemonConnectionError) return true;
+  return error instanceof Error && error.message.startsWith("Timeout waiting for message");
+}
 export type HostOperation = (
   input: Record<string, unknown>,
   context: PaseoToolExecutionContext,
@@ -29,24 +43,46 @@ export interface HostOperations {
   getStatus: HostOperation;
   getActivity: HostOperation;
   listAgents: HostOperation;
+}
+/** Connection authority at the host boundary, independent of child lifecycle. */
+export class HostObservationError extends Error {
+  constructor(
+    readonly reason: "connecting" | "unreachable" | "removed",
+    cause?: unknown,
+  ) {
+    super(`Host observation ${reason}`, { cause });
+    this.name = "HostObservationError";
+  }
+}
+export interface HostObservation {
   wait(agentId: string, signal: AbortSignal): Promise<WaitForFinishResult>;
   observe(
     agentId: string,
-    handler: (snapshot: AgentSnapshotPayload | null) => void,
+    handler: (
+      snapshot: AgentSnapshotPayload | null,
+      event?: AgentStreamEvent,
+      lastMessage?: string | null,
+    ) => void,
     signal: AbortSignal,
+    onError: (error: unknown) => void,
   ): Promise<() => Promise<void>>;
 }
 export interface ToolHosts {
   directory(): Promise<HostDirectory>;
-  use<T>(serverId: string, action: (client: DaemonClient) => Promise<T>): Promise<T>;
+  use<T>(
+    serverId: string,
+    action: (client: DaemonClient) => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T>;
 }
 
 /** Daemon MCP has the daemon's authority, bounded by the destination's admission of its link. */
 export function createToolHosts(hosts: ConnectedHosts): ToolHosts {
   return {
     directory: () => hosts.list(),
-    async use(serverId, action) {
+    async use(serverId, action, signal) {
       const lifetime = new AbortController();
+      let routeFailure: unknown;
       const transportFactory: DaemonTransportFactory = () => {
         const opens = new Set<() => void>();
         const closes = new Set<(event?: unknown) => void>();
@@ -61,7 +97,7 @@ export function createToolHosts(hosts: ConnectedHosts): ToolHosts {
             sourceId: "mcp",
             originSessionId: "mcp",
             permissions: OWNER_PERMISSIONS,
-            signal: lifetime.signal,
+            signal: signal ? AbortSignal.any([lifetime.signal, signal]) : lifetime.signal,
             frame: (data) => {
               for (const listener of messages) listener(data, typeof data !== "string");
             },
@@ -78,6 +114,7 @@ export function createToolHosts(hosts: ConnectedHosts): ToolHosts {
             return undefined;
           })
           .catch((error) => {
+            routeFailure = error;
             for (const listener of errors) listener(error);
             for (const listener of closes) listener(error);
           });
@@ -114,10 +151,17 @@ export function createToolHosts(hosts: ConnectedHosts): ToolHosts {
         transportFactory,
         reconnect: { enabled: false },
       });
+      const stop = () => void client.close();
+      signal?.addEventListener("abort", stop, { once: true });
       try {
-        await client.connect();
+        signal?.throwIfAborted();
+        await client.connect().catch((error) => {
+          // The action has not run; no application request could have been transmitted.
+          throw new HostOperationRejectedError(routeFailure ?? error);
+        });
         return await action(client);
       } finally {
+        signal?.removeEventListener("abort", stop);
         lifetime.abort();
         await client.close();
       }
@@ -212,18 +256,29 @@ export function createHostResolver(input: {
             if (!input.callerAgentId && args.sessionMode !== undefined) {
               await client.setAgentMode(agentId, args.sessionMode as string);
             }
-            const receipt = await client.sendMessage(agentId, args.prompt as string, {
-              sessionMode: input.callerAgentId
-                ? (args.sessionMode as string | undefined)
-                : undefined,
-              sourceAgentId: input.callerAgentId,
-              sourceAgentServerId: input.callerAgentId ? input.serverId : undefined,
-              activeTurnBehavior:
-                (args.activeTurnBehavior as ActiveTurnBehavior | undefined) ??
-                (input.callerAgentId ? "steer" : "interrupt"),
-            });
-            const agent = (await client.fetchAgent(agentId))?.agent;
-            if (!agent) throw new Error(`Agent ${agentId} not found`);
+            const agent = (
+              await client.fetchAgent(agentId).catch((error) => {
+                // Snapshot preflight precedes sendMessage, so failure is definitely unsent.
+                throw new HostOperationRejectedError(error);
+              })
+            )?.agent;
+            if (!agent)
+              throw new HostOperationRejectedError(new Error(`Agent ${agentId} not found`));
+            const receipt = await client
+              .sendMessage(agentId, args.prompt as string, {
+                sessionMode: input.callerAgentId
+                  ? (args.sessionMode as string | undefined)
+                  : undefined,
+                sourceAgentId: input.callerAgentId,
+                sourceAgentServerId: input.callerAgentId ? input.serverId : undefined,
+                activeTurnBehavior:
+                  (args.activeTurnBehavior as ActiveTurnBehavior | undefined) ??
+                  (input.callerAgentId ? "steer" : "interrupt"),
+              })
+              .catch((error) => {
+                if (isAmbiguousPromptFailure(error)) throw error;
+                throw new HostOperationRejectedError(error);
+              });
             return result({
               success: true,
               ...receipt,
@@ -310,45 +365,6 @@ export function createHostResolver(input: {
               throw new Error(response.error ?? "Workspace creation failed");
             return result(workspaceSummary(response.workspace));
           },
-          async observe(agentId, handler, signal) {
-            const observation = client.observeTimeline([agentId], { signal });
-            const refresh = async () => handler((await client.fetchAgent(agentId))?.agent ?? null);
-            const unsubscribe = observation.subscribe({
-              snapshot: () => {},
-              update: (message) => {
-                if (message.type !== "agent_stream" || message.payload.agentId !== agentId) return;
-                const event = message.payload.event;
-                if (
-                  event.type === "permission_resolved" ||
-                  event.type === "turn_started" ||
-                  event.type === "turn_completed" ||
-                  event.type === "turn_canceled" ||
-                  event.type === "turn_failed"
-                )
-                  void refresh().catch(() => handler(null));
-              },
-              error: () => handler(null),
-            });
-            try {
-              await observation.ready;
-              await refresh();
-            } catch (error) {
-              unsubscribe();
-              await observation.release();
-              throw error;
-            }
-            return async () => {
-              unsubscribe();
-              await observation.release();
-            };
-          },
-          wait: (agentId, signal) => {
-            const close = () => void client.close();
-            signal.addEventListener("abort", close, { once: true });
-            return client
-              .waitForFinish(agentId, 0)
-              .finally(() => signal.removeEventListener("abort", close));
-          },
         }),
       );
     },
@@ -366,36 +382,129 @@ function workspaceSummary(workspace: FetchWorkspacesEntry) {
   };
 }
 
-/** Wait pauses at permissions; observe only until that request clears before re-arming it. */
-export async function waitForPermissionChange(
-  host: HostOperations,
-  agentId: string,
-  requestId: string,
-  signal: AbortSignal,
-): Promise<void> {
-  signal.throwIfAborted();
-  let changed!: () => void;
-  let failed!: (error: unknown) => void;
-  const ready = new Promise<void>((resolve, reject) => {
-    changed = resolve;
-    failed = reject;
-  });
-  const abort = () => failed(signal.reason ?? new Error("Finish wait stopped"));
-  signal.addEventListener("abort", abort, { once: true });
-  let release: (() => Promise<void>) | undefined;
-  try {
-    release = await host.observe(
-      agentId,
-      (snapshot) => {
-        if (!snapshot) failed(new Error(`Agent ${agentId} is unavailable`));
-        else if (!snapshot.pendingPermissions.some((request) => request.id === requestId))
-          changed();
-      },
-      signal,
-    );
-    await ready;
-  } finally {
-    signal.removeEventListener("abort", abort);
-    await release?.();
-  }
+function remoteObservation(client: DaemonClient): HostObservation {
+  return {
+    async observe(agentId, handler, signal, onError) {
+      const observation = client.observeTimeline([agentId], { signal });
+      const refresh = async (event?: AgentStreamEvent) => {
+        let snapshot = (await client.fetchAgent(agentId))?.agent ?? null;
+        let lastMessage: string | null = null;
+        if (
+          snapshot &&
+          (snapshot.status === "idle" ||
+            snapshot.status === "closed" ||
+            snapshot.status === "error" ||
+            snapshot.pendingPermissions.length > 0)
+        ) {
+          // A new turn may start between the snapshot and the current-response read.
+          // Bound that wait and refresh state instead of attributing the old event to it.
+          const current = await client.waitForFinish(agentId, 100);
+          if (current.status === "timeout")
+            snapshot = (await client.fetchAgent(agentId))?.agent ?? null;
+          else {
+            if (!current.final && current.error && current.error !== `Agent not found: ${agentId}`)
+              throw new Error(current.error);
+            snapshot = current.final;
+            lastMessage = current.lastMessage;
+          }
+        }
+        handler(snapshot, event, lastMessage);
+      };
+      let updates = Promise.resolve();
+      const unsubscribe = observation.subscribe({
+        snapshot: () => {},
+        update: (message) => {
+          if (message.type !== "agent_stream" || message.payload.agentId !== agentId) return;
+          const event = message.payload.event;
+          if (
+            event.type === "permission_requested" ||
+            event.type === "permission_resolved" ||
+            event.type === "turn_started" ||
+            event.type === "turn_completed" ||
+            event.type === "turn_canceled" ||
+            event.type === "turn_failed"
+          )
+            updates = updates.then(() => refresh(event)).catch(onError);
+        },
+        error: onError,
+      });
+      try {
+        await observation.ready;
+        await refresh();
+      } catch (error) {
+        unsubscribe();
+        await observation.release();
+        throw error;
+      }
+      return async () => {
+        unsubscribe();
+        await observation.release();
+      };
+    },
+    wait: (agentId, signal) => {
+      const close = () => void client.close();
+      signal.addEventListener("abort", close, { once: true });
+      return client
+        .waitForFinish(agentId, 0)
+        .then((outcome) => {
+          if (!outcome.final && outcome.error && outcome.error !== `Agent not found: ${agentId}`)
+            throw new Error(outcome.error);
+          return outcome;
+        })
+        .finally(() => signal.removeEventListener("abort", close));
+    },
+  };
+}
+
+/** Shares routed status observation with daemon services independently of MCP execution. */
+export function createHostObservationResolver(input: {
+  serverId: string;
+  local: HostObservation;
+  hosts(): ToolHosts;
+}) {
+  return {
+    async use<T>(
+      serverId: string | undefined,
+      action: (host: HostObservation) => Promise<T>,
+      signal?: AbortSignal,
+    ): Promise<T> {
+      if (!serverId || serverId === input.serverId) return action(input.local);
+      const hosts = input.hosts();
+      async function classify(error: unknown): Promise<HostObservationError> {
+        // This is the origin's authoritative registration directory, not a destination RPC error.
+        const row = (await hosts.directory()).hosts.find((host) => host.serverId === serverId);
+        if (!row) return new HostObservationError("removed", error);
+        if (row.status === "connecting") return new HostObservationError("connecting", error);
+        return new HostObservationError("unreachable", error);
+      }
+      async function fail(error: unknown): Promise<never> {
+        throw await classify(error);
+      }
+      try {
+        return await hosts.use(
+          serverId,
+          (client) => {
+            const remote = remoteObservation(client);
+            return action({
+              wait: (agentId, lifetime) => remote.wait(agentId, lifetime).catch(fail),
+              observe(agentId, handler, lifetime, onError) {
+                async function report(error: unknown): Promise<void> {
+                  try {
+                    onError(await classify(error));
+                  } catch (failure) {
+                    onError(failure);
+                  }
+                }
+                return remote.observe(agentId, handler, lifetime, report).catch(fail);
+              },
+            });
+          },
+          signal,
+        );
+      } catch (error) {
+        if (error instanceof HostObservationError) throw error;
+        return fail(error);
+      }
+    },
+  };
 }
