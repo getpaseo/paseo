@@ -1,12 +1,18 @@
+import {
+  createFinishSubscriptions,
+  createFinishObservation,
+  type FinishSubscriptions,
+  type FinishSubscription,
+} from "./finish-subscriptions/index.js";
 import type { AgentMessageDelivery } from "./agent-messages/index.js";
 import { createTestAgentMessages } from "../test-utils/agent-messages.js";
-import { setupFinishNotification, type PromptDispatchDisposition } from "./agent-prompt.js";
+import { type PromptDispatchDisposition } from "./agent-prompt.js";
 import { parseAgentMessage } from "./agent-messages/index.js";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { realpathSync } from "node:fs";
 import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve as resolvePath } from "node:path";
@@ -125,6 +131,12 @@ interface RegisteredMcpToolWithHandler extends RegisteredMcpTool {
   }>;
 }
 
+const subscriptionServices: FinishSubscriptions[] = [];
+afterEach(async () => {
+  for (const service of subscriptionServices.splice(0)) await service.close();
+});
+const serverSubscriptionRecords = new WeakMap<object, Map<string, FinishSubscription>>();
+const serverSubscriptions = new WeakMap<object, FinishSubscriptions>();
 const serverDeliveries = new WeakMap<object, AgentMessageDelivery>();
 const toolDeliveries = new WeakMap<object, AgentMessageDelivery>();
 
@@ -842,11 +854,40 @@ async function createAgentMcpServer(
   options: Parameters<typeof createAgentMcpServerWithDependencies>[0],
 ) {
   const messages = createTestAgentMessages(options);
+  const records = new Map<string, FinishSubscription>();
+  const subscriptions = createFinishSubscriptions({
+    store: {
+      list: async () => [...records.values()],
+      put: async (record) => {
+        records.set(record.id, record);
+      },
+      remove: async (id) => {
+        records.delete(id);
+      },
+    },
+    messages: () => messages,
+    callerIsActive: async (id) => !(await options.agentStorage.get(id))?.archivedAt,
+    serverId: options.serverId ?? "self",
+    logger: options.logger,
+    ...createFinishObservation({
+      ...options,
+      messages: () => messages,
+      serverId: options.serverId ?? "self",
+      hosts: () => {
+        if (!options.hosts) throw new Error("No hosts");
+        return options.hosts();
+      },
+    }),
+  });
+  subscriptionServices.push(subscriptions);
   const server = await createAgentMcpServerWithDependencies({
     agentMessages: () => messages,
+    finishSubscriptions: () => subscriptions,
     workspaceRegistry: { get: async () => null, list: async () => [], upsert: async () => {} },
     ...options,
   });
+  serverSubscriptionRecords.set(server, records);
+  serverSubscriptions.set(server, subscriptions);
   serverDeliveries.set(server, messages);
   return server;
 }
@@ -3842,14 +3883,13 @@ describe("send_agent_prompt MCP tool", () => {
           secondResolve = resolve;
         });
         for (const dispatchResult of [first, second]) {
-          setupFinishNotification({
-            agentMessages: serverDeliveries.get(server)!,
-            agentManager: manager,
-            agentStorage: storage,
-            childAgentId: child.id,
-            callerAgentId: parent.id,
-            dispatchResult,
-            logger,
+          const registration = await serverSubscriptions
+            .get(server)!
+            .register({ childAgentId: child.id, callerAgentId: parent.id }, true);
+          void dispatchResult.then((result) => {
+            if (result) registration.accept();
+            else void registration.reject();
+            return undefined;
           });
         }
         firstResolve(firstAccepted ? "steered" : false);
@@ -3925,8 +3965,7 @@ describe("send_agent_prompt MCP tool", () => {
     await serverDeliveries
       .get(server)!
       .waitForDispatch("child-agent", new AbortController().signal);
-    expect(spies.agentManager.subscribe).toHaveBeenCalled();
-    expect(spies.agentManager.waitForAgentEvent).not.toHaveBeenCalled();
+    expect(serverSubscriptionRecords.get(server)!.size).toBe(1);
     expect(response.structuredContent.guidance).toContain("You will get notified");
   });
 

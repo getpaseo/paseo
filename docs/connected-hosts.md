@@ -44,10 +44,17 @@ connection candidates, including direct connections and routes discovered throug
 Adding a direct connection to a discovered host adds another candidate. If no candidate connects,
 the destination workspace keeps its existing disconnected or reconnecting behavior.
 
-Finish notifications use the existing idle wait, including a pending initial run or an already idle
-child. They name the server and agent. A daemon restart or route loss ends an outstanding notification
-wait; inspect or wait for the child again rather than resending its prompt. Concurrent prompts gain
-no additional turn attribution or delivery guarantee.
+Finish notifications name the destination server and child agent. The caller's daemon owns durable
+subscription intent and restores observation through the same routed wait and permission observation
+used during ordinary operation. Restarting the caller's daemon does not imply that a remote child
+stopped. Route loss retains intent and retries with a bounded delay; disconnection never reports
+completion. An ambiguous prompt response also retains notification intent because the destination may
+have admitted the prompt. A confirmed missing child reports unavailability; failed lookups retry.
+
+Remote creation and local subscription persistence are separate commits. A failed local write reports
+failure even if the destination already created the child; inspect it before retrying creation.
+See [finish notification lifetime](agent-lifecycle.md#relationships) for registration, acknowledgment,
+and duplicate-delivery semantics. Concurrent prompts gain no turn attribution.
 
 ## Connections and recovery
 
