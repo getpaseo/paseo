@@ -64,6 +64,11 @@ export class LabSTT implements SpeechToTextProvider {
     let latest: Promise<void> | null = null;
     let connecting = false;
     let replayingCommit = false;
+    // Audio of the current utterance already sent to the lab, and whether it was committed:
+    // replayed to the fallback if the lab dies before its final.
+    const utterance: Buffer[] = [];
+    let commitSent = false;
+    let failingOver = false;
     const aborted = new Error("lab STT connect aborted");
     const dropped = new WeakSet<WebSocket>();
     const abortPending = () => {
@@ -86,7 +91,10 @@ export class LabSTT implements SpeechToTextProvider {
           }
           opened = true;
           ws = socket;
-          for (const chunk of queued.splice(0)) socket.send(chunk);
+          for (const chunk of queued.splice(0)) {
+            socket.send(chunk);
+            utterance.push(chunk);
+          }
           if (endPending) {
             endPending = false;
             socket.send(JSON.stringify({ type: "end" }));
@@ -110,6 +118,8 @@ export class LabSTT implements SpeechToTextProvider {
               language: params.language,
             });
             if (isFinal) {
+              utterance.length = 0;
+              commitSent = false;
               previousSegmentId = segmentId;
               segmentId = randomUUID();
             }
@@ -119,7 +129,7 @@ export class LabSTT implements SpeechToTextProvider {
         });
         socket.on("error", (error) => {
           if (!opened) reject(dropped.has(socket) ? aborted : error);
-          else if (ws === socket) emitter.emit("error", error);
+          else if (ws === socket && !options.fallback) emitter.emit("error", error);
         });
         socket.on("close", () => {
           if (pending === socket) pending = null;
@@ -127,10 +137,32 @@ export class LabSTT implements SpeechToTextProvider {
             reject(dropped.has(socket) ? aborted : new Error("lab STT closed before open"));
           } else if (ws === socket) {
             ws = null;
-            if (!closed) emitter.emit("error", new Error("lab STT connection lost"));
+            if (!closed) failover(new Error("lab STT connection lost"));
           }
         });
       });
+
+    // Established lab session died (or the clear() replacement failed): switch to the fallback
+    // and replay the current utterance; with no fallback, surface the error.
+    const runFailover = async (error: Error): Promise<void> => {
+      failingOver = true;
+      logger.warn({ err: error }, "Lab STT lost; switching to fallback provider");
+      try {
+        await startFallback();
+      } catch (e) {
+        if (!closed) emitter.emit("error", e instanceof Error ? e : new Error(String(e)));
+      } finally {
+        failingOver = false;
+      }
+    };
+    const failover = (error: Error): void => {
+      if (delegate || failingOver || closed) return;
+      if (!options.fallback) {
+        emitter.emit("error", error);
+        return;
+      }
+      void runFailover(error);
+    };
 
     const startFallback = async (): Promise<void> => {
       if (!options.fallback) throw new Error("lab STT unavailable and no fallback configured");
@@ -147,12 +179,13 @@ export class LabSTT implements SpeechToTextProvider {
       session.on("error", (e) => emitter.emit("error", e));
       await session.connect();
       delegate = session;
-      for (const chunk of queued.splice(0)) {
+      for (const chunk of [...utterance.splice(0), ...queued.splice(0)]) {
         session.appendPcm16(resamplePcm16(chunk, LAB_STT_SAMPLE_RATE, session.requiredSampleRate));
       }
-      if (endPending) {
+      if (endPending || commitSent) {
         // commit() already emitted "committed" before the lab failed; only replay the end.
         endPending = false;
+        commitSent = false;
         replayingCommit = true;
         session.commit();
         replayingCommit = false;
@@ -189,6 +222,7 @@ export class LabSTT implements SpeechToTextProvider {
           );
         } else if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(chunk);
+          utterance.push(chunk);
         } else {
           queued.push(chunk);
         }
@@ -199,6 +233,7 @@ export class LabSTT implements SpeechToTextProvider {
           return;
         }
         emitter.emit("committed", { segmentId, previousSegmentId });
+        commitSent = true;
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "end" }));
         } else {
@@ -207,6 +242,8 @@ export class LabSTT implements SpeechToTextProvider {
       },
       clear() {
         queued.length = 0;
+        utterance.length = 0;
+        commitSent = false;
         endPending = false;
         if (delegate) {
           delegate.clear();
@@ -221,13 +258,14 @@ export class LabSTT implements SpeechToTextProvider {
         segmentId = randomUUID();
         const reopen = (latest = openLab());
         reopen.catch((error) => {
-          if (!closed && !connecting && error !== aborted) emitter.emit("error", error);
+          if (!closed && !connecting && error !== aborted) failover(error);
         });
       },
       close() {
         closed = true;
         endPending = false;
         queued.length = 0;
+        utterance.length = 0;
         delegate?.close();
         const old = ws;
         ws = null;

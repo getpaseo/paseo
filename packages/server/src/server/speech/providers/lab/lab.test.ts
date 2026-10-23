@@ -412,6 +412,60 @@ describe("LabSTT", () => {
     expect(transcripts).toEqual(committed);
   });
 
+  test("an established socket dropping mid-utterance falls back and replays the audio", async () => {
+    const calls: string[] = [];
+    const delegate = {
+      requiredSampleRate: 16000,
+      connect: async () => {},
+      appendPcm16: (c: Buffer) => calls.push(`append${c[0]}`),
+      commit: () => calls.push("commit"),
+      clear: () => {},
+      close: () => {},
+      on: () => undefined,
+    };
+    const fallback = { createSession: () => delegate } as unknown as SpeechToTextProvider;
+    const url = await fakeLab(() => {});
+    const stt = new LabSTT({ url, connectTimeoutMs: 1000, fallback }, logger);
+    const session = stt.createSession({ logger });
+    const errors: Error[] = [];
+    session.on("error", (e) => errors.push(e));
+    await session.connect();
+    session.appendPcm16(Buffer.from([1, 0]));
+    session.commit();
+    for (const s of servers) for (const client of s.clients) client.terminate();
+    await expect.poll(() => calls.length).toBe(2);
+    session.appendPcm16(Buffer.from([2, 0]));
+    expect(calls).toEqual(["append1", "commit", "append2"]);
+    expect(errors).toEqual([]);
+  });
+
+  test("a failed clear() replacement socket falls back instead of stranding audio", async () => {
+    const calls: string[] = [];
+    const delegate = {
+      requiredSampleRate: 16000,
+      connect: async () => {},
+      appendPcm16: (c: Buffer) => calls.push(`append${c[0]}`),
+      commit: () => calls.push("commit"),
+      clear: () => {},
+      close: () => {},
+      on: () => undefined,
+    };
+    const fallback = { createSession: () => delegate } as unknown as SpeechToTextProvider;
+    const url = await fakeLab(() => {});
+    const stt = new LabSTT({ url, connectTimeoutMs: 500, fallback }, logger);
+    const session = stt.createSession({ logger });
+    await session.connect();
+    await Promise.all(
+      servers.splice(0).map((s) => {
+        for (const client of s.clients) client.terminate();
+        return new Promise((r) => s.close(r));
+      }),
+    );
+    session.clear();
+    session.appendPcm16(Buffer.from([3, 0]));
+    await expect.poll(() => calls).toEqual(["append3"]);
+  });
+
   test("connect rejects when the lab is down and there is no fallback", async () => {
     const stt = new LabSTT({ url: await deadUrl(), connectTimeoutMs: 500, fallback: null }, logger);
     await expect(stt.createSession({ logger }).connect()).rejects.toThrow(/unavailable/);
