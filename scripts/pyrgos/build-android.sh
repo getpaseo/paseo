@@ -37,6 +37,7 @@ if [ ! -f "$ks" ]; then
 fi
 
 mkdir -p "$out"
+out="$(cd "$out" && pwd)"
 cd "$root"
 # npm blocks these native-asset postinstalls (allowScripts); run them explicitly.
 ( cd "$app/node_modules/react-native-enriched-markdown" && node postinstall.mjs )

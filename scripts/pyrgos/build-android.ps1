@@ -34,6 +34,7 @@ if (-not (Test-Path $ks)) {
 }
 
 New-Item -ItemType Directory -Force $out | Out-Null
+$out = (Resolve-Path $out).Path
 Push-Location $root
 # npm blocks these native-asset postinstalls (allowScripts); run them explicitly.
 Push-Location (Join-Path $app 'node_modules/react-native-enriched-markdown'); Run 'node' @('postinstall.mjs'); Pop-Location
@@ -59,3 +60,7 @@ if ($Target -in 'production', 'both') {
 Pop-Location
 Write-Output "APKs in ${out}:"
 Get-ChildItem (Join-Path $out '*.apk') | Select-Object Name, Length
+$aapt2 = Get-ChildItem (Join-Path $env:ANDROID_HOME 'build-tools/*/aapt2*') -ErrorAction SilentlyContinue | Sort-Object FullName | Select-Object -Last 1
+if ($aapt2) {
+  foreach ($apk in Get-ChildItem (Join-Path $out '*.apk')) { & $aapt2.FullName dump badging $apk.FullName | Select-String -Pattern '^package:|sdkVersion' }
+}
