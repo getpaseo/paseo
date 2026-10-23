@@ -1,0 +1,6 @@
+{
+  "id": "pyrgos-action-ledger",
+  "requirements": {
+    "paseo": ">=0.13.0"
+  }
+}

@@ -1,0 +1,2 @@
+{"id":"u1","text":"Hello there","words":[{"word":"Hello","start":0,"end":0.4},{"word":"there","start":0.5,"end":0.9}],"startedAt":1000}
+{"id":"u2","text":"The ledger has three open items","words":[{"word":"The","start":0,"end":0.15},{"word":"ledger","start":0.2,"end":0.6},{"word":"has","start":0.65,"end":0.85},{"word":"three","start":0.9,"end":1.2},{"word":"open","start":1.25,"end":1.5},{"word":"items","start":1.55,"end":2}],"startedAt":5000}
