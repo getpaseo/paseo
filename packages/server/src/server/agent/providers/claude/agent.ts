@@ -9,6 +9,7 @@ import { createImportDescriptorScheduler } from "./import-descriptor-scheduler.j
 import {
   type AgentDefinition,
   type CanUseTool,
+  type HookInput,
   type McpServerConfig as ClaudeSdkMcpServerConfig,
   type PermissionMode,
   type PermissionResult,
@@ -81,6 +82,7 @@ import {
   type ClaudeRewindSdk,
 } from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
+import { mergeClaudeHooks } from "./hooks.js";
 import { claudeConfigDir, claudeProjectDirSync, claudeTranscriptPathSync } from "./project-dir.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
 import {
@@ -2326,6 +2328,7 @@ class ClaudeAgentSession implements AgentSession {
     { type: "provider_subagent" }
   >[] = [];
   private historyPending = false;
+  private transcriptPath: string | null = null;
   private turnState: TurnState = "idle";
   private nextTurnOrdinal = 1;
   private cancelCurrentTurn: (() => void) | null = null;
@@ -2378,6 +2381,8 @@ class ClaudeAgentSession implements AgentSession {
       }
       this.claudeSessionId = handle.sessionId;
       this.persistence = handle;
+      const transcriptPath = handle.metadata?.transcriptPath;
+      this.transcriptPath = typeof transcriptPath === "string" ? transcriptPath : null;
       this.loadPersistedHistory(handle.sessionId);
     } else {
       this.claudeSessionId = null;
@@ -2920,12 +2925,13 @@ class ClaudeAgentSession implements AgentSession {
     if (!this.claudeSessionId) {
       return null;
     }
+    const transcriptPath = this.recordedTranscriptPath(this.claudeSessionId);
     const { providerOptions: _providerOptions, ...persistedConfig } = this.config;
     this.persistence = {
       provider: "claude",
       sessionId: this.claudeSessionId,
       nativeHandle: this.claudeSessionId,
-      metadata: { ...persistedConfig },
+      metadata: { ...persistedConfig, ...(transcriptPath ? { transcriptPath } : {}) },
     };
     return this.persistence;
   }
@@ -3620,7 +3626,7 @@ class ClaudeAgentSession implements AgentSession {
       // subagents keep running. Without this declaration an interrupt kills every one of them.
       // Claude stops a helper itself with its TaskStop tool.
       perTaskStopAffordance: true,
-      hooks: this.buildSubagentEffortHooks(),
+      hooks: mergeClaudeHooks(this.buildSubagentEffortHooks(), this.buildTranscriptPathHooks()),
       ...(this.persistSession === undefined ? {} : { persistSession: this.persistSession }),
       env: sdkEnv,
     };
@@ -5204,6 +5210,38 @@ class ClaudeAgentSession implements AgentSession {
     };
   }
 
+  /**
+   * Records the transcript file Claude reports, so a resumed session reads history from where
+   * Claude wrote it. A wrapper launcher can set CLAUDE_CONFIG_DIR inside its own process, where
+   * the daemon cannot see it.
+   *
+   * UserPromptSubmit fires on every prompt, including the first one after a resume. SessionStart
+   * callbacks do not fire for SDK sessions, so they cannot carry this.
+   */
+  private buildTranscriptPathHooks(): NonNullable<ClaudeOptions["hooks"]> {
+    const record = async (input: HookInput): Promise<Record<string, never>> => {
+      if (input.transcript_path && input.transcript_path !== this.transcriptPath) {
+        this.transcriptPath = input.transcript_path;
+        this.persistence = null;
+      }
+      return {};
+    };
+    return { UserPromptSubmit: [{ hooks: [record] }] };
+  }
+
+  /**
+   * Resume handles can come from a client, so only a path shaped like Claude's own
+   * `<config>/projects/<project>/<session>.jsonl` is trusted as this session's transcript.
+   */
+  private recordedTranscriptPath(sessionId: string): string | null {
+    if (!this.transcriptPath || !path.isAbsolute(this.transcriptPath)) return null;
+    const transcriptPath = path.normalize(this.transcriptPath);
+    const isSessionTranscript =
+      path.basename(transcriptPath) === `${sessionId}.jsonl` &&
+      path.basename(path.dirname(path.dirname(transcriptPath))) === "projects";
+    return isSessionTranscript ? transcriptPath : null;
+  }
+
   private notifySubscribers(event: AgentStreamEvent): void {
     const turnId =
       getAgentStreamEventTurnId(event) ?? this.activeForegroundTurnId ?? this.autonomousTurn?.id;
@@ -5398,6 +5436,8 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private resolveHistoryPath(sessionId: string): string | null {
+    const transcriptPath = this.recordedTranscriptPath(sessionId);
+    if (transcriptPath && fs.existsSync(transcriptPath)) return transcriptPath;
     const cwd = this.config.cwd;
     if (!cwd) return null;
     return claudeTranscriptPathSync({
