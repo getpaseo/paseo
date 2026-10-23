@@ -11,11 +11,13 @@ import { scheduleOnUI } from "react-native-worklets";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import {
   SYNCED_LOADER_DOT_COUNT,
+  SYNCED_LOADER_GRID_COLUMNS,
+  SYNCED_LOADER_REDUCED_MOTION_ELAPSED_MS,
   getSyncedLoaderDotOpacity,
-  getSyncedLoaderStep,
+  getSyncedLoaderElapsed,
 } from "@/components/synced-loader-state";
 
-const GRID_COLUMNS = 2;
+const GRID_COLUMNS = SYNCED_LOADER_GRID_COLUMNS;
 const DOT_KEYS = Array.from({ length: SYNCED_LOADER_DOT_COUNT }, (_, i) => `dot-${i}`);
 const sharedStep = makeMutable(0);
 const activeLoaderCount = makeMutable(0);
@@ -29,9 +31,9 @@ function advanceSharedStep(): void {
     return;
   }
 
-  const nextStep = getSyncedLoaderStep(Date.now());
-  if (sharedStep.value !== nextStep) {
-    sharedStep.value = nextStep;
+  const nextElapsed = getSyncedLoaderElapsed(Date.now());
+  if (sharedStep.value !== nextElapsed) {
+    sharedStep.value = nextElapsed;
   }
   requestAnimationFrame(advanceSharedStep);
 }
@@ -47,7 +49,7 @@ function registerStepListener(
   }
 
   registered.value = true;
-  step.value = getSyncedLoaderStep(Date.now());
+  step.value = getSyncedLoaderElapsed(Date.now());
   sharedStep.addListener(listenerId, (nextStep) => {
     step.value = nextStep;
   });
@@ -74,7 +76,9 @@ function unregisterStepListener(registered: SharedValue<boolean>, listenerId: nu
 function useSyncedLoaderStep(active: boolean, reduceMotion: boolean): SharedValue<number> {
   // The local value lets retained loaders detach from the app-wide clock without
   // unmounting their animated views or leaving hidden style worklets subscribed.
-  const step = useSharedValue(reduceMotion ? 0 : getSyncedLoaderStep(Date.now()));
+  const step = useSharedValue(
+    reduceMotion ? SYNCED_LOADER_REDUCED_MOTION_ELAPSED_MS : getSyncedLoaderElapsed(Date.now()),
+  );
   const registered = useSharedValue(false);
   const [listenerId] = useState(() => nextStepListenerId++);
 
@@ -97,14 +101,10 @@ export function SyncedLoader({ size = 10, color }: { size?: number; color: strin
   const reduceMotion = useReducedMotion();
   const step = useSyncedLoaderStep(active, reduceMotion);
 
-  // The 2x3 grid fills `size` exactly on its long axis: the dot is whatever is left after
-  // the two gaps, not a floored integer. Flooring cost the grid up to a third of a dot per
-  // row — at size 10 it drew 8pt of ink in a 10pt box and read as a small mark in a large
-  // slot. Fractional dots are fine here; these are sub-pixel radii on a moving glyph.
-  const gap = Math.max(1, Math.round(size * 0.12));
-  const dotSize = Math.max(2, (size - gap * 2) / 3);
-  const gridWidth = dotSize * 2 + gap;
-  const gridHeight = dotSize * 3 + gap * 2;
+  const gap = Math.max(1, Math.round(size * 0.14));
+  const dotSize = Math.max(2, (size - gap * 2) / GRID_COLUMNS);
+  const gridWidth = dotSize * GRID_COLUMNS + gap * (GRID_COLUMNS - 1);
+  const gridHeight = gridWidth;
 
   const gridStyle = useMemo(
     () => ({ width: gridWidth, height: gridHeight }),

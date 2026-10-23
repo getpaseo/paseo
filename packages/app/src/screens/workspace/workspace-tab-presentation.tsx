@@ -10,8 +10,7 @@ import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 import { getStatusDotColor } from "@/utils/status-dot-color";
-import { StatusRing } from "@/components/status-ring";
-import { getStatusRingOffset } from "@/components/status-ring/geometry";
+import { SyncedLoader } from "@/components/synced-loader";
 import {
   STATUS_INDICATOR_ALERT_SIZE,
   STATUS_INDICATOR_DOT_SIZE,
@@ -32,6 +31,7 @@ export interface WorkspaceTabPresentation {
   statusBucket: SidebarStateBucket | null;
 }
 
+const STATUS_LOADER_SIZE = 12;
 const DEFAULT_STATUS_DOT_OFFSET = -2;
 const STATUS_ALERT_OFFSET = -3;
 
@@ -130,6 +130,10 @@ interface WorkspaceTabIconProps {
 
 const ThemedCheckIcon = withUnistyles(Check);
 const ThemedCircleAlert = withUnistyles(CircleAlert);
+const ThemedSyncedLoader = withUnistyles(SyncedLoader);
+const runningLoaderColorMapping = (theme: Theme) => ({
+  color: getStatusDotColor({ theme, bucket: "running" }) ?? undefined,
+});
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const needsInputAlertMapping = (theme: Theme) => ({
   color: theme.colors.surface0,
@@ -172,11 +176,11 @@ export function WorkspaceTabIcon({
       <Icon size={size} color={iconColor} strokeWidth={strokeWidth} />
       {isRunning ? (
         <View
-          style={styles.statusRing}
+          style={[styles.statusLoader, getStatusLoaderBackdropStyle(backdrop)]}
           accessibilityRole="progressbar"
           accessibilityLabel="Agent running"
         >
-          <StatusRing backdrop={backdrop} />
+          <ThemedSyncedLoader size={STATUS_LOADER_SIZE} uniProps={runningLoaderColorMapping} />
         </View>
       ) : null}
       {statusDotColor ? <View style={statusDotStyle} /> : null}
@@ -261,6 +265,27 @@ export function WorkspaceTabOptionRow({
   );
 }
 
+function getStatusLoaderOffset(dotOffset: number, dotSize: number): number {
+  return dotOffset - (STATUS_LOADER_SIZE - dotSize) / 2;
+}
+
+function getStatusLoaderBackdropStyle(backdrop: SurfaceBackdrop) {
+  switch (backdrop) {
+    case "surface0":
+      return styles.statusLoaderBackdropSurface0;
+    case "surface1":
+      return styles.statusLoaderBackdropSurface1;
+    case "surfaceSidebar":
+      return styles.statusLoaderBackdropSurfaceSidebar;
+    case "surfaceSidebarHover":
+      return styles.statusLoaderBackdropSurfaceSidebarHover;
+    case "surfaceSidebarSelected":
+      return styles.statusLoaderBackdropSurfaceSidebarSelected;
+    case "surface2":
+      return styles.statusLoaderBackdropSurface2;
+  }
+}
+
 const styles = StyleSheet.create((theme) => ({
   agentIconWrapper: {
     position: "relative",
@@ -277,11 +302,24 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.full,
     borderWidth: 1,
   },
-  statusRing: {
+  statusLoader: {
+    // Replaces the old status ring in the same corner slot: a 12px knockout disc centred on
+    // the dot position, so the running mark never shifts where the dot sits.
     position: "absolute",
-    right: getStatusRingOffset(DEFAULT_STATUS_DOT_OFFSET, STATUS_INDICATOR_DOT_SIZE),
-    bottom: getStatusRingOffset(DEFAULT_STATUS_DOT_OFFSET, STATUS_INDICATOR_DOT_SIZE),
+    right: getStatusLoaderOffset(DEFAULT_STATUS_DOT_OFFSET, STATUS_INDICATOR_DOT_SIZE),
+    bottom: getStatusLoaderOffset(DEFAULT_STATUS_DOT_OFFSET, STATUS_INDICATOR_DOT_SIZE),
+    borderRadius: theme.borderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
   },
+  statusLoaderBackdropSurface0: { backgroundColor: theme.colors.surface0 },
+  statusLoaderBackdropSurface1: { backgroundColor: theme.colors.surface1 },
+  statusLoaderBackdropSurfaceSidebar: { backgroundColor: theme.colors.surfaceSidebar },
+  statusLoaderBackdropSurfaceSidebarHover: { backgroundColor: theme.colors.surfaceSidebarHover },
+  statusLoaderBackdropSurfaceSidebarSelected: {
+    backgroundColor: theme.colors.surfaceSidebarSelected,
+  },
+  statusLoaderBackdropSurface2: { backgroundColor: theme.colors.surface2 },
   statusDotBorderDefault: {
     borderColor: theme.colors.surface0,
   },
