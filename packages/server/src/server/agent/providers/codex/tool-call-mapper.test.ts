@@ -581,6 +581,56 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it("uses the move destination in generated multi-file diff headers", () => {
+    const item = mapCodexToolCallFromThreadItem(
+      {
+        type: "fileChange",
+        id: "codex-moved-file",
+        status: "completed",
+        changes: [
+          {
+            path: "/tmp/repo/old.txt",
+            kind: { type: "update", move_path: "/tmp/repo/new.txt" },
+            diff: "@@ -1 +1 @@\n-old\n+new\n",
+          },
+          {
+            path: "/tmp/repo/other.txt",
+            kind: { type: "update", move_path: null },
+            diff: "@@ -1 +1 @@\n-before\n+after\n",
+          },
+        ],
+      },
+      { cwd: "/tmp/repo" },
+    );
+
+    expect(item).toEqual({
+      type: "tool_call",
+      callId: "codex-moved-file",
+      name: "apply_patch",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "edit",
+        filePath: "old.txt",
+        unifiedDiff: [
+          "diff --git a/old.txt b/new.txt",
+          "--- a/old.txt",
+          "+++ b/new.txt",
+          "@@ -1 +1 @@",
+          "-old",
+          "+new",
+          "",
+          "diff --git a/other.txt b/other.txt",
+          "--- a/other.txt",
+          "+++ b/other.txt",
+          "@@ -1 +1 @@",
+          "-before",
+          "+after",
+        ].join("\n"),
+      },
+    });
+  });
+
   it("keeps update, add, and delete changes in one fileChange diff", () => {
     const item = mapCodexToolCallFromThreadItem(
       {
@@ -932,6 +982,44 @@ describe("codex tool-call mapper", () => {
       },
       output: {
         files: [{ path: "src/path-only.ts", kind: "modify" }],
+      },
+    });
+  });
+
+  it("maps multi-file path-only updates to unknown detail", () => {
+    const item = mapCodexToolCallFromThreadItem(
+      {
+        type: "fileChange",
+        id: "codex-multi-file-path-only",
+        status: "completed",
+        changes: [
+          { path: "/tmp/repo/first.ts", kind: "modify" },
+          { path: "/tmp/repo/second.ts", kind: { type: "update", move_path: null } },
+        ],
+      },
+      { cwd: "/tmp/repo" },
+    );
+
+    expect(item).toEqual({
+      type: "tool_call",
+      callId: "codex-multi-file-path-only",
+      name: "apply_patch",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "unknown",
+        input: {
+          files: [
+            { path: "first.ts", kind: "modify" },
+            { path: "second.ts", kind: "update" },
+          ],
+        },
+        output: {
+          files: [
+            { path: "first.ts", kind: "modify" },
+            { path: "second.ts", kind: "update" },
+          ],
+        },
       },
     });
   });
