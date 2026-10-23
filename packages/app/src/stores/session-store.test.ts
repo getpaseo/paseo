@@ -832,6 +832,24 @@ describe("prompt suggestions", () => {
     expect(storedAgents().at(-1)).toBe("a1");
   });
 
+  // Dropping the tag put drafted answers in the composer, where Enter sends them as
+  // a new message, and left the question card that asked for them empty.
+  it("keeps the question a drafted answer belongs to", () => {
+    initializeTestSession();
+    useSessionStore.getState().setPromptSuggestions("test-server", {
+      agentId: "agent-q",
+      turnSeq: 1,
+      suggestions: [{ id: "s1", text: "Postgres" }],
+      generatedAt: "2026-09-18T10:00:00.000Z",
+      answersPermissionId: "perm-1",
+    });
+
+    const stored = useSessionStore
+      .getState()
+      .sessions["test-server"]?.promptSuggestions.get("agent-q");
+    expect(stored?.answersPermissionId).toBe("perm-1");
+  });
+
   // Opening a chat clears its attention and bumps updatedAt, which feeds this map.
   // Pruning on it deleted every suggestion the moment the user came to read it.
   it("keeps a suggestion when activity moves without a new turn", () => {

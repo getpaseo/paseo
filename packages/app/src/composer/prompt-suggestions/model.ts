@@ -9,6 +9,9 @@ export interface PromptSuggestionViewInput {
   isAgentRunning: boolean;
   isReadOnly: boolean;
   dismissedTurnSeq: number | null;
+  // Answers to a question the agent asked belong in that question's own answer
+  // box; showing them in the composer would send them as a new message instead.
+  answersPermissionId?: string | undefined;
 }
 
 export interface PromptSuggestionView {
@@ -27,6 +30,9 @@ export function resolvePromptSuggestionView(
     return EMPTY_VIEW;
   }
   if (input.hasText || input.isAgentRunning || input.isReadOnly) {
+    return EMPTY_VIEW;
+  }
+  if (input.answersPermissionId) {
     return EMPTY_VIEW;
   }
   if (input.dismissedTurnSeq !== null && input.dismissedTurnSeq >= input.turnSeq) {

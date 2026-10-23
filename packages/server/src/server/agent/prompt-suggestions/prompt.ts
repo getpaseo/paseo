@@ -5,6 +5,10 @@ import {
   type RepoRootResolver,
 } from "../../../utils/build-metadata-prompt.js";
 import { PROMPT_SUGGESTION_MAX_CHARS, PROMPT_SUGGESTION_MAX_COUNT } from "./types.js";
+import {
+  questionShowsTextInput,
+  type QuestionFormQuestion,
+} from "@getpaseo/protocol/question-form";
 
 // Suggestions guess the next message, not a summary of the session, so the last
 // exchange carries almost all the signal.
@@ -67,6 +71,79 @@ export async function buildPromptSuggestionPrompt(
   };
 }
 
+export interface BuildQuestionAnswerPromptInput extends BuildPromptSuggestionPromptInput {
+  // Every question on the card, in the order the agent asked them.
+  questions: readonly QuestionFormQuestion[];
+}
+
+export interface BuiltQuestionAnswerPrompt extends BuiltPromptSuggestionPrompt {
+  // The number each answerable question carries in the prompt, to its card index.
+  answerable: ReadonlyMap<number, number>;
+}
+
+/**
+ * Answers to a question the agent asked, for the question card's own answer box.
+ * Null when no question carries a free-text box: a question that only offers
+ * options is answered by picking one, and a guess there would just be noise.
+ */
+export async function buildQuestionAnswerPrompt(
+  input: BuildQuestionAnswerPromptInput,
+): Promise<BuiltQuestionAnswerPrompt | null> {
+  // Numbered by position on the card, so "Question 2" is the card's second question
+  // even when the first only offers options and is left out.
+  const answerable = new Map<number, number>();
+  const asked: string[] = [];
+  input.questions.forEach((question, index) => {
+    if (questionShowsTextInput(question)) {
+      answerable.set(index + 1, index);
+      asked.push(renderQuestion(index + 1, question));
+    }
+  });
+  if (answerable.size === 0) {
+    return null;
+  }
+
+  const activity = curateAgentActivity([...input.timeline], {
+    labelAssistantMessages: true,
+    includeKinds: CONTEXT_KINDS,
+    includeExternalToolInput: false,
+  });
+  const context = takeTail(activity, input.maxContextChars ?? PROMPT_SUGGESTION_CONTEXT_CHARS);
+  const header = buildHeader(input);
+  const conversation = context.text.trim()
+    ? `<conversation>\n${context.text}\n</conversation>`
+    : "";
+  const prompt = await buildMetadataPrompt({
+    cwd: input.cwd ?? "",
+    workspaceGitService: input.workspaceGitService,
+    contract: QUESTION_CONTRACT,
+    styles: [{ configKey: "promptSuggestions", default: QUESTION_RULES }],
+    after: [header, conversation, `<questions>\n${asked.join("\n\n")}\n</questions>`]
+      .filter((section) => Boolean(section))
+      .join("\n\n"),
+    trailing: QUESTION_JSON_SHAPE,
+  });
+
+  return {
+    prompt,
+    contextChars: context.text.length,
+    truncated: context.truncated,
+    answerable,
+  };
+}
+
+function renderQuestion(number: number, question: QuestionFormQuestion): string {
+  const lines = [`Question ${number}: ${question.question.trim()}`];
+  if (question.options.length > 0) {
+    lines.push(
+      `Options the developer can already pick: ${question.options
+        .map((option) => option.label)
+        .join(" | ")}`,
+    );
+  }
+  return lines.join("\n");
+}
+
 function hasConversation(timeline: readonly AgentTimelineItem[]): boolean {
   return timeline.some(
     (item) =>
@@ -120,3 +197,24 @@ const RULES = [
 ].join("\n");
 
 const JSON_SHAPE = 'Return JSON only: {"suggestions": ["...", "..."]}';
+
+const QUESTION_CONTRACT = [
+  "A coding agent has stopped to ask the developer a question, and the developer's",
+  "answer box is empty. For each numbered question below, write the answers they are",
+  `most likely to give to that question: at least one, at most ${PROMPT_SUGGESTION_MAX_COUNT},`,
+  "best guess first, filed under that question's number.",
+].join(" ");
+
+const QUESTION_JSON_SHAPE =
+  'Return JSON only: {"answers": [{"question": 1, "suggestions": ["...", "..."]}]}';
+
+const QUESTION_RULES = [
+  "Rules:",
+  "- Answer each question as the developer would, in their own voice.",
+  "- An answer goes under the number of the question it answers, never another.",
+  `- One line each, at most ${PROMPT_SUGGESTION_MAX_CHARS} characters, no numbering or quotes.`,
+  "- Each answer must be a different decision, not a rewording of the same one.",
+  "- Repeat nothing the developer can already pick from the listed options.",
+  "- Decide: no 'up to you', no restating the question, no asking a question back.",
+  "- Write in the language the developer has been using.",
+].join("\n");

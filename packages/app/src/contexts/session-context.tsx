@@ -27,6 +27,7 @@ import {
 
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
+import { useHostFeature } from "@/runtime/host-features";
 import { getHostRuntimeStore, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useVoiceAudioEngineOptional, useVoiceRuntimeOptional } from "@/contexts/voice-context";
 import type { AudioPlaybackSource } from "@/audio";
@@ -203,6 +204,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const voiceAudioEngine = useVoiceAudioEngineOptional();
   const queryClient = useQueryClient();
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const supportsPromptSuggestions = useHostFeature(serverId, "promptSuggestions");
   const toast = useToast();
 
   // Zustand store actions
@@ -481,12 +483,38 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     viewedTimelineSyncRef.current?.setConnected(isConnected);
   }, [isConnected]);
 
+  // COMPAT(promptSuggestions): added in v0.13.0, remove gate after 2027-04-23.
+  // Older hosts reject a whole event subscription that names an event they do not know.
+  useEffect(() => {
+    if (!supportsPromptSuggestions) return;
+    const feed = client.observeEvents(["agent_prompt_suggestions"]);
+    const unsubscribe = feed.subscribe({
+      snapshot: () => {},
+      update: (message) => {
+        if (message.type !== "agent_prompt_suggestions") return;
+        const { agentId, turnSeq, suggestions, generatedAt, answersPermissionId } = message.payload;
+        useSessionStore.getState().setPromptSuggestions(serverId, {
+          agentId,
+          turnSeq,
+          suggestions,
+          generatedAt,
+          ...(answersPermissionId ? { answersPermissionId } : {}),
+        });
+      },
+    });
+    return () => {
+      unsubscribe();
+      void feed
+        .release()
+        .catch((error) => console.warn("[Session] Failed to release suggestion feed", error));
+    };
+  }, [client, serverId, supportsPromptSuggestions]);
+
   // Daemon message handlers - directly update Zustand store
   useEffect(() => {
     const feeds = client.observeEvents(
       [
         "agent_attention_required",
-        "agent_prompt_suggestions",
         "terminal_attention_required",
         "agent_permission_request",
         "agent_permission_resolved",
@@ -513,14 +541,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       if (notification.shouldNotify) {
         notifyAgentAttention(notification);
       }
-    });
-
-    const unsubPromptSuggestions = onFeed("agent_prompt_suggestions", (message) => {
-      if (message.type !== "agent_prompt_suggestions") return;
-      const { agentId, turnSeq, suggestions, generatedAt } = message.payload;
-      useSessionStore
-        .getState()
-        .setPromptSuggestions(serverId, { agentId, turnSeq, suggestions, generatedAt });
     });
 
     const unsubProviderSubagentUpdate = feeds.subscribe({
@@ -695,7 +715,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         .catch((error) => console.warn("[Session] Failed to release feeds", error));
       unsubProviderSubagentUpdate();
       unsubAgentAttention();
-      unsubPromptSuggestions();
       unsubCheckoutStatusUpdate();
       unsubStatus();
       unsubPermissionRequest();

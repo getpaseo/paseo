@@ -21,6 +21,15 @@ const BASE = {
 };
 
 describe("resolvePromptSuggestionView", () => {
+  // These belong in the question card's answer box; in the composer they would be
+  // sent as a new message instead of answering the question.
+  it("keeps answers to a question out of the composer", () => {
+    const view = resolvePromptSuggestionView({ ...BASE, answersPermissionId: "perm-1" });
+
+    expect(view.ghost).toBeNull();
+    expect(view.chips).toEqual([]);
+  });
+
   it("puts the first suggestion in the ghost and the rest in chips", () => {
     expect(resolvePromptSuggestionView(BASE)).toEqual({
       ghost: SUGGESTIONS[0],

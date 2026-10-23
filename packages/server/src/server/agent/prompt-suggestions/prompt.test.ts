@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AgentTimelineItem } from "../agent-sdk-types.js";
-import { buildPromptSuggestionPrompt } from "./prompt.js";
-import { normalizeSuggestions } from "./types.js";
+import { buildPromptSuggestionPrompt, buildQuestionAnswerPrompt } from "./prompt.js";
+import { normalizeQuestionAnswers, normalizeSuggestions } from "./types.js";
 
 function userMessage(text: string): AgentTimelineItem {
   return { type: "user_message", text };
@@ -147,5 +147,98 @@ describe("normalizeSuggestions", () => {
     expect(only.text.length).toBeLessThanOrEqual(160);
     expect(only.text.endsWith("…")).toBe(true);
     expect(only.text).toContain("word word");
+  });
+});
+
+describe("buildQuestionAnswerPrompt", () => {
+  const question = (text: string, options: string[] = [], allowOther = false) => ({
+    question: text,
+    header: text,
+    options: options.map((label) => ({ label })),
+    multiSelect: false,
+    allowOther,
+    allowEmpty: false,
+  });
+
+  it("numbers each answerable question by its place on the card", async () => {
+    const built = await buildQuestionAnswerPrompt({
+      timeline: [userMessage("set up the worker")],
+      questions: [
+        question("Ship today?", ["Yes", "No"]),
+        question("Which database?"),
+        question("Which region?", ["eu-west-1"], true),
+      ],
+    });
+
+    expect(built?.prompt).not.toContain("Ship today?");
+    expect(built?.prompt).toContain("Question 2: Which database?");
+    expect(built?.prompt).toContain("Question 3: Which region?");
+    expect(built?.prompt).toContain('{"answers": [{"question": 1');
+    expect([...(built?.answerable ?? [])]).toEqual([
+      [2, 1],
+      [3, 2],
+    ]);
+  });
+
+  it("returns null when no question takes typed text", async () => {
+    const built = await buildQuestionAnswerPrompt({
+      timeline: [userMessage("set up the worker")],
+      questions: [question("Ship today?", ["Yes", "No"])],
+    });
+
+    expect(built).toBeNull();
+  });
+});
+
+describe("normalizeQuestionAnswers", () => {
+  const answerable = new Map([
+    [1, 0],
+    [3, 2],
+  ]);
+
+  it("tags each answer with its question and lets questions take turns under the cap", () => {
+    expect(
+      normalizeQuestionAnswers(
+        [
+          { question: 1, suggestions: ["Postgres", "SQLite", "MySQL"] },
+          { question: 3, suggestions: ["eu-west-1", "us-east-1"] },
+        ],
+        answerable,
+      ),
+    ).toEqual([
+      { id: "s1", text: "Postgres", questionIndex: 0 },
+      { id: "s2", text: "eu-west-1", questionIndex: 2 },
+      { id: "s3", text: "SQLite", questionIndex: 0 },
+    ]);
+  });
+
+  it("drops answers filed under a number the prompt never gave", () => {
+    expect(
+      normalizeQuestionAnswers(
+        [
+          { question: 2, suggestions: ["Yes"] },
+          { question: 0, suggestions: ["zero"] },
+          { question: 3, suggestions: ["eu-west-1"] },
+        ],
+        answerable,
+      ),
+    ).toEqual([{ id: "s1", text: "eu-west-1", questionIndex: 2 }]);
+  });
+
+  it("merges a question listed twice and dedupes within it, not across questions", () => {
+    expect(
+      normalizeQuestionAnswers(
+        [
+          { question: 1, suggestions: ["Postgres"] },
+          { question: 3, suggestions: ["postgres"] },
+          { question: 1, suggestions: ["- POSTGRES", "SQLite"] },
+        ],
+        answerable,
+      ),
+    ).toEqual([
+      { id: "s1", text: "Postgres", questionIndex: 0 },
+      { id: "s2", text: "postgres", questionIndex: 2 },
+      { id: "s3", text: "SQLite", questionIndex: 0 },
+    ]);
   });
 });

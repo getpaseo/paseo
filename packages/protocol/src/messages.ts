@@ -4955,6 +4955,9 @@ export const PROMPT_SUGGESTION_MAX_COUNT = 3;
 export const PromptSuggestionSchema = z.object({
   id: z.string().min(1),
   text: z.string().min(1).max(PROMPT_SUGGESTION_MAX_CHARS),
+  // A drafted answer's question, by position in the permission's questions;
+  // absent from composer suggestions and from daemons older than this field.
+  questionIndex: z.number().int().nonnegative().optional(),
 });
 export type PromptSuggestion = z.infer<typeof PromptSuggestionSchema>;
 
@@ -4968,6 +4971,9 @@ export const AgentPromptSuggestionsMessageSchema = z.object({
     turnSeq: z.number().int().nonnegative(),
     suggestions: z.array(PromptSuggestionSchema).max(PROMPT_SUGGESTION_MAX_COUNT),
     generatedAt: z.string(),
+    // Set when these answer a question the agent asked: they belong in that
+    // permission's answer box, not in the composer.
+    answersPermissionId: z.string().optional(),
   }),
 });
 export type AgentPromptSuggestionsMessage = z.infer<typeof AgentPromptSuggestionsMessageSchema>;
