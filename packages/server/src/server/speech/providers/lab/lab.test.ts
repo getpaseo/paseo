@@ -25,6 +25,10 @@ async function fakeLab(onMessage: LabMessageHandler): Promise<string> {
   return `ws://127.0.0.1:${address.port}`;
 }
 
+function sendThenDrop(ws: WebSocket): void {
+  ws.send(Buffer.from([1, 0]), () => ws.terminate());
+}
+
 async function deadUrl(): Promise<string> {
   const url = await fakeLab(() => {});
   await Promise.all(servers.splice(0).map((s) => new Promise((r) => s.close(r))));
@@ -129,10 +133,7 @@ describe("LabTTS", () => {
   });
 
   test("destroys the stream when the lab drops after audio started", async () => {
-    const url = await fakeLab((ws) => {
-      ws.send(Buffer.from([1, 0]));
-      queueMicrotask(() => ws.terminate());
-    });
+    const url = await fakeLab(sendThenDrop);
     const tts = new LabTTS({ url, voice: "v", connectTimeoutMs: 500, fallback: null }, logger);
     const { stream } = await tts.synthesizeSpeech("hi");
     await expect(collect(stream)).rejects.toThrow(/mid-stream/);
