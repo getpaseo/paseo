@@ -433,6 +433,7 @@ export interface CreatePullRequestOptions {
   head: string;
   base: string;
   body?: string;
+  draft?: boolean;
 }
 
 export interface ForgeService {
