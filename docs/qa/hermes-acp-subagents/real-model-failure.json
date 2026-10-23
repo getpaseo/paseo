@@ -1,0 +1,16 @@
+{
+  "kind": "real-model",
+  "provider": "openai-codex",
+  "model": "gpt-6.1-sol",
+  "failureInjection": "unavailable child model; real runtime failure",
+  "parentReplyElapsedMs": 9947,
+  "childAtParentReply": {
+    "title": "Count files",
+    "description": "Count files",
+    "status": "failed"
+  },
+  "childAfterReconnect": "failed",
+  "terminalStatus": "failed",
+  "publicTimeline": [],
+  "limitation": "Raw upstream error body and HTTP status were not retained; failed lifecycle state is verified."
+}
