@@ -63,7 +63,7 @@ export class LedgerError extends Error {
   constructor(
     readonly code: LedgerErrorCode,
     message: string,
-    readonly id: string | null
+    readonly id: string | null,
   ) {
     super(message);
     this.name = "LedgerError";
@@ -97,10 +97,7 @@ export function createLedger(deps: LedgerDeps): Ledger {
   const newId = deps.newId ?? (() => randomUUID());
   const items = new Map<string, LedgerItem>();
   const inFlight = new Set<string>();
-  const delivered = new Map<
-    string,
-    { announcedAt?: string; launchedAt?: string }
-  >();
+  const delivered = new Map<string, { announcedAt?: string; launchedAt?: string }>();
   for (const row of deps.store.load()) items.set(row.id, row);
 
   function save(next: LedgerItem): LedgerItem {
@@ -136,12 +133,7 @@ export function createLedger(deps: LedgerDeps): Ledger {
     if (!text) throw new LedgerError("empty", "give an action item", null);
     const stamp = now().toISOString();
     const id = newId();
-    if (items.has(id))
-      throw new LedgerError(
-        "duplicate",
-        `action item ${id} already exists`,
-        id
-      );
+    if (items.has(id)) throw new LedgerError("duplicate", `action item ${id} already exists`, id);
     return save({
       id,
       state: "draft",
@@ -168,16 +160,10 @@ export function createLedger(deps: LedgerDeps): Ledger {
       ...current,
       state: "refined",
       item: text,
-      scope:
-        input.scope === undefined ? current.scope : clean(input.scope) || null,
-      project:
-        input.project === undefined
-          ? current.project
-          : clean(input.project) || null,
+      scope: input.scope === undefined ? current.scope : clean(input.scope) || null,
+      project: input.project === undefined ? current.project : clean(input.project) || null,
       doneCriteria:
-        input.doneCriteria === undefined
-          ? current.doneCriteria
-          : clean(input.doneCriteria) || null,
+        input.doneCriteria === undefined ? current.doneCriteria : clean(input.doneCriteria) || null,
       updatedAt: now().toISOString(),
     });
   }
@@ -190,7 +176,7 @@ export function createLedger(deps: LedgerDeps): Ledger {
     field: "announcedAt" | "launchedAt",
     run: (item: LedgerItem) => Promise<void>,
     failed: (message: string) => string,
-    errors: string[]
+    errors: string[],
   ): Promise<LedgerItem> {
     if (item[field] !== null) return item;
     try {
@@ -201,22 +187,14 @@ export function createLedger(deps: LedgerDeps): Ledger {
       return save({ ...item, [field]: done[field] });
     } catch (error) {
       const message = errorMessage(error);
-      errors.push(
-        done[field] === undefined
-          ? failed(message)
-          : `${PERSIST_FAILED}${message}`
-      );
+      errors.push(done[field] === undefined ? failed(message) : `${PERSIST_FAILED}${message}`);
       return item;
     }
   }
 
   async function agree(id: string, input: AgreeInput): Promise<LedgerItem> {
     if (input?.confirmed !== true) {
-      throw new LedgerError(
-        "unconfirmed",
-        `item ${id} needs explicit confirmation`,
-        id
-      );
+      throw new LedgerError("unconfirmed", `item ${id} needs explicit confirmation`, id);
     }
     const current = get(id);
     const outstanding = (item: LedgerItem) =>
@@ -224,26 +202,14 @@ export function createLedger(deps: LedgerDeps): Ledger {
       (deps.launch !== undefined && item.launchedAt === null);
     const retry = current.state === "agreed" && outstanding(current);
     if (current.state !== "refined" && !retry) {
-      throw new LedgerError(
-        "bad_state",
-        `item ${id} is ${current.state}, not refined`,
-        id
-      );
+      throw new LedgerError("bad_state", `item ${id} is ${current.state}, not refined`, id);
     }
     if (inFlight.has(id)) {
-      throw new LedgerError(
-        "bad_state",
-        `item ${id} is already being agreed`,
-        id
-      );
+      throw new LedgerError("bad_state", `item ${id} is already being agreed`, id);
     }
     const missing = MISSING_FIELDS.filter((field) => current[field] === null);
     if (missing.length > 0) {
-      throw new LedgerError(
-        "incomplete",
-        `item ${id} is missing ${missing.join(", ")}`,
-        id
-      );
+      throw new LedgerError("incomplete", `item ${id} is missing ${missing.join(", ")}`, id);
     }
     inFlight.add(id);
     try {
@@ -266,19 +232,11 @@ export function createLedger(deps: LedgerDeps): Ledger {
           "announcedAt",
           announce,
           (m) => `${ANNOUNCE_FAILED}${m}`,
-          errors
+          errors,
         );
       }
       const launch = deps.launch;
-      if (launch)
-        agreed = await runStep(
-          agreed,
-          done,
-          "launchedAt",
-          launch,
-          (m) => m,
-          errors
-        );
+      if (launch) agreed = await runStep(agreed, done, "launchedAt", launch, (m) => m, errors);
       const launchError = errors.length > 0 ? errors.join("; ") : null;
       if (launchError === agreed.launchError) return agreed;
       return save({ ...agreed, launchError, updatedAt: now().toISOString() });

@@ -142,7 +142,10 @@ describe("ReplyWatcher", () => {
     const watcher = new ReplyWatcher(path);
     await appendFile(path, `${JSON.stringify({ text: "old reply" })}\n`);
     expect(await watcher.poll()).toEqual(["old reply"]);
-    await writeFile(path, `${JSON.stringify({ text: "new reply!" })}\n${JSON.stringify({ text: "more" })}\n`);
+    await writeFile(
+      path,
+      `${JSON.stringify({ text: "new reply!" })}\n${JSON.stringify({ text: "more" })}\n`,
+    );
     expect(await watcher.poll()).toEqual(["new reply!", "more"]);
   });
 

@@ -44,7 +44,10 @@ export function VoicePanel({ theme, layout }: PluginWorkspacePanelProps) {
   });
 
   const { mutateAsync } = save;
-  const saveSettings = useCallback((patch: VoiceSettingsPatch) => mutateAsync(patch), [mutateAsync]);
+  const saveSettings = useCallback(
+    (patch: VoiceSettingsPatch) => mutateAsync(patch),
+    [mutateAsync],
+  );
 
   const utterance = playbackQuery.data?.utterance ?? null;
   const timing = useMemo(
