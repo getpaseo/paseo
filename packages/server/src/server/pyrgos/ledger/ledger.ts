@@ -51,13 +51,19 @@ export interface LedgerDeps {
   launch?: (item: LedgerItem) => Promise<void>;
 }
 
-export type LedgerErrorCode = "not_found" | "bad_state" | "incomplete" | "empty" | "unconfirmed" | "duplicate";
+export type LedgerErrorCode =
+  | "not_found"
+  | "bad_state"
+  | "incomplete"
+  | "empty"
+  | "unconfirmed"
+  | "duplicate";
 
 export class LedgerError extends Error {
   constructor(
     readonly code: LedgerErrorCode,
     message: string,
-    readonly id: string | null,
+    readonly id: string | null
   ) {
     super(message);
     this.name = "LedgerError";
@@ -76,6 +82,7 @@ export interface Ledger {
 const MISSING_FIELDS = ["scope", "project", "doneCriteria"] as const;
 
 const ANNOUNCE_FAILED = "announce failed: ";
+const PERSIST_FAILED = "not recorded: ";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -90,6 +97,10 @@ export function createLedger(deps: LedgerDeps): Ledger {
   const newId = deps.newId ?? (() => randomUUID());
   const items = new Map<string, LedgerItem>();
   const inFlight = new Set<string>();
+  const delivered = new Map<
+    string,
+    { announcedAt?: string; launchedAt?: string }
+  >();
   for (const row of deps.store.load()) items.set(row.id, row);
 
   function save(next: LedgerItem): LedgerItem {
@@ -125,7 +136,12 @@ export function createLedger(deps: LedgerDeps): Ledger {
     if (!text) throw new LedgerError("empty", "give an action item", null);
     const stamp = now().toISOString();
     const id = newId();
-    if (items.has(id)) throw new LedgerError("duplicate", `action item ${id} already exists`, id);
+    if (items.has(id))
+      throw new LedgerError(
+        "duplicate",
+        `action item ${id} already exists`,
+        id
+      );
     return save({
       id,
       state: "draft",
@@ -152,17 +168,55 @@ export function createLedger(deps: LedgerDeps): Ledger {
       ...current,
       state: "refined",
       item: text,
-      scope: input.scope === undefined ? current.scope : clean(input.scope) || null,
-      project: input.project === undefined ? current.project : clean(input.project) || null,
+      scope:
+        input.scope === undefined ? current.scope : clean(input.scope) || null,
+      project:
+        input.project === undefined
+          ? current.project
+          : clean(input.project) || null,
       doneCriteria:
-        input.doneCriteria === undefined ? current.doneCriteria : clean(input.doneCriteria) || null,
+        input.doneCriteria === undefined
+          ? current.doneCriteria
+          : clean(input.doneCriteria) || null,
       updatedAt: now().toISOString(),
     });
   }
 
+  // Runs one external step once. A step that ran but could not be persisted is remembered in
+  // `done`, so a retry records it instead of running the effect again.
+  async function runStep(
+    item: LedgerItem,
+    done: { announcedAt?: string; launchedAt?: string },
+    field: "announcedAt" | "launchedAt",
+    run: (item: LedgerItem) => Promise<void>,
+    failed: (message: string) => string,
+    errors: string[]
+  ): Promise<LedgerItem> {
+    if (item[field] !== null) return item;
+    try {
+      if (done[field] === undefined) {
+        await run(item);
+        done[field] = now().toISOString();
+      }
+      return save({ ...item, [field]: done[field] });
+    } catch (error) {
+      const message = errorMessage(error);
+      errors.push(
+        done[field] === undefined
+          ? failed(message)
+          : `${PERSIST_FAILED}${message}`
+      );
+      return item;
+    }
+  }
+
   async function agree(id: string, input: AgreeInput): Promise<LedgerItem> {
     if (input?.confirmed !== true) {
-      throw new LedgerError("unconfirmed", `item ${id} needs explicit confirmation`, id);
+      throw new LedgerError(
+        "unconfirmed",
+        `item ${id} needs explicit confirmation`,
+        id
+      );
     }
     const current = get(id);
     const outstanding = (item: LedgerItem) =>
@@ -170,37 +224,61 @@ export function createLedger(deps: LedgerDeps): Ledger {
       (deps.launch !== undefined && item.launchedAt === null);
     const retry = current.state === "agreed" && outstanding(current);
     if (current.state !== "refined" && !retry) {
-      throw new LedgerError("bad_state", `item ${id} is ${current.state}, not refined`, id);
+      throw new LedgerError(
+        "bad_state",
+        `item ${id} is ${current.state}, not refined`,
+        id
+      );
     }
     if (inFlight.has(id)) {
-      throw new LedgerError("bad_state", `item ${id} is already being agreed`, id);
+      throw new LedgerError(
+        "bad_state",
+        `item ${id} is already being agreed`,
+        id
+      );
     }
     const missing = MISSING_FIELDS.filter((field) => current[field] === null);
     if (missing.length > 0) {
-      throw new LedgerError("incomplete", `item ${id} is missing ${missing.join(", ")}`, id);
+      throw new LedgerError(
+        "incomplete",
+        `item ${id} is missing ${missing.join(", ")}`,
+        id
+      );
     }
     inFlight.add(id);
     try {
       let agreed = retry
         ? current
-        : save({ ...current, state: "agreed", launchId: newId(), updatedAt: now().toISOString() });
+        : save({
+            ...current,
+            state: "agreed",
+            launchId: newId(),
+            updatedAt: now().toISOString(),
+          });
       const errors: string[] = [];
-      if (deps.announce && agreed.announcedAt === null) {
-        try {
-          await deps.announce(agreed);
-          agreed = save({ ...agreed, announcedAt: now().toISOString() });
-        } catch (error) {
-          errors.push(`${ANNOUNCE_FAILED}${errorMessage(error)}`);
-        }
+      const done = delivered.get(id) ?? {};
+      delivered.set(id, done);
+      const announce = deps.announce;
+      if (announce) {
+        agreed = await runStep(
+          agreed,
+          done,
+          "announcedAt",
+          announce,
+          (m) => `${ANNOUNCE_FAILED}${m}`,
+          errors
+        );
       }
-      if (deps.launch && agreed.launchedAt === null) {
-        try {
-          await deps.launch(agreed);
-          agreed = save({ ...agreed, launchedAt: now().toISOString() });
-        } catch (error) {
-          errors.push(errorMessage(error));
-        }
-      }
+      const launch = deps.launch;
+      if (launch)
+        agreed = await runStep(
+          agreed,
+          done,
+          "launchedAt",
+          launch,
+          (m) => m,
+          errors
+        );
       const launchError = errors.length > 0 ? errors.join("; ") : null;
       if (launchError === agreed.launchError) return agreed;
       return save({ ...agreed, launchError, updatedAt: now().toISOString() });

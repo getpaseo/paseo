@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readLedgerFile } from "./jsonl-store.js";
+import { createJsonlLedgerStore, readLedgerFile } from "./jsonl-store.js";
 
 const row = {
   id: "a1",
@@ -28,6 +28,13 @@ describe("readLedgerFile", () => {
   });
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true });
+  });
+
+  it("keeps a later append valid after a partial final write", async () => {
+    const path = join(dir, "t.ledger.jsonl");
+    await writeFile(path, `${JSON.stringify(row).slice(0, 30)}`);
+    createJsonlLedgerStore(path).append({ ...row, id: "b2" } as never);
+    expect(readLedgerFile(path).map((item) => item.id)).toEqual(["b2"]);
   });
 
   it("skips a truncated row and keeps the valid items", async () => {

@@ -155,6 +155,34 @@ describe("ledger state machine", () => {
     expect(launch).toHaveBeenCalledTimes(1);
   });
 
+  it("does not relaunch when launch succeeded but its record failed to persist", async () => {
+    const rows: LedgerItem[] = [];
+    let failNext = false;
+    const store: LedgerStore = {
+      append: (item) => {
+        if (failNext && item.launchedAt !== null) {
+          failNext = false;
+          throw new Error("disk full");
+        }
+        rows.push(item);
+      },
+      load: () => rows,
+    };
+    const launch = vi.fn(async () => {});
+    const ledger = createLedger({ store, launch, newId: () => "u1" });
+    const { id } = ledger.propose({ item: "x" });
+    ledger.refine(id, COMPLETE);
+    failNext = true;
+    const first = await ledger.agree(id, { confirmed: true });
+    expect(first.launchedAt).toBeNull();
+    expect(first.launchError).toMatch(/not recorded: disk full/);
+    expect(launch).toHaveBeenCalledTimes(1);
+    const second = await ledger.agree(id, { confirmed: true });
+    expect(second.launchedAt).not.toBeNull();
+    expect(second.launchError).toBeNull();
+    expect(launch).toHaveBeenCalledTimes(1);
+  });
+
   it("retries a failed launch without re-announcing", async () => {
     const announce = vi.fn(async () => {});
     const launch = vi

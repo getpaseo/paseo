@@ -17,7 +17,8 @@ export function createJsonlLedgerStore(path: string): LedgerStore {
   mkdirSync(dirname(path), { recursive: true });
   return {
     append(item) {
-      appendFileSync(path, `${JSON.stringify(item)}\n`, "utf8");
+      const lead = existsSync(path) && !readFileSync(path, "utf8").endsWith("\n") ? "\n" : "";
+      appendFileSync(path, `${lead}${JSON.stringify(item)}\n`, "utf8");
     },
     load() {
       return readLedgerFile(path);
