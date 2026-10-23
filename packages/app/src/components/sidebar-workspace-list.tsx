@@ -542,6 +542,7 @@ function ProjectMenuItems({
 }) {
   const { t } = useTranslation();
   const toast = useToast();
+  const localDaemonServerId = useLocalDaemonServerId();
   const handleOpenProjectSettings = useCallback(() => {
     if (!settingsTarget) return;
     router.navigate(buildProjectSettingsRoute(settingsTarget.serverId, settingsTarget.projectId));
@@ -581,6 +582,7 @@ function ProjectMenuItems({
         </ProjectMenuItem>
       ) : null}
       <OpenInFileManagerMenuItem
+        serverId={localDaemonServerId}
         surface={surface}
         path={projectPath}
         testID={`sidebar-project-menu-open-folder-${projectViewKey}`}

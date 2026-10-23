@@ -5,6 +5,10 @@ import { gotoAppShell, openSettings } from "../../app/e2e/support/helpers/app";
 import { expandFolder, openFileExplorer } from "../../app/e2e/support/helpers/file-explorer";
 import { installDesktopRuntime } from "./support/runtime";
 import { clickSettingsBackToWorkspace } from "../../app/e2e/support/helpers/settings";
+import {
+  closeWorkspaceContextMenu,
+  openWorkspaceContextMenu,
+} from "../../app/e2e/support/helpers/sidebar";
 
 interface EditorOpenRecord {
   editorId: string;
@@ -68,6 +72,62 @@ async function expectEditorOpened(input: {
 }
 
 test.describe("Workspace open in editor", () => {
+  for (const { host, expectedCount } of [
+    { host: "local", expectedCount: 1 },
+    { host: "remote", expectedCount: 0 },
+  ]) {
+    test(`file manager actions for ${host} workspace paths`, async ({ page, withWorkspace }) => {
+      const serverId = requireE2EEnv("E2E_SERVER_ID");
+      const recordPath = requireE2EEnv("E2E_EDITOR_RECORD_PATH");
+      await rm(recordPath, { force: true });
+      let desktopServerId = serverId;
+      if (host === "remote") {
+        desktopServerId = "another-desktop-daemon";
+      }
+      await installDesktopRuntime(page, {
+        serverId: desktopServerId,
+        editorTargets: [
+          {
+            id: "file-manager",
+            label: "Finder",
+            kind: "file-manager",
+            icon: { kind: "symbol", name: "folder" },
+          },
+        ],
+        editorRecordPath: recordPath,
+      });
+
+      const workspace = await withWorkspace({ prefix: "workspace-file-manager-" });
+      await workspace.navigateTo();
+      const workspaceKey = `${serverId}:${workspace.workspaceId}`;
+      const fileManagerItem = page.getByTestId(
+        `sidebar-workspace-menu-open-folder-${workspaceKey}`,
+      );
+
+      await openWorkspaceContextMenu(page, workspace.workspaceId);
+      await expect(fileManagerItem).toHaveCount(expectedCount);
+      await closeWorkspaceContextMenu(page, workspace.workspaceId);
+
+      await page.getByTestId(`sidebar-workspace-row-${workspaceKey}`).hover();
+      await page.getByTestId(`sidebar-workspace-kebab-${workspaceKey}`).click();
+      await expect(
+        page.getByTestId(`sidebar-workspace-menu-copy-path-${workspaceKey}`),
+      ).toBeVisible();
+      await expect(fileManagerItem).toHaveCount(expectedCount);
+      if (host === "local") {
+        await fileManagerItem.click();
+        await expectEditorOpened({
+          recordPath,
+          editorId: "file-manager",
+          path: workspace.repoPath,
+          afterCount: 0,
+        });
+      } else {
+        expect(await readEditorOpenRecords(recordPath)).toEqual([]);
+      }
+    });
+  }
+
   test("opens a nested folder in the preferred editor", async ({ page, withWorkspace }) => {
     test.setTimeout(90_000);
 
