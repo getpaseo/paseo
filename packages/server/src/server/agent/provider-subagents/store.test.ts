@@ -2,6 +2,22 @@ import { describe, expect, test } from "vitest";
 import { ProviderSubagentStore } from "./store.js";
 
 describe("ProviderSubagentStore", () => {
+  test("keeps a workflow's agents across upserts that do not carry them", () => {
+    const subagents = new ProviderSubagentStore();
+    const agents = [{ status: "running" as const, label: "metamask", lastProgressAt: 10 }];
+
+    subagents.apply("parent", "claude", {
+      type: "upsert",
+      id: "wf",
+      title: "Workflow",
+      status: "running",
+      workflowAgents: agents,
+    });
+    subagents.apply("parent", "claude", { type: "upsert", id: "wf", subtitle: "Workflow · 1k" });
+
+    expect(subagents.get("parent", "wf")?.workflowAgents).toEqual(agents);
+  });
+
   test("keeps provider children and their timelines scoped to the parent agent", () => {
     const subagents = new ProviderSubagentStore();
 

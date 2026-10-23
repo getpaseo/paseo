@@ -1,3 +1,8 @@
+import {
+  openSyntheticWorkflow,
+  openWorkflowOwner,
+  expectWorkflowProgressAndNavigation,
+} from "../support/helpers/workflow-card";
 import { test, expect } from "../support/fixtures";
 import {
   awaitAssistantMessage,
@@ -295,3 +300,48 @@ test.describe("Agent stream UI", () => {
     await page.getByTestId("turn-working-elapsed").waitFor({ state: "visible", timeout: 5_000 });
   });
 });
+
+for (const viewport of [
+  { name: "wide", width: 1280, count: 6 },
+  { name: "compact", width: 320, count: 300 },
+]) {
+  test(`nested workflow shows progress and opens its own timeline (${viewport.name})`, async ({
+    page,
+  }, testInfo) => {
+    const agent = await openSyntheticWorkflow({
+      page,
+      nested: true,
+      count: viewport.count,
+      width: viewport.width,
+    });
+    try {
+      await openWorkflowOwner(page);
+      await expectWorkflowProgressAndNavigation({
+        page,
+        count: viewport.count,
+        testInfo,
+        name: `nested-${viewport.name}`,
+      });
+    } finally {
+      await agent.cleanup();
+    }
+  });
+}
+
+for (const width of [1280, 320]) {
+  test(`root workflow shows progress and opens its own timeline (${width})`, async ({
+    page,
+  }, testInfo) => {
+    const agent = await openSyntheticWorkflow({ page, nested: false, count: 300, width });
+    try {
+      await expectWorkflowProgressAndNavigation({
+        page,
+        count: 300,
+        testInfo,
+        name: `root-${width}`,
+      });
+    } finally {
+      await agent.cleanup();
+    }
+  });
+}

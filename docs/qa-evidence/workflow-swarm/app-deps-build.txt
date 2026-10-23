@@ -1,0 +1,25 @@
+npm notice run paseo@0.13.0-beta.1 build:app-deps
+npm notice run npm run build:highlight && npm run build:client && npm run build:plugin && npm run build --workspace=@getpaseo/expo-two-way-audio
+npm notice run paseo@0.13.0-beta.1 build:highlight
+npm notice run npm run build --workspace=@getpaseo/highlight
+npm notice run @getpaseo/highlight@0.13.0-beta.1 build
+npm notice run tsc -p tsconfig.json --incremental false
+npm notice run paseo@0.13.0-beta.1 build:client
+npm notice run npm run build --workspace=@getpaseo/client
+npm notice run @getpaseo/client@0.13.0-beta.1 build
+npm notice run npm run build --workspace=@getpaseo/protocol && npm run build --workspace=@getpaseo/relay && tsc -p tsconfig.json --incremental false
+npm notice run @getpaseo/protocol@0.13.0-beta.1 prebuild
+npm notice run npm run generate:validators
+npm notice run @getpaseo/protocol@0.13.0-beta.1 generate:validators
+npm notice run node scripts/generate-validation-aot.mjs
+generated src/generated/validation/ws-outbound.aot.ts: envelope + 234 session message validators
+npm notice run @getpaseo/protocol@0.13.0-beta.1 build
+npm notice run tsc -p tsconfig.json --incremental false
+npm notice run @getpaseo/relay@0.13.0-beta.1 build
+npm notice run tsc -p tsconfig.json --incremental false
+npm notice run paseo@0.13.0-beta.1 build:plugin
+npm notice run npm run build --workspace=@getpaseo/plugin
+npm notice run @getpaseo/plugin@0.13.0-beta.1 build
+npm notice run tsc -p tsconfig.json --incremental false
+npm notice run @getpaseo/expo-two-way-audio@0.13.0-beta.1 build
+npm notice run tsc

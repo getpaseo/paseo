@@ -877,7 +877,9 @@ export class MockLoadTestAgentSession implements AgentSession {
     const settledAssistantImageMarkdown = parseSettledAssistantImageMarkdown(prompt);
     const steeringReplayShape = parseSteeringReplayShape(prompt);
     const scheduleTurn = () => {
-      if (shouldEmitTurnFailure(prompt)) {
+      if (promptToText(prompt).startsWith("Emit synthetic workflow:")) {
+        this.scheduleWorkflowTurn(turn);
+      } else if (shouldEmitTurnFailure(prompt)) {
         this.scheduleFailedTurn(turn);
       } else if (steeringReplayShape) {
         this.scheduleSteeringReplayTurn(turn, steeringReplayShape);
@@ -1616,6 +1618,74 @@ export class MockLoadTestAgentSession implements AgentSession {
         return;
       }
     }
+  }
+
+  private scheduleWorkflowTurn(turn: ActiveTurn): void {
+    turn.timer = setTimeout(() => {
+      if (this.activeTurn !== turn) return;
+      this.emitTurnStarted(turn);
+      const nested = promptToText(turn.prompt).includes("nested");
+      const count = promptToText(turn.prompt).includes("300") ? 300 : 6;
+      const tool = createToolCall({
+        callId: "mock-workflow",
+        name: "Workflow",
+        status: "running",
+        detail: { type: "unknown", input: { name: "Accessibility audit" }, output: null },
+      });
+      if (nested) {
+        this.emit({
+          type: "provider_subagent",
+          provider: this.provider,
+          event: {
+            type: "upsert",
+            id: "mock-owner",
+            title: "Audit coordinator",
+            status: "running",
+          },
+        });
+        this.emit({
+          type: "provider_subagent",
+          provider: this.provider,
+          event: { type: "timeline", id: "mock-owner", item: tool },
+        });
+      } else {
+        this.emitTimeline(turn.turnId, tool);
+      }
+      this.emit({
+        type: "provider_subagent",
+        provider: this.provider,
+        event: {
+          type: "upsert",
+          id: "mock-workflow",
+          title: "Workflow",
+          status: "running",
+          parentSubagentId: nested ? "mock-owner" : null,
+          toolCallId: "mock-workflow",
+          workflowAgents: Array.from({ length: count }, (_, index) => ({
+            status: (["completed", "running", "running", "failed", "queued", "canceled"] as const)[
+              index % 6
+            ],
+            label: `Page ${index + 1} accessibility check`,
+            lastProgressAt: Date.now() - (index % 6 === 2 ? 120_000 : 0),
+          })),
+        },
+      });
+      this.emit({
+        type: "provider_subagent",
+        provider: this.provider,
+        event: {
+          type: "timeline",
+          id: "mock-workflow",
+          item: {
+            type: "assistant_message",
+            text: "Workflow audit output",
+            messageId: randomUUID(),
+          },
+        },
+      });
+      this.finishTurnWithText(turn, "Synthetic workflow launched");
+    }, 0);
+    turn.timer.unref?.();
   }
 
   private finishTurn(turn: ActiveTurn): void {

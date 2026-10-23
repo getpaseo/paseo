@@ -103,6 +103,7 @@ import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
 import { PluginTimelineItemView, useInstalledTimelineTransform } from "@/plugins/timeline";
+import { useWorkflowCardShown, WorkflowToolCallCard } from "@/subagents/workflow-card";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -257,6 +258,8 @@ export interface AgentStreamViewHandle {
 
 export interface AgentStreamViewProps {
   agentId: string;
+  /** Managed agent that owns provider descriptors; agentId may be a synthetic stream ID. */
+  providerParentAgentId?: string;
   serverId?: string;
   context: AgentScreenAgent;
   streamItems: StreamItem[];
@@ -313,6 +316,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
   function AgentStreamView(
     {
       agentId,
+      providerParentAgentId,
       serverId,
       context,
       streamItems,
@@ -772,6 +776,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               isLastInSequence={isLastInSequence}
               onOpenFilePath={handleToolCallOpenFile}
               maxDetailHeight={maxDetailHeight}
+              workflowServerId={resolvedServerId}
+              workflowParentAgentId={providerParentAgentId ?? agentId}
+              workflowSubagentId={data.name === "Workflow" ? data.callId : undefined}
+              workflowCardBeforeLaunch={context.provider === "claude"}
             />
           );
         }
@@ -791,7 +799,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           />
         );
       },
-      [context.cwd, resolvedServerId, setInlineDetailsExpanded, handleToolCallOpenFile],
+      [
+        context.cwd,
+        context.provider,
+        setInlineDetailsExpanded,
+        handleToolCallOpenFile,
+        resolvedServerId,
+        providerParentAgentId,
+        agentId,
+      ],
     );
 
     // Read through a stable event so live group updates do not change the renderer identity
@@ -1230,6 +1246,8 @@ function agentStreamViewPropsEqual(
 ): boolean {
   const reasons: string[] = [];
   if (left.agentId !== right.agentId) reasons.push("agentId");
+  if (left.providerParentAgentId !== right.providerParentAgentId)
+    reasons.push("providerParentAgentId");
   if (left.serverId !== right.serverId) reasons.push("serverId");
   reasons.push(...collectAgentScreenAgentDiffs(left.context, right.context));
   if (left.streamItems !== right.streamItems) reasons.push("streamItems");
@@ -1272,6 +1290,15 @@ interface ToolCallSlotProps extends Omit<
 > {
   itemId: string;
   onInlineDetailsExpandedChangeByItemId: (itemId: string, expanded: boolean) => void;
+  /** A Workflow call is also a provider subagent keyed by its call id; it draws as a card while it runs. */
+  workflowServerId?: string;
+  workflowParentAgentId?: string;
+  workflowSubagentId?: string;
+  /**
+   * Draw the card before the workflow reports. Only Claude has workflows; elsewhere a tool that
+   * happens to be named Workflow keeps its row until a workflow descriptor shows up for it.
+   */
+  workflowCardBeforeLaunch?: boolean;
 }
 
 interface ThoughtSlotProps {
@@ -1310,12 +1337,33 @@ function ThoughtSlot({
 function ToolCallSlot({
   itemId,
   onInlineDetailsExpandedChangeByItemId,
+  workflowServerId,
+  workflowParentAgentId,
+  workflowSubagentId,
+  workflowCardBeforeLaunch = false,
   ...rest
 }: ToolCallSlotProps) {
   const handleExpandedChange = useCallback(
     (expanded: boolean) => onInlineDetailsExpandedChangeByItemId(itemId, expanded),
     [onInlineDetailsExpandedChangeByItemId, itemId],
   );
+  const showWorkflowCard = useWorkflowCardShown({
+    serverId: workflowServerId,
+    parentAgentId: workflowParentAgentId,
+    subagentId: workflowSubagentId,
+    toolStatus: rest.status,
+    beforeLaunch: workflowCardBeforeLaunch,
+  });
+  if (showWorkflowCard && workflowServerId && workflowParentAgentId && workflowSubagentId) {
+    return (
+      <WorkflowToolCallCard
+        serverId={workflowServerId}
+        parentAgentId={workflowParentAgentId}
+        subagentId={workflowSubagentId}
+        detail={rest.detail}
+      />
+    );
+  }
   return <ToolCall {...rest} onInlineDetailsExpandedChange={handleExpandedChange} />;
 }
 

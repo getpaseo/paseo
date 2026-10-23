@@ -1,0 +1,11 @@
+npm notice run paseo@0.13.0-beta.1 npx
+npm notice run 'vitest' run src/i18n/resources.test.ts src/i18n/locales.test.ts --bail=1
+
+ RUN  v4.1.7 /home/bobik/src/paseo-worktrees/workflow-swarm-dots/packages/app
+
+
+ Test Files  2 passed (2)
+      Tests  55 passed (55)
+   Start at  07:57:45
+   Duration  1.18s (transform 698ms, setup 51ms, import 707ms, tests 511ms, environment 1ms)
+

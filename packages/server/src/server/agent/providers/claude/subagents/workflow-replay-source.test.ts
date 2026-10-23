@@ -59,7 +59,37 @@ describe("Claude workflow replay", () => {
       startTime: 1786003484150,
       defaultModel: "claude-sonnet-5",
       totalTokens: 20_417,
+      workflowProgress: [{ type: "workflow_phase", title: "Inspect" }],
     });
+  });
+
+  it("rebuilds the workflow's agents, settling any the run left mid-state", () => {
+    const observations = observeReplayWorkflows({
+      workflows: [
+        {
+          runId: RUN_ID,
+          summary: "Checks wallets",
+          status: "killed",
+          workflowProgress: [
+            { type: "workflow_phase", index: 1, title: "Check" },
+            { type: "workflow_agent", index: 1, label: "metamask", state: "done", startedAt: 1 },
+            { type: "workflow_agent", index: 2, label: "phantom", state: "progress", startedAt: 1 },
+            { type: "workflow_agent", index: 3, label: "rabby", state: "start", queuedAt: 1 },
+          ],
+        },
+      ],
+      parentEntries: parentEntries(),
+    });
+    const store = new ProviderSubagentStore();
+    for (const event of foldSubagentObservations(observations)) {
+      store.apply("parent", "claude", event);
+    }
+
+    expect(store.get("parent", TOOL_CALL_ID)?.workflowAgents).toEqual([
+      { status: "completed", label: "metamask", lastProgressAt: null },
+      { status: "canceled", label: "phantom", lastProgressAt: null },
+      { status: "canceled", label: "rabby", lastProgressAt: null },
+    ]);
   });
 
   it("rebuilds the same generic completed descriptor through the parent Workflow call", () => {

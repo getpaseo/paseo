@@ -59,6 +59,7 @@ import {
   type ClaudeSubagentMeta,
 } from "./subagents/replay-source.js";
 import { foldSubagentObservations, type SubagentObservation } from "./subagents/observation.js";
+import { WorkflowAgentsThrottle } from "./subagents/workflow-agents-throttle.js";
 import {
   observeReplayWorkflows,
   parseClaudeWorkflowRun,
@@ -2247,6 +2248,9 @@ class ClaudeContextUsageState {
   }
 }
 
+/** A swarm reports every agent's state change; clients redraw it at most this often. */
+const WORKFLOW_AGENTS_INTERVAL_MS = 500;
+
 class ClaudeAgentSession implements AgentSession {
   readonly provider = "claude" as const;
   readonly capabilities = CLAUDE_CAPABILITIES;
@@ -2292,6 +2296,11 @@ class ClaudeAgentSession implements AgentSession {
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly timelineAssembler = new TimelineAssembler();
   private readonly taskState = new ClaudeTaskState();
+  private readonly workflowAgentsThrottle = new WorkflowAgentsThrottle({
+    intervalMs: WORKFLOW_AGENTS_INTERVAL_MS,
+    send: (event) =>
+      this.notifySubscribers({ type: "provider_subagent", provider: "claude", event }),
+  });
   private readonly taskProtocolSource = new ClaudeTaskProtocolSource({
     getToolInput: (toolUseId) => this.toolUseCache.get(toolUseId)?.input ?? null,
     readWorkflowResult: readClaudeWorkflowResultFile,
@@ -2951,6 +2960,7 @@ class ClaudeAgentSession implements AgentSession {
       "provider.claude.session_close.start",
     );
     this.closed = true;
+    this.workflowAgentsThrottle.dispose();
     this.rejectAllPendingPermissions(new Error("Claude session closed"));
     this.cancelCurrentTurn?.();
     this.subscribers.clear();
@@ -4015,11 +4025,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private failRunningRuntimeTasks(): void {
-    this.dispatchEvents(
-      foldSubagentObservations(this.taskProtocolSource.failRunningTasks()).map(
-        (event): AgentStreamEvent => ({ type: "provider_subagent", provider: "claude", event }),
-      ),
-    );
+    this.dispatchEvents(this.liveSubagentEvents(this.taskProtocolSource.failRunningTasks()));
   }
 
   private startQueryPump(): void {
@@ -4447,9 +4453,7 @@ class ClaudeAgentSession implements AgentSession {
     // read rather than inferred from sidechain frames. `task_started` precedes the child's first
     // frame, so the descriptor exists before any timeline item lands on it.
     const subagentObservations = this.taskProtocolSource.observe(message);
-    for (const event of foldSubagentObservations(subagentObservations)) {
-      events.push({ type: "provider_subagent", provider: "claude", event });
-    }
+    events.push(...this.liveSubagentEvents(subagentObservations));
     this.releaseFinishedSubagentToolCalls(subagentObservations);
     for (const observation of subagentObservations) {
       if (observation.kind !== "declared") continue;
@@ -5151,11 +5155,18 @@ class ClaudeAgentSession implements AgentSession {
     // the turn ended, the session did not. Wiping it would strand every task id the session still
     // holds — a backgrounded child that settles after the interrupt would find no descriptor to
     // land on, and ownership would flip back to the legacy tracker mid-session.
-    for (const event of foldSubagentObservations(
+    for (const event of this.liveSubagentEvents(
       this.taskProtocolSource.cancelRunningForegroundTasks(),
     )) {
-      this.pushEvent({ type: "provider_subagent", provider: "claude", event });
+      this.pushEvent(event);
     }
+  }
+
+  /** Live task-protocol observations as stream events, with workflow agent lists paced. */
+  private liveSubagentEvents(observations: readonly SubagentObservation[]): AgentStreamEvent[] {
+    return this.workflowAgentsThrottle
+      .route(foldSubagentObservations(observations))
+      .map((event): AgentStreamEvent => ({ type: "provider_subagent", provider: "claude", event }));
   }
 
   private pushToolCall(

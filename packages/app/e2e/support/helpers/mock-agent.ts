@@ -91,7 +91,10 @@ export async function openAgentRoute(
   page: Page,
   input: { workspaceId: string; agentId: string },
 ): Promise<void> {
-  await page.goto(buildAgentRoute(input.workspaceId, input.agentId), { waitUntil: "commit" });
+  const baseURL = process.env.E2E_BASE_URL ?? `http://localhost:${process.env.E2E_METRO_PORT}`;
+  await page.goto(new URL(buildAgentRoute(input.workspaceId, input.agentId), baseURL).href, {
+    waitUntil: "commit",
+  });
   await page.waitForURL(
     (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
     { timeout: 60_000, waitUntil: "commit" },

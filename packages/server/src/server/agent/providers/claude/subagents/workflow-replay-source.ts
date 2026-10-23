@@ -6,6 +6,7 @@ import type { ProviderSubagentStatus } from "../../../provider-subagents/store.j
 import type { SubagentObservation } from "./observation.js";
 import { buildClaudeSubagentSubtitle } from "./presentation.js";
 import type { ClaudeReplayEntry } from "./replay-source.js";
+import { readClaudeWorkflowAgents, settleWorkflowAgents } from "./workflow-agents.js";
 import { formatClaudeWorkflowResult } from "./workflow-output.js";
 
 const ClaudeWorkflowRunSchema = z.object({
@@ -18,6 +19,7 @@ const ClaudeWorkflowRunSchema = z.object({
   defaultModel: z.string().optional().catch(undefined),
   totalTokens: z.number().optional().catch(undefined),
   result: z.unknown().optional(),
+  workflowProgress: z.unknown().optional(),
 });
 
 export type ClaudeWorkflowRun = z.infer<typeof ClaudeWorkflowRunSchema>;
@@ -103,10 +105,20 @@ export function observeReplayWorkflows(input: {
         ...(finishedAt ? { timestamp: finishedAt } : {}),
       });
     }
+    const status = replayWorkflowStatus(workflow.status);
+    const agents = readClaudeWorkflowAgents(workflow.workflowProgress);
+    if (agents && agents.length > 0) {
+      observations.push({
+        kind: "workflow_agents",
+        id,
+        agents: settleWorkflowAgents(agents, status),
+        ...(finishedAt ? { timestamp: finishedAt } : {}),
+      });
+    }
     observations.push({
       kind: "status",
       id,
-      status: replayWorkflowStatus(workflow.status),
+      status,
       ...(finishedAt ? { timestamp: finishedAt } : {}),
     });
   }
@@ -210,7 +222,9 @@ function readResultText(content: unknown): string | undefined {
   return text || undefined;
 }
 
-function replayWorkflowStatus(status: string | undefined): ProviderSubagentStatus {
+function replayWorkflowStatus(
+  status: string | undefined,
+): Exclude<ProviderSubagentStatus, "running"> {
   switch (status?.trim().toLowerCase()) {
     case "completed":
       return "completed";

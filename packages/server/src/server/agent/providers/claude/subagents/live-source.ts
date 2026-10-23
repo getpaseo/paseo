@@ -1,7 +1,10 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import type { AgentMetadata } from "../../../agent-sdk-types.js";
-import type { ProviderSubagentStatus } from "../../../provider-subagents/store.js";
+import type {
+  ProviderSubagentStatus,
+  ProviderSubagentWorkflowAgent,
+} from "../../../provider-subagents/store.js";
 import { resolveObservedClaudeModelId } from "../models.js";
 import type { SubagentObservation } from "./observation.js";
 import {
@@ -9,6 +12,11 @@ import {
   type ClaudeSubagentPresentationFacts,
   type ClaudeSubagentUsage,
 } from "./presentation.js";
+import {
+  readClaudeWorkflowAgents,
+  settleWorkflowAgents,
+  workflowAgentsEqual,
+} from "./workflow-agents.js";
 
 /**
  * Claude Code announces subagent lifecycle on the SDK stream. This reads those announcements
@@ -105,6 +113,8 @@ export interface ClaudeHookObservationInput {
 interface TaskProgressMessage {
   task_id: string;
   usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number };
+  /** Workflow tasks only. Not in the SDK types; see `readClaudeWorkflowAgents`. */
+  workflow_progress?: unknown;
 }
 
 function readUsage(
@@ -174,6 +184,8 @@ export class ClaudeTaskProtocolSource {
   private readonly workflowTaskIds = new Set<string>();
   /** Last result emitted per workflow task, so duplicate terminal notifications stay idempotent. */
   private readonly lastWorkflowResultByTaskId = new Map<string, string>();
+  /** Last agent list emitted per workflow subagent id. */
+  private readonly lastWorkflowAgentsById = new Map<string, ProviderSubagentWorkflowAgent[]>();
   /** Workflow invocations already own a real Workflow card in the parent timeline. */
   private readonly idsWithExistingParentToolCard = new Set<string>();
   /**
@@ -282,6 +294,7 @@ export class ClaudeTaskProtocolSource {
     this.declaredIds.clear();
     this.workflowTaskIds.clear();
     this.lastWorkflowResultByTaskId.clear();
+    this.lastWorkflowAgentsById.clear();
     this.idsWithExistingParentToolCard.clear();
     this.backgroundedIds.clear();
     this.lastStatusById.clear();
@@ -308,6 +321,7 @@ export class ClaudeTaskProtocolSource {
       if (this.backgroundedIds.has(id)) continue;
       if (this.lastStatusById.get(id) !== "running") continue;
       this.lastStatusById.set(id, "canceled");
+      observations.push(...this.observeSettledWorkflowAgents(id, "canceled"));
       observations.push({ kind: "status", id, status: "canceled" });
     }
     return observations;
@@ -319,6 +333,7 @@ export class ClaudeTaskProtocolSource {
     for (const id of this.declaredIds) {
       if (this.lastStatusById.get(id) !== "running") continue;
       this.lastStatusById.set(id, "failed");
+      observations.push(...this.observeSettledWorkflowAgents(id, "failed"));
       observations.push({ kind: "status", id, status: "failed" });
     }
     return observations;
@@ -454,7 +469,20 @@ export class ClaudeTaskProtocolSource {
    * sidechain frames at all and would otherwise show no activity while they work.
    */
   private observeTaskProgress(message: TaskProgressMessage): SubagentObservation[] {
-    return this.observeUsage(message.task_id, message.usage);
+    return [
+      ...this.observeWorkflowAgents(message),
+      ...this.observeUsage(message.task_id, message.usage),
+    ];
+  }
+
+  private observeWorkflowAgents(message: TaskProgressMessage): SubagentObservation[] {
+    if (!this.workflowTaskIds.has(message.task_id)) return [];
+    const id = this.subagentIdByTaskId.get(message.task_id);
+    const agents = readClaudeWorkflowAgents(message.workflow_progress);
+    if (!id || !agents) return [];
+    if (workflowAgentsEqual(this.lastWorkflowAgentsById.get(id), agents)) return [];
+    this.lastWorkflowAgentsById.set(id, agents);
+    return [{ kind: "workflow_agents", id, agents }];
   }
 
   private observeUsage(
@@ -541,6 +569,19 @@ export class ClaudeTaskProtocolSource {
     const status = mapTaskStatus(rawStatus);
     if (!status || this.lastStatusById.get(id) === status) return [];
     this.lastStatusById.set(id, status);
-    return [{ kind: "status", id, status }];
+    return [...this.observeSettledWorkflowAgents(id, status), { kind: "status", id, status }];
+  }
+
+  /** Progress frames stop once the workflow task leaves `running`; see `settleWorkflowAgents`. */
+  private observeSettledWorkflowAgents(
+    id: string,
+    status: ProviderSubagentStatus,
+  ): SubagentObservation[] {
+    const agents = this.lastWorkflowAgentsById.get(id);
+    if (!agents || status === "running") return [];
+    const settled = settleWorkflowAgents(agents, status);
+    if (workflowAgentsEqual(agents, settled)) return [];
+    this.lastWorkflowAgentsById.set(id, settled);
+    return [{ kind: "workflow_agents", id, agents: settled }];
   }
 }

@@ -1,0 +1,11 @@
+npm notice run paseo@0.13.0-beta.1 npx
+npm notice run 'vitest' run packages/server/src/server/agent/providers/mock-load-test-agent.test.ts packages/server/src/server/agent/providers/claude/agent.background-subagent.test.ts packages/server/src/server/agent/providers/claude/subagents/live-source.test.ts packages/server/src/server/agent/providers/claude/subagents/workflow-agents-throttle.test.ts --bail=1
+
+ RUN  v4.1.7 /home/bobik/src/paseo-worktrees/workflow-swarm-dots
+
+
+ Test Files  4 passed (4)
+      Tests  88 passed (88)
+   Start at  07:58:42
+   Duration  537ms (transform 561ms, setup 0ms, import 970ms, tests 93ms, environment 0ms)
+
