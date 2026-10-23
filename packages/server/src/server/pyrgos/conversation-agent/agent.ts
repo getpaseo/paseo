@@ -24,6 +24,8 @@ export interface ConversationAgentOptions {
   onEvent: (event: ConversationEvent) => void;
   /** Spoken when a turn will be slow. Null turns it off. */
   filler?: string | null;
+  /** How long an interrupted turn may take to settle before it is abandoned. */
+  interruptTimeoutMs?: number;
 }
 
 /**
@@ -35,6 +37,7 @@ export class ConversationAgent {
   private active: Promise<void> | null = null;
   private latestTicket = 0;
   private interrupting: { turn: Promise<void>; done: Promise<unknown> } | null = null;
+  private abandonTurn: (() => void) | null = null;
   private readonly filler: string | null;
 
   constructor(private readonly options: ConversationAgentOptions) {
@@ -75,10 +78,29 @@ export class ConversationAgent {
       this.options.onEvent({ type: "interrupted", turnId });
       this.interrupting = {
         turn: running,
-        done: this.options.brain.interrupt().then(() => running),
+        done: this.settle(running),
       };
     }
     await this.interrupting.done;
+  }
+
+  /** Interrupt the brain, then wait for the turn; abandon it if it never settles. */
+  private async settle(running: Promise<void>): Promise<void> {
+    const limit = this.options.interruptTimeoutMs ?? 3000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        this.abandonTurn?.();
+        resolve();
+      }, limit);
+    });
+    try {
+      await Promise.race([this.options.brain.interrupt().then(() => running), timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+    // An abandoned turn settles as soon as its pending read is dropped.
+    await running;
   }
 
   async close(): Promise<void> {
@@ -108,13 +130,22 @@ export class ConversationAgent {
     };
 
     if (wantsFiller(text, model)) sayFiller();
+    const abandoned = new Promise<{ done: true; value: undefined }>((resolve) => {
+      this.abandonTurn = () => resolve({ done: true, value: undefined });
+    });
+    const iterator = brain.runTurn(text)[Symbol.asyncIterator]();
     try {
-      for await (const event of brain.runTurn(text)) {
-        if (!current()) break;
+      for (;;) {
+        // Race each read against abandonment: a brain that never answers must not hold the turn.
+        const next = await Promise.race([iterator.next(), abandoned]);
+        if (next.done || !current()) break;
+        const event = next.value;
         if (event.type === "text") emitChunks(chunker.feed(event.text));
         else if (event.type === "tool_use") sayFiller();
         else emitChunks(chunker.flush());
       }
+      void iterator.return?.(undefined)?.catch(() => {});
+      if (!current()) return;
       emitChunks(chunker.flush());
       if (current()) onEvent({ type: "turn_end", turnId });
     } catch (error) {

@@ -24,7 +24,7 @@ const SEARCH_EXTENSIONS = new Set([
 const SKIP_DIRS = new Set(["node_modules", ".git", ".worktrees", "dist", "build", ".next"]);
 // Files that hold secrets by convention. Never read, whatever the caller asks.
 const SECRET_FILE =
-  /(^|\/)(\.env(\..*)?|.*\.(pem|key|p12|pfx)|id_[a-z0-9]+|secrets?\.[a-z]+|credentials?(\.[a-z]+)?)$/i;
+  /(^|\/)(\.env(\..*)?|.*\.(pem|key|p12|pfx|keystore|jks|kdbx|gpg|asc)|id_[a-z0-9]+|secrets?(\.[a-z]+)?|credentials?(\.[a-z]+)?|\.(npmrc|netrc|pypirc|pgpass|git-credentials|htpasswd|dockercfg)|_netrc|\.docker\/config\.json|\.aws\/config|\.ssh\/.*|\.gnupg\/.*)$/i;
 
 export interface ToolDef {
   name: string;
@@ -75,6 +75,8 @@ async function readHead(file: string, chars: number): Promise<string> {
 async function resolveInside(roots: string[], requested: string): Promise<string | null> {
   for (const root of roots) {
     const candidate = path.resolve(root, requested);
+    // The name the caller asked for counts too: a harmless-looking link must not reach a secret.
+    if (SECRET_FILE.test(candidate.split(path.sep).join("/"))) return null;
     let real: string;
     let realRoot: string;
     try {
@@ -85,7 +87,7 @@ async function resolveInside(roots: string[], requested: string): Promise<string
     }
     const rel = path.relative(realRoot, real);
     if (rel.startsWith("..") || path.isAbsolute(rel)) continue;
-    if (SECRET_FILE.test(real)) return null;
+    if (SECRET_FILE.test(real.split(path.sep).join("/"))) return null;
     return real;
   }
   return null;

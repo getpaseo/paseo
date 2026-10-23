@@ -69,6 +69,17 @@ describe("harness tools", () => {
     expect(await read.run({ path: ".env" })).toMatch(/Not allowed/);
   });
 
+  it("refuses credential files by requested name and by symlink target", async () => {
+    const tools = createHarnessTools({ harnessRoot: root });
+    const read = byName(tools, "read_file");
+    for (const name of [".npmrc", ".netrc", ".pypirc", ".git-credentials"]) {
+      await writeFile(path.join(root, name), "x\n");
+      expect(await read.run({ path: name })).toMatch(/Not allowed/);
+    }
+    await symlink(path.join(root, ".npmrc"), path.join(root, "innocent.md"));
+    expect(await read.run({ path: "innocent.md" })).toMatch(/Not allowed/);
+  });
+
   it("searches text files, skipping node_modules", async () => {
     const tools = createHarnessTools({ harnessRoot: root });
     const out = await byName(tools, "search").run({ query: "needle" });
