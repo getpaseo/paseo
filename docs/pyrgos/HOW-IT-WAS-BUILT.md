@@ -20,6 +20,8 @@ A formal log of the Pyrgos additions to this fork, in build order. Each entry sa
 
 **Review fixes (Codex REQUEST_CHANGES, orchestrator relayed; Claude fixed):** (1) two transcripts during one turn both passed `bargeIn()`; now the newest ticket wins, barge-in interrupts a running turn once, and turns never overlap. (2) `SdkBrain.runTurn` treated every SDK result as success; now an error subtype or `is_error` throws, which the agent emits as an `error` event (an interrupted turn's error result is ignored by design). (3) `read_file` read the whole file before the cap; now it reads at most 4 bytes per capped character. (4) `status` returned the context uncapped; now redacted and capped like the other tools. **Status:** verified by new unit tests for each (35 tests pass, lint and typecheck clean).
 
+**Review fixes, round 2 (Codex, orchestrator relayed; Claude fixed):** (1) a hung SDK turn never reached its result, so barge-in waited forever; `interruptTimeoutMs` now abandons the turn and the session is rebuilt on the next one. (2) the credential denylist (`.npmrc`, `.netrc` and similar) was checked on the requested path only; it now also checks the resolved real path, so a symlink cannot reach a secret file. **Status:** verified by two new unit tests (37 pass, lint and typecheck clean).
+
 ## Open questions
 
 - Warm-turn time to first spoken word on opus (target under 2 s) is not yet measured.
