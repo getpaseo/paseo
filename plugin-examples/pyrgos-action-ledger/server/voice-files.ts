@@ -76,6 +76,7 @@ async function applyPatch(
 
 export async function readPlayback(
   dir: string = voiceDir(),
+  statFile: typeof stat = stat,
 ): Promise<{ serverNow: number; utterance: Utterance | null }> {
   const names = await readdir(dir).catch(() => []);
   const files = await Promise.all(
@@ -83,8 +84,10 @@ export async function readPlayback(
       .filter((name) => name.endsWith(WORDS_SUFFIX))
       .map(async (name) => ({
         path: join(dir, name),
-        mtime: (await stat(join(dir, name))).mtimeMs,
+        mtime: (await statFile(join(dir, name)).catch(() => null))?.mtimeMs ?? null,
       })),
+  ).then((all) =>
+    all.filter((file): file is { path: string; mtime: number } => file.mtime !== null),
   );
   const newest = files.toSorted((a, b) => b.mtime - a.mtime)[0];
   const text = newest ? await readFile(newest.path, "utf8").catch(() => "") : "";

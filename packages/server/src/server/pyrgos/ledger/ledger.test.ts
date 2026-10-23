@@ -252,6 +252,30 @@ describe("ledger state machine", () => {
     expect(() => ledger.get("nope")).toThrow(expect.objectContaining({ code: "not_found" }));
   });
 
+  it("leaves no state behind when the store append fails", () => {
+    const store = {
+      append: () => {
+        throw new Error("disk full");
+      },
+      load: () => [],
+    };
+    const ledger = createLedger({ store, newId: () => "x1" });
+    expect(() => ledger.propose({ item: "x" })).toThrow("disk full");
+    expect(ledger.list()).toHaveLength(0);
+  });
+
+  it("rejects a duplicate id instead of overwriting", () => {
+    const { ledger } = makeLedger({ newId: () => "same" });
+    ledger.propose({ item: "first" });
+    expect(() => ledger.propose({ item: "second" })).toThrow(/already exists/);
+    expect(ledger.get("same").item).toBe("first");
+  });
+
+  it("uses a full UUID by default", () => {
+    const { ledger } = makeLedger({ newId: undefined });
+    expect(ledger.propose({ item: "x" }).id).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
   it("restores state from the store, latest row per id winning", () => {
     const { ledger, store } = makeLedger();
     const { id } = ledger.propose({ item: "x" });

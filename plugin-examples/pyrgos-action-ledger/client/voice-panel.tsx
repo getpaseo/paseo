@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type PluginWorkspacePanelProps, useRpc } from "@getpaseo/plugin/client";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { getPlaybackRpc, getVoiceSettingsRpc, setVoiceSettingsRpc } from "../shared/voice-rpc";
 import type { VoiceSettingsPatch } from "../shared/voice-settings";
@@ -42,6 +42,9 @@ export function VoicePanel({ theme, layout }: PluginWorkspacePanelProps) {
     mutationFn: (patch: VoiceSettingsPatch) => setSettings(patch),
     onSuccess: (state) => queryClient.setQueryData(["pyrgos-voice-settings"], state),
   });
+
+  const { mutateAsync } = save;
+  const saveSettings = useCallback((patch: VoiceSettingsPatch) => mutateAsync(patch), [mutateAsync]);
 
   const utterance = playbackQuery.data?.utterance ?? null;
   const timing = useMemo(
@@ -86,7 +89,7 @@ export function VoicePanel({ theme, layout }: PluginWorkspacePanelProps) {
           settings={settingsQuery.data.settings}
           capabilities={settingsQuery.data.capabilities}
           colors={colors}
-          onChange={save.mutate}
+          onChange={saveSettings}
         />
       ) : null}
       <Text style={styles.heading}>Now speaking</Text>

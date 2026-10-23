@@ -51,7 +51,7 @@ export interface LedgerDeps {
   launch?: (item: LedgerItem) => Promise<void>;
 }
 
-export type LedgerErrorCode = "not_found" | "bad_state" | "incomplete" | "empty" | "unconfirmed";
+export type LedgerErrorCode = "not_found" | "bad_state" | "incomplete" | "empty" | "unconfirmed" | "duplicate";
 
 export class LedgerError extends Error {
   constructor(
@@ -87,14 +87,14 @@ function clean(text: string): string {
 
 export function createLedger(deps: LedgerDeps): Ledger {
   const now = deps.now ?? (() => new Date());
-  const newId = deps.newId ?? (() => randomUUID().slice(0, 8));
+  const newId = deps.newId ?? (() => randomUUID());
   const items = new Map<string, LedgerItem>();
   const inFlight = new Set<string>();
   for (const row of deps.store.load()) items.set(row.id, row);
 
   function save(next: LedgerItem): LedgerItem {
-    items.set(next.id, next);
     deps.store.append(next);
+    items.set(next.id, next);
     return next;
   }
 
@@ -116,8 +116,10 @@ export function createLedger(deps: LedgerDeps): Ledger {
     const text = clean(input.item);
     if (!text) throw new LedgerError("empty", "give an action item", null);
     const stamp = now().toISOString();
+    const id = newId();
+    if (items.has(id)) throw new LedgerError("duplicate", `action item ${id} already exists`, id);
     return save({
-      id: newId(),
+      id,
       state: "draft",
       item: text,
       scope: null,

@@ -16,7 +16,7 @@ export interface VoiceSettingsFormProps {
   settings: VoiceSettings;
   capabilities: VoiceCapabilities;
   colors: WordHighlightColors & { surface: string };
-  onChange: (patch: VoiceSettingsPatch) => void;
+  onChange: (patch: VoiceSettingsPatch) => void | Promise<unknown>;
 }
 
 interface StepperProps {
@@ -110,13 +110,21 @@ export function VoiceSettingsForm({
 }: VoiceSettingsFormProps) {
   const styles = useFormStyles(colors);
   const latest = useRef(settings);
+  const current = useRef(settings);
+  const pending = useRef(0);
+  current.current = settings;
   useEffect(() => {
-    latest.current = settings;
+    if (pending.current === 0) latest.current = settings;
   }, [settings]);
   const send = useCallback(
     (patch: VoiceSettingsPatch) => {
       latest.current = { ...latest.current, ...definedOnly(patch) };
-      onChange(patch);
+      pending.current += 1;
+      const settle = () => {
+        pending.current -= 1;
+        if (pending.current === 0) latest.current = current.current;
+      };
+      Promise.resolve(onChange(patch)).then(settle, settle);
     },
     [onChange],
   );

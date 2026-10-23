@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
@@ -28,6 +28,7 @@ const sent: VoiceSettingsPatch[] = [];
 const record = (patch: VoiceSettingsPatch) => {
   sent.push(patch);
 };
+const FIRST_ACKED = { ...DEFAULT_SETTINGS, speed: 1.1 };
 const PITCH_CAPS = { speed: true, pitch: true, presets: ["warm"] };
 
 afterEach(cleanup);
@@ -88,6 +89,27 @@ describe("settings form", () => {
     fireEvent.click(higher);
     fireEvent.click(higher);
     expect(sent.slice(2)).toEqual([{ pitch: 1 }, { pitch: 2 }]);
+  });
+});
+
+describe("settings form with staggered acks", () => {
+  it("keeps pending edits when a query update lands between presses", async () => {
+    const calls: VoiceSettingsPatch[] = [];
+    const resolvers: Array<() => void> = [];
+    const onChange = (patch: VoiceSettingsPatch) => {
+      calls.push(patch);
+      return new Promise<void>((resolve) => resolvers.push(resolve));
+    };
+    const props = { capabilities: PITCH_CAPS, colors, onChange };
+    const { rerender } = render(<VoiceSettingsForm settings={DEFAULT_SETTINGS} {...props} />);
+    const faster = screen.getByLabelText("Increase Speed");
+    fireEvent.click(faster);
+    fireEvent.click(faster);
+    rerender(<VoiceSettingsForm settings={FIRST_ACKED} {...props} />);
+    fireEvent.click(faster);
+    expect(calls).toEqual([{ speed: 1.1 }, { speed: 1.2 }, { speed: 1.3 }]);
+    for (const resolve of resolvers) resolve();
+    await Promise.resolve();
   });
 });
 
@@ -176,6 +198,19 @@ describe("voice files", () => {
     const playback = await readPlayback(dir);
     expect(playback.utterance?.id).toBe("u2");
     expect(playback.serverNow).toBeGreaterThan(0);
+  });
+
+  it("ignores a words file that vanishes between readdir and stat", async () => {
+    const keep = join(dir, "keep.words.jsonl");
+    await writeFile(keep, `${JSON.stringify({ ...utterance, startedAt: Date.now() })}\n`);
+    await writeFile(join(dir, "gone.words.jsonl"), "");
+    const statFile = (async (path: string) => {
+      if (path.endsWith("gone.words.jsonl")) {
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      }
+      return stat(path);
+    }) as typeof stat;
+    expect((await readPlayback(dir, statFile)).utterance?.id).toBe("u2");
   });
 
   it("expires a finished utterance", async () => {

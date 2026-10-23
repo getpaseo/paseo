@@ -30,7 +30,13 @@ export function readLedgerFile(path: string): LedgerItem[] {
   const latest = new Map<string, LedgerItem>();
   for (const line of readFileSync(path, "utf8").split("\n")) {
     if (!line.trim()) continue;
-    const parsed = LedgerItemSchema.safeParse(JSON.parse(line));
+    let row: unknown;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const parsed = LedgerItemSchema.safeParse(row);
     if (parsed.success) latest.set(parsed.data.id, parsed.data);
   }
   return [...latest.values()];
