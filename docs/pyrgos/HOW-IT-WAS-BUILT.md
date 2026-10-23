@@ -18,6 +18,8 @@ A formal log of the Pyrgos additions to this fork, in build order. Each entry sa
 
 **Status:** verified. Unit tests run against a fake SDK (agent, chunker, context, redaction, tools, brain). A headless script (`packages/server/scripts/pyrgos-conversation-turn.ts`) drove one live text turn on haiku through the subscription login: the filler came out at once and the reply followed; the cold first reply took about 2.4 s including session start. Warm-turn latency on opus is **assumed** under two seconds and still needs measuring.
 
+**Review fixes (Codex REQUEST_CHANGES, orchestrator relayed; Claude fixed):** (1) two transcripts during one turn both passed `bargeIn()`; now the newest ticket wins, barge-in interrupts a running turn once, and turns never overlap. (2) `SdkBrain.runTurn` treated every SDK result as success; now an error subtype or `is_error` throws, which the agent emits as an `error` event (an interrupted turn's error result is ignored by design). (3) `read_file` read the whole file before the cap; now it reads at most 4 bytes per capped character. (4) `status` returned the context uncapped; now redacted and capped like the other tools. **Status:** verified by new unit tests for each (35 tests pass, lint and typecheck clean).
+
 ## Open questions
 
 - Warm-turn time to first spoken word on opus (target under 2 s) is not yet measured.

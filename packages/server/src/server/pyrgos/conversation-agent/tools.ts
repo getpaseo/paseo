@@ -1,7 +1,7 @@
-import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { open, readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { buildContext, TICKETS_CACHE_REL, readTextFile } from "./context.js";
+import { buildContext, TICKETS_CACHE_REL, TOTAL_CHARS, readTextFile } from "./context.js";
 import { redact } from "./redact.js";
 
 export const TOOL_SERVER_NAME = "harness";
@@ -60,6 +60,18 @@ function cap(text: string, limit = READ_CHARS): string {
   return clean.length > limit ? `${clean.slice(0, limit)}\n[truncated]` : clean;
 }
 
+/** First bytes of a file, enough for `chars` characters (UTF-8 is at most 4 bytes each) plus one. */
+async function readHead(file: string, chars: number): Promise<string> {
+  const handle = await open(file, "r");
+  try {
+    const buffer = Buffer.alloc(chars * 4 + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    return buffer.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
 async function resolveInside(roots: string[], requested: string): Promise<string | null> {
   for (const root of roots) {
     const candidate = path.resolve(root, requested);
@@ -110,7 +122,10 @@ export function createHarnessTools(options: HarnessToolsOptions): ToolDef[] {
       description:
         "Current harness state: handoff, plan and open tickets, as reference data. Call when asked what is going on.",
       shape: {},
-      run: async () => (await buildContext(harnessRoot)) || "No harness context is available.",
+      run: async () => {
+        const context = await buildContext(harnessRoot);
+        return context ? cap(context, TOTAL_CHARS) : "No harness context is available.";
+      },
     });
     tools.push({
       name: "open_tickets",
@@ -134,7 +149,7 @@ export function createHarnessTools(options: HarnessToolsOptions): ToolDef[] {
         if (!file) return "Not allowed or not found.";
         const info = await stat(file);
         if (!info.isFile()) return "Not a file.";
-        return cap(await readFile(file, "utf8"));
+        return cap(await readHead(file, READ_CHARS));
       },
     });
     tools.push({

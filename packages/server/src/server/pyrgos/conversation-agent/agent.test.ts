@@ -167,6 +167,41 @@ describe("ConversationAgent", () => {
     expect(events.filter((e) => e.type === "turn_end")).toHaveLength(1);
   });
 
+  it("two transcripts during one turn interrupt it once and only the newest runs", async () => {
+    const { events, onEvent } = collect();
+    const ran: string[] = [];
+    let interrupts = 0;
+    let running = 0;
+    let maxRunning = 0;
+    const brain: Brain = {
+      async *runTurn(text: string) {
+        ran.push(text);
+        running += 1;
+        maxRunning = Math.max(maxRunning, running);
+        try {
+          await new Promise((r) => setTimeout(r, 30));
+          yield { type: "text", text: `Answer to ${text}.` } satisfies BrainEvent;
+        } finally {
+          running -= 1;
+        }
+      },
+      async interrupt() {
+        interrupts += 1;
+      },
+      async close() {},
+    };
+    const agent = new ConversationAgent({ brain, model: "haiku", onEvent, filler: null });
+    const first = agent.handleTranscript("one");
+    await new Promise((r) => setTimeout(r, 5));
+    await Promise.all([agent.handleTranscript("two"), agent.handleTranscript("three")]);
+    await first;
+    expect(ran).toEqual(["one", "three"]);
+    expect(maxRunning).toBe(1);
+    expect(interrupts).toBe(1);
+    expect(events.filter((e) => e.type === "interrupted")).toHaveLength(1);
+    expect(events.filter((e) => e.type === "turn_end")).toHaveLength(1);
+  });
+
   it("reports a brain failure as an error event", async () => {
     const { events, onEvent } = collect();
     const brain: Brain = {

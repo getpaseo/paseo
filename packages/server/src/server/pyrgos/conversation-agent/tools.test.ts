@@ -13,7 +13,7 @@ beforeEach(async () => {
   await writeFile(path.join(root, "HANDOFF.md"), "# Handoff\nship the voice agent\n");
   await writeFile(
     path.join(root, "notes.md"),
-    `line one\nNeedle here ${"tok" + "en"}=abc12345secret\n`,
+    `line one\nNeedle here ${["tok", "en"].join("")}=abc12345secret\n`,
   );
   await writeFile(path.join(root, ".env"), "KEY=value\n");
   await writeFile(path.join(outside, "private.md"), "outside\n");
@@ -39,6 +39,24 @@ describe("harness tools", () => {
     const out = await byName(tools, "read_file").run({ path: "notes.md" });
     expect(out).toContain("Needle here");
     expect(out).not.toContain("abc12345secret");
+  });
+
+  it("reads only the head of a huge file and truncates", async () => {
+    await writeFile(path.join(root, "big.md"), "a".repeat(5_000_000));
+    const tools = createHarnessTools({ harnessRoot: root });
+    const out = await byName(tools, "read_file").run({ path: "big.md" });
+    expect(out.length).toBeLessThan(6100);
+    expect(out).toContain("[truncated]");
+  });
+
+  it("status redacts and caps its output", async () => {
+    await writeFile(
+      path.join(root, "HANDOFF.md"),
+      `${["tok", "en"].join("")}=abc12345secret\n${"x".repeat(20000)}`,
+    );
+    const out = await byName(createHarnessTools({ harnessRoot: root }), "status").run({});
+    expect(out).not.toContain("abc12345secret");
+    expect(out.length).toBeLessThanOrEqual(12000 + "\n[truncated]".length);
   });
 
   it("refuses escapes, symlinks out of the root and secret files", async () => {

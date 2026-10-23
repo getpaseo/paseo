@@ -135,7 +135,11 @@ export class SdkBrain implements Brain {
       }
       const message = next.value as { type: string; [key: string]: unknown };
       if (message.type === "result") {
+        const wasInterrupted = this.interrupted;
         this.interrupted = false;
+        const failure = resultFailure(message);
+        // An interrupted turn ends in an error result by design; the agent already moved on.
+        if (failure && !wasInterrupted) throw new Error(failure);
         return;
       }
       if (this.interrupted) continue; // drain to the result without emitting
@@ -175,6 +179,16 @@ export class SdkBrain implements Brain {
   async close(): Promise<void> {
     await this.reset();
   }
+}
+
+/** A message for a failed SDK result (error subtype or is_error), or null for a success. */
+export function resultFailure(message: { [key: string]: unknown }): string | null {
+  const subtype = typeof message.subtype === "string" ? message.subtype : undefined;
+  const errors = Array.isArray(message.errors) ? message.errors.map(String).join("; ") : "";
+  if ((subtype && subtype !== "success") || message.is_error === true) {
+    return `Claude turn failed (${subtype ?? "error"})${errors ? `: ${errors}` : ""}`;
+  }
+  return null;
 }
 
 /** Maps one SDK message to a brain event, or null when it carries nothing to say or do. */

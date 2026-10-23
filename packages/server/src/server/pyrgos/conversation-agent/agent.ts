@@ -33,6 +33,8 @@ export interface ConversationAgentOptions {
 export class ConversationAgent {
   private generation = 0;
   private active: Promise<void> | null = null;
+  private latestTicket = 0;
+  private interrupting: { turn: Promise<void>; done: Promise<unknown> } | null = null;
   private readonly filler: string | null;
 
   constructor(private readonly options: ConversationAgentOptions) {
@@ -43,11 +45,16 @@ export class ConversationAgent {
     return this.active !== null;
   }
 
-  /** Run one turn to its end. Resolves when the turn finishes or is interrupted. */
+  /**
+   * Run one turn to its end. Resolves when the turn finishes or is interrupted. Turns never
+   * overlap: when several transcripts arrive during one turn, only the newest runs.
+   */
   async handleTranscript(text: string): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed) return;
-    if (this.active) await this.bargeIn();
+    const ticket = ++this.latestTicket;
+    while (this.active) await this.bargeIn();
+    if (ticket !== this.latestTicket) return;
     const turn = this.runTurn(++this.generation, trimmed);
     this.active = turn;
     try {
@@ -61,11 +68,17 @@ export class ConversationAgent {
   async bargeIn(): Promise<void> {
     const running = this.active;
     if (!running) return;
-    const turnId = this.generation;
-    this.generation += 1;
-    this.options.onEvent({ type: "interrupted", turnId });
-    await this.options.brain.interrupt();
-    await running;
+    // Concurrent callers share one interruption of the same turn.
+    if (!this.interrupting || this.interrupting.turn !== running) {
+      const turnId = this.generation;
+      this.generation += 1;
+      this.options.onEvent({ type: "interrupted", turnId });
+      this.interrupting = {
+        turn: running,
+        done: this.options.brain.interrupt().then(() => running),
+      };
+    }
+    await this.interrupting.done;
   }
 
   async close(): Promise<void> {

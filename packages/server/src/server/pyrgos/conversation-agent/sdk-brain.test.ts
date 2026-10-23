@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ConversationAgent } from "./agent.js";
-import { SdkBrain, subscriptionEnv, toBrainEvent } from "./sdk-brain.js";
+import { resultFailure, SdkBrain, subscriptionEnv, toBrainEvent } from "./sdk-brain.js";
 import type { ConversationEvent } from "./types.js";
 
 type FakeInput = Parameters<
@@ -34,6 +34,46 @@ function fakeFactory(replies: unknown[][], seen: FakeInput[] = []) {
   }) as unknown as NonNullable<ConstructorParameters<typeof SdkBrain>[0]["queryFactory"]>;
   return { factory, interrupts: () => interrupts };
 }
+
+describe("result handling", () => {
+  it("resultFailure reads subtype and is_error", () => {
+    expect(resultFailure({ type: "result", subtype: "success" })).toBeNull();
+    expect(resultFailure({ type: "result" })).toBeNull();
+    expect(resultFailure({ type: "result", subtype: "error_max_turns" })).toMatch(
+      /error_max_turns/,
+    );
+    expect(resultFailure({ type: "result", subtype: "success", is_error: true })).toMatch(/failed/);
+  });
+
+  it("a failed result becomes an error event and no turn_end", async () => {
+    const factory = ((input: FakeInput) => {
+      const source = input.prompt as AsyncIterable<unknown>;
+      async function* messages() {
+        for await (const _ of source) {
+          yield delta("Partial. ");
+          yield { type: "result", subtype: "error_during_execution", errors: ["rate limited"] };
+        }
+      }
+      return Object.assign(messages(), { interrupt: async () => {} });
+    }) as unknown as NonNullable<ConstructorParameters<typeof SdkBrain>[0]["queryFactory"]>;
+    const brain = new SdkBrain({ model: "haiku", tools: [], queryFactory: factory });
+    const events: ConversationEvent[] = [];
+    const agent = new ConversationAgent({
+      brain,
+      model: "haiku",
+      filler: null,
+      onEvent: (e) => events.push(e),
+    });
+    await agent.handleTranscript("hello there");
+    const last = events.at(-1);
+    expect(last?.type).toBe("error");
+    expect(last && "message" in last ? last.message : "").toMatch(
+      /error_during_execution.*rate limited/,
+    );
+    expect(events.some((e) => e.type === "turn_end")).toBe(false);
+    await agent.close();
+  });
+});
 
 describe("subscriptionEnv", () => {
   it("drops metered API credentials and keeps the rest", () => {

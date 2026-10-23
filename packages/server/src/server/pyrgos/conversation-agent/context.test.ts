@@ -28,7 +28,7 @@ describe("redact", () => {
 
 describe("buildContext", () => {
   const files: Record<string, string> = {
-    "/h/HANDOFF.md": `Handoff: ${"tok" + "en"}=abc12345secret open items`,
+    "/h/HANDOFF.md": `Handoff: ${["tok", "en"].join("")}=abc12345secret open items`,
     "/h/PLAN.md": "Plan body",
     "/h/.agents/feedback/voice/tickets-cache.md": "- MIC-1 [Todo] a thing",
   };
