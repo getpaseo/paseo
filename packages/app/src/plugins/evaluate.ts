@@ -15,6 +15,8 @@ import * as Zod from "zod";
 import { type PluginCleanup } from "@getpaseo/plugin";
 import {
   type PluginClientContext,
+  type PluginAgentPanelContribution,
+  type PluginWorkspacePanelContribution as WorkspacePanelInput,
   type PluginScreenProps,
   type PluginScreenTitle,
   type PluginText,
@@ -313,7 +315,15 @@ export function runPluginClientBundle(
         () => filePanelIds.delete(panelId),
       );
     },
-    addWorkspacePanel(contribution: PluginWorkspacePanelContribution) {
+    addAgentPanel(contribution: PluginAgentPanelContribution<PluginText>) {
+      return pluginContext.addWorkspacePanel({ ...contribution, context: "agent" });
+    },
+    addWorkspacePanel(input: WorkspacePanelInput<PluginText>) {
+      // COMPAT(pluginAgentPanelAlias): added in v0.13.0, remove after 2027-04-23
+      const contribution = {
+        ...input,
+        context: input.context ?? "workspace",
+      } as PluginWorkspacePanelContribution;
       const normalizedId = requireId(contribution.id, "workspace panel id");
       if (workspacePanelIds.has(normalizedId)) {
         throw new Error(`Duplicate workspace panel: ${normalizedId}`);
