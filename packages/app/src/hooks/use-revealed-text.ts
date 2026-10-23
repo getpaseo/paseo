@@ -11,7 +11,13 @@ import {
   type TextRevealState,
   visibleRevealedText,
 } from "@/agent-stream/text-reveal";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 export type MarkdownPhase = "streaming" | "complete";
+
+export interface UseRevealedTextOptions {
+  /** Callers that know the text is not on screen pass false to skip the frame clock. */
+  enabled?: boolean;
+}
 
 /**
  * Binds the paced reveal in @/agent-stream/text-reveal to a frame clock.
@@ -21,14 +27,25 @@ export type MarkdownPhase = "streaming" | "complete";
  * wiring, so the rendered behavior is covered end to end by
  * `packages/app/e2e/browser/agent-stream-smoothness.spec.ts`.
  */
-export function useRevealedText(text: string, phase: MarkdownPhase): string {
+export function useRevealedText(
+  text: string,
+  phase: MarkdownPhase,
+  options?: UseRevealedTextOptions,
+): string {
   const pacingSupported = isTextRevealPacingSupported();
+  const panelActive = useRetainedPanelActive();
+  const enabled = (options?.enabled ?? true) && panelActive;
   const stateRef = useRef<TextRevealState>(beginTextReveal(text));
   const [, forceRender] = useState(0);
   const frameRef = useRef<number | null>(null);
   const lastFrameAtRef = useRef<number | null>(null);
 
   stateRef.current = retargetTextReveal(stateRef.current, text);
+  if (!enabled) {
+    // Hidden content must be whole the next time it appears. Keeping the reveal
+    // state settled also means re-enabling only paces text that arrives from here.
+    stateRef.current = completeTextReveal(stateRef.current);
+  }
 
   useEffect(() => {
     const settle = () => {
@@ -40,7 +57,7 @@ export function useRevealedText(text: string, phase: MarkdownPhase): string {
       }
     };
 
-    if (!pacingSupported || phase !== "streaming") {
+    if (!enabled || !pacingSupported || phase !== "streaming") {
       settle();
       return;
     }
@@ -79,8 +96,11 @@ export function useRevealedText(text: string, phase: MarkdownPhase): string {
         frameRef.current = null;
       }
     };
-  }, [text, pacingSupported, phase]);
+  }, [enabled, text, pacingSupported, phase]);
 
+  if (!enabled) {
+    return text;
+  }
   return pacingSupported
     ? visibleRevealedText(stateRef.current, { streaming: phase === "streaming" })
     : text;

@@ -121,7 +121,7 @@ export function WorkspacePanelHost({
   return mountedIds.map((tabId) => {
     const tab = stableTabs.get(tabId);
     if (!tab) return null;
-    const visible = tabId === activeTabId;
+    const visible = tabId === activeTabId && isWorkspaceFocused;
     return (
       <MountedTab
         key={tabId}

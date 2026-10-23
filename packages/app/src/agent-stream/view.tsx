@@ -1284,6 +1284,8 @@ interface ThoughtSlotProps {
 }
 
 // Reasoning text is paced the same way assistant text is; see @/hooks/use-revealed-text.
+// While the thinking block is collapsed the text is not on screen, so pacing it only
+// spends frames on a subtree that renders nothing.
 function ThoughtSlot({
   itemId,
   onInlineDetailsExpandedChangeByItemId,
@@ -1292,11 +1294,21 @@ function ThoughtSlot({
   isLastInSequence,
   defaultExpanded,
 }: ThoughtSlotProps) {
-  const revealedText = useRevealedText(text, status === "ready" ? "complete" : "streaming");
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const handleExpandedChange = useCallback(
+    (changedItemId: string, nextExpanded: boolean) => {
+      setExpanded(nextExpanded);
+      onInlineDetailsExpandedChangeByItemId(changedItemId, nextExpanded);
+    },
+    [onInlineDetailsExpandedChangeByItemId],
+  );
+  const revealedText = useRevealedText(text, status === "ready" ? "complete" : "streaming", {
+    enabled: expanded,
+  });
   return (
     <ToolCallSlot
       itemId={itemId}
-      onInlineDetailsExpandedChangeByItemId={onInlineDetailsExpandedChangeByItemId}
+      onInlineDetailsExpandedChangeByItemId={handleExpandedChange}
       toolName="thinking"
       args={revealedText}
       status={status === "ready" ? "completed" : "executing"}
