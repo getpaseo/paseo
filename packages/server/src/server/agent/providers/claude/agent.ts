@@ -351,6 +351,8 @@ interface ClaudeReplayOwnership {
 interface ClaudeSubagentCardFacts {
   title?: string;
   description?: string;
+  /** The child's tool calls, one line each. Live, the sidechain tracker streams it instead. */
+  log?: string;
 }
 
 interface PersistedTimelineEntry {
@@ -5349,7 +5351,12 @@ class ClaudeAgentSession implements AgentSession {
     const replay = {
       restoredIds: restoredProviderSubagentIds,
       toolOwners: subagentReplay.toolOwners,
-      subagentToolCalls: parentFacts.toolCalls,
+      subagentToolCalls: new Map(
+        [...parentFacts.toolCalls].map(([id, facts]) => {
+          const log = subagentReplay.actionLogs.get(id);
+          return [id, log ? { ...facts, log } : facts];
+        }),
+      ),
     };
     if (observations.length === 0) return replay;
 
@@ -6199,7 +6206,7 @@ function buildClaudeSubagentCardDetail(
     type: "sub_agent",
     ...(facts.title ? { subAgentType: facts.title } : {}),
     ...(facts.description ? { description: facts.description } : {}),
-    log: "",
+    log: facts.log ?? "",
     actions: [],
   };
 }
