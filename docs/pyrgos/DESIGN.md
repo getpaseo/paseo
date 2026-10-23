@@ -73,14 +73,35 @@ plus one optional.
 ```ts
 export interface VoiceBrainContext {
   speak(sentence: string, signal: AbortSignal): Promise<void>; // = ttsManager.generateAndWaitForPlayback(...), emits activity_log
-  signal: AbortSignal;                                         // aborted by abort_request or a new user utterance
+  signal: AbortSignal;                                         // per-utterance: aborted by abort_request or a new user utterance
 }
-export interface VoiceBrain {
+export interface VoiceBrainEvents {                            // push events; VoiceSession calls these, the brain never polls
+  onUserSpeechStarted(): void;                                 // from callbacks.onSpeechStarted (voice-session.ts:~590), before STT finishes
+  onUserSpeechEnded(): void;                                   // from the voice_input_state isSpeaking=false emit (:677)
+  onPlaybackStarted(): void;                                   // first audio_output of a TTS request
+  onPlaybackComplete(): void;                                  // last audio_played ack, or abort/cancel (handleAudioPlayed :1142, handleAbort :1097)
+}
+export interface VoiceBrain extends VoiceBrainEvents {
   onUtterance(text: string, ctx: VoiceBrainContext): Promise<void>; // resolves when the turn is spoken
+  speakStanding(text: string): Promise<void>;                  // out-of-turn speech (overseer replies); VoiceSession mints a fresh signal
   cancel(): void;
   dispose(): void;
 }
 ```
+
+**Enabling voice mode without a bound agent (core change 2, in `handleSetVoiceMode`, `voice-session.ts:354`).** The wire message already
+allows it: `SetVoiceModeMessageSchema.agentId` is optional and `set_voice_mode_response.agentId` is nullable
+(`packages/protocol/src/messages.ts:1070-1075`, `:2173-2178`), so no protocol or client change is needed. When a brain is configured for the
+session, `handleSetVoiceMode(true, agentId?)`:
+
+1. skips `parseVoiceTargetAgentId` (`:367`), `enableVoiceModeForAgent` (`:491`, which rewrites the agent prompt) and
+   `registerVoiceBridgeForAgent` (no `speak` MCP tool is registered, no `voiceModeAgentId` is set);
+2. sets `isVoiceMode = true` with `voiceModeAgentId = null` and replies `accepted: true, agentId: null`;
+3. ignores any `agentId` the client sends (`voice-runtime.ts:573,756` still pass the active agent): it is never bound, so the Paseo agent
+   the user is looking at receives no spoken input and no voice system prompt. The branch in `handleTranscriptionResultPayload` goes
+   before the `if (!agentId)` skip (`:~1040`) and returns after `brain.onUtterance`; `host.sendSpokenInput` is unreachable in brain mode.
+
+`set_voice_mode(false)` disposes the brain's turn state (`cancel()`), not the brain. With no brain configured nothing changes (stock path).
 
 ## 4. Interfaces between B, C and D
 
@@ -97,15 +118,20 @@ export interface ActionItem {
   createdAt: string;     // ISO; injected clock
   updatedAt: string;
   transcriptRef: string; // "<session-file>#<line>" from the feed
-  launched?: { agentId: string; lane: string } | null;
+  route: "paseo" | "dispatch"; // set at propose, immutable (section 4.4)
+  ticketId?: string;
+  launch?: { status: "launching" | "launched" | "failed"; agentId?: string; lane?: string; reason?: string } | null;
 }
 export interface Ledger {
   list(filter?: { state?: ItemState }): ActionItem[];
-  propose(text: string, transcriptRef: string): ActionItem;                 // -> draft
+  propose(text: string, transcriptRef: string, opts?: { ticketId?: string; route?: "paseo" | "dispatch" }): ActionItem; // -> draft
   refine(id: string, text: string): ActionItem;                             // draft|refined -> refined
   agree(id: string, evidence: { transcriptRef: string; phrase: string }): ActionItem; // refined -> agreed
   drop(id: string): ActionItem;                                             // any non-agreed -> dropped
+  beginLaunch(id: string, route: "paseo" | "dispatch"): ActionItem;        // agreed only; throws if launching/launched (the lock)
   markLaunched(id: string, launch: { agentId: string; lane: string }): ActionItem;
+  failLaunch(id: string, reason: string): ActionItem;
+  clearLaunch(id: string): ActionItem;                                      // after a spoken "retry"
   subscribe(fn: (items: ActionItem[]) => void): () => void;
 }
 export function createLedger(opts: { path: string; clock?: () => Date; id?: () => string }): Ledger;
@@ -114,7 +140,7 @@ export function createLedger(opts: { path: string; clock?: () => Date; id?: () =
 Rules: transitions are exactly draft->refined->agreed, with drop from draft/refined; anything else throws `LedgerTransitionError`.
 `agree` throws unless `evidence.phrase` normalizes to one of the agreement phrases ("yes, do it", "yes do it"); the caller (B) passes
 the user's actual transcript line, so agreement cannot come from the model alone. Persistence: append-only JSONL, one event per line
-(`{ts, op, id, ...}`), replayed on `createLedger`. Changes since the contract in the MIC-750 brief: `agree` takes `evidence`, and
+(`{ts, op, id, ...}`), replayed on `createLedger`. Changes since the contract in the MIC-750 brief: `agree` takes `evidence`, `route`/`ticketId`/`beginLaunch`/`failLaunch`/`clearLaunch` are added, and
 `markLaunched` plus `subscribe` are added. These are additive.
 
 ### 4.2 B: conversation agent
@@ -175,16 +201,23 @@ export interface AgentLauncher {
 }
 ```
 
-Launch path for an `agreed` item (never before):
+**Exactly one route owns each item.** `ActionItem` gains `route: "paseo" | "dispatch"`, fixed when the item is proposed and never
+changed after `agreed`: `dispatch` only when the user named a ticket (`ticketId` set) **and** `PYRGOS_DISPATCH_CMD` is configured,
+otherwise `paseo`. The launcher never runs both.
 
-1. `PaseoApi.agents.create({ ... })` (`packages/client/src/index.ts:400`) with `initialPrompt` = the item text + transcript ref, in a
-   workspace chosen by `PYRGOS_LAUNCH_WORKSPACE` (or the project the user named). Default provider = the daemon's configured default.
-   Server-side code gets a `PaseoApi` the same way plugin handlers do (`PluginHandlerContext.paseo`, `packages/plugin/src/server/contracts.ts:11`);
-   B/C pick whichever construction the module can reach without a core change (loopback `createPaseoClient` is acceptable).
-2. Lane choice: for items the user marks as a ticket, the launcher shells out to the harness dispatcher with a fixed argv
-   (`dispatch.sh <kind> "<spec>" --ticket <id>` or the `.ps1` twin on Windows), located via env `PYRGOS_DISPATCH_CMD`. This is a
-   configured command, never model-built shell text. When unset, step 1 only.
-3. On success: `ledger.markLaunched`, `feed.append("system", ...)`, and the assistant says so aloud.
+- **`paseo` route:** `PaseoApi.agents.create({ ... })` (`packages/client/src/index.ts:400`) with `initialPrompt` = item text + transcript
+  ref, in the workspace named by `PYRGOS_LAUNCH_WORKSPACE` (or the project the user named). `PaseoApi` is reached as plugin handlers reach it
+  (`PluginHandlerContext.paseo`, `packages/plugin/src/server/contracts.ts:11`); a loopback `createPaseoClient` is acceptable.
+- **`dispatch` route:** a fixed argv, never model-built text: `$PYRGOS_DISPATCH_CMD <kind> "<spec>" --ticket <ticketId>` (`.sh`, or the
+  `.ps1` twin on Windows). The dispatcher creates its own worktree and agent; Paseo creates nothing. The voice session only observes it
+  (the dispatched agent appears in Paseo's agent list like any other, via `agent.created`, `packages/plugin/src/server/lifecycle.ts:66`).
+- **Duplicate prevention:** the ledger is the lock. `launch` first calls `ledger.beginLaunch(id, route)`, an append-only event that throws
+  `LedgerTransitionError` if the item already has a `launching` or `launched` marker, so a second call (retry, double "yes, do it", restart
+  replay) stops before doing any work. The item id is passed as the idempotency key: `agents.create` gets label `pyrgos-item:<id>`, and the
+  dispatch spec carries `item:<id>`; before `beginLaunch` the launcher lists agents/the dispatcher's open runs for that key and adopts a match
+  instead of launching. Then `markLaunched(id, {agentId, lane})` or `failLaunch(id, reason)`. A crash between begin and mark leaves
+  `launching`; B tells the user and re-launches only after a spoken "retry" (`ledger.clearLaunch`), never automatically.
+- Then `feed.append("system", ...)` and the assistant says so aloud.
 
 Guardrail: `launch` refuses any item whose state is not `agreed` or whose agreement evidence is missing.
 
@@ -242,12 +275,16 @@ sequenceDiagram
   B-->>VS: speak at next turn boundary
 ```
 
-Turn-boundary reply (port of `TurnGate`/`pump_replies`, `voice_agent/feed.py`): B keeps a gate with flags `user` (from
-`voice_input_state`/speech start), `bot` (TTS playing, cleared on `audio_played`) and `llm` (a stream is open). A queued overseer reply is
-spoken only when all three are false. B spoke it as `The overseer says: <text>` through the same `ctx.speak`, appends an `overseer` line to
-the transcript after queuing, and re-checks the gate before each further reply because the user may start talking. If the user starts
-talking, pending replies wait; a reply is never spoken over the user. `ctx.speak` outside an utterance needs a standing context: B holds
-the last `VoiceBrainContext` for the socket and refreshes it on each utterance; with no active socket, replies stay queued.
+Turn-boundary reply (port of `TurnGate`/`pump_replies`, `voice_agent/feed.py`): B keeps a gate with flags `user`, `bot` and `llm`,
+driven only by the `VoiceBrainEvents` push calls in section 3: `user` = true on `onUserSpeechStarted`, false on `onUserSpeechEnded`;
+`bot` = true on `onPlaybackStarted`, false on `onPlaybackComplete` (which VoiceSession also fires on abort, so an interrupted reply
+cannot leave `bot` stuck); `llm` = a `ChatBrain.stream` is open. A queued overseer reply is spoken only when all three are false, as
+`The overseer says: <text>`, via `brain.speakStanding(text)`. B never reuses a stored `VoiceBrainContext`: its `signal` belongs to one
+utterance and is already aborted after any interruption. `speakStanding` makes VoiceSession mint a fresh `AbortController` linked to the
+session's own (`this.abortController`, as `registerVoiceBridgeForAgent` does at `:~1066`), and it is cancelled by the next
+`onUserSpeechStarted`. B appends the `overseer` transcript line after queuing and re-checks the gate before each further reply. With no
+active voice socket (`isVoiceMode` false) replies stay queued in the replies file, which `watchReplies` tracks by line offset, so a
+restart does not repeat or lose them.
 
 ## 6. Client / UI
 
