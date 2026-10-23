@@ -53,6 +53,11 @@ async function acquireLock(lockPath: string): Promise<() => Promise<void>> {
   }
 }
 
+async function endsUnterminated(path: string): Promise<boolean> {
+  const text = await readFile(path, "utf8").catch(() => "");
+  return text.length > 0 && !text.endsWith("\n");
+}
+
 async function countLines(path: string): Promise<number> {
   const text = await readFile(path, "utf8").catch(() => "");
   return text.split("\n").filter((line) => line.length > 0).length;
@@ -70,7 +75,8 @@ export function createVoiceSession(input: CreateSessionInput): VoiceSession {
     try {
       const line = (await countLines(path)) + 1;
       const row = TranscriptRowSchema.parse({ ts: now().toISOString(), speaker, text });
-      await appendFile(path, `${JSON.stringify(row)}\n`, "utf8");
+      const lead = (await endsUnterminated(path)) ? "\n" : "";
+      await appendFile(path, `${lead}${JSON.stringify(row)}\n`, "utf8");
       return line;
     } finally {
       await release();
@@ -138,18 +144,25 @@ function parseJsonLine(line: string): unknown {
   }
 }
 
+const HEAD_CHARS = 256;
+
 export class ReplyWatcher {
   private offset = 0;
+  private head = "";
 
   constructor(private readonly path: string) {}
 
   async poll(): Promise<string[]> {
     const raw = await readFile(this.path, "utf8").catch(() => "");
-    if (raw.length < this.offset) this.offset = 0;
+    if (raw.length < this.offset || !raw.startsWith(this.head)) {
+      this.offset = 0;
+      this.head = "";
+    }
     const unread = raw.slice(this.offset);
     const end = unread.lastIndexOf("\n");
     if (end < 0) return [];
     this.offset += end + 1;
+    this.head = raw.slice(0, Math.min(HEAD_CHARS, this.offset));
     const replies: string[] = [];
     for (const line of unread.slice(0, end).split("\n")) {
       if (!line.trim()) continue;

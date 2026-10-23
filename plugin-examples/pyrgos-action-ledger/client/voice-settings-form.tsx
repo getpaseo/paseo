@@ -120,11 +120,16 @@ export function VoiceSettingsForm({
     (patch: VoiceSettingsPatch) => {
       latest.current = { ...latest.current, ...definedOnly(patch) };
       pending.current += 1;
-      const settle = () => {
+      const settle = (failed: boolean) => {
         pending.current -= 1;
-        if (pending.current === 0) latest.current = current.current;
+        // On success the optimistic value stays until the next settings update syncs it;
+        // resetting to current props here would use a stale render.
+        if (failed && pending.current === 0) latest.current = current.current;
       };
-      Promise.resolve(onChange(patch)).then(settle, settle);
+      Promise.resolve(onChange(patch)).then(
+        () => settle(false),
+        () => settle(true),
+      );
     },
     [onChange],
   );

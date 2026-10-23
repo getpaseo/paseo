@@ -9,10 +9,10 @@ import { LedgerList } from "./ledger-list";
 const POLL_MS = 2000;
 const NO_ITEMS: ActionItem[] = [];
 
-export function ActionLedgerPanel({ theme, layout }: PluginWorkspacePanelProps) {
+export function ActionLedgerPanel({ theme, layout, workspaceId }: PluginWorkspacePanelProps) {
   const listItems = useRpc(listActionItemsRpc);
   const { data, error } = useQuery({
-    queryKey: ["pyrgos-action-ledger"],
+    queryKey: ["pyrgos-action-ledger", workspaceId],
     queryFn: () => listItems({}),
     refetchInterval: POLL_MS,
   });

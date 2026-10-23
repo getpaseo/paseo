@@ -137,6 +137,15 @@ describe("ReplyWatcher", () => {
     expect(await watcher.poll()).toEqual(["new"]);
   });
 
+  it("starts over when the file is replaced by one of equal or greater length", async () => {
+    const path = join(dir, "x.replies.jsonl");
+    const watcher = new ReplyWatcher(path);
+    await appendFile(path, `${JSON.stringify({ text: "old reply" })}\n`);
+    expect(await watcher.poll()).toEqual(["old reply"]);
+    await writeFile(path, `${JSON.stringify({ text: "new reply!" })}\n${JSON.stringify({ text: "more" })}\n`);
+    expect(await watcher.poll()).toEqual(["new reply!", "more"]);
+  });
+
   it("skips malformed lines and keeps polling", async () => {
     const path = join(dir, "m.replies.jsonl");
     const watcher = new ReplyWatcher(path);
@@ -144,6 +153,17 @@ describe("ReplyWatcher", () => {
     expect(await watcher.poll()).toEqual(["ok"]);
     await appendFile(path, `${JSON.stringify({ ts: "t", text: "later" })}\n`);
     expect(await watcher.poll()).toEqual(["later"]);
+  });
+});
+
+describe("voice session append", () => {
+  it("starts a new line after an unterminated trailing fragment", async () => {
+    const session = createVoiceSession({ dir, session: "frag" });
+    await writeFile(session.path, '{"ts":"t","speaker":"user","te');
+    await session.append("action", "hello");
+    const lines = (await readFile(session.path, "utf8")).split("\n").filter(Boolean);
+    expect(lines).toHaveLength(2);
+    expect(JSON.parse(lines[1] ?? "").text).toBe("hello");
   });
 });
 

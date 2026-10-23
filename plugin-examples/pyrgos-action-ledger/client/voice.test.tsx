@@ -113,6 +113,28 @@ describe("settings form with staggered acks", () => {
   });
 });
 
+describe("settings form after the last save resolves", () => {
+  it("keeps the optimistic value when the ack lands before the rerender", async () => {
+    const calls: VoiceSettingsPatch[] = [];
+    const onChange = (patch: VoiceSettingsPatch) => {
+      calls.push(patch);
+      return Promise.resolve();
+    };
+    const props = { capabilities: PITCH_CAPS, colors, onChange };
+    const { rerender } = render(<VoiceSettingsForm settings={DEFAULT_SETTINGS} {...props} />);
+    const faster = screen.getByLabelText("Increase Speed");
+    fireEvent.click(faster);
+    await Promise.resolve();
+    await Promise.resolve();
+    fireEvent.click(faster);
+    expect(calls).toEqual([{ speed: 1.1 }, { speed: 1.2 }]);
+    rerender(<VoiceSettingsForm settings={FIRST_ACKED} {...props} />);
+    await Promise.resolve();
+    fireEvent.click(faster);
+    expect(calls.at(-1)).toEqual({ speed: 1.3 });
+  });
+});
+
 describe("parseLastUtterance", () => {
   it("takes the last valid row", () => {
     expect(utterance?.id).toBe("u2");

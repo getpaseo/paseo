@@ -18,8 +18,10 @@ async function newestLedgerFile(dir: string): Promise<string | null> {
       .filter((name) => name.endsWith(LEDGER_SUFFIX))
       .map(async (name) => ({
         path: join(dir, name),
-        mtime: (await stat(join(dir, name))).mtimeMs,
+        mtime: (await stat(join(dir, name)).catch(() => null))?.mtimeMs ?? null,
       })),
+  ).then((all) =>
+    all.filter((file): file is { path: string; mtime: number } => file.mtime !== null),
   );
   return files.toSorted((a, b) => b.mtime - a.mtime)[0]?.path ?? null;
 }
