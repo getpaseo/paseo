@@ -559,6 +559,18 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
 
   test.each([
     {
+      label: "a parent transcript without sidechains",
+      mode: "children",
+      // Cross V8's whole-string limit only in the opt-in reproduction, keeping routine CI small.
+      generate: (root: string) =>
+        generateReplayCorpus(root, {
+          parentMiB: process.env.PASEO_TEST_LARGE_CLAUDE_REPLAY === "1" ? 550 : 2,
+          childrenMiB: 0,
+          children: 0,
+        }),
+      expected: { parentItems: 1, completed: 0, histories: 0 },
+    },
+    {
       label: "4 MiB parent and 20 sidechains",
       mode: "children",
       generate: (root: string) =>
