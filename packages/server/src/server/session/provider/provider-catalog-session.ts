@@ -420,6 +420,24 @@ export class ProviderCatalogSession {
     msg: Extract<SessionInboundMessage, { type: "get_providers_snapshot_request" }>,
   ): Promise<void> {
     const cwd = msg.cwd?.trim() ? resolveSnapshotCwd(expandTilde(msg.cwd)) : undefined;
+    // Refresh a stale catalog (older than the configured max age) before answering,
+    // so long-lived daemons stop serving frozen provider/model lists. Skip when a
+    // refresh is already in flight to avoid duplicate discovery.
+    if (this.providerSnapshotManager.isSnapshotStale(cwd)) {
+      const snapshot = this.providerSnapshotManager.getSnapshot(cwd);
+      const isLoading = snapshot.records.some(({ entry }) => entry.status === "loading");
+      if (!isLoading) {
+        try {
+          if (cwd) {
+            await this.providerSnapshotManager.refreshSnapshotForCwd({ cwd, providers: undefined });
+          } else {
+            await this.providerSnapshotManager.refreshSettingsSnapshot({ providers: undefined });
+          }
+        } catch (error) {
+          this.logger.warn({ err: error }, "Failed to refresh stale provider snapshot");
+        }
+      }
+    }
     const snapshot = this.visibleSnapshot(this.providerSnapshotManager.getSnapshot(cwd));
     this.host.emit({
       type: "get_providers_snapshot_response",
