@@ -38,7 +38,18 @@ Decision log for the Pyrgos additions to this fork. Ordered by build sequence, n
 **Consequence:** the plugin carries its own copy of the item schema because plugins cannot import host server code; the two must be kept in step.
 **Status:** verified for rendering from a fixture; assumed for loading inside a running daemon (not launched here).
 
+## Voice panel talks to the provider through files
+
+**Decided:** settings, capabilities and word timings pass between the panel and the TTS provider as three files in the voice directory (see `voice-panel.md`).
+**Who:** Claude proposed; the orchestrator's brief required a settings panel and word highlight but the provider had no timestamp event yet.
+**Why:** plugins cannot register speech providers or read the audio stream, and the file seam works the same on lab and PC.
+**Rejected:** a core change to the speech pipeline; a websocket from the plugin to the provider.
+**Consequence:** ticket D2 must write `voice-capabilities.json` and `*.words.jsonl` and read `voice-settings.json` per utterance, or the panel shows defaults and no highlight.
+**Status:** verified for clamping, file round-trip and rendering from fixtures; assumed for live sync with a real provider and for Android rendering (neither run here).
+
 ## Open questions
+
+- Will D2 adopt the file contract as written, or expose a server event the plugin can subscribe to instead?
 
 - Which name does the brain call, `agree` or `confirm`?
 - Does the design note (ticket A) want the ledger wired at server start, and where does the `launch` implementation live?
