@@ -50,7 +50,7 @@ import type {
   StoredSchedule,
   UpdateScheduleInput,
 } from "@getpaseo/protocol/schedule/types";
-import type { ScheduleService } from "../schedule/service.js";
+import { ScheduleService } from "../schedule/service.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import {
   createPaseoWorktree as createPaseoWorktreeService,
@@ -6734,4 +6734,64 @@ it("rejects hidden agent-worktree placement and directs callers to workspace cre
       baseBranch: "main",
     }),
   ).rejects.toThrow("create_workspace");
+});
+
+describe("list_schedules MCP tool", () => {
+  it("lists new-agent schedules and agent heartbeats without run history", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "mcp-list-schedules-"));
+    const logger = createTestLogger();
+    const storage = new AgentStorage(join(directory, "agents"), logger);
+    const agentManager = new AgentManager({ clients: {}, registry: storage, logger });
+    const unexpected = async (): Promise<never> => {
+      throw new Error("Unexpected schedule execution");
+    };
+    const scheduleService = new ScheduleService({
+      paseoHome: directory,
+      logger,
+      agentManager,
+      agentStorage: storage,
+      createAgent: unexpected,
+      createDirectoryWorkspace: unexpected,
+      createPaseoWorktreeWorkspace: unexpected,
+      archiveWorkspace: unexpected,
+    });
+    try {
+      const scheduled = await scheduleService.createOrReplace({
+        prompt: "Review changes",
+        cadence: { type: "every", everyMs: 60_000 },
+        target: { type: "new-agent", config: { provider: "codex", cwd: directory } },
+      });
+      const heartbeat = await scheduleService.createOrReplace({
+        prompt: "Check progress",
+        cadence: { type: "every", everyMs: 60_000 },
+        target: { type: "agent", agentId: randomUUID() },
+      });
+      await scheduleService.pause(heartbeat.id);
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        scheduleService,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+      const result = await invokeToolWithParsedInput(registeredTool(server, "list_schedules"), {});
+      const schedules = z
+        .array(z.record(z.string(), z.unknown()))
+        .parse(result.structuredContent.schedules);
+      expect(schedules).toHaveLength(2);
+      expect(schedules).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: scheduled.id, target: scheduled.target, status: "active" }),
+          expect.objectContaining({ id: heartbeat.id, target: heartbeat.target, status: "paused" }),
+        ]),
+      );
+      for (const schedule of schedules) expect(schedule).not.toHaveProperty("runs");
+      await scheduleService.delete(scheduled.id);
+      await scheduleService.delete(heartbeat.id);
+      const empty = await invokeToolWithParsedInput(registeredTool(server, "list_schedules"), {});
+      expect(empty.structuredContent.schedules).toEqual([]);
+    } finally {
+      await removeAgentStateDir(agentManager, storage, directory);
+    }
+  });
 });

@@ -2798,9 +2798,9 @@ function createToolCatalog(
         throw new Error("Schedule service is not configured");
       }
 
-      const schedules = (await scheduleService.list())
-        .filter((schedule) => schedule.target.type === "new-agent")
-        .map((schedule) => toScheduleSummary(schedule));
+      const schedules = (await scheduleService.list()).map((schedule) =>
+        toScheduleSummary(schedule),
+      );
       return {
         content: [],
         structuredContent: ensureValidJson({ schedules }),
