@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -89,6 +89,28 @@ describe("harness tools", () => {
     const out = await byName(tools, "search").run({ query: "needle" });
     expect(out).toContain("notes.md:2");
     expect(out).not.toContain("node_modules");
+  });
+
+  it("search skips a file it cannot read instead of failing", async () => {
+    const locked = path.join(root, "locked.md");
+    await writeFile(locked, "Needle locked\n");
+    await chmod(locked, 0o000);
+    try {
+      const out = await byName(createHarnessTools({ harnessRoot: root }), "search").run({
+        query: "needle",
+      });
+      expect(out).toContain("notes.md:2");
+    } finally {
+      await chmod(locked, 0o600);
+    }
+  });
+
+  it("reads a file whose name starts with two dots", async () => {
+    await writeFile(path.join(root, "..notes.md"), "dotted name\n");
+    const out = await byName(createHarnessTools({ harnessRoot: root }), "read_file").run({
+      path: "..notes.md",
+    });
+    expect(out).toContain("dotted name");
   });
 
   it("status frames the handoff as data", async () => {

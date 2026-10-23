@@ -128,7 +128,14 @@ export class SdkBrain implements Brain {
       parent_tool_use_id: null,
     } as SDKUserMessage);
     for (;;) {
-      const next = await session.iterator.next();
+      let next: IteratorResult<unknown>;
+      try {
+        next = await session.iterator.next();
+      } catch (error) {
+        // A dead session must not be reused: the next turn starts a fresh one.
+        if (this.session === session) void this.reset();
+        throw error;
+      }
       if (next.done) {
         this.session = null;
         return;

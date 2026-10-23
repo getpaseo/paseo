@@ -36,6 +36,7 @@ export class ConversationAgent {
   private generation = 0;
   private active: Promise<void> | null = null;
   private latestTicket = 0;
+  private closed = false;
   private interrupting: { turn: Promise<void>; done: Promise<unknown> } | null = null;
   private abandonTurn: (() => void) | null = null;
   private readonly filler: string | null;
@@ -56,8 +57,9 @@ export class ConversationAgent {
     const trimmed = text.trim();
     if (!trimmed) return;
     const ticket = ++this.latestTicket;
+    if (this.closed) return;
     while (this.active) await this.bargeIn();
-    if (ticket !== this.latestTicket) return;
+    if (this.closed || ticket !== this.latestTicket) return;
     const turn = this.runTurn(++this.generation, trimmed);
     this.active = turn;
     try {
@@ -106,6 +108,8 @@ export class ConversationAgent {
   }
 
   async close(): Promise<void> {
+    // Mark closed first so queued transcripts woken by the interrupt do not start a new turn.
+    this.closed = true;
     await this.bargeIn();
     await this.options.brain.close();
   }

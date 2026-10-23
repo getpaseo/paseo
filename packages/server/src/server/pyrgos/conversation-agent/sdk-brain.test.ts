@@ -101,6 +101,37 @@ describe("toBrainEvent", () => {
 });
 
 describe("SdkBrain", () => {
+  it("drops a session whose iterator throws and starts a fresh one next turn", async () => {
+    let created = 0;
+    const good = fakeFactory([[delta("Recovered.")]]).factory;
+    const factory = ((input: FakeInput) => {
+      created += 1;
+      if (created > 1) return good(input);
+      const dead = {
+        next: async () => {
+          throw new Error("transport closed");
+        },
+        return: async () => ({ done: true, value: undefined }),
+        [Symbol.asyncIterator]() {
+          return dead;
+        },
+        interrupt: async () => {},
+      };
+      return dead;
+    }) as unknown as NonNullable<ConstructorParameters<typeof SdkBrain>[0]["queryFactory"]>;
+    const brain = new SdkBrain({ model: "haiku", tools: [], context: "", queryFactory: factory });
+    await expect(
+      (async () => {
+        for await (const _ of brain.runTurn("hi")) void _;
+      })(),
+    ).rejects.toThrow("transport closed");
+    const out: string[] = [];
+    for await (const e of brain.runTurn("again")) if (e.type === "text") out.push(e.text);
+    expect(out.join("")).toBe("Recovered.");
+    expect(created).toBe(2);
+    await brain.close();
+  });
+
   it("runs two turns on one warm session with a locked-down option set", async () => {
     const seen: FakeInput[] = [];
     const { factory } = fakeFactory([[delta("Hello there.")], [delta("Second.")]], seen);

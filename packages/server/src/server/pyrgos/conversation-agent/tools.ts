@@ -86,7 +86,7 @@ async function resolveInside(roots: string[], requested: string): Promise<string
       continue;
     }
     const rel = path.relative(realRoot, real);
-    if (rel.startsWith("..") || path.isAbsolute(rel)) continue;
+    if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) continue;
     if (SECRET_FILE.test(real.split(path.sep).join("/"))) return null;
     return real;
   }
@@ -173,7 +173,13 @@ export function createHarnessTools(options: HarnessToolsOptions): ToolDef[] {
               continue;
             }
             if (info.size > SEARCH_FILE_BYTES) continue;
-            const lines = (await readFile(file, "utf8")).split("\n");
+            let text: string;
+            try {
+              text = await readFile(file, "utf8");
+            } catch {
+              continue;
+            }
+            const lines = text.split("\n");
             for (let i = 0; i < lines.length && hits.length < SEARCH_HITS; i++) {
               if (lines[i].toLowerCase().includes(needle)) {
                 hits.push(

@@ -266,6 +266,30 @@ describe("ConversationAgent", () => {
     expect(agent.busy).toBe(false);
   });
 
+  it("close() stops queued transcripts from starting a new turn", async () => {
+    const { events, onEvent } = collect();
+    const inner = blockingBrain();
+    let started = 0;
+    const brain: Brain = {
+      runTurn(text) {
+        started += 1;
+        return inner.runTurn(text);
+      },
+      interrupt: () => inner.interrupt(),
+      close: () => inner.close(),
+    };
+    const agent = new ConversationAgent({ brain, model: "haiku", onEvent, filler: null });
+    const first = agent.handleTranscript("one");
+    await new Promise((r) => setTimeout(r, 5));
+    const queued = agent.handleTranscript("two");
+    const closing = agent.close();
+    await Promise.all([first, queued, closing]);
+    await agent.handleTranscript("three");
+    expect(started).toBe(1);
+    expect(agent.busy).toBe(false);
+    expect(events.some((e) => e.type === "speak" && e.text.includes("late words"))).toBe(false);
+  });
+
   it("reports a brain failure as an error event", async () => {
     const { events, onEvent } = collect();
     const brain: Brain = {

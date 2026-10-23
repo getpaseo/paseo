@@ -15,7 +15,8 @@ const ABBREVIATIONS = [
   "approx.",
   "no.",
 ];
-const MARKDOWN_MARKS = /[*_`#>]+/g;
+// `*` and `_` inside a word (snake_case, 2*3) are kept; emphasis marks at word edges go.
+const MARKDOWN_MARKS = /(?<![A-Za-z0-9])[*_]+|[*_]+(?![A-Za-z0-9])|[`#>]+/g;
 const SENTENCE_END = ".!?";
 const CLAUSE_END = ",;:";
 const DASHES = "—–";

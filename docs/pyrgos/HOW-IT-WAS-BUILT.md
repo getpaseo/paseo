@@ -24,6 +24,8 @@ A formal log of the Pyrgos additions to this fork, in build order. Each entry sa
 
 **Review fixes, round 3 (Codex; Claude fixed):** (1) a rejected `brain.interrupt()` escaped the race in `settle()` and blocked the replacement turn; the rejection is now swallowed and the turn is abandoned at the timeout. (2) the secret-name pattern missed multi-suffix names such as `secrets.production.json`; any `secret(s)` or `credential(s)` name with any suffix is now blocked. **Status:** verified by a new agent test and extended tool tests (38 pass, lint and typecheck clean).
 
+**Review fixes, round 5 (Codex; Claude fixed):** (1) `close()` now marks the agent closed first, so a transcript queued behind the interrupted turn cannot start a new one on a closing brain. (2) `SdkBrain` drops its session when `iterator.next()` throws, so the next turn starts a fresh one. (3) `search` skips a file whose read fails. Non-blocking: `..notes.md` no longer counts as an escape from the root; the markdown cleaner keeps `_` and `*` inside identifiers. **Status:** verified by new tests for each (44 pass, lint and typecheck clean).
+
 ## Open questions
 
 - Warm-turn time to first spoken word on opus (target under 2 s) is not yet measured.
