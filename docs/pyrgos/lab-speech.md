@@ -6,12 +6,13 @@ Code: `packages/server/src/server/speech/providers/lab/` (`tts.ts`, `stt.ts`, `c
 
 ## Environment
 
-| Variable                       | Meaning                                                        | Default                                   |
-| ------------------------------ | -------------------------------------------------------------- | ----------------------------------------- |
-| `PASEO_LAB_TTS_URL`            | `ws(s)://` URL of the lab TTS server. Unset turns lab TTS off. | unset                                     |
-| `PASEO_LAB_STT_URL`            | `ws(s)://` URL of the lab STT server. Unset turns lab STT off. | unset                                     |
-| `PASEO_LAB_TTS_VOICE`          | Voice or saved profile id sent with each `speak`.              | `profile:winner-r6-s49-heart-alice-bella` |
-| `PASEO_LAB_CONNECT_TIMEOUT_MS` | Connect timeout before falling back.                           | `1500`                                    |
+| Variable                        | Meaning                                                                                                        | Default                                   |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| `PASEO_LAB_TTS_URL`             | `ws(s)://` URL of the lab TTS server. Unset turns lab TTS off.                                                 | unset                                     |
+| `PASEO_LAB_STT_URL`             | `ws(s)://` URL of the lab STT server. Unset turns lab STT off.                                                 | unset                                     |
+| `PASEO_LAB_TTS_VOICE`           | Voice or saved profile id sent with each `speak`.                                                              | `profile:winner-r6-s49-heart-alice-bella` |
+| `PASEO_LAB_CONNECT_TIMEOUT_MS`  | Connect timeout before falling back.                                                                           | `1500`                                    |
+| `PASEO_LAB_TTS_IDLE_TIMEOUT_MS` | TTS first-audio and between-frame timeout; before audio it falls back to stock, after audio the stream errors. | `3000`                                    |
 
 Values are never committed. Set them in the daemon's environment.
 

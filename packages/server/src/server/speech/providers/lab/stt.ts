@@ -60,6 +60,10 @@ export class LabSTT implements SpeechToTextProvider {
     // commit() before the socket is (re)connected: the "end" goes out right after the queued audio.
     let endPending = false;
     let pending: WebSocket | null = null;
+    // Latest lab open attempt; connect() follows it when clear() aborts the one it started with.
+    let latest: Promise<void> | null = null;
+    let connecting = false;
+    let replayingCommit = false;
     const aborted = new Error("lab STT connect aborted");
     const dropped = new WeakSet<WebSocket>();
     const abortPending = () => {
@@ -114,7 +118,7 @@ export class LabSTT implements SpeechToTextProvider {
           }
         });
         socket.on("error", (error) => {
-          if (!opened) reject(error);
+          if (!opened) reject(dropped.has(socket) ? aborted : error);
           else if (ws === socket) emitter.emit("error", error);
         });
         socket.on("close", () => {
@@ -131,7 +135,9 @@ export class LabSTT implements SpeechToTextProvider {
     const startFallback = async (): Promise<void> => {
       if (!options.fallback) throw new Error("lab STT unavailable and no fallback configured");
       const session = options.fallback.createSession(params);
-      session.on("committed", (p) => emitter.emit("committed", p));
+      session.on("committed", (p) => {
+        if (!replayingCommit) emitter.emit("committed", p);
+      });
       session.on("transcript", (p) => emitter.emit("transcript", p));
       session.on("error", (e) => emitter.emit("error", e));
       await session.connect();
@@ -139,18 +145,37 @@ export class LabSTT implements SpeechToTextProvider {
       for (const chunk of queued.splice(0)) {
         session.appendPcm16(resamplePcm16(chunk, LAB_STT_SAMPLE_RATE, session.requiredSampleRate));
       }
+      if (endPending) {
+        // commit() already emitted "committed" before the lab failed; only replay the end.
+        endPending = false;
+        replayingCommit = true;
+        session.commit();
+        replayingCommit = false;
+      }
     };
 
     return {
       requiredSampleRate: LAB_STT_SAMPLE_RATE,
       async connect() {
-        try {
-          await openLab();
-        } catch (error) {
-          if (closed) return;
-          logger.warn({ err: error }, "Lab STT unavailable; using fallback provider");
-          await startFallback();
+        connecting = true;
+        let attempt = (latest = openLab());
+        for (;;) {
+          try {
+            await attempt;
+            break;
+          } catch (error) {
+            if (closed) break;
+            // clear() replaced this attempt: follow the new one, never start the fallback.
+            if (error === aborted && latest && latest !== attempt) {
+              attempt = latest;
+              continue;
+            }
+            logger.warn({ err: error }, "Lab STT unavailable; using fallback provider");
+            await startFallback();
+            break;
+          }
         }
+        connecting = false;
       },
       appendPcm16(chunk: Buffer) {
         if (delegate) {
@@ -189,8 +214,9 @@ export class LabSTT implements SpeechToTextProvider {
         old?.terminate();
         abortPending();
         segmentId = randomUUID();
-        void openLab().catch((error) => {
-          if (!closed && error !== aborted) emitter.emit("error", error);
+        const reopen = (latest = openLab());
+        reopen.catch((error) => {
+          if (!closed && !connecting && error !== aborted) emitter.emit("error", error);
         });
       },
       close() {

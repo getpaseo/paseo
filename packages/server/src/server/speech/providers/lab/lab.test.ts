@@ -344,6 +344,45 @@ describe("LabSTT", () => {
     session.close();
   });
 
+  test("clear() during the initial connect follows the reopen and never starts the fallback", async () => {
+    let fallbackSessions = 0;
+    const fallback: SpeechToTextProvider = {
+      createSession: () => {
+        fallbackSessions += 1;
+        throw new Error("fallback must not start");
+      },
+    } as unknown as SpeechToTextProvider;
+    const url = await fakeLab(() => {});
+    const stt = new LabSTT({ url, connectTimeoutMs: 1000, fallback }, logger);
+    const session = stt.createSession({ logger });
+    const connected = session.connect();
+    session.clear();
+    await connected;
+    expect(fallbackSessions).toBe(0);
+    session.close();
+  });
+
+  test("a commit before the lab fails is replayed on the fallback", async () => {
+    const calls: string[] = [];
+    const delegate = {
+      requiredSampleRate: 16000,
+      connect: async () => {},
+      appendPcm16: () => calls.push("append"),
+      commit: () => calls.push("commit"),
+      clear: () => {},
+      close: () => {},
+      on: () => undefined,
+    };
+    const fallback = { createSession: () => delegate } as unknown as SpeechToTextProvider;
+    const stt = new LabSTT({ url: await deadUrl(), connectTimeoutMs: 500, fallback }, logger);
+    const session = stt.createSession({ logger });
+    const connected = session.connect();
+    session.appendPcm16(Buffer.from([1, 0]));
+    session.commit();
+    await connected;
+    expect(calls).toEqual(["append", "commit"]);
+  });
+
   test("connect rejects when the lab is down and there is no fallback", async () => {
     const stt = new LabSTT({ url: await deadUrl(), connectTimeoutMs: 500, fallback: null }, logger);
     await expect(stt.createSession({ logger }).connect()).rejects.toThrow(/unavailable/);
