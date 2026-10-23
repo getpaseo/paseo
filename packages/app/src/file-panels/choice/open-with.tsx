@@ -1,17 +1,12 @@
 import { useCallback, useMemo, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { withUnistyles } from "react-native-unistyles";
-import { Ellipsis } from "lucide-react-native";
 import {
   MenuItem,
   MenuSeparator,
   MenuSubTrigger,
   type MenuPageDefinition,
 } from "@/components/ui/menu";
-import { DropdownMenu, DropdownMenuContent } from "@/components/ui/dropdown-menu";
-import { extraMutedIconColorMapping } from "@/components/ui/icon-button-chrome";
-import { ToolbarButton, paneContentToolbarIconSize } from "@/components/ui/pane-content-toolbar";
-import { useIsCompactFormFactor } from "@/constants/layout";
 import type { PanelInstanceIdentity } from "@/panels/panel-instance-attributes";
 import { PluginIconView } from "@/plugins/icons";
 import type { Theme } from "@/styles/theme";
@@ -22,7 +17,6 @@ import { filePanelAlwaysUseLabel, filePanelIcon, filePanelOptionLabel } from "./
 const OPEN_WITH_PAGE_ID = "filePanelOpenWith";
 const MENU_ICON_SIZE = 16;
 
-const ThemedEllipsis = withUnistyles(Ellipsis);
 const ThemedPanelIcon = withUnistyles(PluginIconView);
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
@@ -41,41 +35,6 @@ export function useFilePanelOpenWithMenu(
   testIDBase: string,
 ): FilePanelOpenWithMenu {
   return useOpenWithMenu(useTabFilePanelChoice(identity), testIDBase);
-}
-
-/**
- * The file bar's overflow: remembering the panel the bar's switcher shows. Renders nothing unless
- * the file has more than one panel.
- */
-export function FilePanelBarMenu({ choice }: { choice: FilePanelChoice }) {
-  const { t } = useTranslation();
-  const compact = useIsCompactFormFactor();
-  const { openWith } = useFilePanelChoiceSnapshot(choice);
-  if (!openWith) return null;
-  const label = t("panels.file.filePanels.actions");
-  return (
-    <DropdownMenu compactMode="sheet">
-      <ToolbarButton kind="menu" label={label} compact={compact} testID="file-panel-bar-menu">
-        <ThemedEllipsis
-          size={paneContentToolbarIconSize(compact)}
-          uniProps={extraMutedIconColorMapping}
-        />
-      </ToolbarButton>
-      <DropdownMenuContent
-        align="end"
-        width={240}
-        sheetTitle={label}
-        testID="file-panel-bar-menu-surface"
-      >
-        <AlwaysUseItem
-          choice={choice}
-          label={filePanelAlwaysUseLabel(t, openWith.selectorKey)}
-          selected={openWith.remembered}
-          testID="file-panel-bar-menu-always-use"
-        />
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
 }
 
 function useOpenWithMenu(

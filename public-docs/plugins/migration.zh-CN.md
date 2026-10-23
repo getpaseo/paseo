@@ -68,6 +68,7 @@ my-plugin/
 | 新的侧边栏底部贡献                                                                            | `index.client.tsx` 中的 `client.addSidebarFooterItem({ id, title, Component })`                                        |
 | 新的文件面板贡献                                                                              | `index.client.tsx` 中的 `client.addFilePanel(panel)`                                                                   |
 | 旧根入口中的 `plugin.addWorkspacePanel(panel)`                                                | `index.client.tsx` 中的 `client.addWorkspacePanel(panel)`                                                              |
+| 带有 `context: "agent"` 的 Agent 面板                                                         | `index.client.tsx` 中的 `client.addAgentPanel(panel)`；省略 `context`                                                  |
 | 旧根入口中的 `plugin.addCommandCenterItem(item)`                                              | `index.client.tsx` 中的 `client.addCommandCenterItem(item)`                                                            |
 | 旧根入口中的 `plugin.addClientSlashCommand(command)`                                          | `index.client.tsx` 中的 `client.addSlashCommand(command)`                                                              |
 | 旧根入口中的 `plugin.addClientSide(fn)`                                                       | 删除这层包装，把 `fn` 的函数体移入默认的客户端入口函数                                                                 |
@@ -84,6 +85,22 @@ my-plugin/
 用原 `addSidebarItem` 项的 `id` 注册替代它的界面，这样已保存的链接仍然有效。`/plugin/<plugin>/sidebar/<id>` 链接以及更早的 `/plugin/<plugin>/<id>` 链接，会打开具有该 `id` 的 `addSidebarItem`，否则打开具有该 `id` 的界面。
 
 从 `@getpaseo/plugin/client` 导入 `PluginClientContext`，从 `@getpaseo/plugin/server` 导入 `PluginServerContext`。删除对旧 context 类型的导入。客户端注册返回幂等的移除函数，但标题栏按钮和 Composer 标签除外，它们返回 `{ update, remove }` 句柄。保留插件在销毁之前调用的所有移除函数；入口的清理函数运行后，Paseo 会移除尚未移除的注册。
+
+### 0.13 的面板属性 {#panel-props-in-013}
+
+所有面板类型共享 [params、revision 和持久化的标签页状态](./reference.md#workspace-panels)。
+
+| 旧 API                                                                        | 替代方式                                         |
+| ----------------------------------------------------------------------------- | ------------------------------------------------ |
+| 工作区/Agent 面板的 `context` 属性                                            | 在注册时选择面板类型。                           |
+| Agent 面板的 `agentId` 属性                                                   | `params.agentId`                                 |
+| `addWorkspacePanel({ context: "workspace", ... })`                            | `addWorkspacePanel({ ... })`                     |
+| `addWorkspacePanel({ context: "agent", ... })`                                | `addAgentPanel({ ... })`                         |
+| Beta 文件面板的 `location.lineStart`、`location.lineEnd`、`location.revision` | `params.lineStart`、`params.lineEnd`、`revision` |
+| Beta 的 `PluginFileTab`、`PluginFileLocation`                                 | `PluginTab`、`PluginFilePanelParams`             |
+
+0.12 的别名会保留到 2027-04-23 之后移除。Beta 文件 API 直接替换。采用新 API 时，将
+`requirements.paseo` 声明为 `>=0.13.0`。
 
 ### Composer 标签 {#composer-pills}
 

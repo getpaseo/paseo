@@ -1,7 +1,7 @@
 import type { WorkspacePaneTabOrderInput, WorkspaceTabOrderInput } from "@/workspace-tabs/model";
 import { performOrderGesture } from "@/ordering/intents";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { create } from "zustand";
 import { persist, type StateStorage } from "zustand/middleware";
 import type { z } from "zod";
@@ -130,8 +130,12 @@ export type WorkspaceTabDestination =
   | { kind: "sheet"; tabId: string };
 
 interface WorkspaceLayoutStore {
+  panelRevisionByWorkspace: Record<string, Record<string, number>>;
   /** Published once by the app shell; callers never pass a form factor to open a tab. */
   layoutMode: WorkspaceLayoutMode;
+  pendingOpenByWorkspace: Record<string, OpenWorkspaceTabInput>;
+  deferOpenTab: (input: OpenWorkspaceTabInput) => null;
+  consumePendingOpen: (workspaceKey: string) => string | null;
   /**
    * Each workspace's sheet tabs in the order they opened, so the last is the sheet on top. The
    * list never reorders: the stack belongs to the sheet primitive, and moving a sheet would remount
@@ -996,6 +1000,22 @@ function createPersistedStateProjection() {
   };
 }
 
+function advancePanelRevision(
+  state: WorkspaceLayoutStore,
+  workspaceKey: string,
+  tabId: string,
+  target: WorkspaceTabTarget,
+) {
+  if (target.kind !== "file" && target.kind !== "plugin") return {};
+  const revisions = state.panelRevisionByWorkspace[workspaceKey] ?? {};
+  return {
+    panelRevisionByWorkspace: {
+      ...state.panelRevisionByWorkspace,
+      [workspaceKey]: { ...revisions, [tabId]: (revisions[tabId] ?? 0) + 1 },
+    },
+  };
+}
+
 export function createWorkspaceLayoutStore(
   ids: WorkspaceLayoutIdSource = defaultWorkspaceLayoutIds,
   storage: StateStorage = AsyncStorage,
@@ -1021,6 +1041,27 @@ export function createWorkspaceLayoutStore(
             }));
           }
           return tabId;
+        },
+        panelRevisionByWorkspace: {},
+        pendingOpenByWorkspace: {},
+        deferOpenTab: (input) => {
+          set((state) => ({
+            pendingOpenByWorkspace: {
+              ...state.pendingOpenByWorkspace,
+              [input.workspaceKey]: input,
+            },
+          }));
+          return null;
+        },
+        consumePendingOpen: (workspaceKey) => {
+          const pending = get().pendingOpenByWorkspace[workspaceKey];
+          if (!pending) return null;
+          set((state) => {
+            const { [workspaceKey]: _pending, ...pendingOpenByWorkspace } =
+              state.pendingOpenByWorkspace;
+            return { pendingOpenByWorkspace };
+          });
+          return get().openTab(pending);
         },
         layoutMode: "split-panes",
         sheetsByWorkspace: {},
@@ -1074,7 +1115,15 @@ export function createWorkspaceLayoutStore(
                       ? [existing]
                       : [];
                   });
-            set((state) => withSheets(state, normalizedWorkspaceKey, next));
+            set((state) => ({
+              ...withSheets(state, normalizedWorkspaceKey, next),
+              ...advancePanelRevision(
+                state,
+                normalizedWorkspaceKey,
+                sheet.tab.tabId,
+                normalizedTarget,
+              ),
+            }));
             return sheet.tab.tabId;
           }
           const placement = getOpenTabPlacement(
@@ -1130,6 +1179,7 @@ export function createWorkspaceLayoutStore(
           const shouldPinAgent = input.pin === true && normalizedTarget.kind === "agent";
           set((state) => ({
             ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+            ...advancePanelRevision(state, normalizedWorkspaceKey, result.tabId, normalizedTarget),
             // A tab brought to the front dismisses the sheet over it.
             ...(input.intent === "background" ? {} : dismissSheets(state, normalizedWorkspaceKey)),
             hiddenAgentIdsByWorkspace:
@@ -1509,7 +1559,15 @@ export function createWorkspaceLayoutStore(
               })),
             };
             if (policy) {
-              set({ sheetsByWorkspace: next.sheetsByWorkspace });
+              set((state) => ({
+                sheetsByWorkspace: next.sheetsByWorkspace,
+                ...advancePanelRevision(
+                  state,
+                  normalizedWorkspaceKey,
+                  normalizedTabId,
+                  normalizedTarget,
+                ),
+              }));
               return normalizedTabId;
             }
             // A target sheets do not host becomes the tab it would have opened as.
@@ -1527,6 +1585,7 @@ export function createWorkspaceLayoutStore(
           if (!result) return null;
           set((state) => ({
             ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+            ...advancePanelRevision(state, normalizedWorkspaceKey, result.tabId, normalizedTarget),
             hiddenAgentIdsByWorkspace:
               normalizedTarget.kind !== "agent"
                 ? state.hiddenAgentIdsByWorkspace
@@ -2185,6 +2244,7 @@ export function createWorkspaceLayoutStore(
 
           set((state) => {
             const hasAny =
+              normalizedWorkspaceKey in state.pendingOpenByWorkspace ||
               normalizedWorkspaceKey in state.layoutByWorkspace ||
               normalizedWorkspaceKey in state.splitSizesByWorkspace ||
               normalizedWorkspaceKey in state.explorerSidebarWidthByWorkspace ||
@@ -2198,6 +2258,8 @@ export function createWorkspaceLayoutStore(
             if (!hasAny) {
               return state;
             }
+            const { [normalizedWorkspaceKey]: _pendingOpen, ...pendingOpenByWorkspace } =
+              state.pendingOpenByWorkspace;
             const {
               [normalizedWorkspaceKey]: _autoOpened,
               ...pullRequestTabAutoOpenedByWorkspace
@@ -2224,6 +2286,7 @@ export function createWorkspaceLayoutStore(
               state.sidePaneIdByWorkspace;
             return {
               ...withSheets(state, normalizedWorkspaceKey, NO_SHEETS),
+              pendingOpenByWorkspace,
               pullRequestTabAutoOpenedByWorkspace,
               layoutByWorkspace,
               splitSizesByWorkspace,
@@ -2372,4 +2435,30 @@ export function useWorkspaceLayoutStoreHydrated(): boolean {
   }, []);
 
   return hasHydrated;
+}
+
+interface PendingWorkspaceOpenReadiness {
+  workspaceKey: string | null;
+  hasHydratedWorkspaces: boolean;
+  workspaceExists: boolean;
+  onOpened: (workspaceKey: string, tabId: string | null) => void;
+}
+
+export function usePendingWorkspaceOpen({
+  workspaceKey,
+  hasHydratedWorkspaces,
+  workspaceExists,
+  onOpened,
+}: PendingWorkspaceOpenReadiness): WorkspaceTabTarget | null {
+  const workspaceReady = hasHydratedWorkspaces && workspaceExists;
+  const pending = useWorkspaceLayoutStore((state) =>
+    workspaceKey ? state.pendingOpenByWorkspace[workspaceKey] : undefined,
+  );
+  const layoutHydrated = useWorkspaceLayoutStoreHydrated();
+  useLayoutEffect(() => {
+    if (workspaceKey && workspaceReady && layoutHydrated && pending) {
+      onOpened(workspaceKey, useWorkspaceLayoutStore.getState().consumePendingOpen(workspaceKey));
+    }
+  }, [workspaceKey, workspaceReady, layoutHydrated, pending, onOpened]);
+  return pending ? pending.target : null;
 }

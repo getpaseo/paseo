@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { z } from "zod";
 import { WorkspaceLayoutPersistedStateSchema } from "../../../src/stores/workspace-layout-storage";
 import {
@@ -60,4 +60,27 @@ export async function seedCorruptedWorkspaceLayout(page: Page, workspaceId: stri
     (value) => localStorage.setItem("workspace-layout-state", value),
     JSON.stringify(stored),
   );
+}
+
+export async function expectAgentAbsentFromWorkspaceLayout(
+  page: Page,
+  input: { serverId: string; workspaceId: string; agentId: string },
+): Promise<void> {
+  await expect
+    .poll(async () => {
+      const raw = await page.evaluate(() => localStorage.getItem("workspace-layout-state"));
+      if (!raw) throw new Error("Workspace layout was not persisted");
+      const stored = z
+        .object({ state: WorkspaceLayoutPersistedStateSchema })
+        .parse(JSON.parse(raw));
+      const key = `${input.serverId}:${input.workspaceId}`;
+      const layout = stored.state.layoutByWorkspace[key];
+      const pins = stored.state.pinnedAgentIdsByWorkspace?.[key] ?? [];
+      // The persisted tree is validated above; inspect all panes including hidden ones.
+      return {
+        containsAgent: JSON.stringify(layout).includes(input.agentId),
+        pinned: pins.includes(input.agentId),
+      };
+    })
+    .toEqual({ containsAgent: false, pinned: false });
 }

@@ -1,5 +1,4 @@
 export type OrderIntent =
-  | { kind: "workspaces"; projectViewKey: string; moved: string; before: string[]; after: string[] }
   | { kind: "pinned"; moved: string; before: string[]; after: string[] }
   | { kind: "tabs"; workspaceKey: string; paneId: string; movedTabId: string };
 

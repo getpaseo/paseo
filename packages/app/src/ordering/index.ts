@@ -6,7 +6,6 @@ import {
   type OrderRecord,
   type OrderScope,
 } from "@getpaseo/protocol/ordering";
-import { buildWorkspaceStructureProjects } from "@/projects/workspace-structure";
 import { useSessionStore } from "@/stores/session-store";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
@@ -19,16 +18,6 @@ import {
   OrderItemsRemovedError,
   type OrderMembership,
 } from "./replica";
-
-function projects() {
-  return buildWorkspaceStructureProjects({
-    sessions: Object.entries(useSessionStore.getState().sessions).map(([serverId, session]) => ({
-      serverId,
-      projects: session.projects.values(),
-      workspaces: session.workspaces.values(),
-    })),
-  });
-}
 
 type OrderingClient = Pick<
   DaemonClient,
@@ -70,11 +59,7 @@ class SharedOrderingController {
     if (this.observing) return;
     this.observing = true;
     useSidebarOrderStore.subscribe((state, previous) => {
-      if (
-        state.workspaceOrderByProject !== previous.workspaceOrderByProject ||
-        state.pinnedWorkspaceOrder !== previous.pinnedWorkspaceOrder
-      )
-        this.reapply();
+      if (state.pinnedWorkspaceOrder !== previous.pinnedWorkspaceOrder) this.reapply();
     });
     useWorkspaceLayoutStore.subscribe((state, previous) => {
       if (
@@ -212,7 +197,6 @@ class SharedOrderingController {
     if (this.applying || isOrderGesture()) return;
     this.applying = true;
     try {
-      const structure = projects();
       for (const record of records) {
         const scope = record.scope;
         if (scope.kind === "tabs") {
@@ -246,21 +230,8 @@ class SharedOrderingController {
             store.setPinnedWorkspaceOrder({ keys: next });
           continue;
         }
-        const project = structure.find((candidate) =>
-          candidate.hosts.some(
-            (host) => host.serverId === serverId && host.projectId === scope.projectId,
-          ),
-        );
-        if (!project) continue;
-        const current = store.getWorkspaceOrder(project.viewKey);
-        const currentSet = new Set(current);
-        const complete = [
-          ...current,
-          ...project.workspaceKeys.filter((key) => !currentSet.has(key)),
-        ];
-        const next = applySharedOrder(complete, shared);
-        if (!ordersEqual(current, next))
-          store.setWorkspaceOrder({ projectViewKey: project.viewKey, keys: next });
+        // Ordinary workspaces follow the host's Created/Last prompt sort.
+        // Retained wire records never override that order.
       }
     } finally {
       this.applying = false;
@@ -436,21 +407,9 @@ class SharedOrderingController {
         this.reapply();
         return;
       }
-      const projectId = moved.projectId;
-      const project =
-        intent.kind === "workspaces"
-          ? projects().find((p) => p.viewKey === intent.projectViewKey)
-          : null;
-      if (
-        intent.kind === "workspaces" &&
-        !project?.hosts.some((h) => h.serverId === serverId && h.projectId === projectId)
-      )
-        return;
       const ids = new Map(
         [...session.workspaces.values()]
-          .filter((w) =>
-            intent.kind === "pinned" ? Boolean(w.pinnedAt) : w.projectId === projectId,
-          )
+          .filter((w) => Boolean(w.pinnedAt))
           .map((w) => [`${serverId}:${w.id}`, w.id]),
       );
       const projectOrder = (keys: string[]) =>
@@ -465,8 +424,7 @@ class SharedOrderingController {
         reportOrderError({ kind: "unsupported" });
         return;
       }
-      const scope: OrderScope =
-        intent.kind === "pinned" ? { kind: "pinned" } : { kind: "workspaces", projectId };
+      const scope: OrderScope = { kind: "pinned" };
       if (!this.hosts.has(serverId) || this.hosts.get(serverId)!.deviceRevision === null)
         reportOrderError({ kind: "failed" });
       this.replica(serverId).reorder({

@@ -317,7 +317,7 @@ Paseo tools; otherwise the provider policy applies. Provider and global policy a
 session is created, resumed, imported, or reloaded, so configuration changes affect the next
 session rather than an already-running one.
 
-`agents.metadataGeneration.providers` controls the preferred structured-generation fallback order for daemon-side metadata tasks such as commit messages, PR text, branch names, and generated agent titles. Entries are tried first in the configured order, then Paseo falls through to dynamically discovered defaults and finally the current selection when available.
+`agents.metadataGeneration.providers` selects the models for daemon-side metadata tasks: commit messages, PR text, branch names, and generated titles. An empty list is Automatic; a non-empty list is Manual and only those models are tried. See [public-docs/metadata-generation.md](../public-docs/metadata-generation.md#how-a-model-is-chosen).
 
 ### Git process limits
 
@@ -352,8 +352,6 @@ Environment variables override `config.json`:
 `PASEO_GIT_MAX_PROCESS_CONCURRENCY` wins when it and the legacy alias are both set. Run `paseo reload`
 after changing `config.json`. Environment changes require a daemon restart; the launch environment
 remains authoritative during reload.
-
-`agents.metadataGeneration.providers` controls the preferred structured-generation fallback order for daemon-side metadata tasks such as commit messages, PR text, branch names, and generated agent titles. Entries are tried first in the configured order, then Paseo falls through to dynamically discovered defaults and finally the current selection when available.
 
 Local speech model ids are intentionally narrow: STT uses `parakeet-tdt-0.6b-v2-int8`, TTS uses `kokoro-en-v0_19`, and turn detection uses the bundled Silero VAD model.
 
@@ -524,8 +522,9 @@ late target and order writes. A new connection with that `clientId` can register
 No device-management UI or pairing authority is implied by this operation.
 
 Only the first explicit gesture can initialize a scope at revision zero. Its seed is the
-complete dragged pane order for tabs, or the moved host's visible workspace/pinned order.
-Snapshots, cache hydration, and other panes never seed it. Initialization uses the same
+complete dragged pane order for tabs, or the moved host's visible pinned workspace order.
+Ordinary workspaces keep the host's Created/Last prompt order; retained workspace-order
+records do not override that sort. Snapshots, cache hydration, and other panes never seed it. Initialization uses the same
 revision CAS as later writes: the losing initializer discards its seed and replays only
 its precise move on the winner's record. Later gestures never replace the whole order.
 

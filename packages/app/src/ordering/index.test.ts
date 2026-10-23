@@ -96,7 +96,7 @@ afterEach(() => {
   useSessionStore.getState().clearSession("other-order-host");
   useWorkspaceLayoutStore.setState({ layoutByWorkspace: {}, sheetsByWorkspace: {} });
   useSessionStore.getState().clearSession(host);
-  useSidebarOrderStore.setState({ workspaceOrderByProject: {}, pinnedWorkspaceOrder: [] });
+  useSidebarOrderStore.setState({ pinnedWorkspaceOrder: [] });
 });
 
 test("live permission changes grant ordering without reconnecting", async () => {
@@ -241,31 +241,33 @@ function populate(serverId = host) {
     ),
   );
 }
-test("a cold install applies shared workspace and pinned order without publishing an empty cache", async () => {
+test("a cold install applies pinned order without overriding automatic workspace order", async () => {
   const client = new FakeClient();
   useSessionStore.getState().initializeSession(host, null);
   await sharedOrdering.connect({ serverId: host, client, supported: true, directoryReady: true });
   populate();
   useSessionStore.getState().setHasHydratedWorkspaces(host, true);
-  expect(useSidebarOrderStore.getState().getWorkspaceOrder("project-key")).toEqual([
-    `${host}:b`,
-    `${host}:a`,
-  ]);
+  expect([...useSessionStore.getState().sessions[host]!.workspaces.keys()]).toEqual(["a", "b"]);
+  client.receive({
+    type: "ui.order.update",
+    payload: {
+      scope: { kind: "workspaces", projectId: "p" },
+      record: { scope: { kind: "workspaces", projectId: "p" }, revision: 2, order: ["b", "a"] },
+    },
+  });
+  expect([...useSessionStore.getState().sessions[host]!.workspaces.keys()]).toEqual(["a", "b"]);
   expect(useSidebarOrderStore.getState().pinnedWorkspaceOrder).toEqual([`${host}:a`, `${host}:b`]);
   expect(client.calls).toEqual([]);
-  useSidebarOrderStore.getState().setWorkspaceOrder({
-    projectViewKey: "project-key",
-    keys: [`${host}:a`, `${host}:b`],
+  useSidebarOrderStore.getState().setPinnedWorkspaceOrder({
+    keys: [`${host}:b`, `${host}:a`],
     gesture: {
       userInitiated: true,
-      movedKey: `${host}:a`,
+      movedKey: `${host}:b`,
     },
   });
   await expect
     .poll(() => client.calls)
-    .toEqual([
-      { scope: { kind: "workspaces", projectId: "p" }, expectedRevision: 1, order: ["a", "b"] },
-    ]);
+    .toEqual([{ scope: { kind: "pinned" }, expectedRevision: 1, order: ["b", "a"] }]);
 });
 test("an unsupported host receives no new ordering RPC", async () => {
   const client = new FakeClient();
@@ -275,8 +277,7 @@ test("an unsupported host receives no new ordering RPC", async () => {
   const errors: OrderError[] = [];
   const release = observeOrderErrors((error) => errors.push(error));
   await sharedOrdering.connect({ serverId: host, client, supported: false, directoryReady: true });
-  useSidebarOrderStore.getState().setWorkspaceOrder({
-    projectViewKey: "project-key",
+  useSidebarOrderStore.getState().setPinnedWorkspaceOrder({
     keys: [`${host}:b`, `${host}:a`],
     gesture: {
       userInitiated: true,
@@ -293,20 +294,17 @@ test("a gesture before connect survives the first shared snapshot", async () => 
   useSessionStore.getState().initializeSession(host, null);
   populate();
   useSessionStore.getState().setHasHydratedWorkspaces(host, true);
-  useSidebarOrderStore.getState().setWorkspaceOrder({
-    projectViewKey: "project-key",
-    keys: [`${host}:a`, `${host}:b`],
+  useSidebarOrderStore.getState().setPinnedWorkspaceOrder({
+    keys: [`${host}:b`, `${host}:a`],
     gesture: {
       userInitiated: true,
-      movedKey: `${host}:a`,
+      movedKey: `${host}:b`,
     },
   });
   await sharedOrdering.connect({ serverId: host, client, supported: true, directoryReady: true });
   await expect
     .poll(() => client.calls)
-    .toEqual([
-      { scope: { kind: "workspaces", projectId: "p" }, expectedRevision: 1, order: ["a", "b"] },
-    ]);
+    .toEqual([{ scope: { kind: "pinned" }, expectedRevision: 1, order: ["b", "a"] }]);
 });
 test("pinned gestures publish only the moved host; cross-host interleaving stays local", async () => {
   const otherHost = "other-order-host";
