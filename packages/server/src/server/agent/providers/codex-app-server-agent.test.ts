@@ -1769,6 +1769,89 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test("offers the persistence choices from a Codex MCP elicitation and returns the selected one", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    await session.connect();
+    const permissionRequested = waitForNextPermission(session);
+    appServer.requestMcpElicitation({
+      threadId: "thread-1",
+      turnId: "turn-1",
+      serverName: "computer-use",
+      message: "Allow Computer Use to use Safari?",
+      requestedSchema: { type: "object", properties: {} },
+      _meta: { connector_id: "computer-use", persist: ["session", "always", "forever"] },
+    });
+
+    const permission = await permissionRequested;
+    expect(permission.request.actions).toEqual([
+      { id: "deny", label: "Deny", behavior: "deny", variant: "danger", intent: "dismiss" },
+      {
+        id: "mcp_persist_session",
+        label: "Allow for this session",
+        behavior: "allow",
+        variant: "secondary",
+      },
+      { id: "mcp_persist_always", label: "Always allow", behavior: "allow", variant: "secondary" },
+      { id: "allow_once", label: "Allow once", behavior: "allow", variant: "primary" },
+    ]);
+    await session.respondToPermission(permission.request.id, {
+      behavior: "allow",
+      selectedActionId: "mcp_persist_always",
+    });
+
+    await expect(appServer.waitForMcpElicitationDecision()).resolves.toEqual({
+      action: "accept",
+      content: {},
+      _meta: { persist: "always" },
+    });
+    appServer.resolvesMcpElicitation();
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("replies without persistence when the user allows a Codex MCP elicitation once", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    await session.connect();
+    const permissionRequested = waitForNextPermission(session);
+    appServer.requestMcpElicitation({
+      threadId: "thread-1",
+      turnId: "turn-1",
+      serverName: "computer-use",
+      message: "Allow Computer Use to use Safari?",
+      requestedSchema: { type: "object", properties: {} },
+      _meta: { connector_id: "computer-use", persist: ["session", "always"] },
+    });
+
+    const permission = await permissionRequested;
+    await session.respondToPermission(permission.request.id, {
+      behavior: "allow",
+      selectedActionId: "allow_once",
+    });
+
+    await expect(appServer.waitForMcpElicitationDecision()).resolves.toEqual({
+      action: "accept",
+      content: {},
+      _meta: null,
+    });
+    appServer.resolvesMcpElicitation();
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
   test("initializes Codex app-server without making Paseo the request originator", async () => {
     let initializeParams: unknown;
     const appServer = createFakeCodexAppServer({

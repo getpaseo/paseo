@@ -624,6 +624,62 @@ function decodeEscapedChar(next: string): string {
   return next;
 }
 
+type CodexMcpElicitationPersistOption = "session" | "always";
+
+const CODEX_MCP_PERSIST_ACTIONS: ReadonlyArray<{
+  option: CodexMcpElicitationPersistOption;
+  id: string;
+  label: string;
+}> = [
+  { option: "session", id: "mcp_persist_session", label: "Allow for this session" },
+  { option: "always", id: "mcp_persist_always", label: "Always allow" },
+];
+
+// Codex offers persistence choices for an MCP approval through `_meta.persist`.
+// Keep only the choices Paseo can label; ignore unknown values.
+function readCodexMcpElicitationPersistOptions(meta: unknown): CodexMcpElicitationPersistOption[] {
+  const persist = toObjectRecord(meta)?.persist;
+  if (!Array.isArray(persist)) {
+    return [];
+  }
+  return CODEX_MCP_PERSIST_ACTIONS.filter((action) => persist.includes(action.option)).map(
+    (action) => action.option,
+  );
+}
+
+function buildCodexMcpElicitationActions(
+  options: CodexMcpElicitationPersistOption[],
+): AgentPermissionAction[] {
+  return [
+    { id: "deny", label: "Deny", behavior: "deny", variant: "danger", intent: "dismiss" },
+    ...CODEX_MCP_PERSIST_ACTIONS.filter((action) => options.includes(action.option)).map(
+      (action): AgentPermissionAction => ({
+        id: action.id,
+        label: action.label,
+        behavior: "allow",
+        variant: "secondary",
+      }),
+    ),
+    { id: "allow_once", label: "Allow once", behavior: "allow", variant: "primary" },
+  ];
+}
+
+function resolveCodexMcpElicitationMeta(
+  response: AgentPermissionResponse,
+  options: CodexMcpElicitationPersistOption[] | undefined,
+): { persist: CodexMcpElicitationPersistOption } | null {
+  if (response.behavior !== "allow" || !options) {
+    return null;
+  }
+  const action = CODEX_MCP_PERSIST_ACTIONS.find(
+    (candidate) => candidate.id === response.selectedActionId,
+  );
+  if (!action || !options.includes(action.option)) {
+    return null;
+  }
+  return { persist: action.option };
+}
+
 function resolvePermissionDecision(
   response: AgentPermissionResponse,
 ): "accept" | "cancel" | "decline" {
@@ -3417,6 +3473,7 @@ interface CodexPendingPermissionHandler {
   kind: "command" | "file" | "question" | "mcp_elicitation" | "plan";
   questions?: CodexQuestionPrompt[];
   plan?: { text: string; turnId: string | undefined };
+  mcpPersistOptions?: CodexMcpElicitationPersistOption[];
 }
 
 interface ConsumedRootCompaction {
@@ -4720,7 +4777,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       pending.resolve({
         action: resolvePermissionDecision(response),
         content: response.behavior === "allow" ? {} : null,
-        _meta: null,
+        _meta: resolveCodexMcpElicitationMeta(response, pending.mcpPersistOptions),
       });
       return;
     }
@@ -7120,6 +7177,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         requestedSchema: z.unknown().optional(),
         url: z.string().optional(),
         elicitationId: z.string().optional(),
+        _meta: z.unknown().optional(),
       })
       .parse(params);
     if (parsed.mode === "url") {
@@ -7129,6 +7187,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (Array.isArray(requiredFields) && requiredFields.length > 0) {
       return Promise.resolve({ action: "decline", content: null, _meta: null });
     }
+    const persistOptions = readCodexMcpElicitationPersistOptions(parsed._meta);
     const requestId = `permission-${randomUUID()}`;
     const request: AgentPermissionRequest = {
       id: requestId,
@@ -7148,12 +7207,19 @@ export class CodexAppServerAgentSession implements AgentSession {
         serverName: parsed.serverName,
         elicitationId: parsed.elicitationId ?? null,
       },
+      ...(persistOptions.length > 0
+        ? { actions: buildCodexMcpElicitationActions(persistOptions) }
+        : {}),
     };
     this.pendingPermissions.set(requestId, request);
     this.mcpElicitationPermissionIds.set(serverRequestId, requestId);
     this.emitEvent({ type: "permission_requested", provider: CODEX_PROVIDER, request });
     return new Promise((resolve) => {
-      this.pendingPermissionHandlers.set(requestId, { resolve, kind: "mcp_elicitation" });
+      this.pendingPermissionHandlers.set(requestId, {
+        resolve,
+        kind: "mcp_elicitation",
+        ...(persistOptions.length > 0 ? { mcpPersistOptions: persistOptions } : {}),
+      });
     });
   }
 }
