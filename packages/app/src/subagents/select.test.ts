@@ -53,7 +53,14 @@ const AGENT_DEFAULTS: Agent = {
 };
 
 function makeAgent(input: Partial<Agent> & Pick<Agent, "id">): Agent {
-  return { ...AGENT_DEFAULTS, ...input };
+  return {
+    ...AGENT_DEFAULTS,
+    ...input,
+    labels: {
+      ...(input.parentAgentId ? { "paseo.parent-agent-id": input.parentAgentId } : {}),
+      ...input.labels,
+    },
+  };
 }
 
 function setAgents(agents: Agent[]): void {
@@ -73,6 +80,41 @@ afterEach(() => {
 });
 
 describe("selectSubagentsForParent", () => {
+  it("keeps equal child IDs on different hosts qualified to the complete parent address", () => {
+    const parentId = "shared-parent";
+    const childId = "shared-child";
+    const local = makeAgent({
+      id: childId,
+      parentAgentId: parentId,
+      labels: { "paseo.parent-agent-id": parentId, "paseo.parent-server-id": SERVER_ID },
+    });
+    const remote = makeAgent({
+      id: childId,
+      serverId: "server-2",
+      parentAgentId: null,
+      labels: { "paseo.parent-agent-id": parentId, "paseo.parent-server-id": SERVER_ID },
+    });
+    setAgents([local]);
+    useSessionStore.getState().initializeSession("server-2", null as unknown as DaemonClient);
+    useSessionStore.getState().setAgents("server-2", new Map([[childId, remote]]));
+    try {
+      const rows = selectSubagentsForParent(
+        useSessionStore.getState(),
+        { serverId: SERVER_ID, parentAgentId: parentId },
+        EMPTY_PENDING_ARCHIVE_IDS,
+      );
+      expect(rows).toHaveLength(2);
+      expect(rows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ address: { serverId: SERVER_ID, agentId: childId } }),
+          expect.objectContaining({ address: { serverId: "server-2", agentId: childId } }),
+        ]),
+      );
+    } finally {
+      useSessionStore.getState().clearSession("server-2");
+    }
+  });
+
   it("hides cached provider children when the host does not support them", () => {
     useProviderSubagentStore.getState().applyUpdate(SERVER_ID, {
       kind: "upsert",
@@ -315,6 +357,7 @@ describe("selectSubagentsForParent", () => {
     expect(rows).toEqual([
       {
         kind: "paseo",
+        address: { serverId: SERVER_ID, agentId: "child" },
         id: "child",
         provider: "claude",
         title: "Review child",
@@ -327,6 +370,7 @@ describe("selectSubagentsForParent", () => {
       },
     ]);
     expect(Object.keys(rows[0] ?? {}).sort()).toEqual([
+      "address",
       "createdAt",
       "description",
       "id",
@@ -371,7 +415,7 @@ describe("selectSubagentsForParent", () => {
     setAgents([
       makeAgent({ id: "parent-a" }),
       makeAgent({ id: "parent-b" }),
-      { ...child, parentAgentId: "parent-b" },
+      { ...child, parentAgentId: "parent-b", labels: { "paseo.parent-agent-id": "parent-b" } },
     ]);
 
     expect(
@@ -409,7 +453,7 @@ describe("selectSubagentsForParent", () => {
         serverId: SERVER_ID,
         parentAgentId: "parent",
       },
-      new Set(["child-b"]),
+      new Set([`${SERVER_ID}:child-b`]),
     );
 
     expect(rows.map((row) => row.id)).toEqual(["child-a"]);
@@ -424,7 +468,7 @@ describe("selectSubagentsForParent", () => {
         serverId: SERVER_ID,
         parentAgentId: "parent",
       },
-      new Set(["child"]),
+      new Set([`${SERVER_ID}:child`]),
     );
 
     expect(rows).toEqual([]);
@@ -541,7 +585,7 @@ describe("createSubagentsForParentSelector", () => {
 
     const rows = createSubagentsForParentSelector(
       params,
-      new Set(["child-b"]),
+      new Set([`${SERVER_ID}:child-b`]),
     )(useSessionStore.getState());
 
     expect(rows.map((row) => row.id)).toEqual(["child-a"]);

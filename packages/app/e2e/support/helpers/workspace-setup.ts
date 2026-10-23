@@ -376,3 +376,7 @@ export function observeSetupPanelTraffic(page: Page) {
     },
   };
 }
+
+export function setupCommandOutput(detail: { commands: Array<{ log: string }> }): string {
+  return detail.commands.map((command) => command.log).join("\n");
+}

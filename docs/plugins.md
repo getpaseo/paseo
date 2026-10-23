@@ -86,6 +86,12 @@ plugin before compiling and starting from disk. A failed reload stays failed; Pa
 the old code. Use `enable`, `disable`, and `remove` to manage one plugin. Removing a directory source
 never deletes it. The global `pluginsEnabled` switch remains available.
 
+## Client translations
+
+Plugin runtime translations follow the connected app, so never send a daemon locale through RPCs or add plugin resources to the app catalog. The installation owns the translation engine; native portal bridges must carry it alongside RPC and client-state contexts. Keep host label resolution at presentation time so language changes preserve the installation lifetime.
+
+The author contract is in [runtime translations](../public-docs/plugins/reference.md#runtime-translations).
+
 ## Built-in plugins
 
 Built-in plugins ship from `plugins/<id>/`, with `paseo-plugin.json`, `index.server.ts`,
@@ -560,9 +566,11 @@ one section's order from built-ins, plugin groups, and the section's preference
 
 Client `addFilePanel` registrations become the body of a file tab. The tab stats the file, picks a
 panel, and mounts it with a `PluginFile` handle; the panel reads, shows its own `Loading`, writes,
-and resolves conflicts. The bar only switches panels and shows the dot the panel sets through
-`tab.setModified`. Built-in panels (Markdown, HTML, Image, and Source, Paseo's editor) take the
-same handle as plugin panels, so a fix to reading, watching, or writing lands in one place:
+and resolves conflicts. The host has no bar and no notion of a panel's views: the Markdown and HTML
+panels own their Preview and Source views, toolbar and editor buffer, and the tab only shows the
+dot a panel sets through `tab.setModified`. Source is the floor for text files no other built-in
+claims, never a candidate beside one. Built-in panels (Markdown, HTML, Image, and Source, Paseo's
+editor) take exactly `PluginFilePanelProps`, including params and persisted tab state, so a fix to reading, watching, or writing lands in one place:
 `packages/app/src/file-panels/file/`. Do not add a host-side read or loading gate for one panel;
 make that panel faster instead. Source highlights a large file on native in idle-time slices,
 the lines around the opening line first.
@@ -579,11 +587,14 @@ the author API, selection, `DocumentFrame`, and the version requirement. The exa
 Header buttons and composer pills share the client-only descriptor and registration lifecycle in
 `packages/app/src/plugins/buttons/`. The [public button reference](../public-docs/plugins/reference.md#header-buttons)
 owns the author API and placement rules. Keep presentation policy in this module so another
-placement can reuse behavior without copying registration or action state.
+placement can reuse behavior without copying registration or action state. The header overflow
+and the compact workspace menu share one builder that turns buttons into menu rows and pages; the
+workspace menu reaches it through `usePluginWorkspaceMenu`.
 
 Native sheets teleport their children. Button surfaces rebuild the installation's SDK, state,
-query, and toast providers inside the surface content, including overflow pages from different
-plugins. Providers only around the trigger do not reach those bodies.
+query, and toast providers inside the surface content. A host menu can hold buttons from several
+installations, so each of its rows and pages resolves its own installation's runtime. Providers
+only around the trigger do not reach those bodies.
 
 Request observation with `client.paseo.agents.list({ subscribe: {} })` and consume the returned
 `subscription` handle. Plain `list()` and agent/workspace directory `.subscribe(handler)` listeners create no daemon

@@ -1,5 +1,17 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { useFileText } from "@getpaseo/plugin/client";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type ComponentProps,
+  type ComponentType,
+} from "react";
+import {
+  useFileText,
+  type PluginFilePanelProps,
+  type PluginFilePanelParams,
+} from "@getpaseo/plugin/client";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -10,13 +22,12 @@ import { confirmDialog } from "@/utils/confirm-dialog";
 import { formatFileSize } from "@/utils/format-file-size";
 import type { Theme } from "@/styles/theme";
 import { FilePanelLoading } from "../loading";
-import type { BuiltinFilePanelProps } from "../panels";
-import { FileConflictAlert, type FileConflictAlertState } from "./conflict-alert";
+import type { FileConflictAlertState } from "./conflict-alert";
 import { FileEditorModel, getFileConflictCallout } from "./editor/model";
 import { FileEditorView } from "./editor/view";
 import { selectSourcePresentation } from "./readonly/presentation";
 import { FileSourceView } from "./readonly/view";
-import { SourceStatusRow } from "./status";
+import { TextFileToolbar, type TextFileView } from "./toolbar";
 
 // CodeMirror and native source rendering consume appearance as props. Subscribe at the
 // rendering leaf so theme updates reconfigure it without replacing the editor/model.
@@ -40,19 +51,52 @@ const ThemedFileSourceView = withUnistyles(FileSourceView, sourceAppearance);
 /** The daemon refuses to write larger files. */
 const MAX_EDITABLE_BYTES = 1024 * 1024;
 
-/**
- * Paseo's editor for text files. Edits files up to 1 MiB on web; shows larger files and every file
- * on native read-only, and refuses files above the display budget before reading them.
- */
-export function SourcePanel(props: BuiltinFilePanelProps) {
-  const size = props.file.size;
-  const presentation = selectSourcePresentation({ size, platform: isWeb ? "web" : "native" });
-  if (presentation === "unsupported") return <TooLargeSource size={size} />;
-  if (isWeb && size <= MAX_EDITABLE_BYTES) return <EditableSource {...props} />;
-  return <ReadonlySource {...props} presentation={presentation} />;
+/** A rendered view of the file's text: the panel's Preview, shown instead of its source. */
+export interface TextFilePreviewProps {
+  text: string;
+  params: PluginFilePanelProps["params"];
+  workspaceId: string;
+  host: PluginFilePanelProps["host"];
 }
 
-function TooLargeSource({ size }: { size: number }) {
+type TextFilePanelProps = PluginFilePanelProps & {
+  /** The panel's Preview; with one, the toolbar switches between Preview and Source. */
+  preview?: ComponentType<TextFilePreviewProps>;
+};
+
+/**
+ * What the Markdown, HTML and Source panels share: a toolbar over the file's Source view and, when
+ * the panel passes one, its Preview. Both views show the one read of the file and, while editing, the one editor buffer, so switching
+ * between them neither re-reads nor loses edits. Edits files up to 1 MiB on web; shows larger files
+ * and every file on native read-only, and refuses files above the display budget before reading.
+ */
+export function TextFilePanel(props: TextFilePanelProps) {
+  const size = props.file.size;
+  const presentation = selectSourcePresentation({ size, platform: isWeb ? "web" : "native" });
+  if (presentation === "unsupported") return <TooLargeTextFile size={size} />;
+  if (isWeb && size <= MAX_EDITABLE_BYTES) return <EditableTextFile {...props} />;
+  return <ReadonlyTextFile {...props} presentation={presentation} />;
+}
+
+/**
+ * The view a panel with a preview shows. It opens on Preview, and on Source for a line target;
+ * each later line target switches to Source again.
+ */
+function useTextFileView(
+  params: PluginFilePanelParams,
+  revision: number,
+): [TextFileView, (view: TextFileView) => void] {
+  const lineTarget = params.lineStart ? revision : null;
+  const [view, setView] = useState<TextFileView>(lineTarget === null ? "preview" : "source");
+  const [shownLineTarget, setShownLineTarget] = useState(lineTarget);
+  if (lineTarget !== null && lineTarget !== shownLineTarget) {
+    setShownLineTarget(lineTarget);
+    setView("source");
+  }
+  return [view, setView];
+}
+
+function TooLargeTextFile({ size }: { size: number }) {
   const { t } = useTranslation();
   return (
     <View style={styles.centerState} testID="file-source-too-large">
@@ -62,17 +106,21 @@ function TooLargeSource({ size }: { size: number }) {
   );
 }
 
-function ReadonlySource({
+function ReadonlyTextFile({
   file,
-  location,
-  target,
+  params,
+  revision,
+  workspaceId,
+  host,
+  preview: Preview,
   presentation,
-}: BuiltinFilePanelProps & { presentation: "highlighted" | "plain" }) {
+}: TextFilePanelProps & { presentation: "highlighted" | "plain" }) {
   const text = useFileText(file);
   const { t } = useTranslation();
+  const [view, setView] = useTextFileView(params, revision);
   const sourceLocation = useMemo(
-    () => ({ path: target.path, lineStart: location.lineStart, lineEnd: location.lineEnd }),
-    [location.lineEnd, location.lineStart, target.path],
+    () => ({ path: params.path, lineStart: params.lineStart, lineEnd: params.lineEnd }),
+    [params.lineEnd, params.lineStart, params.path],
   );
   if (text.status === "loading") return <FilePanelLoading />;
   if (text.status === "error") {
@@ -82,25 +130,43 @@ function ReadonlySource({
       </View>
     );
   }
+  const showPreview = Preview !== undefined && view === "preview";
   return (
     <View style={styles.container}>
-      <ThemedFileSourceView
-        content={text.text}
-        filename={target.path}
-        location={sourceLocation}
-        navigationRevision={location.revision}
-        presentation={presentation}
+      <TextFileToolbar
+        size={file.size}
+        lineCount={text.text.split("\n").length}
+        view={Preview ? view : undefined}
+        onViewChange={Preview ? setView : undefined}
       />
-      <SourceStatusRow size={file.size} lineCount={text.text.split("\n").length} />
+      {showPreview ? (
+        <Preview text={text.text} params={params} workspaceId={workspaceId} host={host} />
+      ) : (
+        <ThemedFileSourceView
+          content={text.text}
+          filename={params.path}
+          location={sourceLocation}
+          navigationRevision={revision}
+          presentation={presentation}
+        />
+      )}
     </View>
   );
 }
 
-function EditableSource({ file, tab, location, target }: BuiltinFilePanelProps) {
+function EditableTextFile({
+  file,
+  tab,
+  params,
+  revision,
+  workspaceId,
+  host,
+  preview: Preview,
+}: TextFilePanelProps) {
   const { settings } = useAppSettings();
   const { t } = useTranslation();
   const [model] = useState(() => new FileEditorModel({ file }));
-  const [editorReady, setEditorReady] = useState(false);
+  const [view, setView] = useTextFileView(params, revision);
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
   const [vimMode, setVimMode] = useState<string | null>(settings.vimKeybindings ? "NORMAL" : null);
   const snapshot = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
@@ -130,10 +196,9 @@ function EditableSource({ file, tab, location, target }: BuiltinFilePanelProps) 
   }, [model, snapshot.modified, t]);
   const handleOverwrite = useCallback(() => void model.overwrite(), [model]);
   const handleRetry = useCallback(() => void model.reload(), [model]);
-  const handleReady = useCallback(() => setEditorReady(true), []);
   const editorLocation = useMemo(
-    () => ({ path: target.path, lineStart: location.lineStart, lineEnd: location.lineEnd }),
-    [location.lineEnd, location.lineStart, target.path],
+    () => ({ path: params.path, lineStart: params.lineStart, lineEnd: params.lineEnd }),
+    [params.lineEnd, params.lineStart, params.path],
   );
 
   if (snapshot.status === "loading") return <FilePanelLoading />;
@@ -159,29 +224,44 @@ function EditableSource({ file, tab, location, target }: BuiltinFilePanelProps) 
       onOverwrite: handleOverwrite,
     };
   }
+  const showPreview = Preview !== undefined && view === "preview";
   return (
     <View style={styles.container}>
-      {conflict ? <FileConflictAlert state={conflict} /> : null}
-      <View style={styles.editor}>
-        <ThemedFileEditorView
+      <TextFileToolbar
+        size={file.size}
+        lineCount={snapshot.content.split("\n").length}
+        view={Preview ? view : undefined}
+        onViewChange={Preview ? setView : undefined}
+        editorStatus={snapshot.status}
+        cursor={showPreview ? undefined : cursor}
+        vimMode={showPreview ? null : vimMode}
+        conflict={conflict}
+      />
+      {showPreview ? (
+        <Preview text={snapshot.content} params={params} workspaceId={workspaceId} host={host} />
+      ) : (
+        <SourceEditor
           model={model}
-          filename={target.path}
+          filename={params.path}
           location={editorLocation}
-          navigationRevision={location.revision}
+          navigationRevision={revision}
           vimEnabled={settings.vimKeybindings}
           onCursorChange={setCursor}
           onVimModeChange={setVimMode}
-          onReady={handleReady}
         />
-        {editorReady ? null : <FilePanelLoading />}
-      </View>
-      <SourceStatusRow
-        size={file.size}
-        lineCount={snapshot.content.split("\n").length}
-        editorStatus={snapshot.status}
-        vimMode={vimMode}
-        cursor={cursor}
-      />
+      )}
+    </View>
+  );
+}
+
+/** The editor over the panel's buffer. Each mount shows Loading until the editor shows the text. */
+function SourceEditor(props: Omit<ComponentProps<typeof ThemedFileEditorView>, "onReady">) {
+  const [ready, setReady] = useState(false);
+  const handleReady = useCallback(() => setReady(true), []);
+  return (
+    <View style={styles.editor}>
+      <ThemedFileEditorView {...props} onReady={handleReady} />
+      {ready ? null : <FilePanelLoading />}
     </View>
   );
 }

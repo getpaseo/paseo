@@ -13,29 +13,43 @@ export function createValidatedPersistStorage<State>(
   });
 
   const accepted = new Map<string, StorageValue<State>>();
+  const reading = new Set<string>();
+
+  async function read(name: string): Promise<StorageValue<State> | null> {
+    const raw = await backingStorage.getItem(name);
+    if (raw === null) return null;
+
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(raw);
+    } catch {
+      await backingStorage.removeItem(name);
+      return null;
+    }
+
+    const result = envelopeSchema.safeParse(decoded);
+    if (!result.success) {
+      await backingStorage.removeItem(name);
+      return null;
+    }
+    return result.data;
+  }
 
   return {
     getItem: async (name) => {
       accepted.delete(name);
-      const raw = await backingStorage.getItem(name);
-      if (raw === null) return null;
-
-      let decoded: unknown;
+      reading.add(name);
       try {
-        decoded = JSON.parse(raw);
-      } catch {
-        await backingStorage.removeItem(name);
-        return null;
+        return await read(name);
+      } finally {
+        reading.delete(name);
       }
-
-      const result = envelopeSchema.safeParse(decoded);
-      if (!result.success) {
-        await backingStorage.removeItem(name);
-        return null;
-      }
-      return result.data;
     },
     setItem: async (name, value) => {
+      // A store that changes before hydration settles writes the defaults it started with.
+      // Hydration then merges the stored state in memory without writing it back, so that
+      // write would replace the stored state until the next change.
+      if (reading.has(name)) return;
       const previous = accepted.get(name);
       if (
         options.skipUnchanged &&

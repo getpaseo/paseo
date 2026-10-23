@@ -14,7 +14,7 @@ import { extname, resolve } from "node:path";
 /** Result type for agent send command */
 export interface AgentSendResult {
   agentId: string;
-  status: "sent" | "completed" | "timeout" | "permission" | "error";
+  status: "queued" | "sent" | "completed" | "timeout" | "permission" | "error";
   message: string;
 }
 
@@ -201,7 +201,7 @@ export async function runSendCommand(
 
     const sourceAgentId = process.env.PASEO_AGENT_ID?.trim() || undefined;
     // Send the message
-    await client.sendAgentMessage(agentIdArg, promptInput, {
+    const receipt = await client.sendAgentMessage(agentIdArg, promptInput, {
       images,
       sourceAgentId,
       activeTurnBehavior: options.behavior ?? (sourceAgentId ? "steer" : "interrupt"),
@@ -215,8 +215,11 @@ export async function runSendCommand(
         type: "single",
         data: {
           agentId: agentIdArg,
-          status: "sent",
-          message: "Message sent, not waiting for completion",
+          status: receipt.deliveryStatus ?? "sent",
+          message:
+            receipt.deliveryStatus === "queued"
+              ? "Message queued for delivery after two quiet seconds"
+              : "Message sent, not waiting for completion",
         },
         schema: agentSendSchema,
       };

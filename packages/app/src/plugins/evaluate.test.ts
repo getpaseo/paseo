@@ -141,7 +141,7 @@ describe("evaluatePluginClientBundle", () => {
     Reflect.deleteProperty(globalThis, "__pluginRemovals");
   });
 
-  it("collects timeline transformers and renderers", () => {
+  it.each(["tool_call", "notification"])("collects %s transformers and renderers", (itemType) => {
     const plugin = evaluatePluginClientBundle(
       "reports",
       bundle(`
@@ -149,7 +149,7 @@ describe("evaluatePluginClientBundle", () => {
         const schema = { safeParse(value) { return { success: true, data: value }; } };
         plugin.addTimelineTransformer({
           id: "test-report",
-          query: { itemType: "tool_call" },
+          query: { itemType: "${itemType}" },
           transform() { return { items: [] }; },
         });
         plugin.addTimelineRenderer({
@@ -162,7 +162,7 @@ describe("evaluatePluginClientBundle", () => {
     );
 
     expect(plugin.timelineTransformers.map(({ id, query }) => ({ id, query }))).toEqual([
-      { id: "test-report", query: { itemType: "tool_call" } },
+      { id: "test-report", query: { itemType } },
     ]);
     expect(plugin.timelineRenderers.map(({ kind, version }) => ({ kind, version }))).toEqual([
       { kind: "test-report", version: 1 },
@@ -379,6 +379,23 @@ describe("evaluatePluginClientBundle", () => {
         context,
       })),
     ).toEqual([{ id: "open-review", title: "Open review", icon: "Scan", context: "agent" }]);
+  });
+
+  it("registers workspace and agent panels with stable aliases", () => {
+    const plugin = evaluatePluginClientBundle(
+      "panels",
+      bundle(`
+      const Component = () => null;
+      plugin.addWorkspacePanel({ id: "workspace", title: "Workspace", icon: "File", Component });
+      plugin.addAgentPanel({ id: "agent", title: "Agent", icon: "File", Component });
+      plugin.addWorkspacePanel({ id: "legacy", title: "Legacy", icon: "File", context: "agent", Component });
+    `),
+    );
+    expect(plugin.workspacePanels.map(({ id, context }) => ({ id, context }))).toEqual([
+      { id: "workspace", context: "workspace" },
+      { id: "agent", context: "agent" },
+      { id: "legacy", context: "agent" },
+    ]);
   });
 
   it("registers inline SVG and component icons", () => {
@@ -695,7 +712,8 @@ describe("evaluatePluginClientBundle", () => {
         `(function(require) {
       const shared = require("@getpaseo/plugin");
       const client = require("@getpaseo/plugin/client");
-      const { ExternalLink, Loading } = require("@getpaseo/plugin/client/ui");
+      const { ExternalLink, Loading, Markdown } = require("@getpaseo/plugin/client/ui");
+      if (typeof Markdown !== "function") throw new Error("Markdown");
       if (typeof ExternalLink !== "function") throw new Error("ExternalLink");
       if (typeof Loading !== "function") throw new Error("Loading");
       for (const name of ["usePaseo", "useRpc", "useSettings", "useAgent", "useWorkspace", "openExternalUrl", "useFileText", "useFileBytes", "useFileUrl", "PluginFileConflictError", "PluginFileDeletedError"]) {

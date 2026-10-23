@@ -1,12 +1,6 @@
 import { useMemo } from "react";
-import type {
-  PluginFile,
-  PluginFileLocation,
-  PluginFilePanelContribution,
-  PluginFileTab,
-} from "@getpaseo/plugin/client";
 import { useInstalledPlugins } from "@/plugins/registry";
-import type { InstalledPlugin } from "@/plugins/types";
+import type { PluginFilePanelContribution, InstalledPlugin } from "@/plugins/types";
 import { filePanelCatalog, type RenderingFilePanel, type SourceFilePanel } from "./catalog";
 
 export interface PluginFilePanel {
@@ -17,14 +11,6 @@ export interface PluginFilePanel {
   contribution: PluginFilePanelContribution;
 }
 export type FilePanel = RenderingFilePanel | PluginFilePanel | SourceFilePanel;
-
-/** A built-in panel gets the plugin panel's file, tab and location, plus where the file lives. */
-export interface BuiltinFilePanelProps {
-  file: PluginFile;
-  tab: PluginFileTab;
-  location: PluginFileLocation;
-  target: { serverId: string; workspaceRoot: string; path: string };
-}
 
 export function useFilePanels(serverId: string): readonly FilePanel[] {
   const plugins = useInstalledPlugins();

@@ -182,7 +182,8 @@ test.describe("Workspace file change conflicts", () => {
     await expect(filePane(page).getByText("Before", { exact: true })).toBeVisible();
 
     await unlink(filePath);
-    await expect(filePane(page).getByText("The file was deleted.", { exact: true })).toBeVisible();
+    await expectDeletedFileNotice(page);
+    await expect(filePane(page).getByText("Before", { exact: true })).toBeVisible();
     await writeFile(filePath, "# After\n", "utf8");
 
     await expect(filePane(page).getByText("After", { exact: true })).toBeVisible();

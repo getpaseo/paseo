@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
@@ -158,3 +159,67 @@ test.each(
   },
   60_000,
 );
+
+test("All changes subscriptions refresh on file edits and commits", async () => {
+  const ctx = await createDaemonTestContext();
+  const cwd = mkdtempSync(join(tmpdir(), "checkout-diff-all-"));
+  try {
+    git(cwd, "init", "-b", "main");
+    git(cwd, "config", "user.name", "Test");
+    git(cwd, "config", "user.email", "test@example.com");
+    writeFileSync(join(cwd, "file.txt"), "base\n");
+    git(cwd, "add", ".");
+    git(cwd, "-c", "commit.gpgsign=false", "commit", "-m", "base");
+    git(cwd, "checkout", "-b", "feature");
+    writeFileSync(join(cwd, "file.txt"), "committed\n");
+    git(cwd, "add", ".");
+    git(cwd, "-c", "commit.gpgsign=false", "commit", "-m", "feature");
+    const subscription = ctx.client.observeCheckoutDiff(cwd, { mode: "all", baseRef: "main" });
+    try {
+      let latest = await subscription.ready;
+      expect(latest.error).toBeNull();
+      subscription.subscribe({
+        snapshot: (snapshot) => {
+          latest = snapshot;
+        },
+        update: (message) => {
+          if (message.type === "checkout_diff_update") latest = message.payload;
+        },
+      });
+      writeFileSync(join(cwd, "file.txt"), "working\n");
+      await expect
+        .poll(
+          () =>
+            latest.files[0]?.hunks
+              .flatMap((hunk) => hunk.lines)
+              .filter((line) => line.type === "add")
+              .map((line) => line.content),
+          { timeout: 15_000 },
+        )
+        .toEqual(["working"]);
+      writeFileSync(join(cwd, "new.txt"), "untracked\n");
+      await expect
+        .poll(() => latest.files.map((file) => file.path), { timeout: 15_000 })
+        .toEqual(["file.txt", "new.txt"]);
+      const beforeCommit = latest.files;
+      git(cwd, "add", ".");
+      git(cwd, "-c", "commit.gpgsign=false", "commit", "-m", "working");
+      expect(
+        (await ctx.client.getCheckoutDiff(cwd, { mode: "all", baseRef: "main" })).files,
+      ).toEqual(beforeCommit);
+      writeFileSync(join(cwd, "file.txt"), "base\n");
+      await expect
+        .poll(() => latest.files.map((file) => file.path), { timeout: 15_000 })
+        .toEqual(["new.txt"]);
+      git(cwd, "checkout", "--", "file.txt");
+      await expect
+        .poll(() => latest.files.map((file) => file.path), { timeout: 15_000 })
+        .toEqual(["file.txt", "new.txt"]);
+    } finally {
+      await subscription.release();
+    }
+  } finally {
+    await ctx.cleanup();
+    await rm(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+}, 60_000);

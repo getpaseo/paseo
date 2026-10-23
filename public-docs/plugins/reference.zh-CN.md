@@ -25,6 +25,25 @@ nav: 参考
 
 插件代码是受信任的，没有沙盒。客户端界面在 Paseo 应用中运行。后端贡献在一个子进程中运行，可以访问 daemon 所在的机器，包括它的文件、进程、凭据和网络。
 
+## 已连接的主机 {#connected-hosts}
+
+客户端界面中的 `usePaseo().hosts` 与服务端处理函数或生命周期钩子中的 `context.paseo.hosts`
+使用相同的 [SDK 主机 API](/sdk/reference#clienthosts)。它们描述所选 daemon 保存的连接。
+现有的 `useHosts()` 和 `getPaseoClient(serverId)` 仍描述应用已知的主机。
+
+```ts
+const remote = await context.paseo.hosts.client("srv_build_box");
+try {
+  return await remote.workspaces.list();
+} finally {
+  await remote.dispose();
+}
+```
+
+返回的 API 拥有自己的观察。销毁插件 API 时也会释放由它派生的作用域。
+远程调用应留在拥有它的处理函数或生命周期作用域内。调用 B 不会把 B 的插件生命周期钩子转发到 A。
+通过路由插件创建的注册项保留其来源身份，其中包含经过认证的链路和发起调用的插件。
+
 ## 项目文件 {#project-files}
 
 `paseo plugin init /absolute/path/to/my-plugin` 会创建：
@@ -78,6 +97,8 @@ my-plugin/
 
 预发布的 Paseo 版本也满足其稳定核心版本（`major.minor.patch`）所满足的范围，因此 `0.8.0-beta.1` 满足 `>=0.8.0`，但不满足 `<0.8.0`。
 
+`>=0.12.0-beta.4` 这样的预发布最低版本也会通过稳定核心 `0.12.0` 接受 `0.12.0-beta.3`。若要排除同一核心的较早构建，请使用不同的稳定核心版本。
+
 `paseo plugin init` 会写入 `>=` 加当前 CLI 版本，并为类型检查固定匹配的 SDK。采用更新的 API 时，请提高最低版本。当某个之后的版本不兼容时，请添加上限；只有下限并不能保证免受将来破坏性变更的影响。
 
 daemon 会在安装、运行准备命令或加载插件之前检查自己的版本，并在启动、启用和重新加载时再次检查。被拒绝的更新会保留已安装的修订。每个已连接的应用在执行客户端代码之前会检查自己的版本，并在 **设置 → 插件** 中显示不兼容。兼容的 daemon 并不能让较旧的应用变得兼容。没有客户端入口的插件不要求已连接的应用匹配。
@@ -104,6 +125,79 @@ daemon 会在安装、运行准备命令或加载插件之前检查自己的版�
 | `client/` | 仅应用的包     | React、React Native、hook、样式、界面、面板和回调。 |
 | `server/` | 仅 daemon 的包 | Node API、本地资源、凭据和 RPC 处理函数。           |
 | `shared/` | 两者           | Zod RPC 契约以及两个运行时都会导入的普通值。        |
+
+## 运行时翻译 {#runtime-translations}
+
+**尚未发布的 API。** 发布插件前，请将 `requirements.paseo` 设置为首次包含这些 API 的版本。[翻译示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/translations) 暂用 `>=0.12.1`，实际引入版本尚未确定。
+
+将 JSON 资源随客户端代码一起打包。必须提供英语（`en`）；其他语言使用规范语言标签，例如 `zh-CN`。资源由嵌套对象和字符串叶节点组成。其他语言可省略键，缺失时回退到英语。定义翻译时会拒绝未知键、无效资源、非规范语言标签，以及与英语不一致的插值占位符。
+
+```ts
+// client/messages.ts
+import { defineTranslations } from "@getpaseo/plugin/client";
+import en from "./locales/en.json";
+import zhCN from "./locales/zh-CN.json";
+
+export const messages = defineTranslations({ resources: { en, "zh-CN": zhCN } });
+```
+
+在插件的 `tsconfig.json` 中启用 `resolveJsonModule`。Paseo 在本地打包这些导入，不通过网络加载。资源对示例：
+
+`client/locales/en.json`:
+
+```json
+{
+  "title": "Workspace notes",
+  "add": "Add note",
+  "notes_one": "{{count}} note",
+  "notes_other": "{{count}} notes"
+}
+```
+
+`client/locales/zh-CN.json`:
+
+```json
+{
+  "title": "工作区笔记",
+  "add": "添加笔记",
+  "notes_other": "{{count}} 条笔记"
+}
+```
+
+在 React UI 中使用插件的 hook：
+
+```tsx
+import { useTranslation } from "@getpaseo/plugin/client";
+import { Text } from "react-native";
+import { messages } from "./messages";
+
+function NoteCount({ count }: { count: number }) {
+  const { t, locale } = useTranslation(messages);
+  return <Text accessibilityLanguage={locale}>{t("notes", { count })}</Text>;
+}
+```
+
+对于由宿主持续渲染的标签，使用 `messages.message(key, options?)`：
+
+```tsx
+client.addScreen({
+  id: "notes",
+  title: messages.message("title"),
+  Component: Notes,
+});
+```
+
+`PluginText` 为 `string | PluginMessage`。消息引用支持界面标题（包括标题函数）、设置与侧边栏标题、工作区与文件面板标题、Command Center 标题、斜杠命令描述与参数提示、按钮标题与标签、嵌套菜单标题、附件来源标题/选择器标题/搜索占位文本，以及主题名称。现有的字符串仍然有效。保持 ID、斜杠命令名称、图标、URL 和命令搜索关键词不变。
+
+描述符类型保留现有的字符串默认值。为翻译描述符显式标注类型时，传入文本类型参数，例如 `PluginScreenContribution<PluginText>`。内联注册会自动推导类型。
+
+回调中的临时文本使用 `client.i18n.t(messages, "add")`，它读取调用时的应用语言。`client.i18n.locale` 和 hook 的 `locale` 返回解析后的应用语言，即使某条消息回退到英语。不要将 `t` 的返回值用作持续注册的标签。
+
+键由英语资源推导。`notes` 等复数基础键要求数字类型的 `count`；i18next 根据语言选择 `_zero`、`_one`、`_two`、`_few`、`_many` 或 `_other` 形式。命名插值使用 `{{name}}`，调用时传入 `{ name: value }`。TypeScript 将导入 JSON 的字符串值拓宽为 `string`，因此 JSON 插值名称在运行时检查；内联字面量资源还能推导必需的插值名称。`{{amount, number}}` 等 i18next 格式化语法使用解析后语言的 `Intl` 格式化器。
+
+显式选择的应用语言优先于设备语言；“跟随系统”使用应用支持的语言解析规则。连接到同一 daemon 的不同应用各自保留语言设置。切换语言会更新已挂载的 UI 和宿主标签，不重新加载插件、不重置组件状态，也不替换 RPC/查询缓存。网页和原生的模态框与弹出层均收到相同的安装上下文。
+
+RPC 返回与语言无关的结构化数据，在客户端翻译呈现内容。保持用户草稿、agent 输出、原始 daemon 错误、日志与终端文本不变。manifest 列表翻译和 `OVERVIEW.<locale>.md` 是独立的发布元数据，参见[你的列表页面](publishing#your-listing-page)。
 
 ## 运行时模块 {#runtime-modules}
 
@@ -800,7 +894,7 @@ export default function contribute(client: PluginClientContext) {
 
 路由、标题栏、关闭操作、主机选择器、错误边界和 query client 由 Paseo 负责。界面主体由插件负责。
 
-`addScreen({ id, title, Component })` 注册一个界面。`title` 是界面标题栏的标题：可以是字符串，也可以是一个接收界面参数并返回字符串的函数，这样机器人界面就可以显示机器人的名称。参数变化时，该函数会再次运行。标题为空，或既不是字符串也不是函数时，注册会抛出错误。如果标题函数抛出错误或返回空字符串，会改为显示界面 ID；界面仍然会渲染。
+`addScreen({ id, title, Component })` 注册一个界面。`title` 是界面标题栏的[显示文本](#runtime-translations)，也可以是接收界面参数并返回显示文本的函数。参数或语言变化时，该函数会再次运行。无效标题和空字符串标题会被拒绝。如果标题函数抛出错误或解析为空字符串，会改为显示界面 ID；界面仍然会渲染。
 
 `openScreen({ screenId, params })` 以参数打开一个界面，例如机器人界面要显示的那个机器人。参数保存在界面 URL 的查询字符串中，因此重新加载、前进后退以及指向该界面的链接都会保留它们。任何字符串键都可以；值必须是字符串，其他类型会抛出错误。用其他参数打开同一个界面会显示新的参数。
 
@@ -966,6 +1060,24 @@ export function IssueActions({ theme }: PluginSurfaceProps) {
   );
 }
 ```
+
+### Markdown {#markdown}
+
+从 `@getpaseo/plugin/client/ui` 导入 `Markdown`，即可在网页、iOS 和 Android 上
+使用 Paseo 的 Markdown 样式渲染字符串：
+
+```tsx
+import { Markdown } from "@getpaseo/plugin/client/ui";
+
+<Markdown>{"## 审查\n\n检查**通过**。"}</Markdown>;
+```
+
+`children` 是唯一的属性，必须为字符串。更新它会立即渲染新内容；空字符串不渲染任何内容。
+宿主提供主题、文本选择、代码块、表格、图表和链接处理。
+当所在界面提供工作区上下文时，工作区文件链接和图片会使用该上下文。
+
+组件不添加页面内边距或滚动容器。需要时请在外层使用布局或滚动视图。
+内容获取以及加载和错误状态由插件负责。
 
 ### Modal {#modal}
 
@@ -1413,7 +1525,8 @@ if (current.status === "ready") {
 
 ## 工作区面板 {#workspace-panels}
 
-为工作区或 Agent 上下文注册一个面板：
+使用 `addWorkspacePanel` 注册工作区面板，使用 `addAgentPanel` 注册 Agent 面板。
+两者与[文件面板](#file-panels)使用相同的面板契约。
 
 `client/review.tsx`：
 
@@ -1422,9 +1535,9 @@ import { type PluginAgentPanelProps, useAgent, useWorkspace } from "@getpaseo/pl
 import { useMemo } from "react";
 import { Text, View } from "react-native";
 
-export function ReviewPanel({ theme, layout, workspaceId, agentId }: PluginAgentPanelProps) {
+export function ReviewPanel({ theme, layout, workspaceId, params }: PluginAgentPanelProps) {
   const workspaceName = useWorkspace(workspaceId, (workspace) => workspace.name);
-  const agent = useAgent(agentId, ({ id, title }) => ({ id, title }));
+  const agent = useAgent(params.agentId, ({ id, title }) => ({ id, title }));
   const styles = useMemo(
     () => ({
       screen: {
@@ -1453,11 +1566,10 @@ import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { ReviewPanel } from "./client/review";
 
 export default function contribute(client: PluginClientContext) {
-  client.addWorkspacePanel({
+  client.addAgentPanel({
     id: "review",
     title: "Review",
     icon: "Scan",
-    context: "agent",
     locations: ["workspace", "explorer"],
     Component: ReviewPanel,
   });
@@ -1465,20 +1577,42 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-`addWorkspacePanel` 的字段：
+`addWorkspacePanel` 和 `addAgentPanel` 的字段：
 
 | 字段        | 是否必填 | 含义                                                |
 | ----------- | -------- | --------------------------------------------------- |
 | `id`        | 是       | 插件内部的面板 ID。                                 |
 | `title`     | 是       | 工作区标签页的标题。                                |
 | `icon`      | 是       | Lucide 名称、`{ svg }` 或组件。参见[图标](#icons)。 |
-| `context`   | 是       | `workspace` 或 `agent`。                            |
 | `locations` | 否       | `workspace` 和/或 `explorer`。默认为 `workspace`。  |
 | `Component` | 是       | 与所选上下文的属性相匹配的 React Native 组件。      |
 
-工作区面板接收 `PluginWorkspacePanelProps`：`context: "workspace"`、`theme`、`host`、`layout` 和 `workspaceId`。Agent 面板接收 `PluginAgentPanelProps`：`context: "agent"`、相同的通用字段和 `workspaceId`，外加 `agentId`。
+每个面板都接收 `PluginPanelProps<Params>`，包含 `theme`、`host`、`layout`、`navigation`、
+`workspaceId`、只读的 `params`、`revision` 和 `tab`。工作区面板使用空的
+`PluginWorkspacePanelParams`；Agent 面板的 `PluginAgentPanelParams` 包含 `agentId`。
+每次向同一标签页重新发送 params 时，`revision` 都会递增，即使请求与上次相同。
 
-用 `useWorkspace(workspaceId, selector)` 和 `useAgent(agentId, selector)` 读取缓存的状态。selector 是必填的。Paseo 对它的结果做浅比较，因此选择 `{ name, status }` 时，无关字段的变化不会触发重新渲染。在一次调用中选择组件渲染的所有字段；不要选择整个快照。
+`tab.setModified(boolean)` 标记未保存的更改，并在关闭前询问。`tab.state` 是由面板定义的持久化
+JSON，初始为 `undefined`；`tab.setState(value)` 替换整个值。每个标签页拥有独立状态。
+Paseo 只保存状态，不解释其内容。用 `useTabState(tab, schema, defaultState)` 验证它：
+
+```tsx
+const schema = z.object({ view: z.enum(["preview", "source"]) });
+const [state, setState] = useTabState(tab, schema, { view: "preview" });
+// Missing or invalid persisted state returns the default.
+// In an event handler, call setState({ view: "source" }).
+```
+
+从 `@getpaseo/plugin/client` 导入 `useTabState`，从 `zod` 导入 `z`。setter 替换整个 JSON 值。
+标签页恢复和应用重新加载后，状态仍然保留。
+
+统一属性、`addAgentPanel` 和 `useTabState` 需要 Paseo 0.13.0 或更高版本。
+
+**已弃用，将在 2027-04-23 之后移除**：0.12 面板的 `context` 和顶层 `agentId` 属性、
+`addWorkspacePanel({ context: "workspace" })` 以及 `addWorkspacePanel({ context: "agent" })`
+仍然有效。省略工作区的 `context`，用 `addAgentPanel` 注册 Agent 面板，并读取 `params.agentId`。
+
+用 `useWorkspace(workspaceId, selector)` 和 `useAgent(params.agentId, selector)` 读取缓存的状态。selector 是必填的。Paseo 对它的结果做浅比较，因此选择 `{ name, status }` 时，无关字段的变化不会触发重新渲染。在一次调用中选择组件渲染的所有字段；不要选择整个快照。
 
 当记录不可用时，两个 hook 都返回 `null`。否则它们会针对规范化的客户端状态同步运行。快照 DTO 及其嵌套值都是深度只读的，并在运行时被冻结。不要调用插件 RPC 来获取当前的工作区或 Agent。可选的或特定于厂商的补充数据，请在组件渲染之后再获取。
 
@@ -1525,7 +1659,7 @@ Agent 快照字段：
 
 ## 文件面板 {#file-panels}
 
-注册一个组件，把文件渲染为文件标签页的主体。组件会收到所选主机上该文件的句柄，远程主机也一样。由组件读取文件、显示自己的加载状态，并在用户编辑时写回文件。标签页栏会显示面板切换器、溢出菜单，以及在面板报告有未保存更改时显示一个圆点。
+注册一个组件，把文件渲染为文件标签页的主体。组件会收到所选主机上该文件的句柄，远程主机也一样。由组件读取文件、显示自己的加载状态，并在用户编辑时写回文件。面板报告有未保存更改时，标签页会显示一个圆点。
 
 ```tsx
 import type { PluginClientContext } from "@getpaseo/plugin/client";
@@ -1547,7 +1681,7 @@ export default function contribute(client: PluginClientContext) {
 | 字段        | 必填 | 含义                                                                 |
 | ----------- | ---- | -------------------------------------------------------------------- |
 | `id`        | 是   | 插件内唯一的 ID，匹配 `^[a-z][a-z0-9-]*$`。                          |
-| `title`     | 是   | 显示在面板切换器、选择器和 **打开方式…** 菜单中的非空标签。          |
+| `title`     | 是   | 显示在选择器、**打开方式…** 菜单和 **设置 > 文件** 中的非空标签。    |
 | `icon`      | 是   | Lucide 名称、`{ svg }` 或组件。参见[图标](#icons)。                  |
 | `files`     | 是   | `{ extensions: readonly string[]; filenames?: readonly string[] }`。 |
 | `Component` | 是   | 接收 `PluginFilePanelProps` 的组件。                                 |
@@ -1558,12 +1692,13 @@ export default function contribute(client: PluginClientContext) {
 
 `PluginFilePanelProps` 包含[主题和布局](#theme-and-layout)中介绍的通用属性 `theme`、`host`、`layout` 和可选的 `navigation`，另外还有：
 
-| 属性          | 类型                 | 含义                                                               |
-| ------------- | -------------------- | ------------------------------------------------------------------ |
-| `workspaceId` | `string`             | 包含该文件标签页的工作区。                                         |
-| `file`        | `PluginFile`         | 文件的句柄。标签页显示该文件期间保持不变。                         |
-| `tab`         | `PluginFileTab`      | `setModified(modified)` 会显示标签页的未保存圆点，并在关闭前确认。 |
-| `location`    | `PluginFileLocation` | `lineStart?`、`lineEnd?` 和 `revision`，后者在每次导航时递增。     |
+| 属性          | 类型                    | 含义                                                                                       |
+| ------------- | ----------------------- | ------------------------------------------------------------------------------------------ |
+| `workspaceId` | `string`                | 包含该文件标签页的工作区。                                                                 |
+| `params`      | `PluginFilePanelParams` | 打开请求提供的只读 `path`、`lineStart?` 和 `lineEnd?`。                                    |
+| `revision`    | `number`                | 每次向该标签页重新发送 params 时递增，即使是同一行。                                       |
+| `file`        | `PluginFile`            | 从 `params.path` 解析的文件能力；标签页显示该文件期间保持不变。                            |
+| `tab`         | `PluginTab`             | `setModified`、持久化的自定义 `state` 和 `setState`。参见[工作区面板](#workspace-panels)。 |
 
 Paseo 在知道文件存在及其大小后就会挂载你的面板，不会先读取文件。`file` 对象保持不变，它的 stat 字段保存 Paseo 已知的最新版本。请在渲染时读取这些字段；它们变化时不会重新渲染你的面板。面板要通过 `watch` 监听器，或 `useFileText`、`useFileBytes`、`useFileUrl` 引起的重新渲染，得知它们已变化：
 
@@ -1620,17 +1755,17 @@ hook 的重新读取会采用磁盘上的版本，因此下一次写入会覆盖
 5. 遇到 `PluginFileConflictError` 时，显示同样的冲突。
 6. 收到 `{ type: "deleted" }` 或遇到 `PluginFileDeletedError` 时，告诉用户文件已不存在。
 
-请在组件卸载之前写入待保存的编辑：切换面板或关闭标签页都会卸载它。如果面板报告有未保存的更改，Paseo 会在关闭标签页之前询问。[Markdown 面板](https://github.com/getpaseo/paseo/tree/main/plugin-examples/markdown-panel)示例实现了这些步骤。
+请在组件卸载之前写入待保存的编辑：用其他面板打开标签页或关闭标签页都会卸载它。如果面板报告有未保存的更改，Paseo 会在关闭标签页之前询问。[Markdown 面板](https://github.com/getpaseo/paseo/tree/main/plugin-examples/markdown-panel)示例实现了这些步骤。
 
 ### 选择与打开方式 {#selection-and-open-with}
 
-插件面板是其选择器匹配的每个文件的候选面板，无论是文本还是二进制文件。内置面板要求主机报告的文件类型：Markdown、HTML 和 **源代码** 打开文本文件，**图片** 打开图片。候选面板的顺序是：内置的 Markdown、HTML 和图片面板，然后按主机目录顺序排列的插件面板，最后是每个文本文件都有的 **源代码**。只有没有其他面板认领文件时，源代码才会默认打开它。
+插件面板是其选择器匹配的每个文件的候选面板，无论是文本还是二进制文件。内置面板要求主机报告的文件类型：Markdown、HTML 和 **源代码** 打开文本文件，**图片** 打开图片。Markdown 和 HTML 面板各自有文件的预览视图和源代码视图，在面板的工具栏中切换。**源代码** 是 Paseo 的编辑器，是没有其他内置面板认领的文本文件的内置面板；它从不与其他内置面板一起提供。候选面板的顺序是：认领该文件的内置面板，然后按主机目录顺序排列的插件面板，最后是没有其他内置面板认领该文件时的源代码。
 
-记住的关联在其面板于当前主机上可用时选择该面板。否则 Paseo 打开第一个候选面板。当插件面板是多个候选面板之一且没有适用的关联时，Paseo 每次打开标签页时询问一次，询问显示在它已经打开的面板上方。只有内置面板时从不询问：Markdown 文件用 Markdown 打开，并在切换器中提供源代码。安装了一个 Markdown 插件后，选择器会提供 **Markdown — Paseo**、**Rich Markdown — markdown-panel** 和 **源代码 — Paseo**。认领文本扩展名的插件会与源代码竞争，所以第一次打开时会询问；单独认领某个二进制文件的插件会直接打开，不询问。
+记住的关联在其面板于当前主机上可用时选择该面板。否则 Paseo 打开第一个候选面板。当插件面板是多个候选面板之一且没有适用的关联时，Paseo 每次打开标签页时询问一次，询问显示在它已经打开的面板上方。只有一个候选面板的文件从不询问。安装了一个 Markdown 插件后，选择器会提供 **Markdown — Paseo** 和 **Rich Markdown — markdown-panel**。认领某个没有内置面板认领的文本扩展名的插件会与源代码竞争，所以第一次打开时会询问；单独认领某个二进制文件的插件会直接打开，不询问。
 
 **不再询问** 会在此设备上为该扩展名记住这个选择。当某个候选面板匹配了确切的文件名时，该选择改为应用于那个 basename。不可用的关联在该主机上会被忽略，并为安装了其面板的主机保留。
 
-用户可以用栏中的面板切换器切换当前标签页：它并排显示最多三个面板（手机上为两个），更多的面板放在菜单中；也可以用标签页菜单中的 **打开方式…**。对于这个标签页，该选择优先于记住的关联，直到标签页被重新定向。栏的溢出菜单和打开方式中的 **始终用于** 会记住当前显示的面板。从链接或搜索结果在某一行打开文件时，标签页会切换到源代码。没有候选面板的文件显示 **二进制预览不可用**；二进制文件没有源代码面板。
+用户有三种方式选择面板：第一次打开时的选择器、标签页菜单中的 **打开方式…**，以及 **设置 > 文件**。打开方式会切换当前标签页，并且对于这个标签页优先于记住的关联，直到标签页被重新定向；其中的 **始终用于** 会记住当前显示的面板。从链接或搜索结果在某一行打开文件时，标签页会切换到它的内置面板，并在源代码视图中显示该行。没有候选面板的文件显示 **二进制预览不可用**；二进制文件没有源代码面板。
 
 ### DocumentFrame {#documentframe}
 
@@ -1776,8 +1911,9 @@ review.update({ visible: true });
 review.remove();
 ```
 
-省略 `label` 即为只有图标的标题栏按钮。在宽布局中，菜单和弹出框会显示一个 V 形箭头。紧凑布局中的标题栏
-按钮只使用图标，没有标签和箭头。Paseo 会把多出来的贡献移入一个共享的溢出菜单。位置和溢出由宿主决定。
+省略 `label` 即为只有图标的标题栏按钮。在宽布局中，菜单和弹出框会显示一个 V 形箭头。Paseo 会把多出来的
+贡献移入一个共享的溢出菜单。在手机和较窄的窗口中，标题栏没有空间放置插件按钮，因此每个按钮都会成为工作区
+菜单（`···`）中的一行，显示它的图标和标题；它的菜单和弹出框以该底部面板中的页面打开。位置和溢出由宿主决定。
 
 ## Composer 胶囊 {#composer-pills}
 

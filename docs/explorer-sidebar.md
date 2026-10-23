@@ -43,13 +43,16 @@ remounts its panel. Revealing a target that already has a sheet uncovers that sh
 ones above it, except ones holding unsaved work, which stay where they are. Opening a sheet as a tab
 dismisses the sheets above it, since the tab would sit under them. The stack is not persisted.
 
-Sheets are modal and cover the whole compact workspace, including the header and Explorer. A sheet's header is its drag
+Sheets are modal and cover both compact sidebars as well as the workspace. A sheet's header is its drag
 handle, because the panel scrolls on its own and content panning would fight it. Its trailing rail
 holds icon buttons only (`SheetHeaderIconButton`): Open as tab is the full-screen glyph beside
-Close, so the title keeps its width. The sheets present
-from the shared workspace's `SheetHostScope`, so their panels read the navigator and every
-workspace provider an ordinary pane has without a context bridge
-([floating-panels.md Gotcha 6](floating-panels.md#gotcha-6--bottom-sheet-refs-are-not-lifecycle-truth)).
+Close, so the title keeps its width. Compact sheets use the app overlay host: a workspace-local
+host sits behind the app-level left sidebar. The workspace environment bridge preserves existing
+editing sessions, caches, file-link resolution and supported navigation context without moving
+their providers. Keep this capability at the workspace boundary; new sheet callers must not
+assemble provider internals. Wide layouts retain local hosting and pane geometry. Both hosts
+forward the same Gorhom modal queue; neither creates another stack. See
+[floating-panels.md Gotcha 7](floating-panels.md#gotcha-7--a-sheet-cannot-read-context-from-its-call-site).
 
 A sheet holding unsaved work is never implicitly displaced; only its guarded close removes it.
 Moving its tab to another host remounts the panel, and the file editor keeps unsaved text in the
@@ -83,7 +86,12 @@ literal `"explorer"` pane id and `explorerPaneIdByWorkspace` key for compatibili
 
 Explorer uses the shared workspace tab row and ordinary tab context menus. Files and Changes
 hide their close buttons through the panel manifest; close them from the tab context menu.
-Other tabs reveal the close control on hover. The + menu opens compatible panels in the dock, including Agent and terminal profiles.
+Other tabs reveal the close control on hover. Compact layouts show no inline close on any tab,
+since a narrow X beside the label is easy to hit by accident; the long-press menu closes it.
+Compact tabs also keep their natural width and the rail scrolls as soon as they overflow, while
+pointer layouts shrink tabs toward the clickable minimum first. A rail that scrolls never truncates.
+The + menu opens compatible panels in the dock, including Agent and terminal profiles. Compact
+layouts omit Diff from it because compact Changes shows each file's diff inline.
 Web also supports dragging agents and terminals into Explorer.
 Bulk-close actions apply only to the dock's tabs. Explorer tabs can be reordered and dragged
 between compatible panes, but the dock cannot be split or maximized. Selecting an Explorer tab

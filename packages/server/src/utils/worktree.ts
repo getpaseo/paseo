@@ -1,13 +1,6 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import {
-  constants as fsConstants,
-  existsSync,
-  mkdirSync,
-  realpathSync,
-  rmSync,
-  statSync,
-} from "fs";
+import { constants as fsConstants, existsSync, mkdirSync, realpathSync, statSync } from "fs";
 import { copyFile, rm, stat } from "fs/promises";
 import { join, basename, dirname, isAbsolute, resolve, sep } from "path";
 import net from "node:net";
@@ -217,7 +210,6 @@ export interface CreateWorktreeOptions {
   cwd: string;
   worktreeSlug: string;
   source: WorktreeSource;
-  runSetup: boolean;
   paseoHome?: string;
   worktreesRoot?: string;
 }
@@ -643,7 +635,6 @@ async function inferRepoRootPathFromWorktreePath(worktreePath: string): Promise<
 export async function runWorktreeSetupCommands(options: {
   worktreePath: string;
   branchName: string;
-  cleanupOnFailure: boolean;
   repoRootPath?: string;
   runtimeEnv?: WorktreeRuntimeEnv;
   signal?: AbortSignal;
@@ -683,16 +674,6 @@ export async function runWorktreeSetupCommands(options: {
     results.push(result);
 
     if (result.exitCode !== 0) {
-      if (options.cleanupOnFailure) {
-        try {
-          await runGitCommand(["worktree", "remove", options.worktreePath, "--force"], {
-            cwd: options.worktreePath,
-            timeout: 120_000,
-          });
-        } catch {
-          rmSync(options.worktreePath, { recursive: true, force: true });
-        }
-      }
       throw new WorktreeSetupError(
         `Worktree setup command failed: ${cmd}\n${result.stderr}`.trim(),
         results,
@@ -1221,7 +1202,6 @@ export const createWorktree = async ({
   cwd,
   source,
   worktreeSlug,
-  runSetup,
   paseoHome,
   worktreesRoot,
 }: CreateWorktreeOptions): Promise<CreatedWorktree> => {
@@ -1268,14 +1248,6 @@ export const createWorktree = async ({
   });
 
   await seedPaseoConfigFile({ sourceCwd: cwd, targetCwd: worktreePath });
-
-  if (runSetup) {
-    await runWorktreeSetupCommands({
-      worktreePath,
-      branchName: sourcePlan.branchName,
-      cleanupOnFailure: true,
-    });
-  }
 
   return {
     branchName: sourcePlan.branchName,

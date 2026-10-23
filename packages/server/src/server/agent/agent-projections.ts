@@ -1,3 +1,4 @@
+import { isSameOrDescendantPath } from "../path-utils.js";
 import type {
   AgentListItemPayload,
   AgentSnapshotPayload,
@@ -284,6 +285,66 @@ export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListIt
     labels: agent.labels,
     ...(agent.providerUnavailable ? { providerUnavailable: true } : {}),
   };
+}
+
+function parseTimestamp(value: string | null | undefined): number {
+  if (!value) {
+    return 0;
+  }
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function resolveAgentListActivityTime(agent: AgentListItemPayload): number {
+  return Math.max(
+    parseTimestamp(agent.updatedAt),
+    parseTimestamp(agent.lastUserMessageAt),
+    parseTimestamp(agent.attentionTimestamp),
+    parseTimestamp(agent.archivedAt),
+    parseTimestamp(agent.createdAt),
+  );
+}
+
+function compareAgentListItems(a: AgentListItemPayload, b: AgentListItemPayload): number {
+  const attentionDelta =
+    Number(b.requiresAttention ?? false) - Number(a.requiresAttention ?? false);
+  if (attentionDelta !== 0) {
+    return attentionDelta;
+  }
+
+  const statusOrder = {
+    running: 0,
+    initializing: 1,
+    idle: 2,
+    error: 3,
+    closed: 4,
+  } as Record<string, number>;
+  const statusDelta = (statusOrder[a.status] ?? 999) - (statusOrder[b.status] ?? 999);
+  if (statusDelta !== 0) {
+    return statusDelta;
+  }
+
+  return resolveAgentListActivityTime(b) - resolveAgentListActivityTime(a);
+}
+
+export function selectAgentListItems(
+  agents: readonly AgentSnapshotPayload[],
+  options: {
+    cwd?: string;
+    statuses?: AgentSnapshotPayload["status"][];
+    sinceHours?: number;
+    limit?: number;
+  } = {},
+): AgentListItemPayload[] {
+  const statusFilter = options.statuses?.length ? new Set(options.statuses) : null;
+  const sinceMs = Date.now() - (options.sinceHours ?? 48) * 60 * 60 * 1000;
+  return agents
+    .map(toAgentListItemPayload)
+    .filter((agent) => !options.cwd || isSameOrDescendantPath(options.cwd, agent.cwd))
+    .filter((agent) => !statusFilter || statusFilter.has(agent.status))
+    .filter((agent) => !agent.archivedAt || resolveAgentListActivityTime(agent) >= sinceMs)
+    .sort(compareAgentListItems)
+    .slice(0, options.limit ?? 50);
 }
 
 export function toRecentProviderSessionDescriptorPayload(

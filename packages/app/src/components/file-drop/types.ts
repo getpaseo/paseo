@@ -13,11 +13,11 @@ export type DroppedItem = DroppedFileItem | DroppedPathItem;
 
 /**
  * What a consumer (e.g. a composer) registers to receive files dropped onto the
- * surrounding FileDropZone. Raster images arrive already persisted via `onFiles`;
- * everything else arrives raw via `onGenericFiles`.
+ * surrounding FileDropZone. Every file arrives raw via `onGenericFiles`; a sink that
+ * also provides `onFiles` gets its raster images persisted as attachments.
  */
 export interface FileDropSink {
-  onFiles: (images: ImageAttachment[]) => void;
+  onFiles?: (images: ImageAttachment[]) => void;
   onGenericFiles?: (items: DroppedItem[]) => void;
   onWorkspaceFile?: (payload: WorkspaceFileDragPayload) => void;
 }
