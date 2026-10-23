@@ -146,6 +146,35 @@ describe("ReplyWatcher", () => {
     expect(await watcher.poll()).toEqual(["new reply!", "more"]);
   });
 
+  it("detects a replacement that keeps a long identical prefix", async () => {
+    const path = join(dir, "p.replies.jsonl");
+    const watcher = new ReplyWatcher(path);
+    const pad = "x".repeat(400);
+    await appendFile(path, `${JSON.stringify({ text: `${pad} one` })}\n`);
+    expect(await watcher.poll()).toHaveLength(1);
+    await writeFile(
+      path,
+      `${JSON.stringify({ text: `${pad} two` })}\n${JSON.stringify({ text: "three" })}\n`,
+    );
+    expect(await watcher.poll()).toEqual([`${pad} two`, "three"]);
+  });
+
+  it("keeps its offset across a transient read error and does not replay", async () => {
+    const path = join(dir, "e.replies.jsonl");
+    let fail = false;
+    const watcher = new ReplyWatcher(path, async (p) => {
+      if (fail) throw Object.assign(new Error("EIO"), { code: "EIO" });
+      return readFile(p, "utf8");
+    });
+    await appendFile(path, `${JSON.stringify({ text: "one" })}\n`);
+    expect(await watcher.poll()).toEqual(["one"]);
+    fail = true;
+    await expect(watcher.poll()).rejects.toThrow("EIO");
+    fail = false;
+    await appendFile(path, `${JSON.stringify({ text: "two" })}\n`);
+    expect(await watcher.poll()).toEqual(["two"]);
+  });
+
   it("skips malformed lines and keeps polling", async () => {
     const path = join(dir, "m.replies.jsonl");
     const watcher = new ReplyWatcher(path);
@@ -201,6 +230,32 @@ describe("ReplyPump", () => {
     expect(await pump.pump()).toEqual(["go ahead"]);
     expect(speak).toHaveBeenCalledWith("The overseer says: go ahead");
     expect(await pump.pump()).toEqual([]);
+  });
+
+  it("serializes overlapping pump calls so a reply is logged and spoken once", async () => {
+    const session = createVoiceSession({ dir, session: "s5b" });
+    await appendFile(session.repliesPath, `${JSON.stringify({ text: "only once" })}\n`);
+    let release: () => void = () => {};
+    const speak = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const pump = new ReplyPump({
+      watcher: new ReplyWatcher(session.repliesPath),
+      gate: new TurnGate(),
+      session,
+      speak,
+    });
+    const first = pump.pump();
+    const second = pump.pump();
+    await vi.waitFor(() => expect(speak).toHaveBeenCalledTimes(1));
+    release();
+    await Promise.all([first, second]);
+    expect(speak).toHaveBeenCalledTimes(1);
+    const log = await readFile(session.path, "utf8");
+    expect(log.split("\n").filter((line) => line.includes("only once"))).toHaveLength(1);
   });
 
   it("keeps a reply pending until speak succeeds, logging it once", async () => {

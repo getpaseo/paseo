@@ -276,6 +276,35 @@ describe("ledger state machine", () => {
     expect(ledger.propose({ item: "x" }).id).toMatch(/^[0-9a-f-]{36}$/);
   });
 
+  it("returns copies, so mutating a result does not change ledger state", () => {
+    const { ledger, store } = makeLedger();
+    const created = ledger.propose({ item: "x" });
+    created.state = "agreed";
+    created.item = "hacked";
+    ledger.get(created.id).item = "hacked";
+    ledger.list()[0]!.state = "dropped";
+    expect(ledger.get(created.id)).toMatchObject({ state: "draft", item: "x" });
+    expect(store.rows).toHaveLength(1);
+  });
+
+  it("leaves state unchanged when an append fails during agree", async () => {
+    const rows: LedgerItem[] = [];
+    let failFrom = Infinity;
+    const store: LedgerStore = {
+      append: (item) => {
+        if (rows.length >= failFrom) throw new Error("disk full");
+        rows.push(item);
+      },
+      load: () => rows,
+    };
+    const ledger = createLedger({ store, newId: () => "k1" });
+    const { id } = ledger.propose({ item: "x" });
+    ledger.refine(id, COMPLETE);
+    failFrom = rows.length;
+    await expect(ledger.agree(id, { confirmed: true })).rejects.toThrow("disk full");
+    expect(ledger.get(id).state).toBe("refined");
+  });
+
   it("restores state from the store, latest row per id winning", () => {
     const { ledger, store } = makeLedger();
     const { id } = ledger.propose({ item: "x" });

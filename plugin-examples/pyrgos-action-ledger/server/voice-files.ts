@@ -42,8 +42,13 @@ export async function readCapabilities(dir: string = voiceDir()): Promise<VoiceC
 }
 
 export async function readSettings(dir: string = voiceDir()): Promise<VoiceSettings> {
-  const parsed = VoiceSettingsSchema.safeParse(await readJson(join(dir, "voice-settings.json")));
-  return parsed.success ? parsed.data : DEFAULT_SETTINGS;
+  const path = join(dir, "voice-settings.json");
+  const text = await readFile(path, "utf8").catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (text === null) return DEFAULT_SETTINGS;
+  return VoiceSettingsSchema.parse(JSON.parse(text));
 }
 
 export async function writeSettings(

@@ -109,29 +109,34 @@ export function VoiceSettingsForm({
   onChange,
 }: VoiceSettingsFormProps) {
   const styles = useFormStyles(colors);
-  const latest = useRef(settings);
+  const base = useRef(settings);
+  const queue = useRef<VoiceSettingsPatch[]>([]);
   const current = useRef(settings);
-  const pending = useRef(0);
   current.current = settings;
   useEffect(() => {
-    if (pending.current === 0) latest.current = settings;
+    if (queue.current.length === 0) base.current = settings;
   }, [settings]);
+  const latest = useRef(settings);
+  const recompute = useCallback(() => {
+    latest.current = Object.assign({}, base.current, ...queue.current.map(definedOnly));
+  }, []);
   const send = useCallback(
     (patch: VoiceSettingsPatch) => {
-      latest.current = { ...latest.current, ...definedOnly(patch) };
-      pending.current += 1;
-      const settle = (failed: boolean) => {
-        pending.current -= 1;
-        // On success the optimistic value stays until the next settings update syncs it;
-        // resetting to current props here would use a stale render.
-        if (failed && pending.current === 0) latest.current = current.current;
+      queue.current.push(patch);
+      recompute();
+      const settle = (ok: boolean) => {
+        queue.current = queue.current.filter((entry) => entry !== patch);
+        // An acknowledged patch joins the base; a failed one is dropped, so it never feeds
+        // the next press.
+        if (ok) base.current = { ...base.current, ...definedOnly(patch) };
+        recompute();
       };
       Promise.resolve(onChange(patch)).then(
-        () => settle(false),
         () => settle(true),
+        () => settle(false),
       );
     },
-    [onChange],
+    [onChange, recompute],
   );
   const slower = useCallback(
     () => send({ speed: roundSpeed(Math.max(SPEED_MIN, latest.current.speed - SPEED_STEP)) }),

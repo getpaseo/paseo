@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { appendFile, mkdir, open, readFile, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -144,25 +145,38 @@ function parseJsonLine(line: string): unknown {
   }
 }
 
-const HEAD_CHARS = 256;
+function digest(text: string): string {
+  return createHash("sha1").update(text).digest("hex");
+}
+
+type ReadText = (path: string) => Promise<string>;
+
+const readUtf8: ReadText = (path) => readFile(path, "utf8");
 
 export class ReplyWatcher {
   private offset = 0;
-  private head = "";
+  private consumed = digest("");
 
-  constructor(private readonly path: string) {}
+  constructor(
+    private readonly path: string,
+    private readonly read: ReadText = readUtf8,
+  ) {}
 
   async poll(): Promise<string[]> {
-    const raw = await readFile(this.path, "utf8").catch(() => "");
-    if (raw.length < this.offset || !raw.startsWith(this.head)) {
+    let raw = "";
+    try {
+      raw = await this.read(this.path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    if (raw.length < this.offset || digest(raw.slice(0, this.offset)) !== this.consumed) {
       this.offset = 0;
-      this.head = "";
     }
     const unread = raw.slice(this.offset);
     const end = unread.lastIndexOf("\n");
     if (end < 0) return [];
     this.offset += end + 1;
-    this.head = raw.slice(0, Math.min(HEAD_CHARS, this.offset));
+    this.consumed = digest(raw.slice(0, this.offset));
     const replies: string[] = [];
     for (const line of unread.slice(0, end).split("\n")) {
       if (!line.trim()) continue;
@@ -209,9 +223,17 @@ export interface ReplyPumpInput {
 export class ReplyPump {
   private readonly pending: { text: string; logged: boolean }[] = [];
 
+  private queue: Promise<unknown> = Promise.resolve();
+
   constructor(private readonly input: ReplyPumpInput) {}
 
-  async pump(): Promise<string[]> {
+  pump(): Promise<string[]> {
+    const next = this.queue.then(() => this.drain());
+    this.queue = next.catch(() => undefined);
+    return next;
+  }
+
+  private async drain(): Promise<string[]> {
     for (const text of await this.input.watcher.poll()) this.pending.push({ text, logged: false });
     const spoken: string[] = [];
     while (this.input.gate.idle()) {

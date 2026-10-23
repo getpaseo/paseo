@@ -94,18 +94,26 @@ export function createLedger(deps: LedgerDeps): Ledger {
 
   function save(next: LedgerItem): LedgerItem {
     deps.store.append(next);
-    items.set(next.id, next);
-    return next;
+    items.set(next.id, { ...next });
+    return { ...next };
   }
 
-  function get(id: string): LedgerItem {
+  function copyItem(item: LedgerItem): LedgerItem {
+    return { ...item };
+  }
+
+  function find(id: string): LedgerItem {
     const found = items.get(id);
     if (!found) throw new LedgerError("not_found", `no action item ${id}`, id);
     return found;
   }
 
+  function get(id: string): LedgerItem {
+    return { ...find(id) };
+  }
+
   function editable(id: string): LedgerItem {
-    const found = get(id);
+    const found = find(id);
     if (found.state === "agreed" || found.state === "dropped") {
       throw new LedgerError("bad_state", `item ${id} is ${found.state}`, id);
     }
@@ -212,7 +220,7 @@ export function createLedger(deps: LedgerDeps): Ledger {
   }
 
   function list(): LedgerItem[] {
-    return [...items.values()];
+    return Array.from(items.values(), copyItem);
   }
 
   return { propose, refine, agree, drop, get, list };

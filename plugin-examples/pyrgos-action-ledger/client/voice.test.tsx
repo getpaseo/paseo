@@ -135,6 +135,32 @@ describe("settings form after the last save resolves", () => {
   });
 });
 
+describe("settings form after a failed save", () => {
+  it("does not build the next press on a value the server never saved", async () => {
+    const calls: VoiceSettingsPatch[] = [];
+    const settlers: Array<{ ok: () => void; fail: () => void }> = [];
+    const onChange = (patch: VoiceSettingsPatch) => {
+      calls.push(patch);
+      return new Promise<void>((resolve, reject) =>
+        settlers.push({ ok: resolve, fail: () => reject(new Error("save failed")) }),
+      );
+    };
+    const props = { capabilities: PITCH_CAPS, colors, onChange };
+    render(<VoiceSettingsForm settings={DEFAULT_SETTINGS} {...props} />);
+    const faster = screen.getByLabelText("Increase Speed");
+    fireEvent.click(faster);
+    fireEvent.click(faster);
+    settlers[1]?.fail();
+    await Promise.resolve();
+    await Promise.resolve();
+    settlers[0]?.ok();
+    await Promise.resolve();
+    await Promise.resolve();
+    fireEvent.click(faster);
+    expect(calls.map((c) => c.speed)).toEqual([1.1, 1.2, 1.2]);
+  });
+});
+
 describe("parseLastUtterance", () => {
   it("takes the last valid row", () => {
     expect(utterance?.id).toBe("u2");
@@ -233,6 +259,13 @@ describe("voice files", () => {
       return stat(path);
     }) as typeof stat;
     expect((await readPlayback(dir, statFile)).utterance?.id).toBe("u2");
+  });
+
+  it("does not default over an unreadable or corrupt settings file", async () => {
+    await writeFile(join(dir, "voice-settings.json"), "{not json");
+    await expect(readSettings(dir)).rejects.toThrow();
+    await expect(writeSettings({ speed: 1.3 }, dir)).rejects.toThrow();
+    expect(await readFile(join(dir, "voice-settings.json"), "utf8")).toBe("{not json");
   });
 
   it("expires a finished utterance", async () => {

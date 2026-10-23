@@ -29,6 +29,9 @@ async function newestLedgerFile(dir: string): Promise<string | null> {
 export async function listActionItems(): Promise<{ session: string | null; items: ActionItem[] }> {
   const path = process.env.PYRGOS_LEDGER_FILE ?? (await newestLedgerFile(voiceDir()));
   if (!path) return { session: null, items: [] };
-  const text = await readFile(path, "utf8").catch(() => "");
+  const text = await readFile(path, "utf8").catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return "";
+    throw error;
+  });
   return { session: basename(path, LEDGER_SUFFIX), items: parseLedgerRows(text) };
 }
