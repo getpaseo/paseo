@@ -28,6 +28,7 @@ export function applyLabSpeechServices(params: {
         url: config.ttsUrl,
         voice: config.ttsVoice,
         connectTimeoutMs: config.connectTimeoutMs,
+        idleTimeoutMs: config.idleTimeoutMs,
         fallback: existing.ttsService,
       },
       logger,

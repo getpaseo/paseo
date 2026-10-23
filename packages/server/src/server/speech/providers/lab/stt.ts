@@ -57,6 +57,8 @@ export class LabSTT implements SpeechToTextProvider {
     let previousSegmentId: string | null = null;
     const queued: Buffer[] = [];
     let closed = false;
+    // commit() before the socket is (re)connected: the "end" goes out right after the queued audio.
+    let endPending = false;
     let pending: WebSocket | null = null;
     const aborted = new Error("lab STT connect aborted");
     const dropped = new WeakSet<WebSocket>();
@@ -81,6 +83,10 @@ export class LabSTT implements SpeechToTextProvider {
           opened = true;
           ws = socket;
           for (const chunk of queued.splice(0)) socket.send(chunk);
+          if (endPending) {
+            endPending = false;
+            socket.send(JSON.stringify({ type: "end" }));
+          }
           resolve();
         });
         socket.on("message", (data: WebSocket.RawData, isBinary: boolean) => {
@@ -163,10 +169,15 @@ export class LabSTT implements SpeechToTextProvider {
           return;
         }
         emitter.emit("committed", { segmentId, previousSegmentId });
-        ws?.send(JSON.stringify({ type: "end" }));
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "end" }));
+        } else {
+          endPending = true;
+        }
       },
       clear() {
         queued.length = 0;
+        endPending = false;
         if (delegate) {
           delegate.clear();
           return;
@@ -184,6 +195,7 @@ export class LabSTT implements SpeechToTextProvider {
       },
       close() {
         closed = true;
+        endPending = false;
         queued.length = 0;
         delegate?.close();
         const old = ws;

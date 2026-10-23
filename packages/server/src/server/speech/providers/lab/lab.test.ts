@@ -70,7 +70,11 @@ describe("resolveLabSpeechConfig", () => {
       sttUrl: "ws://stt.invalid/stt",
       ttsVoice: "af_heart",
       connectTimeoutMs: 250,
+      idleTimeoutMs: 3000,
     });
+    expect(resolveLabSpeechConfig({ PASEO_LAB_TTS_IDLE_TIMEOUT_MS: "900" }).idleTimeoutMs).toBe(
+      900,
+    );
   });
 });
 
@@ -149,6 +153,31 @@ describe("LabTTS", () => {
     };
     const tts = new LabTTS({ url, voice: "v", connectTimeoutMs: 500, fallback }, logger);
     expect((await collect((await tts.synthesizeSpeech("hi")).stream)).toString()).toBe("stock");
+  });
+
+  test("falls back when the lab accepts speak but sends no audio", async () => {
+    const url = await fakeLab(() => {});
+    const fallback: TextToSpeechProvider = {
+      synthesizeSpeech: async () => ({
+        stream: Readable.from([Buffer.from("stock")]),
+        format: "pcm",
+      }),
+    };
+    const tts = new LabTTS(
+      { url, voice: "v", connectTimeoutMs: 500, idleTimeoutMs: 100, fallback },
+      logger,
+    );
+    expect((await collect((await tts.synthesizeSpeech("hi")).stream)).toString()).toBe("stock");
+  });
+
+  test("destroys the stream when the lab stalls after audio started", async () => {
+    const url = await fakeLab((ws) => ws.send(Buffer.from([1, 0])));
+    const tts = new LabTTS(
+      { url, voice: "v", connectTimeoutMs: 500, idleTimeoutMs: 100, fallback: null },
+      logger,
+    );
+    const { stream } = await tts.synthesizeSpeech("hi");
+    await expect(collect(stream)).rejects.toThrow(/stalled/);
   });
 
   test("sends cancel when the consumer destroys the stream early", async () => {
@@ -295,6 +324,23 @@ describe("LabSTT", () => {
     await new Promise((r) => setTimeout(r, 100));
     session.commit();
     await expect.poll(() => texts).toEqual(["again"]);
+    session.close();
+  });
+
+  test("commit() right after clear() still sends end once the reopen connects", async () => {
+    const frames: Array<Buffer | string> = [];
+    const url = await fakeLab((_ws, data, isBinary) => {
+      frames.push(isBinary ? Buffer.from(data as Buffer) : data.toString());
+    });
+    const stt = new LabSTT({ url, connectTimeoutMs: 1000, fallback: null }, logger);
+    const session = stt.createSession({ logger });
+    await session.connect();
+    session.clear();
+    session.appendPcm16(Buffer.from([1, 0]));
+    session.commit();
+    await expect.poll(() => frames.length).toBe(2);
+    expect(frames[0]).toEqual(Buffer.from([1, 0]));
+    expect(frames[1]).toBe(JSON.stringify({ type: "end" }));
     session.close();
   });
 

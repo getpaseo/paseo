@@ -2,12 +2,14 @@ import { PassThrough } from "node:stream";
 import type pino from "pino";
 import { WebSocket } from "ws";
 import type { SpeechStreamResult, TextToSpeechProvider } from "../../speech-provider.js";
-import { LAB_TTS_SAMPLE_RATE } from "./config.js";
+import { LAB_IDLE_TIMEOUT_MS, LAB_TTS_SAMPLE_RATE } from "./config.js";
 
 export interface LabTtsOptions {
   url: string;
   voice: string;
   connectTimeoutMs: number;
+  /** Max silence between frames (and before the first one); default LAB_IDLE_TIMEOUT_MS. */
+  idleTimeoutMs?: number;
   /** Used when the lab is unreachable or fails before the first audio frame. */
   fallback: TextToSpeechProvider | null;
 }
@@ -52,8 +54,15 @@ export class LabTTS implements TextToSpeechProvider {
         handshakeTimeout: this.options.connectTimeoutMs,
       });
       let delivered = false;
+      let idleTimer: NodeJS.Timeout | null = null;
+      const idleMs = this.options.idleTimeoutMs ?? LAB_IDLE_TIMEOUT_MS;
 
+      const clearIdle = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = null;
+      };
       const fail = (error: Error) => {
+        clearIdle();
         if (delivered) {
           stream.destroy(error);
         } else {
@@ -61,12 +70,23 @@ export class LabTTS implements TextToSpeechProvider {
         }
         ws.terminate();
       };
+      // Before the first frame a stall rejects (stock fallback runs); after it, the stream errors.
+      const armIdle = () => {
+        clearIdle();
+        idleTimer = setTimeout(() => {
+          fail(
+            new Error(delivered ? "lab TTS stalled mid-stream" : "lab TTS first audio timed out"),
+          );
+        }, idleMs);
+      };
 
       ws.on("open", () => {
         ws.send(JSON.stringify({ type: "speak", text, voice: this.options.voice }));
+        armIdle();
       });
       ws.on("message", (data: WebSocket.RawData, isBinary: boolean) => {
         if (isBinary) {
+          armIdle();
           stream.write(Buffer.isBuffer(data) ? data : Buffer.concat(data as Buffer[]));
           if (!delivered) {
             delivered = true;
@@ -87,12 +107,14 @@ export class LabTTS implements TextToSpeechProvider {
             fail(new Error("lab TTS returned no audio"));
             return;
           }
+          clearIdle();
           stream.end();
           ws.close();
         }
       });
       ws.on("error", (error) => fail(error));
       ws.on("close", () => {
+        clearIdle();
         if (!delivered) {
           reject(new Error("lab TTS closed before audio"));
         } else if (!stream.writableEnded) {
@@ -100,6 +122,7 @@ export class LabTTS implements TextToSpeechProvider {
         }
       });
       stream.on("close", () => {
+        clearIdle();
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "cancel" }));
           ws.close();
