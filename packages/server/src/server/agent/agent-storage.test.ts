@@ -148,23 +148,6 @@ describe("AgentStorage", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  test("snapshot writes preserve pending finish subscriptions and remove only the acknowledged token", async () => {
-    const agent = createManagedAgent({ id: "watched-agent" });
-    await storage.applySnapshot(agent);
-    const first = { id: "watch-1", callerAgentId: "caller-1", requireParentOwnership: true };
-    const second = { id: "watch-2", callerAgentId: "caller-2", requireParentOwnership: false };
-    await Promise.all([
-      storage.addFinishNotification(agent.id, first),
-      storage.addFinishNotification(agent.id, second),
-      storage.applySnapshot(agent),
-    ]);
-    expect((await storage.get(agent.id))?.finishNotifications).toEqual([first, second]);
-    await storage.removeFinishNotification(agent.id, first.id);
-    await storage.applySnapshot(agent);
-    const reloaded = new AgentStorage(storagePath, logger);
-    expect((await reloaded.get(agent.id))?.finishNotifications).toEqual([second]);
-  });
-
   test("applySnapshot persists configs and snapshot metadata", async () => {
     await storage.applySnapshot(
       createManagedAgent({

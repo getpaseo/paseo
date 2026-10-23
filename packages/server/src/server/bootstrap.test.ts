@@ -6,15 +6,12 @@ import { AgentStorage } from "./agent/agent-storage.js";
 import { createTestLogger } from "../test-utils/test-logger.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
-import { createAgentMessageDelivery } from "./agent/agent-messages/index.js";
-import {
-  recoverInterruptedAgentRecords,
-  deliverInterruptedFinishNotifications,
-} from "./agent/restart-recovery.js";
+import { createJsonFinishSubscriptionStore } from "./agent/finish-subscriptions/index.js";
+import { recoverInterruptedAgentRecords } from "./agent/restart-recovery.js";
 
 import { fanOutReconciledWorkspaceUpdates } from "./bootstrap.js";
 
-test("clean shutdown preserves active-turn interruption and finish callbacks for the next worker", async () => {
+test("clean shutdown preserves active-turn interruption for the next worker", async () => {
   const root = await mkdtemp(join(tmpdir(), "paseo-clean-interruption-"));
   let finish!: () => void;
   let running!: () => void;
@@ -42,11 +39,6 @@ test("clean shutdown preserves active-turn interruption and finish callbacks for
       undefined,
       {},
     );
-    await handle.daemon.agentStorage.addFinishNotification(agent.id, {
-      id: "shutdown-watch",
-      callerAgentId: "caller",
-      requireParentOwnership: false,
-    });
     run = handle.daemon.agentManager.runAgent(agent.id, "keep working").catch(() => undefined);
     await started;
     expect(handle.daemon.agentManager.getAgent(agent.id)?.lifecycle).toBe("running");
@@ -57,22 +49,11 @@ test("clean shutdown preserves active-turn interruption and finish callbacks for
       lastStatus: "error",
       lastError: "Daemon restarted before the active turn completed.",
     });
-    expect(record?.finishNotifications).toEqual([
-      {
-        id: "shutdown-watch",
-        callerAgentId: "caller",
-        requireParentOwnership: false,
-        interruptedAt: expect.any(String),
-      },
-    ]);
-    // A late stop() from the previous worker must not discard the recovered callback.
-    await reloaded.removeFinishNotification(agent.id, "shutdown-watch");
-    expect((await reloaded.get(agent.id))?.finishNotifications).toHaveLength(1);
   } finally {
     finish();
     await run;
     await handle.daemon.agentManager.flush();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -103,97 +84,72 @@ test("startup reports an interrupted plugin turn without reopening its provider"
     expect(daemon.daemon.agentManager.listAgents()).toEqual([]);
   } finally {
     await daemon.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
-test("interrupted finish callbacks survive failed dispatch and are removed after acknowledgement", async () => {
-  const root = await mkdtemp(join(tmpdir(), "paseo-interrupted-notify-"));
+test("startup replays interrupted errors through the durable finish-subscription service", async () => {
+  const root = await mkdtemp(join(tmpdir(), "paseo-interrupted-subscription-"));
   const logger = createTestLogger();
-  const storage = new AgentStorage(root, logger);
+  const home = join(root, ".paseo");
+  const storage = new AgentStorage(join(home, "agents"), logger);
   const parentId = "00000000-0000-4000-8000-000000000002";
   const childId = "00000000-0000-4000-8000-000000000003";
   const base = {
-    provider: "claude",
     cwd: root,
     createdAt: "2026-10-22T00:00:00.000Z",
     updatedAt: "2026-10-22T00:00:00.000Z",
     persistence: null,
+    lastModeId: "full-access",
   };
-  await storage.upsert({ ...base, id: parentId, labels: {}, lastStatus: "idle" });
+  await storage.upsert({
+    ...base,
+    id: parentId,
+    provider: "codex",
+    labels: {},
+    lastStatus: "idle",
+  });
   await storage.upsert({
     ...base,
     id: childId,
+    provider: "plugin-interrupted",
     labels: { "paseo.parent-agent-id": parentId },
     lastStatus: "running",
   });
-  await storage.addFinishNotification(childId, {
-    id: "callback-1",
+  await storage.flush();
+  await createJsonFinishSubscriptionStore(home).put({
+    id: "interrupted-subscription",
+    childAgentId: childId,
     callerAgentId: parentId,
     requireParentOwnership: true,
   });
-  await recoverInterruptedAgentRecords(storage, logger);
-  const attempted: Array<{
-    recipientId: string;
-    messageIds: readonly string[];
-    prompt: unknown;
-    unarchive: boolean;
-  }> = [];
-  const delivery = createAgentMessageDelivery({
-    schedule: (_delay, callback) => {
-      queueMicrotask(callback);
-      return () => {};
-    },
-    async dispatch(request) {
-      attempted.push(request);
-      if (attempted.length === 1) throw new Error("recipient temporarily unavailable");
-      return "turn_started";
-    },
-    onError() {},
+  let attempts = 0;
+  const prompts: string[] = [];
+  const daemon = await createTestPaseoDaemon({
+    paseoHomeRoot: root,
+    cleanup: false,
+    agentClients: createTestAgentClients({
+      async beforeCreateSession() {
+        if (++attempts === 1) throw new Error("recipient temporarily unavailable");
+      },
+      onStartTurn: (prompt) => prompts.push(String(prompt)),
+    }),
   });
   try {
-    await deliverInterruptedFinishNotifications({ storage, agentMessages: delivery, logger });
-    expect((await storage.get(childId))?.finishNotifications).toEqual([
-      {
-        id: "callback-1",
-        callerAgentId: parentId,
-        requireParentOwnership: true,
-        interruptedAt: expect.any(String),
-      },
-    ]);
-    const reloaded = new AgentStorage(root, logger);
-    await recoverInterruptedAgentRecords(reloaded, logger);
-    await deliverInterruptedFinishNotifications({
-      storage: reloaded,
-      agentMessages: delivery,
-      logger,
-    });
-    expect(attempted).toHaveLength(2);
-    expect(
-      attempted.map(({ recipientId, messageIds, unarchive }) => ({
-        recipientId,
-        messageIds,
-        unarchive,
-      })),
-    ).toEqual([
-      { recipientId: parentId, messageIds: ["callback-1"], unarchive: false },
-      { recipientId: parentId, messageIds: ["callback-1"], unarchive: false },
-    ]);
-    expect(attempted[1]?.prompt).toContain("Daemon restarted before the active turn completed.");
-    expect((await reloaded.get(childId))?.finishNotifications).toEqual([]);
-    await deliverInterruptedFinishNotifications({
-      storage: reloaded,
-      agentMessages: delivery,
-      logger,
-    });
-    expect(attempted).toHaveLength(2);
+    await expect.poll(() => prompts.length, { timeout: 12_000 }).toBe(1);
+    expect(prompts[0]).toContain(`Agent ${childId}`);
+    expect(prompts[0]).toContain("errored");
+    expect(attempts).toBe(2);
+    expect(daemon.daemon.agentManager.getAgent(childId)).toBeNull();
+    expect((await daemon.daemon.agentStorage.get(childId))?.lastStatus).toBe("error");
+    await expect.poll(() => createJsonFinishSubscriptionStore(home).list()).toEqual([]);
   } finally {
-    await delivery.close();
-    await rm(root, { recursive: true, force: true });
+    await daemon.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
-});
+}, 15_000);
 
-test("startup keeps archived agents closed and preserves idle agents without finish subscriptions", async () => {
+test("startup keeps archived and daemon-owned agents closed while preserving idle records", async () => {
   const root = await mkdtemp(join(tmpdir(), "paseo-archived-recovery-"));
   const logger = createTestLogger();
   const storage = new AgentStorage(root, logger);
@@ -212,18 +168,25 @@ test("startup keeps archived agents closed and preserves idle agents without fin
     archivedAt: "2026-10-22T01:00:00.000Z",
   };
   const idle = { ...base, id: "idle", lastStatus: "idle" as const };
+  const owned = {
+    ...base,
+    id: "owned",
+    lastStatus: "running" as const,
+    owner: { kind: "daemon" as const, daemonId: "hub", executionId: "execution" },
+  };
   await storage.upsert(archived);
   await storage.upsert(idle);
+  await storage.upsert(owned);
   try {
     await recoverInterruptedAgentRecords(storage, logger);
     expect(await storage.get("archived")).toEqual({
       ...archived,
       lastStatus: "closed",
-      finishNotifications: [],
     });
     expect(await storage.get("idle")).toEqual(idle);
+    expect(await storage.get("owned")).toEqual({ ...owned, lastStatus: "closed" });
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 

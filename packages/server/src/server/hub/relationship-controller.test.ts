@@ -926,5 +926,6 @@ describe("Hub relationship", () => {
     await relationship.restartDaemon();
 
     expect(await relationship.storedOwnedStatus(created.payload.agentId!)).toBe("closed");
+    expect(await relationship.hubExecutionIntentFiles()).toEqual([]);
   });
 });

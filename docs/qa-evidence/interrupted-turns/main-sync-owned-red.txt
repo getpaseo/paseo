@@ -1,0 +1,54 @@
+
+ RUN  v4.1.6 $CHECKOUT/packages/server
+
+stdout | src/server/bootstrap.test.ts
+[dotenv@17.3.1] injecting env (0) from .env.test -- tip: 🔐 encrypt with Dotenvx: https://dotenvx.com
+[dotenv@17.3.1] injecting env (0) from ../.env -- tip: ⚙️  override existing env vars with { override: true }
+
+ ❯ src/server/bootstrap.test.ts (6 tests | 1 failed | 5 skipped) 14ms
+   × startup keeps archived and daemon-owned agents closed while preserving idle records 13ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/server/bootstrap.test.ts > startup keeps archived and daemon-owned agents closed while preserving idle records
+AssertionError: expected { provider: 'claude', …(12) } to deeply equal { provider: 'claude', …(8) }
+
+- Expected
++ Received
+
+  {
++   "attentionReason": "error",
++   "attentionTimestamp": "2026-10-23T06:58:52.423Z",
+    "createdAt": "2026-10-22T00:00:00.000Z",
+    "cwd": "/var/folders/7y/sm09nq553fn8904hqgz1nps40000gn/T/paseo-archived-recovery-NDU5hC",
+    "id": "owned",
+    "labels": {},
+-   "lastStatus": "closed",
++   "lastError": "Daemon restarted before the active turn completed.",
++   "lastStatus": "error",
+    "owner": {
+      "daemonId": "hub",
+      "executionId": "execution",
+      "kind": "daemon",
+    },
+    "persistence": null,
+    "provider": "claude",
++   "requiresAttention": true,
+    "updatedAt": "2026-10-22T00:00:00.000Z",
+  }
+
+ ❯ src/server/bootstrap.test.ts:181:40
+    179|     });
+    180|     expect(await storage.get("idle")).toEqual(idle);
+    181|     expect(await storage.get("owned")).toEqual({ ...owned, lastStatus:…
+       |                                        ^
+    182|   } finally {
+    183|     await rm(root, { recursive: true, force: true, maxRetries: 5, retr…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 5 skipped (6)
+   Start at  23:58:45
+   Duration  7.32s (transform 5.73s, setup 21ms, import 7.22s, tests 14ms, environment 0ms)

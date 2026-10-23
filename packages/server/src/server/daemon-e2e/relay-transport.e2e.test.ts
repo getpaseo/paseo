@@ -7,7 +7,10 @@ import {
   encodeTerminalStreamFrame,
   TerminalStreamOpcode,
 } from "@getpaseo/protocol/binary-frames/index";
-import type { DaemonClient as HostClient } from "@getpaseo/client/internal/daemon-client";
+import {
+  getDaemonAuthFailureReason,
+  type DaemonClient as HostClient,
+} from "@getpaseo/client/internal/daemon-client";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { describe, expect, test } from "vitest";
 import { withTimeout } from "../../utils/promise-timeout.js";
@@ -539,6 +542,56 @@ async function waitForCapturedLog(
     },
     120000,
   );
+
+  test("password-protected daemon refuses a relay client without the password", async () => {
+    let daemon: Awaited<ReturnType<typeof createTestPaseoDaemon>> | undefined;
+    const clients: HostClient[] = [];
+    try {
+      await startRelay({ useLocalRelay: true });
+      daemon = await createTestPaseoDaemon({
+        relayEnabled: true,
+        relayEndpoint: `127.0.0.1:${relayPort}`,
+        relayUseTls: false,
+        relayPublicUseTls: false,
+        auth: { password: hashSync("relay-password", 4) },
+      });
+      const offerUrl = await getPairingOfferUrl({
+        paseoHome: daemon.paseoHome,
+        relayEnabled: true,
+        relayEndpoint: daemon.config.relayEndpoint,
+      });
+      const { serverId, daemonPublicKeyB64 } = decodeOfferFromFragmentUrl(offerUrl);
+      const connectOverRelay = (password?: string): Promise<void> => {
+        const connection = new URL(`relay://127.0.0.1:${relayPort}/${serverId}`);
+        connection.searchParams.set("key", daemonPublicKeyB64);
+        if (password) connection.searchParams.set("password", password);
+        const client = createHostClient(connection.toString(), {
+          clientId: crypto.randomUUID(),
+          reconnect: { enabled: false },
+        });
+        clients.push(client);
+        return client.connect();
+      };
+
+      // The pairing offer alone must not grant access to a password-protected daemon.
+      const rejection = await connectOverRelay().then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(getDaemonAuthFailureReason(rejection)).toBe("password_required");
+      await expect(connectOverRelay("wrong-password")).rejects.toThrow("Incorrect password");
+
+      await connectOverRelay("relay-password");
+      expect((await createPaseoApi(clients.at(-1)!).workspaces.list()).entries).toEqual([]);
+    } finally {
+      try {
+        await Promise.all(clients.map((client) => client.close()));
+        await daemon?.close();
+      } finally {
+        await stopRelay();
+      }
+    }
+  }, 90000);
 
   test("oversized attachments fail without disconnecting or resubmitting over the relay", async () => {
     await startRelay({ useLocalRelay: true });

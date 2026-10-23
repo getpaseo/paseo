@@ -1,0 +1,33 @@
+
+ RUN  v4.1.6 $CHECKOUT/packages/server
+
+stdout | src/server/hub/relationship-controller.test.ts
+[dotenv@17.3.1] injecting env (0) from .env.test -- tip: 🤖 agentic secret storage: https://dotenvx.com/as2
+[dotenv@17.3.1] injecting env (0) from ../.env -- tip: 🔐 prevent committing .env to code: https://dotenvx.com/precommit
+
+ ❯ src/server/hub/relationship-controller.test.ts (46 tests | 1 failed | 45 skipped) 1755ms
+     × disconnect leaves no intent artifacts and shutdown closes the owned agent 1753ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/server/hub/relationship-controller.test.ts > Hub relationship > disconnect leaves no intent artifacts and shutdown closes the owned agent
+AssertionError: expected 'error' to be 'closed' // Object.is equality
+
+Expected: "closed"
+Received: "error"
+
+ ❯ src/server/hub/relationship-controller.test.ts:928:76
+    926|     await relationship.restartDaemon();
+    927|
+    928|     expect(await relationship.storedOwnedStatus(created.payload.agentI…
+       |                                                                            ^
+    929|   });
+    930| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 45 skipped (46)
+   Start at  23:57:26
+   Duration  8.57s (transform 5.30s, setup 26ms, import 6.69s, tests 1.75s, environment 0ms)

@@ -5,7 +5,6 @@ import { expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { createTestAgentClients } from "../../test-utils/fake-agent-client.js";
-import { createTestAgentMessages } from "../../test-utils/agent-messages.js";
 import { createProviderSnapshotManagerStub } from "../../test-utils/session-stubs.js";
 import { AgentManager } from "../agent-manager.js";
 import { AgentStorage } from "../agent-storage.js";
@@ -14,58 +13,6 @@ import { createAgentCommand } from "./create.js";
 import type { ManagedAgent } from "../agent-manager.js";
 
 const logger = createTestLogger();
-
-test("mcp create does not dispatch a turn when its finish subscription cannot be persisted", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "paseo-create-notification-failure-"));
-  const storage = new AgentStorage(join(workdir, "agents"), logger);
-  const agentManager = createRealAgentManager(storage);
-  let childId = "";
-  try {
-    const parent = await agentManager.createAgent(
-      { provider: "codex", cwd: workdir, modeId: "full-access" },
-      undefined,
-      { workspaceId: "ws-parent" },
-    );
-    const spy = vi
-      .spyOn(storage, "addFinishNotification")
-      .mockRejectedValue(new Error("notification disk unavailable"));
-    await expect(
-      createAgentCommand(
-        {
-          agentManager,
-          agentStorage: storage,
-          logger,
-          agentMessages: createTestAgentMessages({ agentManager, agentStorage: storage, logger }),
-          providerSnapshotManager: {
-            async resolveCreateConfig() {
-              return { modeId: "full-access" };
-            },
-          },
-        },
-        {
-          kind: "mcp",
-          provider: "codex",
-          cwd: workdir,
-          workspaceId: "ws-parent",
-          title: "Unstarted child",
-          initialPrompt: "Do work",
-          notifyOnFinish: true,
-          callerAgentId: parent.id,
-          onCreated: ({ agentId }) => {
-            childId = agentId;
-          },
-        },
-      ),
-    ).rejects.toThrow("notification disk unavailable");
-    spy.mockRestore();
-    expect(childId).not.toBe("");
-    expect(agentManager.hasInFlightRun(childId)).toBe(false);
-    expect(agentManager.getTimeline(childId)).toEqual([]);
-    expect(agentManager.getMetricsSnapshot().subscriptionCount).toBe(0);
-  } finally {
-    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
-  }
-});
 
 function createRealAgentManager(storage: AgentStorage): AgentManager {
   return new AgentManager({

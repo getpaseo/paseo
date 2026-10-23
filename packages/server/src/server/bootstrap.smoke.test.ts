@@ -1131,7 +1131,7 @@ test("startup reports stale active records before serving status without resumin
   try {
     const expected = records.map((record) => {
       if (record.lastStatus !== "running" && record.lastStatus !== "initializing") return record;
-      if (record.archivedAt) return { ...record, lastStatus: "closed", finishNotifications: [] };
+      if (record.archivedAt) return { ...record, lastStatus: "closed" };
       return {
         ...record,
         lastStatus: "error",
