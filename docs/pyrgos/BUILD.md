@@ -33,7 +33,8 @@ Environment (all optional):
 1. JDK 21: download Temurin 21 (`https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jdk/hotspot/normal/eclipse`) and unpack it to `~/.local/jdk/`.
 2. SDK command-line tools: unpack Google's `commandlinetools-linux-*_latest.zip` to `~/Android/Sdk/cmdline-tools/latest/`.
 3. ```bash
-   export JAVA_HOME=~/.local/jdk/jdk-21*; export ANDROID_HOME=~/Android/Sdk
+   JAVA_HOME="$(printf '%s\n' ~/.local/jdk/jdk-21* | head -1)"; export JAVA_HOME
+   export ANDROID_HOME=~/Android/Sdk
    yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses
    $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
    ```
