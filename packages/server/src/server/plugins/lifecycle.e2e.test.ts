@@ -146,10 +146,12 @@ export default function contribute(server) {
         { hook: "agent.permission_resolved", event: { resolution: { behavior: "deny" } } },
         {
           hook: "agent.turn_ended",
-          event: { outcome: { kind: "completed" }, timeline: expect.any(Array) },
+          event: { outcome: { kind: "completed" }, timeline: [] },
         },
         { hook: "agent.turn_started", event: { agent: { id: agent.id } } },
       ]);
+    const page = await client.fetchAgentTimeline(agent.id, { direction: "tail", limit: 20 });
+    expect(page.entries.length).toBeGreaterThan(0);
     await client.archiveAgent(agent.id);
     await expect
       .poll(async () => {

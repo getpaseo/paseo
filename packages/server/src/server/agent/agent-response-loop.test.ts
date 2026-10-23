@@ -254,6 +254,57 @@ describe("generateStructuredAgentResponseWithFallback", () => {
     expect(manager.checkedProviders).toEqual(["claude", "codex"]);
   });
 
+  it("logs the provider, model and error of every failed attempt", async () => {
+    const warnings: Array<{ obj: object; msg?: string }> = [];
+    const runnerError = new Error("connection refused");
+    const manager = createManager([
+      { provider: "local-llm", available: true, error: null },
+      { provider: "opencode", available: false, error: "not installed" },
+    ]);
+
+    await expect(
+      generateStructuredAgentResponseWithFallback({
+        manager,
+        cwd: "/tmp/project",
+        prompt: "Return JSON",
+        schema,
+        schemaName: "BranchName",
+        providers: [
+          { provider: "local-llm", model: "qwen-local" },
+          { provider: "opencode", model: "minimax-m3" },
+        ],
+        logger: {
+          info: () => undefined,
+          warn: (obj, msg) => warnings.push({ obj, msg }),
+        },
+        runner: async () => {
+          throw runnerError;
+        },
+      }),
+    ).rejects.toBeInstanceOf(StructuredAgentFallbackError);
+
+    expect(warnings).toEqual([
+      {
+        obj: {
+          err: runnerError,
+          provider: "local-llm",
+          model: "qwen-local",
+          schemaName: "BranchName",
+        },
+        msg: "Structured generation: provider failed",
+      },
+      {
+        obj: {
+          provider: "opencode",
+          model: "minimax-m3",
+          schemaName: "BranchName",
+          reason: "not installed",
+        },
+        msg: "Structured generation: skipping unavailable provider",
+      },
+    ]);
+  });
+
   it("throws a fallback error when all providers are unavailable or fail", async () => {
     const manager = createManager([
       { provider: "claude", available: false, error: "missing auth" },

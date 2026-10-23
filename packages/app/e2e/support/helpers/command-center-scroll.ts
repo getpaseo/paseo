@@ -169,3 +169,42 @@ export async function expectTightTwoLineResultSpacing(
     .evaluate((element) => element.getBoundingClientRect().top);
   expect(subtitleTop - titleTop).toBeLessThanOrEqual(18);
 }
+
+/** Wait for the browser to deliver wheel events before publishing a daemon update. */
+export async function scrollCommandCenterAwayFromSelection(page: Page, panel: Locator) {
+  await page.setViewportSize({ width: 1280, height: 500 });
+  const viewport = panel.getByTestId("command-center-results");
+  await viewport.hover();
+  await page.mouse.wheel(0, 300);
+  await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBeGreaterThan(100);
+  const samples = await sampleCommandCenterScroll(panel);
+  const offset = samples.at(-1)!;
+  expect(offset).toBeGreaterThan(100);
+  return offset;
+}
+
+async function sampleCommandCenterScroll(panel: Locator): Promise<number[]> {
+  return panel.getByTestId("command-center-results").evaluate(async (viewport) => {
+    const samples: number[] = [];
+    for (let frame = 0; frame < 30; frame += 1) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      samples.push(viewport.scrollTop);
+    }
+    return samples;
+  });
+}
+
+export async function expectCommandCenterScrollToStayAt(panel: Locator, offset: number) {
+  const samples = await sampleCommandCenterScroll(panel);
+  expect(Math.min(...samples)).toBe(offset);
+  expect(Math.max(...samples)).toBe(offset);
+}
+
+export async function expectKeyboardNavigationToResume(page: Page, panel: Locator, offset: number) {
+  await page.keyboard.press("ArrowDown");
+  await expect
+    .poll(() => panel.getByTestId("command-center-results").evaluate((el) => el.scrollTop))
+    .toBeLessThan(offset);
+  const second = panel.getByTestId("command-center-results").getByRole("button").nth(1);
+  await expect(second).toBeInViewport({ ratio: 1 });
+}
