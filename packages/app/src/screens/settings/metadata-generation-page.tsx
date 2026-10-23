@@ -10,8 +10,10 @@ import { SegmentedControl } from "@/components/ui/segmented-control";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { buildSelectableProviderSelectorProviders } from "@/provider-selection/provider-selection";
+import { useHostFeature } from "@/runtime/host-features";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { settingsStyles } from "@/styles/settings";
+import { SuggestionModelSection } from "./suggestion-model-section";
 
 const METADATA_GENERATION_DOCS_URL = "https://paseo.sh/docs/metadata-generation";
 type SelectionMode = "automatic" | "preferred";
@@ -20,6 +22,7 @@ export function MetadataGenerationPage({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
   const { config, isLoading: isConfigLoading, patchConfig } = useDaemonConfig(serverId);
   const snapshot = useProvidersSnapshot(serverId);
+  const supportsPromptSuggestions = useHostFeature(serverId, "promptSuggestions");
   const providers = useMemo(
     () => buildSelectableProviderSelectorProviders(snapshot.entries),
     [snapshot.entries],
@@ -108,58 +111,71 @@ export function MetadataGenerationPage({ serverId }: { serverId: string }) {
   }
 
   return (
-    <SettingsSection
-      title={t("settings.metadataGeneration.title")}
-      info={t("settings.metadataGeneration.description")}
-      trailing={docsLink}
-      testID="metadata-generation-settings"
-    >
-      <View style={settingsStyles.card}>
-        <View style={settingsStyles.row}>
-          <View style={settingsStyles.rowContent}>
-            <Text style={settingsStyles.rowTitle}>
-              {t("settings.metadataGeneration.selection")}
-            </Text>
-            <Text style={settingsStyles.rowHint}>
-              {mode === "automatic"
-                ? t("settings.metadataGeneration.automaticHint")
-                : t("settings.metadataGeneration.preferredHint")}
-            </Text>
-          </View>
-          <SegmentedControl
-            options={modeOptions}
-            value={mode}
-            onValueChange={handleModeChange}
-            size="sm"
-            testID="metadata-generation-mode"
-          />
-        </View>
-        {mode === "preferred" ? (
-          <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+    <>
+      <SettingsSection
+        title={t("settings.metadataGeneration.title")}
+        info={t("settings.metadataGeneration.description")}
+        trailing={docsLink}
+        testID="metadata-generation-settings"
+      >
+        <View style={settingsStyles.card}>
+          <View style={settingsStyles.row}>
             <View style={settingsStyles.rowContent}>
-              <Text style={settingsStyles.rowTitle}>{t("settings.metadataGeneration.model")}</Text>
+              <Text style={settingsStyles.rowTitle}>
+                {t("settings.metadataGeneration.selection")}
+              </Text>
               <Text style={settingsStyles.rowHint}>
-                {t("settings.metadataGeneration.modelHint")}
+                {mode === "automatic"
+                  ? t("settings.metadataGeneration.automaticHint")
+                  : t("settings.metadataGeneration.preferredHint")}
               </Text>
             </View>
-            <CombinedModelSelector
-              providers={providers}
-              selectedProvider={configuredProvider?.provider ?? ""}
-              selectedModel={configuredProvider?.model ?? ""}
-              onSelect={handleModelSelect}
-              isLoading={snapshot.isLoading || snapshot.isFetching}
-              onOpen={handleSelectorOpen}
-              onRetryProvider={handleRetryProvider}
-              isRetryingProvider={snapshot.isRefreshing}
-              disabled={isSaving}
-              serverId={serverId}
-              desktopPlacement="bottom-start"
-              desktopMinWidth={360}
+            <SegmentedControl
+              options={modeOptions}
+              value={mode}
+              onValueChange={handleModeChange}
+              size="sm"
+              testID="metadata-generation-mode"
             />
           </View>
-        ) : null}
-      </View>
-    </SettingsSection>
+          {mode === "preferred" ? (
+            <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+              <View style={settingsStyles.rowContent}>
+                <Text style={settingsStyles.rowTitle}>
+                  {t("settings.metadataGeneration.model")}
+                </Text>
+                <Text style={settingsStyles.rowHint}>
+                  {t("settings.metadataGeneration.modelHint")}
+                </Text>
+              </View>
+              <CombinedModelSelector
+                providers={providers}
+                selectedProvider={configuredProvider?.provider ?? ""}
+                selectedModel={configuredProvider?.model ?? ""}
+                onSelect={handleModelSelect}
+                isLoading={snapshot.isLoading || snapshot.isFetching}
+                onOpen={handleSelectorOpen}
+                onRetryProvider={handleRetryProvider}
+                isRetryingProvider={snapshot.isRefreshing}
+                disabled={isSaving}
+                serverId={serverId}
+                desktopPlacement="bottom-start"
+                desktopMinWidth={360}
+              />
+            </View>
+          ) : null}
+        </View>
+      </SettingsSection>
+      {supportsPromptSuggestions ? (
+        <SuggestionModelSection
+          serverId={serverId}
+          metadataGeneration={config.metadataGeneration}
+          patchConfig={patchConfig}
+          providers={providers}
+          snapshot={snapshot}
+        />
+      ) : null}
+    </>
   );
 }
 

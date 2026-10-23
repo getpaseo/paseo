@@ -112,7 +112,7 @@ The list above is shared by every kind of metadata. To give one kind its own mod
 }
 ```
 
-The keys are `title`, `branchName`, `commitMessage`, `pullRequest`, `promptSuggestions`, and `newChatSuggestions` — the same names used for per-project instructions below. A workspace title and its branch name come from one call, so it uses `title` when that key is set and `branchName` otherwise. The Settings screen edits the shared list only, and leaves per-kind entries alone.
+The keys are `title`, `branchName`, `commitMessage`, `pullRequest`, `promptSuggestions`, and `newChatSuggestions` — the same names used for per-project instructions below. A workspace title and its branch name come from one call, so it uses `title` when that key is set and `branchName` otherwise. The **Prompt suggestions** section under Metadata sets `promptSuggestions` and `newChatSuggestions` together; the Metadata model picker edits the shared list only and leaves per-kind entries alone.
 
 ## Per-project instructions
 

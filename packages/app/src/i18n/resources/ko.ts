@@ -2243,6 +2243,10 @@ export const ko: TranslationResources = {
       modelHint: "이 모델만 사용합니다. 실패해도 Paseo는 다른 모델을 시도하지 않습니다",
       docs: "문서",
       saveError: "메타데이터 생성을 업데이트할 수 없습니다",
+      suggestionSection: "메시지 제안",
+      suggestionSharedHint: "제안에 메타데이터 생성 모델을 사용합니다",
+      suggestionCustomHint: "제안, 답변 초안, 새 채팅 아이디어에 이 모델을 사용합니다",
+      suggestionModelHint: "가장 먼저 시도합니다. config.json에 나열한 대체 모델도 계속 적용됩니다",
     },
     general: {
       title: "일반",

@@ -2266,6 +2266,12 @@ export const ptBR: TranslationResources = {
       modelHint: "Somente este modelo é usado. Se ele falhar, o Paseo não tenta outro modelo",
       docs: "Documentação",
       saveError: "Não foi possível atualizar a geração de metadados",
+      suggestionSection: "Sugestões de mensagens",
+      suggestionSharedHint: "As sugestões usam o modelo de geração de metadados",
+      suggestionCustomHint:
+        "Sugestões, respostas propostas e ideias para novos chats usam este modelo",
+      suggestionModelHint:
+        "Tentado primeiro; os modelos de reserva listados no config.json continuam valendo",
     },
     general: {
       title: "Geral",

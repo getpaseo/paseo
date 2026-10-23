@@ -2358,6 +2358,10 @@ export const en = {
       modelHint: "Only this model is used. If it fails, Paseo does not try another model",
       docs: "Docs",
       saveError: "Unable to update metadata generation",
+      suggestionSection: "Prompt suggestions",
+      suggestionSharedHint: "Suggestions use the metadata generation model",
+      suggestionCustomHint: "Suggestions, drafted answers and new-chat ideas use this model",
+      suggestionModelHint: "Tried first; fallbacks listed in config.json still apply",
     },
     general: {
       title: "General",

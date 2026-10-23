@@ -2269,6 +2269,11 @@ export const ar: TranslationResources = {
       modelHint: "يُستخدم هذا النموذج فقط. إذا فشل، لا يجرّب Paseo نموذجًا آخر",
       docs: "الوثائق",
       saveError: "تعذر تحديث إنشاء البيانات الوصفية",
+      suggestionSection: "اقتراحات الرسائل",
+      suggestionSharedHint: "تستخدم الاقتراحات نموذج إنشاء البيانات الوصفية",
+      suggestionCustomHint:
+        "تستخدم الاقتراحات والإجابات المقترحة وأفكار المحادثة الجديدة هذا النموذج",
+      suggestionModelHint: "يُجرَّب أولًا؛ وتظل النماذج الاحتياطية المدرجة في config.json سارية",
     },
     general: {
       title: "عام",

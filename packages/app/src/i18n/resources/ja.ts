@@ -2254,6 +2254,11 @@ export const ja: TranslationResources = {
       modelHint: "このモデルのみを使用します。失敗しても、Paseo は別のモデルを試しません",
       docs: "ドキュメント",
       saveError: "メタデータ生成を更新できません",
+      suggestionSection: "メッセージの提案",
+      suggestionSharedHint: "提案にはメタデータ生成のモデルを使用します",
+      suggestionCustomHint: "提案、回答の下書き、新しいチャットの案にこのモデルを使用します",
+      suggestionModelHint:
+        "最初に試すモデルです。config.json に記載したフォールバックも引き続き使われます",
     },
     general: {
       title: "一般",

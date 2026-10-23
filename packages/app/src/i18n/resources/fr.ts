@@ -2281,6 +2281,12 @@ export const fr: TranslationResources = {
       modelHint: "Seul ce modèle est utilisé. S’il échoue, Paseo n’essaie pas d’autre modèle",
       docs: "Documentation",
       saveError: "Impossible de mettre à jour la génération de métadonnées",
+      suggestionSection: "Suggestions de messages",
+      suggestionSharedHint: "Les suggestions utilisent le modèle de génération de métadonnées",
+      suggestionCustomHint:
+        "Les suggestions, les réponses proposées et les idées de nouveau chat utilisent ce modèle",
+      suggestionModelHint:
+        "Essayé en premier ; les modèles de secours de config.json s'appliquent toujours",
     },
     general: {
       title: "Général",
