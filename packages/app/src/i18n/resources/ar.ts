@@ -235,6 +235,12 @@ export const ar: TranslationResources = {
     scrollToBottom: "قم بالتمرير إلى الأسفل",
     historyLoadFailed: "تعذر تحميل سجل الوكيل",
     messageCapped: "تم اقتطاع هذه الرسالة ({{bytes}} بايت).",
+    quote: {
+      action: "اقتباس",
+      noteLabel: "ملاحظة على الاقتباس",
+      notePlaceholder: "أضف ملاحظة",
+      hint: "Enter يضيف إلى الرسالة · Shift+Enter سطر جديد · Esc للإلغاء",
+    },
     permission: {
       rejectedPlan: "خطة مرفوضة",
       approvedPlan: "خطة معتمدة",

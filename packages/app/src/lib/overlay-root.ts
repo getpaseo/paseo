@@ -89,6 +89,7 @@ interface WebOverlayEntry {
   getKeyHandler: () => WebOverlayKeyHandler;
   restoreFocus: HTMLElement | null;
   manageFocus: boolean;
+  passive: boolean;
 }
 
 const webOverlayEntries: WebOverlayEntry[] = [];
@@ -101,7 +102,11 @@ interface RemoveWebOverlayOptions {
 }
 
 function getTopWebOverlay(): WebOverlayEntry | undefined {
-  return webOverlayEntries.reduce<WebOverlayEntry | undefined>((top, entry) => {
+  // A passive control only takes keys while no real overlay is open.
+  const candidates = hasActiveWebOverlay()
+    ? webOverlayEntries.filter((entry) => !entry.passive)
+    : webOverlayEntries;
+  return candidates.reduce<WebOverlayEntry | undefined>((top, entry) => {
     if (!top) return entry;
     const layerDifference = entry.getLayer() - top.getLayer();
     return layerDifference > 0 || (layerDifference === 0 && entry.order > top.order) ? entry : top;
@@ -109,7 +114,7 @@ function getTopWebOverlay(): WebOverlayEntry | undefined {
 }
 
 export function hasActiveWebOverlay(): boolean {
-  return getTopWebOverlay() !== undefined;
+  return webOverlayEntries.some((entry) => !entry.passive);
 }
 
 /**
@@ -275,6 +280,12 @@ interface WebOverlayRegistration {
   restoreFocusRef?: React.RefObject<unknown>;
   /** Hover surfaces claim overlay keys while preserving the user's existing focus. */
   manageFocus?: boolean;
+  /**
+   * A control that rides on the user's own text selection still answers keys first, so
+   * Escape dismisses it instead of interrupting the agent, but it does not count as an open
+   * overlay: find shortcuts keep working while it shows.
+   */
+  passive?: boolean;
 }
 
 /**
@@ -287,6 +298,7 @@ export function useWebOverlayRegistration({
   layer,
   onKeyDown,
   manageFocus = true,
+  passive = false,
   restoreFocusRef: preferredRestoreFocusRef,
 }: WebOverlayRegistration) {
   const idRef = useRef(Symbol("web-overlay"));
@@ -343,10 +355,11 @@ export function useWebOverlayRegistration({
       getKeyHandler: () => keyHandlerRef.current,
       restoreFocus: capturedRestoreFocusRef.current,
       manageFocus,
+      passive,
     };
     removeEntryRef.current = addWebOverlay(entry);
     registeredRef.current = true;
-  }, [manageFocus]);
+  }, [manageFocus, passive]);
 
   const setScope = useCallback(
     (node: unknown) => {

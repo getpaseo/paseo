@@ -236,6 +236,12 @@ export const ptBR: TranslationResources = {
     scrollToBottom: "Rolar para o fim",
     historyLoadFailed: "Não foi possível carregar o histórico do agente",
     messageCapped: "Esta mensagem foi truncada ({{bytes}} bytes).",
+    quote: {
+      action: "Citar",
+      noteLabel: "Nota sobre a citação",
+      notePlaceholder: "Adicione uma nota",
+      hint: "Enter adiciona à mensagem · Shift+Enter nova linha · Esc cancela",
+    },
     permission: {
       rejectedPlan: "Plano rejeitado",
       approvedPlan: "Plano aprovado",
