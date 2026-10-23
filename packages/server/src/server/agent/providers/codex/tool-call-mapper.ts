@@ -713,6 +713,7 @@ interface CodexFileChangeEntry {
   path: string;
   kind?: string;
   diff?: string;
+  movePath?: string;
 }
 
 function parseFileChangePath(
@@ -774,6 +775,10 @@ function toFileChangeEntry(
     path,
     kind: parseFileChangeKind(entry),
     diff: parseFileChangeDiff(entry),
+    movePath:
+      isRecord(entry.kind) && typeof entry.kind.move_path === "string"
+        ? normalizeCodexFilePath(entry.kind.move_path, options?.cwd)
+        : undefined,
   };
 }
 
@@ -844,15 +849,19 @@ function resolveFileChangeTextFields(file: CodexFileChangeEntry | undefined): {
 
 export function fileChangeToUnifiedDiff(file: CodexFileChangeEntry): string {
   const { unifiedDiff, newString } = resolveFileChangeTextFields(file);
+  if (!unifiedDiff && !newString) {
+    return "";
+  }
   if (unifiedDiff?.startsWith("diff --git")) {
     return unifiedDiff.replace(/\r?\n$/, "");
   }
-  const header = `diff --git a/${file.path} b/${file.path}`;
+  const destination = file.movePath ?? file.path;
+  const header = `diff --git a/${file.path} b/${destination}`;
   if (unifiedDiff?.startsWith("--- ")) {
     return `${header}\n${unifiedDiff.replace(/\r?\n$/, "")}`;
   }
   const left = file.kind === "add" ? "/dev/null" : `a/${file.path}`;
-  const right = file.kind === "delete" ? "/dev/null" : `b/${file.path}`;
+  const right = file.kind === "delete" ? "/dev/null" : `b/${destination}`;
   const lines = [header, `--- ${left}`, `+++ ${right}`];
   if (unifiedDiff) {
     lines.push(unifiedDiff.replace(/\r?\n$/, ""));
@@ -900,9 +909,9 @@ function mapFileChangeItem(
   const firstFile = files[0];
   const textFields =
     files.length > 1
-      ? { unifiedDiff: files.map(fileChangeToUnifiedDiff).join("\n\n") }
+      ? { unifiedDiff: files.map(fileChangeToUnifiedDiff).filter(Boolean).join("\n\n") }
       : resolveFileChangeTextFields(firstFile);
-  const hasTextFields = Object.keys(textFields).length > 0;
+  const hasTextFields = Boolean(textFields.unifiedDiff || textFields.newString);
   const input = toNullableObject({
     ...inputBase,
     ...(firstFile?.path && hasTextFields ? { path: firstFile.path } : {}),
