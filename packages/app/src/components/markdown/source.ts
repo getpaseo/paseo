@@ -216,7 +216,8 @@ export function prepareMarkdownSource(
           Math.max(source.lastIndexOf("\n", start - 1), source.lastIndexOf("\r", start - 1)) + 1;
         const newline = source.slice(lineStart - 2, lineStart).replace(/[^\r\n]/g, "");
         const blank = source.slice(lineStart, start).replace(/[^>]/g, " ").trimEnd();
-        edits.push({ start: lineStart, end: lineStart, text: `${blank}${newline}` });
+        const boundary = lineStart - newline.length;
+        edits.push({ start: boundary, end: lineStart, text: `${newline}${blank}${newline}` });
       }
       if (node.type === "link") {
         const title = workspaceHoverTitle(node, source.slice(start, end), workspaceRoot);

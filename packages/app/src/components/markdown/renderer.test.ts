@@ -147,6 +147,18 @@ it.each([
     ["Document", "Paragraph", "Table"],
   ],
   [
+    "an entity at the start of a header without outer pipes",
+    "Notes\nAT&amp;T | Detail\n--- | ---\nA | one",
+    "Notes\n\nAT\\&T | Detail\n--- | ---\nA | one",
+    ["Document", "Paragraph", "Table"],
+  ],
+  [
+    "a local image at the start of a header without outer pipes",
+    "Notes\n![Local](assets/a.png) | Detail\n--- | ---\nA | one",
+    "Notes\n\nLocal | Detail\n--- | ---\nA | one",
+    ["Document", "Paragraph", "Table"],
+  ],
+  [
     "CRLF lines",
     "Notes\r\n| Item |\r\n| --- |\r\n| A |",
     "Notes\r\n\r\n| Item |\r\n| --- |\r\n| A |",
@@ -204,6 +216,42 @@ it.each([
   }
   expect(blocks(await parseMarkdown(rendered, flags))).toEqual(expected);
 });
+
+it.each([
+  [
+    "a literal backslash",
+    "Notes\\\n| Item |\n| --- |\n| A |",
+    "Notes\\\n\n| Item |\n| --- |\n| A |",
+    "Notes\\",
+  ],
+  [
+    "an entity and literal backslash with LF lines",
+    "AT&amp;T\\\n| Item |\n| --- |\n| A |",
+    "AT\\&T\\\n\n| Item |\n| --- |\n| A |",
+    "AT&T\\",
+  ],
+  [
+    "an entity and literal backslash with CRLF lines",
+    "AT&amp;T\\\r\n| Item |\r\n| --- |\r\n| A |",
+    "AT\\&T\\\r\n\r\n| Item |\r\n| --- |\r\n| A |",
+    "AT&T\\",
+  ],
+  [
+    "an entity and literal backslash with CR lines",
+    "AT&amp;T\\\r| Item |\r| --- |\r| A |",
+    "AT\\&T\\\r\r| Item |\r| --- |\r| A |",
+    "AT&T\\",
+  ],
+])(
+  "preserves paragraph text before an interrupting table in %s",
+  async (_name, source, separated, text) => {
+    const rendered = prepareMarkdownSource(source).render();
+    expect(rendered).toEqual(separated);
+    const tree = await parseMarkdown(rendered, { hardSoftBreaks: true, latexMath: false });
+    expect(tree.children?.map((node) => node.type)).toEqual(["Paragraph", "Table"]);
+    expect(tree.children?.[0]?.children?.map((node) => node.content).join("")).toEqual(text);
+  },
+);
 
 it.each([
   "```yaml\n---\nkey: value\n---\n```\n",
