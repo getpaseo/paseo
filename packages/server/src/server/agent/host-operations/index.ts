@@ -19,11 +19,11 @@ import { summarizeAgentActivity } from "../activity-curator.js";
 import { expandUserPath } from "../../path-utils.js";
 import type { PaseoToolExecutionContext, PaseoToolResult } from "../tools/types.js";
 
-export class HostPromptRejectedError extends Error {
+export class HostOperationRejectedError extends Error {
   readonly code: unknown;
   constructor(error: unknown) {
     super(error instanceof Error ? error.message : String(error), { cause: error });
-    this.name = "HostPromptRejectedError";
+    this.name = "HostOperationRejectedError";
     this.code = error instanceof Error && "code" in error ? error.code : undefined;
   }
 }
@@ -72,6 +72,7 @@ export function createToolHosts(hosts: ConnectedHosts): ToolHosts {
     directory: () => hosts.list(),
     async use(serverId, action, signal) {
       const lifetime = new AbortController();
+      let routeFailure: unknown;
       const transportFactory: DaemonTransportFactory = () => {
         const opens = new Set<() => void>();
         const closes = new Set<(event?: unknown) => void>();
@@ -103,6 +104,7 @@ export function createToolHosts(hosts: ConnectedHosts): ToolHosts {
             return undefined;
           })
           .catch((error) => {
+            routeFailure = error;
             for (const listener of errors) listener(error);
             for (const listener of closes) listener(error);
           });
@@ -143,7 +145,10 @@ export function createToolHosts(hosts: ConnectedHosts): ToolHosts {
       signal?.addEventListener("abort", stop, { once: true });
       try {
         signal?.throwIfAborted();
-        await client.connect();
+        await client.connect().catch((error) => {
+          // The action has not run; no application request could have been transmitted.
+          throw new HostOperationRejectedError(routeFailure ?? error);
+        });
         return await action(client);
       } finally {
         signal?.removeEventListener("abort", stop);
@@ -241,8 +246,14 @@ export function createHostResolver(input: {
             if (!input.callerAgentId && args.sessionMode !== undefined) {
               await client.setAgentMode(agentId, args.sessionMode as string);
             }
-            const agent = (await client.fetchAgent(agentId))?.agent;
-            if (!agent) throw new HostPromptRejectedError(new Error(`Agent ${agentId} not found`));
+            const agent = (
+              await client.fetchAgent(agentId).catch((error) => {
+                // Snapshot preflight precedes sendMessage, so failure is definitely unsent.
+                throw new HostOperationRejectedError(error);
+              })
+            )?.agent;
+            if (!agent)
+              throw new HostOperationRejectedError(new Error(`Agent ${agentId} not found`));
             const receipt = await client
               .sendMessage(agentId, args.prompt as string, {
                 sessionMode: input.callerAgentId
@@ -256,7 +267,7 @@ export function createHostResolver(input: {
               })
               .catch((error) => {
                 if (isAmbiguousPromptFailure(error)) throw error;
-                throw new HostPromptRejectedError(error);
+                throw new HostOperationRejectedError(error);
               });
             return result({
               success: true,

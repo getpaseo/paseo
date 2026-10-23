@@ -2,7 +2,7 @@ import type { FinishSubscriptions, FinishRegistration } from "../finish-subscrip
 import type { AgentMessageDelivery } from "../agent-messages/index.js";
 import {
   createHostResolver,
-  HostPromptRejectedError,
+  HostOperationRejectedError,
   type HostOperation,
   type HostOperations,
   type ToolHosts,
@@ -779,7 +779,7 @@ function createToolCatalog(
         } catch (error) {
           // A lost response does not establish whether the remote daemon admitted the prompt.
           // Reconcile the child rather than silently dropping notification intent.
-          if (error instanceof PaseoToolInputError || error instanceof HostPromptRejectedError)
+          if (error instanceof PaseoToolInputError || error instanceof HostOperationRejectedError)
             await remoteNotification?.reject();
           else remoteNotification?.accept();
           if (!options.serverId) throw error;

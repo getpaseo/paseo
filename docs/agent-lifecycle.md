@@ -100,7 +100,8 @@ reporting after detachment.
 Intent remains stored until the parent's notification dispatch is acknowledged. Dispatch failure
 retries observation and delivery. Shutdown stops observation before flushing message delivery, retaining
 outstanding intent. A crash after successful dispatch but before removal commits can repeat the
-notification. This is an at-least-once wakeup, without turn attribution or exactly-once delivery.
+notification. Clean shutdown can also flush an already queued callback while retaining its intent,
+so that callback can repeat after restart. This is an at-least-once wakeup, without turn attribution or exactly-once delivery.
 
 Permission requests are notification checkpoints, not the end of that subscription. The caller is notified again after a permission response when the child finishes, errors, or requests another permission.
 The permission notification includes the normalized request plus the child and request IDs, so the caller can inspect it and respond without fetching agent status.

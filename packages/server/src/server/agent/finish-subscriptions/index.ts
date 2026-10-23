@@ -175,7 +175,7 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
         recipientId: record.callerAgentId,
         prompt: formatFinishNotificationBody({
           childAgentId: record.childAgentId,
-          serverId: record.serverId,
+          serverId: record.serverId ?? deps.serverId,
           title,
           reason,
           lastAssistantMessage: result.lastMessage,
@@ -184,7 +184,7 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
         source: {
           kind: "agent-notification",
           agentId: record.childAgentId,
-          serverId: record.serverId,
+          serverId: record.serverId ?? deps.serverId,
           title,
           event: finishNotificationEvents[reason],
         },

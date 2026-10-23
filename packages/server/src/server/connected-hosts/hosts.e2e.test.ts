@@ -1889,3 +1889,61 @@ test(
       .toEqual([]);
   },
 );
+
+test(
+  "disabled remote send rejects unsent finish intent before reconnecting to an idle child",
+  { timeout: 30000 },
+  async () => {
+    const parentPrompts: string[] = [];
+    const a = await daemon({
+      mcpEnabled: true,
+      agentClients: createTestAgentClients({
+        onStartTurn: (prompt) => {
+          if (String(prompt).includes('kind="agent-notification"'))
+            parentPrompts.push(String(prompt));
+        },
+      }),
+    });
+    const b = await daemon({ agentClients: createTestAgentClients() });
+    const origin = await api(a);
+    const destination = await api(b);
+    const saved = await origin.paseo.hosts.add({ connection: `127.0.0.1:${b.port}` });
+    const directory = await online(origin.paseo);
+    const serverId = directory.hosts[0]!.serverId!;
+    const workspace = await origin.paseo.workspaces.create({
+      source: { kind: "directory", path: a.staticDir },
+    });
+    const remoteWorkspace = await destination.paseo.workspaces.create({
+      source: { kind: "directory", path: b.staticDir },
+    });
+    const parent = await workspace.agents.create({
+      config: { provider: "claude/claude-test", modeId: "full-access" },
+      title: "Parent",
+    });
+    const child = await remoteWorkspace.agents.create({
+      config: { provider: "claude/claude-test", modeId: "full-access" },
+      title: "Idle child",
+    });
+    const mcp = new Client({ name: "offline-parent", version: "1" });
+    cleanup.push(() => mcp.close());
+    await mcp.connect(
+      new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${a.port}/mcp/agents?callerAgentId=${parent.id}`),
+      ),
+    );
+    await origin.paseo.hosts.update(saved.registrationId, { enabled: false });
+    const response = await mcp.callTool({
+      name: "send_agent_prompt",
+      arguments: { serverId, agentId: child.id, prompt: "Never sent" },
+    });
+    expect(response.isError).toBe(true);
+    const records = () =>
+      readFile(join(a.paseoHome, "finish-subscriptions.json"), "utf8").then(JSON.parse);
+    expect(await records()).toEqual([]);
+    await origin.paseo.hosts.update(saved.registrationId, { enabled: true });
+    await online(origin.paseo);
+    expect((await destination.client.fetchAgent(child.id))?.agent.status).toBe("idle");
+    expect(await records()).toEqual([]);
+    expect(parentPrompts).toEqual([]);
+  },
+);
