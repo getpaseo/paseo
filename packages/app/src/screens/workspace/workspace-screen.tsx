@@ -1674,12 +1674,7 @@ function WorkspaceScreenContent({
         navigateToTabId(tabId);
       }
     },
-    [
-      navigateToTabId,
-      openWorkspaceTabFocused,
-      revealWorkspaceChildTab,
-      persistenceKey,
-    ],
+    [navigateToTabId, openWorkspaceTabFocused, revealWorkspaceChildTab, persistenceKey],
   );
 
   const handleOpenPreferredAssistantFile = useCallback(
