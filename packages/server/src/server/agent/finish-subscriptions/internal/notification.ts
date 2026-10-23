@@ -37,7 +37,7 @@ export function formatFinishNotificationBody(params: FinishNotificationBodyInput
     const host =
       params.reason === "host removed"
         ? `Host ${params.serverId} was removed or is unavailable.`
-        : `Host ${params.serverId} is unreachable after three failed observation attempts.`;
+        : `Could not observe child agent ${params.childAgentId} on host ${params.serverId} after three failed attempts.`;
     return `${host}\n\nStatus of child agent ${params.childAgentId} (${params.title}) is unknown.\n\nServer: ${params.serverId}\n\nThis finish subscription has ended. Reassess the delegated work; reconnecting will not resume notifications.`;
   }
   const statusLine = `Agent ${params.childAgentId} (${params.title}) ${params.reason}.`;

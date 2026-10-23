@@ -335,7 +335,7 @@ test("three failed remote observations consume intent only after unavailable-not
   }
   await until(() => state.delivery.prompts.length === 1);
   expect(state.delivery.prompts[0]).toContain(
-    "Host remote is unreachable after three failed observation attempts.",
+    "Could not observe child agent child on host remote after three failed attempts.",
   );
   expect(state.delivery.prompts[0]).toContain("Status of child agent child (child) is unknown.");
   expect(state.delivery.prompts[0]).not.toContain("finished.");

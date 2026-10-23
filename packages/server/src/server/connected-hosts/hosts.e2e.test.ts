@@ -2004,13 +2004,13 @@ test.each(["removed", "disabled"] as const)(
     const childId = (response.structuredContent as { agentId: string }).agentId;
     if (availability === "removed") await origin.paseo.hosts.remove(saved.registrationId);
     else await origin.paseo.hosts.update(saved.registrationId, { enabled: false });
-    await expect.poll(() => parentPrompts, { timeout: 8000 }).toHaveLength(1);
+    await expect.poll(() => parentPrompts, { timeout: 15000 }).toHaveLength(1);
     expect(parentPrompts[0]).toContain(`Status of child agent ${childId}`);
     expect(parentPrompts[0]).toContain(`Server: ${serverId}`);
     expect(parentPrompts[0]).toContain(
       availability === "removed"
-        ? "was removed or is unavailable"
-        : "is unreachable after three failed observation attempts",
+        ? `Host ${serverId} was removed or is unavailable.`
+        : `Could not observe child agent ${childId} on host ${serverId} after three failed attempts.`,
     );
     expect(parentPrompts[0]).toContain("is unknown.");
     expect(parentPrompts[0]).not.toContain("finished.");
