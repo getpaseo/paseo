@@ -98,7 +98,8 @@ child work. Archived or deleted parents suppress delivery; parent-owned creation
 reporting after detachment.
 
 Intent remains stored until the parent's notification dispatch is acknowledged. Dispatch failure
-retries observation and delivery. Shutdown stops observation before flushing message delivery, retaining
+retries the captured notification; it does not change the child's reported outcome. Remote host loss
+follows the [connected-host observation policy](connected-hosts.md#delegating-agents). Shutdown stops observation before flushing message delivery, retaining
 outstanding intent. A crash after successful dispatch but before removal commits can repeat the
 notification. Clean shutdown can also flush an already queued callback while retaining its intent,
 so that callback can repeat after restart. This is an at-least-once wakeup, without turn attribution or exactly-once delivery.

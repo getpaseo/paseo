@@ -1947,3 +1947,88 @@ test(
     expect(parentPrompts).toEqual([]);
   },
 );
+
+test.each(["removed", "disabled"] as const)(
+  "%s remote destination reports unknown child status and consumes its finish subscription",
+  { timeout: 30000 },
+  async (availability) => {
+    const parentPrompts: string[] = [];
+    const finish = Promise.withResolvers<void>();
+    cleanup.push(async () => finish.resolve());
+    const a = await daemon({
+      mcpEnabled: true,
+      agentClients: createTestAgentClients({
+        onStartTurn: (prompt) => {
+          if (String(prompt).includes('kind="agent-notification"'))
+            parentPrompts.push(String(prompt));
+        },
+      }),
+    });
+    const b = await daemon({
+      agentClients: createTestAgentClients({ beforeTurnComplete: () => finish.promise }),
+    });
+    const origin = await api(a);
+    const destination = await api(b);
+    const saved = await origin.paseo.hosts.add({ connection: `127.0.0.1:${b.port}` });
+    const directory = await online(origin.paseo);
+    const serverId = directory.hosts[0]!.serverId!;
+    const workspace = await origin.paseo.workspaces.create({
+      source: { kind: "directory", path: a.staticDir },
+    });
+    const remoteWorkspace = await destination.paseo.workspaces.create({
+      source: { kind: "directory", path: b.staticDir },
+    });
+    const parent = await workspace.agents.create({
+      config: { provider: "claude/claude-test", modeId: "full-access" },
+      title: "Parent",
+    });
+    const mcp = new Client({ name: "removed-host-parent", version: "1" });
+    cleanup.push(() => mcp.close());
+    await mcp.connect(
+      new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${a.port}/mcp/agents?callerAgentId=${parent.id}`),
+      ),
+    );
+    const response = await mcp.callTool({
+      name: "create_agent",
+      arguments: {
+        serverId,
+        workspaceId: remoteWorkspace.id,
+        provider: "claude/claude-test",
+        title: "Child",
+        initialPrompt: "Held work",
+        settings: { modeId: "full-access" },
+      },
+    });
+    expect(response.isError).not.toBe(true);
+    const childId = (response.structuredContent as { agentId: string }).agentId;
+    if (availability === "removed") await origin.paseo.hosts.remove(saved.registrationId);
+    else await origin.paseo.hosts.update(saved.registrationId, { enabled: false });
+    await expect.poll(() => parentPrompts, { timeout: 8000 }).toHaveLength(1);
+    expect(parentPrompts[0]).toContain(`Status of child agent ${childId}`);
+    expect(parentPrompts[0]).toContain(`Server: ${serverId}`);
+    expect(parentPrompts[0]).toContain(
+      availability === "removed"
+        ? "was removed or is unavailable"
+        : "is unreachable after three failed observation attempts",
+    );
+    expect(parentPrompts[0]).toContain("is unknown.");
+    expect(parentPrompts[0]).not.toContain("finished.");
+    await expect
+      .poll(async () =>
+        JSON.parse(await readFile(join(a.paseoHome, "finish-subscriptions.json"), "utf8")),
+      )
+      .toEqual([]);
+    if (availability === "removed")
+      await origin.paseo.hosts.add({ connection: `127.0.0.1:${b.port}` });
+    else await origin.paseo.hosts.update(saved.registrationId, { enabled: true });
+    await online(origin.paseo);
+    finish.resolve();
+    const completed = await destination.client.waitForFinish(childId, 5000);
+    expect(completed.final?.status).toBe("idle");
+    expect(parentPrompts).toHaveLength(1);
+    expect(
+      JSON.parse(await readFile(join(a.paseoHome, "finish-subscriptions.json"), "utf8")),
+    ).toEqual([]);
+  },
+);

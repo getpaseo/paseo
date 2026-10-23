@@ -47,9 +47,16 @@ the destination workspace keeps its existing disconnected or reconnecting behavi
 Finish notifications name the destination server and child agent. The caller's daemon owns durable
 subscription intent and restores observation through the same routed wait and permission observation
 used during ordinary operation. Restarting the caller's daemon does not imply that a remote child
-stopped. Route loss retains intent and retries with a bounded delay; disconnection never reports
-completion. An ambiguous prompt response also retains notification intent because the destination may
-have admitted the prompt. A confirmed missing child reports unavailability; failed lookups retry.
+stopped. Three failed remote observation attempts end the subscription with a host-unreachable
+notification that says the child's status is unknown. Attempts use capped backoff; a connection still
+in progress does not spend that budget. A confirmed removed registration reports host unavailability
+immediately through the same path. Neither notice claims the child finished. Intent remains stored
+until the parent accepts dispatch, then is consumed; reconnecting does not restore that watch. The
+parent decides whether to inspect the child or delegate again.
+
+A definitely unsent prompt returns a tool error and creates no notification. An ambiguous prompt
+response retains intent because the destination may have admitted it; observation then follows the
+same retry policy. A confirmed missing child reports unavailability.
 
 Remote creation and local subscription persistence are separate commits. A failed local write reports
 failure even if the destination already created the child; inspect it before retrying creation.

@@ -1,3 +1,4 @@
+import { HostObservationError } from "../host-operations/index.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,10 +27,15 @@ class Observation implements FinishObservation {
   waits: Array<{ signal: AbortSignal; result: ReturnType<typeof deferred<WaitForFinishResult>> }> =
     [];
   permission = deferred<void>();
+  opening: Promise<void> = Promise.resolve();
+  openedSignals: AbortSignal[] = [];
   async open(_record: unknown, signal: AbortSignal) {
+    this.openedSignals.push(signal);
+    await this.opening;
     return { next: () => this.wait(signal), close: async () => {} };
   }
   async wait(signal: AbortSignal) {
+    signal.throwIfAborted();
     const result = deferred<WaitForFinishResult>();
     signal.addEventListener("abort", () => result.reject(new Error("Stopped")), { once: true });
     this.waits.push({ signal, result });
@@ -61,10 +67,20 @@ afterEach(async () => {
   for (const service of services.splice(0)) await service.close();
   await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
 });
-async function scenario(directory?: string) {
+async function scenario(directory?: string, removalFailures = 0) {
   const home = directory ?? (await mkdtemp(join(tmpdir(), "finish-recovery-")));
   if (!directory) homes.push(home);
-  const store = createJsonFinishSubscriptionStore(home);
+  const durableStore = createJsonFinishSubscriptionStore(home);
+  const store = {
+    ...durableStore,
+    async remove(id: string) {
+      if (removalFailures > 0) {
+        removalFailures--;
+        throw new Error("Subscription removal unavailable");
+      }
+      await durableStore.remove(id);
+    },
+  };
   const observation = new Observation();
   const delivery = new Delivery();
   let active = true;
@@ -188,13 +204,13 @@ test("shutdown before dispatch acknowledgment leaves intent for recovery", async
   await until(() => restarted.delivery.prompts.length === 1);
 });
 
-test("unavailable remote retains intent, reconnect observes later completion", async () => {
+test("remote recovery before three failed observations still reports child completion", async () => {
   const first = await scenario();
   await first.service.register({ ...intent, serverId: "remote" });
   await first.service.close();
   const state = await scenario(first.home);
   await until(() => state.observation.waits.length === 1);
-  state.observation.waits[0]!.result.reject(new Error("Host unavailable"));
+  state.observation.waits[0]!.result.reject(new HostObservationError("unreachable"));
   await until(() => state.observation.waits.length === 2);
   expect(await state.store.list()).toHaveLength(1);
   expect(state.delivery.prompts).toHaveLength(0);
@@ -269,10 +285,9 @@ test("dispatch failure retains intent and retries the ordinary finish notificati
   state.observation.waits[0]!.result.resolve(outcome());
   await until(() => state.delivery.prompts.length === 1);
   state.delivery.acknowledgments[0]!.reject(new Error("Provider unavailable"));
-  await until(() => state.observation.waits.length === 2);
-  expect(await state.store.list()).toHaveLength(1);
-  state.observation.waits[1]!.result.resolve(outcome());
   await until(() => state.delivery.prompts.length === 2);
+  expect(await state.store.list()).toHaveLength(1);
+  expect(state.observation.waits).toHaveLength(1);
   state.delivery.acknowledgments[1]!.resolve("steered");
   await expect.poll(async () => (await state.store.list()).length).toBe(0);
 });
@@ -308,4 +323,92 @@ test("finish notification limits a long last response and points to activity for
   expect(state.delivery.prompts[0]).toContain("x".repeat(4000));
   expect(state.delivery.prompts[0]).not.toContain("x".repeat(4001));
   expect(state.delivery.prompts[0]).toContain("get_agent_activity");
+});
+
+test("three failed remote observations consume intent only after unavailable-notification acknowledgment", async () => {
+  const state = await scenario();
+  await state.service.register({ ...intent, serverId: "remote" });
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await until(() => state.observation.waits.length === attempt + 1);
+    expect(state.delivery.prompts).toEqual([]);
+    state.observation.waits[attempt]!.result.reject(new HostObservationError("unreachable"));
+  }
+  await until(() => state.delivery.prompts.length === 1);
+  expect(state.delivery.prompts[0]).toContain(
+    "Host remote is unreachable after three failed observation attempts.",
+  );
+  expect(state.delivery.prompts[0]).toContain("Status of child agent child (child) is unknown.");
+  expect(state.delivery.prompts[0]).not.toContain("finished.");
+  expect(await state.store.list()).toHaveLength(1);
+  expect(state.observation.waits).toHaveLength(3);
+  state.delivery.acknowledgments[0]!.resolve("steered");
+  await expect.poll(async () => (await state.store.list()).length).toBe(0);
+  await state.service.close();
+  const restarted = await scenario(state.home);
+  expect(restarted.observation.waits).toEqual([]);
+  expect(restarted.delivery.prompts).toEqual([]);
+});
+
+test("connecting does not spend the remote failure budget and recovery before three failures still completes", async () => {
+  const state = await scenario();
+  await state.service.register({ ...intent, serverId: "remote" });
+  for (let attempt = 0; attempt < 4; attempt++) {
+    await until(() => state.observation.waits.length === attempt + 1);
+    expect(state.delivery.prompts).toEqual([]);
+    state.observation.waits[attempt]!.result.reject(new HostObservationError("connecting"));
+  }
+  for (let attempt = 4; attempt < 6; attempt++) {
+    await until(() => state.observation.waits.length === attempt + 1);
+    expect(state.delivery.prompts).toEqual([]);
+    state.observation.waits[attempt]!.result.reject(new HostObservationError("unreachable"));
+  }
+  await until(() => state.observation.waits.length === 7);
+  expect(state.delivery.prompts).toEqual([]);
+  state.observation.waits[6]!.result.resolve(outcome("idle"));
+  await until(() => state.delivery.prompts.length === 1);
+  expect(state.delivery.prompts[0]).toContain("finished.");
+});
+
+test("removed-host notice retries parent dispatch without observing again or deleting unacknowledged intent", async () => {
+  const state = await scenario();
+  await state.service.register({ ...intent, serverId: "remote" });
+  await until(() => state.observation.waits.length === 1);
+  state.observation.waits[0]!.result.reject(new HostObservationError("removed"));
+  await until(() => state.delivery.prompts.length === 1);
+  expect(state.delivery.prompts[0]).toContain("Host remote was removed or is unavailable.");
+  expect(state.delivery.prompts[0]).toContain("Status of child agent child (child) is unknown.");
+  state.delivery.acknowledgments[0]!.reject(new Error("Parent provider unavailable"));
+  await until(() => state.delivery.prompts.length === 2);
+  expect(state.delivery.prompts[1]).toBe(state.delivery.prompts[0]);
+  expect(state.observation.waits).toHaveLength(1);
+  expect(await state.store.list()).toHaveLength(1);
+  state.delivery.acknowledgments[1]!.resolve("steered");
+  await expect.poll(async () => (await state.store.list()).length).toBe(0);
+});
+
+test("failed removal after dispatch acknowledgment retries only storage, preserving the accepted outcome", async () => {
+  const state = await scenario(undefined, 1);
+  await state.service.register(intent);
+  await until(() => state.observation.waits.length === 1);
+  state.observation.waits[0]!.result.resolve(outcome("idle"));
+  await until(() => state.delivery.prompts.length === 1);
+  state.delivery.acknowledgments[0]!.resolve("steered");
+  await expect.poll(async () => (await state.store.list()).length).toBe(0);
+  expect(state.delivery.prompts).toHaveLength(1);
+  expect(state.delivery.prompts[0]).toContain("finished.");
+  expect(state.observation.waits).toHaveLength(1);
+});
+
+test("shutdown during observation setup owns rejection of the already-canceled next result", async () => {
+  const state = await scenario();
+  const opening = deferred<void>();
+  state.observation.opening = opening.promise;
+  await state.service.register(intent);
+  await until(() => state.observation.openedSignals.length === 1);
+  const closing = state.service.close();
+  await until(() => state.observation.openedSignals[0]!.aborted);
+  opening.resolve();
+  await closing;
+  expect(await state.store.list()).toHaveLength(1);
+  expect(state.delivery.prompts).toEqual([]);
 });

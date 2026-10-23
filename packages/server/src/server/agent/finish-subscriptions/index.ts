@@ -1,4 +1,5 @@
 import { setTimeout as pause } from "node:timers/promises";
+import { HostObservationError } from "../host-operations/index.js";
 import { randomUUID } from "node:crypto";
 import type { Logger } from "pino";
 import type { WaitForFinishResult } from "@getpaseo/client/internal/daemon-client";
@@ -108,19 +109,23 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
     // Only IDs captured by this observer are eligible; newer registrations survive.
     for (const record of watch.records) await deps.store.remove(record.id);
   }
-  async function delay(signal: AbortSignal): Promise<void> {
+  async function delay(signal: AbortSignal, attempt: number): Promise<void> {
     try {
-      await pause(deps.retryDelayMs ?? 2000, undefined, { signal });
+      await pause(
+        Math.min((deps.retryDelayMs ?? 1000) * 2 ** Math.min(attempt, 3), 5000),
+        undefined,
+        { signal },
+      );
     } catch (error) {
       if (!signal.aborted) throw error;
     }
   }
   async function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
-    signal.throwIfAborted();
     let abort!: () => void;
     const cancellation = new Promise<never>((_resolve, reject) => {
       abort = () => reject(signal.reason);
-      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+      else signal.addEventListener("abort", abort, { once: true });
     });
     try {
       return await Promise.race([operation, cancellation]);
@@ -150,6 +155,8 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
     return parent?.agentId !== record.callerAgentId || parent.serverId !== deps.serverId;
   }
   function reasonFor(result: FinishObservationResult): FinishNotificationReason {
+    if (result.reason === "host unreachable" || result.reason === "host removed")
+      return result.reason;
     if (!result.final) return "is unavailable";
     if (result.final.status === "closed") return "was closed";
     if (result.status === "error") return "errored";
@@ -213,38 +220,82 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
       ),
     };
     const permissions = new Set<string>();
-    while (!signal.aborted) {
-      let observation: FinishObservationSession | undefined;
+    let observation: FinishObservationSession | undefined;
+    let pending: FinishObservationResult | undefined;
+    let acknowledged = false;
+    let remoteFailures = 0;
+    let retries = 0;
+    let warned = false;
+    async function observeNext(): Promise<FinishObservationResult | undefined> {
       try {
-        if (await suppressed(record)) {
-          await remove(watch);
-          stop(watch, group);
-          return;
-        }
-        observation = await deps.open(record, signal);
-        while (!signal.aborted) {
-          const result = await abortable(observation.next(), signal);
+        observation ??= await deps.open(record, signal);
+        const result = await abortable(observation.next(), signal);
+        remoteFailures = 0;
+        return result;
+      } catch (error) {
+        await observation?.close();
+        observation = undefined;
+        signal.throwIfAborted();
+        if (!(error instanceof HostObservationError) || !record.serverId) throw error;
+        if (error.reason === "connecting") return undefined;
+        if (error.reason === "unreachable" && ++remoteFailures < 3) return undefined;
+        // Host visibility ends this subscription; it says nothing about child completion.
+        return {
+          status: "error",
+          final: null,
+          lastMessage: null,
+          error: null,
+          reason: error.reason === "removed" ? "host removed" : "host unreachable",
+        };
+      }
+    }
+    try {
+      while (!signal.aborted) {
+        try {
+          if (await suppressed(record)) {
+            await remove(watch);
+            stop(watch, group);
+            return;
+          }
+          if (!pending) pending = await observeNext();
+          if (!pending) {
+            await delay(signal, retries++);
+            continue;
+          }
           if (signal.aborted) return;
           await decisions(group);
           if (signal.aborted) return;
-          if (await suppressed(record, result)) {
+          if (await suppressed(record, pending)) {
             await remove(watch);
             stop(watch, group);
             return;
           }
-          if (await deliver(record, result, permissions, signal)) {
+          if (!acknowledged) acknowledged = await deliver(record, pending, permissions, signal);
+          if (acknowledged) {
+            // A removal failure retries only the commit, never the already accepted callback.
             await remove(watch);
             stop(watch, group);
             return;
           }
+          pending = undefined;
+          retries = 0;
+          warned = false;
+        } catch (error) {
+          if (signal.aborted) return;
+          // Delivery and storage failures retain the captured outcome and durable intent.
+          // They do not spend the remote-observation budget or change the child's outcome.
+          if (!warned) {
+            deps.logger.warn(
+              { err: error, subscription: record.id },
+              "Retrying finish subscription",
+            );
+            warned = true;
+          }
+          await delay(signal, retries++);
         }
-      } catch (error) {
-        if (signal.aborted) return;
-        deps.logger.warn({ err: error, subscription: record.id }, "Retrying finish subscription");
-        await delay(signal);
-      } finally {
-        await observation?.close();
       }
+    } finally {
+      await observation?.close();
     }
   }
 

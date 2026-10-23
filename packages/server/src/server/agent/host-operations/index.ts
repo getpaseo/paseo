@@ -44,6 +44,16 @@ export interface HostOperations {
   getActivity: HostOperation;
   listAgents: HostOperation;
 }
+/** Connection authority at the host boundary, independent of child lifecycle. */
+export class HostObservationError extends Error {
+  constructor(
+    readonly reason: "connecting" | "unreachable" | "removed",
+    cause?: unknown,
+  ) {
+    super(`Host observation ${reason}`, { cause });
+    this.name = "HostObservationError";
+  }
+}
 export interface HostObservation {
   wait(agentId: string, signal: AbortSignal): Promise<WaitForFinishResult>;
   observe(
@@ -453,13 +463,48 @@ export function createHostObservationResolver(input: {
   hosts(): ToolHosts;
 }) {
   return {
-    use<T>(
+    async use<T>(
       serverId: string | undefined,
       action: (host: HostObservation) => Promise<T>,
       signal?: AbortSignal,
     ): Promise<T> {
       if (!serverId || serverId === input.serverId) return action(input.local);
-      return input.hosts().use(serverId, (client) => action(remoteObservation(client)), signal);
+      const hosts = input.hosts();
+      async function classify(error: unknown): Promise<HostObservationError> {
+        // This is the origin's authoritative registration directory, not a destination RPC error.
+        const row = (await hosts.directory()).hosts.find((host) => host.serverId === serverId);
+        if (!row) return new HostObservationError("removed", error);
+        if (row.status === "connecting") return new HostObservationError("connecting", error);
+        return new HostObservationError("unreachable", error);
+      }
+      async function fail(error: unknown): Promise<never> {
+        throw await classify(error);
+      }
+      try {
+        return await hosts.use(
+          serverId,
+          (client) => {
+            const remote = remoteObservation(client);
+            return action({
+              wait: (agentId, lifetime) => remote.wait(agentId, lifetime).catch(fail),
+              observe(agentId, handler, lifetime, onError) {
+                async function report(error: unknown): Promise<void> {
+                  try {
+                    onError(await classify(error));
+                  } catch (failure) {
+                    onError(failure);
+                  }
+                }
+                return remote.observe(agentId, handler, lifetime, report).catch(fail);
+              },
+            });
+          },
+          signal,
+        );
+      } catch (error) {
+        if (error instanceof HostObservationError) throw error;
+        return fail(error);
+      }
     },
   };
 }

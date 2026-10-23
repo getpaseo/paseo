@@ -1,7 +1,12 @@
 import { expect, test } from "vitest";
 import type { WaitForFinishResult } from "@getpaseo/client/internal/daemon-client";
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
-import type { HostObservation } from "../../host-operations/index.js";
+import {
+  HostObservationError,
+  createHostObservationResolver,
+  type ToolHosts,
+  type HostObservation,
+} from "../../host-operations/index.js";
 import { buildStoredAgentPayload } from "../../agent-projections.js";
 import { openFinishObservation } from "./observation-stream.js";
 
@@ -168,3 +173,45 @@ test("a terminal event observed after newer work starts waits for that running w
     await observation.close();
   }
 });
+
+test.each([
+  { status: "connecting", reason: "connecting" },
+  { status: "offline", reason: "unreachable" },
+  { status: "disabled", reason: "unreachable" },
+  { status: "removed", reason: "removed" },
+] as const)(
+  "remote observation classifies $status from the authoritative directory, ignoring arbitrary error codes",
+  async ({ status, reason }) => {
+    const row = {
+      registrationId: "registration",
+      serverId: "remote",
+      label: null,
+      source: { id: "owner", key: "remote" },
+      metadata: {},
+      enabled: status !== "disabled",
+      status: status === "removed" ? ("offline" as const) : status,
+      targetDescription: "Remote",
+      lastOnlineAt: null,
+      nextRetryAt: null,
+      error: null,
+    };
+    const hosts: ToolHosts = {
+      directory: async () => ({
+        self: { serverId: "origin", label: "Origin" },
+        hosts: status === "removed" ? [] : [row],
+      }),
+      async use() {
+        throw Object.assign(new Error("Untrusted remote error"), { code: "host_unknown" });
+      },
+    };
+    const local = new Host();
+    const resolver = createHostObservationResolver({
+      serverId: "origin",
+      local,
+      hosts: () => hosts,
+    });
+    const error = await resolver.use("remote", async () => {}).catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(HostObservationError);
+    expect(error).toMatchObject({ reason });
+  },
+);
