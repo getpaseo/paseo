@@ -1,0 +1,25 @@
+# How it was built (Pyrgos Paseo)
+
+A formal log of the Pyrgos additions to this fork, in build order. Each entry says what was decided, why, what was rejected and the consequence. No dates.
+
+## Conversation-agent server module (MIC-750 B)
+
+**Decision:** Add `packages/server/src/server/pyrgos/conversation-agent/` as a self-contained module, with no change to Paseo core. The brain sits behind a small `Brain` interface; the production brain (`SdkBrain`) is one warm Claude Agent SDK session on the subscription login, and tests use a fake. **Who:** the orchestrator specified the module; Claude Sonnet 5.5 designed and built it.
+
+**Why:** The voice agent must answer plain turns in under two seconds, so the session stays warm (streaming input, partial messages) instead of spawning per turn. The `Brain` seam keeps the realtime loop testable without a login.
+
+**Ported from the earlier Python voice agent (idea for idea, not shelled out):** sentence chunker with an early first chunk; redacting context builder (handoff, plan, open tickets, framed as data); the filler rule ("One sec." at once for tool-looking questions, or for turns of four or more words on sonnet and opus, else at the first tool call); barge-in with a generation counter; a read-only tool allowlist; `ANTHROPIC_API_KEY` stripped from the subprocess environment so only the subscription login is used.
+
+**Rejected:** a new voice-session class inside core (large diff, hard to merge upstream); a per-turn SDK `query` (process start on every turn); calling the Python repo (two runtimes).
+
+**Output contract:** the module emits `assistant_chunk` (transcript text), `speak` (text for the speech providers, which produce `audio_output`), `turn_end`, `interrupted` and `error`. Wiring those to the voice session host is left to the speech-provider ticket; this module does not touch `voice-session.ts`.
+
+**Tools:** `status`, `open_tickets`, `read_file`, `search`, plus `list_agents` and `read_agent_timeline` when the daemon passes a `PaseoAgentsPort`. All read only. File reads are confined to the configured roots, follow symlinks to their real path, refuse secret-named files, and redact output.
+
+**Status:** verified. Unit tests run against a fake SDK (agent, chunker, context, redaction, tools, brain). A headless script (`packages/server/scripts/pyrgos-conversation-turn.ts`) drove one live text turn on haiku through the subscription login: the filler came out at once and the reply followed; the cold first reply took about 2.4 s including session start. Warm-turn latency on opus is **assumed** under two seconds and still needs measuring.
+
+## Open questions
+
+- Warm-turn time to first spoken word on opus (target under 2 s) is not yet measured.
+- `list_agents` and `read_agent_timeline` need the daemon to supply a `PaseoAgentsPort`; the adapter is not written.
+- Barge-in drain: an interrupted session that does not reach its result within the drain timeout is rebuilt on the next turn. The rebuild path is covered only indirectly.
