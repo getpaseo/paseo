@@ -95,7 +95,9 @@ export class ConversationAgent {
       }, limit);
     });
     try {
-      await Promise.race([this.options.brain.interrupt().then(() => running), timeout]);
+      // A rejected interrupt must not block the replacement turn: keep waiting, then abandon.
+      const interrupted = this.options.brain.interrupt().catch(() => {});
+      await Promise.race([interrupted.then(() => running), timeout]);
     } finally {
       clearTimeout(timer);
     }

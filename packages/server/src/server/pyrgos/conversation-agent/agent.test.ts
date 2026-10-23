@@ -233,6 +233,39 @@ describe("ConversationAgent", () => {
     expect(agent.busy).toBe(false);
   });
 
+  it("abandons the turn when interrupt() rejects", async () => {
+    const { events, onEvent } = collect();
+    let calls = 0;
+    const brain: Brain = {
+      async *runTurn() {
+        calls += 1;
+        if (calls === 1) {
+          yield { type: "text", text: "Starting. " } satisfies BrainEvent;
+          await new Promise<never>(() => {});
+        }
+        yield { type: "text", text: "Fresh answer." } satisfies BrainEvent;
+      },
+      async interrupt() {
+        throw new Error("interrupt failed");
+      },
+      async close() {},
+    };
+    const agent = new ConversationAgent({
+      brain,
+      model: "haiku",
+      onEvent,
+      filler: null,
+      interruptTimeoutMs: 30,
+    });
+    const first = agent.handleTranscript("one");
+    await new Promise((r) => setTimeout(r, 5));
+    await agent.handleTranscript("two");
+    await first;
+    const spoken = events.filter((e) => e.type === "speak").map((e) => e.text);
+    expect(spoken.join(" ")).toContain("Fresh answer.");
+    expect(agent.busy).toBe(false);
+  });
+
   it("reports a brain failure as an error event", async () => {
     const { events, onEvent } = collect();
     const brain: Brain = {

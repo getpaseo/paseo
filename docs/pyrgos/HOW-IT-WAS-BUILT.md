@@ -22,6 +22,8 @@ A formal log of the Pyrgos additions to this fork, in build order. Each entry sa
 
 **Review fixes, round 2 (Codex, orchestrator relayed; Claude fixed):** (1) a hung SDK turn never reached its result, so barge-in waited forever; `interruptTimeoutMs` now abandons the turn and the session is rebuilt on the next one. (2) the credential denylist (`.npmrc`, `.netrc` and similar) was checked on the requested path only; it now also checks the resolved real path, so a symlink cannot reach a secret file. **Status:** verified by two new unit tests (37 pass, lint and typecheck clean).
 
+**Review fixes, round 3 (Codex; Claude fixed):** (1) a rejected `brain.interrupt()` escaped the race in `settle()` and blocked the replacement turn; the rejection is now swallowed and the turn is abandoned at the timeout. (2) the secret-name pattern missed multi-suffix names such as `secrets.production.json`; any `secret(s)` or `credential(s)` name with any suffix is now blocked. **Status:** verified by a new agent test and extended tool tests (38 pass, lint and typecheck clean).
+
 ## Open questions
 
 - Warm-turn time to first spoken word on opus (target under 2 s) is not yet measured.
