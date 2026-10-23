@@ -10,7 +10,16 @@ import {
   type NativeSyntheticEvent,
   type PressableStateCallbackType,
 } from "react-native";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { Check, ChevronRight, Folder, X } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -69,9 +78,7 @@ import {
   buildContributionSections,
   filterAndRankBuiltInResults,
   joinSubtitleParts,
-  moveActiveResultId,
   PINNED_SECTION_BAND,
-  preserveActiveResultId,
   projectCommandCenterRows,
   type CommandCenterAgentResult,
   type CommandCenterFileResult,
@@ -81,6 +88,7 @@ import {
   type CommandCenterSearchFields,
   type CommandCenterWorkspaceResult,
 } from "./results";
+import { createCommandCenterInteraction, type CommandCenterInteraction } from "./interaction";
 import { useWorkspaceFileSearch } from "./workspace-file-search";
 
 const ThemedBottomSheetTextInput = withUnistyles(TextInput, (theme) => ({
@@ -227,8 +235,6 @@ interface CommandCenterState {
   setQuery(query: string): void;
   activeId: string | null;
   rows: readonly CommandCenterListRow[];
-  results: readonly CommandCenterResult[];
-  rowIndexByResultId: ReadonlyMap<string, number>;
   offsets: readonly number[];
   inputRef: React.RefObject<EditingTextInputHandle | null>;
   fileSearchLoading: boolean;
@@ -238,7 +244,10 @@ interface CommandCenterState {
   key(key: string): boolean;
 }
 
-function useCommandCenterState(listMetrics: CommandCenterListMetrics): CommandCenterState {
+function useCommandCenterState(
+  listMetrics: CommandCenterListMetrics,
+  interaction: CommandCenterInteraction,
+): CommandCenterState {
   const keyboardActionDispatcher = useKeyboardActionDispatcher();
   const { t } = useTranslation();
   const open = useKeyboardShortcutsStore((state) => state.commandCenterOpen);
@@ -248,8 +257,7 @@ function useCommandCenterState(listMetrics: CommandCenterListMetrics): CommandCe
   const snapshot = useCommandCenterContributions();
   const inputRef = useRef<EditingTextInputHandle>(null);
   const previousOpenRef = useRef(open);
-  const [query, setQueryState] = useState("");
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const { query, activeId } = useSyncExternalStore(interaction.subscribe, interaction.getSnapshot);
   const builtInSections = useBuiltInSections(open, query);
   const {
     entries: fileSearchEntries,
@@ -296,15 +304,9 @@ function useCommandCenterState(listMetrics: CommandCenterListMetrics): CommandCe
       ),
     [builtInSections, contributionSections, fileSections, listMetrics, scope],
   );
-  const resolvedActiveId = preserveActiveResultId(activeId, projection.selectableResults);
-
-  // Editing the query re-ranks everything, so an arrow-key selection made under the previous
-  // query is no longer meaningful. Reset it in the same update as the query rather than in an
-  // effect, so there is no intermediate render holding the stale selection.
-  const setQuery = useCallback((next: string) => {
-    setQueryState(next);
-    setActiveId(null);
-  }, []);
+  useLayoutEffect(() => {
+    interaction.update({ open, scope, query, projection, loading: fileSearchLoading });
+  }, [interaction, open, scope, query, projection, fileSearchLoading]);
 
   const close = useCallback(() => setOpen(false), [setOpen]);
   const select = useCallback(
@@ -327,18 +329,25 @@ function useCommandCenterState(listMetrics: CommandCenterListMetrics): CommandCe
         return true;
       }
       if (pressed === "Enter") {
-        const selected = results.find((result) => result.id === resolvedActiveId);
+        const selected = results.find((result) => result.id === activeId);
         if (!selected) return false;
         select(selected);
         return true;
       }
       if (pressed !== "ArrowDown" && pressed !== "ArrowUp") return false;
-      if (results.length === 0) return false;
-      const direction = pressed === "ArrowDown" ? "next" : "previous";
-      setActiveId(moveActiveResultId(resolvedActiveId, results, direction));
-      return true;
+      return interaction.move(pressed === "ArrowDown" ? "next" : "previous");
     },
-    [close, open, projection.selectableResults, query, resolvedActiveId, scope, select, setScope],
+    [
+      close,
+      open,
+      projection.selectableResults,
+      query,
+      activeId,
+      scope,
+      select,
+      setScope,
+      interaction,
+    ],
   );
 
   useEffect(() => {
@@ -348,8 +357,6 @@ function useCommandCenterState(listMetrics: CommandCenterListMetrics): CommandCe
       const timer = setTimeout(() => inputRef.current?.focus(), 0);
       return () => clearTimeout(timer);
     }
-    setQueryState("");
-    setActiveId(null);
     if (!wasOpen) return;
     const element = takeCommandCenterFocusRestoreElement();
     if (!element) return;
@@ -367,11 +374,9 @@ function useCommandCenterState(listMetrics: CommandCenterListMetrics): CommandCe
     scope,
     clearScope: () => setScope(null),
     query,
-    setQuery,
-    activeId: resolvedActiveId,
+    setQuery: interaction.setQuery,
+    activeId,
     rows: projection.rows,
-    results: projection.selectableResults,
-    rowIndexByResultId: projection.rowIndexByResultId,
     offsets: projection.offsets,
     inputRef,
     fileSearchLoading,
@@ -669,62 +674,39 @@ function SectionRow({ row }: { row: Extract<CommandCenterListRow, { kind: "secti
 export function CommandCenter() {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
-  const state = useCommandCenterState(
-    isCompact ? COMMAND_CENTER_LIST_METRICS.compact : COMMAND_CENTER_LIST_METRICS.desktop,
-  );
-  const showBottomSheet = isCompact && isNative;
-  const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && state.open && !showBottomSheet);
   const listRef = useRef<FlatList<CommandCenterListRow>>(null);
   const bottomSheetListRef = useRef<BottomSheetFlatListMethods>(null);
   const bottomSheetInputRef = useRef<EditingTextInputHandle>(null);
-  const scrollMetricsRef = useRef({ offset: 0, visibleLength: 0 });
+  const [interaction] = useState(() =>
+    createCommandCenterInteraction((offset) => {
+      const list = listRef.current ?? bottomSheetListRef.current;
+      list?.scrollToOffset({ offset, animated: false });
+    }),
+  );
+  const state = useCommandCenterState(
+    isCompact ? COMMAND_CENTER_LIST_METRICS.compact : COMMAND_CENTER_LIST_METRICS.desktop,
+    interaction,
+  );
+  const showBottomSheet = isCompact && isNative;
+  const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && state.open && !showBottomSheet);
   const { sheetRef, handleSheetChange, handleSheetDismiss } = useIsolatedBottomSheetVisibility({
     visible: state.open,
     isEnabled: showBottomSheet,
     onClose: state.close,
   });
 
-  const revealActiveResult = useCallback(() => {
-    if (!state.open || !state.activeId) return;
-    const index = state.rowIndexByResultId.get(state.activeId);
-    if (index === undefined) return;
-    const { offset, visibleLength } = scrollMetricsRef.current;
-    if (visibleLength <= 0) return;
-    const rowTop = state.offsets[index];
-    const rowBottom = rowTop + state.rows[index].height;
-    let nextOffset: number | null = null;
-    if (rowTop < offset) nextOffset = rowTop;
-    if (rowBottom > offset + visibleLength) nextOffset = rowBottom - visibleLength;
-    if (nextOffset === null) return;
-    const ref = showBottomSheet ? bottomSheetListRef.current : listRef.current;
-    const boundedOffset = Math.max(0, nextOffset);
-    scrollMetricsRef.current.offset = boundedOffset;
-    ref?.scrollToOffset({ offset: boundedOffset, animated: false });
-  }, [
-    showBottomSheet,
-    state.activeId,
-    state.offsets,
-    state.open,
-    state.rowIndexByResultId,
-    state.rows,
-  ]);
-  useEffect(() => {
-    if (!state.open) {
-      scrollMetricsRef.current = { offset: 0, visibleLength: 0 };
-      return;
-    }
-    revealActiveResult();
-  }, [revealActiveResult, state.open]);
   const handleListLayout = useCallback(
     (event: LayoutChangeEvent) => {
-      scrollMetricsRef.current.visibleLength = event.nativeEvent.layout.height;
-      revealActiveResult();
+      interaction.layout(event.nativeEvent.layout.height);
     },
-    [revealActiveResult],
+    [interaction],
   );
-  const handleListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    scrollMetricsRef.current.offset = event.nativeEvent.contentOffset.y;
-  }, []);
+  const handleListScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      interaction.scrolled(event.nativeEvent.contentOffset.y);
+    },
+    [interaction],
+  );
   useEffect(() => {
     if (!showBottomSheet || !state.open) return;
     const timer = setTimeout(() => bottomSheetInputRef.current?.focus(), 300);
@@ -790,6 +772,14 @@ export function CommandCenter() {
     windowSize: 5,
     onLayout: handleListLayout,
     onScroll: handleListScroll,
+    onScrollBeginDrag: interaction.beginManualScroll,
+    onTouchStart: interaction.beginManualScroll,
+    ...(isWeb
+      ? {
+          onWheel: interaction.beginManualScroll,
+          onMouseDown: interaction.beginManualScroll,
+        }
+      : {}),
     scrollEventThrottle: 16,
   };
   const keyPress = useCallback(
