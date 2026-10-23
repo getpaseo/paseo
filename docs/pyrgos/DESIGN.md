@@ -226,9 +226,13 @@ Guardrail: `launch` refuses any item whose state is not `agreed` or whose agreem
 `packages/server/src/server/pyrgos/speech/index.ts`:
 
 ```ts
-export function createLabSpeech(cfg: LabSpeechConfig): { tts: TextToSpeechProvider; stt: SpeechToTextProvider };
-export interface LabSpeechConfig { ttsUrl: string; sttUrl: string; voice: string }
+export function createLabSpeech(cfg: LabSpeechConfig): { tts?: TextToSpeechProvider; stt?: SpeechToTextProvider };
+export interface LabSpeechConfig { ttsUrl?: string; sttUrl?: string; voice: string }
 ```
+
+Each role is independent: `tts` is built only when `ttsUrl` is set, `stt` only when `sttUrl` is set, and the other is `undefined`.
+A TTS-only or STT-only lab config is valid. `speech-runtime.ts` (core change 1b) resolves each role on its own: a role with a lab
+provider uses `lab`, a role without one keeps the stock `local` provider. Setting neither URL builds nothing.
 
 - Config env: `PYRGOS_LAB_TTS_URL`, `PYRGOS_LAB_STT_URL` (websocket URLs), `PYRGOS_LAB_VOICE`
   (default `profile:winner-r6-s49-heart-alice-bella`, the locked preset; mirrors `LOCAL_REPLY_VOICE` in
@@ -282,9 +286,14 @@ cannot leave `bot` stuck); `llm` = a `ChatBrain.stream` is open. A queued overse
 `The overseer says: <text>`, via `brain.speakStanding(text)`. B never reuses a stored `VoiceBrainContext`: its `signal` belongs to one
 utterance and is already aborted after any interruption. `speakStanding` makes VoiceSession mint a fresh `AbortController` linked to the
 session's own (`this.abortController`, as `registerVoiceBridgeForAgent` does at `:~1066`), and it is cancelled by the next
-`onUserSpeechStarted`. B appends the `overseer` transcript line after queuing and re-checks the gate before each further reply. With no
-active voice socket (`isVoiceMode` false) replies stay queued in the replies file, which `watchReplies` tracks by line offset, so a
-restart does not repeat or lose them.
+`onUserSpeechStarted`. B appends the `overseer` transcript line after queuing and re-checks the gate before each further reply. Reply
+delivery uses a persisted cursor, not memory. C stores `{offset, lastSeq}` in a small file beside the replies file
+(`replies.cursor.json`, written atomically via temp file plus rename). `watchReplies` reads from the saved offset, so a restart neither
+repeats nor loses a reply. A reply is *read* when it is appended to a durable `replies.pending.jsonl` (the cursor advances only after
+that append), and *acked* when `speakStanding` resolves for it (the line is then removed from pending). On startup B reloads
+`replies.pending.jsonl` into the queue before tailing from the cursor. Replies that arrive while voice mode is off (`isVoiceMode`
+false) are read and parked in pending, then spoken at the next turn boundary after voice mode turns on. If the replies file shrinks
+(rotated or truncated) the offset resets to 0 and already-acked sequence numbers are skipped using `lastSeq`.
 
 ## 6. Client / UI
 
