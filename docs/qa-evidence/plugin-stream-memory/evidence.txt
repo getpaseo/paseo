@@ -1,0 +1,38 @@
+Plugin stream memory regression — synthetic QA, 2026-10-22
+
+Platform: macOS Apple Silicon. The 60-minute pair uses the installed Paseo 0.12.0 Electron 44.2.0 / Node 24.20.0, 3 synthetic plugin agents and 15 clients in a separate process. Relay disabled; temporary state; random loopback port. Production daemon was untouched.
+Each agent: 12 steps over one hour, each with 30,000 Chinese reasoning characters in 1,000 cumulative JSON updates plus 32,000 tool-output characters. Force GC before 5-minute samples; heap snapshots every 15 minutes.
+OLS slope of 5–60 minute samples: before 1041.428896 MiB/h, after 8.112445 MiB/h. Raw checkpoint values are in samples.csv, graph in heap-growth.png. MiB means 2^20 bytes.
+
+The long run froze an earlier version of this memory adapter fix. Final source also fixes replay order for interleaved children and tool completion; these cases do not occur in that three-root benchmark. Final compiled source was separately exercised with 4,000 deltas per step: 3 agents, two steps each, before +692.145462 MiB versus after +3.008007 MiB. These are synthetic results, not proof of real-provider/manual QA.
+
+60-minute snapshot ownership, positive classified payload growth, shared objects counted ONCE:
+raw runtime history + translated adapter history: 943.8337 MiB (90.700%)
+those histories + resident timeline: 85.8135 MiB (8.246%)
+The rest includes real content and object metadata. Snapshot-map coverage is about 0.410%, including overlaps. Subscription/send queues/log buffers did not explain the large retained growth.
+Retainers: ProviderRuntimeSession.history -> event.item.text;
+PluginAgentSession.history -> delta.text -> sliced string.parent;
+TimelineProjection.rows -> concatenated string -> sliced string.parent.
+The visible projected text does not repeat cumulative prefixes.
+
+Lifecycle: before/after archive 114.0746/113.8509 MiB; after deletion 113.5339/113.6680. Twenty additional reconnects do not accumulate another full transcript. A separate 95-second idle test exceeded the 90-second reconnect grace: idle retains history, archive releases it. Cold workers with three archived records opened zero provider sessions. This does not reproduce or resolve client-triggered archived history restoration.
+
+Reproduce the exact automated regression (Node 22, checkout dependencies built):
+cd packages/server
+npx vitest run src/server/agent/plugin-provider.test.ts --bail=1
+npx vitest run src/server/agent/timeline-projection.test.ts --bail=1
+The same final 3-root/3-child fixture fails on base adapter code at the 24 MiB bound: 733544704 retained bytes. See old-code-regression.txt. With this patch it passes both 24 MiB retained / 6 MiB archived bounds and content/order assertions.
+
+Repeat the wall-clock benchmark with installed 0.12.0 runtime and this checkout's patch:
+From repo root: npm run build:server
+ELECTRON_RUN_AS_NODE=1 PASEO_MEMORY_SECONDS=3600 PASEO_MEMORY_OUT=/tmp/paseo-before \
+ '/Applications/Paseo.app/Contents/Frameworks/Paseo Helper.app/Contents/MacOS/Paseo Helper' \
+ --expose-gc --max-old-space-size=3072 --import tsx docs/qa-evidence/plugin-stream-memory/worker.mjs
+ELECTRON_RUN_AS_NODE=1 PASEO_MEMORY_SECONDS=3600 PASEO_MEMORY_OUT=/tmp/paseo-after \
+ PASEO_MEMORY_PATCH_ROOT="$PWD/packages/server/dist/server/server/agent" \
+ '/Applications/Paseo.app/Contents/Frameworks/Paseo Helper.app/Contents/MacOS/Paseo Helper' \
+ --expose-gc --max-old-space-size=3072 --import tsx --import ./docs/qa-evidence/plugin-stream-memory/overlay.mjs \
+ docs/qa-evidence/plugin-stream-memory/worker.mjs
+Use a fresh output directory each time. Do not run hour-long benchmarks in CI. Raw synthetic snapshots remain local, outside Git.
+
+Coverage: automated/synthetic macOS only; real-provider manual use and Windows/Linux runtime coverage pending. No UI layout change. Resident real transcript size remains unbounded; no cold storage, history truncation, cursor/protocol changes, or full #6522 closure is claimed.

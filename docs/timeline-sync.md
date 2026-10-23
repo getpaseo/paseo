@@ -10,6 +10,11 @@ then replaces the previous tool state or merges into the current text item. Inte
 are never retained for history or catch-up. Provider history is the durable transcript authority
 and rebuilds the projection when an agent resumes.
 
+Pagination bounds each read, not total resident history. Active and idle agents retain their
+projected transcript; archive releases it and later history reads rebuild it from the provider.
+Streaming overhead must remain proportional to the retained transcript. Cumulative text snapshots
+must be released after their deltas have been consumed.
+
 The invariants are:
 
 > A continuously subscribed client applies every committed row in order. Opening or resuming an

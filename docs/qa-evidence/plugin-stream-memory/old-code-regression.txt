@@ -1,0 +1,61 @@
+
+ RUN  v4.1.6 <checkout>/packages/server
+
+node:internal/modules/run_main:123
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Retained heap exceeded 24 MiB: 733544704 bytes
+    at <anonymous> (<checkout>/packages/server/src/server/agent/test-utils/plugin-stream-memory.ts:144:1) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: '==',
+  diff: 'simple'
+}
+
+Node.js v22.21.0
+stdout | src/server/agent/plugin-provider.test.ts
+[dotenv@17.3.1] injecting env (0) from .env.test -- tip: 🤖 agentic secret storage: https://dotenvx.com/as2
+[dotenv@17.3.1] injecting env (0) from ../.env -- tip: 🤖 agentic secret storage: https://dotenvx.com/as2
+
+ ❯ src/server/agent/plugin-provider.test.ts (44 tests | 1 failed | 43 skipped) 2105ms
+   × long concurrent plugin and child streams retain text-sized history and release it on archive 2102ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/server/agent/plugin-provider.test.ts > long concurrent plugin and child streams retain text-sized history and release it on archive
+Error: Command failed: /Users/suntc/.nvm/versions/node/v22.21.0/bin/node --expose-gc --import tsx <checkout>/packages/server/src/server/agent/test-utils/plugin-stream-memory.ts
+node:internal/modules/run_main:123
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Retained heap exceeded 24 MiB: 733544704 bytes
+    at <anonymous> (<checkout>/packages/server/src/server/agent/test-utils/plugin-stream-memory.ts:144:1) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: '==',
+  diff: 'simple'
+}
+
+Node.js v22.21.0
+
+ ❯ src/server/agent/plugin-provider.test.ts:27:18
+     25| test("long concurrent plugin and child streams retain text-sized histo…
+     26|   const fixture = fileURLToPath(new URL("./test-utils/plugin-stream-me…
+     27|   const output = execFileSync(process.execPath, ["--expose-gc", "--imp…
+       |                  ^
+     28|     encoding: "utf8",
+     29|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 43 skipped (44)
+   Start at  18:17:12
+   Duration  3.10s (transform 633ms, setup 16ms, import 922ms, tests 2.10s, environment 0ms)
+
