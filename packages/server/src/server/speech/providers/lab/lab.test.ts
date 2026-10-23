@@ -128,6 +128,28 @@ describe("LabTTS", () => {
     await expect(tts.synthesizeSpeech("hi")).rejects.toThrow(/Lab TTS failed/);
   });
 
+  test("destroys the stream when the lab drops after audio started", async () => {
+    const url = await fakeLab((ws) => {
+      ws.send(Buffer.from([1, 0]));
+      queueMicrotask(() => ws.terminate());
+    });
+    const tts = new LabTTS({ url, voice: "v", connectTimeoutMs: 500, fallback: null }, logger);
+    const { stream } = await tts.synthesizeSpeech("hi");
+    await expect(collect(stream)).rejects.toThrow(/mid-stream/);
+  });
+
+  test("falls back when the lab closes without audio", async () => {
+    const url = await fakeLab((ws) => ws.close());
+    const fallback: TextToSpeechProvider = {
+      synthesizeSpeech: async () => ({
+        stream: Readable.from([Buffer.from("stock")]),
+        format: "pcm",
+      }),
+    };
+    const tts = new LabTTS({ url, voice: "v", connectTimeoutMs: 500, fallback }, logger);
+    expect((await collect((await tts.synthesizeSpeech("hi")).stream)).toString()).toBe("stock");
+  });
+
   test("sends cancel when the consumer destroys the stream early", async () => {
     let markCancelled: () => void = () => {};
     const cancelled = new Promise<void>((resolve) => {
@@ -206,6 +228,73 @@ describe("LabSTT", () => {
     session.commit();
     expect(appended[0]!.length).toBe(16);
     expect(transcripts).toEqual(["stock"]);
+  });
+
+  test("emits an error when the lab drops mid-utterance", async () => {
+    const url = await fakeLab(() => {});
+    const stt = new LabSTT({ url, connectTimeoutMs: 1000, fallback: null }, logger);
+    const session = stt.createSession({ logger });
+    const errors: Error[] = [];
+    session.on("error", (e) => errors.push(e));
+    await session.connect();
+    session.appendPcm16(Buffer.from([1, 0]));
+    for (const s of servers) for (const client of s.clients) client.terminate();
+    await expect.poll(() => errors.length).toBe(1);
+    expect(errors[0]!.message).toMatch(/connection lost/);
+    session.close();
+  });
+
+  test("close() does not emit an error, and clear() after close does not reopen", async () => {
+    let connections = 0;
+    const url = await fakeLab(() => {});
+    servers[0]!.on("connection", () => {
+      connections += 1;
+    });
+    const stt = new LabSTT({ url, connectTimeoutMs: 1000, fallback: null }, logger);
+    const session = stt.createSession({ logger });
+    const errors: Error[] = [];
+    session.on("error", (e) => errors.push(e));
+    await session.connect();
+    session.close();
+    session.clear();
+    await new Promise((r) => setTimeout(r, 150));
+    expect(connections).toBe(1);
+    expect(errors).toEqual([]);
+  });
+
+  test("close() while a clear() reopen is pending aborts it", async () => {
+    let connections = 0;
+    const url = await fakeLab(() => {});
+    servers[0]!.on("connection", () => {
+      connections += 1;
+    });
+    const stt = new LabSTT({ url, connectTimeoutMs: 1000, fallback: null }, logger);
+    const session = stt.createSession({ logger });
+    const errors: Error[] = [];
+    session.on("error", (e) => errors.push(e));
+    await session.connect();
+    session.clear();
+    session.close();
+    await new Promise((r) => setTimeout(r, 150));
+    expect(errors).toEqual([]);
+    expect(connections).toBeLessThanOrEqual(2);
+  });
+
+  test("clear() reopens a fresh socket that still delivers transcripts", async () => {
+    const url = await fakeLab((ws, _data, isBinary) => {
+      if (!isBinary) ws.send(JSON.stringify({ type: "final", text: "again" }));
+    });
+    const stt = new LabSTT({ url, connectTimeoutMs: 1000, fallback: null }, logger);
+    const session = stt.createSession({ logger });
+    const texts: string[] = [];
+    session.on("transcript", (e) => texts.push(e.transcript));
+    await session.connect();
+    session.clear();
+    session.appendPcm16(Buffer.from([1, 0]));
+    await new Promise((r) => setTimeout(r, 100));
+    session.commit();
+    await expect.poll(() => texts).toEqual(["again"]);
+    session.close();
   });
 
   test("connect rejects when the lab is down and there is no fallback", async () => {

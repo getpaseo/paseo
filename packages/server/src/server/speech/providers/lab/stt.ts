@@ -56,12 +56,28 @@ export class LabSTT implements SpeechToTextProvider {
     let segmentId = randomUUID();
     let previousSegmentId: string | null = null;
     const queued: Buffer[] = [];
+    let closed = false;
+    let pending: WebSocket | null = null;
+    const aborted = new Error("lab STT connect aborted");
+    const dropped = new WeakSet<WebSocket>();
+    const abortPending = () => {
+      if (pending) dropped.add(pending);
+      pending?.terminate();
+      pending = null;
+    };
 
     const openLab = (): Promise<void> =>
       new Promise((resolve, reject) => {
         const socket = new WebSocket(options.url, { handshakeTimeout: options.connectTimeoutMs });
+        pending = socket;
         let opened = false;
         socket.on("open", () => {
+          if (pending === socket) pending = null;
+          if (closed) {
+            socket.terminate();
+            reject(aborted);
+            return;
+          }
           opened = true;
           ws = socket;
           for (const chunk of queued.splice(0)) socket.send(chunk);
@@ -96,8 +112,13 @@ export class LabSTT implements SpeechToTextProvider {
           else if (ws === socket) emitter.emit("error", error);
         });
         socket.on("close", () => {
-          if (ws === socket) ws = null;
-          if (!opened) reject(new Error("lab STT closed before open"));
+          if (pending === socket) pending = null;
+          if (!opened) {
+            reject(dropped.has(socket) ? aborted : new Error("lab STT closed before open"));
+          } else if (ws === socket) {
+            ws = null;
+            if (!closed) emitter.emit("error", new Error("lab STT connection lost"));
+          }
         });
       });
 
@@ -120,6 +141,7 @@ export class LabSTT implements SpeechToTextProvider {
         try {
           await openLab();
         } catch (error) {
+          if (closed) return;
           logger.warn({ err: error }, "Lab STT unavailable; using fallback provider");
           await startFallback();
         }
@@ -149,19 +171,25 @@ export class LabSTT implements SpeechToTextProvider {
           delegate.clear();
           return;
         }
+        if (closed) return;
         // The lab buffer only resets after a final, so drop the socket and reopen it.
         const old = ws;
         ws = null;
         old?.terminate();
+        abortPending();
         segmentId = randomUUID();
-        void openLab().catch((error) => emitter.emit("error", error));
+        void openLab().catch((error) => {
+          if (!closed && error !== aborted) emitter.emit("error", error);
+        });
       },
       close() {
+        closed = true;
         queued.length = 0;
         delegate?.close();
         const old = ws;
         ws = null;
         old?.close();
+        abortPending();
       },
       on(event: string, handler: (...args: never[]) => void) {
         emitter.on(event, handler as (...args: unknown[]) => void);
