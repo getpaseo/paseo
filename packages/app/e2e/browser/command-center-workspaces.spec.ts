@@ -9,6 +9,7 @@ import { addOfflineHostAndReload } from "../support/helpers/hosts";
 import { expectAppRoute } from "../support/helpers/route-assertions";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
+import { seedRunningMockAgentWorkspace, openAgentRoute } from "../support/helpers/mock-agent";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 
 const PRIMARY_HOST_LABEL = "Primary Host";
@@ -19,6 +20,34 @@ const AGENT_TITLE = "Fix checkout retries";
 
 test.describe("Command center workspaces", () => {
   test.describe.configure({ timeout: 180_000 });
+
+  test("agent and workspace results retain their icons and overlay live status", async ({
+    page,
+  }) => {
+    const workspace = await seedRunningMockAgentWorkspace({
+      repoPrefix: "command-center-status-",
+      title: "Review checkout retries",
+      model: "five-minute-stream",
+      initialPrompt: "Keep working on checkout retries",
+    });
+    try {
+      await openAgentRoute(page, workspace);
+      await expectAgentTabActive(page, workspace.agentId);
+      const panel = await openCommandCenter(page);
+      const agent = panel.getByTestId(`command-center-agent-${getServerId()}:${workspace.agentId}`);
+      const row = panel.getByTestId(
+        `command-center-workspace-${getServerId()}:${workspace.workspaceId}`,
+      );
+      await expect(agent.getByRole("progressbar", { name: "Agent running" })).toBeVisible();
+      await expect(row.getByRole("progressbar", { name: "Agent running" })).toBeVisible();
+      await expect(agent.getByRole("img", { name: "Mock agent" })).toBeVisible();
+      await workspace.client.cancelAgent(workspace.agentId);
+      await expect(agent.getByRole("progressbar")).toHaveCount(0);
+      await expect(row.getByRole("progressbar")).toHaveCount(0);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
 
   test("workspace results show their title, host, and branch and open the workspace", async ({
     page,

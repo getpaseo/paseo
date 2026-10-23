@@ -1,3 +1,5 @@
+import equal from "fast-deep-equal";
+import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import {
   FlatList,
   Modal,
@@ -24,7 +26,11 @@ import { useTranslation } from "react-i18next";
 import { Check, ChevronRight, Folder, X } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { BottomSheetFlatList, type BottomSheetFlatListMethods } from "@gorhom/bottom-sheet";
-import { AgentStatusDot } from "@/components/agent-status-dot";
+import { useAgentDescriptor, resolveAgentLabel } from "@/agent-presentation";
+import { StatusIcon } from "@/components/status-icon";
+import { useWorkspaceStatus } from "@/workspace-status";
+import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
+import type { Theme } from "@/styles/theme";
 import { HighlightedText, type HighlightedTextProps } from "@/components/ui/highlighted-text";
 import { findHighlightRanges } from "@/components/ui/highlighted-text-segments";
 import { MaterialFileIcon } from "@/components/material-file-icon";
@@ -114,6 +120,20 @@ function agentSearchFields(result: CommandCenterAgentResult): CommandCenterSearc
   return { visible: [result.title, result.subtitle], hidden: [result.agent.cwd] };
 }
 
+function createWorkspaceResultAction(serverId: string, workspaceId: string) {
+  return () => {
+    clearCommandCenterFocusRestoreElement();
+    navigateToWorkspace({ serverId, workspaceId });
+  };
+}
+
+function createAgentResultAction(serverId: string, agentId: string) {
+  return () => {
+    clearCommandCenterFocusRestoreElement();
+    navigateToAgent({ serverId, agentId });
+  };
+}
+
 /**
  * Build every pinned row. Deliberately not keyed on `query`: none of this work depends on what
  * was typed. Ordering belongs to `filterAndRankBuiltInResults`, which ranks on every keystroke.
@@ -123,6 +143,9 @@ function useBuiltInRows(open: boolean): {
   agents: CommandCenterAgentResult[];
 } {
   const { t } = useTranslation();
+  const previousRows = useRef(
+    new Map<string, CommandCenterAgentResult | CommandCenterWorkspaceResult>(),
+  );
   const { agents } = useAggregatedAgents({ demand: open });
   const { projects } = useProjects({ enabled: open });
   const showHost = useHosts().length > 1;
@@ -144,7 +167,22 @@ function useBuiltInRows(open: boolean): {
   const iconDataByProjectViewKey = useProjectIcons({ projects: iconTargets });
 
   return useMemo(() => {
-    if (!open) return { workspaces: [], agents: [] };
+    if (!open) {
+      previousRows.current.clear();
+      return { workspaces: [], agents: [] };
+    }
+    // Built-in IDs identify immutable navigation targets. Reuse their callbacks and unchanged
+    // row data so a directory update does not invalidate every mounted ResultRow.
+    const nextRows = new Map<string, CommandCenterAgentResult | CommandCenterWorkspaceResult>();
+    const preserve = <T extends CommandCenterAgentResult | CommandCenterWorkspaceResult>(
+      row: T,
+    ): T => {
+      const previous = previousRows.current.get(row.id);
+      if (previous) row.run = previous.run;
+      const stable = previous && equal(previous, row) ? (previous as T) : row;
+      nextRows.set(row.id, stable);
+      return stable;
+    };
     const allWorkspaces: CommandCenterWorkspaceResult[] = [];
     for (const project of projects) {
       const workspaceProject = {
@@ -155,23 +193,24 @@ function useBuiltInRows(open: boolean): {
       for (const host of project.hosts) {
         for (const workspace of host.workspaces) {
           if (workspace.archivingAt) continue;
-          allWorkspaces.push({
-            kind: "workspace",
-            id: `workspace:${host.serverId}:${workspace.id}`,
-            title: workspace.title ?? workspace.name,
-            subtitle: joinSubtitleParts([
-              showHost ? host.serverName : null,
-              project.projectName,
-              workspace.currentBranch,
-            ]),
-            project: workspaceProject,
-            changeRequestNumber: workspace.changeRequestNumber,
-            activityAt: workspace.statusEnteredAt,
-            run: () => {
-              clearCommandCenterFocusRestoreElement();
-              navigateToWorkspace({ serverId: host.serverId, workspaceId: workspace.id });
-            },
-          });
+          allWorkspaces.push(
+            preserve({
+              kind: "workspace",
+              id: `workspace:${host.serverId}:${workspace.id}`,
+              title: workspace.title ?? workspace.name,
+              subtitle: joinSubtitleParts([
+                showHost ? host.serverName : null,
+                project.projectName,
+                workspace.currentBranch,
+              ]),
+              serverId: host.serverId,
+              workspaceId: workspace.id,
+              project: workspaceProject,
+              changeRequestNumber: workspace.changeRequestNumber,
+              activityAt: workspace.statusEnteredAt,
+              run: createWorkspaceResultAction(host.serverId, workspace.id),
+            }),
+          );
         }
       }
     }
@@ -182,22 +221,20 @@ function useBuiltInRows(open: boolean): {
       const workspaceTitle = agent.workspaceId
         ? workspaceTitleByKey.get(`${agent.serverId}:${agent.workspaceId}`)
         : undefined;
-      return {
+      return preserve({
         kind: "agent",
         id: `agent:${agent.serverId}:${agent.id}`,
         agent,
-        title: agent.title || t("shell.commandCenter.newAgent"),
+        title: resolveAgentLabel(agent.title) ?? t("workspace.tabs.loading"),
         subtitle: joinSubtitleParts([
           showHost ? agent.serverLabel : null,
           workspaceTitle ?? shortenPath(agent.cwd),
         ]),
         activityAt: agent.lastActivityAt,
-        run: () => {
-          clearCommandCenterFocusRestoreElement();
-          navigateToAgent({ serverId: agent.serverId, agentId: agent.id });
-        },
-      };
+        run: createAgentResultAction(agent.serverId, agent.id),
+      });
     });
+    previousRows.current = nextRows;
     return { workspaces: allWorkspaces, agents: agentRows };
   }, [agents, iconDataByProjectViewKey, open, projects, showHost, t]);
 }
@@ -402,6 +439,7 @@ const ResultRow = memo(function ResultRow({
   active,
   onSelect,
 }: ResultRowProps) {
+  recordRenderProfileReasons(`CommandCenterResultRow:${result.id}`, ["render"]);
   const press = useCallback(() => onSelect(result), [onSelect, result]);
   const choice =
     result.kind === "contribution" && result.contribution.presentation.kind === "choice"
@@ -435,7 +473,19 @@ const ResultRow = memo(function ResultRow({
         result.kind === "file" ? `command-center-file-row-${result.filePath}` : choice?.testId
       }
     >
-      <ResultContent result={result} query={query} />
+      {(state) => (
+        <ResultContent
+          result={result}
+          query={query}
+          backdrop={
+            active ||
+            state.pressed ||
+            Boolean((state as PressableStateCallbackType & { hovered?: boolean }).hovered)
+              ? "surface1"
+              : "surface0"
+          }
+        />
+      )}
     </Pressable>
   );
 });
@@ -489,6 +539,72 @@ function SubtitleWithTimestamp({
   );
 }
 
+const providerIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+
+function AgentResultContent({
+  result,
+  query,
+  backdrop,
+}: {
+  result: CommandCenterAgentResult;
+  query: string;
+  backdrop: SurfaceBackdrop;
+}) {
+  const agent = result.agent;
+  const descriptor = useAgentDescriptor(
+    { kind: "agent", agentId: agent.id },
+    { serverId: agent.serverId },
+  );
+  const Icon = useMemo(
+    () => withUnistyles(descriptor.icon, providerIconMapping),
+    [descriptor.icon],
+  );
+  return (
+    <View style={styles.rowContent} testID={`command-center-agent-${agent.serverId}:${agent.id}`}>
+      <View style={styles.rowMain}>
+        <View style={styles.iconSlot}>
+          <StatusIcon statusBucket={descriptor.statusBucket} size={16} backdrop={backdrop}>
+            <View accessibilityRole="image" accessibilityLabel={descriptor.subtitle}>
+              <Icon size={16} />
+            </View>
+          </StatusIcon>
+        </View>
+        <View style={styles.textContent}>
+          <QueryHighlightedText
+            query={query}
+            text={result.title}
+            style={styles.title}
+            numberOfLines={1}
+          />
+          <SubtitleWithTimestamp
+            query={query}
+            subtitle={result.subtitle}
+            activityAt={result.activityAt}
+            testID="command-center-agent-subtitle"
+          />
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function WorkspaceResultIcon({
+  result,
+  backdrop,
+}: {
+  result: CommandCenterWorkspaceResult;
+  backdrop: SurfaceBackdrop;
+}) {
+  const statusBucket = useWorkspaceStatus(result.serverId, result.workspaceId);
+  return (
+    <StatusIcon statusBucket={statusBucket} size={16} backdrop={backdrop}>
+      <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" aria-hidden>
+        <WorkspaceProjectIcon project={result.project} />
+      </View>
+    </StatusIcon>
+  );
+}
+
 /** The same project icon the sidebar's workspace rows lead with: its image, or a lettered square. */
 function WorkspaceProjectIcon({ project }: { project: CommandCenterWorkspaceResult["project"] }) {
   const initial = projectIconPlaceholderLabelFromDisplayName(project.name).charAt(0).toUpperCase();
@@ -503,7 +619,15 @@ function WorkspaceProjectIcon({ project }: { project: CommandCenterWorkspaceResu
   );
 }
 
-function ResultContent({ result, query }: { result: CommandCenterResult; query: string }) {
+function ResultContent({
+  result,
+  query,
+  backdrop,
+}: {
+  result: CommandCenterResult;
+  query: string;
+  backdrop: SurfaceBackdrop;
+}) {
   if (result.kind === "file") {
     return (
       <View style={styles.rowContent}>
@@ -530,34 +654,7 @@ function ResultContent({ result, query }: { result: CommandCenterResult; query: 
     );
   }
   if (result.kind === "agent") {
-    const agent = result.agent;
-    return (
-      <View style={styles.rowContent} testID={`command-center-agent-${agent.serverId}:${agent.id}`}>
-        <View style={styles.rowMain}>
-          <View style={styles.iconSlot}>
-            <AgentStatusDot
-              status={agent.status}
-              requiresAttention={agent.requiresAttention}
-              showInactive
-            />
-          </View>
-          <View style={styles.textContent}>
-            <QueryHighlightedText
-              query={query}
-              text={result.title}
-              style={styles.title}
-              numberOfLines={1}
-            />
-            <SubtitleWithTimestamp
-              query={query}
-              subtitle={result.subtitle}
-              activityAt={result.activityAt}
-              testID="command-center-agent-subtitle"
-            />
-          </View>
-        </View>
-      </View>
-    );
+    return <AgentResultContent result={result} query={query} backdrop={backdrop} />;
   }
   if (result.kind === "workspace") {
     const key = result.id.slice("workspace:".length);
@@ -565,13 +662,8 @@ function ResultContent({ result, query }: { result: CommandCenterResult; query: 
       <View style={styles.rowContent} testID={`command-center-workspace-${key}`}>
         <View style={styles.rowMain}>
           {/* Decorative: the fallback icon's initial must not prefix the row's accessible name. */}
-          <View
-            style={styles.iconSlot}
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants"
-            aria-hidden
-          >
-            <WorkspaceProjectIcon project={result.project} />
+          <View style={styles.iconSlot}>
+            <WorkspaceResultIcon result={result} backdrop={backdrop} />
           </View>
           <View style={styles.textContent}>
             <QueryHighlightedText

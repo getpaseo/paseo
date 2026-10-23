@@ -1,5 +1,15 @@
 import { expect } from "@playwright/test";
 import { test } from "../support/fixtures";
+import { getServerId } from "../support/helpers/server-id";
+import {
+  seedSearchableCommandCenter,
+  observeCommandCenterRowRenders,
+  searchCommandCenter,
+  warmCommandCenterRows,
+  expectOnlyCommandCenterRowRendered,
+  expectCommandCenterAgentWindow,
+  scrollToOldestCommandCenterAgent,
+} from "../support/helpers/command-center-performance";
 import { gotoAppShell } from "../support/helpers/app";
 import {
   expectCommandCenterToRemainAtTheTop,
@@ -61,6 +71,47 @@ test("Command Center preserves manual scrolling through live updates and resumes
     await expect(panel.getByText("Command Center Scroll renamed", { exact: true })).toHaveCount(1);
     await expectCommandCenterScrollToStayAt(panel, offset);
     await expectKeyboardNavigationToResume(page, panel, offset);
+  } finally {
+    await seeded.cleanup();
+  }
+});
+
+test("live search updates render only the changed row and keep agents virtualized", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const seeded = await seedSearchableCommandCenter();
+  try {
+    await observeCommandCenterRowRenders(page);
+    await gotoAppShell(page);
+    const panel = await openCommandCenterWithKeyboard(page);
+    await searchCommandCenter(panel, "Search agent");
+    await expect(panel.getByText("Search agent 059", { exact: true })).toBeVisible();
+    await warmCommandCenterRows(page);
+    await expectCommandCenterAgentWindow(panel, seeded.agents.length);
+
+    await seeded.client.updateAgent(seeded.agents[59].id, { name: "Search agent 059 revised" });
+    await expect(panel.getByText("Search agent 059 revised", { exact: true })).toBeVisible();
+    await expectOnlyCommandCenterRowRendered(
+      page,
+      `agent:${getServerId()}:${seeded.agents[59].id}`,
+    );
+
+    await searchCommandCenter(panel, "Search workspace");
+    await expect(panel.getByText("Search workspace 039", { exact: true })).toBeVisible();
+    await warmCommandCenterRows(page);
+    await seeded.client.setWorkspaceTitle(seeded.workspaces[39].id, "Search workspace 039 revised");
+    await expect(panel.getByText("Search workspace 039 revised", { exact: true })).toBeVisible();
+    await expectOnlyCommandCenterRowRendered(
+      page,
+      `workspace:${getServerId()}:${seeded.workspaces[39].id}`,
+    );
+
+    await searchCommandCenter(panel, "Search agent");
+    await warmCommandCenterRows(page);
+    await scrollToOldestCommandCenterAgent(panel);
+    await expect(panel.getByText("Search agent 000", { exact: true })).toBeVisible();
+    await expectCommandCenterAgentWindow(panel, seeded.agents.length);
   } finally {
     await seeded.cleanup();
   }

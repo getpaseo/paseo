@@ -148,6 +148,7 @@ export interface SeedDaemonClient {
     predicate: (snapshot: { status: string }) => boolean,
     timeout?: number,
   ): Promise<{ status: string }>;
+  cancelAgent(agentId: string): Promise<void>;
   sendAgentMessage(agentId: string, text: string): Promise<void>;
   waitForFinish(
     agentId: string,
