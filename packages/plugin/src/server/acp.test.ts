@@ -1611,8 +1611,12 @@ describe("ACP session history replay", () => {
     );
     try {
       expect(timelineProjection(events)).toEqual([
-        { type: "user_message", id: "user-1", text: "What is the " },
-        { type: "user_message", id: "user-1", text: "What is the temperature?" },
+        { type: "user_message", id: '["user_message_chunk","user-1"]', text: "What is the " },
+        {
+          type: "user_message",
+          id: '["user_message_chunk","user-1"]',
+          text: "What is the temperature?",
+        },
         { type: "reasoning", id: "agent_thought_chunk:1", text: "Checking the sensor" },
         { type: "tool_call", id: "tool-1", status: "running" },
         { type: "tool_call", id: "tool-1", status: "completed" },
@@ -1621,6 +1625,48 @@ describe("ACP session history replay", () => {
       const lastReplayed = events.findLastIndex((event) => event.type === "timeline.item");
       const opened = events.findIndex((event) => event.type === "session.opened");
       expect(lastReplayed).toBeLessThan(opened);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("keeps replayed user, reasoning and reply chunks separate when their native IDs match", async () => {
+    const { connection, events } = await openReplaySession(
+      [
+        userChunk("What is the ", "shared-id"),
+        userChunk("temperature?", "shared-id"),
+        textChunk("Checking ", "agent_thought_chunk", "shared-id"),
+        textChunk("the sensor", "agent_thought_chunk", "shared-id"),
+        textChunk("It is ", "agent_message_chunk", "shared-id"),
+        textChunk("25°C", "agent_message_chunk", "shared-id"),
+      ],
+      "replay",
+    );
+    try {
+      const items = new Map(
+        events.flatMap((event) =>
+          event.type === "timeline.item" ? [[event.item.id, event.item] as const] : [],
+        ),
+      );
+      expect([...items.values()]).toEqual([
+        {
+          type: "user_message",
+          id: '["user_message_chunk","shared-id"]',
+          messageId: "shared-id",
+          text: "What is the temperature?",
+        },
+        {
+          type: "reasoning",
+          id: '["agent_thought_chunk","shared-id"]',
+          text: "Checking the sensor",
+        },
+        {
+          type: "assistant_message",
+          id: '["agent_message_chunk","shared-id"]',
+          messageId: "shared-id",
+          text: "It is 25°C",
+        },
+      ]);
     } finally {
       await connection.close();
     }
