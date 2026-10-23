@@ -15,6 +15,8 @@ import * as Zod from "zod";
 import { type PluginCleanup } from "@getpaseo/plugin";
 import {
   type PluginClientContext,
+  type PluginAgentPanelContribution,
+  type PluginWorkspacePanelContribution as WorkspacePanelInput,
   type PluginScreenProps,
   type PluginScreenTitle,
   type PluginText,
@@ -206,6 +208,31 @@ export function runPluginClientBundle(
       () => ids.delete(normalizedId),
     );
   }
+  function registerPanel(contribution: PluginWorkspacePanelContribution): PluginCleanup {
+    const normalizedId = requireId(contribution.id, "workspace panel id");
+    if (workspacePanelIds.has(normalizedId)) {
+      throw new Error(`Duplicate workspace panel: ${normalizedId}`);
+    }
+    const title = normalizePluginText(contribution.title);
+    if (!title) throw new Error(`Workspace panel ${normalizedId} has no title`);
+    const icon = parsePluginIcon(`Workspace panel ${normalizedId}`, contribution.icon);
+    if (typeof contribution.Component !== "function") {
+      throw new Error(`Workspace panel ${normalizedId} is not a component`);
+    }
+    const locations = normalizePanelLocations(normalizedId, contribution.locations);
+    workspacePanelIds.add(normalizedId);
+    return register(
+      collector.workspacePanels,
+      {
+        ...contribution,
+        id: normalizedId,
+        title,
+        icon,
+        locations,
+      },
+      () => workspacePanelIds.delete(normalizedId),
+    );
+  }
   const pluginContext: PluginClientContext = {
     ...runtime,
     addSettingsScreen(contribution) {
@@ -313,33 +340,17 @@ export function runPluginClientBundle(
         () => filePanelIds.delete(panelId),
       );
     },
-    addWorkspacePanel(contribution: PluginWorkspacePanelContribution) {
-      const normalizedId = requireId(contribution.id, "workspace panel id");
-      if (workspacePanelIds.has(normalizedId)) {
-        throw new Error(`Duplicate workspace panel: ${normalizedId}`);
+    addAgentPanel(contribution: PluginAgentPanelContribution<PluginText>) {
+      return registerPanel({ ...contribution, context: "agent" });
+    },
+    addWorkspacePanel(input: WorkspacePanelInput<PluginText>) {
+      // COMPAT(pluginAgentPanelAlias): added in v0.13.0, remove after 2027-04-23
+      if (input.context === "agent") return pluginContext.addAgentPanel(input);
+      // COMPAT(pluginPanelFlatProps): added in v0.13.0, remove after 2027-04-23
+      if (input.context !== undefined && input.context !== "workspace") {
+        throw new Error(`Workspace panel ${input.id} has invalid context`);
       }
-      const title = normalizePluginText(contribution.title);
-      if (!title) throw new Error(`Workspace panel ${normalizedId} has no title`);
-      const icon = parsePluginIcon(`Workspace panel ${normalizedId}`, contribution.icon);
-      if (contribution.context !== "workspace" && contribution.context !== "agent") {
-        throw new Error(`Workspace panel ${normalizedId} has invalid context`);
-      }
-      if (typeof contribution.Component !== "function") {
-        throw new Error(`Workspace panel ${normalizedId} is not a component`);
-      }
-      const locations = normalizePanelLocations(normalizedId, contribution.locations);
-      workspacePanelIds.add(normalizedId);
-      return register(
-        collector.workspacePanels,
-        {
-          ...contribution,
-          id: normalizedId,
-          title,
-          icon,
-          locations,
-        },
-        () => workspacePanelIds.delete(normalizedId),
-      );
+      return registerPanel({ ...input, context: "workspace" });
     },
     addCommandCenterItem(contribution: PluginCommandCenterItemContribution) {
       const normalizedId = requireId(contribution.id, "Command Center item id");

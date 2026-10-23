@@ -5360,7 +5360,7 @@ export class Session {
     if (!record || record.internal) {
       return null;
     }
-    return { record, lastMessage: null };
+    return { record, lastMessage: await this.agentManager.getLastAssistantMessage(agentId) };
   }
 
   private async getAgentPayloadById(agentId: string): Promise<AgentSnapshotPayload | null> {

@@ -145,14 +145,13 @@ function SidebarHistoryRow({ onBeforeNavigate }: SidebarNavRowProps) {
   );
 }
 
-function SidebarSearchRow({ onBeforeNavigate }: SidebarNavRowProps) {
+function SidebarSearchRow() {
   const { t } = useTranslation();
   const shortcutKeys = useShortcutKeys(builtinSidebarNavShortcutAction("search"));
   const setCommandCenterOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
   const handlePress = useCallback(() => {
-    onBeforeNavigate?.();
     setCommandCenterOpen(true);
-  }, [onBeforeNavigate, setCommandCenterOpen]);
+  }, [setCommandCenterOpen]);
 
   return (
     <SidebarHeaderRow

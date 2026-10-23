@@ -53,7 +53,18 @@ hold-to-delete and background-tap dismissal scenario on chat, a workspace draft
 tab, and New workspace. It checks empty-content taps and header taps at the cap
 without changing the input height. Each
 host also opens command/file autocomplete, the model selector, the attachment
-menu, and the forge picker from both keyboard states. It then submits a long
+menu, and the forge picker from both keyboard states. Autocomplete opens with
+the keyboard closed, before the keyboard opens, and after it settles. Each time
+the expected best match must be drawn whole between the header and the composer,
+above the IME frame, and tapping it there must produce the exact composer text.
+Accessibility reports rows behind the keyboard too, so
+`packages/app/e2e/mobile/composer-keyboard/autocomplete-placement.mjs` compares
+bounds. Android leaves the chat and composer out of the accessibility tree while
+suggestions are open, so the composer bounds come from a snapshot with an empty
+input in the same keyboard state. The queries are partial names with known best
+matches: in chat `/mo` finds the mock provider's `/mock` command, in drafts
+`/release` finds this repository's `release-beta` skill for the first Claude model,
+and `@app` finds `packages/app`. It then submits a long
 fixture from each host and checks native stream displacement twice: after the
 response settles, and after returning to the bottom and letting the scrollbar
 fade. The image comparison excludes the scrollbar; keyboard dismissal alone
@@ -64,6 +75,25 @@ Metro, and device through the `PASEO_COMPOSER_KEYBOARD_*` variables in
 `packages/app/e2e/mobile/composer-keyboard/android.sh`. Use a software keyboard;
 the headless input helper cannot verify the
 [visible composer constraints](floating-panels.md#gotcha-3--keyboard-layout-and-portal-anchors).
+To rerun only the autocomplete, model selector, attachment menu, and forge picker
+checks on each host, skipping the chat baseline and the growth, dismissal, and
+stream scenarios:
+
+```bash
+PASEO_COMPOSER_KEYBOARD_SCENARIO=overlays npm run test:e2e:composer-keyboard:android
+```
+
+`node packages/app/e2e/mobile/composer-keyboard/ios.mjs` runs the same
+autocomplete checks on iOS for chat, a workspace draft tab, and New workspace,
+with commands, files, and files under a grown draft. Suggestions open while the
+keyboard opens (`fill` taps and types at once), after it settles, with it closed,
+and before it reopens. `test:e2e:mobile` cannot host this: its `.ad` flows assert
+accessibility state and cannot compare bounds. Run it where `agent-device`
+reaches the simulator, with the development app connected to the fixture host
+and its Claude provider available. Set `PASEO_COMPOSER_KEYBOARD_SERVER_ID`,
+`_AGENT_ID` (an idle mock chat), and `_WORKSPACE_ID` (its workspace); `_DEVICE`,
+`_SESSION`, and `_DRAFT_ID` are optional. Artifacts go to
+`.dev/agent-device-artifacts/composer-keyboard-ios`.
 
 The Android sidebar scroll-retention flow requires a connected host with enough
 workspaces to overflow the compact sidebar. Pass `TOP_WORKSPACE` and

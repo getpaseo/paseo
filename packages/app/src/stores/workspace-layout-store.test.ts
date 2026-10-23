@@ -79,6 +79,39 @@ function createDeterministicWorkspaceLayoutIds() {
 const workspaceLayoutIds = createDeterministicWorkspaceLayoutIds();
 const workspaceLayoutStore = createWorkspaceLayoutStore(workspaceLayoutIds);
 
+it("bumps panel params revision when the same tab is opened again", () => {
+  const storage = {
+    getItem: async () => null,
+    setItem: async () => {},
+    removeItem: async () => {},
+  };
+  const store = createWorkspaceLayoutStore(workspaceLayoutIds, storage);
+  const workspaceKey = "server-1:workspace-params";
+  const targets = [
+    { kind: "file" as const, path: "notes.md", lineStart: 3 },
+    {
+      kind: "plugin" as const,
+      pluginId: "notes",
+      panelId: "workspace",
+      context: "workspace" as const,
+    },
+    {
+      kind: "plugin" as const,
+      pluginId: "notes",
+      panelId: "agent",
+      context: "agent" as const,
+      agentId: "agent-1",
+    },
+  ];
+  for (const target of targets) {
+    const first = store.getState().openTab({ workspaceKey, target, intent: "reveal" })!;
+    const revision = store.getState().panelRevisionByWorkspace[workspaceKey][first];
+    const second = store.getState().openTab({ workspaceKey, target, intent: "reveal" });
+    expect(second).toBe(first);
+    expect(store.getState().panelRevisionByWorkspace[workspaceKey][first]).toBe(revision + 1);
+  }
+});
+
 it("observes open chats across unmounted workspaces until their tabs close", () => {
   const store = createWorkspaceLayoutStore(workspaceLayoutIds);
   store.setState({ layoutByWorkspace: {} });

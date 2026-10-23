@@ -1,3 +1,4 @@
+import { deriveEffectiveWorkspaceStatus } from "@/workspace-status";
 import equal from "fast-deep-equal";
 import type { PrHint } from "@/git/pr-hint";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
@@ -124,11 +125,6 @@ export function areSidebarWorkspaceSessionsEqual(
   return true;
 }
 
-interface EffectiveWorkspaceStatus {
-  status: WorkspaceDescriptor["status"];
-  enteredAt: Date | null;
-}
-
 function projectNameForWorkspace(workspace: WorkspaceDescriptor): string {
   return (
     workspace.projectCustomName ??
@@ -188,51 +184,6 @@ export function createSidebarWorkspaceEntry(input: {
 }
 
 const EMPTY_WORKSPACE_LABELS: string[] = [];
-
-function deriveEffectiveWorkspaceStatus(input: {
-  serverId: string;
-  workspace: WorkspaceDescriptor;
-  pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
-  workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
-}): EffectiveWorkspaceStatus {
-  if (input.workspace.status !== "done") {
-    return { status: input.workspace.status, enteredAt: input.workspace.statusEnteredAt };
-  }
-
-  const pendingStartedAt = getPendingInitialAgentCreateStartedAt({
-    serverId: input.serverId,
-    workspaceId: input.workspace.id,
-    pendingCreateAttempts: input.pendingCreateAttempts,
-  });
-  if (pendingStartedAt) {
-    return { status: "running", enteredAt: pendingStartedAt };
-  }
-
-  const rootAgentActivity = input.workspaceAgentActivity?.get(input.workspace.id);
-  if (rootAgentActivity && rootAgentActivity.status !== "done") {
-    return rootAgentActivity;
-  }
-
-  return { status: input.workspace.status, enteredAt: input.workspace.statusEnteredAt };
-}
-
-function getPendingInitialAgentCreateStartedAt(input: {
-  serverId: string;
-  workspaceId: string;
-  pendingCreateAttempts: Record<string, PendingCreateAttempt> | undefined;
-}): Date | null {
-  let latestStartedAt: Date | null = null;
-  for (const pending of Object.values(input.pendingCreateAttempts ?? {})) {
-    if (pending.serverId !== input.serverId) continue;
-    if (pending.workspaceId !== input.workspaceId) continue;
-    if (pending.lifecycle === "abandoned") continue;
-    const startedAt = new Date(pending.timestamp);
-    if (!latestStartedAt || startedAt > latestStartedAt) {
-      latestStartedAt = startedAt;
-    }
-  }
-  return latestStartedAt;
-}
 
 export interface ProjectStatusSession {
   workspaces: Map<string, WorkspaceDescriptor>;
