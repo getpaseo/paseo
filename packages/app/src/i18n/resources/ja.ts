@@ -2664,7 +2664,7 @@ export const ja: TranslationResources = {
         },
         promptSuggestions: {
           title: "次のプロンプトを提案",
-          hint: "エージェントの応答が終わったら、次に依頼する内容を提案します",
+          hint: "入力欄が空のときに、次に送る内容を提案します",
           accessibilityLabel: "次のプロンプトを提案",
         },
         systemPrompt: {

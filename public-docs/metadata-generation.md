@@ -16,7 +16,8 @@ Paseo generates these kinds of metadata:
 - **Worktree branch names** — a slug for a new worktree-isolated workspace's branch.
 - **Commit messages** — a concise message for the changes you're committing.
 - **Pull request title and body** — drafted from the diff when you open a PR.
-- **Prompt suggestions** — up to three next prompts proposed in the composer when an agent finishes a turn.
+- **Prompt suggestions** — up to three next prompts proposed in the composer.
+- **New chat suggestions** — first prompts proposed in a chat that has no messages yet.
 
 A workspace title and its branch name are produced together from the same prompt, but you configure their wording independently (see below).
 
@@ -24,9 +25,13 @@ A workspace title and its branch name are produced together from the same prompt
 
 When an agent finishes a turn and its composer is empty, Paseo proposes what you might send next. The strongest suggestion appears as ghost text in the input: <kbd>Tab</kbd> accepts it into the composer, <kbd>Enter</kbd> sends it, and <kbd>Esc</kbd> dismisses it. The others appear as chips above the composer; selecting one fills the input without sending. A suggestion disappears as soon as the agent does anything new.
 
+Suggestions are proposed at three moments: when an agent finishes a turn, when you open a chat that is holding none, and when an agent stops to ask you a question — those last ones appear in the question card, beside its answer box.
+
 The suggestion model only sees the recent user and assistant messages of that conversation. Tool calls, command output, sub-agent logs, and attachments are never included.
 
-Suggestions cost one generation per finished turn. To turn them off, open **Settings → Host** and turn off **Suggest next prompts**, or set it in `~/.paseo/config.json`:
+A new chat, before you send anything, has no conversation to read, so its suggestions are built from the directory it will start in: the current branch name, the subjects of the last few commits, and the paths of uncommitted files. Only names and subjects are sent — never the contents of a file or a diff. If that directory is not a git repository, the new chat gets no suggestions.
+
+Suggestions cost one generation per finished turn, and one more for each chat you open that has none. To turn them off, open **Settings → Host** and turn off **Suggest next prompts**, or set it in `~/.paseo/config.json`:
 
 ```json
 {
@@ -96,6 +101,9 @@ The list above is shared by every kind of metadata. To give one kind its own mod
       "promptSuggestions": {
         "providers": [{ "provider": "opencode", "model": "minimax-m3" }]
       },
+      "newChatSuggestions": {
+        "providers": [{ "provider": "opencode", "model": "minimax-m3" }]
+      },
       "pullRequest": {
         "providers": [{ "provider": "codex", "model": "gpt-6-astra" }]
       }
@@ -104,7 +112,7 @@ The list above is shared by every kind of metadata. To give one kind its own mod
 }
 ```
 
-The keys are `title`, `branchName`, `commitMessage`, `pullRequest`, and `promptSuggestions` — the same names used for per-project instructions below. A workspace title and its branch name come from one call, so it uses `title` when that key is set and `branchName` otherwise. The Settings screen edits the shared list only, and leaves per-kind entries alone.
+The keys are `title`, `branchName`, `commitMessage`, `pullRequest`, `promptSuggestions`, and `newChatSuggestions` — the same names used for per-project instructions below. A workspace title and its branch name come from one call, so it uses `title` when that key is set and `branchName` otherwise. The Settings screen edits the shared list only, and leaves per-kind entries alone.
 
 ## Per-project instructions
 
@@ -119,6 +127,9 @@ You can steer the wording of each kind of metadata per repository with a `paseo.
     "pullRequest": { "instructions": "Include a Testing section in the body." },
     "promptSuggestions": {
       "instructions": "Suggest in Romanian. Never suggest pushing or merging."
+    },
+    "newChatSuggestions": {
+      "instructions": "Open with a question about the branch, never with a code change."
     }
   }
 }

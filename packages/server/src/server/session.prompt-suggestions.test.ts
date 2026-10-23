@@ -21,6 +21,7 @@ interface SessionInternals {
     type: "agent.prompt_suggestions.request";
     agentId: string;
     requestId: string;
+    draftCwd?: string;
   }): Promise<void>;
 }
 
@@ -138,6 +139,37 @@ describe("prompt suggestion requests", () => {
     await session.handlePromptSuggestionsRequest(REQUEST);
 
     expect(ensureAgentLoaded).not.toHaveBeenCalled();
+    expect(request).not.toHaveBeenCalled();
+    expect(responseOf(messages)).toMatchObject({ accepted: false });
+  });
+
+  // A new-chat screen has a draft key and a directory, and no agent to resume.
+  test("hands a draft straight to the service without resuming anything", async () => {
+    ensureAgentLoaded.mockClear();
+    const request = vi.fn(() => ({ accepted: true }));
+    const { session, messages } = createSession(request);
+
+    await session.handlePromptSuggestionsRequest({
+      ...REQUEST,
+      agentId: "draft:1",
+      draftCwd: "/repo",
+    });
+
+    expect(ensureAgentLoaded).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledWith("draft:1", { cwd: "/repo" });
+    expect(responseOf(messages)).toMatchObject({ agentId: "draft:1", accepted: true });
+  });
+
+  test("refuses a draft whose directory is not absolute", async () => {
+    const request = vi.fn(() => ({ accepted: true }));
+    const { session, messages } = createSession(request);
+
+    await session.handlePromptSuggestionsRequest({
+      ...REQUEST,
+      agentId: "draft:1",
+      draftCwd: "../elsewhere",
+    });
+
     expect(request).not.toHaveBeenCalled();
     expect(responseOf(messages)).toMatchObject({ accepted: false });
   });

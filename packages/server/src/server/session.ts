@@ -481,7 +481,10 @@ export interface SessionOptions {
   workspaceRuntimeStore: WorkspaceRuntimeStore;
   // Set by the daemon once the suggestion service exists; absent in tests and in
   // hosts that never built one, where the request is simply declined.
-  requestPromptSuggestions?: (agentId: string) => { accepted: boolean; error?: string };
+  requestPromptSuggestions?: (
+    agentId: string,
+    draft?: { cwd: string },
+  ) => { accepted: boolean; error?: string };
   workspaceAutoName: WorkspaceAutoName;
   daemonConfigStore: DaemonConfigStore;
   pluginRuntime?: {
@@ -4961,6 +4964,16 @@ export class Session {
     const request = this.requestPromptSuggestions;
     if (!request) {
       respond(false, "Prompt suggestions are unavailable on this host.");
+      return;
+    }
+    // A new chat has no agent yet; its draft key names the reply, not an agent.
+    if (msg.draftCwd !== undefined) {
+      if (!isAbsolute(msg.draftCwd)) {
+        respond(false, "A draft needs an absolute working directory.");
+        return;
+      }
+      const outcome = request(msg.agentId, { cwd: msg.draftCwd });
+      respond(outcome.accepted, outcome.error);
       return;
     }
     // A chat the daemon has not resumed since launch has no live agent to read a

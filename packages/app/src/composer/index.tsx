@@ -1739,6 +1739,7 @@ function ComposerContentImpl({
     hasText,
     isAgentRunning,
     isReadOnly: readOnly || isComposerLocked,
+    draftCwd: resolveAgentControlsMode(agentControls) === "draft" ? cwd : undefined,
   });
 
   const handleSuggestionSelect = useCallback(

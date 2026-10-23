@@ -101,4 +101,28 @@ describe("usePromptSuggestions", () => {
 
     expect(requestPromptSuggestions).toHaveBeenCalledTimes(1);
   });
+
+  // A new-chat screen has no agent; the daemon can only guess from its directory.
+  it("sends a draft's directory along with its draft key", () => {
+    const requestPromptSuggestions = vi.fn().mockResolvedValue(true);
+    seedSession({ requestPromptSuggestions } as Partial<DaemonClient>);
+
+    renderHook({ ...BASE, agentId: "draft:1", draftCwd: "/repo" });
+
+    expect(requestPromptSuggestions).toHaveBeenCalledWith("draft:1", { draftCwd: "/repo" });
+  });
+
+  it("asks again when the draft moves to another directory", () => {
+    const requestPromptSuggestions = vi.fn().mockResolvedValue(true);
+    seedSession({ requestPromptSuggestions } as Partial<DaemonClient>);
+
+    const rerender = renderHook({ ...BASE, agentId: "draft:1", draftCwd: "/repo" });
+    rerender({ ...BASE, agentId: "draft:1", draftCwd: "/repo" });
+    rerender({ ...BASE, agentId: "draft:1", draftCwd: "/other" });
+
+    expect(requestPromptSuggestions.mock.calls).toEqual([
+      ["draft:1", { draftCwd: "/repo" }],
+      ["draft:1", { draftCwd: "/other" }],
+    ]);
+  });
 });

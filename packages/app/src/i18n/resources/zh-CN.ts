@@ -2611,7 +2611,7 @@ export const zhCN: TranslationResources = {
         },
         promptSuggestions: {
           title: "建议下一条提示",
-          hint: "Agent 完成后，建议接下来可以问什么",
+          hint: "输入框为空时，建议接下来可以发送什么",
           accessibilityLabel: "建议下一条提示",
         },
         systemPrompt: {

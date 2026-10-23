@@ -66,6 +66,7 @@ export const PaseoMetadataGenerationSchema = z
     commitMessage: PaseoMetadataGenerationEntrySchema.optional(),
     pullRequest: PaseoMetadataGenerationEntrySchema.optional(),
     promptSuggestions: PaseoMetadataGenerationEntrySchema.optional(),
+    newChatSuggestions: PaseoMetadataGenerationEntrySchema.optional(),
   })
   // COMPAT(projectMetadataAgentTitle): `agentTitle` project metadata prompts were removed
   // in v0.1.96; keep legacy paseo.json parseable until 2026-12-16.

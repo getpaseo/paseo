@@ -2650,7 +2650,7 @@ export const ko: TranslationResources = {
         },
         promptSuggestions: {
           title: "다음 프롬프트 제안",
-          hint: "에이전트가 응답을 마치면 다음에 무엇을 요청할지 제안합니다",
+          hint: "입력창이 비어 있을 때 다음에 보낼 내용을 제안합니다",
           accessibilityLabel: "다음 프롬프트 제안",
         },
         systemPrompt: {

@@ -3880,12 +3880,16 @@ export class DaemonClient {
   }
 
   /** Ask the daemon for suggestions for an open chat; results arrive as the usual event. */
-  async requestPromptSuggestions(agentId: string): Promise<boolean> {
+  async requestPromptSuggestions(
+    agentId: string,
+    options?: { draftCwd?: string },
+  ): Promise<boolean> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "agent.prompt_suggestions.request",
       agentId,
       requestId,
+      ...(options?.draftCwd ? { draftCwd: options.draftCwd } : {}),
     });
     const payload = await this.sendRequest({
       requestId,

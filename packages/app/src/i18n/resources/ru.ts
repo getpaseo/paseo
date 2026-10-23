@@ -2686,7 +2686,7 @@ export const ru: TranslationResources = {
         },
         promptSuggestions: {
           title: "Предлагать следующие сообщения",
-          hint: "Когда агент завершает ход, предлагать, что спросить дальше",
+          hint: "Предлагать, что отправить, когда поле ввода пустое",
           accessibilityLabel: "Предлагать следующие сообщения",
         },
         systemPrompt: {

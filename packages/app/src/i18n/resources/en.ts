@@ -2766,7 +2766,7 @@ export const en = {
         },
         promptSuggestions: {
           title: "Suggest next prompts",
-          hint: "After an agent finishes, suggest what to ask next",
+          hint: "Suggest what to send next whenever your composer is empty",
           accessibilityLabel: "Suggest next prompts",
         },
         systemPrompt: {

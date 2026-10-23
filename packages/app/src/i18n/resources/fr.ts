@@ -2698,7 +2698,7 @@ export const fr: TranslationResources = {
         },
         promptSuggestions: {
           title: "Suggérer les prochains messages",
-          hint: "Quand un agent a terminé, proposer quoi demander ensuite",
+          hint: "Proposer quoi envoyer chaque fois que le champ de saisie est vide",
           accessibilityLabel: "Suggérer les prochains messages",
         },
         systemPrompt: {

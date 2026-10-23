@@ -2695,7 +2695,7 @@ export const es: TranslationResources = {
         },
         promptSuggestions: {
           title: "Sugerir próximos mensajes",
-          hint: "Cuando un agente termina, sugerir qué pedir a continuación",
+          hint: "Sugerir qué enviar siempre que el campo de mensaje esté vacío",
           accessibilityLabel: "Sugerir próximos mensajes",
         },
         systemPrompt: {

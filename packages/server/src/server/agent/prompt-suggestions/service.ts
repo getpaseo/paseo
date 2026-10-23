@@ -7,11 +7,13 @@ import {
 import type { AgentPermissionRequest } from "../agent-sdk-types.js";
 import type { AgentManager } from "../agent-manager.js";
 import {
+  buildNewChatSuggestionPrompt,
   buildPromptSuggestionPrompt,
   buildQuestionAnswerPrompt,
   type BuildPromptSuggestionPromptInput,
   type BuiltPromptSuggestionPrompt,
 } from "./prompt.js";
+import type { WorkspaceContextReader } from "./workspace-context.js";
 import type { RepoRootResolver } from "../../../utils/build-metadata-prompt.js";
 import {
   PROMPT_SUGGESTIONS_SCHEMA,
@@ -29,7 +31,7 @@ export interface PromptSuggestionGeneration {
     schema: z.ZodType<T>;
     schemaName: string;
     agentTitle: string;
-    configKey?: "promptSuggestions";
+    configKey?: "promptSuggestions" | "newChatSuggestions";
     currentSelection?: { provider?: string | null; model?: string | null };
   }): Promise<T>;
 }
@@ -47,6 +49,9 @@ export interface PromptSuggestionServiceOptions {
   // Lets paseo.json steer the suggestion wording, the same way it steers every
   // other metadata prompt; absent, the built-in rules stand.
   workspaceGitService?: RepoRootResolver;
+  // Reads the checkout a brand-new chat starts in; absent, an empty chat is left
+  // without suggestions rather than guessed at blind.
+  readWorkspaceContext?: WorkspaceContextReader;
   hasListeners?: () => boolean;
   debounceMs?: number;
   maxConcurrent?: number;
@@ -62,7 +67,7 @@ interface PreparedPrompt {
   built: BuiltPromptSuggestionPrompt;
   // Set for a question: the prompt number of each answerable question, to its card index.
   answerable: ReadonlyMap<number, number> | null;
-  configKey: "promptSuggestions";
+  configKey: "promptSuggestions" | "newChatSuggestions";
 }
 
 interface CachedSuggestions {
@@ -81,7 +86,14 @@ interface AgentEntry {
   generating: boolean;
 }
 
+interface DraftEntry {
+  cwd: string;
+  payload: AgentPromptSuggestionsMessage["payload"] | null;
+}
+
 const DEFAULT_DEBOUNCE_MS = 400;
+// Draft keys are minted per new-chat screen and never retired by the client.
+const MAX_DRAFTS = 32;
 const DEFAULT_MAX_CONCURRENT = 2;
 
 export class PromptSuggestionService {
@@ -89,6 +101,7 @@ export class PromptSuggestionService {
   private readonly entries = new Map<string, AgentEntry>();
   private readonly lastEmitted = new Map<string, CachedSuggestions>();
   private readonly pendingQuestions = new Map<string, PendingQuestion>();
+  private readonly drafts = new Map<string, DraftEntry>();
   private readonly queue: string[] = [];
   private unsubscribe: (() => void) | null = null;
   private inFlight = 0;
@@ -138,6 +151,7 @@ export class PromptSuggestionService {
     this.entries.clear();
     this.lastEmitted.clear();
     this.pendingQuestions.clear();
+    this.drafts.clear();
     this.queue.length = 0;
   }
 
@@ -174,6 +188,84 @@ export class PromptSuggestionService {
     entry.token += 1;
     this.enqueue(agentId);
     return { accepted: true };
+  }
+
+  /**
+   * First prompts for a new-chat screen, which has no agent until it sends. The
+   * draft key only addresses the reply; the checkout at `cwd` is all it reads.
+   */
+  requestForDraft(draftKey: string, cwd: string): { accepted: boolean; error?: string } {
+    if (!this.options.isEnabled()) {
+      return { accepted: false, error: "Prompt suggestions are turned off for this host." };
+    }
+    if (!this.options.readWorkspaceContext) {
+      return { accepted: false, error: "New chat suggestions are unavailable on this host." };
+    }
+    const existing = this.drafts.get(draftKey);
+    if (existing && existing.cwd === cwd) {
+      // Either a reply is already on its way, or this is the one we sent before.
+      if (existing.payload) {
+        this.options.emit({ type: "agent_prompt_suggestions", payload: existing.payload });
+      }
+      return { accepted: true };
+    }
+    const entry: DraftEntry = { cwd, payload: null };
+    this.drafts.delete(draftKey);
+    this.drafts.set(draftKey, entry);
+    while (this.drafts.size > MAX_DRAFTS) {
+      const oldest = this.drafts.keys().next().value;
+      if (oldest === undefined) break;
+      this.drafts.delete(oldest);
+    }
+    void this.generateDraft(draftKey, entry);
+    return { accepted: true };
+  }
+
+  private async generateDraft(draftKey: string, entry: DraftEntry): Promise<void> {
+    const read = this.options.readWorkspaceContext;
+    const isCurrent = () => this.drafts.get(draftKey) === entry;
+    // Only a delivered answer is remembered; anything else lets the next open retry.
+    const forget = () => {
+      if (isCurrent() && !entry.payload) {
+        this.drafts.delete(draftKey);
+      }
+    };
+    try {
+      const workspace = read ? await read(entry.cwd) : null;
+      const built = workspace
+        ? await buildNewChatSuggestionPrompt({
+            workspace,
+            cwd: entry.cwd,
+            workspaceGitService: this.options.workspaceGitService,
+          })
+        : null;
+      if (!built || !isCurrent()) {
+        return;
+      }
+      const response = await this.options.generation.generate({
+        cwd: entry.cwd,
+        prompt: built.prompt,
+        schema: PROMPT_SUGGESTIONS_SCHEMA,
+        schemaName: PROMPT_SUGGESTIONS_SCHEMA_NAME,
+        agentTitle: "Prompt suggestions",
+        configKey: "newChatSuggestions",
+      });
+      const suggestions = normalizeSuggestions(response.suggestions);
+      if (suggestions.length === 0 || !isCurrent()) {
+        return;
+      }
+      entry.payload = {
+        agentId: draftKey,
+        turnSeq: 0,
+        suggestions,
+        generatedAt: (this.options.now?.() ?? new Date()).toISOString(),
+      };
+      this.options.emit({ type: "agent_prompt_suggestions", payload: entry.payload });
+    } catch (error) {
+      this.options.logger.debug({ err: error, draftKey }, "prompt suggestions: draft failed");
+    } finally {
+      forget();
+    }
   }
 
   private entryFor(agentId: string): AgentEntry {
@@ -272,6 +364,23 @@ export class PromptSuggestionService {
     return Boolean(agent) && !agent?.internal;
   }
 
+  // An empty chat has nothing to read but the checkout it opened in.
+  private async buildFromWorkspace(common: {
+    agentTitle: string | null;
+    cwd: string;
+    workspaceGitService?: RepoRootResolver;
+  }): Promise<Awaited<ReturnType<typeof buildPromptSuggestionPrompt>>> {
+    const read = this.options.readWorkspaceContext;
+    if (!read) {
+      return null;
+    }
+    const workspace = await read(common.cwd);
+    if (!workspace) {
+      return null;
+    }
+    return buildNewChatSuggestionPrompt({ ...common, workspace });
+  }
+
   private async preparePrompt(
     common: BuildPromptSuggestionPromptInput & { agentTitle: string | null; cwd: string },
     question: PendingQuestion | undefined,
@@ -281,7 +390,13 @@ export class PromptSuggestionService {
       return built ? { built, answerable: built.answerable, configKey: "promptSuggestions" } : null;
     }
     const built = await buildPromptSuggestionPrompt(common);
-    return built ? { built, answerable: null, configKey: "promptSuggestions" } : null;
+    if (built) {
+      return { built, answerable: null, configKey: "promptSuggestions" };
+    }
+    const fromWorkspace = await this.buildFromWorkspace(common);
+    return fromWorkspace
+      ? { built: fromWorkspace, answerable: null, configKey: "newChatSuggestions" }
+      : null;
   }
 
   // A question's drafts come back filed by question, so each can be tagged with it.

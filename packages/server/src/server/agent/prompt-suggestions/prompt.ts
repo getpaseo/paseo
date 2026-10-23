@@ -9,6 +9,7 @@ import {
   questionShowsTextInput,
   type QuestionFormQuestion,
 } from "@getpaseo/protocol/question-form";
+import type { NewChatWorkspaceContext } from "./workspace-context.js";
 
 // Suggestions guess the next message, not a summary of the session, so the last
 // exchange carries almost all the signal.
@@ -132,6 +133,65 @@ export async function buildQuestionAnswerPrompt(
   };
 }
 
+export interface BuildNewChatSuggestionPromptInput extends Omit<
+  BuildPromptSuggestionPromptInput,
+  "timeline"
+> {
+  workspace: NewChatWorkspaceContext;
+}
+
+/**
+ * First prompts for a chat that has no conversation yet, guessed from the
+ * checkout the agent starts in: branch, uncommitted paths and recent subjects.
+ * Null when the repository says nothing — an empty directory gets no guess.
+ */
+export async function buildNewChatSuggestionPrompt(
+  input: BuildNewChatSuggestionPromptInput,
+): Promise<BuiltPromptSuggestionPrompt | null> {
+  const workspace = renderWorkspace(input.workspace);
+  if (!workspace) {
+    return null;
+  }
+
+  const header = buildHeader({ ...input, timeline: [] });
+  const prompt = await buildMetadataPrompt({
+    cwd: input.cwd ?? "",
+    workspaceGitService: input.workspaceGitService,
+    contract: NEW_CHAT_CONTRACT,
+    styles: [{ configKey: "newChatSuggestions", default: NEW_CHAT_RULES }],
+    after: [header, `<workspace>\n${workspace}\n</workspace>`]
+      .filter((section) => Boolean(section))
+      .join("\n\n"),
+    trailing: JSON_SHAPE,
+  });
+
+  return {
+    prompt,
+    contextChars: workspace.length,
+    truncated: input.workspace.moreChangedPaths > 0,
+  };
+}
+
+function renderWorkspace(workspace: NewChatWorkspaceContext): string | null {
+  const lines: string[] = [];
+  if (workspace.branch) {
+    lines.push(`Branch: ${workspace.branch}`);
+  }
+  if (workspace.recentCommits.length > 0) {
+    lines.push(
+      `Recent commits:\n${workspace.recentCommits.map((subject) => `- ${subject}`).join("\n")}`,
+    );
+  }
+  if (workspace.changedPaths.length > 0) {
+    const more =
+      workspace.moreChangedPaths > 0 ? `\n- …and ${workspace.moreChangedPaths} more` : "";
+    lines.push(
+      `Uncommitted files:\n${workspace.changedPaths.map((path) => `- ${path}`).join("\n")}${more}`,
+    );
+  }
+  return lines.length > 0 ? lines.join("\n\n") : null;
+}
+
 function renderQuestion(number: number, question: QuestionFormQuestion): string {
   const lines = [`Question ${number}: ${question.question.trim()}`];
   if (question.options.length > 0) {
@@ -197,6 +257,23 @@ const RULES = [
 ].join("\n");
 
 const JSON_SHAPE = 'Return JSON only: {"suggestions": ["...", "..."]}';
+
+const NEW_CHAT_CONTRACT = [
+  "A developer has just opened an empty chat with a coding agent in the checkout",
+  "described below, and has typed nothing yet. Write the first messages they are",
+  `most likely to send: at least one, at most ${PROMPT_SUGGESTION_MAX_COUNT}, best guess first.`,
+].join(" ");
+
+const NEW_CHAT_RULES = [
+  "Rules:",
+  "- Write as the developer, addressing the agent: imperative, first person.",
+  `- One line each, at most ${PROMPT_SUGGESTION_MAX_CHARS} characters, no numbering or quotes.`,
+  "- Name something real from the branch, the commits or the changed files.",
+  "- Only file names and commit subjects are given: never claim to know what the code does.",
+  "- Propose work that fits what is unfinished here, not generic housekeeping.",
+  "- No filler like 'help me' or 'what should I do': instruct, or ask something specific.",
+  "- Write in the language the commit subjects are written in.",
+].join("\n");
 
 const QUESTION_CONTRACT = [
   "A coding agent has stopped to ask the developer a question, and the developer's",

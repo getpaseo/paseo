@@ -3,6 +3,7 @@ import type { AgentPromptSuggestionsMessage } from "@getpaseo/protocol/messages"
 import type { AgentManagerEvent, AgentSubscriber } from "../agent-manager.js";
 import type { AgentStreamEvent, AgentTimelineItem } from "../agent-sdk-types.js";
 import { PromptSuggestionService, type PromptSuggestionGeneration } from "./service.js";
+import type { NewChatWorkspaceContext } from "./workspace-context.js";
 
 interface FakeAgent {
   id: string;
@@ -52,6 +53,8 @@ function createHarness(
     enabled?: boolean;
     hasListeners?: () => boolean;
     maxConcurrent?: number;
+    timeline?: AgentTimelineItem[];
+    readWorkspaceContext?: (cwd: string) => Promise<NewChatWorkspaceContext | null>;
   } = {},
 ) {
   const agents: Record<string, FakeAgent> = overrides.agents ?? {
@@ -67,6 +70,7 @@ function createHarness(
     prompt: string;
     schemaName: string;
     cwd: string;
+    configKey?: string;
     currentSelection?: { provider?: string | null; model?: string | null };
   }> = [];
 
@@ -79,15 +83,16 @@ function createHarness(
         };
       }) as never,
       getAgent: ((id: string) => (agents[id] ?? null) as never) as never,
-      getTimeline: (() => TIMELINE) as never,
+      getTimeline: (() => overrides.timeline ?? TIMELINE) as never,
     },
     generation: {
-      generate: (({ prompt, cwd, currentSelection, schemaName }) =>
+      generate: (({ prompt, cwd, currentSelection, configKey, schemaName }) =>
         new Promise((resolve, reject) => {
-          pending.push({ resolve, reject, prompt, cwd, currentSelection, schemaName });
+          pending.push({ resolve, reject, prompt, cwd, currentSelection, configKey, schemaName });
         })) as PromptSuggestionGeneration["generate"],
     },
     emit: (message) => emitted.push(message),
+    readWorkspaceContext: overrides.readWorkspaceContext,
     isEnabled: () => overrides.enabled ?? true,
     hasListeners: overrides.hasListeners,
     maxConcurrent: overrides.maxConcurrent,
@@ -472,5 +477,144 @@ describe("PromptSuggestionService", () => {
     await vi.advanceTimersByTimeAsync(1000);
 
     expect(harness.pending).toHaveLength(0);
+  });
+
+  describe("a chat with nothing in it yet", () => {
+    const WORKSPACE: NewChatWorkspaceContext = {
+      branch: "feat/prompt-suggestions",
+      changedPaths: ["packages/server/src/server/agent/prompt-suggestions/service.ts"],
+      recentCommits: ["feat(composer): suggest the next prompt after a turn ends"],
+      moreChangedPaths: 0,
+    };
+
+    it("guesses a first prompt from the checkout", async () => {
+      const harness = createHarness({
+        timeline: [],
+        readWorkspaceContext: async () => WORKSPACE,
+      });
+
+      expect(harness.service.requestFor("a1")).toEqual({ accepted: true });
+      await vi.advanceTimersByTimeAsync(400);
+
+      expect(harness.pending).toHaveLength(1);
+      expect(harness.pending[0].configKey).toBe("newChatSuggestions");
+      expect(harness.pending[0].prompt).toContain("feat/prompt-suggestions");
+      expect(harness.pending[0].prompt).toContain("prompt-suggestions/service.ts");
+      expect(harness.pending[0].prompt).toContain("has typed nothing yet");
+
+      harness.pending[0].resolve({ suggestions: ["finish the new-chat trigger"] });
+      await vi.runAllTimersAsync();
+      expect(harness.emitted[0].payload.suggestions[0].text).toBe("finish the new-chat trigger");
+    });
+
+    // An empty directory gets silence, not an invented task.
+    it("says nothing when the checkout says nothing", async () => {
+      const harness = createHarness({ timeline: [], readWorkspaceContext: async () => null });
+
+      harness.service.requestFor("a1");
+      await vi.runAllTimersAsync();
+
+      expect(harness.pending).toHaveLength(0);
+      expect(harness.emitted).toHaveLength(0);
+    });
+
+    it("leaves an empty chat alone when no reader is wired", async () => {
+      const harness = createHarness({ timeline: [] });
+
+      harness.service.requestFor("a1");
+      await vi.runAllTimersAsync();
+
+      expect(harness.pending).toHaveLength(0);
+    });
+  });
+
+  describe("a new-chat screen, before any agent exists", () => {
+    const WORKSPACE: NewChatWorkspaceContext = {
+      branch: "feat/drafts",
+      changedPaths: ["src/draft.ts"],
+      recentCommits: ["wip: drafts"],
+      moreChangedPaths: 0,
+    };
+
+    it("answers to the draft key from the checkout it will run in", async () => {
+      const reads: string[] = [];
+      const harness = createHarness({
+        agents: {},
+        readWorkspaceContext: async (cwd) => {
+          reads.push(cwd);
+          return WORKSPACE;
+        },
+      });
+
+      expect(harness.service.requestForDraft("draft:1", "/repo")).toEqual({ accepted: true });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(reads).toEqual(["/repo"]);
+      expect(harness.pending).toHaveLength(1);
+      expect(harness.pending[0].configKey).toBe("newChatSuggestions");
+      expect(harness.pending[0].prompt).toContain("src/draft.ts");
+
+      harness.pending[0].resolve({ suggestions: ["finish the draft path"] });
+      await vi.runAllTimersAsync();
+      expect(harness.emitted[0].payload).toMatchObject({
+        agentId: "draft:1",
+        suggestions: [{ text: "finish the draft path" }],
+      });
+    });
+
+    it("re-sends a delivered answer instead of paying for it twice", async () => {
+      const harness = createHarness({ agents: {}, readWorkspaceContext: async () => WORKSPACE });
+
+      harness.service.requestForDraft("draft:1", "/repo");
+      await vi.advanceTimersByTimeAsync(0);
+      harness.pending[0].resolve({ suggestions: ["finish the draft path"] });
+      await vi.runAllTimersAsync();
+
+      harness.service.requestForDraft("draft:1", "/repo");
+      await vi.runAllTimersAsync();
+
+      expect(harness.pending).toHaveLength(1);
+      expect(harness.emitted).toHaveLength(2);
+      expect(harness.emitted[1].payload.agentId).toBe("draft:1");
+    });
+
+    it("drops the answer for a directory the draft has since left", async () => {
+      const harness = createHarness({ agents: {}, readWorkspaceContext: async () => WORKSPACE });
+
+      harness.service.requestForDraft("draft:1", "/repo");
+      await vi.advanceTimersByTimeAsync(0);
+      harness.service.requestForDraft("draft:1", "/other");
+      await vi.advanceTimersByTimeAsync(0);
+
+      harness.pending[0].resolve({ suggestions: ["stale guess"] });
+      harness.pending[1].resolve({ suggestions: ["current guess"] });
+      await vi.runAllTimersAsync();
+
+      expect(harness.emitted).toHaveLength(1);
+      expect(harness.emitted[0].payload.suggestions[0].text).toBe("current guess");
+    });
+
+    it("lets the next open retry when the directory said nothing", async () => {
+      let workspace: NewChatWorkspaceContext | null = null;
+      const harness = createHarness({ agents: {}, readWorkspaceContext: async () => workspace });
+
+      harness.service.requestForDraft("draft:1", "/empty");
+      await vi.runAllTimersAsync();
+      expect(harness.pending).toHaveLength(0);
+
+      workspace = WORKSPACE;
+      harness.service.requestForDraft("draft:1", "/empty");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(harness.pending).toHaveLength(1);
+    });
+
+    it("declines when suggestions are turned off", () => {
+      const harness = createHarness({
+        agents: {},
+        enabled: false,
+        readWorkspaceContext: async () => WORKSPACE,
+      });
+      expect(harness.service.requestForDraft("draft:1", "/repo").accepted).toBe(false);
+    });
   });
 });
