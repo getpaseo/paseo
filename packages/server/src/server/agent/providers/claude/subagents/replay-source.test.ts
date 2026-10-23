@@ -159,8 +159,8 @@ describe("observeReplaySubagents", () => {
   it("falls back to the scraped link when there is no meta file", () => {
     const parent: ClaudeReplayParentFacts = {
       toolCalls: new Map([[TOOL_USE_ID, { title: "Explore" }]]),
-      linksByAgentId: new Map([[AGENT_ID, { toolCallId: TOOL_USE_ID, failed: false }]]),
-      outcomesByToolCallId: new Map(),
+      linksByAgentId: new Map([[AGENT_ID, { toolCallId: TOOL_USE_ID }]]),
+      outcomesByToolCallId: new Map([[TOOL_USE_ID, { failed: false }]]),
     };
 
     const [declared, ...rest] = observeReplaySubagents({
@@ -240,8 +240,8 @@ describe("observeReplaySubagents", () => {
         subagents: [{ agentId: AGENT_ID, meta: null, entries: [] }],
         parent: {
           toolCalls: new Map([[TOOL_USE_ID, { title: "Explore" }]]),
-          linksByAgentId: new Map([[AGENT_ID, { toolCallId: TOOL_USE_ID, failed: true }]]),
-          outcomesByToolCallId: new Map(),
+          linksByAgentId: new Map([[AGENT_ID, { toolCallId: TOOL_USE_ID }]]),
+          outcomesByToolCallId: new Map([[TOOL_USE_ID, { failed: true }]]),
         },
         convertEntry: () => [],
       }).observations,
