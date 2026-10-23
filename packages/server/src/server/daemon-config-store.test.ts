@@ -825,6 +825,32 @@ describe("DaemonConfigStore", () => {
     expect(persisted.daemon?.enableTerminalAgentHooks).toBe(true);
   });
 
+  test("patch persists restore terminals into config.json and notifies listeners", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+    const changes: unknown[] = [];
+    store.onFieldChange("restoreTerminals", (value) => changes.push(value));
+
+    store.patch({ restoreTerminals: true });
+
+    expect(loadPersistedConfig(paseoHome).daemon?.restoreTerminals).toBe(true);
+    expect(store.get().restoreTerminals).toBe(true);
+    expect(changes).toEqual([true]);
+  });
+
   test("patch persists metadata generation providers into config.json", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

@@ -1,4 +1,5 @@
 import type { AgentHookActivityState, AgentHookProvider } from "../agent-hook-installer.js";
+import { readAgentHookPayload } from "../agent-hook-session.js";
 import { type CodexHooksFile, codexHooksFormat } from "./codex-settings.js";
 
 const CODEX_EVENT_STATES: Record<string, AgentHookActivityState> = {
@@ -28,5 +29,8 @@ export const codexAgentHookProvider: AgentHookProvider<CodexHooksFile> = {
   },
   async resolveActivity({ event }) {
     return CODEX_EVENT_STATES[event] ?? null;
+  },
+  async resolveSession({ input }) {
+    return (await readAgentHookPayload(input))?.session ?? undefined;
   },
 };

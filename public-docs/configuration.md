@@ -98,6 +98,20 @@ New worktrees are created under `$PASEO_HOME/worktrees` by default. To place new
 
 Relative paths are resolved against `PASEO_HOME`. Existing worktrees remain where they are; changing this setting only changes where Paseo creates and discovers Paseo-managed worktrees going forward.
 
+## Terminal restore
+
+Set `daemon.restoreTerminals` to reopen terminal tabs after the daemon restarts (app quit, update, reboot). It is off by default. You can also turn it on in the app under the host's **Terminals** settings.
+
+```json
+{
+  "daemon": {
+    "restoreTerminals": true
+  }
+}
+```
+
+Each tab comes back with the same id in its workspace. A Claude Code or Codex tab resumes its conversation (`claude --resume <id>`, `codex resume <id>`) when the agent reported its session through terminal agent hooks, so turn on `daemon.enableTerminalAgentHooks` too. Every other tab comes back as a plain shell in its directory: Paseo never reruns a tab's original command, because it can hold the original prompt or a command you didn't ask to rerun. Closing a tab forgets it. Turning the setting off forgets all tabs.
+
 ## Voice
 
 Voice is configured through `features.dictation` and `features.voiceMode`, with provider credentials under `providers`.

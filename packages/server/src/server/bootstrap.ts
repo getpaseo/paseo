@@ -171,7 +171,13 @@ import { wrapSessionMessage, type SessionOutboundMessage } from "./messages.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { createConfiguredTerminalManager } from "../terminal/terminal-manager-factory.js";
 import { applyTerminalAgentHookSetting } from "../terminal/agent-hooks/terminal-agent-hook-setting.js";
+import { PersistedTerminalStore } from "../terminal/persisted-terminal-store.js";
+import {
+  createTerminalPersistence,
+  type TerminalAgentSessionReport,
+} from "../terminal/terminal-persistence.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
+import { createRestoredWorktreeEnv } from "./restored-worktree-env.js";
 import { createRelayRuntime, type RelayRuntime } from "./relay-runtime.js";
 import { admitSecuredRelaySocket } from "./websocket/secure-relay-ingress.js";
 import type { PushNotificationSender } from "./push/index.js";
@@ -284,6 +290,13 @@ const TerminalActivityReportSchema = z.object({
   terminalId: z.string().min(1),
   token: z.string().min(1),
   state: z.enum(["running", "idle", "needs-input"]),
+  agentSession: z
+    .object({
+      provider: z.string().min(1).max(64),
+      sessionId: z.string().min(1).max(256).nullable(),
+      cwd: z.string().min(1).max(4096).optional(),
+    })
+    .optional(),
 });
 
 const TERMINAL_ACTIVITY_STATE_MAP = {
@@ -298,8 +311,13 @@ function isLoopbackRemoteAddress(remoteAddress: string | undefined): boolean {
   return remoteAddress !== undefined && LOOPBACK_REMOTE_ADDRESSES.has(remoteAddress);
 }
 
+export interface TerminalActivityRouteOptions {
+  onAgentSession?: (terminalId: string, report: TerminalAgentSessionReport) => void;
+}
+
 export function createTerminalActivityRouteHandler(
   terminalManager: TerminalManager,
+  options: TerminalActivityRouteOptions = {},
 ): express.RequestHandler {
   return async (req, res) => {
     if (!isLoopbackRemoteAddress(req.socket.remoteAddress)) {
@@ -330,6 +348,9 @@ export function createTerminalActivityRouteHandler(
       if (!updated) {
         res.status(403).json({ error: "Forbidden" });
         return;
+      }
+      if (parsed.data.agentSession) {
+        options.onAgentSession?.(parsed.data.terminalId, parsed.data.agentSession);
       }
       res.status(204).end();
     } catch {
@@ -410,6 +431,7 @@ export interface PaseoDaemonConfig {
   };
   autoArchiveAfterMerge?: boolean;
   enableTerminalAgentHooks?: boolean;
+  restoreTerminals?: boolean;
   appendSystemPrompt?: string;
   terminalProfiles?: TerminalProfile[];
   agentProfiles?: AgentProfile[];
@@ -572,6 +594,7 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     },
     autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
+    restoreTerminals: config.restoreTerminals === true,
     appendSystemPrompt: config.appendSystemPrompt ?? "",
     pluginsEnabled: config.pluginsEnabled ?? false,
     plugins: config.plugins ?? {},
@@ -679,10 +702,21 @@ export async function createPaseoDaemon(
   });
   let boundListenTarget: ListenTarget | null = null;
   let workspaceRegistry: FileBackedWorkspaceRegistry | null = null;
-  const terminalManager = createConfiguredTerminalManager({
-    getTerminalActivityUrl: () => createTerminalActivityUrl(boundListenTarget),
+  const terminalPersistence = createTerminalPersistence({
+    manager: createConfiguredTerminalManager({
+      getTerminalActivityUrl: () => createTerminalActivityUrl(boundListenTarget),
+    }),
+    store: new PersistedTerminalStore(path.join(config.paseoHome, "terminals"), logger),
+    isEnabled: () => daemonConfigStore.get().restoreTerminals === true,
+    logger,
   });
+  const terminalManager = terminalPersistence.manager;
   applyTerminalAgentHookSetting({ store: daemonConfigStore, logger });
+  daemonConfigStore.onFieldChange("restoreTerminals", (value) => {
+    void terminalPersistence.setEnabled(value === true).catch((error) => {
+      logger.warn({ err: error }, "Failed to apply terminal restore setting");
+    });
+  });
 
   const serviceProxyPublicBaseUrl = config.serviceProxy?.publicBaseUrl
     ? config.serviceProxy.publicBaseUrl
@@ -785,7 +819,10 @@ export async function createPaseoDaemon(
   app.post(
     "/api/terminal-activity",
     express.json(),
-    createTerminalActivityRouteHandler(terminalManager),
+    createTerminalActivityRouteHandler(terminalManager, {
+      onAgentSession: (terminalId, report) =>
+        terminalPersistence.recordAgentSession(terminalId, report),
+    }),
   );
 
   // Serve the bundled browser web UI when enabled. Mounted after service-proxy
@@ -1634,6 +1671,31 @@ export async function createPaseoDaemon(
 
   logger.info({ elapsed: elapsed() }, "Bootstrap complete, ready to start listening");
 
+  const restorePersistedTerminals = async () => {
+    const registerWorktreeEnv = createRestoredWorktreeEnv({
+      manager: terminalManager,
+      logger,
+      paseoHome: config.paseoHome,
+      ...(config.worktreesRoot ? { worktreesRoot: config.worktreesRoot } : {}),
+    });
+    try {
+      const summary = await terminalPersistence.restore({
+        canRestore: async (record) => {
+          const workspace = await workspaceRegistry?.get(record.workspaceId);
+          if (!workspace || workspace.archivedAt) return false;
+          if (!((await stat(record.cwd).catch(() => null))?.isDirectory() ?? false)) return false;
+          await registerWorktreeEnv(workspace.cwd);
+          return true;
+        },
+      });
+      if (summary.restored.length > 0 || summary.dropped.length > 0) {
+        logger.info(summary, "Restored persisted terminals");
+      }
+    } catch (error) {
+      logger.warn({ err: error }, "Failed to restore persisted terminals");
+    }
+  };
+
   const start = async () => {
     let mainStarted = false;
     try {
@@ -1790,6 +1852,9 @@ export async function createPaseoDaemon(
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();
             providerSnapshotManager.settlePluginProviders();
+            // After listen, so restored terminals get the bound activity URL;
+            // before accepting connections, so the first terminal list has them.
+            await restorePersistedTerminals();
             wsServer.beginAcceptingConnections();
             const relaySecurityLogger = logger.child({ module: "relay-security" });
             relayRuntime = createRelayRuntime({
@@ -1862,6 +1927,7 @@ export async function createPaseoDaemon(
   };
 
   const stop = async () => {
+    terminalPersistence.prepareForShutdown();
     localCredential = null;
     await deleteLocalCredential(config.paseoHome);
     // Stop tracking plugin provider registrations before anything tears plugins
@@ -1887,7 +1953,9 @@ export async function createPaseoDaemon(
     await agentStorage.flush().catch(() => undefined);
     await agentProviderRuntime.shutdown();
     await pluginRuntime.stopAllPlugins();
+    // Keeps terminal records on disk so the next start restores them.
     terminalManager.killAll();
+    await terminalPersistence.flush();
     await speechService.stop();
     await scheduleService.stop().catch(() => undefined);
     await relayRuntime?.stop().catch(() => undefined);

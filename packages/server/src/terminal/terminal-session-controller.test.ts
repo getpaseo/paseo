@@ -273,6 +273,7 @@ describe("terminal-session-controller legacy terminal creation", () => {
         cwd: terminalCwd,
         workspaceId: "ws-app",
         name: "App Shell",
+        restorable: true,
       }),
     );
     expect(outboundMessages).toEqual([

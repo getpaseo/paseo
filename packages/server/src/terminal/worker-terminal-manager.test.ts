@@ -204,6 +204,27 @@ it("creates a terminal through the worker and streams output", async () => {
   expect(snapshots).toBe(snapshotsBeforeOutput);
 });
 
+it("does not keep a terminal whose command exits before creation resolves", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-fast-exit-"));
+  temporaryDirs.push(cwd);
+  manager = createWorkerTerminalManager();
+  const exits: string[] = [];
+  const ids: string[] = [];
+  for (let index = 0; index < 10; index += 1) {
+    const session = await manager.createTerminal({
+      workspaceId: "ws-test",
+      cwd,
+      ...nodeTerminalCommand("process.exit(0)"),
+    });
+    ids.push(session.id);
+    session.onExit(() => exits.push(session.id));
+  }
+
+  await waitForCondition(() => exits.length === ids.length, 10000);
+  expect(ids.map((id) => manager?.getTerminal(id))).toEqual(ids.map(() => undefined));
+  expect(await manager.getTerminals(cwd)).toEqual([]);
+});
+
 it("delivers rapid small writes complete and in order through worker coalescing", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-coalesce-"));
   temporaryDirs.push(cwd);

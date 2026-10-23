@@ -64,6 +64,9 @@ export interface TerminalManager {
     cols?: number;
     activityToken?: string;
     activityUrl?: string | null;
+    // A user-opened terminal tab that comes back after a daemon restart when
+    // `restoreTerminals` is on. Handled by terminal-persistence.ts.
+    restorable?: boolean;
   }): Promise<TerminalSession>;
   registerCwdEnv(options: { cwd: string; env: Record<string, string> }): void;
   validateTerminalActivityToken(terminalId: string, token: string): "valid" | "unknown" | "invalid";

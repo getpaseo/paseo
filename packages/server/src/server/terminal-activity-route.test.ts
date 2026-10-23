@@ -160,3 +160,62 @@ it("uses one rejection for unknown terminals and wrong tokens", async () => {
   expect(invalidResponse.statusCode).toBe(403);
   expect(unknownResponse.body).toEqual(invalidResponse.body);
 });
+
+it("forwards the agent session from authenticated reports only", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "terminal-activity-route-"));
+  temporaryDirs.push(cwd);
+  const envPath = join(cwd, "activity-env.json");
+  manager = createTerminalManager({
+    getTerminalActivityUrl: () => "http://127.0.0.1:6767/api/terminal-activity",
+  });
+  const session = await manager.createTerminal({
+    cwd,
+    command: process.execPath,
+    args: [
+      "-e",
+      `require("node:fs").writeFileSync(${JSON.stringify(envPath)}, JSON.stringify({ token: process.env.PASEO_ACTIVITY_TOKEN })); setInterval(() => {}, 1000);`,
+    ],
+  });
+  await waitForCondition(() => existsSync(envPath), 10000);
+  const { token } = JSON.parse(readFileSync(envPath, "utf8")) as { token: string };
+  const reports: unknown[] = [];
+  const handler = createTerminalActivityRouteHandler(manager, {
+    onAgentSession: (terminalId, report) => reports.push({ terminalId, ...report }),
+  });
+  const agentSession = { provider: "claude", sessionId: "session-1" };
+
+  await handler(
+    createMockRequest({
+      body: { terminalId: session.id, token: "bad", state: "running", agentSession },
+    }),
+    createMockResponse() as unknown as express.Response,
+    () => undefined,
+  );
+  await handler(
+    createMockRequest({ body: { terminalId: session.id, token, state: "running", agentSession } }),
+    createMockResponse() as unknown as express.Response,
+    () => undefined,
+  );
+
+  expect(reports).toEqual([{ terminalId: session.id, provider: "claude", sessionId: "session-1" }]);
+});
+
+it("rejects oversized agent session ids", async () => {
+  const handler = createTerminalActivityRouteHandler(createTerminalManager());
+  const response = createMockResponse();
+
+  await handler(
+    createMockRequest({
+      body: {
+        terminalId: "terminal-1",
+        token: "token",
+        state: "running",
+        agentSession: { provider: "claude", sessionId: "x".repeat(257) },
+      },
+    }),
+    response as unknown as express.Response,
+    () => undefined,
+  );
+
+  expect(response.statusCode).toBe(400);
+});

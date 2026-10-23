@@ -141,10 +141,11 @@ const PROMPT_ARGS_BY_COMMAND = new Map(
   ]),
 );
 
-// Adoption applies only to the interactive, prompt-taking form of each CLI.
-// These are the global options whose values would otherwise look positional
-// while walking argv. Unknown options stay conservative: a following bare arg
-// blocks adoption rather than risking a second prompt or changing a subcommand.
+// Global options whose values would otherwise look positional while walking
+// argv. Prompt adoption reads them here, and the daemon reads them through
+// getCommandOptionsWithValues to keep flag values when it resumes a terminal.
+// Unknown options stay conservative: a following bare arg blocks adoption
+// rather than risking a second prompt or changing a subcommand.
 const GLOBAL_OPTIONS_WITH_VALUES_BY_COMMAND = new Map<string, ReadonlySet<string>>([
   [
     "claude",
@@ -155,11 +156,13 @@ const GLOBAL_OPTIONS_WITH_VALUES_BY_COMMAND = new Map<string, ReadonlySet<string
       "--allowed-tools",
       "--allowedTools",
       "--append-system-prompt",
+      "--autocompact",
       "--betas",
       "--debug-file",
       "--disallowed-tools",
       "--disallowedTools",
       "--effort",
+      "--environment",
       "--fallback-model",
       "--file",
       "--input-format",
@@ -170,12 +173,16 @@ const GLOBAL_OPTIONS_WITH_VALUES_BY_COMMAND = new Map<string, ReadonlySet<string
       "--name",
       "--output-format",
       "--permission-mode",
+      "--permission-prompts",
       "--plugin-dir",
       "--plugin-url",
       "--remote-control-session-name-prefix",
+      "--session-id",
+      "--setting-sources",
       "--settings",
       "--system-prompt",
       "--system-prompt-file",
+      "--system-prompt-snapshot",
       "--tools",
       "-n",
     ]),
@@ -253,6 +260,15 @@ const GLOBAL_OPTIONS_WITH_VALUES_BY_COMMAND = new Map<string, ReadonlySet<string
   ],
 ]);
 
+const NO_OPTIONS_WITH_VALUES: ReadonlySet<string> = new Set();
+
+/** Options of a known agent CLI that take the next argv entry as their value. */
+export function getCommandOptionsWithValues(command: string): ReadonlySet<string> {
+  return (
+    GLOBAL_OPTIONS_WITH_VALUES_BY_COMMAND.get(getCommandBaseName(command)) ?? NO_OPTIONS_WITH_VALUES
+  );
+}
+
 // Profiles predating the sentinel got materialized into user config the first
 // time anyone touched the profile list (host-page.tsx patches the whole list on
 // any add, edit, or reorder). Those users would otherwise be stuck with
@@ -277,7 +293,7 @@ const GLOBAL_OPTIONS_WITH_VALUES_BY_COMMAND = new Map<string, ReadonlySet<string
 // prompt/project argument. Option assignments carry their value inline; known
 // split options consume the next argv entry before positional detection.
 function hasPositionalArg(command: string, args: readonly string[]): boolean {
-  const optionsWithValues = GLOBAL_OPTIONS_WITH_VALUES_BY_COMMAND.get(command) ?? new Set();
+  const optionsWithValues = getCommandOptionsWithValues(command);
   let expectsOptionValue = false;
 
   for (const arg of args) {

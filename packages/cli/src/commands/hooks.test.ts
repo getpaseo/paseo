@@ -66,7 +66,11 @@ async function runHook(agent: string, event: string, input = ttyInput()) {
   return fetch;
 }
 
-function expectPostedState(fetch: RecordingFetch, state: string) {
+function expectPostedState(
+  fetch: RecordingFetch,
+  state: string,
+  agentSession?: { provider: string; sessionId: string | null; cwd?: string },
+) {
   expect(fetch.calls).toEqual([
     {
       url: hookEnv.PASEO_TERMINAL_ACTIVITY_URL,
@@ -77,6 +81,7 @@ function expectPostedState(fetch: RecordingFetch, state: string) {
           terminalId: hookEnv.PASEO_TERMINAL_ID,
           token: hookEnv.PASEO_ACTIVITY_TOKEN,
           state,
+          ...(agentSession ? { agentSession } : {}),
         }),
         signal: expect.any(AbortSignal),
       },
@@ -135,7 +140,66 @@ describe("runHooksCommand", () => {
       inputFrom(claudeNotification("idle_prompt")),
     );
 
-    expectPostedState(send, "needs-input");
+    expectPostedState(send, "needs-input", { provider: "claude", sessionId: "session-1" });
+  });
+
+  it("forwards the Claude session id from the hook payload", async () => {
+    const send = await runHook(
+      claudeProvider.id,
+      "UserPromptSubmit",
+      inputFrom(
+        JSON.stringify({ session_id: "claude-session", hook_event_name: "UserPromptSubmit" }),
+      ),
+    );
+
+    expectPostedState(send, "running", { provider: "claude", sessionId: "claude-session" });
+  });
+
+  it("reports a Claude session as ended when Claude exits", async () => {
+    const send = await runHook(
+      claudeProvider.id,
+      "SessionEnd",
+      inputFrom(JSON.stringify({ session_id: "claude-session", reason: "prompt_input_exit" })),
+    );
+
+    expectPostedState(send, "idle", { provider: "claude", sessionId: null });
+  });
+
+  it.each(["clear", "resume", "other"])(
+    "keeps the Claude session when SessionEnd reason is %s",
+    async (reason) => {
+      const send = await runHook(
+        claudeProvider.id,
+        "SessionEnd",
+        inputFrom(JSON.stringify({ session_id: "claude-session", reason })),
+      );
+
+      expectPostedState(send, "idle");
+    },
+  );
+
+  it("forwards the agent's cwd with the session", async () => {
+    const send = await runHook(
+      claudeProvider.id,
+      "UserPromptSubmit",
+      inputFrom(JSON.stringify({ session_id: "claude-session", cwd: "/repo/packages/app" })),
+    );
+
+    expectPostedState(send, "running", {
+      provider: "claude",
+      sessionId: "claude-session",
+      cwd: "/repo/packages/app",
+    });
+  });
+
+  it("forwards the Codex session id from the hook payload", async () => {
+    const send = await runHook(
+      codexProvider.id,
+      "Stop",
+      inputFrom(JSON.stringify({ session_id: "codex-session", hook_event_name: "Stop" })),
+    );
+
+    expectPostedState(send, "idle", { provider: "codex", sessionId: "codex-session" });
   });
 
   it.each(["permission_prompt", "elicitation_prompt", "elicitation_response", "auth_success"])(

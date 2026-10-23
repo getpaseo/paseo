@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { resolveHookActivity, type AgentHookActivityState } from "@getpaseo/server/agent-hooks";
+import { resolveHookReport, type AgentHookReport } from "@getpaseo/server/agent-hooks";
 
 interface HookEnvironment {
   PASEO_TERMINAL_ID?: string;
@@ -38,7 +38,7 @@ export async function runHooksCommand(
   const target = resolveTarget(runtime.env);
   if (!target) return;
 
-  const state = await resolveHookActivity({
+  const report = await resolveHookReport({
     provider: agent,
     event,
     input: {
@@ -46,9 +46,9 @@ export async function runHooksCommand(
       read: () => readInput(runtime.input),
     },
   });
-  if (!state) return;
+  if (!report) return;
 
-  await postActivity(target, state, runtime.fetch);
+  await postActivity(target, report, runtime.fetch);
 }
 
 function resolveTarget(env: HookEnvironment) {
@@ -91,7 +91,7 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null
 
 async function postActivity(
   target: { terminalId: string; token: string; url: string },
-  state: AgentHookActivityState,
+  report: AgentHookReport,
   send: typeof fetch,
 ): Promise<void> {
   const controller = new AbortController();
@@ -104,7 +104,8 @@ async function postActivity(
       body: JSON.stringify({
         terminalId: target.terminalId,
         token: target.token,
-        state,
+        state: report.state,
+        ...(report.agentSession ? { agentSession: report.agentSession } : {}),
       }),
       signal: controller.signal,
     });

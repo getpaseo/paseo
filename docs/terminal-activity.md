@@ -45,7 +45,11 @@ Terminals receive four environment variables when the daemon creates the shell:
 - `PASEO_TERMINAL_ACTIVITY_URL`
 - `PASEO_HOOK_CLI` — absolute path to the current `paseo` CLI executable.
 
-The generated shell command uses `PASEO_HOOK_CLI` to run the current CLI. `paseo hooks <agent> <event>` then reads the terminal id, token, and activity URL, asks the agent hook provider registry to resolve the event to a coarse activity state, and silently posts `{ terminalId, token, state }` to the activity URL. Missing env, unsupported agents/events, malformed hook input, and daemon/network failures are no-ops so agent hooks never break the user's terminal session.
+The generated shell command uses `PASEO_HOOK_CLI` to run the current CLI. `paseo hooks <agent> <event>` then reads the terminal id, token, and activity URL, asks the agent hook provider registry to resolve the event to a coarse activity state, and silently posts `{ terminalId, token, state, agentSession? }` to the activity URL. Missing env, unsupported agents/events, malformed hook input, and daemon/network failures are no-ops so agent hooks never break the user's terminal session.
+
+`agentSession` is `{ provider, sessionId, cwd }` from the hook's stdin; `sessionId: null` means the agent session ended. The daemon stores it on the terminal record so [terminal restore](data-model.md#terminal-sessions) can resume the conversation. Stdin is read once and shared between activity and session resolution, so Codex hooks read stdin on every event.
+
+Only a deliberate quit ends a Claude session from the hook side. A signal-driven exit must stay resumable, because a daemon shutdown kills the terminal and Claude reports that as a session end. The provider-agnostic end signal is the shell reporting a finished foreground command: when an agent quits back to the shell, its session is cleared. Today only the zsh integration emits it, so in other shells a Codex session id stays on the record until the tab closes or another session replaces it.
 
 Claude hook mapping:
 
@@ -104,7 +108,7 @@ When enabled, Paseo installs provider hooks globally:
 
 Installation is marker-based/idempotent for config hooks and exact-file/idempotent for the OpenCode plugin. Paseo preserves user hooks, removes only its own marker-matched command hooks, and leaves hooks installed across daemon shutdown. Outside a Paseo terminal they are inert because the command or plugin is gated on `PASEO_TERMINAL_ID`.
 
-Provider variation lives in `AGENT_HOOK_PROVIDERS`: provider id, installed events, config install metadata, and runtime event-to-activity resolution. The daemon calls `installRegisteredAgentHooks()` once; the CLI calls `resolveHookActivity(provider, event, input)`. Adding a provider should add one provider entry and register it in `AGENT_HOOK_PROVIDERS`, without editing the generic CLI command or daemon bootstrap.
+Provider variation lives in `AGENT_HOOK_PROVIDERS`: provider id, installed events, config install metadata, and runtime event-to-activity resolution. The daemon calls `installRegisteredAgentHooks()` once; the CLI calls `resolveHookReport(provider, event, input)`. Adding a provider should add one provider entry and register it in `AGENT_HOOK_PROVIDERS`, without editing the generic CLI command or daemon bootstrap.
 
 The installed hook command keeps the config portable and resolves the CLI at runtime:
 

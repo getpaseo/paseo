@@ -978,6 +978,49 @@ function EnableTerminalAgentHooksCard({ serverId }: { serverId: string }) {
   );
 }
 
+function RestoreTerminalsCard({ serverId }: { serverId: string }) {
+  const isConnected = useHostRuntimeIsConnected(serverId);
+  const { config, patchConfig } = useDaemonConfig(serverId);
+  const supportsRestoreTerminals = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.restoreTerminals === true,
+  );
+
+  const handleValueChange = useCallback(
+    (next: boolean) => {
+      void patchConfig({ restoreTerminals: next }).catch((error) => {
+        console.error("[HostPage] Failed to update terminal restore", error);
+        Alert.alert(
+          "Unable to update terminal restore",
+          error instanceof Error ? error.message : String(error),
+        );
+      });
+    },
+    [patchConfig],
+  );
+
+  if (!isConnected || !supportsRestoreTerminals) return null;
+
+  return (
+    <View style={settingsStyles.card} testID="host-page-restore-terminals-card">
+      <View style={settingsStyles.row}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>Restore terminals after restart</Text>
+          <Text style={settingsStyles.rowHint}>
+            Reopen terminal tabs when the host restarts. Claude Code and Codex resume their
+            conversation when terminal agent hooks are on.
+          </Text>
+        </View>
+        <Switch
+          value={config?.restoreTerminals === true}
+          onValueChange={handleValueChange}
+          accessibilityLabel="Restore terminals after restart"
+          testID="host-page-restore-terminals-switch"
+        />
+      </View>
+    </View>
+  );
+}
+
 function AppendSystemPromptCard({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -1667,6 +1710,7 @@ export function HostTerminalsPage({ serverId }: { serverId: string }) {
     <View>
       <SettingsSection title="Terminal agents">
         <EnableTerminalAgentHooksCard serverId={serverId} />
+        <RestoreTerminalsCard serverId={serverId} />
       </SettingsSection>
       <TerminalProfilesSection serverId={serverId} />
     </View>

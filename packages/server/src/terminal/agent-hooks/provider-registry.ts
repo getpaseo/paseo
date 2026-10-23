@@ -66,11 +66,34 @@ export function registeredAgentHooksAreInstalled(options: AgentHookInstallOption
   );
 }
 
-export async function resolveHookActivity(
+export interface AgentHookReport {
+  state: AgentHookActivityState;
+  // Present when the event identifies the agent session; `sessionId: null` means it ended.
+  agentSession?: { provider: string; sessionId: string | null; cwd?: string };
+}
+
+export async function resolveHookReport(
   request: AgentHookActivityRequest,
-): Promise<AgentHookActivityState | null> {
-  const provider = AGENT_HOOK_PROVIDERS[request.provider.toLowerCase()];
+): Promise<AgentHookReport | null> {
+  const providerId = request.provider.toLowerCase();
+  const provider: AgentHookProvider | undefined = AGENT_HOOK_PROVIDERS[providerId];
   if (!provider) return null;
 
-  return provider.resolveActivity({ event: request.event, input: request.input });
+  // Stdin can only be consumed once; activity and session resolution share it.
+  let pendingRead: Promise<string | null> | null = null;
+  const input: AgentHookActivityInput = {
+    isTTY: request.input.isTTY,
+    read: () => {
+      pendingRead ??= request.input.read();
+      return pendingRead;
+    },
+  };
+
+  const state = await provider.resolveActivity({ event: request.event, input });
+  if (!state) return null;
+
+  const session = await provider.resolveSession?.({ event: request.event, input });
+  if (session === undefined) return { state };
+  const agentSession = session ?? { sessionId: null };
+  return { state, agentSession: { provider: providerId, ...agentSession } };
 }
