@@ -24,7 +24,7 @@ const SEARCH_EXTENSIONS = new Set([
 const SKIP_DIRS = new Set(["node_modules", ".git", ".worktrees", "dist", "build", ".next"]);
 // Files that hold secrets by convention. Never read, whatever the caller asks.
 const SECRET_FILE =
-  /(^|\/)(\.env(\..*)?|.*\.(pem|key|p12|pfx|keystore|jks|kdbx|gpg|asc)|id_[a-z0-9]+|(secrets?|credentials?)(\.[^/]+)?|\.(npmrc|netrc|pypirc|pgpass|git-credentials|htpasswd|dockercfg)|_netrc|\.docker\/config\.json|\.aws\/config|\.ssh\/.*|\.gnupg\/.*)$/i;
+  /(^|\/)(\.env(\..*)?|.*\.(pem|key|p12|pfx|keystore|jks|kdbx|gpg|asc)|id_[a-z0-9]+|(secrets?|credentials?)(\.[^/]+)?|\.(npmrc|netrc|pypirc|pgpass|git-credentials|htpasswd|dockercfg)|_netrc|\.docker\/config\.json|\.aws\/.*|\.git\/.*|\.kube\/config|\.config\/gh\/hosts\.yml|\.ssh\/.*|\.gnupg\/.*)$/i;
 
 export interface ToolDef {
   name: string;

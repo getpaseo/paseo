@@ -21,6 +21,11 @@ describe("redact", () => {
     expect(out).not.toMatch(/hunter2/);
     expect(out).toContain("[private-key]");
   });
+  it("scrubs url credentials whose password contains an @", () => {
+    const out = redact("clone https://user:p@ss@word@git.example.com/repo.git now");
+    expect(out).not.toMatch(/p@ss|word|user:/);
+    expect(out).toContain("[url-credentials]@git.example.com/repo.git now");
+  });
   it("leaves plain prose alone", () => {
     expect(redact("Ship the voice agent on Friday.")).toBe("Ship the voice agent on Friday.");
   });

@@ -91,6 +91,25 @@ describe("harness tools", () => {
     expect(out).not.toContain("node_modules");
   });
 
+  it("denies cloud, git, ssh and gpg credential paths", async () => {
+    const read = byName(createHarnessTools({ harnessRoot: root }), "read_file");
+    const files = [
+      ".aws/credentials",
+      ".aws/config",
+      ".git/config",
+      ".ssh/id_rsa",
+      ".ssh/known_hosts",
+      ".gnupg/pubring.kbx",
+      ".kube/config",
+      ".config/gh/hosts.yml",
+    ];
+    for (const rel of files) {
+      await mkdir(path.dirname(path.join(root, rel)), { recursive: true });
+      await writeFile(path.join(root, rel), "x\n");
+      expect(await read.run({ path: rel }), rel).toMatch(/Not allowed/);
+    }
+  });
+
   it("search skips a file it cannot read instead of failing", async () => {
     const locked = path.join(root, "locked.md");
     await writeFile(locked, "Needle locked\n");

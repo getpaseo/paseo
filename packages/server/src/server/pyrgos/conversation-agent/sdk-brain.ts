@@ -9,7 +9,9 @@ export const VOICE_BRAIN_PROMPT =
   "know the state below, say what matters, skip the preamble. You have read-only tools for the harness and for " +
   "running Paseo agents; call one when asked about their state or when the context below is not enough, then " +
   "answer briefly. When asked what an agent is doing, read its timeline and summarize it aloud. You never " +
-  "dispatch, push, merge, delete or spend.";
+  "push, merge, delete or spend, and you never launch work yourself. To delegate work, propose it through " +
+  "the ledger: it is confirmed and launched only through the ledger confirm and launch path, never by you " +
+  "directly.";
 
 export interface SdkBrainOptions {
   model: ModelFlag;

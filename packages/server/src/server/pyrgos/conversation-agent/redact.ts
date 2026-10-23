@@ -10,7 +10,7 @@ const PATTERNS: Array<[RegExp, string]> = [
     /(--?[A-Za-z0-9_-]*(?:pass|pwd|secret|token|key|auth|credential)[A-Za-z0-9_-]*[=\s]+)(\S+)/gi,
     "$1[redacted]",
   ],
-  [/[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/g, "[url-credentials]@"],
+  [/[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/]+@/g, "[url-credentials]@"],
   [
     /\b(?:lin_api_|lin_oauth_|sk-ant-|sk-|ghp_|gho_|ghu_|ghs_|github_pat_|xox[bp]-|gsk_)[A-Za-z0-9_-]{8,}/g,
     "[redacted]",

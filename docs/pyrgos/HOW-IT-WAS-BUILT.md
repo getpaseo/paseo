@@ -26,6 +26,8 @@ A formal log of the Pyrgos additions to this fork, in build order. Each entry sa
 
 **Review fixes, round 5 (Codex; Claude fixed):** (1) `close()` now marks the agent closed first, so a transcript queued behind the interrupted turn cannot start a new one on a closing brain. (2) `SdkBrain` drops its session when `iterator.next()` throws, so the next turn starts a fresh one. (3) `search` skips a file whose read fails. Non-blocking: `..notes.md` no longer counts as an escape from the root; the markdown cleaner keeps `_` and `*` inside identifiers. **Status:** verified by new tests for each (44 pass, lint and typecheck clean).
 
+**Review fixes, round 6 (Codex; Claude fixed):** (1) the system prompt said the brain never dispatches, which contradicted the demo's delegate action; it now says delegation is proposed through the ledger and confirmed and launched only on the ledger's confirm and launch path. (2) URL credentials whose password contained `@` left part of the password and host visible; the pattern now runs to the last `@` before the path. (3) `read_file` now also denies `.aws/*`, `.git/*`, `.kube/config` and `.config/gh/hosts.yml`, beside the existing `.ssh` and `.gnupg`. **Status:** verified by new tests (46 pass, lint and typecheck clean).
+
 ## Open questions
 
 - Warm-turn time to first spoken word on opus (target under 2 s) is not yet measured.
