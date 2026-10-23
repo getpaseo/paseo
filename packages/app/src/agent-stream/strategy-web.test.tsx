@@ -179,6 +179,66 @@ describe("createWebStreamStrategy", () => {
     expect(rowRenderCount.mock.calls.length).toBeLessThanOrEqual(historyVirtualized.length);
   });
 
+  it("settles row measurement when two history rows share an id", () => {
+    const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const renderRow = (rowItem: StreamItem) => <MeasuredTestRow item={rowItem} />;
+    const duplicate = userMessage(2);
+    const historyVirtualized = [
+      userMessage(0),
+      userMessage(1),
+      { ...duplicate, text: "grown" },
+      duplicate,
+      userMessage(3),
+    ];
+    const input: StreamRenderInput = {
+      agentId: "agent",
+      segments: { historyVirtualized, historyMounted: [], liveHead: [] },
+      boundary: { hasVirtualizedHistory: true, hasMountedHistory: false, hasLiveHead: false },
+      renderers: {
+        renderHistoryVirtualizedRow: renderRow,
+        renderHistoryMountedRow: renderRow,
+        renderLiveHeadRow: renderRow,
+        renderLiveAuxiliary: () => null,
+      },
+      listEmptyComponent: null,
+      viewportRef: React.createRef<StreamViewportHandle>(),
+      routeBottomAnchorRequest: null,
+      isAuthoritativeHistoryReady: true,
+      onNearBottomChange: () => {},
+      onNearHistoryStart: () => true,
+      isLoadingOlderHistory: false,
+      hasOlderHistory: false,
+      olderHistoryProgressKey: null,
+      scrollEnabled: true,
+      listStyle: null,
+      baseListContentContainerStyle: null,
+      forwardListContentContainerStyle: null,
+      contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
+    };
+
+    // Before the fix, this render aborted with "Maximum update depth exceeded".
+    act(() => root?.render(strategy.render(input)));
+
+    const rows = [...container.querySelectorAll<HTMLElement>("[data-history-row-id]")];
+    expect(rows.map((row) => row.dataset.historyRowId)).toEqual([
+      "message-0",
+      "message-1",
+      "message-2",
+      "message-2",
+      "message-3",
+    ]);
+    expect(rows.map((row) => row.style.transform)).toEqual([
+      "translateY(0px)",
+      "translateY(24px)",
+      "translateY(48px)",
+      "translateY(168px)",
+      "translateY(192px)",
+    ]);
+  });
+
   it("retains a row's DOM and local state when recent history becomes virtualized", () => {
     const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
     container = document.createElement("div");
