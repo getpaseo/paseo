@@ -14,9 +14,8 @@ async function openMarkdownPreview(page: Page) {
   await openFileFromExplorer(page, "README.md");
   await expectFileTabOpen(page, "README.md");
   await page
-    .getByTestId("file-panel-switcher")
-    .filter({ visible: true })
-    .getByRole("button", { name: "Markdown", exact: true })
+    .getByTestId("file-panel-bar")
+    .getByRole("button", { name: "Preview", exact: true })
     .click();
   await ensureWorkspaceAgentPaneVisible(page);
 }

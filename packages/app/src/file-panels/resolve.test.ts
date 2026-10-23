@@ -70,6 +70,17 @@ describe("resolveFilePanel", () => {
     });
     expect(resolve({ file: { ...file, kind: "binary" }, candidates: [every] }).panel).toBeNull();
   });
+  it("offers a built-in panel claiming every file only when no other built-in claims the file", () => {
+    const every: FilePanelCandidate = { ...markdown, id: "builtin:source", files: "all" };
+    expect(resolve({ candidates: [markdown, alternative, every] }).candidates).toEqual([
+      markdown,
+      alternative,
+    ]);
+    expect(resolve({ candidates: [alternative, every] }).candidates).toEqual([alternative, every]);
+    expect(
+      resolve({ file: { ...file, kind: "binary" }, candidates: [markdown, every] }).candidates,
+    ).toEqual([]);
+  });
   it("passes over a built-in panel for another kind of file, even with an association", () => {
     expect(
       resolve({ file: { ...file, kind: "binary" }, associations: { "ext:md": markdown.id } }).panel,

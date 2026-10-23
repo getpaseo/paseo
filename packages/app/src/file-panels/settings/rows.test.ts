@@ -39,12 +39,12 @@ describe("buildFilePanelSettingsRows", () => {
     expect(rows(catalog())).toEqual([]);
   });
 
-  it("lists a key a plugin panel claims, built-in first and Source last", () => {
+  it("lists a key a plugin panel claims with the built-in first and no Source", () => {
     const plugin = richMarkdown("host-a");
     expect(rows(catalog(plugin))).toEqual([
       {
         selectorKey: "ext:md",
-        candidates: [builtinMarkdown, plugin, source],
+        candidates: [builtinMarkdown, plugin],
         associatedPanelId: null,
       },
     ]);
@@ -77,16 +77,22 @@ describe("buildFilePanelSettingsRows", () => {
   it("offers a panel installed on several hosts once, as the first host has it", () => {
     const first = richMarkdown("host-a");
     const [row] = rows(catalog(first, richMarkdown("host-b")));
-    expect(row?.candidates).toEqual([builtinMarkdown, first, source]);
+    expect(row?.candidates).toEqual([builtinMarkdown, first]);
   });
 
   it("keeps a remembered key that only built-in panels claim", () => {
     expect(rows(catalog(), { "ext:markdown": source.id })).toEqual([
       {
         selectorKey: "ext:markdown",
-        candidates: [builtinMarkdown, source],
+        candidates: [builtinMarkdown],
         associatedPanelId: source.id,
       },
+    ]);
+  });
+
+  it("offers only Source on a text key no other panel claims", () => {
+    expect(rows(catalog(), { "ext:ts": source.id })).toEqual([
+      { selectorKey: "ext:ts", candidates: [source], associatedPanelId: source.id },
     ]);
   });
 
@@ -104,7 +110,7 @@ describe("buildFilePanelSettingsRows", () => {
     };
     const keys = rows(catalog(named)).map((row) => row.selectorKey);
     expect(keys).toEqual(["name:README.md"]);
-    expect(rows(catalog(named))[0]?.candidates).toEqual([builtinMarkdown, named, source]);
+    expect(rows(catalog(named))[0]?.candidates).toEqual([builtinMarkdown, named]);
   });
 
   it("orders extensions before filenames, each alphabetically", () => {

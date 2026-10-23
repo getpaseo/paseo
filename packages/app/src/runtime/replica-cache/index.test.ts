@@ -306,6 +306,37 @@ async function expectLegacyWorkspaceRefresh({
 }
 
 describe("ReplicaCache", () => {
+  it("preserves workspace sorting timestamps across cache reopen", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const baseline = directory();
+    const workspace = normalizeWorkspaceDescriptor({
+      ...workspacePayload(),
+      createdAt: "2026-07-18T08:00:00.000Z",
+      lastUserMessageAt: "2026-07-18T09:00:00.000Z",
+    });
+    baseline.workspaces.set(workspace.id, workspace);
+    commitDirectory(writer, SERVER_ID, baseline);
+    await writer.flush();
+    const reader = createCache(storage);
+    expect((await reader.readDirectory(SERVER_ID)).workspaces.get(workspace.id)).toEqual(workspace);
+    expect((await reader.readWorkspace(SERVER_ID, workspace.id))?.workspace).toEqual(workspace);
+  });
+
+  it.each(["createdAt", "lastUserMessageAt"])(
+    "refetches workspaces cached without %s",
+    async (field) => {
+      const cached = await cacheWithoutBackgroundVisibility();
+      const key = `${SERVER_ID}:workspace:workspace-1`;
+      const row = cached.storage.rows.get(key)!;
+      const payload = JSON.parse(row.payload);
+      payload.background = false;
+      delete payload[field];
+      cached.storage.rows.set(key, { ...row, payload: JSON.stringify(payload) });
+      await expectLegacyWorkspaceRefresh(cached);
+    },
+  );
+
   it.each([true, false, undefined])(
     "preserves background visibility (%s) when reopening a cached workspace",
     async (background) => {

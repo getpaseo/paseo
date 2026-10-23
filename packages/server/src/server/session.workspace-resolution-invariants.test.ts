@@ -1,3 +1,4 @@
+import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { createAgentMessageDeliveryStub } from "./test-utils/session-stubs.js";
 import {
   createMessageReceiptsStub,
@@ -79,7 +80,6 @@ function createHarness(input: {
         mainRepoRoot: null,
       };
     },
-    peekSnapshot: () => null,
   });
 
   const emitted: SessionOutboundMessage[] = [];
@@ -93,6 +93,7 @@ function createHarness(input: {
   };
 
   const session = new Session({
+    workspaceRuntimeStore: createWorkspaceRuntimeStore(),
     messageReceipts: createMessageReceiptsStub(),
     agentMessages: createAgentMessageDeliveryStub(),
     creationService: createTestCreationService(),

@@ -278,6 +278,12 @@ export const PersistedConfigSchema = z
         relay: z
           .object({
             enabled: z.boolean().optional(),
+            requireProtectedSecurity: z
+              .boolean()
+              .optional()
+              .describe(
+                "Admit only relay clients that negotiate protected endpoint security (replay protection). Defaults to false; older clients still connect while it is off.",
+              ),
             endpoint: z.string().optional(),
             publicEndpoint: z.string().optional(),
             useTls: z.boolean().optional(),

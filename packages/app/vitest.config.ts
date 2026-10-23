@@ -121,10 +121,32 @@ export default defineConfig({
   // so it scans the native files and dies on imports react-native-web has no answer for.
   // Unbundled, the same imports go through the resolver below and land on the web files.
   optimizeDeps: {
+    // Expo's public navigation barrel also loads screens. Match Metro's web-first resolution
+    // while optimizing its CJS dependencies, including DebugContainer.web.js.
+    esbuildOptions: {
+      resolveExtensions: [
+        ".web.js",
+        ".web.jsx",
+        ".web.ts",
+        ".web.tsx",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".json",
+      ],
+    },
     // Bundle the CJS dependencies of the excluded gesture-handler package for the browser.
     include: [
       "react/jsx-runtime",
       "react/compiler-runtime",
+      "expo-router/react-navigation",
+      "@testing-library/react",
+      "@tanstack/react-query",
+      "react-i18next",
+      "i18next",
+      "@marijn/find-cluster-break",
+      "tiny-invariant",
       "react-native-gesture-handler > hoist-non-react-statics",
       "react-native-gesture-handler > invariant",
     ],

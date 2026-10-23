@@ -71,10 +71,6 @@ async function captureWideAndCompact(
   await ready();
 }
 
-function filePanelSwitcher(page: Page) {
-  return page.getByTestId("file-panel-switcher").filter({ visible: true });
-}
-
 /** Turns on vim keybindings without discarding settings the test writes later. */
 async function enableVimKeybindings(page: Page) {
   await page.addInitScript(() => {
@@ -94,15 +90,29 @@ async function replaceMarkdown(page: Page, text: string) {
   await page.getByRole("textbox", { name: "Rich Markdown editor", exact: true }).fill(text);
 }
 
-async function selectPanel(page: Page, title: string) {
-  await filePanelSwitcher(page).getByRole("button", { name: title, exact: true }).click();
+async function openWithFromTabMenu(page: Page, name: string, option: string) {
+  await page.getByTestId(`workspace-tab-file_${name}`).first().click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Open with…" }).hover();
+  await page.getByRole("menuitem", { name: option }).click();
 }
 
-async function expectPanels(page: Page, titles: string[]) {
-  for (const title of titles) {
-    await expect(
-      filePanelSwitcher(page).getByRole("button", { name: title, exact: true }),
-    ).toBeInViewport({ ratio: 1 });
+async function selectFileView(page: Page, view: "Preview" | "Source") {
+  const option = page
+    .getByTestId("file-preview-mode")
+    .filter({ visible: true })
+    .getByRole("button", { name: view, exact: true });
+  await option.click();
+  await expect(option).toHaveAttribute("aria-selected", "true");
+}
+
+async function rememberMarkdownViewAcrossReload(page: Page, view: "Preview" | "Source") {
+  const button = page.getByRole("button", { name: `Rich Markdown ${view}`, exact: true });
+  await button.click();
+  await page.reload();
+  if (view === "Source") {
+    await expectMarkdownEditor(page, "Edited by Rich Markdown");
+  } else {
+    await expect(page.getByRole("heading", { name: "Edited by Rich Markdown" })).toBeVisible();
   }
 }
 
@@ -126,9 +136,6 @@ async function expectMarkdownEditor(page: Page, text: string) {
   await expect(editor).toBeVisible();
   await expect(editor).toContainText(text);
   await expect(editor).toBeInViewport({ ratio: 1 });
-  // Side by side on a wide screen; on a phone three panels do not fit, so the switcher is a menu.
-  await expect(filePanelSwitcher(page)).toContainText("Rich Markdown");
-  await expect(filePanelSwitcher(page)).toBeInViewport({ ratio: 1 });
 }
 
 test("directory examples mount the PDF frame and write Markdown through the file handle", async ({
@@ -197,7 +204,7 @@ test("directory examples mount the PDF frame and write Markdown through the file
     await expect(
       page.getByRole("radio", { name: "Rich Markdown — markdown-panel", exact: true }),
     ).toBeVisible();
-    await expect(page.getByRole("radio", { name: "Source — Paseo", exact: true })).toBeVisible();
+    await expect(page.getByRole("radio")).toHaveCount(2);
     await captureWideAndCompact(page, testInfo, "markdown-example-picker", async () => {
       // The previous layout's picker animates out (the sheet slides down, the dialog fades), so
       // both pickers are mounted for a moment after a resize.
@@ -220,32 +227,26 @@ test("directory examples mount the PDF frame and write Markdown through the file
       .poll(() => readFile(path.join(workspace.repoPath, "notes.md"), "utf8"))
       .toBe("# Edited by Rich Markdown\n\nSaved by the panel.\n");
     await expect(page.getByTestId("workspace-tab-modified-file_notes.md")).toBeHidden();
-    await expectPanels(page, ["Rich Markdown", "Markdown", "Source"]);
     await captureWideAndCompact(page, testInfo, "markdown-example-rich-markdown", async () => {
       await expectMarkdownEditor(page, "Edited by Rich Markdown");
     });
 
-    // Source is Paseo's editor; its cursor and vim mode are in its own status row.
-    await selectPanel(page, "Source");
+    await rememberMarkdownViewAcrossReload(page, "Preview");
+    await rememberMarkdownViewAcrossReload(page, "Source");
+
+    // "Open with…" switches to Paseo's Markdown panel; its Source view is the editor, with the
+    // cursor and vim mode in the panel's toolbar.
+    await openWithFromTabMenu(page, "notes.md", "Markdown — Paseo");
+    await expect(page.getByRole("heading", { name: "Edited by Rich Markdown" })).toBeVisible();
+    await selectFileView(page, "Source");
     const source = page.getByTestId("file-source-editor").filter({ visible: true });
     await expect(source.locator(".cm-content")).toContainText("Edited by Rich Markdown");
     await source.locator(".cm-line").nth(2).click();
-    const bar = page.getByTestId("file-source-status").filter({ visible: true });
+    const bar = page.getByTestId("file-panel-bar").filter({ visible: true });
     await expect(bar.getByText("NORMAL", { exact: true })).toBeVisible();
     await expect(bar.getByText(/^Ln 3, Col \d+$/)).toBeVisible();
     await capture(page, testInfo, "markdown-example-source-wide");
-    // The phone layout mounts the tab anew, so it opens the remembered panel; its menu offers Source.
-    await page.setViewportSize(COMPACT);
-    await expect(filePanelSwitcher(page)).toHaveText("Rich Markdown");
-    await filePanelSwitcher(page).click();
-    await page.getByRole("menuitem", { name: "Source", exact: true }).click();
-    await expect(filePanelSwitcher(page)).toHaveText("Source");
-    await source.locator(".cm-line").nth(2).click();
-    await expect(bar.getByText("NORMAL", { exact: true })).toBeInViewport();
-    await expect(bar.getByText(/^Ln 3, Col \d+$/)).toBeInViewport();
-    await capture(page, testInfo, "markdown-example-source-compact");
-    await page.setViewportSize(WIDE);
-    await selectPanel(page, "Rich Markdown");
+    await openWithFromTabMenu(page, "notes.md", "Rich Markdown — markdown-panel");
     await writeFile(path.join(workspace.repoPath, "notes.md"), "# External update\n");
     await expect(page.getByRole("textbox", { name: "Rich Markdown editor" })).toHaveText(
       "# External update",
@@ -266,7 +267,6 @@ test("directory examples mount the PDF frame and write Markdown through the file
     await expect(page.getByText("Open .md files with", { exact: true })).toBeHidden();
     await page.setViewportSize(COMPACT);
     await expectMarkdownEditor(page, "Remembered panel");
-    await expect(filePanelSwitcher(page)).toHaveText("Rich Markdown");
   } finally {
     await client.removePlugin("pdf-panel");
     await client.removePlugin("markdown-panel");

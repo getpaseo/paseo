@@ -616,6 +616,9 @@ export const ko: TranslationResources = {
       hostDisconnected: "호스트가 연결되어 있지 않습니다",
       updateHost: "기본 터미널 렌더러를 사용하도록 호스트를 업데이트합니다.",
       unableToSubscribe: "터미널을 구독할 수 없습니다",
+      fileUploaded: "파일을 업로드했습니다",
+      pasteFileFailed: "파일을 붙여넣지 못했습니다: {{reason}}",
+      uploadingFile: "파일 업로드 중…",
     },
     sheet: {
       openAsTab: "탭으로 열기",
@@ -1170,6 +1173,12 @@ export const ko: TranslationResources = {
       showBackground: "백그라운드 표시",
       trigger: "표시 설정",
       heading: "표시",
+      sort: {
+        label: "정렬",
+        created: "생성일",
+        lastPrompt: "마지막 프롬프트",
+        updateHost: "작업 공간을 정렬하려면 호스트를 업데이트하세요",
+      },
       grouping: {
         label: "그룹화",
         project: "프로젝트",
@@ -1938,7 +1947,6 @@ export const ko: TranslationResources = {
         alwaysUseExtension: ".{{extension}}에 항상 사용",
         alwaysUseFilename: "{{filename}}에 항상 사용",
         option: "{{title}} — {{owner}}",
-        actions: "파일 작업",
         builtin: {
           owner: "Paseo",
           markdown: "Markdown",
@@ -1957,6 +1965,8 @@ export const ko: TranslationResources = {
       notFound: "파일을 찾을 수 없습니다",
       failedToLoadPreview: "파일 미리보기를 불러오지 못했습니다",
       editor: {
+        preview: "미리보기",
+        source: "소스",
         fileSize: "파일 크기 {{size}}",
         lines: "{{count}} 라인",
         editorStatus: "편집기 상태 {{status}}",
@@ -2226,7 +2236,7 @@ export const ko: TranslationResources = {
       automaticHint: "Paseo가 사용 가능한 빠른 모델을 선택합니다",
       preferredHint: "Paseo에서 사용할 모델을 선택하세요",
       model: "모델",
-      fallbackHint: "사용할 수 없으면 Paseo가 다른 사용 가능한 모델을 사용합니다",
+      modelHint: "이 모델만 사용합니다. 실패해도 Paseo는 다른 모델을 시도하지 않습니다",
       docs: "문서",
       saveError: "메타데이터 생성을 업데이트할 수 없습니다",
     },
@@ -2303,11 +2313,6 @@ export const ko: TranslationResources = {
     },
     diagnostics: {
       title: "진단",
-      legacyTerminalRenderer: {
-        label: "레거시 터미널 렌더러 사용",
-        description: "터미널을 다시 열 때 이전 WebView 터미널을 사용합니다.",
-        accessibilityLabel: "레거시 터미널 렌더러 사용",
-      },
       testAudio: "오디오 테스트",
       playTest: "테스트 재생",
       playing: "재생 중...",
