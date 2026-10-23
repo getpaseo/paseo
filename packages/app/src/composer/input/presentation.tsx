@@ -3,19 +3,31 @@ import { View, type ViewProps } from "react-native";
 import { Maximize2, Minimize2 } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { ComposerFullscreenBody, ComposerFullscreenFooter } from "@/composer/dock";
+import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { isWeb } from "@/constants/platform";
+import { ICON_SIZE } from "@/styles/theme";
 import { StyleSheet } from "react-native-unistyles";
-import { ComposerFullscreenHost } from "./fullscreen-host";
+import { useComposerFullscreenExit } from "./fullscreen-exit";
+import { resolveGlyphRailOffset } from "./state";
+
+const CONTROL_SIZE = 28;
+const FULLSCREEN_GLYPH_SIZE = ICON_SIZE.md;
 
 function keepEditorFocused(event: import("react-native").PointerEvent) {
   if (isWeb) event.preventDefault();
 }
 
-/** Both presentations receive the same editing surface and send capability. */
+/**
+ * One tree for both layout modes. The editing surface keeps its position so the
+ * mounted editor, its native buffer, selection, and focus survive every toggle;
+ * only the chrome around it changes. Fullscreen shows exit top right and Send
+ * bottom right, both on the rail the inline Send button uses; a send error sits
+ * in the same footer as Send.
+ */
 export function ComposerInputPresentation({
   fullscreen,
-  iconSize,
-  active,
+  sendIconSize,
   surface,
   toolbar,
   send,
@@ -30,8 +42,7 @@ export function ComposerInputPresentation({
   overlay,
 }: {
   fullscreen: boolean;
-  iconSize: number;
-  active: boolean;
+  sendIconSize: number;
   surface: ReactNode;
   toolbar: ReactNode;
   send: ReactNode;
@@ -46,55 +57,33 @@ export function ComposerInputPresentation({
   overlay: ReactNode;
 }) {
   const { t } = useTranslation();
-  // ArrowUp ends at x19; the fullscreen glyphs end at x21 in Lucide's 24px viewBox.
-  // Compensate for that difference to align visible ink with Send, not just boxes.
-  const railAdjustment = iconSize / 12;
+  // A retained tab keeps its fullscreen editor mounted while hidden; the global exit
+  // action (Escape, hardware back) belongs only to the pane the user is in.
+  const { isActiveComposer } = useComposerKeyboardScope();
+  const exitScopeRef = useComposerFullscreenExit(fullscreen && isActiveComposer, onExit);
+  const railOffset = resolveGlyphRailOffset({
+    controlSize: CONTROL_SIZE,
+    sendIconSize,
+    glyphIconSize: FULLSCREEN_GLYPH_SIZE,
+  });
   const maximizeIcon = useCallback(
-    (color: string) => <Maximize2 color={color} size={iconSize} />,
-    [iconSize],
+    (color: string) => <Maximize2 color={color} size={FULLSCREEN_GLYPH_SIZE} />,
+    [],
   );
   const minimizeIcon = useCallback(
-    (color: string) => <Minimize2 color={color} size={iconSize} />,
-    [iconSize],
+    (color: string) => <Minimize2 color={color} size={FULLSCREEN_GLYPH_SIZE} />,
+    [],
   );
-  const enterStyle = useMemo(
-    () => [styles.fullscreenButton, { right: -6 + railAdjustment }],
-    [railAdjustment],
-  );
-  const exitStyle = useMemo(
-    () => [styles.iconButton, { marginRight: railAdjustment }],
-    [railAdjustment],
-  );
-  if (!fullscreen)
-    return (
-      <>
-        <View ref={inputWrapperRef} style={inputWrapperStyle} pointerEvents={inputPointerEvents}>
-          {attachmentSlot}
-          <View style={styles.inlineTextSurface}>
-            {surface}
-            {showFullscreenButton ? (
-              <Button
-                variant="ghost"
-                size="xs"
-                accessibilityLabel={t("composer.input.fullscreen")}
-                leftIcon={maximizeIcon}
-                onPointerDown={keepEditorFocused}
-                onPress={onEnter}
-                style={enterStyle}
-                hitSlop={8}
-              >
-                {null}
-              </Button>
-            ) : null}
-          </View>
-          {toolbar}
-        </View>
-        {overlay}
-      </>
-    );
+  // The toolbar row bleeds 6px past the input padding; the inline glyph sits on that edge.
+  const enterStyle = useMemo(() => [styles.enterButton, { right: -6 + railOffset }], [railOffset]);
+  const exitStyle = useMemo(() => [styles.iconButton, { marginRight: railOffset }], [railOffset]);
   return (
-    <ComposerFullscreenHost onExit={onExit} active={active}>
-      <View style={styles.fullscreen} testID="composer-fullscreen">
+    <View
+      ref={exitScopeRef}
+      style={fullscreen ? styles.fullscreen : styles.inline}
+      testID={fullscreen ? "composer-fullscreen" : undefined}
+    >
+      {fullscreen ? (
         <View style={styles.exitRow}>
           <Button
             variant="ghost"
@@ -109,28 +98,60 @@ export function ComposerInputPresentation({
             {null}
           </Button>
         </View>
-        {surface}
-        {error}
-        <View style={styles.sendRow}>{send}</View>
-      </View>
-    </ComposerFullscreenHost>
+      ) : null}
+      <ComposerFullscreenBody fullscreen={fullscreen}>
+        <View
+          ref={inputWrapperRef}
+          style={fullscreen ? styles.fullscreenInputWrapper : inputWrapperStyle}
+          pointerEvents={inputPointerEvents}
+        >
+          {fullscreen ? null : attachmentSlot}
+          <View style={fullscreen ? styles.fullscreenTextSurface : styles.inlineTextSurface}>
+            {surface}
+            {showFullscreenButton && !fullscreen ? (
+              <Button
+                variant="ghost"
+                size="xs"
+                accessibilityLabel={t("composer.input.fullscreen")}
+                leftIcon={maximizeIcon}
+                onPointerDown={keepEditorFocused}
+                onPress={onEnter}
+                style={enterStyle}
+                hitSlop={8}
+              >
+                {null}
+              </Button>
+            ) : null}
+          </View>
+          {fullscreen ? null : toolbar}
+        </View>
+      </ComposerFullscreenBody>
+      {fullscreen ? (
+        <ComposerFullscreenFooter style={styles.footer}>
+          {error}
+          <View style={styles.sendRow}>{send}</View>
+        </ComposerFullscreenFooter>
+      ) : null}
+      {overlay}
+    </View>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
+  inline: { flexShrink: 1, position: "relative" },
   inlineTextSurface: { flexShrink: 1, position: "relative" },
   iconButton: {
-    width: 28,
-    height: 28,
+    width: CONTROL_SIZE,
+    height: CONTROL_SIZE,
     padding: 0,
     borderWidth: 0,
     borderRadius: theme.borderRadius.full,
   },
-  fullscreenButton: {
+  enterButton: {
     position: "absolute",
     top: 0,
-    width: 28,
-    height: 28,
+    width: CONTROL_SIZE,
+    height: CONTROL_SIZE,
     padding: 0,
     borderWidth: 0,
     borderRadius: theme.borderRadius.full,
@@ -141,6 +162,10 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[4],
     gap: theme.spacing[3],
   },
+  fullscreenInputWrapper: { flex: 1, minHeight: 0 },
+  fullscreenTextSurface: { flex: 1, minHeight: 0 },
   exitRow: { alignItems: "flex-end", flexShrink: 0 },
-  sendRow: { flexShrink: 0, alignItems: "flex-end" },
+  // The send error rides the keyboard with Send; below the body it would sit behind it.
+  footer: { flexShrink: 0, gap: theme.spacing[3] },
+  sendRow: { alignItems: "flex-end" },
 }));

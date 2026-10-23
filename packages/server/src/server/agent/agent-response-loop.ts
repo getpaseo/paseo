@@ -475,7 +475,7 @@ export async function generateStructuredAgentResponseWithFallback<T>(
       });
       logger?.warn(
         { err: error, provider: candidate.provider, model: candidate.model, schemaName },
-        "Structured generation: provider failed, trying next",
+        "Structured generation: provider failed",
       );
     }
   }

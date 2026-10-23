@@ -1,6 +1,14 @@
 import { router, usePathname } from "expo-router";
 import { CalendarClock, History, Plus, Search } from "lucide-react-native";
-import { memo, useCallback, useMemo, useRef, useState, type ComponentType } from "react";
+import {
+  memo,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
   ScrollView,
@@ -48,17 +56,24 @@ interface SidebarNavRowsProps extends SidebarNavRowProps {
   /** Style for the group wrapper, which the sidebar owns. */
   style?: StyleProp<ViewStyle>;
   footerHeight: number | null;
+  /** Sits at the trailing edge of the group's header, which stays visible when the rows fold or scroll. */
+  headerTrailing?: ReactNode;
 }
 
 /**
  * Top-level sidebar navigation, ordered and filtered by the user's
  * `sidebarNavItems` preference. Renders nothing — not even the bordered group
- * wrapper — when every item is hidden.
+ * wrapper — when every item is hidden and there is no `headerTrailing`.
  *
  * The group folds down to its header on demand and its rows scroll inside a cap,
  * so plugin contributions never push the workspace list off the sidebar.
  */
-export function SidebarNavRows({ style, onBeforeNavigate, footerHeight }: SidebarNavRowsProps) {
+export function SidebarNavRows({
+  style,
+  onBeforeNavigate,
+  footerHeight,
+  headerTrailing,
+}: SidebarNavRowsProps) {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
   const rowHeight = isCompact ? density.rowHeight.xs : density.rowHeight.md;
@@ -107,7 +122,8 @@ export function SidebarNavRows({ style, onBeforeNavigate, footerHeight }: Sideba
     [navigationRowHeight, resolvedFooterHeight, rowHeight, setStoredHeight, viewportHeight],
   );
 
-  if (visibleItems.length === 0) return null;
+  if (visibleItems.length === 0 && !headerTrailing) return null;
+  const showRows = !collapsed && visibleItems.length > 0;
 
   return (
     <View ref={groupRef} collapsable={false} style={style} testID="sidebar-nav-group">
@@ -116,15 +132,17 @@ export function SidebarNavRows({ style, onBeforeNavigate, footerHeight }: Sideba
         collapsed={collapsed}
         onToggle={toggleCollapsed}
         testID="sidebar-nav-group-header"
-      />
-      {collapsed ? null : (
+      >
+        {headerTrailing}
+      </SidebarSectionHeader>
+      {showRows ? (
         <SidebarNavResizeHandle
           height={measuredHeight ?? height}
           onPreviewHeight={setDraggedHeight}
           onCommitHeight={commitHeight}
         />
-      )}
-      {collapsed ? null : (
+      ) : null}
+      {showRows ? (
         <ScrollView
           style={rowsStyle}
           onLayout={handleRowsLayout}
@@ -148,7 +166,7 @@ export function SidebarNavRows({ style, onBeforeNavigate, footerHeight }: Sideba
             return <Row key={item.key} onBeforeNavigate={onBeforeNavigate} />;
           })}
         </ScrollView>
-      )}
+      ) : null}
     </View>
   );
 }
@@ -220,14 +238,13 @@ function SidebarHistoryRow({ onBeforeNavigate }: SidebarNavRowProps) {
   );
 }
 
-function SidebarSearchRow({ onBeforeNavigate }: SidebarNavRowProps) {
+function SidebarSearchRow() {
   const { t } = useTranslation();
   const shortcutKeys = useShortcutKeys(builtinSidebarNavShortcutAction("search"));
   const setCommandCenterOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
   const handlePress = useCallback(() => {
-    onBeforeNavigate?.();
     setCommandCenterOpen(true);
-  }, [onBeforeNavigate, setCommandCenterOpen]);
+  }, [setCommandCenterOpen]);
 
   return (
     <SidebarHeaderRow

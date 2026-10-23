@@ -86,6 +86,12 @@ buildNpmPackage {
     # Expo's web build pulls in some pre-bundled assets; ensure it doesn't try
     # to phone home during the build.
     CI = "1";
+    # Metro's worker runs out of heap transforming the generated
+    # ws-outbound.aot.js validator (about 12 MB). Node's default heap limit is
+    # 2 GB on machines with less than 15 GB of memory, such as GitHub's 7 GB
+    # macOS runners, and 4 GB above that. 4096 MB is that 4 GB ceiling, so this
+    # only raises the limit on smaller builders, like desktop-release.yml does.
+    NODE_OPTIONS = "--max-old-space-size=4096";
   };
 
   buildPhase = ''
@@ -251,7 +257,7 @@ buildNpmPackage {
   meta = {
     description = "Paseo desktop app (Electron wrapper)";
     homepage = "https://github.com/getpaseo/paseo";
-    license = lib.licenses.agpl3Plus;
+    license = lib.licenses.asl20;
     mainProgram = "paseo-desktop";
     platforms = lib.platforms.linux ++ lib.platforms.darwin;
   };

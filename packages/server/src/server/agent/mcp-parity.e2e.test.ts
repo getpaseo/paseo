@@ -314,6 +314,124 @@ afterAll(async () => {
 
 describe("Suite A: Core Fixes", () => {
   test.each([
+    { relationship: "detached", reparent: false, notifications: 1 },
+    { relationship: "subagent", reparent: false, notifications: 1 },
+    { relationship: "subagent", reparent: true, notifications: 0 },
+  ] as const)(
+    "create_agent $relationship (reparent=$reparent) sends $notifications finish notification(s)",
+    async ({ relationship, reparent, notifications }) => {
+      let releaseChild!: () => void;
+      let childReachedGate!: () => void;
+      const heldTurn = new Promise<void>((resolve) => {
+        releaseChild = resolve;
+      });
+      const childAtGate = new Promise<void>((resolve) => {
+        childReachedGate = resolve;
+      });
+      const callerPrompts: string[] = [];
+      const daemon = await createTestPaseoDaemon({
+        agentClients: createTestAgentClients({
+          onStartTurn(prompt, config) {
+            if (config.title === "Notification caller" && typeof prompt === "string")
+              callerPrompts.push(prompt);
+          },
+          async beforeTurnComplete(prompt) {
+            if (
+              typeof prompt === "string" &&
+              parseAgentMessage(prompt).text === "Hold notification child"
+            ) {
+              childReachedGate();
+              await heldTurn;
+            }
+          },
+        }),
+      });
+      const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+      let mcp: McpClient | undefined;
+      try {
+        await client.connect();
+        const caller = await client.createAgent({
+          provider: "claude",
+          cwd: daemon.paseoHome,
+          title: "Notification caller",
+          modeId: "bypassPermissions",
+        });
+        mcp = await createMcpClient(
+          buildExpectedAgentMcpUrl({
+            host: "127.0.0.1",
+            port: daemon.port,
+            agentId: caller.id,
+          }),
+        );
+        const created = await callToolStructured(mcp, "create_agent", {
+          relationship: { kind: relationship },
+          workspace: { kind: "current" },
+          provider: "codex/gpt-5.4",
+          title: "Notification child",
+          initialPrompt: "Hold notification child",
+          notifyOnFinish: true,
+          settings: { modeId: "full-access" },
+        });
+        const childId = str(created.agentId);
+        await childAtGate;
+        expect(daemon.daemon.agentManager.getAgent(childId)?.labels?.[PARENT_AGENT_ID_LABEL]).toBe(
+          relationship === "subagent" ? caller.id : undefined,
+        );
+        if (reparent) {
+          const other = await client.createAgent({
+            provider: "claude",
+            cwd: daemon.paseoHome,
+            title: "Other parent",
+            modeId: "bypassPermissions",
+          });
+          await daemon.daemon.agentManager.setLabels(childId, {
+            [PARENT_AGENT_ID_LABEL]: other.id,
+          });
+        }
+        releaseChild();
+        await waitFor({
+          timeoutMs: 10000,
+          label: "child completion",
+          check: () =>
+            daemon.daemon.agentManager.getAgent(childId)?.lifecycle === "idle" ? true : null,
+        });
+        if (notifications) {
+          await waitFor({
+            timeoutMs: 10000,
+            label: "caller finish notification",
+            check: () => (callerPrompts.length > 0 ? true : null),
+          });
+          expect(parseAgentMessage(callerPrompts[0]).source).toEqual({
+            kind: "agent-notification",
+            agentId: childId,
+            title: "Notification child",
+            event: "finished",
+          });
+          expect(parseAgentMessage(callerPrompts[0]).text).toContain(
+            "Notification child) finished.",
+          );
+          await waitFor({
+            timeoutMs: 10000,
+            label: "caller notification drained",
+            check: () =>
+              daemon.daemon.agentManager.getAgent(caller.id)?.lifecycle === "idle" ? true : null,
+          });
+        } else {
+          // Allow the terminal event's asynchronous storage reads and notification dispatch to drain.
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        expect(callerPrompts).toHaveLength(notifications);
+      } finally {
+        releaseChild();
+        await mcp?.close();
+        await client.close();
+        await daemon.close();
+      }
+    },
+    30000,
+  );
+
+  test.each([
     ["Stop", "cancelAgent"],
     ["Reload", "refreshAgent"],
   ] as const)(

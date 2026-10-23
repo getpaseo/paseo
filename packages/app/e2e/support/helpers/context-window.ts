@@ -37,7 +37,7 @@ export async function hoverContextWindowMeter(page: Page, name = METER_NAME): Pr
   await page.getByRole("img", { name, exact: true }).hover({ timeout: 30_000 });
   const card = contextWindowDetails(page);
   await expect(card).toBeVisible();
-  await expect(card).toBeInViewport();
+  await expect(card).toBeInViewport({ ratio: 1 });
   return card;
 }
 

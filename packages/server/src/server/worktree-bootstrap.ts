@@ -1,4 +1,3 @@
-import { v4 as uuidv4 } from "uuid";
 import type { Logger } from "pino";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { TerminalSession } from "../terminal/terminal.js";
@@ -9,9 +8,7 @@ import {
   paseoConfigParseError,
   processCarriageReturns,
   readPaseoConfig,
-  resolveWorktreeRuntimeEnv,
   runWorktreeSetupCommands,
-  WorktreeSetupError,
   type WorktreeConfig,
   type WorktreeSetupCommandResult,
   type WorktreeRuntimeEnv,
@@ -19,7 +16,7 @@ import {
 import type { ServiceProxySubsystem } from "./service-proxy.js";
 import { allocateWorkspaceServicePort } from "./workspace-service-port-allocator.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
-import type { AgentTimelineItem, ToolCallDetail } from "./agent/agent-sdk-types.js";
+import type { ToolCallDetail } from "./agent/agent-sdk-types.js";
 import {
   assertNoServiceEnvNameCollisions,
   buildWorkspaceServiceEnv,
@@ -31,28 +28,6 @@ import {
   refreshWorkspaceServicePort,
 } from "./workspace-service-port-registry.js";
 import type { PaseoServicePortAllocation } from "@getpaseo/protocol/paseo-config-schema";
-
-export interface WorktreeBootstrapTerminalResult {
-  name: string | null;
-  command: string;
-  status: "started" | "failed";
-  terminalId: string | null;
-  error: string | null;
-}
-
-export interface RunAsyncWorktreeBootstrapOptions {
-  agentId: string;
-  // Workspace the bootstrapped terminals belong to. Stamping it lets
-  // workspaceId-scoped archive tear these terminals down.
-  workspaceId: string;
-  worktree: WorktreeConfig;
-  workspaceCwd?: string;
-  shouldBootstrap?: boolean;
-  terminalManager: TerminalManager | null;
-  appendTimelineItem: (item: AgentTimelineItem) => Promise<boolean>;
-  emitLiveTimelineItem?: (item: AgentTimelineItem) => Promise<boolean>;
-  logger?: Logger;
-}
 
 const MAX_WORKTREE_SETUP_COMMAND_OUTPUT_BYTES = 64 * 1024;
 const WORKTREE_SETUP_TRUNCATION_MARKER = "\n...<output truncated in the middle>...\n";
@@ -170,10 +145,6 @@ function renderMiddleTruncationAccumulator(accumulator: MiddleTruncationAccumula
   };
 }
 
-function formatDurationMs(durationMs: number): string {
-  return `${(durationMs / 1000).toFixed(2)}s`;
-}
-
 function commandStatusFromResult(
   result: WorktreeSetupCommandResult,
 ): "running" | "completed" | "failed" {
@@ -181,46 +152,6 @@ function commandStatusFromResult(
     return "running";
   }
   return result.exitCode === 0 ? "completed" : "failed";
-}
-
-function buildWorktreeSetupLog(input: {
-  results: WorktreeSetupCommandResult[];
-  outputAccumulatorsByIndex?: Map<number, WorktreeSetupOutputAccumulator>;
-}): { log: string; truncated: boolean } {
-  const { results, outputAccumulatorsByIndex } = input;
-  if (results.length === 0) {
-    return {
-      log: "",
-      truncated: false,
-    };
-  }
-
-  const lines: string[] = [];
-  let anyTruncated = false;
-  const total = results.length;
-  for (const [index, result] of results.entries()) {
-    lines.push(`==> [${index + 1}/${total}] Running: ${result.command}`);
-    const output = buildWorktreeSetupCommandLog({
-      index: index + 1,
-      result,
-      outputAccumulatorsByIndex,
-    });
-    if (output.log.length > 0) {
-      lines.push(output.log.replace(/\n$/, ""));
-    }
-    if (output.truncated) {
-      anyTruncated = true;
-    }
-    if (result.exitCode !== null) {
-      lines.push(
-        `<== [${index + 1}/${total}] Exit ${result.exitCode} in ${formatDurationMs(result.durationMs)}`,
-      );
-    }
-  }
-  return {
-    log: lines.join("\n"),
-    truncated: anyTruncated,
-  };
 }
 
 function buildWorktreeSetupCommandLog(input: {
@@ -325,124 +256,15 @@ export function buildWorktreeSetupDetail(input: {
       ...(result.durationMs > 0 ? { durationMs: result.durationMs } : {}),
     };
   });
-  const renderedLog = buildWorktreeSetupLog({
-    results: input.results,
-    outputAccumulatorsByIndex: input.outputAccumulatorsByIndex,
-  });
-
   return {
     type: "worktree_setup",
     worktreePath: input.worktree.worktreePath,
     branchName: input.worktree.branchName,
-    log: renderedLog.log,
+    // COMPAT(workspaceSetupCombinedLog): added in v0.12.0, remove after 2027-04-20 once legacy wire schemas no longer require log.
+    // Setup clients render commands[].log; retain the required wire field without duplicating output.
+    log: "",
     commands,
-    ...(renderedLog.truncated || anyCommandTruncated ? { truncated: true } : {}),
-  };
-}
-
-function buildSetupTimelineItem(input: {
-  callId: string;
-  status: "running" | "completed" | "failed";
-  worktree: WorktreeConfig;
-  results: WorktreeSetupCommandResult[];
-  outputAccumulatorsByIndex?: Map<number, WorktreeSetupOutputAccumulator>;
-  errorMessage: string | null;
-}): AgentTimelineItem {
-  const detail = buildWorktreeSetupDetail({
-    worktree: input.worktree,
-    results: input.results,
-    outputAccumulatorsByIndex: input.outputAccumulatorsByIndex,
-  });
-
-  if (input.status === "running") {
-    return {
-      type: "tool_call",
-      name: "paseo_worktree_setup",
-      callId: input.callId,
-      status: "running",
-      detail,
-      error: null,
-    };
-  }
-
-  if (input.status === "completed") {
-    return {
-      type: "tool_call",
-      name: "paseo_worktree_setup",
-      callId: input.callId,
-      status: "completed",
-      detail,
-      error: null,
-    };
-  }
-
-  return {
-    type: "tool_call",
-    name: "paseo_worktree_setup",
-    callId: input.callId,
-    status: "failed",
-    detail,
-    error: { message: input.errorMessage ?? "Worktree setup failed" },
-  };
-}
-
-function buildTerminalTimelineItem(input: {
-  callId: string;
-  status: "running" | "completed" | "failed";
-  worktree: WorktreeConfig;
-  results: WorktreeBootstrapTerminalResult[];
-  errorMessage: string | null;
-}): AgentTimelineItem {
-  const detailInput = {
-    worktreePath: input.worktree.worktreePath,
-    branchName: input.worktree.branchName,
-  };
-  const detailOutput = {
-    worktreePath: input.worktree.worktreePath,
-    terminals: input.results,
-  };
-
-  if (input.status === "running") {
-    return {
-      type: "tool_call",
-      name: "paseo_worktree_terminals",
-      callId: input.callId,
-      status: "running",
-      detail: {
-        type: "unknown",
-        input: detailInput,
-        output: null,
-      },
-      error: null,
-    };
-  }
-
-  if (input.status === "completed") {
-    return {
-      type: "tool_call",
-      name: "paseo_worktree_terminals",
-      callId: input.callId,
-      status: "completed",
-      detail: {
-        type: "unknown",
-        input: detailInput,
-        output: detailOutput,
-      },
-      error: null,
-    };
-  }
-
-  return {
-    type: "tool_call",
-    name: "paseo_worktree_terminals",
-    callId: input.callId,
-    status: "failed",
-    detail: {
-      type: "unknown",
-      input: detailInput,
-      output: detailOutput,
-    },
-    error: { message: input.errorMessage ?? "Worktree terminal bootstrap failed" },
+    ...(anyCommandTruncated ? { truncated: true } : {}),
   };
 }
 
@@ -502,215 +324,35 @@ function terminalHasOutput(state: ReturnType<TerminalSession["getState"]>): bool
   return false;
 }
 
-async function runWorktreeTerminalBootstrap(
-  options: RunAsyncWorktreeBootstrapOptions,
-  runtimeEnv: WorktreeRuntimeEnv,
-): Promise<void> {
-  const workspaceCwd = options.workspaceCwd ?? options.worktree.worktreePath;
-  const terminalSpecs = getWorktreeTerminalSpecs(workspaceCwd);
-  if (terminalSpecs.length === 0) {
-    return;
-  }
-
-  const callId = uuidv4();
-  const started = await options.appendTimelineItem(
-    buildTerminalTimelineItem({
-      callId,
-      status: "running",
-      worktree: options.worktree,
-      results: [],
-      errorMessage: null,
-    }),
-  );
-  if (!started) {
-    return;
-  }
-
-  if (!options.terminalManager) {
-    await options.appendTimelineItem(
-      buildTerminalTimelineItem({
-        callId,
-        status: "failed",
-        worktree: options.worktree,
-        results: [],
-        errorMessage: "Terminal manager not available",
-      }),
-    );
-    return;
-  }
-
-  const terminalManager = options.terminalManager;
-  const results = await Promise.all(
-    terminalSpecs.map(async (spec): Promise<WorktreeBootstrapTerminalResult> => {
-      try {
-        const terminal = await terminalManager.createTerminal({
-          cwd: workspaceCwd,
-          name: spec.name,
-          env: runtimeEnv,
-          workspaceId: options.workspaceId,
-        });
-        await waitForTerminalBootstrapReadiness(terminal);
-        terminal.send({
-          type: "input",
-          data: `${spec.command}\r`,
-        });
-        return {
-          name: terminal.name ?? spec.name ?? null,
-          command: spec.command,
-          status: "started",
-          terminalId: terminal.id,
-          error: null,
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        options.logger?.warn(
-          { agentId: options.agentId, command: spec.command, err: error },
-          "Failed to bootstrap worktree terminal",
-        );
-        return {
-          name: spec.name ?? null,
-          command: spec.command,
-          status: "failed",
-          terminalId: null,
-          error: message,
-        };
-      }
-    }),
-  );
-
-  await options.appendTimelineItem(
-    buildTerminalTimelineItem({
-      callId,
-      status: "completed",
-      worktree: options.worktree,
-      results,
-      errorMessage: null,
-    }),
-  );
-}
-
 export async function runWorktreeAutoTerminals(options: {
   workspaceId: string;
   worktree: WorktreeConfig;
   workspaceCwd: string;
+  runtimeEnv: WorktreeRuntimeEnv;
   terminalManager: TerminalManager | null;
   logger?: Logger;
 }): Promise<void> {
-  const runtimeEnv = await resolveWorktreeRuntimeEnv({
-    worktreePath: options.worktree.worktreePath,
-    branchName: options.worktree.branchName,
-  });
-  await runWorktreeTerminalBootstrap(
-    {
-      agentId: options.workspaceId,
-      workspaceId: options.workspaceId,
-      worktree: options.worktree,
-      workspaceCwd: options.workspaceCwd,
-      terminalManager: options.terminalManager,
-      appendTimelineItem: async () => true,
-      logger: options.logger,
-    },
-    runtimeEnv,
-  );
-}
-
-export async function runAsyncWorktreeBootstrap(
-  options: RunAsyncWorktreeBootstrapOptions,
-): Promise<void> {
-  if (options.shouldBootstrap === false) {
-    return;
-  }
-
-  const setupCallId = uuidv4();
-  let setupResults: WorktreeSetupCommandResult[] = [];
-  let runtimeEnv: WorktreeRuntimeEnv | null = null;
-  const emitLiveTimelineItem = options.emitLiveTimelineItem;
-  const progressAccumulator = createWorktreeSetupProgressAccumulator();
-  const workspaceCwd = options.workspaceCwd ?? options.worktree.worktreePath;
-  let liveEmitQueue = Promise.resolve();
-
-  const queueLiveRunningEmit = () => {
-    if (!emitLiveTimelineItem) {
-      return;
-    }
-    const runningResults = getWorktreeSetupProgressResults(progressAccumulator);
-    liveEmitQueue = liveEmitQueue.then(async () => {
+  if (!options.terminalManager) return;
+  const terminalManager = options.terminalManager;
+  await Promise.all(
+    getWorktreeTerminalSpecs(options.workspaceCwd).map(async (spec) => {
       try {
-        await emitLiveTimelineItem(
-          buildSetupTimelineItem({
-            callId: setupCallId,
-            status: "running",
-            worktree: options.worktree,
-            results: runningResults,
-            outputAccumulatorsByIndex: progressAccumulator.outputAccumulatorsByIndex,
-            errorMessage: null,
-          }),
-        );
+        const terminal = await terminalManager.createTerminal({
+          cwd: options.workspaceCwd,
+          name: spec.name,
+          env: options.runtimeEnv,
+          workspaceId: options.workspaceId,
+        });
+        await waitForTerminalBootstrapReadiness(terminal);
+        terminal.send({ type: "input", data: `${spec.command}\r` });
       } catch (error) {
         options.logger?.warn(
-          { err: error, agentId: options.agentId },
-          "Failed to emit live worktree setup timeline update",
+          { workspaceId: options.workspaceId, command: spec.command, err: error },
+          "Failed to bootstrap worktree terminal",
         );
       }
-      return;
-    });
-  };
-
-  try {
-    runtimeEnv = await resolveWorktreeRuntimeEnv({
-      worktreePath: options.worktree.worktreePath,
-      branchName: options.worktree.branchName,
-    });
-    options.terminalManager?.registerCwdEnv({
-      cwd: workspaceCwd,
-      env: runtimeEnv,
-    });
-
-    setupResults = await runWorktreeSetupCommands({
-      worktreePath: workspaceCwd,
-      branchName: options.worktree.branchName,
-      cleanupOnFailure: false,
-      runtimeEnv,
-      onEvent: (event) => {
-        applyWorktreeSetupProgressEvent(progressAccumulator, event);
-        queueLiveRunningEmit();
-      },
-    });
-    await liveEmitQueue;
-
-    const completed = await options.appendTimelineItem(
-      buildSetupTimelineItem({
-        callId: setupCallId,
-        status: "completed",
-        worktree: options.worktree,
-        results: setupResults,
-        outputAccumulatorsByIndex: progressAccumulator.outputAccumulatorsByIndex,
-        errorMessage: null,
-      }),
-    );
-    if (!completed) {
-      return;
-    }
-  } catch (error) {
-    if (error instanceof WorktreeSetupError) {
-      setupResults = error.results;
-    }
-    await liveEmitQueue;
-    const message = error instanceof Error ? error.message : String(error);
-    await options.appendTimelineItem(
-      buildSetupTimelineItem({
-        callId: setupCallId,
-        status: "failed",
-        worktree: options.worktree,
-        results: setupResults,
-        outputAccumulatorsByIndex: progressAccumulator.outputAccumulatorsByIndex,
-        errorMessage: message,
-      }),
-    );
-    return;
-  }
-
-  await runWorktreeTerminalBootstrap(options, runtimeEnv);
+    }),
+  );
 }
 
 // ---------------------------------------------------------------------------

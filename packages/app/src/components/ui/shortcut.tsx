@@ -68,7 +68,7 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: 0,
   },
   badgeBackground: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     borderRadius: theme.borderRadius.md,
     backgroundColor: theme.colors.surface3,
     opacity: theme.opacity[50],
