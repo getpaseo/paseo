@@ -40,4 +40,29 @@ describe("selectPrHintFromStatus", () => {
       selectPrHintFromStatus({ url: "https://example.com/x", state: "open", isMerged: false }),
     ).toBeNull();
   });
+
+  it("derives open for a ready-for-review pull request", () => {
+    const hint = selectPrHintFromStatus(githubStatus);
+    expect(hint?.state).toBe("open");
+  });
+
+  it("derives draft for an open pull request flagged as a draft", () => {
+    const hint = selectPrHintFromStatus({ ...githubStatus, isDraft: true });
+    expect(hint?.state).toBe("draft");
+  });
+
+  it("derives merged when isMerged is set, even if isDraft is also set", () => {
+    const hint = selectPrHintFromStatus({
+      ...githubStatus,
+      state: "closed",
+      isMerged: true,
+      isDraft: true,
+    });
+    expect(hint?.state).toBe("merged");
+  });
+
+  it("derives closed for a non-open, non-merged pull request", () => {
+    const hint = selectPrHintFromStatus({ ...githubStatus, state: "closed", isMerged: false });
+    expect(hint?.state).toBe("closed");
+  });
 });
