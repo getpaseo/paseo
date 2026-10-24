@@ -3138,3 +3138,168 @@ new file mode 100644
 +    }
 +  }
 +}
+diff --git a/node_modules/react-native-enriched-markdown/ios/renderer/ListItemRenderer.m b/node_modules/react-native-enriched-markdown/ios/renderer/ListItemRenderer.m
+index ed80dfa..4719d7e 100644
+--- a/node_modules/react-native-enriched-markdown/ios/renderer/ListItemRenderer.m
++++ b/node_modules/react-native-enriched-markdown/ios/renderer/ListItemRenderer.m
+@@ -1,4 +1,5 @@
+ #import "ListItemRenderer.h"
++#import "ENRMBlockSelectionRange.h"
+ #import "BlockquoteBorder.h"
+ #import "ENRMUIKit.h"
+ #import "LastElementUtils.h"
+@@ -123,6 +124,7 @@ NSString *const TaskIndexAttribute = @"TaskIndex";
+
+   // Boxing metadata for attributed string storage
+   NSMutableDictionary *metadata = [@{
++    ENRMSelectionBlockAttribute : [NSObject new],
+     ListDepthAttribute : @(nestingLevel),
+     ListTypeAttribute : @(context.listType),
+     ListItemNumberAttribute : @(currentPosition)
+diff --git a/node_modules/react-native-enriched-markdown/ios/renderer/ParagraphRenderer.m b/node_modules/react-native-enriched-markdown/ios/renderer/ParagraphRenderer.m
+index 413182e..8a1b4fd 100644
+--- a/node_modules/react-native-enriched-markdown/ios/renderer/ParagraphRenderer.m
++++ b/node_modules/react-native-enriched-markdown/ios/renderer/ParagraphRenderer.m
+@@ -1,4 +1,5 @@
+ #import "ParagraphRenderer.h"
++#import "ENRMBlockSelectionRange.h"
+ #import "FontUtils.h"
+ #import "MarkdownASTNode.h"
+ #import "ParagraphStyleUtils.h"
+@@ -80,6 +81,11 @@
+   }
+
+   applyParagraphSpacingAfter(output, start, marginBottom);
++  if (!isBlockImage && output.length > start) {
++    [output addAttribute:ENRMSelectionBlockAttribute
++                   value:[NSObject new]
++                   range:NSMakeRange(start, output.length - start)];
++  }
+ }
+
+ @end
+diff --git a/node_modules/react-native-enriched-markdown/ios/utils/ENRMBlockSelectionRange.h b/node_modules/react-native-enriched-markdown/ios/utils/ENRMBlockSelectionRange.h
+new file mode 100644
+index 0000000..caa25c6
+--- /dev/null
++++ b/node_modules/react-native-enriched-markdown/ios/utils/ENRMBlockSelectionRange.h
+@@ -0,0 +1,29 @@
++#pragma once
++#import <Foundation/Foundation.h>
++
++// Logical paragraphs and list items keep one identity across inline styles and hard breaks.
++static NSString *const ENRMSelectionBlockAttribute = @"ENRMSelectionBlock";
++
++static inline NSRange ENRMBlockSelectionRange(NSAttributedString *text, NSUInteger index)
++{
++  if (index >= text.length)
++    return NSMakeRange(NSNotFound, 0);
++
++  NSRange range;
++  id block = [text attribute:ENRMSelectionBlockAttribute
++                    atIndex:index
++      longestEffectiveRange:&range
++                    inRange:NSMakeRange(0, text.length)];
++  if (!block)
++    range = [text.string paragraphRangeForRange:NSMakeRange(index, 0)];
++
++  // Layout spacer and separator newlines belong to neither neighbouring block.
++  NSCharacterSet *newlines = NSCharacterSet.newlineCharacterSet;
++  while (range.length && [newlines characterIsMember:[text.string characterAtIndex:range.location]]) {
++    range.location++;
++    range.length--;
++  }
++  while (range.length && [newlines characterIsMember:[text.string characterAtIndex:NSMaxRange(range) - 1]])
++    range.length--;
++  return range.length ? range : NSMakeRange(NSNotFound, 0);
++}
+diff --git a/node_modules/react-native-enriched-markdown/ios/views/ENRMMarkdownTextView.m b/node_modules/react-native-enriched-markdown/ios/views/ENRMMarkdownTextView.m
+index c790eb1..5b97726 100644
+--- a/node_modules/react-native-enriched-markdown/ios/views/ENRMMarkdownTextView.m
++++ b/node_modules/react-native-enriched-markdown/ios/views/ENRMMarkdownTextView.m
+@@ -1,4 +1,5 @@
+ #import "ENRMMarkdownTextView.h"
++#import "ENRMBlockSelectionRange.h"
+ #import "ENRMLinkPillAttachment.h"
+ #import "ENRMLinkPillText.h"
+ #import "ENRMTextHitTest.h"
+@@ -6,7 +7,7 @@
+ #import "PasteboardUtils.h"
+
+ #if !TARGET_OS_OSX
+-@interface ENRMMarkdownTextView () <UIContextMenuInteractionDelegate>
++@interface ENRMMarkdownTextView () <UIContextMenuInteractionDelegate, UIGestureRecognizerDelegate>
+ @end
+
+ @implementation ENRMMarkdownTextView {
+@@ -15,6 +16,7 @@
+   // stands in for it: it would show through that image.
+   ENRMLinkPillAttachment *_liftedPill;
+   NSUInteger _pillMenuIndex;
++  UITapGestureRecognizer *_blockSelectionTap;
+ }
+
+ - (instancetype)initWithFrame:(CGRect)frame textContainer:(NSTextContainer *)textContainer
+@@ -24,10 +26,62 @@
+     __weak ENRMMarkdownTextView *weakSelf = self;
+     _pillLift.onEnd = ^{ [weakSelf restoreLiftedPill]; };
+     [self addInteraction:[[UIContextMenuInteraction alloc] initWithDelegate:self]];
++    _blockSelectionTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(selectTappedBlock:)];
++    _blockSelectionTap.numberOfTapsRequired = 2;
++    _blockSelectionTap.cancelsTouchesInView = NO;
++    _blockSelectionTap.delaysTouchesEnded = NO;
++    _blockSelectionTap.delegate = self;
++    [self addGestureRecognizer:_blockSelectionTap];
+   }
+   return self;
+ }
+
++// Observe UIKit's double tap without taking over its text interaction. UIKit
++// creates the selection handles and menu; only its initial word range expands.
++- (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer
++    shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other
++{
++  return recognizer == _blockSelectionTap || other == _blockSelectionTap;
++}
++
++- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)recognizer
++{
++  if (recognizer != _blockSelectionTap)
++    return YES;
++  if (!self.selectable || self.editable || self.textStorage.length == 0)
++    return NO;
++  CGPoint point = [recognizer locationInView:self];
++  if (isPointOnInteractiveElement(self, point, YES, YES))
++    return NO;
++  CGPoint contentPoint = CGPointMake(point.x - self.textContainerInset.left, point.y - self.textContainerInset.top);
++  NSUInteger glyph = [self.layoutManager glyphIndexForPoint:contentPoint inTextContainer:self.textContainer];
++  if (glyph >= self.layoutManager.numberOfGlyphs)
++    return NO;
++  CGRect line = [self.layoutManager lineFragmentUsedRectForGlyphAtIndex:glyph effectiveRange:NULL];
++  return CGRectContainsPoint(line, contentPoint);
++}
++
++- (void)selectTappedBlock:(UITapGestureRecognizer *)recognizer
++{
++  if (recognizer.state != UIGestureRecognizerStateRecognized)
++    return;
++  NSUInteger index = ENRMCharacterIndexAtPoint(self, [recognizer locationInView:self]);
++  NSRange range = ENRMBlockSelectionRange(self.textStorage, index);
++  if (range.location == NSNotFound)
++    return;
++  NSString *text = [self.text copy];
++  __weak ENRMMarkdownTextView *weakSelf = self;
++  // All native recognizers finish this event before the range is expanded.
++  dispatch_async(dispatch_get_main_queue(), ^{
++    ENRMMarkdownTextView *view = weakSelf;
++    if (!view.window || !view.selectable || ![view.text isEqualToString:text])
++      return;
++    NSRange selected = view.selectedRange;
++    if (selected.length && NSLocationInRange(index, selected))
++      view.selectedRange = range;
++  });
++}
++
+ /// New text moves or replaces the pill under its lifted image.
+ - (void)setAttributedText:(NSAttributedString *)attributedText
+ {
