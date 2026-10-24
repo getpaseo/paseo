@@ -775,27 +775,39 @@ export function deriveModesFromACP(
   modeState?: { availableModes?: SessionMode[] | null; currentModeId?: string | null } | null,
   configOptions?: SessionConfigOption[] | null,
 ): { modes: AgentMode[]; currentModeId: string | null } {
-  if (modeState?.availableModes?.length) {
+  const modeOption = findSelectConfigOption({ configOptions, category: "mode" });
+  const modeOptionChoices = modeOption ? flattenSelectOptions(modeOption.options) : null;
+  const advertisedModes = modeState?.availableModes ?? null;
+  // Some agents advertise session modes that their `mode` config option does not accept. Junie,
+  // for example, advertises brave-auto/on/off while `mode` only allows default/plan, which makes
+  // every advertised mode switch fail. Only trust the advertised list when it is consistent with
+  // the config option that actually applies the change.
+  const advertisedModesAreUsable =
+    Boolean(advertisedModes?.length) &&
+    (!modeOptionChoices ||
+      advertisedModes!.every((mode) =>
+        modeOptionChoices.some((option) => option.value === mode.id),
+      ));
+
+  if (advertisedModesAreUsable && advertisedModes) {
     return {
-      modes: modeState.availableModes.map((mode) => ({
+      modes: advertisedModes.map((mode) => ({
         id: mode.id,
         label: mode.name,
         description: mode.description ?? undefined,
       })),
-      currentModeId: modeState.currentModeId ?? null,
+      currentModeId: modeState?.currentModeId ?? null,
     };
   }
 
-  const modeOption = findSelectConfigOption({ configOptions, category: "mode" });
-  if (modeOption) {
-    const flatOptions = flattenSelectOptions(modeOption.options);
+  if (modeOptionChoices) {
     return {
-      modes: flatOptions.map((option) => ({
+      modes: modeOptionChoices.map((option) => ({
         id: option.value,
         label: option.name,
         description: option.description ?? undefined,
       })),
-      currentModeId: modeOption.currentValue,
+      currentModeId: modeOption?.currentValue ?? null,
     };
   }
 
@@ -2189,7 +2201,28 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     if (selection.hasAvailableModes) {
       const { connection, sessionId } = this;
-      await this.runACPRequest(() => connection.setSessionMode({ sessionId, modeId }));
+      try {
+        await this.runACPRequest(() => connection.setSessionMode({ sessionId, modeId }));
+      } catch (modeError) {
+        // Agents such as Junie reject session/set_mode and expect the value on a config option
+        // instead, so retry on the option that actually lists this value.
+        const fallbackOption = (this.configOptions ?? []).find(
+          (option) =>
+            option.type === "select" &&
+            flattenSelectOptions(option.options ?? []).some((choice) => choice.value === modeId),
+        );
+        if (!fallbackOption) {
+          throw modeError;
+        }
+        const fallbackResponse = await this.runACPRequest(() =>
+          connection.setSessionConfigOption({
+            sessionId,
+            configId: fallbackOption.id,
+            value: modeId,
+          }),
+        );
+        this.configOptions = this.transformConfigOptions(fallbackResponse.configOptions);
+      }
       this.currentMode = modeId;
       this.pushEvent({
         type: "mode_changed",
