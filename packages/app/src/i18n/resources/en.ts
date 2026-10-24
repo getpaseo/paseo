@@ -2033,6 +2033,12 @@ export const en = {
     input: "Input",
     output: "Output",
   },
+  turnSummary: {
+    messages: {
+      one: "wrote {{count}} message",
+      other: "wrote {{count}} messages",
+    },
+  },
   toolCallGroup: {
     editedFiles: {
       one: "edited {{count}} file",
@@ -2400,12 +2406,13 @@ export const en = {
         label: "Always expand reasoning",
         description: "Show agent thinking and chain-of-thought blocks fully expanded by default",
       },
-      toolCallDetail: {
-        label: "Tool call display",
-        description: "How tool calls appear in the timeline",
+      chatDisplay: {
+        label: "Chat display",
+        description: "How much of an agent's work the chat shows",
         options: {
-          overview: "Summary",
-          detailed: "Full detail",
+          full: "Full",
+          collapseToolCalls: "Collapse tool calls",
+          collapseTurns: "Collapse turns",
         },
       },
       language: {

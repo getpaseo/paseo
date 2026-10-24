@@ -1986,6 +1986,12 @@ export const zhCN: TranslationResources = {
     input: "输入",
     output: "输出",
   },
+  turnSummary: {
+    messages: {
+      one: "写了 {{count}} 条消息",
+      other: "写了 {{count}} 条消息",
+    },
+  },
   toolCallGroup: {
     editedFiles: {
       one: "编辑了 {{count}} 个文件",
@@ -2251,12 +2257,13 @@ export const zhCN: TranslationResources = {
         label: "始终展开推理过程",
         description: "默认情况下完全展开 AI 的思考和推理过程",
       },
-      toolCallDetail: {
-        label: "工具调用显示",
-        description: "工具调用在时间线中的显示方式",
+      chatDisplay: {
+        label: "聊天显示",
+        description: "聊天中显示多少智能体的工作",
         options: {
-          overview: "摘要",
-          detailed: "完整详情",
+          full: "完整",
+          collapseToolCalls: "折叠工具调用",
+          collapseTurns: "折叠轮次",
         },
       },
       language: {

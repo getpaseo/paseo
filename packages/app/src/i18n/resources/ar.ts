@@ -2008,6 +2008,12 @@ export const ar: TranslationResources = {
     input: "مدخل",
     output: "الإخراج",
   },
+  turnSummary: {
+    messages: {
+      one: "كتب {{count}} رسالة",
+      other: "كتب {{count}} رسائل",
+    },
+  },
   toolCallGroup: {
     editedFiles: {
       one: "حرّر {{count}} ملفًا",
@@ -2312,12 +2318,13 @@ export const ar: TranslationResources = {
         label: "عرض التفكير دائماً",
         description: "إظهار تفكير الوكيل وخطوات الاستدلال بشكل كامل بشكل افتراضي",
       },
-      toolCallDetail: {
-        label: "عرض استدعاءات الأدوات",
-        description: "كيفية ظهور استدعاءات الأدوات في المخطط الزمني",
+      chatDisplay: {
+        label: "عرض المحادثة",
+        description: "مقدار عمل الوكيل الذي تعرضه المحادثة",
         options: {
-          overview: "ملخص",
-          detailed: "التفاصيل الكاملة",
+          full: "كامل",
+          collapseToolCalls: "طيّ استدعاءات الأدوات",
+          collapseTurns: "طيّ الأدوار",
         },
       },
       language: {

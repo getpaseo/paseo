@@ -2018,6 +2018,12 @@ export const ko: TranslationResources = {
     input: "입력",
     output: "출력",
   },
+  turnSummary: {
+    messages: {
+      one: "{{count}} 메시지를 작성했습니다.",
+      other: "{{count}} 메시지를 작성했습니다.",
+    },
+  },
   toolCallGroup: {
     editedFiles: {
       one: "{{count}} 파일을 편집했습니다.",
@@ -2287,12 +2293,13 @@ export const ko: TranslationResources = {
         label: "추론 항상 펼치기",
         description: "에이전트의 사고 및 추론 블록을 기본적으로 모두 펼쳐 표시합니다.",
       },
-      toolCallDetail: {
-        label: "도구 호출 표시",
-        description: "타임라인에 도구 호출이 표시되는 방식",
+      chatDisplay: {
+        label: "채팅 표시",
+        description: "채팅에 표시할 에이전트 작업의 양",
         options: {
-          overview: "요약",
-          detailed: "전체 세부정보",
+          full: "전체",
+          collapseToolCalls: "도구 호출 접기",
+          collapseTurns: "턴 접기",
         },
       },
       language: {
