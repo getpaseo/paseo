@@ -1,3 +1,4 @@
+import { OrderingService } from "./ordering/index.js";
 import {
   createWorkspaceRuntimeStore,
   type WorkspaceRuntimeStore,
@@ -293,6 +294,7 @@ vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
 });
 
 interface SessionForTestOptions {
+  ordering?: SessionOptions["ordering"];
   workspaceRuntimeStore?: WorkspaceRuntimeStore;
   sendToSource?: SessionOptions["onMessageToSource"];
   clientId?: string;
@@ -420,6 +422,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
       list: vi.fn().mockResolvedValue([]),
     },
     workspaceLabelService: options.workspaceLabelService,
+    ordering: options.ordering,
     scheduleService: asScheduleService(),
     checkoutDiffManager: asCheckoutDiffManager(checkoutDiffManager),
     github: asGitHubService(github),
@@ -5847,6 +5850,170 @@ test("provider snapshots preserve versionless visibility while capabilities upda
     "plugin-provider",
   ]);
   expect(references.compactSnapshot!.entries[0]!.modes![0]!.icon).toBe("ShieldCheck");
+});
+
+test("ordering preferences isolate real sessions by admission principal and deny viewer writes", async () => {
+  const home = mkdtempSync(join(tmpdir(), "paseo-order-session-"));
+  const ordering = new OrderingService({
+    filePath: join(home, "order.json"),
+    validate: async () => {},
+  });
+  await ordering.initialize();
+  const ownerMessages: SessionOutboundMessage[] = [];
+  const otherMessages: SessionOutboundMessage[] = [];
+  const viewerMessages: SessionOutboundMessage[] = [];
+  const owner = createSessionForTest({
+    clientId: "same-client",
+    ordering: { service: ordering, principalId: "owner" },
+    messages: ownerMessages,
+  });
+  const other = createSessionForTest({
+    clientId: "same-client",
+    ordering: { service: ordering, principalId: "other" },
+    messages: otherMessages,
+  });
+  const viewer = createSessionForTest({
+    clientId: "viewer",
+    ordering: { service: ordering, principalId: "owner" },
+    permissions: ["workspace.read"],
+    messages: viewerMessages,
+  });
+  try {
+    const targets = [{ workspaceId: "w", targets: ["file_readme", "browser_1"] }];
+    expect(viewer.getPermissions()).toEqual(["workspace.read"]);
+    await viewer.handleMessage({
+      type: "ui.order.list.request",
+      requestId: "viewer-subscribe",
+      subscribe: {},
+    });
+    expect(viewerMessages).toContainEqual(
+      expect.objectContaining({
+        type: "ui.order.list.response",
+        payload: expect.objectContaining({ requestId: "viewer-subscribe", records: [] }),
+      }),
+    );
+    await owner.handleMessage({
+      type: "ui.order.targets.set.request",
+      requestId: "targets",
+      expectedRevision: 0,
+      workspaces: targets,
+    });
+    await owner.handleMessage({
+      type: "ui.order.set.request",
+      requestId: "order",
+      scope: { kind: "tabs", workspaceId: "w" },
+      expectedRevision: 0,
+      order: ["browser_1", "file_readme"],
+    });
+    expect(viewerMessages).toContainEqual(
+      expect.objectContaining({
+        type: "ui.order.update",
+        payload: expect.objectContaining({
+          record: {
+            scope: { kind: "tabs", workspaceId: "w" },
+            revision: 1,
+            order: ["browser_1", "file_readme"],
+          },
+        }),
+      }),
+    );
+    await other.handleMessage({ type: "ui.order.list.request", requestId: "other-list" });
+    expect(otherMessages).toContainEqual({
+      type: "ui.order.list.response",
+      payload: { requestId: "other-list", records: [], deviceRevision: 0 },
+    });
+    await other.handleMessage({
+      type: "ui.order.devices.forget.request",
+      requestId: "other-forget",
+      clientId: "same-client",
+    });
+    expect(ordering.list("owner")[0]!.order).toEqual(["browser_1", "file_readme"]);
+    const requests: SessionInboundMessage[] = [
+      {
+        type: "ui.order.targets.set.request",
+        requestId: "viewer-targets",
+        expectedRevision: 0,
+        workspaces: targets,
+      },
+      {
+        type: "ui.order.devices.forget.request",
+        requestId: "viewer-forget",
+        clientId: "same-client",
+      },
+      {
+        type: "ui.order.set.request",
+        requestId: "viewer-order",
+        scope: { kind: "tabs", workspaceId: "w" },
+        expectedRevision: 1,
+        order: [],
+      },
+    ];
+    for (const request of requests) await viewer.handleMessage(request);
+    expect(
+      viewerMessages
+        .filter((message) => message.type === "rpc_error")
+        .map((message) => message.payload.code),
+    ).toEqual(["access_denied", "access_denied", "access_denied"]);
+    expect(ordering.list("owner")[0]!.order).toEqual(["browser_1", "file_readme"]);
+    const delayedSource = {};
+    owner.updateClientCapabilities(null, delayedSource);
+    await owner.handleMessage({ type: "ui.order.devices.forget.request", requestId: "forget" });
+    await owner.handleMessage(
+      {
+        type: "ui.order.targets.set.request",
+        requestId: "delayed-first-registration",
+        expectedRevision: 2,
+        workspaces: targets,
+      },
+      delayedSource,
+    );
+    expect(ownerMessages).toContainEqual(
+      expect.objectContaining({
+        type: "rpc_error",
+        payload: expect.objectContaining({
+          requestId: "delayed-first-registration",
+          code: "order_update_failed",
+        }),
+      }),
+    );
+
+    await owner.handleMessage({
+      type: "ui.order.targets.set.request",
+      requestId: "stale",
+      expectedRevision: 2,
+      workspaces: targets,
+    });
+    expect(ownerMessages).toContainEqual(
+      expect.objectContaining({
+        type: "rpc_error",
+        payload: expect.objectContaining({ requestId: "stale", code: "order_update_failed" }),
+      }),
+    );
+    expect(ordering.list("owner")[0]!.order).toEqual([]);
+    const reconnectedMessages: SessionOutboundMessage[] = [];
+    const reconnected = createSessionForTest({
+      clientId: "same-client",
+      ordering: { service: ordering, principalId: "owner" },
+      messages: reconnectedMessages,
+    });
+    try {
+      await reconnected.handleMessage({
+        type: "ui.order.targets.set.request",
+        requestId: "register",
+        expectedRevision: 2,
+        workspaces: targets,
+      });
+      expect(reconnectedMessages).toContainEqual({
+        type: "ui.order.targets.set.response",
+        payload: { requestId: "register", accepted: true, revision: 3 },
+      });
+    } finally {
+      await reconnected.cleanup();
+    }
+  } finally {
+    await Promise.all([owner.cleanup(), other.cleanup(), viewer.cleanup()]);
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("a failing direct source observes fire-and-forget file replies without unhandled rejections", async () => {

@@ -1,3 +1,4 @@
+import type { PaneTabOrderInput } from "@/workspace-tabs/model";
 import { useHostFeature } from "@/runtime/host-features";
 import {
   AssistantFileLinkResolverProvider,
@@ -3128,24 +3129,25 @@ function WorkspaceScreenContent({
   );
 
   const handleReorderTabsInPane = useCallback(
-    function handleReorderTabsInPane(paneId: string, tabIds: string[]) {
+    function handleReorderTabsInPane(input: PaneTabOrderInput) {
       if (!persistenceKey) {
         return;
       }
-      reorderWorkspaceTabsInPane(persistenceKey, paneId, tabIds);
+      reorderWorkspaceTabsInPane({ workspaceKey: persistenceKey, ...input });
     },
     [persistenceKey, reorderWorkspaceTabsInPane],
   );
 
   const handleReorderTabsInFocusedPane = useCallback(
-    (nextTabs: WorkspaceTabDescriptor[]) => {
+    (nextTabs: WorkspaceTabDescriptor[], movedTabId: string) => {
       if (!focusedPaneId) {
         return;
       }
-      handleReorderTabsInPane(
-        focusedPaneId,
-        nextTabs.map((tab) => tab.tabId),
-      );
+      handleReorderTabsInPane({
+        paneId: focusedPaneId,
+        tabIds: nextTabs.map((tab) => tab.tabId),
+        movedTabId,
+      });
     },
     [focusedPaneId, handleReorderTabsInPane],
   );
