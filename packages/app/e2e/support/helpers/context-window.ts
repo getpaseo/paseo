@@ -107,6 +107,7 @@ function onLogin(report: UsageReportEntry, login: string): UsageReportEntry {
 export function expiredLogin(report: UsageReportEntry): UsageReportEntry {
   return {
     ...report,
+    fetchedAt: new Date().toISOString(),
     report: {
       status: "unavailable",
       problem: {
