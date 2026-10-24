@@ -64,6 +64,13 @@ interface RankedSessionFile {
   mtime: Date;
 }
 
+interface PiSessionFileReader {
+  readHead(filePath: string): Promise<string | null>;
+  readTail(filePath: string): Promise<string>;
+}
+
+const sessionFileReader: PiSessionFileReader = { readHead: readHeadChunk, readTail };
+
 export interface PiImportSessionConfig {
   model?: string;
   thinkingOptionId?: string;
@@ -71,6 +78,7 @@ export interface PiImportSessionConfig {
 
 export async function listPiImportableSessions(
   options: PiSessionDescriptorOptions = {},
+  reader: PiSessionFileReader = sessionFileReader,
 ): Promise<ImportableProviderSession[]> {
   const sessionsDir = await resolvePiSessionsDir(options);
   const files = await walkJsonlFiles(sessionsDir);
@@ -86,9 +94,8 @@ export async function listPiImportableSessions(
   const sessions: ImportableProviderSession[] = [];
 
   for (const entry of candidates) {
-    const session = await readPiImportableSession(entry.file);
+    const session = await readPiImportableSession(entry.file, reader, matchesCwd);
     if (!session) continue;
-    if (matchesCwd && !matchesCwd(session.cwd)) continue;
     sessions.push(session);
     if (sessions.length >= limit) {
       break;
@@ -216,8 +223,10 @@ async function rankSessionFilesByMtime(files: string[]): Promise<RankedSessionFi
 
 async function readPiImportableSession(
   filePath: string,
+  reader: PiSessionFileReader,
+  matchesCwd: ((cwd: string) => boolean) | null,
 ): Promise<ImportableProviderSession | null> {
-  const descriptor = await readPiSessionDescriptor(filePath);
+  const descriptor = await readPiSessionDescriptor(filePath, reader, matchesCwd);
   if (!descriptor) return null;
 
   return {
@@ -232,13 +241,19 @@ async function readPiImportableSession(
   };
 }
 
-async function readPiSessionDescriptor(filePath: string): Promise<PiSessionDescriptor | null> {
-  const headChunk = await readHeadChunk(filePath);
+async function readPiSessionDescriptor(
+  filePath: string,
+  reader: PiSessionFileReader = sessionFileReader,
+  matchesCwd?: ((cwd: string) => boolean) | null,
+): Promise<PiSessionDescriptor | null> {
+  const headChunk = await reader.readHead(filePath);
   if (!headChunk) return null;
   const header = parseSessionHeader(headChunk.split(/\r?\n/u, 1)[0]?.trim() ?? "");
   if (!header) return null;
+  // Workspace misses need only the header, even when the match is an older file.
+  if (matchesCwd && !matchesCwd(header.cwd)) return null;
 
-  const tail = await readTail(filePath).catch(() => "");
+  const tail = await reader.readTail(filePath).catch(() => "");
   const tailInfo = parseSessionTail(tail);
   const headInfo = parseSessionHeadFromChunk(headChunk);
   const title = tailInfo.title ?? headInfo.title ?? headInfo.firstUserMessage;
