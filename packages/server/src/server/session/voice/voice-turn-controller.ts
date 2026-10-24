@@ -77,6 +77,12 @@ interface VoiceFinalTranscript {
   avgLogprob?: number;
   isLowConfidence?: boolean;
   durationMs: number;
+  /**
+   * True when no STT final arrived and the turn fell back to the last
+   * non-filler partial, so callers can tell the user the text may be
+   * incomplete instead of silently dropping the utterance.
+   */
+  isPartialFallback?: boolean;
 }
 
 interface FinalizingVoiceTurn {
@@ -88,6 +94,11 @@ interface FinalizingVoiceTurn {
   transcriptMetaBySegmentId: Map<string, TranscriptSegmentMeta>;
   timeout: ReturnType<typeof setTimeout>;
   fired: boolean;
+  /**
+   * True once the stall retry (one extra window + re-commit) was used.
+   * Guards against re-arming the timeout forever on a dead STT stream.
+   */
+  stallRetried: boolean;
 }
 
 export function createVoiceTurnController(params: {
@@ -111,6 +122,13 @@ export function createVoiceTurnController(params: {
   let activeTranscriptSegmentId: string | null = null;
   let partialTranscriptFired = false;
   let reconnectAttemptedForTurn = false;
+  /**
+   * Latest non-filler partial of the current utterance. Reset on every
+   * speech_started. Used as a last-resort transcript when the STT stream
+   * commits a segment but never delivers its final (observed live:
+   * committedSegments:1, receivedFinals:0 after the full 10s window).
+   */
+  let lastPartialTranscript: { segmentId: string; transcript: string } | null = null;
   const sealedTranscriptSegmentIds = new Set<string>();
   let currentFinalizingTurn: FinalizingVoiceTurn | null = null;
 
@@ -203,6 +221,22 @@ export function createVoiceTurnController(params: {
     currentFinalizingTurn = null;
 
     const finalTranscript = assembleFinalTranscript(turn);
+    let resolvedTranscript = finalTranscript;
+    if (reason === "timeout" && resolvedTranscript.transcript.length === 0) {
+      const fallback = lastPartialTranscript;
+      const fallbackCommitted =
+        fallback !== null &&
+        (turn.committedSegmentIds.length === 0 ||
+          turn.committedSegmentIds.includes(fallback.segmentId));
+      if (fallback !== null && fallbackCommitted) {
+        resolvedTranscript = {
+          ...finalTranscript,
+          segmentId: fallback.segmentId,
+          transcript: fallback.transcript.trim(),
+          isPartialFallback: true,
+        };
+      }
+    }
     if (reason === "timeout") {
       params.logger.warn(
         {
@@ -210,15 +244,54 @@ export function createVoiceTurnController(params: {
           committedSegments: turn.committedSegmentIds.length,
           receivedFinals: turn.finalTranscriptSegmentIds.size,
           timeoutMs: VOICE_FINAL_TRANSCRIPT_TIMEOUT_MS,
-          transcriptLength: finalTranscript.transcript.length,
+          stallRetried: turn.stallRetried,
+          isPartialFallback: resolvedTranscript.isPartialFallback ?? false,
+          transcriptLength: resolvedTranscript.transcript.length,
         },
         "voice_turn.final_transcript_timeout",
       );
     }
 
     void runSerial(async () => {
-      await params.callbacks.onFinalTranscript(finalTranscript);
+      await params.callbacks.onFinalTranscript(resolvedTranscript);
     });
+  }
+
+  /**
+   * First timeout with committed-but-no-finals means the STT stream stalled
+   * between commit and final. Re-commit once and grant one extra window
+   * before giving up, instead of dropping the utterance on the first miss.
+   */
+  function handleFinalizeTimeout(turn: FinalizingVoiceTurn): void {
+    if (turn.fired || currentFinalizingTurn?.turnId !== turn.turnId) {
+      return;
+    }
+
+    const stalled =
+      turn.committedSegmentIds.length > 0 && turn.finalTranscriptSegmentIds.size === 0;
+    if (stalled && !turn.stallRetried) {
+      turn.stallRetried = true;
+      params.logger.warn(
+        {
+          turnId: turn.turnId,
+          committedSegments: turn.committedSegmentIds.length,
+          timeoutMs: VOICE_FINAL_TRANSCRIPT_TIMEOUT_MS,
+        },
+        "voice_turn.final_transcript_stall_retry",
+      );
+      try {
+        sttSession?.commit();
+      } catch (error) {
+        handleSttError(error);
+      }
+      clearTimeout(turn.timeout);
+      turn.timeout = setTimeout(() => {
+        fireFinalTranscript(turn, "timeout");
+      }, VOICE_FINAL_TRANSCRIPT_TIMEOUT_MS);
+      return;
+    }
+
+    fireFinalTranscript(turn, "timeout");
   }
 
   function maybeFireFinalTranscript(turn: FinalizingVoiceTurn): void {
@@ -304,6 +377,8 @@ export function createVoiceTurnController(params: {
     if (isFillerOnlyPartial(transcript)) {
       return;
     }
+
+    lastPartialTranscript = { segmentId: event.segmentId, transcript };
 
     firePartialTranscript(event.segmentId, transcript);
   }
@@ -407,6 +482,7 @@ export function createVoiceTurnController(params: {
 
     const startedAt = Date.now();
     activeTranscriptSegmentId = null;
+    lastPartialTranscript = null;
     partialTranscriptFired = false;
     reconnectAttemptedForTurn = false;
     clearFinalizingTurnTimeout();
@@ -443,11 +519,15 @@ export function createVoiceTurnController(params: {
       finalTranscriptSegmentIds: new Set(),
       transcriptMetaBySegmentId: new Map(),
       timeout: setTimeout(() => {
-        fireFinalTranscript(finalizingTurn, "timeout");
+        handleFinalizeTimeout(finalizingTurn);
       }, VOICE_FINAL_TRANSCRIPT_TIMEOUT_MS),
       fired: false,
+      stallRetried: false,
     };
     currentFinalizingTurn = finalizingTurn;
+    // NOTE: lastPartialTranscript is intentionally NOT reset here — partials
+    // arrive during capturing (before this point) and the finalize timeout
+    // below is their only consumer. It resets on the next speech_started.
 
     detector.reset();
     try {

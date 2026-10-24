@@ -1523,11 +1523,28 @@ export async function createPaseoDaemon(
   const createAgentToolCatalog = (runtime: PaseoToolRuntimeContext) =>
     createPaseoToolCatalog(createAgentToolHostDependencies(runtime));
   const setAgentProviderToolsEnabled = (enabled: boolean) => {
+    // Voice mode (#7212): the bridge plugin registers its tools from
+    // this provider-wide manifest, which was built with an empty runtime — so
+    // speak was invisible no matter the voice state. Include it always;
+    // execution stays gated per session (resolveSpeakHandler is null without
+    // voice, a clean error).
     agentProviderRuntime.setPaseoToolCatalog(
-      enabled ? createPaseoAgentToolManifest(createAgentToolHostDependencies({})) : null,
+      enabled ? createPaseoAgentToolManifest(createAgentToolHostDependencies({ enableVoiceTools: true })) : null,
     );
   };
-  agentManager.setPaseoToolCatalogFactory(createAgentToolCatalog);
+  // Voice mode (#7212): external providers declare native paseo tools,
+  // so their per-session catalog comes through this factory — which also
+  // carried no voice context. Resolve live voice state per agent instead.
+  agentManager.setPaseoToolCatalogFactory((runtime) =>
+    createAgentToolCatalog({
+      ...runtime,
+      enableVoiceTools:
+        runtime?.enableVoiceTools ||
+        (runtime?.callerAgentId
+          ? (wsServer?.resolveVoiceCallerContext(runtime.callerAgentId)?.enableVoiceTools ?? false)
+          : false),
+    }),
+  );
   agentManager.setPaseoToolsEnabled(config.mcpInjectIntoAgents !== false);
   setAgentProviderToolsEnabled(config.mcpEnabled !== false && config.mcpInjectIntoAgents !== false);
 
@@ -1543,6 +1560,12 @@ export async function createPaseoDaemon(
           paseoToolPolicy: callerAgentId
             ? agentManager.getPaseoToolPolicy(callerAgentId)
             : undefined,
+          // Voice mode (#7212): MCP sessions are built per request, so read
+          // live voice state here — otherwise external providers never see
+          // the speak tool and voice replies stay text-only.
+          enableVoiceTools: callerAgentId
+            ? (wsServer?.resolveVoiceCallerContext(callerAgentId)?.enableVoiceTools ?? false)
+            : false,
         }),
       );
 
