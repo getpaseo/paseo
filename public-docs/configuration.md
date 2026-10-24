@@ -20,6 +20,10 @@ By default, Paseo uses `~/.paseo` as its home directory. The configuration file 
 
 You can change the home directory by setting `PASEO_HOME` or selecting `--home` on a CLI command.
 
+## Paths
+
+Every filesystem path you write in `config.json` or in a `PASEO_*` variable — `worktrees.root`, `providers.local.modelsDir`, `features.webUi.distDir`, `log.file.path` — takes `~` for your home directory. Relative paths are resolved against `PASEO_HOME`, not the daemon's working directory.
+
 ## Precedence
 
 Managed `start` and Desktop use defaults, then `config.json`. Inherited daemon-setting environment variables are removed from their launches.
@@ -96,7 +100,7 @@ New worktrees are created under `$PASEO_HOME/worktrees` by default. To place new
 }
 ```
 
-Relative paths are resolved against `PASEO_HOME`. Existing worktrees remain where they are; changing this setting only changes where Paseo creates and discovers Paseo-managed worktrees going forward.
+Existing worktrees remain where they are; changing this setting only changes where Paseo creates and discovers Paseo-managed worktrees going forward.
 
 ## Voice
 
