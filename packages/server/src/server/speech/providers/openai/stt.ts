@@ -1,10 +1,12 @@
 import { EventEmitter } from "node:events";
 import type pino from "pino";
-import { OpenAI } from "openai";
+import { OpenAI, type ClientOptions } from "openai";
+import type { TranscriptionCreateParamsNonStreaming } from "openai/resources/audio/transcriptions";
 import { writeFile, unlink } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { v4 } from "uuid";
+import { z } from "zod";
 import { inferAudioExtension } from "../../../agent/audio-utils.js";
 import type {
   LogprobToken,
@@ -18,7 +20,12 @@ export type { LogprobToken, TranscriptionResult };
 export interface STTConfig {
   apiKey: string;
   baseUrl?: string;
-  model?: "whisper-1" | "gpt-4o-transcribe" | "gpt-4o-mini-transcribe" | (string & {});
+  model?:
+    | "whisper-1"
+    | "gpt-transcribe"
+    | "gpt-4o-transcribe"
+    | "gpt-4o-mini-transcribe"
+    | (string & {});
   confidenceThreshold?: number; // Default: -3.0
 }
 
@@ -46,20 +53,34 @@ function isLogprobTokenArray(value: unknown): value is LogprobToken[] {
   return Array.isArray(value) && value.every((entry) => isLogprobToken(entry));
 }
 
+export interface TranscriptionClient {
+  create(
+    request: TranscriptionCreateParamsNonStreaming<"json">,
+    options?: { body?: unknown },
+  ): Promise<unknown>;
+}
+
+interface OpenAISTTOptions {
+  config: STTConfig;
+  logger: pino.Logger;
+  createClient?: (options: ClientOptions) => TranscriptionClient;
+}
+
 export class OpenAISTT implements SpeechToTextProvider {
-  private readonly openaiClient: OpenAI;
+  private readonly transcriptions: TranscriptionClient;
   private readonly config: STTConfig;
   private readonly logger: pino.Logger;
   public readonly id = "openai" as const;
 
-  constructor(sttConfig: STTConfig, parentLogger: pino.Logger) {
-    this.config = sttConfig;
-    this.logger = parentLogger.child({ module: "agent", provider: "openai", component: "stt" });
-    this.openaiClient = new OpenAI({
-      apiKey: sttConfig.apiKey,
-      ...(sttConfig.baseUrl ? { baseURL: sttConfig.baseUrl } : {}),
-    });
-    this.logger.info({ model: sttConfig.model || "whisper-1" }, "STT (OpenAI Whisper) initialized");
+  constructor({ config, logger, createClient }: OpenAISTTOptions) {
+    this.config = config;
+    this.logger = logger.child({ module: "agent", provider: "openai", component: "stt" });
+    const options: ClientOptions = {
+      apiKey: config.apiKey,
+      ...(config.baseUrl ? { baseURL: config.baseUrl } : {}),
+    };
+    this.transcriptions = createClient?.(options) ?? new OpenAI(options).audio.transcriptions;
+    this.logger.info({ model: config.model || "whisper-1" }, "STT (OpenAI) initialized");
   }
 
   public createSession(params: {
@@ -124,11 +145,16 @@ export class OpenAISTT implements SpeechToTextProvider {
 
         const committedId = segmentId;
         const prev = previousSegmentId;
+        // Detach this commit before events or requests can append the next segment.
+        const committedPcm16 = pcm16;
+        pcm16 = Buffer.alloc(0);
+        previousSegmentId = committedId;
+        segmentId = v4();
         emitter.emit("committed", { segmentId: committedId, previousSegmentId: prev });
 
         void (async () => {
           try {
-            if (pcm16.length === 0) {
+            if (committedPcm16.length === 0) {
               emitter.emit("transcript", {
                 segmentId: committedId,
                 transcript: "",
@@ -139,7 +165,7 @@ export class OpenAISTT implements SpeechToTextProvider {
               return;
             }
 
-            const wav = convertPCMToWavBuffer(pcm16);
+            const wav = convertPCMToWavBuffer(committedPcm16);
             const result = await transcribeAudio(
               wav,
               "audio/wav",
@@ -159,10 +185,6 @@ export class OpenAISTT implements SpeechToTextProvider {
             });
           } catch (err) {
             emitter.emit("error", err);
-          } finally {
-            previousSegmentId = committedId;
-            segmentId = v4();
-            pcm16 = Buffer.alloc(0);
           }
         })();
       },
@@ -203,14 +225,28 @@ export class OpenAISTT implements SpeechToTextProvider {
         modelToUse === "gpt-4o-transcribe" || modelToUse === "gpt-4o-mini-transcribe";
       const includeLogprobs: ["logprobs"] = ["logprobs"];
 
-      const response = await this.openaiClient.audio.transcriptions.create({
+      const request: TranscriptionCreateParamsNonStreaming<"json"> = {
         file: await import("fs").then((fs) => fs.createReadStream(tempFilePath!)),
-        language,
         model: modelToUse,
         ...(prompt ? { prompt } : {}),
         ...(supportsLogprobs ? { include: includeLogprobs } : {}),
         response_format: "json",
-      });
+      };
+      let requestOptions: Parameters<TranscriptionClient["create"]>[1];
+      if (modelToUse === "gpt-transcribe") {
+        // The installed SDK predates gpt-transcribe's plural language hints.
+        requestOptions = { body: { ...request, languages: [language] } };
+      } else {
+        request.language = language;
+      }
+      const response = z
+        .object({
+          text: z.string(),
+          language: z.string().optional(),
+          languages: z.array(z.object({ code: z.string() })).optional(),
+        })
+        .passthrough()
+        .parse(await this.transcriptions.create(request, requestOptions));
 
       const duration = Date.now() - startTime;
       const confidenceThreshold = this.config.confidenceThreshold ?? -3.0;
@@ -218,9 +254,7 @@ export class OpenAISTT implements SpeechToTextProvider {
       let avgLogprob: number | undefined;
       let isLowConfidence = false;
       const logprobs =
-        supportsLogprobs && isObject(response) && isLogprobTokenArray(response.logprobs)
-          ? response.logprobs
-          : undefined;
+        supportsLogprobs && isLogprobTokenArray(response.logprobs) ? response.logprobs : undefined;
 
       if (logprobs && logprobs.length > 0) {
         const totalLogprob = logprobs.reduce((sum, token) => sum + token.logprob, 0);
@@ -248,10 +282,7 @@ export class OpenAISTT implements SpeechToTextProvider {
         logprobs: logprobs,
         avgLogprob: avgLogprob,
         isLowConfidence: isLowConfidence,
-        language:
-          isObject(response) && typeof response.language === "string"
-            ? response.language
-            : undefined,
+        language: response.language ?? response.languages?.[0]?.code,
       };
     } catch (error) {
       logger.error({ err: error }, "Transcription error");
