@@ -9,6 +9,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useFileLink } from "@/assistant-file-links";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
+import { OUTER_FOCUS_RING_DATASET } from "@/styles/focus-ring";
 import type { Theme } from "@/styles/theme";
 import { MermaidFence } from "./fence/mermaid";
 import { markdownLinkSource } from "./source";
@@ -46,6 +47,7 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
   const anchor = (
     <a
       {...anchorProps}
+      data-focus-ring={OUTER_FOCUS_RING_DATASET.focusRing}
       style={anchorStyle}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}

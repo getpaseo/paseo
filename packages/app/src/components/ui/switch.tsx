@@ -14,6 +14,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { createControlGeometry, switchGeometry } from "@/components/ui/control-geometry";
+import { OUTER_FOCUS_RING_DATASET } from "@/styles/focus-ring";
 import type { Theme } from "@/styles/theme";
 
 interface SwitchProps {
@@ -106,6 +107,7 @@ export function Switch({
       accessibilityLabel={accessibilityLabel}
       aria-checked={value}
       testID={testID}
+      dataSet={OUTER_FOCUS_RING_DATASET}
       style={pressableStyle}
     >
       <ThemedSwitchTrack value={value} />

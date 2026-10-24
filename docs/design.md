@@ -205,6 +205,8 @@ Imperative errors are `Alert.alert("Error", "Unable to ...")` (the React Native 
 
 Disabled state is `opacity: theme.opacity[50]` on the outer pressable. Color changes for disabled state are wrong; a disabled button is the same button, dimmer.
 
+Keyboard focus on web is one app-wide ring (`packages/app/public/index.html`), drawn inside the control's box because toolbars, sidebar rows and tab strips clip with `overflow: hidden`. Inside the box the ring sits on the control's fill, so a control filled with the accent or destructive color, or a surface with that fill, carries `FILLED_FOCUS_RING_DATASET` from `packages/app/src/styles/focus-ring.ts`; without it the ring disappears. `<Button>` marks its `default` and `destructive` variants; a custom filled pressable marks itself. A control whose content reaches its box edge, like a text link or the switch, carries `OUTER_FOCUS_RING_DATASET` so the ring does not cover it.
+
 Partial failure (a list mostly fine but one source errored) is a bordered banner above the list, listing each failure in red-300 `xs` (`packages/app/src/screens/projects-screen.tsx:151-159`). The list still renders.
 
 State surfaces at the smallest scope it affects. Field error stays under the field; page error is a banner; flow-stopping error is an `Alert`.
