@@ -5,6 +5,7 @@ export function buildWorkspaceDraftAgentConfig(input: {
   cwd: string;
   modeId?: string;
   model?: string;
+  selectionSource?: AgentSessionConfig["selectionSource"];
   thinkingOptionId?: string;
   featureValues?: Record<string, unknown>;
 }): AgentSessionConfig {
@@ -13,6 +14,7 @@ export function buildWorkspaceDraftAgentConfig(input: {
     cwd: input.cwd,
     ...(input.modeId ? { modeId: input.modeId } : {}),
     ...(input.model ? { model: input.model } : {}),
+    ...(input.selectionSource ? { selectionSource: input.selectionSource } : {}),
     ...(input.thinkingOptionId ? { thinkingOptionId: input.thinkingOptionId } : {}),
     ...(input.featureValues ? { featureValues: input.featureValues } : {}),
   };

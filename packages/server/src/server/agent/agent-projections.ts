@@ -371,6 +371,9 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
   if (config.model) {
     serializable.model = config.model;
   }
+  if (config.selectionSource) {
+    serializable.selectionSource = config.selectionSource;
+  }
   if (config.thinkingOptionId) {
     serializable.thinkingOptionId = config.thinkingOptionId;
   }
