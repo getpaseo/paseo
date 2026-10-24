@@ -313,6 +313,41 @@ function makeHermesInteropEager(code: string): string {
   return code.replaceAll("get: () => from[key]", "value: from[key]");
 }
 
+type BabelCore = typeof import("@babel/core");
+
+let babelCore: BabelCore | null = null;
+
+// Babel is only needed for client bundles, and loading it costs more than the rest of
+// the compiler's imports combined. Load it the first time a client bundle is compiled.
+function loadBabel(): BabelCore {
+  babelCore ??= nodeRequire("@babel/core") as BabelCore;
+  return babelCore;
+}
+
+// Older clients on React Native 0.81.5 cannot evaluate unlowered classes in plugin
+// bundles. Hosts and clients update independently, so preserve lowering for those
+// clients even when the host uses a newer Hermes compiler. Plugin bundles bypass
+// Metro and esbuild cannot lower classes; everything else stays as esbuild emitted it.
+export function lowerClassesForHermes(code: string): string {
+  const result = loadBabel().transformSync(code, {
+    babelrc: false,
+    configFile: false,
+    sourceType: "script",
+    comments: false,
+    compact: false,
+    sourceMaps: false,
+    plugins: [
+      nodeRequire("@babel/plugin-transform-class-static-block"),
+      nodeRequire("@babel/plugin-transform-class-properties"),
+      nodeRequire("@babel/plugin-transform-private-methods"),
+      nodeRequire("@babel/plugin-transform-private-property-in-object"),
+      nodeRequire("@babel/plugin-transform-classes"),
+    ],
+  });
+  if (result?.code == null) throw new Error("Plugin client class lowering produced no output");
+  return result.code;
+}
+
 function runtimeSpecifierError(
   specifier: string,
   target: PluginBuildTarget | "shared",
@@ -424,7 +459,10 @@ async function compileTarget(entryPath: string, target: PluginBuildTarget): Prom
   checkSharedDependencies(result.metafile.inputs, pluginDirectory);
   const output = result.outputFiles[0]?.text;
   if (!output) throw new Error(`Plugin ${target} compilation produced no output`);
-  return wrapCommonJsBundle(makeHermesInteropEager(output));
+  const interopSafe = makeHermesInteropEager(output);
+  let transformed = interopSafe;
+  if (target === "client") transformed = lowerClassesForHermes(transformed);
+  return wrapCommonJsBundle(transformed);
 }
 
 export async function compilePlugin(entryPaths: {
