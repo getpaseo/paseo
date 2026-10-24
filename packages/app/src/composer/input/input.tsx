@@ -471,6 +471,7 @@ function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
     let disposed = false;
     const handlePaste = (event: ClipboardEvent) => {
       if (!isConnected || disabled || isDictating || isRealtimeVoiceForCurrentAgent) return;
+      if (event.clipboardData?.getData("text/plain")) return;
 
       const imageFiles = collectImageFilesFromClipboardData(event.clipboardData);
       if (imageFiles.length === 0) return;
