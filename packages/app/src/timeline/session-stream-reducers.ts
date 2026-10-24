@@ -7,6 +7,7 @@ import {
   applyStreamEvent,
   flushHeadToTail,
   hydrateStreamState,
+  getStreamItemLatestTimestamp,
   isAgentToolCallItem,
   mergeAgentToolCallItem,
   replaceWithCanonicalStream,
@@ -241,7 +242,7 @@ function reconcilePromptWindowItems(input: {
             ? mergeAgentToolCallItem(
                 existing,
                 item.payload.data,
-                item.timestamp,
+                getStreamItemLatestTimestamp(item),
                 item.timelineCursor,
               )
             : { ...item, id: existing.id };
@@ -724,7 +725,11 @@ function mergeTimelineIdentityBoundary(
   if (!isAgentToolCallItem(olderLast) || !isAgentToolCallItem(currentFirst)) return null;
   return [
     ...olderTail.slice(0, -1),
-    mergeAgentToolCallItem(olderLast, currentFirst.payload.data, currentFirst.timestamp),
+    mergeAgentToolCallItem(
+      olderLast,
+      currentFirst.payload.data,
+      getStreamItemLatestTimestamp(currentFirst),
+    ),
     ...currentTail.slice(1),
   ];
 }

@@ -1,5 +1,5 @@
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
-import type { StreamItem, ToolCallItem } from "@/types/stream";
+import { getStreamItemLatestTimestamp, type StreamItem, type ToolCallItem } from "@/types/stream";
 
 export interface ToolCallDescriptor {
   detail: ToolCallDetail;
@@ -83,7 +83,15 @@ function createHost(run: ToolCallRun): ToolCallItem {
   if (run.calls.length === 1) {
     return run.latest;
   }
-  return { ...run.latest, id: run.id };
+  const host = { ...run.latest, id: run.id };
+  // The last row hosts the group, but an earlier call may finish later.
+  for (const call of run.calls) {
+    const timestamp = getStreamItemLatestTimestamp(call);
+    if (timestamp.getTime() > getStreamItemLatestTimestamp(host).getTime()) {
+      host.latestTimestamp = timestamp;
+    }
+  }
+  return host;
 }
 
 function isRunning(call: ToolCallItem): boolean {
