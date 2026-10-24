@@ -8,6 +8,8 @@ import { KeyboardTranslateView } from "@/keyboard/shift";
 import { Button } from "@/components/ui/button";
 import type { Theme } from "@/styles/theme";
 import { toErrorMessage } from "@/utils/error-messages";
+import { ContextWindowMeter } from "@/components/context-window-meter";
+import { useSessionStore } from "@/stores/session-store";
 
 interface ArchivedAgentCalloutProps {
   serverId: string;
@@ -20,6 +22,11 @@ export function ArchivedAgentCallout({ serverId, agentId }: ArchivedAgentCallout
   const isConnected = useHostRuntimeIsConnected(serverId);
   const [isUnarchiving, setIsUnarchiving] = useState(false);
   const [unarchiveError, setUnarchiveError] = useState<string | null>(null);
+  const usage = useSessionStore((state) => {
+    const session = state.sessions[serverId];
+    const agent = session?.agents?.get(agentId) ?? session?.agentDetails?.get(agentId);
+    return agent?.lastUsage;
+  });
 
   const handleUnarchive = useCallback(async () => {
     if (!client || !isConnected || isUnarchiving) return;
@@ -39,6 +46,14 @@ export function ArchivedAgentCallout({ serverId, agentId }: ArchivedAgentCallout
         <View style={styles.inputAreaContent}>
           <View style={styles.calloutStack}>
             <View style={styles.callout}>
+              <ContextWindowMeter
+                maxTokens={usage?.contextWindowMaxTokens ?? null}
+                usedTokens={usage?.contextWindowUsedTokens ?? null}
+                totalCostUsd={usage?.totalCostUsd ?? null}
+                showPercentage
+                serverId={serverId}
+                agentId={agentId}
+              />
               <Text style={styles.calloutText}>{t("agentPanel.archived.callout")}</Text>
               <Button
                 size="sm"

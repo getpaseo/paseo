@@ -6,6 +6,7 @@ import { promises as fs } from "node:fs";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentStorage } from "./agent-storage.js";
+import { buildStoredAgentPayload } from "./agent-projections.js";
 import { buildConfigOverrides, buildSessionConfig } from "../persistence-hooks.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type {
@@ -146,6 +147,32 @@ describe("AgentStorage", () => {
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("archived usage survives disk reload and is available without a provider runtime", async () => {
+    const lastUsage = {
+      inputTokens: 1234,
+      cachedInputTokens: 1000,
+      outputTokens: 234,
+      totalCostUsd: 0.75,
+      contextWindowUsedTokens: 4567,
+      contextWindowMaxTokens: 200000,
+    };
+    await storage.applySnapshot(createManagedAgent({ lastUsage }));
+    const record = await storage.get("agent-test");
+    expect(record).not.toBeNull();
+    await storage.upsert({ ...record!, lastStatus: "closed", archivedAt: "2026-10-14T00:00:00Z" });
+    await storage.flush();
+
+    const reloaded = new AgentStorage(storagePath, logger);
+    const archived = await reloaded.get("agent-test");
+    expect(archived?.lastUsage).toEqual(lastUsage);
+    const payload = buildStoredAgentPayload(archived!, []);
+    expect(payload.lastUsage).toEqual(lastUsage);
+    expect(payload.providerUnavailable).toBe(true);
+    expect(payload.archivedAt).toBe("2026-10-14T00:00:00Z");
+    payload.lastUsage!.inputTokens = 0;
+    expect(archived?.lastUsage?.inputTokens).toBe(1234);
   });
 
   test("applySnapshot persists configs and snapshot metadata", async () => {
