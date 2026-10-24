@@ -37,7 +37,95 @@ describe("terminal row model", () => {
     });
 
     expect(rows[0].runs.map((run) => ({ text: run.text, cellCount: run.cellCount }))).toEqual([
-      { text: "A界", cellCount: 3 },
+      { text: "A", cellCount: 2 },
+      { text: "界", cellCount: 1 },
+    ]);
+  });
+
+  test("keeps wide scripts in the run as segments the renderer spaces to two cells", () => {
+    const resolver = createTerminalCellStyleResolver(DEFAULT_TERMINAL_THEME);
+
+    const rows = buildRows({
+      grid: [
+        [
+          cell("한", { width: 2 }),
+          cell(" ", { width: 0 }),
+          cell("글", { width: 2 }),
+          cell(" ", { width: 0 }),
+          cell(" ", { width: 1 }),
+          cell("中", { width: 2 }),
+          cell(" ", { width: 0 }),
+          cell("あ", { width: 2 }),
+          cell(" ", { width: 0 }),
+          cell("o", { width: 1 }),
+          cell("k", { width: 1 }),
+        ],
+      ],
+      resolver,
+    });
+
+    expect(
+      rows[0].runs.map((run) => ({
+        text: run.text,
+        cellCount: run.cellCount,
+        segments: run.renderKind === "text" ? run.segments : null,
+      })),
+    ).toEqual([
+      {
+        text: "한글 中あok",
+        cellCount: 11,
+        segments: [
+          { text: "한글", wideGlyphClass: "hangul" },
+          { text: " ", wideGlyphClass: null },
+          { text: "中", wideGlyphClass: "han" },
+          { text: "あ", wideGlyphClass: "kana" },
+          { text: "ok", wideGlyphClass: null },
+        ],
+      },
+    ]);
+  });
+
+  test("gives wide glyphs outside the spaced scripts their own box", () => {
+    const resolver = createTerminalCellStyleResolver(DEFAULT_TERMINAL_THEME);
+
+    const [row] = buildRows({
+      grid: [
+        [
+          cell("ㄱ", { width: 2 }),
+          cell(" ", { width: 0 }),
+          cell("Ａ", { width: 2 }),
+          cell(" ", { width: 0 }),
+          cell("가", { width: 2 }),
+          cell(" ", { width: 0 }),
+        ],
+      ],
+      resolver,
+    });
+
+    expect(
+      row.runs.map((run) => [run.text, run.cellCount, run.renderKind === "text" && run.isolated]),
+    ).toEqual([
+      ["ㄱ", 2, true],
+      ["Ａ", 2, true],
+      ["가", 2, false],
+    ]);
+  });
+
+  test("gives non-ASCII narrow glyphs their own cell", () => {
+    const resolver = createTerminalCellStyleResolver(DEFAULT_TERMINAL_THEME);
+
+    const [row] = buildRows({
+      grid: [
+        ["⏺", " ", "e\u0301", " ", "d", "o", "n", "e"].map((char) => cell(char, { width: 1 })),
+      ],
+      resolver,
+    });
+
+    expect(row.runs.map((run) => [run.text, run.cellCount])).toEqual([
+      ["⏺", 1],
+      [" ", 1],
+      ["e\u0301", 1],
+      [" done", 5],
     ]);
   });
 
