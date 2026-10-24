@@ -6,7 +6,6 @@ export interface WorkspaceTabLayoutMetrics {
   rowPaddingHorizontal: number;
   tabGap: number;
   minTabWidth: number;
-  maxTabWidth: number;
   tabIconWidth: number;
   tabContentGap: number;
   tabHorizontalPadding: number;
@@ -46,14 +45,51 @@ export function retainWorkspaceTabMeasuredWidth(
   return measuredWidth;
 }
 
-function clamp(value: number, min: number, max: number): number {
-  if (value < min) {
-    return min;
+/**
+ * Hands the rail's width to the tabs, so a label is never cut while the rail still has width to
+ * give. A tab whose need (the width that shows its label whole) fits inside its equal share keeps
+ * that need; the tabs that do not fit share what is left equally, cheapest need first. Every tab
+ * keeps `minTabWidth`, and no tab grows past its own need, so the rail is only as empty as its
+ * labels are short.
+ */
+function allocateTabWidths(needs: number[], availableWidth: number, minTabWidth: number): number[] {
+  const tabCount = needs.length;
+  const widths = needs.map(() => minTabWidth);
+  let remainingWidth = availableWidth - minTabWidth * tabCount;
+  let unresolvedTabCount = tabCount;
+  const byNeed = needs
+    .map((need, index) => ({ need, index }))
+    .sort((left, right) => left.need - right.need);
+
+  for (const { need, index } of byNeed) {
+    const share = Math.max(remainingWidth / unresolvedTabCount, 0);
+    const granted = Math.min(Math.max(need - minTabWidth, 0), share);
+    widths[index] = minTabWidth + granted;
+    remainingWidth -= granted;
+    unresolvedTabCount -= 1;
   }
-  if (value > max) {
-    return max;
+
+  return widths;
+}
+
+/** Round to whole pixels without changing the total by more than half a pixel. */
+function roundTabWidths(widths: number[]): number[] {
+  const rounded = widths.map((width) => Math.floor(width));
+  const target = Math.round(widths.reduce((total, width) => total + width, 0));
+  let remainder = target - rounded.reduce((total, width) => total + width, 0);
+  const byFraction = widths
+    .map((width, index) => ({ index, fraction: width - Math.floor(width) }))
+    .sort((left, right) => right.fraction - left.fraction || left.index - right.index);
+
+  for (const { index } of byFraction) {
+    if (remainder <= 0) {
+      break;
+    }
+    rounded[index] += 1;
+    remainder -= 1;
   }
-  return value;
+
+  return rounded;
 }
 
 export function computeWorkspaceTabLayout(
@@ -81,9 +117,8 @@ export function computeWorkspaceTabLayout(
     input.metrics.tabContentGap +
     input.metrics.tabHorizontalPadding * 2 +
     input.metrics.closeButtonWidth;
-  const naturalWidths = input.tabLabelWidths.map((labelWidth) =>
-    clamp(tabChromeWidth + labelWidth, input.metrics.minTabWidth, input.metrics.maxTabWidth),
-  );
+  const labelNeeds = input.tabLabelWidths.map((labelWidth) => tabChromeWidth + labelWidth);
+  const naturalWidths = labelNeeds.map((need) => Math.max(need, input.metrics.minTabWidth));
   const naturalTotalWidth = naturalWidths.reduce((total, width) => total + width, 0);
   const minimumTotalWidth = input.metrics.minTabWidth * tabCount;
   // A row that scrolls has no reason to truncate: the tabs keep their natural widths and the
@@ -93,23 +128,12 @@ export function computeWorkspaceTabLayout(
     ? naturalTotalWidth > availableTabsWidth
     : availableTabsWidth < minimumTotalWidth;
 
-  let resolvedWidths = naturalWidths;
-  if (
-    !requiresHorizontalScrollFallback &&
-    !input.compact &&
-    naturalTotalWidth > availableTabsWidth
-  ) {
-    const widthToRemove = naturalTotalWidth - availableTabsWidth;
-    const shrinkCapacity = naturalTotalWidth - minimumTotalWidth;
-    const shrinkRatio = widthToRemove / shrinkCapacity;
-    resolvedWidths = naturalWidths.map(
-      (width) => width - (width - input.metrics.minTabWidth) * shrinkRatio,
-    );
-  }
+  const resolvedWidths =
+    input.compact || requiresHorizontalScrollFallback
+      ? naturalWidths
+      : allocateTabWidths(labelNeeds, availableTabsWidth, input.metrics.minTabWidth);
 
-  const roundedWidths = resolvedWidths.map((width) =>
-    Math.round(clamp(width, input.metrics.minTabWidth, input.metrics.maxTabWidth)),
-  );
+  const roundedWidths = roundTabWidths(resolvedWidths);
 
   return {
     items: roundedWidths.map((width) => ({
