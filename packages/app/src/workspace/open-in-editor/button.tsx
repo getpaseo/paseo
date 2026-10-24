@@ -29,6 +29,7 @@ import { ForgeBrandIcon } from "@/git/forge-icon";
 import { getForgePresentation } from "@/git/forge";
 import { buttonControlHeight, HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 import { extraMutedIconColorMapping } from "@/components/ui/icon-button-chrome";
+import { type ClientForgeHostSnapshot, useClientForgeHost } from "@/git/client-forge-registry";
 
 interface WorkspaceOpenInEditorButtonProps {
   serverId: string;
@@ -52,8 +53,13 @@ const ThemedCheckIcon = withUnistyles(Check);
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
-function renderForgeOpenTargetIcon(icon: string): ReactElement {
-  return <ForgeBrandIcon iconKind={icon} size={16} uniProps={mutedColorMapping} />;
+function renderForgeOpenTargetIcon(
+  icon: string,
+  clientForgeHost: ClientForgeHostSnapshot,
+): ReactElement {
+  return (
+    <ForgeBrandIcon iconKind={icon} size={16} uniProps={mutedColorMapping} host={clientForgeHost} />
+  );
 }
 
 interface OpenTargetMenuItemProps {
@@ -88,6 +94,7 @@ export function WorkspaceOpenInEditorButton({
 }: WorkspaceOpenInEditorButtonProps) {
   const { t } = useTranslation();
   const toast = useToast();
+  const clientForgeHost = useClientForgeHost(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const isLocalDaemon = useIsLocalDaemon(serverId);
   const { preferredEditorId, updatePreferredEditor } = usePreferredEditor();
@@ -129,13 +136,14 @@ export function WorkspaceOpenInEditorButton({
         isLocalExecution: isLocalDaemon,
         checkoutStatus,
         forge: resolvedForge,
+        clientForgeHost,
       }).map((target) => {
         if (target.source === "forge") {
-          const presentation = getForgePresentation(target.forge);
+          const presentation = getForgePresentation(target.forge, clientForgeHost);
           return {
             id: target.id,
             label: target.label,
-            icon: renderForgeOpenTargetIcon(presentation.icon),
+            icon: renderForgeOpenTargetIcon(presentation.icon, clientForgeHost),
             onOpen: () => openExternalUrl(target.url),
           };
         }
@@ -150,6 +158,7 @@ export function WorkspaceOpenInEditorButton({
       }),
     [
       activeFile,
+      clientForgeHost,
       checkoutStatus,
       cwd,
       desktopOpenTargets,

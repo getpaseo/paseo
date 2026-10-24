@@ -1,8 +1,13 @@
-import { getForgeDefinitionOrNeutral } from "@getpaseo/protocol/forge-manifest";
+import {
+  getForgeDefinitionOrNeutral,
+  type ForgeDefinition,
+} from "@getpaseo/protocol/forge-manifest";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { AgentPromptContentBlock, AgentPromptInput } from "./agent-sdk-types.js";
 
 const REVIEW_LINE_MARKERS = { add: "+", remove: "-", context: " " } as const;
+
+export type ForgeDefinitionLookup = (forge: string) => ForgeDefinition;
 
 export function buildAgentPrompt(
   text: string,
@@ -37,53 +42,68 @@ export function buildAgentPrompt(
   return blocks;
 }
 
-export function renderPromptAttachmentAsText(attachment: AgentAttachment): string {
+export function renderPromptAttachmentAsText(
+  attachment: AgentAttachment,
+  resolveForgeDefinition: ForgeDefinitionLookup = getForgeDefinitionOrNeutral,
+): string {
   switch (attachment.type) {
     case "forge_change_request": {
-      return renderChangeRequestAttachment({
-        forge: attachment.forge,
-        number: attachment.number,
-        title: attachment.title,
-        url: attachment.url,
-        body: attachment.body,
-        projectPath: attachment.projectPath,
-        baseRefName: attachment.baseRefName,
-        headRefName: attachment.headRefName,
-      });
+      return renderChangeRequestAttachment(
+        {
+          forge: attachment.forge,
+          number: attachment.number,
+          title: attachment.title,
+          url: attachment.url,
+          body: attachment.body,
+          projectPath: attachment.projectPath,
+          baseRefName: attachment.baseRefName,
+          headRefName: attachment.headRefName,
+        },
+        resolveForgeDefinition,
+      );
     }
     // COMPAT(githubAttachmentKinds): render legacy wire attachments until
     // 2027-01-17, when supported client and daemon floors are >= v0.2.0.
     case "github_pr": {
-      return renderChangeRequestAttachment({
-        forge: "github",
-        number: attachment.number,
-        title: attachment.title,
-        url: attachment.url,
-        body: attachment.body,
-        baseRefName: attachment.baseRefName,
-        headRefName: attachment.headRefName,
-      });
+      return renderChangeRequestAttachment(
+        {
+          forge: "github",
+          number: attachment.number,
+          title: attachment.title,
+          url: attachment.url,
+          body: attachment.body,
+          baseRefName: attachment.baseRefName,
+          headRefName: attachment.headRefName,
+        },
+        resolveForgeDefinition,
+      );
     }
     case "forge_issue": {
-      return renderIssueAttachment({
-        forge: attachment.forge,
-        number: attachment.number,
-        title: attachment.title,
-        url: attachment.url,
-        body: attachment.body,
-        projectPath: attachment.projectPath,
-      });
+      return renderIssueAttachment(
+        {
+          forge: attachment.forge,
+          number: attachment.number,
+          title: attachment.title,
+          url: attachment.url,
+          body: attachment.body,
+          projectPath: attachment.projectPath,
+        },
+        resolveForgeDefinition,
+      );
     }
     // COMPAT(githubAttachmentKinds): render legacy wire attachments until
     // 2027-01-17, when supported client and daemon floors are >= v0.2.0.
     case "github_issue": {
-      return renderIssueAttachment({
-        forge: "github",
-        number: attachment.number,
-        title: attachment.title,
-        url: attachment.url,
-        body: attachment.body,
-      });
+      return renderIssueAttachment(
+        {
+          forge: "github",
+          number: attachment.number,
+          title: attachment.title,
+          url: attachment.url,
+          body: attachment.body,
+        },
+        resolveForgeDefinition,
+      );
     }
     case "text": {
       return attachment.text;
@@ -128,18 +148,22 @@ export function renderPromptAttachmentAsText(attachment: AgentAttachment): strin
   }
 }
 
-function renderChangeRequestAttachment(input: {
-  forge: string;
-  number: number;
-  title: string;
-  url: string;
-  body?: string | null;
-  projectPath?: string;
-  baseRefName?: string | null;
-  headRefName?: string | null;
-}): string {
+function renderChangeRequestAttachment(
+  input: {
+    forge: string;
+    number: number;
+    title: string;
+    url: string;
+    body?: string | null;
+    projectPath?: string;
+    baseRefName?: string | null;
+    headRefName?: string | null;
+  },
+  resolveForgeDefinition: ForgeDefinitionLookup,
+): string {
+  const definition = resolveForgeDefinition(input.forge);
   const lines = [
-    `${formatForgeLabel(input.forge)} ${formatChangeRequestAbbrev(input.forge)} ${formatChangeRequestNumber(input.forge, input.number)}: ${input.title}`,
+    `${definition.displayName} ${definition.changeRequestAbbrev} ${definition.changeRequestNumberPrefix}${input.number}: ${input.title}`,
     input.url,
   ];
   if (input.projectPath) {
@@ -157,16 +181,20 @@ function renderChangeRequestAttachment(input: {
   return lines.join("\n");
 }
 
-function renderIssueAttachment(input: {
-  forge: string;
-  number: number;
-  title: string;
-  url: string;
-  body?: string | null;
-  projectPath?: string;
-}): string {
+function renderIssueAttachment(
+  input: {
+    forge: string;
+    number: number;
+    title: string;
+    url: string;
+    body?: string | null;
+    projectPath?: string;
+  },
+  resolveForgeDefinition: ForgeDefinitionLookup,
+): string {
+  const definition = resolveForgeDefinition(input.forge);
   const lines = [
-    `${formatForgeLabel(input.forge)} Issue ${formatIssueNumber(input.forge, input.number)}: ${input.title}`,
+    `${definition.displayName} Issue ${definition.issueNumberPrefix}${input.number}: ${input.title}`,
     input.url,
   ];
   if (input.projectPath) {
@@ -178,28 +206,13 @@ function renderIssueAttachment(input: {
   return lines.join("\n");
 }
 
-function formatForgeLabel(forge: string): string {
-  return getForgeDefinitionOrNeutral(forge).displayName;
-}
-
-function formatChangeRequestAbbrev(forge: string): string {
-  return getForgeDefinitionOrNeutral(forge).changeRequestAbbrev;
-}
-
-function formatChangeRequestNumber(forge: string, number: number): string {
-  return `${getForgeDefinitionOrNeutral(forge).changeRequestNumberPrefix}${number}`;
-}
-
-function formatIssueNumber(forge: string, number: number): string {
-  return `${getForgeDefinitionOrNeutral(forge).issueNumberPrefix}${number}`;
-}
-
 function padLineNumber(lineNumber: number | null): string {
   return (lineNumber?.toString() ?? "-").padStart(2);
 }
 
 export function buildAgentBranchNameSeed(
   firstAgentContext: { prompt?: string; attachments?: readonly AgentAttachment[] } | undefined,
+  resolveForgeDefinition: ForgeDefinitionLookup = getForgeDefinitionOrNeutral,
 ): string | undefined {
   if (!firstAgentContext) {
     return undefined;
@@ -211,7 +224,7 @@ export function buildAgentBranchNameSeed(
   }
   const renderedAttachments: string[] = [];
   for (const attachment of firstAgentContext.attachments ?? []) {
-    const rendered = renderPromptAttachmentAsText(attachment).trim();
+    const rendered = renderPromptAttachmentAsText(attachment, resolveForgeDefinition).trim();
     if (rendered) {
       renderedAttachments.push(rendered);
     }
@@ -220,4 +233,29 @@ export function buildAgentBranchNameSeed(
     parts.push(["<attachments>", renderedAttachments.join("\n\n"), "</attachments>"].join("\n"));
   }
   return parts.length > 0 ? parts.join("\n\n") : undefined;
+}
+
+/**
+ * Render forge attachments with the selected daemon's dynamic terminology
+ * before a provider converts the remaining structured prompt blocks.
+ */
+export function renderForgePromptAttachments(
+  prompt: AgentPromptInput,
+  resolveForgeDefinition: ForgeDefinitionLookup,
+): AgentPromptInput {
+  if (typeof prompt === "string") return prompt;
+  return prompt.map((block): AgentPromptContentBlock => {
+    if (
+      block.type !== "forge_change_request" &&
+      block.type !== "github_pr" &&
+      block.type !== "forge_issue" &&
+      block.type !== "github_issue"
+    ) {
+      return block;
+    }
+    return {
+      type: "text",
+      text: renderPromptAttachmentAsText(block, resolveForgeDefinition),
+    };
+  });
 }

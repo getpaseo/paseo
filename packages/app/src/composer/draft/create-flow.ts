@@ -15,11 +15,18 @@ import {
 } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PendingMessageSubmission } from "@/composer/submission/model";
+import { useDraftStore } from "@/stores/draft-store";
+import { markLaunchOutcomeUnknown } from "@/plugins/agent-launch";
+import {
+  LAUNCH_OUTCOME_UNKNOWN_MESSAGE,
+  resolveDraftLaunchIdentity,
+} from "@/plugins/agent-launch/identity";
 
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
 
 interface CreateAttempt {
   clientMessageId: string;
+  labels?: Record<string, string>;
   text: string;
   timestamp: Date;
   images?: UserMessageImageAttachment[];
@@ -73,6 +80,46 @@ function prepareCreateAttempt<TDraftAgent>(
   } catch (error) {
     return { tag: "draft", errorMessage: error instanceof Error ? error.message : String(error) };
   }
+}
+
+type LaunchIdentity = ReturnType<typeof resolveDraftLaunchIdentity>;
+
+function buildCreateAttempt(input: {
+  identity: LaunchIdentity;
+  text: string;
+  images: UserMessageImageAttachment[];
+  attachments: AgentAttachment[];
+}): CreateAttempt {
+  return {
+    clientMessageId: input.identity.clientMessageId,
+    ...(input.identity.labels ? { labels: input.identity.labels } : {}),
+    text: input.text,
+    timestamp: new Date(),
+    ...(input.images.length > 0 ? { images: input.images } : {}),
+    ...(input.attachments.length > 0 ? { attachments: input.attachments } : {}),
+  };
+}
+
+function buildPendingCreateAttempt(input: {
+  draftId: string;
+  serverId: string;
+  attempt: CreateAttempt;
+  identity: LaunchIdentity;
+}) {
+  const { attempt } = input;
+  return {
+    draftId: input.draftId,
+    serverId: input.serverId,
+    agentId: null,
+    clientMessageId: attempt.clientMessageId,
+    ...(attempt.labels ? { labels: attempt.labels } : {}),
+    text: attempt.text,
+    timestamp: attempt.timestamp.getTime(),
+    ...(attempt.images && attempt.images.length > 0 ? { images: attempt.images } : {}),
+    ...(attempt.attachments && attempt.attachments.length > 0
+      ? { attachments: attempt.attachments }
+      : {}),
+  };
 }
 
 interface CreateRequestResult<TCreateResult> {
@@ -243,6 +290,26 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
       } catch (error) {
         const resolved =
           error instanceof Error ? error : new Error(t("composer.errors.failedToCreateAgent"));
+        const launchMetadata = useDraftStore.getState().getAgentLaunchMetadata(draftId);
+        if (launchMetadata) {
+          try {
+            await markLaunchOutcomeUnknown({
+              draftId,
+              stage: "agent_create",
+              message: resolved.message,
+            });
+          } catch (journalError) {
+            console.warn("[Plugins] Failed to record agent launch uncertainty", {
+              draftId,
+              error: journalError instanceof Error ? journalError.message : "journal failed",
+            });
+          }
+          const refreshed = useDraftStore.getState().getAgentLaunchMetadata(draftId);
+          if (refreshed?.submissionState === "outcome_unknown_readonly") {
+            onCreateError?.(resolved);
+            throw error;
+          }
+        }
         dispatch({ type: "CREATE_FAILED", message: resolved.message });
         markPendingCreateLifecycle({
           draftId,
@@ -312,27 +379,23 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
         throw error;
       }
 
-      const attempt: CreateAttempt = {
-        clientMessageId: `${draftId}:initial-message`,
+      const identity = resolveDraftLaunchIdentity(draftId, () => `${draftId}:initial-message`);
+      if (identity.readOnly) {
+        const error = new Error(LAUNCH_OUTCOME_UNKNOWN_MESSAGE);
+        dispatch({ type: "DRAFT_SET_ERROR", message: error.message });
+        throw error;
+      }
+      const attempt = buildCreateAttempt({
+        identity,
         text: trimmedPrompt,
-        timestamp: new Date(),
-        ...(images.length > 0 ? { images } : {}),
-        ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),
-      };
+        images,
+        attachments: wirePayload.attachments,
+      });
 
       startCreateAttempt(attempt);
-      setPendingCreateAttempt({
-        draftId,
-        serverId: pendingServerId,
-        agentId: null,
-        clientMessageId: attempt.clientMessageId,
-        text: attempt.text,
-        timestamp: attempt.timestamp.getTime(),
-        ...(attempt.images && attempt.images.length > 0 ? { images: attempt.images } : {}),
-        ...(attempt.attachments && attempt.attachments.length > 0
-          ? { attachments: attempt.attachments }
-          : {}),
-      });
+      setPendingCreateAttempt(
+        buildPendingCreateAttempt({ draftId, serverId: pendingServerId, attempt, identity }),
+      );
 
       onCreateStart?.();
       await runCreateAttempt({ attempt, cwd });

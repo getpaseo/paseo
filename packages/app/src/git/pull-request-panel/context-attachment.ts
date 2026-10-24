@@ -2,6 +2,10 @@ import type { CheckoutCheckDetails } from "@getpaseo/protocol/messages";
 import type { PullRequestContextAttachment } from "@/attachments/types";
 import { type Forge, getForgePresentation } from "@/git/forge";
 import {
+  BUILTIN_CLIENT_FORGE_HOST,
+  type ClientForgeHostSnapshot,
+} from "@/git/client-forge-registry";
+import {
   formatPullRequestActivityLocation,
   formatPullRequestThreadPath,
 } from "./activity-location";
@@ -19,6 +23,7 @@ export interface PullRequestContextBuilderInput {
   forge: Forge;
   pullRequest: PullRequestContextMetadata;
   activity: PrPaneActivity;
+  clientForgeHost?: ClientForgeHostSnapshot;
 }
 
 export interface PullRequestThreadContextBuilderInput {
@@ -26,6 +31,7 @@ export interface PullRequestThreadContextBuilderInput {
   forge: Forge;
   pullRequest: PullRequestContextMetadata;
   thread: PrThreadEntry;
+  clientForgeHost?: ClientForgeHostSnapshot;
 }
 
 export interface PullRequestGithubCheckContextBuilderInput {
@@ -34,6 +40,7 @@ export interface PullRequestGithubCheckContextBuilderInput {
   pullRequest: PullRequestContextMetadata;
   check: PrPaneCheck;
   githubDetails?: CheckoutCheckDetails | null;
+  clientForgeHost?: ClientForgeHostSnapshot;
 }
 
 export function canAddPullRequestActivityToChat(activity: PrPaneActivity): boolean {
@@ -50,12 +57,15 @@ export function canAddPullRequestCheckLogsToChat(check: PrPaneCheck): boolean {
 export function buildPullRequestCommentContextAttachment(
   input: PullRequestContextBuilderInput,
 ): PullRequestContextAttachment {
-  const presentation = getForgePresentation(input.forge);
+  const presentation = getForgePresentation(
+    input.forge,
+    input.clientForgeHost ?? BUILTIN_CLIENT_FORGE_HOST,
+  );
   return {
     kind: "forge.change_request_comment",
     id: `${input.pullRequest.number}:${input.activity.id}`,
     title: input.activity.author,
-    subtitle: formatPullRequestSubtitle(input.pullRequest, input.forge),
+    subtitle: formatPullRequestSubtitle(input.pullRequest, input.forge, input.clientForgeHost),
     text: formatActivityContextText({
       ...input,
       heading: `${presentation.brandLabel} ${presentation.changeRequestNoun} comment`,
@@ -71,12 +81,15 @@ export function buildPullRequestReviewContextAttachment(
     return null;
   }
 
-  const presentation = getForgePresentation(input.forge);
+  const presentation = getForgePresentation(
+    input.forge,
+    input.clientForgeHost ?? BUILTIN_CLIENT_FORGE_HOST,
+  );
   return {
     kind: "forge.change_request_review",
     id: `${input.pullRequest.number}:${input.activity.id}`,
     title: input.activity.author,
-    subtitle: formatPullRequestSubtitle(input.pullRequest, input.forge),
+    subtitle: formatPullRequestSubtitle(input.pullRequest, input.forge, input.clientForgeHost),
     text: formatActivityContextText({
       ...input,
       heading: `${presentation.brandLabel} ${presentation.changeRequestNoun} review`,
@@ -99,7 +112,10 @@ export function buildPullRequestThreadContextAttachment(
     return null;
   }
 
-  const presentation = getForgePresentation(input.forge);
+  const presentation = getForgePresentation(
+    input.forge,
+    input.clientForgeHost ?? BUILTIN_CLIENT_FORGE_HOST,
+  );
   const noun = capitalizeFirst(presentation.changeRequestNoun);
   const location = input.thread.location;
   const threadTitle = location ? formatPullRequestThreadPath(location) : "Discussion thread";
@@ -127,7 +143,7 @@ export function buildPullRequestThreadContextAttachment(
     kind: "forge.change_request_comment",
     id: `${input.pullRequest.number}:${input.thread.id}`,
     title: threadTitle,
-    subtitle: formatPullRequestSubtitle(input.pullRequest, input.forge),
+    subtitle: formatPullRequestSubtitle(input.pullRequest, input.forge, input.clientForgeHost),
     text: [...lines, "", conversation.join("\n\n---\n\n")].join("\n"),
     url: root.url,
   };
@@ -140,7 +156,7 @@ export function buildPullRequestCheckContextAttachment(
     kind: "forge.change_request_check",
     id: formatPullRequestCheckContextId(input.pullRequest, input.check),
     title: input.check.name,
-    subtitle: formatPullRequestSubtitle(input.pullRequest, input.forge),
+    subtitle: formatPullRequestSubtitle(input.pullRequest, input.forge, input.clientForgeHost),
     text: formatCheckContextText(input),
     url: input.githubDetails?.detailsUrl ?? input.githubDetails?.url ?? input.check.url,
   };
@@ -162,8 +178,9 @@ function formatCheckContextText({
   pullRequest,
   check,
   githubDetails,
+  clientForgeHost,
 }: PullRequestGithubCheckContextBuilderInput): string {
-  const presentation = getForgePresentation(forge);
+  const presentation = getForgePresentation(forge, clientForgeHost ?? BUILTIN_CLIENT_FORGE_HOST);
   const noun = capitalizeFirst(presentation.changeRequestNoun);
   const lines = [
     `${provider.label} ${presentation.changeRequestNoun} check`,
@@ -263,8 +280,9 @@ function formatActivityContextText({
   pullRequest,
   activity,
   reviewState,
+  clientForgeHost,
 }: PullRequestContextBuilderInput & { heading: string; reviewState?: ReviewState }): string {
-  const presentation = getForgePresentation(forge);
+  const presentation = getForgePresentation(forge, clientForgeHost ?? BUILTIN_CLIENT_FORGE_HOST);
   const noun = capitalizeFirst(presentation.changeRequestNoun);
   const lines = [
     heading,
@@ -292,8 +310,12 @@ function formatActivityContextText({
   return [...lines, "", body].join("\n");
 }
 
-function formatPullRequestSubtitle(pullRequest: PullRequestContextMetadata, forge: Forge): string {
-  return `${getForgePresentation(forge).numberPrefix}${pullRequest.number} ${pullRequest.title}`;
+function formatPullRequestSubtitle(
+  pullRequest: PullRequestContextMetadata,
+  forge: Forge,
+  clientForgeHost?: ClientForgeHostSnapshot,
+): string {
+  return `${getForgePresentation(forge, clientForgeHost ?? BUILTIN_CLIENT_FORGE_HOST).numberPrefix}${pullRequest.number} ${pullRequest.title}`;
 }
 
 function capitalizeFirst(value: string): string {

@@ -35,7 +35,7 @@ import type {
   PullRequestCheck,
   PullRequestMergeable,
 } from "../services/forge-service.js";
-import { createForgeService } from "../services/forge-registry.js";
+import { defaultForgeRegistry, type ForgeRegistry } from "../services/forge-registry.js";
 import {
   createForgeResolver,
   type ForgeResolution,
@@ -397,6 +397,7 @@ interface WorkspaceGitServiceOptions {
   paseoHome: string;
   worktreesRoot?: string;
   fileObserver?: FileObserver;
+  forgeRegistry?: ForgeRegistry;
   deps?: Partial<WorkspaceGitServiceDependencies>;
 }
 
@@ -425,6 +426,7 @@ interface WorkspaceGitTarget {
   observationReensureTimer: NodeJS.Timeout | null;
   forgePrStatusPollSubscription: { unsubscribe: () => void } | null;
   forgePrStatusPollKey: string | null;
+  forgePrStatusPollGeneration: number;
   refreshState: WorkspaceGitRefreshState;
   latestGit: WorkspaceGitRuntimeSnapshot["git"] | null;
   latestGitLoadedAtMs: number | null;
@@ -590,6 +592,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly fileObserver: FileObserver;
   private readonly deps: WorkspaceGitServiceDependencies;
   private readonly forgeResolver: ForgeResolver;
+  private readonly forgeRegistry: ForgeRegistry;
+  private readonly unsubscribeForgeRegistry: () => void;
   private readonly workspaceRefreshLimit = pLimit({
     concurrency: WORKSPACE_GIT_REFRESH_CONCURRENCY,
     rejectOnClear: true,
@@ -643,8 +647,14 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       this.fileObserver.subscribe.bind(this.fileObserver),
       options.deps,
     );
+    this.forgeRegistry = options.forgeRegistry ?? defaultForgeRegistry;
     this.forgeResolver = createForgeResolver({
-      createService: (forge) => this.deps.forgeOverrides?.[forge] ?? createForgeService(forge),
+      registry: this.forgeRegistry,
+      createService: (forge) =>
+        this.deps.forgeOverrides?.[forge] ?? this.forgeRegistry.create(forge),
+    });
+    this.unsubscribeForgeRegistry = this.forgeRegistry.subscribe(() => {
+      this.handleForgeRegistryChange();
     });
   }
 
@@ -1037,6 +1047,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.disposeController.abort(new WorkspaceGitServiceDisposedError());
     this.workspaceRefreshLimit.clearQueue();
     this.workspaceObservationSetupLimit.clearQueue();
+    this.unsubscribeForgeRegistry();
+    this.forgeResolver.dispose();
 
     for (const target of this.workspaceTargets.values()) {
       this.closeWorkspaceTarget(target);
@@ -1206,6 +1218,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       observationReensureTimer: null,
       forgePrStatusPollSubscription: null,
       forgePrStatusPollKey: null,
+      forgePrStatusPollGeneration: 0,
       refreshState: { status: "idle" },
       latestGit: null,
       latestGitLoadedAtMs: null,
@@ -2794,6 +2807,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
     const pollKey = buildWorkspaceForgePrStatusPollKey({
       forge: resolution.forge,
+      adapterRevision: resolution.adapterRevision,
       remoteUrl,
       target: pollTarget,
     });
@@ -2805,6 +2819,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
     this.stopForgePrStatusPollForTarget(target);
     target.forgePrStatusPollKey = pollKey;
+    const pollGeneration = target.forgePrStatusPollGeneration;
     if (resolution.service.retainCurrentPullRequestStatusPoll) {
       target.forgePrStatusPollSubscription = resolution.service.retainCurrentPullRequestStatusPoll({
         cwd: target.cwd,
@@ -2814,7 +2829,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           ? { headRepositoryOwner: pollTarget.headRepositoryOwner }
           : {}),
         onStatus: (status) => {
-          if (!this.isActiveObservedWorkspaceTarget(target)) {
+          if (
+            target.forgePrStatusPollGeneration !== pollGeneration ||
+            !this.isActiveObservedWorkspaceTarget(target)
+          ) {
             return;
           }
           this.rememberForgePrStatusSnapshot(
@@ -2823,6 +2841,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           );
         },
         onError: (error) => {
+          if (target.forgePrStatusPollGeneration !== pollGeneration) {
+            return;
+          }
           this.logger.warn(
             {
               err: error,
@@ -2954,9 +2975,34 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   private stopForgePrStatusPollForTarget(target: WorkspaceGitTarget): void {
+    target.forgePrStatusPollGeneration += 1;
     target.forgePrStatusPollSubscription?.unsubscribe();
     target.forgePrStatusPollSubscription = null;
     target.forgePrStatusPollKey = null;
+  }
+
+  private handleForgeRegistryChange(): void {
+    if (this.disposed) {
+      return;
+    }
+    for (const target of this.workspaceTargets.values()) {
+      if (target.closed) {
+        continue;
+      }
+      this.stopForgePrStatusPollForTarget(target);
+      target.latestForge = buildForgeUnavailableSnapshot();
+      target.latestForgeLoadedAtMs = this.deps.now().getTime();
+      if (target.latestGit) {
+        this.rememberSnapshot(target, this.combineSnapshot(target), {
+          forceEmit: false,
+        });
+      }
+      this.scheduleWorkspaceRefresh(target, {
+        force: true,
+        includeForge: true,
+        reason: "forge-registry-change",
+      });
+    }
   }
 
   /**
@@ -3399,8 +3445,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     facts: CheckoutSnapshotFacts,
     runRefreshGitCommand: RunGitCommand,
   ): Promise<void> {
+    const registryRevision = this.forgeRegistry.revision();
     const remoteUrl = target.latestGit?.remoteUrl ?? null;
     const resolution = await this.forgeResolver.resolveFromRemoteUrlAsync(remoteUrl);
+    if (this.forgeRegistry.revision() !== registryRevision) {
+      return;
+    }
     // Every forge gates on the resolver alone: a cloud host matches synchronously
     // and a self-hosted/Enterprise host is recognized by the adapter probe (which
     // this async resolution populates), so GitHub Enterprise is no longer gated
@@ -3426,6 +3476,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       facts,
       runGitCommand: runRefreshGitCommand,
     });
+    if (this.forgeRegistry.revision() !== registryRevision) {
+      return;
+    }
     // Carry the resolved forge (probe-aware) so the wire projection labels
     // self-managed GitLab hosts correctly instead of falling back to "github".
     target.latestForge = { ...forgeSnapshot, forge: resolution.forge };
@@ -3462,6 +3515,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
     return buildWorkspaceForgePrStatusPollKey({
       forge: resolution.forge,
+      adapterRevision: resolution.adapterRevision,
       remoteUrl: git.remoteUrl,
       target: pollTarget,
     });
@@ -3933,15 +3987,18 @@ function buildForgeSnapshotFromStatus(
 
 function buildWorkspaceForgePrStatusPollKey({
   forge,
+  adapterRevision,
   remoteUrl,
   target,
 }: {
   forge: string;
+  adapterRevision: number;
   remoteUrl: string;
   target: WorkspaceForgePrStatusPollTarget;
 }): string {
   return JSON.stringify([
     forge,
+    adapterRevision,
     remoteUrl,
     target.headRef,
     target.headSha ?? null,

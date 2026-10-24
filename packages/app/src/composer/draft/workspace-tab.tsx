@@ -20,11 +20,13 @@ import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-
 import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
-import type { Agent } from "@/stores/session-store";
+import { useSessionStore, type Agent } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { useAgentControlCommandCenterActions } from "@/command-center/agent-control-registration";
 import { encodeImages } from "@/utils/encode-images";
+import { markAgentCreated, markAgentRequestStarted } from "@/plugins/agent-launch";
+import { useDraftStore } from "@/stores/draft-store";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
 import {
@@ -117,7 +119,7 @@ function resolveDraftModeId(input: {
 
 async function submitDraftCreateRequest(input: {
   draftId: string;
-  attempt: { clientMessageId: string };
+  attempt: { clientMessageId: string; labels?: Record<string, string> };
   text: string;
   images?: UserMessageImageAttachment[];
   attachments?: unknown;
@@ -181,6 +183,7 @@ async function submitDraftCreateRequest(input: {
     workspaceId,
     initialPrompt: text,
     clientMessageId: attempt.clientMessageId,
+    ...(attempt.labels ? { labels: attempt.labels } : {}),
     ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
     ...(attachmentsArray && attachmentsArray.length > 0 ? { attachments: attachmentsArray } : {}),
   };
@@ -339,9 +342,7 @@ export function WorkspaceDraftAgentTab({
     },
   });
   const composerState = draftInput.composerState;
-  if (!composerState) {
-    throw new Error("Workspace draft composer state is required");
-  }
+  invariant(composerState, "Workspace draft composer state is required");
 
   const draftProvider = composerState.selectedProvider;
   const draftProviderDefinitions = composerState.providerDefinitions;
@@ -375,6 +376,7 @@ export function WorkspaceDraftAgentTab({
     }
     return {
       clientMessageId: pendingCreateAttempt.clientMessageId,
+      ...(pendingCreateAttempt.labels ? { labels: pendingCreateAttempt.labels } : {}),
       text: pendingCreateAttempt.text,
       timestamp: new Date(pendingCreateAttempt.timestamp),
       ...(pendingCreateAttempt.images && pendingCreateAttempt.images.length > 0
@@ -423,7 +425,7 @@ export function WorkspaceDraftAgentTab({
 
   const {
     formErrorMessage,
-    isSubmitting,
+    isSubmitting: createIsSubmitting,
     submittedStreamItems,
     pendingMessageSubmissions,
     draftAgent,
@@ -454,6 +456,16 @@ export function WorkspaceDraftAgentTab({
         (document.activeElement as HTMLElement | null)?.blur?.();
       }
       Keyboard.dismiss();
+      const metadata = useDraftStore.getState().getAgentLaunchMetadata(draftId);
+      if (metadata) {
+        const workspace = useSessionStore
+          .getState()
+          .sessions[serverId]?.workspaces.get(workspaceId);
+        if (!workspace || workspace.projectId !== metadata.projectId) {
+          throw new Error("The selected workspace is no longer in the launch project.");
+        }
+        await markAgentRequestStarted(draftId, workspaceId);
+      }
     },
     buildDraftAgent: (attempt) =>
       buildDraftAgentSnapshot({
@@ -486,13 +498,24 @@ export function WorkspaceDraftAgentTab({
         selectModelMessage: t("workspaceSetup.errors.selectModel"),
       });
     },
-    onCreateSuccess: ({ result }) => {
+    onCreateSuccess: async ({ result }) => {
+      if (useDraftStore.getState().getAgentLaunchMetadata(draftId)) {
+        await markAgentCreated({ draftId, workspaceId, agentId: result.id });
+      }
       clearDraftInput("sent");
       clearWorkspaceAttachments({ scopeKey: draftAttachmentScopeKey });
       useWorkspaceDraftSubmissionStore.getState().clearDraftSetup({ draftId });
       onCreated(result);
     },
   });
+  const isLaunchOutcomeUnknown = useDraftStore((state) =>
+    Object.values(state.drafts).some(
+      (record) =>
+        record.agentLaunch?.draftId === draftId &&
+        record.agentLaunch.submissionState === "outcome_unknown_readonly",
+    ),
+  );
+  const isSubmitting = createIsSubmitting || isLaunchOutcomeUnknown;
   const turnPresentation = useMemo(
     () => resolveTurnPresentation(TURN_LIVENESS_IDLE, pendingMessageSubmissions.length > 0),
     [pendingMessageSubmissions],
@@ -565,6 +588,12 @@ export function WorkspaceDraftAgentTab({
           cwd: submission.cwd,
         });
     void createPromise.catch(() => {
+      if (
+        useDraftStore.getState().getAgentLaunchMetadata(draftId)?.submissionState ===
+        "outcome_unknown_readonly"
+      ) {
+        return;
+      }
       replaceDraftText(submission.text);
       setDraftAttachments(composerWorkspaceAttachment.userAttachmentsOnly(submission.attachments));
       autoSubmitKeyRef.current = null;
@@ -648,6 +677,12 @@ export function WorkspaceDraftAgentTab({
             isPaneFocused={isPaneFocused}
             onSubmitMessage={handleCreateFromInput}
             isSubmitLoading={isSubmitting}
+            readOnly={isLaunchOutcomeUnknown}
+            placeholder={
+              isLaunchOutcomeUnknown
+                ? "This launch may already have created an agent. Check its Todo status."
+                : undefined
+            }
             blurOnSubmit={true}
             textSource={draftInput.textSource}
             onChangeText={draftInput.editText}

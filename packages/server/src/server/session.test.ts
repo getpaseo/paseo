@@ -20,6 +20,7 @@ import {
 } from "../services/github-service.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import { getForgeDefinitionOrNeutral } from "@getpaseo/protocol/forge-manifest";
 import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   decodeFileTransferFrame,
@@ -363,7 +364,11 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     resolveRepoRemoteUrl: vi.fn(),
     resolveRepoRoot: vi.fn(),
     getWorkspaceGitMetadata: vi.fn(),
-    resolveForge: vi.fn().mockResolvedValue({ forge: "github", service: github }),
+    resolveForge: vi.fn().mockResolvedValue({
+      forge: "github",
+      service: github,
+      definition: getForgeDefinitionOrNeutral("github"),
+    }),
     // Mirror production: invalidateForge resolves the forge and busts the
     // adapter's cache. The resolved forge here is github, so delegate to it.
     invalidateForge: vi.fn((cwd: string) => github.invalidate({ cwd })),
@@ -4845,7 +4850,11 @@ describe("session pull request timeline handling", () => {
       }),
     };
     const workspaceGitService = {
-      resolveForge: vi.fn().mockResolvedValue({ forge: "gitlab", service: gitlab }),
+      resolveForge: vi.fn().mockResolvedValue({
+        forge: "gitlab",
+        service: gitlab,
+        definition: getForgeDefinitionOrNeutral("gitlab"),
+      }),
     };
     const session = createSessionForTest({ github, workspaceGitService, messages });
 
