@@ -2392,7 +2392,16 @@ export class PiRpcAgentSession implements AgentSession {
           ),
         });
       }
-      if (!this.activeTurnStarted) {
+      // Extension slash commands can finish with only a custom message and never
+      // emit agent_start. Ordinary prompts must keep the turn open so
+      // before_agent_start injections (e.g. hidden recall context) do not settle
+      // the turn early — see https://github.com/getpaseo/paseo/issues/6366.
+      if (
+        !this.activeTurnStarted &&
+        event.message.display !== false &&
+        this.activeNoTurnPromptText != null &&
+        this.parseSlashCommandInput(this.activeNoTurnPromptText) !== null
+      ) {
         this.completeTurn(turnId, []);
       }
       return;
