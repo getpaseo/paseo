@@ -26,6 +26,28 @@ async function collectHistory(
   return events;
 }
 
+test.each(["", "Describe this image"])(
+  "cross-client history preserves images with text %j",
+  async (text) => {
+    const image = { type: "image" as const, data: "AA==", mimeType: "image/png" };
+    const events = await collectHistory(
+      [{ role: "user", content: [{ type: "text", text }, image] }],
+      [{ id: "user-image", text }],
+    );
+    expect(events).toMatchObject([
+      {
+        type: "timeline",
+        item: {
+          type: "user_message",
+          messageId: "user-image",
+          text,
+          images: [{ data: image.data, mimeType: image.mimeType }],
+        },
+      },
+    ]);
+  },
+);
+
 describe("OMP history mapper", () => {
   test("renders visible custom messages as completed tools with their type and content", async () => {
     const events = await collectHistory([

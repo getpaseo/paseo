@@ -40,15 +40,25 @@ function sourceToolCallTimelineItem(data: AgentToolCallData): ToolCallTimelineIt
   }
 }
 
+function sourceUserMessageTimelineItem(
+  item: Extract<StreamItem, { kind: "user_message" }>,
+): AgentTimelineItem | null {
+  // Local attachment metadata cannot be rendered outside its storage owner.
+  // Keep that row native until the canonical event supplies portable images.
+  if (item.images?.length && !item.inlineImages?.length) return null;
+  return {
+    type: "user_message",
+    text: item.text,
+    ...(item.inlineImages?.length ? { images: item.inlineImages } : {}),
+    ...(item.messageId ? { messageId: item.messageId } : {}),
+    ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
+  };
+}
+
 function sourceTimelineItem(item: StreamItem): AgentTimelineItem | null {
   switch (item.kind) {
     case "user_message":
-      return {
-        type: "user_message",
-        text: item.text,
-        ...(item.messageId ? { messageId: item.messageId } : {}),
-        ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
-      };
+      return sourceUserMessageTimelineItem(item);
     case "assistant_message":
       return {
         type: "assistant_message",

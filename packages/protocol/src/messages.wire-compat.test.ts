@@ -12,6 +12,35 @@ import {
   AgentTimelineEntryPayloadSchema,
 } from "./messages.js";
 
+test("cross-client user images survive wire parsing without requiring images on older messages", async () => {
+  const legacy = { type: "user_message" as const, text: "hello", messageId: "user-1" };
+  const withImages = { ...legacy, images: [{ data: "AA==", mimeType: "image/png" }] };
+  expect(AgentTimelineItemPayloadSchema.parse(withImages)).toEqual(withImages);
+  const { validateWSOutboundMessage } = await import("./validation/ws-outbound.js");
+  const wireMessage = {
+    type: "session",
+    message: {
+      type: "agent_stream",
+      payload: {
+        agentId: "image-agent",
+        timestamp: "2026-10-12T00:00:00.000Z",
+        event: { type: "timeline", provider: "omp", item: withImages },
+      },
+    },
+  };
+  const result = validateWSOutboundMessage(wireMessage);
+  if (!result.success) throw result.error;
+  expect(result.data).toEqual(wireMessage);
+
+  expect(AgentTimelineItemPayloadSchema.parse(legacy)).toEqual(legacy);
+  const legacySchema = z.object({
+    type: z.literal("user_message"),
+    text: z.string(),
+    messageId: z.string().optional(),
+  });
+  expect(legacySchema.parse(withImages)).toEqual(legacy);
+});
+
 test("terminal listings accept older rows and retain new per-terminal directories", () => {
   const response = {
     type: "list_terminals_response",

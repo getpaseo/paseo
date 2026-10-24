@@ -61,6 +61,13 @@ export function getUserMessageText(content: string | (OmpTextContent | OmpImageC
   return textParts.join("\n\n");
 }
 
+export function getUserMessageImages(content: string | (OmpTextContent | OmpImageContent)[]) {
+  if (typeof content === "string") return [];
+  return content.flatMap((block) =>
+    block.type === "image" ? [{ data: block.data, mimeType: block.mimeType }] : [],
+  );
+}
+
 export class OmpHistoryMapper {
   private readonly pendingToolCalls = new Map<string, OmpTrackedToolCall>();
   private userIndex = 0;
@@ -106,8 +113,9 @@ export class OmpHistoryMapper {
 
   private mapUserMessage(message: Extract<OmpAgentMessage, { role: "user" }>): AgentStreamEvent[] {
     const text = getUserMessageText(message.content);
+    const images = getUserMessageImages(message.content);
     this.userIndex += 1;
-    if (!text) {
+    if (!text && images.length === 0) {
       return [];
     }
     const userEntry = this.userEntries[this.userIndex - 1];
@@ -118,6 +126,7 @@ export class OmpHistoryMapper {
         item: {
           type: "user_message",
           text,
+          ...(images.length > 0 ? { images } : {}),
           ...(userEntry ? { messageId: userEntry.id } : {}),
         },
       },
