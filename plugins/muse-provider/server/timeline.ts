@@ -182,14 +182,19 @@ export class Timeline {
     if (previous && previous.revision >= item.revision) return false;
     let patch;
     if (item.patchRef && item.status === "completed") {
-      const output = await this.host.request(
-        "item/readOutput",
-        { sessionId: this.nativeId, itemId: item.itemId, outputRef: item.patchRef.id },
-        outputSchema,
-      );
-      if (output.encoding !== "utf8" || !output.eof)
-        throw new MuseError("invalidPatch", "Muse edit patch is not a complete UTF-8 document");
-      patch = unifiedDiff(output.content);
+      // The diff is display-only: a failed or slow fetch shows the edit without it.
+      const output = await this.host
+        .request(
+          "item/readOutput",
+          { sessionId: this.nativeId, itemId: item.itemId, outputRef: item.patchRef.id },
+          outputSchema,
+        )
+        .catch(() => undefined);
+      if (output) {
+        if (output.encoding !== "utf8" || !output.eof)
+          throw new MuseError("invalidPatch", "Muse edit patch is not a complete UTF-8 document");
+        patch = unifiedDiff(output.content);
+      }
     }
     this.items.set(item.itemId, item);
     this.emit({
