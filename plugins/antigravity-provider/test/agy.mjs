@@ -1,4 +1,4 @@
-import { readFileSync, appendFileSync } from "node:fs";
+import { readFileSync, appendFileSync, existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 
 const args = process.argv.slice(2);
@@ -61,9 +61,13 @@ emit(init);
 let interrupted = null;
 const turns = new Map();
 const lines = createInterface({ input: process.stdin });
-lines.on("line", (line) => {
+lines.on("line", async (line) => {
   const input = JSON.parse(line);
   record({ input });
+  const gate = process.env.AGY_TEST_RESPONSE_GATE;
+  if (gate) {
+    while (!existsSync(gate)) await new Promise((resolve) => setTimeout(resolve, 10));
+  }
   const text = input.message.content;
   let name = "text-turn";
   if (text.includes("Attached image: ")) name = "image-file-external";

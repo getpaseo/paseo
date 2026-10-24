@@ -13,6 +13,7 @@ import {
   type ProviderLaunch,
   type ProviderPersistence,
 } from "@getpaseo/plugin/server/provider";
+import { contextLimit, requestContextUsage } from "./internal/context.js";
 import { signalPlan } from "./internal/signals.js";
 import { createAntigravityProvider } from "./provider.js";
 
@@ -334,6 +335,124 @@ it("accounts DONE generation usage once without adding cumulative results, inclu
   });
 });
 
+it.each([undefined, "unknown", "gemini-3.8-flash-low", "toString", "constructor"])(
+  "leaves context limits unknown for unverified model %s",
+  (model) => {
+    expect(contextLimit(model)).toBeUndefined();
+    expect(requestContextUsage(model, { input_tokens: 100, cache_read_tokens: 200 })).toEqual({});
+  },
+);
+
+it("counts cached input in the latest request context without capping it at the model limit", () => {
+  expect(
+    requestContextUsage("gemini-3.8-flash-high", { input_tokens: 100, cache_read_tokens: 200 }),
+  ).toEqual({ contextWindowMaxTokens: 1048576, contextWindowUsedTokens: 300 });
+  expect(
+    requestContextUsage("gemini-3.8-flash-high", { input_tokens: 1048576, cache_read_tokens: 1 }),
+  ).toEqual({ contextWindowMaxTokens: 1048576, contextWindowUsedTokens: 1048577 });
+});
+
+it.each([NaN, Infinity, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+  "does not report invalid request context %s",
+  (input_tokens) => {
+    expect(
+      requestContextUsage("gemini-3.8-flash-high", { input_tokens, cache_read_tokens: 0 }),
+    ).toEqual({});
+  },
+);
+
+it("reports request context for the selected Gemini model across resumed turns", async () => {
+  const h = await harness();
+  await h.open();
+  await h.request({
+    type: "session.configure",
+    requestId: "model",
+    sessionId: "s",
+    changes: { model: "gemini-3.8-flash-high" },
+  });
+  await h.completed(await h.prompt("MULTI"));
+  await h.completed(await h.prompt("MULTI"));
+  expect(
+    h.events
+      .filter((event) => event.type === "session.usage")
+      .map((event) =>
+        event.type === "session.usage" ? event.usage.contextWindowUsedTokens : null,
+      ),
+  ).toEqual([11263, 11604]);
+  expect(h.events.findLast((event) => event.type === "session.usage")).toMatchObject({
+    usage: { contextWindowMaxTokens: 1048576, contextWindowUsedTokens: 11604 },
+  });
+  const persistence = h.persistence();
+  await h.request({ type: "session.close", sessionId: "s", requestId: "close" });
+  await h.open(persistence);
+  await h.request({
+    type: "session.configure",
+    requestId: "model-resumed",
+    sessionId: "s",
+    changes: { model: "gemini-3.8-flash-high" },
+  });
+  await h.completed(await h.prompt("RESUME"));
+  expect(h.events.findLast((event) => event.type === "session.usage")).toMatchObject({
+    usage: { contextWindowMaxTokens: 1048576, contextWindowUsedTokens: 11815 },
+  });
+  await h.completed(await h.prompt("TOOLS"));
+  expect(h.events.findLast((event) => event.type === "session.usage")).toMatchObject({
+    usage: {
+      inputTokens: 11257 + 11478,
+      contextWindowMaxTokens: 1048576,
+      contextWindowUsedTokens: 11478,
+    },
+  });
+  await h.request({
+    type: "session.configure",
+    requestId: "unverified-model",
+    sessionId: "s",
+    changes: { model: "gemini-3.8-flash-low" },
+  });
+  await h.completed(await h.prompt("HELLO"));
+  const unverified = h.events.findLast((event) => event.type === "session.usage");
+  expect(unverified).not.toHaveProperty("usage.contextWindowMaxTokens");
+  expect(unverified).not.toHaveProperty("usage.contextWindowUsedTokens");
+});
+
+it.each([
+  ["gemini-3.8-flash-high", "gemini-3.8-flash-low", true],
+  ["gemini-3.8-flash-low", "gemini-3.8-flash-high", false],
+] as const)(
+  "uses the running model when switching from %s to %s mid-turn",
+  async (running, next, known) => {
+    const gateDirectory = await mkdtemp(path.join(os.tmpdir(), "antigravity-response-gate-"));
+    temporary.push(gateDirectory);
+    const gate = path.join(gateDirectory, "ready");
+    const h = await harness({ AGY_TEST_RESPONSE_GATE: gate });
+    await h.open();
+    await h.request({
+      type: "session.configure",
+      requestId: "running-model",
+      sessionId: "s",
+      changes: { model: running },
+    });
+    const prompt = await h.prompt("HELLO");
+    await h.request({
+      type: "session.configure",
+      requestId: "next-model",
+      sessionId: "s",
+      changes: { model: next },
+    });
+    await writeFile(gate, "ready");
+    await h.completed(prompt);
+    const usage = h.events.findLast((event) => event.type === "session.usage");
+    if (known) {
+      expect(usage).toMatchObject({
+        usage: { contextWindowMaxTokens: 1048576, contextWindowUsedTokens: 11235 },
+      });
+    } else {
+      expect(usage).not.toHaveProperty("usage.contextWindowMaxTokens");
+      expect(usage).not.toHaveProperty("usage.contextWindowUsedTokens");
+    }
+  },
+);
+
 it("maps subagent steps to a tool carrying the child conversation ID", async () => {
   const h = await harness();
   await h.open();
@@ -600,6 +719,11 @@ describe("discovery", () => {
       catalog: {
         models: expect.arrayContaining([
           { id: "gemini-3.8-flash-low", label: "Gemini 3.8 Flash (Low)" },
+          {
+            id: "gemini-3.8-flash-high",
+            label: "Gemini 3.8 Flash (High)",
+            contextWindowMaxTokens: 1048576,
+          },
         ]),
         thinkingOptions: [],
         defaultMode: "full-access",

@@ -1044,6 +1044,42 @@ describe("pending provider responses", () => {
 });
 
 describe("plugin provider launch and status", () => {
+  test("associates native usage with the effective session account and current model", async () => {
+    const harness = createProviderHarness();
+    const logger = createTestLogger();
+    const registry = new PluginAgentClientRegistry(logger);
+    registry.replace([harness.registration]);
+    try {
+      const client = registry.definitions()[harness.registration.id]!.createClient(logger, {
+        env: { HOME: "/provider-account", HTTPS_PROXY: "http://provider-proxy" },
+      });
+      const session = await client.createSession(
+        { provider: harness.registration.id, cwd: "/workspace" },
+        { env: { HOME: "/session-account", CLAUDECODE: "parent" } },
+      );
+      const usage = session.usageSession?.();
+      expect(usage).toMatchObject({
+        provider: "plugin-direct",
+        model: "plugin-model",
+        env: { HOME: "/session-account", HTTPS_PROXY: "http://provider-proxy" },
+        sessionKey: expect.any(String),
+      });
+      expect(usage?.env).not.toHaveProperty("CLAUDECODE");
+      if (!usage) throw new Error("Missing session usage scope");
+      usage.env.HOME = "/mutated-copy";
+      expect(session.usageSession?.()?.env.HOME).toBe("/session-account");
+      await session.setModel?.("updated-model");
+      expect(session.usageSession?.()).toMatchObject({
+        model: "updated-model",
+        sessionKey: usage.sessionKey,
+      });
+      await session.close();
+      expect(session.usageSession?.()).toBeNull();
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
   test("resolves the executable against the provider's PATH override", async () => {
     const harness = createProviderHarness();
     const registration: ProviderRegistration = { ...harness.registration, command: ["node"] };

@@ -1,3 +1,4 @@
+import { contextLimit } from "./context.js";
 import type {
   ProviderCatalog,
   ProviderLaunch,
@@ -29,7 +30,10 @@ export async function getCatalog(launch: ProviderLaunch, cwd?: string): Promise<
       throw new AntigravityError("Invalid `agy models` output", "INVALID_CATALOG");
     if (models.some((model) => model.id === id))
       throw new AntigravityError(`Duplicate Antigravity model: ${id}`, "INVALID_CATALOG");
-    models.push({ id, label });
+    const model: ProviderModel = { id, label };
+    const limit = contextLimit(id);
+    if (limit !== undefined) model.contextWindowMaxTokens = limit;
+    models.push(model);
   }
   return { models, modes, thinkingOptions: [], defaultMode: "full-access" };
 }

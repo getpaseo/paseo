@@ -1,3 +1,4 @@
+import { requestContextUsage } from "./context.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type {
@@ -22,6 +23,7 @@ const persistenceSchema = z
   .strict();
 interface Turn {
   id: string;
+  model: string | undefined;
   text: Map<number, string>;
   usageSteps: Set<number>;
   tools: Map<string, Extract<ProviderTimelineItem, { type: "tool_call" }>>;
@@ -90,6 +92,7 @@ export class Session {
     const driver = this.state.driver;
     const turn: Turn = {
       id: randomUUID(),
+      model: this.config.model,
       text: new Map(),
       usageSteps: new Set(),
       tools: new Map(),
@@ -298,7 +301,7 @@ export class Session {
           type: "session.usage",
           sessionId: this.options.id,
           turnId: turn.id,
-          usage: { ...turn.usage },
+          usage: { ...turn.usage, ...requestContextUsage(turn.model, step.usage) },
         });
       }
     } else if (step.step_type === "tool" || step.step_type === "subagent") {
