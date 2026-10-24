@@ -2594,6 +2594,21 @@ export const ru: TranslationResources = {
             blue: "Синий",
           },
         },
+        icon: {
+          label: "Значок",
+          accessibilityLabel: "Значок, {{value}}",
+          options: {
+            server: "Сервер",
+            cloud: "Облачная ВМ",
+            desktop: "Настольный ПК",
+            laptop: "Ноутбук",
+            workstation: "Рабочая станция",
+            board: "Одноплатник",
+            container: "Контейнер",
+            home: "Домашний сервер",
+            office: "Офис",
+          },
+        },
         badge: {
           label: "Значок на боковой панели",
           accessibilityLabel: "Значок на боковой панели, {{value}}",
