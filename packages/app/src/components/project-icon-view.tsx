@@ -1,9 +1,9 @@
 import { useMemo } from "react";
 import { type StyleProp, Text, type TextStyle, View } from "react-native";
 import { ProjectIconImage } from "@/components/project-icon-image";
-import { deriveIdentityColorName, identityColor } from "@/styles/identity-colors";
+import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
+import { deriveProjectColors } from "@/styles/identity-colors";
 
-const WHITE_TEXT = { color: "#ffffff" } as const;
 const FALLBACK_LAYOUT = { alignItems: "center", justifyContent: "center" } as const;
 
 /**
@@ -45,16 +45,23 @@ export function ProjectIconView({
 }) {
   // The uploaded image is sized but never clipped — see projectIconRadius.
   const box = useMemo(() => ({ width: size, height: size }), [size]);
+  const projectOrderIndex = useSidebarOrderStore((state) =>
+    state.projectOrder.indexOf(projectViewKey),
+  );
+  const colors = useMemo(
+    () => deriveProjectColors(projectViewKey, projectOrderIndex),
+    [projectViewKey, projectOrderIndex],
+  );
   const fallbackStyles = useMemo(
     () => [
       box,
       { borderRadius: projectIconRadius(size) },
       FALLBACK_LAYOUT,
-      { backgroundColor: identityColor(deriveIdentityColorName(projectViewKey)) },
+      { backgroundColor: colors.backgroundColor },
     ],
-    [box, size, projectViewKey],
+    [box, size, colors.backgroundColor],
   );
-  const textStyles = useMemo(() => [textStyle, WHITE_TEXT], [textStyle]);
+  const textStyles = useMemo(() => [textStyle, { color: colors.color }], [textStyle, colors.color]);
 
   const fallback = useMemo(
     () => (
