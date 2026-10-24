@@ -414,6 +414,9 @@ jobs:
       - name: Build app dependencies
         run: npm run build:app-deps
 
+      - name: Install Kotlin compiler for native keyboard unit tests
+        run: sudo apt-get update && sudo apt-get install -y kotlin
+
       - name: Run app unit tests
         run: npm run test --workspace=@getpaseo/app
 
