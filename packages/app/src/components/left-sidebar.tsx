@@ -404,14 +404,7 @@ function IconTooltipContent({
   );
 }
 
-function SidebarFooter({
-  handleOpenProject,
-  handleSettings,
-  labels,
-  handleAddHost,
-  handleOpenHostSettings,
-  onBeforeNavigate,
-}: {
+interface SidebarFooterProps {
   handleOpenProject: () => void;
   handleSettings: () => void;
   labels: {
@@ -424,14 +417,35 @@ function SidebarFooter({
   handleAddHost: () => void;
   handleOpenHostSettings: (serverId: string) => void;
   onBeforeNavigate?: () => void;
-}) {
+  onHeightChange?: (height: number) => void;
+}
+
+function SidebarFooter({
+  handleOpenProject,
+  handleSettings,
+  labels,
+  handleAddHost,
+  handleOpenHostSettings,
+  onBeforeNavigate,
+  onHeightChange,
+}: SidebarFooterProps) {
   const newAgentKeys = useShortcutKeys("new-agent");
   const settingsKeys = useShortcutKeys("toggle-settings");
+  const lastHeightRef = useRef<number | null>(null);
+  const handleLayout = useCallback(
+    (event: { nativeEvent: { layout: { height: number } } }) => {
+      const height = event.nativeEvent.layout.height;
+      if (!Number.isFinite(height) || height <= 0 || height === lastHeightRef.current) return;
+      lastHeightRef.current = height;
+      onHeightChange?.(height);
+    },
+    [onHeightChange],
+  );
 
   // One line of icons: Add project, Usage, Hosts, then Help and Settings at the end.
   return (
     <UsageSidebarRoot>
-      <View style={styles.footerContainer} testID="sidebar-footer">
+      <View style={styles.footerContainer} testID="sidebar-footer" onLayout={handleLayout}>
         <SidebarFooterRows onBeforeNavigate={onBeforeNavigate} />
         <View style={styles.sidebarFooter} testID="sidebar-footer-bottom-line">
           <FooterIconButton
@@ -538,6 +552,7 @@ function MobileSidebar({
 }: MobileSidebarProps) {
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const { gesture: closeGesture, gestureRef: closeGestureRef } = useCloseAgentListGesture();
+  const [footerHeight, setFooterHeight] = useState<number | null>(null);
 
   const handleWorkspacePress = useCallback(() => {
     closeSidebar();
@@ -576,7 +591,8 @@ function MobileSidebar({
         <SidebarNavRows
           style={styles.sidebarHeaderGroup}
           onBeforeNavigate={closeSidebar}
-          firstRowTrailing={closeButton}
+          footerHeight={footerHeight}
+          headerTrailing={closeButton}
         />
 
         {isInitialLoad && !hasActiveHostFilter ? (
@@ -612,6 +628,7 @@ function MobileSidebar({
           handleAddHost={handleAddHost}
           handleOpenHostSettings={handleOpenHostSettings}
           onBeforeNavigate={closeSidebar}
+          onHeightChange={setFooterHeight}
         />
       </View>
     </MobilePanelOverlay>
@@ -646,6 +663,7 @@ function DesktopSidebar({
 }: DesktopSidebarProps) {
   const ownsTopLeft = useOwnsWindowChromeCorner("top-left");
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
+  const [footerHeight, setFooterHeight] = useState<number | null>(null);
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
   const { width: windowWidth } = useWindowDimensions();
@@ -758,7 +776,7 @@ function DesktopSidebar({
           ) : (
             <TitlebarDragRegion />
           )}
-          <SidebarNavRows style={sidebarHeaderGroupStyle} />
+          <SidebarNavRows style={sidebarHeaderGroupStyle} footerHeight={footerHeight} />
         </View>
 
         {isInitialLoad && !hasActiveHostFilter ? (
@@ -792,6 +810,7 @@ function DesktopSidebar({
           labels={labels}
           handleAddHost={handleAddHost}
           handleOpenHostSettings={handleOpenHostSettings}
+          onHeightChange={setFooterHeight}
         />
 
         <SidebarResizeHandle

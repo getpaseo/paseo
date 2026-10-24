@@ -1248,6 +1248,10 @@ export const fr: TranslationResources = {
     pinned: {
       title: "Épinglés",
     },
+    nav: {
+      title: "Navigation",
+      resize: "Redimensionner la navigation",
+    },
     host: {
       noHost: "Aucun hôte",
       switchTitle: "Changer d’hôte",
