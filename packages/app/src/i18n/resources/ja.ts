@@ -1182,6 +1182,7 @@ export const ja: TranslationResources = {
       sort: {
         label: "並び順",
         created: "作成日時",
+        manual: "手動",
         lastPrompt: "最後のプロンプト",
         updateHost: "ワークスペースを並べ替えるにはホストを更新してください",
       },

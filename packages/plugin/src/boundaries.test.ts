@@ -101,12 +101,29 @@ describe("plugin SDK import boundaries", () => {
     );
   });
 
-  it.each(compatibilityEntries)("%s only re-exports the UI entry", (entry) => {
-    const source = readFileSync(
-      path.resolve(sourceDirectory, "..", manifest.exports[entry].source),
-      "utf8",
-    );
-    expect(source.replace(/\/\/[^\n]*|\/\*[^]*?\*\//g, "").trim()).toBe('export * from "./ui.js";');
+  it.each(compatibilityEntries)("%s respects the client boundary", (entry) => {
+    expect(
+      boundaryViolations(
+        path.resolve(sourceDirectory, "..", manifest.exports[entry].source),
+        "client",
+      ),
+    ).toEqual([]);
+  });
+
+  it("typechecks a 0.12 reveal-hook consumer without exposing the hook on current UI", () => {
+    expect(
+      typeErrors(`
+      import { useRevealedText, Icon } from "@getpaseo/plugin/client/react-native";
+      import { StreamedText } from "@getpaseo/plugin/client/ui";
+      // @ts-expect-error the legacy hook is not part of the current UI API
+      import { useRevealedText as currentHook } from "@getpaseo/plugin/client/ui";
+      import { Text } from "react-native";
+      function LegacyRow({ text, phase }: { text: string; phase: "streaming" | "complete" }) {
+        const revealed: string = useRevealedText(text, phase);
+        return <Text>{revealed}</Text>;
+      }
+    `),
+    ).toEqual([]);
   });
 
   it.each(Object.entries(entries))(

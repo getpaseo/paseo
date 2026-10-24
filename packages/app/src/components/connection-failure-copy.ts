@@ -83,6 +83,8 @@ export function buildConnectionFailureCopy(input: {
     rawLower.includes("err_connection_refused")
   ) {
     detail = labels.refused;
+  } else if (rawLower.includes("unable to resolve host") || rawLower.includes("enotfound")) {
+    detail = labels.hostNotFound;
   } else if (
     rawLower.includes("certificate") ||
     rawLower.includes("certpathvalidator") ||
@@ -91,7 +93,7 @@ export function buildConnectionFailureCopy(input: {
     rawLower.includes("ssl")
   ) {
     detail = labels.tlsError;
-  } else if (rawLower.includes("enotfound") || rawLower.includes("not found")) {
+  } else if (rawLower.includes("not found")) {
     detail = labels.hostNotFound;
   } else if (rawLower.includes("ehostunreach") || rawLower.includes("host is unreachable")) {
     detail = labels.hostUnreachable;

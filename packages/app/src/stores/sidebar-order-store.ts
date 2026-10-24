@@ -7,10 +7,13 @@ import { createValidatedPersistStorage } from "@/storage/validated-persist-stora
 interface SidebarOrderStoreState {
   projectOrder: string[];
   pinnedWorkspaceOrder: string[];
+  workspaceOrderByProject: Record<string, string[]>;
   getProjectOrder: () => string[];
   setProjectOrder: (keys: string[]) => void;
   getPinnedWorkspaceOrder: () => string[];
   setPinnedWorkspaceOrder: (keys: string[]) => void;
+  getWorkspaceOrder: (projectViewKey: string) => string[];
+  setWorkspaceOrder: (projectViewKey: string, keys: string[]) => void;
 }
 
 interface SidebarOrderPersistedState {
@@ -25,11 +28,15 @@ const StringArrayRecordSchema = z.record(z.string(), z.array(z.string()));
 const SidebarOrderPersistedStateSchema = z.strictObject({
   projectOrder: z.array(z.string()).optional(),
   pinnedWorkspaceOrder: z.array(z.string()).optional(),
-  // COMPAT(automaticWorkspaceOrder): v0.13.0; accept discarded keys until 2027-04-22 so strict parsing preserves projects/pins.
   workspaceOrderByProject: StringArrayRecordSchema.optional(),
   projectOrderByServerId: StringArrayRecordSchema.optional(),
   workspaceOrderByServerAndProject: StringArrayRecordSchema.optional(),
 });
+
+interface SidebarWorkspaceOrderScope {
+  serverId: string;
+  projectViewKey: string;
+}
 
 // Trims each key. Only for persisted state read at migration time, where a
 // stray space is an artifact of an older format rather than part of the key.
@@ -71,13 +78,42 @@ function dedupeKeys(keys: string[]): string[] {
   return deduped;
 }
 
+function normalizeWorkspaceOrderByProject(
+  workspaceOrderByProject: Record<string, string[]> | undefined,
+): Record<string, string[]> {
+  const normalized: Record<string, string[]> = {};
+  for (const [projectViewKey, order] of Object.entries(workspaceOrderByProject ?? {})) {
+    const scope = projectViewKey;
+    if (!scope.trim()) continue;
+    normalized[scope] = dedupeKeys(order);
+  }
+  return normalized;
+}
+
+function extractWorkspaceOrderScope(scopeKey: string): SidebarWorkspaceOrderScope | null {
+  const separatorIndex = scopeKey.indexOf("::");
+  if (separatorIndex < 0) return null;
+  const serverId = scopeKey.slice(0, separatorIndex).trim();
+  const projectViewKey = scopeKey.slice(separatorIndex + 2).trim();
+  if (!serverId || !projectViewKey) return null;
+  return { serverId, projectViewKey };
+}
+
+function normalizeLegacyWorkspaceKey(serverId: string, rawWorkspaceKey: string): string | null {
+  const workspaceKey = rawWorkspaceKey.trim();
+  if (!workspaceKey) return null;
+  const serverPrefix = `${serverId}:`;
+  return workspaceKey.startsWith(serverPrefix) ? workspaceKey : `${serverPrefix}${workspaceKey}`;
+}
+
 export function migrateSidebarOrderState(persistedState: unknown): {
   projectOrder: string[];
   pinnedWorkspaceOrder: string[];
+  workspaceOrderByProject: Record<string, string[]>;
 } {
   const result = SidebarOrderPersistedStateSchema.safeParse(persistedState);
   if (!result.success) {
-    return { projectOrder: [], pinnedWorkspaceOrder: [] };
+    return { projectOrder: [], pinnedWorkspaceOrder: [], workspaceOrderByProject: {} };
   }
   const state: SidebarOrderPersistedState = result.data;
 
@@ -91,9 +127,26 @@ export function migrateSidebarOrderState(persistedState: unknown): {
     }
   }
 
+  const workspaceOrderByProject = normalizeWorkspaceOrderByProject(state.workspaceOrderByProject);
+  for (const [scopeKey, order] of Object.entries(state.workspaceOrderByServerAndProject ?? {})) {
+    const scope = extractWorkspaceOrderScope(scopeKey);
+    if (!scope) continue;
+    const existing = workspaceOrderByProject[scope.projectViewKey] ?? [];
+    const merged = [...existing];
+    const seen = new Set(merged);
+    for (const key of order) {
+      const workspaceKey = normalizeLegacyWorkspaceKey(scope.serverId, key);
+      if (!workspaceKey || seen.has(workspaceKey)) continue;
+      seen.add(workspaceKey);
+      merged.push(workspaceKey);
+    }
+    workspaceOrderByProject[scope.projectViewKey] = merged;
+  }
+
   return {
     projectOrder,
     pinnedWorkspaceOrder: dedupeKeys(state.pinnedWorkspaceOrder ?? []),
+    workspaceOrderByProject,
   };
 }
 
@@ -102,6 +155,7 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
     (set, get) => ({
       projectOrder: [],
       pinnedWorkspaceOrder: [],
+      workspaceOrderByProject: {},
       getProjectOrder: () => get().projectOrder,
       setProjectOrder: (keys) => {
         set({ projectOrder: dedupeKeys(keys) });
@@ -110,6 +164,19 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
       setPinnedWorkspaceOrder: (keys) => {
         set({ pinnedWorkspaceOrder: dedupeKeys(keys) });
       },
+      getWorkspaceOrder: (projectViewKey) => {
+        if (!projectViewKey.trim()) return [];
+        return get().workspaceOrderByProject[projectViewKey] ?? [];
+      },
+      setWorkspaceOrder: (projectViewKey, keys) => {
+        if (!projectViewKey.trim()) return;
+        set((state) => ({
+          workspaceOrderByProject: {
+            ...state.workspaceOrderByProject,
+            [projectViewKey]: dedupeKeys(keys),
+          },
+        }));
+      },
     }),
     {
       name: "sidebar-project-workspace-order",
@@ -117,8 +184,9 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
       partialize: (state) => ({
         projectOrder: state.projectOrder,
         pinnedWorkspaceOrder: state.pinnedWorkspaceOrder,
+        workspaceOrderByProject: state.workspaceOrderByProject,
       }),
-      version: 2,
+      version: 3,
       migrate: migrateSidebarOrderState,
     },
   ),

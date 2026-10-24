@@ -123,7 +123,7 @@ test("projects and pinned chats reorder while ordinary workspaces stay newest fi
   }
 });
 
-async function selectWorkspaceSort(page: Page, name: "Created" | "Last prompt") {
+async function selectWorkspaceSort(page: Page, name: "Manual" | "Created" | "Last prompt") {
   await page.getByLabel("Display preferences", { exact: true }).click();
   await page.getByRole("menuitem", { name: /^Sort/ }).click();
   await page.getByRole("menuitem", { name, exact: true }).click();
@@ -360,5 +360,62 @@ test("compact groups retain active overflow and reveal the current ordered rows"
       expectStatusBucketsRetainActiveOverflow(page, fixture));
   } finally {
     await fixture.seed.cleanup();
+  }
+});
+
+async function restorePreBetaOrder(page: Page, projectKey: string, workspaceKeys: string[]) {
+  await page.evaluate(
+    ({ projectKey: scope, workspaceKeys: order }) => {
+      localStorage.setItem(
+        "sidebar-project-workspace-order",
+        JSON.stringify({
+          version: 1,
+          state: {
+            projectOrder: [scope],
+            pinnedWorkspaceOrder: [],
+            workspaceOrderByProject: { [scope]: order },
+          },
+        }),
+      );
+    },
+    { projectKey, workspaceKeys },
+  );
+  await reconnectSidebar(page);
+}
+
+test("Manual restores pre-beta order and keeps drag order across sorting and reloads", async ({
+  page,
+}) => {
+  const seed = await seedWorkspace({ repoPrefix: "sidebar-manual-" });
+  try {
+    const second = await seed.client.createWorkspace({
+      source: { kind: "directory", path: seed.repoPath, projectId: seed.projectId },
+      title: "New manual workspace",
+    });
+    if (!second.workspace) throw new Error(second.error ?? "Workspace creation failed");
+    const keys = [seed.workspaceId, second.workspace.id].map((id) => `${getServerId()}:${id}`);
+    const ids = keys.map((key) => `sidebar-workspace-row-${key}`);
+    const rows = page.locator(ids.map((id) => `[data-testid="${id}"]`).join(", "));
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    await restorePreBetaOrder(page, projectEquivalenceViewKey(seed.projectKey), keys);
+    await expect.poll(() => rowTestIds(rows)).toEqual([ids[1], ids[0]]);
+    await selectWorkspaceSort(page, "Manual");
+    await expect.poll(() => rowTestIds(rows)).toEqual(ids);
+    await selectWorkspaceSort(page, "Created");
+    await expect.poll(() => rowTestIds(rows)).toEqual([ids[1], ids[0]]);
+    await selectWorkspaceSort(page, "Last prompt");
+    await selectWorkspaceSort(page, "Manual");
+    await expect.poll(() => rowTestIds(rows)).toEqual(ids);
+    await quickDragFirstRowAfterSecond(rows, pressWorkspaceRow);
+    await reconnectSidebar(page);
+    await expect.poll(() => rowTestIds(rows)).toEqual([ids[1], ids[0]]);
+    await quickDragFirstRowAfterSecond(rows, pressWorkspaceRow);
+    await selectWorkspaceSort(page, "Created");
+    await reconnectSidebar(page);
+    await selectWorkspaceSort(page, "Manual");
+    await expect.poll(() => rowTestIds(rows)).toEqual(ids);
+  } finally {
+    await seed.cleanup();
   }
 });

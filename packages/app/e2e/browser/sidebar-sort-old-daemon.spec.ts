@@ -72,6 +72,9 @@ async function expectSortingRequiresHostUpdate(page: Page) {
   ).toBeDisabled();
   await expect(page.getByRole("menuitem", { name: "Created", exact: true })).toHaveCount(0);
   await expect(page.getByRole("menuitem", { name: "Last prompt", exact: true })).toHaveCount(0);
+  await page.getByRole("menuitem", { name: "Manual", exact: true }).click();
+  await page.getByLabel("Display preferences", { exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: /^Sort/ })).toContainText("Manual");
   await page.keyboard.press("Escape");
 }
 

@@ -300,3 +300,7 @@ it("defaults to Created and persists the Last prompt choice across migration", (
     migrateSidebarViewState({ workspaceSort: "lastPrompt", groupMode: "status" }),
   ).toMatchObject({ workspaceSort: "lastPrompt", groupMode: "status" });
 });
+
+it("retains the manual sorting preference on reload", () => {
+  expect(migrateSidebarViewState({ workspaceSort: "manual" }).workspaceSort).toBe("manual");
+});
