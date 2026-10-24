@@ -312,6 +312,8 @@ export type ToolCallDetail =
       type: "sub_agent";
       subAgentType?: string;
       description?: string;
+      /** The task text the parent handed the subagent, verbatim. */
+      prompt?: string;
       childSessionId?: string;
       log: string;
       actions?: Array<{

@@ -43,7 +43,7 @@ function hasMeaningfulFetchDetail(detail: Extract<ToolCallDetail, { type: "fetch
 function hasMeaningfulSubAgentDetail(
   detail: Extract<ToolCallDetail, { type: "sub_agent" }>,
 ): boolean {
-  return Boolean(detail.subAgentType || detail.description || detail.log);
+  return Boolean(detail.subAgentType || detail.description || detail.prompt || detail.log);
 }
 
 function hasMeaningfulPlainTextDetail(

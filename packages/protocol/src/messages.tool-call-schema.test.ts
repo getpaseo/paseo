@@ -138,6 +138,26 @@ describe("shared messages tool_call schema", () => {
     }
   });
 
+  it("keeps the prompt a sub_agent was given", () => {
+    const prompt = "Map the repository layout.\n\nList the top-level folders.";
+    const parsed = AgentTimelineItemPayloadSchema.parse({
+      type: "tool_call",
+      callId: "call_sub_agent_prompt",
+      name: "Task",
+      status: "running",
+      error: null,
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Explore",
+        description: "Map the repo",
+        prompt,
+        log: "",
+      },
+    });
+
+    expect(parsed).toMatchObject({ detail: { type: "sub_agent", prompt } });
+  });
+
   it("parses sub_agent detail without structured actions", () => {
     const parsed = AgentTimelineItemPayloadSchema.parse({
       type: "tool_call",

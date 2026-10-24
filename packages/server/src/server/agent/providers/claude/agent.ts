@@ -345,6 +345,7 @@ interface ClaudeReplayOwnership {
 interface ClaudeSubagentCardFacts {
   title?: string;
   description?: string;
+  prompt?: string;
 }
 
 interface PersistedTimelineEntry {
@@ -6138,6 +6139,7 @@ function buildClaudeSubagentCardDetail(
     type: "sub_agent",
     ...(facts.title ? { subAgentType: facts.title } : {}),
     ...(facts.description ? { description: facts.description } : {}),
+    ...(facts.prompt ? { prompt: facts.prompt } : {}),
     log: "",
     actions: [],
   };
@@ -6165,7 +6167,7 @@ function labelReplayedSubagentCard(
 function readClaudeReplayParentFacts(
   entries: Iterable<ClaudeHistoryEntry>,
 ): ClaudeReplayParentFacts {
-  const toolCalls = new Map<string, { title?: string; description?: string }>();
+  const toolCalls = new Map<string, ClaudeSubagentCardFacts>();
   const linksByAgentId = new Map<string, { toolCallId: string; failed: boolean }>();
   const outcomes = new Map<string, { failed: boolean }>();
   for (const entry of entries) {
@@ -6178,13 +6180,7 @@ function readClaudeReplayParentFacts(
         (block.name === "Task" || block.name === "Agent") &&
         typeof block.id === "string"
       ) {
-        const input = toObjectRecord(block.input);
-        const title = readNonEmptyString(input?.name) ?? readNonEmptyString(input?.subagent_type);
-        const description = readNonEmptyString(input?.description);
-        toolCalls.set(block.id, {
-          ...(title ? { title } : {}),
-          ...(description ? { description } : {}),
-        });
+        toolCalls.set(block.id, readClaudeSubagentCardFacts(block.input));
       }
       if (block?.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
       outcomes.set(block.tool_use_id, { failed: block.is_error === true });
@@ -6200,6 +6196,19 @@ function readClaudeReplayParentFacts(
     toolCalls,
     linksByAgentId,
     outcomesByToolCallId: new Map([...outcomes].filter(([id]) => toolCalls.has(id))),
+  };
+}
+
+function readClaudeSubagentCardFacts(value: unknown): ClaudeSubagentCardFacts {
+  const input = toObjectRecord(value);
+  const title = readNonEmptyString(input?.name) ?? readNonEmptyString(input?.subagent_type);
+  const description = readNonEmptyString(input?.description);
+  // Keep original whitespace; only whitespace-only prompts are absent.
+  const prompt = readNonEmptyString(input?.prompt);
+  return {
+    ...(title ? { title } : {}),
+    ...(description ? { description } : {}),
+    ...(prompt ? { prompt } : {}),
   };
 }
 

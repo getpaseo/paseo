@@ -3,7 +3,70 @@ import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
 
+function assistantMessage(parentToolUseId: string): SDKMessage {
+  return {
+    type: "assistant",
+    parent_tool_use_id: parentToolUseId,
+    uuid: "00000000-0000-4000-8000-000000000001",
+    session_id: "00000000-0000-4000-8000-000000000002",
+    message: {
+      id: "msg_task",
+      type: "message",
+      role: "assistant",
+      model: "claude-sonnet-4-5-20250929",
+      content: [],
+      container: null,
+      context_management: null,
+      diagnostics: null,
+      stop_details: null,
+      stop_reason: null,
+      stop_sequence: null,
+      usage: {
+        cache_creation: null,
+        cache_creation_input_tokens: null,
+        cache_read_input_tokens: null,
+        inference_geo: null,
+        input_tokens: 0,
+        iterations: null,
+        output_tokens: 0,
+        output_tokens_details: null,
+        server_tool_use: null,
+        service_tier: null,
+        speed: null,
+      },
+    },
+  } satisfies SDKMessage;
+}
+
 describe("ClaudeSidechainTracker", () => {
+  it("preserves nonempty prompt whitespace on the Task card and omits whitespace-only prompts", () => {
+    const prompt = "  inspect this\n";
+    const tracker = new ClaudeSidechainTracker({
+      getToolInput: () => ({ prompt }),
+    });
+    const events = tracker.handleMessage(assistantMessage("task-1"), "task-1");
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        item: expect.objectContaining({ detail: expect.objectContaining({ prompt }) }),
+      }),
+    );
+
+    const emptyTracker = new ClaudeSidechainTracker({
+      getToolInput: () => ({ name: "child", prompt: " \n " }),
+    });
+    const emptyEvents = emptyTracker.handleMessage(assistantMessage("task-2"), "task-2");
+    const emptyTaskCardEvent = emptyEvents.find(
+      (event) => event.type === "timeline" && event.item.type === "tool_call",
+    );
+    expect(emptyTaskCardEvent).toBeDefined();
+    if (emptyTaskCardEvent?.type !== "timeline" || emptyTaskCardEvent.item.type !== "tool_call") {
+      throw new Error("Expected the sidechain tracker to emit the Task card");
+    }
+    expect(emptyTaskCardEvent.item.detail).toMatchObject({ type: "sub_agent" });
+    expect(emptyTaskCardEvent.item.detail).not.toHaveProperty("prompt");
+  });
+
   it("retains a background child's actions across the parent finishing", () => {
     const tracker = new ClaudeSidechainTracker({
       getToolInput: () => ({ subagent_type: "general-purpose", description: "List files" }),

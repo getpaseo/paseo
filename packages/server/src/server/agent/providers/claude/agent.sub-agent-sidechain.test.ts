@@ -362,6 +362,123 @@ describe("ClaudeAgentSession sub-agent sidechain updates", () => {
     });
   });
 
+  test("keeps the Task prompt on the card once a declared subagent's frames arrive", async () => {
+    // The declaration and the sidechain tracker both emit this card, and a later card replaces the
+    // earlier detail when the timeline is projected. The prompt has to survive that.
+    const prompt =
+      "Map the repository layout.\n\n  List the top-level folders and what each holds.";
+    queryFactory.mockImplementation(() =>
+      buildQueryMock([
+        {
+          type: "system",
+          subtype: "init",
+          session_id: "prompt-session",
+          permissionMode: "default",
+          model: "opus",
+        },
+        {
+          type: "stream_event",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_start",
+            index: 0,
+            content_block: {
+              type: "tool_use",
+              id: "task-prompt",
+              name: "Task",
+              input: { subagent_type: "Explore", description: "Map the repo", prompt },
+            },
+          },
+        },
+        {
+          type: "system",
+          subtype: "task_started",
+          task_id: "prompt-task",
+          tool_use_id: "task-prompt",
+          task_type: "local_agent",
+          subagent_type: "Explore",
+          description: "Map the repo",
+          prompt,
+        },
+        {
+          type: "stream_event",
+          parent_tool_use_id: "task-prompt",
+          event: {
+            type: "content_block_start",
+            index: 1,
+            content_block: {
+              type: "tool_use",
+              id: "sub-ls-1",
+              name: "Read",
+              input: { file_path: "README.md" },
+            },
+          },
+        },
+        {
+          type: "assistant",
+          parent_tool_use_id: null,
+          message: {
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "task-prompt",
+                tool_name: "Task",
+                content: "done",
+                is_error: false,
+              },
+            ],
+          },
+        },
+        {
+          type: "result",
+          subtype: "success",
+          usage: { input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 1 },
+          total_cost_usd: 0,
+        },
+      ]),
+    );
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd() });
+
+    const events = await collectUntilTerminal(streamSession(session, "delegate work"));
+    await session.close();
+
+    const taskCards = events.flatMap((event) =>
+      event.type === "timeline" &&
+      event.item.type === "tool_call" &&
+      event.item.callId === "task-prompt"
+        ? [event.item]
+        : [],
+    );
+    const subAgentCards = taskCards.filter((item) => item.detail.type === "sub_agent");
+    expect(subAgentCards.length).toBeGreaterThanOrEqual(2);
+    for (const card of subAgentCards) {
+      expect(card.detail).toMatchObject({ type: "sub_agent", prompt });
+    }
+
+    const rows: AgentTimelineRow[] = taskCards.map((item, index) => ({
+      seq: index + 1,
+      timestamp: `2026-02-01T00:00:0${index}.000Z`,
+      item,
+    }));
+    const projected = projectTimelineRows({ rows, mode: "projected" }).filter(
+      (entry) => entry.item.type === "tool_call" && entry.item.callId === "task-prompt",
+    );
+    expect(projected).toHaveLength(1);
+    expect(projected[0]?.item).toMatchObject({
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Explore",
+        description: "Map the repo",
+        prompt,
+        log: expect.stringContaining("[Read] README.md"),
+      },
+    });
+  });
+
   test("keeps sidechain assistant text out of the parent transcript", async () => {
     const session = await new ClaudeAgentClient({
       logger,

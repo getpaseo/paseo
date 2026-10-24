@@ -614,6 +614,7 @@ const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail, unknown> = z.discri
       type: z.literal("sub_agent"),
       subAgentType: z.string().optional(),
       description: z.string().optional(),
+      prompt: z.string().optional(),
       childSessionId: z.string().optional(),
       log: z.string(),
       // Compat cruft for clients <= 0.1.65-beta.3 that required this field. Producers still
