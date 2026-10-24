@@ -416,6 +416,8 @@ export const ar: TranslationResources = {
       loading: "جارٍ تحميل الجلسات الأخيرة...",
       failedProvider: "تعذر تحميل جلسات {{provider}}",
       failedImport: "تعذر استيراد الجلسة المحددة.",
+      activeWriter:
+        "هذه الجلسة قيد الاستخدام بواسطة عملية Codex/Paseo أخرى. حررها في التطبيق الأصلي قبل إعادة المحاولة، أو اختر جلسة أخرى.",
     },
     actions: {
       refresh: "تحديث الجلسات",

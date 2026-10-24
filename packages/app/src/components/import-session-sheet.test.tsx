@@ -644,6 +644,7 @@ describe("ImportSessionSheet", () => {
     fireEvent.click(await screen.findByTestId("import-session-session-claude-provider-thread-1"));
 
     await screen.findByText("Could not import selected session.");
+    expect(screen.getByText("import unavailable").textContent).toBe("import unavailable");
     expect(importAgent).toHaveBeenCalledWith({
       providerId: "claude",
       providerHandleId: "provider-thread-1",
@@ -651,6 +652,45 @@ describe("ImportSessionSheet", () => {
     });
     expect(onImportedAgent).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("explains an active writer conflict and lets the user retry without closing", async () => {
+    const fetchRecentProviderSessions = vi.fn(async () => ({
+      requestId: "recent-provider-sessions",
+      entries: [createProviderSessionEntry({ providerId: "codex", providerLabel: "Codex" })],
+    }));
+    const importAgent = vi
+      .fn<DaemonClient["importAgent"]>()
+      .mockRejectedValueOnce(
+        new Error("Failed to resume Codex thread provider-thread-1: already has an active writer"),
+      )
+      .mockResolvedValueOnce(createImportedAgentSnapshot("agent-imported"));
+    const onClose = vi.fn();
+    const onImported = vi.fn();
+
+    renderSheet(
+      { fetchRecentProviderSessions, importAgent },
+      {
+        onClose,
+        onImported,
+        snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("codex")] },
+      },
+    );
+
+    fireEvent.click(await screen.findByTestId("import-session-session-codex-provider-thread-1"));
+    await screen.findByText(
+      "This session is in use by another Codex/Paseo process. Release it in the original app before retrying, or choose another session.",
+    );
+    expect(screen.getByTestId("import-session-sheet").hidden).toBe(false);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onImported).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("import-session-retry-import"));
+    await waitFor(() =>
+      expect(onImported).toHaveBeenCalledWith(createImportedAgentSnapshot("agent-imported")),
+    );
+    expect(importAgent).toHaveBeenCalledTimes(2);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("fans out one request per enabled provider when snapshot is supported", async () => {

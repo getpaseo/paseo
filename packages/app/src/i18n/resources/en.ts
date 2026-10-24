@@ -413,6 +413,8 @@ export const en = {
       loading: "Loading recent sessions...",
       failedProvider: "Could not load {{provider}} sessions",
       failedImport: "Could not import selected session.",
+      activeWriter:
+        "This session is in use by another Codex/Paseo process. Release it in the original app before retrying, or choose another session.",
     },
     actions: {
       refresh: "Refresh sessions",
