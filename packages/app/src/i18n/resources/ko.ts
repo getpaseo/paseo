@@ -657,6 +657,7 @@ export const ko: TranslationResources = {
         reloadAgent: "에이전트 다시 로드",
         reloadAgentTooltip:
           "스킬, MCP 또는 로그인 상태를 업데이트하려면 에이전트를 다시 로드하세요.",
+        markAsUnread: "읽지 않음으로 표시",
         close: "닫기",
         renameTerminal: "터미널 이름 변경",
         renameAgent: "에이전트 이름 변경",

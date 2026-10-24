@@ -655,6 +655,7 @@ export const ar: TranslationResources = {
         moveToMain: "Move to main panel",
         reloadAgent: "إعادة تحميل الوكيل",
         reloadAgentTooltip: "قم بإعادة تحميل الوكيل لتحديث المهارات أو MCPs أو حالة تسجيل الدخول.",
+        markAsUnread: "تحديد كغير مقروء",
         close: "يغلق",
         renameTerminal: "إعادة تسمية المحطة",
         renameAgent: "إعادة تسمية الوكيل",

@@ -655,6 +655,7 @@ export const zhCN: TranslationResources = {
         moveToMain: "移至主面板",
         reloadAgent: "重新加载 Agent",
         reloadAgentTooltip: "重新加载 Agent 以更新 skills、MCPs 或登录状态。",
+        markAsUnread: "标记为未读",
         close: "关闭",
         renameTerminal: "重命名 Terminal",
         renameAgent: "重命名 Agent",

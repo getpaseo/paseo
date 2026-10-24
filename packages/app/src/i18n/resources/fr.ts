@@ -662,6 +662,7 @@ export const fr: TranslationResources = {
         reloadAgent: "Recharger l’agent",
         reloadAgentTooltip:
           "Rechargez l’agent pour mettre à jour les skills, les MCP ou l’état de connexion.",
+        markAsUnread: "Marquer comme non lu",
         close: "Fermer",
         renameTerminal: "Renommer le terminal",
         renameAgent: "Renommer l’agent",
