@@ -183,6 +183,30 @@ export function resolveDirectoryLabel(
   return relative ? { name: bestName, detail: relative } : { name: bestName };
 }
 
+export function createDirectoryLabelResolver(projects: ReadonlyArray<DirectoryProject>) {
+  const namesByRoot = new Map<string, string>();
+  for (const project of projects) {
+    const root = withoutTrailingSlash(project.rootPath);
+    if (root && !namesByRoot.has(root)) namesByRoot.set(root, project.name);
+  }
+  return function resolve(directory: string): DirectoryLabel {
+    const normalized = withoutTrailingSlash(directory);
+    let end = normalized.length;
+    do {
+      const root = normalized.slice(0, end);
+      const name = namesByRoot.get(root);
+      if (name !== undefined) {
+        const relative = normalized.slice(end + 1);
+        return relative ? { name, detail: relative } : { name };
+      }
+      // Only slash-delimited ancestors match. In particular, '/' historically
+      // owns '//child' but not '/child'; do not normalize interior separators.
+      end = normalized.lastIndexOf("/", end - 1);
+    } while (end > 0);
+    return { name: normalized };
+  };
+}
+
 /** The one-line form a row shows under its prompt preview. */
 export function formatDirectoryLabel(label: DirectoryLabel): string {
   return label.detail ? `${label.name} · ${label.detail}` : label.name;
