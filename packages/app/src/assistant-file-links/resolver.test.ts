@@ -259,6 +259,13 @@ describe("classifyForResolution", () => {
     });
   });
 
+  it("ignores single-segment root-relative slash-command links", () => {
+    expect(classifyForResolution({ href: "/code-review" }, CONTEXT)).toEqual({
+      kind: "resolved",
+      value: { kind: "ignored" },
+    });
+  });
+
   it("keeps absolute paths outside the workspace as direct file targets", () => {
     const result = classifyForResolution({ href: "/tmp/outside.txt" }, CONTEXT);
 
