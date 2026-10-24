@@ -199,6 +199,35 @@ function collapseByIdentity(entries: readonly WorkingEntry[]): WorkingEntry[] {
   return output;
 }
 
+/**
+ * Reasoning deltas belong to the open message lane (#2803/#4509): while a
+ * message's text streams, the thought it grew from stays open, so interleaved
+ * thinking deltas merge into it instead of opening a second reasoning row.
+ * The lane is still open only while everything after its thought is
+ * assistant_message text from the same turn; any other entry (tool call, user
+ * message, ...) closed it and a new row opens. Mirrors the app reducer's
+ * findOpenLaneThoughtIndex (upstream PR #5541): purely positional — the
+ * thought's seqEnd keeps advancing as lane thoughts merge, so a seq chain
+ * check here would wrongly close the lane after the first lane merge.
+ */
+function findOpenLaneThoughtIndex(
+  entries: readonly WorkingEntry[],
+  turnId: string | undefined,
+): number {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (!entry) return -1;
+    const continuesLane =
+      entry.item.type === "reasoning" ||
+      (entry.item.type === "assistant_message" && entry.turnId === turnId);
+    if (!continuesLane) return -1;
+    if (entry.item.type === "reasoning") {
+      return entry.turnId === turnId ? index : -1;
+    }
+  }
+  return -1;
+}
+
 function mergeReasoningChunks(entries: readonly WorkingEntry[]): WorkingEntry[] {
   const output: WorkingEntry[] = [];
 
@@ -318,6 +347,30 @@ export class TimelineProjection {
       const mergedText = adjacent[0];
       this.rows[this.rows.length - 1] = { ...mergedText, seq: mergedText.seqEnd };
       return;
+    }
+    if (entry.item.type === "reasoning") {
+      const laneIndex = findOpenLaneThoughtIndex(this.rows, entry.turnId);
+      if (laneIndex >= 0) {
+        const thought = this.rows[laneIndex] as WorkingEntry & {
+          item: Extract<AgentTimelineItem, { type: "reasoning" }>;
+        };
+        const reasoning = entry.item as Extract<AgentTimelineItem, { type: "reasoning" }>;
+        const collapsedKinds = new Set<TimelineProjectionKind>([
+          ...thought.collapsed,
+          ...entry.collapsed,
+          "reasoning_merge",
+        ]);
+        const mergedEntry: WorkingEntry = {
+          ...thought,
+          item: { type: "reasoning", text: `${thought.item.text}${reasoning.text}` },
+          timestamp: entry.timestamp,
+          seqEnd: Math.max(thought.seqEnd, entry.seqEnd),
+          sourceSeqRanges: mergeSeqRanges(thought.sourceSeqRanges, entry.sourceSeqRanges),
+          collapsed: Array.from(collapsedKinds),
+        };
+        this.rows[laneIndex] = { ...mergedEntry, seq: mergedEntry.seqEnd };
+        return;
+      }
     }
     if (identity !== null) this.identities.set(identity, this.rows.length);
     this.rows.push({ ...entry, seq: entry.seqEnd });

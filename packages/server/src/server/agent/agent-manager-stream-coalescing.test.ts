@@ -822,19 +822,18 @@ describe("target coalesced behavior", () => {
       const rows = await harness.manager.getTimelineRows(agentId);
       const events = getTimelineStreamEvents(harness.events, agentId);
 
+      // One thinking block per message lane (#2803/#4509): interleaved
+      // reasoning merges into the open lane's thought, which stays anchored
+      // above the message text it grew from.
       expect(getTimelineItems(rows)).toEqual([
         { type: "assistant_message", text: "a1" },
-        { type: "reasoning", text: "r1" },
+        { type: "reasoning", text: "r1r2r3r4r5" },
         { type: "assistant_message", text: "a2" },
-        { type: "reasoning", text: "r2" },
         { type: "assistant_message", text: "a3" },
-        { type: "reasoning", text: "r3" },
         { type: "assistant_message", text: "a4" },
-        { type: "reasoning", text: "r4" },
         { type: "assistant_message", text: "a5" },
-        { type: "reasoning", text: "r5" },
       ]);
-      expect(rows).toHaveLength(10);
+      expect(rows).toHaveLength(6);
       expect(events).toHaveLength(10);
       expectContiguousRowSeqs(
         rows,

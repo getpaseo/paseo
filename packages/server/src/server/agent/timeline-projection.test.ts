@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import type { AgentTimelineRow } from "./agent-manager.js";
 import {
+  TimelineProjection,
   projectTimelineRows,
   selectProjectedTimelinePage,
   selectTimelineWindowByProjectedLimit,
@@ -776,5 +777,170 @@ describe("selectProjectedTimelinePage", () => {
 
     expect(page.entries.some((entry) => entry.item.type === "tool_call")).toBe(true);
     expect(page.endSeq).toBe(501);
+  });
+});
+
+describe("TimelineProjection reasoning lane", () => {
+  function projectionRow(
+    seq: number,
+    timestamp: string,
+    item: AgentTimelineRow["item"],
+    turnId?: string,
+  ): AgentTimelineRow {
+    return { seq, timestamp, item, ...(turnId ? { turnId } : {}) };
+  }
+
+  test("merges an interleaved thought back into the open lane above the message text", () => {
+    const projection = new TimelineProjection();
+    projection.append(
+      projectionRow(1, "2026-02-13T00:00:00.000Z", { type: "reasoning", text: "Think" }),
+    );
+    projection.append(
+      projectionRow(2, "2026-02-13T00:00:00.100Z", {
+        type: "assistant_message",
+        text: "Answer so far",
+      }),
+    );
+    projection.append(
+      projectionRow(3, "2026-02-13T00:00:00.200Z", { type: "reasoning", text: "ing harder" }),
+    );
+
+    const rows = projection.getRows();
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.item).toEqual({ type: "reasoning", text: "Thinking harder" });
+    expect(rows[1]?.item).toEqual({ type: "assistant_message", text: "Answer so far" });
+    expect(rows[0]?.seqStart).toBe(1);
+    expect(rows[0]?.seqEnd).toBe(3);
+    expect(rows[0]?.seq).toBe(3);
+    expect(rows[0]?.sourceSeqRanges).toEqual([
+      { startSeq: 1, endSeq: 1 },
+      { startSeq: 3, endSeq: 3 },
+    ]);
+    expect(rows[0]?.collapsed).toContain("reasoning_merge");
+    expect(rows[0]?.timestamp).toBe("2026-02-13T00:00:00.200Z");
+  });
+
+  test("a tool call between thoughts closes the lane and opens a new row", () => {
+    const projection = new TimelineProjection();
+    projection.append(
+      projectionRow(1, "2026-02-13T00:00:00.000Z", { type: "reasoning", text: "First" }),
+    );
+    projection.append(
+      projectionRow(2, "2026-02-13T00:00:00.100Z", {
+        type: "assistant_message",
+        text: "Running tool",
+      }),
+    );
+    projection.append(
+      projectionRow(3, "2026-02-13T00:00:00.200Z", {
+        type: "tool_call",
+        callId: "call_1",
+        name: "shell",
+        status: "running",
+        error: null,
+        detail: { type: "unknown", input: { cmd: "pwd" }, output: null },
+      }),
+    );
+    projection.append(
+      projectionRow(4, "2026-02-13T00:00:00.300Z", { type: "reasoning", text: "Second" }),
+    );
+
+    const rows = projection.getRows();
+
+    expect(rows).toHaveLength(4);
+    expect(rows[0]?.item).toEqual({ type: "reasoning", text: "First" });
+    expect(rows[3]?.item).toEqual({ type: "reasoning", text: "Second" });
+    expect(rows[0]?.collapsed).not.toContain("reasoning_merge");
+    expect(rows[3]?.collapsed).not.toContain("reasoning_merge");
+  });
+
+  test("a thought from another turn does not merge into the open lane", () => {
+    const projection = new TimelineProjection();
+    projection.append(
+      projectionRow(
+        1,
+        "2026-02-13T00:00:00.000Z",
+        { type: "reasoning", text: "Turn one" },
+        "turn-1",
+      ),
+    );
+    projection.append(
+      projectionRow(
+        2,
+        "2026-02-13T00:00:00.100Z",
+        { type: "assistant_message", text: "Answer" },
+        "turn-1",
+      ),
+    );
+    projection.append(
+      projectionRow(
+        3,
+        "2026-02-13T00:00:00.200Z",
+        { type: "reasoning", text: "Turn two" },
+        "turn-2",
+      ),
+    );
+
+    const rows = projection.getRows();
+
+    expect(rows).toHaveLength(3);
+    expect(rows[2]?.item).toEqual({ type: "reasoning", text: "Turn two" });
+  });
+
+  test("adjacent reasoning deltas keep using the fast path", () => {
+    const projection = new TimelineProjection();
+    projection.append(
+      projectionRow(1, "2026-02-13T00:00:00.000Z", { type: "reasoning", text: "Step " }),
+    );
+    projection.append(
+      projectionRow(2, "2026-02-13T00:00:00.100Z", { type: "reasoning", text: "by step" }),
+    );
+
+    const rows = projection.getRows();
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.item).toEqual({ type: "reasoning", text: "Step by step" });
+    expect(rows[0]?.sourceSeqRanges).toEqual([{ startSeq: 1, endSeq: 2 }]);
+    expect(rows[0]?.collapsed).toContain("reasoning_merge");
+  });
+
+  test("a page boundary inside the lane does not re-split the merged thought on a later fetch", () => {
+    const projection = new TimelineProjection();
+    projection.append(
+      projectionRow(1, "2026-02-13T00:00:00.000Z", { type: "reasoning", text: "Think" }),
+    );
+    projection.append(
+      projectionRow(2, "2026-02-13T00:00:00.100Z", {
+        type: "assistant_message",
+        text: "Answer",
+      }),
+    );
+    projection.append(
+      projectionRow(3, "2026-02-13T00:00:00.200Z", { type: "reasoning", text: "ing" }),
+    );
+
+    const rows = projection.getRows();
+    const firstPage = selectProjectedTimelinePage({
+      rows,
+      bounds: { minSeq: 1, maxSeq: 3 },
+      direction: "after",
+      cursorSeq: 1,
+      limit: 1,
+    });
+    expect(firstPage.entries.map((entry) => entry.item.type)).toEqual(["assistant_message"]);
+    expect(firstPage.endSeq).toBe(2);
+
+    const secondPage = selectProjectedTimelinePage({
+      rows,
+      bounds: { minSeq: 1, maxSeq: 3 },
+      direction: "after",
+      cursorSeq: firstPage.endSeq ?? 0,
+      limit: 1,
+    });
+    expect(secondPage.entries).toHaveLength(1);
+    expect(secondPage.entries[0]?.item).toEqual({ type: "reasoning", text: "Thinking" });
+    expect(secondPage.entries[0]?.collapsed).toContain("reasoning_merge");
+    expect(secondPage.endSeq).toBe(3);
   });
 });
