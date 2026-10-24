@@ -12,6 +12,7 @@ interface QueryMock {
   close: ReturnType<typeof vi.fn>;
   setPermissionMode: ReturnType<typeof vi.fn>;
   setModel: ReturnType<typeof vi.fn>;
+  applyFlagSettings: ReturnType<typeof vi.fn>;
   supportedModels: ReturnType<typeof vi.fn>;
   supportedCommands: ReturnType<typeof vi.fn>;
   rewindFiles: ReturnType<typeof vi.fn>;
@@ -148,6 +149,7 @@ function createScriptedQuery(params: {
     close: vi.fn(() => undefined),
     setPermissionMode: vi.fn(async () => undefined),
     setModel: vi.fn(async () => undefined),
+    applyFlagSettings: vi.fn(async () => undefined),
     supportedModels: vi.fn(async () => [{ value: "opus", displayName: "Opus" }]),
     supportedCommands: vi.fn(async () => []),
     rewindFiles: vi.fn(async () => ({ canRewind: true })),
@@ -274,6 +276,64 @@ function buildCommandLifecycle(commandUuid: string | null | undefined, state: st
 
 afterEach(() => {
   queryFactory.mockReset();
+});
+
+async function createThinkingRestartSession() {
+  const queries: ScriptedQuery[] = [];
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    const scriptedQuery = createScriptedQuery({
+      prompt,
+      sessionId: "thinking-restart-session",
+      handlePrompt: ({ query }) => query.emit(buildSuccessResult("thinking-restart-session")),
+    });
+    queries.push(scriptedQuery);
+    return scriptedQuery;
+  });
+  const session = await new ClaudeAgentClient({
+    logger: createTestLogger(),
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  }).createSession({ provider: "claude", cwd: process.cwd() });
+  return { session, queries };
+}
+
+test("submits after a thinking change before the first turn", async () => {
+  const { session, queries } = await createThinkingRestartSession();
+
+  try {
+    await session.setThinkingOption!("medium");
+    const events = await collectUntilTerminal(
+      streamSession(session, "continue", { clientMessageId: "client-continue" }),
+    );
+    expect(events.filter((event) => event.type === "turn_failed")).toEqual([]);
+    expect(events.at(-1)?.type).toBe("turn_completed");
+    expect(queryFactory).toHaveBeenCalledTimes(1);
+    expect(queries[0].prompts.map((prompt) => prompt.text)).toEqual(["continue"]);
+  } finally {
+    await session.close();
+  }
+});
+
+test("submits after a thinking change once the previous query ended", async () => {
+  const { session, queries } = await createThinkingRestartSession();
+
+  try {
+    await collectUntilTerminal(streamSession(session, "first prompt"));
+    queries[0].end();
+    // Let the pump retire the old query before changing thinking.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    await session.setThinkingOption!("medium");
+    const events = await collectUntilTerminal(
+      streamSession(session, "continue", { clientMessageId: "client-continue" }),
+    );
+    expect(events.filter((event) => event.type === "turn_failed")).toEqual([]);
+    expect(events.at(-1)?.type).toBe("turn_completed");
+    expect(queryFactory).toHaveBeenCalledTimes(2);
+    expect(queries[1].prompts.map((prompt) => prompt.text)).toEqual(["continue"]);
+  } finally {
+    await session.close();
+  }
 });
 
 test("interrupt only calls query.interrupt and leaves the query open", async () => {
