@@ -70,6 +70,7 @@ import {
   invalidateServerDataQueriesAfterReconnect,
   mountServerDataPushRouter,
 } from "@/data/push-router";
+import { mountClientNetworkRouting } from "@/desktop/browser/network-routing/lifecycle";
 import { mountBrowserAutomationDaemonClientHandler } from "@/desktop/browser/automation/handler";
 import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
 import { dispatchComposerAgentMessage, sendQueuedComposerMessageNow } from "@/composer/actions";
@@ -688,18 +689,23 @@ function createDefaultDeps(
     },
     getClientId: () => getOrCreateClientId(),
     mountClientHandlers: ({ client, host }) => {
+      const unmountNetworkRouting = mountClientNetworkRouting(client, host.serverId);
       const unmountServerData = mountServerDataPushRouter({
         client,
         queryClient,
         serverId: host.serverId,
       });
       if (!browserAutomationCapabilities) {
-        return unmountServerData;
+        return () => {
+          unmountNetworkRouting();
+          unmountServerData();
+        };
       }
       const unmountBrowserAutomation = mountBrowserAutomationDaemonClientHandler(client, {
         serverId: host.serverId,
       });
       return () => {
+        unmountNetworkRouting();
         unmountBrowserAutomation();
         unmountServerData();
       };

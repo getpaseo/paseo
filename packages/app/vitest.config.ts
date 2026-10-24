@@ -17,6 +17,17 @@ const resolvePackageEntry = (packageName: string) => {
     : path.resolve(rootNodeModules, packageName);
 };
 
+// Points Reanimated's `./webUtils` at a stub that imports react-native-web's style helpers as
+// ES modules (see test-stubs/reanimated-web-utils.ts). Browser project only.
+const reanimatedWebUtils = {
+  name: "paseo-test:reanimated-web-utils",
+  enforce: "pre" as const,
+  resolveId(source: string, importer?: string) {
+    if (source !== "./webUtils" || !importer?.includes("/react-native-reanimated/")) return null;
+    return path.resolve(__dirname, "test-stubs/reanimated-web-utils.ts");
+  },
+};
+
 export default defineConfig({
   plugins: [
     {
@@ -76,6 +87,7 @@ export default defineConfig({
       },
       {
         extends: true,
+        plugins: [reanimatedWebUtils],
         test: {
           name: "browser",
           fileParallelism: false,
@@ -149,6 +161,10 @@ export default defineConfig({
       "tiny-invariant",
       "react-native-gesture-handler > hoist-non-react-statics",
       "react-native-gesture-handler > invariant",
+      // Imported by test-stubs/reanimated-web-utils.ts. Discovered mid-run, they make Vite reload
+      // and fail the browser test that was importing at that moment.
+      "react-native-web/dist/exports/StyleSheet/compiler/createReactDOMStyle",
+      "react-native-web/dist/exports/StyleSheet/preprocess",
     ],
     exclude: [
       "react-native-reanimated",

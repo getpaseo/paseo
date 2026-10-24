@@ -1,3 +1,13 @@
+export { NetworkTunnelError, NetworkTunnelRpcError } from "./network-tunnel.js";
+export type {
+  NetworkTunnel,
+  NetworkTunnelLimits,
+  NetworkTunnelClosedReason,
+  NetworkTunnelStream,
+  NetworkTunnelStreamHandlers,
+  NetworkTunnelTarget,
+  NetworkTunnelErrorCode,
+} from "./network-tunnel.js";
 import type { AgentAddress } from "@getpaseo/protocol/addresses";
 import { parentAddressLabels } from "@getpaseo/protocol/agent-labels";
 export type { AgentAddress } from "@getpaseo/protocol/addresses";

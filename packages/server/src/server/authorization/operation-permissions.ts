@@ -6,6 +6,8 @@ type OutboundOperation = SessionOutboundMessage["type"];
 export type PermissionRequirement = DaemonPermission | readonly DaemonPermission[] | null;
 
 const INBOUND_PERMISSION = {
+  "network.tunnel.open.request": "network.proxy",
+  "network.tunnel.close.request": "network.proxy",
   "hosts.list.request": "daemon.read",
   "hosts.add.request": "tunnel.manage",
   "hosts.update.request": "tunnel.manage",
@@ -224,6 +226,9 @@ const INBOUND_PERMISSION = {
 } as const satisfies Record<InboundOperation, PermissionRequirement>;
 
 const OUTBOUND_PERMISSION = {
+  "network.tunnel.open.response": "network.proxy",
+  "network.tunnel.close.response": "network.proxy",
+  "network.tunnel.closed": "network.proxy",
   "hosts.list.response": "daemon.read",
   "hosts.changed": "daemon.read",
   "hosts.add.response": "tunnel.manage",

@@ -62,6 +62,22 @@ Interactive elements carry refs like `@e3`. The agent passes a ref to `browser_c
 
 For anything the tree can't capture, agents fall back to `browser_screenshot`, and `browser_logs` exposes console messages and network timing.
 
+## Browse through a host's network
+
+By default, a tab loads pages from the computer running the desktop app. For a remote host, you can send the tab's traffic through that host instead. Names resolve on the host, and `localhost` means the host's own loopback. A dev server on the host and a page only the host can reach open like they would on the host.
+
+Turn it on per host in the desktop app: open **Settings → your host → Overview**, find **Browser**, and turn on **Use host network for browser tabs**. It is off by default.
+
+- **Desktop only.** The option appears for remote hosts in the desktop app, and only when the host is recent enough to support it; otherwise the page asks you to update the host.
+- **Separate cookies.** Tabs on that host use a separate Paseo profile, so logins from the shared Paseo browser profile do not carry over in either direction. Each routed host has its own profile.
+- **Existing tabs reload.** Turning the option on or off recreates that host's tabs at their current URLs.
+- **Works through the relay.** No extra ports or VPN.
+- **Needs permission.** Your connection needs the `network.proxy` permission. The host owner has it; others see an error in the same settings card until the owner allows it.
+
+> A routed tab can reach everything the host's network reaches: services on its loopback, private addresses, and internal sites. Cloud metadata addresses are blocked. Turn this on only for hosts and connections you trust, and keep in mind that pages you open there can see that network.
+
+How it works and why is in the [developer docs](https://github.com/getpaseo/paseo/blob/main/docs/browser-host-network.md).
+
 ## Architecture
 
 ```
@@ -77,6 +93,6 @@ agent ──MCP──▶ daemon (broker) ──▶ browser host (desktop app) �
 
 - Navigation is restricted to `http(s)` URLs.
 - File uploads can only reference files inside the agent's workspace.
-- Tabs share the browser profile you use in Paseo, including cookies and logins — that's what makes logged-in testing work, and why the feature is opt-in per host.
+- Tabs share the browser profile you use in Paseo, including cookies and logins — that's what makes logged-in testing work, and why the feature is opt-in per host. Tabs on a host with [its network turned on](#browse-through-a-hosts-network) use that host's own profile instead.
 
 See the [tools reference](/docs/browser-tools) for the full tool list.
