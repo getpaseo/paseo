@@ -2,7 +2,7 @@
 
 ## Project identity
 
-Projects are allocated for the exact root selected by the caller, normalized lexically with `path.resolve` (never `realpath`). New project IDs are opaque `prj_<16 hex>` values. Existing remote-shaped or path-shaped IDs are retained as readable compatibility records and are never rekeyed. An active exact root is idempotent; archived-only matches do not resurrect an old project. Workspace `projectId` is stable membership: reconciliation may update git-derived kind and branch metadata, but never rehomes a workspace or changes a project's root, ID, or default name.
+Projects retain the root selected by the caller, normalized lexically with `path.resolve`. Opening a symlink to an active project root reuses that project, preserving its stored path and name. New project IDs are opaque `prj_<16 hex>` values. Existing remote-shaped or path-shaped IDs are retained as readable compatibility records and are never rekeyed. Archived-only matches allocate a fresh project. Workspace `projectId` is stable membership: reconciliation may update git-derived kind and branch metadata, but never rehomes a workspace or changes a project's root, ID, or default name.
 
 `projectKey` is a persisted, opaque equivalence key used only to group the same logical project
 across hosts. It is separate from the host-local `projectId`; today's producer prefers a normalized
@@ -465,7 +465,7 @@ receives or fetches the URL; it validates the uploaded bytes, stores them, and r
 `customIconRevision`. Going back to automatic deletes the stored image, as does removing the
 project.
 
-Active exact roots are idempotent using lexical platform-equivalence semantics. Existing legacy
+Active roots are idempotent using platform-equivalent paths and symlinks resolving to the same directory. Existing legacy
 remote-shaped and path-shaped IDs remain readable, including duplicate roots; reconciliation never
 merges them, transfers names, archives them, or moves workspace foreign keys. An explicit
 workspace `projectId` is authoritative when it names an active project, regardless of cwd

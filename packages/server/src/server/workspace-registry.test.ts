@@ -337,29 +337,45 @@ describe("workspace registries", () => {
     expect(await projectRegistry.list()).toEqual([first]);
   });
 
-  test("keeps lexical and symlink root spellings distinct without realpath", async () => {
-    await projectRegistry.initialize();
-    const target = path.join(tmpDir, "target");
-    const link = path.join(tmpDir, "link");
-    mkdirSync(target);
-    symlinkSync(target, link, process.platform === "win32" ? "junction" : "dir");
+  test.each(["target", "link"])(
+    "reuses a symlinked project opened through %s first",
+    async (first) => {
+      await projectRegistry.initialize();
+      const target = path.join(tmpDir, "target");
+      const link = path.join(tmpDir, "link");
+      mkdirSync(target);
+      symlinkSync(target, link, process.platform === "win32" ? "junction" : "dir");
 
-    const targetProject = await projectRegistry.getOrCreateActiveByRoot({
-      rootPath: target,
-      kind: "non_git",
-      displayName: "target",
-      timestamp: "2026-03-01T00:00:00.000Z",
-    });
-    const linkProject = await projectRegistry.getOrCreateActiveByRoot({
-      rootPath: link,
-      kind: "non_git",
-      displayName: "link",
-      timestamp: "2026-03-02T00:00:00.000Z",
-    });
+      const firstProject = await projectRegistry.getOrCreateActiveByRoot({
+        rootPath: first === "target" ? target : link,
+        kind: "non_git",
+        displayName: "target",
+        timestamp: "2026-03-01T00:00:00.000Z",
+      });
+      const reopenedProject = await projectRegistry.getOrCreateActiveByRoot({
+        rootPath: first === "target" ? link : target,
+        kind: "non_git",
+        displayName: "link",
+        timestamp: "2026-03-02T00:00:00.000Z",
+      });
 
-    expect(linkProject.projectId).not.toBe(targetProject.projectId);
-    expect(await projectRegistry.list()).toEqual([targetProject, linkProject]);
-  });
+      expect(reopenedProject).toEqual(firstProject);
+      expect(await projectRegistry.list()).toEqual([firstProject]);
+
+      await projectRegistry.archive(firstProject.projectId, "2026-03-03T00:00:00.000Z");
+      const freshProject = await projectRegistry.getOrCreateActiveByRoot({
+        rootPath: link,
+        kind: "non_git",
+        displayName: "link",
+        timestamp: "2026-03-04T00:00:00.000Z",
+      });
+      expect(freshProject.projectId).not.toBe(firstProject.projectId);
+      expect(freshProject.archivedAt).toBeNull();
+      expect((await projectRegistry.get(firstProject.projectId))?.archivedAt).toBe(
+        "2026-03-03T00:00:00.000Z",
+      );
+    },
+  );
 
   test("retries a generated project ID collision", async () => {
     const generatedIds = ["prj_collision", "prj_fresh"];
