@@ -4646,6 +4646,92 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test.each([
+    { turnStatus: "completed", expected: "completed" },
+    { turnStatus: "interrupted", expected: "canceled" },
+    { turnStatus: "failed", expected: "failed" },
+    { turnStatus: "inProgress", expected: "running", spawnStatus: "completed" },
+    { turnStatus: "completed", threadStatus: "active", expected: "running" },
+    { turnStatus: "completed", threadStatus: "notLoaded", expected: "completed" },
+    { turnStatus: undefined, threadStatus: "notLoaded", expected: "running" },
+    { turnStatus: "futureStatus", expected: "running" },
+    { turnStatus: "completed", readFailure: true, expected: "running" },
+    { turnStatus: undefined, emptyTurns: true, expected: "running" },
+  ])(
+    "restores a legacy child's final turn: $turnStatus / $threadStatus / $expected",
+    async ({ turnStatus, threadStatus, expected, spawnStatus, readFailure, emptyTurns }) => {
+      const session = createSession();
+      const request = vi.fn(async (_method: string, params: unknown) => {
+        const threadId = (params as { threadId: string }).threadId;
+        if (threadId === "stale-child-thread") {
+          if (readFailure) {
+            throw new Error("Child history unavailable");
+          }
+          return {
+            thread: {
+              status: { type: threadStatus },
+              turns: emptyTurns
+                ? []
+                : [
+                    { status: "completed", items: [] },
+                    {
+                      status: turnStatus,
+                      items: [{ type: "agentMessage", id: "child-final", text: "Finished." }],
+                    },
+                  ],
+            },
+          };
+        }
+        return {
+          thread: {
+            turns: [
+              {
+                items: [
+                  {
+                    type: "collabAgentToolCall",
+                    id: "legacy-stale-spawn",
+                    tool: "spawnAgent",
+                    status: "completed",
+                    prompt: "Completed work",
+                    receiverThreadIds: ["stale-child-thread"],
+                    agentsStates: { "stale-child-thread": { status: spawnStatus ?? "running" } },
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      });
+      session.client = { request };
+      await asInternals(session).loadPersistedHistory(session.client);
+      const history: AgentStreamEvent[] = [];
+      for await (const event of session.streamHistory()) {
+        history.push(event);
+      }
+      expect(
+        history
+          .flatMap((event) =>
+            event.type === "provider_subagent" && event.event.type === "upsert"
+              ? [event.event]
+              : [],
+          )
+          .at(-1),
+      ).toMatchObject({ id: "stale-child-thread", status: expected });
+      expect(
+        history.flatMap((event) =>
+          event.type === "timeline" && event.item.type === "tool_call" ? [event.item] : [],
+        ),
+      ).toMatchObject([
+        {
+          callId: "legacy-stale-spawn",
+          status: expected,
+          error: expected === "failed" ? { message: "Sub-agent failed" } : null,
+        },
+      ]);
+      expect(request.mock.calls.map(([method]) => method)).toEqual(["thread/read", "thread/read"]);
+    },
+  );
+
   test("loads mixed legacy and MultiAgentV2 sub-agent history", async () => {
     const session = createSession();
     session.client = {
@@ -4824,68 +4910,95 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("restores nested MultiAgentV2 ownership from persisted child threads", async () => {
-    const session = createSession();
-    session.client = {
-      request: vi.fn(async (method: string, params: unknown) => {
-        if (method !== "thread/read") {
-          return {};
-        }
-        const threadId = (params as { threadId?: string }).threadId;
-        const itemsByThreadId = {
-          "test-thread": [
-            {
-              type: "subAgentActivity",
-              id: "spawn-persisted-child",
-              kind: "started",
-              agentThreadId: "persisted-child",
-              agentPath: "/root/persisted-child",
+  test.each([
+    { turnStatus: undefined, expected: "completed" },
+    { turnStatus: "interrupted", expected: "canceled" },
+    { turnStatus: "inProgress", expected: "running" },
+  ])(
+    "restores nested MultiAgentV2 ownership and state: $expected",
+    async ({ turnStatus, expected }) => {
+      const session = createSession();
+      session.client = {
+        request: vi.fn(async (method: string, params: unknown) => {
+          if (method !== "thread/read") {
+            return {};
+          }
+          const threadId = (params as { threadId?: string }).threadId;
+          const itemsByThreadId = {
+            "test-thread": [
+              {
+                type: "subAgentActivity",
+                id: "spawn-persisted-child",
+                kind: "started",
+                agentThreadId: "persisted-child",
+                agentPath: "/root/persisted-child",
+              },
+              {
+                type: "collabAgentToolCall",
+                id: "root-wait-grandchild",
+                tool: "wait",
+                status: "completed",
+                receiverThreadIds: ["persisted-grandchild"],
+                agentsStates: { "persisted-grandchild": { status: "completed" } },
+              },
+            ],
+            "persisted-child": [
+              {
+                type: "subAgentActivity",
+                id: "spawn-persisted-grandchild",
+                kind: "started",
+                agentThreadId: "persisted-grandchild",
+                agentPath: "/root/persisted-child/grandchild",
+              },
+            ],
+          } as const;
+          const items = threadId ? itemsByThreadId[threadId as keyof typeof itemsByThreadId] : [];
+          return {
+            thread: {
+              turns: [
+                {
+                  items: items ?? [],
+                  status: threadId === "persisted-grandchild" ? turnStatus : "completed",
+                },
+              ],
             },
-            {
-              type: "collabAgentToolCall",
-              id: "root-wait-grandchild",
-              tool: "wait",
-              status: "completed",
-              receiverThreadIds: ["persisted-grandchild"],
-              agentsStates: { "persisted-grandchild": { status: "completed" } },
-            },
-          ],
-          "persisted-child": [
-            {
-              type: "subAgentActivity",
-              id: "spawn-persisted-grandchild",
-              kind: "started",
-              agentThreadId: "persisted-grandchild",
-              agentPath: "/root/persisted-child/grandchild",
-            },
-          ],
-        } as const;
-        const items = threadId ? itemsByThreadId[threadId as keyof typeof itemsByThreadId] : [];
-        return {
-          thread: {
-            turns: items ? [{ items }] : [],
-          },
-        };
-      }),
-    };
+          };
+        }),
+      };
 
-    await asInternals(session).loadPersistedHistory(session.client);
+      await asInternals(session).loadPersistedHistory(session.client);
 
-    const history: AgentStreamEvent[] = [];
-    for await (const event of session.streamHistory()) {
-      history.push(event);
-    }
-    const upserts = history.flatMap((event) =>
-      event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
-    );
-    expect(upserts).toEqual([
-      expect.objectContaining({ id: "persisted-child", parentSubagentId: null }),
-      expect.objectContaining({
-        id: "persisted-grandchild",
-        parentSubagentId: "persisted-child",
-      }),
-    ]);
-  });
+      const history: AgentStreamEvent[] = [];
+      for await (const event of session.streamHistory()) {
+        history.push(event);
+      }
+      const upserts = history.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
+      );
+      expect(upserts).toEqual([
+        expect.objectContaining({
+          id: "persisted-child",
+          parentSubagentId: null,
+          status: "completed",
+        }),
+        expect.objectContaining({
+          id: "persisted-grandchild",
+          parentSubagentId: "persisted-child",
+          status: expected,
+        }),
+      ]);
+      expect(
+        history.flatMap((event) =>
+          event.type === "provider_subagent" &&
+          event.event.type === "timeline" &&
+          event.event.id === "persisted-child" &&
+          event.event.item.type === "tool_call"
+            ? [event.event.item]
+            : [],
+        ),
+      ).toMatchObject([{ callId: "spawn-persisted-grandchild", status: expected }]);
+    },
+  );
 
   test("coalesces persisted MultiAgentV2 activity for one child into one terminal card", async () => {
     const session = createSession();
