@@ -581,6 +581,183 @@
                 "required": ["provider"],
                 "additionalProperties": false
               }
+            },
+            "title": {
+              "type": "object",
+              "properties": {
+                "providers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "provider": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "model": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "thinkingOptionId": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["provider"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "branchName": {
+              "type": "object",
+              "properties": {
+                "providers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "provider": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "model": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "thinkingOptionId": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["provider"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "commitMessage": {
+              "type": "object",
+              "properties": {
+                "providers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "provider": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "model": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "thinkingOptionId": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["provider"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "pullRequest": {
+              "type": "object",
+              "properties": {
+                "providers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "provider": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "model": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "thinkingOptionId": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["provider"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "promptSuggestions": {
+              "type": "object",
+              "properties": {
+                "providers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "provider": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "model": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "thinkingOptionId": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["provider"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "newChatSuggestions": {
+              "type": "object",
+              "properties": {
+                "providers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "provider": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "model": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "thinkingOptionId": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": ["provider"],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "promptSuggestions": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
             }
           },
           "additionalProperties": false

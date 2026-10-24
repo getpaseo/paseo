@@ -12,9 +12,13 @@ import { isWeb } from "@/constants/platform";
 import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import type { EditingTextInputHandle } from "@/components/ui/text-input/types";
 import { ScrollableCodeSurface } from "@/components/ui/scrollable-code-surface";
+import { PromptSuggestionChips } from "@/composer/prompt-suggestions/chips";
+import { useSessionStore } from "@/stores/session-store";
+import type { PromptSuggestion } from "@getpaseo/protocol/messages";
 import {
   areQuestionsAnswered,
   buildQuestionFormAnswers,
+  draftsForQuestion,
   isQuestionAnswered,
   parseQuestionFormQuestions,
   questionShowsTextInput,
@@ -26,6 +30,7 @@ import {
 
 interface QuestionFormCardProps {
   permission: PendingPermission;
+  serverId: string;
   onRespond: (response: AgentPermissionResponse) => void;
   isResponding: boolean;
   responseError: string | null;
@@ -35,6 +40,7 @@ const IS_WEB = isWeb;
 // Native previews are uncapped: inside the option's Pressable, Android never hands a
 // drag to the preview's nested scroll, so lines past a cap would be unreachable.
 const OPTION_PREVIEW_MAX_HEIGHT = IS_WEB ? 240 : undefined;
+const EMPTY: PromptSuggestion[] = [];
 
 function getQuestionInputPlaceholder({
   question,
@@ -341,8 +347,44 @@ function QuestionOtherInput({
   );
 }
 
+// Drafted answers arrive as the same event as composer suggestions, tagged with
+// the permission they answer, so a stale question's guesses never show here;
+// each draft also names its question, so one question's guess never shows under another.
+function QuestionAnswerSuggestions({
+  enabled,
+  serverId,
+  agentId,
+  permissionId,
+  questions,
+  qIndex,
+  onPick,
+}: {
+  enabled: boolean;
+  serverId: string;
+  agentId: string;
+  permissionId: string;
+  questions: readonly QuestionFormQuestion[];
+  qIndex: number;
+  onPick: (qIndex: number, text: string) => void;
+}) {
+  const drafts = useSessionStore((state) => {
+    const stored = state.sessions[serverId]?.promptSuggestions.get(agentId);
+    return stored?.answersPermissionId === permissionId ? stored.suggestions : EMPTY;
+  });
+  const suggestions = useMemo(
+    () => draftsForQuestion(drafts, qIndex, questions),
+    [drafts, qIndex, questions],
+  );
+  const handleSelect = useCallback((text: string) => onPick(qIndex, text), [onPick, qIndex]);
+  if (!enabled || suggestions.length === 0) {
+    return null;
+  }
+  return <PromptSuggestionChips suggestions={suggestions} onSelect={handleSelect} />;
+}
+
 export function QuestionFormCard({
   permission,
+  serverId,
   onRespond,
   isResponding,
   responseError,
@@ -412,6 +454,15 @@ export function QuestionFormCard({
       }
     },
     [questions],
+  );
+
+  // The answer box owns its text, so a picked draft must be written onto it as well as into state.
+  const pickDraftAnswer = useCallback(
+    (qIndex: number, text: string) => {
+      setOtherText(qIndex, text);
+      otherInputRef.current?.replaceText(text);
+    },
+    [setOtherText],
   );
 
   const allAnswered = areQuestionsAnswered(questions, selections, otherTexts);
@@ -576,7 +627,7 @@ export function QuestionFormCard({
       </View>
 
       {activeQuestion ? (
-        <View key={activeQuestion.question} style={styles.questionBlock}>
+        <View key={resolvedActiveQuestionIndex} style={styles.questionBlock}>
           {activeQuestion.options.length > 0 ? (
             <View style={styles.optionsWrap} {...optionsGroupAccessibility}>
               {activeQuestion.options.map((opt, optIndex) => (
@@ -593,6 +644,17 @@ export function QuestionFormCard({
               ))}
             </View>
           ) : null}
+
+          <QuestionAnswerSuggestions
+            enabled={showTextInput}
+            serverId={serverId}
+            agentId={permission.agentId}
+            permissionId={permission.request.id}
+            questions={questions}
+            qIndex={resolvedActiveQuestionIndex}
+            onPick={pickDraftAnswer}
+          />
+
           {showTextInput ? (
             <QuestionOtherInput
               qIndex={resolvedActiveQuestionIndex}

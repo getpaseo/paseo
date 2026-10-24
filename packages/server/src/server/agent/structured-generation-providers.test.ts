@@ -18,6 +18,87 @@ class ProviderSnapshots {
 }
 
 describe("resolveStructuredGenerationProviders", () => {
+  test("suggestion policy uses the per-kind chain while other manual metadata keeps the shared chain", async () => {
+    const snapshots = new ProviderSnapshots([
+      {
+        provider: "codex",
+        status: READY,
+        enabled: true,
+        models: [
+          { provider: "codex", id: "gpt-6-astra", label: "Astra" },
+          { provider: "codex", id: "gpt-5.4-mini", label: "Mini" },
+        ],
+      },
+    ]);
+    const common = {
+      cwd: "/tmp/repo",
+      providerSnapshotManager: snapshots,
+      daemonConfig: {
+        metadataGeneration: {
+          providers: [{ provider: "codex", model: "shared" }],
+          promptSuggestions: { providers: [{ provider: "codex", model: "cheap" }] },
+        },
+      },
+      currentSelection: { provider: "codex", model: "gpt-6-astra" },
+    };
+
+    const suggestions = await resolveStructuredGenerationProviders({
+      ...common,
+      configKey: "promptSuggestions",
+      selectionPolicy: "configured-only",
+    });
+    const commitMessage = await resolveStructuredGenerationProviders({
+      ...common,
+      configKey: "commitMessage",
+    });
+
+    expect(suggestions).toEqual([{ provider: "codex", model: "cheap" }]);
+    expect(commitMessage).toEqual([{ provider: "codex", model: "shared" }]);
+  });
+
+  test("suggestion policy uses the shared chain when its per-kind list is empty", async () => {
+    const providers = await resolveStructuredGenerationProviders({
+      cwd: "/tmp/repo",
+      providerSnapshotManager: new ProviderSnapshots([
+        {
+          provider: "claude",
+          status: READY,
+          enabled: true,
+          models: [{ provider: "claude", id: "haiku", label: "Haiku" }],
+        },
+      ]),
+      daemonConfig: {
+        metadataGeneration: {
+          providers: [{ provider: "codex", model: "shared" }],
+          newChatSuggestions: { providers: [] },
+        },
+      },
+      configKey: "newChatSuggestions",
+      selectionPolicy: "configured-only",
+    });
+
+    expect(providers).toEqual([{ provider: "codex", model: "shared" }]);
+  });
+
+  test("suggestion policy leaves an empty chain empty even when defaults are available", async () => {
+    const providers = await resolveStructuredGenerationProviders({
+      cwd: "/tmp/repo",
+      providerSnapshotManager: new ProviderSnapshots([
+        {
+          provider: "claude",
+          status: READY,
+          enabled: true,
+          models: [{ provider: "claude", id: "haiku", label: "Haiku" }],
+        },
+      ]),
+      configKey: "newChatSuggestions",
+      selectionPolicy: "configured-only",
+      currentSelection: { provider: "codex", model: "gpt-6-astra" },
+    });
+
+    expect(providers).toEqual([]);
+  });
+
   test("tries only the configured models when metadata generation is manual", async () => {
     const snapshots = new ProviderSnapshots([
       {
@@ -210,6 +291,70 @@ describe("resolveStructuredGenerationProviders", () => {
 
     expect(providers).toEqual([{ provider: "opencode", model: "plexus/small-fast" }]);
     expect(snapshots.calls).toEqual([{ cwd: "/tmp/repo", wait: true }]);
+  });
+
+  test("prefers the providers configured for this metadata kind", async () => {
+    const snapshots = new ProviderSnapshots([
+      { provider: "current-provider", status: ERROR, enabled: true, error: "timed out" },
+    ]);
+
+    const providers = await resolveStructuredGenerationProviders({
+      cwd: "/tmp/repo",
+      providerSnapshotManager: snapshots,
+      daemonConfig: {
+        metadataGeneration: {
+          providers: [{ provider: "current-provider", model: "shared-model" }],
+          promptSuggestions: {
+            providers: [{ provider: "current-provider", model: "cheap-model" }],
+          },
+        },
+      },
+      configKey: "promptSuggestions",
+    });
+
+    expect(providers).toEqual([{ provider: "current-provider", model: "cheap-model" }]);
+  });
+
+  test("falls back to the shared providers for a kind that configures none", async () => {
+    const snapshots = new ProviderSnapshots([
+      { provider: "current-provider", status: ERROR, enabled: true, error: "timed out" },
+    ]);
+
+    const providers = await resolveStructuredGenerationProviders({
+      cwd: "/tmp/repo",
+      providerSnapshotManager: snapshots,
+      daemonConfig: {
+        metadataGeneration: {
+          providers: [{ provider: "current-provider", model: "shared-model" }],
+          promptSuggestions: {
+            providers: [{ provider: "current-provider", model: "cheap-model" }],
+          },
+        },
+      },
+      configKey: "commitMessage",
+    });
+
+    expect(providers).toEqual([{ provider: "current-provider", model: "shared-model" }]);
+  });
+
+  test("takes the first of several kinds that configures providers", async () => {
+    const snapshots = new ProviderSnapshots([
+      { provider: "current-provider", status: ERROR, enabled: true, error: "timed out" },
+    ]);
+
+    const providers = await resolveStructuredGenerationProviders({
+      cwd: "/tmp/repo",
+      providerSnapshotManager: snapshots,
+      daemonConfig: {
+        metadataGeneration: {
+          providers: [{ provider: "current-provider", model: "shared-model" }],
+          branchName: { providers: [{ provider: "current-provider", model: "slug-model" }] },
+        },
+      },
+      configKey: ["title", "branchName"],
+    });
+
+    expect(providers).toEqual([{ provider: "current-provider", model: "slug-model" }]);
   });
 
   test("keeps explicit candidates when provider snapshots are in error state", async () => {

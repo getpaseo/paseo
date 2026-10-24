@@ -122,6 +122,10 @@ export const ja: TranslationResources = {
       fallback: "メッセージ...",
       terminal: "Prompt",
     },
+    promptSuggestions: {
+      a11yLabel: "候補のプロンプト、Tab キーで採用",
+      chipAccessibilityLabel: "候補を使用: {{text}}",
+    },
     input: {
       accessibilityLabel: "エージェントにメッセージ...",
       terminalAccessibilityLabel: "Terminal prompt",
@@ -2241,7 +2245,7 @@ export const ja: TranslationResources = {
     metadataGeneration: {
       title: "メタデータ生成",
       description:
-        "ワークスペースのタイトル、ブランチ名、コミットメッセージ、プルリクエストの下書きに使用するモデルを選択します",
+        "ワークスペースのタイトル、ブランチ名、コミットメッセージ、プルリクエストの下書き、プロンプト候補に使用するモデルを選択します",
       selection: "モデル選択",
       automatic: "自動",
       preferred: "手動",
@@ -2251,6 +2255,11 @@ export const ja: TranslationResources = {
       modelHint: "このモデルのみを使用します。失敗しても、Paseo は別のモデルを試しません",
       docs: "ドキュメント",
       saveError: "メタデータ生成を更新できません",
+      suggestionSection: "メッセージの提案",
+      suggestionSharedHint: "ここまたはメタデータ生成でモデルを選ぶまでオフです",
+      suggestionCustomHint: "提案、回答の下書き、新しいチャットの案にこのモデルを使用します",
+      suggestionModelHint:
+        "最初に試すモデルです。config.json に記載したフォールバックも引き続き使われます",
     },
     general: {
       title: "一般",
@@ -2658,6 +2667,11 @@ export const ja: TranslationResources = {
           title: "Paseoツールを有効にする",
           hint: "エージェントがワークツリー、エージェント、スケジュールを管理できるようになります",
           accessibilityLabel: "Paseoツールを有効にする",
+        },
+        promptSuggestions: {
+          title: "次のプロンプトを提案",
+          hint: "入力欄が空のときに、次に送る内容を提案します。メタデータでモデルの選択が必要です",
+          accessibilityLabel: "次のプロンプトを提案",
         },
         systemPrompt: {
           title: "システムプロンプト",

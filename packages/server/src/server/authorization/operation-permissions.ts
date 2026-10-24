@@ -33,6 +33,7 @@ const INBOUND_PERMISSION = {
   "subscription.release.request": null,
   "session.events.set_subscription.request": ["workspace.read", "daemon.read", "hub.execute"],
   "agent.timeline.set_subscription.request": ["workspace.read", "hub.execute"],
+  "agent.prompt_suggestions.request": ["workspace.read", "hub.execute"],
   agent_permission_response: "workspace.write",
   archive_agent_request: ["workspace.write", "hub.execute"],
   archive_workspace_request: ["workspace.manage", "hub.execute"],
@@ -262,6 +263,9 @@ const OUTBOUND_PERMISSION = {
   agent_attention_required: ["workspace.read", "hub.execute"],
   agent_deleted: ["workspace.read", "hub.execute"],
   agent_permission_request: ["workspace.read", "hub.execute"],
+  // Suggestions are derived from the transcript, so they carry the stream's requirement.
+  agent_prompt_suggestions: ["workspace.read", "hub.execute"],
+  "agent.prompt_suggestions.response": ["workspace.read", "hub.execute"],
   agent_permission_resolved: ["workspace.write", "hub.execute"],
   agent_status: ["workspace.read", "hub.execute"],
   agent_stream: ["workspace.read", "hub.execute"],

@@ -802,3 +802,64 @@ describe("removeWorkspace", () => {
     expect(after.workspaces).toBe(before.workspaces);
   });
 });
+
+describe("prompt suggestions", () => {
+  function storeSuggestion(agentId: string, generatedAt: string): void {
+    useSessionStore.getState().setPromptSuggestions("test-server", {
+      agentId,
+      turnSeq: 1,
+      suggestions: [{ id: "s1", text: `suggestion for ${agentId}` }],
+      generatedAt,
+    });
+  }
+
+  function storedAgents(): string[] {
+    const session = useSessionStore.getState().sessions["test-server"];
+    return session ? [...session.promptSuggestions.keys()] : [];
+  }
+
+  it("keeps only the newest entries and refreshes an updated agent", () => {
+    initializeTestSession();
+    for (let index = 0; index <= 32; index += 1) {
+      storeSuggestion(`a${index}`, "2026-09-18T10:00:00.000Z");
+    }
+
+    expect(storedAgents()).toHaveLength(32);
+    expect(storedAgents()[0]).toBe("a1");
+
+    storeSuggestion("a1", "2026-09-18T10:00:01.000Z");
+
+    expect(storedAgents().at(-1)).toBe("a1");
+  });
+
+  // Dropping the tag put drafted answers in the composer, where Enter sends them as
+  // a new message, and left the question card that asked for them empty.
+  it("keeps the question a drafted answer belongs to", () => {
+    initializeTestSession();
+    useSessionStore.getState().setPromptSuggestions("test-server", {
+      agentId: "agent-q",
+      turnSeq: 1,
+      suggestions: [{ id: "s1", text: "Postgres" }],
+      generatedAt: "2026-09-18T10:00:00.000Z",
+      answersPermissionId: "perm-1",
+    });
+
+    const stored = useSessionStore
+      .getState()
+      .sessions["test-server"]?.promptSuggestions.get("agent-q");
+    expect(stored?.answersPermissionId).toBe("perm-1");
+  });
+
+  // Opening a chat clears its attention and bumps updatedAt, which feeds this map.
+  // Pruning on it deleted every suggestion the moment the user came to read it.
+  it("keeps a suggestion when activity moves without a new turn", () => {
+    initializeTestSession();
+    storeSuggestion("agent-a", "2026-09-18T10:00:00.000Z");
+
+    useSessionStore
+      .getState()
+      .setAgentLastActivityBatch(new Map([["agent-a", new Date("2026-09-18T10:00:30.000Z")]]));
+
+    expect(storedAgents()).toEqual(["agent-a"]);
+  });
+});

@@ -5,6 +5,7 @@ import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n as testI18n } from "@/i18n/i18next";
 import type { PendingPermission } from "@/types/shared";
+import { useSessionStore } from "@/stores/session-store";
 import { QuestionFormCard } from "./question-form-card";
 
 // Load translations so controls expose their real accessible names.
@@ -33,7 +34,9 @@ afterEach(() => {
   }
 });
 
-function buildPermission(question: Record<string, unknown>): PendingPermission {
+function buildPermission(
+  question: Record<string, unknown> | Record<string, unknown>[],
+): PendingPermission {
   return {
     key: "perm-1",
     agentId: "agent-1",
@@ -42,7 +45,7 @@ function buildPermission(question: Record<string, unknown>): PendingPermission {
       provider: "claude",
       name: "AskUserQuestion",
       kind: "question",
-      input: { questions: [question] },
+      input: { questions: Array.isArray(question) ? question : [question] },
     },
   };
 }
@@ -55,6 +58,7 @@ function mountCard(question: Record<string, unknown>) {
   act(() =>
     root.render(
       <QuestionFormCard
+        serverId="server-1"
         permission={buildPermission(question)}
         onRespond={onRespond}
         isResponding={false}
@@ -78,13 +82,15 @@ function mountCard(question: Record<string, unknown>) {
       input.dispatchEvent(new InputEvent("input", { bubbles: true, data: text }));
     });
   };
+  const pickDraft = (text: string) =>
+    act(() => view.getByRole("button", { name: `Use suggestion: ${text}` }).click());
   const submit = () => act(() => view.getByRole("button", { name: "Submit" }).click());
   const submittedAnswers = (): Record<string, string> => {
     const response = onRespond.mock.calls[0]?.[0];
     if (!response || response.behavior !== "allow") throw new Error("card did not submit");
     return (response.updatedInput as { answers: Record<string, string> }).answers;
   };
-  return { check, type, otherInput, submit, submittedAnswers };
+  return { check, type, pickDraft, otherInput, submit, submittedAnswers };
 }
 
 const multiSelectQuestion = {
@@ -146,5 +152,127 @@ describe("QuestionFormCard other answers", () => {
     expect(card.otherInput().value).toBe("");
     card.submit();
     expect(card.submittedAnswers()).toEqual({ Provider: "Codex" });
+  });
+});
+
+function seedDrafts(suggestions: Array<{ id: string; text: string; questionIndex?: number }>) {
+  const promptSuggestions = new Map([
+    ["agent-1", { turnSeq: 1, suggestions, generatedAt: "", answersPermissionId: "perm-1" }],
+  ]);
+  useSessionStore.setState({
+    sessions: { "server-1": { promptSuggestions } } as unknown as ReturnType<
+      typeof useSessionStore.getState
+    >["sessions"],
+  });
+}
+
+function mountQuestions(questions: Record<string, unknown>[]) {
+  const onRespond = vi.fn<(response: AgentPermissionResponse) => void>();
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  act(() =>
+    root.render(
+      <QuestionFormCard
+        serverId="server-1"
+        permission={buildPermission(questions)}
+        onRespond={onRespond}
+        isResponding={false}
+        responseError={null}
+      />,
+    ),
+  );
+  mounted.push({ root, container });
+  const view = within(container);
+  return {
+    drafts: () =>
+      view
+        .queryAllByRole("button", { name: /^Use suggestion: / })
+        .map((chip) => chip.getAttribute("aria-label")?.replace("Use suggestion: ", "")),
+    pickDraft: (text: string) =>
+      act(() => view.getByRole("button", { name: `Use suggestion: ${text}` }).click()),
+    input: () => view.getByRole<HTMLInputElement>("textbox"),
+    next: () => act(() => view.getByRole("button", { name: "Next" }).click()),
+    submit: () => act(() => view.getByRole("button", { name: "Submit" }).click()),
+    submittedAnswers: (): Record<string, string> => {
+      const response = onRespond.mock.calls[0]?.[0];
+      if (!response || response.behavior !== "allow") throw new Error("card did not submit");
+      return (response.updatedInput as { answers: Record<string, string> }).answers;
+    },
+  };
+}
+
+const databaseQuestion = { question: "Which database?", header: "DB", options: [] };
+const regionQuestion = { question: "Which region?", header: "Region", options: [] };
+
+describe("QuestionFormCard drafted answers", () => {
+  afterEach(() => useSessionStore.setState({ sessions: {} }));
+
+  it("shows each question only the drafts written for it", () => {
+    seedDrafts([
+      { id: "s1", text: "Postgres", questionIndex: 0 },
+      { id: "s2", text: "eu-west-1", questionIndex: 1 },
+      { id: "s3", text: "SQLite", questionIndex: 0 },
+    ]);
+    const card = mountQuestions([databaseQuestion, regionQuestion]);
+
+    expect(card.drafts()).toEqual(["Postgres", "SQLite"]);
+    card.pickDraft("Postgres");
+    card.next();
+
+    expect(card.drafts()).toEqual(["eu-west-1"]);
+    card.pickDraft("eu-west-1");
+    card.submit();
+    expect(card.submittedAnswers()).toEqual({ DB: "Postgres", Region: "eu-west-1" });
+  });
+
+  it("clears the answer box when moving to a question worded the same", () => {
+    seedDrafts([
+      { id: "s1", text: "alpha", questionIndex: 0 },
+      { id: "s2", text: "beta", questionIndex: 1 },
+    ]);
+    const same = { question: "Which name?", options: [] };
+    const card = mountQuestions([
+      { ...same, header: "First" },
+      { ...same, header: "Second" },
+    ]);
+
+    card.pickDraft("alpha");
+    card.next();
+
+    expect(card.input().value).toBe("");
+    expect(card.drafts()).toEqual(["beta"]);
+    card.pickDraft("beta");
+    card.submit();
+    expect(card.submittedAnswers()).toEqual({ First: "alpha", Second: "beta" });
+  });
+
+  it("hides untagged drafts from an older daemon when several questions take text", () => {
+    seedDrafts([{ id: "s1", text: "Postgres" }]);
+    const card = mountQuestions([databaseQuestion, regionQuestion]);
+
+    expect(card.drafts()).toEqual([]);
+    card.next();
+    expect(card.drafts()).toEqual([]);
+  });
+
+  it("shows a picked draft in the answer box and submits it", () => {
+    const suggestions = [{ id: "s1", text: "OpenCode" }];
+    const promptSuggestions = new Map([
+      ["agent-1", { turnSeq: 1, suggestions, generatedAt: "", answersPermissionId: "perm-1" }],
+    ]);
+    useSessionStore.setState({
+      sessions: { "server-1": { promptSuggestions } } as unknown as ReturnType<
+        typeof useSessionStore.getState
+      >["sessions"],
+    });
+    const card = mountCard(singleSelectQuestion);
+
+    card.check("Codex");
+    card.pickDraft("OpenCode");
+
+    expect(card.otherInput().value).toBe("OpenCode");
+    card.submit();
+    expect(card.submittedAnswers()).toEqual({ Provider: "OpenCode" });
   });
 });

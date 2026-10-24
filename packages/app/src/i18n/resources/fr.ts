@@ -123,6 +123,10 @@ export const fr: TranslationResources = {
       fallback: "Message…",
       terminal: "Prompt",
     },
+    promptSuggestions: {
+      a11yLabel: "Suggestion de message, appuyez sur Tab pour accepter",
+      chipAccessibilityLabel: "Utiliser la suggestion : {{text}}",
+    },
     input: {
       accessibilityLabel: "Écrire à l’agent…",
       terminalAccessibilityLabel: "Prompt du terminal",
@@ -2268,7 +2272,7 @@ export const fr: TranslationResources = {
     metadataGeneration: {
       title: "Génération de métadonnées",
       description:
-        "Choisissez le modèle utilisé par Paseo pour les titres d’espaces de travail, les noms de branches, les messages de commit et les brouillons de pull request",
+        "Choisissez le modèle utilisé par Paseo pour les titres d’espaces de travail, les noms de branches, les messages de commit, les brouillons de pull request et les suggestions de prompts",
       selection: "Sélection du modèle",
       automatic: "Automatique",
       preferred: "Manuel",
@@ -2278,6 +2282,13 @@ export const fr: TranslationResources = {
       modelHint: "Seul ce modèle est utilisé. S’il échoue, Paseo n’essaie pas d’autre modèle",
       docs: "Documentation",
       saveError: "Impossible de mettre à jour la génération de métadonnées",
+      suggestionSection: "Suggestions de messages",
+      suggestionSharedHint:
+        "Désactivé tant que vous n'avez pas choisi de modèle ici ou dans Génération de métadonnées",
+      suggestionCustomHint:
+        "Les suggestions, les réponses proposées et les idées de nouveau chat utilisent ce modèle",
+      suggestionModelHint:
+        "Essayé en premier ; les modèles de secours de config.json s'appliquent toujours",
     },
     general: {
       title: "Général",
@@ -2692,6 +2703,11 @@ export const fr: TranslationResources = {
           title: "Activer les outils Paseo",
           hint: "Les agents pourront gérer les worktrees, les agents et les planifications",
           accessibilityLabel: "Injecter les outils Paseo",
+        },
+        promptSuggestions: {
+          title: "Suggérer les prochains messages",
+          hint: "Proposer quoi envoyer quand le champ de saisie est vide. Nécessite un modèle dans Métadonnées",
+          accessibilityLabel: "Suggérer les prochains messages",
         },
         systemPrompt: {
           title: "Prompt système",

@@ -135,6 +135,7 @@ function BottomOverlayInset({ height }: { height: number }) {
 function renderPendingPermissionsNode(input: {
   pendingPermissions: PendingPermission[];
   client: DaemonClient | null;
+  serverId: string;
 }): ReactNode {
   if (input.pendingPermissions.length === 0) {
     return null;
@@ -142,7 +143,12 @@ function renderPendingPermissionsNode(input: {
   return (
     <View style={stylesheet.permissionsContainer}>
       {input.pendingPermissions.map((permission) => (
-        <PermissionRequestCard key={permission.key} permission={permission} client={input.client} />
+        <PermissionRequestCard
+          key={permission.key}
+          permission={permission}
+          client={input.client}
+          serverId={input.serverId}
+        />
       ))}
     </View>
   );
@@ -917,8 +923,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         renderPendingPermissionsNode({
           pendingPermissions: pendingPermissionItems,
           client,
+          serverId: resolvedServerId,
         }),
-      [client, pendingPermissionItems],
+      [client, pendingPermissionItems, resolvedServerId],
     );
     const turnFooterNode = useMemo(
       () =>
@@ -1386,9 +1393,11 @@ function PermissionActionButton({
 function PermissionRequestCard({
   permission,
   client,
+  serverId,
 }: {
   permission: PendingPermission;
   client: DaemonClient | null;
+  serverId: string;
 }) {
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
@@ -1527,6 +1536,7 @@ function PermissionRequestCard({
     return (
       <QuestionFormCard
         permission={permission}
+        serverId={serverId}
         onRespond={handleResponse}
         isResponding={isResponding}
         responseError={responseError}
