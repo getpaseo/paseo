@@ -222,6 +222,37 @@ describe("planWorkspaceOpenTargets", () => {
     expect(targets.map((target) => target.id)).toEqual(["github"]);
   });
 
+  it("leads with targets matched against the project so they become the default", () => {
+    const targets = planWorkspaceOpenTargets({
+      workspaceDirectory: "/repo",
+      desktopTargets: [
+        ...desktopTargets,
+        {
+          id: "xcode",
+          label: "Xcode",
+          kind: "editor" as const,
+          icon: { kind: "symbol" as const, name: "terminal" as const },
+          scope: "workspace" as const,
+        },
+      ],
+      canUseDesktopBridge: true,
+      isLocalExecution: true,
+    });
+
+    expect(targets.map((target) => target.id)).toEqual(["xcode", "vscode", "finder"]);
+  });
+
+  it("keeps registry order when no target is matched against the project", () => {
+    const targets = planWorkspaceOpenTargets({
+      workspaceDirectory: "/repo",
+      desktopTargets,
+      canUseDesktopBridge: true,
+      isLocalExecution: true,
+    });
+
+    expect(targets.map((target) => target.id)).toEqual(["vscode", "finder"]);
+  });
+
   it("suppresses desktop targets for remote execution paths", () => {
     const targets = planWorkspaceOpenTargets({
       workspaceDirectory: "/repo",

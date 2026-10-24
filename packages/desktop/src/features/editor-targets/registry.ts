@@ -25,6 +25,7 @@ import { vscodiumTarget } from "./targets/vscodium.js";
 import { vscodeInsidersTarget } from "./targets/vscode-insiders.js";
 import { vscodeTarget } from "./targets/vscode.js";
 import { webstormTarget } from "./targets/webstorm.js";
+import { xcodeTarget } from "./targets/xcode.js";
 import { zedTarget } from "./targets/zed.js";
 
 export const EDITOR_TARGETS: readonly EditorTarget[] = [
@@ -37,6 +38,7 @@ export const EDITOR_TARGETS: readonly EditorTarget[] = [
   zedTarget,
   antigravityTarget,
   androidStudioTarget,
+  xcodeTarget,
   intellijIdeaTarget,
   aquaTarget,
   clionTarget,
@@ -54,15 +56,33 @@ export const EDITOR_TARGETS: readonly EditorTarget[] = [
   fileManagerTarget,
 ];
 
+export interface ListEditorTargetsOptions {
+  /**
+   * Absolute workspace root. Without it, targets that declare
+   * `supportsWorkspace` are left out — there is nothing to match them against.
+   */
+  workspacePath?: string;
+}
+
 export async function listAvailableEditorTargets(
   runtime: EditorTargetRuntime,
   targets: readonly EditorTarget[] = EDITOR_TARGETS,
+  options: ListEditorTargetsOptions = {},
 ): Promise<EditorTargetDescriptor[]> {
+  const workspacePath =
+    options.workspacePath && runtime.isAbsolutePath(options.workspacePath)
+      ? options.workspacePath
+      : null;
   const descriptors: EditorTargetDescriptor[] = [];
   for (const target of targets) {
-    if (await target.isInstalled(runtime)) {
+    if (!(await target.isInstalled(runtime))) continue;
+    if (!target.supportsWorkspace) {
       descriptors.push(await target.describe(runtime));
+      continue;
     }
+    if (!workspacePath) continue;
+    if (!(await target.supportsWorkspace(workspacePath, runtime))) continue;
+    descriptors.push({ ...(await target.describe(runtime)), scope: "workspace" });
   }
   return descriptors;
 }

@@ -60,6 +60,16 @@ function resolveActiveFileForOpenTargets(
     : null;
 }
 
+function orderProjectTargetsFirst(
+  targets: readonly DesktopOpenTarget[],
+): readonly DesktopOpenTarget[] {
+  const projectTargets = targets.filter((target) => target.scope === "workspace");
+  if (projectTargets.length === 0) {
+    return targets;
+  }
+  return [...projectTargets, ...targets.filter((target) => target.scope !== "workspace")];
+}
+
 function planDesktopOpenTargets(input: {
   workspaceDirectory: string;
   directoryPath?: string | null;
@@ -87,7 +97,10 @@ function planDesktopOpenTargets(input: {
   }
   const workspacePath = resolvedDirectory?.absolutePath ?? input.workspaceDirectory;
 
-  return input.desktopTargets.map((target) => {
+  // Targets matched against this project lead: they are the most relevant entry
+  // in the menu, and they become the primary action when no editor preference is
+  // stored. A stored preference still wins — it is matched by id, not position.
+  return orderProjectTargetsFirst(input.desktopTargets).map((target) => {
     if (!input.resolvedFile) {
       return {
         source: "desktop",

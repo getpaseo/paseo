@@ -24,6 +24,8 @@ export function useOpenDirectoryInEditor({
   const toast = useToast();
   const isLocalExecution = useIsLocalDaemon(serverId);
   const { preferredEditorId } = usePreferredEditor();
+  // Deliberately workspace-agnostic: this action opens an arbitrary
+  // subdirectory, which project-scoped targets like Xcode cannot open.
   const { targets, isAvailable } = useDesktopOpenTargets({ isLocalExecution });
   const editorTargets = useMemo(
     () => targets.filter((target) => target.kind === "editor"),
