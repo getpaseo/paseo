@@ -62,6 +62,11 @@ describe("canonical CLI surface", () => {
     expect(help).toContain("--forge <forge>");
   });
 
+  it("offers provider mode selection when importing an agent", () => {
+    const importCommand = createCli().commands.find((command) => command.name() === "import");
+    expect(importCommand?.helpInformation()).toContain("--mode <mode>");
+  });
+
   it("uses --no-wait for execution, --internal for visibility, and reserves detach for ownership", () => {
     const run = createCli().commands.find((command) => command.name() === "run");
     const help = run?.helpInformation();

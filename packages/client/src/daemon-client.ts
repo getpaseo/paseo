@@ -210,6 +210,7 @@ interface ImportAgentInputBase {
   cwd?: string;
   workspaceId?: string;
   labels?: Record<string, string>;
+  modeId?: string;
 }
 
 export type ImportAgentInput =
@@ -3478,6 +3479,13 @@ export class DaemonClient {
   }
 
   async importAgent(input: ImportAgentInput): Promise<AgentSnapshotPayload> {
+    // COMPAT(importSessionMode): added after v0.11.4, remove gate after 2027-04-16.
+    if (input.modeId) {
+      await this.whenConnected();
+      if (this.lastServerInfoMessage?.features?.importSessionMode !== true) {
+        throw new Error("Update the host to select a mode when importing an agent.");
+      }
+    }
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "import_agent_request",
@@ -3488,6 +3496,7 @@ export class DaemonClient {
       ...(input.cwd ? { cwd: input.cwd } : {}),
       ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
       ...(input.labels && Object.keys(input.labels).length > 0 ? { labels: input.labels } : {}),
+      ...(input.modeId ? { modeId: input.modeId } : {}),
     });
 
     const status = await this.sendRequest({
