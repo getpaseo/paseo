@@ -44,6 +44,38 @@ interface TimelineFetch {
   fail(message: string): void;
 }
 
+test("visible catch-up signal covers preparation and reconnect but excludes hidden chats", async () => {
+  const world = new TimelineWorld();
+  expect(world.sync.isVisibleCatchUpPending()).toBe(false);
+  world.openedEarlier(["hidden"]);
+  expect(world.sync.isVisibleCatchUpPending()).toBe(false);
+  world.show("pane", ["visible"]);
+  expect(world.sync.isVisibleCatchUpPending()).toBe(true);
+  world.sync.setConnected(true);
+  (await world.nextMembership()).succeed();
+  const visible = await world.nextFetch("visible");
+  expect(world.sync.isVisibleCatchUpPending()).toBe(true);
+  visible.respond({ hasNewer: false });
+  await world.nextFetch("hidden");
+  expect(world.sync.isVisibleCatchUpPending()).toBe(false);
+  world.sync.setConnected(false);
+  world.sync.setConnected(true);
+  expect(world.sync.isVisibleCatchUpPending()).toBe(true);
+  world.show("pane", []);
+  expect(world.sync.isVisibleCatchUpPending()).toBe(false);
+  world.sync.dispose();
+});
+
+test("hiding a pending chat notifies catch-up signal listeners even when demand stays open", () => {
+  const world = new TimelineWorld();
+  world.show("pane", ["visible"]);
+  const signals: boolean[] = [];
+  world.sync.subscribe(() => signals.push(world.sync.isVisibleCatchUpPending()));
+  world.show("pane", []);
+  expect(signals).toEqual([false]);
+  world.sync.dispose();
+});
+
 test("split panes catch up together before hidden open chats start fetching", async () => {
   const world = new TimelineWorld();
   world.openedEarlier(["a-hidden"]);
