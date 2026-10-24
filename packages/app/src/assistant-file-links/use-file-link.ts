@@ -7,6 +7,7 @@ import { openExternalUrl } from "@/utils/open-external-url";
 import {
   parseHostWorkspaceRouteFromPathname,
   parseHostAgentRouteFromPathname,
+  parseHostWorkspaceOpenIntentFromPathname,
 } from "@/utils/host-routes";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
@@ -348,11 +349,21 @@ function tryNavigateInternalPaseoLink(url: string): boolean {
     return false;
   }
   // `paseo://h/<server>/...` parses to hostname "h" with the rest in pathname;
-  // prepend the hostname so the `/h/...` route parsers match.
-  const pathname = `/${parsed.hostname}${parsed.pathname}`;
+  // prepend the hostname so the `/h/...` route parsers match. WHATWG URL
+  // parsing keeps an opaque (non-special-scheme) host's case, so lowercase
+  // it before matching.
+  const pathname = `/${parsed.hostname.toLowerCase()}${parsed.pathname}`;
   const workspace = parseHostWorkspaceRouteFromPathname(pathname);
   if (workspace) {
-    navigateToWorkspace({ serverId: workspace.serverId, workspaceId: workspace.workspaceId });
+    // A `?open=` intent (for example `open=agent:<id>`, the form the web
+    // address bar shows) must survive the in-app handoff so the workspace
+    // opens on the right tab.
+    const openIntent = parseHostWorkspaceOpenIntentFromPathname(`${pathname}${parsed.search}`);
+    navigateToWorkspace({
+      serverId: workspace.serverId,
+      workspaceId: workspace.workspaceId,
+      ...(openIntent ? { target: openIntent } : {}),
+    });
     return true;
   }
   const agent = parseHostAgentRouteFromPathname(pathname);

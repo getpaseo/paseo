@@ -341,6 +341,8 @@ describe("useFileLink", () => {
 });
 
 describe("external url dispatch", () => {
+  afterEach(cleanup);
+
   beforeEach(() => {
     vi.mocked(navigateToWorkspace).mockClear();
     vi.mocked(navigateToAgent).mockClear();
@@ -351,7 +353,7 @@ describe("external url dispatch", () => {
     return { href, markup: "linkify" };
   }
 
-  async function pressHref(href: string) {
+  function pressHref(href: string) {
     const openedFiles: OpenedFile[] = [];
     const { result } = renderHook(() => useFileLink(urlSource(href)), {
       wrapper: createWrapper({
@@ -365,7 +367,7 @@ describe("external url dispatch", () => {
   }
 
   it("navigates paseo workspace links in-app instead of opening them externally", async () => {
-    await pressHref("paseo://h/server-1/workspace/ws_1");
+    pressHref("paseo://h/server-1/workspace/ws_1");
     await waitFor(() => {
       expect(vi.mocked(navigateToWorkspace)).toHaveBeenCalledWith({
         serverId: "server-1",
@@ -376,7 +378,7 @@ describe("external url dispatch", () => {
   });
 
   it("navigates paseo agent links to the agent detail route", async () => {
-    await pressHref("paseo://h/server-1/agent/ag_1");
+    pressHref("paseo://h/server-1/agent/ag_1");
     await waitFor(() => {
       expect(vi.mocked(navigateToAgent)).toHaveBeenCalledWith({
         serverId: "server-1",
@@ -386,9 +388,32 @@ describe("external url dispatch", () => {
     expect(vi.mocked(openExternalUrl)).not.toHaveBeenCalled();
   });
 
+  it("keeps the ?open= intent when navigating a workspace link in-app", async () => {
+    pressHref("paseo://h/server-1/workspace/ws_1?open=agent%3Aag_9");
+    await waitFor(() => {
+      expect(vi.mocked(navigateToWorkspace)).toHaveBeenCalledWith({
+        serverId: "server-1",
+        workspaceId: "ws_1",
+        target: { kind: "agent", agentId: "ag_9" },
+      });
+    });
+    expect(vi.mocked(openExternalUrl)).not.toHaveBeenCalled();
+  });
+
+  it("navigates paseo links with an uppercase host in-app", async () => {
+    pressHref("paseo://H/server-1/workspace/ws_1");
+    await waitFor(() => {
+      expect(vi.mocked(navigateToWorkspace)).toHaveBeenCalledWith({
+        serverId: "server-1",
+        workspaceId: "ws_1",
+      });
+    });
+    expect(vi.mocked(openExternalUrl)).not.toHaveBeenCalled();
+  });
+
   it("still sends https host links to the external opener", async () => {
     const href = "https://app.paseo.sh/h/server-1/workspace/ws_1";
-    await pressHref(href);
+    pressHref(href);
     await waitFor(() => {
       expect(vi.mocked(openExternalUrl)).toHaveBeenCalledWith(href);
     });
@@ -397,7 +422,7 @@ describe("external url dispatch", () => {
   });
 
   it("falls through unrecognized schemes to the external opener", async () => {
-    await pressHref("slack://channel/C123");
+    pressHref("slack://channel/C123");
     await waitFor(() => {
       expect(vi.mocked(openExternalUrl)).toHaveBeenCalledWith("slack://channel/C123");
     });
@@ -406,7 +431,7 @@ describe("external url dispatch", () => {
   });
 
   it("falls through paseo links that match no host route", async () => {
-    await pressHref("paseo://h/server-1/unknown/ws_1");
+    pressHref("paseo://h/server-1/unknown/ws_1");
     await waitFor(() => {
       expect(vi.mocked(openExternalUrl)).toHaveBeenCalledWith("paseo://h/server-1/unknown/ws_1");
     });
