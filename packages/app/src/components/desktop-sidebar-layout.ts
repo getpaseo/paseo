@@ -63,6 +63,12 @@ export function resolveDesktopSidebarWidth(input: {
   });
 }
 
+// Android tablets draw the desktop sidebar edge to edge, with the three-button navigation bar or
+// taskbar over the bottom edge. Without the bottom inset the footer sits under it.
+export function resolveDesktopSidebarSafeAreaPadding(insets: { top: number; bottom: number }) {
+  return { paddingTop: insets.top, paddingBottom: insets.bottom };
+}
+
 export function resolveDesktopAppContentMinimum(input: {
   isSettingsRoute: boolean;
   explorerVisible?: boolean;

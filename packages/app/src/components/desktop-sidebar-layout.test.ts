@@ -3,6 +3,7 @@ import {
   canDesktopAppSidebarShare,
   resolveDesktopAppChromeLayout,
   resolveDesktopAppContentMinimum,
+  resolveDesktopSidebarSafeAreaPadding,
   resolveDesktopSidebarVisibility,
   resolveDesktopSidebarWidth,
 } from "@/components/desktop-sidebar-layout";
@@ -122,4 +123,11 @@ it("reserves room for Explorer and the workspace before showing app navigation",
       viewportWidth: 951,
     }),
   ).toBe(true);
+});
+
+it("keeps the sidebar footer above an Android tablet navigation bar", () => {
+  expect(resolveDesktopSidebarSafeAreaPadding({ top: 24, bottom: 48 })).toEqual({
+    paddingTop: 24,
+    paddingBottom: 48,
+  });
 });
