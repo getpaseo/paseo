@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveSidebarResizeHandleGeometry } from "./sidebar-resize-handle-layout";
 
-const MIN_TOUCH_TARGET = 24;
+const MIN_TOUCH_TARGET = 44;
 
 describe("resolveSidebarResizeHandleGeometry", () => {
   it("keeps the touch hit area inside the sidebar so native hit-testing reaches it", () => {

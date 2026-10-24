@@ -13,7 +13,7 @@
  */
 
 export const POINTER_HANDLE_WIDTH = 10;
-export const TOUCH_HANDLE_WIDTH = 24;
+export const TOUCH_HANDLE_WIDTH = 44;
 export const TOUCH_HANDLE_HEIGHT = 88;
 
 /**
