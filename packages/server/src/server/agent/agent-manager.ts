@@ -262,6 +262,11 @@ export type ImportablePersistedAgentQueryOptions = ListImportableSessionsOptions
   providerFilter?: Set<string>;
 };
 
+interface PendingImportableListings {
+  client: AgentClient;
+  requests: Map<string, Promise<ImportableProviderSession[]>>;
+}
+
 export interface ManagedImportableProviderSession extends ImportableProviderSession {
   provider: AgentProvider;
 }
@@ -291,8 +296,19 @@ export interface ProviderAvailability {
 }
 
 interface AgentManagerRescueTimeouts {
+  importableSessionListMs?: number;
   reloadSessionCloseMs?: number;
   interruptSessionMs?: number;
+}
+
+function resolveRescueTimeouts(
+  options: AgentManagerRescueTimeouts = {},
+): Required<AgentManagerRescueTimeouts> {
+  return {
+    importableSessionListMs: options.importableSessionListMs ?? IMPORTABLE_SESSION_LIST_TIMEOUT_MS,
+    reloadSessionCloseMs: options.reloadSessionCloseMs ?? RELOAD_SESSION_CLOSE_TIMEOUT_MS,
+    interruptSessionMs: options.interruptSessionMs ?? INTERRUPT_SESSION_TIMEOUT_MS,
+  };
 }
 
 interface ProviderEnabledFlag {
@@ -739,6 +755,7 @@ export class AgentManager {
     RetiredInternalAgent & { expiresAt: number }
   >();
   private readonly clients = new Map<AgentProvider, AgentClient>();
+  private readonly pendingImportableListings = new Map<AgentProvider, PendingImportableListings>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
   private readonly agents = new Map<string, LiveManagedAgent>();
@@ -791,12 +808,7 @@ export class AgentManager {
     this.resolvePaseoToolPolicy = options.resolvePaseoToolPolicy ?? (() => undefined);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
-    this.rescueTimeouts = {
-      reloadSessionCloseMs:
-        options.rescueTimeouts?.reloadSessionCloseMs ?? RELOAD_SESSION_CLOSE_TIMEOUT_MS,
-      interruptSessionMs:
-        options.rescueTimeouts?.interruptSessionMs ?? INTERRUPT_SESSION_TIMEOUT_MS,
-    };
+    this.rescueTimeouts = resolveRescueTimeouts(options.rescueTimeouts);
     this.beforeSteerUnavailableFallback = options.beforeSteerUnavailableFallback;
     this.agentStreamCoalescer = new AgentStreamCoalescer({
       windowMs: options.agentStreamCoalesceWindowMs ?? AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
@@ -818,6 +830,7 @@ export class AgentManager {
   }
 
   registerClient(provider: AgentProvider, client: AgentClient): void {
+    if (this.clients.get(provider) !== client) this.pendingImportableListings.delete(provider);
     this.clients.set(provider, client);
   }
 
@@ -835,6 +848,10 @@ export class AgentManager {
       }
     }
 
+    for (const [provider, pending] of this.pendingImportableListings) {
+      if (input.clients[provider] !== pending.client)
+        this.pendingImportableListings.delete(provider);
+    }
     this.clients.clear();
     for (const [provider, client] of Object.entries(input.clients)) {
       if (client) {
@@ -1040,20 +1057,16 @@ export class AgentManager {
     const providerResults = await Promise.all(
       providerEntries.map(async ([provider, client]) => {
         try {
-          const sessions = await withTimeout(
-            client.listImportableSessions!({
-              limit: options?.limit,
-              query: options?.query,
-              scanLimit: options?.scanLimit,
-              cwd: options?.cwd,
-            }),
-            IMPORTABLE_SESSION_LIST_TIMEOUT_MS,
-            `Timed out listing importable sessions for provider '${provider}' after ${IMPORTABLE_SESSION_LIST_TIMEOUT_MS}ms`,
-          );
+          const sessions = await this.listProviderImportableSessions(provider, client, {
+            limit: options?.limit,
+            query: options?.query,
+            scanLimit: options?.scanLimit,
+            cwd: options?.cwd,
+          });
           return {
             sessions: sessions
               .filter((session) => matchesImportableSessionQuery(session, options?.query))
-              .map((session) => Object.assign(session, { provider })),
+              .map((session) => Object.assign({}, session, { provider })),
             error: null,
           };
         } catch (error) {
@@ -1080,6 +1093,35 @@ export class AgentManager {
         .slice(0, limit),
       providerErrors: providerResults.flatMap((result) => (result.error ? [result.error] : [])),
     };
+  }
+
+  private listProviderImportableSessions(
+    provider: AgentProvider,
+    client: AgentClient,
+    options: ListImportableSessionsOptions,
+  ): Promise<ImportableProviderSession[]> {
+    let pending = this.pendingImportableListings.get(provider);
+    if (!pending || pending.client !== client) {
+      pending = { client, requests: new Map() };
+      this.pendingImportableListings.set(provider, pending);
+    }
+    const requests = pending.requests;
+    const key = JSON.stringify([options.cwd, options.query, options.limit, options.scanLimit]);
+    const existing = requests.get(key);
+    if (existing) return existing;
+
+    // Bound the shared group so a wedged provider cannot prevent a later retry.
+    // A client giving up earlier does not release the group or cancel provider work.
+    const timeoutMs = this.rescueTimeouts.importableSessionListMs;
+    const request = withTimeout(
+      client.listImportableSessions!(options),
+      timeoutMs,
+      `Timed out listing importable sessions for provider '${provider}' after ${timeoutMs}ms`,
+    ).finally(() => {
+      if (requests.get(key) === request) requests.delete(key);
+    });
+    requests.set(key, request);
+    return request;
   }
 
   private isProviderImportable(
