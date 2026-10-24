@@ -158,12 +158,16 @@ export class PiExtensionHost {
     mapping: T,
   ): PiExtensionOutput<T> {
     const events: AgentStreamEvent[] = [
-      ...("timeline" in mapping ? (mapping.timeline ?? []) : []).map(
-        (item): AgentStreamEvent => ({ type: "timeline", provider: "pi", item }),
-      ),
-      ...(mapping.subagents ?? []).map(
-        (event): AgentStreamEvent => ({ type: "provider_subagent", provider: "pi", event }),
-      ),
+      ...("timeline" in mapping ? (mapping.timeline ?? []) : []).map((item): AgentStreamEvent => ({
+        type: "timeline",
+        provider: "pi",
+        item,
+      })),
+      ...(mapping.subagents ?? []).map((event): AgentStreamEvent => ({
+        type: "provider_subagent",
+        provider: "pi",
+        event,
+      })),
     ];
     const hydration = (
       this.onFollowEvent ? this.followChildren(mapping) : this.readChildren(mapping)
@@ -210,9 +214,11 @@ export class PiExtensionHost {
         const bytes = Math.min(this.remainingHydrationBytes, 2 * 1024 * 1024);
         if (bytes <= 0) return [];
         this.remainingHydrationBytes -= bytes;
-        return (await this.readChildSession(id, file, bytes)).map(
-          (event): AgentStreamEvent => ({ type: "provider_subagent", provider: "pi", event }),
-        );
+        return (await this.readChildSession(id, file, bytes)).map((event): AgentStreamEvent => ({
+          type: "provider_subagent",
+          provider: "pi",
+          event,
+        }));
       }),
     );
     return groups.flat();

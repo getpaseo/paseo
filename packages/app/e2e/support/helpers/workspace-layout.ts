@@ -26,14 +26,11 @@ export async function seedCorruptedWorkspaceLayout(page: Page, workspaceId: stri
   const tabs: WorkspaceTab[] = [
     { tabId: "files", target: { kind: "files" }, createdAt: 1 },
     { tabId: "changes_tree", target: { kind: "changes_tree" }, createdAt: 1 },
-    ...Array.from(
-      { length: 2250 },
-      (_, index): WorkspaceTab => ({
-        tabId: `draft_saved_${index}`,
-        target: { kind: "draft", draftId: `draft_saved_${index}` },
-        createdAt: index + 2,
-      }),
-    ),
+    ...Array.from({ length: 2250 }, (_, index): WorkspaceTab => ({
+      tabId: `draft_saved_${index}`,
+      target: { kind: "draft", draftId: `draft_saved_${index}` },
+      createdAt: index + 2,
+    })),
   ];
   const corruptedLayout = {
     root: {

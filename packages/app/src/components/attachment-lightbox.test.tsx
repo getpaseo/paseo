@@ -121,7 +121,13 @@ vi.mock("@/components/zoomable-viewport/image", () => ({
 
 vi.mock("react-native", async () => {
   const actual = await vi.importActual<Record<string, unknown>>("react-native");
-  const Modal = ({ visible = true, children }: { visible?: boolean; children?: React.ReactNode }) =>
+  const Modal = ({
+    visible = true,
+    children,
+  }: {
+    visible?: boolean;
+    children?: React.ReactNode;
+  }) =>
     visible ? React.createElement("div", { "data-testid": "lightbox-modal" }, children) : null;
   return { ...actual, Modal };
 });

@@ -647,7 +647,7 @@ const TAB_SIZE = 4;
 function segmentGraphemes(text: string): Array<Omit<DiffGrapheme, "width">> {
   const segments: Array<Omit<DiffGrapheme, "width">> = [];
   let column = 0;
-  for (let index = 0; index < text.length; ) {
+  for (let index = 0; index < text.length;) {
     const end = findClusterBreak(text, index);
     const segment = text.slice(index, end);
     const isTab = segment === "\t";
@@ -700,7 +700,7 @@ export function fragmentWidthForRange(fragment: DiffFragment, start: number, end
 
 export function graphemeBoundaries(text: string): number[] {
   const boundaries = [0];
-  for (let index = 0; index < text.length; ) {
+  for (let index = 0; index < text.length;) {
     index = findClusterBreak(text, index);
     boundaries.push(index);
   }
