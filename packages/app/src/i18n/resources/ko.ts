@@ -1176,6 +1176,7 @@ export const ko: TranslationResources = {
       sort: {
         label: "정렬",
         created: "생성일",
+        manual: "수동",
         lastPrompt: "마지막 프롬프트",
         updateHost: "작업 공간을 정렬하려면 호스트를 업데이트하세요",
       },
