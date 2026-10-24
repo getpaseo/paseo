@@ -3158,6 +3158,7 @@ export class AgentManager {
         { agentId, turnId: runTurnId, kind: run.kind },
         "cancelAgentRun: acknowledged turn still active after timeout, force-canceling",
       );
+      await this.releaseAbandonedTurn(agent);
       await this.dispatchSessionEvent(agent, {
         type: "turn_canceled",
         provider: agent.provider,
@@ -3170,6 +3171,7 @@ export class AgentManager {
         { agentId, kind: run.kind },
         "cancelAgentRun: acknowledged pending turn still active after timeout, clearing it",
       );
+      await this.releaseAbandonedTurn(agent);
       this.runs.settleForegroundRun(agentId, run.token);
       if (!agent.pendingReplacement) {
         agent.lifecycle = "idle";
@@ -3194,6 +3196,26 @@ export class AgentManager {
       this.emitState(agent);
     }
     return { status: "settled" };
+  }
+
+  /**
+   * After a forced settlement, stop reusing a runtime whose foreground turn it never confirmed
+   * ending. Providers that cannot reconcile omit the hook and keep today's behavior.
+   *
+   * A rejected release leaves the agent unusable, so log it and continue: the manager already
+   * settled the run, and refusing here would report a failure whose only cause is the provider.
+   */
+  private async releaseAbandonedTurn(agent: ActiveManagedAgent): Promise<void> {
+    const abandon = agent.session.abandonForegroundTurn;
+    if (!abandon) return;
+    try {
+      await abandon.call(agent.session);
+    } catch (error) {
+      this.logger.warn(
+        { err: error, agentId: agent.id, provider: agent.provider },
+        "cancelAgentRun: provider could not release the abandoned foreground turn",
+      );
+    }
   }
 
   private async cancelAgentRunBefore(

@@ -22,6 +22,7 @@ type OptionalAgentSessionMethodName = {
 
 const OPTIONAL_AGENT_SESSION_METHOD_NAMES = [
   "steerActiveTurn",
+  "abandonForegroundTurn",
   "listCommands",
   "setModel",
   "setThinkingOption",
@@ -168,6 +169,10 @@ class FakeSession implements AgentSession {
     this.recordedCalls.push("revertBoth");
   }
 
+  async abandonForegroundTurn() {
+    this.recordedCalls.push("abandonForegroundTurn");
+  }
+
   tryHandleOutOfBand(_prompt: AgentPromptInput) {
     this.recordedCalls.push("tryHandleOutOfBand");
     return {
@@ -190,6 +195,7 @@ describe("wrapSessionProvider", () => {
     const wrapped = wrapSessionProvider("custom-claude", session);
 
     await wrapped.steerActiveTurn?.("follow-up", { expectedTurnId: "turn-1" });
+    await wrapped.abandonForegroundTurn?.();
     await wrapped.listCommands?.();
     await wrapped.setModel?.("sonnet");
     await wrapped.setThinkingOption?.("high");
@@ -205,6 +211,7 @@ describe("wrapSessionProvider", () => {
     ]);
     expect(session.recordedCalls).toEqual([
       "steerActiveTurn",
+      "abandonForegroundTurn",
       "listCommands",
       "setModel",
       "setThinkingOption",
@@ -245,5 +252,11 @@ describe("wrapSessionProvider", () => {
     const session: AgentSession = new FakeSession();
     session.steerActiveTurn = undefined;
     expect(wrapSessionProvider("custom-claude", session).steerActiveTurn).toBeUndefined();
+  });
+
+  test("leaves abandoned-turn release unavailable when the provider has no implementation", () => {
+    const session: AgentSession = new FakeSession();
+    session.abandonForegroundTurn = undefined;
+    expect(wrapSessionProvider("custom-claude", session).abandonForegroundTurn).toBeUndefined();
   });
 });
