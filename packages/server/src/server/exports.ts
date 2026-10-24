@@ -4,6 +4,7 @@ export { loadConfig, type CliConfigOverrides } from "./config.js";
 export { resolvePaseoHome } from "./paseo-home.js";
 export { getOrCreateServerId } from "./server-id.js";
 export { createRootLogger, type LogLevel, type LogFormat } from "./logger.js";
+export { inheritLoginShellEnv, type LoginShellEnvLogger } from "./login-shell-env.js";
 export {
   loadPersistedConfig,
   savePersistedConfig,
