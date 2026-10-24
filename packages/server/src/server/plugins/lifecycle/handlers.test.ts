@@ -98,3 +98,53 @@ test("session-open hooks reject changes to session identity instead of silently 
     ),
   ).rejects.toThrow("agent.session_open hooks can only change env");
 });
+
+test("native maintenance hooks inject environment without invoking session-open callbacks", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  hooks.before("agent.session_open", () => {
+    throw new Error("A resident session must not be opened");
+  });
+  hooks.before("agent.session_maintenance", ({ request }) => ({
+    ...request,
+    env: { ...request.env, SESSION_CONTEXT: request.agentId },
+  }));
+  const input = {
+    agentId: "agent",
+    workspaceId: "workspace",
+    provider: "custom-codex",
+    cwd: "/project",
+    operation: "archive",
+    env: {},
+  };
+  expect(
+    await hooks.invoke("operation", "before", "agent.session_maintenance", input, paseo),
+  ).toEqual({ ...input, env: { SESSION_CONTEXT: "agent" } });
+  expect(input.env).toEqual({});
+});
+
+test.each(["agentId", "workspaceId", "provider", "cwd", "operation"])(
+  "native maintenance hooks cannot change %s",
+  async (field) => {
+    const hooks = new PluginHookHandlers(() => {});
+    hooks.before("agent.session_maintenance", ({ request }) => ({
+      ...request,
+      [field]: field === "operation" ? "restore" : "changed",
+    }));
+    await expect(
+      hooks.invoke(
+        "operation",
+        "before",
+        "agent.session_maintenance",
+        {
+          agentId: "agent",
+          workspaceId: "workspace",
+          provider: "custom-codex",
+          cwd: "/project",
+          operation: "archive",
+          env: {},
+        },
+        paseo,
+      ),
+    ).rejects.toThrow("agent.session_maintenance hooks can only change env");
+  },
+);

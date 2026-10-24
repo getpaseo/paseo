@@ -1864,7 +1864,7 @@ export class AgentManager {
     const { archivedAt } = await this.markRecordArchived(stored, requestedArchivedAt);
     agent.updatedAt = new Date(archivedAt);
     await this.closeAgentRuntime(agentId);
-    await this.syncNativeArchiveState(stored.provider, stored.persistence, "archive");
+    await this.syncNativeArchiveState(stored, "archive");
     this.discardRetainedAgentState(agentId);
 
     await this.cascadeArchiveChildren(stored);
@@ -2298,7 +2298,7 @@ export class AgentManager {
 
     const nextRecord = await this.persistArchivedRecord(record, { archivedAt });
 
-    await this.syncNativeArchiveState(record.provider, record.persistence, "archive");
+    await this.syncNativeArchiveState(record, "archive");
 
     this.discardRetainedAgentState(agentId);
     if (!nextRecord.internal) this.dispatchStoredAgentState(nextRecord);
@@ -2331,7 +2331,7 @@ export class AgentManager {
     // Close and native restore share the lifecycle lane with persisted resume.
     // No new history or interactive runtime can acquire the writer between them.
     if (this.agents.has(agentId)) await this.closeAgentRuntime(agentId);
-    await this.syncNativeArchiveState(record.provider, record.persistence, "restore");
+    await this.syncNativeArchiveState(record, "restore");
 
     await registry.upsert({
       ...record,
@@ -5427,22 +5427,35 @@ export class AgentManager {
   }
 
   private async syncNativeArchiveState(
-    provider: AgentProvider,
-    persistence: AgentPersistenceHandle | null | undefined,
+    record: StoredAgentRecord,
     state: "archive" | "restore",
   ): Promise<void> {
+    const { provider, persistence } = record;
     if (!persistence) return;
     const client = this.clients.get(provider);
-    const sync =
-      state === "archive" ? client?.archiveNativeSession : client?.unarchiveNativeSession;
+    if (!client) return;
+    const sync = state === "archive" ? client.archiveNativeSession : client.unarchiveNativeSession;
     if (!sync) return;
-    if (state === "restore") {
-      await sync.call(client, persistence);
-      return;
-    }
     try {
-      await sync.call(client, persistence);
+      let env: Record<string, string> = {};
+      if (this.pluginLifecycle) {
+        const request = await this.pluginLifecycle.before("agent.session_maintenance", {
+          agentId: record.id,
+          provider,
+          cwd: record.cwd,
+          workspaceId: record.workspaceId ?? null,
+          operation: state,
+          env,
+        });
+        env = request.env;
+      }
+      const launchContext: AgentLaunchContext = {
+        agentId: record.id,
+        env: { ...env, PASEO_AGENT_ID: record.id, PASEO_AGENT_CWD: record.cwd },
+      };
+      await sync.call(client, persistence, launchContext);
     } catch (error) {
+      if (state === "restore") throw error;
       this.logger.warn(
         { error, provider, sessionId: persistence.sessionId },
         "Failed to archive native session (best-effort)",
