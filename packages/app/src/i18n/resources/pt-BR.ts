@@ -1430,14 +1430,14 @@ export const ptBR: TranslationResources = {
         pid: "PID {{pid}}",
       },
       management: {
-        title: "Gerenciar daemon integrado",
-        hint: "Permitir que o Paseo inicie e pare o daemon integrado",
+        title: "Iniciar daemon automaticamente",
+        hint: "O daemon integrado inicia quando você abre o Paseo",
         pauseTitle: "Pausar daemon integrado",
         pauseMessage:
           "Isso vai parar o daemon integrado imediatamente. Agentes e terminais em execução conectados ao daemon integrado serão interrompidos.",
         pauseAndStop: "Pausar e parar",
         registrationFailed:
-          "O daemon integrado foi iniciado, mas o Paseo não conseguiu salvar a conexão localhost. Desative e reative o gerenciamento do daemon ou adicione localhost manualmente.",
+          "O daemon integrado foi iniciado, mas o Paseo não conseguiu salvar a conexão localhost. Tente iniciá-lo novamente ou adicione localhost manualmente.",
         pausedStopFailed:
           "O gerenciamento do daemon integrado foi pausado, mas o Paseo não conseguiu parar o daemon.",
         updateFailed: "Não foi possível atualizar o gerenciamento do daemon integrado.",

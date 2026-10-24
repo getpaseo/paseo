@@ -1411,14 +1411,14 @@ export const ko: TranslationResources = {
         pid: "PID {{pid}}",
       },
       management: {
-        title: "내장 데몬 관리",
-        hint: "Paseo가 내장 데몬을 시작하고 중지하도록 허용합니다",
+        title: "데몬 자동 시작",
+        hint: "Paseo를 열면 내장 데몬이 시작됩니다",
         pauseTitle: "내장 데몬 일시 중지",
         pauseMessage:
           "내장 데몬이 즉시 중지됩니다. 내장 데몬에 연결된 실행 중인 에이전트와 터미널이 중지됩니다.",
         pauseAndStop: "일시 중지 후 중지",
         registrationFailed:
-          "내장 데몬이 시작되었지만 Paseo가 localhost 연결을 저장하지 못했습니다. 데몬 관리를 껐다가 다시 켜거나 localhost를 수동으로 추가하세요.",
+          "내장 데몬이 시작되었지만 Paseo가 localhost 연결을 저장하지 못했습니다. 다시 시작해 보거나 localhost를 수동으로 추가하세요.",
         pausedStopFailed: "내장 데몬 관리가 일시 중지되었지만 Paseo가 데몬을 중지하지 못했습니다.",
         updateFailed: "내장 데몬 관리를 업데이트할 수 없습니다.",
       },

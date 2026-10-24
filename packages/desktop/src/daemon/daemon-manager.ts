@@ -276,8 +276,20 @@ function assertBuiltInDaemonManagementEnabled(settings: DesktopSettings): void {
   }
 }
 
-async function startDaemon(): Promise<DesktopDaemonStatus> {
-  assertBuiltInDaemonManagementEnabled(await getDesktopSettingsStore().get());
+// Launch-time autostart must respect the persisted preference; explicit user
+// actions (Start buttons) start the daemon regardless of that preference.
+type StartDaemonReason = "launch" | "manual";
+
+function parseStartDaemonReason(args: unknown): StartDaemonReason {
+  return args && typeof args === "object" && (args as { reason?: unknown }).reason === "manual"
+    ? "manual"
+    : "launch";
+}
+
+async function startDaemon(reason: StartDaemonReason = "launch"): Promise<DesktopDaemonStatus> {
+  if (reason === "launch") {
+    assertBuiltInDaemonManagementEnabled(await getDesktopSettingsStore().get());
+  }
 
   const current = await resolveDesktopDaemonStatus();
   logDesktopDaemonLifecycle("initial status check before start", {
@@ -411,7 +423,7 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
       if (!instance?.desktopManaged || typeof args?.listen !== "string") return null;
       return readLocalCredentialForTarget(getPaseoHome(), args.listen);
     },
-    start_desktop_daemon: () => startDaemon(),
+    start_desktop_daemon: (args) => startDaemon(parseStartDaemonReason(args)),
     stop_desktop_daemon: (args) =>
       stopDesktopDaemon(
         parseDesktopDaemonStopReason(args),
