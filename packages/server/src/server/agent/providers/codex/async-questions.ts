@@ -25,6 +25,16 @@ function requestId(itemId: string): string {
   return `permission-${itemId}`;
 }
 
+function timelineQuestions(record: QuestionRecord) {
+  return record.item.questions.map((question, index) => ({
+    id: String(index),
+    header: `Question ${index + 1}`,
+    question: question.title,
+    options: (question.options ?? []).map((label) => ({ label })),
+    isOther: true,
+  }));
+}
+
 function toPermission(record: QuestionRecord): AgentPermissionRequest {
   return {
     id: requestId(record.item.id),
@@ -33,25 +43,32 @@ function toPermission(record: QuestionRecord): AgentPermissionRequest {
     kind: "question",
     title: "Question",
     input: {
-      questions: record.item.questions.map((question, index) => ({
-        id: String(index),
-        header: `Question ${index + 1}`,
-        question: question.title,
-        options: (question.options ?? []).map((label) => ({ label })),
-        isOther: true,
-      })),
+      questions: timelineQuestions(record),
     },
   };
 }
 
 function toTimeline(record: QuestionRecord): ToolCallTimelineItem {
   const answers = Array.isArray(record.resolution) ? record.resolution : undefined;
+  const metadata: Record<string, unknown> = {
+    questions: timelineQuestions(record),
+    questionStatus: "pending",
+  };
+  if (answers) {
+    metadata.answers = Object.fromEntries(
+      answers.map((answer, index) => [String(index), [answer]]),
+    );
+    metadata.questionStatus = "answered";
+  } else if (record.resolution === "dismissed") {
+    metadata.questionStatus = "dismissed";
+  }
   return {
     type: "tool_call",
     callId: record.item.id,
     name: "request_user_input_async",
     status: "completed",
     error: null,
+    metadata,
     detail: {
       type: "plain_text",
       icon: "brain",

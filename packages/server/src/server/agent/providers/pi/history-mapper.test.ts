@@ -221,3 +221,57 @@ describe("Pi history mapper", () => {
     ]);
   });
 });
+
+test("preserves structured questions and results in history alongside the native summary", async () => {
+  const questions = [
+    {
+      question: "Which colors?",
+      header: "Colors",
+      options: [
+        { label: "Red", description: "Warm" },
+        { label: "Blue", description: "Cool" },
+      ],
+      multiSelect: true,
+    },
+  ];
+  const details = {
+    answers: [
+      { question: "Which colors?", kind: "multi", answer: null, selected: ["Red", "Blue"] },
+    ],
+    cancelled: false,
+  };
+  const events = await collectHistory([
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: "questions-1",
+          name: "ask_user_question",
+          arguments: { questions },
+        },
+      ],
+    },
+    {
+      role: "toolResult",
+      toolCallId: "questions-1",
+      toolName: "ask_user_question",
+      content: [{ type: "text", text: "Answered" }],
+      details,
+      isError: false,
+    },
+  ]);
+  expect(events).toHaveLength(2);
+  expect(events[0]).toMatchObject({
+    type: "timeline",
+    item: { type: "tool_call", status: "running", metadata: { questions } },
+  });
+  expect(events[1]).toMatchObject({
+    type: "timeline",
+    item: {
+      type: "tool_call",
+      status: "completed",
+      metadata: { questions, questionResult: details },
+    },
+  });
+});
