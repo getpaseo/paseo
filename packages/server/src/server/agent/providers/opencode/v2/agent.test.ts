@@ -573,15 +573,14 @@ describe("OpenCode v2 session lifecycle", () => {
     const assertEnvironment = (index: number) => {
       const env = environments.get([first, second][index].info.id);
       expect(env?.PATH).toBe(process.env.PATH);
-      expect(env).toMatchObject({ ...launches[index].env, PASEO_ENV_TEST: "configured" });
+      expect(env).toMatchObject({
+        ...launches[index].env,
+        PASEO_ENV_TEST: "configured",
+        ELECTRON_RUN_AS_NODE: "1",
+        PASEO_SUPERVISED: "1",
+      });
       expect(env?.USER).toBe(process.env.USER);
-      for (const key of [
-        "ELECTRON_RUN_AS_NODE",
-        "PASEO_SUPERVISED",
-        "CLAUDECODE",
-        "ESBUILD_BINARY_PATH",
-        "PASEO_NODE_ENV",
-      ]) {
+      for (const key of ["CLAUDECODE", "ESBUILD_BINARY_PATH", "PASEO_NODE_ENV"]) {
         expect(env).not.toHaveProperty(key);
       }
     };

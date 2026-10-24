@@ -1161,7 +1161,12 @@ describe("plugin provider launch and status", () => {
       try {
         const client = registry.definitions()[registration.id]!.createClient(logger, {
           command,
-          env: { PLUGIN_SETTING: "custom", CLAUDECODE: "parent" },
+          env: {
+            PLUGIN_SETTING: "custom",
+            CLAUDECODE: "parent",
+            ELECTRON_RUN_AS_NODE: "1",
+            ESBUILD_BINARY_PATH: "/provider/esbuild",
+          },
         });
         expect(await client.isAvailable()).toBe(true);
         expect(await client.getCatalogCacheKey!({ scope: "global" })).toBe("shared");
@@ -1174,7 +1179,11 @@ describe("plugin provider launch and status", () => {
           expect(launch).toMatchObject({
             command: process.execPath,
             args: expectedArgs,
-            env: { PLUGIN_SETTING: "custom" },
+            env: {
+              PLUGIN_SETTING: "custom",
+              ELECTRON_RUN_AS_NODE: "1",
+              ESBUILD_BINARY_PATH: "/provider/esbuild",
+            },
           });
           expect(launch!.env).not.toHaveProperty("CLAUDECODE");
           expect(launch!.env).not.toHaveProperty("PASEO_NODE_ENV");
