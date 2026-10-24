@@ -1,5 +1,11 @@
 import type { AgentStreamEvent } from "../../agent/agent-sdk-types.js";
 import { z } from "zod";
+import {
+  managedMcpDeclarationSchema,
+  mcpBindingSchema,
+  type ManagedMcpServers,
+} from "./managed-mcp.js";
+import { validateManagedHookResult } from "./managed-mcp.js";
 import { CreateAgentRequestMessageSchema } from "@getpaseo/protocol/messages";
 import type {
   PluginHookAgent,
@@ -11,6 +17,7 @@ import type {
   PluginBeforeRequests,
   PluginHookWorkspace,
   PluginLifecycleEvents,
+  PluginMcpBindRequest,
 } from "@getpaseo/plugin/server";
 import { WorkspaceCreateRequestSchema } from "@getpaseo/protocol/messages";
 import type { PersistedWorkspaceRecord } from "../../workspace-registry.js";
@@ -26,19 +33,59 @@ export const lifecycleEventNames = [
   "workspace.created",
   "workspace.archived",
 ] as const;
-export const beforeHookNames = ["agent.create", "agent.session_open", "workspace.create"] as const;
+export const beforeHookNames = [
+  "agent.create",
+  "agent.mcp_stage",
+  "agent.session_open",
+  "agent.mcp_bind",
+  "agent.mcp_authorization",
+  "workspace.create",
+] as const;
 
+const sessionOpenSchema = z
+  .object({
+    agentId: z.string(),
+    workspaceId: z.string().nullable(),
+    provider: z.string(),
+    cwd: z.string(),
+    reason: z.enum(["create", "resume", "refresh", "import"]),
+    purpose: z.enum(["interactive", "history"]),
+    env: z.record(z.string(), z.string()),
+  })
+  .strict();
+const mcpBindSchema = sessionOpenSchema
+  .extend({
+    opening: z
+      .object({ id: z.string().uuid(), digest: z.string().regex(/^[a-f0-9]{64}$/) })
+      .strict(),
+    bootstrapEnvKeys: z.array(z.string()),
+    binding: mcpBindingSchema.optional(),
+  })
+  .strict();
 const beforeSchemas = {
-  "agent.create": CreateAgentRequestMessageSchema.pick({ config: true, env: true }).strict(),
-  "agent.session_open": z
+  "agent.create": CreateAgentRequestMessageSchema.pick({ config: true, env: true })
+    .extend({
+      managedMcpServers: z.record(z.string(), managedMcpDeclarationSchema).optional(),
+    })
+    .strict(),
+  "agent.mcp_stage": CreateAgentRequestMessageSchema.pick({ config: true, env: true })
+    .extend({
+      managedMcpServers: z.record(z.string(), managedMcpDeclarationSchema).optional(),
+    })
+    .strict(),
+  "agent.session_open": sessionOpenSchema,
+  "agent.mcp_bind": mcpBindSchema,
+  "agent.mcp_authorization": z
     .object({
-      agentId: z.string(),
-      workspaceId: z.string().nullable(),
-      provider: z.string(),
-      cwd: z.string(),
-      reason: z.enum(["create", "resume", "refresh", "import"]),
-      purpose: z.enum(["interactive", "history"]),
-      env: z.record(z.string(), z.string()),
+      session: mcpBindSchema.omit({ env: true, bootstrapEnvKeys: true, binding: true }),
+      binding: mcpBindingSchema,
+      server: z.object({ name: z.string(), url: z.string() }).strict(),
+      authorization: z
+        .string()
+        .min(1)
+        .max(16384)
+        .regex(/^[\x20-\x7e]+$/)
+        .optional(),
     })
     .strict(),
   "workspace.create": WorkspaceCreateRequestSchema.omit({ type: true, requestId: true }).strict(),
@@ -52,7 +99,16 @@ export interface PluginLifecycle {
   before<Name extends keyof PluginBeforeRequests>(
     name: Name,
     request: PluginBeforeRequests[Name],
+    context?: Pick<PluginHookContext, "managedMcp">,
   ): Promise<PluginBeforeRequests[Name]>;
+  authorizeMcp?(
+    session: PluginMcpBindRequest,
+    servers: ManagedMcpServers,
+  ): Promise<{
+    headers: Readonly<Record<string, string>>;
+    env: Record<string, string>;
+    assertCurrent: () => void;
+  }>;
 }
 
 export function validateBeforeRequest<Name extends keyof PluginBeforeRequests>(
@@ -135,6 +191,9 @@ export function validateBeforeResult<Name extends keyof PluginBeforeRequests>(
   output: unknown,
 ): PluginBeforeRequests[Name] {
   const result = validateBeforeRequest(name, output);
+  if (name === "agent.mcp_bind" || name === "agent.mcp_authorization") {
+    validateManagedHookResult(name, input, result);
+  }
   if (name === "agent.session_open") {
     const previous = beforeSchemas["agent.session_open"].parse(input);
     const next = beforeSchemas["agent.session_open"].parse(result);
@@ -149,7 +208,7 @@ export function validateBeforeResult<Name extends keyof PluginBeforeRequests>(
       throw new Error("agent.session_open hooks can only change env");
     }
   }
-  if (name === "agent.create") {
+  if (name === "agent.create" || name === "agent.mcp_stage") {
     const previous = beforeSchemas["agent.create"].parse(input);
     const next = beforeSchemas["agent.create"].parse(result);
     if (previous.config.cwd !== next.config.cwd) {
@@ -196,6 +255,7 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
     name: string,
     input: unknown,
     paseo: PluginHookContext["paseo"],
+    managedMcp?: PluginHookContext["managedMcp"],
   ): Promise<unknown> {
     const controller = new AbortController();
     this.active.set(id, controller);
@@ -214,7 +274,7 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
           controller.signal.throwIfAborted();
           const result = await handler(
             { request: structuredClone(request) },
-            { paseo, signal: controller.signal },
+            { paseo, signal: controller.signal, managedMcp },
           );
           if (result !== undefined) {
             request = validateBeforeResult(hookName, request, result);

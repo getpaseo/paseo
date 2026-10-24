@@ -1,3 +1,4 @@
+import { ManagedOpeningReplayError, type ManagedOpeningRequest } from "./agent/managed-opening.js";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
 import { AgentDirectory } from "./agent/directory.js";
@@ -57,6 +58,8 @@ import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech
 import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js";
 import {
   buildConfigOverrides,
+  extractAttention,
+  extractTimestamps,
   isStoredAgentProviderAvailable,
   resolveStoredAgentUpdatedAt,
   toAgentPersistenceHandle,
@@ -4574,7 +4577,25 @@ export class Session {
         : overrides;
       let snapshot: ManagedAgent;
       try {
-        snapshot = await this.agentManager.resumeAgentFromPersistence(handle, effectiveOverrides);
+        if (matched?.record.config?.managedMcpServers) {
+          const record = matched.record;
+          snapshot =
+            this.agentManager.getAgent(record.id) ??
+            (await this.agentManager.resumeAgentFromPersistence(
+              handle,
+              effectiveOverrides,
+              record.id,
+              {
+                ...extractTimestamps(record),
+                attention: extractAttention(record),
+                workspaceId: record.workspaceId,
+                labels: record.labels,
+                owner: record.owner,
+              },
+            ));
+        } else {
+          snapshot = await this.agentManager.resumeAgentFromPersistence(handle, effectiveOverrides);
+        }
       } catch (error) {
         if (matched?.didUnarchive && matched.originalArchivedAt) {
           await this.agentManager.archiveSnapshot(matched.record.id, matched.originalArchivedAt);
@@ -4700,6 +4721,31 @@ export class Session {
     this.sessionLogger.info({ agentId }, `Refreshing agent ${agentId} from persistence`);
 
     try {
+      const managedRecord = await this.agentStorage.get(agentId);
+      const openingRequest: ManagedOpeningRequest | undefined =
+        requestId && managedRecord?.config?.managedMcpServers
+          ? {
+              key: JSON.stringify(["refresh", this.getHostSourceId(), requestId]),
+              fingerprint: "refresh",
+            }
+          : undefined;
+      if (
+        openingRequest &&
+        (await this.agentStorage.managedOpenings.checkRequest(agentId, openingRequest))
+      ) {
+        this.emit({
+          type: "status",
+          payload: {
+            status: "agent_refreshed",
+            agentId,
+            requestId,
+            timelineSize: this.agentManager.getAgent(agentId)
+              ? this.agentManager.getTimeline(agentId).length
+              : 0,
+          },
+        });
+        return;
+      }
       await this.restoreOwningWorkspaceForLegacyAgentRefresh(agentId);
       await unarchiveAgentState(this.agentStorage, this.agentManager, agentId);
       let snapshot: ManagedAgent;
@@ -4708,6 +4754,7 @@ export class Session {
         await this.interruptAgentIfRunning(agentId);
         snapshot = await this.agentManager.reloadAgentSession(agentId, undefined, {
           rehydrateFromDisk: true,
+          openingRequest,
         });
       } else {
         const record = await this.agentStorage.get(agentId);
@@ -4729,6 +4776,7 @@ export class Session {
           agentStorage: this.agentStorage,
           broadcastTimeline: true,
           logger: this.sessionLogger,
+          openingRequest,
         });
       }
       await this.agentManager.hydrateTimelineFromProvider(agentId, { broadcast: true });
@@ -4746,6 +4794,20 @@ export class Session {
         });
       }
     } catch (error) {
+      if (error instanceof ManagedOpeningReplayError) {
+        this.emit({
+          type: "status",
+          payload: {
+            status: "agent_refreshed",
+            agentId,
+            requestId,
+            timelineSize: this.agentManager.getAgent(agentId)
+              ? this.agentManager.getTimeline(agentId).length
+              : 0,
+          },
+        });
+        return;
+      }
       const message = getErrorMessage(error);
       this.sessionLogger.error({ err: error, agentId }, `Failed to refresh agent ${agentId}`);
       if (requestId) {

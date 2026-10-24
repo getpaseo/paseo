@@ -165,7 +165,10 @@ export async function createAgentCommand(
   const snapshot = await dependencies.agentManager.createAgent(
     resolved.config,
     input.kind === "session" ? input.agentId : undefined,
-    resolved.createOptions,
+    {
+      ...resolved.createOptions,
+      managedCreationReserved: input.kind === "session" && input.agentId !== undefined,
+    },
   );
 
   if (input.kind === "session") await input.onAgentReady?.(snapshot);

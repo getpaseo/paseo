@@ -10,6 +10,8 @@ import type { WorkspaceCreateRequest } from "@getpaseo/protocol/messages";
 export interface PluginHookContext {
   paseo: PaseoApi;
   signal: AbortSignal;
+  /** Daemon-attested obligations for this invocation; absent on ordinary agents. */
+  readonly managedMcp?: PluginManagedMcpContext;
 }
 
 export interface PluginHookWorkspace {
@@ -29,6 +31,29 @@ export interface PluginHookAgent {
   title: string | null;
 }
 
+export interface PluginManagedMcpContext {
+  readonly opening: { readonly id: string; readonly digest: string };
+  readonly servers: readonly {
+    readonly name: string;
+    readonly url: string;
+    readonly ownerPluginId: string;
+    readonly bindPluginId: string;
+  }[];
+}
+
+export interface PluginMcpBinding {
+  readonly openingId: string;
+  readonly sessionEpoch: number;
+  readonly bindRequestId: string;
+}
+
+export interface PluginManagedMcpDeclaration {
+  bindPluginId: string;
+  bootstrapEnvKeys?: string[];
+  /** Assigned and checked by the daemon, not evidence supplied by the caller. */
+  ownerPluginId?: string;
+}
+
 export interface PluginSessionOpenRequest {
   agentId: string;
   workspaceId: string | null;
@@ -37,6 +62,20 @@ export interface PluginSessionOpenRequest {
   reason: "create" | "resume" | "refresh" | "import";
   purpose: "interactive" | "history";
   env: Record<string, string>;
+}
+
+export type PluginMcpBindRequest = Readonly<Omit<PluginSessionOpenRequest, "env">> & {
+  readonly env: Readonly<Record<string, string>>;
+  readonly opening: { readonly id: string; readonly digest: string };
+  readonly bootstrapEnvKeys: readonly string[];
+  readonly binding?: PluginMcpBinding;
+};
+
+export interface PluginMcpAuthorizationRequest {
+  readonly session: Omit<PluginMcpBindRequest, "env" | "bootstrapEnvKeys" | "binding">;
+  readonly binding: PluginMcpBinding;
+  readonly server: { readonly name: string; readonly url: string };
+  authorization?: string;
 }
 
 export type PluginTurnOutcome =
@@ -70,8 +109,15 @@ export interface PluginLifecycleEvents {
 }
 
 export interface PluginBeforeRequests {
-  "agent.create": { config: AgentSessionConfig; env?: Record<string, string> };
+  "agent.create": {
+    config: AgentSessionConfig;
+    env?: Record<string, string>;
+    managedMcpServers?: Record<string, PluginManagedMcpDeclaration>;
+  };
   "agent.session_open": PluginSessionOpenRequest;
+  "agent.mcp_stage": PluginBeforeRequests["agent.create"];
+  "agent.mcp_bind": PluginMcpBindRequest;
+  "agent.mcp_authorization": PluginMcpAuthorizationRequest;
   "workspace.create": Omit<WorkspaceCreateRequest, "type" | "requestId">;
 }
 

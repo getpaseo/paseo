@@ -3,6 +3,7 @@ import type { Logger } from "pino";
 import type { AgentProvider } from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
+import type { ManagedOpeningRequest } from "./managed-opening.js";
 import {
   buildConfigOverrides,
   buildSessionConfig,
@@ -21,7 +22,7 @@ export class AgentNotFoundError extends Error {
 
 interface PendingAgentInitialization {
   promise: Promise<ManagedAgent>;
-  options: { broadcastTimeline: boolean };
+  options: { broadcastTimeline: boolean; openingRequest?: ManagedOpeningRequest };
 }
 
 const pendingAgentInitializations = new Map<string, PendingAgentInitialization>();
@@ -42,6 +43,7 @@ export interface EnsureAgentLoadedDeps {
   validProviders?: Iterable<AgentProvider>;
   broadcastTimeline?: boolean;
   logger: Logger;
+  openingRequest?: ManagedOpeningRequest;
 }
 
 export async function ensureUnarchivedAgentLoaded(
@@ -75,12 +77,26 @@ export async function ensureAgentLoaded(
 
   const inflight = pendingAgentInitializations.get(agentId);
   if (inflight) {
+    if (deps.openingRequest && inflight.options.openingRequest?.key !== deps.openingRequest.key) {
+      throw new Error(
+        "Managed opening is already in progress; reconcile before requesting another refresh",
+      );
+    }
     inflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
     return inflight.promise;
   }
 
   const existing = deps.agentManager.getAgent(agentId);
   if (existing) {
+    if (
+      deps.openingRequest &&
+      existing.config.managedMcpServers &&
+      !(await deps.agentStorage.managedOpenings.checkRequest(agentId, deps.openingRequest))
+    ) {
+      throw new Error(
+        "Managed agent became resident without this refresh receipt; reconcile before another refresh",
+      );
+    }
     return existing;
   }
 
@@ -97,6 +113,7 @@ export async function ensureAgentLoaded(
 
   const pendingOptions = {
     broadcastTimeline: deps.broadcastTimeline === true,
+    openingRequest: deps.openingRequest,
   };
   const initPromise = (async () => {
     const record = await deps.agentStorage.get(agentId);
@@ -117,7 +134,11 @@ export async function ensureAgentLoaded(
         handle,
         buildConfigOverrides(record),
         agentId,
-        { ...extractTimestamps(record), attention: extractAttention(record) },
+        {
+          ...extractTimestamps(record),
+          attention: extractAttention(record),
+          openingRequest: deps.openingRequest,
+        },
         record.archivedAt ? { purpose: "history" } : undefined,
       );
       deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");

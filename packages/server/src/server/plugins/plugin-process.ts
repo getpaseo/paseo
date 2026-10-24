@@ -285,6 +285,9 @@ export function createPluginWorker(options: {
         register(contract, (input, context) => handler(contract.input.parse(input), context)),
       registerProvider,
       registerUsageSource,
+      capabilities: Object.freeze({
+        managedMcpAuthorization: Object.freeze({ providers: Object.freeze(["omp"]) }),
+      }),
       registerSettings,
       on: hooks.on,
       before: hooks.before,
@@ -523,14 +526,27 @@ export function createPluginWorker(options: {
         });
         return;
       }
-      void hooks.invoke(message.requestId, message.kind, message.name, message.input, paseo).then(
-        (output) => {
-          return send({ type: "result", requestId: message.requestId, output });
-        },
-        (error) => {
-          return send({ type: "error", requestId: message.requestId, error: describeError(error) });
-        },
-      );
+      void hooks
+        .invoke(
+          message.requestId,
+          message.kind,
+          message.name,
+          message.input,
+          paseo,
+          message.managedMcp,
+        )
+        .then(
+          (output) => {
+            return send({ type: "result", requestId: message.requestId, output });
+          },
+          (error) => {
+            return send({
+              type: "error",
+              requestId: message.requestId,
+              error: describeError(error),
+            });
+          },
+        );
       return;
     }
   }

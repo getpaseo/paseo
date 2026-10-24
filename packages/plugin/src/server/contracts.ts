@@ -28,6 +28,9 @@ export interface PluginSettings<Schema extends ZodType> {
 }
 
 export interface PluginServerContext extends PluginLifecycleRegistration {
+  readonly capabilities?: {
+    readonly managedMcpAuthorization?: { readonly providers: readonly string[] };
+  };
   registerSettings<Schema extends ZodType>(
     definition: import("../settings.js").SettingsDefinition<Schema>,
   ): PluginSettings<Schema>;

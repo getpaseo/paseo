@@ -481,6 +481,7 @@ function withOmpCapabilities(): AgentCapabilityFlags {
     ...OMP_CORE_CAPABILITIES,
     supportsMcpServers: true,
     supportsNativePaseoTools: true,
+    supportsTransientMcpAuthorization: true,
   };
 }
 
@@ -2253,15 +2254,24 @@ export class OmpAgentClient implements AgentClient {
     catalog: PaseoToolCatalog | undefined,
     config: AgentSessionConfig,
     launchEnv?: NodeJS.ProcessEnv,
+    authorization?: Readonly<Record<string, string>>,
+    assertAuthorized?: () => void,
   ): Promise<OmpHostToolRouter | undefined> {
     if (!catalog && !config.mcpServers) {
       return;
     }
-    const bridge = await OmpMcpBridge.connect(config.mcpServers, config.cwd, this.logger, {
-      ...process.env,
-      ...this.runtimeSettings?.env,
-      ...launchEnv,
-    });
+    const bridge = await OmpMcpBridge.connect(
+      config.mcpServers,
+      config.cwd,
+      this.logger,
+      {
+        ...process.env,
+        ...this.runtimeSettings?.env,
+        ...launchEnv,
+      },
+      authorization,
+      assertAuthorized,
+    );
     const router = new OmpHostToolRouter({ runtimeSession, catalog, bridge, logger: this.logger });
     try {
       await router.register();
@@ -2288,6 +2298,7 @@ export class OmpAgentClient implements AgentClient {
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
+    launchContext?.assertMcpAuthorization?.();
     const launchMode = this.resolveLaunchMode(config.modeId, config.providerOptions);
     const startInput: OmpStartSessionInput = {
       cwd: config.cwd,
@@ -2310,6 +2321,8 @@ export class OmpAgentClient implements AgentClient {
         launchContext?.paseoTools,
         config,
         startInput.env,
+        launchContext?.mcpAuthorization,
+        launchContext?.assertMcpAuthorization,
       );
       const initialState = await this.restoreFastMode(
         runtimeSession,
@@ -2360,6 +2373,7 @@ export class OmpAgentClient implements AgentClient {
         persistenceMetadata.bridgedTools,
       );
     }
+    launchContext?.assertMcpAuthorization?.();
 
     const launchMode = this.resolveLaunchMode(
       resumeConfig.modeId,
@@ -2381,6 +2395,8 @@ export class OmpAgentClient implements AgentClient {
         launchContext?.paseoTools,
         resumeConfig.config,
         startInput.env,
+        launchContext?.mcpAuthorization,
+        launchContext?.assertMcpAuthorization,
       );
       const resumedState = await this.applyResumeModel(runtimeSession, resumeConfig.model);
       const config = {
@@ -2445,6 +2461,11 @@ export class OmpAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
   ): OmpAgentSessionOptions["restartRuntime"] {
     return async (sessionFile, modeId) => {
+      if (launchContext?.mcpAuthorization) {
+        throw new Error(
+          "Managed MCP runtime restart requires an explicit host refresh and new authorization",
+        );
+      }
       const launchMode = this.resolveLaunchMode(modeId, config.providerOptions);
       const next = await this.resolveRuntime(config.providerOptions).startSession({
         ...startInput,

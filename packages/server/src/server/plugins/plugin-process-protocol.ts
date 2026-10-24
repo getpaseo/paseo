@@ -1,3 +1,5 @@
+import type { PluginManagedMcpContext } from "@getpaseo/plugin/server";
+import { managedMcpContextSchema } from "./lifecycle/managed-mcp.js";
 import { UsageScopeSchema, type UsageScope } from "@getpaseo/plugin/server/usage";
 import type {
   ProviderConnectRequest,
@@ -51,7 +53,14 @@ export type PluginProcessRequest =
       providerId: string;
       options: ProviderCatalogOptions;
     }
-  | { type: "hook"; requestId: string; kind: "event" | "before"; name: string; input: unknown }
+  | {
+      type: "hook";
+      requestId: string;
+      kind: "event" | "before";
+      name: string;
+      input: unknown;
+      managedMcp?: PluginManagedMcpContext;
+    }
   | { type: "hook.cancel"; requestId: string }
   | { type: "usage.fetch"; requestId: string; sourceId: string; input: unknown }
   | { type: "usage.discover"; requestId: string; sourceId: string; scope: UsageScope }
@@ -190,6 +199,7 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
         kind: z.enum(["event", "before"]),
         name: z.string(),
         input: z.unknown(),
+        managedMcp: managedMcpContextSchema.optional(),
       })
       .strict(),
     z.object({ type: z.literal("hook.cancel"), requestId: z.string() }).strict(),

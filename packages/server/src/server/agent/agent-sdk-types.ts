@@ -11,6 +11,7 @@ import type {
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PaseoToolCatalog } from "./tools/types.js";
+import type { ManagedMcpServers } from "../plugins/lifecycle/managed-mcp.js";
 
 export type {
   AgentFeature,
@@ -608,6 +609,8 @@ export interface AgentSessionConfig {
   providerOptions?: ProviderOptions;
   toolPolicy?: ToolPolicy;
   mcpServers?: Record<string, McpServerConfig>;
+  /** Daemon-attested contribution provenance; never accepted from wire config. */
+  managedMcpServers?: ManagedMcpServers;
   /**
    * Internal agents are hidden from listings and don't trigger notifications.
    * They are used for ephemeral system tasks like commit/PR generation.
@@ -618,6 +621,10 @@ export interface AgentSessionConfig {
 export interface AgentLaunchContext {
   agentId?: string;
   env?: Record<string, string>;
+  /** Transient managed HTTP credentials. Providers must not persist or export these. */
+  mcpAuthorization?: Readonly<Record<string, string>>;
+  commitManagedOpening?: () => Promise<void>;
+  assertMcpAuthorization?: () => void;
   /**
    * Runtime-only internal Paseo tools. This must never be persisted into
    * AgentSessionConfig; providers may adapt it to their native tool surface.

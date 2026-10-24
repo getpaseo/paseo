@@ -1,7 +1,18 @@
 import { projectTimelineRows } from "./timeline-projection.js";
 import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
 import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
-import type { PluginSessionOpenRequest } from "@getpaseo/plugin/server";
+import type {
+  PluginSessionOpenRequest,
+  PluginMcpBindRequest,
+  PluginManagedMcpContext,
+} from "@getpaseo/plugin/server";
+import type { ManagedOpeningRequest } from "./managed-opening.js";
+import { isDeepStrictEqual } from "node:util";
+import {
+  captureManagedMcpServers,
+  createMcpOpening,
+  validateManagedMcpConfig,
+} from "../plugins/lifecycle/managed-mcp.js";
 import { randomUUID } from "node:crypto";
 import { basename, resolve } from "node:path";
 import { stat } from "node:fs/promises";
@@ -213,6 +224,7 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
     config.systemPrompt = record.config.systemPrompt;
   }
   if (record.config.mcpServers != null) config.mcpServers = record.config.mcpServers;
+  if (record.config.managedMcpServers) config.managedMcpServers = record.config.managedMcpServers;
   return stripInternalPaseoMcpServer(config);
 }
 
@@ -315,6 +327,8 @@ export interface CreateAgentOptions {
   // undefined is an explicit decision: the agent never appears in the sidebar.
   workspaceId: string | undefined;
   owner?: AgentOwner;
+  /** Set only by native creation dispatch after CreationService has durably reserved the ID. */
+  managedCreationReserved?: boolean;
 }
 
 export interface AgentManagerOptions {
@@ -1273,7 +1287,22 @@ export class AgentManager {
     agentId: string | undefined,
     options: CreateAgentOptions,
   ): Promise<ManagedAgent> {
-    return this.trackAgentRegistrationOperation(this.createAgentInternal(config, agentId, options));
+    const id = validateAgentId(agentId ?? this.idFactory(), "createAgent");
+    return this.trackAgentRegistrationOperation(
+      this.runLifecycleMutation(id, () => this.createAgentInternal(config, id, options)),
+    );
+  }
+
+  private async inspectNewAgentIdentity(agentId: string): Promise<boolean> {
+    const existing = this.agents.get(agentId);
+    const record = await this.registry?.get(agentId);
+    if (existing?.config.managedMcpServers || record?.config?.managedMcpServers) {
+      throw new Error(
+        "Managed agent already exists; reconcile the original creation instead of recreating it",
+      );
+    }
+    await this.registry?.managedOpenings.assertUnusedIdentity(agentId);
+    return Boolean(existing || record);
   }
 
   private async createAgentInternal(
@@ -1283,13 +1312,31 @@ export class AgentManager {
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
+    if (config.internal && config.managedMcpServers) {
+      throw new Error("Internal agents cannot declare managed MCP authorization");
+    }
+    const identityExists = await this.inspectNewAgentIdentity(resolvedAgentId);
     if (this.pluginLifecycle && !config.internal) {
       const request = await this.pluginLifecycle.before("agent.create", {
         config,
         env: options.env,
       });
-      config = { ...request.config, internal: config.internal };
+      config = {
+        ...request.config,
+        internal: config.internal,
+        managedMcpServers: captureManagedMcpServers(request),
+      };
       options = { ...options, env: request.env };
+    }
+    if (config.managedMcpServers && identityExists) {
+      throw new Error(
+        "Managed agent already exists; reconcile the original creation instead of recreating it",
+      );
+    }
+    if (config.managedMcpServers && !options.managedCreationReserved) {
+      throw new Error(
+        "Managed MCP creation requires a durable native creation receipt; use SDK createAgent or keyed native creation",
+      );
     }
     await this.deleteAgentState(resolvedAgentId);
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
@@ -1305,7 +1352,7 @@ export class AgentManager {
     const launchContext = await this.buildLaunchContext(
       resolvedAgentId,
       client,
-      storedConfig.cwd,
+      storedConfig,
       paseoToolPolicy,
       options?.env,
       { reason: "create", purpose: "interactive", workspaceId: options.workspaceId ?? null },
@@ -1314,13 +1361,19 @@ export class AgentManager {
     const createOptions = this.buildCreateSessionOptions(options);
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
     await this.requireExternalMcpSupport(session, storedConfig);
-    const agent = await this.registerSession(session, storedConfig, resolvedAgentId, {
-      labels: options.labels,
-      initialTitle: options.initialTitle,
-      workspaceId: options.workspaceId,
-      owner: options.owner,
-      historyPrimed: true,
-    });
+    const agent = await this.registerSession(
+      session,
+      storedConfig,
+      resolvedAgentId,
+      {
+        labels: options.labels,
+        initialTitle: options.initialTitle,
+        workspaceId: options.workspaceId,
+        owner: options.owner,
+        historyPrimed: true,
+      },
+      launchContext,
+    );
     if (!agent.internal) {
       this.pluginLifecycle?.emit("agent.created", {
         agent: describeHookAgent({ ...agent, title: agent.config.title }),
@@ -1351,6 +1404,7 @@ export class AgentManager {
       workspaceId?: string;
       owner?: AgentOwner;
       attention?: AttentionState;
+      openingRequest?: ManagedOpeningRequest;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1371,6 +1425,26 @@ export class AgentManager {
     );
   }
 
+  private reuseManagedResident(
+    agentId: string,
+    record: StoredAgentRecord | null,
+    overrides: Partial<AgentSessionConfig> | undefined,
+  ): ManagedAgent | undefined {
+    if (!record?.config?.managedMcpServers) return undefined;
+    const resident = this.agents.get(agentId);
+    if (!resident) return undefined;
+    if (
+      Object.entries(overrides ?? {}).some(
+        ([key, value]) =>
+          value !== undefined &&
+          !isDeepStrictEqual(value, resident.config[key as keyof AgentSessionConfig]),
+      )
+    ) {
+      throw new Error("Managed resume overrides require an explicit refresh");
+    }
+    return resident;
+  }
+
   private async resumeAgentFromPersistenceInternal(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
@@ -1383,6 +1457,7 @@ export class AgentManager {
       workspaceId?: string;
       owner?: AgentOwner;
       attention?: AttentionState;
+      openingRequest?: ManagedOpeningRequest;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1406,6 +1481,11 @@ export class AgentManager {
       ? { purpose: record.archivedAt ? ("history" as const) : ("interactive" as const) }
       : resumeOptions;
     const purpose = currentResumeOptions?.purpose ?? "interactive";
+    // Only the daemon's durable record can carry plugin provenance. Provider
+    // metadata and public overrides cannot attest ownership.
+    const resident = this.reuseManagedResident(resolvedAgentId, record, overrides);
+    if (resident) return resident;
+    mergedConfig.managedMcpServers = record?.config?.managedMcpServers;
 
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
       mergedConfig,
@@ -1423,13 +1503,14 @@ export class AgentManager {
     const launchContext = await this.buildLaunchContext(
       resolvedAgentId,
       client,
-      storedConfig.cwd,
+      storedConfig,
       paseoToolPolicy,
       undefined,
       {
         reason: "resume",
         purpose,
         workspaceId: options?.workspaceId ?? null,
+        request: options?.openingRequest,
       },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
@@ -1440,11 +1521,18 @@ export class AgentManager {
       currentResumeOptions,
     );
     await this.requireExternalMcpSupport(session, storedConfig);
-    return this.registerSession(session, storedConfig, resolvedAgentId, {
-      ...options,
-      persistence: handle,
-      restoring: true,
-    });
+    const agent = await this.registerSession(
+      session,
+      storedConfig,
+      resolvedAgentId,
+      {
+        ...options,
+        persistence: handle,
+        restoring: true,
+      },
+      launchContext,
+    );
+    return agent;
   }
 
   importProviderSession(input: {
@@ -1454,18 +1542,27 @@ export class AgentManager {
     workspaceId: string;
     labels?: Record<string, string>;
   }): Promise<ManagedAgent> {
-    return this.trackAgentRegistrationOperation(this.importProviderSessionInternal(input));
+    const reservationKey = JSON.stringify(["import", input.provider, input.providerHandleId]);
+    return this.trackAgentRegistrationOperation(
+      this.runLifecycleMutation(reservationKey, () =>
+        this.importProviderSessionInternal(input, reservationKey),
+      ),
+    );
   }
 
-  private async importProviderSessionInternal(input: {
-    provider: AgentProvider;
-    providerHandleId: string;
-    cwd: string;
-    workspaceId: string;
-    labels?: Record<string, string>;
-  }): Promise<ManagedAgent> {
+  private async importProviderSessionInternal(
+    input: {
+      provider: AgentProvider;
+      providerHandleId: string;
+      cwd: string;
+      workspaceId: string;
+      labels?: Record<string, string>;
+    },
+    reservationKey: string,
+  ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(this.idFactory(), "importProviderSession");
+    await this.registry?.managedOpenings.assertUnusedIdentity(reservationKey);
     this.requireEnabledProvider(input.provider);
 
     const client = await this.requireAvailableClient({ provider: input.provider });
@@ -1473,21 +1570,30 @@ export class AgentManager {
       throw new Error(`Provider '${input.provider}' does not support importing sessions`);
     }
 
+    let importConfig: AgentSessionConfig = { provider: input.provider, cwd: input.cwd };
+    let importEnv: Record<string, string> | undefined;
+    if (this.pluginLifecycle) {
+      const request = await this.pluginLifecycle.before("agent.mcp_stage", {
+        config: importConfig,
+      });
+      if (request.config.provider !== input.provider) {
+        throw new Error("Import hooks cannot change the native provider");
+      }
+      importConfig = { ...request.config, managedMcpServers: captureManagedMcpServers(request) };
+      importEnv = request.env;
+    }
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
-      {
-        provider: input.provider,
-        cwd: input.cwd,
-      },
+      importConfig,
       resolvedAgentId,
     );
     this.paseoToolPolicies.set(resolvedAgentId, paseoToolPolicy);
     const launchContext = await this.buildLaunchContext(
       resolvedAgentId,
       client,
-      storedConfig.cwd,
+      storedConfig,
       paseoToolPolicy,
-      undefined,
-      { reason: "import", purpose: "interactive", workspaceId: input.workspaceId },
+      importEnv,
+      { reason: "import", purpose: "interactive", workspaceId: input.workspaceId, reservationKey },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const imported = await client.importSession(
@@ -1502,20 +1608,33 @@ export class AgentManager {
       const importedConfig = await this.normalizeConfig(
         stripInternalPaseoMcpServer(imported.config),
       );
+      if (storedConfig.managedMcpServers) {
+        importedConfig.mcpServers = storedConfig.mcpServers;
+        importedConfig.managedMcpServers = storedConfig.managedMcpServers;
+        importedConfig.toolPolicy = storedConfig.toolPolicy;
+      } else {
+        delete importedConfig.managedMcpServers;
+      }
       const timelineRows = buildImportedTimelineRows(imported.timeline);
       const initialTitle = resolveImportedAgentTitle(importedConfig, timelineRows);
 
       handedToRegistration = true;
-      const agent = await this.registerSession(imported.session, importedConfig, resolvedAgentId, {
-        labels: input.labels,
-        workspaceId: input.workspaceId,
-        timelineRows,
-        timelineNextSeq: timelineRows.length + 1,
-        persistence: imported.persistence,
-        historyPrimed: true,
-        initialTitle,
-        publishWhenReady: true,
-      });
+      const agent = await this.registerSession(
+        imported.session,
+        importedConfig,
+        resolvedAgentId,
+        {
+          labels: input.labels,
+          workspaceId: input.workspaceId,
+          timelineRows,
+          timelineNextSeq: timelineRows.length + 1,
+          persistence: imported.persistence,
+          historyPrimed: true,
+          initialTitle,
+          publishWhenReady: true,
+        },
+        launchContext,
+      );
       for (const event of imported.providerSubagentEvents ?? []) {
         const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
         this.dispatch({ type: "provider_subagent", event: update });
@@ -1537,7 +1656,7 @@ export class AgentManager {
   reloadAgentSession(
     agentId: string,
     overrides?: Partial<AgentSessionConfig>,
-    options?: { rehydrateFromDisk?: boolean },
+    options: { rehydrateFromDisk?: boolean; openingRequest?: ManagedOpeningRequest } = {},
   ): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(
       this.runLifecycleMutation(agentId, () =>
@@ -1549,7 +1668,7 @@ export class AgentManager {
   private async reloadAgentSessionInternal(
     agentId: string,
     overrides?: Partial<AgentSessionConfig>,
-    options?: { rehydrateFromDisk?: boolean },
+    options: { rehydrateFromDisk?: boolean; openingRequest?: ManagedOpeningRequest } = {},
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     let existing = this.requireSessionAgent(agentId);
@@ -1557,7 +1676,7 @@ export class AgentManager {
       await this.cancelAgentRunBefore(agentId, "reload");
       existing = this.requireSessionAgent(agentId);
     }
-    const rehydrateFromDisk = options?.rehydrateFromDisk ?? false;
+    const rehydrateFromDisk = options.rehydrateFromDisk ?? false;
     const preservedHistoryPrimed = existing.historyPrimed;
     const preservedLastUsage = existing.lastUsage;
     const preservedLastError = existing.lastError;
@@ -1579,10 +1698,15 @@ export class AgentManager {
     const launchContext = await this.buildLaunchContext(
       agentId,
       client,
-      storedConfig.cwd,
+      storedConfig,
       paseoToolPolicy,
       undefined,
-      { reason: "refresh", purpose: "interactive", workspaceId: existing.workspaceId },
+      {
+        reason: "refresh",
+        purpose: "interactive",
+        workspaceId: existing.workspaceId,
+        request: options.openingRequest,
+      },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     if (
@@ -1622,19 +1746,26 @@ export class AgentManager {
 
       // Preserve existing labels and timeline during reload.
       handedToRegistration = true;
-      return this.registerSession(session, storedConfig, agentId, {
-        labels: existing.labels,
-        workspaceId: existing.workspaceId,
-        owner: existing.owner,
-        createdAt: existing.createdAt,
-        updatedAt: existing.updatedAt,
-        lastUserMessageAt: existing.lastUserMessageAt,
-        historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
-        lastUsage: preservedLastUsage,
-        lastError: preservedLastError,
-        attention: preservedAttention,
-        restoring: true,
-      });
+      const agent = await this.registerSession(
+        session,
+        storedConfig,
+        agentId,
+        {
+          labels: existing.labels,
+          workspaceId: existing.workspaceId,
+          owner: existing.owner,
+          createdAt: existing.createdAt,
+          updatedAt: existing.updatedAt,
+          lastUserMessageAt: existing.lastUserMessageAt,
+          historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
+          lastUsage: preservedLastUsage,
+          lastError: preservedLastError,
+          attention: preservedAttention,
+          restoring: true,
+        },
+        launchContext,
+      );
+      return agent;
     } catch (error) {
       if (closedExisting) {
         this.emitClosedAgent(closedExisting, { persist: false });
@@ -3576,10 +3707,12 @@ export class AgentManager {
       workspaceId?: string;
       owner?: AgentOwner;
     },
+    openingContext?: AgentLaunchContext,
   ): Promise<ManagedAgent> {
     let registered = false;
     try {
       this.assertAcceptingAgentRegistrations();
+      validateManagedMcpConfig(config);
       const resolvedAgentId = validateAgentId(agentId, "registerSession");
       if (this.agents.has(resolvedAgentId)) {
         throw new Error(`Agent with id ${resolvedAgentId} already exists`);
@@ -3656,6 +3789,7 @@ export class AgentManager {
       this.subscribeToSession(managed);
       await this.drainSessionEvents(managed.id);
       this.assertAgentRegistrationActive(managed);
+      await openingContext?.commitManagedOpening?.();
       return { ...managed };
     } catch (error) {
       if (!registered) {
@@ -5293,6 +5427,7 @@ export class AgentManager {
       env: options.env,
       purpose: options.purpose,
     });
+    validateManagedMcpConfig(storedConfig);
     const paseoToolPolicy = this.paseoToolsEnabled
       ? this.resolvePaseoToolPolicy(storedConfig.provider)
       : { enabled: false };
@@ -5323,40 +5458,98 @@ export class AgentManager {
       : next;
   }
 
+  private async reserveManagedMcpOpening(
+    client: AgentClient,
+    config: AgentSessionConfig,
+    session: PluginSessionOpenRequest,
+    reservation: { reservationKey?: string; request?: ManagedOpeningRequest },
+  ): Promise<
+    | {
+        opening: PluginMcpBindRequest["opening"];
+        commit: () => Promise<void>;
+        descriptor: PluginManagedMcpContext;
+      }
+    | undefined
+  > {
+    const managed = config.managedMcpServers;
+    if (!managed || session.purpose === "history") return undefined;
+    if (
+      client.provider !== "omp" ||
+      client.capabilities.supportsTransientMcpAuthorization !== true ||
+      !this.pluginLifecycle?.authorizeMcp
+    ) {
+      throw new Error(
+        "Provider or host cannot deliver managed MCP authorization; start a fresh execution",
+      );
+    }
+    const opening = createMcpOpening(config, session);
+    const commit = await this.requireRegistry().managedOpenings.begin(
+      reservation.reservationKey ?? session.agentId,
+      opening,
+      reservation.request,
+    );
+    return {
+      opening,
+      commit,
+      descriptor: {
+        opening,
+        servers: Object.entries(managed).map(([name, owned]) => ({
+          name,
+          url: owned.server.type === "http" ? owned.server.url : "",
+          ownerPluginId: owned.ownerPluginId,
+          bindPluginId: owned.bindPluginId,
+        })),
+      },
+    };
+  }
+
   private async buildLaunchContext(
     agentId: string,
     client: AgentClient,
-    cwd: string,
+    config: AgentSessionConfig,
     paseoToolPolicy: ProviderPaseoToolsPolicy | undefined,
-    env?: Record<string, string>,
-    opening?: {
+    env: Record<string, string> | undefined,
+    opening: {
       reason: PluginSessionOpenRequest["reason"];
       purpose: PluginSessionOpenRequest["purpose"];
       workspaceId?: string | null;
+      reservationKey?: string;
+      request?: ManagedOpeningRequest;
     },
   ): Promise<AgentLaunchContext> {
-    if (this.pluginLifecycle) {
-      const request: PluginSessionOpenRequest = {
-        agentId,
-        provider: client.provider,
-        cwd,
-        workspaceId: opening?.workspaceId ?? null,
-        reason: opening?.reason ?? "resume",
-        purpose: opening?.purpose ?? "interactive",
-        env: { ...env },
-      };
-      const transformed = await this.pluginLifecycle.before("agent.session_open", request);
-      env = transformed.env;
+    const cwd = config.cwd;
+    const managedHistory = config.managedMcpServers && opening.purpose === "history";
+    let sessionRequest: PluginSessionOpenRequest = {
+      agentId,
+      provider: client.provider,
+      cwd,
+      workspaceId: opening.workspaceId ?? null,
+      reason: opening.reason,
+      purpose: opening.purpose,
+      env: { ...env },
+    };
+    const admission = await this.reserveManagedMcpOpening(client, config, sessionRequest, opening);
+    if (this.pluginLifecycle && !managedHistory) {
+      sessionRequest = await this.pluginLifecycle.before("agent.session_open", sessionRequest, {
+        managedMcp: admission?.descriptor,
+      });
     }
     const context: AgentLaunchContext = {
       agentId,
-      env: {
-        ...env,
-        PASEO_AGENT_ID: agentId,
-        PASEO_AGENT_CWD: cwd,
-      },
+      env: { ...sessionRequest.env, PASEO_AGENT_ID: agentId, PASEO_AGENT_CWD: cwd },
     };
+    if (admission && config.managedMcpServers) {
+      const authorization = await this.pluginLifecycle!.authorizeMcp!(
+        { ...sessionRequest, opening: admission.opening, bootstrapEnvKeys: [] },
+        config.managedMcpServers,
+      );
+      context.commitManagedOpening = admission.commit;
+      context.mcpAuthorization = authorization.headers;
+      context.env = { ...authorization.env, PASEO_AGENT_ID: agentId, PASEO_AGENT_CWD: cwd };
+      context.assertMcpAuthorization = authorization.assertCurrent;
+    }
     if (
+      !managedHistory &&
       this.paseoToolsEnabled &&
       isPaseoToolPolicyEnabled(paseoToolPolicy) &&
       client.capabilities.supportsNativePaseoTools &&
@@ -5374,7 +5567,13 @@ export class AgentManager {
     launchConfig: AgentSessionConfig,
     launchContext: AgentLaunchContext,
   ): AgentSessionConfig {
-    return launchContext.paseoTools ? stripInternalPaseoMcpServer(launchConfig) : launchConfig;
+    const config = launchContext.paseoTools
+      ? stripInternalPaseoMcpServer(launchConfig)
+      : launchConfig;
+    if (!config.managedMcpServers || launchContext.mcpAuthorization) return config;
+    const mcpServers = { ...config.mcpServers };
+    for (const name of Object.keys(config.managedMcpServers)) delete mcpServers[name];
+    return { ...config, mcpServers };
   }
 
   private async requireAvailableClient(options: { provider: AgentProvider }): Promise<AgentClient> {

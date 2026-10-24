@@ -6,6 +6,13 @@ import { expect, onTestFinished, test } from "vitest";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { resolveDaemonVersion } from "../daemon-version.js";
+import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
+import pino from "pino";
+import { OmpAgentClient } from "../agent/providers/omp/agent.js";
+import { FakeOmp } from "../agent/providers/omp/test-utils/fake-omp.js";
+import { createTestAgentClient } from "../test-utils/fake-agent-client.js";
+import type { PluginMcpBindRequest } from "@getpaseo/plugin/server";
 
 test("a plugin transforms workspace creation once across receipt replays and observes its committed lifecycle", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-lifecycle-"));
@@ -585,4 +592,417 @@ test("reloading a plugin does not send on a closed IPC channel", async () => {
     await rm(cwd, { recursive: true, force: true });
     await rm(pluginDirectory, { recursive: true, force: true });
   }
+}, 60_000);
+
+function managedMcpResult(method: string) {
+  if (method === "initialize") {
+    return {
+      protocolVersion: "2024-11-05",
+      capabilities: { tools: {} },
+      serverInfo: { name: "managed", version: "1" },
+    };
+  }
+  if (method === "tools/call") {
+    return { content: [{ type: "text", text: "managed tool result" }] };
+  }
+  return {
+    tools: [
+      {
+        name: "probe",
+        description: "Managed probe",
+        inputSchema: { type: "object", properties: {} },
+      },
+    ],
+  };
+}
+
+async function managedMcpHarness() {
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-managed-mcp-"));
+  const logger = pino({ level: "silent" });
+  const runtime = new FakeOmp();
+  const events: string[] = [];
+  const bindings = new Map<string, PluginMcpBindRequest>();
+  const current = new Map<string, string>();
+  const credentials = new Map<string, string>();
+  const consumed: string[] = [];
+  let rejectMint = false;
+  let firstBindBeforeSave = false;
+  const fixture = createServer(async (req, res) => {
+    let text = "";
+    for await (const chunk of req) text += chunk;
+    const input = text ? JSON.parse(text) : {};
+    const json = (value: unknown, status = 200) => {
+      res.writeHead(status, { "content-type": "application/json" });
+      res.end(JSON.stringify(value));
+    };
+    if (req.url === "/bind") {
+      events.push("bind");
+      if (input.reason === "create") {
+        firstBindBeforeSave = (await daemon.daemon.agentStorage.get(input.agentId)) === null;
+      }
+      const prior = bindings.get(input.opening.id);
+      if (prior && JSON.stringify(prior) !== JSON.stringify(input)) return json({}, 409);
+      bindings.set(input.opening.id, input);
+      current.set(input.agentId, input.opening.id);
+      return json({
+        openingId: input.opening.id,
+        sessionEpoch: bindings.size,
+        bindRequestId: input.opening.id,
+      });
+    }
+    if (req.url === "/mint") {
+      events.push("mint");
+      const committed = bindings.get(input.binding.bindRequestId);
+      if (
+        !committed ||
+        current.get(committed.agentId) !== input.session.opening.id ||
+        input.binding.openingId !== committed.opening.id
+      )
+        return json({}, 403);
+      if (rejectMint) return json({ message: "mint unavailable" }, 503);
+      const credential = credentials.get(committed.opening.id) ?? `Bearer ${randomUUID()}`;
+      credentials.set(committed.opening.id, credential);
+      return json({ authorization: credential });
+    }
+    const authorizedOpening = [...credentials].find(
+      ([, token]) => req.headers.authorization === token,
+    )?.[0];
+    const bound = authorizedOpening ? bindings.get(authorizedOpening) : undefined;
+    if (!bound || current.get(bound.agentId) !== authorizedOpening) return json({}, 401);
+    if (req.method !== "POST") {
+      res.writeHead(405).end();
+      return;
+    }
+    consumed.push(authorizedOpening!);
+    events.push("mcp");
+    if (input.method === "notifications/initialized") {
+      res.writeHead(202).end();
+      return;
+    }
+    const result = managedMcpResult(input.method);
+    return json({ jsonrpc: "2.0", id: input.id, result });
+  });
+  await new Promise<void>((resolve) => fixture.listen(0, "127.0.0.1", resolve));
+  const address = fixture.address();
+  if (!address || typeof address === "string") throw new Error("Missing fixture port");
+  const url = `http://127.0.0.1:${address.port}`;
+  const daemon = await createTestPaseoDaemon({
+    agentClients: {
+      omp: new OmpAgentClient({ logger, runtime }),
+      codex: createTestAgentClient("codex", { supportsMcpServers: true }),
+    },
+    mcpEnabled: false,
+    logger,
+    providerOverrides: { omp: { enabled: true } },
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.13.0",
+  });
+  onTestFinished(async () => {
+    await client.close();
+    await daemon.close();
+    await new Promise<void>((resolve) => fixture.close(() => resolve()));
+    await rm(directory, { recursive: true, force: true });
+  });
+  await client.connect();
+  await client.fetchAgents({ subscribe: {} });
+  await client.patchDaemonConfig({ pluginsEnabled: true });
+  for (const [id, source] of [
+    [
+      "z-binder",
+      `
+      server.before("agent.session_open", ({ request }, context) => {
+        if (request.env.MANAGED_REQUIRED && !context.managedMcp) throw new Error("required declaration missing");
+      });
+      server.before("agent.mcp_bind", async ({ request }, context) => {
+        if (!context.managedMcp.servers.some((s) => s.ownerPluginId === "a-owner" && s.bindPluginId === "z-binder"))
+          throw new Error("unexpected owner");
+        const response = await fetch("${url}/bind", { method: "POST", body: JSON.stringify(request) });
+        if (!response.ok) throw new Error("bind refused");
+        const env = { ...request.env };
+        for (const key of request.bootstrapEnvKeys) delete env[key];
+        return { ...request, env, binding: await response.json() };
+      });`,
+    ],
+    [
+      "a-owner",
+      `
+      const stage = ({ request }) => {
+        if (request.config.title !== "managed") return;
+        return { ...request, config: { ...request.config, mcpServers: {
+          ...request.config.mcpServers,
+          memory: { type: "http", url: "${url}/mcp", headers: { Authorization: "PASEO_MANAGED_MCP_INERT" } },
+        } }, managedMcpServers: { memory: { bindPluginId: "z-binder", bootstrapEnvKeys: ["PASEO_MEMORY_BOOTSTRAP_REF"] } } };
+      };
+      server.before("agent.create", stage);
+      server.before("agent.mcp_stage", ({ request }) => stage({ request: { ...request, config: { ...request.config, title: "managed" } } }));
+      server.before("agent.mcp_authorization", async ({ request }) => {
+        const response = await fetch("${url}/mint", { method: "POST", body: JSON.stringify(request) });
+        if (!response.ok) throw new Error("mint refused");
+        return { ...request, authorization: (await response.json()).authorization };
+      });`,
+    ],
+  ]) {
+    const plugin = path.join(directory, id!);
+    await mkdir(plugin);
+    await writeFile(
+      path.join(plugin, "paseo-plugin.json"),
+      JSON.stringify({ id, requirements: { paseo: ">=0.8.0" } }),
+    );
+    await writeFile(
+      path.join(plugin, "index.server.ts"),
+      `export default function(server) { ${source} return () => {}; }`,
+    );
+    await client.installDirectoryPlugin(plugin);
+  }
+  return {
+    directory,
+    daemon,
+    client,
+    runtime,
+    events,
+    bindings,
+    credentials,
+    consumed,
+    url,
+    firstBindBeforeSave: () => firstBindBeforeSave,
+    rejectMint: () => {
+      rejectMint = true;
+    },
+  };
+}
+
+test("managed MCP binds before mint and provider access, stores inert config, and rolls over before old provider closure", async () => {
+  const h = await managedMcpHarness();
+  const input = {
+    provider: "omp",
+    cwd: h.directory,
+    model: "anthropic/claude-haiku-5-5",
+    title: "managed",
+    env: { MANAGED_REQUIRED: "yes", PASEO_MEMORY_BOOTSTRAP_REF: "opaque-reference", REGION: "eu" },
+    idempotencyKey: "managed-create",
+  };
+  const agent = await h.client.createAgent(input);
+  const first = [...h.bindings.values()][0]!;
+  const firstToken = h.credentials.get(first.opening.id)!;
+  expect(h.events.slice(0, 3)).toEqual(["bind", "mint", "mcp"]);
+  expect(h.firstBindBeforeSave()).toBe(true);
+  const launch = h.runtime.recordedLaunches.find((entry) => entry.env?.PASEO_AGENT_ID === agent.id);
+  expect(launch?.env?.REGION).toBe("eu");
+  expect(launch?.env).not.toHaveProperty("PASEO_MEMORY_BOOTSTRAP_REF");
+  expect(h.consumed).toContain(first.opening.id);
+  const stored = await h.daemon.daemon.agentStorage.get(agent.id);
+  expect(stored?.config?.mcpServers.memory.headers).toEqual({
+    Authorization: "PASEO_MANAGED_MCP_INERT",
+  });
+  expect(stored?.config?.managedMcpServers?.memory?.ownerPluginId).toBe("a-owner");
+  expect(JSON.stringify(stored)).not.toContain(firstToken);
+  const replay = await h.client.createAgent(input);
+  expect(replay.id).toBe(agent.id);
+  expect(h.bindings.size).toBe(1);
+  const oldRuntime = h.runtime.latestSession();
+  const close = oldRuntime.close.bind(oldRuntime);
+  oldRuntime.close = async () => {
+    h.events.push("old-close");
+    await close();
+  };
+  h.events.length = 0;
+  await h.client.refreshAgent(agent.id, "managed-refresh-retry");
+  expect(h.events.indexOf("bind")).toBeLessThan(h.events.indexOf("mint"));
+  expect(h.events.indexOf("mint")).toBeLessThan(h.events.indexOf("old-close"));
+  expect(h.events.indexOf("old-close")).toBeLessThan(h.events.indexOf("mcp"));
+  expect(
+    await fetch(`${h.url}/mcp`, {
+      method: "POST",
+      headers: { Authorization: firstToken },
+      body: "{}",
+    }).then((r) => r.status),
+  ).toBe(401);
+  expect(h.bindings.size).toBe(2);
+  const second = [...h.bindings.values()][1]!;
+  await h.client.refreshAgent(agent.id, "managed-refresh-retry");
+  expect(h.bindings.size).toBe(2);
+  expect(second.opening.id).not.toBe(first.opening.id);
+  expect(second.env).not.toHaveProperty("PASEO_MEMORY_BOOTSTRAP_REF");
+  expect(second.env.REGION).toBeUndefined();
+  const current = h.daemon.daemon.agentManager.getAgent(agent.id)!;
+  const handle = current.persistence!;
+  await h.daemon.daemon.agentManager.closeAgent(agent.id);
+  await h.daemon.daemon.agentManager.resumeAgentFromPersistence(handle, current.config, agent.id, {
+    workspaceId: current.workspaceId,
+  });
+  expect([...h.bindings.values()][2]?.reason).toBe("resume");
+  expect(h.bindings.size).toBe(3);
+}, 60_000);
+
+test("managed authorization failure fences the old fixture generation, quarantines unknown startup and never replays it", async () => {
+  const h = await managedMcpHarness();
+  const agent = await h.client.createAgent({
+    provider: "omp",
+    cwd: h.directory,
+    model: "anthropic/claude-haiku-5-5",
+    title: "managed",
+  });
+  const first = [...h.bindings.values()][0]!;
+  const oldToken = h.credentials.get(first.opening.id)!;
+  const oldRuntime = h.runtime.latestSession();
+  const launches = h.runtime.recordedLaunches.length;
+  h.rejectMint();
+  await expect(h.daemon.daemon.agentManager.reloadAgentSession(agent.id)).rejects.toThrow(
+    "authorization was not applied",
+  );
+  expect(oldRuntime.closed).toBe(false);
+  expect(h.runtime.recordedLaunches).toHaveLength(launches);
+  expect(
+    await fetch(`${h.url}/mcp`, {
+      method: "POST",
+      headers: { Authorization: oldToken },
+      body: "{}",
+    }).then((r) => r.status),
+  ).toBe(401);
+  await expect(h.daemon.daemon.agentManager.reloadAgentSession(agent.id)).rejects.toThrow(
+    "unknown outcome",
+  );
+  expect(h.bindings.size).toBe(2);
+  expect(h.credentials.size).toBe(1);
+  const existing = h.daemon.daemon.agentManager.getAgent(agent.id)!;
+  const unfinishedAgentId = randomUUID();
+  await expect(
+    h.client.createAgent({
+      agentId: unfinishedAgentId,
+      provider: "omp",
+      cwd: h.directory,
+      model: "anthropic/claude-haiku-5-5",
+      title: "managed",
+    }),
+  ).rejects.toThrow("authorization was not applied");
+  await h.client.archiveAgent(agent.id);
+  await h.client.disablePlugin("a-owner");
+  await h.client.disablePlugin("z-binder");
+  const eventCount = h.events.length;
+  const history = await h.daemon.daemon.agentManager.resumeAgentFromPersistence(
+    existing.persistence!,
+    existing.config,
+    agent.id,
+    { workspaceId: existing.workspaceId },
+    { purpose: "history" },
+  );
+  expect(h.events).toHaveLength(eventCount);
+  expect(h.runtime.recordedLaunches).toHaveLength(launches);
+  await expect(history.session.run("must not execute")).rejects.toThrow(
+    "history session cannot start",
+  );
+  await expect(
+    h.daemon.daemon.agentManager.createAgent(
+      {
+        provider: "omp",
+        cwd: h.directory,
+      },
+      agent.id,
+      { workspaceId: undefined },
+    ),
+  ).rejects.toThrow();
+  await expect(
+    h.daemon.daemon.agentManager.createAgent(
+      {
+        provider: "omp",
+        cwd: h.directory,
+      },
+      unfinishedAgentId,
+      { workspaceId: undefined },
+    ),
+  ).rejects.toThrow("unknown outcome");
+  expect(h.events).toHaveLength(eventCount);
+  expect(h.runtime.recordedLaunches).toHaveLength(launches);
+  const stored = await h.daemon.daemon.agentStorage.get(agent.id);
+  expect(stored?.config?.managedMcpServers?.memory?.ownerPluginId).toBe("a-owner");
+}, 60_000);
+
+test("unsupported provider, absent obligation and unloaded required hooks cannot start a managed provider", async () => {
+  const h = await managedMcpHarness();
+  await expect(
+    h.client.createAgent({ provider: "codex", cwd: h.directory, title: "managed" }),
+  ).rejects.toThrow("cannot deliver managed MCP");
+  expect(h.bindings.size).toBe(0);
+  await expect(
+    h.daemon.daemon.agentManager.createAgent(
+      {
+        provider: "omp",
+        cwd: h.directory,
+        title: "managed",
+        model: "anthropic/claude-haiku-5-5",
+      },
+      undefined,
+      { workspaceId: undefined },
+    ),
+  ).rejects.toThrow("durable native creation receipt");
+  expect(h.bindings.size).toBe(0);
+  await expect(
+    h.client.createAgent({ provider: "omp", cwd: h.directory, env: { MANAGED_REQUIRED: "yes" } }),
+  ).rejects.toThrow("required declaration missing");
+  await h.client.disablePlugin("z-binder");
+  await expect(
+    h.client.createAgent({ provider: "omp", cwd: h.directory, title: "managed" }),
+  ).rejects.toThrow("Required managed MCP plugin hook");
+  expect(h.bindings.size).toBe(0);
+  const ordinary = await h.client.createAgent({
+    provider: "omp",
+    cwd: h.directory,
+    model: "anthropic/claude-haiku-5-5",
+  });
+  expect(ordinary.provider).toBe("omp");
+}, 60_000);
+
+test("managed native import stages attested inert servers and binds the actual import opening", async () => {
+  const h = await managedMcpHarness();
+  const nativeFile = path.join(h.directory, "import.jsonl");
+  await writeFile(
+    nativeFile,
+    JSON.stringify({
+      type: "session",
+      id: randomUUID(),
+      cwd: h.directory,
+      timestamp: new Date().toISOString(),
+    }) + "\n",
+  );
+  const agent = await h.client.importAgent({
+    providerId: "omp",
+    providerHandleId: nativeFile,
+    cwd: h.directory,
+  });
+  const opening = [...h.bindings.values()][0]!;
+  expect(opening.agentId).toBe(agent.id);
+  expect(opening.reason).toBe("import");
+  expect(h.consumed).toContain(opening.opening.id);
+  const stored = await h.daemon.daemon.agentStorage.get(agent.id);
+  expect(stored?.config?.managedMcpServers?.memory?.ownerPluginId).toBe("a-owner");
+  expect(JSON.stringify(stored)).not.toContain(h.credentials.get(opening.opening.id)!);
+}, 60_000);
+
+test("reloaded hook ownership fences queued host tool dispatch without requiring service revocation", async () => {
+  const h = await managedMcpHarness();
+  await h.client.createAgent({
+    provider: "omp",
+    cwd: h.directory,
+    model: "anthropic/claude-haiku-5-5",
+    title: "managed",
+  });
+  const runtime = h.runtime.latestSession();
+  const tool = runtime.hostToolSetRequests
+    .flat()
+    .find((entry) => entry.name.startsWith("mcp_memory__probe"))!;
+  expect(tool.name).toMatch(/^mcp_memory__probe/);
+  await h.client.reloadPlugin("a-owner");
+  const consumed = h.consumed.length;
+  const result = runtime.nextHostToolResult();
+  runtime.emit({
+    type: "host_tool_call",
+    id: "late-call",
+    toolCallId: "late-tool",
+    toolName: tool.name,
+    arguments: {},
+  });
+  expect(await result).toMatchObject({ isError: true, result: { isError: true } });
+  expect(h.consumed).toHaveLength(consumed);
 }, 60_000);
