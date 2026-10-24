@@ -9,7 +9,7 @@ function createPagingClient(archivedAgentNumber?: number) {
     id: `${n}${n}${n}${n}${n}${n}${n}${n}-0000-4000-8000-000000000000`,
     provider: "codex",
     title: `agent ${n}`,
-    status: "closed",
+    status: n === archivedAgentNumber ? "idle" : "closed",
     archivedAt: n === archivedAgentNumber ? "2026-10-10T00:00:00.000Z" : null,
     cwd: "/tmp/project",
     createdAt: `2026-10-0${n}T00:00:00.000Z`,
@@ -150,6 +150,7 @@ describe("runLsCommand", () => {
     if (!archivedColumn || typeof archivedColumn.field !== "function") {
       throw new Error("Expected the ARCHIVED column to have a display accessor");
     }
+    expect(result.data[1]!.status).toBe("idle");
     expect(archivedColumn.field(result.data[1]!)).toBe("yes");
     expect(archivedColumn.field(result.data[0]!)).toBe("-");
   });
