@@ -12,9 +12,14 @@ import { selectAgentTimelineState, useSessionStore } from "@/stores/session-stor
 import { useCreateFlowStore, type PendingCreateAttempt } from "@/stores/create-flow-store";
 import type { StreamItem } from "@/types/stream";
 import {
+  planTimelineOlderFetch,
+  type ProjectedTimelineForwardFetchPlan,
+} from "./timeline-sync-plan";
+import {
   createTimelineReplica,
   createViewedTimelineOwner,
   type TimelineReplicaStorage,
+  type TimelineResponsePayload,
   type ViewedTimelineOwner,
 } from "./viewed-timeline-sync";
 
@@ -672,10 +677,106 @@ function createSqliteCache() {
   return {
     cache,
     database,
+    reopen: () => new ReplicaCache(storage, { clearLegacyCache: async () => {} }),
     holdRead: (operation: () => Promise<void>) => {
       beforeRead = operation;
     },
   };
+}
+
+// One source row per projected entry, with a prompt at seq 5, 15, ..., 75.
+function longTimelineEntry(seq: number): TimelineResponsePayload["entries"][number] {
+  return {
+    provider: "codex",
+    item:
+      seq % 10 === 5
+        ? { type: "user_message", text: `Prompt ${seq}`, messageId: `prompt-${seq}` }
+        : {
+            type: "tool_call",
+            callId: `call-${seq}`,
+            name: "Read",
+            status: "completed",
+            detail: { type: "read", filePath: `/tmp/${seq}.ts` },
+            error: null,
+          },
+    timestamp: new Date(Date.UTC(2026, 7, 26, 10, 0, seq)).toISOString(),
+    seqStart: seq,
+    seqEnd: seq,
+    sourceSeqRanges: [{ startSeq: seq, endSeq: seq }],
+    collapsed: [],
+  };
+}
+
+function longTimelinePage(input: {
+  direction: "tail" | "before" | "after";
+  startSeq: number;
+  endSeq: number;
+  hasOlder: boolean;
+}): TimelineResponsePayload {
+  const entries = [];
+  for (let seq = input.startSeq; seq <= input.endSeq; seq += 1)
+    entries.push(longTimelineEntry(seq));
+  return {
+    requestId: `${input.direction}-${input.startSeq}`,
+    agentId: AGENT_ID,
+    agent: null,
+    direction: input.direction,
+    projection: "projected",
+    reset: false,
+    epoch: "epoch-1",
+    window: { minSeq: 1, maxSeq: 80, nextSeq: 81 },
+    startCursor: entries.length > 0 ? { epoch: "epoch-1", seq: input.startSeq } : null,
+    endCursor: entries.length > 0 ? { epoch: "epoch-1", seq: input.endSeq } : null,
+    entries,
+    error: null,
+    hasNewer: false,
+    hasOlder: input.hasOlder,
+    staleCursor: false,
+    gap: false,
+  };
+}
+
+function ownerWithRequests(storage: TimelineReplicaStorage) {
+  const requests: ProjectedTimelineForwardFetchPlan[] = [];
+  const replica = createTimelineReplica({
+    serverId: SERVER_ID,
+    storage,
+    prepareAgent: async () => undefined,
+  });
+  const owner = createViewedTimelineOwner({
+    serverId: SERVER_ID,
+    replica,
+    replaceDemandedAgentIds: () => undefined,
+    drainQueuedAgentMessage: () => undefined,
+    ports: {
+      observe: () => ({ ready: Promise.resolve(), release: async () => undefined }),
+      readCursor: () => undefined,
+      fetchPage: async (_agentId, request) => {
+        requests.push(request);
+        return { hasNewer: false, endCursor: null };
+      },
+      fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),
+      reportError: () => undefined,
+      schedule: () => () => undefined,
+    },
+  });
+  return { owner, requests };
+}
+
+function timelineSeqs(): number[] {
+  const timeline = selectAgentTimelineState(
+    useSessionStore.getState().sessions[SERVER_ID],
+    AGENT_ID,
+  );
+  return timeline.status === "cold"
+    ? []
+    : timeline.items.map((timelineItem) => timelineItem.timelineCursor?.seq ?? -1);
+}
+
+function seqRange(first: number, last: number): number[] {
+  const seqs = [];
+  for (let seq = first; seq <= last; seq += 1) seqs.push(seq);
+  return seqs;
 }
 
 describe("SQLite baseline restoration", () => {
@@ -745,6 +846,69 @@ describe("SQLite baseline restoration", () => {
     } finally {
       release();
       await preparation;
+      database.close();
+    }
+  });
+
+  it("reopens a trimmed long chat with forward catch-up and pages older history from its boundary", async () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    const { cache, database, reopen } = createSqliteCache();
+    cache.setHosts([SERVER_ID]);
+    const first = ownerWithRequests(cache);
+    first.owner.applyTimelineResponse(
+      longTimelinePage({ direction: "tail", startSeq: 41, endSeq: 80, hasOlder: true }),
+    );
+    first.owner.applyTimelineResponse(
+      longTimelinePage({ direction: "before", startSeq: 1, endSeq: 40, hasOlder: false }),
+    );
+    expect(timelineSeqs()).toHaveLength(80);
+    first.owner.dispose();
+    await cache.flush();
+
+    useSessionStore.getState().clearSession(SERVER_ID);
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    const restoredCache = reopen();
+    restoredCache.setHosts([SERVER_ID]);
+    const second = ownerWithRequests(restoredCache);
+    try {
+      second.owner.setConnected(true);
+      second.owner.replaceVisibleAgentIds("test", [AGENT_ID]);
+
+      await expect.poll(() => second.requests).toHaveLength(1);
+      expect(second.requests[0]).toMatchObject({
+        direction: "after",
+        cursor: { epoch: "epoch-1", seq: 80 },
+      });
+      // The newest 50 start at seq 31; the kept window begins at the prompt anchored at 35.
+      expect(timelineSeqs()).toEqual(seqRange(35, 80));
+
+      second.owner.applyTimelineResponse(
+        longTimelinePage({ direction: "after", startSeq: 81, endSeq: 80, hasOlder: true }),
+      );
+      const synced = selectAgentTimelineState(
+        useSessionStore.getState().sessions[SERVER_ID],
+        AGENT_ID,
+      );
+      expect(synced).toMatchObject({
+        status: "synced",
+        range: { epoch: "epoch-1", startSeq: 35, endSeq: 80 },
+        older: "available",
+      });
+      if (synced.status !== "synced" || !synced.range) throw new Error("timeline not synced");
+      expect(
+        planTimelineOlderFetch({ epoch: synced.range.epoch, seq: synced.range.startSeq }),
+      ).toMatchObject({ direction: "before", cursor: { epoch: "epoch-1", seq: 35 } });
+
+      // The daemon answers `before 35` with every entry anchored at or below 34.
+      second.owner.applyTimelineResponse(
+        longTimelinePage({ direction: "before", startSeq: 1, endSeq: 34, hasOlder: false }),
+      );
+      expect(timelineSeqs()).toEqual(seqRange(1, 80));
+      expect(
+        selectAgentTimelineState(useSessionStore.getState().sessions[SERVER_ID], AGENT_ID),
+      ).toMatchObject({ range: { startSeq: 1, endSeq: 80 }, older: "none" });
+    } finally {
+      second.owner.dispose();
       database.close();
     }
   });
