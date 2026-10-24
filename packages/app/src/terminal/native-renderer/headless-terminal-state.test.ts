@@ -19,6 +19,20 @@ function expectedBenchmarkLine(index: number): string {
 }
 
 describe("native headless terminal state", () => {
+  test("counts emoji as two cells only for daemons with Unicode 11 widths", async () => {
+    // "\r\x1b[3C" targets the "b" when the emoji takes two cells.
+    const emoji = String.fromCodePoint(0x1f4be);
+    const current = createNativeHeadlessTerminal({ rows: 5, cols: COLS, unicode11Widths: true });
+    const legacy = createNativeHeadlessTerminal({ rows: 5, cols: COLS });
+
+    await current.write(`${emoji}ab\r\x1b[3Cx`);
+    await legacy.write(`${emoji}ab\r\x1b[3Cx`);
+
+    const chars = (row: TerminalCellRow | undefined) => row?.slice(0, 4).map((cell) => cell.char);
+    expect(chars(current.getState().grid[0])).toEqual([emoji, " ", "a", "x"]);
+    expect(chars(legacy.getState().grid[0])).toEqual([emoji, "a", "b", "x"]);
+  });
+
   test("exposes application cursor key mode from headless xterm", async () => {
     const terminal = createNativeHeadlessTerminal({ rows: 5, cols: COLS });
 

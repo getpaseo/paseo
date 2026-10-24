@@ -568,6 +568,30 @@ describe("createTerminal", () => {
     expect(state.grid[0][1].char).toBe("");
   });
 
+  it("counts emoji as two cells so cursor-positioned redraws land in place", async () => {
+    // TUIs such as Claude Code redraw only changed cells, at columns they compute
+    // with emoji as two cells. Here "\r\x1b[3C" targets the "b". With Unicode 6
+    // widths the emoji took one cell, so the "x" landed after the "b".
+    const emoji = String.fromCodePoint(0x1f4be);
+    const session = trackSession(
+      await createTerminal({
+        workspaceId: "ws-test",
+        cwd: realpathSync(tmpdir()),
+        cols: 80,
+        rows: 10,
+        command: process.execPath,
+        args: [
+          "-e",
+          `process.stdout.write(${JSON.stringify(`${emoji}ab\r\x1b[3Cx`)}); setInterval(() => {}, 100000);`,
+        ],
+      }),
+    );
+
+    const state = await waitForState(session, (current) => rowHasChar(current.grid[0], "x"));
+
+    expect(state.grid[0].slice(0, 4).map((cell) => cell.char)).toEqual([emoji, "", "a", "x"]);
+  });
+
   it("captures exit diagnostics from the terminal buffer", async () => {
     const session = trackSession(
       await createTerminal({

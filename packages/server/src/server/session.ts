@@ -1120,6 +1120,8 @@ export class Session {
       listTerminalWorkspaceRefs: () => this.listActiveWorkspaceRefs(),
       clientSupportsWrapReflow: (source) =>
         this.supportsForSource(CLIENT_CAPS.terminalReflowableSnapshot, source),
+      clientSupportsUnicode11Widths: (source) =>
+        this.supportsForSource(CLIENT_CAPS.terminalUnicode11Widths, source),
       getClientBufferedAmount: (source) => this.getTransportBufferedAmount(source),
     });
     this.agentDirectory = new AgentDirectory({
