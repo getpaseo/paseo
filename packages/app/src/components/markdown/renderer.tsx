@@ -14,7 +14,7 @@ import { MarkdownBlockStack } from "./block-stack";
 import { WEB_RENDERERS } from "./renderers";
 import { createMarkdownStyles } from "./styles";
 import { PENDING_MARKDOWN_IMAGE } from "./source";
-import { splitStreamingMarkdown } from "./streaming";
+import { createStreamingMarkdownSplitter } from "./streaming";
 import { useMarkdownSource, type MarkdownImageContext } from "./images";
 
 import { MermaidFence, MermaidStreamingContext, splitMermaidFences } from "./fence/mermaid";
@@ -40,10 +40,8 @@ export const MarkdownRenderer = memo(function MarkdownRenderer(props: MarkdownRe
   const streaming = !isWeb && !!props.streaming;
   // Only completed lines affect block closure. Do not run mdast on every reveal frame.
   const completeLines = streaming ? props.text.slice(0, props.text.lastIndexOf("\n") + 1) : "";
-  const boundary = useMemo(
-    () => splitStreamingMarkdown(completeLines, true).head.length,
-    [completeLines],
-  );
+  const [splitStreaming] = useState(createStreamingMarkdownSplitter);
+  const boundary = useMemo(() => splitStreaming(completeLines), [completeLines, splitStreaming]);
   if (!streaming || boundary === 0) return <MarkdownPart {...props} />;
   return (
     <MarkdownBlockStack>
