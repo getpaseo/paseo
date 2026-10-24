@@ -162,6 +162,19 @@ REACT_NATIVE_PACKAGER_HOSTNAME=localhost \
 
 This is the Android counterpart of the iOS local-simulator flow in [development.md](development.md): on iOS the simulator shares the Mac's loopback so `localhost:<port>` works directly; on Android you need `10.0.2.2` or `adb reverse`.
 
+## Monospace fonts
+
+Keep the bundled Roboto Mono assets in Android builds, including all four React Native style
+variants and their license. Some vendor firmware resolves `Typeface.MONOSPACE` and named monospace
+aliases to proportional fonts even when the system font configuration lists Droid Sans Mono.
+React Native loads the bundled `assets/fonts/monospace*.ttf` files before resolving system aliases,
+so host code blocks and plugin text share the same font without runtime loading or network access.
+Font provenance and licensing live in `packages/app/assets/fonts/roboto-mono/README.md`.
+
+When validating a font change, compare both `iiiiiiii` and `WWWWWWWW` on the affected physical
+device, including bold and italic text. Verify the visible command and output alongside measured
+widths; a valid family name alone does not prove monospace rendering.
+
 ## Inverted timeline selection
 
 Android focus and selection visibility requests must not reposition inverted timelines. The
