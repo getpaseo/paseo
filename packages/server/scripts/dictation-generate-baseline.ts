@@ -33,9 +33,9 @@ async function main(): Promise<void> {
 
   const apiKey = requireEnv("OPENAI_API_KEY");
   const transcriptionModel = process.env.STT_MODEL ?? "gpt-4o-transcribe";
-  const prompt =
-    process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT ??
-    "Transcribe only what the speaker says. Do not add words. Preserve punctuation and casing. If the audio is silence or non-speech noise, return an empty transcript.";
+  // Mirrors the daemon: no built-in prompt, only an explicit override. Whisper
+  // treats `prompt` as preceding transcript, so a default would bias the baseline.
+  const prompt = process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT?.trim() || undefined;
 
   const openai = new OpenAI({ apiKey });
 
@@ -43,7 +43,7 @@ async function main(): Promise<void> {
     file: await import("node:fs").then((fs) => fs.createReadStream(audioPath)),
     language: "en",
     model: transcriptionModel,
-    prompt,
+    ...(prompt ? { prompt } : {}),
     response_format: "json",
     // Aim for determinism.
     temperature: 0,
