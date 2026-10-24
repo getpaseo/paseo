@@ -77,6 +77,12 @@ export interface ProviderConnectRequest {
 export interface ProviderConnection {
   readonly version: number;
   readonly capabilities: readonly string[];
+  /**
+   * Settles when the connection is gone: resolves after a clean close, rejects with the
+   * failure otherwise. Optional so in-process providers can omit it; hosts use it to drop
+   * the connection instead of caching a dead one.
+   */
+  readonly closed?: Promise<void>;
   send(input: ProviderInput): Promise<void>;
   onEvent(listener: (event: ProviderEvent) => void): () => void;
   close(): Promise<void>;
