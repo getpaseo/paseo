@@ -30,7 +30,7 @@ interface WorkspaceStructureSession {
   workspaces: Iterable<WorkspaceDescriptor>;
 }
 
-export type WorkspaceSort = "created" | "lastPrompt";
+export type WorkspaceSort = "manual" | "created" | "lastPrompt";
 
 interface WorkspaceSortItem {
   workspaceName: string;
