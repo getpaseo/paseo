@@ -444,7 +444,7 @@ class EnvProbeAgentClient extends TestAgentClient {
 }
 
 class TestAgentSession implements AgentSession {
-  readonly provider = "codex" as const;
+  readonly provider: AgentProvider = "codex";
   readonly capabilities = TEST_CAPABILITIES;
   readonly id = randomUUID();
   private runtimeModel: string | null = null;
@@ -530,6 +530,25 @@ class TestAgentSession implements AgentSession {
   }
 
   async close(): Promise<void> {}
+}
+
+class InheritedResumeTestClient extends TestAgentClient {
+  constructor() {
+    super("my-codex");
+  }
+
+  override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+    return new (class extends TestAgentSession {
+      override readonly provider = "my-codex";
+    })(config);
+  }
+
+  override async resumeSession(
+    _handle: AgentPersistenceHandle,
+    config?: Partial<AgentSessionConfig>,
+  ): Promise<AgentSession> {
+    return this.createSession({ provider: this.provider, cwd: config?.cwd ?? process.cwd() });
+  }
 }
 
 class ResumeTrackingTestAgentClient extends TestAgentClient {
@@ -2908,6 +2927,207 @@ test("createAgent passes persistSession to provider create options", async () =>
   expect(client.lastCreateOptions).toEqual({ persistSession: false });
 
   rmSync(workdir, { recursive: true, force: true });
+});
+
+test.each([
+  {
+    name: "stock launch",
+    env: undefined,
+    providerOptions: undefined,
+    hookEnv: false,
+    expected: "codex",
+  },
+  {
+    name: "per-agent environment",
+    env: { CODEX_HOME: "/custom/home" },
+    providerOptions: undefined,
+    hookEnv: false,
+    expected: undefined,
+  },
+  {
+    name: "per-agent options",
+    env: undefined,
+    providerOptions: { profile: "work" },
+    hookEnv: false,
+    expected: undefined,
+  },
+  {
+    name: "plugin launch environment",
+    env: undefined,
+    providerOptions: undefined,
+    hookEnv: true,
+    expected: undefined,
+  },
+])(
+  "binds inherited resume eligibility to $name",
+  async ({ env, providerOptions, hookEnv, expected }) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-resume-provenance-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const manager = new AgentManager({
+      clients: { "my-codex": new InheritedResumeTestClient() },
+      providerDefinitions: {
+        "my-codex": {
+          enabled: true,
+          derivedFromProviderId: "codex",
+          defaultResumeProvider: "codex",
+        },
+      },
+      registry: storage,
+      logger,
+      pluginLifecycle: {
+        emit: () => {},
+        before: async (name, request) =>
+          name === "agent.session_open" && hookEnv
+            ? { ...request, env: { CODEX_HOME: "/plugin/home" } }
+            : request,
+      },
+    });
+    try {
+      const agent = await manager.createAgent(
+        { provider: "my-codex", cwd: workdir, providerOptions },
+        undefined,
+        { workspaceId: undefined, env },
+      );
+      expect(toAgentPayload(agent).defaultResumeProvider).toBe(expected);
+      expect((await storage.get(agent.id))?.defaultResumeProvider).toBe(expected);
+    } finally {
+      for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each([
+  { original: "codex", expected: "codex" },
+  { original: undefined, expected: undefined },
+  { original: "claude", expected: undefined },
+])(
+  "restores only matching inherited launch provenance ($original)",
+  async ({ original, expected }) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-resume-restore-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const agentId = "00000000-0000-4000-8000-0000000000e1";
+    const handle = { provider: "my-codex", sessionId: "native-session" };
+    await storage.upsert({
+      id: agentId,
+      provider: "my-codex",
+      cwd: workdir,
+      labels: {},
+      lastStatus: "closed",
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+      persistence: handle,
+      defaultResumeProvider: original,
+    });
+    await storage.flush();
+    const restartedStorage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new InheritedResumeTestClient();
+    const manager = new AgentManager({
+      clients: { "my-codex": client },
+      providerDefinitions: {
+        "my-codex": {
+          enabled: true,
+          derivedFromProviderId: "codex",
+          defaultResumeProvider: "codex",
+        },
+      },
+      registry: restartedStorage,
+      logger,
+    });
+    try {
+      const restored = await manager.resumeAgentFromPersistence(handle, { cwd: workdir }, agentId);
+      expect(toAgentPayload(restored).defaultResumeProvider).toBe(expected);
+      const reloaded = await manager.reloadAgentSession(agentId);
+      expect(toAgentPayload(reloaded).defaultResumeProvider).toBe(expected);
+      manager.updateProviderRegistry({
+        clients: { "my-codex": client },
+        providerDefinitions: { "my-codex": { enabled: true, derivedFromProviderId: "codex" } },
+      });
+      const customized = await manager.reloadAgentSession(agentId);
+      expect(toAgentPayload(customized).defaultResumeProvider).toBeUndefined();
+      expect((await restartedStorage.get(agentId))?.defaultResumeProvider).toBeUndefined();
+    } finally {
+      for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each([
+  { initial: "codex", replacement: undefined, expected: "codex" },
+  { initial: undefined, replacement: "codex", expected: undefined },
+])(
+  "captures launch eligibility with its client before availability awaits ($initial)",
+  async ({ initial, replacement, expected }) => {
+    const started = deferred<void>();
+    const available = deferred<boolean>();
+    class HeldAvailabilityClient extends InheritedResumeTestClient {
+      override async isAvailable() {
+        started.resolve();
+        return available.promise;
+      }
+    }
+    const workdir = mkdtempSync(join(tmpdir(), "agent-resume-race-"));
+    const manager = new AgentManager({
+      clients: { "my-codex": new HeldAvailabilityClient() },
+      providerDefinitions: { "my-codex": { enabled: true, defaultResumeProvider: initial } },
+      logger,
+    });
+    try {
+      const creating = manager.createAgent({ provider: "my-codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      await started.promise;
+      manager.updateProviderRegistry({
+        clients: { "my-codex": new InheritedResumeTestClient() },
+        providerDefinitions: { "my-codex": { enabled: true, defaultResumeProvider: replacement } },
+      });
+      available.resolve(true);
+      expect(toAgentPayload(await creating).defaultResumeProvider).toBe(expected);
+    } finally {
+      for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test("does not certify imported custom sessions or promote them on reload", async () => {
+  class ImportClient extends InheritedResumeTestClient {
+    async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
+      return {
+        session: await this.createSession(context.config),
+        config: context.storedConfig,
+        persistence: { provider: this.provider, sessionId: input.providerHandleId },
+        timeline: [],
+      };
+    }
+  }
+  const workdir = mkdtempSync(join(tmpdir(), "agent-resume-import-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { "my-codex": new ImportClient() },
+    providerDefinitions: {
+      "my-codex": { enabled: true, derivedFromProviderId: "codex", defaultResumeProvider: "codex" },
+    },
+    registry: storage,
+    logger,
+  });
+  try {
+    const imported = await manager.importProviderSession({
+      provider: "my-codex",
+      providerHandleId: "external-native-session",
+      cwd: workdir,
+      workspaceId: "workspace",
+    });
+    expect(toAgentPayload(imported).defaultResumeProvider).toBeUndefined();
+    expect(
+      toAgentPayload(await manager.reloadAgentSession(imported.id)).defaultResumeProvider,
+    ).toBeUndefined();
+    expect((await storage.get(imported.id))?.defaultResumeProvider).toBeUndefined();
+  } finally {
+    for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("createAgent persists workspaceId on the stored record and emits it in the snapshot", async () => {
