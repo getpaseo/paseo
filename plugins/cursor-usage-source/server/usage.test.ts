@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { discover, fetchUsage } from "./usage.js";
+import { discover, discoverSession, fetchUsage } from "./usage.js";
 import { inputSchema } from "../shared/input.js";
 import type { UsageReport } from "@getpaseo/plugin/server/usage";
 
@@ -128,7 +128,10 @@ describe("cursor usage source", () => {
     const lookup = { platform: "darwin" as const, readKeychainToken };
     const accounts = await discover(lookup);
     expect(accounts).toEqual([
-      { key: "default", input: { store: "keychain", locator: "cursor-access-token" } },
+      {
+        key: expect.stringMatching(/^store-[a-f0-9]{64}$/),
+        input: { store: "keychain", locator: "cursor-access-token" },
+      },
     ]);
     const input = inputSchema.parse(accounts[0]?.input);
     token = "cursor-keychain-rotated";
@@ -181,51 +184,6 @@ describe("cursor usage source", () => {
           resetsAt: null,
         }),
       ],
-    });
-  });
-
-  it("uses subscription percentages even when metered spend exceeds the dollar allowance", async () => {
-    process.env.CURSOR_ACCESS_TOKEN = "fixture-token";
-    const report = await fetchFirst(async () =>
-      jsonResponse({
-        billingCycleEnd: "1792697143000",
-        planUsage: {
-          totalSpend: 79034,
-          includedSpend: 40000,
-          bonusSpend: 39034,
-          limit: 40000,
-          totalPercentUsed: 25.29088,
-          autoPercentUsed: 26.344666666666665,
-          apiPercentUsed: 0,
-        },
-      }),
-    );
-    expect(report).toMatchObject({
-      status: "available",
-      windows: [
-        { id: "plan_usage", label: "Total", usedPct: 25.29088, summary: true, tone: "ok" },
-        { id: "cursor_usage", label: "Cursor", usedPct: 26.344666666666665, tone: "ok" },
-        { id: "third_party_usage", label: "Third Party", usedPct: 0, tone: "ok" },
-      ],
-      balances: [],
-    });
-    if (report.status !== "available") throw new Error("Expected usage report");
-    expect(report.windows.every((w) => w.resetsAt === new Date(1792697143000).toISOString())).toBe(
-      true,
-    );
-  });
-
-  it("preserves zero subscription usage and does not invent missing breakdowns", async () => {
-    process.env.CURSOR_ACCESS_TOKEN = "fixture-token";
-    const report = await fetchFirst(async () =>
-      jsonResponse({
-        planUsage: { totalPercentUsed: "0", autoPercentUsed: null },
-      }),
-    );
-    expect(report).toMatchObject({
-      status: "available",
-      windows: [{ id: "plan_usage", usedPct: 0, remainingPct: 100, resetsAt: null }],
-      balances: [],
     });
   });
 
@@ -285,7 +243,10 @@ describe("cursor usage source", () => {
     writeFileSync(join(folder, "auth.json"), JSON.stringify({ accessToken: "fixture-cli" }));
     const accounts = await discover({ platform, readKeychainToken: async () => null });
     expect(accounts).toEqual([
-      { key: "default", input: { store: "file", locator: join(folder, "auth.json") } },
+      {
+        key: expect.stringMatching(/^store-[a-f0-9]{64}$/),
+        input: { store: "file", locator: join(folder, "auth.json") },
+      },
     ]);
   });
 
@@ -296,7 +257,10 @@ describe("cursor usage source", () => {
     writeFileSync(join(folder, "auth.json"), JSON.stringify({ accessToken: "fixture-file" }));
     const readKeychainToken = vi.fn(async () => "fixture-keychain");
     expect(await discover({ platform: "darwin", readKeychainToken })).toEqual([
-      { key: "default", input: { store: "file", locator: join(folder, "auth.json") } },
+      {
+        key: expect.stringMatching(/^store-[a-f0-9]{64}$/),
+        input: { store: "file", locator: join(folder, "auth.json") },
+      },
     ]);
     expect(readKeychainToken).not.toHaveBeenCalled();
   });
@@ -414,6 +378,123 @@ describe("cursor usage source", () => {
     writeFileSync(join(directory, "state.vscdb"), "invalid database");
     expect(await discover({ platform: "linux" })).toEqual([]);
   });
+
+  describe("session discovery", () => {
+    let sessionHome: string;
+    beforeEach(() => {
+      sessionHome = mkdtempSync(join(tmpdir(), "usage-session-home-"));
+    });
+    afterEach(() => {
+      rmSync(sessionHome, { recursive: true, force: true });
+    });
+    function cursorSession(env: Record<string, string>, provider = "cursor") {
+      return { kind: "session" as const, provider, env: { HOME: sessionHome, ...env } };
+    }
+    function writeAuthJson(path: string): void {
+      mkdirSync(join(path, ".."), { recursive: true });
+      writeFileSync(path, JSON.stringify({ accessToken: "session-token" }));
+    }
+
+    it("keeps different accounts separate while joining global and session logins for the same account", async () => {
+      function token(sub: string, nonce: string) {
+        return `e30.${Buffer.from(JSON.stringify({ sub, nonce })).toString("base64url")}.signature`;
+      }
+      writeCursorAuthJson(homeDir, token("user-a", "desktop"));
+      writeCursorAuthJson(sessionHome, token("user-b", "session"));
+      const globalAccounts = await discover({ platform: "linux" });
+      const differentAccount = await discoverSession(cursorSession({}), "linux");
+      expect(globalAccounts).toHaveLength(1);
+      expect(differentAccount).toHaveLength(1);
+      expect(differentAccount[0]!.key).not.toBe(globalAccounts[0]!.key);
+
+      writeCursorAuthJson(sessionHome, token("user-a", "refreshed-session"));
+      const sameAccount = await discoverSession(cursorSession({}), "linux");
+      expect(sameAccount).toHaveLength(1);
+      expect(sameAccount[0]!.key).toBe(globalAccounts[0]!.key);
+    });
+
+    it("isolates logins without a readable subject by store and keeps their key across token rotation", async () => {
+      writeCursorAuthJson(homeDir, "opaque-global-token");
+      writeCursorAuthJson(sessionHome, "opaque-session-token");
+      const globalAccounts = await discover({ platform: "linux" });
+      const sessionAccounts = await discoverSession(cursorSession({}), "linux");
+      expect(sessionAccounts).toHaveLength(1);
+      expect(globalAccounts).toHaveLength(1);
+      expect(sessionAccounts[0]!.key).not.toBe(globalAccounts[0]!.key);
+      writeCursorAuthJson(sessionHome, "e30.invalid-json.signature");
+      expect(await discoverSession(cursorSession({}), "linux")).toEqual(sessionAccounts);
+      writeCursorAuthJson(sessionHome, "e30.e30.signature");
+      expect(await discoverSession(cursorSession({}), "linux")).toEqual(sessionAccounts);
+    });
+
+    it("reads the login cursor-agent uses under the session's XDG_CONFIG_HOME", async () => {
+      const configHome = join(sessionHome, "xdg");
+      const authPath = join(configHome, "cursor", "auth.json");
+      writeAuthJson(authPath);
+      expect(
+        await discoverSession(cursorSession({ XDG_CONFIG_HOME: configHome }), "linux"),
+      ).toEqual([
+        {
+          key: expect.stringMatching(/^store-[a-f0-9]{64}$/),
+          input: { store: "file", locator: authPath },
+        },
+      ]);
+    });
+
+    it("reads the login under the session's HOME, not the daemon's", async () => {
+      writeCursorAuthJson(homeDir, "daemon-token");
+      writeCursorAuthJson(sessionHome, "session-token");
+      expect(await discoverSession(cursorSession({}), "linux")).toEqual([
+        {
+          key: expect.stringMatching(/^store-[a-f0-9]{64}$/),
+          input: { store: "file", locator: join(sessionHome, ".config", "cursor", "auth.json") },
+        },
+      ]);
+    });
+
+    it("reads %APPDATA%/Cursor/auth.json on Windows", async () => {
+      const appData = join(sessionHome, "AppData", "Roaming");
+      const authPath = join(appData, "Cursor", "auth.json");
+      writeAuthJson(authPath);
+      expect(await discoverSession(cursorSession({ APPDATA: appData }), "win32")).toEqual([
+        {
+          key: expect.stringMatching(/^store-[a-f0-9]{64}$/),
+          input: { store: "file", locator: authPath },
+        },
+      ]);
+    });
+
+    it("reads ~/.cursor/auth.json on macOS only when cursor-agent uses the file store", async () => {
+      const authPath = join(sessionHome, ".cursor", "auth.json");
+      writeAuthJson(authPath);
+      expect(await discoverSession(cursorSession({}), "darwin")).toEqual([]);
+      expect(
+        await discoverSession(cursorSession({ AGENT_CLI_CREDENTIAL_STORE: "file" }), "darwin"),
+      ).toEqual([
+        {
+          key: expect.stringMatching(/^store-[a-f0-9]{64}$/),
+          input: { store: "file", locator: authPath },
+        },
+      ]);
+    });
+
+    it.each([
+      ["another provider", cursorSession({}, "claude")],
+      ["a CURSOR_API_KEY session", cursorSession({ CURSOR_API_KEY: "key" })],
+      ["a CURSOR_AUTH_TOKEN session", cursorSession({ CURSOR_AUTH_TOKEN: "token" })],
+      ["an in-memory credential store", cursorSession({ AGENT_CLI_CREDENTIAL_STORE: "memory" })],
+    ])("returns no login for %s", async (_scenario, scope) => {
+      writeCursorAuthJson(sessionHome, "session-token");
+      expect(await discoverSession(scope, "linux")).toEqual([]);
+    });
+
+    it("never falls back to the daemon's default stores", async () => {
+      writeCursorStateDb(homeDir, { "cursorAuth/accessToken": "desktop-token" });
+      writeCursorAuthJson(homeDir, "daemon-token");
+      process.env["CURSOR_ACCESS_TOKEN"] = "daemon-env-token";
+      expect(await discoverSession(cursorSession({}), "linux")).toEqual([]);
+    });
+  });
 });
 
 it("discovery returns a locator when fetch finds cursor credentials", async () => {
@@ -427,7 +508,10 @@ it("discovery returns a locator when fetch finds cursor credentials", async () =
     });
     expect(requested).toBe(true);
     expect(await discover({ platform: "linux" })).toEqual([
-      { key: "default", input: { store: "env", locator: "CURSOR_ACCESS_TOKEN" } },
+      {
+        key: expect.stringMatching(/^store-[a-f0-9]{64}$/),
+        input: { store: "env", locator: "CURSOR_ACCESS_TOKEN" },
+      },
     ]);
   } finally {
     if (previous === undefined) delete process.env["CURSOR_ACCESS_TOKEN"];

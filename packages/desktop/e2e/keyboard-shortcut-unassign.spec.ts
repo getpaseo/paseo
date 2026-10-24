@@ -1,3 +1,5 @@
+import { clickNewChat, gotoWorkspace } from "../../app/e2e/support/helpers/launcher";
+import { clickSettingsBackToWorkspace } from "../../app/e2e/support/helpers/settings";
 import type { Page } from "@playwright/test";
 import { test, expect } from "../../app/e2e/support/fixtures";
 import { gotoAppShell, openSettings } from "../../app/e2e/support/helpers/app";
@@ -211,5 +213,85 @@ for (const { platform, keys, label, firstCombo, secondCombo } of [
     await eraseLastCapturedCombo(page, firstCombo, secondCombo);
     await finishInterruptCapture(page, "Cancel");
     await expectInterruptShortcut(page, label);
+  });
+}
+
+async function rebindTabNumbers(page: Page) {
+  await captureShortcut(page, "Jump to tab", "workspace-tab-jump-index", "Control+1");
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+}
+
+async function expectTabNumberRange(page: Page) {
+  const row = page.getByText("Jump to tab", { exact: true }).locator("..");
+  await expect(row.getByText("⌃1-9", { exact: true })).toBeVisible();
+}
+
+async function openTwoDraftTabs(page: Page, workspaceId: string) {
+  await installDesktopBridge(page);
+  await gotoWorkspace(page, workspaceId);
+  await clickNewChat(page);
+  await clickNewChat(page);
+  await expect(
+    page.locator('[data-testid^="workspace-tab-draft_"]').filter({ visible: true }),
+  ).toHaveCount(2);
+  await openSettings(page);
+  await openSettingsSection(page, "shortcuts");
+}
+
+async function expectTabNumberNavigation(page: Page) {
+  const tabs = page.locator('[data-testid^="workspace-tab-draft_"]').filter({ visible: true });
+  await expect(page.getByTestId("settings-sidebar")).not.toBeVisible();
+  await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Control+1");
+  await expect(tabs.nth(0)).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Control+2");
+  await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
+}
+
+test("rebinding Jump to tab preserves the number group after reload", async ({
+  page,
+  withWorkspace,
+}) => {
+  const workspace = await withWorkspace({ prefix: "tab-number-rebind-" });
+  await openTwoDraftTabs(page, workspace.workspaceId);
+  await rebindTabNumbers(page);
+  await clickSettingsBackToWorkspace(page);
+  await expectTabNumberNavigation(page);
+  await page.reload();
+  await expectTabNumberNavigation(page);
+  await openSettings(page);
+  await openSettingsSection(page, "shortcuts");
+  await expectTabNumberRange(page);
+});
+
+async function expectNumberRequiredBeforeSaving(page: Page, label: string) {
+  const row = page.getByText(label, { exact: true }).locator("..");
+  await expect(row.getByRole("button", { name: "Done", exact: true })).toBeDisabled();
+  await expect(row.getByText("End with a number from 1 to 9.", { exact: true })).toBeVisible();
+}
+
+async function completeNumberShortcut(page: Page, label: string) {
+  const row = page.getByText(label, { exact: true }).locator("..");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.press("Control+2");
+  await expect(row.getByRole("button", { name: "Done", exact: true })).toBeEnabled();
+  await row.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(row.getByText("⌃K", { exact: true })).toBeVisible();
+  await expect(row.getByText("⌃1-9", { exact: true })).toBeVisible();
+}
+
+for (const { label, action } of [
+  { label: "Jump to tab", action: "workspace-tab-jump-index" },
+  { label: "Jump to workspace", action: "workspace-jump-index" },
+]) {
+  test(`${label} requires a final number before a recorded shortcut can be saved`, async ({
+    page,
+  }) => {
+    await openShortcutsSettings(page);
+    await captureShortcut(page, label, action, "Control+K");
+    await expectNumberRequiredBeforeSaving(page, label);
+    await page.keyboard.press("Control+0");
+    await expectNumberRequiredBeforeSaving(page, label);
+    await completeNumberShortcut(page, label);
   });
 }

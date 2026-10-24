@@ -34,9 +34,11 @@ export async function refreshReport({
     agentId === undefined
       ? { reportIds: [reportId], forceRefresh: true }
       : { agentId, forceRefresh: true };
-  const { reports: refreshed } = await client.listUsageReports(options);
   const queryKey =
     agentId === undefined ? usageReportsQueryKey(serverId) : agentUsageQueryKey(serverId, agentId);
+  // An agent list still loading belongs to the login from before this refresh.
+  if (agentId !== undefined) await queryClient.cancelQueries({ queryKey, exact: true });
+  const { reports: refreshed } = await client.listUsageReports(options);
   queryClient.setQueryData<UsageReportEntry[]>(queryKey, (reports) => {
     if (agentId !== undefined) return settleReports(reports, refreshed);
     const report = refreshed.find((entry) => entry.id === reportId) ?? null;

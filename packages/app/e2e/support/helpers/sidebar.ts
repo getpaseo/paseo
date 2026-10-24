@@ -1,5 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import { getServerId } from "./server-id";
+import { projectEquivalenceViewKey } from "./project-view-key";
 
 interface ContextMenuAnchor {
   x: number;
@@ -249,4 +250,58 @@ export async function expectMobileAgentSidebarVisible(page: Page): Promise<void>
 
 export async function expectMobileAgentSidebarHidden(page: Page): Promise<void> {
   await expect(page.getByTestId("sidebar-sessions")).not.toBeInViewport({ timeout: 5_000 });
+}
+
+/** Drag from the left edge: the only way to open the list while fullscreen hides the header. */
+export async function swipeOpenMobileAgentSidebar(page: Page): Promise<void> {
+  const viewport = page.viewportSize();
+  if (!viewport) throw new Error("viewport size is required");
+  const y = Math.round(viewport.height / 2);
+  await page.mouse.move(8, y);
+  await page.mouse.down();
+  await page.mouse.move(40, y, { steps: 4 });
+  await page.mouse.move(Math.round(viewport.width * 0.7), y, { steps: 12 });
+  await page.mouse.up();
+}
+
+/** Drag from the right edge to open the compact Explorer over the agent. */
+export async function swipeOpenMobileExplorer(page: Page): Promise<void> {
+  const viewport = page.viewportSize();
+  if (!viewport) throw new Error("viewport size is required");
+  const y = Math.round(viewport.height / 2);
+  await page.mouse.move(viewport.width - 8, y);
+  await page.mouse.down();
+  await page.mouse.move(viewport.width - 40, y, { steps: 4 });
+  await page.mouse.move(Math.round(viewport.width * 0.3), y, { steps: 12 });
+  await page.mouse.up();
+}
+
+export async function closeMobileExplorer(page: Page): Promise<void> {
+  const closeButton = page
+    .getByTestId("workspace-explorer-sidebar")
+    .getByRole("button", { name: "Close Explorer sidebar", exact: true });
+  await expect(closeButton).toBeInViewport({ ratio: 1, timeout: 5_000 });
+  await closeButton.click();
+}
+
+export async function expectMobileExplorerVisible(page: Page): Promise<void> {
+  await expect(page.getByTestId("workspace-explorer-sidebar")).toBeInViewport({
+    ratio: 1,
+    timeout: 5_000,
+  });
+}
+
+export async function expectMobileExplorerHidden(page: Page): Promise<void> {
+  await expect(page.getByTestId("workspace-explorer-sidebar")).not.toBeInViewport({
+    timeout: 5_000,
+  });
+}
+
+export async function revealSidebarProjectWorkspaces(
+  page: Page,
+  projectKey: string,
+): Promise<void> {
+  await page
+    .getByTestId(`sidebar-project-show-more-${projectEquivalenceViewKey(projectKey)}`)
+    .click();
 }

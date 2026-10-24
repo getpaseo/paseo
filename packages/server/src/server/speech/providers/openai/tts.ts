@@ -8,8 +8,8 @@ export type { SpeechStreamResult };
 export interface TTSConfig {
   apiKey: string;
   baseUrl?: string;
-  model?: "tts-1" | "tts-1-hd";
-  voice?: "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer";
+  model?: "tts-1" | "tts-1-hd" | (string & {});
+  voice?: "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer" | (string & {});
   responseFormat?: "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm";
 }
 
@@ -67,7 +67,9 @@ export class OpenAITTS implements TextToSpeechProvider {
           | "pcm",
       });
 
-      const audioStream = response.body as unknown as Readable;
+      // Prefetched speech can wait through playback of an earlier sentence. Consume
+      // the response here so fetch cannot collect it and cancel its unread body.
+      const audioStream = Readable.from([Buffer.from(await response.arrayBuffer())]);
 
       const duration = Date.now() - startTime;
       this.logger.debug({ duration }, "Speech synthesis stream ready");

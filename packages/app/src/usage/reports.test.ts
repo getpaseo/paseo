@@ -41,7 +41,7 @@ test.each([
     agentId: "agent",
     key: agentKey,
     refreshed: [team, codex],
-    expected: [team, codex],
+    expected: [codex, team],
     request: { agentId: "agent", forceRefresh: true },
     invalidateHost: true,
   },
@@ -95,6 +95,36 @@ test.each([
     }
   },
 );
+
+test("an agent refresh drops the agent list still loading under the previous login", async () => {
+  const queryClient = new QueryClient();
+  let finishOlder: () => void = () => {};
+  const older = queryClient
+    .fetchQuery({
+      queryKey: agentKey,
+      queryFn: ({ signal }) =>
+        new Promise<UsageReportEntry[]>((resolve) => {
+          void signal;
+          finishOlder = () => resolve([personal]);
+        }),
+    })
+    .catch(() => undefined);
+  const client = new UsageClient(Promise.resolve({ requestId: "refresh", reports: [team, codex] }));
+  try {
+    await refreshReport({
+      client,
+      queryClient,
+      serverId: "host",
+      reportId: personal.id,
+      agentId: "agent",
+    });
+    finishOlder();
+    await older;
+    expect(queryClient.getQueryData(agentKey)).toEqual([team, codex]);
+  } finally {
+    queryClient.clear();
+  }
+});
 
 test("a failed refresh preserves the previous reports and propagates the error", async () => {
   const queryClient = new QueryClient();

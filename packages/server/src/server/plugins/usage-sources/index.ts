@@ -33,6 +33,7 @@ interface KnownReport {
 interface LoginIdentity {
   id: string;
   label?: string;
+  generation: number;
 }
 
 export interface AgentUsageLookup {
@@ -61,7 +62,10 @@ export class UsageSourceRegistry {
   private defaults = new Map<string, KnownReport>();
   private readonly byAgent = new Map<string, AgentReports>();
   private readonly cache = new Map<string, { at: number; entry: UsageReportEntry }>();
+  private readonly successful = new Map<string, NonNullable<UsageReportEntry["lastSuccessful"]>>();
   private readonly pending = new Map<string, Promise<UsageReportEntry>>();
+  private readonly identities = new Map<string, LoginIdentity>();
+  private discoveries = 0;
 
   constructor(
     private readonly now: () => number = Date.now,
@@ -86,7 +90,11 @@ export class UsageSourceRegistry {
     }
     for (const key of this.known.keys()) if (key.startsWith(`${id}:`)) this.known.delete(key);
     for (const key of this.cache.keys()) if (key.startsWith(`${id}:`)) this.cache.delete(key);
+    for (const key of this.successful.keys())
+      if (key.startsWith(`${id}:`)) this.successful.delete(key);
     for (const key of this.pending.keys()) if (key.startsWith(`${id}:`)) this.pending.delete(key);
+    for (const key of this.identities.keys())
+      if (key.startsWith(`${id}:`)) this.identities.delete(key);
   }
 
   async listReports(options: ListUsageReportsOptions = {}): Promise<UsageReportEntry[]> {
@@ -101,8 +109,9 @@ export class UsageSourceRegistry {
     } else if (options.reportIds !== undefined) {
       ids = options.reportIds;
     } else {
-      this.defaults = await this.discover({ kind: "global" });
-      this.rebindLogins(this.defaults);
+      const generation = ++this.discoveries;
+      this.defaults = await this.discover({ kind: "global" }, this.defaults);
+      this.rebindLogins(this.defaults, generation);
       this.mergeKnown();
       ids = [...this.known.keys()];
     }
@@ -130,13 +139,18 @@ export class UsageSourceRegistry {
   private async discoverAgent(agentId: string, forceRefresh = false): Promise<string[]> {
     if (!this.agents.hasAgent(agentId)) throw new Error(`Unknown agent: ${agentId}`);
     const session = this.agents.usageSession(agentId);
-    if (!session) return [];
+    if (!session) {
+      this.byAgent.delete(agentId);
+      this.mergeKnown();
+      return [];
+    }
     const previous = this.byAgent.get(agentId);
     const sameScope =
       previous?.sessionKey === session.sessionKey &&
       previous.provider === session.provider &&
       previous.model === session.model;
     if (sameScope && !forceRefresh) return [...previous.reports.keys()];
+    const generation = ++this.discoveries;
     const reports = await this.discover({
       kind: "session",
       provider: session.provider,
@@ -151,24 +165,27 @@ export class UsageSourceRegistry {
       model: session.model,
       reports,
     });
-    this.rebindLogins(reports);
+    this.rebindLogins(reports, generation);
     this.mergeKnown();
     return [...reports.keys()];
   }
 
-  private rebindLogins(fresh: Map<string, KnownReport>): void {
-    // A shared login store changes identity for every scope when its account switches.
-    const identities = new Map<string, LoginIdentity>();
+  private rebindLogins(fresh: Map<string, KnownReport>, generation: number): void {
+    // The newest-started discovery owns a shared login, even if an older one finishes later.
     for (const [id, report] of fresh) {
-      for (const login of report.logins)
-        identities.set(`${report.source.id}:${loginKey(login)}`, { id, label: report.label });
+      for (const login of report.logins) {
+        const key = `${report.source.id}:${loginKey(login)}`;
+        if ((this.identities.get(key)?.generation ?? 0) <= generation)
+          this.identities.set(key, { id, label: report.label, generation });
+      }
     }
     for (const reports of [this.defaults, ...[...this.byAgent.values()].map((a) => a.reports)]) {
-      if (reports === fresh) continue;
       const rebound = new Map<string, KnownReport>();
       for (const [id, report] of reports) {
         for (const login of report.logins) {
-          const identity = identities.get(`${report.source.id}:${loginKey(login)}`);
+          const owner = this.identities.get(`${report.source.id}:${loginKey(login)}`);
+          const identity =
+            reports === fresh && (owner?.generation ?? 0) <= generation ? undefined : owner;
           const currentId = identity?.id ?? id;
           const current = rebound.get(currentId);
           if (current) current.logins.push(login);
@@ -204,9 +221,26 @@ export class UsageSourceRegistry {
         }
       }
     }
+    // Fetch freshness expires independently of successful snapshots. Retain only live identities.
+    const active = this.activeCacheKeys();
+    for (const key of this.successful.keys()) if (!active.has(key)) this.successful.delete(key);
+    for (const key of this.cache.keys()) if (!active.has(key)) this.cache.delete(key);
   }
 
-  private async discover(scope: UsageScope): Promise<Map<string, KnownReport>> {
+  private activeCacheKeys(): Set<string> {
+    return new Set(
+      [
+        this.known,
+        this.defaults,
+        ...[...this.byAgent.values()].map((agent) => agent.reports),
+      ].flatMap((reports) => [...reports].map(([id, report]) => cacheIdentity(id, report))),
+    );
+  }
+
+  private async discover(
+    scope: UsageScope,
+    previous: ReadonlyMap<string, KnownReport> = new Map(),
+  ): Promise<Map<string, KnownReport>> {
     const discovered = await Promise.all(
       [...this.sources.values()].map(async (source) => {
         const reports = new Map<string, KnownReport>();
@@ -233,6 +267,11 @@ export class UsageSourceRegistry {
           }
         } catch (error) {
           this.logger.warn({ sourceId: source.id, err: error }, "Usage source discovery failed");
+          // A failed store read does not confirm removal. Session discovery has no previous
+          // mapping because a resumed agent may use a different launch environment.
+          for (const [id, report] of previous) {
+            if (report.source === source) reports.set(id, report);
+          }
         }
         return reports;
       }),
@@ -271,25 +310,42 @@ export class UsageSourceRegistry {
 
   private fetchId(id: string, known: KnownReport, forceRefresh = false): Promise<UsageReportEntry> {
     // Account identity groups cards; the ordered login set identifies a fetch result.
-    const cacheKey = `${id}:${createHash("sha256")
-      .update(JSON.stringify([known.label, known.logins.map(loginKey)]))
-      .digest("hex")}`;
+    const cacheKey = cacheIdentity(id, known);
     const cached = this.cache.get(cacheKey);
     if (!forceRefresh && cached && this.now() - cached.at < this.ttlMs)
       return Promise.resolve(cached.entry);
     const pending = this.pending.get(cacheKey);
     if (pending) return pending;
     const request = (async () => {
+      const fetchedAt = new Date(this.now()).toISOString();
+      const outcome = await this.fetchWithFallback(known);
+      const completedAt = new Date(this.now()).toISOString();
       const entry: UsageReportEntry = {
         id,
         sourceId: known.source.id,
         sourceLabel: known.source.label,
         icon: known.source.icon,
         account: { label: known.label },
-        fetchedAt: new Date(this.now()).toISOString(),
-        ...(await this.fetchWithFallback(known)),
+        fetchedAt,
+        ...outcome,
       };
-      if (this.sources.get(known.source.id) === known.source) this.writeCache(cacheKey, entry);
+      if (entry.report.status === "available") {
+        entry.successfulAt = completedAt;
+      } else {
+        entry.lastSuccessful = this.successful.get(cacheKey);
+      }
+      if (
+        this.sources.get(known.source.id) === known.source &&
+        this.activeCacheKeys().has(cacheKey)
+      ) {
+        if (entry.report.status === "available") {
+          this.successful.set(cacheKey, {
+            fetchedAt: completedAt,
+            report: entry.report,
+          });
+        }
+        this.writeCache(cacheKey, entry);
+      }
       return entry;
     })();
     this.pending.set(cacheKey, request);
@@ -381,4 +437,10 @@ function loginKey(login: Login): string {
       ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)))
       : value,
   );
+}
+
+function cacheIdentity(id: string, known: KnownReport): string {
+  return `${id}:${createHash("sha256")
+    .update(JSON.stringify([known.label, known.logins.map(loginKey)]))
+    .digest("hex")}`;
 }

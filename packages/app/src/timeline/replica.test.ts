@@ -77,6 +77,90 @@ function applySynced(agentId: string, seq: number): void {
 afterEach(() => useSessionStore.getState().clearSession(SERVER_ID));
 
 describe("viewed timeline persistence", () => {
+  it("keeps one complete reply when live chunks arrive before a cached chat catches up", async () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    const partial = "Paragraph 1. Paragraph 2.";
+    const complete = `${partial} Paragraph 3. END`;
+    const owner = createOwner({
+      readTimeline: async () => ({
+        agentId: AGENT_ID,
+        items: [{ ...item("reply-1", partial, 4), messageId: "reply-1" }],
+        range: { epoch: "epoch-1", startSeq: 1, endSeq: 4 },
+        hasOlder: false,
+      }),
+      commitTimeline: () => undefined,
+    });
+    try {
+      owner.replaceVisibleAgentIds("test", [AGENT_ID]);
+      await expect
+        .poll(
+          () =>
+            selectAgentTimelineState(useSessionStore.getState().sessions[SERVER_ID], AGENT_ID)
+              .status,
+        )
+        .toBe("painted");
+      owner.enqueueStreamEvent(AGENT_ID, {
+        event: {
+          type: "timeline",
+          provider: "codex",
+          item: { type: "assistant_message", text: " Paragraph 3.", messageId: "reply-1" },
+        } as AgentStreamEventPayload,
+        seq: 5,
+        epoch: "epoch-1",
+        timestamp: new Date("2026-08-26T10:00:01.000Z"),
+      });
+      owner.flushStreamAgent(AGENT_ID);
+      owner.applyTimelineResponse({
+        requestId: "resume",
+        agentId: AGENT_ID,
+        agent: null,
+        direction: "after",
+        projection: "projected",
+        reset: false,
+        epoch: "epoch-1",
+        window: { minSeq: 1, maxSeq: 6, nextSeq: 7 },
+        startCursor: { epoch: "epoch-1", seq: 5 },
+        endCursor: { epoch: "epoch-1", seq: 6 },
+        entries: [
+          {
+            provider: "codex",
+            item: { type: "assistant_message", text: complete, messageId: "reply-1" },
+            timestamp: "2026-08-26T10:00:02.000Z",
+            seqStart: 2,
+            seqEnd: 6,
+            sourceSeqRanges: [{ startSeq: 2, endSeq: 6 }],
+            collapsed: ["assistant_merge"],
+          },
+        ],
+        error: null,
+        hasNewer: false,
+        hasOlder: false,
+        staleCursor: false,
+        gap: false,
+      });
+      const replyTexts = () => {
+        const session = useSessionStore.getState().sessions[SERVER_ID];
+        return [
+          ...(session?.agentStreamTail.get(AGENT_ID) ?? []),
+          ...(session?.agentStreamHead.get(AGENT_ID) ?? []),
+        ]
+          .filter((entry) => entry.kind === "assistant_message")
+          .map((entry) => entry.text);
+      };
+      expect.soft(replyTexts()).toEqual([complete]);
+      owner.enqueueStreamEvent(AGENT_ID, {
+        event: { type: "turn_completed", provider: "codex" } as AgentStreamEventPayload,
+        seq: 7,
+        epoch: "epoch-1",
+        timestamp: new Date("2026-08-26T10:00:03.000Z"),
+      });
+      owner.flushStreamAgent(AGENT_ID);
+      expect.soft(replyTexts()).toEqual([complete]);
+    } finally {
+      owner.dispose();
+    }
+  });
+
   it("shares an in-flight cache preparation with the viewed owner", async () => {
     useSessionStore.getState().initializeSession(SERVER_ID, null);
     let release!: (value: CachedTimeline) => void;

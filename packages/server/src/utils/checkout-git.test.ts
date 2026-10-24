@@ -14,7 +14,7 @@ import { join } from "path";
 import { win32 } from "node:path";
 import { tmpdir } from "os";
 import pino from "pino";
-import { base64EncryptedWireByteLength } from "@getpaseo/relay";
+import { base64EncryptedWireByteLength, maxSecuredPlaintextByteLength } from "@getpaseo/relay";
 import {
   __resetCheckoutShortstatCacheForTests,
   __resetPullRequestStatusCacheForTests,
@@ -67,7 +67,7 @@ interface LegacyCreateWorktreeTestOptions {
   cwd: string;
   baseBranch: string;
   worktreeSlug: string;
-  runSetup?: boolean;
+
   paseoHome?: string;
 }
 
@@ -86,7 +86,7 @@ function createLegacyWorktreeForTest(
       baseBranch: options.baseBranch,
       branchName: options.branchName,
     },
-    runSetup: options.runSetup ?? true,
+
     paseoHome: options.paseoHome,
   });
 }
@@ -523,6 +523,7 @@ describe("checkout git utilities", () => {
 
   it("honors commit signing configuration", async () => {
     execFileSync("git", ["config", "commit.gpgsign", "true"], { cwd: repoDir });
+    execFileSync("git", ["config", "gpg.format", "openpgp"], { cwd: repoDir });
     execFileSync("git", ["config", "gpg.program", process.execPath], { cwd: repoDir });
     writeFileSync(join(repoDir, "file.txt"), "signed\n");
 
@@ -538,8 +539,127 @@ describe("checkout git utilities", () => {
     });
 
     expect(diff.structured).toContainEqual(
-      expect.objectContaining({ path: "renamed.txt", oldPath: "file.txt" }),
+      expect.objectContaining({
+        path: "renamed.txt",
+        oldPath: "file.txt",
+        additions: 0,
+        deletions: 0,
+        hunks: [],
+      }),
     );
+  });
+
+  it.each([
+    { mode: "uncommitted", oldPath: "to-rename.txt", path: "renamed.txt" },
+    { mode: "base", oldPath: "to-rename.txt", path: "renamed.txt" },
+    { mode: "uncommitted", oldPath: "old [file].txt", path: "new [file].txt" },
+  ] as const)(
+    "shows only the edited line of a rename ($mode, $path)",
+    async ({ mode, oldPath, path }) => {
+      const original = Array.from({ length: 12 }, (_, index) => `line ${index + 1}`);
+      commitFile(repoDir, oldPath, original.join("\n") + "\n", "file to rename");
+      if (mode === "base") {
+        execFileSync("git", ["checkout", "-b", "feature/rename"], { cwd: repoDir });
+      }
+      execFileSync("git", ["mv", oldPath, path], { cwd: repoDir });
+      const edited = [...original];
+      edited[5] = "edited line 6";
+      writeFileSync(join(repoDir, path), edited.join("\n") + "\n");
+      execFileSync("git", ["add", path], { cwd: repoDir });
+
+      expect(
+        execFileSync("git", ["diff", "--name-status", "HEAD"], { cwd: repoDir }).toString(),
+      ).toMatch(/R\d+\t/);
+      if (mode === "base") {
+        execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "rename and edit"], {
+          cwd: repoDir,
+        });
+      }
+
+      const diff = await getCheckoutDiff(repoDir, {
+        mode,
+        ...(mode === "base" ? { baseRef: "main" } : {}),
+        includeStructured: true,
+      });
+
+      expect(diff.structured).toEqual([
+        expect.objectContaining({
+          path,
+          oldPath,
+          isNew: false,
+          isDeleted: false,
+          additions: 1,
+          deletions: 1,
+          status: "ok",
+        }),
+      ]);
+      expect(diff.diff).toContain(`rename from ${oldPath}`);
+      expect(diff.diff).toContain(`rename to ${path}`);
+      expect(diff.diff).toContain("-line 6\n+edited line 6");
+      expect(diff.diff).not.toContain("new file mode");
+    },
+  );
+
+  it("includes a changed copy source only once in the diff", async () => {
+    const original =
+      Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n") + "\n";
+    commitFile(repoDir, "source.txt", original, "copy source");
+    execFileSync("git", ["config", "diff.renames", "copies"], { cwd: repoDir });
+    writeFileSync(join(repoDir, "copy.txt"), original);
+    writeFileSync(join(repoDir, "source.txt"), original.replace("line 6", "edited line 6"));
+    execFileSync("git", ["add", "copy.txt", "source.txt"], { cwd: repoDir });
+    expect(
+      execFileSync("git", ["diff", "--name-status", "HEAD"], { cwd: repoDir }).toString(),
+    ).toContain("C100\tsource.txt\tcopy.txt");
+
+    const diff = await getCheckoutDiff(repoDir, {
+      mode: "uncommitted",
+      includeStructured: true,
+    });
+    expect(diff.structured).toEqual([
+      expect.objectContaining({
+        path: "copy.txt",
+        oldPath: "source.txt",
+        additions: 0,
+        deletions: 0,
+      }),
+      expect.objectContaining({ path: "source.txt", additions: 1, deletions: 1 }),
+    ]);
+    expect(diff.diff.match(/^diff --git a\/source.txt b\/source.txt$/gm)).toHaveLength(1);
+    expect(diff.diff).toContain("copy from source.txt");
+    expect(diff.diff).toContain("copy to copy.txt");
+  });
+
+  it("keeps a small copy patch when its edited source exceeds the patch limit", async () => {
+    const original =
+      Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n") + "\n";
+    commitFile(repoDir, "source.txt", original, "copy source");
+    execFileSync("git", ["config", "diff.renames", "copies"], { cwd: repoDir });
+    writeFileSync(join(repoDir, "copy.txt"), original);
+    writeFileSync(join(repoDir, "source.txt"), original + "added source line\n".repeat(80_000));
+    execFileSync("git", ["add", "copy.txt", "source.txt"], { cwd: repoDir });
+    expect(
+      execFileSync("git", ["diff", "--name-status", "HEAD"], { cwd: repoDir }).toString(),
+    ).toContain("C100\tsource.txt\tcopy.txt");
+
+    const diff = await getCheckoutDiff(repoDir, {
+      mode: "uncommitted",
+      includeStructured: true,
+    });
+    expect(diff.structured).toEqual([
+      expect.objectContaining({
+        path: "copy.txt",
+        oldPath: "source.txt",
+        additions: 0,
+        deletions: 0,
+        hunks: [],
+        status: "ok",
+      }),
+      expect.objectContaining({ path: "source.txt", status: "too_large", hunks: [] }),
+    ]);
+    expect(diff.diff).toContain("copy from source.txt");
+    expect(diff.diff).toContain("copy to copy.txt");
+    expect(diff.diff).not.toContain("+added source line");
   });
 
   it("reads the origin URL once when collecting facts for an origin-tracking branch", async () => {
@@ -1278,6 +1398,92 @@ const x = 1;
     expect(diff.structured).toEqual([]);
   });
 
+  it.each([
+    { contents: "hello\n", expectedFiles: [], patch: "" },
+    {
+      contents: "restored\n",
+      expectedFiles: [
+        { path: "file.txt", isNew: false, isDeleted: false, additions: 1, deletions: 1 },
+      ],
+      patch: "-hello\n+restored\n",
+    },
+  ])(
+    "compares restored untracked base files against disk: $contents",
+    async ({ contents, expectedFiles, patch }) => {
+      execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+      execFileSync("git", ["rm", "file.txt"], { cwd: repoDir });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "delete"], {
+        cwd: repoDir,
+      });
+      writeFileSync(join(repoDir, "file.txt"), contents);
+      const indexPath = execFileSync("git", ["rev-parse", "--git-path", "index"], {
+        cwd: repoDir,
+        encoding: "utf8",
+      }).trim();
+      const beforeIndex = readFileSync(join(repoDir, indexPath));
+      const beforeStatus = execFileSync("git", ["status", "--porcelain=v1", "-z"], {
+        cwd: repoDir,
+      });
+      const result = await getCheckoutDiff(repoDir, {
+        mode: "all",
+        baseRef: "main",
+        includeStructured: true,
+      });
+      expect(
+        result.structured?.map(({ path, isNew, isDeleted, additions, deletions }) => ({
+          path,
+          isNew,
+          isDeleted,
+          additions,
+          deletions,
+        })),
+      ).toEqual(expectedFiles);
+      expect(result.diff).toContain(patch);
+      expect(result.diff.length === 0).toBe(expectedFiles.length === 0);
+      expect(readFileSync(join(repoDir, indexPath))).toEqual(beforeIndex);
+      expect(execFileSync("git", ["status", "--porcelain=v1", "-z"], { cwd: repoDir })).toEqual(
+        beforeStatus,
+      );
+      expect(readFileSync(join(repoDir, "file.txt"), "utf8")).toBe(contents);
+      expect((await getCheckoutDiff(repoDir, { mode: "base", baseRef: "main" })).diff).toContain(
+        "deleted file mode",
+      );
+      expect((await getCheckoutDiff(repoDir, { mode: "uncommitted" })).diff).toContain(
+        "new file mode",
+      );
+    },
+  );
+
+  it("compares all changes as one net patch including untracked files", async () => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    writeFileSync(join(repoDir, "file.txt"), "committed\n");
+    execFileSync("git", ["add", "."], { cwd: repoDir });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "feature"], {
+      cwd: repoDir,
+    });
+    writeFileSync(join(repoDir, "file.txt"), "working\n");
+    writeFileSync(join(repoDir, "new.txt"), "untracked\n");
+    const compare = { mode: "all", baseRef: "main", includeStructured: true } as const;
+    const before = await getCheckoutDiff(repoDir, compare);
+    expect(before.structured?.map((file) => file.path)).toEqual(["file.txt", "new.txt"]);
+    expect(before.diff).toContain("-hello\n+working\n");
+    expect(before.diff).not.toContain("committed");
+    expect(before.diff).toContain("+untracked");
+    const committed = await getCheckoutDiff(repoDir, { ...compare, mode: "base" });
+    expect(committed.diff).toContain("-hello\n+committed\n");
+    const uncommitted = await getCheckoutDiff(repoDir, { ...compare, mode: "uncommitted" });
+    expect(uncommitted.diff).toContain("-committed\n+working\n");
+    execFileSync("git", ["add", "."], { cwd: repoDir });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "working"], {
+      cwd: repoDir,
+    });
+    expect((await getCheckoutDiff(repoDir, compare)).diff).toBe(before.diff);
+    writeFileSync(join(repoDir, "file.txt"), "hello\n");
+    expect((await getCheckoutDiff(repoDir, compare)).structured?.map((file) => file.path)).toEqual([
+      "new.txt",
+    ]);
+  });
+
   it("falls back to the local base branch when origin is absent", async () => {
     execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
     writeFileSync(join(repoDir, "local-feature.txt"), "feature\n");
@@ -1383,19 +1589,15 @@ const x = 1;
   it("warms shortstat cache in the background without blocking listing callers", async () => {
     expect(getCachedCheckoutShortstat(repoDir)).toBeUndefined();
 
-    warmCheckoutShortstatInBackground(repoDir);
+    const warmed = new Promise<void>((resolve) => {
+      warmCheckoutShortstatInBackground(repoDir, undefined, resolve);
+    });
+    // The warm hands off to git and returns; listing callers see no value yet.
+    expect(getCachedCheckoutShortstat(repoDir)).toBeUndefined();
 
+    await warmed;
     // A repo with no origin/main computes to null, but null should still be cached.
-    for (let attempts = 0; attempts < 20; attempts += 1) {
-      const cached = getCachedCheckoutShortstat(repoDir);
-      if (cached !== undefined) {
-        expect(cached).toBeNull();
-        return;
-      }
-      await sleep(25);
-    }
-
-    throw new Error("shortstat background warm did not populate cache in time");
+    expect(getCachedCheckoutShortstat(repoDir)).toBeNull();
   });
 
   it("commits messages with quotes safely", async () => {
@@ -1452,9 +1654,14 @@ const x = 1;
       CHECKOUT_DIFF_MAX_STRUCTURED_BYTES + frameEnvelopeHeadroomBytes,
     );
 
-    expect(CHECKOUT_DIFF_MAX_STRUCTURED_BYTES).toBe(24_117_208);
+    // The cap is sized for the tighter of the legacy and protected relay framings.
+    expect(CHECKOUT_DIFF_MAX_STRUCTURED_BYTES).toBe(
+      maxSecuredPlaintextByteLength(relayFrameBytes) - frameEnvelopeHeadroomBytes,
+    );
+    expect(CHECKOUT_DIFF_MAX_STRUCTURED_BYTES).toBeLessThanOrEqual(24_117_208);
+    expect(CHECKOUT_DIFF_MAX_STRUCTURED_BYTES).toBeGreaterThan(24_000_000);
     expect(diffWireBytes).toBeLessThan(relayFrameBytes);
-    expect(maximumFrameWireBytes).toBe(relayFrameBytes);
+    expect(maximumFrameWireBytes).toBeLessThanOrEqual(relayFrameBytes);
   });
 
   it("marks tracked generated one-line diffs as too_large by content size", async () => {
@@ -1507,8 +1714,12 @@ const x = 1;
     expect(diff.diff).toContain("# generated.js: diff too large omitted");
     expect(diff.diff).toContain(`-export const value = "old";`);
     expect(diff.diff).toContain(`+export const value = "new";`);
-    expect(commands).toContain("diff --numstat HEAD");
-    expect(commands).toContain("diff HEAD -- :(literal)generated.js :(literal)small.ts");
+    expect(commands).toContain(
+      "diff --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/ -z --numstat HEAD",
+    );
+    expect(commands).toContain(
+      "diff --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/ HEAD -- :(literal)generated.js :(literal)small.ts",
+    );
     expect(metrics.maxConcurrent).toBeLessThanOrEqual(8);
   });
 
@@ -3576,6 +3787,7 @@ const x = 1;
       cwd: repoDir,
     });
     execFileSync("git", ["config", "commit.gpgsign", "true"], { cwd: repoDir });
+    execFileSync("git", ["config", "gpg.format", "openpgp"], { cwd: repoDir });
     execFileSync("git", ["config", "gpg.program", process.execPath], { cwd: repoDir });
 
     await expect(mergeToBase(repoDir, { baseRef: "main", mode: "squash" })).rejects.toThrow(

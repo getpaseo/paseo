@@ -55,18 +55,19 @@ describe("plugin scaffold", () => {
     expect(await readdir(directory)).toContain("paseo-plugin.json");
   });
 
-  it("includes the author overview in the packed npm artifact", async () => {
+  it("includes the author overview and its translations in the packed npm artifact", async () => {
     const parent = await mkdtemp(path.join(tmpdir(), "paseo-plugin-scaffold-"));
     directories.push(parent);
     const directory = path.join(parent, "packed-plugin");
     await scaffoldPluginDirectory(directory);
+    await writeFile(path.join(directory, "OVERVIEW.zh-CN.md"), "插件概览\n");
 
     const { stdout } = await execAsync("npm pack --dry-run --ignore-scripts --json", {
       cwd: directory,
     });
     const [artifact] = JSON.parse(stdout) as { files: { path: string }[] }[];
     expect(artifact.files.map((file) => file.path)).toEqual(
-      expect.arrayContaining(["OVERVIEW.md", "paseo-plugin.json"]),
+      expect.arrayContaining(["OVERVIEW.md", "OVERVIEW.zh-CN.md", "paseo-plugin.json"]),
     );
   });
 
@@ -105,6 +106,7 @@ describe("plugin scaffold", () => {
         files: [
           "paseo-plugin.json",
           "OVERVIEW.md",
+          "OVERVIEW.*.md",
           "index.client.ts",
           "index.client.tsx",
           "index.server.ts",
@@ -196,7 +198,7 @@ export async function inspectConfig(
         path.join(directory, "client", "main.tsx"),
         `import React from "react";
 import { Text } from "react-native";
-import { Icon, Modal, useToast } from "@getpaseo/plugin/client/react-native";
+import { Icon, Modal, useToast } from "@getpaseo/plugin/client/ui";
 import { type PluginAgentPanelProps, type PluginClientContext, type PluginSurfaceProps, useAgent, usePaseo, useWorkspace } from "@getpaseo/plugin/client";
 import { inspect } from "../shared/inspect";
 

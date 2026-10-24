@@ -17,7 +17,15 @@ const server = createServer((request, response) => {
     body += chunk;
   });
   request.on("end", () => {
-    requests.push({ url: request.url, body: JSON.parse(body) });
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      response.writeHead(400);
+      response.end();
+      return;
+    }
+    requests.push({ url: request.url, body: parsed });
     const validation = request.url?.endsWith("/validate") === true;
     response.writeHead(validation ? 200 : 201, { "content-type": "application/json" });
     response.end(
@@ -59,6 +67,11 @@ try {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
   const origin = `http://127.0.0.1:${address.port}`;
+  // A malformed request must not kill the fixture or satisfy a deployment assertion.
+  const malformed = await fetch(`${origin}/api/v1/configurations/validate`, { method: "POST" });
+  assert.equal(malformed.status, 400);
+  assert.equal(requests.length, 0);
+
   const validate = await runLocalPaseo(
     [
       "hub",
