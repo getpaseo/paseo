@@ -68,6 +68,7 @@ export interface TerminalManager {
   registerCwdEnv(options: { cwd: string; env: Record<string, string> }): void;
   validateTerminalActivityToken(terminalId: string, token: string): "valid" | "unknown" | "invalid";
   getTerminal(id: string): TerminalSession | undefined;
+  listTerminals(): TerminalSession[];
   getTerminalState(
     id: string,
     options?: TerminalStateSnapshotOptions,
@@ -388,6 +389,10 @@ export function createTerminalManager(
 
     getTerminal(id: string): TerminalSession | undefined {
       return terminalsById.get(id);
+    },
+
+    listTerminals(): TerminalSession[] {
+      return Array.from(terminalsById.values());
     },
 
     async getTerminalState(

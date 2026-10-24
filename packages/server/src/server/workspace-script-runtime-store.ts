@@ -21,6 +21,10 @@ export class WorkspaceScriptRuntimeStore {
     return entry ? { ...entry } : null;
   }
 
+  list(): ScriptRuntimeEntry[] {
+    return Array.from(this.entries.values(), (entry) => ({ ...entry }));
+  }
+
   set(entry: ScriptRuntimeEntry): void {
     const workspaceKey = this.toWorkspaceKey(entry.workspaceId);
     const entryKey = this.toEntryKey(entry);

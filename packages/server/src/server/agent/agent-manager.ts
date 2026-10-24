@@ -425,6 +425,11 @@ interface ManagedAgentBase {
   >;
   inFlightPermissionResponses: Set<string>;
   pendingReplacement: boolean;
+  /**
+   * Explicit program-reported background work (OMP settle frames). Consumed from
+   * `background_work_changed` stream events; never dispatched to clients.
+   */
+  backgroundWorkPending: boolean;
   persistence: AgentPersistenceHandle | null;
   historyPrimed: boolean;
   lastUserMessageAt: Date | null;
@@ -756,6 +761,7 @@ export class AgentManager {
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
+  private readonly agentRegistrationListeners = new Set<() => void>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
   private readonly reloadedSessionCloses = new WeakMap<AgentSession, Promise<void>>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
@@ -1012,6 +1018,22 @@ export class AgentManager {
     return Array.from(this.agents.values())
       .filter((agent) => options?.includeInternal === true || !agent.internal)
       .map((agent) => Object.assign({}, agent));
+  }
+
+  /**
+   * Creates, resumes, imports and reloads in progress. Their agents are not
+   * in listAgents() until the provider session exists, which can take seconds
+   * while a provider process starts.
+   */
+  pendingAgentRegistrationCount(): number {
+    return this.agentRegistrationTasks.size;
+  }
+
+  subscribeAgentRegistrations(listener: () => void): () => void {
+    this.agentRegistrationListeners.add(listener);
+    return () => {
+      this.agentRegistrationListeners.delete(listener);
+    };
   }
 
   /** Archived internal agents still readable by id; see getRetiredInternalAgent. */
@@ -2003,6 +2025,7 @@ export class AgentManager {
         bufferedPermissionResolutions: new Map(),
         inFlightPermissionResponses: new Set(),
         pendingReplacement: false,
+        backgroundWorkPending: false,
         activeForegroundTurnId: null,
         activeTurnId: null,
         activeTurnStartedAt: null,
@@ -3776,6 +3799,7 @@ export class AgentManager {
       bufferedPermissionResolutions: new Map(),
       inFlightPermissionResponses: new Set(),
       pendingReplacement: false,
+      backgroundWorkPending: false,
       activeForegroundTurnId: null,
       activeTurnId: null,
       activeTurnStartedAt: null,
@@ -3838,6 +3862,7 @@ export class AgentManager {
       bufferedPermissionResolutions: new Map(),
       inFlightPermissionResponses: new Set(),
       pendingReplacement: false,
+      backgroundWorkPending: false,
       foregroundTurnWaiters: new Set(),
       finalizedForegroundTurnIds: new Set(),
       unsubscribeSession: null,
@@ -4433,6 +4458,11 @@ export class AgentManager {
         return undefined;
       case "usage_updated":
         agent.lastUsage = event.usage;
+        this.emitState(agent);
+        return undefined;
+      case "background_work_changed":
+        agent.backgroundWorkPending = event.pending;
+        flags.shouldDispatchEvent = false;
         this.emitState(agent);
         return undefined;
       case "mode_changed":
@@ -5070,11 +5100,23 @@ export class AgentManager {
       () => undefined,
     );
     this.agentRegistrationTasks.add(settled);
+    this.notifyAgentRegistrationListeners();
     void settled.then(() => {
       this.agentRegistrationTasks.delete(settled);
+      this.notifyAgentRegistrationListeners();
       return undefined;
     });
     return result;
+  }
+
+  private notifyAgentRegistrationListeners(): void {
+    for (const listener of Array.from(this.agentRegistrationListeners)) {
+      try {
+        listener();
+      } catch (err) {
+        this.logger.error({ err }, "Agent registration listener failed");
+      }
+    }
   }
 
   /**

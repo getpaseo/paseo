@@ -410,6 +410,7 @@ export type AgentStreamEvent =
   | { type: "turn_started"; provider: AgentProvider; turnId?: string }
   | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage; turnId?: string }
   | { type: "usage_updated"; provider: AgentProvider; usage: AgentUsage; turnId?: string }
+  | { type: "background_work_changed"; provider: AgentProvider; pending: boolean }
   | {
       type: "mode_changed";
       provider: AgentProvider;

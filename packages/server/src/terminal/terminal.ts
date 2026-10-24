@@ -98,6 +98,18 @@ export interface TerminalActivityTransition {
   previous: TerminalActivity | null;
 }
 
+// What the terminal's foreground is, from Paseo's shell integration (OSC 633):
+// `prompt` after A or D, `running` after C (a command started), `unknown`
+// until the first mark, which is forever for shells without the integration
+// and terminals launched straight into a program.
+export type TerminalCommandState = "unknown" | "prompt" | "running";
+
+// What runs in the terminal's foreground, for callers deciding whether the
+// host is mid-work.
+export interface TerminalForeground {
+  commandState: TerminalCommandState;
+}
+
 export interface TerminalSession {
   id: string;
   name: string;
@@ -109,12 +121,14 @@ export interface TerminalSession {
   onCommandFinished(listener: (info: TerminalCommandFinishedInfo) => void): () => void;
   onTitleChange(listener: (title?: string) => void): () => void;
   onActivityChange(listener: (transition: TerminalActivityTransition) => void): () => void;
+  onForegroundChange(listener: (foreground: TerminalForeground) => void): () => void;
   getSize(): { rows: number; cols: number };
   getState(): TerminalState;
   getStateSnapshot(options?: TerminalStateSnapshotOptions): TerminalStateSnapshot;
   getReplayPreamble(): string;
   getTitle(): string | undefined;
   getActivity(): TerminalActivity | null;
+  getForeground(): TerminalForeground;
   setActivity(state: TerminalActivityState): void;
   clearActivityAttention(): boolean;
   setTitle(title: string): void;
@@ -1010,6 +1024,8 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   const inputModeTracker = new TerminalInputModeTracker();
   const activityTracker = new TerminalActivityTracker();
   const activityChangeListeners = new Set<(transition: TerminalActivityTransition) => void>();
+  let foreground: TerminalForeground = { commandState: "unknown" };
+  const foregroundChangeListeners = new Set<(foreground: TerminalForeground) => void>();
   let titleChangeSubscription: { dispose(): void } | null = null;
 
   // Create xterm.js headless terminal
@@ -1159,10 +1175,14 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
 
   const disposeCommandLifecycleSubscription = terminal.parser.registerOscHandler(633, (data) => {
     const commandFinished = parseCommandFinishedOsc(data);
+    if (data === "A" || data.startsWith("A;") || commandFinished) {
+      updateForeground("prompt");
+    } else if (data === "C") {
+      updateForeground("running");
+    }
     if (!commandFinished) {
       return true;
     }
-
     for (const listener of Array.from(commandFinishedListeners)) {
       try {
         listener(commandFinished);
@@ -1172,6 +1192,16 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     }
     return true;
   });
+
+  function updateForeground(commandState: TerminalCommandState): void {
+    if (disposed || killed || commandState === foreground.commandState) {
+      return;
+    }
+    foreground = { commandState };
+    for (const listener of Array.from(foregroundChangeListeners)) {
+      listener(foreground);
+    }
+  }
 
   activityTracker.onChange((snapshot, previousSnapshot) => {
     if (disposed || killed) {
@@ -1248,6 +1278,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     commandFinishedListeners.clear();
     titleChangeListeners.clear();
     activityChangeListeners.clear();
+    foregroundChangeListeners.clear();
   }
 
   function writeOutputToHeadless(data: string): void {
@@ -1518,12 +1549,23 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     };
   }
 
+  function onForegroundChange(listener: (foreground: TerminalForeground) => void): () => void {
+    foregroundChangeListeners.add(listener);
+    return () => {
+      foregroundChangeListeners.delete(listener);
+    };
+  }
+
   function getTitle(): string | undefined {
     return title;
   }
 
   function getActivity(): TerminalActivity | null {
     return toTerminalActivity(activityTracker.getSnapshot());
+  }
+
+  function getForeground(): TerminalForeground {
+    return foreground;
   }
 
   function setActivity(state: TerminalActivityState): void {
@@ -1633,12 +1675,14 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     onCommandFinished,
     onTitleChange,
     onActivityChange,
+    onForegroundChange,
     getSize,
     getState,
     getStateSnapshot,
     getReplayPreamble,
     getTitle,
     getActivity,
+    getForeground,
     setActivity,
     clearActivityAttention,
     setTitle,
