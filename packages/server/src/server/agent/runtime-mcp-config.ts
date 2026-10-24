@@ -1,5 +1,8 @@
 import type { AgentSessionConfig, McpServerConfig } from "./agent-sdk-types.js";
 
+// Reserved ownership survives service deletion when importing provider snapshots.
+export const MANUAL_MCP_SERVER_PREFIX = "paseo_manual_";
+
 const PASEO_MCP_SERVER_NAME = "paseo";
 const PASEO_MCP_PATHNAME = "/mcp/agents";
 

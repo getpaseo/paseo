@@ -1,3 +1,5 @@
+export { PluginMcpServerSchema } from "../mcp.js";
+export type { PluginMcpServer, PluginMcpConfig, PluginMcpRegistration } from "../mcp.js";
 export type {
   UsageSourceRegistration,
   UsageReport,

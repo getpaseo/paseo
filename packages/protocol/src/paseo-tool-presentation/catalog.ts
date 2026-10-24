@@ -310,6 +310,11 @@ export const PASEO_TOOL_CATALOG = {
     detail: { inputOrder: ["provider"] },
   },
   list_profiles: { label: "List profiles" },
+  list_mcp_services: { label: "List MCP services" },
+  create_mcp_service: { label: "Create MCP service" },
+  update_mcp_service: { label: "Update MCP service" },
+  set_mcp_service_enabled: { label: "Set MCP service enabled" },
+  delete_mcp_service: { label: "Delete MCP service" },
   inspect_provider: {
     label: "Inspect provider",
     context: field("provider"),

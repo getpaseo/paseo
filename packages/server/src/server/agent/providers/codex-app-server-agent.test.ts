@@ -1189,6 +1189,45 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("forwards a registered stdio service working directory to native Codex configuration", async () => {
+    const appServer = createFakeCodexAppServer();
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.createSession(
+      createConfig({
+        mcpServers: {
+          plugin_fixture_service: {
+            type: "stdio",
+            command: "node",
+            args: ["/plugins/fixture/mcp.mjs"],
+            cwd: "/plugins/fixture",
+            env: { FIXTURE_MODE: "fictional" },
+          },
+        },
+      }),
+    );
+    try {
+      await session.startTurn("use the fictional service");
+      await appServer.waitForTurnStart();
+      expect(
+        appServer.requests().find((request) => request.method === "thread/start")?.params,
+      ).toMatchObject({
+        config: {
+          mcp_servers: {
+            plugin_fixture_service: {
+              command: "node",
+              args: ["/plugins/fixture/mcp.mjs"],
+              cwd: "/plugins/fixture",
+              env: { FIXTURE_MODE: "fictional" },
+            },
+          },
+        },
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("preapproves only granted tools on the injected Codex MCP server", async () => {
     const session = createSession({
       modeId: undefined,

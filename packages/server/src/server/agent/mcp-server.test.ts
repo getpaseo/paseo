@@ -6915,3 +6915,260 @@ describe("local durable finish subscription MCP wiring", () => {
     }
   });
 });
+
+it("system MCP management discovers services and creates safe host-local definitions", async () => {
+  const { createTestPaseoDaemon } = await import("../test-utils/paseo-daemon.js");
+  const { DaemonClient } = await import("../test-utils/daemon-client.js");
+  const { StreamableHTTPClientTransport } =
+    await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+  const daemon = await createTestPaseoDaemon();
+  const mcp = new Client({ name: "mcp-management-test", version: "1" });
+  const ui = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await ui.connect();
+    await mcp.connect(
+      new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${daemon.port}/mcp/agents`)),
+    );
+    const tools = (await mcp.listTools()).tools;
+    expect(tools.map(({ name }) => name)).toContain("create_mcp_service");
+    const configEvents: unknown[] = [];
+    const observation = ui.observeEvents(["status.daemon_config_changed"]);
+    await observation.ready;
+    const stopObserving = ui.subscribeRawMessages((message) => {
+      if (message.type === "status" && message.payload.status === "daemon_config_changed")
+        configEvents.push(message.payload.config.mcpServers);
+    });
+    await ui.patchDaemonConfig({
+      providers: { codex: { paseoTools: { disabledTools: ["delete_mcp_service"] } } },
+    });
+    const agent = await ui.createAgent({ provider: "codex", cwd: daemon.paseoHome });
+    const restricted = new Client({ name: "restricted-test", version: "1" });
+    try {
+      await restricted.connect(
+        new StreamableHTTPClientTransport(
+          new URL(`http://127.0.0.1:${daemon.port}/mcp/agents?callerAgentId=${agent.id}`),
+        ),
+      );
+      const names = (await restricted.listTools()).tools.map((tool) => tool.name);
+      expect(names).toContain("list_mcp_services");
+      expect(names).not.toContain("delete_mcp_service");
+      expect(
+        (
+          await restricted.callTool({
+            name: "delete_mcp_service",
+            arguments: { id: "missing", confirmed: true },
+          })
+        ).isError,
+      ).toBe(true);
+    } finally {
+      await restricted.close();
+    }
+    const result = await mcp.callTool({
+      name: "create_mcp_service",
+      arguments: {
+        name: "Fictional service",
+        config: {
+          type: "http",
+          url: "https://fictional.invalid/mcp",
+          headers: { authorization: "fictional-secret" },
+        },
+      },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      name: "Fictional service",
+      source: "manual",
+      transport: "http",
+      enabled: true,
+    });
+    expect(JSON.stringify(result)).not.toContain("fictional-secret");
+    expect(JSON.stringify(result)).not.toContain("fictional.invalid");
+    expect(Object.values((await ui.getDaemonConfig()).config.mcpServers ?? {})).toEqual([
+      {
+        name: "Fictional service",
+        enabled: true,
+        config: {
+          type: "http",
+          url: "https://fictional.invalid/mcp",
+          headers: { authorization: "fictional-secret" },
+        },
+      },
+    ]);
+    await vi.waitFor(() =>
+      expect(configEvents).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            [z.object({ id: z.string() }).parse(result.structuredContent).id]:
+              expect.objectContaining({ name: "Fictional service" }),
+          }),
+        ]),
+      ),
+    );
+    stopObserving();
+    await observation.release();
+    const id = z.object({ id: z.string() }).parse(result.structuredContent).id;
+    async function call(name: string, input: Record<string, unknown>) {
+      const response = await mcp.callTool({ name, arguments: input });
+      expect(JSON.stringify(response)).not.toMatch(
+        /fictional-secret|fictional.invalid|never-spawn-this-command/,
+      );
+      return response;
+    }
+    for (const name of [
+      "list_mcp_services",
+      "create_mcp_service",
+      "update_mcp_service",
+      "set_mcp_service_enabled",
+      "delete_mcp_service",
+    ]) {
+      expect(tools.map((tool) => tool.name)).toContain(name);
+    }
+    expect(
+      tools.find((tool) => tool.name === "delete_mcp_service")?.annotations?.destructiveHint,
+    ).toBe(true);
+    expect(tools.find((tool) => tool.name === "list_mcp_services")?.annotations?.readOnlyHint).toBe(
+      true,
+    );
+    expect((await call("update_mcp_service", { id, name: "Renamed service" })).isError).not.toBe(
+      true,
+    );
+    expect((await ui.getDaemonConfig()).config.mcpServers?.[id]?.config).toMatchObject({
+      headers: { authorization: "fictional-secret" },
+    });
+    expect(
+      (
+        await call("update_mcp_service", {
+          id,
+          config: { type: "sse", url: "https://fictional.invalid/sse" },
+        })
+      ).isError,
+    ).not.toBe(true);
+    expect((await ui.getDaemonConfig()).config.mcpServers?.[id]?.config).toEqual({
+      type: "sse",
+      url: "https://fictional.invalid/sse",
+    });
+    expect(
+      (
+        await call("update_mcp_service", {
+          id,
+          config: {
+            type: "stdio",
+            command: "never-spawn-this-command",
+            args: ["fictional-secret"],
+            env: { TOKEN: "fictional-secret" },
+          },
+        })
+      ).isError,
+    ).not.toBe(true);
+    const saved = (await ui.getDaemonConfig()).config.mcpServers?.[id];
+    expect(
+      (await call("set_mcp_service_enabled", { id, enabled: false })).structuredContent,
+    ).toMatchObject({ enabled: false });
+    expect((await ui.getDaemonConfig()).config.mcpServers?.[id]).toEqual({
+      ...saved,
+      enabled: false,
+    });
+    expect(
+      (await call("set_mcp_service_enabled", { id, enabled: true })).structuredContent,
+    ).toMatchObject({ enabled: true });
+    expect((await call("delete_mcp_service", { id, confirmed: false })).isError).toBe(true);
+    expect((await call("delete_mcp_service", { id })).isError).toBe(true);
+    expect((await ui.getDaemonConfig()).config.mcpServers?.[id]).toEqual(saved);
+    expect(
+      (
+        await call("create_mcp_service", {
+          name: " renamed SERVICE ",
+          config: {
+            type: "http",
+            url: "https://fictional.invalid",
+            headers: { authorization: "fictional-secret" },
+          },
+        })
+      ).isError,
+    ).toBe(true);
+    expect(
+      (
+        await call("update_mcp_service", {
+          id,
+          config: { type: "http", url: "invalid-fictional-secret" },
+        })
+      ).isError,
+    ).toBe(true);
+    for (const [name, extras] of [
+      ["update_mcp_service", {}],
+      ["set_mcp_service_enabled", { enabled: false }],
+      ["delete_mcp_service", { confirmed: true }],
+    ] as const) {
+      expect((await call(name, { id: "missing", ...extras })).isError).toBe(true);
+    }
+    const other = await createTestPaseoDaemon();
+    const otherMcp = new Client({ name: "other-host-test", version: "1" });
+    try {
+      await otherMcp.connect(
+        new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${other.port}/mcp/agents`)),
+      );
+      expect(
+        (await otherMcp.callTool({ name: "list_mcp_services", arguments: {} })).structuredContent,
+      ).toEqual({ services: [] });
+      expect(
+        (
+          await otherMcp.callTool({
+            name: "delete_mcp_service",
+            arguments: { id, confirmed: true },
+          })
+        ).isError,
+      ).toBe(true);
+      expect((await ui.getDaemonConfig()).config.mcpServers?.[id]).toEqual(saved);
+    } finally {
+      await otherMcp.close();
+      await other.close();
+    }
+    const pluginPath = join(daemon.paseoHome, "fictional-plugin");
+    await mkdir(pluginPath);
+    await writeFile(
+      join(pluginPath, "paseo-plugin.json"),
+      JSON.stringify({
+        id: "test-service",
+        name: "Test service",
+        requirements: { paseo: ">=0.13.0-beta.1" },
+      }),
+    );
+    await writeFile(
+      join(pluginPath, "index.server.ts"),
+      `export default function(server) { const service = server.registerMcpServer({ id: "remote", label: "Plugin service", config: { type: "http", url: "https://fictional.invalid/mcp", headers: { authorization: "fictional-secret" } } }); return () => service.remove(); }`,
+    );
+    await ui.patchDaemonConfig({ pluginsEnabled: true });
+    await ui.installDirectoryPlugin(pluginPath);
+    const listed = await call("list_mcp_services", {});
+    expect(listed.structuredContent).toMatchObject({
+      services: expect.arrayContaining([
+        {
+          id: "plugin:test-service:remote",
+          name: "Plugin service",
+          pluginId: "test-service",
+          source: "plugin",
+          transport: "http",
+          enabled: true,
+          registered: true,
+        },
+      ]),
+    });
+    for (const [name, extras] of [
+      ["update_mcp_service", {}],
+      ["set_mcp_service_enabled", { enabled: false }],
+      ["delete_mcp_service", { confirmed: true }],
+    ] as const) {
+      expect((await call(name, { id: "plugin:test-service:remote", ...extras })).isError).toBe(
+        true,
+      );
+    }
+    expect(
+      (await call("delete_mcp_service", { id, confirmed: true })).structuredContent,
+    ).toMatchObject({ id, registered: false });
+    expect((await ui.getDaemonConfig()).config.mcpServers).toEqual({});
+  } finally {
+    await mcp.close();
+    await ui.close();
+    await daemon.close();
+  }
+});

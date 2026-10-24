@@ -31,6 +31,7 @@ export interface AgentMetadata {
  */
 export interface McpStdioServerConfig {
   type: "stdio";
+  cwd?: string;
   command: string;
   args?: string[];
   env?: Record<string, string>;

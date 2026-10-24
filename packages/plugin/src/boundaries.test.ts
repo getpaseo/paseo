@@ -92,7 +92,12 @@ function typeErrors(code: string): string[] {
 }
 describe("plugin SDK import boundaries", () => {
   it("publishes process capabilities without their Windows implementation helpers", () => {
-    expect(Object.keys(server).sort()).toEqual(["execCommand", "spawnProcess", "terminateProcess"]);
+    expect(Object.keys(server).sort()).toEqual([
+      "PluginMcpServerSchema",
+      "execCommand",
+      "spawnProcess",
+      "terminateProcess",
+    ]);
   });
 
   it("classifies every published entry", () => {

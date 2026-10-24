@@ -72,7 +72,8 @@ export function PluginCatalogSync({
         }
         if (message.payload.status === "plugin_catalog_changed") {
           const pluginId = message.payload.pluginId;
-          if (typeof pluginId === "string") void refresh(pluginId);
+          if (typeof pluginId === "string")
+            void refresh(message.payload.reason === "mcp" ? undefined : pluginId);
         }
       },
     });

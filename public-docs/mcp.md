@@ -85,6 +85,22 @@ MCP does not expose an agent-detach tool. Detaching is a manual user action in t
 
 ## Tools
 
+### MCP services
+
+These tools manage the connected host's MCP definitions. They do not route to another host or call tools on the managed services. Plugin-owned services are listed but must be configured through their plugin.
+
+| Tool                      | Function                                                                                                                        |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `list_mcp_services`       | List manual and plugin services with stable IDs, names, sources, transports, and enabled/registered state.                      |
+| `create_mcp_service`      | Add a manual service using `name` and `config`, enabled by default.                                                             |
+| `update_mcp_service`      | Update `name` and/or `config` by `id`. Omitted fields are preserved; supplied `config` replaces the full connection definition. |
+| `set_mcp_service_enabled` | Set `enabled` by `id`, retaining the saved definition.                                                                          |
+| `delete_mcp_service`      | Permanently remove a manual service by `id`; requires `confirmed: true` after user confirmation.                                |
+
+`config` uses `type: "stdio"` with `command`, optional `args` and `env`, or `type: "http"` / `"sse"` with `url` and optional `headers`. Tool results contain only summaries: no command, arguments, URL, environment values, or headers. To preserve existing credentials, omit `config` when renaming or use the enable/disable tool.
+
+Provider tool policies apply to these tools too. See [MCP service configuration](/docs/configuration#mcp-services) for persistence, host isolation, and when changes take effect.
+
 ### Agents
 
 | Tool                 | Function                                                                                                                                                       |

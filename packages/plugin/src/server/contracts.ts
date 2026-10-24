@@ -28,6 +28,10 @@ export interface PluginSettings<Schema extends ZodType> {
 }
 
 export interface PluginServerContext extends PluginLifecycleRegistration {
+  readonly directory: string;
+  registerMcpServer(
+    definition: import("../mcp.js").PluginMcpServer,
+  ): import("../mcp.js").PluginMcpRegistration;
   registerSettings<Schema extends ZodType>(
     definition: import("../settings.js").SettingsDefinition<Schema>,
   ): PluginSettings<Schema>;

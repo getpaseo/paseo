@@ -11,8 +11,9 @@ vi.mock("@/constants/platform", () => ({
   isNative: false,
 }));
 
+const layout = vi.hoisted(() => ({ compact: false }));
 vi.mock("@/constants/layout", () => ({
-  useIsCompactFormFactor: () => false,
+  useIsCompactFormFactor: () => layout.compact,
 }));
 
 vi.mock("@gorhom/portal", () => ({
@@ -41,6 +42,7 @@ let root: Root | null = null;
 let container: HTMLElement | null = null;
 
 beforeEach(() => {
+  layout.compact = false;
   const dom = new JSDOM("<!doctype html><html><body></body></html>");
   vi.stubGlobal("React", React);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -113,4 +115,26 @@ describe("TooltipTrigger", () => {
 
     expect(onPress).toHaveBeenCalledTimes(1);
   });
+});
+
+it("keeps a compact tooltip open after the touch pointer leaves", () => {
+  layout.compact = true;
+  const onOpenChange = vi.fn();
+  act(() =>
+    root?.render(
+      <Tooltip enabledOnMobile onOpenChange={onOpenChange}>
+        <TooltipTrigger testID="trigger">
+          <Text>Help</Text>
+        </TooltipTrigger>
+      </Tooltip>,
+    ),
+  );
+  pressTrigger();
+  expect(onOpenChange).toHaveBeenLastCalledWith(true);
+  const trigger = container?.querySelector('[data-testid="trigger"]');
+  act(() => {
+    trigger?.dispatchEvent(new window.MouseEvent("mouseout", { bubbles: true }));
+    trigger?.dispatchEvent(new window.Event("pointerout", { bubbles: true }));
+  });
+  expect(onOpenChange).not.toHaveBeenCalledWith(false);
 });

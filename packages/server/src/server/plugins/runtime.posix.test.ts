@@ -249,6 +249,102 @@ afterEach(async () => {
 });
 
 describe("PluginRuntime", () => {
+  it("ignores MCP changes from a stopped installation after its replacement is published", async () => {
+    const directory = await createPlugin(
+      "replaced-mcp",
+      "export default function contribute() { return () => {}; }",
+    );
+    const lifecycle: string[] = [];
+    const previous = createReloadChild("previous", lifecycle);
+    const replacement = createReloadChild("replacement", lifecycle);
+    const children = [previous, replacement];
+    const changes: string[] = [];
+    const runtime = createTestRuntime({
+      spawnChild: () => children.shift()!,
+      onMcpChanged: (id) => changes.push(id),
+    });
+    try {
+      await runtime.startPlugin("replaced-mcp", directory);
+      previous.emitMessage({
+        type: "mcp.changed",
+        server: {
+          id: "repositories",
+          label: "Previous",
+          config: { type: "http", url: "https://previous.example/mcp" },
+        },
+      });
+      await runtime.stopPluginById("replaced-mcp");
+      await runtime.startPlugin("replaced-mcp", directory);
+      replacement.emitMessage({
+        type: "mcp.changed",
+        server: {
+          id: "repositories",
+          label: "Replacement",
+          config: { type: "http", url: "https://replacement.example/mcp" },
+        },
+      });
+      previous.emitMessage({ type: "mcp.changed", server: null });
+      previous.emitMessage({
+        type: "mcp.changed",
+        server: {
+          id: "repositories",
+          label: "Stale",
+          config: { type: "http", url: "https://stale.example/mcp" },
+        },
+      });
+      expect(runtime.mcpServers()).toEqual({
+        "plugin_replaced-mcp_repositories": {
+          type: "http",
+          url: "https://replacement.example/mcp",
+        },
+      });
+      expect(changes).toEqual(["replaced-mcp", "replaced-mcp"]);
+    } finally {
+      await runtime.stopAll();
+    }
+  });
+
+  it.each([
+    { operation: "update", microtasks: 2 },
+    { operation: "remove", microtasks: 2 },
+    { operation: "update", microtasks: 3 },
+    { operation: "remove", microtasks: 3 },
+  ])(
+    "preserves MCP $operation after ready across $microtasks startup microtasks",
+    async ({ operation, microtasks }) => {
+      const directory = await createPlugin(
+        "startup-mcp",
+        `
+      export default function contribute(server) {
+        const service = server.registerMcpServer({ id: "repositories", label: "Repositories", config: { type: "http", url: "https://initial.example/mcp" } });
+        function change(remaining) {
+          if (remaining) queueMicrotask(() => change(remaining - 1));
+          else ${operation === "update" ? 'service.update({ type: "http", url: "https://current.example/mcp" })' : "service.remove()"};
+        }
+        change(${microtasks});
+        return () => service.remove();
+      }
+    `,
+      );
+      const runtime = createTestRuntime();
+      try {
+        await runtime.startBuiltinPlugin({ id: "startup-mcp", directory });
+        expect(runtime.mcpServers()).toEqual(
+          operation === "update"
+            ? {
+                "plugin_startup-mcp_repositories": {
+                  type: "http",
+                  url: "https://current.example/mcp",
+                },
+              }
+            : {},
+        );
+      } finally {
+        await runtime.stopAll();
+      }
+    },
+  );
+
   it.each([
     { specifier: "@getpaseo/plugin", moduleDirectory: "shared" },
     { specifier: "@getpaseo/plugin", moduleDirectory: "server" },
@@ -1847,13 +1943,31 @@ export default function contribute(plugin: any) {
     );
     const events: string[] = [];
     const child = createReloadChild("blocked", events);
-    const runtime = createTestRuntime({ spawnChild: () => child });
+    const changes: string[] = [];
+    const runtime = createTestRuntime({
+      spawnChild: () => child,
+      onMcpChanged: (id) => changes.push(id),
+    });
 
-    await expect(runtime.startPlugin("blocked", directory, () => false)).rejects.toThrow(
-      "Plugin start cancelled: blocked",
-    );
+    const change = {
+      type: "mcp.changed",
+      server: {
+        id: "repositories",
+        label: "Cancelled",
+        config: { type: "http", url: "https://cancelled.example/mcp" },
+      },
+    };
+    await expect(
+      runtime.startPlugin("blocked", directory, () => {
+        child.emitMessage(change);
+        return false;
+      }),
+    ).rejects.toThrow("Plugin start cancelled: blocked");
 
+    child.emitMessage(change);
     expect(runtime.catalog()).toEqual([]);
+    expect(runtime.mcpServers()).toEqual({});
+    expect(changes).toEqual([]);
     expect(events).toEqual(["start:blocked", "shutdown:blocked", "exit:blocked"]);
   });
 

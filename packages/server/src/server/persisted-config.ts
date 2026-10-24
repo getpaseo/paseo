@@ -1,3 +1,4 @@
+import { ManagedMcpServiceIdSchema, ManagedMcpServiceSchema } from "@getpaseo/protocol/messages";
 import { PluginRegistriesSchema } from "@getpaseo/protocol/plugin-registry";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -333,6 +334,7 @@ export const PersistedConfigSchema = z
 
     providers: ProvidersSchema.optional(),
     pluginRegistries: PluginRegistriesSchema.optional(),
+    mcpServers: z.record(ManagedMcpServiceIdSchema, ManagedMcpServiceSchema).optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
     worktrees: WorktreesConfigSchema.optional(),

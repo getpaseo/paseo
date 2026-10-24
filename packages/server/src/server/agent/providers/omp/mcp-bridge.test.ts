@@ -1,3 +1,8 @@
+import { createServer } from "node:http";
+import { once } from "node:events";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { z } from "zod";
 import { fileURLToPath } from "node:url";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,7 +14,92 @@ import type { PaseoToolCatalog } from "../../tools/types.js";
 const fixture = fileURLToPath(new URL("./test-utils/echo-mcp-server.mjs", import.meta.url));
 const healthy = { type: "stdio" as const, command: process.execPath, args: [fixture] };
 
+async function startSseService() {
+  const mcp = new McpServer({ name: "fictional-repositories", version: "1.0.0" });
+  mcp.registerTool("repository", { inputSchema: { name: z.string() } }, async ({ name }) => ({
+    content: [{ type: "text", text: `demo/${name}` }],
+    structuredContent: { path: `demo/${name}` },
+  }));
+  let transport: SSEServerTransport | undefined;
+  const requests: { method: string; header: string | string[] | undefined }[] = [];
+  const errors: unknown[] = [];
+  const http = createServer((request, response) => {
+    requests.push({ method: request.method ?? "", header: request.headers["x-fixture"] });
+    const handle = async () => {
+      if (request.method === "GET" && request.url === "/sse") {
+        transport = new SSEServerTransport("/messages", response);
+        await mcp.connect(transport);
+      } else if (request.method === "POST" && request.url?.startsWith("/messages?")) {
+        if (!transport) throw new Error("SSE session is not open");
+        await transport.handlePostMessage(request, response);
+      } else {
+        response.writeHead(404).end();
+      }
+    };
+    void handle().catch((error) => {
+      errors.push(error);
+      response.end();
+    });
+  });
+  http.listen(0, "127.0.0.1");
+  await once(http, "listening");
+  const address = http.address();
+  if (!address || typeof address === "string") throw new Error("Missing SSE listener");
+  return {
+    url: `http://127.0.0.1:${address.port}/sse`,
+    requests,
+    errors,
+    async close() {
+      await mcp.close();
+      const closed = once(http, "close");
+      http.close();
+      http.closeAllConnections();
+      await closed;
+    },
+  };
+}
+
 describe("OMP MCP host tools", () => {
+  test("calls a real legacy SSE service with headers on GET and POST", async () => {
+    await mkdir("/tmp/paseo-omp-agent-test", { recursive: true });
+    const service = await startSseService();
+    const omp = new OmpHarness();
+    try {
+      await omp.start({
+        mcpServers: {
+          remote: {
+            type: "sse",
+            url: service.url,
+            headers: { "x-fixture": "orchard" },
+          },
+        },
+      });
+      const tool = omp.registeredHostTools().at(-1)?.[0];
+      expect(tool?.name).toMatch(/^mcp_remote__repository/);
+      const result = omp.runtime().nextHostToolResult();
+      omp.runtime().emit({
+        type: "host_tool_call",
+        id: "sse-call",
+        toolCallId: "sse-tool",
+        toolName: tool!.name,
+        arguments: { name: "orchard" },
+      });
+      expect(await result).toMatchObject({
+        result: {
+          content: [{ type: "text", text: "demo/orchard" }],
+          details: { path: "demo/orchard" },
+        },
+      });
+      expect(service.requests.some((request) => request.method === "GET")).toBe(true);
+      expect(service.requests.some((request) => request.method === "POST")).toBe(true);
+      expect(service.requests.every((request) => request.header === "orchard")).toBe(true);
+      expect(service.errors).toEqual([]);
+    } finally {
+      await omp.close();
+      await service.close();
+    }
+  });
+
   test("registers a stdio MCP tool and proxies its call", async () => {
     await mkdir("/tmp/paseo-omp-agent-test", { recursive: true });
     const omp = new OmpHarness();

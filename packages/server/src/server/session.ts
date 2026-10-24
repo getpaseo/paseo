@@ -513,7 +513,7 @@ export interface SessionOptions {
     enablePlugin(pluginId: string): Promise<import("@getpaseo/protocol/messages").PluginListItem>;
     disablePlugin(pluginId: string): Promise<import("@getpaseo/protocol/messages").PluginListItem>;
     removePlugin(pluginId: string): Promise<void>;
-    subscribe(listener: (pluginId: string) => void): () => void;
+    subscribe(listener: (pluginId: string, reason?: "mcp") => void): () => void;
     subscribeSettings?(listener: (pluginId: string, settingsId: string) => void): () => void;
     catalog(): Array<{ id: string; clientBundle: string }>;
     invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
@@ -2678,8 +2678,11 @@ export class Session {
     pluginRuntime: SessionOptions["pluginRuntime"],
   ): (() => void) | null {
     if (!pluginRuntime) return null;
-    const catalog = pluginRuntime.subscribe((pluginId) => {
-      this.emit({ type: "status", payload: { status: "plugin_catalog_changed", pluginId } });
+    const catalog = pluginRuntime.subscribe((pluginId, reason) => {
+      this.emit({
+        type: "status",
+        payload: { status: "plugin_catalog_changed", pluginId, ...(reason ? { reason } : {}) },
+      });
     });
     const settings = pluginRuntime.subscribeSettings?.((pluginId, settingsId) => {
       this.emit({

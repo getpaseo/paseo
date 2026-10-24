@@ -12083,3 +12083,94 @@ test("reads the last durable assistant response without loading a stored-only ch
   );
   expect(manager.getAgent("stored-child")).toBeNull();
 });
+
+test("plugin MCP definitions follow real create, resume and import without becoming saved user configuration", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-plugin-mcp-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let definitions: NonNullable<AgentSessionConfig["mcpServers"]> = {
+    plugin_repositories_service: {
+      type: "http",
+      url: "https://first.example/mcp",
+      headers: { authorization: "fictional-plugin-secret" },
+    },
+  };
+  const manual = { type: "http" as const, url: "https://manual.example/mcp" };
+  class PrivateMcpSession extends McpCapableTestAgentSession {
+    private readonly launch: AgentSessionConfig;
+    constructor(config: AgentSessionConfig) {
+      super(config);
+      this.launch = config;
+    }
+    override describePersistence() {
+      return { ...super.describePersistence(), metadata: { ...this.launch } };
+    }
+  }
+  class CurrentMcpClient extends TestAgentClient {
+    override readonly capabilities = { ...TEST_CAPABILITIES, supportsMcpServers: true };
+    override async createSession(config: AgentSessionConfig) {
+      this.createdConfigs.push(config);
+      return new PrivateMcpSession(config);
+    }
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ) {
+      this.resumeOverrides.push(config);
+      return new PrivateMcpSession({ ...config, provider: "codex", cwd: workdir });
+    }
+    async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
+      const config = {
+        ...context.config,
+        mcpServers: {
+          ...context.config.mcpServers,
+          imported_manual: manual,
+          paseo_manual_removed: { type: "http" as const, url: "https://removed.example/mcp" },
+        },
+      };
+      const session = new PrivateMcpSession(config);
+      return {
+        session,
+        config,
+        persistence: { ...session.describePersistence(), sessionId: input.providerHandleId },
+        timeline: [],
+      };
+    }
+  }
+  const client = new CurrentMcpClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    runtimeMcpServers: () => definitions,
+  });
+  onTestFinished(async () => {
+    for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  });
+  const agent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, mcpServers: { manual } },
+    undefined,
+    { workspaceId: undefined },
+  );
+  expect(client.createdConfigs[0].mcpServers).toEqual({ manual, ...definitions });
+  expect(agent.config.mcpServers).toEqual({ manual });
+  expect(agent.persistence?.metadata?.mcpServers).toEqual({ manual });
+  definitions = {
+    plugin_repositories_service: { type: "http", url: "https://second.example/mcp" },
+  };
+  const resumed = await manager.reloadAgentSession(agent.id);
+  expect(client.resumeOverrides[0]?.mcpServers).toEqual({ manual, ...definitions });
+  expect(resumed.persistence?.metadata?.mcpServers).toEqual({ manual });
+  const imported = await manager.importProviderSession({
+    provider: "codex",
+    cwd: workdir,
+    providerHandleId: "fictional-import",
+    workspaceId: "fictional-workspace",
+  });
+  expect(imported.config.mcpServers).toEqual({ imported_manual: manual });
+  expect(imported.persistence?.metadata?.mcpServers).toEqual({ imported_manual: manual });
+  definitions = {};
+  await manager.reloadAgentSession(agent.id);
+  expect(client.resumeOverrides[1]?.mcpServers).toEqual({ manual });
+  expect(JSON.stringify(await storage.get(agent.id))).not.toContain("fictional-plugin-secret");
+});

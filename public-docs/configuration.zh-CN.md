@@ -82,6 +82,16 @@ Agent Provider，包括 Paseo 自带的一等 Provider 和你在 `agents.provide
 
 心智模型见 [Provider](/docs/providers)，Paseo 可以启动的全部 Agent 见[支持的 Provider](/docs/supported-providers)。要让 Claude 指向兼容 Anthropic 的端点（Z.AI、Alibaba/Qwen）、使用多个配置、自定义二进制文件、ACP Agent，以及了解 `additionalModels` 的合并行为，见[自定义 Provider](/docs/custom-providers)。完整的字段参考在 GitHub 上的 [docs/custom-providers.md](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md)。
 
+## MCP 服务 {#mcp-services}
+
+添加或编辑手动服务时，可选择**表单 / JSON**。JSON 只包含一个连接对象（`type` 及其连接字段），名称在外层填写。无效草稿会保留在编辑器中，修正后才能切换模式。
+
+打开**设置 > MCP 服务**并选择目标主机。你可以添加 stdio、Streamable HTTP 或 SSE 手动服务，然后编辑、停用或删除。停用保留配置，删除需要确认。插件服务与手动服务显示在同一页面，但仍由所属插件的配置控制。
+
+保存只校验并存储定义，不启动进程或连接服务。新建 Agent 运行实例或重新建立已有运行实例时，Provider 才使用当前定义直接连接。修改不会中断运行中的 Agent，也不会立即关闭它们的 MCP 连接。stdio 命令运行于所选主机，不是在显示设置的设备上运行。传输支持取决于 Provider。
+
+此管理页面需要包含 `mcpServiceManagement` 能力的应用和 daemon 构建。旧主机会提示升级。更新 daemon 不会更新 macOS 应用内置的界面。
+
 ## worktree {#worktrees}
 
 新的 worktree 默认创建在 `$PASEO_HOME/worktrees` 下。要把新的 worktree 放到其他位置，请设置 `worktrees.root`：
