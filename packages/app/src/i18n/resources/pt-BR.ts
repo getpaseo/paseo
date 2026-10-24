@@ -438,6 +438,7 @@ export const ptBR: TranslationResources = {
     },
     row: {
       importing: "Importando...",
+      cwdMissing: "A pasta não existe mais",
     },
   },
   workspace: {
