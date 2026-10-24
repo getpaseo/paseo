@@ -14,6 +14,7 @@ export interface StreamTurnTiming {
 interface OpenTurn {
   userAt: Date | null;
   lastItemAt: Date | null;
+  lastItemId: string | null;
   assistantIds: readonly string[];
   previousItem: StreamItem | null;
 }
@@ -32,12 +33,13 @@ interface TailTurnTiming {
 const EMPTY_OPEN_TURN: OpenTurn = {
   userAt: null,
   lastItemAt: null,
+  lastItemId: null,
   assistantIds: [],
   previousItem: null,
 };
 
 function closeTurn(turn: OpenTurn, into: Map<string, TurnTiming>): void {
-  if (!turn.lastItemAt || turn.assistantIds.length === 0) {
+  if (!turn.lastItemAt || !turn.lastItemId) {
     return;
   }
   const timing: TurnTiming = {
@@ -47,6 +49,9 @@ function closeTurn(turn: OpenTurn, into: Map<string, TurnTiming>): void {
   for (const id of turn.assistantIds) {
     into.set(id, timing);
   }
+  // Responses without an assistant text row anchor the footer on the turn's
+  // last visible item.
+  into.set(turn.lastItemId, timing);
 }
 
 function walkTurns(
@@ -56,22 +61,25 @@ function walkTurns(
 ): OpenTurn {
   let userAt = from.userAt;
   let lastItemAt = from.lastItemAt;
+  let lastItemId = from.lastItemId;
   let assistantIds = [...from.assistantIds];
   let previousItem = from.previousItem;
   for (const item of items) {
     if (startsNewTurn(item, previousItem)) {
-      closeTurn({ userAt, lastItemAt, assistantIds, previousItem }, into);
+      closeTurn({ userAt, lastItemAt, lastItemId, assistantIds, previousItem }, into);
       userAt = item.kind === "user_message" ? item.timestamp : null;
       lastItemAt = null;
+      lastItemId = null;
       assistantIds = [];
     }
     lastItemAt = item.timestamp;
+    lastItemId = item.id;
     if (item.kind === "assistant_message") {
       assistantIds.push(item.id);
     }
     previousItem = item;
   }
-  return { userAt, lastItemAt, assistantIds, previousItem };
+  return { userAt, lastItemAt, lastItemId, assistantIds, previousItem };
 }
 
 function areTimingsEqual(a: Map<string, TurnTiming>, b: Map<string, TurnTiming>): boolean {

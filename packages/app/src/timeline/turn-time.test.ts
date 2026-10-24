@@ -99,6 +99,46 @@ describe("deriveStreamTurnTiming", () => {
     assert.deepEqual(timing.byAssistantId.get("a2"), expected);
   });
 
+  it("keys timing by the last visible item when a turn has no assistant text", () => {
+    const userAt = new Date("2026-05-15T00:00:00.000Z");
+    const toolAt = new Date("2026-05-15T00:00:04.000Z");
+    const thoughtAt = new Date("2026-05-15T00:00:09.000Z");
+    const toolCall: StreamItem = {
+      kind: "tool_call",
+      id: "tool-1",
+      timestamp: toolAt,
+      payload: {
+        source: "orchestrator",
+        data: {
+          toolCallId: "tool-1",
+          toolName: "Shell",
+          arguments: "echo hi",
+          status: "completed",
+        },
+      },
+    };
+    const thought: StreamItem = {
+      kind: "thought",
+      id: "thought-1",
+      text: "thinking",
+      timestamp: thoughtAt,
+      status: "ready",
+    };
+
+    const timing = deriveStreamTurnTiming({
+      isTurnActive: false,
+      activeTurnStartedAt: null,
+      tail: [user("u1", userAt), toolCall, thought],
+      head: [],
+    });
+
+    assert.deepEqual(timing.byAssistantId.get("thought-1"), {
+      completedAt: thoughtAt,
+      durationMs: 9000,
+    });
+    assert.equal(timing.byAssistantId.has("tool-1"), false);
+  });
+
   it("preserves the completion timestamp when a canonical turn has no visible prompt", () => {
     const firstTurnAt = new Date("2026-05-15T00:00:00.000Z");
     const hiddenPromptTurnAt = new Date("2026-05-15T00:01:07.000Z");
