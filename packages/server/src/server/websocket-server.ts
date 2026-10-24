@@ -16,7 +16,8 @@ import type { CreationSnapshot } from "@getpaseo/protocol/messages";
 import { CreationService } from "./creation/index.js";
 import { MessageReceipts } from "./message-receipts/index.js";
 import { WebSocket, WebSocketServer } from "ws";
-import type { IncomingMessage, Server as HTTPServer } from "http";
+import type { IncomingMessage } from "http";
+import type { Duplex } from "node:stream";
 import { join } from "path";
 import { getHostName } from "./host-name.js";
 import { randomUUID } from "node:crypto";
@@ -642,7 +643,6 @@ export class VoiceAssistantWebSocketServer {
   }
 
   constructor(
-    server: HTTPServer,
     logger: pino.Logger,
     serverId: string,
     agentManager: AgentManager,
@@ -808,7 +808,7 @@ export class VoiceAssistantWebSocketServer {
       });
     });
 
-    this.wss = this.createWebSocketServer(server, wsConfig, auth);
+    this.wss = this.createWebSocketServer(wsConfig, auth);
     this.startRuntimeMetricsInterval();
     this.startApplicationSocketLeaseInterval();
 
@@ -868,14 +868,12 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private createWebSocketServer(
-    server: HTTPServer,
     wsConfig: WebSocketServerConfig,
     auth: DaemonAuthConfig | undefined,
   ): WebSocketServer {
     const password = auth?.password;
     const wss = new WebSocketServer({
-      server,
-      path: "/ws",
+      noServer: true,
       maxPayload: MAX_WEBSOCKET_MESSAGE_BYTES,
       handleProtocols: (protocols) => selectWebSocketProtocol(protocols, password),
       verifyClient: ({ req }, callback) => {
@@ -891,6 +889,33 @@ export class VoiceAssistantWebSocketServer {
       void this.attachAuthenticatedSocket(ws, request, password);
     });
     return wss;
+  }
+
+  // Owns the /ws upgrade on the shared HTTP server. The dispatcher in bootstrap
+  // calls this only after the service proxy declines the socket, so exactly one
+  // component ever writes to it.
+  public handleUpgrade({
+    req,
+    socket,
+    head,
+  }: {
+    req: IncomingMessage;
+    socket: Duplex;
+    head: Buffer;
+  }): boolean {
+    // Mirror the path check `ws` used with `path: "/ws"`: slice at the query
+    // without parsing, so a malformed target cannot throw inside the upgrade
+    // listener (which would take the daemon down).
+    const target = req.url ?? "";
+    const queryIndex = target.indexOf("?");
+    const pathname = queryIndex === -1 ? target : target.slice(0, queryIndex);
+    if (pathname !== "/ws") {
+      return false;
+    }
+    this.wss.handleUpgrade(req, socket, head, (ws) => {
+      this.wss.emit("connection", ws, req);
+    });
+    return true;
   }
 
   private startRuntimeMetricsInterval(): void {

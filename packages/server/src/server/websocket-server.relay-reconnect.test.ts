@@ -1,7 +1,6 @@
 import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { SessionDelivery } from "./session/owned-subscriptions/index.js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import type { Server as HTTPServer } from "http";
 import type pino from "pino";
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
@@ -264,7 +263,6 @@ function createServer(options?: {
   };
   const logger = options?.logger ?? createLogger();
   return new VoiceAssistantWebSocketServer(
-    createStub<HTTPServer>({}),
     createStub<pino.Logger>(logger),
     "srv_test",
     createStub<AgentManager>({
