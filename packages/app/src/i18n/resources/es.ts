@@ -1945,6 +1945,10 @@ export const es: TranslationResources = {
     dontAskAgain: "no vuelvas a preguntar",
   },
   downloads: {
+    saveFailed: "No se pudo guardar el archivo. Comprueba el destino e inténtalo de nuevo.",
+    saveToDevice: "Guardar en el dispositivo",
+    finishing: "Finalizando la descarga…",
+    sharingUnavailable: "No se pueden compartir archivos en este dispositivo.",
     requestTokenFailed: "No se pudo solicitar el token de descarga.",
     hostUnavailable: "El host de descarga no está disponible.",
     cancelled: "La descarga fue cancelada.",

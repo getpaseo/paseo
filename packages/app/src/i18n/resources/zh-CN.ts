@@ -1875,6 +1875,10 @@ export const zhCN: TranslationResources = {
     dontAskAgain: "不再询问",
   },
   downloads: {
+    saveFailed: "无法保存文件。请检查保存位置，然后重试。",
+    saveToDevice: "保存到设备",
+    finishing: "正在完成下载…",
+    sharingUnavailable: "此设备不支持文件共享。",
     requestTokenFailed: "请求下载 token 失败。",
     hostUnavailable: "下载 Host 不可用。",
     cancelled: "下载已取消。",

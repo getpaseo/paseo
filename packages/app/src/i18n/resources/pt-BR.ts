@@ -1930,6 +1930,10 @@ export const ptBR: TranslationResources = {
     dontAskAgain: "Não perguntar novamente",
   },
   downloads: {
+    saveFailed: "Não foi possível salvar o arquivo. Verifique o destino e tente novamente.",
+    saveToDevice: "Salvar no dispositivo",
+    finishing: "Finalizando o download…",
+    sharingUnavailable: "O compartilhamento de arquivos não está disponível neste dispositivo.",
     requestTokenFailed: "Falha ao solicitar token de download.",
     hostUnavailable: "Host de download indisponível.",
     cancelled: "Download cancelado.",

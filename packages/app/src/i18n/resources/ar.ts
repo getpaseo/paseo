@@ -1897,6 +1897,10 @@ export const ar: TranslationResources = {
     dontAskAgain: "لا تسأل مرة أخرى",
   },
   downloads: {
+    saveFailed: "تعذّر حفظ الملف. تحقّق من موقع الحفظ وحاول مرة أخرى.",
+    saveToDevice: "حفظ على الجهاز",
+    finishing: "جارٍ إنهاء التنزيل…",
+    sharingUnavailable: "مشاركة الملفات غير متاحة على هذا الجهاز.",
     requestTokenFailed: "فشل طلب رمز التنزيل.",
     hostUnavailable: "مضيف التنزيل غير متاح.",
     cancelled: "تم إلغاء التنزيل.",
