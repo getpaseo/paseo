@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import {
   Alert,
@@ -7,6 +7,8 @@ import {
   Text,
   View,
   type PressableStateCallbackType,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "expo-router/react-navigation";
@@ -924,6 +926,9 @@ interface SettingsSidebarProps {
   layout: "desktop" | "mobile";
 }
 
+// Settings routes replace the screen, so the sidebar's offset must outlive its mount.
+let settingsSidebarScrollOffset = 0;
+
 function SettingsSidebar({
   view,
   onSelectSection,
@@ -945,6 +950,21 @@ function SettingsSidebar({
   const items = SIDEBAR_SECTION_ITEMS.filter((item) => isSectionAvailable(item, isDesktopApp));
   const insets = useSafeAreaInsets();
   const isDesktop = layout === "desktop";
+  const scrollRef = useRef<ScrollView>(null);
+  const rememberSettingsSidebarScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      // React Native Web can deliver scroll-end events after this sidebar unmounts.
+      if (scrollRef.current !== null) {
+        settingsSidebarScrollOffset = event.nativeEvent.contentOffset.y;
+      }
+    },
+    [],
+  );
+  useLayoutEffect(() => {
+    if (isDesktop) {
+      scrollRef.current?.scrollTo({ y: settingsSidebarScrollOffset, animated: false });
+    }
+  }, [isDesktop]);
   const outerContainerStyle = useMemo(
     () => [isDesktop ? sidebarStyles.desktopContainer : sidebarStyles.mobileContainer],
     [isDesktop],
@@ -1057,6 +1077,9 @@ function SettingsSidebar({
             style={sidebarStyles.scrollBody}
             showsVerticalScrollIndicator={false}
             testID="settings-sidebar-scroll-body"
+            ref={scrollRef}
+            onScroll={rememberSettingsSidebarScroll}
+            scrollEventThrottle={16}
           >
             {sidebarBody}
           </ScrollView>
