@@ -8652,6 +8652,52 @@ test("unarchiveSnapshot unarchives native provider storage before clearing archi
   expect(stored?.labels).toEqual({ retained: "yes", source: "reimport" });
 });
 
+test("unarchiveSnapshot publishes the stored state for a closed agent", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unarchive-state-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new NativeArchiveRecordingClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+        title: "Unarchive state target",
+      },
+      undefined,
+      { workspaceId: undefined },
+    );
+    await manager.closeAgent(agent.id);
+    await manager.archiveSnapshot(agent.id, new Date().toISOString());
+
+    const states: string[] = [];
+    const unsubscribe = manager.subscribe(
+      (event) => {
+        if (event.type === "agent_state" && event.agent.id === agent.id) {
+          states.push(event.agent.lifecycle);
+        }
+      },
+      { replayState: false },
+    );
+
+    const unarchived = await manager.unarchiveSnapshot(agent.id);
+    unsubscribe();
+
+    expect(unarchived).toBe(true);
+    expect((await storage.get(agent.id))?.archivedAt).toBeNull();
+    expect(states).toEqual(["closed"]);
+  } finally {
+    for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("unarchiveSnapshotByHandle unarchives native provider storage for the matched snapshot", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-native-unarchive-handle-"));
   const storagePath = join(workdir, "agents");
