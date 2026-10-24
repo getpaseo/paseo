@@ -4,6 +4,12 @@ import { useTranslation } from "react-i18next";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import type { OpenFileDisposition } from "@/workspace/file-open";
 import { openExternalUrl } from "@/utils/open-external-url";
+import {
+  parseHostWorkspaceRouteFromPathname,
+  parseHostAgentRouteFromPathname,
+} from "@/utils/host-routes";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { formatFileLinkTooltipPath } from "./tooltip-path";
 import type { InlinePathTarget } from "./parse";
 import {
@@ -322,6 +328,41 @@ async function dispatchFileTarget(input: {
   current.onOpenWorkspaceFile?.(input.target, input.disposition);
 }
 
+/**
+ * Route the app's own `paseo://` scheme in-app instead of handing it to
+ * `openExternalUrl`, whose allowlist is http(s) only and silently drops every
+ * other scheme. A tapped `paseo://h/<server>/workspace/<id>` link then opens
+ * the workspace inside the app the user is already in, through the same
+ * `navigateToWorkspace`/`navigateToAgent` helpers every other in-app entry
+ * point uses (attention-agent focus, tab placement, last-workspace memory).
+ * Returns true when the link was a known host route and navigation was issued.
+ */
+function tryNavigateInternalPaseoLink(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "paseo:") {
+    return false;
+  }
+  // `paseo://h/<server>/...` parses to hostname "h" with the rest in pathname;
+  // prepend the hostname so the `/h/...` route parsers match.
+  const pathname = `/${parsed.hostname}${parsed.pathname}`;
+  const workspace = parseHostWorkspaceRouteFromPathname(pathname);
+  if (workspace) {
+    navigateToWorkspace({ serverId: workspace.serverId, workspaceId: workspace.workspaceId });
+    return true;
+  }
+  const agent = parseHostAgentRouteFromPathname(pathname);
+  if (agent) {
+    navigateToAgent({ serverId: agent.serverId, agentId: agent.agentId });
+    return true;
+  }
+  return false;
+}
+
 async function dispatchExternalUrl(input: {
   url: string;
   capturedServerId?: string;
@@ -333,6 +374,9 @@ async function dispatchExternalUrl(input: {
     current.serverId !== input.capturedServerId ||
     current.workspaceRoot !== input.capturedWorkspaceRoot
   ) {
+    return;
+  }
+  if (tryNavigateInternalPaseoLink(input.url)) {
     return;
   }
   await openExternalUrl(input.url);
