@@ -232,7 +232,7 @@ For pay-as-you-go, use `ANTHROPIC_API_KEY` with a standard Model Studio key (`sk
 
 Codex talks to OpenAI's Responses API by default. Custom providers that extend `"codex"` can point Codex at any OpenAI-compatible endpoint (OpenRouter, LiteLLM, vLLM, llama.cpp server, an internal gateway, etc.) by setting `OPENAI_BASE_URL` and `OPENAI_API_KEY` in the provider `env`.
 
-Paseo passes those variables through to the Codex app-server process **and** maps them into Codex's thread config under `model_provider` / `model_providers`, because Codex reads provider routing from config rather than from `OPENAI_BASE_URL` alone.
+Paseo passes those variables through to the Codex app-server process **and** maps them into Codex's thread config under `model_provider` / `model_providers`, because Codex reads provider routing from config rather than from `OPENAI_BASE_URL` alone. The generated Codex provider key is `paseo:<provider-id>`, so a Paseo provider such as `ollama` does not override a Codex built-in. Existing custom sessions created with a non-built-in provider key remain available in Import session. Native Codex conversations using a built-in key stay separate from a custom provider of the same name.
 
 ### Setup
 
@@ -260,9 +260,9 @@ Paseo passes those variables through to the Codex app-server process **and** map
 Under the hood, for each custom Codex provider Paseo injects this into Codex's config:
 
 ```toml
-model_provider = "my-codex"
+model_provider = "paseo:my-codex"
 
-[model_providers.my-codex]
+[model_providers."paseo:my-codex"]
 name = "My Codex"
 base_url = "https://custom-relay.example.com/v1"
 wire_api = "responses"
