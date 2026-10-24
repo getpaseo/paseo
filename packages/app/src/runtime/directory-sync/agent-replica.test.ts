@@ -57,6 +57,72 @@ function entry(agent: AgentSnapshotPayload): FetchAgentsEntry {
 }
 
 describe("AgentDirectoryReplica", () => {
+  it.each(["delta", "snapshot", "timeline"] as const)(
+    "preserves equal features across %s updates while accepting real changes",
+    (source) => {
+      const serverId = `agent-replica-features-${source}`;
+      const store = useSessionStore.getState();
+      store.initializeSession(serverId, null);
+      const replica = new AgentDirectoryReplica(
+        serverId,
+        () => undefined,
+        () => undefined,
+      );
+      const update = (agent: AgentSnapshotPayload) => {
+        const updates = {
+          delta: () => replica.applyDelta({ kind: "upsert", ...entry(agent) }),
+          snapshot: () => replica.commitSnapshot([entry(agent)], []),
+          timeline: () => replica.submitTimelineAgent(replica.captureTimeline(agent.id), agent),
+        };
+        updates[source]();
+        return useSessionStore.getState().sessions[serverId]!.agents.get(agent.id)!;
+      };
+
+      const initial = update({ ...payload("initial"), features: [] });
+      const empty = update({
+        ...payload("empty update"),
+        updatedAt: "2026-07-17T00:02:00.000Z",
+        features: [],
+      });
+      expect(empty.title).toBe("empty update");
+      expect(empty.updatedAt.toISOString()).toBe("2026-07-17T00:02:00.000Z");
+      expect(empty.features).toBe(initial.features);
+
+      const feature = {
+        type: "select" as const,
+        id: "speed",
+        label: "Speed",
+        value: "fast",
+        options: [{ id: "fast", label: "Fast" }],
+      };
+      const added = update({
+        ...payload("added"),
+        updatedAt: empty.updatedAt.toISOString(),
+        features: [feature],
+      });
+      expect(added.features).toEqual([feature]);
+      expect(added.features).not.toBe(empty.features);
+      const unchanged = update({
+        ...payload("unchanged"),
+        updatedAt: empty.updatedAt.toISOString(),
+        features: [{ ...feature, options: [{ ...feature.options[0] }] }],
+      });
+      expect(unchanged.features).toBe(added.features);
+
+      const changedFeature = { ...feature, options: [{ id: "fast", label: "Faster" }] };
+      const changed = update({
+        ...payload("changed"),
+        updatedAt: empty.updatedAt.toISOString(),
+        features: [changedFeature],
+      });
+      expect(changed.features).toEqual([changedFeature]);
+      expect(changed.features).not.toBe(unchanged.features);
+      const removed = update({ ...payload("removed"), updatedAt: empty.updatedAt.toISOString() });
+      expect(removed.features).toBeUndefined();
+      store.clearSession(serverId);
+    },
+  );
+
   it.each(["delta", "snapshot"] as const)(
     "does not erase freshly fetched history when the active directory removes it by %s",
     (removal) => {
