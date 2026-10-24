@@ -60,6 +60,23 @@ describe("ProviderSubagentStore", () => {
     expect(subagents.list("parent-b")).toHaveLength(1);
   });
 
+  test("keeps a poll liveness marker across presentation-only upserts", () => {
+    const subagents = new ProviderSubagentStore();
+    subagents.apply("parent-a", "pi", {
+      type: "upsert",
+      id: "child-1",
+      status: "running",
+      liveness: "poll",
+    });
+    subagents.apply("parent-a", "pi", { type: "upsert", id: "child-1", title: "scout" });
+
+    expect(subagents.get("parent-a", "child-1")).toMatchObject({
+      title: "scout",
+      status: "running",
+      liveness: "poll",
+    });
+  });
+
   test("limits oversized provider child tool output before storage", () => {
     const subagents = new ProviderSubagentStore();
     const output = "x".repeat(70 * 1024);

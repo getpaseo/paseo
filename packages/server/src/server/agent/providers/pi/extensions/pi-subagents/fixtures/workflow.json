@@ -1,0 +1,153 @@
+{
+  "provenance": {
+    "package": "pi-subagents",
+    "version": "0.78.0",
+    "sourceCommit": "reconstructed-workflow-launch",
+    "piVersion": "1.2.0",
+    "captureDate": "2026-10-17"
+  },
+  "events": [
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "call_wf1",
+      "toolName": "subagent",
+      "args": {
+        "workflow": "tmp/rigor-ui-test.js",
+        "async": true
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "call_wf1",
+      "toolName": "subagent",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Run fan-out: 1/64 used, 63 remaining\nAsync workflow: [eac895df-6a71-4b4f-9f0a-2ba2b7f0f4a1]\n\nThe async run is detached and running in the background.\nMission: 3d6d9bb6-1ea3-4b8d-9c56-6a1f0e3b6f88 (active)"
+          }
+        ],
+        "details": {
+          "mode": "workflow",
+          "runId": "eac895df-6a71-4b4f-9f0a-2ba2b7f0f4a1",
+          "results": [],
+          "asyncId": "eac895df-6a71-4b4f-9f0a-2ba2b7f0f4a1",
+          "asyncDir": "/tmp/pi-subagents-uid-1000/async-subagent-runs/eac895df-6a71-4b4f-9f0a-2ba2b7f0f4a1",
+          "workflowGraph": {
+            "lanes": [{ "key": "alpha", "agent": "scout" }]
+          },
+          "context": "fresh",
+          "timeoutMs": 1800000,
+          "deadlineAt": 1790199499998
+        }
+      },
+      "isError": false
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "custom",
+        "customType": "subagent-incremental-child-notify",
+        "content": "Workflow child completed: **alpha**\nWorkflow run: eac895df-6a71-4b4f-9f0a-2ba2b7f0f4a1\nChild run: 4cb1c0a2-2f2e-4c31-9c53-0f0d2ad0f3f1\nOutput: /tmp/paseo-pi-extension-phase3/workspace/tmp/alpha.md\nStatus: workflow still running",
+        "display": false,
+        "details": {
+          "childKey": "alpha",
+          "outcome": "completed"
+        },
+        "timestamp": 1790197711046
+      }
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "custom",
+        "customType": "subagent-notify",
+        "content": "Background task completed: **workflow**\n\nWorkflow receipt: /tmp/pi-subagents-uid-1000/async-subagent-runs/eac895df-6a71-4b4f-9f0a-2ba2b7f0f4a1/receipt.json\n\nRetention-managed async directory: /tmp/pi-subagents-uid-1000/async-subagent-runs/eac895df-6a71-4b4f-9f0a-2ba2b7f0f4a1\n\nSession file: /tmp/paseo-pi-extension-phase3/sessions-nico/2026-10-17T21-08-13-722Z_01a0d018/0f2c1b1e-9d1c-4b0e-8d5b-8e6f27a1c2d3/run-0/session.jsonl",
+        "display": false,
+        "timestamp": 1790197722046
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "call_wf1",
+          "name": "subagent",
+          "arguments": {
+            "workflow": "tmp/rigor-ui-test.js",
+            "async": true
+          }
+        }
+      ],
+      "api": "openai-completions",
+      "provider": "openrouter",
+      "model": "google/gemini-3.6-flash",
+      "usage": {
+        "input": 3303,
+        "output": 114,
+        "cacheRead": 7053,
+        "cacheWrite": 0,
+        "reasoning": 81,
+        "totalTokens": 10470,
+        "cost": {
+          "input": 0.00247725,
+          "output": 0.00042750000000000004,
+          "cacheRead": 0.000528975,
+          "cacheWrite": 0,
+          "total": 0.003433725
+        }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 1790197697608,
+      "responseId": "gen-1790197697-lxluaTrDkdaxjSXsO957",
+      "rawStopReason": "tool_calls"
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call_wf1",
+      "toolName": "subagent",
+      "content": [
+        {
+          "type": "text",
+          "text": "Run fan-out: 1/64 used, 63 remaining\nAsync workflow: [eac895df-6a71-4b4f-9f0a-2ba2b7f0f4a1]\n\nThe async run is detached and running in the background.\nMission: 3d6d9bb6-1ea3-4b8d-9c56-6a1f0e3b6f88 (active)"
+        }
+      ],
+      "details": {
+        "mode": "workflow",
+        "runId": "eac895df-6a71-4b4f-9f0a-2ba2b7f0f4a1",
+        "results": [],
+        "asyncId": "eac895df-6a71-4b4f-9f0a-2ba2b7f0f4a1",
+        "asyncDir": "/tmp/pi-subagents-uid-1000/async-subagent-runs/eac895df-6a71-4b4f-9f0a-2ba2b7f0f4a1",
+        "workflowGraph": {
+          "lanes": [{ "key": "alpha", "agent": "scout" }]
+        },
+        "context": "fresh",
+        "timeoutMs": 1800000,
+        "deadlineAt": 1790199499998
+      },
+      "isError": false,
+      "timestamp": 1790197700011
+    },
+    {
+      "role": "custom",
+      "customType": "subagent-incremental-child-notify",
+      "content": "Workflow child completed: **alpha**\nWorkflow run: eac895df-6a71-4b4f-9f0a-2ba2b7f0f4a1\nChild run: 4cb1c0a2-2f2e-4c31-9c53-0f0d2ad0f3f1\nOutput: /tmp/paseo-pi-extension-phase3/workspace/tmp/alpha.md\nStatus: workflow still running",
+      "display": false,
+      "details": {
+        "childKey": "alpha",
+        "outcome": "completed"
+      },
+      "timestamp": 1790197711046
+    },
+    {
+      "role": "custom",
+      "customType": "subagent-notify",
+      "content": "Background task completed: **workflow**\n\nWorkflow receipt: /tmp/pi-subagents-uid-1000/async-subagent-runs/eac895df-6a71-4b4f-9f0a-2ba2b7f0f4a1/receipt.json\n\nRetention-managed async directory: /tmp/pi-subagents-uid-1000/async-subagent-runs/eac895df-6a71-4b4f-9f0a-2ba2b7f0f4a1\n\nSession file: /tmp/paseo-pi-extension-phase3/sessions-nico/2026-10-17T21-08-13-722Z_01a0d018/0f2c1b1e-9d1c-4b0e-8d5b-8e6f27a1c2d3/run-0/session.jsonl",
+      "display": false,
+      "timestamp": 1790197722046
+    }
+  ]
+}
