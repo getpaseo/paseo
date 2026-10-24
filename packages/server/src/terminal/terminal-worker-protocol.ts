@@ -55,6 +55,7 @@ export type TerminalWorkerRequest =
       requestId: string;
       terminalId: string;
       state: TerminalActivityState;
+      atNs?: string;
     }
   | {
       type: "clearAttention";
