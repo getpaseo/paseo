@@ -7,6 +7,7 @@ import { parseHostTarget, type HostTarget } from "@getpaseo/protocol/host-target
 import { createSshTunnel, type SshTunnel } from "./ssh-tunnel.js";
 import { createWebSocketTransportFactory } from "../daemon-client-websocket-transport.js";
 import { createRelayE2eeTransportFactory } from "../daemon-client-relay-e2ee-transport.js";
+import type { SecurityMode } from "@getpaseo/relay/e2ee";
 import type {
   DaemonTransport,
   DaemonTransportFactory,
@@ -24,6 +25,10 @@ export function createHostTransportFactory(
   budget = new HostTransportBudget(),
 ): DaemonTransportFactory {
   const target = parseHostTarget(connection);
+  // Rises to "protected" once the daemon negotiates it, so a later attempt
+  // cannot be downgraded to legacy endpoint security.
+  let securityFloor: SecurityMode | undefined =
+    target.kind === "socket" ? target.offer?.minimumSecurityMode : undefined;
   return (attemptOptions) => {
     const opens = new Set<() => void>();
     const closes = new Set<(event?: unknown) => void>();
@@ -120,6 +125,10 @@ export function createHostTransportFactory(
         factory = createRelayE2eeTransportFactory({
           baseFactory: factory,
           daemonPublicKeyB64: socketTarget.offer.daemonPublicKeyB64,
+          ...(securityFloor ? { minimumMode: securityFloor } : {}),
+          onSecurityMode: (mode) => {
+            if (mode === "protected") securityFloor = "protected";
+          },
           logger: { warn() {} },
           assertOutboundCapacity: (bytes) => assertOutboundCapacity(bytes),
         });

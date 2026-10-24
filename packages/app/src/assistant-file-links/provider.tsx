@@ -39,6 +39,18 @@ export interface AssistantFileLinkResolverContextValue {
 const AssistantFileLinkResolverContext =
   createContext<AssistantFileLinkResolverContextValue | null>(null);
 
+export function useAssistantFileLinkEnvironmentBridge() {
+  const value = useContext(AssistantFileLinkResolverContext);
+  return useCallback(
+    (children: ReactNode) => (
+      <AssistantFileLinkResolverContext.Provider value={value}>
+        {children}
+      </AssistantFileLinkResolverContext.Provider>
+    ),
+    [value],
+  );
+}
+
 export function AssistantFileLinkResolverProvider({
   client,
   serverId,

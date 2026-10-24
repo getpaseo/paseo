@@ -232,3 +232,40 @@ describe("relay connection URI", () => {
     ).toEqual(parts);
   });
 });
+
+describe("relay connection URI security mode", () => {
+  test("round-trips a protected minimum security mode", () => {
+    const uri = serializeRelayConnectionUri({
+      offer: {
+        v: 2,
+        serverId: "srv_test",
+        daemonPublicKeyB64: "key",
+        relay: { endpoint: "relay.example.com:443", useTls: true },
+        minimumSecurityMode: "protected",
+      },
+    });
+
+    expect(new URL(uri).searchParams.get("security")).toBe("protected");
+    expect(parseRelayConnectionUri(uri).offer.minimumSecurityMode).toBe("protected");
+  });
+
+  test("omits the security parameter when the offer has no minimum", () => {
+    const uri = serializeRelayConnectionUri({
+      offer: {
+        v: 2,
+        serverId: "srv_test",
+        daemonPublicKeyB64: "key",
+        relay: { endpoint: "relay.example.com:443", useTls: true },
+      },
+    });
+
+    expect(new URL(uri).searchParams.has("security")).toBe(false);
+    expect(parseRelayConnectionUri(uri).offer).not.toHaveProperty("minimumSecurityMode");
+  });
+
+  test("rejects an unknown security mode instead of silently downgrading", () => {
+    expect(() =>
+      parseRelayConnectionUri("relay://relay.example.com:443/srv_test?key=k&security=legacy"),
+    ).toThrow("unsupported security mode");
+  });
+});

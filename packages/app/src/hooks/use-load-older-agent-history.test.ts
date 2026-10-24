@@ -56,6 +56,7 @@ function createToast(): FakeToast {
     shown,
     show: (message, options) => {
       shown.push({ message, options });
+      return () => {};
     },
     copied: () => {},
     error: () => {},

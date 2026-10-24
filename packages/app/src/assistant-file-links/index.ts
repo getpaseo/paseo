@@ -6,6 +6,7 @@ export {
 export {
   AssistantFileLinkResolverProvider,
   useAssistantFileLinkEnvironment,
+  useAssistantFileLinkEnvironmentBridge,
   type AssistantFileLinkResolverProviderProps,
 } from "./provider";
 export type { AssistantFileLinkSource } from "./resolver";

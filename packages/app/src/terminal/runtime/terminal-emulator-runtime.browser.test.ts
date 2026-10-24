@@ -1,7 +1,12 @@
 import { page, userEvent } from "@vitest/browser/context";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TerminalInputModeState } from "@getpaseo/protocol/terminal-input-mode";
-import { encodeTerminalOutput, TerminalEmulatorRuntime } from "./terminal-emulator-runtime";
+import type { TerminalFile } from "../file-paste";
+import {
+  encodeTerminalOutput,
+  TerminalEmulatorRuntime,
+  type TerminalClipboard,
+} from "./terminal-emulator-runtime";
 
 vi.mock("@xterm/addon-webgl", () => ({
   WebglAddon: class WebglAddon {
@@ -41,6 +46,36 @@ interface MountedTerminal {
   terminalKeys: TerminalKeyRecord[];
   inputModeChanges: TerminalInputModeState[];
   openedUrls: string[];
+  clipboard: FakeClipboard;
+  filePastes: Promise<TerminalFile | null>[];
+}
+
+class FakeClipboard implements TerminalClipboard {
+  text = "";
+  image: { mimeType: string; bytes: number[] } | null = null;
+  imageReads = 0;
+
+  async readText(): Promise<string> {
+    return this.text;
+  }
+
+  async read(): Promise<readonly Pick<ClipboardItem, "types" | "getType">[]> {
+    this.imageReads += 1;
+    const image = this.image;
+    if (!image) {
+      return [];
+    }
+    return [
+      {
+        types: ["text/html", image.mimeType],
+        getType: async (type: string) => new Blob([new Uint8Array(image.bytes)], { type }),
+      },
+    ];
+  }
+
+  async writeText(text: string): Promise<void> {
+    this.text = text;
+  }
 }
 
 const mountedTerminals: MountedTerminal[] = [];
@@ -100,8 +135,11 @@ function createTerminalHost(input: CreateTerminalHostInput): MountedTerminal {
   const terminalKeys: TerminalKeyRecord[] = [];
   const inputModeChanges: TerminalInputModeState[] = [];
   const openedUrls: string[] = [];
+  const clipboard = new FakeClipboard();
+  const filePastes: Promise<TerminalFile | null>[] = [];
   const runtime = new TerminalEmulatorRuntime(
     input.isMac === undefined ? undefined : { isMac: input.isMac },
+    clipboard,
   );
   runtime.setCallbacks({
     callbacks: {
@@ -119,6 +157,9 @@ function createTerminalHost(input: CreateTerminalHostInput): MountedTerminal {
       },
       onOpenExternalUrl: (url) => {
         openedUrls.push(url);
+      },
+      onFilePaste: (file) => {
+        filePastes.push(file);
       },
     },
   });
@@ -143,6 +184,8 @@ function createTerminalHost(input: CreateTerminalHostInput): MountedTerminal {
     terminalKeys,
     inputModeChanges,
     openedUrls,
+    clipboard,
+    filePastes,
   };
   mountedTerminals.push(mounted);
   return mounted;
@@ -411,6 +454,78 @@ describe("terminal emulator runtime in a real browser", () => {
 
     await waitFor({ predicate: () => mounted.inputs.length > 0 });
     expect(mounted.inputs).toEqual(["legacy renderer paste"]);
+  });
+
+  it("pastes clipboard text on Ctrl+V without reading the clipboard image", async () => {
+    const mounted = createTerminalHost({ width: 720, height: 360, isMac: false });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    mounted.clipboard.text = "clipboard text";
+    mounted.clipboard.image = { mimeType: "image/png", bytes: [1, 2, 3] };
+
+    dispatchTerminalKey({ host: mounted.host, key: "v", ctrlKey: true });
+
+    expect(mounted.filePastes).toHaveLength(1);
+    await expect(mounted.filePastes[0]).resolves.toBeNull();
+    expect(mounted.inputs).toEqual(["clipboard text"]);
+    expect(mounted.clipboard.imageReads).toBe(0);
+  });
+
+  it("hands the clipboard image to onFilePaste on Ctrl+V when there is no text", async () => {
+    const mounted = createTerminalHost({ width: 720, height: 360, isMac: false });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    mounted.clipboard.image = { mimeType: "image/jpeg", bytes: [1, 2, 3] };
+
+    dispatchTerminalKey({ host: mounted.host, key: "v", ctrlKey: true });
+
+    expect(mounted.filePastes).toHaveLength(1);
+    await expect(mounted.filePastes[0]).resolves.toEqual({
+      fileName: "clipboard.jpg",
+      mimeType: "image/jpeg",
+      bytes: new Uint8Array([1, 2, 3]),
+    });
+    expect(mounted.inputs).toEqual([]);
+  });
+
+  it("takes file-only paste events at xterm's input before xterm pastes empty text", async () => {
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([new Uint8Array([1, 2, 3])], "shot.png", { type: "image/png" }));
+    const event = new ClipboardEvent("paste", {
+      clipboardData: transfer,
+      bubbles: true,
+      cancelable: true,
+    });
+
+    mounted.host.querySelector(".xterm-helper-textarea")!.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(mounted.filePastes).toHaveLength(1);
+    await expect(mounted.filePastes[0]).resolves.toEqual({
+      fileName: "shot.png",
+      mimeType: "image/png",
+      bytes: new Uint8Array([1, 2, 3]),
+    });
+    await nextFrame();
+    expect(mounted.inputs).toEqual([]);
+  });
+
+  it("leaves paste events with text to xterm", async () => {
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    const transfer = new DataTransfer();
+    transfer.setData("text/plain", "echo hi");
+    transfer.items.add(new File([new Uint8Array([1])], "shot.png", { type: "image/png" }));
+
+    mounted.host
+      .querySelector(".xterm-helper-textarea")!
+      .dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData: transfer, bubbles: true, cancelable: true }),
+      );
+
+    await waitFor({ predicate: () => mounted.inputs.length > 0 });
+    expect(mounted.inputs).toEqual(["echo hi"]);
+    expect(mounted.filePastes).toEqual([]);
   });
 
   it("refreshes visible rows on a forced same-size resize", async () => {

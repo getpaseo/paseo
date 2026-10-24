@@ -2,7 +2,6 @@ import { EventEmitter } from "node:events";
 import { MAX_PHYSICAL_SOCKET_BUFFERED_BYTES } from "./physical-socket.js";
 
 export interface EncryptedRelayChannel {
-  setState: (state: "open") => void;
   send: (data: string | ArrayBuffer) => Promise<void>;
   outboundWireByteLength: (data: string | ArrayBuffer) => number;
   close: (code?: number, reason?: string) => void;
@@ -26,8 +25,6 @@ export function createEncryptedRelaySocket(params: {
 }): EncryptedRelaySocket {
   const { channel, emitter, getTransportBufferedAmount, terminateTransport } = params;
   let readyState = 1;
-
-  channel.setState("open");
 
   const terminate = () => {
     if (readyState === 3) return;

@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { waitFor } from "@testing-library/dom";
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const noop = () => {};
-const toastApi = { show: noop, error: noop, copied: noop };
+const toastApi = { show: () => noop, error: noop, copied: noop };
 const roots: ReturnType<typeof createRoot>[] = [];
 function render(children: ReactNode) {
   const container = document.createElement("div");
@@ -124,6 +124,8 @@ beforeEach(async () => {
           workspaceKind: "local_checkout",
           name: "main",
           status: "done",
+          createdAt: null,
+          lastUserMessageAt: null,
           statusEnteredAt: null,
           archivingAt: null,
           diffStat: null,

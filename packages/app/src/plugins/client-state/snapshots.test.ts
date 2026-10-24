@@ -3,6 +3,8 @@ import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import { createPluginAgentSnapshot, createPluginWorkspaceSnapshot } from "./snapshots";
 
 const workspace: WorkspaceDescriptor = {
+  createdAt: null,
+  lastUserMessageAt: null,
   id: "workspace-1",
   projectId: "project-1",
   projectDisplayName: "Paseo",

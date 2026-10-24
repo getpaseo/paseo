@@ -75,6 +75,7 @@ Use this table as the complete registration checklist.
 | New sidebar footer contribution                                                               | `client.addSidebarFooterItem({ id, title, Component })` in `index.client.tsx`                                               |
 | New file panel contribution                                                                   | `client.addFilePanel(panel)` in `index.client.tsx`                                                                          |
 | `plugin.addWorkspacePanel(panel)` in the old root entry                                       | `client.addWorkspacePanel(panel)` in `index.client.tsx`                                                                     |
+| Agent panel with `context: "agent"`                                                           | `client.addAgentPanel(panel)` in `index.client.tsx`; omit `context`                                                         |
 | `plugin.addCommandCenterItem(item)` in the old root entry                                     | `client.addCommandCenterItem(item)` in `index.client.tsx`                                                                   |
 | `plugin.addClientSlashCommand(command)` in the old root entry                                 | `client.addSlashCommand(command)` in `index.client.tsx`                                                                     |
 | `plugin.addClientSide(fn)` in the old root entry                                              | Delete the wrapper and move the body of `fn` into the default client entry function                                         |
@@ -95,6 +96,22 @@ working. A `/plugin/<plugin>/sidebar/<id>` link, and the older `/plugin/<plugin>
 Import `PluginClientContext` from `@getpaseo/plugin/client` and `PluginServerContext` from
 `@getpaseo/plugin/server`. Remove imports of the old context type. Client registrations return idempotent removal functions, except header buttons and composer pills, which return `{ update, remove }` handles. Preserve any remover the plugin calls before teardown; Paseo removes outstanding
 registrations after the entry cleanup runs.
+
+### Panel props in 0.13
+
+All panel kinds share [params, revision, and persisted tab state](./reference.md#workspace-panels).
+
+| Previous API                                                            | Replacement                                      |
+| ----------------------------------------------------------------------- | ------------------------------------------------ |
+| Workspace/agent `context` prop                                          | Select the kind at registration.                 |
+| Agent `agentId` prop                                                    | `params.agentId`                                 |
+| `addWorkspacePanel({ context: "workspace", ... })`                      | `addWorkspacePanel({ ... })`                     |
+| `addWorkspacePanel({ context: "agent", ... })`                          | `addAgentPanel({ ... })`                         |
+| Beta file `location.lineStart`, `location.lineEnd`, `location.revision` | `params.lineStart`, `params.lineEnd`, `revision` |
+| Beta `PluginFileTab`, `PluginFileLocation`                              | `PluginTab`, `PluginFilePanelParams`             |
+
+The 0.12 aliases remain available until removal after 2027-04-23. The beta file API changes
+outright. Declare `requirements.paseo` as `>=0.13.0` when adopting the new API.
 
 ### Composer pills
 
@@ -159,8 +176,9 @@ its registration; that registration belongs in the client entry.
 
 ### UI imports in v0.13
 
-Use `/client/ui` for all Paseo UI components and UI hooks. The previous entry remains an
-undocumented compatibility alias until 2027-04-20.
+Use `/client/ui` for all Paseo UI components and UI hooks. The deprecated
+`/client/react-native` entry retains `useRevealedText(text, phase): string` for 0.12 plugins
+until removal after 2027-04-20. The hook is deprecated and is not exported from `/client/ui`.
 
 For paced timeline text, replace `useRevealedText(text, phase)` and the surrounding `Text` with
 `<StreamedText text={text} phase={phase} style={style} />` from `/client/ui`.

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { buildAgentDescriptor, resolveAgentLabel } from "@/agent-presentation";
 import { i18n } from "@/i18n/i18next";
 import { buildDraftPanelDescriptor } from "@/panels/draft-panel-descriptor";
 
@@ -64,5 +65,59 @@ describe("buildDraftPanelDescriptor", () => {
       subtitle: "正在创建 Agent",
     });
     await i18n.changeLanguage("en");
+  });
+});
+
+describe("shared agent descriptor", () => {
+  function describeAgent(overrides: Partial<Parameters<typeof buildAgentDescriptor>[0]> = {}) {
+    return buildAgentDescriptor({
+      provider: "codex",
+      title: "  Review checkout retries  ",
+      status: "idle",
+      pendingPermissionCount: 0,
+      requiresAttention: false,
+      attentionReason: null,
+      isTurnActive: false,
+      icon: TestIcon,
+      ...overrides,
+    });
+  }
+
+  it("keeps the normalized title and provider identity together", () => {
+    expect(describeAgent()).toMatchObject({
+      label: "Review checkout retries",
+      subtitle: "Codex agent",
+      icon: TestIcon,
+      titleState: "ready",
+      statusBucket: "done",
+    });
+  });
+
+  it.each([null, "", "   ", "New Agent", " new agent "])(
+    "leaves an untitled agent loading: %s",
+    (title) => {
+      expect(resolveAgentLabel(title)).toBeNull();
+      expect(describeAgent({ title })).toMatchObject({ label: "", titleState: "loading" });
+    },
+  );
+
+  it("shows an active turn as running before the lifecycle update arrives", () => {
+    expect(describeAgent({ isTurnActive: true }).statusBucket).toBe("running");
+  });
+
+  it("surfaces pending permissions even while the turn is running", () => {
+    expect(describeAgent({ isTurnActive: true, pendingPermissionCount: 1 }).statusBucket).toBe(
+      "needs_input",
+    );
+  });
+
+  it.each([
+    ["finished", "attention"],
+    ["error", "failed"],
+    ["permission", "needs_input"],
+  ] as const)("preserves %s attention", (attentionReason, statusBucket) => {
+    expect(describeAgent({ requiresAttention: true, attentionReason }).statusBucket).toBe(
+      statusBucket,
+    );
   });
 });

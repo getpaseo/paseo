@@ -13,7 +13,7 @@ export interface PaneContextValue {
   tabId: string;
   target: WorkspaceTabTarget;
   state?: JsonValue;
-  fileNavigationRevision?: number;
+  panelRevision?: number;
   openTab: (target: WorkspaceTabTarget) => void;
   openPreferredTarget: (target: WorkspaceTabTarget, source: OpenInSidePaneSource) => void;
   openTargetToSide?: (target: WorkspaceTabTarget) => void;

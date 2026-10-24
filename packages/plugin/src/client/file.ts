@@ -44,19 +44,6 @@ export interface PluginFileWriteOptions {
 /** What happened to the file on disk. Switch on `type`; later versions may add fields. */
 export type PluginFileEvent = { type: "changed" } | { type: "deleted" };
 
-/** What the panel reports back to its tab. */
-export interface PluginFileTab {
-  /** Shows the tab's unsaved dot and asks before the tab closes. */
-  setModified(modified: boolean): void;
-}
-
-/** The line a link or search result opened the file at. `revision` bumps on every new target. */
-export interface PluginFileLocation {
-  lineStart?: number;
-  lineEnd?: number;
-  revision: number;
-}
-
 /** The file changed on disk since the handle last read or wrote it. */
 export class PluginFileConflictError extends Error {
   constructor(message = "The file changed on disk.") {

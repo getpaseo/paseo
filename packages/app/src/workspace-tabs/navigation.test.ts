@@ -85,3 +85,26 @@ it("preserves dock visibility intent while compact targets are opened and reveal
     false,
   );
 });
+it.each(["agent-list", "file-explorer"] as const)(
+  "preserves %s under a deferred file sheet and reveals deferred agents",
+  (panel) => {
+    const store = useWorkspaceLayoutStore.getState();
+    store.setLayoutMode("compact");
+    if (panel === "agent-list") usePanelStore.getState().showMobileAgentList();
+    const before = usePanelStore.getState().mobilePanel;
+    store.deferOpenTab({
+      workspaceKey,
+      target: { kind: "file", path: "pending.ts" },
+      intent: "reveal",
+    });
+    revealWorkspaceTab(workspaceKey, store.consumePendingOpen(workspaceKey));
+    expect(usePanelStore.getState().mobilePanel).toEqual(before);
+    store.deferOpenTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "root" },
+      intent: "reveal",
+    });
+    revealWorkspaceTab(workspaceKey, store.consumePendingOpen(workspaceKey));
+    expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
+  },
+);
