@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, type Page, type TestInfo } from "@playwright/test";
+import { expectChatHistoryAttachment } from "./assistant-fork";
 import { copyPluginExample, pluginRequirements } from "./plugin-fixture";
 import { connectNewWorkspaceDaemonClient } from "./new-workspace";
 import { openAgentRoute, seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
@@ -13,12 +14,14 @@ export const ASSISTANT_TEXT =
 const CLIENT_SOURCE = `import React, { useState } from "react";
 import { Text, View, Pressable } from "react-native";
 import { z } from "zod";
+import { ForkMenu } from "@getpaseo/plugin/client/ui";
 
 function Card({ item }) {
   const [count, setCount] = useState(0);
   return <View>
     <Text accessibilityRole="header">{item.data.label + " " + item.data.phase}</Text>
     <Text>{item.data.text}</Text>
+    <ForkMenu testID="plugin-reply-fork" />
     <Pressable accessibilityRole="button" onPress={() => setCount(count + 1)}>
       <Text>{"Card clicks " + count}</Text>
     </Pressable>
@@ -273,6 +276,37 @@ export async function withPopoverTimelinePlugin(run: () => Promise<void>): Promi
     source: POPOVER_CLIENT_SOURCE,
     run,
   });
+}
+
+export async function forkCompletedPluginReply(
+  page: Page,
+  info: TestInfo,
+  target: "tab" | "workspace",
+): Promise<void> {
+  const trigger = page.getByTestId("plugin-reply-fork-trigger");
+  await expect(trigger).toBeVisible();
+  await trigger.click();
+  await expect(page.getByTestId("plugin-reply-fork-new-tab")).toBeVisible();
+  await expect(page.getByTestId("plugin-reply-fork-new-workspace")).toBeVisible();
+  await expect
+    .poll(() =>
+      page.getByTestId("plugin-reply-fork-new-workspace").evaluate((element) => {
+        let opacity = 1;
+        for (let node: Element | null = element; node; node = node.parentElement) {
+          opacity *= Number(getComputedStyle(node).opacity);
+        }
+        return opacity;
+      }),
+    )
+    .toBe(1);
+  await info.attach("plugin-fork-menu", {
+    body: await page.screenshot({ path: info.outputPath("plugin-fork-menu.png") }),
+    contentType: "image/png",
+  });
+  const option = target === "tab" ? "plugin-reply-fork-new-tab" : "plugin-reply-fork-new-workspace";
+  await page.getByTestId(option).click();
+  await expectChatHistoryAttachment(page);
+  if (target === "workspace") await expect(page).toHaveURL(/\/new\?.*draftId=/);
 }
 
 const THOUGHT =
