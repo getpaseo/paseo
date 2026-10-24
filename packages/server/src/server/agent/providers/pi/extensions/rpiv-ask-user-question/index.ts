@@ -2,17 +2,26 @@ import { z } from "zod";
 import type { AgentPermissionRequest } from "../../../../agent-sdk-types.js";
 import type { PiExtension, PiExtensionDialog, PiExtensionUiResponse } from "../contract.js";
 
+// Caps mirrored from pi's own ask_user_question schema
+// (@juicesharp/rpiv-ask-user-question tool/types.ts: MAX_HEADER_LENGTH 16,
+// MAX_LABEL_LENGTH 60). pi rejects an over-limit call before the tool runs, so a
+// looser schema here renders a form for a questionnaire that no tool will ever
+// answer: the user sees a second, identical card with nothing behind it, and any
+// interaction with it lands on the live questionnaire instead.
+const MAX_HEADER_LENGTH = 16;
+const MAX_LABEL_LENGTH = 60;
+
 const Params = z
   .object({
     questions: z
       .array(
         z.object({
           question: z.string(),
-          header: z.string(),
+          header: z.string().max(MAX_HEADER_LENGTH),
           options: z
             .array(
               z.object({
-                label: z.string(),
+                label: z.string().max(MAX_LABEL_LENGTH),
                 description: z.string(),
                 preview: z.string().optional(),
               }),
@@ -54,6 +63,16 @@ const Result = z.object({
 });
 type Question = z.infer<typeof Params>["questions"][number];
 const PERMISSION_PREFIX = "rpiv-question:";
+
+interface QuestionForm {
+  callId: string;
+  questions: Question[];
+  answers: Record<string, unknown> | null;
+  cancelled: boolean;
+  index: number;
+  customInput: boolean;
+  deferred: PiExtensionDialog | null;
+}
 
 function answerFor(answers: Record<string, unknown>, question: Question): string | null {
   const answer = answers[question.header];
@@ -103,34 +122,71 @@ function replyToDialog(
 export const rpivAskUserQuestion: PiExtension = {
   id: "rpiv-ask-user-question",
   createSession() {
-    let active: {
-      callId: string;
-      questions: Question[];
-      answers: Record<string, unknown> | null;
-      cancelled: boolean;
-      index: number;
-      customInput: boolean;
-      deferred: PiExtensionDialog | null;
-    } | null = null;
+    // One entry per live ask_user_question tool call. A single slot shared by
+    // every call lets a second questionnaire overwrite the first, and lets a
+    // stale form's dismissal cancel a questionnaire it never belonged to.
+    const forms: QuestionForm[] = [];
 
-    function answerDialog(dialog: PiExtensionDialog): PiExtensionUiResponse {
-      if (!active || active.cancelled) return { cancelled: true };
-      const question = active.questions[active.index];
-      if (!question || !active.answers) return { cancelled: true };
-      const answer = answerFor(active.answers, question);
+    function dialogTitle(dialog: PiExtensionDialog): string {
+      return typeof dialog.title === "string" ? dialog.title : "";
+    }
+
+    // The provider dialog titles are `[Header] question…`, so a dialog can be
+    // attributed to the form whose current question it asks. When titles cannot
+    // decide (older provider format), the form still waiting for its form wins.
+    function formForDialog(dialog: PiExtensionDialog): QuestionForm | undefined {
+      const title = dialogTitle(dialog);
+      const asked = forms.find((form) => {
+        const question = form.questions[form.index];
+        return (
+          !!question &&
+          (title.startsWith(`[${question.header}] `) || title.startsWith(question.question))
+        );
+      });
+      if (asked) return asked;
+      const waiting = forms.find((form) => !form.answers && !form.cancelled);
+      return waiting ?? forms.find((form) => form.cancelled);
+    }
+
+    function formCard(form: QuestionForm, provider: string): AgentPermissionRequest {
+      return {
+        id: `${PERMISSION_PREFIX}${form.callId}`,
+        provider,
+        name: "Pi ask_user_question",
+        kind: "question",
+        title: form.questions[0].question,
+        input: {
+          questions: form.questions.map((question) => ({
+            question: question.question,
+            header: question.header,
+            options: question.options,
+            multiSelect: question.multiSelect ?? false,
+            allowOther: true,
+          })),
+        },
+      };
+    }
+
+    function answerDialog(form: QuestionForm, dialog: PiExtensionDialog): PiExtensionUiResponse {
+      if (form.cancelled) return { cancelled: true };
+      const question = form.questions[form.index];
+      if (!question || !form.answers) return { cancelled: true };
+      const answer = answerFor(form.answers, question);
       if (answer === null) return { cancelled: true };
-      const mapped = replyToDialog(dialog, question, answer, active.customInput);
-      active.customInput = mapped.customInput;
-      if (!active.customInput) active.index++;
+      const mapped = replyToDialog(dialog, question, answer, form.customInput);
+      form.customInput = mapped.customInput;
+      if (!form.customInput) form.index++;
       return mapped.response;
     }
 
     return {
-      onToolStart(call, provider): AgentPermissionRequest | undefined {
+      onToolStart(call) {
         if (call.toolName !== "ask_user_question") return undefined;
         const parsed = Params.safeParse(call.args);
         if (!parsed.success) return undefined;
-        active = {
+        const existing = forms.findIndex((form) => form.callId === call.callId);
+        if (existing >= 0) forms.splice(existing, 1); // replayed tool start
+        forms.push({
           callId: call.callId,
           questions: parsed.data.questions,
           answers: null,
@@ -138,47 +194,42 @@ export const rpivAskUserQuestion: PiExtension = {
           index: 0,
           customInput: false,
           deferred: null,
-        };
-        return {
-          id: `${PERMISSION_PREFIX}${call.callId}`,
-          provider,
-          name: "Pi ask_user_question",
-          kind: "question",
-          title: parsed.data.questions[0].question,
-          input: {
-            questions: parsed.data.questions.map((question) => ({
-              question: question.question,
-              header: question.header,
-              options: question.options,
-              multiSelect: question.multiSelect ?? false,
-              allowOther: true,
-            })),
-          },
-        };
+        });
+        // The card appears when the tool actually asks (its first dialog), not
+        // at tool start: a call pi rejects, interrupts, or finishes without
+        // ever asking then leaves no unanswered card behind.
+        return undefined;
       },
       onToolEnd(call) {
-        if (active?.callId === call.callId) active = null;
+        const index = forms.findIndex((form) => form.callId === call.callId);
+        if (index >= 0) forms.splice(index, 1);
       },
-      mapDialog(dialog) {
-        if (!active || (dialog.method !== "select" && dialog.method !== "input")) return undefined;
-        if (!active.answers && !active.cancelled) {
-          active.deferred = dialog;
-          return { type: "deferred" };
+      mapDialog(dialog, provider) {
+        if (dialog.method !== "select" && dialog.method !== "input") return undefined;
+        const form = formForDialog(dialog);
+        if (!form) return undefined;
+        if (form.cancelled) return { type: "response", response: { cancelled: true } };
+        if (!form.answers) {
+          form.deferred = dialog;
+          return { type: "permission", request: formCard(form, provider) };
         }
-        return { type: "response", response: answerDialog(dialog) };
+        return { type: "response", response: answerDialog(form, dialog) };
       },
       respondToPermission(request, response) {
-        if (!active || request.id !== `${PERMISSION_PREFIX}${active.callId}`) return undefined;
+        if (!request.id.startsWith(PERMISSION_PREFIX)) return undefined;
+        const callId = request.id.slice(PERMISSION_PREFIX.length);
+        const form = forms.find((candidate) => candidate.callId === callId);
+        if (!form) return { responses: [] }; // its tool already ended: nothing to corrupt
         const answers = response.behavior === "allow" ? response.updatedInput?.answers : undefined;
-        active.answers =
+        form.answers =
           answers && typeof answers === "object" && !Array.isArray(answers)
             ? (answers as Record<string, unknown>)
             : null;
-        active.cancelled = response.behavior === "deny" || !active.answers;
-        const deferred = active.deferred;
-        active.deferred = null;
+        form.cancelled = response.behavior === "deny" || !form.answers;
+        const deferred = form.deferred;
+        form.deferred = null;
         return {
-          responses: deferred ? [{ id: deferred.id, response: answerDialog(deferred) }] : [],
+          responses: deferred ? [{ id: deferred.id, response: answerDialog(form, deferred) }] : [],
         };
       },
       mapToolCall(call) {
