@@ -6494,6 +6494,13 @@ export const TerminalStateSchema = z.object({
   // `terminalReflowableSnapshot` capability, so old daemons/clients are unaffected.
   gridWrapped: z.array(z.boolean()).optional(),
   scrollbackWrapped: z.array(z.boolean()).optional(),
+  // True when the snapshot was taken while the foreground app held the alternate
+  // screen (`?1049`/`?1047`/`?47`). A restore resets the client terminal, which
+  // drops the buffer along with the input modes, so the snapshot has to say which
+  // buffer it belongs to: repainting an alternate-screen frame into the normal
+  // buffer leaves the client scrolling app repaints instead of the shell history.
+  // Optional: absent (old daemon) restores into the normal buffer.
+  alternateScreen: z.boolean().optional(),
 });
 
 export const ListTerminalsResponseSchema = z.object({

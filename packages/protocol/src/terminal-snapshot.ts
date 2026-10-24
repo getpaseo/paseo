@@ -27,6 +27,12 @@ const DEFAULT_STYLE: TerminalStyle = {
 };
 
 export function renderTerminalSnapshotToAnsi(state: TerminalState): string {
+  // The client resets before painting a snapshot, so the buffer itself has to be
+  // re-established first: `?1049h` goes in ahead of the rows, not in the replay
+  // preamble that follows, because entering the alternate screen clears it.
+  // Without it an alternate-screen app (TUIs, editors) repaints into the normal
+  // buffer, where its frames reach scrollback and the wheel scrolls stale frames.
+  const screenAnsi = state.alternateScreen ? "\u001b[?1049h" : "";
   const rows = [...state.scrollback, ...state.grid];
   const wrapFlags = [...(state.scrollbackWrapped ?? []), ...(state.gridWrapped ?? [])];
   // Soft-wrapped lines can only be re-wrapped on resize when we know which rows
@@ -58,7 +64,7 @@ export function renderTerminalSnapshotToAnsi(state: TerminalState): string {
   if (!hasWrapInfo) {
     lines.push("\u001b[?7h");
   }
-  return lines.join("");
+  return screenAnsi + lines.join("");
 }
 
 function renderCursorPresentationToAnsi(cursor: TerminalState["cursor"]): string | null {

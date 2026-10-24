@@ -46,6 +46,37 @@ describe("renderTerminalSnapshotToAnsi", () => {
     expect(ansi).toContain("[?7l");
     expect(ansi).toContain("ABCDEFGHIJ\r\nKLMNOP");
   });
+
+  it("enters the alternate screen before the rows when the snapshot held one", () => {
+    // A restore resets the terminal before replaying a snapshot, which drops the
+    // alternate screen along with the input modes. Entering it after the rows are
+    // painted would clear them, so the switch has to lead the payload.
+    const state: TerminalState = {
+      rows: 2,
+      cols: 10,
+      scrollback: [],
+      grid: [cells("TUI"), cells("")],
+      cursor: { row: 0, col: 3 },
+      alternateScreen: true,
+    };
+
+    const ansi = renderTerminalSnapshotToAnsi(state);
+
+    expect(ansi.startsWith("\u001b[?1049h")).toBe(true);
+    expect(ansi.indexOf("TUI")).toBeGreaterThan("\u001b[?1049h".length);
+  });
+
+  it("leaves the buffer alone for a normal-screen snapshot", () => {
+    const state: TerminalState = {
+      rows: 1,
+      cols: 10,
+      scrollback: [],
+      grid: [cells("SHELL")],
+      cursor: { row: 0, col: 5 },
+    };
+
+    expect(renderTerminalSnapshotToAnsi(state)).not.toContain("\u001b[?1049");
+  });
 });
 
 describe("renderTerminalSnapshotToAnsi wide chars", () => {
