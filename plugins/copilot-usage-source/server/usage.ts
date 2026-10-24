@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import {
+  fetchWithAutoProxy,
   unavailable,
   type UsageAccount,
   type UsageReport,
@@ -46,7 +47,7 @@ export async function discover(): Promise<UsageAccount[]> {
 
 export async function fetchUsage(
   input: UsageInput,
-  fetchApi: typeof fetch = fetch,
+  fetchApi: typeof fetch = fetchWithAutoProxy,
 ): Promise<UsageReport> {
   const token = await readToken(input);
   if (!token) throw new Error("Copilot login store no longer exists");
