@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { ToolCallDetail } from "../../agent-sdk-types.js";
+import type { ProviderImageOutput } from "../provider-image-output.js";
 
 interface BashToolInput {
   command: string;
@@ -65,6 +66,12 @@ interface PiToolResultDetails {
 interface PiToolResultTextContent {
   type: "text";
   text: string;
+}
+
+interface PiToolResultImageContent {
+  type: "image";
+  data?: unknown;
+  mimeType?: unknown;
 }
 
 interface PiToolResultUnknownContent {
@@ -234,6 +241,45 @@ export function parseToolResult(rawResult: unknown): PiToolResult {
     return parsed.data;
   }
   return null;
+}
+
+// Pi returns images inside tool-result content as base64 blocks. Left in place they reach the
+// tool-output stringifier, which dumps base64 into the tool output. We pull those blocks out to
+// render them as image markdown and leave a "[image]" placeholder so image-only results still
+// produce non-empty output (mirroring splitClaudeToolResultImages).
+export function splitPiToolResultImages(result: PiToolResult): {
+  images: ProviderImageOutput[];
+  result: PiToolResult;
+} {
+  if (!result || typeof result === "string" || !result.content) {
+    return { images: [], result };
+  }
+  const images: ProviderImageOutput[] = [];
+  let replaced = false;
+  const content = result.content.map((block) => {
+    const image = toPiImageOutput(block);
+    if (image) {
+      images.push(image);
+      replaced = true;
+      return { type: "text", text: "[image]" } satisfies PiToolResultTextContent;
+    }
+    return block;
+  });
+  if (!replaced) {
+    return { images: [], result };
+  }
+  return { images, result: { ...result, content } };
+}
+
+function toPiImageOutput(block: PiToolResultContent): ProviderImageOutput | null {
+  const candidate = block as PiToolResultImageContent;
+  if (candidate.type !== "image" || typeof candidate.data !== "string") {
+    return null;
+  }
+  return {
+    data: candidate.data,
+    mimeType: typeof candidate.mimeType === "string" ? candidate.mimeType : null,
+  };
 }
 
 export function extractTextFromToolResult(result: PiToolResult): string | undefined {

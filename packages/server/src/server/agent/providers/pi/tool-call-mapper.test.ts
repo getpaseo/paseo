@@ -1,6 +1,12 @@
 import { describe, expect, test } from "vitest";
 
-import { mapToolDetail, parseToolArgs, parseToolResult } from "./tool-call-mapper.js";
+import {
+  extractTextFromToolResult,
+  mapToolDetail,
+  parseToolArgs,
+  parseToolResult,
+  splitPiToolResultImages,
+} from "./tool-call-mapper.js";
 
 describe("Pi tool call mapper", () => {
   test("maps bash args and result to shell detail", () => {
@@ -54,5 +60,54 @@ describe("Pi tool call mapper", () => {
       input: { value: 42 },
       output: { text: "custom result" },
     });
+  });
+});
+
+describe("splitPiToolResultImages", () => {
+  test("extracts image blocks and replaces them with [image] placeholders", () => {
+    const parsed = parseToolResult({
+      content: [
+        { type: "text", text: "shot taken" },
+        { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+      ],
+    });
+    const { images, result } = splitPiToolResultImages(parsed);
+
+    expect(images).toEqual([{ data: "aGVsbG8=", mimeType: "image/png" }]);
+    expect(result).toEqual({
+      content: [
+        { type: "text", text: "shot taken" },
+        { type: "text", text: "[image]" },
+      ],
+    });
+  });
+
+  test("replaces image-only results with a non-empty placeholder", () => {
+    const parsed = parseToolResult({
+      content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/jpeg" }],
+    });
+    const { images, result } = splitPiToolResultImages(parsed);
+
+    expect(images).toHaveLength(1);
+    expect(extractTextFromToolResult(result)).toBe("[image]");
+  });
+
+  test("passes through string results and results without images", () => {
+    expect(splitPiToolResultImages("plain output")).toEqual({
+      images: [],
+      result: "plain output",
+    });
+    const textOnly = parseToolResult({ content: [{ type: "text", text: "no images" }] });
+    expect(splitPiToolResultImages(textOnly)).toEqual({ images: [], result: textOnly });
+    expect(splitPiToolResultImages(null)).toEqual({ images: [], result: null });
+  });
+
+  test("keeps other fields on the result object", () => {
+    const parsed = parseToolResult({
+      exitCode: 0,
+      content: [{ type: "image", data: "aGVsbG8=" }],
+    });
+    const { result } = splitPiToolResultImages(parsed);
+    expect(result).toMatchObject({ exitCode: 0 });
   });
 });

@@ -3488,3 +3488,47 @@ describe("transformPiModels", () => {
     ]);
   });
 });
+
+describe("Pi tool-result images", () => {
+  test("tool_execution_end with an image block emits a tool_call row then an image row", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    await session.startTurn("run");
+    fakeSession.emit({
+      type: "tool_execution_start",
+      toolCallId: "shot-1",
+      toolName: "screenshot",
+      args: {},
+    });
+    fakeSession.emit({
+      type: "tool_execution_end",
+      toolCallId: "shot-1",
+      toolName: "screenshot",
+      result: {
+        content: [
+          { type: "text", text: "captured" },
+          { type: "image", data: Buffer.from("hello").toString("base64"), mimeType: "image/png" },
+        ],
+      },
+      isError: false,
+    });
+    fakeSession.finishTurn();
+    await events.nextTurnCompletion();
+
+    const items = events.timelineItems();
+    const toolIndex = items.findIndex(
+      (item) => item.type === "tool_call" && item.callId === "shot-1",
+    );
+    expect(toolIndex).toBeGreaterThanOrEqual(0);
+    // Base64 must never reach the tool output stringifier.
+    expect(JSON.stringify(items[toolIndex])).not.toContain(Buffer.from("hello").toString("base64"));
+    expect(items.slice(toolIndex + 1)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "assistant_message",
+          text: expect.stringContaining("![Image]("),
+        }),
+      ]),
+    );
+  });
+});
