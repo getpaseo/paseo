@@ -4,6 +4,7 @@ import type { AgentTimelineItem } from "../../../agent-sdk-types.js";
 import { normalizeProviderReplayTimestamp } from "../../../provider-history-timestamps.js";
 import type { ProviderSubagentStatus } from "../../../provider-subagents/store.js";
 import { resolveObservedClaudeModelId } from "../models.js";
+import type { ClaudeRestoredSubagent } from "./live-source.js";
 import type { SubagentObservation } from "./observation.js";
 import { buildClaudeSubagentSubtitle, type ClaudeSubagentUsage } from "./presentation.js";
 
@@ -255,6 +256,7 @@ function observeSubagent(
   parent: ClaudeReplayParentFacts,
   convertEntry: (entry: ClaudeReplayEntry) => AgentTimelineItem[],
   toolOwners: Map<string, string>,
+  restored: ClaudeRestoredSubagent[],
   parentSubagentId?: string,
 ): SubagentObservation[] {
   const link = resolveParentLink(subagent, parent);
@@ -287,13 +289,14 @@ function observeSubagent(
   const observations = [
     declareSubagent(subagent, link, toolCall, parentSubagentId, firstTimestamp),
   ];
-  const subtitle = observeSubtitle(
-    link,
-    toolCall?.title ?? subagent.meta?.agentType,
-    runtime,
-    usage,
-    lastTimestamp,
-  );
+  const title = toolCall?.title ?? subagent.meta?.agentType;
+  // The agentId is the task_id Claude resumes this child under, so live can find it again.
+  restored.push({
+    taskId: subagent.agentId,
+    id: link.id,
+    presentation: { ...(title ? { title } : {}), ...runtime, ...(usage ? { usage } : {}) },
+  });
+  const subtitle = observeSubtitle(link, title, runtime, usage, lastTimestamp);
   if (subtitle) observations.push(subtitle);
   for (const observation of timeline) observations.push(observation);
   const terminalStatus = link.status ?? childTerminalStatus;
@@ -324,9 +327,14 @@ export function observeReplaySubagents(input: {
   subagents: readonly ClaudeReplaySubagentInput[];
   parent: ClaudeReplayParentFacts;
   convertEntry: (entry: ClaudeReplayEntry) => AgentTimelineItem[];
-}): { observations: SubagentObservation[]; toolOwners: ReadonlyMap<string, string> } {
+}): {
+  observations: SubagentObservation[];
+  toolOwners: ReadonlyMap<string, string>;
+  restored: readonly ClaudeRestoredSubagent[];
+} {
   const observations: SubagentObservation[] = [];
   const toolOwners = new Map<string, string>();
+  const restored: ClaudeRestoredSubagent[] = [];
   const unresolved = [...input.subagents].sort(
     (left, right) => (left.meta?.spawnDepth ?? 1) - (right.meta?.spawnDepth ?? 1),
   );
@@ -351,6 +359,7 @@ export function observeReplaySubagents(input: {
         parent,
         input.convertEntry,
         toolOwners,
+        restored,
         ownerId,
       )) {
         observations.push(observation);
@@ -360,7 +369,7 @@ export function observeReplaySubagents(input: {
       madeProgress = true;
     }
   }
-  return { observations, toolOwners };
+  return { observations, toolOwners, restored };
 }
 
 function resolveReplayOwner(
