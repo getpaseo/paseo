@@ -1,3 +1,4 @@
+import { revealWorkspaceTab } from "./navigation";
 import type { OpenInSidePanePreferences } from "@/hooks/use-settings";
 import {
   collectAllTabs,
@@ -22,13 +23,11 @@ interface OpenWorkspaceTargetInput {
 }
 
 export interface OpenPreferredWorkspaceTargetInput extends OpenWorkspaceTargetInput {
-  isCompact: boolean;
   source: OpenInSidePaneSource;
   preferences: OpenInSidePanePreferences;
 }
 
 interface OpenWorkspaceTargetAtLocationInput extends OpenWorkspaceTargetInput {
-  isCompact: boolean;
   location: WorkspaceTargetOpenLocation;
 }
 
@@ -37,6 +36,11 @@ interface OpenPreferredWorkspacePreviewInput extends OpenPreferredWorkspaceTarge
   workspaceId: string;
   explorerSidebarPaneId: string | null;
   lastMainPaneId: string | null;
+}
+
+/** A side pane exists only where the workspace renders split panes. */
+function canOpenBeside(): boolean {
+  return useWorkspaceLayoutStore.getState().layoutMode === "split-panes";
 }
 
 function resolveMainPane(input: {
@@ -86,7 +90,6 @@ export function openPreferredWorkspaceTarget(
   input: OpenPreferredWorkspaceTargetInput,
 ): string | null {
   return openWorkspaceTargetAtLocation({
-    isCompact: input.isCompact,
     workspaceKey: input.workspaceKey,
     target: input.target,
     location: input.preferences[input.source] ? "side" : "main",
@@ -105,7 +108,7 @@ export function openWorkspaceTargetAtLocation(
     layout &&
     collectAllTabs(layout.root).some((tab) => workspaceTabTargetsEqual(tab.target, input.target)),
   );
-  const shouldOpenBeside = !input.isCompact && input.location === "side";
+  const shouldOpenBeside = canOpenBeside() && input.location === "side";
   let placement: WorkspaceTabPlacement | undefined;
   if (shouldOpenBeside && !targetAlreadyExists) {
     const paneId = store.ensureSidePane(input.workspaceKey);
@@ -115,13 +118,16 @@ export function openWorkspaceTargetAtLocation(
     const parentPane = findPaneContainingTab(layout.root, input.parentTabId);
     placement = parentPane ? { mode: "prefer", paneId: parentPane.id } : undefined;
   }
-  return store.openTab({
-    workspaceKey: input.workspaceKey,
-    target: input.target,
-    intent: "reveal",
-    placement,
-    parentTabId: input.parentTabId ?? undefined,
-  });
+  return revealWorkspaceTab(
+    input.workspaceKey,
+    store.openTab({
+      workspaceKey: input.workspaceKey,
+      target: input.target,
+      intent: "reveal",
+      placement,
+      parentTabId: input.parentTabId ?? undefined,
+    }),
+  );
 }
 
 /** Opens a tree selection while reusing an unmodified preview in its destination pane. */
@@ -135,7 +141,13 @@ export function openPreferredWorkspacePreview(
   const existing = collectAllTabs(layout.root).some((tab) =>
     workspaceTabTargetsEqual(tab.target, input.target),
   );
-  if (existing) return openPreferredWorkspaceTarget(input);
+  // The sheet is already a single replaceable slot, so it needs no preview tab.
+  if (
+    existing ||
+    store.opensInSheet({ workspaceKey: input.workspaceKey, target: input.target, intent: "reveal" })
+  ) {
+    return openPreferredWorkspaceTarget(input);
+  }
 
   const mainPane = resolveMainPane({
     workspaceKey: input.workspaceKey,
@@ -143,7 +155,7 @@ export function openPreferredWorkspacePreview(
     lastMainPaneId: input.lastMainPaneId,
   });
   const destinationPaneId =
-    !input.isCompact && input.preferences[input.source]
+    canOpenBeside() && input.preferences[input.source]
       ? store.ensureSidePane(input.workspaceKey)
       : mainPane?.id;
   if (!destinationPaneId) return null;
@@ -162,27 +174,42 @@ export function openPreferredWorkspacePreview(
       nextTarget: input.target,
     })
   ) {
-    return store.replaceTab(input.workspaceKey, activeTab.tabId, input.target);
+    return revealWorkspaceTab(
+      input.workspaceKey,
+      store.replaceTab(input.workspaceKey, activeTab.tabId, input.target),
+    );
   }
-  return store.openTab({
-    workspaceKey: input.workspaceKey,
-    target: input.target,
-    intent: "reveal",
-    placement: { mode: "pane", paneId: destinationPaneId },
-    parentTabId: input.parentTabId ?? activeTab?.tabId ?? undefined,
-  });
+  return revealWorkspaceTab(
+    input.workspaceKey,
+    store.openTab({
+      workspaceKey: input.workspaceKey,
+      target: input.target,
+      intent: "reveal",
+      placement: { mode: "pane", paneId: destinationPaneId },
+      parentTabId: input.parentTabId ?? activeTab?.tabId ?? undefined,
+    }),
+  );
 }
 
-/** Explicit Open to Side: creates the side pane and places the target there. */
+/**
+ * Explicit Open to Side: creates the side pane and places the target there. Without split panes
+ * the target opens like any other.
+ */
 export function openWorkspaceTargetBeside(input: OpenWorkspaceTargetInput): string | null {
   if (!input.workspaceKey) return null;
+  if (!canOpenBeside()) {
+    return openWorkspaceTargetAtLocation({ ...input, location: "main" });
+  }
   const store = useWorkspaceLayoutStore.getState();
   const paneId = store.ensureSidePane(input.workspaceKey);
-  return store.openTab({
-    workspaceKey: input.workspaceKey,
-    target: input.target,
-    intent: "reveal",
-    placement: paneId ? { mode: "pane", paneId } : undefined,
-    parentTabId: input.parentTabId ?? undefined,
-  });
+  return revealWorkspaceTab(
+    input.workspaceKey,
+    store.openTab({
+      workspaceKey: input.workspaceKey,
+      target: input.target,
+      intent: "reveal",
+      placement: paneId ? { mode: "pane", paneId } : undefined,
+      parentTabId: input.parentTabId ?? undefined,
+    }),
+  );
 }

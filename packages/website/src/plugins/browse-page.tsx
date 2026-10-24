@@ -1,5 +1,8 @@
+import type { TFunction } from "i18next";
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { SiteShell } from "~/components/site-shell";
+import { useLocale, useLocalizePath } from "~/i18n";
 import { ContributeLinks } from "./contribute-links";
 import type { InstallCounts } from "./installs";
 import { type BrowseQuery, browseHref } from "./links";
@@ -16,7 +19,9 @@ import {
   mostInstalled,
   newestFirst,
   type Plugin,
+  recentlyUpdated,
   searchPlugins,
+  updatedAgo,
 } from "./registry";
 import { WindowSwitch } from "./window-switch";
 
@@ -34,7 +39,7 @@ const TAB_OFF = `${TAB_BASE} border-transparent text-muted-foreground hover:text
 const CLEAR_CLASS =
   "text-sm text-extra-muted-foreground transition-colors hover:text-muted-foreground";
 
-/** All plugins or one category: sidebar, Most installed / Newest tabs, and the card grid. */
+/** All plugins or one category: sidebar, Most installed / Newest / Recently updated tabs, and the card grid. */
 export function BrowsePage({
   plugins,
   installs,
@@ -46,14 +51,17 @@ export function BrowsePage({
   now: string;
   query: BrowseQuery;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
+  const localize = useLocalizePath();
   const category = query.category ? getCategory(query.category) : null;
-  const ordered =
-    query.sort === "new" ? newestFirst(plugins) : mostInstalled(plugins, installs, query.window);
+  const ordered = sortPlugins(plugins, installs, query);
   // Search ranks by relevance; the tab's order breaks ties.
-  const matches = query.q ? searchPlugins(ordered, query.q) : ordered;
-  const results = category ? getPluginsInCategory(matches, category.slug) : matches;
-  const title = category?.label ?? "All plugins";
-  const clearHref = browseHref({ ...query, q: undefined });
+  const matches = query.q ? searchPlugins(ordered, query.q, locale) : ordered;
+  const results = category ? getPluginsInCategory(matches, category) : matches;
+  const categoryLabel = category ? t(`plugins.categories.${category}.label`) : undefined;
+  const title = categoryLabel ?? t("plugins.allPlugins");
+  const clearHref = localize(browseHref({ ...query, q: undefined }));
   return (
     <SiteShell width="wide">
       <div className="lg:flex lg:gap-12">
@@ -64,14 +72,14 @@ export function BrowsePage({
         <div className="min-w-0 flex-1">
           <div className="mb-6 flex items-baseline justify-between gap-4">
             <h1 className="text-3xl font-medium tracking-tight">
-              {query.q ? `Results for “${query.q}”${category ? ` in ${title}` : ""}` : title}
+              {resultsTitle({ term: query.q, categoryLabel, title, t })}
               <span className="ml-3 align-middle text-sm font-normal tabular-nums text-extra-muted-foreground">
                 {results.length}
               </span>
             </h1>
             {query.q && (
               <a href={clearHref} className={CLEAR_CLASS}>
-                Clear
+                {t("plugins.clear")}
               </a>
             )}
           </div>
@@ -79,31 +87,27 @@ export function BrowsePage({
             <SortTabs query={query} />
             {results.length === 0 && query.q && (
               <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-10 text-center">
-                <p className="text-sm text-muted-foreground">No plugins match.</p>
+                <p className="text-sm text-muted-foreground">{t("plugins.noMatches")}</p>
                 <a
                   href={clearHref}
                   className="mt-2 inline-block text-xs text-extra-muted-foreground transition-colors hover:text-muted-foreground"
                 >
-                  Clear filters
+                  {t("plugins.clearFilters")}
                 </a>
               </div>
             )}
             {results.length === 0 && !query.q && (
-              <p className="text-sm text-muted-foreground">No plugins in this category yet.</p>
+              <p className="text-sm text-muted-foreground">
+                {query.sort === "updated" ? t("plugins.noneUpdated") : t("plugins.noneInCategory")}
+              </p>
             )}
             {results.length > 0 && (
               <div className={PLUGIN_GRID_CLASS}>
-                {results.map((plugin) =>
-                  query.sort === "new" ? (
-                    <PluginCard key={plugin.id} plugin={plugin}>
-                      {addedAgo(plugin, now)}
-                    </PluginCard>
-                  ) : (
-                    <PluginCard key={plugin.id} plugin={plugin}>
-                      <InstallCount count={installs[plugin.id]?.[query.window] ?? 0} />
-                    </PluginCard>
-                  ),
-                )}
+                {results.map((plugin) => (
+                  <PluginCard key={plugin.id} plugin={plugin}>
+                    <CardDetail plugin={plugin} installs={installs} now={now} query={query} />
+                  </PluginCard>
+                ))}
               </div>
             )}
           </PluginSection>
@@ -111,6 +115,52 @@ export function BrowsePage({
       </div>
     </SiteShell>
   );
+}
+
+/** The heading: the category or all plugins, or the search term and where it searched. */
+function resultsTitle({
+  term,
+  categoryLabel,
+  title,
+  t,
+}: {
+  term: string | undefined;
+  categoryLabel: string | undefined;
+  title: string;
+  t: TFunction;
+}): string {
+  if (!term) return title;
+  return categoryLabel
+    ? t("plugins.resultsInCategory", { term, category: categoryLabel })
+    : t("plugins.results", { term });
+}
+
+function sortPlugins(
+  plugins: Plugin[],
+  installs: Record<string, InstallCounts>,
+  query: BrowseQuery,
+): Plugin[] {
+  if (query.sort === "new") return newestFirst(plugins);
+  if (query.sort === "updated") return recentlyUpdated(plugins);
+  return mostInstalled(plugins, installs, query.window);
+}
+
+/** What the card shows beside the author: the date the tab sorts by, or the install count. */
+function CardDetail({
+  plugin,
+  installs,
+  now,
+  query,
+}: {
+  plugin: Plugin;
+  installs: Record<string, InstallCounts>;
+  now: string;
+  query: BrowseQuery;
+}) {
+  const { t } = useTranslation();
+  if (query.sort === "new") return addedAgo(plugin, now, t);
+  if (query.sort === "updated") return updatedAgo(plugin, now, t);
+  return <InstallCount count={installs[plugin.id]?.[query.window] ?? 0} />;
 }
 
 interface NavEntry {
@@ -124,26 +174,28 @@ interface NavEntry {
 
 /** Category sidebar on wide screens, a row of chips on narrow ones. Counts follow the search. */
 function CategoryNav({ plugins, query }: { plugins: Plugin[]; query: BrowseQuery }) {
+  const { t } = useTranslation();
+  const localize = useLocalizePath();
   const entries: NavEntry[] = [
     {
-      href: browseHref({ ...query, category: undefined }),
-      label: "All plugins",
-      chip: "All",
+      href: localize(browseHref({ ...query, category: undefined })),
+      label: t("plugins.allPlugins"),
+      chip: t("plugins.allChip"),
       count: plugins.length,
     },
     ...CATEGORIES.map((category) => ({
-      href: browseHref({ ...query, category: category.slug }),
-      label: category.label,
-      chip: category.label,
-      slug: category.slug,
-      count: getPluginsInCategory(plugins, category.slug).length,
+      href: localize(browseHref({ ...query, category })),
+      label: t(`plugins.categories.${category}.label`),
+      chip: t(`plugins.categories.${category}.label`),
+      slug: category,
+      count: getPluginsInCategory(plugins, category).length,
     })),
   ];
   return (
     <>
-      <nav aria-label="Categories" className="-ml-2.5 hidden lg:block">
+      <nav aria-label={t("plugins.categoriesTitle")} className="-ml-2.5 hidden lg:block">
         {entries.map((entry, index) => (
-          <div key={entry.label}>
+          <div key={entry.href}>
             <a
               href={entry.href}
               aria-current={query.category === entry.slug ? "page" : undefined}
@@ -162,10 +214,13 @@ function CategoryNav({ plugins, query }: { plugins: Plugin[]; query: BrowseQuery
           <ContributeLinks />
         </div>
       </nav>
-      <nav aria-label="Categories" className="-mx-6 flex gap-2 overflow-x-auto px-6 pb-1 lg:hidden">
+      <nav
+        aria-label={t("plugins.categoriesTitle")}
+        className="-mx-6 flex gap-2 overflow-x-auto px-6 pb-1 lg:hidden"
+      >
         {entries.map((entry) => (
           <a
-            key={entry.label}
+            key={entry.href}
             href={entry.href}
             aria-current={query.category === entry.slug ? "page" : undefined}
             className={query.category === entry.slug ? CHIP_ON : CHIP_OFF}
@@ -179,13 +234,15 @@ function CategoryNav({ plugins, query }: { plugins: Plugin[]; query: BrowseQuery
 }
 
 function SortTabs({ query }: { query: BrowseQuery }) {
+  const { t } = useTranslation();
+  const localize = useLocalizePath();
   const windowHrefs = useMemo(
     () => ({
-      week: browseHref({ ...query, window: "week" }),
-      month: browseHref({ ...query, window: "month" }),
-      all: browseHref({ ...query, window: "all" }),
+      week: localize(browseHref({ ...query, window: "week" })),
+      month: localize(browseHref({ ...query, window: "month" })),
+      all: localize(browseHref({ ...query, window: "all" })),
     }),
-    [query],
+    [localize, query],
   );
   const windowSwitch = query.sort === "installs" && (
     <WindowSwitch current={query.window} hrefs={windowHrefs} />
@@ -195,18 +252,25 @@ function SortTabs({ query }: { query: BrowseQuery }) {
       <div className="flex items-baseline justify-between gap-6 border-b border-white/10">
         <div className="flex gap-6">
           <a
-            href={browseHref({ ...query, sort: "installs" })}
+            href={localize(browseHref({ ...query, sort: "installs" }))}
             aria-current={query.sort === "installs" ? "page" : undefined}
             className={query.sort === "installs" ? TAB_ON : TAB_OFF}
           >
-            Most installed
+            {t("plugins.mostInstalled")}
           </a>
           <a
-            href={browseHref({ ...query, sort: "new" })}
+            href={localize(browseHref({ ...query, sort: "new" }))}
             aria-current={query.sort === "new" ? "page" : undefined}
             className={query.sort === "new" ? TAB_ON : TAB_OFF}
           >
-            Newest
+            {t("plugins.newest")}
+          </a>
+          <a
+            href={localize(browseHref({ ...query, sort: "updated" }))}
+            aria-current={query.sort === "updated" ? "page" : undefined}
+            className={query.sort === "updated" ? TAB_ON : TAB_OFF}
+          >
+            {t("plugins.recentlyUpdated")}
           </a>
         </div>
         {windowSwitch && <div className="hidden pb-2 sm:block">{windowSwitch}</div>}

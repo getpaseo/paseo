@@ -74,6 +74,14 @@ The adapter keys legacy slots by physical socket, so an old connection cannot re
 sibling's observation even when both use the same logical client ID. Optional wire IDs stay accepted
 for parsing compatibility; modern requests cannot select their subscription ID.
 
+Workspace setup details negotiate `workspace_setup_observation` with
+`server_info.features.workspaceSetupObservation`. Capable clients cannot request details through
+the legacy session event category. The setup panel owns a workspace-scoped observation while
+active and visible; directory metadata signals failures without requesting output. Older clients
+retain their legacy event delivery. A new app makes no setup event demand on older hosts and
+requires a host update to view details. Subscription-capable older hosts honor that absence of
+demand; broadcast-era hosts require an update before wire silence is guaranteed.
+
 ## Every shim is tagged and dated
 
 A shim that exists for old-app or old-daemon support carries a comment naming it, the version it arrived in, and when it can go:

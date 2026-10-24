@@ -56,6 +56,12 @@ export async function expectComposerNotFocused(page: Page): Promise<void> {
   await expect(composerInput(page)).not.toBeFocused();
 }
 
+/** Blur the editor without anything else taking focus. */
+export async function blurComposerInput(page: Page): Promise<void> {
+  await composerInput(page).blur();
+  await expectComposerNotFocused(page);
+}
+
 export async function submitMessage(page: Page, text: string): Promise<void> {
   const input = composerInput(page);
   await expect(input).toBeEditable({ timeout: 30_000 });
@@ -315,4 +321,240 @@ export async function openGithubWorkspace(
       await client.close().catch(() => undefined);
     },
   };
+}
+
+const COMPOSER_TEST_IMAGE_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+export async function attachComposerTestImage(page: Page): Promise<void> {
+  await attachImageFromMenu(page, {
+    name: "fullscreen.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(COMPOSER_TEST_IMAGE_BASE64, "base64"),
+  });
+}
+
+export async function pasteComposerTestImage(page: Page): Promise<boolean> {
+  return composerInput(page).evaluate((input, base64) => {
+    const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+    const clipboardData = new DataTransfer();
+    clipboardData.items.add(new File([bytes], "pasted.png", { type: "image/png" }));
+    const event = new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true });
+    input.dispatchEvent(event);
+    return event.defaultPrevented;
+  }, COMPOSER_TEST_IMAGE_BASE64);
+}
+
+export async function enterComposerFullscreen(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Fullscreen", exact: true }).click();
+}
+export async function exitComposerFullscreen(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Exit fullscreen", exact: true }).click();
+}
+export async function resizeComposerViewport(
+  page: Page,
+  orientation: "portrait" | "landscape" | "short",
+): Promise<void> {
+  const sizes = {
+    portrait: { width: 390, height: 844 },
+    landscape: { width: 844, height: 390 },
+    short: { width: 390, height: 390 },
+  };
+  await page.setViewportSize(sizes[orientation]);
+  // Before the app has loaded there is no layout to wait for.
+  if (page.url() === "about:blank") return;
+  // The shell and editor survive the breakpoint. Wait for the shell's layout
+  // marker to update before interacting with the resized composer.
+  await expect(
+    page.getByTestId(orientation === "landscape" ? "wide-shell" : "compact-shell"),
+  ).toBeVisible();
+}
+export async function selectComposerDraftRange(
+  page: Page,
+  start: number,
+  end: number,
+): Promise<void> {
+  await composerInput(page).focus();
+  await composerInput(page).evaluate(
+    (element, selection) => {
+      const input = element as HTMLTextAreaElement;
+      input.setSelectionRange(selection.start, selection.end);
+      input.dispatchEvent(new Event("select", { bubbles: true }));
+    },
+    { start, end },
+  );
+}
+export async function expectComposerDraftSelection(
+  page: Page,
+  start: number,
+  end: number,
+): Promise<void> {
+  await expect
+    .poll(() =>
+      composerInput(page).evaluate((element) => {
+        const input = element as HTMLTextAreaElement;
+        return [input.selectionStart, input.selectionEnd];
+      }),
+    )
+    .toEqual([start, end]);
+}
+export async function expectComposerFullscreenControls(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: "Exit fullscreen", exact: true })).toBeVisible();
+  await expect(page.getByTestId("composer-fullscreen").getByRole("button")).toHaveCount(2);
+  await expect(composerInput(page)).toHaveCount(1);
+}
+/** The fullscreen frame and its submit button sit inside the browser's visible viewport. */
+export async function expectComposerFullscreenFitsVisibleViewport(
+  page: Page,
+  submitLabel = "Send message",
+): Promise<void> {
+  await expect
+    .poll(() =>
+      page.getByTestId("composer-fullscreen").evaluate((element, label) => {
+        const viewport = window.visualViewport!;
+        const frame = element.getBoundingClientRect();
+        const send = element.querySelector(`[aria-label="${label}"]`)!.getBoundingClientRect();
+        return {
+          frameFits:
+            Math.abs(frame.top - viewport.offsetTop) < 1 &&
+            Math.abs(frame.left - viewport.offsetLeft) < 1 &&
+            Math.abs(frame.height - viewport.height) < 1 &&
+            Math.abs(frame.width - viewport.width) < 1,
+          sendFits:
+            send.top >= viewport.offsetTop &&
+            send.bottom <= viewport.offsetTop + viewport.height &&
+            send.left >= viewport.offsetLeft &&
+            send.right <= viewport.offsetLeft + viewport.width,
+        };
+      }, submitLabel),
+    )
+    .toEqual({ frameFits: true, sendFits: true });
+}
+export async function sendComposerWithButton(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+}
+export async function queueComposerWithButton(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Queue message", exact: true }).click();
+}
+export async function configureComposerQueueSend(page: Page): Promise<void> {
+  await page.addInitScript(() =>
+    localStorage.setItem("@paseo:app-settings", JSON.stringify({ sendBehavior: "queue" })),
+  );
+}
+
+/** Drive the real tab chooser's commands even when fullscreen covers its pointer surface.
+ * This exercises retained activity changes, not a claim that covered chrome is clickable.
+ */
+/** Needs a desktop-width viewport: compact layouts have no keyboard shortcuts. */
+export async function switchComposerTabWithKeyboard(
+  page: Page,
+  direction: "previous" | "next",
+): Promise<void> {
+  await page.keyboard.press(
+    direction === "previous" ? "Alt+Shift+BracketLeft" : "Alt+Shift+BracketRight",
+  );
+}
+export async function expectWorkspaceHeaderHidden(page: Page): Promise<void> {
+  await expect(page.getByTestId("workspace-tab-switcher-trigger")).toHaveCount(0);
+}
+export async function expectWorkspaceHeaderVisible(page: Page): Promise<void> {
+  await expect(page.getByTestId("workspace-tab-switcher-trigger")).toBeVisible();
+}
+
+export async function activateRetainedComposerTab(page: Page, title: string): Promise<void> {
+  await page
+    .getByTestId("workspace-tab-switcher-trigger")
+    .evaluate((element) => (element as HTMLElement).click());
+  const option = page.getByText(title, { exact: true }).filter({ visible: true }).last();
+  await expect(option).toBeVisible();
+  await option.evaluate((element) => (element as HTMLElement).click());
+}
+
+export async function recordVisibleComposerGeometry(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const frames: { input: number; root: number }[] = [];
+    Reflect.set(window, "__composerGeometryFrames", frames);
+    let running = true;
+    const tick = () => {
+      if (!running) return;
+      for (const root of document.querySelectorAll('[data-testid="message-input-root"]')) {
+        if (root.getClientRects().length === 0) continue;
+        const input = root.querySelector("textarea");
+        if (input)
+          frames.push({
+            input: input.getBoundingClientRect().height,
+            root: root.getBoundingClientRect().height,
+          });
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    Reflect.set(window, "__stopComposerGeometry", () => {
+      running = false;
+    });
+  });
+}
+export async function expectNoCollapsedVisibleComposer(page: Page): Promise<void> {
+  const frames = await page.evaluate(() => {
+    Reflect.get(window, "__stopComposerGeometry")?.();
+    return Reflect.get(window, "__composerGeometryFrames") as { input: number; root: number }[];
+  });
+  expect(frames.length).toBeGreaterThan(0);
+  expect(frames.filter((frame) => frame.root < 42 || frame.input < 42)).toEqual([]);
+}
+
+/** Exercise the quick-return race before a hidden pane gets a rendering frame. */
+export async function roundTripComposerTabBeforePaint(
+  page: Page,
+  activeChatTitle: string,
+): Promise<void> {
+  const activeTab = page.getByRole("button", { name: activeChatTitle, exact: true });
+  await expect(activeTab).toHaveAttribute("aria-selected", "true");
+  const result = await activeTab.evaluate((tab) => {
+    const editor = document.activeElement;
+    return new Promise<{ returnedBeforePaint: boolean; focused: boolean }>((resolve) => {
+      let switchedAway = false;
+      let painted = false;
+      let frame = 0;
+      const shortcut = (code: "BracketLeft" | "BracketRight") => {
+        document.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: code === "BracketLeft" ? "{" : "}",
+            code,
+            altKey: true,
+            shiftKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      };
+      // Watch selection commits without reading layout: a layout read could make
+      // Chromium blur the hidden editor and erase the condition under test.
+      const observer = new MutationObserver(() => {
+        if (!switchedAway && tab.getAttribute("aria-selected") === "false") {
+          switchedAway = true;
+          frame = requestAnimationFrame(() => {
+            painted = true;
+          });
+          // Deliver the return shortcut before rendering, without a Playwright
+          // round trip allowing the browser to paint the inactive tab first.
+          shortcut("BracketRight");
+        } else if (switchedAway && tab.getAttribute("aria-selected") === "true") {
+          observer.disconnect();
+          cancelAnimationFrame(frame);
+          return resolve({
+            returnedBeforePaint: !painted,
+            focused: document.activeElement === editor,
+          });
+        }
+      });
+      observer.observe(tab, { attributes: true, attributeFilter: ["aria-selected"] });
+      shortcut("BracketLeft");
+    });
+  });
+  expect(
+    result.returnedBeforePaint,
+    "tab round trip must finish before rendering the hidden pane",
+  ).toBe(true);
+  expect(result.focused, "returning on touch must leave the composer unfocused").toBe(false);
 }

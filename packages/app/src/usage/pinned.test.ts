@@ -73,27 +73,6 @@ describe("choosePinnedUsageLayout", () => {
 });
 
 describe("resolvePinnedUsage", () => {
-  it("keeps sources and accounts alphabetical across refresh results", () => {
-    const work = { ...claude, id: "claude:work", account: { label: "work" } };
-    const cursor = report({
-      sourceId: "cursor",
-      sourceLabel: "Cursor",
-      windows: [{ id: "total", label: "Total", usedPct: 26 }],
-    });
-    const streamed = [cursor, work, codex, claude];
-    const completed = streamed.toReversed();
-
-    for (const reports of [streamed, completed]) {
-      Object.freeze(reports);
-      expect(resolvePinnedUsage(reports, preferences(null)).map((source) => source.key)).toEqual([
-        "claude:default",
-        "claude:work",
-        "codex:default",
-        "cursor:default",
-      ]);
-    }
-  });
-
   it("defaults to source-wide pins collected from each account", () => {
     const work = report({
       sourceId: "claude",
@@ -135,7 +114,7 @@ describe("resolvePinnedUsage", () => {
     ]);
   });
 
-  it("groups sources alphabetically and keeps windows in report order, not pin order", () => {
+  it("groups pinned windows by source in report order, not pin order", () => {
     const work = report({
       sourceId: "claude",
       sourceLabel: "Claude",
@@ -278,9 +257,12 @@ describe("resolvePinnedUsage", () => {
   });
 });
 
-it("keeps unavailable and error reports out of the sidebar summary", () => {
+it("keeps unavailable and error reports out of the sidebar summary even with retained data", () => {
+  if (claude.report.status !== "available" || codex.report.status !== "available")
+    throw new Error("fixtures must be available");
   const expired: UsageReportEntry = {
     ...claude,
+    lastSuccessful: { fetchedAt: claude.fetchedAt, report: claude.report },
     report: {
       status: "unavailable",
       problem: { kind: "expired", expiresAt: "2026-10-01T00:00:00.000Z", refreshedBy: "claude" },
@@ -288,7 +270,34 @@ it("keeps unavailable and error reports out of the sidebar summary", () => {
   };
   const failed: UsageReportEntry = {
     ...codex,
+    lastSuccessful: { fetchedAt: codex.fetchedAt, report: codex.report },
     report: { status: "error", error: "Store deleted" },
   };
   expect(resolvePinnedUsage([expired, failed], preferences(null))).toEqual([]);
+});
+
+it("localizes pinned labels and meanings while preserving custom window names", async () => {
+  const { i18n } = await import("@/i18n/i18next");
+  await i18n.changeLanguage("ja");
+  try {
+    const entries = [
+      report({
+        sourceId: "test",
+        sourceLabel: "Test",
+        windows: [
+          { id: "session", label: "Session", summary: true, usedPct: 70 },
+          { id: "weekly", label: "My allowance", summary: true, usedPct: 20 },
+        ],
+      }),
+    ];
+    expect(windows(entries, preferences(null)).map((w) => [w.label, w.shortLabel])).toEqual([
+      ["Test セッション 70% 使用済み", "セッション"],
+      ["Test My allowance 20% 使用済み", "My allowance"],
+    ]);
+    expect(windows(entries, preferences(null, "remaining"))[0].label).toBe(
+      "Test セッション 残り 30%",
+    );
+  } finally {
+    await i18n.changeLanguage("en");
+  }
 });

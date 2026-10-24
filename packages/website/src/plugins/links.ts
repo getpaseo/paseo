@@ -5,7 +5,7 @@ export const DOCS_URL = "/docs/plugins";
 export const SUBMIT_URL =
   "https://github.com/getpaseo/plugins/issues/new?template=submit-plugin.yml";
 
-export type BrowseSort = "installs" | "new";
+export type BrowseSort = "installs" | "new" | "updated";
 export interface BrowseQuery {
   /** Absent for all plugins. */
   category?: CategorySlug;
@@ -24,11 +24,14 @@ export function parseSearchTerm(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 export function parseSort(value: unknown): BrowseSort | undefined {
-  return value === "new" ? value : undefined;
+  return value === "new" || value === "updated" ? value : undefined;
 }
 
 export function pluginHref(id: string): string {
   return `/plugins/${id}`;
+}
+export function pluginOwnerHref(owner: string): string {
+  return `/plugins/${owner}`;
 }
 export function categoryHref(category: CategorySlug): string {
   return `/plugins/category/${category}`;
@@ -37,7 +40,7 @@ export function browseHref({ category, sort, window, q }: BrowseQuery): string {
   const path = category ? categoryHref(category) : "/plugins/all";
   const params = new URLSearchParams();
   if (q) params.set("q", q);
-  if (sort === "new") params.set("sort", sort);
+  if (sort !== "installs") params.set("sort", sort);
   else if (window !== DEFAULT_WINDOW) params.set("window", window);
   const search = params.toString();
   return search ? `${path}?${search}` : path;

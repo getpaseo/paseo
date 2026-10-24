@@ -1,6 +1,9 @@
+import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { promisify } from "node:util";
+import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { PermissionResult, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
@@ -15,9 +18,11 @@ import {
   resolveClaudeCodeVersion,
   toClaudeSdkMcpConfig,
 } from "./agent.js";
+import { createImportDescriptorScheduler } from "./import-descriptor-scheduler.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
 import type {
+  ImportableProviderSession,
   AgentPromptInput,
   AgentSession,
   AgentTimelineItem,
@@ -426,6 +431,14 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     try {
       const client = new ClaudeAgentClient({
         logger,
+        discoverModels: async () => [
+          {
+            value: "mythos",
+            resolvedModel: "claude-mythos-5-1",
+            displayName: "Mythos",
+            description: "",
+          },
+        ],
         resolveBinary: async () => "/test/claude/bin",
         resolveVersion: async () => "2.1.219",
         runtimeSettings: { env: { CLAUDE_CONFIG_DIR: emptyConfigDir } },
@@ -438,6 +451,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
 
       expect(models.map((m) => m.id)).toEqual([
         "claude-opus-5",
+        "claude-mythos-5-1",
         "claude-fable-5-1",
         "claude-fable-5",
         "claude-fable-5[1m]",
@@ -472,6 +486,14 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     try {
       const client = new ClaudeAgentClient({
         logger,
+        discoverModels: async () => [
+          {
+            value: "mythos",
+            resolvedModel: "claude-mythos-5-1",
+            displayName: "Mythos",
+            description: "",
+          },
+        ],
         resolveVersion: async () => {
           throw new Error("unrecognized version output");
         },
@@ -495,6 +517,14 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     try {
       const client = new ClaudeAgentClient({
         logger,
+        discoverModels: async () => [
+          {
+            value: "mythos",
+            resolvedModel: "claude-mythos-5-1",
+            displayName: "Mythos",
+            description: "",
+          },
+        ],
         resolveBinary: async () => "/test/claude/bin",
         resolveVersion: async () => "2.1.293",
         runtimeSettings: { env: { CLAUDE_CONFIG_DIR: emptyConfigDir } },
@@ -509,6 +539,14 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       };
 
       expect(getThinkingIds("claude-opus-5")).toContain("ultracode");
+      expect(getThinkingIds("claude-mythos-5-1")).toEqual([
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultracode",
+      ]);
       expect(getThinkingIds("claude-fable-5-1")).toContain("ultracode");
       expect(getThinkingIds("claude-fable-5")).toContain("ultracode");
       expect(getThinkingIds("claude-opus-4-8[1m]")).toContain("ultracode");
@@ -540,6 +578,36 @@ describe("ClaudeAgentClient binary resolution", () => {
 
   test("resolves the installed Claude Code version", async () => {
     await expect(resolveClaudeCodeVersion()).resolves.toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  test("rejects a wrapper command's own version output instead of reading it as Claude Code's", async () => {
+    const wrapperDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-version-"));
+    const wrapperPath = path.join(wrapperDir, "wrapper");
+    await fs.writeFile(wrapperPath, 'console.log("cux 0.4.1");\n');
+    try {
+      await expect(
+        resolveClaudeCodeVersion({
+          command: { mode: "replace", argv: [process.execPath, wrapperPath] },
+        }),
+      ).rejects.toThrow("Unable to parse Claude Code version from --version output");
+    } finally {
+      await fs.rm(wrapperDir, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves the version when the command forwards the Claude Code banner", async () => {
+    const wrapperDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-version-"));
+    const wrapperPath = path.join(wrapperDir, "wrapper");
+    await fs.writeFile(wrapperPath, 'console.log("2.1.302 (Claude Code)");\n');
+    try {
+      await expect(
+        resolveClaudeCodeVersion({
+          command: { mode: "replace", argv: [process.execPath, wrapperPath] },
+        }),
+      ).resolves.toBe("2.1.302");
+    } finally {
+      await fs.rm(wrapperDir, { recursive: true, force: true });
+    }
   });
 
   test("loads user, project, and local Claude settings", async () => {
@@ -1232,6 +1300,7 @@ describe("ClaudeAgentSession features", () => {
 
   test.each([
     ["supported model", "claude-opus-4-8", { type: "disabled" }, undefined],
+    ["Mythos 5.1", "claude-mythos-5-1", { type: "adaptive", display: "summarized" }, "high"],
     ["Haiku 5.5", "claude-haiku-5-5", { type: "disabled" }, undefined],
     ["unsupported model", "claude-fable-5", { type: "adaptive", display: "summarized" }, "high"],
     ["custom model", "openrouter/anthropic/claude-opus-4-8", undefined, undefined],
@@ -1676,6 +1745,404 @@ describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
 });
 
 describe("ClaudeAgentClient.listImportableSessions", () => {
+  async function descriptorFixture(count: number) {
+    const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-errors-"));
+    const projectDir = path.join(configDir, "projects", "errors");
+    await fs.mkdir(projectDir, { recursive: true });
+    const files: string[] = [];
+    const descriptors: ImportableProviderSession[] = [];
+    const logs: unknown[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const file = path.join(projectDir, `${index}.jsonl`);
+      const timestamp = new Date(Date.UTC(2026, 0, 1) + (count - index) * 1000);
+      await fs.writeFile(
+        file,
+        JSON.stringify({
+          type: "user",
+          sessionId: `session-${index}`,
+          cwd: "/errors",
+          message: { content: `Prompt ${index}` },
+        }),
+      );
+      await fs.utimes(file, timestamp, timestamp);
+      files.push(file);
+      descriptors.push({
+        providerHandleId: `session-${index}`,
+        cwd: "/errors",
+        title: `Prompt ${index}`,
+        firstPromptPreview: `Prompt ${index}`,
+        lastPromptPreview: `Prompt ${index}`,
+        lastActivityAt: timestamp,
+      });
+    }
+    const options = {
+      logger: pino({ level: "warn" }, { write: (line: string) => logs.push(JSON.parse(line)) }),
+      runtimeSettings: { env: { CLAUDE_CONFIG_DIR: configDir } },
+    };
+    return {
+      files,
+      descriptors,
+      logs,
+      options,
+      cleanup: () => fs.rm(configDir, { recursive: true, force: true }),
+    };
+  }
+
+  const cannotEnforceFilePermissions = process.platform === "win32" || process.getuid?.() === 0;
+  const discoveryPermissionCases = [
+    { label: "project enumeration", mode: 0, deniedSuffix: "", existingSuffix: "" },
+    {
+      label: "candidate stat",
+      mode: 0o400,
+      deniedSuffix: "hidden.jsonl",
+      existingSuffix: "0.jsonl",
+    },
+  ];
+  test.skipIf(cannotEnforceFilePermissions).each(discoveryPermissionCases)(
+    "logs denied $label while discovering a healthy project",
+    async ({ mode, deniedSuffix }) => {
+      const fixture = await descriptorFixture(1);
+      const projectsRoot = path.dirname(path.dirname(fixture.files[0]!));
+      const deniedProject = path.join(projectsRoot, "denied-project");
+      await fs.mkdir(deniedProject);
+      try {
+        await fs.writeFile(path.join(deniedProject, "hidden.jsonl"), '{"type":"user"}');
+        await fs.chmod(deniedProject, mode);
+        const client = new ClaudeAgentClient(fixture.options);
+        await expect(client.listImportableSessions({ limit: 2 })).resolves.toEqual(
+          fixture.descriptors,
+        );
+        expect(fixture.logs).toEqual([
+          expect.objectContaining({
+            path: path.join(deniedProject, deniedSuffix),
+            err: expect.objectContaining({ code: "EACCES" }),
+            msg: "Skipping Claude session discovery path with denied access",
+          }),
+        ]);
+      } finally {
+        await fs.chmod(deniedProject, 0o700);
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  test.skipIf(cannotEnforceFilePermissions).each(discoveryPermissionCases)(
+    "surfaces a provider error when $label denies discovery in every project",
+    async ({ mode, deniedSuffix, existingSuffix }) => {
+      const fixture = await descriptorFixture(1);
+      const existingProject = path.dirname(fixture.files[0]!);
+      const deniedProject = path.join(path.dirname(existingProject), "denied-project");
+      await fs.mkdir(deniedProject);
+      try {
+        await fs.writeFile(path.join(deniedProject, "hidden.jsonl"), '{"type":"user"}');
+        await fs.chmod(existingProject, mode);
+        await fs.chmod(deniedProject, mode);
+        const client = new ClaudeAgentClient(fixture.options);
+        await expect(client.listImportableSessions({ limit: 2 })).rejects.toMatchObject({
+          name: "AggregateError",
+          message: expect.stringContaining("no transcripts could be discovered"),
+          errors: expect.arrayContaining([
+            expect.objectContaining({
+              code: "EACCES",
+              path: path.join(existingProject, existingSuffix),
+            }),
+            expect.objectContaining({
+              code: "EACCES",
+              path: path.join(deniedProject, deniedSuffix),
+            }),
+          ]),
+        });
+        expect(fixture.logs).toHaveLength(2);
+        expect(fixture.logs).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              path: path.join(existingProject, existingSuffix),
+              err: expect.objectContaining({ code: "EACCES" }),
+            }),
+            expect.objectContaining({
+              path: path.join(deniedProject, deniedSuffix),
+              err: expect.objectContaining({ code: "EACCES" }),
+            }),
+          ]),
+        );
+      } finally {
+        await fs.chmod(existingProject, 0o700);
+        await fs.chmod(deniedProject, 0o700);
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  test.skipIf(cannotEnforceFilePermissions)(
+    "isolates an actual access-denied transcript while returning a healthy session",
+    async () => {
+      const fixture = await descriptorFixture(2);
+      try {
+        await fs.chmod(fixture.files[0]!, 0);
+        const client = new ClaudeAgentClient(fixture.options);
+        await expect(client.listImportableSessions({ limit: 2 })).resolves.toEqual([
+          fixture.descriptors[1],
+        ]);
+        expect(fixture.logs).toEqual([
+          expect.objectContaining({
+            path: fixture.files[0],
+            err: expect.objectContaining({ code: "EACCES" }),
+            msg: "Skipping Claude transcript with unreadable import metadata",
+          }),
+        ]);
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  test.skipIf(cannotEnforceFilePermissions)(
+    "surfaces a provider error when every actual candidate is access denied",
+    async () => {
+      const fixture = await descriptorFixture(2);
+      try {
+        await Promise.all(fixture.files.map((file) => fs.chmod(file, 0)));
+        const client = new ClaudeAgentClient(fixture.options);
+        await expect(client.listImportableSessions({ limit: 2 })).rejects.toMatchObject({
+          name: "AggregateError",
+          errors: fixture.files.map((file) =>
+            expect.objectContaining({ code: "EACCES", path: file }),
+          ),
+          message: expect.stringContaining(
+            "all 2 candidate transcripts have unreadable import metadata",
+          ),
+        });
+        expect(fixture.logs).toHaveLength(2);
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  test("returns an empty listing for readable transcripts without import metadata", async () => {
+    const fixture = await descriptorFixture(2);
+    try {
+      await Promise.all(fixture.files.map((file) => fs.writeFile(file, '{"type":"assistant"}')));
+      const client = new ClaudeAgentClient(fixture.options);
+      await expect(client.listImportableSessions({ limit: 2 })).resolves.toEqual([]);
+      expect(fixture.logs).toEqual([]);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test("refreshes descriptors after append, rewrite, replacement, and deletion", async () => {
+    const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-cache-"));
+    try {
+      const projectDir = path.join(configDir, "projects", "changing-transcript");
+      await fs.mkdir(projectDir, { recursive: true });
+      const sessionFile = path.join(projectDir, "changing.jsonl");
+      const initial = `${JSON.stringify({
+        type: "user",
+        sessionId: "changing-session",
+        cwd: "/changing-project",
+        message: { content: "First prompt" },
+      })}\n`;
+      function title(customTitle: string): string {
+        return `${JSON.stringify({ type: "custom-title", customTitle })}\n`;
+      }
+      await fs.writeFile(sessionFile, initial + title("First title"));
+      const timestamp = new Date("2026-06-01T12:00:00.000Z");
+      await fs.utimes(sessionFile, timestamp, timestamp);
+
+      const client = new ClaudeAgentClient({
+        logger: createTestLogger(),
+        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: configDir } },
+      });
+      const first = await client.listImportableSessions({ limit: 1 });
+      expect(first.map((session) => session.title)).toEqual(["First title"]);
+      // Callers must not be able to mutate a cached descriptor, including its Date.
+      first[0]!.title = "Changed by caller";
+      first[0]!.lastActivityAt.setTime(0);
+      const repeated = await Promise.all([
+        client.listImportableSessions({ limit: 1 }),
+        client.listImportableSessions({ limit: 1 }),
+      ]);
+      expect(repeated.map((sessions) => [sessions[0]!.title, sessions[0]!.lastActivityAt])).toEqual(
+        [
+          ["First title", timestamp],
+          ["First title", timestamp],
+        ],
+      );
+
+      repeated[0]![0]!.title = "Changed by overlapping caller";
+      repeated[0]![0]!.lastActivityAt.setTime(0);
+      expect([repeated[1]![0]!.title, repeated[1]![0]!.lastActivityAt]).toEqual([
+        "First title",
+        timestamp,
+      ]);
+
+      await fs.appendFile(sessionFile, title("After append"));
+      expect(
+        (await client.listImportableSessions({ limit: 1 })).map((session) => session.title),
+      ).toEqual(["After append"]);
+
+      // Same-length rewrites with a restored mtime still invalidate the descriptor.
+      await fs.writeFile(sessionFile, initial + title("Other title"));
+      await fs.utimes(sessionFile, timestamp, timestamp);
+      expect(
+        (await client.listImportableSessions({ limit: 1 })).map((session) => session.title),
+      ).toEqual(["Other title"]);
+
+      const replacement = path.join(projectDir, "replacement.tmp");
+      await fs.writeFile(replacement, initial + title("Final title"));
+      await fs.utimes(replacement, timestamp, timestamp);
+      await fs.rename(replacement, sessionFile);
+      expect(
+        (await client.listImportableSessions({ limit: 1 })).map((session) => session.title),
+      ).toEqual(["Final title"]);
+
+      await fs.unlink(sessionFile);
+      await expect(client.listImportableSessions({ limit: 1 })).resolves.toEqual([]);
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    { providers: 1, requestsPerProvider: 4 },
+    { providers: 5, requestsPerProvider: 3 },
+  ])(
+    "discovers large histories with $providers providers and $requestsPerProvider requests each",
+    async ({ providers, requestsPerProvider }) => {
+      const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-heap-"));
+      try {
+        const projectDir = path.join(configDir, "projects", "large-transcript");
+        await fs.mkdir(projectDir, { recursive: true });
+        const sessionFile = path.join(projectDir, "large.jsonl");
+        const transcript = await fs.open(sessionFile, "w");
+        try {
+          await transcript.writeFile(
+            `${JSON.stringify({
+              type: "user",
+              sessionId: "large-session",
+              cwd: "/large-project",
+              message: { content: "First prompt" },
+            })}\r\n`,
+          );
+          const block = `${JSON.stringify({ type: "assistant", text: "x".repeat(1024) })}\n`.repeat(
+            1024,
+          );
+          for (let index = 0; index < 128; index += 1) {
+            await transcript.writeFile(block);
+          }
+          // A malformed record must not hide the final unterminated record.
+          await transcript.writeFile(
+            `incomplete json\n${JSON.stringify({
+              type: "user",
+              message: { content: "Last prompt 🐢" },
+            })}`,
+          );
+        } finally {
+          await transcript.close();
+        }
+
+        const { stdout } = await promisify(execFile)(
+          process.execPath,
+          [
+            "--max-old-space-size=96",
+            "--import",
+            import.meta.resolve("tsx"),
+            "--input-type=module",
+            "--eval",
+            `
+            import { deepStrictEqual } from "node:assert";
+            import { ClaudeAgentClient } from ${JSON.stringify(new URL("./agent.ts", import.meta.url).href)};
+            import pino from ${JSON.stringify(import.meta.resolve("pino"))};
+            import { mkdir, symlink } from "node:fs/promises";
+            import path from "node:path";
+            const clients = [];
+            for (let index = 0; index < ${providers}; index++) {
+              const providerConfigDir = path.join(${JSON.stringify(configDir)}, "alias-" + index);
+              await mkdir(providerConfigDir);
+              await symlink(path.join(${JSON.stringify(configDir)}, "projects"), path.join(providerConfigDir, "projects"), "junction");
+              clients.push(new ClaudeAgentClient({
+                logger: pino({ level: "silent" }),
+                runtimeSettings: { env: { CLAUDE_CONFIG_DIR: providerConfigDir } },
+              }));
+            }
+            const listings = await Promise.all(clients.flatMap(client =>
+              Array.from({ length: ${requestsPerProvider} }, () => client.listImportableSessions({ limit: 1 }))
+            ));
+            const sessions = listings[0];
+            for (const listing of listings) deepStrictEqual(listing, sessions);
+            console.log(JSON.stringify(sessions));
+          `,
+          ],
+          { timeout: 20_000 },
+        );
+
+        expect(JSON.parse(stdout)).toEqual([
+          {
+            providerHandleId: "large-session",
+            cwd: "/large-project",
+            title: "First prompt",
+            firstPromptPreview: "First prompt",
+            lastPromptPreview: "Last prompt 🐢",
+            lastActivityAt: (await fs.stat(sessionFile)).mtime.toISOString(),
+          },
+        ]);
+      } finally {
+        await fs.rm(configDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("keeps metadata and UTF-8 across read chunk boundaries", async () => {
+    const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-limit-"));
+    try {
+      const projectDir = path.join(configDir, "projects", "boundary");
+      await fs.mkdir(projectDir, { recursive: true });
+      const prefix = '{"padding":"';
+      // Split the four-byte turtle across a 64 KiB input chunk boundary.
+      const padding = "x".repeat(64 * 1024 - Buffer.byteLength(prefix) - 1);
+      const suffix =
+        '","type":"user","sessionId":"boundary-session","cwd":"/boundary","message":{"content":"Hello 🐢"}}';
+      const remaining = 4 * 1024 * 1024 - Buffer.byteLength(prefix + padding + "🐢" + suffix);
+      await fs.writeFile(
+        path.join(projectDir, "boundary.jsonl"),
+        prefix + padding + "🐢" + "x".repeat(remaining) + suffix,
+      );
+      const client = new ClaudeAgentClient({
+        logger: createTestLogger(),
+        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: configDir } },
+      });
+      expect(
+        (await client.listImportableSessions({ limit: 1 })).map((session) => ({
+          providerHandleId: session.providerHandleId,
+          cwd: session.cwd,
+          title: session.title,
+          firstPromptPreview: session.firstPromptPreview,
+          lastPromptPreview: session.lastPromptPreview,
+        })),
+      ).toEqual([
+        {
+          providerHandleId: "boundary-session",
+          cwd: "/boundary",
+          title: "Hello 🐢",
+          firstPromptPreview: "Hello 🐢",
+          lastPromptPreview: "Hello 🐢",
+        },
+      ]);
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects a cancelled listing before doing filesystem work", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("Picker closed"));
+    const client = new ClaudeAgentClient({ logger: createTestLogger() });
+    await expect(client.listImportableSessions({ signal: controller.signal })).rejects.toThrow(
+      "Picker closed",
+    );
+  });
+
   test("uses the latest native custom title and leaves fixture mtimes unchanged", async () => {
     const tmpConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-"));
     const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
@@ -2101,13 +2568,15 @@ describe("ClaudeAgentSession context window usage", () => {
   }
 
   function createMessageDeltaEvent(outputTokens: number): Record<string, unknown> {
+    return createMessageDeltaUsageEvent({ output_tokens: outputTokens });
+  }
+
+  function createMessageDeltaUsageEvent(usage: Record<string, unknown>): Record<string, unknown> {
     return {
       type: "stream_event",
       event: {
         type: "message_delta",
-        usage: {
-          output_tokens: outputTokens,
-        },
+        usage,
       },
       session_id: "session-1",
     };
@@ -2769,6 +3238,7 @@ describe("ClaudeAgentSession context window usage", () => {
           type: "usage_updated",
           provider: "claude",
           usage: {
+            contextWindowMaxTokens: 200_000,
             contextWindowUsedTokens: 150,
           },
         }),
@@ -2804,7 +3274,13 @@ describe("ClaudeAgentSession context window usage", () => {
 
   test("selected 1M Claude models seed active context window usage from the catalog", async () => {
     const session = await createSessionForTurns(
-      [[createInitMessage(), createMessageStartEvent(), createSuccessResult()]],
+      [
+        [
+          { ...createInitMessage(), model: "claude-sonnet-5[1m]" },
+          createMessageStartEvent(),
+          createSuccessResult(),
+        ],
+      ],
       { model: "claude-sonnet-5[1m]" },
     );
 
@@ -2844,10 +3320,126 @@ describe("ClaudeAgentSession context window usage", () => {
           type: "usage_updated",
           provider: "claude",
           usage: {
+            contextWindowMaxTokens: 200_000,
             contextWindowUsedTokens: 175,
           },
         }),
       );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("message_delta input usage replaces an empty message_start count", async () => {
+    // Translating gateways (LiteLLM in front of an OpenAI-compatible backend) do not know the
+    // prompt size when message_start is emitted, so they report input_tokens: 0 there and send
+    // the cumulative counts on message_delta, as the Anthropic Messages API allows.
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent({
+          input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        }),
+        createMessageDeltaUsageEvent({ input_tokens: 20_236, output_tokens: 64 }),
+        createSuccessResult({
+          usage: {
+            input_tokens: 20_236,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            output_tokens: 64,
+            iterations: [],
+          },
+        }),
+      ],
+    ]);
+
+    try {
+      const events = await collectStreamEvents(session);
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "usage_updated",
+          provider: "claude",
+          usage: {
+            contextWindowMaxTokens: 200_000,
+            contextWindowUsedTokens: 20_300,
+          },
+        }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "turn_completed",
+          usage: expect.objectContaining({
+            inputTokens: 20_236,
+            outputTokens: 64,
+            contextWindowUsedTokens: 20_300,
+          }),
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("message_delta without cache counters keeps the message_start cache usage", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent({
+          input_tokens: 5,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 1_000,
+        }),
+        createMessageDeltaUsageEvent({ input_tokens: 5, output_tokens: 64 }),
+        createSuccessResult(),
+      ],
+    ]);
+
+    try {
+      const events = await collectStreamEvents(session);
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "usage_updated",
+          provider: "claude",
+          usage: {
+            contextWindowMaxTokens: 200_000,
+            contextWindowUsedTokens: 1_069,
+          },
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("message_delta before this request's message_start does not seed usage", async () => {
+    // A canceled request can leave its terminal message_delta queued behind the next turn.
+    // Nothing is known about the new request until its message_start, so that straggler
+    // must not produce a usage_updated event or leak into the next request's counters.
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageDeltaUsageEvent({ input_tokens: 20_236, output_tokens: 64 }),
+        createMessageStartEvent({
+          input_tokens: 40,
+          cache_creation_input_tokens: 5,
+          cache_read_input_tokens: 10,
+        }),
+        createMessageDeltaEvent(7),
+        createSuccessResult(),
+      ],
+    ]);
+
+    try {
+      const events = await collectStreamEvents(session);
+
+      const usedTokens = events
+        .filter((event) => event.type === "usage_updated")
+        .map((event) => event.usage.contextWindowUsedTokens);
+      expect(usedTokens).toEqual([55, 62]);
     } finally {
       await session.close();
     }
@@ -2877,6 +3469,7 @@ describe("ClaudeAgentSession context window usage", () => {
           type: "usage_updated",
           provider: "claude",
           usage: {
+            contextWindowMaxTokens: 200_000,
             contextWindowUsedTokens: 55,
           },
         }),
@@ -2886,6 +3479,7 @@ describe("ClaudeAgentSession context window usage", () => {
           type: "usage_updated",
           provider: "claude",
           usage: {
+            contextWindowMaxTokens: 200_000,
             contextWindowUsedTokens: 62,
           },
         }),
@@ -2923,6 +3517,7 @@ describe("ClaudeAgentSession context window usage", () => {
           type: "usage_updated",
           provider: "claude",
           usage: {
+            contextWindowMaxTokens: 200_000,
             contextWindowUsedTokens: 704,
           },
         }),
@@ -3501,5 +4096,186 @@ describe("Claude question permission notifications", () => {
 
     expect(request.title).toBeUndefined();
     expect(request.description).toBeUndefined();
+  });
+});
+
+describe("Claude import descriptor scheduling", () => {
+  function controlledReads() {
+    const started: string[] = [];
+    const reads = new Map<
+      string,
+      { resolve: (value: string) => void; reject: (reason: unknown) => void }
+    >();
+    const signals = new Map<string, AbortSignal>();
+    const sharedScheduler = createImportDescriptorScheduler(
+      (candidate: { cacheKey: string }, signal) => {
+        started.push(candidate.cacheKey);
+        signals.set(candidate.cacheKey, signal);
+        return new Promise<string>((resolve, reject) => {
+          reads.set(candidate.cacheKey, { resolve, reject });
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      },
+    );
+    function scheduler(candidates: string[], signal: AbortSignal): Promise<string[]> {
+      return sharedScheduler(
+        candidates.map((cacheKey) => ({ cacheKey })),
+        signal,
+      );
+    }
+    return { scheduler, started, reads, signals };
+  }
+
+  test("shares a cold read across overlapping listings and leaves capacity for unrelated work", async () => {
+    const { scheduler, started, reads } = controlledReads();
+    const signal = new AbortController().signal;
+    const overlapping = Array.from({ length: 4 }, () => scheduler(["shared"], signal));
+    await vi.waitFor(() => expect(started).toEqual(["shared"]));
+    const unrelated = scheduler(["unrelated"], signal);
+    await vi.waitFor(() => expect(started).toEqual(["shared", "unrelated"]));
+    reads.get("unrelated")!.resolve("unrelated descriptor");
+    await expect(unrelated).resolves.toEqual(["unrelated descriptor"]);
+    reads.get("shared")!.resolve("shared descriptor");
+    await expect(Promise.all(overlapping)).resolves.toEqual(
+      Array.from({ length: 4 }, () => ["shared descriptor"]),
+    );
+    // A settled entry must not become an accidental second cache.
+    const later = scheduler(["shared"], signal);
+    await vi.waitFor(() => expect(started).toEqual(["shared", "unrelated", "shared"]));
+    reads.get("shared")!.resolve("updated descriptor");
+    await expect(later).resolves.toEqual(["updated descriptor"]);
+  });
+
+  test("cancelling the initiating listing keeps its other subscriber alive", async () => {
+    const { scheduler, started, reads } = controlledReads();
+    const initiator = new AbortController();
+    const first = scheduler(["shared"], initiator.signal);
+    const firstRejected = expect(first).rejects.toThrow("First picker closed");
+    const second = scheduler(["shared"], new AbortController().signal);
+    await vi.waitFor(() => expect(started).toEqual(["shared"]));
+    initiator.abort(new Error("First picker closed"));
+    await firstRejected;
+    reads.get("shared")!.resolve("shared descriptor");
+    await expect(second).resolves.toEqual(["shared descriptor"]);
+    expect(started).toEqual(["shared"]);
+  });
+
+  test("the final subscriber cancellation aborts the read and allows a fresh subscription", async () => {
+    const { scheduler, started, signals } = controlledReads();
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const first = scheduler(["shared"], firstController.signal);
+    const second = scheduler(["shared"], secondController.signal);
+    const firstRejected = expect(first).rejects.toThrow("First picker closed");
+    const secondRejected = expect(second).rejects.toThrow("Final picker closed");
+    await vi.waitFor(() => expect(started).toEqual(["shared"]));
+    firstController.abort(new Error("First picker closed"));
+    await firstRejected;
+    expect(signals.get("shared")!.aborted).toEqual(false);
+    secondController.abort(new Error("Final picker closed"));
+    await secondRejected;
+    expect(signals.get("shared")!.aborted).toEqual(true);
+    const retryController = new AbortController();
+    const retry = scheduler(["shared"], retryController.signal);
+    const retryRejected = expect(retry).rejects.toThrow("Retry closed");
+    await vi.waitFor(() => expect(started).toEqual(["shared", "shared"]));
+    retryController.abort(new Error("Retry closed"));
+    await retryRejected;
+    expect(signals.get("shared")!.aborted).toEqual(true);
+  });
+
+  test("runs four reads per listing and gives a later small listing a bounded turn", async () => {
+    const { scheduler, started, reads, signals } = controlledReads();
+    const controller = new AbortController();
+    const large = scheduler(
+      Array.from({ length: 500 }, (_, index) => `large-${index}`),
+      controller.signal,
+    );
+    const largeRejected = expect(large).rejects.toThrow("Fairness check complete");
+    await vi.waitFor(() => expect(started).toEqual(["large-0", "large-1", "large-2", "large-3"]));
+    const small = scheduler(["small"], new AbortController().signal);
+    reads.get("large-0")!.resolve("first descriptor");
+    await vi.waitFor(() =>
+      expect(started).toEqual(["large-0", "large-1", "large-2", "large-3", "small"]),
+    );
+    reads.get("small")!.resolve("small descriptor");
+    await expect(small).resolves.toEqual(["small descriptor"]);
+    controller.abort(new Error("Fairness check complete"));
+    await largeRejected;
+    expect(signals.get("large-1")!.aborted).toEqual(true);
+    expect(signals.get("large-2")!.aborted).toEqual(true);
+    expect(signals.get("large-3")!.aborted).toEqual(true);
+    expect(started.length).toBeLessThanOrEqual(6);
+  });
+
+  test("refills four workers while retaining candidate order after out-of-order completions", async () => {
+    const { scheduler, started, reads } = controlledReads();
+    const listing = scheduler(["0", "1", "2", "3", "4", "5"], new AbortController().signal);
+    await vi.waitFor(() => expect(started).toEqual(["0", "1", "2", "3"]));
+    reads.get("3")!.resolve("descriptor-3");
+    await vi.waitFor(() => expect(started).toEqual(["0", "1", "2", "3", "4"]));
+    reads.get("2")!.resolve("descriptor-2");
+    await vi.waitFor(() => expect(started).toEqual(["0", "1", "2", "3", "4", "5"]));
+    reads.get("5")!.resolve("descriptor-5");
+    reads.get("4")!.resolve("descriptor-4");
+    reads.get("1")!.resolve("descriptor-1");
+    reads.get("0")!.resolve("descriptor-0");
+    await expect(listing).resolves.toEqual([
+      "descriptor-0",
+      "descriptor-1",
+      "descriptor-2",
+      "descriptor-3",
+      "descriptor-4",
+      "descriptor-5",
+    ]);
+  });
+
+  test("an unexpected read failure cancels sibling workers without starting remaining candidates", async () => {
+    const { scheduler, started, reads, signals } = controlledReads();
+    const listing = scheduler(["0", "1", "2", "3", "4", "5"], new AbortController().signal);
+    const rejected = expect(listing).rejects.toThrow("Unexpected read failure");
+    await vi.waitFor(() => expect(started).toEqual(["0", "1", "2", "3"]));
+    reads.get("0")!.reject(new TypeError("Unexpected read failure"));
+    await rejected;
+    expect(signals.get("1")!.aborted).toEqual(true);
+    expect(signals.get("2")!.aborted).toEqual(true);
+    expect(signals.get("3")!.aborted).toEqual(true);
+    expect(started).toEqual(["0", "1", "2", "3"]);
+  });
+
+  test("bounds global reads and skips cancelled queued candidates", async () => {
+    const { scheduler, started, reads } = controlledReads();
+    const controllers = Array.from({ length: 5 }, () => new AbortController());
+    const listings = controllers.map((controller, index) =>
+      scheduler([`${index}-first`], controller.signal),
+    );
+    // Attach handlers before aborting any promises.
+    function errorMessage(error: Error): string {
+      return error.message;
+    }
+    const settled = listings.map((listing) => listing.catch(errorMessage));
+    await vi.waitFor(() => expect(started).toEqual(["0-first", "1-first", "2-first", "3-first"]));
+    controllers[4]!.abort(new Error("Queued picker closed"));
+    await expect(settled[4]).resolves.toEqual("Queued picker closed");
+    controllers[0]!.abort(new Error("Active picker closed"));
+    await expect(settled[0]).resolves.toEqual("Active picker closed");
+    reads.get("1-first")!.reject(new Error("Stop 1"));
+    reads.get("2-first")!.reject(new Error("Stop 2"));
+    reads.get("3-first")!.reject(new Error("Stop 3"));
+    await expect(Promise.all(settled)).resolves.toEqual([
+      "Active picker closed",
+      "Stop 1",
+      "Stop 2",
+      "Stop 3",
+      "Queued picker closed",
+    ]);
+    expect(started).toEqual(["0-first", "1-first", "2-first", "3-first"]);
+    // A cancelled queue entry must not consume a later listing's read slot.
+    const later = scheduler(["later"], new AbortController().signal);
+    await vi.waitFor(() =>
+      expect(started).toEqual(["0-first", "1-first", "2-first", "3-first", "later"]),
+    );
+    reads.get("later")!.resolve("later descriptor");
+    await expect(later).resolves.toEqual(["later descriptor"]);
   });
 });
