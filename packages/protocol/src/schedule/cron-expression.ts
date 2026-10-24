@@ -5,6 +5,7 @@ interface CronFieldBounds {
 }
 
 export interface CronFieldMatcher {
+  isWildcard: boolean;
   matches(value: number): boolean;
 }
 
@@ -98,6 +99,7 @@ function parseField(source: string, bounds: CronFieldBounds): CronFieldMatcher {
   }
 
   return {
+    isWildcard: trimmed.startsWith("*"),
     matches(value: number): boolean {
       return allowed.has(value);
     },
