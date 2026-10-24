@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { openWorkspaceFileFromExplorer } from "@/screens/workspace/workspace-file-open-command";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
@@ -7,6 +8,14 @@ import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { clearCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
+import {
+  isNamedFileSuggestion,
+  matchHiddenListingEntries,
+  planDaemonFileSearchRequest,
+  resolveSuggestedFilePath,
+  type DaemonFileSearchPlan,
+  type DaemonFileSearchRequest,
+} from "./file-search-query";
 import {
   describeWorkspaceFilePath,
   type WorkspaceFileSearchEntry,
@@ -43,8 +52,119 @@ function errorMessage(error: unknown): string {
 
 function describeFileEntries(
   entries: readonly DirectorySuggestionEntry[],
+  searchRoot: string | null,
 ): WorkspaceFileSearchEntry[] {
-  return entries.map(({ path }) => describeWorkspaceFilePath(path));
+  return entries.map(({ path }) =>
+    describeWorkspaceFilePath(
+      searchRoot ? resolveSuggestedFilePath({ root: searchRoot, path }) : path,
+    ),
+  );
+}
+
+interface FileSearchResults {
+  entries: WorkspaceFileSearchEntry[];
+  error: string | null;
+}
+
+/**
+ * Runs the daemon reads one file query needs and merges them in display order: the named path,
+ * then hidden names from the parent listing, then ordinary discovery.
+ *
+ * They are separate because each filter that keeps the palette quiet in the common case also
+ * hides something the caller explicitly asked for: discovery skips hidden and Git-ignored
+ * names, and it cannot resolve a hidden partial name at all.
+ */
+async function collectFileSearchResults(input: {
+  client: DaemonClient;
+  plan: DaemonFileSearchPlan | null;
+  workspaceRoot: string;
+  query: string;
+}): Promise<FileSearchResults> {
+  const { client, plan, workspaceRoot, query } = input;
+  const listing = plan?.list ?? { cwd: workspaceRoot, query, root: workspaceRoot };
+  const [payload, exactPayload, hiddenListingPayload] = await Promise.all([
+    client.getDirectorySuggestions({
+      cwd: listing.cwd,
+      query: listing.query,
+      includeFiles: true,
+      includeDirectories: false,
+      limit: FILE_SEARCH_LIMIT,
+    }),
+    namedPathSuggestions({ client, request: plan?.exact ?? null, namedPath: plan?.namedPath }),
+    hiddenNameSuggestions({
+      client,
+      request: plan?.hiddenListing ?? null,
+      typedName: listing.query,
+    }),
+  ]);
+
+  const listedEntries = payload.error ? [] : describeFileEntries(payload.entries, listing.root);
+  const listedPaths = new Set(listedEntries.map((entry) => entry.path));
+  const hiddenPaths = new Set(hiddenListingPayload.map((entry) => entry.path));
+  return {
+    entries: [
+      ...exactPayload.filter((entry) => !listedPaths.has(entry.path)),
+      ...hiddenListingPayload.filter((entry) => !listedPaths.has(entry.path)),
+      ...listedEntries.filter((entry) => !hiddenPaths.has(entry.path)),
+    ],
+    error: payload.error ?? null,
+  };
+}
+
+/**
+ * Retrieves the path the user named. The request falls back to a suffix search when that path
+ * does not exist, and the fallback can offer a same-named file deeper under the root — opening
+ * that instead of the typed path would be wrong, so only equal paths are kept.
+ */
+async function namedPathSuggestions(input: {
+  client: DaemonClient;
+  request: DaemonFileSearchRequest | null;
+  namedPath: string | undefined;
+}): Promise<WorkspaceFileSearchEntry[]> {
+  const { client, request, namedPath } = input;
+  if (!request) {
+    return [];
+  }
+  const payload = await client
+    .getDirectorySuggestions({
+      cwd: request.cwd,
+      query: request.query,
+      includeFiles: true,
+      includeDirectories: false,
+      matchMode: "suffix",
+      limit: 1,
+    })
+    .catch(() => null);
+  if (!payload || payload.error) {
+    return [];
+  }
+  return describeFileEntries(
+    payload.entries.filter((entry) =>
+      isNamedFileSuggestion({ root: request.root, path: entry.path, namedPath: namedPath ?? "" }),
+    ),
+    request.root,
+  );
+}
+
+/** Partial hidden names never reach discovery, so the parent directory is listed and filtered. */
+async function hiddenNameSuggestions(input: {
+  client: DaemonClient;
+  request: DaemonFileSearchRequest | null;
+  typedName: string;
+}): Promise<WorkspaceFileSearchEntry[]> {
+  const { client, request, typedName } = input;
+  if (!request) {
+    return [];
+  }
+  const listing = await client.listDirectory(request.cwd, ".").catch(() => null);
+  if (!listing) {
+    return [];
+  }
+  return matchHiddenListingEntries({
+    entries: listing.entries,
+    typedName,
+    limit: FILE_SEARCH_LIMIT,
+  }).map((entry) => describeWorkspaceFilePath(`${request.root}/${entry.name}`));
 }
 
 export function useWorkspaceFileSearch(input: { enabled: boolean; query: string }): {
@@ -77,6 +197,11 @@ export function useWorkspaceFileSearch(input: { enabled: boolean; query: string 
     }
     const activeClient = client;
     const activeCwd = cwd;
+    // A typed absolute path may live outside the workspace, which the workspace-scoped search
+    // cannot reach. Re-root that query on the typed path's own directory and re-attach the root to
+    // the suggestions, so the row opens the same path the user named. The named path is also
+    // retrieved on its own, because discovery drops hidden and Git-ignored names.
+    const plan = planDaemonFileSearchRequest({ query: input.query, workspaceRoot: activeCwd });
 
     let cancelled = false;
     setState((previous) => ({
@@ -88,21 +213,14 @@ export function useWorkspaceFileSearch(input: { enabled: boolean; query: string 
     }));
     async function search(): Promise<void> {
       try {
-        const payload = await activeClient.getDirectorySuggestions({
-          cwd: activeCwd,
+        const results = await collectFileSearchResults({
+          client: activeClient,
+          plan,
+          workspaceRoot: activeCwd,
           query: input.query,
-          includeFiles: true,
-          includeDirectories: false,
-          limit: FILE_SEARCH_LIMIT,
         });
         if (cancelled) return;
-        setState({
-          sourceKey,
-          requestKey,
-          entries: payload.error ? [] : describeFileEntries(payload.entries),
-          loading: false,
-          error: payload.error ?? null,
-        });
+        setState({ sourceKey, requestKey, ...results, loading: false });
       } catch (error) {
         if (!cancelled) {
           setState({
