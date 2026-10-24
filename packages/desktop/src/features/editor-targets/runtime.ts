@@ -56,6 +56,14 @@ function isAbsolutePath(value: string, platform: NodeJS.Platform): boolean {
   return platform === "win32" ? win32.isAbsolute(value) : posix.isAbsolute(value);
 }
 
+function expandHomePath(value: string, homeDirectory: string): string {
+  if (value === "~") return homeDirectory;
+  if (value.startsWith("~/") || value.startsWith("~\\")) {
+    return path.join(homeDirectory, value.slice(2));
+  }
+  return value;
+}
+
 function resolveExecutable(
   commands: readonly string[],
   input: {
@@ -140,6 +148,7 @@ export function createEditorTargetRuntime(
     env,
     pathExists,
     isAbsolutePath: (targetPath) => isAbsolutePath(targetPath, platform),
+    expandHomePath: (targetPath) => expandHomePath(targetPath, homeDirectory),
     resolveCommand: (commands) => resolveExecutable(commands, { env, pathExists, platform }),
     async spawnDetached({ command, args }) {
       const commandScript = isWindowsCommandScript(command, platform);
