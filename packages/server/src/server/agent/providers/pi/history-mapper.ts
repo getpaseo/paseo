@@ -1,11 +1,16 @@
 import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
 import type { PiAgentMessage, PiImageContent, PiTextContent } from "./rpc-types.js";
 import {
+  materializeProviderImage,
+  renderProviderImageOutputAsAssistantMarkdown,
+} from "../provider-image-output.js";
+import {
   extractTextFromToolResult,
   mapToolDetail,
   parseToolArgs,
   parseToolResult,
   resolveToolCallName,
+  splitPiToolResultImages,
   type PiToolResult,
   type PiTrackedToolCall,
 } from "./tool-call-mapper.js";
@@ -77,13 +82,9 @@ export class PiHistoryMapper {
         case "assistant":
           events.push(...this.mapAssistantMessage(message));
           break;
-        case "toolResult": {
-          const event = this.mapToolResultMessage(message);
-          if (event) {
-            events.push(event);
-          }
+        case "toolResult":
+          events.push(...this.mapToolResultMessage(message));
           break;
-        }
         case "bashExecution":
           events.push(this.mapBashExecutionMessage(message));
           break;
@@ -182,26 +183,40 @@ export class PiHistoryMapper {
 
   private mapToolResultMessage(
     message: Extract<PiAgentMessage, { role: "toolResult" }>,
-  ): AgentStreamEvent | null {
+  ): AgentStreamEvent[] {
     const tracked =
       this.pendingToolCalls.get(message.toolCallId) ?? parseToolArgs(message.toolName, null);
     this.pendingToolCalls.delete(message.toolCallId);
-    const result = parseToolResult({ content: message.content, details: message.details });
+    const { images, result } = splitPiToolResultImages(
+      parseToolResult({ content: message.content, details: message.details }),
+    );
     const detail = this.mapToolDetail(message.toolCallId, tracked, result);
     if (!detail) {
-      return null;
+      return [];
     }
-    return {
-      type: "timeline",
-      provider: this.provider,
-      item: toToolResultTimelineItem({
-        callId: this.resolveToolCallId(message.toolCallId, tracked),
-        name: resolveToolCallName(tracked, result),
-        isError: Boolean(message.isError),
-        detail,
-        errorText: extractTextFromToolResult(result) ?? "Tool call failed",
-      }),
-    };
+    const events: AgentStreamEvent[] = [
+      {
+        type: "timeline",
+        provider: this.provider,
+        item: toToolResultTimelineItem({
+          callId: this.resolveToolCallId(message.toolCallId, tracked),
+          name: resolveToolCallName(tracked, result),
+          isError: Boolean(message.isError),
+          detail,
+          errorText: extractTextFromToolResult(result) ?? "Tool call failed",
+        }),
+      },
+    ];
+    // Replayed images render after the tool call, matching the live emission path.
+    for (const image of images) {
+      const item = renderProviderImageOutputAsAssistantMarkdown(image, {
+        materialize: materializeProviderImage,
+      });
+      if (item) {
+        events.push({ type: "timeline", provider: this.provider, item });
+      }
+    }
+    return events;
   }
 
   private mapBashExecutionMessage(

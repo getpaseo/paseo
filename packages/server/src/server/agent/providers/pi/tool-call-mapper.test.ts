@@ -5,6 +5,7 @@ import {
   parseToolArgs,
   parseToolResult,
   resolveToolCallName,
+  splitPiToolResultImages,
 } from "./tool-call-mapper.js";
 
 describe("Pi tool call mapper", () => {
@@ -191,5 +192,55 @@ describe("Pi tool call mapper", () => {
     });
 
     expect(resolveToolCallName(toolCall, result)).toBe("paseo.list_models");
+  });
+});
+
+describe("splitPiToolResultImages", () => {
+  test("extracts image blocks and keeps the remaining content", () => {
+    const result = parseToolResult({
+      content: [
+        { type: "text", text: "Read image file [image/png]" },
+        { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+      ],
+    });
+
+    const { images, result: cleaned } = splitPiToolResultImages(result);
+
+    expect(images).toEqual([{ data: "aGVsbG8=", mimeType: "image/png" }]);
+    expect(cleaned).toEqual({
+      content: [{ type: "text", text: "Read image file [image/png]" }],
+    });
+  });
+
+  test("defaults a missing mime type to image/png and skips invalid image blocks", () => {
+    const { images, result: cleaned } = splitPiToolResultImages(
+      parseToolResult({
+        content: [
+          { type: "image", data: "aGVsbG8=" },
+          { type: "image", data: "" },
+          { type: "image", mimeType: "image/png" },
+          { type: "text", text: "kept" },
+        ],
+      }),
+    );
+
+    expect(images).toEqual([{ data: "aGVsbG8=", mimeType: "image/png" }]);
+    expect(cleaned).toEqual({
+      content: [
+        { type: "image", data: "" },
+        { type: "image", mimeType: "image/png" },
+        { type: "text", text: "kept" },
+      ],
+    });
+  });
+
+  test("passes through results without images", () => {
+    const stringResult = parseToolResult("plain output");
+    expect(splitPiToolResultImages(stringResult)).toEqual({ images: [], result: stringResult });
+
+    const textResult = parseToolResult({ content: [{ type: "text", text: "no images" }] });
+    expect(splitPiToolResultImages(textResult)).toEqual({ images: [], result: textResult });
+
+    expect(splitPiToolResultImages(null)).toEqual({ images: [], result: null });
   });
 });

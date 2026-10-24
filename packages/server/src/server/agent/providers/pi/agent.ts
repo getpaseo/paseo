@@ -63,7 +63,11 @@ import {
   streamPiHistory,
   type PiCapturedUserMessageEntry,
 } from "./history-mapper.js";
-import { materializeProviderImage } from "../provider-image-output.js";
+import {
+  materializeProviderImage,
+  renderProviderImageOutputAsAssistantMarkdown,
+  type ProviderImageOutput,
+} from "../provider-image-output.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import { revertPiConversation } from "./rewind.js";
 import { listPiImportableSessions, readPiImportSessionConfig } from "./session-descriptor.js";
@@ -84,6 +88,7 @@ import {
   parseToolArgs,
   parseToolResult,
   resolveToolCallName,
+  splitPiToolResultImages,
   type PiToolResult,
   type PiTrackedToolCall,
 } from "./tool-call-mapper.js";
@@ -2302,10 +2307,30 @@ export class PiRpcAgentSession implements AgentSession {
       this.pendingCombinedAskUserResponse = null;
     }
 
-    const result = parseToolResult(event.result);
+    const { images, result } = splitPiToolResultImages(parseToolResult(event.result));
     const error = event.isError ? event.result : null;
     const status = event.isError ? "failed" : "completed";
     this.emitToolCallEvent(event.toolCallId, toolCall, status, result, error);
+    this.emitToolResultImages(images);
+  }
+
+  // Tool-result images become standalone assistant markdown images right after the tool call,
+  // matching how the Claude adapter emits them.
+  private emitToolResultImages(images: ProviderImageOutput[]): void {
+    for (const image of images) {
+      const item = renderProviderImageOutputAsAssistantMarkdown(image, {
+        materialize: materializeProviderImage,
+      });
+      if (!item) {
+        continue;
+      }
+      this.emit({
+        type: "timeline",
+        provider: this.provider,
+        turnId: this.currentTurnIdForEvent(),
+        item,
+      });
+    }
   }
 
   private emitCompactionTimeline(input: {

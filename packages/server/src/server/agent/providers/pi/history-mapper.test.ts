@@ -184,3 +184,58 @@ describe("Pi history mapper", () => {
     ]);
   });
 });
+
+describe("Pi history mapper tool-result images", () => {
+  test("replays tool-result images as assistant markdown images after the tool call", async () => {
+    const events = await collectHistory([
+      {
+        role: "user",
+        content: [{ type: "text", text: "show me the render" }],
+      },
+      {
+        role: "assistant",
+        responseId: "response-1",
+        content: [
+          { type: "toolCall", id: "tool-1", name: "read", arguments: { path: "render.png" } },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "tool-1",
+        toolName: "read",
+        content: [
+          { type: "text", text: "Read image file [image/png]" },
+          { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+        ],
+      },
+    ]);
+
+    expect(events).toHaveLength(4);
+    expect(events[0]).toEqual({
+      type: "timeline",
+      provider: "pi",
+      item: { type: "user_message", text: "show me the render" },
+    });
+    expect(events[1].item.type).toBe("tool_call");
+    expect(events[1].item).toMatchObject({ status: "running" });
+    expect(events[2].item.type).toBe("tool_call");
+    expect(events[2].item).toMatchObject({ status: "completed" });
+    expect(events[3].item.type).toBe("assistant_message");
+    const text = (events[3].item as { text: string }).text;
+    expect(text).toMatch(/!\[Image\]\(file:\/\/\/.*paseo-attachments-[^)]+\)/);
+  });
+
+  test("text-only tool results stay single events", async () => {
+    const events = await collectHistory([
+      {
+        role: "toolResult",
+        toolCallId: "tool-1",
+        toolName: "read",
+        content: [{ type: "text", text: "file contents" }],
+      },
+    ]);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].item.type).toBe("tool_call");
+  });
+});

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { ToolCallDetail } from "../../agent-sdk-types.js";
+import type { ProviderImageOutput } from "../provider-image-output.js";
 
 interface BashToolInput {
   command: string;
@@ -253,6 +254,40 @@ export function parseToolResult(rawResult: unknown): PiToolResult {
     return parsed.data;
   }
   return null;
+}
+
+const PiToolResultImageContentSchema = z.object({
+  type: z.literal("image"),
+  data: z.string().min(1),
+  mimeType: z.string().min(1).optional(),
+});
+
+export interface SplitPiToolResultImagesOutput {
+  images: ProviderImageOutput[];
+  result: PiToolResult;
+}
+
+// Tool-result images render as standalone assistant markdown images after the tool call (the
+// Claude and Codex adapters share this contract). Split the image blocks out before mapping the
+// result text, because extractTextFromToolResult would silently drop them.
+export function splitPiToolResultImages(result: PiToolResult): SplitPiToolResultImagesOutput {
+  if (typeof result !== "object" || result === null || !Array.isArray(result.content)) {
+    return { images: [], result };
+  }
+  const images: ProviderImageOutput[] = [];
+  const content: PiToolResultContent[] = [];
+  for (const block of result.content) {
+    const image = PiToolResultImageContentSchema.safeParse(block);
+    if (image.success) {
+      images.push({ data: image.data.data, mimeType: image.data.mimeType ?? "image/png" });
+      continue;
+    }
+    content.push(block);
+  }
+  if (images.length === 0) {
+    return { images: [], result };
+  }
+  return { images, result: { ...result, content } };
 }
 
 export function extractTextFromToolResult(result: PiToolResult): string | undefined {
