@@ -48,6 +48,86 @@ describe("schedule cron cadence", () => {
     expect(second.toISOString()).toBe("2026-11-01T06:30:00.000Z");
   });
 
+  test("finds a leap day beyond the following year", () => {
+    const next = computeNextRunAt(
+      { type: "cron", expression: "0 0 29 2 *" },
+      new Date("2026-10-17T00:00:00.000Z"),
+    );
+
+    expect(next.toISOString()).toBe("2028-02-29T00:00:00.000Z");
+  });
+
+  test.each([
+    ["2028-02-29T00:00:00.000Z", "2032-02-29T00:00:00.000Z"],
+    ["2096-02-29T00:00:00.000Z", "2104-02-29T00:00:00.000Z"],
+  ])("finds the next leap day after %s", (after, expected) => {
+    const next = computeNextRunAt({ type: "cron", expression: "0 0 29 2 *" }, new Date(after));
+
+    expect(next.toISOString()).toBe(expected);
+  });
+
+  test.each([
+    ["America/New_York", "2028-02-29T05:00:00.000Z"],
+    ["Pacific/Kiritimati", "2028-02-28T10:00:00.000Z"],
+  ])("finds leap-day midnight in %s", (timezone, expected) => {
+    const next = computeNextRunAt(
+      { type: "cron", expression: "0 0 29 2 *", timezone },
+      new Date("2026-10-17T00:00:00.000Z"),
+    );
+
+    expect(next.toISOString()).toBe(expected);
+  });
+
+  test("skips a missing annual wall-clock time during daylight saving time", () => {
+    const next = computeNextRunAt(
+      { type: "cron", expression: "30 2 14 3 *", timezone: "America/New_York" },
+      new Date("2026-03-14T06:30:00.000Z"),
+    );
+
+    expect(next.toISOString()).toBe("2028-03-14T06:30:00.000Z");
+  });
+
+  test.each([
+    ["Pacific/Kiritimati", "2026-12-30T23:59:00.000Z", "2026-12-31T10:00:00.000Z"],
+    ["Etc/GMT+12", "2026-12-31T23:59:00.000Z", "2027-01-01T12:00:00.000Z"],
+  ])("keeps the first local minute when skipping months in %s", (timezone, after, expected) => {
+    const next = computeNextRunAt(
+      { type: "cron", expression: "0 0 1 1 *", timezone },
+      new Date(after),
+    );
+
+    expect(next.toISOString()).toBe(expected);
+  });
+
+  test("rejects a calendar date that never occurs", () => {
+    expect(() =>
+      computeNextRunAt(
+        { type: "cron", expression: "0 0 30 2 *" },
+        new Date("2026-10-17T00:00:00.000Z"),
+      ),
+    ).toThrow("Unable to compute next run time for cron expression: 0 0 30 2 *");
+  });
+
+  test.each(["*", "*/2"])("rejects impossible month lists with weekday %s", (weekday) => {
+    const expression = `0 0 31 2,4,6,9,11 ${weekday}`;
+
+    expect(() =>
+      computeNextRunAt(
+        { type: "cron", expression, timezone: "America/New_York" },
+        new Date("2026-10-17T00:00:00.000Z"),
+      ),
+    ).toThrow(`Unable to compute next run time for cron expression: ${expression}`);
+  });
+
+  test("keeps month lists that include a valid selected date", () => {
+    const next = computeNextRunAt(
+      { type: "cron", expression: "0 0 31 2,4,6,9,11,12 *", timezone: "America/New_York" },
+      new Date("2026-10-17T00:00:00.000Z"),
+    );
+
+    expect(next.toISOString()).toBe("2026-12-31T05:00:00.000Z");
+  });
+
   test("rejects invalid cron expressions", () => {
     expect(() => validateScheduleCadence({ type: "cron", expression: "not-a-valid-cron" })).toThrow(
       "Cron expressions must have 5 fields",
