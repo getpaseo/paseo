@@ -319,33 +319,33 @@ There is no mobile-release workflow under `.github/workflows`. The EAS GitHub ap
 
 ### Watching mobile builds from the terminal
 
-Use the EAS CLI from `packages/app/`:
+The EAS CLI is not a repo dependency; `npx eas-cli@latest` fetches it on demand, and CI installs it through `expo/expo-github-action`. Run it from `packages/app/`:
 
 ```bash
 cd packages/app
 
 # Recent builds (newest first). Pipe to jq for status only.
-npx eas build:list --limit 8 --non-interactive --json | jq '.[] | {platform, status, appVersion, gitCommitHash}'
+npx eas-cli@latest build:list --limit 8 --non-interactive --json | jq '.[] | {platform, status, appVersion, gitCommitHash}'
 
 # Recent EAS workflow runs. This is the source of truth for submit/review jobs.
-npx eas workflow:runs --json | jq '.[] | {status, workflowName, trigger, gitCommitHash, startedAt, finishedAt}'
+npx eas-cli@latest workflow:runs --json | jq '.[] | {status, workflowName, trigger, gitCommitHash, startedAt, finishedAt}'
 
 # Filter by platform.
-npx eas build:list --platform ios --limit 5 --non-interactive --json
-npx eas build:list --platform android --limit 5 --non-interactive --json
+npx eas-cli@latest build:list --platform ios --limit 5 --non-interactive --json
+npx eas-cli@latest build:list --platform android --limit 5 --non-interactive --json
 
 # Inspect a specific build.
-npx eas build:view <build-id>
+npx eas-cli@latest build:view <build-id>
 
 # Inspect the full release workflow, including distribute_ios, submit_android,
 # and submit_ios_for_review.
-npx eas workflow:view <workflow-run-id> --json
+npx eas-cli@latest workflow:view <workflow-run-id> --json
 
 # Read failed submit/review job logs.
-npx eas workflow:logs <workflow-job-id> --all-steps --non-interactive
+npx eas-cli@latest workflow:logs <workflow-job-id> --all-steps --non-interactive
 
 # Stream logs for a build.
-npx eas build:view <build-id> --json | jq '.logFiles[]'
+npx eas-cli@latest build:view <build-id> --json | jq '.logFiles[]'
 ```
 
 A build's `gitCommitHash` must match the release tag commit. `status` walks through `NEW` → `IN_QUEUE` → `IN_PROGRESS` → `FINISHED` (or `ERRORED`/`CANCELED`). The EAS workflow run's `gitCommitHash` and `trigger` must also match the release tag.
@@ -362,7 +362,7 @@ For the `Release Mobile` EAS workflow, these jobs must pass:
 
 Do not treat `build_ios: SUCCESS` or `distribute_ios: SUCCESS` as a completed iOS release. `submit_ios_for_review: FAILURE` means the iOS release is blocked even if the build is visible in TestFlight.
 
-To confirm the submission landed, inspect the EAS workflow with `npx eas workflow:view <workflow-run-id> --json`. App Store Connect (review state for the matching version/build) and the Play Console track are the final ground truth.
+To confirm the submission landed, inspect the EAS workflow with `npx eas-cli@latest workflow:view <workflow-run-id> --json`. App Store Connect (review state for the matching version/build) and the Play Console track are the final ground truth.
 
 ## Release completion and heartbeat
 
