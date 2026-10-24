@@ -2340,6 +2340,7 @@ export const es: TranslationResources = {
         label: "Idioma",
         description: "Idioma de la aplicación",
         options: {
+          it: "Italiano",
           system: "Sistema",
           ar: "العربية",
           en: "English",

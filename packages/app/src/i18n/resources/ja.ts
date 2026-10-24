@@ -2308,6 +2308,7 @@ export const ja: TranslationResources = {
         label: "言語",
         description: "アプリの言語",
         options: {
+          it: "Italiano",
           system: "システム",
           ar: "アラビア語",
           en: "英語",

@@ -1,3 +1,4 @@
+import { translateProviderDescription } from "@/i18n/provider-descriptions";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
@@ -154,8 +155,17 @@ function OpenAgentProfileEditModal({
   );
 
   const providerOptions = useMemo(
-    () => toSelectOptions(state.providerOptions),
-    [state.providerOptions],
+    () =>
+      toSelectOptions(state.providerOptions).map((option) =>
+        Object.assign(
+          {},
+          option,
+          option.description
+            ? { description: translateProviderDescription(t, option.value, option.description) }
+            : {},
+        ),
+      ),
+    [state.providerOptions, t],
   );
   const modelOptions = useMemo(() => toSelectOptions(state.modelOptions), [state.modelOptions]);
   const modeOptions = useMemo(() => toSelectOptions(state.modeOptions), [state.modeOptions]);
