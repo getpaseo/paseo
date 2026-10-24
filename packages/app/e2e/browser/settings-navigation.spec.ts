@@ -43,6 +43,8 @@ import {
 } from "../support/helpers/settings";
 import { getServerId } from "../support/helpers/server-id";
 import { expectAppRoute } from "../support/helpers/route-assertions";
+import { clickNewChat, gotoWorkspace } from "../support/helpers/launcher";
+import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
 async function openWorkspace(
   page: import("@playwright/test").Page,
@@ -53,6 +55,74 @@ async function openWorkspace(
 }
 
 test.describe("Settings sidebar navigation", () => {
+  test("opening Settings closes the composer model selector until it is opened again", async ({
+    page,
+    withWorkspace,
+  }, testInfo) => {
+    const workspace = await withWorkspace({ prefix: "settings-model-selector-" });
+    await gotoWorkspace(page, workspace.workspaceId);
+    await clickNewChat(page);
+
+    const selector = page.getByTestId("combined-model-selector").filter({ visible: true });
+    const popover = page.getByTestId("combobox-desktop-container");
+    await selector.click();
+    await expect(popover).toBeVisible();
+
+    const modifier = process.platform === "darwin" ? "Meta" : "Control";
+    await page.keyboard.press(`${modifier}+,`);
+    await expect(page).toHaveURL(/\/settings\/general$/);
+    await page.screenshot({ path: testInfo.outputPath("settings-after-model-selector.png") });
+    await expect(popover).toHaveCount(0);
+
+    await clickSettingsBackToWorkspace(page);
+    await expect(selector).toBeVisible();
+    await expect(popover).toHaveCount(0);
+
+    await selector.click();
+    await expect(popover).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(popover).toHaveCount(0);
+  });
+
+  test("opening Settings closes an existing chat's model selector until it is opened again", async ({
+    page,
+  }, testInfo) => {
+    const workspace = await seedMockAgentWorkspace({
+      repoPrefix: "settings-existing-model-",
+      title: "Settings model selector",
+    });
+    try {
+      await openAgentRoute(page, {
+        workspaceId: workspace.workspaceId,
+        agentId: workspace.agentId,
+      });
+
+      const selector = page.getByTestId("combined-model-selector").filter({ visible: true });
+      const popover = page.getByTestId("combobox-desktop-container");
+      await selector.click();
+      await expect(popover).toBeVisible();
+
+      const modifier = process.platform === "darwin" ? "Meta" : "Control";
+      await page.keyboard.press(`${modifier}+,`);
+      await expect(page).toHaveURL(/\/settings\/general$/);
+      await page.screenshot({
+        path: testInfo.outputPath("settings-after-existing-model-selector.png"),
+      });
+      await expect(popover).toHaveCount(0);
+
+      await clickSettingsBackToWorkspace(page);
+      await expect(selector).toBeVisible();
+      await expect(popover).toHaveCount(0);
+
+      await selector.click();
+      await expect(popover).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(popover).toHaveCount(0);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   test("clicking a sidebar section updates the URL and renders the section", async ({ page }) => {
     await gotoAppShell(page);
     await openSettings(page);
@@ -146,6 +216,42 @@ test.describe("Settings sidebar navigation", () => {
 
 test.describe("Settings — compact master-detail", () => {
   test.use({ viewport: { width: 390, height: 844 } });
+
+  test("the compact tab switcher reopens after Settings hides its workspace", async ({ page }) => {
+    const workspace = await seedMockAgentWorkspace({
+      repoPrefix: "settings-tab-switcher-",
+      title: "Compact tab switcher",
+    });
+    try {
+      await openAgentRoute(page, {
+        workspaceId: workspace.workspaceId,
+        agentId: workspace.agentId,
+      });
+
+      const switcher = page.getByTestId("workspace-tab-switcher-trigger").filter({ visible: true });
+      const newAgent = page.getByTestId("workspace-tab-switcher-new-agent");
+      await switcher.click();
+      await expect(newAgent).toBeInViewport();
+
+      // Navigate without dismissing the sheet through its backdrop first.
+      await page
+        .getByTestId("menu-button")
+        .filter({ visible: true })
+        .first()
+        .dispatchEvent("click");
+      await page.getByTestId("sidebar-settings").first().dispatchEvent("click");
+      await expectAppRoute(page, buildSettingsRoute());
+      await expect(newAgent).toHaveCount(0);
+
+      await closeCompactSettings(page);
+      await expect(switcher).toBeVisible();
+      await expect(newAgent).toHaveCount(0);
+      await switcher.click();
+      await expect(newAgent).toBeInViewport();
+    } finally {
+      await workspace.cleanup();
+    }
+  });
 
   test("opens compact app and host details and returns through the settings list", async ({
     page,
