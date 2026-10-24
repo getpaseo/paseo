@@ -1886,6 +1886,13 @@ export const zhCN: TranslationResources = {
     backdrop: "菜单背景",
   },
   subagents: {
+    parent: {
+      backToParent: "返回父代理",
+      backTo: "返回 {{label}}",
+      parent: "父代理",
+      parentAgent: "父代理",
+      openParent: "打开父代理",
+    },
     title: "Subagent",
     pillLabelOne: "1 个 subagent",
     pillLabelMany: "{{count}} 个 subagent",

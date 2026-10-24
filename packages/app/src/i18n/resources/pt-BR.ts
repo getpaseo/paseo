@@ -1941,6 +1941,13 @@ export const ptBR: TranslationResources = {
     backdrop: "Fundo do menu",
   },
   subagents: {
+    parent: {
+      backToParent: "Voltar ao pai",
+      backTo: "Voltar para {{label}}",
+      parent: "Pai",
+      parentAgent: "Agente pai",
+      openParent: "Abrir pai",
+    },
     title: "Subagentes",
     pillLabelOne: "1 subagente",
     pillLabelMany: "{{count}} subagentes",

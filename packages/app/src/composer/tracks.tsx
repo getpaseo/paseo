@@ -276,7 +276,11 @@ export function ComposerTrackRow({
  * knockout for marks that sit on top of an icon, and nothing sits under this one, so it comes off
  * too — leaving every mark's visible edge on the same rail whatever state it is in.
  */
-function ComposerTrackMark({ bucket }: { bucket: SidebarStateBucket | null }): ReactElement | null {
+export function ComposerTrackMark({
+  bucket,
+}: {
+  bucket: SidebarStateBucket | null;
+}): ReactElement | null {
   if (!bucket) {
     return null;
   }

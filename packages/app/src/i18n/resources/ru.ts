@@ -1940,6 +1940,13 @@ export const ru: TranslationResources = {
     backdrop: "Фон меню",
   },
   subagents: {
+    parent: {
+      backToParent: "Назад к родителю",
+      backTo: "Назад к {{label}}",
+      parent: "Родитель",
+      parentAgent: "Родительский агент",
+      openParent: "Открыть родителя",
+    },
     title: "Субагенты",
     pillLabelOne: "1 субагент",
     pillLabelMany: "Субагентов: {{count}}",

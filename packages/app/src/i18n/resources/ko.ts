@@ -1918,6 +1918,13 @@ export const ko: TranslationResources = {
     backdrop: "메뉴 배경",
   },
   subagents: {
+    parent: {
+      backToParent: "상위 에이전트로 돌아가기",
+      backTo: "{{label}}(으)로 돌아가기",
+      parent: "상위",
+      parentAgent: "상위 에이전트",
+      openParent: "상위 에이전트 열기",
+    },
     title: "하위 에이전트",
     pillLabelOne: "하위 에이전트 1개",
     pillLabelMany: "하위 에이전트 {{count}}개",
