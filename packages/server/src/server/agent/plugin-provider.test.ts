@@ -30,6 +30,7 @@ const CAPABILITIES = [
 
 interface ProviderHarnessOptions {
   capabilities?: ProviderConnection["capabilities"];
+  registrationCapabilities?: ProviderRegistration["capabilities"];
   completeTurn?: boolean;
   openChildren?: (rootSessionId: string, emit: (event: ProviderEvent) => void) => void;
   handleInput?: (input: ProviderInput, emit: (event: ProviderEvent) => void) => Promise<boolean>;
@@ -206,6 +207,7 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
   const registration: ProviderRegistration = {
     id: "plugin-direct",
     label: "Plugin direct",
+    capabilities: options.registrationCapabilities,
     async connect() {
       return connection;
     },
@@ -502,6 +504,21 @@ describe("PluginAgentClientRegistry", () => {
     await expect(client.archiveNativeSession?.(persistence)).resolves.toBeUndefined();
     await expect(client.unarchiveNativeSession?.(persistence)).resolves.toBeUndefined();
     expect(harness.inputs).toEqual([]);
+    await registry.shutdown();
+  });
+
+  test("exposes declared registration capabilities before connection is established", async () => {
+    const harness = createProviderHarness({
+      registrationCapabilities: ["session.list", "session.persistence"],
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const client = registry.clients()[harness.registration.id]!;
+
+    expect(client.capabilities).toMatchObject({
+      supportsSessionListing: true,
+      supportsSessionPersistence: true,
+    });
     await registry.shutdown();
   });
 
