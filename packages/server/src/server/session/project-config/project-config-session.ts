@@ -17,7 +17,13 @@ export interface ProjectConfigSessionHost {
 export interface ProjectConfigSessionOptions {
   host: ProjectConfigSessionHost;
   projectRegistry: Pick<ProjectRegistry, "list">;
+  onProjectConfigWritten?: (projectId: string) => Promise<void>;
   logger: pino.Logger;
+}
+
+interface KnownProjectConfigTarget {
+  projectId: string;
+  repoRoot: string;
 }
 
 /**
@@ -30,22 +36,25 @@ export interface ProjectConfigSessionOptions {
 export class ProjectConfigSession {
   private readonly host: ProjectConfigSessionHost;
   private readonly projectRegistry: Pick<ProjectRegistry, "list">;
+  private readonly onProjectConfigWritten: ((projectId: string) => Promise<void>) | undefined;
   private readonly logger: pino.Logger;
 
   constructor(options: ProjectConfigSessionOptions) {
     this.host = options.host;
     this.projectRegistry = options.projectRegistry;
+    this.onProjectConfigWritten = options.onProjectConfigWritten;
     this.logger = options.logger;
   }
 
   async handleReadProjectConfigRequest(
     msg: Extract<SessionInboundMessage, { type: "read_project_config_request" }>,
   ): Promise<void> {
-    const repoRoot = await this.resolveKnownProjectRoot(msg.repoRoot);
-    if (!repoRoot) {
+    const target = await this.resolveKnownProjectConfigTarget(msg.repoRoot);
+    if (!target) {
       this.emitProjectConfigReadFailure(msg, { code: "project_not_found" });
       return;
     }
+    const { repoRoot } = target;
 
     const result = readPaseoConfigForEdit(repoRoot);
     if (!result.ok) {
@@ -84,11 +93,12 @@ export class ProjectConfigSession {
   async handleWriteProjectConfigRequest(
     msg: Extract<SessionInboundMessage, { type: "write_project_config_request" }>,
   ): Promise<void> {
-    const repoRoot = await this.resolveKnownProjectRoot(msg.repoRoot);
-    if (!repoRoot) {
+    const target = await this.resolveKnownProjectConfigTarget(msg.repoRoot);
+    if (!target) {
       this.emitProjectConfigWriteFailure(msg, { code: "project_not_found" });
       return;
     }
+    const { repoRoot } = target;
 
     this.logger.debug(
       { repoRoot, requestId: msg.requestId, outcome: "write_attempt" },
@@ -112,6 +122,18 @@ export class ProjectConfigSession {
       { repoRoot, requestId: msg.requestId, outcome: "written" },
       "Project config written",
     );
+    if (this.onProjectConfigWritten) {
+      try {
+        await this.onProjectConfigWritten(target.projectId);
+      } catch (error) {
+        // The config is already durable. A subscription refresh is best effort and
+        // must not turn a successful write into a failed RPC.
+        this.logger.warn(
+          { err: error, projectId: target.projectId, repoRoot, requestId: msg.requestId },
+          "Failed to refresh workspaces after project config write",
+        );
+      }
+    }
     const setupCommitStatus = await this.readSetupCommitStatus(repoRoot, result.config);
     this.host.emit({
       type: "write_project_config_response",
@@ -172,7 +194,9 @@ export class ProjectConfigSession {
     });
   }
 
-  private async resolveKnownProjectRoot(repoRoot: string): Promise<string | null> {
+  private async resolveKnownProjectConfigTarget(
+    repoRoot: string,
+  ): Promise<KnownProjectConfigTarget | null> {
     const requestedRoot = canonicalizeConfigRoot(repoRoot);
     const projects = await this.projectRegistry.list();
     for (const project of projects) {
@@ -181,7 +205,7 @@ export class ProjectConfigSession {
       }
       const projectRoot = canonicalizeConfigRoot(project.rootPath);
       if (requestedRoot === projectRoot) {
-        return projectRoot;
+        return { projectId: project.projectId, repoRoot: projectRoot };
       }
     }
     return null;
