@@ -4652,6 +4652,7 @@ export class Session {
       const { snapshot, timelineSize, createdWorkspace } = await importProviderSession({
         request: normalized,
         workspaceProvisioning: this.workspaceProvisioning,
+        workspaceRegistry: this.workspaceRegistry,
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
