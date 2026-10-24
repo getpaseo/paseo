@@ -185,13 +185,11 @@ export class ClaudeSidechainTracker {
 
     return [
       ...descriptorEvents,
-      ...childTimelineItems.map(
-        (item): AgentStreamEvent => ({
-          type: "provider_subagent",
-          provider: "claude",
-          event: { type: "timeline", id: parentToolUseId, item },
-        }),
-      ),
+      ...childTimelineItems.map((item): AgentStreamEvent => ({
+        type: "provider_subagent",
+        provider: "claude",
+        event: { type: "timeline", id: parentToolUseId, item },
+      })),
       ...parentCard,
     ];
   }

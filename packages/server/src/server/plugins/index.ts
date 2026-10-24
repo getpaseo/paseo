@@ -623,33 +623,31 @@ export class PluginService {
       }
     }
     const registrations = await Promise.all(
-      metadata.map(
-        async (provider): Promise<ProviderRegistration> => ({
-          id: provider.id,
-          label: provider.label,
-          description: provider.description,
-          command: provider.command,
-          requiresConfiguration: provider.requiresConfiguration,
-          status: provider.hasStatus
-            ? (request) => {
-                if (!this.runtime.getProviderStatus)
-                  throw new Error("Plugin runtime cannot resolve provider status");
-                return this.runtime.getProviderStatus(pluginId, provider.id, request);
-              }
-            : undefined,
-          getCatalogCacheKey: provider.hasCatalogCacheKey
-            ? (options) => {
-                if (!this.runtime.getProviderCatalogCacheKey)
-                  throw new Error("Plugin runtime cannot resolve catalogue keys");
-                return this.runtime.getProviderCatalogCacheKey(pluginId, provider.id, options);
-              }
-            : undefined,
-          icon: provider.iconPath
-            ? await readPluginProviderIcon(pluginDirectory, provider.iconPath)
-            : undefined,
-          connect: (request) => this.runtime.connectProvider(pluginId, provider.id, request),
-        }),
-      ),
+      metadata.map(async (provider): Promise<ProviderRegistration> => ({
+        id: provider.id,
+        label: provider.label,
+        description: provider.description,
+        command: provider.command,
+        requiresConfiguration: provider.requiresConfiguration,
+        status: provider.hasStatus
+          ? (request) => {
+              if (!this.runtime.getProviderStatus)
+                throw new Error("Plugin runtime cannot resolve provider status");
+              return this.runtime.getProviderStatus(pluginId, provider.id, request);
+            }
+          : undefined,
+        getCatalogCacheKey: provider.hasCatalogCacheKey
+          ? (options) => {
+              if (!this.runtime.getProviderCatalogCacheKey)
+                throw new Error("Plugin runtime cannot resolve catalogue keys");
+              return this.runtime.getProviderCatalogCacheKey(pluginId, provider.id, options);
+            }
+          : undefined,
+        icon: provider.iconPath
+          ? await readPluginProviderIcon(pluginDirectory, provider.iconPath)
+          : undefined,
+        connect: (request) => this.runtime.connectProvider(pluginId, provider.id, request),
+      })),
     );
     const ids = registrations.map((provider) => provider.id);
     for (const provider of registrations) {

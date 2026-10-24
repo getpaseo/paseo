@@ -57,16 +57,13 @@ describe("file explorer tree", () => {
 
   it("flattens a large expanded directory without spreading its rows into the parent", () => {
     const fileCount = 150_000;
-    const files = Array.from(
-      { length: fileCount },
-      (_, index): ExplorerEntry => ({
-        name: `file-${index.toString().padStart(6, "0")}`,
-        path: `generated/file-${index}`,
-        kind: "file",
-        size: index,
-        modifiedAt: "2026-01-01T00:00:00.000Z",
-      }),
-    );
+    const files = Array.from({ length: fileCount }, (_, index): ExplorerEntry => ({
+      name: `file-${index.toString().padStart(6, "0")}`,
+      path: `generated/file-${index}`,
+      kind: "file",
+      size: index,
+      modifiedAt: "2026-01-01T00:00:00.000Z",
+    }));
     const child = makeDirectoryEntry("generated", "generated");
     const directories = new Map([
       [".", { path: ".", entries: [child] }],

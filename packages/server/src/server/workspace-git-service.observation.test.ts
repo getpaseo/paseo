@@ -1457,14 +1457,12 @@ describe("WorkspaceGitService checkout observation", () => {
     const worktrees = Array.from({ length: 10 }, (_, index) =>
       path.resolve(`/tmp/paseo-shared-worktree-${index}`),
     );
-    const getCheckoutSnapshotFacts = vi.fn(
-      async (cwd: string): Promise<CheckoutSnapshotFacts> => ({
-        ...createCheckoutFacts(cwd),
-        remoteUrl: "https://github.com/acme/shared.git",
-        absoluteGitDir: path.join(commonGitDir, "worktrees", path.basename(cwd)),
-        gitCommonDir: commonGitDir,
-      }),
-    );
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string): Promise<CheckoutSnapshotFacts> => ({
+      ...createCheckoutFacts(cwd),
+      remoteUrl: "https://github.com/acme/shared.git",
+      absoluteGitDir: path.join(commonGitDir, "worktrees", path.basename(cwd)),
+      gitCommonDir: commonGitDir,
+    }));
     const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
     const runGitCommand = vi.fn(async (_args: string[], options: { cwd: string }) => ({
       stdout: `${options.cwd}\n`,
@@ -1658,9 +1656,8 @@ describe("WorkspaceGitService checkout observation", () => {
   test("non-Git fallback promotes an externally initialized checkout", async () => {
     const watcher = createWatcherHarness();
     let isGit = false;
-    const getCheckoutSnapshotFacts = vi.fn(
-      async (cwd: string): Promise<CheckoutSnapshotFacts> =>
-        isGit ? createCheckoutFacts(cwd) : { isGit: false },
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string): Promise<CheckoutSnapshotFacts> =>
+      isGit ? createCheckoutFacts(cwd) : { isGit: false },
     );
     const getCheckoutStatus = vi.fn(async (cwd: string) =>
       isGit ? createCheckoutStatus(cwd) : ({ isGit: false } as const),
@@ -2025,11 +2022,9 @@ describe("WorkspaceGitService checkout observation", () => {
 
   test("non-Git discovery polling survives watcher recovery", async () => {
     const watcher = createWatcherHarness();
-    const getCheckoutSnapshotFacts = vi.fn(
-      async (): Promise<CheckoutSnapshotFacts> => ({
-        isGit: false,
-      }),
-    );
+    const getCheckoutSnapshotFacts = vi.fn(async (): Promise<CheckoutSnapshotFacts> => ({
+      isGit: false,
+    }));
     const getCheckoutStatus = vi.fn(async () => ({ isGit: false }) as const);
     const runGitCommand = vi.fn(async () => {
       throw new Error("not a git repository");

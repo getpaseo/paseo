@@ -87,7 +87,7 @@ describe("chunked advance measurement", () => {
   const LIGATURES = new Set(["=>", "==", "->"]);
   function shapingMeasure(text: string): number {
     let width = 0;
-    for (let index = 0; index < text.length; ) {
+    for (let index = 0; index < text.length;) {
       if (LIGATURES.has(text.slice(index, index + 2))) {
         width += 12;
         index += 2;

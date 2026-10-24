@@ -32,7 +32,7 @@
     "@getpaseo/cli": "*",
     "@getpaseo/server": "*",
     "electron-log": "^5.4.3",
-    "electron-updater": "^6.6.2",
+    "electron-updater": "^6.8.11",
     "ws": "^8.14.2",
     "zod": "^4.4.3"
   },
@@ -40,12 +40,12 @@
     "@electron/asar": "3.4.1",
     "@types/node": "24.6.0",
     "@types/ws": "^8.5.14",
-    "electron": "44.2.0",
-    "electron-builder": "26.8.1",
+    "electron": "44.9.3",
+    "electron-builder": "26.18.0",
     "typescript": "5.9.3",
     "unzip-crx-3": "^0.2.0",
-    "vitest": "^4.1.6",
-    "wait-on": "8.0.5"
+    "vitest": "^4.1.12",
+    "wait-on": "9.5.1"
   },
   "desktopName": "Paseo.desktop"
 }
