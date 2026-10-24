@@ -12,6 +12,11 @@ initializing → idle → running → idle (or error → closed)
 
 Each live agent in `AgentManager` carries a `lastStatus` of `initializing`, `idle`, `running`, or `error`. `closed` is the persisted, resumable state for an agent record that has no live provider runtime. State transitions persist to disk and stream to subscribed clients via WebSocket.
 
+An interrupted daemon turn persists as `error` without loading a provider runtime. Opening that
+agent restores the session and preserves its failure reason and unread attention. A restart must
+never turn unfinished work into an apparently successful idle agent. Daemon-owned Hub executions
+retain their owner's shutdown policy and close instead.
+
 ## Runtime residency
 
 An unarchived agent may be `closed` without being deleted or archived. Closing releases its provider
@@ -103,6 +108,9 @@ follows the [connected-host observation policy](connected-hosts.md#delegating-ag
 outstanding intent. A crash after successful dispatch but before removal commits can repeat the
 notification. Clean shutdown can also flush an already queued callback while retaining its intent,
 so that callback can repeat after restart. This is an at-least-once wakeup, without turn attribution or exactly-once delivery.
+
+Interrupted local turns are marked as errors before finish subscriptions start observing persisted
+state. The durable intent and delivery retry rules above also apply to those errors.
 
 Permission requests are notification checkpoints, not the end of that subscription. The caller is notified again after a permission response when the child finishes, errors, or requests another permission.
 The permission notification includes the normalized request plus the child and request IDs, so the caller can inspect it and respond without fetching agent status.

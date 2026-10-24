@@ -1069,7 +1069,7 @@ function probeWebSocketConnection(
   });
 }
 
-test("startup closes stale active records before serving status without resuming sessions", async () => {
+test("startup reports stale active records before serving status without resuming sessions", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "paseo-stale-status-"));
   const logger = pino({ level: "silent" });
   const storagePath = path.join(root, ".paseo", "agents");
@@ -1129,13 +1129,18 @@ test("startup closes stale active records before serving status without resuming
   });
   const client = new DaemonClient({ url: `ws://127.0.0.1:${handle.port}/ws` });
   try {
-    const expected = records.map((record) => ({
-      ...record,
-      lastStatus:
-        record.lastStatus === "running" || record.lastStatus === "initializing"
-          ? "closed"
-          : record.lastStatus,
-    }));
+    const expected = records.map((record) => {
+      if (record.lastStatus !== "running" && record.lastStatus !== "initializing") return record;
+      if (record.archivedAt) return { ...record, lastStatus: "closed" };
+      return {
+        ...record,
+        lastStatus: "error",
+        lastError: "Daemon restarted before the active turn completed.",
+        requiresAttention: true,
+        attentionReason: "error",
+        attentionTimestamp: expect.any(String),
+      };
+    });
     expect(
       (await handle.daemon.agentStorage.list()).sort((a, b) => a.id.localeCompare(b.id)),
     ).toEqual(expected.sort((a, b) => a.id.localeCompare(b.id)));
@@ -1272,9 +1277,9 @@ test.each(["reject", "stall"] as const)(
       stopped = true;
       // Windows taskkill is forceful on the first signal; POSIX escalates after SIGTERM.
       expect(child!.exitCode !== null || child!.signalCode !== null).toBe(true);
-      expect((await handle.daemon.agentStorage.get(agent.id))?.lastStatus).toBe("closed");
+      expect((await handle.daemon.agentStorage.get(agent.id))?.lastStatus).toBe("error");
       expect(handle.daemon.agentManager.getAgent(agent.id)).toBeNull();
-      expect((await handle.daemon.agentStorage.get(peer.id))?.lastStatus).toBe("running");
+      expect((await handle.daemon.agentStorage.get(peer.id))?.lastStatus).toBe("error");
     } finally {
       finishStream();
       if (child && child.exitCode === null && child.signalCode === null) {

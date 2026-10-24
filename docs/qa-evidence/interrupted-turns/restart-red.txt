@@ -1,0 +1,43 @@
+
+ RUN  v4.1.6 <checkout>/packages/server
+
+stdout | src/server/bootstrap.test.ts
+[dotenv@17.3.1] injecting env (0) from .env.test -- tip: ⚡️ secrets for agents: https://dotenvx.com/as2
+[dotenv@17.3.1] injecting env (0) from ../.env -- tip: ⚙️  enable debug logging with { debug: true }
+
+ ❯ src/server/bootstrap.test.ts (3 tests | 1 failed | 2 skipped) 318ms
+   × startup reports an interrupted plugin turn without reopening its provider 301ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/server/bootstrap.test.ts > startup reports an interrupted plugin turn without reopening its provider
+AssertionError: expected { …(9) } to match object { lastStatus: 'error', …(3) }
+(8 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "attentionReason": "error",
+-   "lastError": "Daemon restarted before the active turn completed.",
+-   "lastStatus": "error",
+-   "requiresAttention": true,
++   "lastStatus": "closed",
+  }
+
+ ❯ src/server/bootstrap.test.ts:23:20
+     21|   try {
+     22|     const record = await daemon.daemon.agentStorage.get(id);
+     23|     expect(record).toMatchObject({
+       |                    ^
+     24|       lastStatus: "error", requiresAttention: true, attentionReason: "…
+     25|       lastError: "Daemon restarted before the active turn completed.",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 2 skipped (3)
+   Start at  09:56:14
+   Duration  11.91s (transform 9.02s, setup 48ms, import 11.37s, tests 318ms, environment 0ms)
+

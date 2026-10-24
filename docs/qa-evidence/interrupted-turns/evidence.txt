@@ -1,0 +1,9 @@
+Current evidence: main-sync.md and main-sync-*.txt.
+
+Upstream main now owns durable finish subscriptions (#7683). This PR uses that service and adds interrupted local-turn error state, preserved resume errors and shutdown recovery. Archived/Hub-owned executions retain closed status.
+
+The previous Hub closed-vs-error regression and a focused owned-record regression were reproduced red and now pass. A new real isolated-daemon test covers startup error recovery through the official subscription store, failed recipient startup, retry and acknowledged removal. Current focused run: bootstrap 6, agent-loading 4, Hub regression 1, targeted bootstrap smoke 4 = 15 passed.
+
+Files without a main-sync prefix (except this index and commands.txt) are historical evidence from 4fb6bf80 before upstream #7683. Superseded callback/storage test outputs are not current verification. Current cross-platform CI and remaining manual coverage are stated in the PR.
+
+The production daemon was not restarted or changed. Live memory monitoring continues independently of this branch update.

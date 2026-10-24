@@ -1,0 +1,14 @@
+npm run build:server
+npm run format
+npm run lint
+npm run typecheck
+npm run format:check
+cd packages/server
+npx vitest run src/server/bootstrap.test.ts --bail=1
+npx vitest run src/server/agent/agent-loading.test.ts --bail=1
+npx vitest run src/server/hub/relationship-controller.test.ts --bail=1 -t 'disconnect leaves no intent'
+npx vitest run src/server/bootstrap.smoke.test.ts --bail=1 -t 'stale active|shutdown closes|closing agents'
+
+Pre-fix reproduction:
+npx vitest run src/server/bootstrap.test.ts --bail=1 -t 'daemon-owned'
+npx vitest run src/server/hub/relationship-controller.test.ts --bail=1 -t 'disconnect leaves no intent'

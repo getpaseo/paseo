@@ -18,6 +18,45 @@ import type {
 } from "./agent-sdk-types.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 
+test("opening an interrupted agent preserves its failure reason and attention", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "agent-loading-interrupted-"));
+  const logger = createTestLogger();
+  const storage = new AgentStorage(path.join(root, "agents"), logger);
+  const manager = new AgentManager({
+    clients: createTestAgentClients(),
+    registry: storage,
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: root }, undefined, {});
+  const lastError = "Daemon restarted before the active turn completed.";
+  try {
+    await manager.closeAgent(agent.id);
+    const record = await storage.get(agent.id);
+    if (!record) throw new Error("missing persisted agent");
+    await storage.upsert({
+      ...record,
+      lastStatus: "error",
+      lastError,
+      requiresAttention: true,
+      attentionReason: "error",
+      attentionTimestamp: new Date().toISOString(),
+    });
+    const loaded = await ensureAgentLoaded(agent.id, {
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    expect(loaded.lastError).toBe(lastError);
+    expect(loaded.attention).toMatchObject({ requiresAttention: true, attentionReason: "error" });
+    await manager.flush();
+    expect((await storage.get(agent.id))?.lastError).toBe(lastError);
+  } finally {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("loads archived records for history and active records with the interactive default", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "agent-loading-purpose-"));
   const logger = createTestLogger();
