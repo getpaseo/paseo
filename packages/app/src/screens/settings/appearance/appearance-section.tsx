@@ -23,6 +23,7 @@ import {
   EditingTextInput as TextInput,
   type EditingTextInputHandle,
 } from "@/components/ui/text-input";
+import { FontSizeRow } from "./font-size-row";
 import {
   MAX_CODE_FONT_SIZE,
   MAX_CONTENT_FONT_SIZE,
@@ -293,49 +294,6 @@ function FontFamilyRow({
   );
 }
 
-interface FontSizeRowProps {
-  title: string;
-  hint: string;
-  accessibilityLabel: string;
-  draft: string;
-  withBorder?: boolean;
-  onChangeDraft: (value: string) => void;
-  onCommit: () => void;
-}
-
-function FontSizeRow({
-  title,
-  hint,
-  accessibilityLabel,
-  draft,
-  withBorder = true,
-  onChangeDraft,
-  onCommit,
-}: FontSizeRowProps) {
-  return (
-    <View style={withBorder ? styles.rowWithBorder : settingsStyles.row}>
-      <View style={settingsStyles.rowContent}>
-        <Text style={settingsStyles.rowTitle}>{title}</Text>
-        <Text style={settingsStyles.rowHint}>{hint}</Text>
-      </View>
-      <View style={styles.sizeField}>
-        <TextInput
-          initialValue={draft}
-          onChangeText={onChangeDraft}
-          onBlur={onCommit}
-          onSubmitEditing={onCommit}
-          keyboardType="number-pad"
-          inputMode="numeric"
-          selectTextOnFocus
-          style={styles.sizeInput}
-          accessibilityLabel={accessibilityLabel}
-        />
-        <Text style={styles.unit}>px</Text>
-      </View>
-    </View>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Content width: numeric field (commit on blur/submit) + reset to the default
 // ---------------------------------------------------------------------------
@@ -586,6 +544,7 @@ export function AppearanceSection() {
     if (next !== settings.uiBaseFontSize) {
       void updateSettings({ uiBaseFontSize: next });
     }
+    return String(next);
   }, [settings.uiBaseFontSize, uiBaseSizeDraft, updateSettings]);
 
   const commitCodeSize = useCallback(() => {
@@ -598,6 +557,7 @@ export function AppearanceSection() {
     if (next !== settings.codeFontSize) {
       void updateSettings({ codeFontSize: next });
     }
+    return String(next);
   }, [codeSizeDraft, settings.codeFontSize, updateSettings]);
 
   const commitContentSize = useCallback(() => {
@@ -610,6 +570,7 @@ export function AppearanceSection() {
     if (next !== settings.contentFontSize) {
       void updateSettings({ contentFontSize: next });
     }
+    return String(next);
   }, [contentSizeDraft, settings.contentFontSize, updateSettings]);
 
   // Live-while-typing: the in-progress drafts drive the preview without
@@ -749,19 +710,6 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-  },
-  sizeInput: {
-    width: 64,
-    minHeight: 36,
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface2,
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    textAlign: "right",
   },
   widthInput: {
     width: 80,
