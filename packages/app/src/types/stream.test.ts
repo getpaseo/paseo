@@ -661,6 +661,63 @@ describe("stream reducer canonical tool calls", () => {
     expect(new Set(tools.map((tool) => tool.id)).size).toBe(2);
   });
 
+  it("keeps the newest call's turn when an earlier turn's call reports late", () => {
+    const background = "tool-background-subagent";
+    const question = "tool-current-question";
+    const state = hydrateStreamState([
+      {
+        event: canonicalToolTimeline({
+          provider: "claude",
+          callId: background,
+          turnId: "foreground-turn-1",
+          name: "Agent",
+          status: "running",
+        }),
+        timestamp: new Date("2025-01-01T09:00:00Z"),
+      },
+      {
+        event: canonicalToolTimeline({
+          provider: "claude",
+          callId: question,
+          turnId: "foreground-turn-2",
+          name: "AskUserQuestion",
+          status: "running",
+        }),
+        timestamp: new Date("2025-01-01T09:01:00Z"),
+      },
+      {
+        event: canonicalToolTimeline({
+          provider: "claude",
+          callId: background,
+          turnId: "foreground-turn-1",
+          name: "Agent",
+          status: "running",
+          output: "still working",
+        }),
+        timestamp: new Date("2025-01-01T09:02:00Z"),
+      },
+      {
+        event: canonicalToolTimeline({
+          provider: "claude",
+          callId: question,
+          turnId: "foreground-turn-2",
+          name: "AskUserQuestion",
+          status: "completed",
+        }),
+        timestamp: new Date("2025-01-01T09:03:00Z"),
+      },
+    ]);
+
+    const tools = state.filter(isAgentToolCallItem);
+    expect(
+      tools.map((tool) => [tool.payload.data.callId, tool.turnId, tool.payload.data.status]),
+    ).toEqual([
+      [background, "foreground-turn-1", "running"],
+      [question, "foreground-turn-2", "completed"],
+    ]);
+    expect(new Set(state.map((item) => item.id)).size).toBe(state.length);
+  });
+
   it("merges lifecycle updates for the same call occurrence", () => {
     const callId = "tool-updated-within-turn";
     const turnId = "autonomous-turn-1";

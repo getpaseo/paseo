@@ -1597,6 +1597,7 @@ export function reduceStreamUpdate(
   switch (event.type) {
     case "timeline":
       return applyTimelineTurnId(
+        state,
         reduceTimelineEvent(
           state,
           event,
@@ -1622,6 +1623,7 @@ export function reduceStreamUpdate(
 }
 
 function applyTimelineTurnId(
+  previous: StreamItem[],
   items: StreamItem[],
   event: Extract<AgentStreamEventPayload, { type: "timeline" }>,
 ): StreamItem[] {
@@ -1635,6 +1637,11 @@ function applyTimelineTurnId(
   const index = items.length - 1;
   const last = items[index];
   if (!last || last.turnId === event.turnId) return items;
+  // Only the row this event wrote joins its turn. A late update to an earlier
+  // row (a background subagent from a previous turn) must not relabel the
+  // newest row: its identity would change under its id, and its next update
+  // would append a second row with the same id.
+  if (items.length === previous.length && last === previous[index]) return items;
   return [
     ...items.slice(0, index),
     { ...last, turnId: event.turnId } as StreamItem,
