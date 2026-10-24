@@ -24,6 +24,8 @@ export interface EditorTargetRuntime {
 
   pathExists(path: string): boolean;
   isAbsolutePath(path: string): boolean;
+  /** Resolves a leading `~` to the user's home directory. */
+  expandHomePath(path: string): string;
   resolveCommand(commands: readonly string[]): string | null;
   spawnDetached(input: { command: string; args: readonly string[] }): Promise<void>;
   openPath(path: string): Promise<void>;
