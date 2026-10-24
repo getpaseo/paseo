@@ -23,6 +23,7 @@ import {
   CodexAppServerAgentSession,
   codexMicrosoftStoreBinaryCandidates,
   codexAppServerTurnInputFromPrompt,
+  isExpiredCodexContinuationError,
   listCodexSkills,
   mapCodexPatchNotificationToToolCall,
   mapCodexPlanUpdateToTodo,
@@ -81,6 +82,83 @@ describe("Codex executable discovery", () => {
         "codex.exe",
       ),
     ]);
+  });
+});
+
+describe("Codex continuation recovery", () => {
+  test("recognizes expired forward-continuation errors", () => {
+    expect(
+      isExpiredCodexContinuationError(
+        "OpenAI forward continuation state is unavailable or expired; start a new session instead of reusing this previous_response_id.",
+      ),
+    ).toBe(true);
+    expect(isExpiredCodexContinuationError("Codex turn failed")).toBe(false);
+  });
+
+  test("starts a fresh app-server session before the next turn", async () => {
+    const beforeExpiry = createFakeCodexAppServer({
+      "thread/start": () => ({ thread: { id: "old-thread" } }),
+    });
+    const afterExpiry = createFakeCodexAppServer({
+      "thread/start": () => ({ thread: { id: "new-thread" } }),
+    });
+    let spawnCount = 0;
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => (spawnCount++ === 0 ? beforeExpiry.child : afterExpiry.child),
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      await session.startTurn("first turn");
+      await beforeExpiry.waitForTurnStart();
+      beforeExpiry.startsTurn({ threadId: "old-thread", turnId: "expired-turn" });
+      await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+        sessionId: "old-thread",
+      });
+      beforeExpiry.completeTurn({
+        threadId: "old-thread",
+        status: "failed",
+        error: {
+          message:
+            "OpenAI forward continuation state is unavailable or expired; start a new session instead of reusing this previous_response_id.",
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "turn_failed",
+          code: "CODEX_SESSION_EXPIRED",
+          error: expect.stringContaining("next message will start a fresh session"),
+        }),
+      );
+
+      const nextTurn = session.startTurn("second turn");
+      const nextStart = await afterExpiry.waitForTurnStart();
+      expect(nextStart).toMatchObject({ threadId: "new-thread" });
+      afterExpiry.startsTurn({ threadId: "new-thread", turnId: "fresh-turn" });
+      await expect(nextTurn).resolves.toEqual(
+        expect.objectContaining({ turnId: expect.any(String) }),
+      );
+      await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+        sessionId: "new-thread",
+      });
+      expect(spawnCount).toBe(2);
+      expect(
+        beforeExpiry.requests().filter((request) => request.method === "turn/start"),
+      ).toHaveLength(1);
+      expect(
+        afterExpiry.requests().filter((request) => request.method === "turn/start"),
+      ).toHaveLength(1);
+      beforeExpiry.assertNoErrors();
+      afterExpiry.assertNoErrors();
+    } finally {
+      await session.close();
+    }
   });
 });
 

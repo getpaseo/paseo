@@ -117,6 +117,19 @@ import {
   type CodexProviderOptions,
 } from "./codex/options.js";
 
+const CODEX_SESSION_EXPIRED_MESSAGE =
+  "Codex session expired. The next message will start a fresh session automatically. The failed turn was not replayed to avoid repeating tool actions.";
+
+export function isExpiredCodexContinuationError(message: string | null | undefined): boolean {
+  if (!message) return false;
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("previous_response_id") ||
+    normalized.includes("forward continuation state is unavailable") ||
+    (normalized.includes("continuation state") && normalized.includes("start a new session"))
+  );
+}
+
 function assertChildWithPipes(
   child: ChildProcess,
 ): asserts child is ChildProcessWithoutNullStreams {
@@ -3457,6 +3470,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
+  private staleContinuation = false;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
   private serviceTier: string | null = null;
   private speedModels: CodexModel[] = [];
@@ -4371,6 +4385,9 @@ export class CodexAppServerAgentSession implements AgentSession {
 
     try {
       await this.connect();
+      if (this.staleContinuation) {
+        await this.startFreshCodexSession();
+      }
       if (!this.client) {
         throw new Error("Codex client not initialized");
       }
@@ -5067,6 +5084,26 @@ export class CodexAppServerAgentSession implements AgentSession {
       await client.dispose();
     }
     this.client = null;
+  }
+
+  private async startFreshCodexSession(): Promise<void> {
+    const previousThreadId = this.currentThreadId;
+    this.staleContinuation = false;
+    this.currentThreadId = null;
+    this.currentTurnId = null;
+    this.cachedRuntimeInfo = null;
+    this.persistedHistory = [];
+    this.historyPending = false;
+    this.resetCodexUserMessageTurns();
+    this.clearPendingPermissions();
+    // Recreate app-server as well as the thread. This prevents Codex from
+    // carrying the expired forward-continuation state in process memory.
+    await this.disposeClient();
+    await this.connect();
+    this.logger.info(
+      { previousThreadId },
+      "Codex continuation expired; started a fresh app-server session",
+    );
   }
 
   async listCommands(): Promise<AgentSlashCommand[]> {
@@ -6154,10 +6191,21 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     this.completePendingRootCompactions();
     if (parsed.status === "failed") {
+      const expiredContinuation = isExpiredCodexContinuationError(parsed.errorMessage);
+      if (expiredContinuation) {
+        this.staleContinuation = true;
+        this.logger.warn(
+          { error: parsed.errorMessage, threadId: this.currentThreadId },
+          "Codex forward continuation expired; next turn will use a fresh session",
+        );
+      }
       this.emitEvent({
         type: "turn_failed",
         provider: CODEX_PROVIDER,
-        error: parsed.errorMessage ?? "Codex turn failed",
+        error: expiredContinuation
+          ? CODEX_SESSION_EXPIRED_MESSAGE
+          : (parsed.errorMessage ?? "Codex turn failed"),
+        ...(expiredContinuation ? { code: "CODEX_SESSION_EXPIRED" } : {}),
       });
     } else if (parsed.status === "interrupted") {
       this.dismissInterruptedAsyncQuestions();
