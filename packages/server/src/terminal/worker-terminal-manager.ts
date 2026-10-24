@@ -323,7 +323,8 @@ export function createWorkerTerminalManager(
         return record.activity;
       },
       setActivity(state: TerminalActivityState): void {
-        record.activity = { state, changedAt: Date.now() };
+        // The worker decides (hook reports yield to OSC 7501) and reports
+        // the result as terminalActivityChange.
         sendBestEffortRequest({ type: "setActivity", terminalId: record.info.id, state });
       },
       clearActivityAttention(): boolean {

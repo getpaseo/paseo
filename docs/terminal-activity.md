@@ -6,7 +6,7 @@ Paseo surfaces terminal activity as a tab indicator (the same "running" dot used
 
 Terminal activity is source-agnostic plumbing. `TerminalActivityTracker` holds the current per-terminal state and emits transitions to the manager, worker protocol, websocket subscription, app buckets, dots, and notifications.
 
-The tracker defaults to unknown (`null`). Activity production lives outside terminal stream parsing: agent hook commands report coarse activity to the daemon's local `/api/terminal-activity` endpoint.
+The tracker defaults to unknown (`null`). Two sources produce activity: programs that report their own status with OSC 7501 in the terminal stream, and agent hook commands that report coarse activity to the daemon's local `/api/terminal-activity` endpoint. Both write the same tracker. OSC 7501 takes precedence: after a program sends an accepted 7501 report, hook reports for that terminal are ignored until the next shell prompt, a full reset, or a report that leaves no records (a program clearing its status on exit). A harness that speaks both, such as current Claude Code, is then tracked through 7501. Older versions that never send 7501 keep working through their hooks, with no version checks. Paseo never infers activity from titles or output.
 
 ## Architecture
 
@@ -36,6 +36,26 @@ Terminal list visibility is `workspaceId`-scoped: a terminal belongs to the work
 
 Path-prefix routing is only a legacy fallback for unowned terminal activity contribution. If a live terminal has no `workspaceId`, the daemon resolves the deepest active parent workspace from the terminal `cwd`, then fans status out to active same-`cwd` siblings of that owner. That fallback contributes status, but it does not make the terminal visible in workspace-scoped terminal lists.
 
+## Program status reporting
+
+Programs report their own status with the [OSC 7501 Program Status Protocol](https://www.superlogical.com/rex/docs/build/program-status), for example `ESC ] 7501 ; state=working:app=claude ESC \`. The terminal worker parses these sequences in its headless emulator, so programs need no Paseo-specific setup. Paseo answers the `ESC ] 7501 ; ? ST` feature query with `ESC ] 7501 ; ? ESC \`. Some programs, such as Claude Code and Pi, report only after that reply; others, such as Codex and Crush, report without asking, and Paseo accepts both.
+
+The worker keeps one record per report `id` and follows the spec's syntax, limits, `clear` subtrees, `app` inheritance, record cap, and record lifetime, with the one deviation below. Malformed or oversized reports are ignored. The tracker shows the most urgent record (`blocked` > `working` > `error` > `done` > `idle`):
+
+| Program status  | Terminal activity                                                                                                                               |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `working`       | `working`                                                                                                                                       |
+| `blocked`       | `idle` with `attentionReason: needs_input`                                                                                                      |
+| `done`, `error` | `idle` with finished attention when the status changes to it, whatever came before; repeating it does not bring back attention the user cleared |
+| `idle`          | `idle` with no attention, so an interrupted run never shows finished; a finished mark the user has not seen stays                               |
+| no records left | unknown                                                                                                                                         |
+
+A new shell prompt drops `working` and `blocked` records, so a program that exits without clearing its status does not stay working. `done` and `error` records survive until the program replaces or clears them. A full reset (`RIS`) removes every record; a soft reset (`DECSTR`) does not. Records end with the terminal when its process exits.
+
+Paseo's zsh integration marks prompts with OSC 633 `A`. Paseo also treats OSC 133 `A` as a new prompt, with one deviation from the spec: while the integration reports a running command (633 `C` with no prompt since), Paseo ignores 133 `A`. The spec says the shell emits 133 `A`, but TUIs such as OMP draw 133 prompt zones inside their own UI while they keep running. Without the integration the spec rule applies, and an OMP prompt zone drops OMP's own `working` record.
+
+In shells without Paseo's integration, a program that exits or crashes while `working`, without clearing its status, leaves the terminal working until a later 7501 report replaces it, a 133 prompt, a full reset, or the terminal's exit. Hook reports in that terminal stay ignored for as long. The terminal cannot see the foreground program exit on its own.
+
 ## Hook reporting
 
 Terminals receive four environment variables when the daemon creates the shell:
@@ -56,7 +76,8 @@ Claude hook mapping:
 Claude does not run `Stop` when the user interrupts a turn. A standalone Ctrl-C or Escape input
 while terminal activity is working clears the activity without finished attention. The same
 fallback applies to every hooked terminal agent; exact input matching excludes escape sequences and
-pasted content, while later provider idle events remain authoritative.
+pasted content, while later provider idle events remain authoritative. Terminals with OSC 7501
+records skip this fallback, because those programs report their own interrupts.
 
 Codex hook mapping:
 

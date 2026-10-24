@@ -23,6 +23,11 @@ import {
 import type { TerminalCell, TerminalState } from "@getpaseo/protocol/messages";
 import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 import { TerminalActivityTracker } from "./activity/terminal-activity-tracker.js";
+import {
+  ProgramStatusRecords,
+  parseProgramStatusReport,
+  type ProgramStatusState,
+} from "./activity/program-status.js";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 
 const { Terminal } = xterm;
@@ -115,6 +120,8 @@ export interface TerminalSession {
   getReplayPreamble(): string;
   getTitle(): string | undefined;
   getActivity(): TerminalActivity | null;
+  // Applies an agent hook report; ignored while the current program run
+  // reports OSC 7501 (until the next shell prompt or full reset).
   setActivity(state: TerminalActivityState): void;
   clearActivityAttention(): boolean;
   setTitle(title: string): void;
@@ -1009,6 +1016,10 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   let stateRevision = 0;
   const inputModeTracker = new TerminalInputModeTracker();
   const activityTracker = new TerminalActivityTracker();
+  const programStatusRecords = new ProgramStatusRecords();
+  // Paseo's shell integration (OSC 633) reports a command running from C until
+  // the next A or D. Shells without the integration never set it.
+  let commandRunning = false;
   const activityChangeListeners = new Set<(transition: TerminalActivityTransition) => void>();
   let titleChangeSubscription: { dispose(): void } | null = null;
 
@@ -1157,11 +1168,31 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     });
   }
 
+  // Set by any accepted OSC 7501 report; a new shell prompt or a full reset
+  // lifts it. While set, agent hook reports are ignored (see setActivity).
+  let programReportsStatus = false;
+
+  // A new shell prompt drops `working` and `blocked` program status records
+  // (OSC 7501 lifetime rule) and ends the program run that owned activity.
+  function dropLiveProgramStatus(): void {
+    programReportsStatus = false;
+    if (!disposed && !killed && programStatusRecords.dropLiveRecords()) {
+      applyProgramStatusActivity();
+    }
+  }
+
   const disposeCommandLifecycleSubscription = terminal.parser.registerOscHandler(633, (data) => {
+    if (data === "A" || data.startsWith("A;")) {
+      commandRunning = false;
+      dropLiveProgramStatus();
+    } else if (data === "C") {
+      commandRunning = true;
+    }
     const commandFinished = parseCommandFinishedOsc(data);
     if (!commandFinished) {
       return true;
     }
+    commandRunning = false;
 
     for (const listener of Array.from(commandFinishedListeners)) {
       try {
@@ -1170,6 +1201,87 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
         // no-op
       }
     }
+    return true;
+  });
+
+  // OSC 133 A marks a new shell prompt, except while Paseo's shell integration
+  // reports a running command: then the foreground program drew it. TUIs such
+  // as OMP draw 133 prompt zones inside their own UI while they keep working.
+  const disposeSemanticPromptSubscription = terminal.parser.registerOscHandler(133, (data) => {
+    if ((data === "A" || data.startsWith("A;")) && !commandRunning) {
+      dropLiveProgramStatus();
+    }
+    return false;
+  });
+
+  // A full reset (RIS, ESC c) removes every program status record; a soft
+  // reset (DECSTR) does not.
+  const disposeFullResetSubscription = terminal.parser.registerEscHandler({ final: "c" }, () => {
+    programReportsStatus = false;
+    if (!disposed && !killed && programStatusRecords.size > 0) {
+      programStatusRecords.apply({ state: "clear", id: null });
+      applyProgramStatusActivity();
+    }
+    return false;
+  });
+
+  // Maps the aggregate program status onto terminal activity. Only called when
+  // a 7501 report or a lifetime drop changed the records, so terminals whose
+  // activity comes from agent hooks are left alone.
+  let appliedProgramStatus: ProgramStatusState | null = null;
+  function applyProgramStatusActivity(): void {
+    if (disposed || killed) {
+      return;
+    }
+    const resolved = programStatusRecords.resolve();
+    const changed = resolved !== appliedProgramStatus;
+    appliedProgramStatus = resolved;
+    if (resolved === null) {
+      activityTracker.clear();
+      return;
+    }
+    switch (resolved) {
+      case "blocked":
+        activityTracker.set("attention");
+        break;
+      case "working":
+        activityTracker.set("working");
+        break;
+      case "done":
+      case "error":
+        // Reaching done or error leaves a result to review whatever came
+        // before (a program may report idle, then done). Re-applying an
+        // unchanged done keeps a finished mark the user already cleared.
+        if (changed) {
+          activityTracker.finish();
+        } else {
+          activityTracker.set("idle");
+        }
+        break;
+      case "idle":
+        activityTracker.setAtRest();
+        break;
+    }
+  }
+
+  const disposeProgramStatusSubscription = terminal.parser.registerOscHandler(7501, (data) => {
+    if (disposed || killed) {
+      return true;
+    }
+    if (data.trim() === "?") {
+      ptyProcess.write("\x1b]7501;?\x1b\\");
+      return true;
+    }
+    const report = parseProgramStatusReport(data);
+    if (!report) {
+      return true;
+    }
+    programStatusRecords.apply(report);
+    // A program that clears every record has ended its run (Claude Code,
+    // Codex and Pi clear on exit), which lifts the hook gate in shells
+    // without prompt marks.
+    programReportsStatus = programStatusRecords.size > 0;
+    applyProgramStatusActivity();
     return true;
   });
 
@@ -1241,6 +1353,9 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     clearPendingTitleChange();
     disposeTitleChangeSubscription();
     disposeCommandLifecycleSubscription.dispose();
+    disposeProgramStatusSubscription.dispose();
+    disposeSemanticPromptSubscription.dispose();
+    disposeFullResetSubscription.dispose();
     activityTracker.dispose();
     terminal.dispose();
     listeners.clear();
@@ -1397,7 +1512,9 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
 
     switch (msg.type) {
       case "input": {
-        if (isTerminalActivityInterruptInput(msg.data)) {
+        // Programs with OSC 7501 records report their own interrupts; Escape
+        // in their UI does not mean the run stopped.
+        if (isTerminalActivityInterruptInput(msg.data) && programStatusRecords.resolve() === null) {
           activityTracker.interrupt();
         }
         pendingInput += msg.data;
@@ -1526,7 +1643,14 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     return toTerminalActivity(activityTracker.getSnapshot());
   }
 
+  // Hook reports yield to OSC 7501: a program that reports its own status
+  // owns the terminal's activity for the rest of its run, so a harness that
+  // speaks both is not reported twice. Old harness versions that never send
+  // 7501 keep using hooks; no version checks.
   function setActivity(state: TerminalActivityState): void {
+    if (programReportsStatus) {
+      return;
+    }
     activityTracker.set(state);
   }
 
