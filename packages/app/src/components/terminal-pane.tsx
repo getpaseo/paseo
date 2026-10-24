@@ -627,6 +627,7 @@ export function TerminalPane({
   const getStreamRestoreOptions = useStableEvent(() =>
     resolveTerminalRestoreOptions({
       supportsTerminalRestoreModes,
+      scrollbackLines: settings.terminalScrollbackLines,
       canClaimSize: canRequestFocusClaim({
         isWorkspaceFocused: terminalPresentedRef.current,
         isPaneFocused,
