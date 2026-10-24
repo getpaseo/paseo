@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -48,6 +56,18 @@ function install(root, PATH = `${bin}${path.delimiter}${process.env.PATH}`) {
   });
 }
 
+// A copy outside the repository cannot resolve patch-package, as in an install without dev
+// dependencies.
+function installWithoutPatchPackage(root, env = {}) {
+  const isolatedScript = path.join(root, "postinstall-patches.mjs");
+  copyFileSync(script, isolatedScript);
+  return spawnSync(process.execPath, [isolatedScript], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, ...env },
+  });
+}
+
 test("a patch that changed since it was applied removes the package for a clean reinstall", () => {
   const { root, packageDir } = createCheckout();
   try {
@@ -84,15 +104,48 @@ test("an already applied patch leaves the package in place", () => {
   }
 });
 
+test("patch-package runs without node_modules/.bin on PATH", () => {
+  const { root, packageDir } = createCheckout();
+  try {
+    writePatch(root, 1, 2);
+    assert.equal(install(root, root).status, 0);
+    assert.equal(
+      readFileSync(path.join(packageDir, "index.js"), "utf8"),
+      "export const value = 2;\n",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a missing patch-package fails the install and leaves the package in place", () => {
   const { root, packageDir } = createCheckout();
   try {
     writePatch(root, 1, 2);
-    const result = install(root, root);
+    const result = installWithoutPatchPackage(root, { NODE_ENV: "production" });
 
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /failed to spawn/);
+    assert.match(result.stderr, /installed dependencies require patches/);
+    assert.match(result.stderr, /npm ci --include=dev/);
     assert.equal(existsSync(packageDir), true);
+    assert.equal(
+      readFileSync(path.join(packageDir, "index.js"), "utf8"),
+      "export const value = 1;\n",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a missing patch-package is fine when no installed package needs a patch", () => {
+  const { root, packageDir } = createCheckout();
+  try {
+    writePatch(root, 1, 2);
+    rmSync(packageDir, { recursive: true, force: true });
+    const result = installWithoutPatchPackage(root, { NODE_ENV: "production" });
+
+    assert.equal(result.status, 0);
+    assert.equal(result.stderr, "");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
