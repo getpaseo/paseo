@@ -664,6 +664,16 @@ export interface AgentUsageSession {
   sessionKey: string;
 }
 
+/** An enabled provider that sets its own env, as its sessions report it for usage. */
+export interface ProviderUsageEnvironment {
+  /** The provider a custom provider extends, or its own id. */
+  provider: string;
+  /** The provider's label, used to name the logins found through it. */
+  label: string;
+  /** The environment the provider launches with. */
+  env: Record<string, string>;
+}
+
 export interface AgentSession {
   usageSession?(): AgentUsageSession | null;
   readonly provider: AgentProvider;
