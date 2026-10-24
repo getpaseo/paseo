@@ -228,6 +228,7 @@ function SidebarWorkspaceMenuItems({
         </DropdownMenuSubTrigger>
       ) : null}
       <OpenInFileManagerMenuItem
+        serverId={serverId}
         surface={surface}
         path={openInFileManagerPath}
         testID={`sidebar-workspace-menu-open-folder-${workspaceKey}`}
