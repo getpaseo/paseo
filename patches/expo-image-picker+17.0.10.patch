@@ -1,0 +1,16 @@
+diff --git a/node_modules/expo-image-picker/ios/MediaHandler.swift b/node_modules/expo-image-picker/ios/MediaHandler.swift
+index 6e4fbe1..e214bc4 100644
+--- a/node_modules/expo-image-picker/ios/MediaHandler.swift
++++ b/node_modules/expo-image-picker/ios/MediaHandler.swift
+@@ -30,7 +30,10 @@ internal struct MediaHandler {
+     return try await asyncMap(selection) { selectedItem in
+       let itemProvider = selectedItem.itemProvider
+ 
+-      if itemProvider.canLoadObject(ofClass: PHLivePhoto.self) && options.mediaTypes.contains(.livePhotos) {
++      // Patched: check mediaTypes first so the provider is never queried when live photos
++      // were not requested. iOS 27.1 raises NSInvalidArgumentException from canLoadObject(ofClass:)
++      // (expo/expo#50435).
++      if options.mediaTypes.contains(.livePhotos) && itemProvider.canLoadObject(ofClass: PHLivePhoto.self) {
+         return try await handleLivePhoto(from: selectedItem)
+       }
+       if itemProvider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
