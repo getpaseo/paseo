@@ -10,7 +10,7 @@ import React, {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import { Pressable, Text, View, type LayoutChangeEvent, type ScrollView } from "react-native";
+import { Pressable, Text, View, type LayoutChangeEvent } from "react-native";
 import { useFilePanelOpenWithMenu } from "@/file-panels";
 import {
   CopyX,
@@ -52,6 +52,7 @@ import type { ShortcutKey } from "@/utils/format-shortcut";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useWorkspaceTabLayout } from "@/screens/workspace/use-workspace-tab-layout";
 import { retainWorkspaceTabMeasuredWidth } from "@/screens/workspace/workspace-tab-layout";
+import { useWorkspaceTabsWheelScroll } from "@/screens/workspace/workspace-tabs-wheel-scroll";
 import {
   WorkspaceTabPresentationResolver,
   WorkspaceTabIcon,
@@ -1056,7 +1057,6 @@ function ResolvedWorkspaceDesktopTabsRow({
   const isCompact = useIsCompactFormFactor();
   const newTabKeys = useShortcutKeys("workspace-tab-new");
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
-  const tabsScrollRef = useRef<ScrollView>(null);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
   const tabScrollBoundary = useHorizontalScrollBoundary();
   const [labelMeasurements, setLabelMeasurements] = useState(
@@ -1220,13 +1220,17 @@ function ResolvedWorkspaceDesktopTabsRow({
     metrics: layoutMetrics,
     compact: isCompact,
   });
+  // The strip hides its scrollbar and relies on the edge shades, so a plain mouse wheel
+  // has to pan it; otherwise tabs past the viewport are unreachable without a trackpad.
+  const tabsScrollRef = useWorkspaceTabsWheelScroll(layout.requiresHorizontalScrollFallback);
+
   // A scroll view keeps its offset when its content shrinks under the viewport, so a row that
   // stops scrolling would leave the tabs it had panned past out of view with no way back.
   useEffect(() => {
     if (!layout.requiresHorizontalScrollFallback) {
       tabsScrollRef.current?.scrollTo({ x: 0, animated: false });
     }
-  }, [layout.requiresHorizontalScrollFallback]);
+  }, [layout.requiresHorizontalScrollFallback, tabsScrollRef]);
 
   const handleDragEnd = useCallback(
     (nextTabs: ResolvedWorkspaceDesktopTabRowItem[]) => {
