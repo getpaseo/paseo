@@ -22,8 +22,11 @@ export const SETTINGS_DESKTOP_SPLIT_MIN_WIDTH =
 
 // Desktop app constants for macOS traffic light buttons
 // These buttons (close/minimize/maximize) overlay the top-left corner
+// Native controls do not follow page zoom, so these are on-screen points, not CSS px.
 export const DESKTOP_TRAFFIC_LIGHT_WIDTH = 78;
 export const DESKTOP_TRAFFIC_LIGHT_HEIGHT = 45;
+// Vertical center of the buttons: trafficLightPosition.y (14) + trafficLightOffsetY (-4) + radius (7).
+export const DESKTOP_TRAFFIC_LIGHT_CENTER_Y = 17;
 
 // Custom desktop window controls (minimize/maximize/close) — top-right
 export const DESKTOP_WINDOW_CONTROLS_HEIGHT = HEADER_INNER_HEIGHT;
