@@ -109,6 +109,7 @@ import type {
   WorkspacePanelTarget,
 } from "@/keyboard/keyboard-action-dispatcher";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
+import { useDesktopWindowViewStore } from "@/stores/desktop-window-view-store";
 import { normalizeWorkspaceTabTarget, workspaceTabTargetsEqual } from "@/workspace-tabs/identity";
 import { useVisibleAgentIds } from "./visible-agent-ids";
 import {
@@ -1428,6 +1429,15 @@ function WorkspaceScreenContent({
         .catch(() => undefined);
     }
   }, [normalizedServerId, visibleAgentIds]);
+  useEffect(() => {
+    if (!persistenceKey) {
+      return;
+    }
+    useDesktopWindowViewStore.getState().setVisibleAgentIds(persistenceKey, visibleAgentIds);
+    return () => {
+      useDesktopWindowViewStore.getState().clearVisibleAgentIds(persistenceKey);
+    };
+  }, [persistenceKey, visibleAgentIds]);
   useLayoutEffect(() => {
     if (!persistenceKey || !viewedTimelineSync) {
       return;
