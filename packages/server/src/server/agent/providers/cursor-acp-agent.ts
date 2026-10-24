@@ -98,6 +98,8 @@ export class CursorACPAgentClient extends GenericACPAgentClient {
       initialCommandsWaitTimeoutMs: CURSOR_INITIAL_COMMANDS_WAIT_TIMEOUT_MS,
       clientCapabilityMeta: CURSOR_CLIENT_CAPABILITY_META,
       configFeatureOptions: [CURSOR_FAST_FEATURE_OPTION],
+      // The thinking option id differs per model (effort, reasoning, reasoning_effort, thinking).
+      switchModelViaConfigOption: true,
       catalogModelResolver: resolveCursorCatalogModels,
     });
   }
