@@ -4534,6 +4534,28 @@ describe("ForgeService", () => {
     ]);
   });
 
+  it("creates a draft pull request when requested", async () => {
+    const runner = createRunner([
+      JSON.stringify({ owner: { login: "acme" }, name: "repo" }),
+      JSON.stringify({ url: "https://github.com/acme/repo/pull/8", number: 8 }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveRepoHost: async () => null,
+    });
+
+    await service.createPullRequest({
+      cwd: "/tmp/repo",
+      title: "Add thing",
+      head: "feature",
+      base: "main",
+      draft: true,
+    });
+
+    expect(runner.calls[1]?.args).toContain("draft=true");
+    expect(runner.calls[1]?.args).toContain("-F");
+  });
+
   it("routes gh calls to the resolved GitHub Enterprise host via GH_HOST", async () => {
     const runner = createRunner([
       JSON.stringify({ owner: { login: "acme" }, name: "repo" }),

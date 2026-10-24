@@ -956,11 +956,13 @@ export class CheckoutSession {
     try {
       let title = msg.title?.trim() ?? "";
       let body = msg.body?.trim() ?? "";
+      let draft = msg.draft;
 
       if (!title || !body) {
         const generated = await this.gitMetadataGenerator.generatePullRequestText(cwd, msg.baseRef);
         if (!title) title = generated.title;
         if (!body) body = generated.body;
+        draft ??= generated.draft;
       }
 
       const { service } = await this.requireForgeService(cwd);
@@ -969,6 +971,7 @@ export class CheckoutSession {
         {
           title,
           body,
+          draft,
           base: msg.baseRef,
         },
         service,
