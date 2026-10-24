@@ -14,7 +14,10 @@ import { randomUUID } from "node:crypto";
 import type pino from "pino";
 import {
   PROVIDER_CAPABILITIES,
+  parseProviderComposerControls,
   requireProviderCapabilities,
+  type ProviderComposerControl,
+  type ProviderComposerControlContext,
   type ProviderConnectRequest,
   type ProviderCatalogOptions,
   type ProviderConnection,
@@ -592,6 +595,42 @@ export class PluginRuntime {
     if (output !== undefined && typeof output !== "string")
       throw new Error("Invalid catalogue key from plugin");
     return output;
+  }
+
+  async getProviderComposerControls(
+    pluginId: string,
+    providerId: string,
+    context: ProviderComposerControlContext,
+  ): Promise<ProviderComposerControl[]> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    const output = await this.request(loaded, {
+      type: "provider.composer_controls",
+      requestId: randomUUID(),
+      providerId,
+      context,
+    });
+    return parseProviderComposerControls(output);
+  }
+
+  async invokeProviderComposerControl(
+    pluginId: string,
+    providerId: string,
+    controlId: string,
+    value: unknown,
+    context: ProviderComposerControlContext,
+  ): Promise<ProviderComposerControl[]> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    const output = await this.request(loaded, {
+      type: "provider.composer_control.invoke",
+      requestId: randomUUID(),
+      providerId,
+      controlId,
+      ...(value === undefined ? {} : { value }),
+      context,
+    });
+    return parseProviderComposerControls(output);
   }
 
   private request(

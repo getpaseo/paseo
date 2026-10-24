@@ -26,6 +26,8 @@ import {
   getAgentStreamEventTurnId,
   type AgentCapabilityFlags,
   type AgentClient,
+  type AgentComposerControl,
+  type AgentComposerControlContext,
   type AgentCreateSessionOptions,
   type AgentResumePurpose,
   type AgentResumeSessionOptions,
@@ -204,6 +206,9 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
   }
   if (record.config.featureValues != null) {
     config.featureValues = record.config.featureValues;
+  }
+  if (record.config.controlValues != null) {
+    config.controlValues = record.config.controlValues;
   }
   if (record.config.providerOptions != null) {
     config.providerOptions = record.config.providerOptions;
@@ -417,6 +422,7 @@ interface ManagedAgentBase {
   updatedAt: Date;
   availableModes: AgentMode[];
   features?: AgentFeature[];
+  composerControls?: AgentComposerControl[];
   currentModeId: string | null;
   pendingPermissions: Map<string, AgentPermissionRequest>;
   bufferedPermissionResolutions: Map<
@@ -2034,6 +2040,7 @@ export class AgentManager {
     }
     this.touchUpdatedAt(agent);
     this.emitState(agent);
+    await this.refreshComposerControls(agent);
     return notice;
   }
 
@@ -2054,6 +2061,7 @@ export class AgentManager {
     this.refreshSessionPersistence(agent);
     this.touchUpdatedAt(agent);
     this.emitState(agent);
+    await this.refreshComposerControls(agent);
   }
 
   async setAgentThinkingOption(
@@ -2087,6 +2095,7 @@ export class AgentManager {
     }
     this.touchUpdatedAt(agent);
     this.emitState(agent);
+    await this.refreshComposerControls(agent);
     return notice;
   }
 
@@ -2102,6 +2111,42 @@ export class AgentManager {
     agent.config.featureValues = { ...agent.config.featureValues, [featureId]: value };
     this.touchUpdatedAt(agent);
     this.emitState(agent);
+    await this.refreshComposerControls(agent);
+  }
+
+  async listDraftComposerControls(
+    config: AgentSessionConfig,
+    surface: AgentComposerControlContext["surface"] = "draft",
+  ): Promise<AgentComposerControl[]> {
+    const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
+    const client = this.requireClient(normalizedConfig.provider);
+    // Only plugin providers implement listComposerControls. There is no
+    // session fallback: unlike features, controls are never worth opening a
+    // throwaway session for, and built-ins must not pay for one.
+    if (!client.listComposerControls) {
+      return [];
+    }
+    return await client.listComposerControls(normalizedConfig, surface);
+  }
+
+  async invokeComposerControl(
+    agentId: string,
+    controlId: string,
+    value: unknown,
+  ): Promise<AgentComposerControl[]> {
+    const agent = this.requireSessionAgent(agentId);
+    if (!agent.session.invokeComposerControl) {
+      throw new Error("Agent session does not support composer controls");
+    }
+    const refreshed =
+      (await agent.session.invokeComposerControl({ agentId, controlId, value })) ??
+      (await agent.session.listComposerControls?.({ agentId })) ??
+      [];
+    agent.composerControls = refreshed;
+    await this.drainSessionEvents(agentId);
+    this.touchUpdatedAt(agent);
+    this.emitState(agent);
+    return refreshed;
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {
@@ -4071,6 +4116,7 @@ export class AgentManager {
     }
 
     this.syncFeaturesFromSession(agent);
+    await this.refreshComposerControls(agent, options);
     await this.refreshRuntimeInfo(agent, options);
   }
 
@@ -4967,6 +5013,19 @@ export class AgentManager {
   private syncFeaturesFromSession(agent: ManagedAgent): void {
     if ("session" in agent && agent.session?.features) {
       agent.features = agent.session.features;
+    }
+  }
+
+  private async refreshComposerControls(
+    agent: ManagedAgent,
+    options?: { emit?: boolean },
+  ): Promise<void> {
+    if (!("session" in agent) || !agent.session?.listComposerControls) return;
+    try {
+      agent.composerControls = await agent.session.listComposerControls({ agentId: agent.id });
+      if (options?.emit !== false) this.emitState(agent, { persist: false });
+    } catch (error) {
+      this.logger.warn({ err: error, agentId: agent.id }, "Failed to refresh composer controls");
     }
   }
 

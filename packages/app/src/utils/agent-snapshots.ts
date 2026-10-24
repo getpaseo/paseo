@@ -128,6 +128,7 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     workspaceId: snapshot.workspaceId,
     model: snapshot.model ?? null,
     features: snapshot.features,
+    composerControls: snapshot.composerControls,
     thinkingOptionId: snapshot.thinkingOptionId ?? null,
     requiresAttention: snapshot.requiresAttention ?? false,
     attentionReason: snapshot.attentionReason ?? null,

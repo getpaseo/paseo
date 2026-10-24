@@ -1,5 +1,6 @@
 import { UsageScopeSchema, type UsageScope } from "@getpaseo/plugin/server/usage";
 import type {
+  ProviderComposerControlContext,
   ProviderConnectRequest,
   ProviderCatalogOptions,
   ProviderEvent,
@@ -7,6 +8,7 @@ import type {
   ProviderStatusRequest,
 } from "@getpaseo/plugin/server/provider";
 import {
+  ProviderComposerControlContextSchema,
   ProviderEventSchema,
   ProviderInputSchema,
   ProviderLaunchSchema,
@@ -17,6 +19,7 @@ export interface PluginProviderMetadata {
   requiresConfiguration?: boolean;
   hasCatalogCacheKey?: boolean;
   hasStatus?: boolean;
+  hasComposerControls?: boolean;
   command?: readonly [string, ...string[]];
   id: string;
   label: string;
@@ -50,6 +53,20 @@ export type PluginProcessRequest =
       requestId: string;
       providerId: string;
       options: ProviderCatalogOptions;
+    }
+  | {
+      type: "provider.composer_controls";
+      requestId: string;
+      providerId: string;
+      context: ProviderComposerControlContext;
+    }
+  | {
+      type: "provider.composer_control.invoke";
+      requestId: string;
+      providerId: string;
+      controlId: string;
+      value?: unknown;
+      context: ProviderComposerControlContext;
     }
   | { type: "hook"; requestId: string; kind: "event" | "before"; name: string; input: unknown }
   | { type: "hook.cancel"; requestId: string }
@@ -116,6 +133,7 @@ const providerMetadataSchema = z
     requiresConfiguration: z.boolean().optional(),
     hasCatalogCacheKey: z.boolean().optional(),
     hasStatus: z.boolean().optional(),
+    hasComposerControls: z.boolean().optional(),
     command: z.tuple([z.string().min(1)], z.string()).optional(),
   })
   .strict();
@@ -181,6 +199,24 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
             })
             .strict(),
         ]),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("provider.composer_controls"),
+        requestId: z.string().min(1),
+        providerId: z.string().min(1),
+        context: ProviderComposerControlContextSchema,
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("provider.composer_control.invoke"),
+        requestId: z.string().min(1),
+        providerId: z.string().min(1),
+        controlId: z.string().min(1),
+        value: z.unknown().optional(),
+        context: ProviderComposerControlContextSchema,
       })
       .strict(),
     z

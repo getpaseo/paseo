@@ -6,12 +6,15 @@ import {
   type PluginProcessRequest,
 } from "./plugin-process-protocol.js";
 import type { UsageSourceRegistration } from "@getpaseo/plugin/server/usage";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { SettingsDefinition, PluginRpcContract } from "@getpaseo/plugin";
 import type { PluginHandlerContext, PluginServerContribution } from "@getpaseo/plugin/server";
 import { fileURLToPath } from "node:url";
 import type { ZodType } from "zod";
 import {
   ProviderEventSchema,
+  parseProviderComposerControls,
+  type ProviderComposerControl,
   type ProviderConnection,
   type ProviderRegistration,
   ProviderStatusSchema,
@@ -127,6 +130,12 @@ export function createPluginWorker(options: {
     if (provider.status !== undefined && typeof provider.status !== "function")
       throw new Error(`Invalid status callback for plugin provider ${id}`);
     if (
+      provider.composerControls !== undefined &&
+      (typeof provider.composerControls.getControls !== "function" ||
+        typeof provider.composerControls.onControlEvent !== "function")
+    )
+      throw new Error(`Invalid composer controls for plugin provider ${id}`);
+    if (
       provider.command !== undefined &&
       (provider.command.length === 0 ||
         provider.command.some((part) => typeof part !== "string" || !part.trim()))
@@ -161,6 +170,7 @@ export function createPluginWorker(options: {
       requiresConfiguration: provider.requiresConfiguration,
       hasCatalogCacheKey: provider.getCatalogCacheKey !== undefined,
       hasStatus: provider.status !== undefined,
+      hasComposerControls: provider.composerControls !== undefined,
       command: provider.command,
     };
   }
@@ -355,10 +365,75 @@ export function createPluginWorker(options: {
     );
   }
 
+  function isComposerControlMessage(
+    message: PluginProcessRequest,
+  ): message is Extract<
+    PluginProcessRequest,
+    { type: "provider.composer_controls" } | { type: "provider.composer_control.invoke" }
+  > {
+    return (
+      message.type === "provider.composer_controls" ||
+      message.type === "provider.composer_control.invoke"
+    );
+  }
+
+  function handleComposerControlMessage(
+    message: Extract<
+      PluginProcessRequest,
+      { type: "provider.composer_controls" } | { type: "provider.composer_control.invoke" }
+    >,
+  ): void {
+    if (message.type === "provider.composer_controls") {
+      handleComposerControlsListing(message);
+      return;
+    }
+    handleComposerControlInvoke(message);
+  }
+
+  function handleComposerControlsListing(
+    message: Extract<PluginProcessRequest, { type: "provider.composer_controls" }>,
+  ): void {
+    void (async () => {
+      const provider = providers.get(message.providerId);
+      if (!provider?.composerControls)
+        throw new Error(`Provider has no composer controls: ${message.providerId}`);
+      const output: ProviderComposerControl[] = parseProviderComposerControls(
+        await provider.composerControls.getControls(message.context),
+      );
+      send({ type: "result", requestId: message.requestId, output });
+    })().catch((error) =>
+      send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+    );
+  }
+
+  function handleComposerControlInvoke(
+    message: Extract<PluginProcessRequest, { type: "provider.composer_control.invoke" }>,
+  ): void {
+    void (async () => {
+      const provider = providers.get(message.providerId);
+      if (!provider?.composerControls)
+        throw new Error(`Provider has no composer controls: ${message.providerId}`);
+      const result = await provider.composerControls.onControlEvent({
+        controlId: message.controlId,
+        ...(message.value === undefined ? {} : { value: message.value as JsonValue }),
+        context: message.context,
+      });
+      // Normalize void to a fresh listing so the daemon gets one round trip.
+      const output: ProviderComposerControl[] = parseProviderComposerControls(
+        result?.controls ?? (await provider.composerControls?.getControls(message.context)),
+      );
+      send({ type: "result", requestId: message.requestId, output });
+    })().catch((error) =>
+      send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+    );
+  }
+
   function rejectWhileStopping(message: PluginProcessRequest): void {
     if (
       message.type === "provider.status" ||
       message.type === "provider.catalog_key" ||
+      message.type === "provider.composer_controls" ||
+      message.type === "provider.composer_control.invoke" ||
       message.type === "usage.fetch" ||
       message.type === "usage.discover"
     ) {
@@ -445,6 +520,10 @@ export function createPluginWorker(options: {
       })().catch((error) =>
         send({ type: "error", requestId: message.requestId, error: describeError(error) }),
       );
+      return;
+    }
+    if (isComposerControlMessage(message)) {
+      handleComposerControlMessage(message);
       return;
     }
     if (message.type === "usage.fetch" || message.type === "usage.discover") {

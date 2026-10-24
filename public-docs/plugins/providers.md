@@ -273,6 +273,56 @@ available controls at runtime, including after a model change.
 for provider-specific configuration that Paseo does not render. A provider-specific token budget
 belongs in one of those two places; it is not a dedicated prompt field.
 
+## Add composer controls beyond settings
+
+`settings` persist through `featureValues` and apply to the provider session. When the control is
+yours to own — a stateless action, or a value whose meaning is yours alone — declare
+`composerControls` on the registration instead. Paseo renders the descriptors inside the composer
+toolbar whenever your provider is selected, and routes every live interaction to `onControlEvent`.
+Live values are never persisted or interpreted; Paseo validates shape only. Draft and profile
+choices are the exception: they follow draft features — held by the host, remembered per provider
+for drafts, stored explicitly in profiles — and handed to you at creation as `controlValues`.
+
+```ts
+composerControls: {
+  getControls: (context) => [
+    { kind: "action", id: "send-pony", label: "Send pony", icon: "sparkles" },
+    { kind: "toggle", id: "verbose", label: "Verbose", icon: "zap", value: verbose },
+    {
+      kind: "select",
+      id: "tier",
+      label: "Tier",
+      value: tier,
+      options: [
+        { label: "Flex", value: "flex" },
+        { label: "Priority", value: "priority", icon: "zap" },
+      ],
+    },
+  ],
+  onControlEvent: async (event) => {
+    // event is { controlId, value?, context }. Apply your own semantics,
+    // then return replacement controls to re-render (or void to keep state).
+  },
+},
+```
+
+Kinds are `action`, `toggle`, and `select`. Every control takes `label`, a Lucide `icon` name
+(any icon the app ships, in PascalCase or kebab-case — `Bell` and `bell` both resolve), `tooltip`, `description`,
+`disabled`, and `visible`. `icon` is also accepted on `settings` entries. An unknown name falls
+back to the default feature icon, so check the rendered composer after upgrading `lucide-react-native`.
+
+`getControls` receives `{ surface, provider, model, mode, thinkingOption, cwd, agentId?,
+controlValues? }` where surface is `live`, `draft`, or `profile`. Return `[]` (or `disabled`)
+for controls that only make sense against a running session; draft and profile have no agent to
+act on. Draft and profile toggle/select choices are held by the host and handed to you at
+creation: draft values arrive in `session.open` as `controlValues` and in later `getControls`
+contexts, profile values land in the profile's `controlValues`. Draft and profile value changes
+never fire events, and draft actions render disabled — only live interactions reach
+`onControlEvent`. Profiles never render actions.
+
+Raise `requirements.paseo` when adopting this API. Old daemons ignore the registration field and
+old apps render no controls; the capability is gated on `server_info.features.providerComposerControls`.
+
 ## Add persistence and replay
 
 Advertise `session.persistence` when a native session can be reopened. Open a new native session

@@ -3,6 +3,31 @@ import { describe, expect, it } from "vitest";
 import { createDirectExampleProvider } from "./provider.js";
 
 describe("direct provider example", () => {
+  it("exposes composer controls with plugin-owned state", async () => {
+    const registration = createDirectExampleProvider();
+    const controls = registration.composerControls;
+    expect(controls).toBeDefined();
+    const context = { surface: "draft" as const, provider: "direct-example", cwd: "/repo" };
+    const initial = await controls?.getControls(context);
+    expect(initial).toContainEqual(
+      expect.objectContaining({ kind: "toggle", id: "verbose", value: false }),
+    );
+    expect(initial).toContainEqual(expect.objectContaining({ kind: "action", id: "ping" }));
+
+    const afterToggle = await controls?.onControlEvent({
+      controlId: "verbose",
+      value: true,
+      context: { ...context, surface: "live" as const },
+    });
+    expect(afterToggle?.controls).toContainEqual(
+      expect.objectContaining({ kind: "toggle", id: "verbose", value: true }),
+    );
+
+    const afterPing = await controls?.onControlEvent({ controlId: "ping", context });
+    expect(afterPing?.controls).toContainEqual(
+      expect.objectContaining({ kind: "action", id: "ping", label: "Ping sessions (1)" }),
+    );
+  });
   it("fails steering when no turn is active without creating a turn", async () => {
     const connection = await createDirectExampleProvider().connect({
       versions: [1],

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } 
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
-import type { AgentFeature } from "@getpaseo/protocol/agent-types";
+import type { AgentComposerControl, AgentFeature } from "@getpaseo/protocol/agent-types";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
@@ -344,6 +344,22 @@ function OpenAgentProfileEditModal({
                   model={model}
                 />
               ))}
+              {state.composerControls
+                .filter(
+                  (control): control is Extract<typeof control, { kind: "toggle" | "select" }> =>
+                    (control.kind === "toggle" || control.kind === "select") &&
+                    control.visible !== false,
+                )
+                .map((control, index) => (
+                  <AgentProfileControlRow
+                    key={control.id}
+                    control={control}
+                    isFirst={state.features.length === 0 && index === 0}
+                    disabled={state.isSubmitting || control.disabled === true}
+                    size={controlSize}
+                    model={model}
+                  />
+                ))}
             </View>
           </Field>
         ) : null}
@@ -397,6 +413,97 @@ function OpenAgentProfileEditModal({
         </View>
       </View>
     </AdaptiveModalSheet>
+  );
+}
+
+function AgentProfileControlRow({
+  control,
+  isFirst,
+  disabled,
+  size,
+  model,
+}: {
+  control: Extract<AgentComposerControl, { kind: "toggle" | "select" }>;
+  isFirst: boolean;
+  disabled: boolean;
+  size: FieldControlSize;
+  model: AgentProfileFormModel;
+}): ReactElement {
+  const rowStyle = useMemo(
+    () => [styles.featureRow, isFirst ? null : styles.featureRowBorder],
+    [isFirst],
+  );
+  const handleToggle = useCallback(
+    (value: boolean) => model.setControlValue(control.id, value),
+    [control.id, model],
+  );
+  const handleSelect = useCallback(
+    (value: string) => model.setControlValue(control.id, value),
+    [control.id, model],
+  );
+  const selectOptions = useMemo<SelectFieldOption<string>[]>(
+    () =>
+      control.kind === "select"
+        ? control.options.map((option) => ({
+            id: option.id,
+            value: option.id,
+            label: option.label,
+            ...(option.description ? { description: option.description } : {}),
+            testID: `agent-profile-control-option-${control.id}-${option.id}`,
+          }))
+        : [],
+    [control],
+  );
+  const selectedDisplay = useMemo<SelectFieldDisplay | null>(() => {
+    if (control.kind !== "select" || !control.value) {
+      return null;
+    }
+    const option = control.options.find((candidate) => candidate.id === control.value);
+    return { label: option?.label ?? control.value };
+  }, [control]);
+
+  if (control.kind === "select") {
+    return (
+      <View style={rowStyle} testID={`agent-profile-control-row-${control.id}`}>
+        <SelectField
+          label={control.label}
+          value={control.value}
+          selectedDisplay={selectedDisplay}
+          options={selectOptions}
+          onChange={handleSelect}
+          placeholder={control.label}
+          emptyText={control.label}
+          disabled={disabled}
+          {...(control.description ? { hint: control.description } : {})}
+          title={control.label}
+          size={size}
+          testID={`agent-profile-control-field-${control.id}`}
+          triggerTestID={`agent-profile-control-trigger-${control.id}`}
+        />
+      </View>
+    );
+  }
+
+  return (
+    <View style={rowStyle} testID={`agent-profile-control-row-${control.id}`}>
+      <View style={styles.featureMeta}>
+        <Text style={styles.featureLabel} numberOfLines={1}>
+          {control.label}
+        </Text>
+        {control.description ? (
+          <Text style={styles.featureDescription} numberOfLines={2}>
+            {control.description}
+          </Text>
+        ) : null}
+      </View>
+      <Switch
+        value={control.value === true}
+        onValueChange={handleToggle}
+        disabled={disabled}
+        accessibilityLabel={control.label}
+        testID={`agent-profile-control-switch-${control.id}`}
+      />
+    </View>
   );
 }
 

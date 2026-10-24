@@ -120,6 +120,9 @@ export function useAgentProfilePicker(
           ...(Object.keys(resolved.featureValues).length > 0
             ? { featureValues: resolved.featureValues }
             : {}),
+          ...(Object.keys(resolved.controlValues).length > 0
+            ? { controlValues: resolved.controlValues }
+            : {}),
         }),
       ).catch((error) => {
         console.warn("[useAgentProfilePicker] persist profile selection failed", error);

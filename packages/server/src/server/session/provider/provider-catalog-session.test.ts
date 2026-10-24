@@ -59,6 +59,8 @@ function makeSubsystem(options: MakeOptions = {}) {
     supportsCompactProviderSnapshots: () => options.supportsCompactProviderSnapshots ?? false,
     listProviderAvailability: async () => [],
     listDraftFeatures: async () => [],
+    listDraftComposerControls: async () => [],
+    invokeDraftComposerControl: async () => [],
     ...options.host,
   };
   const providerSnapshotManager = createStub<ProviderSnapshotManager>({
@@ -315,6 +317,29 @@ describe("ProviderCatalogSession", () => {
     const res = findByType(emitted, "list_provider_features_response");
     expect(res?.payload.error).toBe("feature probe failed");
     expect(res?.payload.requestId).toBe("f1");
+  });
+
+  it("keeps features when the composer control listing fails", async () => {
+    const { subsystem, emitted } = makeSubsystem({
+      host: {
+        listDraftFeatures: async () => [{ type: "toggle", id: "fast", label: "Fast", value: true }],
+        listDraftComposerControls: async () => {
+          throw new Error("controls probe failed");
+        },
+      },
+    });
+
+    await subsystem.handleListProviderFeaturesRequest({
+      type: "list_provider_features_request",
+      requestId: "f1",
+      draftConfig: { provider: "codex", cwd: "/tmp/project" },
+    });
+
+    const res = findByType(emitted, "list_provider_features_response");
+    expect(res?.payload.error).toBeNull();
+    expect(res?.payload.features).toHaveLength(1);
+    expect(res?.payload.composerControls).toBeUndefined();
+    expect(res?.payload.controlsError).toBe("controls probe failed");
   });
 });
 

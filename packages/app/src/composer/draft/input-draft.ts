@@ -36,6 +36,7 @@ interface AgentInputDraftComposerOptions {
   initialServerId: string | null;
   initialValues?: CreateAgentInitialValues;
   initialFeatureValues?: Record<string, unknown>;
+  initialControlValues?: Record<string, unknown>;
   isVisible?: boolean;
   lockedWorkingDir?: string;
 }
@@ -51,6 +52,7 @@ type DraftComposerState = UseAgentFormStateResult & {
   effectiveModelId: string;
   effectiveThinkingOptionId: string;
   featureValues: Record<string, unknown> | undefined;
+  controlValues: Record<string, unknown> | undefined;
   agentControls: DraftAgentControlsProps;
   commandDraft: DraftCommandTarget;
 };
@@ -277,7 +279,11 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     features: draftFeatures,
     featureValues: draftFeatureValues,
     setFeatureValue: setDraftFeatureValue,
+    controls: draftControls,
+    controlValues: draftControlValues,
+    setControlValue: setDraftControlValue,
     applyProfileFeatureValues,
+    applyProfileControlValues,
   } = useDraftAgentFeatures({
     serverId: formState.selectedServerId,
     provider: formState.selectedProvider,
@@ -286,14 +292,16 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     modelId: effectiveModelId,
     thinkingOptionId: effectiveThinkingOptionId,
     initialFeatureValues: composerOptions?.initialFeatureValues,
+    initialControlValues: composerOptions?.initialControlValues,
   });
 
   const applyDraftAgentProfile = useCallback(
     (profile: Parameters<typeof formState.applyProfileFromUser>[0]) => {
       formState.applyProfileFromUser(profile);
       applyProfileFeatureValues(profile.featureValues);
+      applyProfileControlValues(profile.controlValues ?? {});
     },
-    [applyProfileFeatureValues, formState],
+    [applyProfileControlValues, applyProfileFeatureValues, formState],
   );
 
   const commandDraft = useMemo(
@@ -314,6 +322,18 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     ],
   );
 
+  const handleInvokeDraftComposerControl = useCallback(
+    (controlId: string, value: unknown) => {
+      // Draft actions have no agent to act on, so the toolbar renders them
+      // disabled; this only routes toggle/select changes to host-held values.
+      if (value === undefined) return;
+      const control = draftControls.find((entry) => entry.id === controlId);
+      if (!control || control.kind === "action") return;
+      setDraftControlValue(controlId, value);
+    },
+    [draftControls, setDraftControlValue],
+  );
+
   const composerState = useMemo<DraftComposerState | null>(() => {
     if (!composerOptions) {
       return null;
@@ -326,10 +346,13 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       effectiveModelId,
       effectiveThinkingOptionId,
       featureValues: draftFeatureValues,
+      controlValues: draftControlValues,
       agentControls: buildDraftAgentControls({
         formState,
         features: draftFeatures,
         onSetFeature: setDraftFeatureValue,
+        composerControls: draftControls,
+        onInvokeComposerControl: handleInvokeDraftComposerControl,
         onApplyAgentProfile: applyDraftAgentProfile,
       }),
       commandDraft,
@@ -342,6 +365,9 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     effectiveThinkingOptionId,
     draftFeatures,
     draftFeatureValues,
+    draftControls,
+    draftControlValues,
+    handleInvokeDraftComposerControl,
     applyDraftAgentProfile,
     formState,
     setDraftFeatureValue,
