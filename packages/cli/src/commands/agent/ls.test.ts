@@ -4,13 +4,13 @@ import { buildAgentLsFetchOptions, listAgents } from "./ls.js";
 
 const daemonTarget = { kind: "endpoint" as const, host: "example.test:12345" };
 
-function createPagingClient() {
+function createPagingClient(archivedAgentNumber?: number) {
   const daemonAgents: AgentSnapshotPayload[] = [3, 2, 1].map((n) => ({
     id: `${n}${n}${n}${n}${n}${n}${n}${n}-0000-4000-8000-000000000000`,
     provider: "codex",
     title: `agent ${n}`,
     status: "closed",
-    archivedAt: null,
+    archivedAt: n === archivedAgentNumber ? "2026-10-10T00:00:00.000Z" : null,
     cwd: "/tmp/project",
     createdAt: `2026-10-0${n}T00:00:00.000Z`,
     updatedAt: `2026-10-0${n}T00:00:00.000Z`,
@@ -129,5 +129,28 @@ describe("runLsCommand", () => {
     );
 
     expect(result.data.map((item) => item.name)).toEqual(["agent 3", "agent 2", "agent 1"]);
+  });
+
+  it("marks archived agents in table and JSON list data", async () => {
+    const result = await listAgents({ daemonTarget, all: true, global: true }, async () =>
+      createPagingClient(2),
+    );
+
+    expect(
+      result.data.map(({ name, archived, archivedAt }) => ({ name, archived, archivedAt })),
+    ).toEqual([
+      { name: "agent 3", archived: false, archivedAt: null },
+      { name: "agent 2", archived: true, archivedAt: "2026-10-10T00:00:00.000Z" },
+      { name: "agent 1", archived: false, archivedAt: null },
+    ]);
+
+    const archivedColumn = result.schema.columns.find((column) => column.header === "ARCHIVED");
+    expect(archivedColumn).toBeDefined();
+    expect(typeof archivedColumn?.field).toBe("function");
+    if (!archivedColumn || typeof archivedColumn.field !== "function") {
+      throw new Error("Expected the ARCHIVED column to have a display accessor");
+    }
+    expect(archivedColumn.field(result.data[1]!)).toBe("yes");
+    expect(archivedColumn.field(result.data[0]!)).toBe("-");
   });
 });
