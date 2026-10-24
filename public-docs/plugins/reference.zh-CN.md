@@ -2167,6 +2167,62 @@ export function HostAgents({ theme }: Pick<PluginSurfaceProps, "theme">): ReactE
 插件是受信任的应用代码；跨主机访问是有意设计的。摘要中不包含连接 URL 或凭据，借用的 API 也不提供连接
 生命周期控制。请参阅[主机 Agent 示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/hosts)。
 
+## 注册 MCP 服务 {#register-an-mcp-service}
+
+使用 `server.registerMcpServer()` 将插件拥有的 MCP 服务直接提供给编码 Agent。
+Provider 获得原始连接定义，负责 MCP 发现、调用和权限。Paseo 不把 RPC 处理函数转换为工具，也不代理 Agent 调用。
+
+```ts
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+
+export default function contribute(server: PluginServerContext) {
+  const service = server.registerMcpServer({
+    id: "repositories",
+    label: "Repository service",
+    settingsScreenId: "connection",
+    config: null,
+  });
+  // Call from your server-side settings subscription after configuration is ready.
+  service.update({ type: "http", url: "https://example.invalid/mcp" });
+  return () => service.remove();
+}
+```
+
+每个安装实例可以注册零个或一个服务。`id` 和可选的 `settingsScreenId` 以小写字母开头，只包含小写字母、数字或连字符；显示名称不能为空。
+`settingsScreenId` 指向插件已有界面，不会创建界面。`config: null` 表示尚未配置。
+返回的 `PluginMcpRegistration` 提供 `update(config)` 和 `remove()`；移除会释放本次注册，卸载插件也会自动撤销。
+重复注册或服务名称碰撞会明确失败。
+
+为服务选择一种传输即可，不要求插件实现全部三种：
+
+| `type`  | 必填字段      | 可选字段             |
+| ------- | ------------- | -------------------- |
+| `stdio` | `command`     | `args`, `env`, `cwd` |
+| `http`  | HTTP(S) `url` | `headers`            |
+| `sse`   | HTTP(S) `url` | `headers`            |
+
+stdio 的裸命令名通过 PATH 查找，相对可执行文件路径在插件安装目录内解析；显式相对 `cwd` 也在该目录内解析。
+参数不会自动调整路径：使用只读的 `server.directory` 安装目录生成脚本和资源的绝对路径。
+Provider 支持情况不同：目前只有 Codex 支持显式服务 `cwd`；必要配置不受支持时会报错，不会丢弃配置。
+旧式 SSE 同样取决于实际 Provider 和二进制版本。服务所需的可执行文件和依赖应自行安装；插件运行时提供的模块不构成子 MCP 进程的通用依赖环境。
+
+传给 Provider 的服务名称包含插件安装 ID 和服务 ID。手动 MCP 和 Paseo 平台服务保持可用，Provider 使用原生平台工具时也不例外。
+新建或实际重新建立的 Agent 运行时读取当前定义；普通追问不会重新建立运行时。
+更新或移除定义不会重启、刷新或断开正在运行的 Agent，其原连接可能一直保留到运行时结束。
+不同 stdio 客户端可能分别启动进程；需要共享服务实例时，由插件提供支持多客户端的 HTTP 服务。
+
+在插件服务端设置中维护配置。定义可能包含受信任 Provider 进程需要的凭据，不要放入模型提示词、客户端状态或日志。
+Paseo 不会将这些贡献保存为 Agent 的手动 MCP 配置。插件自行启动的服务进程应在清理时停止；撤销远端地址不会删除远端服务。
+
+侧栏 **MCP** 页面显示所选主机的安全注册摘要和插件配置入口。**已注册**表示定义存在，不代表所有 Agent 都已连接。
+页面不会启动服务、公开凭据或提供工具目录。插件 UI 继续使用普通 [`useRpc()`](#add-plugin-specific-backend-behavior)：
+与 MCP 处理函数复用业务函数，或在只有 MCP 的平台上由自己的服务端 RPC 处理函数使用 MCP SDK。
+Paseo 不提供 UI MCP 客户端或面向 Provider 的网关。
+
+参阅[仓库 MCP 示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/repository-mcp)，其中包含设置、更新、清理、普通 UI RPC 和虚构 HTTP MCP 服务。
+此 API 尚未发布：app、daemon 和插件 SDK 都需要包含该功能的构建。已发布的 0.12 或相同 beta 版本号不能证明支持，最低版本在发布时确定。
+旧主机通过 `pluginMcpServers` 能力门控显示升级提示。
+
 ## 添加插件特有的后端行为 {#add-plugin-specific-backend-behavior}
 
 插件 RPC 只用于不属于普通 Paseo 操作的工作：读取厂商 API、访问 daemon 本地资源，或者让凭据不经过客户端。

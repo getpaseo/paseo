@@ -201,6 +201,25 @@ describe("translation resources", () => {
     expect(countMatchingEnglishStrings(zhCN)).toBeLessThan(maxFallbackStrings);
   });
 
+  it("keeps the MCP management surface translated in every supported language", () => {
+    // These words are valid translations that happen to match English.
+    const matchingLabels: Record<string, readonly string[]> = {
+      es: ["manual"],
+      fr: ["transport"],
+      "pt-BR": ["manual"],
+    };
+    const resources = { ar, es, fr, ja, ko, "pt-BR": ptBR, ru, "zh-CN": zhCN };
+    const englishStrings = flattenStrings(en.mcp);
+    for (const [locale, resource] of Object.entries(resources)) {
+      const translated = flattenStrings(resource.mcp);
+      const allowed = matchingLabels[locale] ?? [];
+      const untranslated = Object.entries(englishStrings)
+        .filter(([key, value]) => translated[key] === value && !allowed.includes(key))
+        .map(([key]) => key);
+      expect(untranslated, locale).toEqual([]);
+    }
+  });
+
   it("localizes the pull request empty state in every supported language", () => {
     for (const resource of [ar, es, fr, ja, ko, ptBR, ru, zhCN]) {
       expect(resource.panels.pullRequest.emptyTitle).not.toBe(en.panels.pullRequest.emptyTitle);

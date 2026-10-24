@@ -2483,6 +2483,78 @@ Plugins are trusted app code; cross-host access is intentional. Summaries contai
 URLs or credentials, and borrowed APIs provide no connection lifecycle controls. See the
 [host agents example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/hosts).
 
+## Register an MCP service
+
+Use `server.registerMcpServer()` to offer a plugin-owned MCP service directly to coding Agents.
+The provider receives the original connection definition and handles MCP discovery, calls and
+permissions. Paseo does not turn RPC handlers into tools or proxy Agent calls.
+
+```ts
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+
+export default function contribute(server: PluginServerContext) {
+  const service = server.registerMcpServer({
+    id: "repositories",
+    label: "Repository service",
+    settingsScreenId: "connection",
+    config: null,
+  });
+  // Call from your server-side settings subscription after configuration is ready.
+  service.update({ type: "http", url: "https://example.invalid/mcp" });
+  return () => service.remove();
+}
+```
+
+Each installation can register zero or one service. `id` and optional `settingsScreenId` start with
+a lowercase letter and contain lowercase letters, digits or hyphens. The label is nonempty.
+`settingsScreenId` names an existing plugin screen; it does not create one. `config: null` means
+not configured. The returned `PluginMcpRegistration` has `update(config)` and `remove()`;
+removal releases this registration, while unloading the plugin also withdraws it automatically.
+Duplicate registrations and collisions with other service names fail explicitly.
+
+Choose one transport for the service; a plugin need not implement all three:
+
+| `type`  | Required fields | Optional fields      |
+| ------- | --------------- | -------------------- |
+| `stdio` | `command`       | `args`, `env`, `cwd` |
+| `http`  | HTTP(S) `url`   | `headers`            |
+| `sse`   | HTTP(S) `url`   | `headers`            |
+
+For stdio, use a bare executable for PATH lookup or a relative executable resolved within the
+installation. An explicit relative `cwd` is also resolved there. Arguments are not rebased:
+use the readonly `server.directory` installation root for absolute script and resource arguments.
+Provider support varies: an explicit service `cwd` is currently supported only by Codex; an
+unsupported required configuration fails instead of being discarded. Legacy SSE also depends on
+the actual provider and binary version. Install the service's own executable/dependencies; the
+plugin runtime's supplied modules are not a general dependency environment for a child MCP process.
+
+The service name passed to a provider includes the plugin installation ID and the service ID.
+Manual MCP and Paseo platform services remain available, including when the provider uses native
+platform tools. New or actually reconstructed Agent runtimes receive the current definition;
+ordinary follow-up messages do not reconstruct a runtime. Updating or removing a definition does
+not restart, refresh or disconnect an already-running Agent. Its old connection may remain until
+that runtime ends. Separate stdio clients may start separate processes; use a multi-client HTTP
+service when callers need to share one service instance.
+
+Keep configuration in the plugin's server-side settings. Definitions can include credentials for
+the trusted provider process, so do not put them in model prompts, client-state payloads or logs.
+Paseo does not save these contributions as the Agent's manual MCP configuration. Stop any service
+process the plugin itself starts during cleanup; unregistering a remote endpoint never deletes the
+remote service.
+
+The **MCP services** page in Settings shows the selected host's safe registration summary and plugin configuration
+link. **Registered** means a definition exists, not that every Agent connected. The page does not
+start services, expose credentials or offer a tool directory. Plugin UI keeps ordinary
+[`useRpc()`](#add-plugin-specific-backend-behavior): share business functions with your MCP handlers,
+or use an MCP SDK inside your own server-side RPC handler when the platform only offers MCP.
+Paseo supplies no UI MCP client or provider-facing gateway.
+
+See the [repository MCP example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/repository-mcp)
+for settings, updates, cleanup, ordinary UI RPC and a fictional HTTP MCP service. This API is
+unreleased: use app, daemon and plugin SDK builds containing the feature. Released 0.12 and an
+identical beta version number do not establish support; the minimum release will be assigned when
+it ships. Older hosts show an upgrade message through the `pluginMcpServers` feature gate.
+
 ## Add plugin-specific backend behavior
 
 Use plugin RPC only for work that is not a normal Paseo operation: reading a vendor API, accessing daemon-local resources, or keeping credentials off the client.

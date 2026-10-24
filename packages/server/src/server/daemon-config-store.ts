@@ -29,6 +29,7 @@ interface SupportedMutableConfigPatch {
   terminalProfiles?: MutableDaemonConfig["terminalProfiles"];
   agentProfiles?: MutableDaemonConfig["agentProfiles"];
   skills?: MutableDaemonConfig["skills"];
+  mcpServers?: MutableDaemonConfigPatch["mcpServers"];
   pluginsEnabled?: boolean;
   plugins?: MutableDaemonConfig["plugins"];
 }
@@ -189,6 +190,7 @@ const RELOADABLE_PATHS = [
   "agents.catalogRefreshTimeoutMs",
   "agents.metadataGeneration",
   "agents.skills.selection",
+  "mcpServers",
   "pluginsEnabled",
 ] as const;
 
@@ -213,6 +215,7 @@ const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
   ["agents.catalogRefreshTimeoutMs", "catalogRefreshTimeoutMs"],
   ["agents.metadataGeneration", "metadataGeneration"],
   ["agents.skills.selection", "skills.selection"],
+  ["mcpServers", "mcpServers"],
   ["pluginsEnabled", "pluginsEnabled"],
 ]);
 
@@ -289,6 +292,7 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
     ...(patch.terminalProfiles !== undefined ? { terminalProfiles: patch.terminalProfiles } : {}),
     ...(patch.agentProfiles !== undefined ? { agentProfiles: patch.agentProfiles } : {}),
     ...(patch.pluginsEnabled !== undefined ? { pluginsEnabled: patch.pluginsEnabled } : {}),
+    ...(patch.mcpServers !== undefined ? { mcpServers: patch.mcpServers } : {}),
     ...(patch.plugins !== undefined ? { plugins: patch.plugins } : {}),
   };
 }
@@ -381,6 +385,8 @@ export class DaemonConfigStore {
     if (parsedPatch.skills?.selection !== undefined) {
       merged.skills = { selection: parsedPatch.skills.selection };
     }
+    if (parsedPatch.mcpServers !== undefined)
+      merged.mcpServers = applyMcpServerPatch(this.current.mcpServers, parsedPatch.mcpServers);
     if (parsedPatch.plugins !== undefined) merged.plugins = parsedPatch.plugins;
     const next = MutableDaemonConfigSchema.parse(
       omitMetadataGenerationProvidersFromConfig(
@@ -389,6 +395,12 @@ export class DaemonConfigStore {
       ),
     );
 
+    const names = new Set<string>();
+    for (const service of Object.values(next.mcpServers ?? {})) {
+      const name = service.name.trim().toLowerCase();
+      if (names.has(name)) throw new Error("MCP service name already exists");
+      names.add(name);
+    }
     const configChanged = !isEqualValue(this.current, next);
 
     if (!configChanged && removedProviders.length === 0) {
@@ -601,6 +613,9 @@ function mergeMutablePatchIntoPersistedConfig(params: {
   return {
     ...persisted,
     ...(patch.pluginsEnabled !== undefined ? { pluginsEnabled: patch.pluginsEnabled } : {}),
+    ...(patch.mcpServers !== undefined
+      ? { mcpServers: applyMcpServerPatch(persisted.mcpServers, patch.mcpServers) }
+      : {}),
     ...(patch.plugins !== undefined ? { plugins: patch.plugins } : {}),
     ...(daemon ? { daemon } : { daemon: undefined }),
     ...(agents ? { agents } : { agents: undefined }),
@@ -679,4 +694,16 @@ function mergeMutableDaemonPatch(
   if (patch.terminalProfiles !== undefined) next.terminalProfiles = patch.terminalProfiles;
   if (patch.agentProfiles !== undefined) next.agentProfiles = patch.agentProfiles;
   return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function applyMcpServerPatch(
+  current: MutableDaemonConfig["mcpServers"],
+  patch: NonNullable<MutableDaemonConfigPatch["mcpServers"]>,
+): NonNullable<MutableDaemonConfig["mcpServers"]> {
+  const next = { ...current };
+  for (const [name, config] of Object.entries(patch)) {
+    if (config === null) delete next[name];
+    else next[name] = config;
+  }
+  return next;
 }

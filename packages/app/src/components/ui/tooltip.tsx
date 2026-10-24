@@ -332,17 +332,17 @@ export function TooltipTrigger({
   const handleHoverIn = useCallback(
     (e?: unknown) => {
       if (isCallable(onHoverIn)) onHoverIn(e);
-      scheduleOpen();
+      if (!ctx.openOnPress) scheduleOpen();
     },
-    [onHoverIn, scheduleOpen],
+    [ctx.openOnPress, onHoverIn, scheduleOpen],
   );
 
   const handleHoverOut = useCallback(
     (e?: unknown) => {
       if (isCallable(onHoverOut)) onHoverOut(e);
-      close();
+      if (!ctx.openOnPress) close();
     },
-    [onHoverOut, close],
+    [ctx.openOnPress, onHoverOut, close],
   );
 
   const handleFocus = useCallback(

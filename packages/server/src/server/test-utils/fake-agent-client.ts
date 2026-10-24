@@ -65,6 +65,7 @@ interface FakeAgentSessionOptions {
 
 export interface TestAgentClientOptions {
   beforeCreateSession?: (config: AgentSessionConfig) => Promise<void>;
+  beforeResumeSession?: (config: AgentSessionConfig) => Promise<void>;
   closeSession?: () => Promise<void>;
   onStartTurn?: (prompt: AgentPromptInput, config: AgentSessionConfig) => void;
   beforeTurnComplete?: (prompt: AgentPromptInput) => Promise<void>;
@@ -1248,6 +1249,7 @@ class FakeAgentClient implements AgentClient {
       cwd: overrides?.cwd ?? process.cwd(),
       ...overrides,
     };
+    await this.options.beforeResumeSession?.(cfg);
     const marker =
       (handle.metadata as Record<string, unknown> | undefined)?.marker ??
       (handle.metadata as Record<string, unknown> | undefined)?.conversationId ??

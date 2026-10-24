@@ -77,6 +77,22 @@ MCP 不提供解除 Agent 父子关系的工具。解除关系是用户在应用
 
 ## 工具 {#tools}
 
+### MCP 服务 {#mcp-services}
+
+这些工具管理当前连接主机的 MCP 定义，不转发到其他主机，也不调用所管理服务的工具。插件服务可查看，配置仍通过所属插件管理。
+
+| 工具                      | 功能                                                                                      |
+| ------------------------- | ----------------------------------------------------------------------------------------- |
+| `list_mcp_services`       | 列出手动和插件服务的稳定 ID、名称、来源、传输方式及启用／注册状态。                       |
+| `create_mcp_service`      | 使用 `name` 和 `config` 新增手动服务，默认启用。                                          |
+| `update_mcp_service`      | 按 `id` 修改 `name` 和／或 `config`；未提供的字段保留，提供的 `config` 完整替换连接定义。 |
+| `set_mcp_service_enabled` | 按 `id` 设置 `enabled`，保留已保存的定义。                                                |
+| `delete_mcp_service`      | 按 `id` 永久删除手动服务；用户确认后需传入 `confirmed: true`。                            |
+
+`config` 使用 `type: "stdio"` 时包含 `command`，可选 `args` 和 `env`；使用 `type: "http"`／`"sse"` 时包含 `url`，可选 `headers`。工具只返回摘要，不返回命令、参数、URL、环境变量或请求头。重命名时省略 `config`，或使用启停工具，可保留现有凭据。
+
+Provider 工具策略同样适用于这些工具。持久化、主机隔离及生效时机见 [MCP 服务配置](/zh-CN/docs/configuration#mcp-services)。
+
 ### Agent {#agents}
 
 | 工具                 | 功能                                                                                                 |

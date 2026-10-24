@@ -1,4 +1,5 @@
 import { projectTimelineRows } from "./timeline-projection.js";
+import { PluginMcpError } from "../plugins/mcp-service.js";
 import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
 import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
 import type { PluginSessionOpenRequest } from "@getpaseo/plugin/server";
@@ -45,6 +46,7 @@ import {
   type AgentRunResult,
   type AgentSession,
   type AgentSessionConfig,
+  type McpServerConfig,
   type SteerResult,
   type AgentStreamEvent,
   type AgentTimelineItem,
@@ -81,7 +83,11 @@ import {
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { parseAgentMessage, projectAgentMessages } from "./agent-messages/index.js";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
-import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
+import {
+  MANUAL_MCP_SERVER_PREFIX,
+  stripInternalPaseoMcpServer,
+  withRuntimePaseoMcpServer,
+} from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
 import { isPaseoToolPolicyEnabled } from "./paseo-tool-policy.js";
@@ -167,6 +173,7 @@ interface PreparedSessionConfig {
   storedConfig: AgentSessionConfig;
   launchConfig: AgentSessionConfig;
   paseoToolPolicy: ProviderPaseoToolsPolicy | undefined;
+  runtimeMcpNames: readonly string[];
 }
 
 interface NormalizeConfigOptions {
@@ -319,6 +326,7 @@ export interface CreateAgentOptions {
 
 export interface AgentManagerOptions {
   pluginLifecycle?: PluginLifecycle;
+  runtimeMcpServers?: () => Record<string, McpServerConfig>;
   /** An internal workspace makes every agent created inside it internal. */
   clients?: ProviderClientMap;
   providerDefinitions?: ProviderEnabledMap;
@@ -557,17 +565,15 @@ const SYSTEM_ERROR_PREFIX = "[System Error]";
 function attachPersistenceCwd(
   handle: AgentPersistenceHandle | null,
   cwd: string,
+  mcpServers?: Record<string, McpServerConfig>,
 ): AgentPersistenceHandle | null {
   if (!handle) {
     return null;
   }
-  return {
-    ...handle,
-    metadata: {
-      ...handle.metadata,
-      cwd,
-    },
-  };
+  const metadata = { ...handle.metadata };
+  delete metadata.mcpServers;
+  if (mcpServers) metadata.mcpServers = mcpServers;
+  return { ...handle, metadata: { ...metadata, cwd } };
 }
 
 interface SubscriptionRecord {
@@ -734,6 +740,7 @@ export interface RetiredInternalAgent {
 
 export class AgentManager {
   private readonly pluginLifecycle: PluginLifecycle | undefined;
+  private readonly runtimeMcpServers: AgentManagerOptions["runtimeMcpServers"];
   private readonly retiredInternalAgents = new Map<
     string,
     RetiredInternalAgent & { expiresAt: number }
@@ -779,6 +786,7 @@ export class AgentManager {
 
   constructor(options: AgentManagerOptions) {
     this.pluginLifecycle = options.pluginLifecycle;
+    this.runtimeMcpServers = options.runtimeMcpServers;
     this.timelineStore = options.timelineStore ?? new InMemoryAgentTimelineStore();
     this.idFactory = options.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
@@ -1313,7 +1321,7 @@ export class AgentManager {
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const createOptions = this.buildCreateSessionOptions(options);
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
-    await this.requireExternalMcpSupport(session, storedConfig);
+    await this.requireExternalMcpSupport(session, providerLaunchConfig);
     const agent = await this.registerSession(session, storedConfig, resolvedAgentId, {
       labels: options.labels,
       initialTitle: options.initialTitle,
@@ -1439,7 +1447,7 @@ export class AgentManager {
       launchContext,
       currentResumeOptions,
     );
-    await this.requireExternalMcpSupport(session, storedConfig);
+    await this.requireExternalMcpSupport(session, providerLaunchConfig);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
       persistence: handle,
@@ -1473,13 +1481,14 @@ export class AgentManager {
       throw new Error(`Provider '${input.provider}' does not support importing sessions`);
     }
 
-    const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
-      {
-        provider: input.provider,
-        cwd: input.cwd,
-      },
-      resolvedAgentId,
-    );
+    const { storedConfig, launchConfig, paseoToolPolicy, runtimeMcpNames } =
+      await this.prepareSessionConfig(
+        {
+          provider: input.provider,
+          cwd: input.cwd,
+        },
+        resolvedAgentId,
+      );
     this.paseoToolPolicies.set(resolvedAgentId, paseoToolPolicy);
     const launchContext = await this.buildLaunchContext(
       resolvedAgentId,
@@ -1497,11 +1506,22 @@ export class AgentManager {
       },
       { config: providerLaunchConfig, storedConfig, launchContext },
     );
+    await this.requireExternalMcpSupport(imported.session, providerLaunchConfig);
     let handedToRegistration = false;
     try {
-      const importedConfig = await this.normalizeConfig(
-        stripInternalPaseoMcpServer(imported.config),
-      );
+      let importedBase = stripInternalPaseoMcpServer(imported.config);
+      if (importedBase.mcpServers) {
+        const importedMcpServers = { ...importedBase.mcpServers };
+        for (const name of Object.keys(importedMcpServers)) {
+          if (name.startsWith(MANUAL_MCP_SERVER_PREFIX) || runtimeMcpNames.includes(name))
+            delete importedMcpServers[name];
+        }
+        importedBase = {
+          ...importedBase,
+          mcpServers: Object.keys(importedMcpServers).length ? importedMcpServers : undefined,
+        };
+      }
+      const importedConfig = await this.normalizeConfig(importedBase);
       const timelineRows = buildImportedTimelineRows(imported.timeline);
       const initialTitle = resolveImportedAgentTitle(importedConfig, timelineRows);
 
@@ -1608,7 +1628,7 @@ export class AgentManager {
       session = handle
         ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
         : await client.createSession(providerLaunchConfig, launchContext);
-      await this.requireExternalMcpSupport(session, storedConfig);
+      await this.requireExternalMcpSupport(session, providerLaunchConfig);
       this.assertAcceptingAgentRegistrations();
 
       if (rehydrateFromDisk) {
@@ -2743,7 +2763,11 @@ export class AgentManager {
         ? { provider: mutableAgent.provider, sessionId: mutableAgent.runtimeInfo.sessionId }
         : null);
     if (persistenceHandle) {
-      mutableAgent.persistence = attachPersistenceCwd(persistenceHandle, mutableAgent.cwd);
+      mutableAgent.persistence = attachPersistenceCwd(
+        persistenceHandle,
+        mutableAgent.cwd,
+        mutableAgent.config.mcpServers,
+      );
     }
     this.logger.trace(
       {
@@ -3690,7 +3714,7 @@ export class AgentManager {
     storedConfig: AgentSessionConfig,
   ): Promise<void> {
     if (
-      Object.keys(storedConfig.mcpServers ?? {}).length === 0 ||
+      Object.keys(stripInternalPaseoMcpServer(storedConfig).mcpServers ?? {}).length === 0 ||
       session.capabilities.supportsMcpServers === true
     ) {
       return;
@@ -3785,6 +3809,7 @@ export class AgentManager {
       persistence: attachPersistenceCwd(
         options?.persistence ?? session.describePersistence(),
         config.cwd,
+        config.mcpServers,
       ),
       historyPrimed: options?.historyPrimed ?? durableTimelineHasRows,
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
@@ -4523,7 +4548,7 @@ export class AgentManager {
   private refreshSessionPersistence(agent: ActiveManagedAgent): void {
     const handle = agent.session.describePersistence();
     if (handle) {
-      agent.persistence = attachPersistenceCwd(handle, agent.cwd);
+      agent.persistence = attachPersistenceCwd(handle, agent.cwd, agent.config.mcpServers);
     }
   }
 
@@ -5296,9 +5321,26 @@ export class AgentManager {
     const paseoToolPolicy = this.paseoToolsEnabled
       ? this.resolvePaseoToolPolicy(storedConfig.provider)
       : { enabled: false };
+    for (const name of Object.keys(storedConfig.mcpServers ?? {})) {
+      if (name.startsWith(MANUAL_MCP_SERVER_PREFIX))
+        throw new PluginMcpError({ code: "MCP_NAME_CONFLICT", serviceName: name });
+    }
+    const runtimeServers = this.runtimeMcpServers?.() ?? {};
+    for (const [name, server] of Object.entries(runtimeServers)) {
+      if (Object.hasOwn(storedConfig.mcpServers ?? {}, name))
+        throw new PluginMcpError({ code: "MCP_NAME_CONFLICT", serviceName: name });
+      if (server.type === "stdio" && server.cwd && storedConfig.provider !== "codex")
+        throw new PluginMcpError({
+          code: "MCP_CWD_UNSUPPORTED",
+          serviceName: name,
+          provider: storedConfig.provider,
+        });
+    }
     const launchConfig = this.applyDaemonAppendSystemPrompt(
       withRuntimePaseoMcpServer({
-        config: storedConfig,
+        config: Object.keys(runtimeServers).length
+          ? { ...storedConfig, mcpServers: { ...storedConfig.mcpServers, ...runtimeServers } }
+          : storedConfig,
         agentId,
         mcpBaseUrl:
           this.paseoToolsEnabled && isPaseoToolPolicyEnabled(paseoToolPolicy)
@@ -5307,7 +5349,12 @@ export class AgentManager {
         mcpAuthToken: this.mcpAuthToken,
       }),
     );
-    return { storedConfig, launchConfig, paseoToolPolicy };
+    return {
+      storedConfig,
+      launchConfig,
+      paseoToolPolicy,
+      runtimeMcpNames: Object.keys(runtimeServers),
+    };
   }
 
   private applyDaemonAppendSystemPrompt(config: AgentSessionConfig): AgentSessionConfig {

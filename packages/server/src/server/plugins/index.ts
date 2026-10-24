@@ -42,6 +42,8 @@ interface PluginRuntimePort {
   before?: PluginLifecycle["before"];
   catalog: PluginRuntime["catalog"];
   invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
+  mcpServers: PluginRuntime["mcpServers"];
+  mcpServices: PluginRuntime["mcpServices"];
   getLogs(pluginId: string): PluginLogEntry[];
   clearLogs(pluginId: string): void;
   getProviderRegistrations?(pluginId: string): readonly PluginProviderMetadata[];
@@ -84,7 +86,7 @@ export class PluginService {
   private readonly builtinPlugins: BuiltinPluginLoader;
   private readonly logger: pino.Logger;
   private readonly errors = new Map<string, string>();
-  private readonly listeners = new Set<(pluginId: string) => void>();
+  private readonly listeners = new Set<(pluginId: string, reason?: "mcp") => void>();
   private readonly providers = new Map<string, ProviderRegistration>();
   private readonly usageSources: UsageSourceRegistry;
   private readonly usageSourceIdsByPlugin = new Map<string, string[]>();
@@ -112,6 +114,7 @@ export class PluginService {
       dependencies.runtime ??
       new PluginRuntime(logger, daemonVersion, {
         settingsDirectory: dependencies.settingsDirectory,
+        onMcpChanged: (pluginId) => this.notify(pluginId, "mcp"),
         onSettingsChanged: (pluginId, settingsId) => {
           for (const listener of this.settingsListeners) listener(pluginId, settingsId);
         },
@@ -147,7 +150,7 @@ export class PluginService {
     return () => this.settingsListeners.delete(listener);
   }
 
-  subscribe(listener: (pluginId: string) => void): () => void {
+  subscribe(listener: (pluginId: string, reason?: "mcp") => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
@@ -202,6 +205,9 @@ export class PluginService {
   async listPlugins(): Promise<PluginListItem[]> {
     const config = this.configStore.get();
     const running = new Set(this.runtime.catalog().map((plugin) => plugin.id));
+    const services = new Map(
+      this.runtime.mcpServices().map((service) => [service.pluginId, service.server]),
+    );
     const plugins = await Promise.all(
       Object.entries(config.plugins ?? {}).map(async ([id, source]) => {
         const enabled = source.enabled !== false;
@@ -215,6 +221,15 @@ export class PluginService {
             running: running.has(id),
           }),
         };
+        const service = services.get(id);
+        if (service)
+          item.mcpServer = {
+            id: service.id,
+            label: service.label,
+            transport: service.config?.type ?? null,
+            configured: service.config !== null,
+            settingsScreenId: service.settingsScreenId,
+          };
         const manifest = await readPluginManifest(path.resolve(source.path)).catch(() => null);
         if (manifest) {
           item.name = manifest.name;
@@ -471,6 +486,10 @@ export class PluginService {
           force: true,
         });
     });
+  }
+
+  mcpServers(): ReturnType<PluginRuntime["mcpServers"]> {
+    return this.runtime.mcpServers();
   }
 
   invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown> {
@@ -798,8 +817,8 @@ export class PluginService {
     return item;
   }
 
-  private notify(pluginId: string): void {
-    for (const listener of this.listeners) listener(pluginId);
+  private notify(pluginId: string, reason?: "mcp"): void {
+    for (const listener of this.listeners) listener(pluginId, reason);
   }
 }
 

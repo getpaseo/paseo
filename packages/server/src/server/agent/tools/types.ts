@@ -1,3 +1,4 @@
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import type { z } from "zod";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 
@@ -25,6 +26,7 @@ export interface PaseoToolResult {
 }
 
 export interface PaseoToolConfig {
+  annotations?: ToolAnnotations;
   title?: string;
   description?: string;
   inputSchema?: z.ZodRawShape | z.ZodType;

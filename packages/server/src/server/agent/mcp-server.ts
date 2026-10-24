@@ -40,6 +40,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       tool.name,
       {
         title: tool.title,
+        annotations: tool.annotations,
         description: tool.description,
         inputSchema: tool.inputSchema,
       },

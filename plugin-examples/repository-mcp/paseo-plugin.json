@@ -1,0 +1,5 @@
+{
+  "id": "repository-mcp",
+  "name": "Fictional repository MCP",
+  "requirements": { "paseo": ">=0.13.0-beta.1" }
+}

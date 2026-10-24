@@ -30,10 +30,15 @@ const roots: string[] = [];
 type TestPluginRuntime = NonNullable<ConstructorParameters<typeof PluginService>[3]["runtime"]>;
 
 const emptyUsageRuntime = {
+  mcpServers: () => ({}),
+  mcpServices: () => [],
   getUsageSourceRegistrations: () => [],
   fetchUsage: async () => undefined,
   discoverUsage: async () => [],
-} satisfies Pick<TestPluginRuntime, "getUsageSourceRegistrations" | "fetchUsage" | "discoverUsage">;
+} satisfies Pick<
+  TestPluginRuntime,
+  "getUsageSourceRegistrations" | "fetchUsage" | "discoverUsage" | "mcpServers" | "mcpServices"
+>;
 
 async function createPlugin(id: string, source: string): Promise<string> {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-service-"));

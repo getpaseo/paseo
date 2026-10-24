@@ -1,4 +1,6 @@
+import { mcpServices } from "./mcp-services";
 export const en = {
+  mcp: mcpServices["en"],
   paneFind: {
     connectionFailure: "Could not search this chat. Check the host connection and retry.",
     historyChangedFailure: "The chat changed while searching. Search again.",

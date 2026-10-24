@@ -193,6 +193,57 @@ const MutableRelayConfigSchema = z
   })
   .passthrough();
 
+const McpStdioServerConfigSchema = z.object({
+  type: z.literal("stdio"),
+  command: z.string(),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  alwaysLoad: z.boolean().optional(),
+});
+
+const McpHttpServerConfigSchema = z.object({
+  type: z.literal("http"),
+  url: z.string(),
+  headers: z.record(z.string(), z.string()).optional(),
+  alwaysLoad: z.boolean().optional(),
+});
+
+const McpSseServerConfigSchema = z.object({
+  type: z.literal("sse"),
+  url: z.string(),
+  headers: z.record(z.string(), z.string()).optional(),
+  alwaysLoad: z.boolean().optional(),
+});
+
+const McpServerConfigSchema = z.discriminatedUnion("type", [
+  McpStdioServerConfigSchema,
+  McpHttpServerConfigSchema,
+  McpSseServerConfigSchema,
+]);
+
+export const ManagedMcpServiceIdSchema = z.string().regex(/^[a-z][a-z0-9-]*$/);
+const ManagedMcpServerConfigSchema = z.discriminatedUnion("type", [
+  McpStdioServerConfigSchema.extend({ command: z.string().regex(/\S/) }),
+  McpHttpServerConfigSchema.extend({
+    url: z
+      .string()
+      .url()
+      .regex(/^https?:\/\//),
+  }),
+  McpSseServerConfigSchema.extend({
+    url: z
+      .string()
+      .url()
+      .regex(/^https?:\/\//),
+  }),
+]);
+export const ManagedMcpServiceSchema = z.object({
+  name: z.string().min(1).max(80).regex(/\S/),
+  enabled: z.boolean(),
+  config: ManagedMcpServerConfigSchema,
+});
+export type ManagedMcpService = z.infer<typeof ManagedMcpServiceSchema>;
+
 export const MutableDaemonConfigSchema = z
   .object({
     // COMPAT(relayConfig): added in v0.2.6, remove after 2027-01-31 when old daemons are unsupported.
@@ -228,6 +279,7 @@ export const MutableDaemonConfigSchema = z
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
     agentProfiles: z.array(AgentProfileSchema).optional(),
     skills: z.object({ selection: AgentSkillSelectionSchema.optional() }).strict().optional(),
+    mcpServers: z.record(ManagedMcpServiceIdSchema, ManagedMcpServiceSchema).optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
   })
@@ -248,6 +300,7 @@ export const MutableDaemonConfigPatchSchema = z
     appendSystemPrompt: z.string().optional(),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
     agentProfiles: z.array(AgentProfileSchema).optional(),
+    mcpServers: z.record(ManagedMcpServiceIdSchema, ManagedMcpServiceSchema.nullable()).optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
   })
@@ -413,34 +466,6 @@ const AgentUsageSchema: z.ZodType<AgentUsage> = z.object({
   contextWindowMaxTokens: z.number().optional(),
   contextWindowUsedTokens: z.number().optional(),
 });
-
-const McpStdioServerConfigSchema = z.object({
-  type: z.literal("stdio"),
-  command: z.string(),
-  args: z.array(z.string()).optional(),
-  env: z.record(z.string(), z.string()).optional(),
-  alwaysLoad: z.boolean().optional(),
-});
-
-const McpHttpServerConfigSchema = z.object({
-  type: z.literal("http"),
-  url: z.string(),
-  headers: z.record(z.string(), z.string()).optional(),
-  alwaysLoad: z.boolean().optional(),
-});
-
-const McpSseServerConfigSchema = z.object({
-  type: z.literal("sse"),
-  url: z.string(),
-  headers: z.record(z.string(), z.string()).optional(),
-  alwaysLoad: z.boolean().optional(),
-});
-
-const McpServerConfigSchema = z.discriminatedUnion("type", [
-  McpStdioServerConfigSchema,
-  McpHttpServerConfigSchema,
-  McpSseServerConfigSchema,
-]);
 
 const ProviderOptionsSchema = z.record(z.string(), z.unknown());
 
@@ -3691,6 +3716,8 @@ export const ServerInfoStatusPayloadSchema = z
         // so a theme plugin cannot start there at all.
         pluginThemes: z.boolean().optional(),
         pluginSettings: z.boolean().optional(),
+        pluginMcpServers: z.boolean().optional(),
+        mcpServiceManagement: z.boolean().optional(),
         pluginTimelineItems: z.boolean().optional(),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: z.boolean().optional(),
@@ -3904,6 +3931,7 @@ export const DaemonConfigChangedStatusPayloadSchema = z
   .passthrough();
 
 export const PluginCatalogChangedStatusPayloadSchema = z.object({
+  reason: z.literal("mcp").optional(),
   status: z.literal("plugin_catalog_changed"),
   pluginId: PluginIdSchema,
 });
@@ -6746,7 +6774,17 @@ export const PluginNpmInstallationSchema = z.object({
   integrity: z.string(),
 });
 
+export const PluginMcpServiceSummarySchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  transport: z.enum(["stdio", "http", "sse"]).nullable(),
+  configured: z.boolean(),
+  settingsScreenId: z.string().optional(),
+});
+export type PluginMcpServiceSummary = z.infer<typeof PluginMcpServiceSummarySchema>;
+
 export const PluginListItemSchema = z.object({
+  mcpServer: PluginMcpServiceSummarySchema.optional(),
   id: PluginIdSchema,
   name: z.string().optional(),
   icon: z.string().optional(),

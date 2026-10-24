@@ -16,6 +16,9 @@ paseo plugin add owner/slug
 
 或者把 `owner/slug` 粘贴到 **设置 → 插件 → 插件来源**，然后选择 **安装插件**。Paseo 会安装注册表中经过审查的制品。想直接从 Git 仓库安装时，请使用 `git:owner/repository` 或完整的 Git URL。
 
+插件还可以[注册 MCP 服务](/docs/plugins/reference#register-an-mcp-service)，由 Agent 通过 Provider 直接连接。
+按需选择 stdio、HTTP 或旧式 SSE；插件 UI 继续使用普通 RPC。
+
 本指南会搭建一个插件、运行它，并为它添加一个工作区面板。
 
 ## 创建插件 {#create-a-plugin}

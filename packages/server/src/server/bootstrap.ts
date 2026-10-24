@@ -1,3 +1,5 @@
+import { MANUAL_MCP_SERVER_PREFIX } from "./agent/runtime-mcp-config.js";
+import type { ManagedMcpService } from "@getpaseo/protocol/messages";
 import {
   createFinishSubscriptions,
   createFinishObservation,
@@ -421,6 +423,7 @@ export interface PaseoDaemonConfig {
   skillSelection?: AgentSkillSelection;
   pluginsEnabled?: boolean;
   plugins?: Record<string, PluginSource>;
+  mcpServers?: Record<string, ManagedMcpService>;
   pluginRegistries?: PluginRegistries;
   pluginRegistryUrl?: string;
   staticDir: string;
@@ -580,6 +583,7 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     appendSystemPrompt: config.appendSystemPrompt ?? "",
     pluginsEnabled: config.pluginsEnabled ?? false,
     plugins: config.plugins ?? {},
+    mcpServers: config.mcpServers ?? {},
     skills: { selection: config.skillSelection },
   };
 
@@ -974,6 +978,15 @@ export async function createPaseoDaemon(
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
   const agentManager = new AgentManager({
     pluginLifecycle: pluginRuntime,
+    runtimeMcpServers: () => {
+      const manual = Object.entries(daemonConfigStore.get().mcpServers ?? {});
+      const servers = Object.fromEntries(
+        manual
+          .filter(([, service]) => service.enabled)
+          .map(([id, service]) => [`${MANUAL_MCP_SERVER_PREFIX}${id}`, service.config]),
+      );
+      return { ...servers, ...pluginRuntime.mcpServers() };
+    },
     clients: initialAgentManagerState.clients,
     providerDefinitions: initialAgentManagerState.providerDefinitions,
     registry: agentStorage,
@@ -1465,6 +1478,7 @@ export async function createPaseoDaemon(
     scheduleService,
     providerSnapshotManager,
     daemonConfigStore,
+    listPlugins: () => pluginRuntime.listPlugins(),
     github,
     workspaceGitService,
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,

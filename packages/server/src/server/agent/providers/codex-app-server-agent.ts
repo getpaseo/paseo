@@ -871,6 +871,7 @@ function expandCodexCustomPrompt(template: string, args: string | undefined): st
 }
 
 interface CodexMcpServerConfig {
+  cwd?: string;
   url?: string;
   http_headers?: Record<string, string>;
   command?: string;
@@ -884,6 +885,7 @@ function toCodexMcpConfig(config: McpServerConfig): CodexMcpServerConfig {
     case "stdio":
       return {
         command: config.command,
+        ...(config.cwd ? { cwd: config.cwd } : {}),
         args: config.args,
         env: config.env,
       };

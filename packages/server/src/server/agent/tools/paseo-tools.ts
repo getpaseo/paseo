@@ -8,6 +8,9 @@ import {
   type ToolHosts,
 } from "../host-operations/index.js";
 import { AgentDirectory } from "../directory.js";
+import { randomUUID } from "node:crypto";
+import type { PluginService } from "../../plugins/index.js";
+import { ManagedMcpServiceSchema, type ManagedMcpService } from "@getpaseo/protocol/messages";
 import { stat } from "node:fs/promises";
 import { z } from "zod";
 import { ensureValidJson } from "../../json-utils.js";
@@ -126,7 +129,8 @@ export interface PaseoToolHostDependencies {
   getDaemonTcpPort?: () => number | null;
   scheduleService?: ScheduleService | null;
   providerSnapshotManager: ProviderSnapshotManager;
-  daemonConfigStore?: Pick<DaemonConfigStore, "get">;
+  daemonConfigStore?: Pick<DaemonConfigStore, "get"> & Partial<Pick<DaemonConfigStore, "patch">>;
+  listPlugins?: PluginService["listPlugins"];
   github?: ForgeService;
   workspaceGitService?: Pick<
     WorkspaceGitService,
@@ -803,6 +807,7 @@ function createToolCatalog(
       description: config.description ?? name,
       inputSchema: config.inputSchema,
       outputSchema: config.outputSchema,
+      annotations: config.annotations,
       handler: handler as PaseoToolDefinition["handler"],
     });
   };
@@ -1359,6 +1364,137 @@ function createToolCatalog(
       callerAgentId,
       resolveCallerAgent,
     });
+  }
+
+  if (daemonConfigStore?.patch && options.listPlugins) {
+    const store = daemonConfigStore;
+    const patch = daemonConfigStore.patch.bind(daemonConfigStore);
+    const listPlugins = options.listPlugins;
+    function manualSummary(id: string, service: ManagedMcpService) {
+      return {
+        id,
+        name: service.name,
+        source: "manual",
+        transport: service.config.type,
+        enabled: service.enabled,
+        registered: true,
+      };
+    }
+    function serviceResult(summary: unknown): PaseoToolResult {
+      return { content: [], structuredContent: ensureValidJson(summary) };
+    }
+    function requireManual(id: string): ManagedMcpService {
+      if (id.startsWith("plugin:"))
+        throw new PaseoToolInputError(
+          "Plugin MCP services must be managed through their owning plugin",
+        );
+      const services = store.get().mcpServers ?? {};
+      const service = Object.hasOwn(services, id) ? services[id] : undefined;
+      if (!service) throw new PaseoToolInputError("MCP service not found");
+      return service;
+    }
+    function saveService(id: string, service: ManagedMcpService | null): void {
+      try {
+        patch({ mcpServers: { [id]: service } });
+      } catch {
+        // Config persistence errors can contain connection credentials.
+        throw new PaseoToolInputError(
+          "Unable to save MCP service; check the definition and use a unique name",
+        );
+      }
+    }
+    const lifecycle =
+      "Changes apply to new or re-established Agent runtimes on this host. Saving does not connect to the service or interrupt existing Agents.";
+    registerTool(
+      "list_mcp_services",
+      {
+        title: "List MCP services",
+        description:
+          "List safe summaries of manual and plugin MCP services on this host. Connection details and credentials are never returned.",
+        inputSchema: z.object({}).strict(),
+        annotations: { readOnlyHint: true },
+      },
+      async () => {
+        const manual = Object.entries(store.get().mcpServers ?? {}).map(([id, service]) =>
+          manualSummary(id, service),
+        );
+        const plugins = (await listPlugins()).flatMap((plugin) =>
+          plugin.mcpServer
+            ? [
+                {
+                  id: `plugin:${plugin.id}:${plugin.mcpServer.id}`,
+                  name: plugin.mcpServer.label,
+                  source: "plugin",
+                  pluginId: plugin.id,
+                  transport: plugin.mcpServer.transport,
+                  enabled: plugin.enabled,
+                  registered: plugin.mcpServer.configured,
+                },
+              ]
+            : [],
+        );
+        return serviceResult({ services: [...manual, ...plugins] });
+      },
+    );
+    registerTool(
+      "create_mcp_service",
+      {
+        title: "Create MCP service",
+        description: `Add a manual MCP service on this host, enabled by default. ${lifecycle}`,
+        inputSchema: ManagedMcpServiceSchema.omit({ enabled: true }).strict(),
+      },
+      async (input: Omit<ManagedMcpService, "enabled">) => {
+        const id = `mcp-${randomUUID()}`;
+        const service = { ...input, enabled: true };
+        saveService(id, service);
+        return serviceResult(manualSummary(id, service));
+      },
+    );
+    registerTool(
+      "update_mcp_service",
+      {
+        title: "Update MCP service",
+        description: `Update a manual service by stable id. Omitted fields are preserved; config replaces the entire connection definition. ${lifecycle}`,
+        inputSchema: ManagedMcpServiceSchema.omit({ enabled: true })
+          .partial()
+          .extend({ id: z.string().min(1) })
+          .strict(),
+      },
+      async ({ id, ...changes }: { id: string } & Partial<Omit<ManagedMcpService, "enabled">>) => {
+        const service = { ...requireManual(id), ...changes };
+        saveService(id, service);
+        return serviceResult(manualSummary(id, service));
+      },
+    );
+    registerTool(
+      "set_mcp_service_enabled",
+      {
+        title: "Set MCP service enabled",
+        description: `Enable or disable a manual service, preserving its saved definition. ${lifecycle}`,
+        inputSchema: z.object({ id: z.string().min(1), enabled: z.boolean() }).strict(),
+      },
+      async ({ id, enabled }: { id: string; enabled: boolean }) => {
+        const service = { ...requireManual(id), enabled };
+        saveService(id, service);
+        return serviceResult(manualSummary(id, service));
+      },
+    );
+    registerTool(
+      "delete_mcp_service",
+      {
+        title: "Delete MCP service",
+        description: `Permanently delete a manual service definition. Requires confirmed: true after user confirmation. ${lifecycle}`,
+        inputSchema: z.object({ id: z.string().min(1), confirmed: z.boolean() }).strict(),
+        annotations: { destructiveHint: true, readOnlyHint: false },
+      },
+      async ({ id, confirmed }: { id: string; confirmed: boolean }) => {
+        if (!confirmed)
+          throw new PaseoToolInputError("Confirm deletion before removing an MCP service");
+        const service = requireManual(id);
+        saveService(id, null);
+        return serviceResult({ ...manualSummary(id, service), registered: false });
+      },
+    );
   }
 
   registerTool(

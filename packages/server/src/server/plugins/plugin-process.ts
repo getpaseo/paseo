@@ -27,6 +27,8 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+import { PluginMcpService } from "./mcp-service.js";
+
 export interface PluginWorkerChannel {
   send(message: PluginProcessMessage, callback?: () => void): void;
   onMessage(handler: (message: PluginProcessRequest) => void): () => void;
@@ -74,6 +76,7 @@ export function createPluginWorker(options: {
   let daemonClient: DaemonClient | null = null;
   let paseo: PaseoApi | null = null;
   let stopping = false;
+  let mcp: PluginMcpService | null = null;
   function send(message: PluginProcessMessage): void {
     channel.send(message);
   }
@@ -280,7 +283,14 @@ export function createPluginWorker(options: {
           send({ type: "settings.changed", settingsId }),
         )
       : null;
+    const mcpService = new PluginMcpService({
+      directory: message.pluginDirectory,
+      changed: (server) => send({ type: "mcp.changed", server }),
+    });
+    mcp = mcpService;
     const contributedCleanup = contribute({
+      directory: message.pluginDirectory,
+      registerMcpServer: (definition) => mcpService.register(definition),
       handle: (contract, handler) =>
         register(contract, (input, context) => handler(contract.input.parse(input), context)),
       registerProvider,
@@ -307,6 +317,7 @@ export function createPluginWorker(options: {
     send({
       type: "ready",
       methods: [...handlers.keys()].sort(),
+      mcpServer: mcpService.definition(),
       hooks: hooks.catalog(),
       providers: [...providers.values()]
         .sort((left, right) => left.id.localeCompare(right.id))
@@ -322,6 +333,7 @@ export function createPluginWorker(options: {
       ?.dispose()
       .catch((error) => console.error("Plugin API cleanup failed", error));
     hooks.close();
+    mcp?.close();
     for (const pending of pendingProviderConnections.values()) pending.tombstoned = true;
     const currentCleanup = cleanup;
     cleanup = null;

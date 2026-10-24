@@ -22,6 +22,10 @@ A plugin is a TypeScript project installed into one Paseo daemon. It can add
 [connect a coding agent as a provider](/docs/plugins/providers). Client
 contributions run on every Paseo client connected to that daemon, including mobile.
 
+Plugins can also [register an MCP service](/docs/plugins/reference#register-an-mcp-service) for
+Agents to connect through their provider. Choose stdio, HTTP or legacy SSE as needed; plugin UI
+continues to use ordinary RPC.
+
 Browse [published plugins](https://paseo.sh/plugins), then install one on your daemon:
 
 ```bash

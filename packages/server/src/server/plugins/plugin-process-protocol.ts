@@ -12,6 +12,7 @@ import {
   ProviderLaunchSchema,
 } from "@getpaseo/plugin/server/provider";
 import { z } from "zod";
+import { PluginMcpServerSchema, type PluginMcpServer } from "@getpaseo/plugin/server";
 
 export interface PluginProviderMetadata {
   requiresConfiguration?: boolean;
@@ -74,11 +75,13 @@ export type PluginProcessRequest =
   | { type: "paseo_close" };
 
 export type PluginProcessMessage =
+  | { type: "mcp.changed"; server: PluginMcpServer | null }
   | { type: "settings.changed"; settingsId: string }
   | { type: "hooks.changed"; hooks: { events: string[]; before: string[] } }
   | {
       type: "ready";
       methods: string[];
+      mcpServer?: PluginMcpServer | null;
       providers: PluginProviderMetadata[];
       usageSources?: PluginUsageSourceMetadata[];
       hooks?: { events: string[]; before: string[] };
@@ -243,12 +246,14 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
 export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.discriminatedUnion(
   "type",
   [
+    z.object({ type: z.literal("mcp.changed"), server: PluginMcpServerSchema.nullable() }).strict(),
     z.object({ type: z.literal("settings.changed"), settingsId: z.string() }).strict(),
     z.object({ type: z.literal("hooks.changed"), hooks: hooksSchema }).strict(),
     z
       .object({
         type: z.literal("ready"),
         methods: z.array(z.string()),
+        mcpServer: PluginMcpServerSchema.nullable().optional(),
         providers: z.array(providerMetadataSchema),
         usageSources: z.array(usageSourceMetadataSchema).optional(),
         hooks: hooksSchema.optional(),

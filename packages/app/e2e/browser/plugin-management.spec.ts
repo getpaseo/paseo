@@ -1,12 +1,14 @@
+import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
+import { getE2EDaemonPort } from "../support/helpers/daemon-port";
 import { existsSync } from "node:fs";
 import overviewCorpus from "../../../protocol/tests/fixtures/plugin-overview.json";
-import { pluginRequirements } from "../support/helpers/plugin-fixture";
+import { copyPluginExample, pluginRequirements } from "../support/helpers/plugin-fixture";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { TestInfo } from "@playwright/test";
+import type { TestInfo, WebSocketRoute } from "@playwright/test";
 import { buildOpenProjectRoute } from "@/utils/host-routes";
 import { expect, test as base, type Page } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
@@ -19,6 +21,8 @@ import {
   openCompactSettings,
   openHostSection,
   openSettingsHost,
+  seedSavedSettingsHosts,
+  selectSettingsHost,
 } from "../support/helpers/settings";
 
 import {
@@ -873,4 +877,779 @@ test("keeps Reload pending past a minute while the plugin queue is busy", async 
   } finally {
     await queue.settle();
   }
+});
+
+test("MCP services links the registered service to its plugin configuration", async ({
+  page,
+  pluginEnvironment,
+}, testInfo) => {
+  const example = await copyPluginExample("repository-mcp");
+  const { client } = pluginEnvironment;
+  try {
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(example.directory);
+    await gotoAppShell(page);
+    await expect(page.getByTestId("sidebar-mcp")).toHaveCount(0);
+    await openSettings(page);
+    await page.getByTestId("settings-host-section-mcp").click();
+    await expect(page).toHaveURL(new RegExp(`/settings/hosts/${getServerId()}/mcp$`));
+    const service = page.getByTestId("mcp-service-repository-mcp").filter({ visible: true });
+    await expect(service).toContainText("Fictional repositories");
+    await expect(service).toContainText("Not configured");
+    await service.getByRole("button", { name: "Configure", exact: true }).click();
+    await expect(page.getByRole("textbox", { name: "HTTP MCP URL", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "List repositories", exact: true }).click();
+    await expect(page.getByText("demo/orchard", { exact: false })).toBeVisible();
+    await page
+      .getByRole("textbox", { name: "HTTP MCP URL", exact: true })
+      .fill("http://127.0.0.1:9/mcp");
+    await page.getByRole("button", { name: "Save connection", exact: true }).click();
+    await expect(page.getByText("http://127.0.0.1:9/mcp", { exact: true })).toBeVisible();
+    await page.locator('[data-testid="settings-host-section-mcp"]:visible').click();
+    await expect(service).toContainText("Registered");
+    await expect(service).toContainText("HTTP");
+    await expect(service).not.toContainText("127.0.0.1");
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await page.screenshot({
+      path: testInfo.outputPath("mcp-services-desktop.png"),
+      fullPage: true,
+    });
+    await client.disablePlugin("repository-mcp");
+    await expect(service).toHaveCount(0);
+    await expect(
+      page.getByText("No MCP services registered", { exact: true }).filter({ visible: true }),
+    ).toBeVisible();
+  } finally {
+    await client.removePlugin("repository-mcp");
+    await example.cleanup();
+  }
+});
+
+test("MCP services distinguishes a failed load from an empty list and retries", async ({
+  page,
+}) => {
+  let fail = true;
+  await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
+    const server = browser.connectToServer();
+    browser.onMessage((message) => {
+      if (typeof message === "string") {
+        const request = JSON.parse(message).message;
+        if (fail && request?.type === "plugin.list.request") {
+          browser.send(
+            JSON.stringify({
+              type: "session",
+              message: {
+                type: "rpc_error",
+                payload: {
+                  requestId: request.requestId,
+                  requestType: request.type,
+                  error: "Service catalog unavailable",
+                  code: "handler_error",
+                },
+              },
+            }),
+          );
+          return;
+        }
+      }
+      server.send(message);
+    });
+    server.onMessage((message) => browser.send(message));
+  });
+  await gotoAppShell(page);
+  await openSettings(page);
+  await page.getByTestId("settings-host-section-mcp").click();
+  await expect(page.getByText("Unable to load MCP services", { exact: true })).toBeVisible();
+  await expect(page.getByText("No MCP services registered", { exact: true })).toHaveCount(0);
+  fail = false;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.getByText("No MCP services registered", { exact: true })).toBeVisible();
+  await expect(page.getByText("Unable to load MCP services", { exact: true })).toHaveCount(0);
+});
+
+test("MCP services asks an older host to update", async ({ page }) => {
+  await advertisePluginCapabilities(page, { mcpServiceManagement: false });
+  await gotoAppShell(page);
+  await expect(page.getByTestId("sidebar-mcp")).toHaveCount(0);
+  await openSettings(page);
+  await page.getByTestId("settings-host-section-mcp").click();
+  await expect(
+    page.getByText("Update this host to manage MCP services", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByTestId("mcp-services-page")).toHaveCount(0);
+});
+
+test.describe("MCP services compact", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
+  test("keeps loaded service rows focused during a same-host background refresh", async ({
+    page,
+    pluginEnvironment,
+  }) => {
+    const example = await copyPluginExample("repository-mcp");
+    const { client } = pluginEnvironment;
+    let hold = false;
+    const held: { send(message: string): void; message: string }[] = [];
+    function intercept(browser: WebSocketRoute) {
+      const server = browser.connectToServer();
+      browser.onMessage((message) => server.send(message));
+      server.onMessage((message) => {
+        if (
+          hold &&
+          typeof message === "string" &&
+          JSON.parse(message).message?.type === "plugin.list.response"
+        )
+          held.push({ send: browser.send.bind(browser), message });
+        else browser.send(message);
+      });
+    }
+    await page.routeWebSocket(`**:${getE2EDaemonPort()}/ws`, intercept);
+    try {
+      await client.patchDaemonConfig({ pluginsEnabled: true });
+      await client.installDirectoryPlugin(example.directory);
+      await gotoAppShell(page);
+      await page.getByRole("button", { name: "Open menu", exact: true }).first().tap();
+      await expect(page.getByTestId("sidebar-mcp")).toHaveCount(0);
+      await page.getByTestId("sidebar-settings").tap();
+      await page.getByTestId("settings-host-section-mcp").tap();
+      const service = page.getByTestId("mcp-service-repository-mcp");
+      const configure = service.getByRole("button", { name: "Configure", exact: true });
+      await expect(service).toContainText("Not configured");
+      await configure.focus();
+      await expect(configure).toBeFocused();
+      hold = true;
+      await client.invokePluginRpc("repository-mcp", "settings.connection.write", {
+        revision: "missing",
+        values: { url: "http://127.0.0.1:9/mcp" },
+      });
+      await expect.poll(() => held.length).toBeGreaterThan(0);
+      await expect(configure).toBeFocused();
+      await expect(service).toContainText("Not configured");
+      hold = false;
+      for (const reply of held.splice(0)) reply.send(reply.message);
+      await expect(service).toContainText("Registered");
+      await expect(configure).toBeFocused();
+    } finally {
+      hold = false;
+      for (const reply of held.splice(0)) reply.send(reply.message);
+      await client.removePlugin("repository-mcp");
+      await example.cleanup();
+    }
+  });
+
+  test("supports touch, keyboard focus and ordinary RPC without horizontal overflow", async ({
+    page,
+    pluginEnvironment,
+  }, testInfo) => {
+    const example = await copyPluginExample("repository-mcp");
+    const { client } = pluginEnvironment;
+    try {
+      await client.patchDaemonConfig({ pluginsEnabled: true });
+      await client.installDirectoryPlugin(example.directory);
+      await gotoAppShell(page);
+      await page.getByRole("button", { name: "Open menu", exact: true }).first().tap();
+      await expect(page.getByTestId("sidebar-mcp")).toHaveCount(0);
+      await page.getByTestId("sidebar-settings").tap();
+      await page.getByTestId("settings-host-section-mcp").tap();
+      const configure = page
+        .getByTestId("mcp-service-repository-mcp")
+        .getByRole("button", { name: "Configure", exact: true });
+      await expect(configure).toBeVisible();
+      await page.getByTestId("mcp-services-section-info").tap();
+      await expect(
+        page.getByText(
+          "New or re-established Agent runtimes receive the current configuration. Existing Agent connections are not changed.",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      await expect(page.getByRole("tooltip")).toHaveCSS("opacity", "1");
+      await expect(page.getByRole("tooltip")).toBeInViewport({ ratio: 1 });
+      await page.screenshot({
+        path: testInfo.outputPath("mcp-services-touch-info.png"),
+        fullPage: true,
+      });
+      await configure.focus();
+      await page.keyboard.press("Shift+Tab");
+      await page.keyboard.press("Tab");
+      await expect(configure).toBeFocused();
+      await expect(page.getByRole("tooltip")).toHaveCount(0);
+      await page.screenshot({
+        path: testInfo.outputPath("mcp-services-touch.png"),
+        fullPage: true,
+      });
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      ).toBe(true);
+      await page.keyboard.press("Enter");
+      await expect(page.getByRole("textbox", { name: "HTTP MCP URL", exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "List repositories", exact: true }).tap();
+      await expect(page.getByText("demo/orchard", { exact: false })).toBeVisible();
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      ).toBe(true);
+    } finally {
+      await client.removePlugin("repository-mcp");
+      await example.cleanup();
+    }
+  });
+});
+
+test("MCP services ignores old host responses while switching hosts", async ({
+  page,
+  pluginEnvironment,
+}) => {
+  const second = await startIsolatedHostDaemon("mcp-services-secondary");
+  const example = await copyPluginExample("repository-mcp");
+  const { client } = pluginEnvironment;
+  let hold = false;
+  const held: { send(message: string): void; message: string }[] = [];
+  await page.routeWebSocket(`**:${getE2EDaemonPort()}/ws`, (browser) => {
+    const server = browser.connectToServer();
+    browser.onMessage((message) => server.send(message));
+    server.onMessage((message) => {
+      if (
+        hold &&
+        typeof message === "string" &&
+        ["plugin.list.response", "set_daemon_config_response"].includes(
+          JSON.parse(message).message?.type,
+        )
+      )
+        held.push({ send: browser.send.bind(browser), message });
+      else browser.send(message);
+    });
+  });
+  try {
+    await client.patchDaemonConfig({
+      pluginsEnabled: true,
+      mcpServers: {
+        hostrace: {
+          name: "Primary private service",
+          enabled: true,
+          config: {
+            type: "http",
+            url: "https://primary.invalid/mcp",
+            headers: { authorization: "fictional-primary-private" },
+          },
+        },
+      },
+    });
+    await client.installDirectoryPlugin(example.directory);
+    await seedSavedSettingsHosts(page, [
+      {
+        serverId: getServerId(),
+        label: "Primary MCP host",
+        endpoint: `127.0.0.1:${getE2EDaemonPort()}`,
+      },
+      {
+        serverId: second.serverId,
+        label: "Secondary MCP host",
+        endpoint: `127.0.0.1:${second.port}`,
+      },
+    ]);
+    await page.goto(`/settings/hosts/${getServerId()}/mcp`);
+    await expect(page.getByTestId("mcp-service-repository-mcp")).toBeVisible();
+    await expect(page.getByTestId("mcp-manual-hostrace")).toBeVisible();
+    hold = true;
+    await page
+      .getByTestId("mcp-manual-hostrace")
+      .getByRole("button", { name: "Disable", exact: true })
+      .click();
+    await expect
+      .poll(() =>
+        held.some(
+          (reply) => JSON.parse(reply.message).message?.type === "set_daemon_config_response",
+        ),
+      )
+      .toBe(true);
+    await client.reloadPlugin("repository-mcp");
+    await selectSettingsHost(page, second.serverId);
+    await expect(
+      page.getByText("No MCP services registered", { exact: true }).filter({ visible: true }),
+    ).toBeVisible();
+    const reconnect = page.waitForEvent("websocket", (socket) =>
+      socket.url().includes(`:${second.port}/ws`),
+    );
+    await second.restart();
+    await reconnect;
+    await expect(
+      page.getByText("No MCP services registered", { exact: true }).filter({ visible: true }),
+    ).toBeVisible();
+    hold = false;
+    for (const reply of held.splice(0)) reply.send(reply.message);
+    await expect(page.getByTestId("mcp-service-repository-mcp")).toHaveCount(0);
+    await expect(page.getByTestId("mcp-manual-hostrace")).toHaveCount(0);
+    await expect(page.getByText("MCP service disabled", { exact: true })).toHaveCount(0);
+    expect((await client.getDaemonConfig()).config.mcpServers?.hostrace.enabled).toBe(false);
+    await expect(page).toHaveURL(new RegExp(`/settings/hosts/${second.serverId}/mcp$`));
+    await expect(
+      page.getByText("No MCP services registered", { exact: true }).filter({ visible: true }),
+    ).toBeVisible();
+    await second.close();
+    await expect(
+      page.getByText("Connect to this host to view MCP services", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText("No MCP services registered", { exact: true })).toHaveCount(0);
+  } finally {
+    hold = false;
+    for (const reply of held.splice(0)) reply.send(reply.message);
+    await client.patchDaemonConfig({ mcpServers: { hostrace: null } });
+    await client.removePlugin("repository-mcp");
+    await example.cleanup();
+    await second.close();
+  }
+});
+
+test("manual MCP management saves all transports and preserves edits through refresh and failed saves", async ({
+  page,
+  pluginEnvironment,
+}, testInfo) => {
+  const { client } = pluginEnvironment;
+  const previous = (await client.getDaemonConfig()).config.mcpServers ?? {};
+  try {
+    await gotoAppShell(page);
+    await openSettings(page);
+    await page.getByTestId("settings-host-section-mcp").click();
+    await page.getByTestId("mcp-add").click();
+    const help = page.getByText(
+      "Enter a name and valid connection fields. Arguments must be a JSON string array; environment and headers must be JSON objects with string values.",
+      { exact: true },
+    );
+    await expect(help).toBeHidden();
+    await page.getByTestId("mcp-form-tip").hover();
+    await expect(help).toBeVisible();
+    await page.getByTestId("mcp-name").hover();
+    await expect(help).toBeHidden();
+    await page.getByTestId("mcp-name").fill("Local tools");
+    await page.getByTestId("mcp-command").fill("fictional-mcp-not-installed");
+    await page.getByTestId("mcp-args").fill('["--read-only"]');
+    await page.getByTestId("mcp-env").fill('{"TOKEN":"fictional-ui-secret"}');
+    await page.screenshot({ path: testInfo.outputPath("manual-mcp-form.png"), fullPage: true });
+    await page.getByTestId("mcp-save").click();
+    const rows = page.locator('[data-testid^="mcp-manual-"]');
+    await expect(rows).toContainText(["Local tools"]);
+    await expect(rows).not.toContainText("fictional-ui-secret");
+    let entries = Object.entries((await client.getDaemonConfig()).config.mcpServers ?? {});
+    const [id, local] = entries.find(([, value]) => value.name === "Local tools")!;
+    expect(local.config).toEqual({
+      type: "stdio",
+      command: "fictional-mcp-not-installed",
+      args: ["--read-only"],
+      env: { TOKEN: "fictional-ui-secret" },
+    });
+    await rows.getByRole("button", { name: "Edit", exact: true }).click();
+    await page.getByTestId("mcp-name").fill("Remote tools");
+    await client.patchDaemonConfig({
+      mcpServers: {
+        external: {
+          name: "Concurrent tools",
+          enabled: true,
+          config: { type: "http", url: "https://example.invalid/concurrent" },
+        },
+      },
+    });
+    await expect(rows).toContainText(["Local tools", "Concurrent tools"]);
+    await expect(page.getByTestId("mcp-name")).toHaveValue("Remote tools");
+    await page.getByTestId("mcp-transport-trigger").click();
+    await page.getByRole("button", { name: "HTTP", exact: true }).click();
+    await page.getByTestId("mcp-url").fill("https://example.invalid/mcp");
+    await page.getByTestId("mcp-header-add").click();
+    await page.getByTestId("mcp-header-key").fill("Authorization");
+    await page.getByTestId("mcp-header-value").fill("fictional-http-secret");
+    await page.getByTestId("mcp-header-add").click();
+    await page.getByTestId("mcp-header-key").nth(1).fill("X-Workspace");
+    await page.getByTestId("mcp-header-value").nth(1).fill("fictional-workspace");
+    await page.getByTestId("mcp-header-remove").first().click();
+    await expect(page.getByTestId("mcp-header-key")).toHaveValue("X-Workspace");
+    await expect(page.getByTestId("mcp-header-value")).toHaveValue("fictional-workspace");
+    await page.getByTestId("mcp-header-key").fill("Authorization");
+    await page.getByTestId("mcp-header-value").fill("fictional-http-secret");
+    await page.getByTestId("mcp-save").click();
+    expect((await client.getDaemonConfig()).config.mcpServers?.[id]?.config).toEqual({
+      type: "http",
+      url: "https://example.invalid/mcp",
+      headers: { Authorization: "fictional-http-secret" },
+    });
+    await page
+      .getByTestId(`mcp-manual-${id}`)
+      .getByRole("button", { name: "Edit", exact: true })
+      .click();
+    await page.getByTestId("mcp-name").fill("Concurrent tools");
+    await page.getByTestId("mcp-save").click();
+    await expect(
+      page.getByText("An MCP service with this name already exists. Choose another name.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(page.getByTestId("mcp-name")).toHaveValue("Concurrent tools");
+    await page.getByTestId("mcp-name").fill("Events");
+    await page.getByTestId("mcp-transport-trigger").click();
+    await page.getByRole("button", { name: "SSE", exact: true }).click();
+    await page.getByTestId("mcp-header-remove").click();
+    await page.getByTestId("mcp-save").focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId(`mcp-manual-${id}`)).toContainText("Events");
+    expect((await client.getDaemonConfig()).config.mcpServers?.[id]?.config).toEqual({
+      type: "sse",
+      url: "https://example.invalid/mcp",
+      headers: {},
+    });
+    await page.screenshot({ path: testInfo.outputPath("manual-mcp-desktop.png"), fullPage: true });
+  } finally {
+    const current = (await client.getDaemonConfig()).config.mcpServers ?? {};
+    await client.patchDaemonConfig({
+      mcpServers: {
+        ...Object.fromEntries(Object.keys(current).map((id) => [id, null])),
+        ...previous,
+      },
+    });
+  }
+});
+
+test.describe("manual MCP compact", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
+  test("adds a service with touch without horizontal overflow", async ({
+    page,
+    pluginEnvironment,
+  }, testInfo) => {
+    const { client } = pluginEnvironment;
+    try {
+      await gotoAppShell(page);
+      await openCompactSettings(page, buildOpenProjectRoute());
+      await page.getByTestId("settings-host-section-mcp").tap();
+      await page.getByTestId("mcp-add").tap();
+      await page.getByTestId("mcp-name").fill("Phone tools");
+      await page.getByTestId("mcp-command").fill("fictional-mobile-mcp");
+      await page.screenshot({
+        path: testInfo.outputPath("manual-mcp-compact-form.png"),
+        fullPage: true,
+      });
+      await page.getByTestId("mcp-save").tap();
+      await expect(page.getByText("Phone tools", { exact: true })).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+      const row = page.locator('[data-testid^="mcp-manual-"]').filter({ hasText: "Phone tools" });
+      await row.getByRole("switch").tap();
+      await expect(row.getByText("Disabled", { exact: true })).toBeVisible();
+      await expect(row.getByRole("switch")).not.toBeChecked();
+      await row.getByRole("switch").tap();
+      await expect(row.getByRole("switch")).toBeChecked();
+      await page.screenshot({ path: testInfo.outputPath("manual-mcp-touch.png"), fullPage: true });
+      page.once("dialog", (dialog) => dialog.dismiss());
+      await row.getByRole("button", { name: "Delete", exact: true }).tap();
+      await expect(row.getByRole("button", { name: "Delete", exact: true })).toBeEnabled();
+      page.once("dialog", (dialog) => dialog.accept());
+      await row.getByRole("button", { name: "Delete", exact: true }).tap();
+      await expect(row).toHaveCount(0);
+    } finally {
+      const services = (await client.getDaemonConfig()).config.mcpServers ?? {};
+      await client.patchDaemonConfig({
+        mcpServers: Object.fromEntries(
+          Object.entries(services)
+            .filter(([, value]) => value.name === "Phone tools")
+            .map(([id]) => [id, null]),
+        ),
+      });
+    }
+  });
+});
+
+test("manual MCP lifecycle supports pending failure retry and keyboard delete confirmation", async ({
+  page,
+  pluginEnvironment,
+}, testInfo) => {
+  const { client } = pluginEnvironment;
+  const service = {
+    name: "Lifecycle tools",
+    enabled: true,
+    config: { type: "http" as const, url: "https://example.invalid/lifecycle" },
+  };
+  let fail = false;
+  let hold = false;
+  const held: { send(message: string | Buffer): void; message: string | Buffer }[] = [];
+  await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
+    const server = browser.connectToServer();
+    browser.onMessage((message) => {
+      const request = typeof message === "string" ? JSON.parse(message).message : undefined;
+      if (request?.type === "set_daemon_config_request") {
+        if (fail) {
+          browser.send(
+            JSON.stringify({
+              type: "session",
+              message: {
+                type: "rpc_error",
+                payload: {
+                  requestId: request.requestId,
+                  requestType: request.type,
+                  error: "Fictional lifecycle failure",
+                  code: "handler_error",
+                },
+              },
+            }),
+          );
+          return;
+        }
+        if (hold) {
+          held.push({ send: server.send.bind(server), message });
+          return;
+        }
+      }
+      server.send(message);
+    });
+    server.onMessage((message) => browser.send(message));
+  });
+  try {
+    await client.patchDaemonConfig({ mcpServers: { lifecycle: service } });
+    await gotoAppShell(page);
+    await openSettings(page);
+    await page.getByTestId("settings-host-section-mcp").click();
+    const row = page.getByTestId("mcp-manual-lifecycle");
+    await expect(row.getByRole("switch")).toBeChecked();
+    hold = true;
+    await row.getByRole("switch").click();
+    await expect.poll(() => held.length).toBe(1);
+    await expect(row.getByRole("button", { name: "Edit", exact: true })).toBeDisabled();
+    await expect(page.getByTestId("mcp-add")).toBeDisabled();
+    await expect(row.getByRole("switch")).toBeDisabled();
+    hold = false;
+    for (const reply of held.splice(0)) reply.send(reply.message);
+    await expect(row.getByText("Disabled", { exact: true })).toBeVisible();
+    await expect(row.getByRole("switch")).not.toBeChecked();
+    await expect(
+      page.getByTestId("mcp-services-section").getByText("MCP service disabled", { exact: true }),
+    ).toHaveCount(0);
+    await expect(page.getByText("MCP service disabled", { exact: true })).toBeVisible();
+    expect((await client.getDaemonConfig()).config.mcpServers?.lifecycle).toEqual({
+      ...service,
+      enabled: false,
+    });
+    fail = true;
+    await row.getByRole("switch").click();
+    await expect(
+      page.getByText("Unable to update MCP service. Retry.", { exact: true }),
+    ).toBeVisible();
+    await expect(row.getByText("Disabled", { exact: true })).toBeVisible();
+    await expect(row.getByRole("switch")).not.toBeChecked();
+    fail = false;
+    await row.getByRole("switch").focus();
+    await page.keyboard.press("Enter");
+    await expect(row.getByRole("switch")).toBeChecked();
+    expect((await client.getDaemonConfig()).config.mcpServers?.lifecycle).toEqual(service);
+    await page.screenshot({
+      path: testInfo.outputPath("manual-mcp-lifecycle-desktop.png"),
+      fullPage: true,
+    });
+    page.once("dialog", (dialog) => dialog.dismiss());
+    await row.getByRole("button", { name: "Delete", exact: true }).click();
+    await expect(row.getByRole("button", { name: "Delete", exact: true })).toBeEnabled();
+    expect((await client.getDaemonConfig()).config.mcpServers?.lifecycle).toEqual(service);
+    fail = true;
+    page.once("dialog", (dialog) => dialog.accept());
+    await row.getByRole("button", { name: "Delete", exact: true }).click();
+    await expect(
+      page.getByText("Unable to update MCP service. Retry.", { exact: true }),
+    ).toBeVisible();
+    await expect(row).toBeVisible();
+    fail = false;
+    page.once("dialog", async (dialog) => {
+      expect(dialog.message()).toContain("Delete Lifecycle tools?");
+      await dialog.accept();
+    });
+    await row.getByRole("button", { name: "Delete", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(row).toHaveCount(0);
+    await expect(page.getByText("MCP service deleted", { exact: true })).toBeVisible();
+    await expect(page.getByText("No MCP services registered", { exact: true })).toBeVisible();
+    expect((await client.getDaemonConfig()).config.mcpServers?.lifecycle).toBeUndefined();
+  } finally {
+    for (const reply of held.splice(0)) reply.send(reply.message);
+    await client.patchDaemonConfig({ mcpServers: { lifecycle: null } });
+  }
+});
+
+test("manual MCP JSON editing retains drafts and round trips all transports", async ({
+  page,
+  pluginEnvironment,
+}, testInfo) => {
+  const { client } = pluginEnvironment;
+  const previous = (await client.getDaemonConfig()).config.mcpServers ?? {};
+  try {
+    await gotoAppShell(page);
+    await openSettings(page);
+    await page.getByTestId("settings-host-section-mcp").click();
+    await page.getByTestId("mcp-add").click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("mcp-service-form")).toBeHidden();
+    await page.getByTestId("mcp-add").click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await page.getByTestId("mcp-mode-trigger").click();
+    await page.getByTestId("mcp-mode-json").click();
+    await page.getByTestId("mcp-mode-trigger").click();
+    await page.getByTestId("mcp-mode-form").click();
+    await expect(page.getByTestId("mcp-command")).toHaveValue("");
+    await expect(page.getByTestId("mcp-save")).toBeDisabled();
+    await page.getByTestId("mcp-name").fill("JSON tools");
+    await page.getByTestId("mcp-mode-trigger").click();
+    await page.getByTestId("mcp-mode-json").click();
+    await page.getByTestId("mcp-json").fill('{"type":"stdio",');
+    await expect(page.getByTestId("mcp-save")).toBeDisabled();
+    await page.getByTestId("mcp-mode-trigger").click();
+    await page.getByTestId("mcp-mode-form").click();
+    await expect(page.getByTestId("mcp-json")).toHaveValue('{"type":"stdio",');
+    await expect(
+      page.getByText("Fix the connection draft before switching modes. Your input has been kept."),
+    ).toBeVisible();
+    const local = {
+      type: "stdio",
+      command: "fictional-json-mcp",
+      args: ["--read-only"],
+      env: { TOKEN: "fictional-only" },
+    };
+    await page.getByTestId("mcp-json").fill(JSON.stringify(local));
+    await page.getByTestId("mcp-mode-trigger").click();
+    await page.getByTestId("mcp-mode-form").click();
+    await expect(page.getByTestId("mcp-command")).toHaveValue(local.command);
+    await page.getByTestId("mcp-mode-trigger").click();
+    await page.getByTestId("mcp-mode-json").click();
+    expect(JSON.parse(await page.getByTestId("mcp-json").inputValue())).toEqual(local);
+    await page.screenshot({ path: testInfo.outputPath("mcp-json-desktop.png"), fullPage: true });
+    await page.getByTestId("mcp-save").click();
+    const rows = page.locator('[data-testid^="mcp-manual-"]');
+    await expect(rows).toContainText(["JSON tools"]);
+    const [id] = Object.entries((await client.getDaemonConfig()).config.mcpServers ?? {}).find(
+      ([, s]) => s.name === "JSON tools",
+    )!;
+    expect((await client.getDaemonConfig()).config.mcpServers?.[id]?.config).toEqual(local);
+    for (const type of ["http", "sse"] as const) {
+      await page
+        .getByTestId(`mcp-manual-${id}`)
+        .getByRole("button", { name: "Edit", exact: true })
+        .click();
+      await page.getByTestId("mcp-mode-trigger").click();
+      await page.getByTestId("mcp-mode-json").click();
+      const remote = { type, url: `https://example.invalid/${type}` };
+      const raw = JSON.stringify(remote);
+      await page.getByTestId("mcp-json").fill(raw);
+      await client.patchDaemonConfig({
+        mcpServers: {
+          "concurrent-json": {
+            name: "Concurrent JSON",
+            enabled: true,
+            config: { type: "http", url: "https://example.invalid/concurrent" },
+          },
+        },
+      });
+      await expect(rows).toContainText(["JSON tools", "Concurrent JSON"]);
+      await expect(page.getByTestId("mcp-json")).toHaveValue(raw);
+      await page.getByTestId("mcp-name").fill("Concurrent JSON");
+      await page.getByTestId("mcp-save").click();
+      await expect(
+        page.getByText("An MCP service with this name already exists. Choose another name.", {
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect(page.getByTestId("mcp-json")).toHaveValue(raw);
+      await page.getByTestId("mcp-name").fill("JSON tools");
+      await page.getByTestId("mcp-mode-trigger").click();
+      await page.getByTestId("mcp-mode-form").click();
+      await expect(page.getByTestId("mcp-url")).toHaveValue(remote.url);
+      await page.getByTestId("mcp-mode-trigger").click();
+      await page.getByTestId("mcp-mode-json").click();
+      expect(JSON.parse(await page.getByTestId("mcp-json").inputValue())).toEqual(remote);
+      await page.getByTestId("mcp-save").focus();
+      await page.keyboard.press("Enter");
+      await expect(page.getByTestId("mcp-service-form")).not.toBeVisible();
+      expect((await client.getDaemonConfig()).config.mcpServers?.[id]?.config).toEqual(remote);
+    }
+  } finally {
+    const current = (await client.getDaemonConfig()).config.mcpServers ?? {};
+    await client.patchDaemonConfig({
+      mcpServers: {
+        ...Object.fromEntries(Object.keys(current).map((id) => [id, null])),
+        ...previous,
+      },
+    });
+  }
+});
+
+test.describe("manual MCP JSON compact", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
+  test("edits JSON with touch and keyboard without overflow", async ({
+    page,
+    pluginEnvironment,
+  }, testInfo) => {
+    const { client } = pluginEnvironment;
+    try {
+      await gotoAppShell(page);
+      await openCompactSettings(page, buildOpenProjectRoute());
+      await page.getByTestId("settings-host-section-mcp").tap();
+      await page.getByTestId("mcp-add").tap();
+      await expect(page.getByTestId("mcp-service-form")).toBeVisible();
+      await page.getByTestId("mcp-mode-trigger").click();
+      await page.getByTestId("mcp-mode-json").tap();
+      await page.getByTestId("mcp-mode-trigger").click();
+      await page.getByTestId("mcp-mode-form").tap();
+      await expect(page.getByTestId("mcp-command")).toHaveValue("");
+      await page.getByTestId("mcp-name").fill("Phone JSON");
+      await page.getByTestId("mcp-mode-trigger").click();
+      await page.getByTestId("mcp-mode-json").tap();
+      await page
+        .getByTestId("mcp-json")
+        .fill(JSON.stringify({ type: "http", url: "https://example.invalid/mobile" }, null, 2));
+      await expect(page.getByTestId("mcp-mode-json")).toBeHidden();
+      await page.screenshot({ path: testInfo.outputPath("mcp-json-compact.png"), fullPage: true });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+      await page.getByTestId("mcp-mode-trigger").click();
+      await page.getByTestId("mcp-mode-form").tap();
+      await expect(page.getByTestId("mcp-url")).toHaveValue("https://example.invalid/mobile");
+      await page.getByTestId("mcp-form-tip").tap();
+      await expect(
+        page.getByText(
+          "Enter a name and valid connection fields. Arguments must be a JSON string array; environment and headers must be JSON objects with string values.",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      await page.getByTestId("mcp-name").tap();
+      await page.getByTestId("mcp-header-add").tap();
+      await page.getByTestId("mcp-header-key").fill("X-Workspace");
+      await page.getByTestId("mcp-header-value").fill("fictional-mobile");
+      await page.getByTestId("mcp-header-add").tap();
+      await page.getByTestId("mcp-header-key").nth(1).fill("X-Second");
+      await page.getByTestId("mcp-header-value").nth(1).fill("second");
+      await page.getByTestId("mcp-header-remove").first().tap();
+      await expect(page.getByTestId("mcp-header-key")).toHaveCount(1);
+      await expect(page.getByTestId("mcp-header-key")).toHaveValue("X-Second");
+      await expect(page.getByTestId("mcp-header-value")).toHaveValue("second");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+      await page.screenshot({
+        path: testInfo.outputPath("mcp-headers-compact.png"),
+        fullPage: true,
+      });
+      await page.getByTestId("mcp-mode-trigger").focus();
+      await page.keyboard.press("Enter");
+      await page.getByTestId("mcp-mode-json").focus();
+      await page.keyboard.press("Enter");
+      await expect(page.getByTestId("mcp-json")).toBeVisible();
+      expect(JSON.parse(await page.getByTestId("mcp-json").inputValue()).headers).toEqual({
+        "X-Second": "second",
+      });
+      await page.getByTestId("mcp-save").tap();
+      await expect(page.getByText("Phone JSON", { exact: true })).toBeVisible();
+    } finally {
+      const services = (await client.getDaemonConfig()).config.mcpServers ?? {};
+      await client.patchDaemonConfig({
+        mcpServers: Object.fromEntries(
+          Object.entries(services)
+            .filter(([, s]) => s.name === "Phone JSON")
+            .map(([id]) => [id, null]),
+        ),
+      });
+    }
+  });
 });
