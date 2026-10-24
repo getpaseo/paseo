@@ -33,7 +33,10 @@ afterEach(() => {
   }
 });
 
-function buildPermission(question: Record<string, unknown>): PendingPermission {
+function buildPermission(
+  question: Record<string, unknown>,
+  structured: boolean,
+): PendingPermission {
   return {
     key: "perm-1",
     agentId: "agent-1",
@@ -42,12 +45,12 @@ function buildPermission(question: Record<string, unknown>): PendingPermission {
       provider: "claude",
       name: "AskUserQuestion",
       kind: "question",
-      input: { questions: [question] },
+      input: { questions: [question], ...(structured ? { answerFormat: "structured" } : {}) },
     },
   };
 }
 
-function mountCard(question: Record<string, unknown>) {
+function mountCard(question: Record<string, unknown>, structured = false) {
   const onRespond = vi.fn<(response: AgentPermissionResponse) => void>();
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -55,7 +58,7 @@ function mountCard(question: Record<string, unknown>) {
   act(() =>
     root.render(
       <QuestionFormCard
-        permission={buildPermission(question)}
+        permission={buildPermission(question, structured)}
         onRespond={onRespond}
         isResponding={false}
         responseError={null}
@@ -69,6 +72,7 @@ function mountCard(question: Record<string, unknown>) {
   const otherInput = () =>
     view.getByRole<HTMLInputElement>("textbox", { name: String(question.question) });
   const check = (label: string) => act(() => view.getByRole(optionRole, { name: label }).click());
+  const checkAt = (index: number) => act(() => view.getAllByRole(optionRole)[index].click());
   const type = (text: string) => {
     const input = otherInput();
     const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
@@ -84,7 +88,12 @@ function mountCard(question: Record<string, unknown>) {
     if (!response || response.behavior !== "allow") throw new Error("card did not submit");
     return (response.updatedInput as { answers: Record<string, string> }).answers;
   };
-  return { check, type, otherInput, submit, submittedAnswers };
+  const submittedInput = () => {
+    const response = onRespond.mock.calls[0]?.[0];
+    if (!response || response.behavior !== "allow") throw new Error("card did not submit");
+    return response.updatedInput;
+  };
+  return { check, checkAt, type, otherInput, submit, submittedAnswers, submittedInput };
 }
 
 const multiSelectQuestion = {
@@ -104,6 +113,61 @@ const singleSelectQuestion = {
 };
 
 describe("QuestionFormCard other answers", () => {
+  it.each([true, false])(
+    "submits structured identities for colliding labels (multiSelect=%s)",
+    (multiSelect) => {
+      const card = mountCard(
+        {
+          question: "Colors?",
+          header: "Colors",
+          multiSelect,
+          allowOther: true,
+          options: [
+            { id: "combined", label: "Red, Blue" },
+            { id: "red", label: "Red" },
+            { id: "blue", label: "Blue" },
+            { id: "duplicate", label: "Red" },
+          ],
+        },
+        true,
+      );
+      card.checkAt(3);
+      if (multiSelect) {
+        card.checkAt(2);
+        card.type("Red, Blue");
+      }
+      card.submit();
+      expect(card.submittedInput()?.questionAnswers).toEqual({
+        Colors: {
+          selectedOptionIds: multiSelect ? ["duplicate", "blue"] : ["duplicate"],
+          ...(multiSelect ? { otherText: "Red, Blue" } : {}),
+        },
+      });
+    },
+  );
+
+  it("keeps a custom single-select answer equal to an option label as free text", () => {
+    const card = mountCard(
+      {
+        question: "Colors?",
+        header: "Colors",
+        multiSelect: false,
+        allowOther: true,
+        options: [{ id: "red", label: "Red" }],
+      },
+      true,
+    );
+    card.check("Red");
+    card.type("Red");
+    card.submit();
+    expect(card.submittedInput()?.questionAnswers).toEqual({
+      Colors: {
+        selectedOptionIds: [],
+        otherText: "Red",
+      },
+    });
+  });
+
   it("keeps checked options when the other answer is typed afterwards (multi-select)", () => {
     const card = mountCard(multiSelectQuestion);
 
