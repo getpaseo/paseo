@@ -17,6 +17,11 @@ import {
   type SharedKey,
 } from "./crypto.js";
 import { arrayBufferToBase64, base64ToArrayBuffer } from "./base64.js";
+import {
+  decodePlaintextFrame,
+  encodePlaintextFrame,
+  PLAINTEXT_FRAME_HEADER_BYTES,
+} from "./plaintext-frame.js";
 
 export interface Transport {
   send(data: string | ArrayBuffer): void | Promise<void>;
@@ -51,6 +56,12 @@ interface EncryptedChannelOptions {
    */
   daemonKeyPair?: KeyPair;
   binaryCiphertext?: boolean;
+  /**
+   * Both peers frame plaintext with a kind header (see `plaintext-frame.ts`),
+   * deflate large text, and send every ciphertext as a binary frame. Only
+   * negotiated together with `binaryCiphertext`.
+   */
+  deflatePayloads?: boolean;
 }
 
 interface E2EEHelloMessage {
@@ -66,17 +77,23 @@ interface E2EEReadyMessage {
 
 interface E2EECapabilities {
   binaryCiphertext?: boolean;
+  deflatePayloads?: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isOptionalBoolean(value: unknown): boolean {
+  return value === undefined || typeof value === "boolean";
+}
+
 function isE2EECapabilities(value: unknown): value is E2EECapabilities {
   return (
     value === undefined ||
     (isRecord(value) &&
-      (value.binaryCiphertext === undefined || typeof value.binaryCiphertext === "boolean"))
+      isOptionalBoolean(value.binaryCiphertext) &&
+      isOptionalBoolean(value.deflatePayloads))
   );
 }
 
@@ -94,8 +111,30 @@ function isE2EEReadyMessage(value: unknown): value is E2EEReadyMessage {
   return isRecord(value) && value.type === "e2ee_ready" && isE2EECapabilities(value.capabilities);
 }
 
-function supportsBinaryCiphertext(message: E2EEHelloMessage | E2EEReadyMessage): boolean {
-  return message.capabilities?.binaryCiphertext === true;
+interface NegotiatedCapabilities {
+  binaryCiphertext: boolean;
+  deflatePayloads: boolean;
+}
+
+function negotiateCapabilities(
+  message: E2EEHelloMessage | E2EEReadyMessage,
+): NegotiatedCapabilities {
+  const binaryCiphertext = message.capabilities?.binaryCiphertext === true;
+  return {
+    binaryCiphertext,
+    deflatePayloads: binaryCiphertext && message.capabilities?.deflatePayloads === true,
+  };
+}
+
+function buildReadyMessage(negotiated: EncryptedChannelOptions): E2EEReadyMessage {
+  if (!negotiated.binaryCiphertext) return { type: "e2ee_ready" };
+  return {
+    type: "e2ee_ready",
+    capabilities: {
+      binaryCiphertext: true,
+      ...(negotiated.deflatePayloads ? { deflatePayloads: true } : {}),
+    },
+  };
 }
 
 function buildInvalidHelloError(rawText: string, parsed?: unknown): Error {
@@ -167,7 +206,7 @@ export async function createClientChannel(
   const hello: E2EEHelloMessage = {
     type: "e2ee_hello",
     key: ourPublicKeyB64,
-    capabilities: { binaryCiphertext: true },
+    capabilities: { binaryCiphertext: true, deflatePayloads: true },
   };
   const helloText = JSON.stringify(hello);
 
@@ -274,19 +313,12 @@ export async function createDaemonChannel(
         const clientPublicKey = importPublicKey(msg.key);
         const sharedKey = deriveSharedKey(daemonKeyPair.secretKey, clientPublicKey);
 
-        const binaryCiphertext = supportsBinaryCiphertext(msg);
-        await transport.send(
-          JSON.stringify({
-            type: "e2ee_ready",
-            ...(binaryCiphertext
-              ? { capabilities: { binaryCiphertext: true } satisfies E2EECapabilities }
-              : {}),
-          } satisfies E2EEReadyMessage),
-        );
+        const negotiated = negotiateCapabilities(msg);
+        await transport.send(JSON.stringify(buildReadyMessage(negotiated)));
 
         const channel = new EncryptedChannel(transport, sharedKey, events, {
           daemonKeyPair,
-          binaryCiphertext,
+          ...negotiated,
         });
         channel.setState("open");
         events.onopen?.();
@@ -362,7 +394,7 @@ export class EncryptedChannel {
         const text = decodeTransportText(message.data);
         const parsed: unknown = JSON.parse(text);
         if (isE2EEReadyMessage(parsed)) {
-          this.options.binaryCiphertext = supportsBinaryCiphertext(parsed);
+          Object.assign(this.options, negotiateCapabilities(parsed));
           this.state = "open";
           this.events.onopen?.();
           for (const cb of this.onOpenCallbacks) cb();
@@ -442,7 +474,11 @@ export class EncryptedChannel {
 
       if (ciphertext) {
         const plaintextBytes = decrypt(this.sharedKey, ciphertext.data);
-        const plaintext = decodePlaintext(plaintextBytes, ciphertext.isBinary);
+        // COMPAT(deflatePayloads): added in v0.13.0, remove unframed receives after
+        // 2027-04-22 once the supported peer floor negotiates deflatePayloads.
+        const plaintext = this.options.deflatePayloads
+          ? decodePlaintextFrame(plaintextBytes)
+          : decodePlaintext(plaintextBytes, ciphertext.isBinary);
         this.events.onmessage?.(plaintext);
       }
     } catch (error) {
@@ -472,6 +508,13 @@ export class EncryptedChannel {
       throw new Error("Channel not open");
     }
 
+    if (this.options.deflatePayloads) {
+      await this.transport.send(encrypt(this.sharedKey, encodePlaintextFrame(data)));
+      return;
+    }
+
+    // COMPAT(deflatePayloads): added in v0.13.0, remove unframed sends after
+    // 2027-04-22 once the supported peer floor negotiates deflatePayloads.
     const ciphertext = encrypt(this.sharedKey, data);
     if (this.options.binaryCiphertext && data instanceof ArrayBuffer) {
       await this.transport.send(ciphertext);
@@ -482,9 +525,16 @@ export class EncryptedChannel {
     await this.transport.send(arrayBufferToBase64(ciphertext));
   }
 
+  /**
+   * Wire bytes for `data`. With `deflatePayloads` this is an upper bound: text
+   * is only compressed when that makes the frame smaller.
+   */
   outboundWireByteLength(data: string | ArrayBuffer): number {
     const plaintextBytes = utf8ByteLength(data);
     const encryptedBytes = plaintextBytes + ENCRYPTED_PAYLOAD_OVERHEAD_BYTES;
+    if (this.options.deflatePayloads) {
+      return encryptedBytes + PLAINTEXT_FRAME_HEADER_BYTES;
+    }
     if (this.options.binaryCiphertext && data instanceof ArrayBuffer) {
       return encryptedBytes;
     }
@@ -509,14 +559,7 @@ export class EncryptedChannel {
   }
 
   private async sendReadyForRetry(): Promise<void> {
-    await this.transport.send(
-      JSON.stringify({
-        type: "e2ee_ready",
-        ...(this.options.binaryCiphertext
-          ? { capabilities: { binaryCiphertext: true } satisfies E2EECapabilities }
-          : {}),
-      } satisfies E2EEReadyMessage),
-    );
+    await this.transport.send(JSON.stringify(buildReadyMessage(this.options)));
   }
 
   private rejectKeyRotation(): void {

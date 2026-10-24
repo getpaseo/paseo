@@ -187,7 +187,7 @@ Enables remote access when the daemon is behind a firewall.
 - Client and daemon channels with identical API (`openClientSecureChannel`, `openDaemonSecureChannel`)
 - Pairing via QR code transfers the daemon's public key to the client
 - New homes keep relay disabled until pairing consent. `DaemonConfigStore` persists the desired state, while the relay runtime starts or stops the outbound transport live; pairing reads that current state instead of a startup snapshot.
-- Optional E2EE capability negotiation preserves application frame kind: text plaintext uses base64 ciphertext text frames, while binary plaintext uses raw ciphertext binary frames; mixed-version peers remain base64-only
+- Optional E2EE capabilities pick the wire format: with `binaryCiphertext` and `deflatePayloads` every ciphertext is a binary frame whose plaintext carries a kind byte and text of 1 KiB or more is DEFLATE-compressed; with `binaryCiphertext` only, the WebSocket opcode carries the kind and text stays base64; peers without either stay base64-only. See [SECURITY.md](../SECURITY.md#how-it-works)
 - Self-hosted relays opt into TLS with `daemon.relay.useTls` or `PASEO_RELAY_USE_TLS=true`; the public (client-facing) TLS setting can be overridden independently via `daemon.relay.publicUseTls` or `PASEO_RELAY_PUBLIC_USE_TLS`
 
 The production relay server lives in [getpaseo/paseo-relay](https://github.com/getpaseo/paseo-relay). It is a distributed Elixir service. The Cloudflare relay implementation in this monorepo is retained as legacy code and is not deployed.
