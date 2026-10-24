@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import { isSyntaxThemeId, type SyntaxThemeId } from "@getpaseo/highlight";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 import type { QueryClient } from "@tanstack/react-query";
@@ -55,17 +56,19 @@ export function defaultUiBaseFontSize(native: boolean): number {
   return native ? 15 : FONT_SIZE.base;
 }
 
-export const DEFAULT_UI_BASE_FONT_SIZE = defaultUiBaseFontSize(isNative);
+export const DEFAULT_UI_BASE_FONT_SIZE =
+  Platform.OS === "android" ? 13 : defaultUiBaseFontSize(isNative);
 export const MIN_UI_BASE_FONT_SIZE = 10;
 export const MAX_UI_BASE_FONT_SIZE = 21;
 export function defaultContentFontSize(native: boolean): number {
   return native ? 16 : FONT_SIZE.content;
 }
 
-export const DEFAULT_CONTENT_FONT_SIZE = defaultContentFontSize(isNative);
+export const DEFAULT_CONTENT_FONT_SIZE =
+  Platform.OS === "android" ? 13 : defaultContentFontSize(isNative);
 export const MIN_CONTENT_FONT_SIZE = 10;
 export const MAX_CONTENT_FONT_SIZE = 21;
-export const DEFAULT_CODE_FONT_SIZE = 12; // == FONT_SIZE.code
+export const DEFAULT_CODE_FONT_SIZE = Platform.OS === "android" ? 13 : 12;
 export const MIN_CODE_FONT_SIZE = 9;
 export const MAX_CODE_FONT_SIZE = 22; // line-height 1.5×22=33 stays safe
 export const MAX_FONT_FAMILY_LENGTH = 200;
@@ -83,9 +86,9 @@ export interface AppSettings {
   terminalScrollbackLines: number;
   uiFontFamily: string; // "" = platform default UI stack
   monoFontFamily: string; // "" = platform default mono stack
-  uiBaseFontSize: number; // clamped px, platform default 14 or 15
-  contentFontSize: number; // clamped px, platform default 15 or 16
-  codeFontSize: number; // clamped px, default 12
+  uiBaseFontSize: number; // clamped px, platform default 13, 14, or 15
+  contentFontSize: number; // clamped px, platform default 13, 15, or 16
+  codeFontSize: number; // clamped px, platform default 12 or 13
   /** Max width of chat and markdown content in px; null follows the current default. */
   contentMaxWidth: number | null;
   syntaxTheme: SyntaxThemeId; // default "one"
