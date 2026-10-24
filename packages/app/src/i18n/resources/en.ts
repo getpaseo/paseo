@@ -96,6 +96,7 @@ export const en = {
       home: "Home",
       groupByProject: "Group by project",
       groupByStatus: "Group by status",
+      groupByDay: "Group by activity day",
       modelGroupLabel: "Model",
       modelSearchKeywords: "switch model change model set model select model",
       thinkingGroupLabel: "Thinking",
@@ -1170,6 +1171,11 @@ export const en = {
       working: "Working",
       done: "Done",
     },
+    dayBucket: {
+      today: "Today",
+      yesterday: "Yesterday",
+      older: "Older",
+    },
     display: {
       showBackground: "Show background",
       trigger: "Display preferences",
@@ -1185,6 +1191,7 @@ export const en = {
         label: "Grouping",
         project: "Project",
         status: "Status",
+        day: "Activity day",
         labels: "Labels",
       },
       titleSource: {
