@@ -27,9 +27,9 @@ interface WriteToolInput {
 }
 
 interface FindToolInput {
-  pattern: string;
+  query: string;
+  grep_keywords: string[];
   path?: string;
-  limit?: number;
 }
 
 interface GrepToolInput {
@@ -229,9 +229,9 @@ const WriteToolInputSchema: z.ZodType<WriteToolInput> = z.object({
 });
 
 const FindToolInputSchema: z.ZodType<FindToolInput> = z.object({
-  pattern: z.string(),
+  query: z.string(),
+  grep_keywords: z.array(z.string()),
   path: z.string().optional(),
-  limit: z.number().optional(),
 });
 
 const GrepToolInputSchema: z.ZodType<GrepToolInput> = z.object({
@@ -526,9 +526,9 @@ const SIMPLE_TOOL_SCHEMAS: {
 function mapFindToolDetail(args: FindToolInput, result: OmpToolResult): ToolCallDetail {
   return {
     type: "search",
-    query: args.pattern,
+    query: args.query,
     toolName: "search",
-    content: typeof result === "string" ? result : undefined,
+    content: extractTextFromToolResult(result),
   };
 }
 
@@ -537,7 +537,7 @@ function mapGrepToolDetail(args: GrepToolInput, result: OmpToolResult): ToolCall
     type: "search",
     query: args.pattern,
     toolName: "grep",
-    content: typeof result === "string" ? result : undefined,
+    content: extractTextFromToolResult(result),
   };
 }
 
@@ -545,6 +545,6 @@ function mapLsToolDetail(args: LsToolInput, result: OmpToolResult): ToolCallDeta
   return {
     type: "search",
     query: args.path ?? "ls",
-    content: typeof result === "string" ? result : undefined,
+    content: extractTextFromToolResult(result),
   };
 }

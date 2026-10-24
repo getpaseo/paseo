@@ -397,7 +397,7 @@ function mapFindToolDetail(args: FindToolInput, result: PiToolResult): ToolCallD
     type: "search",
     query: args.pattern,
     toolName: "search",
-    content: typeof result === "string" ? result : undefined,
+    content: extractTextFromToolResult(result),
   };
 }
 
@@ -406,7 +406,7 @@ function mapGrepToolDetail(args: GrepToolInput, result: PiToolResult): ToolCallD
     type: "search",
     query: args.pattern,
     toolName: "grep",
-    content: typeof result === "string" ? result : undefined,
+    content: extractTextFromToolResult(result),
   };
 }
 
@@ -414,6 +414,6 @@ function mapLsToolDetail(args: LsToolInput, result: PiToolResult): ToolCallDetai
   return {
     type: "search",
     query: args.path ?? "ls",
-    content: typeof result === "string" ? result : undefined,
+    content: extractTextFromToolResult(result),
   };
 }
