@@ -567,6 +567,42 @@ export default function contribute(client) {
     expect(clientBundle).toContain("__async");
   });
 
+  it("minifies the client bundle after Hermes interop getters are eager", async () => {
+    const entries = await createSplitPlugin();
+    await writeFile(
+      entries.client,
+      `import { useState } from "react";
+const label = "\\u2013";
+export default function contribute(client) {
+  void useState;
+  void label;
+  client.addCommandCenterItem({ id: "open", title: "Open", icon: "Scan", context: "global", onSelect() {} });
+  return () => undefined;
+}`,
+    );
+    await writeFile(
+      entries.server,
+      `import { z } from "zod";
+export default function contribute() {
+  void z.object({});
+  return () => undefined;
+}`,
+    );
+
+    const { clientBundle, serverBundle } = await compilePlugin(entries);
+    if (clientBundle === null || serverBundle === null) {
+      throw new Error("compilePlugin returned no bundle");
+    }
+
+    expect(clientBundle).not.toContain("get: () => from[key]");
+    expect(clientBundle).not.toContain("get:()=>from[key]");
+    expect(clientBundle).toContain("value:from[key]");
+    expect(clientBundle.split("").every((char) => char.charCodeAt(0) <= 0x7f)).toBe(true);
+    expect(serverBundle).toContain("value: from[key]");
+    expect(serverBundle).not.toContain("value:from[key]");
+    expect(clientBundle.split("\n").length).toBeLessThan(serverBundle.split("\n").length);
+  });
+
   it("rejects node imports from the client entry", async () => {
     const entries = await createSplitPlugin();
     await writeFile(
