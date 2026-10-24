@@ -2108,6 +2108,15 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private handleProcessExit(error: string): void {
+    for (const [toolCallId, toolCall] of this.activeToolCalls) {
+      this.handleToolExecutionEnd({
+        type: "tool_execution_end",
+        toolCallId,
+        toolName: toolCall.toolName,
+        isError: true,
+        result: { content: [{ type: "text", text: error }] },
+      });
+    }
     this.rejectAllExtensionResults(new Error(error));
     this.interruptingTurn = null;
     if (!this.activeTurnId && !this.activeTurnStarted) {
