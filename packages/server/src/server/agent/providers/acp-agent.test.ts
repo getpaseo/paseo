@@ -656,6 +656,86 @@ describe("ACPAgentSession terminal tools", () => {
     }
   });
 
+  // cmd.exe re-parses the whole command line with its own tokenizer, so Node's
+  // CommandLineToArgvW-style quoting of the argv is wrong for this one target: it
+  // escapes embedded double quotes as \", which cmd.exe passes through as text
+  // instead of removing them (#5947, #4482).
+  test("hands the Windows command string to cmd.exe verbatim so its quotes survive", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", {
+      value: "win32",
+      configurable: true,
+    });
+    try {
+      const child = createTerminalChildStub();
+      const spawn = vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+      const session = createSession();
+
+      await session.createTerminal({
+        sessionId: "session-1",
+        command: 'node -e "console.log(1+1)"',
+        cwd: "C:\\repo",
+      });
+
+      expect(spawn).toHaveBeenCalledWith(
+        "cmd.exe",
+        ["/c", 'node -e "console.log(1+1)"'],
+        expect.objectContaining({ windowsVerbatimArguments: true }),
+      );
+    } finally {
+      Object.defineProperty(process, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+    }
+  });
+
+  test("does not ask for verbatim arguments when the command is an explicit argv", async () => {
+    const child = createTerminalChildStub();
+    const spawn = vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+    const session = createSession();
+
+    await session.createTerminal({
+      sessionId: "session-1",
+      command: "node",
+      args: ["-e", "console.log(1+1)"],
+      cwd: "/repo",
+    });
+
+    // An argv is parsed by the target itself, so Node's MSVCRT quoting is the
+    // correct one there; only a shell command string needs the cmd.exe path.
+    expect(spawn).toHaveBeenCalledWith(
+      "node",
+      ["-e", "console.log(1+1)"],
+      expect.not.objectContaining({ windowsVerbatimArguments: true }),
+    );
+  });
+
+  // End-to-end on the host that has the problem: the mocked tests above pin the
+  // spawn option, this one runs the command through cmd.exe for real.
+  test.runIf(process.platform === "win32")(
+    "runs a quoted Windows command string with its quotes intact",
+    async () => {
+      const session = createSession();
+      const terminal = await session.createTerminal({
+        sessionId: "session-1",
+        command: 'node -e "console.log(6*7)"',
+        cwd: process.cwd(),
+      });
+
+      await session.waitForTerminalExit({
+        sessionId: "session-1",
+        terminalId: terminal.terminalId,
+      });
+      const { output } = await session.terminalOutput({
+        sessionId: "session-1",
+        terminalId: terminal.terminalId,
+      });
+
+      expect(output.trim()).toBe("42");
+    },
+  );
+
   test("preserves explicit terminal argv", async () => {
     const child = createTerminalChildStub();
     const spawn = vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
