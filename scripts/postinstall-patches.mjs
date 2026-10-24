@@ -19,6 +19,10 @@ const patchedPackages = [
     patchPrefix: "react-native-enriched-markdown+",
     cwd: "packages/app",
   },
+  {
+    nodeModulesPath: "node_modules/react-native-uitextview",
+    patchPrefix: "react-native-uitextview+",
+  },
   // Remove after react-native-unistyles ships
   // https://github.com/jpudysz/react-native-unistyles/pull/1203.
   {
