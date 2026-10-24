@@ -1,4 +1,4 @@
-import { fork } from "node:child_process";
+import { fork, type ForkOptions } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
@@ -30,6 +30,9 @@ const DEFAULT_IDLE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_LOCAL_SAMPLE_RATE = 16000;
 const STDERR_TAIL_MAX_CHARS = 8000;
 const USER_ERROR_STDERR_MAX_CHARS = 1000;
+
+// fork() forwards its options to spawn(), but @types/node omits windowsHide from ForkOptions.
+type ForkOptionsWithWindowsHide = ForkOptions & { windowsHide: boolean };
 
 type LocalSpeechWorkerRequestInput = LocalSpeechWorkerRequest extends infer Request
   ? Request extends LocalSpeechWorkerRequest
@@ -94,12 +97,14 @@ function resolveWorkerExecArgv(): string[] {
 function forkLocalSpeechWorker(): LocalSpeechWorkerProcess {
   const env = { ...process.env };
   applySherpaLoaderEnv(env);
-  return fork(fileURLToPath(resolveWorkerUrl()), [], {
+  const options = {
     env,
     execArgv: resolveWorkerExecArgv(),
     serialization: "advanced",
     stdio: ["ignore", "ignore", "pipe", "ipc"],
-  }) as LocalSpeechWorkerProcess;
+    windowsHide: true,
+  } satisfies ForkOptionsWithWindowsHide;
+  return fork(fileURLToPath(resolveWorkerUrl()), [], options) as LocalSpeechWorkerProcess;
 }
 
 function isResponse(
