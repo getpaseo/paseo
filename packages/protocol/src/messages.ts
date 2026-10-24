@@ -3740,6 +3740,7 @@ export const ServerInfoStatusPayloadSchema = z
         providerSubagents: z.boolean().optional(),
         // COMPAT(projectedSubagentTimeline): added after v0.8.0, remove gates after 2027-03-14; retain wire field.
         projectedSubagentTimeline: z.boolean().optional(),
+        agentTurnTiming: z.boolean().optional(),
         // COMPAT(providerSubagentNesting): added in v0.7, remove gate after 2027-03-04.
         providerSubagentNesting: z.boolean().optional(),
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
@@ -4686,6 +4687,16 @@ const AgentTimelineSeqRangeSchema = z.object({
   endSeq: z.number().int().nonnegative(),
 });
 
+export const AgentTurnTimingSchema = z.object({
+  turnId: z.string(),
+  startedAt: z.string(),
+  completedAt: z.string(),
+  status: z.enum(["turn_completed", "turn_failed", "turn_canceled"]),
+  messageIds: z.array(z.string()),
+});
+
+export type AgentTurnTiming = z.infer<typeof AgentTurnTimingSchema>;
+
 export const AgentTimelineEntryPayloadSchema = z.object({
   provider: AgentProviderSchema,
   item: AgentTimelineItemPayloadSchema,
@@ -4720,6 +4731,7 @@ export const FetchAgentTimelineResponseMessageSchema = z.object({
     hasNewer: z.boolean(),
     mergeWindow: z.boolean().optional(),
     entries: z.array(AgentTimelineEntryPayloadSchema),
+    turnTimings: z.array(AgentTurnTimingSchema).optional(),
     error: z.string().nullable(),
   }),
 });

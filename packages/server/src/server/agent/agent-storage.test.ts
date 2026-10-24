@@ -1,4 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
+import type { AgentTurnTiming } from "@getpaseo/protocol/messages";
 import os from "node:os";
 import path from "node:path";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
@@ -193,6 +194,68 @@ describe("AgentStorage", () => {
     const [persisted] = await reloaded.list();
     expect(persisted.cwd).toBe("/tmp/project");
     expect(persisted.config?.providerOptions).toEqual({ allowedTools: ["Read"] });
+  });
+
+  test("turn timings survive snapshot writes and reload, and reads include pending writes", async () => {
+    const agent = createManagedAgent({ id: "timed-agent" });
+    await storage.applySnapshot(agent);
+    const timing = {
+      turnId: "automatic-turn",
+      startedAt: "2026-10-15T08:00:00.000Z",
+      completedAt: "2026-10-15T08:00:12.000Z",
+      status: "turn_completed",
+      messageIds: ["provider-reply"],
+    } satisfies AgentTurnTiming;
+    const write = storage.recordTurnTiming({ agentId: agent.id, timing });
+    const snapshot = storage.applySnapshot(agent);
+    expect(
+      await storage.getTurnTimings({
+        agentId: agent.id,
+        turnIds: new Set([timing.turnId]),
+        messageIds: new Set(),
+      }),
+    ).toEqual([timing]);
+    await Promise.all([write, snapshot]);
+    const stale = await storage.get(agent.id);
+    expect(stale).not.toBeNull();
+    await storage.upsert({ ...stale!, turnTimings: [] });
+    await storage.recordTurnTiming({
+      agentId: agent.id,
+      timing: {
+        ...timing,
+        completedAt: "2026-10-15T09:00:00.000Z",
+      },
+    });
+    const reloaded = new AgentStorage(storagePath, logger);
+    expect(
+      await reloaded.getTurnTimings({
+        agentId: agent.id,
+        turnIds: new Set(),
+        messageIds: new Set(["provider-reply"]),
+      }),
+    ).toEqual([timing]);
+    expect(
+      await reloaded.getTurnTimings({
+        agentId: agent.id,
+        turnIds: new Set(["another-page"]),
+        messageIds: new Set(),
+      }),
+    ).toEqual([]);
+    expect(
+      await reloaded.getTurnTimings({
+        agentId: agent.id,
+        turnIds: new Set(),
+        messageIds: new Set(),
+      }),
+    ).toEqual([]);
+    await reloaded.remove(agent.id);
+    expect(
+      await reloaded.getTurnTimings({
+        agentId: agent.id,
+        turnIds: new Set([timing.turnId]),
+        messageIds: new Set(),
+      }),
+    ).toEqual([]);
   });
 
   test("applySnapshot stores and reloads featureValues when present", async () => {

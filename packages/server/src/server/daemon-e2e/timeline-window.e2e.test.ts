@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
+import type { AgentTurnTiming } from "@getpaseo/protocol/messages";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -56,6 +57,70 @@ describe("daemon E2E - timeline window", () => {
     vi.restoreAllMocks();
     await ctx.cleanup();
   }, 60_000);
+
+  test("returns only the completed turn timings referenced by each projected page", async () => {
+    const cwd = tmpCwd();
+    try {
+      const agent = await ctx.client.createAgent({ provider: "codex", cwd, title: "Turn timing" });
+      expect(ctx.client.getLastServerInfoMessage()?.features?.agentTurnTiming).toBe(true);
+      await ctx.client.sendMessage(agent.id, "Respond with exactly: FIRST");
+      expect((await ctx.client.waitForFinish(agent.id, 5_000)).status).toBe("idle");
+      await ctx.client.sendMessage(agent.id, "Respond with exactly: SECOND");
+      expect((await ctx.client.waitForFinish(agent.id, 5_000)).status).toBe("idle");
+      const tail = await ctx.client.fetchAgentTimeline(agent.id, { direction: "tail", limit: 1 });
+      expect(tail.turnTimings).toHaveLength(1);
+      expect(tail.turnTimings![0]).toMatchObject({
+        turnId: tail.entries[0]!.turnId,
+        status: "turn_completed",
+      });
+      const latest = tail.turnTimings![0]!;
+      expect(Date.parse(latest.completedAt)).toBeGreaterThanOrEqual(Date.parse(latest.startedAt));
+      const older = await ctx.client.fetchAgentTimeline(agent.id, {
+        direction: "before",
+        cursor: tail.startCursor!,
+        limit: 0,
+      });
+      expect(older.turnTimings!.some((timing) => timing.turnId !== latest.turnId)).toBe(true);
+      const after = await ctx.client.fetchAgentTimeline(agent.id, {
+        direction: "after",
+        cursor: tail.endCursor!,
+        limit: 1,
+      });
+      expect(after.entries).toEqual([]);
+      expect(after.turnTimings).toEqual([]);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("associates a rehydrated assistant message with stored timing without a runtime turn ID", async () => {
+    const cwd = tmpCwd();
+    try {
+      const agent = await ctx.client.createAgent({
+        provider: "codex",
+        cwd,
+        title: "Rehydrated timing",
+      });
+      const timing = {
+        turnId: "previous-runtime-turn",
+        startedAt: "2026-10-15T08:00:00.000Z",
+        completedAt: "2026-10-15T08:00:12.000Z",
+        status: "turn_completed",
+        messageIds: ["provider-reply"],
+      } satisfies AgentTurnTiming;
+      await ctx.daemon.daemon.agentStorage.recordTurnTiming({ agentId: agent.id, timing });
+      await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+        type: "assistant_message",
+        text: "rehydrated reply",
+        messageId: "provider-reply",
+      });
+      const page = await ctx.client.fetchAgentTimeline(agent.id, { limit: 1 });
+      expect(page.entries[0]!.turnId).toBeUndefined();
+      expect(page.turnTimings).toEqual([timing]);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 
   test("canonical tail limit returns one finalized committed assistant row at the window boundary", async () => {
     const cwd = tmpCwd();
