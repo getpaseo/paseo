@@ -18,6 +18,7 @@ import type { WorkspaceServiceSummary } from "./service-summary";
 export type MetaRowItem =
   | { kind: "branch"; name: string }
   | { kind: "project"; name: string }
+  | { kind: "repository"; name: string }
   | { kind: "host" }
   | { kind: "changeRequest"; hint: PrHint }
   | { kind: "checks"; summary: CheckSummary; label: boolean }
@@ -37,6 +38,7 @@ export type MetaRowItem =
 export function selectMetaRowItems(input: {
   currentBranch: string | null;
   projectName: string | null;
+  repositoryName: string | null;
   hasHostBadge: boolean;
   prHint: PrHint | null;
   serviceSummary: WorkspaceServiceSummary | null;
@@ -47,6 +49,7 @@ export function selectMetaRowItems(input: {
   const {
     currentBranch,
     projectName,
+    repositoryName,
     hasHostBadge,
     prHint,
     serviceSummary,
@@ -61,6 +64,9 @@ export function selectMetaRowItems(input: {
   }
   if (projectName && visible.project) {
     items.push({ kind: "project", name: projectName });
+  }
+  if (repositoryName && visible.repository) {
+    items.push({ kind: "repository", name: repositoryName });
   }
   if (hasHostBadge) {
     items.push({ kind: "host" });

@@ -29,6 +29,7 @@ function makeWorkspace(
     workspaceDirectoryLabel: "",
     title: null,
     currentBranch: null,
+    repositoryName: null,
     statusBucket,
     statusEnteredAt: null,
     archivingAt: null,

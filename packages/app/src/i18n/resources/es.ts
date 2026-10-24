@@ -1224,6 +1224,7 @@ export const es: TranslationResources = {
         label: "Mostrar",
         branch: "Rama",
         project: "Proyecto",
+        repository: "Repositorio",
         host: "Host",
         changeRequest: "Pull request",
         checks: "Comprobaciones",

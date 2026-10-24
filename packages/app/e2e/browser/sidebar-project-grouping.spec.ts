@@ -1,6 +1,14 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { expect } from "@playwright/test";
 import { test as base } from "../support/fixtures";
+import { gotoAppShell } from "../support/helpers/app";
+import {
+  closeSidebarDisplayPreferences,
+  openMobileAgentSidebar,
+  openSidebarDisplayPage,
+  selectSidebarStatusGrouping,
+} from "../support/helpers/sidebar";
 import {
   beginWorkspaceFromProject,
   createWorkspaceWithoutAgent,
@@ -21,7 +29,11 @@ import {
   type IsolatedHostDaemon,
   startIsolatedHostDaemon,
 } from "../support/helpers/isolated-host-daemon";
-import { connectSeedClient, type SeedDaemonClient } from "../support/helpers/seed-client";
+import {
+  connectSeedClient,
+  seedWorkspace,
+  type SeedDaemonClient,
+} from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
 import { createTempGitRepo } from "../support/helpers/workspace";
 
@@ -333,6 +345,83 @@ async function openScenario(
 
 test.describe("Sidebar project grouping", () => {
   test.describe.configure({ timeout: 120_000 });
+
+  test("shows optional repository context independently of project names and grouping", async ({
+    page,
+  }, info) => {
+    const repositoryName = "qa/sidebar-repository-with-a-long-name";
+    const git = await seedWorkspace({
+      repoPrefix: "unrelated-checkout-",
+      title: "Investigate sidebar layout",
+      repo: { originUrl: `https://git.example.test/${repositoryName}.git` },
+    });
+    const directory = await seedWorkspace({
+      repoPrefix: "plain-directory-",
+      title: "Non-Git workspace",
+      git: false,
+    });
+    const gitRow = page.getByTestId(`sidebar-workspace-row-${getServerId()}:${git.workspaceId}`);
+    const directoryRow = page.getByTestId(
+      `sidebar-workspace-row-${getServerId()}:${directory.workspaceId}`,
+    );
+    const repository = gitRow.getByTestId("sidebar-workspace-repository");
+
+    try {
+      await git.client.renameProject(git.projectId, "Custom project title");
+      await gotoAppShell(page);
+      await expect(gitRow).toBeVisible({ timeout: 30_000 });
+      await expect(repository).toHaveCount(0);
+      await openSidebarDisplayPage(page, "sidebar-display-show");
+      await page.getByTestId("sidebar-row-item-branch").click();
+      await closeSidebarDisplayPreferences(page);
+      await expect(gitRow.getByTestId("sidebar-workspace-branch")).toHaveText("main");
+      await page.screenshot({ path: info.outputPath("repository-disabled.png") });
+
+      await openSidebarDisplayPage(page, "sidebar-display-show");
+      await page.getByTestId("sidebar-row-item-repository").click();
+      await page.screenshot({ path: info.outputPath("repository-setting.png") });
+      await closeSidebarDisplayPreferences(page);
+      await expect(repository).toHaveText(repositoryName);
+      await expect(gitRow.getByTestId("sidebar-workspace-branch")).toHaveText("main");
+      await expect(directoryRow.getByTestId("sidebar-workspace-repository")).toHaveCount(0);
+      await expect(gitRow).toContainText("Investigate sidebar layout");
+      await page.screenshot({ path: info.outputPath("repository-grouped.png") });
+
+      await selectSidebarStatusGrouping(page);
+      await closeSidebarDisplayPreferences(page);
+      await expect(repository).toHaveText(repositoryName);
+      await page.reload();
+      await expect(repository).toHaveText(repositoryName, { timeout: 30_000 });
+
+      const bounds = await repository.boundingBox();
+      const rowBounds = await gitRow.boundingBox();
+      expect(bounds).not.toBeNull();
+      expect(rowBounds).not.toBeNull();
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(rowBounds!.x + rowBounds!.width);
+      await expect(repository.locator("svg")).toHaveAttribute("width", "12");
+      expect(
+        await repository.evaluate((element) => {
+          const label = element.lastElementChild;
+          return label !== null && label.scrollWidth > label.clientWidth;
+        }),
+      ).toBe(true);
+      await page.screenshot({ path: info.outputPath("repository-status.png") });
+
+      await page.setViewportSize({ width: 390, height: 844 });
+      await openMobileAgentSidebar(page);
+      await expect(repository).toBeInViewport();
+      await page.screenshot({ path: info.outputPath("repository-compact-web.png") });
+
+      await openSidebarDisplayPage(page, "sidebar-display-show");
+      await page.getByTestId("sidebar-row-item-repository").click();
+      await closeSidebarDisplayPreferences(page);
+      await expect(repository).toHaveCount(0);
+      await expect(gitRow.getByTestId("sidebar-workspace-branch")).toHaveText("main");
+    } finally {
+      await directory.cleanup();
+      await git.cleanup();
+    }
+  });
 
   test("groups projects with the same Git remote across hosts", async ({
     page,

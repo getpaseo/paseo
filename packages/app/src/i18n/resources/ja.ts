@@ -1201,6 +1201,7 @@ export const ja: TranslationResources = {
         label: "表示項目",
         branch: "ブランチ",
         project: "プロジェクト",
+        repository: "リポジトリ",
         host: "ホスト",
         changeRequest: "プルリクエスト",
         checks: "チェック",
