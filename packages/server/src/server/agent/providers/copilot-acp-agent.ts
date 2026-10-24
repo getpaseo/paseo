@@ -14,6 +14,7 @@ import {
   type ACPProviderModeWriteResult,
   type ACPProviderModeWriterContext,
   type SessionStateResponse,
+  resolveCatalogModelsBySwitchingModels,
 } from "./acp-agent.js";
 import {
   formatProviderDiagnostic,
@@ -86,6 +87,8 @@ export class CopilotACPAgentClient extends ACPAgentClient {
       runtimeSettings: options.runtimeSettings,
       defaultCommand: ["copilot", "--acp"],
       defaultModes: COPILOT_MODES,
+      // Copilot reports reasoning_effort only for the selected model, and each model has its own levels.
+      catalogModelResolver: resolveCatalogModelsBySwitchingModels,
       sessionResponseTransformer: transformCopilotSessionResponse,
       configOptionsTransformer: transformCopilotConfigOptions,
       configFeatureOptions: [COPILOT_AGENT_FEATURE_OPTION],
