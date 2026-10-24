@@ -49,7 +49,7 @@ describe("terminal pane focus claim", () => {
     ]);
   });
 
-  it("sends passive refits as owner-only updates and lets interaction reclaim the same size", () => {
+  it("claims focused-pane refits so the PTY follows the visible pane", () => {
     const readiness = {
       isWorkspaceFocused: true,
       isPaneFocused: true,
@@ -85,9 +85,29 @@ describe("terminal pane focus claim", () => {
       readiness,
     });
 
-    expect(passiveRefit).toEqual({ shouldSend: false, intent: "update" });
+    expect(passiveRefit).toEqual({ shouldSend: true, intent: "claim" });
     expect(ordinarySameSizeMeasurement).toEqual({ shouldSend: true, intent: "claim" });
     expect(explicitReclaim.shouldSend).toBe(true);
+  });
+
+  it("heals stale ownership when a focused pane refits after another client claimed", () => {
+    const result = resolveTerminalResizeClaim({
+      size: { rows: 42, cols: 120 },
+      previousSentSize: { rows: 42, cols: 120 },
+      shouldClaim: false,
+      forceClaim: false,
+      supportsTerminalSizeOwnership: true,
+      readiness: {
+        isWorkspaceFocused: true,
+        isPaneFocused: true,
+        isAppActivelyVisible: true,
+        isClientReady: true,
+        isConnected: true,
+        isRendererReady: true,
+      },
+    });
+
+    expect(result).toEqual({ shouldSend: true, intent: "claim" });
   });
 
   it("lets the current owner update after pane focus moves without transferring ownership", () => {
@@ -110,7 +130,27 @@ describe("terminal pane focus claim", () => {
     expect(result).toEqual({ shouldSend: true, intent: "update" });
   });
 
-  it("keeps passive refits local against legacy daemons", () => {
+  it("keeps unfocused-pane refits local against legacy daemons", () => {
+    const result = resolveTerminalResizeClaim({
+      size: { rows: 20, cols: 100 },
+      previousSentSize: { rows: 40, cols: 100 },
+      shouldClaim: false,
+      forceClaim: false,
+      supportsTerminalSizeOwnership: false,
+      readiness: {
+        isWorkspaceFocused: true,
+        isPaneFocused: false,
+        isAppActivelyVisible: true,
+        isClientReady: true,
+        isConnected: true,
+        isRendererReady: true,
+      },
+    });
+
+    expect(result).toEqual({ shouldSend: false, intent: "update" });
+  });
+
+  it("sends focused-pane refits as claims against legacy daemons", () => {
     const result = resolveTerminalResizeClaim({
       size: { rows: 20, cols: 100 },
       previousSentSize: { rows: 40, cols: 100 },
@@ -127,7 +167,7 @@ describe("terminal pane focus claim", () => {
       },
     });
 
-    expect(result).toEqual({ shouldSend: false, intent: "update" });
+    expect(result).toEqual({ shouldSend: true, intent: "claim" });
   });
 
   it("waits for both the client and renderer before requesting a claim", () => {
