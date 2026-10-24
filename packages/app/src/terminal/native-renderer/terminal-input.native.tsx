@@ -43,19 +43,6 @@ interface TerminalInputProps {
   style?: StyleProp<TextStyle>;
 }
 
-// Scripts produced by CJK IMEs when they commit or update a candidate. The
-// native input does not expose marked-text ranges, so the committed script is
-// the only reliable distinction between composition and ordinary autocorrect.
-const CJK_COMPOSITION_PATTERN =
-  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Bopomofo}]/u;
-
-// Only ASCII travels the keypress path. An IME script reports the jamo it is
-// composing, which the text-change diff below immediately contradicts, so
-// forwarding both would put two conflicting characters on the wire.
-function isPrintableKey(key: string): boolean {
-  return key.length === 1 && key >= " " && key <= "~";
-}
-
 function getCommonPrefixLength(left: string[], right: string[]): number {
   const limit = Math.min(left.length, right.length);
   let index = 0;
@@ -66,30 +53,30 @@ function getCommonPrefixLength(left: string[], right: string[]): number {
 }
 
 /**
- * What the terminal receives for an edit that is not a plain append.
+ * The terminal edit for a hidden input whose buffer changed.
  *
- * CJK IMEs rewrite their composing suffix in place. Korean updates one
- * syllable at a time (`ㅎ` -> `하` -> `한`), while Chinese and Japanese replace
- * a multi-character reading (`nihao` -> `你好`, `にほんご` -> `日本語`). None of
- * those are appends, so rub out the rewritten suffix and send the replacement.
+ * Android keyboards rewrite the buffer in place instead of appending to it: a
+ * tapped Gboard suggestion replaces the word, a swipe across Backspace drops a
+ * whole word in one edit, space-bar cursor control inserts mid-line, and CJK
+ * IMEs rewrite the composing syllable on every jamo (`ㅎ` -> `하` -> `한`).
+ * Diff the buffer instead of guessing which of those happened: rub out what it
+ * dropped, then send what it gained. A plain append rubs out nothing, so
+ * ordinary typing is one write.
  *
- * The inserted suffix must contain a CJK script. Ordinary autocorrect and
- * suggestion replacements stay swallowed: the hidden input can edit text the
- * terminal has already committed, and the terminal cannot take it back.
+ * The diff is also the recovery path. The anticipated buffer drifts whenever
+ * the keyboard edits text it never reported, and measuring the next change
+ * against whatever the buffer actually holds absorbs that drift.
+ *
+ * Rubouts stay bounded by the buffer, and the buffer resets whenever the
+ * terminal takes the line (submit, paste, blur, refocus), so an edit can only
+ * take back characters this buffer put on the wire.
  */
-function resolveCompositionEdit(previousText: string, text: string): string {
+function resolveBufferEdit(previousText: string, text: string): string {
   const previousCharacters = Array.from(previousText);
   const nextCharacters = Array.from(text);
   const commonPrefixLength = getCommonPrefixLength(previousCharacters, nextCharacters);
-  const removed = previousCharacters.slice(commonPrefixLength);
-  const inserted = nextCharacters.slice(commonPrefixLength).join("");
-  if (removed.length === 0 || inserted.length === 0) {
-    return "";
-  }
-  if (!CJK_COMPOSITION_PATTERN.test(inserted)) {
-    return "";
-  }
-  return `${"\x7f".repeat(removed.length)}${inserted}`;
+  const rubouts = previousCharacters.length - commonPrefixLength;
+  return `${"\x7f".repeat(rubouts)}${nextCharacters.slice(commonPrefixLength).join("")}`;
 }
 
 export function resolveTerminalInputFocusRequest(input: {
@@ -105,11 +92,6 @@ export function resolveTerminalInputFocusRequest(input: {
 export function createTerminalTextInputState(): TerminalTextInputState {
   let previousText = "";
   let submittedText: string | null = null;
-  // A swallowed replacement leaves the terminal holding text the buffer no
-  // longer describes. A composition rubout deletes from the terminal, so it
-  // would delete whatever is actually sitting there rather than the character
-  // the buffer thinks it is replacing. Stay off until the input state resets.
-  let replacementDesynced = false;
 
   return {
     receiveKeyPress(key: string): TerminalTextInputChange {
@@ -118,17 +100,20 @@ export function createTerminalTextInputState(): TerminalTextInputState {
         return { data: "", key: terminalKey, shouldClear: false };
       }
       if (key === "Backspace") {
+        // A soft-keyboard Backspace deletes one character from what the user
+        // can see, which is the terminal. Forward it whatever the buffer
+        // holds; the text change that follows rubs out anything else it took.
         previousText = Array.from(previousText).slice(0, -1).join("");
-        if (replacementDesynced) {
-          return { data: "", shouldClear: false };
-        }
         return { data: "\x7f", shouldClear: false };
       }
       if (key === "Enter" || key === "Return" || key === "return") {
         submittedText = previousText;
         return { data: "\r", shouldClear: true };
       }
-      if (isPrintableKey(key)) {
+      // Only ASCII travels the keypress path. An IME reports the jamo it is
+      // composing, which the text-change diff immediately contradicts, so
+      // forwarding both would put two conflicting characters on the wire.
+      if (key.length === 1 && key >= " " && key <= "~") {
         previousText += key;
         return { data: key, shouldClear: false };
       }
@@ -140,11 +125,14 @@ export function createTerminalTextInputState(): TerminalTextInputState {
         submittedText = null;
         if (text === lateSubmitText) {
           previousText = "";
-          replacementDesynced = false;
           return { data: "", shouldClear: false };
         }
       }
 
+      // Our own clear echoes back as an empty change, and `reset` has already
+      // emptied the buffer by then, so this only fires when the keyboard wiped
+      // text we still anticipate. Forget it rather than rub out a line the
+      // terminal may have moved on from.
       if (text.length === 0) {
         previousText = "";
         return { data: "", shouldClear: false };
@@ -152,32 +140,15 @@ export function createTerminalTextInputState(): TerminalTextInputState {
 
       if (text.includes("\n") || text.includes("\r")) {
         previousText = "";
-        replacementDesynced = false;
         return { data: "", shouldClear: true };
       }
 
-      if (!text.startsWith(previousText)) {
-        let compositionEdit = "";
-        if (!replacementDesynced) {
-          compositionEdit = resolveCompositionEdit(previousText, text);
-        }
-        if (compositionEdit === "") {
-          replacementDesynced = true;
-        }
-        previousText = text;
-        return { data: compositionEdit, shouldClear: false };
-      }
-
-      const appendedText = text.slice(previousText.length);
+      const edit = resolveBufferEdit(previousText, text);
       previousText = text;
-      return {
-        data: appendedText,
-        shouldClear: false,
-      };
+      return { data: edit, shouldClear: false };
     },
     reset(): void {
       previousText = "";
-      replacementDesynced = false;
     },
   };
 }
@@ -325,6 +296,8 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
         onBlur={handleBlur}
         onFocus={handleFocus}
         onKeyPress={handleKeyPress}
+        // The hitbox is a fixed 1x1 box, so nothing here ever needs re-measuring.
+        remeasureOnChange={false}
         showSoftInputOnFocus={true}
         spellCheck={false}
         style={inputStyle}
