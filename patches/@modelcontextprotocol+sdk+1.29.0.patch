@@ -1,0 +1,26 @@
+diff --git a/node_modules/@modelcontextprotocol/sdk/dist/cjs/types.js b/node_modules/@modelcontextprotocol/sdk/dist/cjs/types.js
+index e41c81c..196ac6c 100644
+--- a/node_modules/@modelcontextprotocol/sdk/dist/cjs/types.js
++++ b/node_modules/@modelcontextprotocol/sdk/dist/cjs/types.js
+@@ -32,7 +32,7 @@ exports.assertCompleteRequestResourceTemplate = assertCompleteRequestResourceTem
+ const z = __importStar(require("zod/v4"));
+ exports.LATEST_PROTOCOL_VERSION = '2025-11-25';
+ exports.DEFAULT_NEGOTIATED_PROTOCOL_VERSION = '2025-03-26';
+-exports.SUPPORTED_PROTOCOL_VERSIONS = [exports.LATEST_PROTOCOL_VERSION, '2025-06-18', '2025-03-26', '2024-11-05', '2024-10-07'];
++exports.SUPPORTED_PROTOCOL_VERSIONS = [exports.LATEST_PROTOCOL_VERSION, '2026-07-28', '2025-06-18', '2025-03-26', '2024-11-05', '2024-10-07'];
+ exports.RELATED_TASK_META_KEY = 'io.modelcontextprotocol/related-task';
+ /* JSON-RPC types */
+ exports.JSONRPC_VERSION = '2.0';
+diff --git a/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js b/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
+index 866da3e..4eba69d 100644
+--- a/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
++++ b/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
+@@ -1,7 +1,7 @@
+ import * as z from 'zod/v4';
+ export const LATEST_PROTOCOL_VERSION = '2025-11-25';
+ export const DEFAULT_NEGOTIATED_PROTOCOL_VERSION = '2025-03-26';
+-export const SUPPORTED_PROTOCOL_VERSIONS = [LATEST_PROTOCOL_VERSION, '2025-06-18', '2025-03-26', '2024-11-05', '2024-10-07'];
++export const SUPPORTED_PROTOCOL_VERSIONS = [LATEST_PROTOCOL_VERSION, '2026-07-28', '2025-06-18', '2025-03-26', '2024-11-05', '2024-10-07'];
+ export const RELATED_TASK_META_KEY = 'io.modelcontextprotocol/related-task';
+ /* JSON-RPC types */
+ export const JSONRPC_VERSION = '2.0';
