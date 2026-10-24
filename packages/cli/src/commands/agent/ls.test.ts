@@ -139,8 +139,8 @@ describe("runLsCommand", () => {
     expect(
       result.data.map(({ name, archived, archivedAt }) => ({ name, archived, archivedAt })),
     ).toEqual([
-      { name: "agent 3", archived: false, archivedAt: null },
       { name: "agent 2", archived: true, archivedAt: "2026-10-10T00:00:00.000Z" },
+      { name: "agent 3", archived: false, archivedAt: null },
       { name: "agent 1", archived: false, archivedAt: null },
     ]);
 
@@ -150,8 +150,8 @@ describe("runLsCommand", () => {
     if (!archivedColumn || typeof archivedColumn.field !== "function") {
       throw new Error("Expected the ARCHIVED column to have a display accessor");
     }
-    expect(result.data[1]!.status).toBe("idle");
-    expect(archivedColumn.field(result.data[1]!)).toBe("yes");
-    expect(archivedColumn.field(result.data[0]!)).toBe("-");
+    expect(result.data[0]!.status).toBe("idle");
+    expect(archivedColumn.field(result.data[0]!)).toBe("yes");
+    expect(archivedColumn.field(result.data[1]!)).toBe("-");
   });
 });
