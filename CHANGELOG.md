@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.13.0-beta.2 - 2026-10-23
+## 0.13.0 - 2026-10-24
 
 Foldable phone layouts, agents that delegate work to other machines, plugin file panels, and plugin translations.
 
@@ -23,7 +23,7 @@ paseo host add 'relay://...' --label laptop
 
 ### Improved
 
-- Changed sidebar workspaces to sort by Created, with Last prompt under Display → Sort; workspaces no longer drag to reorder ([#7635](https://github.com/getpaseo/paseo/pull/7635))
+- Changed sidebar workspaces to sort by Created, with Last prompt and Manual under Display → Sort ([#7635](https://github.com/getpaseo/paseo/pull/7635), [#7771](https://github.com/getpaseo/paseo/pull/7771))
 - Changed long project groups in the sidebar to show seven workspaces plus any that need attention or are working, with Show more for the rest ([#7635](https://github.com/getpaseo/paseo/pull/7635))
 - Changed Command Center agent and workspace results to show the same icons and status as tabs and the sidebar ([#7690](https://github.com/getpaseo/paseo/pull/7690))
 - Changed Manual metadata generation to use only the models you chose, without falling back to the defaults ([#7611](https://github.com/getpaseo/paseo/pull/7611))
@@ -32,6 +32,7 @@ paseo host add 'relay://...' --label laptop
 - Changed Explorer tabs on phones to keep full labels and scroll, with Close moved to the long-press menu ([#7589](https://github.com/getpaseo/paseo/pull/7589))
 - Changed relay connections to require the daemon password when the daemon has one; re-add relay hosts saved without it ([#7668](https://github.com/getpaseo/paseo/pull/7668) by [@nickmaglowsch](https://github.com/nickmaglowsch))
 - Kept the sidebar open on phones when you cancel Search, Import session or Add project ([#7693](https://github.com/getpaseo/paseo/pull/7693))
+- Updated pinned ACP agents to their latest releases ([#7781](https://github.com/getpaseo/paseo/pull/7781) by [@JunWeiUp](https://github.com/JunWeiUp), [@LouisDeconinck](https://github.com/LouisDeconinck))
 - Removed the legacy terminal renderer; iOS and Android always use the native terminal renderer ([#7639](https://github.com/getpaseo/paseo/pull/7639))
 - Changed usage rows to say whether a percentage is used or remaining, in the app's language ([#7376](https://github.com/getpaseo/paseo/pull/7376) by [@michaelmwu](https://github.com/michaelmwu))
 - Changed an agent's report and its finish notification to reach the parent agent as one message ([#7561](https://github.com/getpaseo/paseo/pull/7561))
@@ -48,10 +49,11 @@ paseo host add 'relay://...' --label laptop
 - Added translated plugin listings through `translations` in `paseo-plugin.json` and `OVERVIEW.zh-CN.md` ([#7373](https://github.com/getpaseo/paseo/pull/7373))
 - Added `Markdown` to `@getpaseo/plugin/client/ui` to render Markdown with Paseo's renderer ([#7579](https://github.com/getpaseo/paseo/pull/7579))
 - Added inline SVG and component icons to every plugin `icon` ([#7368](https://github.com/getpaseo/paseo/pull/7368))
-- Changed every plugin UI import to `@getpaseo/plugin/client/ui`; the previous entry point still works and is deprecated ([#7474](https://github.com/getpaseo/paseo/pull/7474))
+- Changed every plugin UI import to `@getpaseo/plugin/client/ui`; the previous entry point, including `useRevealedText`, still works and is deprecated ([#7474](https://github.com/getpaseo/paseo/pull/7474), [#7780](https://github.com/getpaseo/paseo/pull/7780) by [@luoph](https://github.com/luoph), [@RRD-dev](https://github.com/RRD-dev), [@mcowger](https://github.com/mcowger))
 - Deprecated the panel `context` and `agentId` props and `addWorkspacePanel`'s `context` field; use `params.agentId` and `addAgentPanel` ([#7685](https://github.com/getpaseo/paseo/pull/7685))
 - Changed turn-ended hooks to send an empty `timeline`; fetch recent history with `timeline.refetch` instead ([#7477](https://github.com/getpaseo/paseo/pull/7477))
 - Fixed plugin header buttons missing on phones and narrow windows; they now appear in the workspace ··· menu ([#7630](https://github.com/getpaseo/paseo/pull/7630))
+- Fixed reopened ACP plugin agents showing an empty chat ([#7717](https://github.com/getpaseo/paseo/pull/7717) by [@nistream](https://github.com/nistream))
 - Fixed notification timeline transformers failing to load with "invalid item type: notification" ([#7582](https://github.com/getpaseo/paseo/pull/7582) by [@Gavinchen92](https://github.com/Gavinchen92))
 
 ### Fixed
@@ -66,6 +68,11 @@ paseo host add 'relay://...' --label laptop
 - Fixed workspace diff stats and merged-PR auto-archive missing updates while no app was showing the workspace ([#7681](https://github.com/getpaseo/paseo/pull/7681))
 - Fixed the `/` and `@` picker on iPhone covering the composer and hiding its best match behind the keyboard ([#7679](https://github.com/getpaseo/paseo/pull/7679) by [@masz77](https://github.com/masz77))
 - Fixed reopening a workspace marked unread on a phone leaving its agent stuck loading ([#7608](https://github.com/getpaseo/paseo/pull/7608))
+- Fixed a new workspace's pin or title disappearing from the sidebar until the next update ([#7758](https://github.com/getpaseo/paseo/pull/7758) by [@stv1024](https://github.com/stv1024))
+- Fixed Claude background command notifications appearing twice after a daemon restart ([#7737](https://github.com/getpaseo/paseo/pull/7737))
+- Fixed voice replies skipping later sentences with OpenAI-compatible speech servers ([#7756](https://github.com/getpaseo/paseo/pull/7756) by [@grueneisfabian](https://github.com/grueneisfabian))
+- Fixed Cursor usage showing bonus spend as overage instead of the quota percentages ([#7778](https://github.com/getpaseo/paseo/pull/7778) by [@kbitz](https://github.com/kbitz), [@stackia](https://github.com/stackia))
+- Fixed the Android tablet taskbar covering the sidebar's Add project, Hosts, Help and Settings ([#7768](https://github.com/getpaseo/paseo/pull/7768))
 - Fixed Command Center jumping back to the selected result while you scroll ([#7688](https://github.com/getpaseo/paseo/pull/7688))
 - Fixed Claude system context appearing as an assistant message in imported or restored chats ([#7590](https://github.com/getpaseo/paseo/pull/7590) by [@khevamann](https://github.com/khevamann), [@rogerluan](https://github.com/rogerluan))
 - Fixed saved workspace tabs being lost when leaving or reloading the app right after it loads ([#7547](https://github.com/getpaseo/paseo/pull/7547))
@@ -73,7 +80,7 @@ paseo host add 'relay://...' --label laptop
 - Fixed Add image failing with "Failed to select image" on Android after changing the font size ([#7546](https://github.com/getpaseo/paseo/pull/7546) by [@RRD-dev](https://github.com/RRD-dev), [@idoyana](https://github.com/idoyana), [@luoph](https://github.com/luoph))
 - Fixed popovers, tooltips and context menus on Android opening one status bar below their trigger ([#7589](https://github.com/getpaseo/paseo/pull/7589))
 - Fixed the active Explorer tab being invisible in the light theme ([#7589](https://github.com/getpaseo/paseo/pull/7589))
-- Fixed Android showing "Host not found" instead of a TLS error for untrusted certificates ([#7429](https://github.com/getpaseo/paseo/pull/7429))
+- Fixed Android showing "Host not found" for untrusted certificates, and TLS advice for hostnames that don't resolve ([#7429](https://github.com/getpaseo/paseo/pull/7429), [#7701](https://github.com/getpaseo/paseo/pull/7701))
 - Fixed the keyboard covering focused Settings fields on Android ([#7362](https://github.com/getpaseo/paseo/pull/7362))
 - Fixed Pull or Push appearing twice in the compact Changes menu ([#7355](https://github.com/getpaseo/paseo/pull/7355) by [@az33zy](https://github.com/az33zy))
 - Fixed Jump to tab and Jump to workspace saving shortcuts that don't end in a number ([#7365](https://github.com/getpaseo/paseo/pull/7365))
