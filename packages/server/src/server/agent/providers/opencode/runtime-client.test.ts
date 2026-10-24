@@ -209,3 +209,37 @@ test.each([
   },
   10000,
 );
+
+test("selects v2 without probing the binary when an external server is configured", async () => {
+  const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const client = new OpenCodeRuntimeClient(createTestLogger(), {
+    command: { mode: "replace", argv: [process.execPath, "-e", "process.exit(1)"] },
+    env: { PASEO_OPENCODE_SERVER_URL: "http://127.0.0.1:4096" },
+  });
+  try {
+    const features = await client.listFeatures({ provider: "opencode", cwd: "/tmp/project" });
+    expect(features.map((feature) => feature.label)).toEqual(["Auto-accept"]);
+  } finally {
+    await client.shutdown();
+  }
+});
+
+test("disables native Paseo tools when an external server is configured", async () => {
+  const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const bridge = {} as unknown as import("./bridge.js").OpenCodeBridge;
+  const external = new OpenCodeRuntimeClient(
+    createTestLogger(),
+    { env: { PASEO_OPENCODE_SERVER_URL: "http://127.0.0.1:4096" } },
+    { bridge },
+  );
+  const local = new OpenCodeRuntimeClient(createTestLogger(), undefined, { bridge });
+  try {
+    expect(external.capabilities.supportsNativePaseoTools).toBe(false);
+    expect(local.capabilities.supportsNativePaseoTools).toBe(true);
+  } finally {
+    await external.shutdown();
+    await local.shutdown();
+  }
+});
