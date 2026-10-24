@@ -1,6 +1,6 @@
 import type { EditorTarget, EditorTargetLaunchInput } from "../target.js";
 
-const COMMANDS = ["zed", "zeditor"] as const;
+const COMMANDS = ["zed", "zeditor", "dev.zed.Zed"] as const;
 
 function location(input: EditorTargetLaunchInput): string {
   if (!input.line) return input.filePath!;

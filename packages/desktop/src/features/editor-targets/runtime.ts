@@ -56,10 +56,28 @@ function isAbsolutePath(value: string, platform: NodeJS.Platform): boolean {
   return platform === "win32" ? win32.isAbsolute(value) : posix.isAbsolute(value);
 }
 
+// Flatpak exports app launchers here, but does not put these directories on PATH.
+function flatpakExportDirectories(env: NodeJS.ProcessEnv, homeDirectory: string): string[] {
+  const userDataDirectory = env.XDG_DATA_HOME || `${homeDirectory}/.local/share`;
+  return [`${userDataDirectory}/flatpak/exports/bin`, "/var/lib/flatpak/exports/bin"];
+}
+
+function commandSearchDirectories(input: {
+  env: NodeJS.ProcessEnv;
+  platform: NodeJS.Platform;
+  homeDirectory: string;
+}): string[] {
+  const pathValue = input.env.PATH ?? input.env.Path ?? input.env.path ?? "";
+  const pathDelimiter = input.platform === "win32" ? ";" : ":";
+  const directories = pathValue.split(pathDelimiter).filter(Boolean);
+  if (input.platform !== "linux") return directories;
+  return [...directories, ...flatpakExportDirectories(input.env, input.homeDirectory)];
+}
+
 function resolveExecutable(
   commands: readonly string[],
   input: {
-    env: NodeJS.ProcessEnv;
+    searchDirectories: readonly string[];
     pathExists: (path: string) => boolean;
     platform: NodeJS.Platform;
   },
@@ -69,10 +87,7 @@ function resolveExecutable(
       return command;
     }
 
-    const pathValue = input.env.PATH ?? input.env.Path ?? input.env.path ?? "";
-    const pathDelimiter = input.platform === "win32" ? ";" : ":";
-    for (const directory of pathValue.split(pathDelimiter)) {
-      if (!directory) continue;
+    for (const directory of input.searchDirectories) {
       const candidate = `${directory}/${command}`;
       if (input.platform !== "win32") {
         if (input.pathExists(candidate)) return candidate;
@@ -140,7 +155,12 @@ export function createEditorTargetRuntime(
     env,
     pathExists,
     isAbsolutePath: (targetPath) => isAbsolutePath(targetPath, platform),
-    resolveCommand: (commands) => resolveExecutable(commands, { env, pathExists, platform }),
+    resolveCommand: (commands) =>
+      resolveExecutable(commands, {
+        searchDirectories: commandSearchDirectories({ env, platform, homeDirectory }),
+        pathExists,
+        platform,
+      }),
     async spawnDetached({ command, args }) {
       const commandScript = isWindowsCommandScript(command, platform);
       const launchCommand = commandScript ? escapeWindowsCmdValue(command) : command;
