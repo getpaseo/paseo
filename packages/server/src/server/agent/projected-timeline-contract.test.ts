@@ -14,12 +14,12 @@ import type { AgentClient } from "./agent-sdk-types.js";
 test("projects Codex child history and confines old-client degradation to the child transcript", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "paseo-projected-contract-"));
   const app = createFakeCodexAppServer();
-  const session = new CodexAppServerAgentSession(
-    { provider: "codex", cwd },
-    null,
-    pino({ level: "silent" }),
-    async () => app.child,
-  );
+  const session = new CodexAppServerAgentSession({
+    config: { provider: "codex", cwd },
+    resumeHandle: null,
+    logger: pino({ level: "silent" }),
+    spawnAppServer: async () => app.child,
+  });
   await session.connect();
   const provider: AgentClient = {
     provider: "codex",
@@ -141,12 +141,12 @@ test("resuming Codex restores child descriptors and complete messages without hi
       };
     },
   });
-  const session = new CodexAppServerAgentSession(
-    { provider: "codex", cwd: tmpdir() },
-    { sessionId: "root" },
-    pino({ level: "silent" }),
-    async () => app.child,
-  );
+  const session = new CodexAppServerAgentSession({
+    config: { provider: "codex", cwd: tmpdir() },
+    resumeHandle: { sessionId: "root" },
+    logger: pino({ level: "silent" }),
+    spawnAppServer: async () => app.child,
+  });
   try {
     await session.connect();
     const children = [];
