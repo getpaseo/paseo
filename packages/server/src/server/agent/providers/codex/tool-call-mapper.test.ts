@@ -528,6 +528,165 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it.each([
+    ["inProgress", "running"],
+    ["completed", "completed"],
+  ])("keeps both fileChange diffs when the patch is %s", (status, expectedStatus) => {
+    const item = mapCodexToolCallFromThreadItem(
+      {
+        type: "fileChange",
+        id: "codex-two-files",
+        status,
+        changes: [
+          {
+            path: "/tmp/repo/alpha.txt",
+            kind: { type: "update", move_path: null },
+            diff: "@@ -1 +1 @@\n-color = blue\n+color = green\n",
+          },
+          {
+            path: "/tmp/repo/beta.txt",
+            kind: { type: "update", move_path: null },
+            diff: "@@ -1 +1 @@\n-size = small\n+size = large\n",
+          },
+        ],
+      },
+      { cwd: "/tmp/repo" },
+    );
+
+    expect(item).toEqual({
+      type: "tool_call",
+      callId: "codex-two-files",
+      name: "apply_patch",
+      status: expectedStatus,
+      error: null,
+      detail: {
+        type: "edit",
+        filePath: "alpha.txt",
+        unifiedDiff: [
+          "diff --git a/alpha.txt b/alpha.txt",
+          "--- a/alpha.txt",
+          "+++ b/alpha.txt",
+          "@@ -1 +1 @@",
+          "-color = blue",
+          "+color = green",
+          "",
+          "diff --git a/beta.txt b/beta.txt",
+          "--- a/beta.txt",
+          "+++ b/beta.txt",
+          "@@ -1 +1 @@",
+          "-size = small",
+          "+size = large",
+        ].join("\n"),
+      },
+    });
+  });
+
+  it("uses the move destination in generated multi-file diff headers", () => {
+    const item = mapCodexToolCallFromThreadItem(
+      {
+        type: "fileChange",
+        id: "codex-moved-file",
+        status: "completed",
+        changes: [
+          {
+            path: "/tmp/repo/old.txt",
+            kind: { type: "update", move_path: "/tmp/repo/new.txt" },
+            diff: "@@ -1 +1 @@\n-old\n+new\n",
+          },
+          {
+            path: "/tmp/repo/other.txt",
+            kind: { type: "update", move_path: null },
+            diff: "@@ -1 +1 @@\n-before\n+after\n",
+          },
+        ],
+      },
+      { cwd: "/tmp/repo" },
+    );
+
+    expect(item).toEqual({
+      type: "tool_call",
+      callId: "codex-moved-file",
+      name: "apply_patch",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "edit",
+        filePath: "old.txt",
+        unifiedDiff: [
+          "diff --git a/old.txt b/new.txt",
+          "--- a/old.txt",
+          "+++ b/new.txt",
+          "@@ -1 +1 @@",
+          "-old",
+          "+new",
+          "",
+          "diff --git a/other.txt b/other.txt",
+          "--- a/other.txt",
+          "+++ b/other.txt",
+          "@@ -1 +1 @@",
+          "-before",
+          "+after",
+        ].join("\n"),
+      },
+    });
+  });
+
+  it("keeps update, add, and delete changes in one fileChange diff", () => {
+    const item = mapCodexToolCallFromThreadItem(
+      {
+        type: "fileChange",
+        id: "codex-mixed-files",
+        status: "completed",
+        changes: [
+          {
+            path: "/tmp/repo/alpha.txt",
+            kind: { type: "update", move_path: null },
+            diff: "--- a/alpha.txt\n+++ b/alpha.txt\n@@ -1 +1 @@\n-blue\n+green\n",
+          },
+          { path: "/tmp/repo/new.txt", kind: { type: "add" }, diff: "new\n\nvalue\n" },
+          { path: "/tmp/repo/old.txt", kind: { type: "delete" }, diff: "old\n\nvalue\n" },
+        ],
+      },
+      { cwd: "/tmp/repo" },
+    );
+
+    expect(item).toEqual({
+      type: "tool_call",
+      callId: "codex-mixed-files",
+      name: "apply_patch",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "edit",
+        filePath: "alpha.txt",
+        unifiedDiff: [
+          "diff --git a/alpha.txt b/alpha.txt",
+          "--- a/alpha.txt",
+          "+++ b/alpha.txt",
+          "@@ -1 +1 @@",
+          "-blue",
+          "+green",
+          "",
+          "diff --git a/new.txt b/new.txt",
+          "--- /dev/null",
+          "+++ b/new.txt",
+          "@@ -0,0 +1,3 @@",
+          "+new",
+          "+",
+          "+value",
+          "",
+          "diff --git a/old.txt b/old.txt",
+          "--- a/old.txt",
+          "+++ /dev/null",
+          "@@ -1,3 +0,0 @@",
+          "-old",
+          "-",
+          "-value",
+        ].join("\n"),
+      },
+    });
+  });
+
   it("maps fileChange object-style change payloads keyed by path", () => {
     const item = expectMapped(
       mapCodexToolCallFromThreadItem(
@@ -823,6 +982,44 @@ describe("codex tool-call mapper", () => {
       },
       output: {
         files: [{ path: "src/path-only.ts", kind: "modify" }],
+      },
+    });
+  });
+
+  it("maps multi-file path-only updates to unknown detail", () => {
+    const item = mapCodexToolCallFromThreadItem(
+      {
+        type: "fileChange",
+        id: "codex-multi-file-path-only",
+        status: "completed",
+        changes: [
+          { path: "/tmp/repo/first.ts", kind: "modify" },
+          { path: "/tmp/repo/second.ts", kind: { type: "update", move_path: null } },
+        ],
+      },
+      { cwd: "/tmp/repo" },
+    );
+
+    expect(item).toEqual({
+      type: "tool_call",
+      callId: "codex-multi-file-path-only",
+      name: "apply_patch",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "unknown",
+        input: {
+          files: [
+            { path: "first.ts", kind: "modify" },
+            { path: "second.ts", kind: "update" },
+          ],
+        },
+        output: {
+          files: [
+            { path: "first.ts", kind: "modify" },
+            { path: "second.ts", kind: "update" },
+          ],
+        },
       },
     });
   });
