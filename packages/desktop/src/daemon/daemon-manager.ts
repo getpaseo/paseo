@@ -436,18 +436,20 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     read_file_base64: (args) => readManagedFileBase64(args ?? {}),
     delete_attachment_file: (args) => deleteManagedAttachmentFile(args ?? {}),
     garbage_collect_attachment_files: (args) => garbageCollectManagedAttachmentFiles(args ?? {}),
-    open_local_daemon_transport: async (args) => await openLocalTransportSession(args),
-    send_local_daemon_transport_message: async (args) => {
+    open_local_daemon_transport: (args, context) =>
+      openLocalTransportSession(args, context?.sender),
+    send_local_daemon_transport_message: async (args, context) => {
       await sendLocalTransportMessage(
         args as { sessionId: string; text?: string; binaryBase64?: string },
+        context?.sender,
       );
     },
-    close_local_daemon_transport: (args) => {
+    close_local_daemon_transport: (args, context) => {
       const sessionId =
         typeof args === "object" && args !== null && "sessionId" in args
           ? (args as { sessionId: string }).sessionId
           : "";
-      if (sessionId) closeLocalTransportSession(sessionId);
+      if (sessionId) closeLocalTransportSession(sessionId, context?.sender);
     },
     check_app_update: async (args) => {
       const currentVersion = resolveDesktopAppVersion();
@@ -477,14 +479,11 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
 export function registerDaemonManager(): void {
   const handlers = createDaemonCommandHandlers();
 
-  ipcMain.handle(
-    "paseo:invoke",
-    async (_event, command: string, args?: Record<string, unknown>) => {
-      const handler = handlers[command];
-      if (!handler) {
-        throw new Error(`Unknown desktop command: ${command}`);
-      }
-      return await handler(args);
-    },
-  );
+  ipcMain.handle("paseo:invoke", async (event, command: string, args?: Record<string, unknown>) => {
+    const handler = handlers[command];
+    if (!handler) {
+      throw new Error(`Unknown desktop command: ${command}`);
+    }
+    return await handler(args, { sender: event.sender });
+  });
 }
