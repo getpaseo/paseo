@@ -74,7 +74,7 @@ Runtime-safe settings include relay enablement, MCP settings, browser tools, hos
 
 New homes keep relay disabled when you remove `daemon.relay.enabled`. A daemon whose config already omitted this field when it started keeps the legacy relay-enabled behavior for compatibility. Set `daemon.relay.enabled` explicitly when editing an older config.
 
-Listen addresses, authentication, relay endpoints and TLS, worktree allocation, service-proxy addresses, the bundled web UI, logging, speech, voice, credentials, and local model settings require a restart. Reload applies other valid edits in the same file before reporting those paths.
+Idle runtime cleanup, listen addresses, authentication, relay endpoints and TLS, worktree allocation, service-proxy addresses, the bundled web UI, logging, speech, voice, credentials, and local model settings require a restart. Reload applies other valid edits in the same file before reporting those paths.
 
 Deployment environment variables and legacy supervisor flags remain authoritative. Reload reports a changed file setting under `overrideControlledPaths` when a launch override prevents it from taking effect. This includes startup settings such as listen addresses, passwords, relay endpoints and TLS, service-proxy and web UI settings, logging, speech, and voice configuration. List settings such as hostnames and CORS origins still append across sources, so values from `config.json` continue to apply. Stop and relaunch the deployment without the override to make the file value authoritative.
 
@@ -83,6 +83,20 @@ Deployment environment variables and legacy supervisor flags remain authoritativ
 Agent providers, both the first-class ones Paseo ships with and custom entries you add under `agents.providers`, are documented on their own page.
 
 See [Providers](/docs/providers) for the mental model and [Supported providers](/docs/supported-providers) for the full list of agents Paseo can launch. For pointing Claude at Anthropic-compatible endpoints (Z.AI, Alibaba/Qwen), multiple profiles, custom binaries, ACP agents, and the `additionalModels` merge behavior, see [Custom providers](/docs/custom-providers). The full field reference lives on GitHub at [docs/custom-providers.md](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md).
+
+## Idle runtimes
+
+Paseo releases resumable idle agent processes after one hour when its daemon baseline allows
+cleanup and any implemented provider check agrees. Your next prompt resumes the same conversation. Disable this
+for the entire host with:
+
+```json
+{ "agents": { "idleRuntimeCleanup": false } }
+```
+
+This setting defaults to `true` and requires a daemon restart to change. There is no per-agent
+setting. Providers without a runtime safety check use the same daemon baseline and one-hour idle
+period. Active work, descendants and pending finish notifications prevent cleanup.
 
 ## Worktrees
 

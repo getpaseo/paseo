@@ -552,6 +552,9 @@
             }
           }
         },
+        "idleRuntimeCleanup": {
+          "type": "boolean"
+        },
         "catalogRefreshTimeoutMs": {
           "type": "integer",
           "exclusiveMinimum": 0,

@@ -27,6 +27,17 @@ describe("server config", () => {
     expect(standaloneConfig.desktopManaged).toBe(false);
   });
 
+  test("idle runtime cleanup defaults on and supports a host-wide opt-out", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-idle-cleanup-"));
+    roots.push(paseoHome);
+    expect(loadConfig(paseoHome, { env: {} }).idleRuntimeCleanup).toBe(true);
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({ agents: { idleRuntimeCleanup: false } }),
+    );
+    expect(loadConfig(paseoHome, { env: {} }).idleRuntimeCleanup).toBe(false);
+  });
+
   test("loads the provider catalog refresh timeout", async () => {
     const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-provider-timeout-"));
     roots.push(paseoHome);
