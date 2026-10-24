@@ -225,6 +225,12 @@ function detectPathsNoSuffix(line: string, clause: string): TerminalParsedLink[]
       index += 2;
     }
 
+    // `user@host:~/dir$ cmd`: the prompt terminator is not part of the working directory.
+    const next = line[index + text.length];
+    if (text.length > 1 && /[$#%]$/.test(text) && (next === undefined || /\s/.test(next))) {
+      text = text.slice(0, -1);
+    }
+
     results.push({
       path: { index, text },
       prefix: undefined,
