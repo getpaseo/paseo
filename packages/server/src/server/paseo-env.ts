@@ -8,14 +8,19 @@ const RUNTIME_CONTROL_ENV_KEYS = [
   ELECTRON_RUN_AS_NODE,
   "ELECTRON_NO_ATTACH_CONSOLE",
   "ESBUILD_BINARY_PATH",
+  "XPC_FLAGS",
 ] as const;
 
 export type PaseoNodeEnv = "development" | "production" | "test";
 export type ProcessEnvRecord = Record<string, string | undefined>;
 export type ExternalProcessEnv = NodeJS.ProcessEnv & Record<string, string>;
 
-function buildInternalProcessEnv<T extends ProcessEnvRecord>(baseEnv: T): T {
-  return { ...baseEnv };
+function buildInternalProcessEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env = { ...baseEnv };
+  // launchd flags describe the launching process. Inheriting 0x2 disables macOS
+  // service lookup in children, breaking DNS, user lookup, and managed preferences.
+  delete env.XPC_FLAGS;
+  return env;
 }
 
 function buildExternalProcessEnv(
