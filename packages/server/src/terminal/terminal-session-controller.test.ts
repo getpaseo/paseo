@@ -440,6 +440,20 @@ describe("terminal-session-controller wrap-flag gating", () => {
     );
   });
 
+  test("keeps a legacy snapshot at the legacy scrollback", async () => {
+    const { controller, getTerminalState } = setup();
+    await controller.dispatch({
+      type: "subscribe_terminal_request",
+      terminalId: "term-1",
+      requestId: "req-1",
+    });
+    await flushMicrotasks();
+    expect(getTerminalState).toHaveBeenCalledWith(
+      "term-1",
+      expect.objectContaining({ scrollbackLines: 1000 }),
+    );
+  });
+
   test("omits wrap flags when the client does not advertise support", async () => {
     const { controller, getTerminalState } = setup();
     await subscribe(controller);
