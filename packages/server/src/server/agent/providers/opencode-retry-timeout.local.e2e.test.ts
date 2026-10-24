@@ -149,7 +149,7 @@ test("does not fail an active OpenCode provider retry before the advertised retr
     ).toEqual([]);
   } finally {
     await session?.close();
-    await OpenCodeServerManager.getInstance(logger, runtimeSettings).shutdown();
+    await OpenCodeServerManager.getInstance({ logger, runtimeSettings }).shutdown();
     providerServer.close();
     await rm(root, { recursive: true, force: true });
   }
