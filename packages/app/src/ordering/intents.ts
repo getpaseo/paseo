@@ -1,5 +1,5 @@
 export type OrderIntent =
-  | { kind: "pinned"; moved: string; before: string[]; after: string[] }
+  | { kind: "pinned" | "workspaces"; moved: string; before: string[]; after: string[] }
   | { kind: "tabs"; workspaceKey: string; paneId: string; movedTabId: string };
 
 const listeners = new Set<(intent: OrderIntent) => void>();

@@ -1,4 +1,5 @@
 import { getE2EDaemonPort } from "./daemon-port";
+import { hideDeveloperToasts } from "../developer-ui.mjs";
 import type { Browser, BrowserContext, Page, WebSocketRoute } from "@playwright/test";
 export interface DragTabAfterInput {
   page: Page;
@@ -49,6 +50,7 @@ export async function openIndependentCompactClient({
   });
   try {
     const compact = await context.newPage();
+    await hideDeveloperToasts(compact);
     await compact.route(/:(6767)\b/, (route) => route.abort());
     await compact.routeWebSocket(/:(6767)\b/, (socket) => socket.close());
     let offline = false;

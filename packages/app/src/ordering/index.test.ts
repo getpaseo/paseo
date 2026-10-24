@@ -16,6 +16,8 @@ import {
 } from "@/stores/session-store";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { sharedOrdering } from "./index";
+import { buildWorkspaceStructureProjects } from "@/projects/workspace-structure";
+import { composeWorkspaceStructure } from "@/stores/session-store-hooks/selectors";
 
 const host = "order-host";
 type Client = Pick<DaemonClient, "setOrder" | "observeOrders" | "setOrderTargets">;
@@ -96,7 +98,7 @@ afterEach(() => {
   useSessionStore.getState().clearSession("other-order-host");
   useWorkspaceLayoutStore.setState({ layoutByWorkspace: {}, sheetsByWorkspace: {} });
   useSessionStore.getState().clearSession(host);
-  useSidebarOrderStore.setState({ pinnedWorkspaceOrder: [] });
+  useSidebarOrderStore.setState({ pinnedWorkspaceOrder: [], workspaceOrderByProject: {} });
 });
 
 test("live permission changes grant ordering without reconnecting", async () => {
@@ -241,13 +243,17 @@ function populate(serverId = host) {
     ),
   );
 }
-test("a cold install applies pinned order without overriding automatic workspace order", async () => {
+test("a cold install restores shared Manual order without overriding automatic workspace order", async () => {
   const client = new FakeClient();
   useSessionStore.getState().initializeSession(host, null);
   await sharedOrdering.connect({ serverId: host, client, supported: true, directoryReady: true });
   populate();
   useSessionStore.getState().setHasHydratedWorkspaces(host, true);
   expect([...useSessionStore.getState().sessions[host]!.workspaces.keys()]).toEqual(["a", "b"]);
+  expect(useSidebarOrderStore.getState().getWorkspaceOrder("project-key")).toEqual([
+    `${host}:b`,
+    `${host}:a`,
+  ]);
   client.receive({
     type: "ui.order.update",
     payload: {
@@ -256,6 +262,26 @@ test("a cold install applies pinned order without overriding automatic workspace
     },
   });
   expect([...useSessionStore.getState().sessions[host]!.workspaces.keys()]).toEqual(["a", "b"]);
+  const projects = buildWorkspaceStructureProjects({
+    sessions: [
+      {
+        serverId: host,
+        projects: useSessionStore.getState().sessions[host]!.projects.values(),
+        workspaces: useSessionStore.getState().sessions[host]!.workspaces.values(),
+      },
+    ],
+    workspaceSort: "created",
+  });
+  expect(
+    composeWorkspaceStructure({ projects, projectOrder: [] }).projects[0]!.workspaceKeys,
+  ).toEqual([`${host}:a`, `${host}:b`]);
+  expect(
+    composeWorkspaceStructure({
+      projects,
+      projectOrder: [],
+      workspaceOrderByProject: useSidebarOrderStore.getState().workspaceOrderByProject,
+    }).projects[0]!.workspaceKeys,
+  ).toEqual([`${host}:b`, `${host}:a`]);
   expect(useSidebarOrderStore.getState().pinnedWorkspaceOrder).toEqual([`${host}:a`, `${host}:b`]);
   expect(client.calls).toEqual([]);
   useSidebarOrderStore.getState().setPinnedWorkspaceOrder({
@@ -269,25 +295,164 @@ test("a cold install applies pinned order without overriding automatic workspace
     .poll(() => client.calls)
     .toEqual([{ scope: { kind: "pinned" }, expectedRevision: 1, order: ["b", "a"] }]);
 });
-test("an unsupported host receives no new ordering RPC", async () => {
+
+test("Manual reconciliation stays local while an exact workspace gesture publishes only its host and project", async () => {
+  const otherHost = "other-order-host";
+  for (const id of [host, otherHost]) {
+    useSessionStore.getState().initializeSession(id, null);
+    populate(id);
+    useSessionStore.getState().setHasHydratedWorkspaces(id, true);
+  }
   const client = new FakeClient();
+  const other = new FakeClient();
+  await sharedOrdering.connect({ serverId: host, client, supported: true, directoryReady: true });
+  await sharedOrdering.connect({
+    serverId: otherHost,
+    client: other,
+    supported: true,
+    directoryReady: true,
+  });
+  const store = useSidebarOrderStore.getState();
+  // Directory reconciliation does not enter the gesture boundary.
+  store.setWorkspaceOrder("project-key", [
+    `${host}:a`,
+    `${host}:b`,
+    `${otherHost}:a`,
+    `${otherHost}:b`,
+  ]);
+  expect(client.calls).toEqual([]);
+  expect(other.calls).toEqual([]);
+  const before = store.getWorkspaceOrder("project-key");
+  const after = before.filter((key) => key !== `${host}:a`);
+  after.unshift(`${host}:a`);
+  store.setWorkspaceOrder("project-key", after, { userInitiated: true, movedKey: `${host}:a` });
+  await expect
+    .poll(() => client.calls)
+    .toEqual([
+      { scope: { kind: "workspaces", projectId: "p" }, expectedRevision: 1, order: ["a", "b"] },
+    ]);
+  expect(other.calls).toEqual([]);
+  store.setWorkspaceOrder(
+    "project-key",
+    [`${host}:a`, `${otherHost}:b`, `${host}:b`, `${otherHost}:a`],
+    { userInitiated: true, movedKey: `${host}:b` },
+  );
+  expect(client.calls).toHaveLength(1);
+  expect(other.calls).toEqual([]);
+});
+
+test("shared Manual records resolve ambiguous project keys through the sidebar's placement identity", async () => {
+  useSessionStore.getState().initializeSession(host, null);
+  populate();
+  const session = useSessionStore.getState().sessions[host]!;
+  const project = session.projects.get("p")!;
+  useSessionStore.getState().setProjects(host, [project, { ...project, projectId: "q" }]);
+  useSessionStore
+    .getState()
+    .mergeWorkspaces(host, [{ ...session.workspaces.get("b")!, projectId: "q" }]);
+  useSessionStore.getState().setHasHydratedWorkspaces(host, true);
+  const client = new FakeClient();
+  client.records = [
+    { scope: { kind: "workspaces", projectId: "p" }, revision: 1, order: ["a"] },
+    { scope: { kind: "workspaces", projectId: "q" }, revision: 1, order: ["b"] },
+  ];
+  await sharedOrdering.connect({ serverId: host, client, supported: true, directoryReady: true });
+  expect(useSidebarOrderStore.getState().workspaceOrderByProject).toEqual({
+    [JSON.stringify([host, "p"])]: [`${host}:a`],
+    [JSON.stringify([host, "q"])]: [`${host}:b`],
+  });
+  expect(client.calls).toEqual([]);
+});
+
+test("offline Manual moves wait for the fresh directory and read-only authority cancels them", async () => {
   useSessionStore.getState().initializeSession(host, null);
   populate();
   useSessionStore.getState().setHasHydratedWorkspaces(host, true);
+  await sharedOrdering.connect({
+    serverId: host,
+    client: new FakeClient(),
+    supported: true,
+    directoryReady: true,
+  });
+  sharedOrdering.disconnect(host);
+  const store = useSidebarOrderStore.getState();
+  store.setWorkspaceOrder("project-key", [`${host}:a`, `${host}:b`], {
+    userInitiated: true,
+    movedKey: `${host}:a`,
+  });
+  const writer = new FakeClient();
+  await sharedOrdering.connect({
+    serverId: host,
+    client: writer,
+    supported: true,
+    directoryReady: false,
+  });
+  expect(writer.calls).toEqual([]);
+  sharedOrdering.directoryReady(host);
+  await expect
+    .poll(() => writer.calls)
+    .toEqual([
+      { scope: { kind: "workspaces", projectId: "p" }, expectedRevision: 1, order: ["a", "b"] },
+    ]);
+  sharedOrdering.disconnect(host);
+  store.setWorkspaceOrder("project-key", [`${host}:b`, `${host}:a`], {
+    userInitiated: true,
+    movedKey: `${host}:b`,
+  });
+  const reader = new FakeClient();
+  reader.permissions = ["workspace.read"];
+  reader.records = [
+    { scope: { kind: "workspaces", projectId: "p" }, revision: 2, order: ["a", "b"] },
+  ];
   const errors: OrderError[] = [];
   const release = observeOrderErrors((error) => errors.push(error));
-  await sharedOrdering.connect({ serverId: host, client, supported: false, directoryReady: true });
-  useSidebarOrderStore.getState().setPinnedWorkspaceOrder({
-    keys: [`${host}:b`, `${host}:a`],
-    gesture: {
+  try {
+    await sharedOrdering.connect({
+      serverId: host,
+      client: reader,
+      supported: true,
+      directoryReady: true,
+    });
+    expect(store.getWorkspaceOrder("project-key")).toEqual([`${host}:a`, `${host}:b`]);
+    expect(reader.calls).toEqual([]);
+    expect(reader.targetCalls).toBe(0);
+    expect(errors).toEqual([{ kind: "permissionLost" }]);
+    store.setWorkspaceOrder("project-key", [`${host}:b`, `${host}:a`], {
       userInitiated: true,
-      movedKey: `${host}:a`,
-    },
-  });
-  expect(client.calls).toEqual([]);
-  expect(errors).toEqual([{ kind: "unsupported" }]);
-  release();
+      movedKey: `${host}:b`,
+    });
+    expect(store.getWorkspaceOrder("project-key")).toEqual([`${host}:a`, `${host}:b`]);
+    expect(reader.calls).toEqual([]);
+  } finally {
+    reader.changePermissions(["workspace.read", "workspace.manage"]);
+    release();
+  }
 });
+test.each(["pinned", "workspaces"] as const)(
+  "an unsupported host receives no new %s ordering RPC",
+  async (kind) => {
+    const client = new FakeClient();
+    useSessionStore.getState().initializeSession(host, null);
+    populate();
+    useSessionStore.getState().setHasHydratedWorkspaces(host, true);
+    const errors: OrderError[] = [];
+    const release = observeOrderErrors((error) => errors.push(error));
+    await sharedOrdering.connect({
+      serverId: host,
+      client,
+      supported: false,
+      directoryReady: true,
+    });
+    const keys = [`${host}:b`, `${host}:a`];
+    const gesture = { userInitiated: true as const, movedKey: `${host}:a` };
+    if (kind === "pinned")
+      useSidebarOrderStore.getState().setPinnedWorkspaceOrder({ keys, gesture });
+    else useSidebarOrderStore.getState().setWorkspaceOrder("project-key", keys, gesture);
+    expect(client.calls).toEqual([]);
+    expect(errors).toEqual([{ kind: "unsupported" }]);
+    release();
+  },
+);
 
 test("a gesture before connect survives the first shared snapshot", async () => {
   const client = new FakeClient();

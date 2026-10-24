@@ -8,6 +8,7 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import type {
   DaemonClient,
+  DaemonEventHandler,
   WorkspaceLabelListPayload,
 } from "@getpaseo/client/internal/daemon-client";
 import type { ServerInfoStatusPayload } from "@getpaseo/protocol/messages";
@@ -36,6 +37,10 @@ type AgentFetchResult = Awaited<ReturnType<DaemonClient["fetchAgents"]>>;
 type WorkspaceScriptsResult = Awaited<ReturnType<DaemonClient["listWorkspaceScripts"]>>;
 
 class FakeDirectoryClient {
+  subscribe(_handler: DaemonEventHandler): () => void {
+    return () => {};
+  }
+
   supportsBackgroundWorkspaces(): boolean {
     return false;
   }

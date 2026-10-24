@@ -522,9 +522,11 @@ late target and order writes. A new connection with that `clientId` can register
 No device-management UI or pairing authority is implied by this operation.
 
 Only the first explicit gesture can initialize a scope at revision zero. Its seed is the
-complete dragged pane order for tabs, or the moved host's visible pinned workspace order.
-Ordinary workspaces keep the host's Created/Last prompt order; retained workspace-order
-records do not override that sort. Snapshots, cache hydration, and other panes never seed it. Initialization uses the same
+complete dragged pane order for tabs, or the moved host's visible workspace order within
+the project or Pinned section. Shared project workspace records populate the Manual cache;
+Created/Last prompt remain host-sorted. Sort preferences, project headers, and cross-host
+interleaving stay local. Snapshots, cache hydration, and other panes never seed a scope.
+Initialization uses the same
 revision CAS as later writes: the losing initializer discards its seed and replays only
 its precise move on the winner's record. Later gestures never replace the whole order.
 

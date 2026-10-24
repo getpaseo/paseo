@@ -12,6 +12,7 @@ import { getServerId } from "../support/helpers/server-id";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
+import { tapSheetBackdrop } from "../support/helpers/sheet";
 
 async function rowTestIds(rows: Locator) {
   return rows.evaluateAll((elements) =>
@@ -166,7 +167,7 @@ async function closeCompactTabs(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
 }
 
-test("pinned workspace and tab reorder propagate to an independent compact client and survive reload", async ({
+test("manual workspace, pinned and tab reorder propagate to an independent compact client and survive reload", async ({
   page,
   browser,
 }, testInfo) => {
@@ -215,7 +216,10 @@ test("pinned workspace and tab reorder propagate to an independent compact clien
     await closeCompactTabs(compact);
     const workspaceSelector = `[data-testid="sidebar-workspace-row-${getServerId()}:${seed.workspaceId}"], [data-testid="sidebar-workspace-row-${getServerId()}:${created.workspace.id}"]`;
     const rows = page.locator(workspaceSelector);
+    await selectWorkspaceSort(page, "Manual");
     const beforeRows = await rowTestIds(rows);
+    await quickDragFirstRowAfterSecond(rows, pressWorkspaceRow);
+    const sharedRows = beforeRows.toReversed();
     const initialTabs = await agentTabIds(page);
     expect(initialTabs).toEqual(
       expect.arrayContaining([a, b, c, d].map((agent) => `workspace-tab-agent_${agent.id}`)),
@@ -233,7 +237,11 @@ test("pinned workspace and tab reorder propagate to an independent compact clien
     await closeCompactTabs(compact);
     await openMobileAgentSidebar(compact);
     await expectMobileAgentSidebarVisible(compact);
-    await expect.poll(() => rowTestIds(compact.locator(workspaceSelector))).toEqual(beforeRows);
+    await selectWorkspaceSort(compact, "Manual", { compact: true });
+    await expect.poll(() => rowTestIds(compact.locator(workspaceSelector))).toEqual(sharedRows);
+    await captureOrderingScreenshot(compact, testInfo, "compact-shared-workspace-order");
+    await quickDragFirstRowAfterSecond(compact.locator(workspaceSelector), pressWorkspaceRow);
+    await expect.poll(() => rowTestIds(rows)).toEqual(beforeRows);
     await seed.client.setWorkspacePinned(seed.workspaceId, true);
     await seed.client.setWorkspacePinned(created.workspace.id, true);
     const pinnedBefore = await rowTestIds(rows);
@@ -257,10 +265,20 @@ test("pinned workspace and tab reorder propagate to an independent compact clien
     await seed.cleanup();
   }
 });
-async function selectWorkspaceSort(page: Page, name: "Created" | "Last prompt") {
-  await page.getByLabel("Display preferences", { exact: true }).click();
-  await page.getByRole("menuitem", { name: /^Sort/ }).click();
-  await page.getByRole("menuitem", { name, exact: true }).click();
+async function selectWorkspaceSort(
+  page: Page,
+  name: "Manual" | "Created" | "Last prompt",
+  options?: { compact: true },
+) {
+  // Dnd-kit's pointer sensor deliberately suppresses clicks for 50ms after a drop.
+  // Open through the trigger's keyboard interaction, including immediately after a drag.
+  await page.getByLabel("Display preferences", { exact: true }).press("Enter");
+  await page.getByRole("menuitem", { name: /^Sort/ }).press("Enter");
+  await page.getByRole("menuitem", { name, exact: true }).press("Enter");
+  if (options?.compact) {
+    await tapSheetBackdrop(page);
+    await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
+  }
 }
 
 async function reconnectSidebar(page: Page): Promise<void> {
@@ -494,5 +512,62 @@ test("compact groups retain active overflow and reveal the current ordered rows"
       expectStatusBucketsRetainActiveOverflow(page, fixture));
   } finally {
     await fixture.seed.cleanup();
+  }
+});
+
+async function restorePreBetaOrder(page: Page, projectKey: string, workspaceKeys: string[]) {
+  await page.evaluate(
+    ({ projectKey: scope, workspaceKeys: order }) => {
+      localStorage.setItem(
+        "sidebar-project-workspace-order",
+        JSON.stringify({
+          version: 1,
+          state: {
+            projectOrder: [scope],
+            pinnedWorkspaceOrder: [],
+            workspaceOrderByProject: { [scope]: order },
+          },
+        }),
+      );
+    },
+    { projectKey, workspaceKeys },
+  );
+  await reconnectSidebar(page);
+}
+
+test("Manual restores pre-beta order and keeps drag order across sorting and reloads", async ({
+  page,
+}) => {
+  const seed = await seedWorkspace({ repoPrefix: "sidebar-manual-" });
+  try {
+    const second = await seed.client.createWorkspace({
+      source: { kind: "directory", path: seed.repoPath, projectId: seed.projectId },
+      title: "New manual workspace",
+    });
+    if (!second.workspace) throw new Error(second.error ?? "Workspace creation failed");
+    const keys = [seed.workspaceId, second.workspace.id].map((id) => `${getServerId()}:${id}`);
+    const ids = keys.map((key) => `sidebar-workspace-row-${key}`);
+    const rows = page.locator(ids.map((id) => `[data-testid="${id}"]`).join(", "));
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    await restorePreBetaOrder(page, projectEquivalenceViewKey(seed.projectKey), keys);
+    await expect.poll(() => rowTestIds(rows)).toEqual([ids[1], ids[0]]);
+    await selectWorkspaceSort(page, "Manual");
+    await expect.poll(() => rowTestIds(rows)).toEqual(ids);
+    await selectWorkspaceSort(page, "Created");
+    await expect.poll(() => rowTestIds(rows)).toEqual([ids[1], ids[0]]);
+    await selectWorkspaceSort(page, "Last prompt");
+    await selectWorkspaceSort(page, "Manual");
+    await expect.poll(() => rowTestIds(rows)).toEqual(ids);
+    await quickDragFirstRowAfterSecond(rows, pressWorkspaceRow);
+    await reconnectSidebar(page);
+    await expect.poll(() => rowTestIds(rows)).toEqual([ids[1], ids[0]]);
+    await quickDragFirstRowAfterSecond(rows, pressWorkspaceRow);
+    await selectWorkspaceSort(page, "Created");
+    await reconnectSidebar(page);
+    await selectWorkspaceSort(page, "Manual");
+    await expect.poll(() => rowTestIds(rows)).toEqual(ids);
+  } finally {
+    await seed.cleanup();
   }
 });

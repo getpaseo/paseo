@@ -6,7 +6,7 @@ import {
 import { migrateSidebarOrderState, useSidebarOrderStore } from "./sidebar-order-store";
 
 describe("migrateSidebarOrderState", () => {
-  it("discards legacy workspace ordering while retaining project ordering", () => {
+  it("preserves legacy workspace ordering across hosts", () => {
     const migrated = migrateSidebarOrderState({
       projectOrderByServerId: {
         "host-a": ["project-a"],
@@ -21,6 +21,7 @@ describe("migrateSidebarOrderState", () => {
     expect(migrated).toEqual({
       projectOrder: ["project-a"],
       pinnedWorkspaceOrder: [],
+      workspaceOrderByProject: { "project-a": ["host-a:main", "host-a:feature", "host-b:main"] },
     });
   });
 
@@ -88,14 +89,18 @@ describe("sidebar order keys that end in whitespace", () => {
   });
 });
 
-it("preserves project and pinned order while discarding ordinary workspace order", () => {
+it("preserves project, pinned and ordinary workspace order", () => {
   expect(
     migrateSidebarOrderState({
       projectOrder: ["b", "a"],
       pinnedWorkspaceOrder: ["h:y", "h:x"],
       workspaceOrderByProject: { a: ["h:old", "h:new"] },
     }),
-  ).toEqual({ projectOrder: ["b", "a"], pinnedWorkspaceOrder: ["h:y", "h:x"] });
+  ).toEqual({
+    projectOrder: ["b", "a"],
+    pinnedWorkspaceOrder: ["h:y", "h:x"],
+    workspaceOrderByProject: { a: ["h:old", "h:new"] },
+  });
 });
 
 it("preserves whitespace in current project and pin identities during upgrade", () => {
@@ -105,5 +110,37 @@ it("preserves whitespace in current project and pin identities during upgrade", 
       pinnedWorkspaceOrder: ["host:workspace "],
       workspaceOrderByProject: {},
     }),
-  ).toEqual({ projectOrder: ["project "], pinnedWorkspaceOrder: ["host:workspace "] });
+  ).toEqual({
+    projectOrder: ["project "],
+    pinnedWorkspaceOrder: ["host:workspace "],
+    workspaceOrderByProject: {},
+  });
+});
+
+it("retains a pre-beta manual order when upgrading", () => {
+  expect(
+    migrateSidebarOrderState({
+      projectOrder: ["project"],
+      pinnedWorkspaceOrder: [],
+      workspaceOrderByProject: { project: ["host:b", "host:a"] },
+    }),
+  ).toEqual({
+    projectOrder: ["project"],
+    pinnedWorkspaceOrder: [],
+    workspaceOrderByProject: { project: ["host:b", "host:a"] },
+  });
+});
+
+it("starts with an empty manual order for beta users whose order was discarded", () => {
+  expect(migrateSidebarOrderState({ projectOrder: ["p"], pinnedWorkspaceOrder: ["h:a"] })).toEqual({
+    projectOrder: ["p"],
+    pinnedWorkspaceOrder: ["h:a"],
+    workspaceOrderByProject: {},
+  });
+});
+it("preserves spaces in saved workspace scopes and identities", () => {
+  expect(
+    migrateSidebarOrderState({ workspaceOrderByProject: { "project ": ["host:b ", "host:a "] } })
+      .workspaceOrderByProject,
+  ).toEqual({ "project ": ["host:b ", "host:a "] });
 });

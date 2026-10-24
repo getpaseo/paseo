@@ -39,7 +39,9 @@ In Paseo, the workspace is the stable container. The sessions are what you run i
 
 ## Ordering across devices
 
-Drag a workspace or tab to publish its order to the connected daemon. Other clients
+Select **Manual** sorting to drag ordinary workspaces, or drag a pinned workspace or tab,
+to publish its order to the connected daemon. **Created** and **Last prompt** keep their
+automatic ordering; each device keeps its own sort preference. Other clients
 connected to that daemon under the same principal apply the shared order and restore
 it after reconnecting. Offline moves stay pending and merge into the latest order
 when this running client reconnects. Conflicts retain pending moves for retry.
