@@ -10,7 +10,7 @@ interface FakeSubAgentActivity {
   callId: string;
   threadId: string;
   agentPath: string;
-  kind: "started" | "interacted" | "interrupted";
+  kind: "started" | "interacted" | "interrupted" | "completed";
   parentThreadId?: string;
 }
 interface FakeLegacyCommand {
