@@ -84,6 +84,7 @@ import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
 import {
   computeNotificationPlan,
   isPushEligibleAttentionReason,
+  shouldSuppressCompletionAlerts,
   type ClientPresenceState,
 } from "./agent-attention-policy.js";
 import {
@@ -2778,6 +2779,21 @@ export class VoiceAssistantWebSocketServer {
     };
   }
 
+  private async shouldSuppressAgentCompletionAlerts(
+    workspaceId: string,
+    reason: "finished" | "error" | "permission",
+  ): Promise<boolean> {
+    if (reason !== "finished") {
+      return false;
+    }
+
+    const workspace = await this.workspaceRegistry.get(workspaceId);
+    return shouldSuppressCompletionAlerts({
+      explicitMute: null,
+      background: workspace?.background ?? false,
+    });
+  }
+
   private async broadcastAgentAttention(params: {
     agentId: string;
     provider: AgentProvider;
@@ -2820,10 +2836,15 @@ export class VoiceAssistantWebSocketServer {
       permissionRequest: findLatestPermissionRequest(agent.pendingPermissions),
     });
 
+    const completionAlertsSuppressed = await this.shouldSuppressAgentCompletionAlerts(
+      agent.workspaceId,
+      params.reason,
+    );
+
     const plan = computeNotificationPlan({
       allStates,
       focusTarget: { kind: "agent", id: params.agentId },
-      pushEligible: isPushEligibleAttentionReason(params.reason),
+      pushEligible: isPushEligibleAttentionReason(params.reason) && !completionAlertsSuppressed,
       nowMs,
     });
 
