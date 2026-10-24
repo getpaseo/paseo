@@ -322,6 +322,22 @@ The supervisor rotates `daemon.log`. Persisted `log.file.rotate` settings in
 `PASEO_LOG_ROTATE_SIZE` and `PASEO_LOG_ROTATE_COUNT` env vars override the
 defaults. The default rotation is `10m` x `3` files everywhere.
 
+### macOS service lookup failures
+
+If model discovery fails with `Failed to synchronize managed preferences`, compare
+`launchctl manageruid` and `id -un` in a Paseo terminal with a normal terminal on
+the same host. A daemon can still answer RPCs while its children cannot reach
+macOS services. This can also produce DNS `ENOTFOUND` errors and
+`No user exists for uid` from SSH. Check the host selected by the client before
+changing provider credentials or model settings.
+
+`XPC_FLAGS=0x2` inherited at launch reproduces these failures. Paseo removes this
+process-specific marker when preparing daemon and external child environments.
+Removing it from a child of an already broken runtime may restore DNS without
+restoring user lookup or managed preferences. Drain active work and preserve
+scheduled tasks before fully stopping and starting the supervisor from a healthy
+launch context. A worker restart retains the supervisor's context.
+
 ### Git process pressure
 
 If Git refreshes consume too much CPU, disk, or antivirus capacity, especially on Windows, reduce

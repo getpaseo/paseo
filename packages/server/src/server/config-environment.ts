@@ -1,3 +1,5 @@
+import { createPaseoInternalEnv } from "./paseo-env.js";
+
 // Daemon configuration inputs. General provider credentials and executable/runtime
 // controls remain available to managed launches and their agent processes.
 export const DAEMON_SETTING_ENV_KEYS = [
@@ -78,7 +80,7 @@ export function daemonLaunchEnvironment(input: {
   mode: "managed" | "deployment";
   desktopManaged?: boolean;
 }): NodeJS.ProcessEnv {
-  const env = { ...input.env };
+  const env = createPaseoInternalEnv(input.env);
   if (input.mode === "managed") {
     for (const key of DAEMON_SETTING_ENV_KEYS) delete env[key];
   }
