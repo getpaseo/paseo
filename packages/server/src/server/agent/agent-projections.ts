@@ -441,6 +441,9 @@ function projectPersistenceHandleForWire(
     return projected;
   }
   delete projected.metadata.mcpServers;
+  // Resume log only. Clients read pending questions from pendingPermissions,
+  // and this array dominates directory snapshots (kilobytes per agent).
+  delete projected.metadata.asyncQuestions;
   if (Object.keys(projected.metadata).length === 0) {
     delete projected.metadata;
   }
