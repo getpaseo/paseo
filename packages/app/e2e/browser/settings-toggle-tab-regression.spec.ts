@@ -10,6 +10,16 @@ async function pressSettingsToggleShortcut(page: import("@playwright/test").Page
   await page.keyboard.press(`${modifier}+Comma`);
 }
 
+async function openComposerTab(page: import("@playwright/test").Page, agentId: string) {
+  await page
+    .getByTestId(`workspace-tab-agent_${agentId}`)
+    .filter({ visible: true })
+    .first()
+    .click();
+  await expectAgentTabActive(page, agentId);
+  await expect(page.getByRole("textbox", { name: "Message agent..." })).toBeVisible();
+}
+
 interface ComposerFrame {
   at: number;
   visible: boolean;
@@ -27,7 +37,9 @@ async function startComposerFrameCapture(page: import("@playwright/test").Page) 
 
     const sample = () => {
       if (capture.stopped) return;
-      const root = document.querySelector<HTMLElement>('[data-testid="message-input-root"]');
+      const root = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-testid="message-input-root"]'),
+      ).find((candidate) => candidate.offsetParent !== null);
       const input = root?.querySelector<HTMLTextAreaElement>("textarea");
       if (root && input) {
         const style = getComputedStyle(input);
@@ -178,6 +190,8 @@ test.describe("Settings toggle tab regression", () => {
       await openWorkspaceWithAgents(page, [firstAgent, secondAgent]);
       await waitForTabBar(page);
 
+      await openComposerTab(page, firstAgent.id);
+      await openComposerTab(page, secondAgent.id);
       const input = page.getByRole("textbox", { name: "Message agent..." });
       await input.fill("Keep this short draft in the composer");
       const root = page.getByTestId("message-input-root").filter({ visible: true }).first();
@@ -194,6 +208,7 @@ test.describe("Settings toggle tab regression", () => {
 
       const frames = await stopComposerFrameCapture(page);
       const visibleFrames = frames.filter((frame) => frame.visible);
+      expect(visibleFrames.length, "Capture must observe the visible composer").toBeGreaterThan(0);
       const tallestIndex = visibleFrames.reduce(
         (index, frame, candidateIndex) =>
           frame.rootHeight > visibleFrames[index].rootHeight ? candidateIndex : index,

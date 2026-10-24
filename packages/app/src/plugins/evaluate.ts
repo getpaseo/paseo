@@ -2,6 +2,7 @@ import { requirePluginText } from "@getpaseo/plugin/client/host";
 import type { createPluginHosts } from "./hosts";
 import { openExternalUrl } from "@/utils/open-external-url";
 import * as pluginUiRuntime from "./react-native/ui";
+import { useRevealedText } from "@/hooks/use-revealed-text";
 import { useSettings } from "./settings/use-settings";
 import * as pluginSharedRuntime from "@getpaseo/plugin";
 import * as pluginClientRuntime from "@getpaseo/plugin/client";
@@ -113,6 +114,10 @@ export type PluginClientRuntime = Pick<
   | "addComposerPill"
   | "addHeaderButton"
 > & { hosts: ReturnType<typeof createPluginHosts> };
+
+// COMPAT(pluginReactNativeEntrypoint): added in v0.13.0, remove after 2027-04-20
+// The 0.12 entry exposed the reveal hook as well as UI components.
+const pluginReactNativeCompatRuntime = { ...pluginUiRuntime, useRevealedText };
 
 export function runPluginClientBundle(
   id: string,
@@ -503,7 +508,7 @@ export function runPluginClientBundle(
   };
   const runtimeRequire = (name: string): unknown => {
     // COMPAT(pluginReactNativeEntrypoint): added in v0.13.0, remove after 2027-04-20
-    if (name === "@getpaseo/plugin/client/react-native") return pluginUiRuntime;
+    if (name === "@getpaseo/plugin/client/react-native") return pluginReactNativeCompatRuntime;
     if (name === "@getpaseo/plugin/client/ui") return pluginUiRuntime;
     if (name === "react") return React;
     if (name === "react/jsx-runtime") return ReactJsxRuntime;

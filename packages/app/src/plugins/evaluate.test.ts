@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { useRevealedText } from "@/hooks/use-revealed-text";
 import { runPluginClientBundle, type PluginClientRuntime } from "./evaluate";
 
 const runtime = {
@@ -703,6 +704,21 @@ describe("evaluatePluginClientBundle", () => {
     );
 
     expect(plugin.surfaces.map((surface) => surface.id)).toEqual(["main"]);
+  });
+
+  it("keeps the host reveal hook on the deprecated client/react-native entry", () => {
+    const plugin = evaluatePluginClientBundle(
+      "legacy-reveal",
+      bundle(`
+        const legacy = require("@getpaseo/plugin/client/react-native");
+        const ui = require("@getpaseo/plugin/client/ui");
+        if (typeof legacy.useRevealedText !== "function") throw new Error("Missing legacy reveal hook");
+        if (legacy.StreamedText !== ui.StreamedText) throw new Error("Missing current UI exports");
+        if ("useRevealedText" in ui) throw new Error("Legacy hook leaked into current UI");
+        plugin.addScreen({ id: "reveal", title: "Reveal", Component: legacy.useRevealedText });
+      `),
+    );
+    expect(plugin.surfaces[0]?.Component).toBe(useRevealedText);
   });
 
   it("keeps shared and client runtime exports separate", () => {

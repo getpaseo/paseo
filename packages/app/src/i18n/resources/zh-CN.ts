@@ -1161,6 +1161,7 @@ export const zhCN: TranslationResources = {
       sort: {
         label: "排序",
         created: "创建时间",
+        manual: "手动",
         lastPrompt: "最近提示词",
         updateHost: "请更新主机以排序工作区",
       },
