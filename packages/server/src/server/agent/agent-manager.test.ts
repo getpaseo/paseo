@@ -6931,6 +6931,54 @@ test("applies live autonomous events and preserves usage omitted from completion
   expect(lifecycleUpdates).toContain("idle");
 });
 
+test("keeps session cost while a running turn streams partial usage", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-partial-usage-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let capturedSession: TestAgentSession | null = null;
+
+  class LiveEventClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      capturedSession = new TestAgentSession(config);
+      return capturedSession;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new LiveEventClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000136",
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  capturedSession!.pushEvent({ type: "turn_started", provider: "codex", turnId: "turn-1" });
+  capturedSession!.pushEvent({
+    type: "turn_completed",
+    provider: "codex",
+    turnId: "turn-1",
+    usage: { totalCostUsd: 0.42, contextWindowMaxTokens: 200_000, contextWindowUsedTokens: 100 },
+  });
+  capturedSession!.pushEvent({ type: "turn_started", provider: "codex", turnId: "turn-2" });
+  capturedSession!.pushEvent({
+    type: "usage_updated",
+    provider: "codex",
+    turnId: "turn-2",
+    usage: { contextWindowUsedTokens: 150 },
+  });
+
+  await vi.waitFor(() => {
+    const running = manager.getAgent(snapshot.id);
+    expect(running?.lifecycle).toBe("running");
+    expect(running?.lastUsage).toEqual({
+      totalCostUsd: 0.42,
+      contextWindowMaxTokens: 200_000,
+      contextWindowUsedTokens: 150,
+    });
+  });
+});
+
 test("ignores stale autonomous terminals without lowering the active turn lifecycle", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-autonomous-terminal-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

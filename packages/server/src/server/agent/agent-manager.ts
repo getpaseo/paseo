@@ -4432,7 +4432,8 @@ export class AgentManager {
         this.onStreamThreadStarted(agent);
         return undefined;
       case "usage_updated":
-        agent.lastUsage = event.usage;
+        // Live updates are partial (e.g. context tokens only); keep fields like session cost.
+        agent.lastUsage = { ...agent.lastUsage, ...event.usage };
         this.emitState(agent);
         return undefined;
       case "mode_changed":
