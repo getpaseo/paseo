@@ -1510,6 +1510,15 @@ the source row, so updates to one streaming item do not remount its renderer. Re
 `Text` props (including `style`) and supplies assistant typography and foreground color by default.
 Completion displays the full text immediately; the host owns pacing while streaming. Requires Paseo 0.13 or later.
 
+Renderers on app clients that support it also receive an optional
+`openFile(location: PluginOpenFileLocation)`. The location is `{ path, lineStart?, lineEnd? }`.
+The file panel's `PluginFileLocation` is the tab revision (`lineStart`, `lineEnd`, `revision`).
+`openFile` opens the file the way a file path in a native reply
+does, from the pane that shows this stream, on the same host and workspace. A `path` is absolute
+or relative to the agent's working directory, and a folder inside the workspace opens in the file
+explorer. Line numbers are one-based. Check that `openFile` exists before offering the action;
+updating only the daemon or the plugin does not add it to an older app.
+
 Chat find (Ctrl or Cmd+F) finds and highlights text in replacement rows when the query also
 matches the original message. The host searches the original prompt text or the assistant reply
 with Markdown syntax removed, then the app counts matches in the text your renderer draws.
