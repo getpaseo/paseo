@@ -481,6 +481,56 @@ describe("PluginAgentClientRegistry", () => {
     }
   });
 
+  test("keeps a child's canceled or failed turn when the child closes normally", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const session = await registry.clients()[harness.registration.id]!.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+    try {
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      const open = harness.inputs.find((input) => input.type === "session.open")!;
+      const outcomes = [
+        ["child-canceled", "canceled"],
+        ["child-failed", "failed"],
+        ["child-completed", "completed"],
+      ] as const;
+      for (const [sessionId, state] of outcomes) {
+        harness.emit({
+          type: "session.opened",
+          sessionId,
+          parentSessionId: open.sessionId,
+          capabilities: [],
+          restoration: "parent",
+          cwd: "/workspace",
+        });
+        harness.emit({ type: "session.turn", sessionId, turnId: "turn", state: "started" });
+        harness.emit({ type: "session.turn", sessionId, turnId: "turn", state });
+        harness.emit({ type: "session.closed", sessionId });
+      }
+
+      const lastStatus = (id: string) =>
+        events
+          .flatMap((event) =>
+            event.type === "provider_subagent" &&
+            event.event.type === "upsert" &&
+            event.event.id === id
+              ? [event.event.status]
+              : [],
+          )
+          .at(-1);
+      expect(lastStatus("child-canceled")).toBe("canceled");
+      expect(lastStatus("child-failed")).toBe("failed");
+      expect(lastStatus("child-completed")).toBe("completed");
+    } finally {
+      await session.close();
+      registry.replace([]);
+    }
+  });
+
   test("gates persistence operations on negotiated provider capabilities", async () => {
     const harness = createProviderHarness({ capabilities: ["session.persistence"] });
     const registry = new PluginAgentClientRegistry(createTestLogger());
