@@ -1,0 +1,7 @@
+npm run build:server
+npm run format
+npm run lint
+npm run typecheck
+cd packages/server
+npx vitest run src/server/agent/plugin-provider.test.ts --bail=1
+npx vitest run src/server/agent/timeline-projection.test.ts --bail=1

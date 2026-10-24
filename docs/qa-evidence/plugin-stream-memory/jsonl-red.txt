@@ -1,0 +1,29 @@
+
+ RUN  v4.1.6 /Users/suntc/.codex/worktrees/daemon-memory-fix/paseo/packages/server
+
+stdout | src/server/agent/providers/jsonl-frame-decoder.test.ts
+[dotenv@17.3.1] injecting env (0) from .env.test -- tip: 🛡️ auth for agents: https://vestauth.com
+[dotenv@17.3.1] injecting env (0) from ../.env -- tip: 🔐 prevent committing .env to code: https://dotenvx.com/precommit
+
+ ❯ src/server/agent/providers/jsonl-frame-decoder.test.ts (6 tests | 1 failed) 318ms
+     × allocates linearly when a large image-bearing frame arrives in small chunks 315ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/server/agent/providers/jsonl-frame-decoder.test.ts > JsonlFrameDecoder > allocates linearly when a large image-bearing frame arrives in small chunks
+AssertionError: expected 1103204912 to be less than 50332716
+ ❯ src/server/agent/providers/jsonl-frame-decoder.test.ts:41:30
+     39|     const memory = JSON.parse(output) as { allocated: number; inputCha…
+     40|     expect(memory.frames).toBe(1);
+     41|     expect(memory.allocated).toBeLessThan(memory.inputChars * 12);
+       |                              ^
+     42|   });
+     43|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (6)
+   Start at  20:19:25
+   Duration  445ms (transform 33ms, setup 25ms, import 21ms, tests 318ms, environment 0ms)

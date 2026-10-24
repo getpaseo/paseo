@@ -1,0 +1,8 @@
+
+ RUN  v4.1.6 /Users/suntc/.codex/worktrees/daemon-memory-fix/paseo/packages/server
+
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  20:20:17
+   Duration  250ms (transform 24ms, setup 19ms, import 15ms, tests 157ms, environment 0ms)

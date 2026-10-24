@@ -300,7 +300,7 @@ export class TimelineProjection {
   private readonly rows: ProjectedTimelineRow[] = [];
   private readonly identities = new Map<string, number>();
 
-  append(row: AgentTimelineRow): void {
+  append(row: AgentTimelineRow): ProjectedTimelineRow {
     const entry = makeCanonicalEntries([row])[0];
     const identity = timelineItemIdentity(row.item);
     const index = identity === null ? undefined : this.identities.get(identity);
@@ -308,7 +308,7 @@ export class TimelineProjection {
     const merged = existing ? mergeIdentityEntries(existing, entry) : null;
     if (merged && index !== undefined) {
       this.rows[index] = { ...merged, seq: merged.seqEnd };
-      return;
+      return { ...this.rows[index] };
     }
     const previous = this.rows.at(-1);
     const adjacent = previous
@@ -317,10 +317,12 @@ export class TimelineProjection {
     if (previous && adjacent.length === 1) {
       const mergedText = adjacent[0];
       this.rows[this.rows.length - 1] = { ...mergedText, seq: mergedText.seqEnd };
-      return;
+      return { ...this.rows[this.rows.length - 1] };
     }
     if (identity !== null) this.identities.set(identity, this.rows.length);
-    this.rows.push({ ...entry, seq: entry.seqEnd });
+    const projected = { ...entry, seq: entry.seqEnd };
+    this.rows.push(projected);
+    return { ...projected };
   }
 
   getRows(): ProjectedTimelineRow[] {
