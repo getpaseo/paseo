@@ -29,7 +29,10 @@ function waitForRuntimeMessage(
   });
 }
 
-async function mountRuntime(size?: { width: number; height: number }): Promise<HTMLIFrameElement> {
+async function mountRuntime(
+  size?: { width: number; height: number },
+  { fractionalMeasurement = false }: { fractionalMeasurement?: boolean } = {},
+): Promise<HTMLIFrameElement> {
   const frame = document.createElement("iframe");
   frame.sandbox.add("allow-scripts");
   if (size) {
@@ -37,11 +40,43 @@ async function mountRuntime(size?: { width: number; height: number }): Promise<H
     frame.style.height = `${size.height}px`;
   }
   const ready = waitForRuntimeMessage(frame, (message) => message.type === "bridgeReady");
-  frame.srcdoc = mermaidRuntimeHtml;
+  frame.srcdoc = fractionalMeasurement
+    ? withFractionalMeasurement(mermaidRuntimeHtml)
+    : mermaidRuntimeHtml;
   document.body.append(frame);
   mountedFrames.push(frame);
   await ready;
   return frame;
+}
+
+/**
+ * Emulate Chrome/Blink on a fractional device pixel ratio, where
+ * `getBoundingClientRect()` returns a width a fraction of a pixel off the
+ * integer `max-width` Mermaid sets. Mermaid's HTML-label wrap check is an exact
+ * float comparison (`bbox.width === width`), so the offset makes a long label
+ * skip the wrap branch and clip. Appended after the runtime so it patches the
+ * iframe's own realm, not this document.
+ */
+function withFractionalMeasurement(html: string): string {
+  const patch = `<script>(function () {
+    var original = Element.prototype.getBoundingClientRect;
+    Element.prototype.getBoundingClientRect = function () {
+      var rect = original.call(this);
+      if (this.tagName === "DIV") {
+        var offset = Object.create(Object.getPrototypeOf(rect));
+        Object.defineProperties(offset, {
+          width: { value: rect.width - 0.5 },
+          height: { value: rect.height },
+          top: { value: rect.top }, left: { value: rect.left },
+          right: { value: rect.right }, bottom: { value: rect.bottom },
+          x: { value: rect.x }, y: { value: rect.y }
+        });
+        return offset;
+      }
+      return rect;
+    };
+  })();<\/script>`;
+  return html + patch;
 }
 
 function renderedSize(message: MermaidRuntimeMessage): { height: number; width: number } {
@@ -110,6 +145,25 @@ describe("Mermaid sandbox runtime", () => {
     const wide = await render(wideFrame, { revision: 1, source });
 
     expect(renderedSize(narrow)).toEqual(renderedSize(wide));
+  });
+
+  /**
+   * Regression for mermaid-js/mermaid#7794: on a fractional device pixel ratio
+   * Chrome/Blink measures the label a fraction of a pixel off the configured
+   * width, so Mermaid's exact `bbox.width === width` wrap check fails and a long
+   * label clips instead of wrapping. The fix tolerates the rounding error.
+   */
+  it("wraps a long flowchart label when the measured width is fractional", async () => {
+    const frame = await mountRuntime(undefined, { fractionalMeasurement: true });
+    const shortSource = "flowchart TD\n  A[short] --> B[also short]";
+    const longSource =
+      "flowchart TD\n  A[This is a very long node label that should wrap onto multiple lines instead of being clipped] --> B[also short]";
+
+    const short = renderedSize(await render(frame, { revision: 1, source: shortSource }));
+    const long = renderedSize(await render(frame, { revision: 2, source: longSource }));
+
+    // One line fits within the wrapping width; the other must wrap onto more.
+    expect(long.height).toBeGreaterThan(short.height);
   });
 
   it("coalesces queued input and never reports an obsolete result", async () => {
