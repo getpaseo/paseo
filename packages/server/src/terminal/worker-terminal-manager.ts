@@ -143,6 +143,7 @@ function forkTerminalWorker(): TerminalWorkerProcess {
     execArgv: resolveWorkerExecArgv(),
     serialization: "advanced",
     stdio: ["ignore", "ignore", "inherit", "ipc"],
+    windowsHide: true,
   }) as TerminalWorkerProcess;
 }
 
