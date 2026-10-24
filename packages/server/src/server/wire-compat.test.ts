@@ -118,6 +118,10 @@ class InMemoryAgentManager {
     return this.timeline.fetch("agent-1", options);
   }
 
+  fetchPublicTimeline() {
+    return this.fetchTimeline();
+  }
+
   listAgents() {
     return [];
   }
