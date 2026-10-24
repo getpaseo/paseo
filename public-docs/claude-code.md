@@ -28,6 +28,27 @@ Claude Code also works great inside the Paseo terminal. If you prefer the standa
 
 You can use the terminal from Paseo's desktop, web, or mobile app while keeping access to your workspace, git changes, and other Paseo tools.
 
+## Release idle Claude processes
+
+By default, an idle Claude agent keeps its Claude Code process and its MCP servers running until
+you archive it or restart the daemon. To release idle processes, add this to
+`$PASEO_HOME/config.json`:
+
+```json
+{
+  "agents": {
+    "claudeIdleBackendTimeoutMs": 1800000
+  }
+}
+```
+
+The value is in milliseconds (minimum 60,000). `0` keeps processes resident. The agent stays in Paseo
+as `closed`, not archived. Opening or prompting it later resumes the same agent and Claude session;
+the next response has a cold-start delay. Paseo keeps the process while Claude reports background
+work (background shells, `Monitor` watches, workflows, background subagents) or a pending
+permission. Detached commands that Claude does not track may still be interrupted. A daemon restart
+is required after changing this setting.
+
 ## See also
 
 - [Supported providers](/docs/supported-providers), for other agents you can run alongside Claude Code.
