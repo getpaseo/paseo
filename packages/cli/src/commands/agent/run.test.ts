@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
 import { resolveCallerAgentId as resolveRunCallerAgentId } from "../../utils/caller-agent.js";
 import {
+  buildRunAgentRequest,
+  prepareRun,
   resolveExistingRunWorkspace,
+  resolveRunFeatureValues,
+  type RunModelEntry,
+  type RunPreparationClient,
   runRunCommand,
   waitsForFinish,
   type AgentRunOptions,
@@ -17,7 +22,7 @@ function daemonWithAgents(...agentIds: string[]) {
       if (!agentIds.includes(agentId)) {
         throw new Error(`Agent not found: ${agentId}`);
       }
-      return { agent: { id: agentId } };
+      return { agent: { id: agentId, cwd: `/agents/${agentId}` } };
     },
   };
 }
@@ -167,5 +172,230 @@ describe("runRunCommand option validation", () => {
       { newWorkspace: "worktree", worktreeMode: "container" },
       /Unsupported worktree mode/,
     );
+  });
+});
+
+const serviceTier = {
+  type: "select" as const,
+  id: "service_tier",
+  label: "Speed",
+  value: "default",
+  options: [
+    { id: "default", label: "Normal" },
+    { id: "priority", label: "Fast" },
+  ],
+};
+
+// A daemon with one workspace and Codex-like features. It records what feature discovery was asked
+// and offers no way to create anything, so preparation cannot leave a workspace or agent behind.
+class PreparationDaemon implements RunPreparationClient {
+  readonly modelLookups: Array<{ provider: string; cwd: string }> = [];
+  readonly featureDrafts: unknown[] = [];
+
+  constructor(private readonly models: RunModelEntry[] = []) {}
+
+  async fetchWorkspaces() {
+    return {
+      entries: [{ id: "workspace-2", workspaceDirectory: "/remote/repo" }],
+      pageInfo: { nextCursor: null },
+    };
+  }
+
+  async listProviderModels(provider: string, options: { cwd: string }) {
+    this.modelLookups.push({ provider, cwd: options.cwd });
+    return { models: this.models };
+  }
+
+  async listProviderFeatures(draftConfig: unknown) {
+    this.featureDrafts.push(draftConfig);
+    return { features: [serviceTier] };
+  }
+}
+
+describe("run preparation", () => {
+  const originalWorkspaceId = process.env.PASEO_WORKSPACE_ID;
+  // Workspace terminals export PASEO_WORKSPACE_ID; each test sets the placement it needs.
+  beforeEach(() => {
+    delete process.env.PASEO_WORKSPACE_ID;
+  });
+  afterEach(() => {
+    if (originalWorkspaceId === undefined) delete process.env.PASEO_WORKSPACE_ID;
+    else process.env.PASEO_WORKSPACE_ID = originalWorkspaceId;
+  });
+
+  const draft = {
+    provider: "codex",
+    model: "gpt-5.5",
+    modeId: undefined,
+    thinkingOptionId: "high",
+  };
+  const fast = { service_tier: "priority" };
+  const caller = { id: "parent-agent", cwd: "/caller/workspace" };
+
+  it("checks features in an explicit workspace's directory, not the shell's", async () => {
+    const daemon = new PreparationDaemon();
+
+    const prepared = await prepareRun(daemon, {
+      options: { workspace: "workspace-2" },
+      cwd: "/local/shell",
+      caller: undefined,
+      requestedFeatures: fast,
+      draft,
+    });
+
+    expect(prepared).toEqual({
+      placement: { id: "workspace-2", cwd: "/remote/repo" },
+      featureValues: { service_tier: "priority" },
+    });
+    expect(daemon.featureDrafts).toEqual([{ ...draft, cwd: "/remote/repo" }]);
+  });
+
+  it("checks a subagent's features in its caller's directory, ahead of an ambient workspace", async () => {
+    process.env.PASEO_WORKSPACE_ID = "workspace-2";
+    const daemon = new PreparationDaemon();
+
+    const prepared = await prepareRun(daemon, {
+      options: {},
+      cwd: "/local/shell",
+      caller,
+      requestedFeatures: fast,
+      draft,
+    });
+
+    expect(prepared.placement).toEqual({ cwd: "/caller/workspace" });
+    expect(daemon.featureDrafts).toEqual([{ ...draft, cwd: "/caller/workspace" }]);
+  });
+
+  it("checks a run that needs a new workspace in the shell's directory and leaves it unplaced", async () => {
+    const daemon = new PreparationDaemon();
+
+    const prepared = await prepareRun(daemon, {
+      options: { newWorkspace: "worktree" },
+      cwd: "/local/shell",
+      caller,
+      requestedFeatures: fast,
+      draft,
+    });
+
+    expect(prepared.placement).toBeUndefined();
+    expect(daemon.featureDrafts).toEqual([{ ...draft, cwd: "/local/shell" }]);
+  });
+
+  it("rejects an unknown feature before any workspace or agent exists", async () => {
+    const daemon = new PreparationDaemon();
+
+    await expect(
+      prepareRun(daemon, {
+        options: {},
+        cwd: "/local/shell",
+        caller: undefined,
+        requestedFeatures: { fast_mode: "true" },
+        draft,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_FEATURE", message: "Unknown feature: fast_mode" });
+  });
+
+  it("asks the daemon nothing about features without --feature", async () => {
+    const daemon = new PreparationDaemon();
+
+    const prepared = await prepareRun(daemon, {
+      options: {},
+      cwd: "/local/shell",
+      caller: undefined,
+      requestedFeatures: {},
+      draft,
+    });
+
+    expect(prepared.featureValues).toBeUndefined();
+    expect(daemon.modelLookups).toEqual([]);
+    expect(daemon.featureDrafts).toEqual([]);
+  });
+});
+
+describe("run feature values", () => {
+  const draft = { provider: "codex", cwd: "/repo", thinkingOptionId: "high" };
+  const models = [{ id: "gpt-5.4" }, { id: "gpt-5.5", isDefault: true }];
+
+  it("checks an explicit model without listing models", async () => {
+    const daemon = new PreparationDaemon(models);
+
+    await resolveRunFeatureValues(
+      daemon,
+      { service_tier: "priority" },
+      { ...draft, model: "gpt-5.4" },
+    );
+    expect(daemon.modelLookups).toEqual([]);
+    expect(daemon.featureDrafts).toEqual([{ ...draft, model: "gpt-5.4" }]);
+  });
+
+  it.each([undefined, "default", " default "])(
+    "checks model %j against the model the daemon defaults to",
+    async (model) => {
+      const daemon = new PreparationDaemon(models);
+
+      await expect(
+        resolveRunFeatureValues(daemon, { service_tier: "priority" }, { ...draft, model }),
+      ).resolves.toEqual({ service_tier: "priority" });
+      expect(daemon.modelLookups).toEqual([{ provider: "codex", cwd: "/repo" }]);
+      expect(daemon.featureDrafts).toEqual([{ ...draft, model: "gpt-5.5" }]);
+    },
+  );
+
+  it("falls back to the first listed model when none is marked default", async () => {
+    const daemon = new PreparationDaemon([{ id: "gpt-5.4" }, { id: "gpt-5.5" }]);
+
+    await resolveRunFeatureValues(daemon, { service_tier: "priority" }, draft);
+    expect(daemon.featureDrafts).toEqual([{ ...draft, model: "gpt-5.4" }]);
+  });
+
+  it("reports a provider that cannot list its features", async () => {
+    const client = {
+      async listProviderModels() {
+        return { models: [] };
+      },
+      async listProviderFeatures() {
+        return { error: "provider unavailable" };
+      },
+    };
+
+    await expect(
+      resolveRunFeatureValues(client, { service_tier: "priority" }, { ...draft, model: "gpt-5.5" }),
+    ).rejects.toMatchObject({
+      code: "FEATURES_UNAVAILABLE",
+      message: "Could not list features for codex: provider unavailable",
+    });
+  });
+});
+
+describe("run agent request", () => {
+  it("carries the checked feature values and the resolved placement", () => {
+    expect(
+      buildRunAgentRequest({
+        provider: "codex",
+        model: undefined,
+        modeId: "full-access",
+        thinkingOptionId: "high",
+        featureValues: { service_tier: "priority" },
+        workspace: { id: "workspace-2", cwd: "/remote/repo" },
+        callerAgentId: "parent-agent",
+        title: "Task",
+        images: undefined,
+        env: undefined,
+        labels: {},
+      }),
+    ).toEqual({
+      provider: "codex",
+      cwd: "/remote/repo",
+      workspaceId: "workspace-2",
+      callerAgentId: "parent-agent",
+      title: "Task",
+      modeId: "full-access",
+      model: undefined,
+      thinkingOptionId: "high",
+      featureValues: { service_tier: "priority" },
+      images: undefined,
+      env: undefined,
+      labels: undefined,
+    });
   });
 });
