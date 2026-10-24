@@ -4824,6 +4824,509 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test.each([
+    { turns: [{ status: "completed", items: [] }], expected: "completed" },
+    { turns: [{ status: "failed", items: [] }], expected: "failed" },
+    { turns: [{ status: "interrupted", items: [] }], expected: "canceled" },
+    {
+      turns: [
+        { status: "interrupted", items: [] },
+        { status: "completed", items: [] },
+      ],
+      expected: "completed",
+    },
+    { turns: [{ status: "inProgress", items: [] }], expected: "running" },
+    { turns: [{ items: [] }], expected: "running" },
+  ])("restores the latest child turn as $expected", async ({ turns, expected }) => {
+    const session = createSession();
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        if (method !== "thread/read") return {};
+        const threadId = (params as { threadId?: string }).threadId;
+        return {
+          thread: {
+            turns:
+              threadId === "test-thread"
+                ? [
+                    {
+                      items: [
+                        {
+                          type: "collabAgentToolCall",
+                          id: "persisted-spawn",
+                          tool: "spawnAgent",
+                          status: "completed",
+                          prompt: "Review the change",
+                          receiverThreadIds: ["persisted-child"],
+                          agentsStates: { "persisted-child": { status: "pendingInit" } },
+                        },
+                        {
+                          type: "collabAgentToolCall",
+                          id: "persisted-followup",
+                          tool: "sendInput",
+                          status: "completed",
+                          receiverThreadIds: ["persisted-child"],
+                          agentsStates: { "persisted-child": { status: "running" } },
+                        },
+                      ],
+                    },
+                  ]
+                : turns,
+          },
+        };
+      }),
+    };
+
+    await asInternals(session).loadPersistedHistory(session.client);
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) history.push(event);
+    const childUpserts = history.flatMap((event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "upsert" &&
+      event.event.id === "persisted-child"
+        ? [event.event]
+        : [],
+    );
+    expect(childUpserts.at(-1)).toMatchObject({ status: expected });
+    expect(
+      history.find(
+        (event) =>
+          event.type === "timeline" &&
+          event.item.type === "tool_call" &&
+          event.item.callId === "persisted-spawn",
+      ),
+    ).toMatchObject({ item: { status: expected } });
+  });
+
+  test("reopens a child restored as completed when Codex starts another turn", async () => {
+    const session = createSession();
+    session.client = {
+      request: vi.fn(async (_method: string, params: unknown) => ({
+        thread: {
+          turns:
+            (params as { threadId?: string }).threadId === "test-thread"
+              ? [
+                  {
+                    items: [
+                      {
+                        type: "collabAgentToolCall",
+                        id: "spawn-reopened-child",
+                        tool: "spawnAgent",
+                        status: "completed",
+                        receiverThreadIds: ["reopened-child"],
+                        agentsStates: { "reopened-child": { status: "pendingInit" } },
+                      },
+                    ],
+                  },
+                ]
+              : [{ status: "completed", items: [] }],
+        },
+      })),
+    };
+    await asInternals(session).loadPersistedHistory(session.client);
+    for await (const _event of session.streamHistory()) {
+      // Consume the replay before checking live updates.
+    }
+
+    const liveEvents: AgentStreamEvent[] = [];
+    session.subscribe((event) => liveEvents.push(event));
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "reopened-child",
+      turn: { id: "next-child-turn" },
+    });
+    expect(
+      liveEvents.findLast(
+        (event) => event.type === "provider_subagent" && event.event.type === "upsert",
+      ),
+    ).toMatchObject({ event: { id: "reopened-child", status: "running" } });
+  });
+
+  test("keeps a live child turn ahead of an older persisted snapshot", async () => {
+    const session = createSession();
+    let markChildReadRequested!: () => void;
+    const childReadRequested = new Promise<void>((resolve) => {
+      markChildReadRequested = resolve;
+    });
+    let releaseChildRead!: (response: unknown) => void;
+    const childRead = new Promise<unknown>((resolve) => {
+      releaseChildRead = resolve;
+    });
+    session.client = {
+      request: vi.fn(async (_method: string, params: unknown) => {
+        if ((params as { threadId?: string }).threadId === "test-thread") {
+          return {
+            thread: {
+              turns: [
+                {
+                  items: [
+                    {
+                      type: "collabAgentToolCall",
+                      id: "spawn-racing-child",
+                      tool: "spawnAgent",
+                      status: "completed",
+                      receiverThreadIds: ["racing-child"],
+                      agentsStates: { "racing-child": { status: "pendingInit" } },
+                    },
+                  ],
+                },
+              ],
+            },
+          };
+        }
+        markChildReadRequested();
+        return childRead;
+      }),
+    };
+
+    const loading = asInternals(session).loadPersistedHistory(session.client);
+    await childReadRequested;
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "racing-child",
+      turn: { id: "newer-turn" },
+    });
+    releaseChildRead({ thread: { turns: [{ status: "completed", items: [] }] } });
+    await loading;
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) history.push(event);
+    expect(
+      history.findLast(
+        (event) => event.type === "provider_subagent" && event.event.type === "upsert",
+      ),
+    ).toMatchObject({ event: { id: "racing-child", status: "running" } });
+    expect(
+      history.find(
+        (event) =>
+          event.type === "timeline" &&
+          event.item.type === "tool_call" &&
+          event.item.callId === "spawn-racing-child",
+      ),
+    ).toMatchObject({ item: { status: "running" } });
+  });
+
+  test("keeps a child turn received while root history is loading", async () => {
+    const session = createSession();
+    let releaseRootRead!: (response: unknown) => void;
+    const rootRead = new Promise<unknown>((resolve) => {
+      releaseRootRead = resolve;
+    });
+    let markRootReadRequested!: () => void;
+    const rootReadRequested = new Promise<void>((resolve) => {
+      markRootReadRequested = resolve;
+    });
+    session.client = {
+      request: vi.fn(async (_method: string, params: unknown) => {
+        if ((params as { threadId?: string }).threadId === "test-thread") {
+          markRootReadRequested();
+          return rootRead;
+        }
+        return { thread: { turns: [{ status: "completed", items: [] }] } };
+      }),
+    };
+
+    const loading = asInternals(session).loadPersistedHistory(session.client);
+    await rootReadRequested;
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "child-before-root-read",
+      turn: { id: "newer-turn" },
+    });
+    releaseRootRead({
+      thread: {
+        turns: [
+          {
+            items: [
+              {
+                type: "collabAgentToolCall",
+                id: "spawn-before-root-read",
+                tool: "spawnAgent",
+                status: "completed",
+                receiverThreadIds: ["child-before-root-read"],
+                agentsStates: { "child-before-root-read": { status: "pendingInit" } },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    await loading;
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) history.push(event);
+    expect(
+      history.findLast(
+        (event) => event.type === "provider_subagent" && event.event.type === "upsert",
+      ),
+    ).toMatchObject({ event: { id: "child-before-root-read", status: "running" } });
+  });
+
+  test("does not lose a child turn while reloading a previously registered route", async () => {
+    const session = createSession();
+    let releaseSecondRootRead!: (response: unknown) => void;
+    const secondRootRead = new Promise<unknown>((resolve) => {
+      releaseSecondRootRead = resolve;
+    });
+    let markSecondRootReadRequested!: () => void;
+    const secondRootReadRequested = new Promise<void>((resolve) => {
+      markSecondRootReadRequested = resolve;
+    });
+    const rootHistory = {
+      thread: {
+        turns: [
+          {
+            items: [
+              {
+                type: "collabAgentToolCall",
+                id: "spawn-reconnected-child",
+                tool: "spawnAgent",
+                status: "completed",
+                receiverThreadIds: ["reconnected-child"],
+                agentsStates: { "reconnected-child": { status: "pendingInit" } },
+              },
+            ],
+          },
+        ],
+      },
+    };
+    let rootReadCount = 0;
+    session.client = {
+      request: vi.fn(async (_method: string, params: unknown) => {
+        if ((params as { threadId?: string }).threadId !== "test-thread") {
+          return { thread: { turns: [{ status: "completed", items: [] }] } };
+        }
+        rootReadCount += 1;
+        if (rootReadCount === 1) return rootHistory;
+        markSecondRootReadRequested();
+        return secondRootRead;
+      }),
+    };
+
+    await asInternals(session).loadPersistedHistory(session.client);
+    for await (const _event of session.streamHistory()) {
+      // Consume the first replay before reconnecting.
+    }
+    const reloading = asInternals(session).loadPersistedHistory(session.client);
+    await secondRootReadRequested;
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "reconnected-child",
+      turn: { id: "new-turn-after-reconnect" },
+    });
+    releaseSecondRootRead(rootHistory);
+    await reloading;
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) history.push(event);
+    expect(
+      history.findLast(
+        (event) => event.type === "provider_subagent" && event.event.type === "upsert",
+      ),
+    ).toMatchObject({ event: { id: "reconnected-child", status: "running" } });
+  });
+
+  test("keeps a child turn spawned while root history is loading", async () => {
+    const session = createSession();
+    let releaseRootRead!: (response: unknown) => void;
+    const rootRead = new Promise<unknown>((resolve) => {
+      releaseRootRead = resolve;
+    });
+    let markRootReadRequested!: () => void;
+    const rootReadRequested = new Promise<void>((resolve) => {
+      markRootReadRequested = resolve;
+    });
+    session.client = {
+      request: vi.fn(async (_method: string, params: unknown) => {
+        if ((params as { threadId?: string }).threadId === "test-thread") {
+          markRootReadRequested();
+          return rootRead;
+        }
+        return { thread: { turns: [{ status: "completed", items: [] }] } };
+      }),
+    };
+
+    const loading = asInternals(session).loadPersistedHistory(session.client);
+    await rootReadRequested;
+    asInternals(session).handleNotification("item/started", {
+      threadId: "test-thread",
+      item: {
+        type: "collabAgentToolCall",
+        id: "spawn-during-root-read",
+        tool: "spawnAgent",
+        status: "inProgress",
+        receiverThreadIds: ["live-child-during-root-read"],
+        agentsStates: { "live-child-during-root-read": { status: "running" } },
+      },
+    });
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "live-child-during-root-read",
+      turn: { id: "newer-child-turn" },
+    });
+    releaseRootRead({
+      thread: {
+        turns: [
+          {
+            items: [
+              {
+                type: "collabAgentToolCall",
+                id: "spawn-during-root-read",
+                tool: "spawnAgent",
+                status: "completed",
+                receiverThreadIds: ["live-child-during-root-read"],
+                agentsStates: { "live-child-during-root-read": { status: "pendingInit" } },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    await loading;
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) history.push(event);
+    expect(
+      history.findLast(
+        (event) => event.type === "provider_subagent" && event.event.type === "upsert",
+      ),
+    ).toMatchObject({ event: { id: "live-child-during-root-read", status: "running" } });
+    expect(
+      history.find(
+        (event) =>
+          event.type === "timeline" &&
+          event.item.type === "tool_call" &&
+          event.item.callId === "spawn-during-root-read",
+      ),
+    ).toMatchObject({ item: { status: "running" } });
+  });
+
+  test("replays a grandchild turn received before its history route is registered", async () => {
+    const session = createSession();
+    let releaseChildRead!: (response: unknown) => void;
+    const childRead = new Promise<unknown>((resolve) => {
+      releaseChildRead = resolve;
+    });
+    let markChildReadRequested!: () => void;
+    const childReadRequested = new Promise<void>((resolve) => {
+      markChildReadRequested = resolve;
+    });
+    session.client = {
+      request: vi.fn(async (_method: string, params: unknown) => {
+        const threadId = (params as { threadId?: string }).threadId;
+        if (threadId === "test-thread") {
+          return {
+            thread: {
+              turns: [
+                {
+                  items: [
+                    {
+                      type: "subAgentActivity",
+                      id: "spawn-persisted-parent",
+                      kind: "started",
+                      agentThreadId: "persisted-parent",
+                      agentPath: "/root/parent",
+                    },
+                  ],
+                },
+              ],
+            },
+          };
+        }
+        if (threadId === "persisted-parent") {
+          markChildReadRequested();
+          return childRead;
+        }
+        return { thread: { turns: [{ status: "completed", items: [] }] } };
+      }),
+    };
+
+    const loading = asInternals(session).loadPersistedHistory(session.client);
+    await childReadRequested;
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "persisted-grandchild",
+      turn: { id: "newer-grandchild-turn" },
+    });
+    releaseChildRead({
+      thread: {
+        turns: [
+          {
+            status: "completed",
+            items: [
+              {
+                type: "subAgentActivity",
+                id: "spawn-persisted-grandchild",
+                kind: "started",
+                agentThreadId: "persisted-grandchild",
+                agentPath: "/root/parent/grandchild",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    await loading;
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) history.push(event);
+    expect(
+      history.findLast(
+        (event) =>
+          event.type === "provider_subagent" &&
+          event.event.type === "upsert" &&
+          event.event.id === "persisted-grandchild",
+      ),
+    ).toMatchObject({ event: { status: "running" } });
+  });
+
+  test("restores siblings independently when one child lacks a turn status", async () => {
+    const session = createSession();
+    session.client = {
+      request: vi.fn(async (_method: string, params: unknown) => {
+        const threadId = (params as { threadId?: string }).threadId;
+        if (threadId === "test-thread") {
+          return {
+            thread: {
+              turns: [
+                {
+                  items: [
+                    {
+                      type: "collabAgentToolCall",
+                      id: "spawn-siblings",
+                      tool: "spawnAgent",
+                      status: "completed",
+                      receiverThreadIds: ["first-child", "second-child"],
+                      agentsStates: {
+                        "first-child": { status: "pendingInit" },
+                        "second-child": { status: "pendingInit" },
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          };
+        }
+        return {
+          thread: {
+            turns: [{ ...(threadId === "first-child" ? { status: "completed" } : {}), items: [] }],
+          },
+        };
+      }),
+    };
+
+    await asInternals(session).loadPersistedHistory(session.client);
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) history.push(event);
+    const finalStatuses = new Map(
+      history.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "upsert"
+          ? [[event.event.id, event.event.status] as const]
+          : [],
+      ),
+    );
+    expect(finalStatuses).toEqual(
+      new Map([
+        ["first-child", "completed"],
+        ["second-child", "running"],
+      ]),
+    );
+  });
+
   test("restores nested MultiAgentV2 ownership from persisted child threads", async () => {
     const session = createSession();
     session.client = {
@@ -4832,6 +5335,9 @@ describe("Codex app-server provider", () => {
           return {};
         }
         const threadId = (params as { threadId?: string }).threadId;
+        if (threadId === "persisted-grandchild") {
+          return { thread: { turns: [{ status: "completed", items: [] }] } };
+        }
         const itemsByThreadId = {
           "test-thread": [
             {
@@ -4847,7 +5353,7 @@ describe("Codex app-server provider", () => {
               tool: "wait",
               status: "completed",
               receiverThreadIds: ["persisted-grandchild"],
-              agentsStates: { "persisted-grandchild": { status: "completed" } },
+              agentsStates: { "persisted-grandchild": { status: "pendingInit" } },
             },
           ],
           "persisted-child": [
@@ -4863,7 +5369,7 @@ describe("Codex app-server provider", () => {
         const items = threadId ? itemsByThreadId[threadId as keyof typeof itemsByThreadId] : [];
         return {
           thread: {
-            turns: items ? [{ items }] : [],
+            turns: items ? [{ status: "completed", items }] : [],
           },
         };
       }),
@@ -4878,11 +5384,16 @@ describe("Codex app-server provider", () => {
     const upserts = history.flatMap((event) =>
       event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
     );
-    expect(upserts).toEqual([
-      expect.objectContaining({ id: "persisted-child", parentSubagentId: null }),
+    expect(Array.from(new Map(upserts.map((upsert) => [upsert.id, upsert])).values())).toEqual([
+      expect.objectContaining({
+        id: "persisted-child",
+        parentSubagentId: null,
+        status: "completed",
+      }),
       expect.objectContaining({
         id: "persisted-grandchild",
         parentSubagentId: "persisted-child",
+        status: "completed",
       }),
     ]);
   });
