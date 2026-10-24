@@ -43,3 +43,60 @@ export function createReadingAnchor() {
     },
   };
 }
+
+const LANDING_TOLERANCE_PX = 1;
+
+export interface CellFrame {
+  y: number;
+  height: number;
+}
+
+export type InvertedReadingRow = { kind: "row"; id: string } | { kind: "live-head" } | null;
+
+/**
+ * The native list is inverted: content starts at the visual bottom with the live head, and a
+ * cell's `y` grows toward older rows. The reading line sits just below the visual top, under
+ * any overlay that floats over the list there.
+ */
+export interface InvertedReadingRowInput {
+  frames: ReadonlyMap<string, CellFrame>;
+  offsetY: number;
+  viewportHeight: number;
+  topInset: number;
+}
+
+export function resolveInvertedReadingRow(input: InvertedReadingRowInput): InvertedReadingRow {
+  const readingLine =
+    input.offsetY + input.viewportHeight - input.topInset - READING_POSITION_OFFSET_PX;
+  let firstStart = Number.POSITIVE_INFINITY;
+  let readingId: string | null = null;
+  let readingStart = Number.POSITIVE_INFINITY;
+  // Cells outside the render window have no frame. A line over that gap reads the nearest
+  // rendered newer cell, the same row a reader leaving it upward last saw.
+  let newerId: string | null = null;
+  let newerEnd = Number.NEGATIVE_INFINITY;
+  for (const [id, frame] of input.frames) {
+    const end = frame.y + frame.height;
+    firstStart = Math.min(firstStart, frame.y);
+    // A prompt jump lands a row's top exactly on the reading line; sub-point rounding must
+    // not hand it to the row before. Of two rows meeting the line, the newer one reads.
+    if (frame.y < readingLine && readingLine <= end + LANDING_TOLERANCE_PX) {
+      if (frame.y < readingStart) {
+        readingStart = frame.y;
+        readingId = id;
+      }
+      continue;
+    }
+    if (end < readingLine && end > newerEnd) {
+      newerEnd = end;
+      newerId = id;
+    }
+  }
+  if (readingId !== null) {
+    return { kind: "row", id: readingId };
+  }
+  if (newerId !== null) {
+    return { kind: "row", id: newerId };
+  }
+  return input.frames.size > 0 && readingLine <= firstStart ? { kind: "live-head" } : null;
+}
