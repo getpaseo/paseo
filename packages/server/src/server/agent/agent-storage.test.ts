@@ -594,7 +594,9 @@ describe("AgentStorage", () => {
     const files = await fs.readdir(directory);
     const record = JSON.parse(await fs.readFile(path.join(directory, files[0]!), "utf8"));
     expect(record).toEqual({ opening, status: "pending" });
-    expect((await fs.stat(path.join(directory, files[0]!))).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await fs.stat(path.join(directory, files[0]!))).mode & 0o777).toBe(0o600);
+    }
   });
 
   test("only the exact pending opening can commit and a later physical opening has a new identity", async () => {
