@@ -1,7 +1,9 @@
 import { MAX_RELAY_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
 import {
-  createClientChannel,
-  type EncryptedChannel,
+  openClientSecureChannel,
+  PROTECTED_HANDSHAKE_FAILED_CLOSE_CODE,
+  type SecureChannel,
+  type SecurityMode,
   type Transport as RelayTransport,
 } from "@getpaseo/relay/e2ee";
 import type {
@@ -20,32 +22,86 @@ type CloseHandler = (event?: unknown) => void;
 type ErrorHandler = (event?: unknown) => void;
 type MessageHandler = (data: unknown, isBinary: boolean) => void;
 
-export function createRelayE2eeTransportFactory(args: {
-  baseFactory: DaemonTransportFactory;
+export interface RelayE2eeTransportOptions {
   daemonPublicKeyB64: string;
   logger: TransportLogger;
-}): DaemonTransportFactory {
-  return ({ url }) => {
-    const base = args.baseFactory({ url });
-    return createEncryptedTransport(base, args.daemonPublicKeyB64, args.logger);
-  };
+  assertOutboundCapacity?: (wireBytes: number) => void;
+  /** Refuse to open unless the daemon negotiates at least this endpoint security mode. */
+  minimumMode?: SecurityMode;
+  /** Reports the negotiated mode once the daemon has authenticated the handshake. */
+  onSecurityMode?: (mode: SecurityMode) => void;
 }
 
-export function createRelayTransportFactory(
+export function createRelayE2eeTransportFactory(
+  args: RelayE2eeTransportOptions & { baseFactory: DaemonTransportFactory },
+): DaemonTransportFactory {
+  const { baseFactory, ...options } = args;
+  return ({ url }) => createEncryptedTransport(baseFactory({ url }), options);
+}
+
+const DAEMON_REQUIRES_PROTECTED_REASON = "daemon requires protected endpoint security";
+
+/**
+ * Returns a user-facing message when this client closed the session itself
+ * because endpoint security could not be established, so reconnecting cannot help.
+ *
+ * The daemon's own policy close never reaches the client: both relays replace a
+ * daemon-side close with their own code (1012 on the wrangler relay).
+ */
+export function describeEndpointSecurityClose(event: unknown): string | null {
+  if (!event || typeof event !== "object") return null;
+  const code = "code" in event ? event.code : undefined;
+  const reason = "reason" in event && typeof event.reason === "string" ? event.reason : "";
+  if (code === PROTECTED_HANDSHAKE_FAILED_CLOSE_CODE) {
+    return `Endpoint security handshake failed: ${reason || "protected mode unavailable"}`;
+  }
+  return null;
+}
+
+/**
+ * The first session message from the daemon is `server_info`. A daemon that can
+ * negotiate protected security advertises it there, so a legacy session with such
+ * a daemon was downgraded in transit and must not proceed to admission.
+ */
+function readServerInfoProtectedSupport(text: string): boolean | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed) || parsed.type !== "session" || !isRecord(parsed.message)) return null;
+  const message = parsed.message;
+  if (message.type !== "status" || !isRecord(message.payload)) return null;
+  if (message.payload.status !== "server_info") return null;
+  const features = message.payload.features;
+  return isRecord(features) && features.relayProtectedSecurity === true;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/**
+ * Relay upgrades carry routing only. Daemon credentials and subprotocols must
+ * never reach the relay; they travel inside the encrypted hello.
+ */
+export function createRelayUpgradeTransportFactory(
   baseFactory: DaemonTransportFactory,
 ): DaemonTransportFactory {
-  // The relay upgrade precedes E2EE. Only the encrypted hello may carry daemon credentials.
   return ({ url }) => baseFactory({ url });
 }
 
 export function createEncryptedTransport(
   base: DaemonTransport,
-  daemonPublicKeyB64: string,
-  logger: TransportLogger,
+  options: RelayE2eeTransportOptions,
 ): DaemonTransport {
-  let channel: EncryptedChannel | null = null;
+  const { daemonPublicKeyB64, logger, minimumMode, onSecurityMode } = options;
+  const assertOutboundCapacity = options.assertOutboundCapacity ?? (() => {});
+  let channel: SecureChannel | null = null;
   let opened = false;
   let closed = false;
+  let awaitingServerInfo = true;
 
   const openHandlers = new Set<OpenHandler>();
   const closeHandlers = new Set<CloseHandler>();
@@ -79,6 +135,20 @@ export function createEncryptedTransport(
     if (closed) {
       return;
     }
+    if (awaitingServerInfo && typeof data === "string") {
+      const daemonSupportsProtected = readServerInfoProtectedSupport(data);
+      if (daemonSupportsProtected !== null) {
+        awaitingServerInfo = false;
+        if (daemonSupportsProtected && channel?.securityMode() === "legacy") {
+          logger.warn(
+            { reason: DAEMON_REQUIRES_PROTECTED_REASON },
+            "relay_e2ee_downgrade_rejected",
+          );
+          channel.close(PROTECTED_HANDSHAKE_FAILED_CLOSE_CODE, DAEMON_REQUIRES_PROTECTED_REASON);
+          return;
+        }
+      }
+    }
     emitHandlers(messageHandlers, data, data instanceof ArrayBuffer);
   };
 
@@ -98,7 +168,13 @@ export function createEncryptedTransport(
       }
       base.send(String(data));
     },
-    close: (code?: number, reason?: string) => base.close(code, reason),
+    // The channel decides the close code. Report it now: a socket close event
+    // arrives asynchronously, and the consumer must not act on an earlier
+    // error before it has seen the code.
+    close: (code?: number, reason?: string) => {
+      base.close(code, reason);
+      emitClose({ code, reason });
+    },
     onmessage: null,
     onclose: null,
     onerror: null,
@@ -106,11 +182,23 @@ export function createEncryptedTransport(
 
   const startHandshake = async () => {
     try {
-      channel = await createClientChannel(relayTransport, daemonPublicKeyB64, {
-        onopen: emitOpen,
-        onmessage: (data) => emitMessage(data),
-        onclose: (code, reason) => emitClose({ code, reason }),
-        onerror: (error) => emitError(error),
+      channel = await openClientSecureChannel(relayTransport, {
+        daemonPublicKeyB64,
+        ...(minimumMode ? { minimumMode } : {}),
+        events: {
+          onopen: () => {
+            onSecurityMode?.(channel?.securityMode() ?? "legacy");
+            emitOpen();
+          },
+          onmessage: (data) => emitMessage(data),
+          onclose: (code, reason) => emitClose({ code, reason }),
+          // Every fatal channel error is followed by a close that carries the
+          // code and reason; forwarding the error first would make the consumer
+          // reconnect before it sees them.
+          onerror: (error) => {
+            logger.warn({ err: normalizeTransportError(error) }, "relay_e2ee_channel_error");
+          },
+        },
       });
     } catch (error) {
       logger.warn({ err: normalizeTransportError(error) }, "relay_e2ee_handshake_failed");
@@ -148,6 +236,9 @@ export function createEncryptedTransport(
       if (wireBytes > MAX_RELAY_WEBSOCKET_MESSAGE_BYTES) {
         throw messageTooLargeError(wireBytes, MAX_RELAY_WEBSOCKET_MESSAGE_BYTES);
       }
+      // Encryption and its transport handoff are synchronous up to send's first await.
+      // Reject capacity failures here so a routed sender loses only its own channel.
+      assertOutboundCapacity(wireBytes);
       void channel.send(payload).catch((error) => {
         emitError(error);
       });

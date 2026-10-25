@@ -64,7 +64,7 @@ export function groupPluginSidebarItems(
           key,
           pluginId: plugin.id,
           contributionId: item.id,
-          title: item.title,
+          title: plugin.i18n.resolve(item.title, plugin.locale),
           icon: item.icon,
           targets: [{ plugin, item }],
         });
@@ -80,7 +80,7 @@ export function groupPluginSidebarItems(
           key,
           pluginId: plugin.id,
           contributionId: item.id,
-          title: item.title,
+          title: plugin.i18n.resolve(item.title, plugin.locale),
           targets: [{ plugin, item }],
         });
       }

@@ -15,6 +15,7 @@ import { AgentManager } from "../../agent-manager.js";
 import { AgentStorage } from "../../agent-storage.js";
 import { ProviderSnapshotManager } from "../../provider-snapshot-manager.js";
 import { createTestAgentClients } from "../../../test-utils/fake-agent-client.js";
+import { createTestAgentMessages } from "../../../test-utils/agent-messages.js";
 import { createPaseoAgentToolManifest, createPaseoToolCatalog } from "../../tools/paseo-tools.js";
 import { serializePaseoToolInputParameters } from "../../tools/paseo-tool-serialization.js";
 import {
@@ -83,7 +84,14 @@ describe("OpenCodeBridge", () => {
     const agentStorage = new AgentStorage(path.join(paseoHome, "agents"), logger);
     const agentManager = new AgentManager({ clients, registry: agentStorage, logger });
     const providerSnapshotManager = new ProviderSnapshotManager({ logger, extraClients: clients });
-    const dependencies = { agentManager, agentStorage, providerSnapshotManager, logger };
+    const agentMessages = createTestAgentMessages({ agentManager, agentStorage, logger });
+    const dependencies = {
+      agentManager,
+      agentStorage,
+      providerSnapshotManager,
+      logger,
+      agentMessages: () => agentMessages,
+    };
     const bridge = new OpenCodeBridge({ paseoHome, logger });
     await bridge.start();
     bridge.setManifestCatalog(createPaseoAgentToolManifest(dependencies));
@@ -199,11 +207,13 @@ describe("OpenCodeBridge", () => {
             sessionID: "bound",
             ask: async () => undefined,
           }),
-        ).resolves.toMatchObject({ output: expect.stringContaining('"success": true') });
+        ).resolves.toMatchObject({ output: expect.stringContaining('"deliveryStatus": "queued"') });
+        await agentMessages.waitForDispatch(child.id, new AbortController().signal);
       } finally {
         await dispose();
       }
     } finally {
+      await agentMessages.close();
       await bridge.close();
       await Promise.all(
         agentManager.listAgents().map((agent) => agentManager.closeAgent(agent.id)),

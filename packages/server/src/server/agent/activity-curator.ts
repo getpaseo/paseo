@@ -5,7 +5,7 @@ import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 import { isLikelyExternalToolName } from "@getpaseo/protocol/tool-name-normalization";
 import { buildAgentMessageDisplay } from "@getpaseo/protocol/paseo-tool-presentation/index";
 import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
-import { projectTimelineRows } from "./timeline-projection.js";
+import { projectTimelineRows, selectItemsByProjectedLimit } from "./timeline-projection.js";
 
 const DEFAULT_MAX_ITEMS = 0;
 const MAX_TOOL_INPUT_CHARS = 400;
@@ -208,6 +208,24 @@ export function curateAgentActivity(
   return entries.length > 0
     ? entries.map((entry) => entry.text).join("\n")
     : "No activity to display.";
+}
+
+export function summarizeAgentActivity(timeline: AgentTimelineItem[], limit?: number) {
+  const selection = selectItemsByProjectedLimit({
+    items: timeline,
+    direction: "tail",
+    limit: limit ?? 0,
+  });
+  const { totalProjected, shownProjected } = selection;
+  const noun = totalProjected === 1 ? "activity" : "activities";
+  const countHeader =
+    limit && shownProjected < totalProjected
+      ? `Showing ${shownProjected} of ${totalProjected} ${noun} (limited to ${limit})`
+      : `Showing all ${totalProjected} ${noun}`;
+  return {
+    updateCount: timeline.length,
+    content: `${countHeader}\n\n${curateAgentActivity(selection.items)}`,
+  };
 }
 
 interface ForkCursorBoundary {

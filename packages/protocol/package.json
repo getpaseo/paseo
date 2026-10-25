@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/protocol",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Paseo shared protocol schemas and wire types",
   "files": [
     "dist",
@@ -12,6 +12,10 @@
     "./*": {
       "types": "./dist/*.d.ts",
       "default": "./dist/*.js"
+    },
+    "./addresses": {
+      "types": "./dist/addresses.d.ts",
+      "default": "./dist/addresses.js"
     }
   },
   "publishConfig": {

@@ -30,6 +30,9 @@ export function parseSort(value: unknown): BrowseSort | undefined {
 export function pluginHref(id: string): string {
   return `/plugins/${id}`;
 }
+export function pluginOwnerHref(owner: string): string {
+  return `/plugins/${owner}`;
+}
 export function categoryHref(category: CategorySlug): string {
   return `/plugins/category/${category}`;
 }

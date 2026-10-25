@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildAgentForkContextAttachment, curateAgentActivity } from "./activity-curator.js";
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
-import { formatAgentMessage, projectAgentMessage } from "./agent-messages/index.js";
+import { formatAgentMessage, projectAgentMessages } from "./agent-messages/index.js";
 
 function toolCallItem(params: {
   callId: string;
@@ -81,10 +81,10 @@ describe("curateAgentActivity", () => {
 
   it("renders delivered agent messages with their event, sender, and body", () => {
     const delivered = (source: Parameters<typeof formatAgentMessage>[0]["source"], text: string) =>
-      projectAgentMessage({
+      projectAgentMessages({
         type: "user_message",
         text: formatAgentMessage({ id: `msg-${text.length}`, source, text }),
-      })!;
+      })[0]!;
     const timeline: AgentTimelineItem[] = [
       delivered(
         { kind: "agent-message", agentId: "agt_lead", title: "CI lead" },
