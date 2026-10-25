@@ -1,6 +1,5 @@
-import {
+import React, {
   useCallback,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -8,6 +7,7 @@ import {
   type FocusEvent,
   type KeyboardEvent,
 } from "react";
+import { View, type LayoutChangeEvent } from "react-native";
 import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
 import type { ImportSessionListProps } from "./import-session-list.types";
 
@@ -28,7 +28,6 @@ export function ImportSessionList<Item>({
   footer,
 }: ImportSessionListProps<Item>) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const headerRef = useRef<HTMLDivElement>(null);
   const [headerHeight, setHeaderHeight] = useState(0);
   const [focusedKey, setFocusedKey] = useState<string | null>(null);
   const indexByKey = useMemo(
@@ -55,14 +54,8 @@ export function ImportSessionList<Item>({
   const handleBlur = useCallback((event: FocusEvent<HTMLDivElement>) => {
     if (!event.currentTarget.contains(event.relatedTarget)) setFocusedKey(null);
   }, []);
-  useLayoutEffect(() => {
-    const element = headerRef.current;
-    if (!element) return;
-    const measure = () => setHeaderHeight(element.getBoundingClientRect().height);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
+  const handleHeaderLayout = useCallback((event: LayoutChangeEvent) => {
+    setHeaderHeight(event.nativeEvent.layout.height);
   }, []);
   const getScrollElement = useCallback(() => scrollRef.current, []);
   const getItemKey = useCallback(
@@ -128,7 +121,7 @@ export function ImportSessionList<Item>({
       onBlurCapture={handleBlur}
       onKeyDown={handleKeyDown}
     >
-      <div ref={headerRef}>{header}</div>
+      <View onLayout={handleHeaderLayout}>{header}</View>
       <div style={contentStyle}>
         {virtualRows.map((row) => (
           <div
