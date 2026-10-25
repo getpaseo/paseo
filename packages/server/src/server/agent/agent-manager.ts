@@ -7,6 +7,7 @@ import type {
   PluginManagedMcpContext,
 } from "@getpaseo/plugin/server";
 import type { ManagedOpeningRequest } from "./managed-opening.js";
+import { assertManagedMcpDurabilitySupported } from "../managed-mcp-support.js";
 import { isDeepStrictEqual } from "node:util";
 import {
   captureManagedMcpServers,
@@ -424,6 +425,8 @@ interface ManagedAgentBase {
    */
   workspaceId?: string;
   owner?: AgentOwner;
+  /** A managed agent loaded for reading only: it never reserved an opening and cannot run. */
+  historyOnly?: boolean;
   capabilities: AgentCapabilityFlags;
   config: AgentSessionConfig;
   runtimeInfo?: AgentRuntimeInfo;
@@ -1334,6 +1337,7 @@ export class AgentManager {
       );
     }
     if (config.managedMcpServers) {
+      assertManagedMcpDurabilitySupported();
       const reserve = options.ensureManagedCreationReservation;
       if (!reserve) {
         throw new Error(
@@ -1449,6 +1453,40 @@ export class AgentManager {
     return resident;
   }
 
+  /**
+   * Decide residency from durable state inside the lifecycle lane. A loader may have read the
+   * record before a queued archive or restore completed. Residency is settled before the config
+   * is prepared, because a history load reads an archived agent whose working directory may be
+   * gone. Only the daemon's durable record can carry plugin provenance; provider metadata and
+   * public overrides cannot attest ownership.
+   */
+  private async settleResumeResidency(
+    agentId: string,
+    overrides: Partial<AgentSessionConfig> | undefined,
+    resumeOptions: AgentResumeSessionOptions | undefined,
+  ): Promise<{
+    resident?: ManagedAgent;
+    record: StoredAgentRecord | null;
+    currentResumeOptions: AgentResumeSessionOptions | undefined;
+    purpose: AgentResumePurpose;
+  }> {
+    const record = this.registry ? await this.registry.get(agentId) : null;
+    // A managed agent's reading-only load never reserves an opening; the caller names it.
+    const readsManagedHistory =
+      resumeOptions?.purpose === "history" && Boolean(record?.config?.managedMcpServers);
+    const currentResumeOptions: AgentResumeSessionOptions | undefined = record
+      ? { purpose: record.archivedAt || readsManagedHistory ? "history" : "interactive" }
+      : resumeOptions;
+    const purpose = currentResumeOptions?.purpose ?? "interactive";
+    const resident = this.reuseManagedResident(agentId, record, overrides);
+    if (resident && !(resident.historyOnly && purpose === "interactive")) {
+      return { resident, record, currentResumeOptions, purpose };
+    }
+    // A reading-only resident never ran an opening; a caller that may run it reopens it.
+    if (resident) await this.closeAgentRuntime(agentId);
+    return { record, currentResumeOptions, purpose };
+  }
+
   private async resumeAgentFromPersistenceInternal(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
@@ -1476,19 +1514,9 @@ export class AgentManager {
       ...overrides,
       provider: handle.provider,
     } as AgentSessionConfig;
-    // Decide residency from durable state inside the lifecycle lane. A loader may
-    // have read the record before a queued archive or restore completed. Residency is
-    // settled before the config is prepared, because a history load reads an archived
-    // agent whose working directory may be gone.
-    const record = this.registry ? await this.registry.get(resolvedAgentId) : null;
-    const currentResumeOptions = record
-      ? { purpose: record.archivedAt ? ("history" as const) : ("interactive" as const) }
-      : resumeOptions;
-    const purpose = currentResumeOptions?.purpose ?? "interactive";
-    // Only the daemon's durable record can carry plugin provenance. Provider
-    // metadata and public overrides cannot attest ownership.
-    const resident = this.reuseManagedResident(resolvedAgentId, record, overrides);
-    if (resident) return resident;
+    const settled = await this.settleResumeResidency(resolvedAgentId, overrides, resumeOptions);
+    if (settled.resident) return settled.resident;
+    const { record, currentResumeOptions, purpose } = settled;
     mergedConfig.managedMcpServers = record?.config?.managedMcpServers;
 
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
@@ -1533,6 +1561,7 @@ export class AgentManager {
         ...options,
         persistence: handle,
         restoring: true,
+        historyOnly: purpose === "history" && Boolean(record?.config?.managedMcpServers),
       },
       launchContext,
     );
@@ -3710,6 +3739,7 @@ export class AgentManager {
       publishWhenReady?: boolean;
       workspaceId?: string;
       owner?: AgentOwner;
+      historyOnly?: boolean;
     },
     openingContext?: AgentLaunchContext,
   ): Promise<ManagedAgent> {
@@ -3891,6 +3921,7 @@ export class AgentManager {
           persistence?: AgentPersistenceHandle;
           workspaceId?: string;
           owner?: AgentOwner;
+          historyOnly?: boolean;
         }
       | undefined;
   }): ActiveManagedAgent {
@@ -3901,6 +3932,7 @@ export class AgentManager {
       cwd: config.cwd,
       workspaceId: options?.workspaceId,
       owner: options?.owner,
+      historyOnly: options?.historyOnly,
       session,
       capabilities: session.capabilities,
       config,
@@ -5477,9 +5509,11 @@ export class AgentManager {
   > {
     const managed = config.managedMcpServers;
     if (!managed || session.purpose === "history") return undefined;
+    assertManagedMcpDurabilitySupported();
     if (
       client.provider !== "omp" ||
       client.capabilities.supportsTransientMcpAuthorization !== true ||
+      client.capabilities.supportsMcpServers !== true ||
       !this.pluginLifecycle?.authorizeMcp
     ) {
       throw new Error(

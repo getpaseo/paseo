@@ -950,7 +950,7 @@ alone does not negotiate this feature.
 
 Before registering the new hooks, check
 `server.capabilities?.managedMcpAuthorization`. Its `providers` list contains supported native
-adapters, currently `["omp"]`. Clients discover the same contract through
+adapters, currently `["omp"]` and empty on Windows. Clients discover the same contract through
 `server_info.features.pluginManagedMcpAuthorization` and
 `pluginManagedMcpAuthorizationProviders`. Provider availability is still a separate discovery
 check. A different provider fails before managed bind or credential callbacks run.
@@ -1043,7 +1043,9 @@ The daemon durably records pending/committed opening disposition under
 `agents/.managed-openings/`. Managed creation also makes its exact native reservation durable
 before bind. These private records require file and ancestor-directory sync on POSIX hosts; a
 POSIX filesystem that cannot provide it refuses managed opening. Windows cannot sync directories,
-so rename durability there is unproven and managed opening is unqualified on Windows.
+so a Windows host advertises no managed MCP authorization and refuses declared managed create,
+resume, refresh, and import before bind, mint, and provider launch. Ordinary agents and history
+are unchanged.
 Callback-local retries must reuse the same opening and body. There is no automatic hook or
 provider replay.
 A crash, lost callback acknowledgment, or gate failure leaves a pending opening quarantined:
@@ -1060,6 +1062,11 @@ the original acknowledgment without binding, minting, or starting another provid
 after reconnect or daemon restart. Receipts are retained with the managed identity; a changed
 body conflicts. Use a fresh `requestId` for an explicitly new refresh. The acknowledgment does
 not prove provider consumption.
+
+Read-only requests (timeline, search, prompt list, fork context, attention clear, and the
+`get_agent_activity` tool) load a non-resident managed agent as history. They never reserve an
+opening or mint a credential; a later prompt, schedule, refresh, or resume reopens it. A managed
+tool failure reaches the model as a generic message, never the service's response text.
 
 History bypasses execution hooks, reservation, binding, minting, and MCP connection even if
 plugins are unavailable or an interactive opening is quarantined. Managed servers are removed

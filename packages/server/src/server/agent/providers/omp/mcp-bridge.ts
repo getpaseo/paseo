@@ -105,9 +105,16 @@ export class OmpMcpBridge {
     this.assertAuthorized?.();
     const entry = this.tools.get(name);
     if (!entry || this.closed) throw new Error(`MCP tool ${name} is unavailable`);
-    const raw = await entry.client.callTool({ name: entry.tool, arguments: args }, undefined, {
-      signal,
-    });
+    let raw: unknown;
+    try {
+      raw = await entry.client.callTool({ name: entry.tool, arguments: args }, undefined, {
+        signal,
+      });
+    } catch (error) {
+      // A managed server's failure text can echo request material; abort stays observable.
+      if (!this.assertAuthorized || signal.aborted) throw error;
+      throw managedToolFailure(name);
+    }
     const result = CallToolResultSchema.parse(raw);
     return {
       content: result.content.map((item) => ({ ...item })),
@@ -124,6 +131,10 @@ export class OmpMcpBridge {
     await Promise.all(this.clients.map((client) => client.close().catch(() => undefined)));
     this.clients.length = 0;
   }
+}
+
+function managedToolFailure(name: string): Error {
+  return new Error(`Managed MCP tool ${name} failed`);
 }
 
 function makeTransport(
@@ -147,8 +158,11 @@ function makeTransport(
         headers: authorization
           ? { ...config.headers, Authorization: authorization }
           : config.headers,
-        ...(authorization ? { redirect: "error" as const } : {}),
       },
+      // The SDK uses this for GET streams and DELETE as well, which requestInit alone misses.
+      ...(authorization
+        ? { fetch: (url, init) => fetch(url, { ...init, redirect: "error" as const }) }
+        : {}),
     });
   }
   return new SSEClientTransport(new URL(config.url), {

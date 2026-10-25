@@ -5011,6 +5011,7 @@ export class Session {
             agentManager: this.agentManager,
             agentStorage: this.agentStorage,
             logger: this.sessionLogger,
+            readOnly: true,
           }),
         ),
       );
@@ -7849,6 +7850,7 @@ export class Session {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
+        readOnly: true,
       });
       const agentPayload = await this.buildAgentPayload(snapshot);
 
@@ -7979,6 +7981,7 @@ export class Session {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
+        readOnly: true,
       });
       const rows = await this.agentManager.getTimelineRows(msg.agentId);
       const { epoch } = this.agentManager.fetchTimeline(msg.agentId, {
@@ -8032,6 +8035,7 @@ export class Session {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
+        readOnly: true,
       });
       const rows = await this.agentManager.getTimelineRows(msg.agentId);
       const timeline = this.agentManager.fetchTimeline(msg.agentId, {
@@ -8211,6 +8215,7 @@ export class Session {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
+        readOnly: true,
       });
       const agentPayload = await this.buildAgentPayload(snapshot);
       const timeline = this.agentManager.fetchTimeline(msg.agentId, {

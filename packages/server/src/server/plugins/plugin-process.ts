@@ -1,4 +1,5 @@
 import { PluginHookHandlers } from "./lifecycle/index.js";
+import { managedMcpAuthorizationProviders } from "../managed-mcp-support.js";
 import { evaluateBundle } from "./bundle-evaluator.js";
 import {
   PluginProcessRequestSchema,
@@ -280,14 +281,21 @@ export function createPluginWorker(options: {
           send({ type: "settings.changed", settingsId }),
         )
       : null;
+    const managedProviders = managedMcpAuthorizationProviders();
     const contributedCleanup = contribute({
       handle: (contract, handler) =>
         register(contract, (input, context) => handler(contract.input.parse(input), context)),
       registerProvider,
       registerUsageSource,
-      capabilities: Object.freeze({
-        managedMcpAuthorization: Object.freeze({ providers: Object.freeze(["omp"]) }),
-      }),
+      capabilities: Object.freeze(
+        managedProviders.length > 0
+          ? {
+              managedMcpAuthorization: Object.freeze({
+                providers: Object.freeze(managedProviders),
+              }),
+            }
+          : {},
+      ),
       registerSettings,
       on: hooks.on,
       before: hooks.before,

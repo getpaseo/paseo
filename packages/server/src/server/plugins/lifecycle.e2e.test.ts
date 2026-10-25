@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, onTestFinished, test, vi } from "vitest";
 import { DaemonClient } from "../test-utils/daemon-client.js";
+import { ensureAgentLoaded } from "../agent/agent-loading.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { resolveDaemonVersion } from "../daemon-version.js";
 import { createServer } from "node:http";
@@ -1050,6 +1051,114 @@ test.skipIf(process.platform === "win32")(
     }
     await expect(h.client.createAgent(input)).rejects.toThrow();
     expect(h.bindings.size).toBe(0);
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === "win32")(
+  "read-only loads of a managed agent never reserve an opening or mint, and a later run reopens it",
+  async () => {
+    const h = await managedMcpHarness();
+    const agent = await h.client.createAgent({
+      provider: "omp",
+      cwd: h.directory,
+      model: "anthropic/claude-haiku-5-5",
+      title: "managed",
+    });
+    const manager = h.daemon.daemon.agentManager;
+    await manager.closeAgent(agent.id);
+    const binds = h.bindings.size;
+    const events = h.events.length;
+    const agentLaunches = () =>
+      h.runtime.recordedLaunches.filter((launch) => launch.env?.PASEO_AGENT_ID).length;
+    const launches = agentLaunches();
+    const deps = {
+      agentManager: manager,
+      agentStorage: h.daemon.daemon.agentStorage,
+      logger: pino({ level: "silent" }),
+    };
+    const read = await ensureAgentLoaded(agent.id, { ...deps, readOnly: true });
+    expect(read.historyOnly).toBe(true);
+    expect(h.bindings.size).toBe(binds);
+    expect(h.events).toHaveLength(events);
+    expect(agentLaunches()).toBe(launches);
+    await expect(read.session.run("must not execute")).rejects.toThrow(
+      "history session cannot start",
+    );
+    const running = await ensureAgentLoaded(agent.id, deps);
+    expect(running.historyOnly).toBeFalsy();
+    expect(h.bindings.size).toBe(binds + 1);
+    expect([...h.bindings.values()].at(-1)?.reason).toBe("resume");
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === "win32")(
+  "an unsupported platform refuses declared managed openings before bind, mint and provider",
+  async () => {
+    const h = await managedMcpHarness();
+    const agent = await h.client.createAgent({
+      provider: "omp",
+      cwd: h.directory,
+      model: "anthropic/claude-haiku-5-5",
+      title: "managed",
+    });
+    const nativeFile = path.join(h.directory, "unsupported-import.jsonl");
+    await writeFile(
+      nativeFile,
+      JSON.stringify({
+        type: "session",
+        id: randomUUID(),
+        cwd: h.directory,
+        timestamp: new Date().toISOString(),
+      }) + "\n",
+    );
+    const manager = h.daemon.daemon.agentManager;
+    const binds = h.bindings.size;
+    const events = h.events.length;
+    const agentLaunches = () =>
+      h.runtime.recordedLaunches.filter((launch) => launch.env?.PASEO_AGENT_ID).length;
+    const launches = agentLaunches();
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { value: "win32" });
+    try {
+      const refusal = "unsupported on this platform";
+      await expect(h.client.refreshAgent(agent.id, "unsupported-refresh")).rejects.toThrow(refusal);
+      await expect(
+        h.client.createAgent({
+          provider: "omp",
+          cwd: h.directory,
+          model: "anthropic/claude-haiku-5-5",
+          title: "managed",
+          agentId: randomUUID(),
+          idempotencyKey: "unsupported-create",
+        }),
+      ).rejects.toThrow(refusal);
+      await expect(
+        h.client.importAgent({ providerId: "omp", providerHandleId: nativeFile, cwd: h.directory }),
+      ).rejects.toThrow(refusal);
+      const handle = manager.getAgent(agent.id)!.persistence!;
+      const config = manager.getAgent(agent.id)!.config;
+      await manager.closeAgent(agent.id);
+      await expect(manager.resumeAgentFromPersistence(handle, config, agent.id)).rejects.toThrow(
+        refusal,
+      );
+      expect(h.bindings.size).toBe(binds);
+      expect(h.events).toHaveLength(events);
+      expect(agentLaunches()).toBe(launches);
+      const history = await manager.resumeAgentFromPersistence(
+        handle,
+        config,
+        agent.id,
+        undefined,
+        {
+          purpose: "history",
+        },
+      );
+      expect(history.id).toBe(agent.id);
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+    }
   },
   60_000,
 );
