@@ -139,7 +139,7 @@ export function MetadataGenerationPage({ serverId }: { serverId: string }) {
             <View style={settingsStyles.rowContent}>
               <Text style={settingsStyles.rowTitle}>{t("settings.metadataGeneration.model")}</Text>
               <Text style={settingsStyles.rowHint}>
-                {t("settings.metadataGeneration.fallbackHint")}
+                {t("settings.metadataGeneration.modelHint")}
               </Text>
             </View>
             <CombinedModelSelector

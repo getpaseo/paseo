@@ -10,7 +10,8 @@
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "noEmit": true,
-    "types": ["node"]
+    "types": ["node"],
+    "resolveJsonModule": true
   },
   "include": ["../../plugin-examples/**/*.ts", "../../plugin-examples/**/*.tsx"]
 }

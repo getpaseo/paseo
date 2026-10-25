@@ -420,3 +420,40 @@ test.describe("Add Project command-center flow", () => {
     }
   });
 });
+
+test.describe("Compact Add project context", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+  test("canceling Add project preserves the sidebar", async ({ page }) => {
+    await gotoAppShell(page);
+    await page.getByRole("button", { name: "Open menu", exact: true }).click();
+    await openAddProjectFlow(page);
+    await page.keyboard.press("Escape");
+    await expect(addProjectFlow(page)).not.toBeVisible();
+    await expect(page.getByRole("button", { name: "Close menu", exact: true })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    await expect(page.getByTestId("sidebar-search")).toBeVisible();
+  });
+  test("successful Add project reveals the new workspace page", async ({
+    page,
+    projectPickerFixture,
+  }) => {
+    await gotoAppShell(page);
+    await page.getByRole("button", { name: "Open menu", exact: true }).click();
+    await openAddProjectFlow(page);
+    await chooseAddProjectMethod(page, "directory-search");
+    await addProjectFlowInput(page).fill(projectPickerFixture.fuzzyQuery);
+    await expect(addProjectFlow(page)).toContainText(projectPickerFixture.projectName);
+    await page.keyboard.press("Enter");
+    const projectId = await expectOpenedProject(page, projectPickerFixture.projectName);
+    projectPickerFixture.rememberProjectId(projectId);
+    await expectNewWorkspaceForAddedProject(page, {
+      serverId: getServerId(),
+      projectId,
+      projectName: projectPickerFixture.projectName,
+      projectPath: projectPickerFixture.projectPath,
+    });
+    await expect(page.getByRole("button", { name: "Open menu", exact: true })).toBeVisible();
+  });
+});

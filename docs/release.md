@@ -62,9 +62,10 @@ release. This applies to both beta and stable releases.
   the changelog. Retarget remaining PRs based on `next` to `main` and delete the integrated
   `next`. Create it fresh when needed again.
 
-**Setup still needed:** CI, Docker, and Nix PR checks currently target only `main`,
-and GitHub permits only squash merges. Enable checks and required-check protection
-for `next`, CI on its pushes, and merge commits for the integration PR. Handle PR
+**Setup still needed:** PR checks run for every base branch, but CI, Docker, and Nix
+push runs target only `main`, and GitHub permits only squash merges. Enable
+required-check protection for `next`, CI on its pushes, and merge commits for the
+integration PR. Handle PR
 base changes (`edited` events) so retargeting runs checks against the new base;
 GitHub's default PR events do not cover this. Deployment triggers stay unchanged.
 
@@ -533,6 +534,14 @@ No prefix (`v`), no extra text. `Release Notes Sync` matches the `## X.Y.Z` (or 
 
 Older prerelease bodies on GitHub keep the notes they were synced with; `Release Notes Sync` only writes the release whose tag matches the top entry.
 
+## Changelog translations
+
+`CHANGELOG.zh-CN.md` holds the Chinese notes for `paseo.sh/zh-CN/changelog`. Only the website reads it; the app's **What's new** sheet, GitHub release bodies and F-Droid read `CHANGELOG.md`.
+
+- The release agent writes the Chinese entry in the changelog commit, after the English entry is approved. Every beta that rewrites the English entry rewrites the Chinese one too, and promotion renames both. `packages/website/e2e/i18n.spec.ts` fails CI on the release commit when any entry has no current translation.
+- A translated entry uses the English heading unchanged: `## X.Y.Z - YYYY-MM-DD`. The website uses it only while the version and date both match the English entry. Otherwise it shows that release whole in English under a notice. Delete Chinese entries whose English entry was renamed.
+- Keep the English sections, bullets and links one to one. Section titles: Added 新增, Improved 改进, Changed 变更, Fixed 修复, Security 安全, Breaking 破坏性变更, Plugins 插件, Notes 说明. Wording follows [website-i18n.md](website-i18n.md#chinese-style).
+
 ## Changelog ownership
 
 - **The agent running the release writes the changelog entry — beta or stable.** The release context and final wording stay with that agent.
@@ -645,7 +654,7 @@ Every entry covers `previous stable release → release source`: first beta, lat
 
 - [ ] The resolved release source is the intended commit (default `origin/main`) and its existing CI is green
 - [ ] Every PR in the release range has been opened, and its full description and every linked issue have been read before drafting the changelog
-- [ ] Fold this beta into the series' single `CHANGELOG.md` entry (heading `## X.Y.Z-beta.N - YYYY-MM-DD`, previous stable → release source), review it against the changelog policy, get approval, and commit it before cutting the release
+- [ ] Fold this beta into the series' single `CHANGELOG.md` entry (heading `## X.Y.Z-beta.N - YYYY-MM-DD`, previous stable → release source), review it against the changelog policy, get approval, and commit it with its [`CHANGELOG.zh-CN.md` translation](#changelog-translations) before cutting the release
 - [ ] The diff from the previous stable to the resolved release source is classified as patch or minor, with the target version and rationale approved
 - [ ] Release preparation stayed local until the approved release command pushed the complete branch and tag
 - [ ] `npm run release:beta:patch`, `npm run release:beta:minor`, or `npm run release:beta:next` completes successfully
@@ -668,7 +677,7 @@ Every entry covers `previous stable release → release source`: first beta, lat
 - [ ] Every PR in the release range has been opened, and its full description and every linked issue have been read before drafting the changelog
 - [ ] Ensure the approved release inputs are committed locally and the git worktree is clean before running any release command
 - [ ] Ensure local `npm run typecheck` passes on that exact commit before running any release command
-- [ ] Update `CHANGELOG.md` with user-facing release notes (features, fixes — not refactors). Promotion renames the series' `## X.Y.Z-beta.N` entry to `## X.Y.Z - YYYY-MM-DD` and re-checks it covers the full release
+- [ ] Update `CHANGELOG.md` with user-facing release notes (features, fixes — not refactors). Promotion renames the series' `## X.Y.Z-beta.N` entry to `## X.Y.Z - YYYY-MM-DD` and re-checks it covers the full release. Commit the matching [`CHANGELOG.zh-CN.md` entry](#changelog-translations) with it
 - [ ] Verify the changelog heading follows strict `## X.Y.Z - YYYY-MM-DD` format
 - [ ] Release preparation stayed local until the approved release command pushed the complete branch and tag
 - [ ] `npm run release:patch`, `npm run release:minor`, or `npm run release:promote` completes successfully

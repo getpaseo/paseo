@@ -15,16 +15,22 @@ const entries = {
   "./server/acp": "server",
   "./client": "client",
   "./client/host": "client",
-  "./client/react-native": "client",
   "./client/ui": "client",
 } as const;
+const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+// Compatibility entrypoints inherit the boundary of their one re-export target.
+const compatibilityEntries = Object.keys(manifest.exports).filter((entry) => {
+  const file = path.resolve(sourceDirectory, "..", manifest.exports[entry].source);
+  return readFileSync(file, "utf8").startsWith("// COMPAT(");
+});
 const uiDependency = /^(react(?:-dom|-native)?|use-sync-external-store)(\/|$)/;
 const serverModule = /^server\//;
 const clientModule = /^client\//;
 
 function resolveLocal(importer: string, specifier: string): string {
   const base = path.resolve(path.dirname(importer), specifier.replace(/\.js$/, ""));
-  const result = [base + ".ts", base + ".tsx"].find(existsSync);
+  const candidates = specifier.endsWith(".json") ? [base] : [base + ".ts", base + ".tsx"];
+  const result = candidates.find(existsSync);
   if (!result) throw new Error(`Cannot resolve ${specifier} from ${importer}`);
   return result;
 }
@@ -64,14 +70,60 @@ function boundaryViolations(entry: string, runtime: "shared" | "server" | "clien
   return violations;
 }
 
+function typeErrors(code: string): string[] {
+  const configPath = path.resolve(sourceDirectory, "../tsconfig.examples.json");
+  const { config } = ts.readConfigFile(configPath, ts.sys.readFile);
+  const { options } = ts.parseJsonConfigFileContent(config, ts.sys, path.dirname(configPath));
+  const file = path.resolve(
+    sourceDirectory,
+    "../../../plugin-examples/skill-example/client/example.tsx",
+  );
+  const host = ts.createCompilerHost(options);
+  const getSourceFile = host.getSourceFile;
+  host.getSourceFile = (name, language, ...rest) =>
+    path.resolve(name) === file
+      ? ts.createSourceFile(name, code, language)
+      : getSourceFile.call(host, name, language, ...rest);
+  host.fileExists = (name) => path.resolve(name) === file || ts.sys.fileExists(name);
+  const program = ts.createProgram([file], options, host);
+  return ts
+    .getPreEmitDiagnostics(program)
+    .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"));
+}
 describe("plugin SDK import boundaries", () => {
   it("publishes process capabilities without their Windows implementation helpers", () => {
     expect(Object.keys(server).sort()).toEqual(["execCommand", "spawnProcess", "terminateProcess"]);
   });
 
   it("classifies every published entry", () => {
-    const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-    expect(Object.keys(manifest.exports).sort()).toEqual(Object.keys(entries).sort());
+    expect(Object.keys(manifest.exports).sort()).toEqual(
+      [...Object.keys(entries), ...compatibilityEntries].sort(),
+    );
+  });
+
+  it.each(compatibilityEntries)("%s respects the client boundary", (entry) => {
+    expect(
+      boundaryViolations(
+        path.resolve(sourceDirectory, "..", manifest.exports[entry].source),
+        "client",
+      ),
+    ).toEqual([]);
+  });
+
+  it("typechecks a 0.12 reveal-hook consumer without exposing the hook on current UI", () => {
+    expect(
+      typeErrors(`
+      import { useRevealedText, Icon } from "@getpaseo/plugin/client/react-native";
+      import { StreamedText } from "@getpaseo/plugin/client/ui";
+      // @ts-expect-error the legacy hook is not part of the current UI API
+      import { useRevealedText as currentHook } from "@getpaseo/plugin/client/ui";
+      import { Text } from "react-native";
+      function LegacyRow({ text, phase }: { text: string; phase: "streaming" | "complete" }) {
+        const revealed: string = useRevealedText(text, phase);
+        return <Text>{revealed}</Text>;
+      }
+    `),
+    ).toEqual([]);
   });
 
   it.each(Object.entries(entries))(
@@ -89,8 +141,8 @@ describe("plugin SDK import boundaries", () => {
 
 describe("plugin example import boundaries", () => {
   const examples = path.resolve(sourceDirectory, "../../../plugin-examples");
-  const files = readdirSync(examples, { recursive: true }).filter((file) =>
-    /(?<!\.test)\.tsx?$/.test(file),
+  const files = readdirSync(examples, { recursive: true }).filter(
+    (file) => !file.split(path.sep).includes("node_modules") && /(?<!\.test)\.tsx?$/.test(file),
   );
   const owner = (file: string) => {
     const [, directory] = path.relative(examples, file).split(path.sep);
@@ -125,5 +177,35 @@ describe("plugin example import boundaries", () => {
       }
     }
     expect(violations).toEqual([]);
+  });
+});
+
+describe("plugin panel SDK boundary", () => {
+  it("accepts uniform params and persisted tab state alongside 0.12 panels", () => {
+    expect(
+      typeErrors(`
+      import { type PluginClientContext, type PluginFilePanelProps, type PluginWorkspacePanelProps, type PluginAgentPanelProps, type PluginTab, useTabState } from "@getpaseo/plugin/client";
+      import { z } from "zod";
+      function FilePanel({ params, revision, tab, file }: PluginFilePanelProps) {
+        const [state, setState] = useTabState(tab, z.object({ view: z.enum(["preview", "source"]) }), { view: "preview" });
+        setState({ view: "source" });
+        tab.setState({ nested: [true, null, 3] });
+        // @ts-expect-error only JSON state crosses the host boundary
+        tab.setState(() => {});
+        // @ts-expect-error params belong to the opener
+        params.path = "other";
+        return null;
+      }
+      function OldWorkspace({ context, workspaceId }: PluginWorkspacePanelProps) { return null; }
+      function OldAgent({ context, workspaceId, agentId }: PluginAgentPanelProps) { return null; }
+      function Agent({ params }: PluginAgentPanelProps) { params.agentId.toUpperCase(); return null; }
+      function contribute(client: PluginClientContext) {
+        client.addWorkspacePanel({ id: "old-workspace", title: "Old", icon: "File", context: "workspace", Component: OldWorkspace });
+        client.addWorkspacePanel({ id: "old-agent", title: "Old", icon: "File", context: "agent", Component: OldAgent });
+        client.addWorkspacePanel({ id: "workspace", title: "Workspace", icon: "File", Component: OldWorkspace });
+        client.addAgentPanel({ id: "agent", title: "Agent", icon: "File", Component: Agent });
+      }
+    `),
+    ).toEqual([]);
   });
 });

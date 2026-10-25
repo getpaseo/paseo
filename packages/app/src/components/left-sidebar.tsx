@@ -5,7 +5,6 @@ import {
   GitBranch,
   Server,
   Settings,
-  X,
   type LucideIcon,
 } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
@@ -21,14 +20,9 @@ import { Gesture } from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
-import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
-import {
-  IconButtonChromeProvider,
-  iconButtonChromeGlyphSize,
-  mutedIconColorMapping,
-} from "@/components/ui/icon-button-chrome";
+import { SidebarCloseButton } from "@/components/headers/sidebar-close-button";
 import { resolveDesktopSidebarWidth } from "@/components/desktop-sidebar-layout";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
@@ -68,7 +62,6 @@ import { usePanelStore } from "@/stores/panel-store";
 import { useOwnsWindowChromeCorner, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { useCloseAgentListGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
-import type { ShortcutKey } from "@/utils/format-shortcut";
 import { buildSettingsAddHostRoute, buildSettingsRoute } from "@/utils/host-routes";
 import { openHostOverview } from "@/navigation/settings-navigation";
 import {
@@ -80,8 +73,6 @@ import {
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
-
-const ThemedX = withUnistyles(X);
 
 type SidebarTheme = ReturnType<typeof useUnistyles>["theme"];
 
@@ -175,9 +166,8 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
   const { open: openImportSession, sheet: importSessionSheet } = useImportSession();
 
   const handleOpenProjectMobile = useCallback(() => {
-    showMobileAgent();
     void openProjectPicker();
-  }, [showMobileAgent, openProjectPicker]);
+  }, [openProjectPicker]);
 
   const handleOpenProjectDesktop = useCallback(() => {
     void openProjectPicker();
@@ -214,9 +204,8 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
   }, []);
 
   const handleImportSessionMobile = useCallback(() => {
-    showMobileAgent();
     openImportSession();
-  }, [openImportSession, showMobileAgent]);
+  }, [openImportSession]);
 
   const labels = useMemo(
     (): SidebarLabels => ({
@@ -555,7 +544,15 @@ function MobileSidebar({
   }, [closeSidebar]);
 
   const closeButton = useMemo(
-    () => <SidebarCloseButton label={labels.closeSidebar} onPress={closeSidebar} />,
+    () => (
+      <SidebarCloseButton
+        label={labels.closeSidebar}
+        onPress={closeSidebar}
+        testID="sidebar-close"
+        nativeID="sidebar-close"
+        style={styles.mobileCloseButton}
+      />
+    ),
     [labels.closeSidebar, closeSidebar],
   );
 
@@ -621,34 +618,6 @@ function MobileSidebar({
   );
 }
 
-const NO_SHORTCUT: ShortcutKey[] = [];
-
-/** The compact header's icon button, so the sidebar's close reads like the header it covers. */
-function SidebarCloseButton({ label, onPress }: { label: string; onPress: () => void }) {
-  return (
-    <IconButtonChromeProvider value="header-island">
-      <HeaderToggleButton
-        onPress={onPress}
-        tooltipLabel={label}
-        tooltipKeys={NO_SHORTCUT}
-        tooltipSide="bottom"
-        style={styles.mobileCloseButton}
-        testID="sidebar-close"
-        nativeID="sidebar-close"
-        accessible
-        accessibilityRole="button"
-        accessibilityLabel={label}
-      >
-        <ThemedX
-          size={iconButtonChromeGlyphSize("large")}
-          strokeWidth={1.5}
-          uniProps={mutedIconColorMapping}
-        />
-      </HeaderToggleButton>
-    </IconButtonChromeProvider>
-  );
-}
-
 function DesktopSidebar({
   theme,
   workspaceGroups,
@@ -679,7 +648,9 @@ function DesktopSidebar({
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
-  const { width: viewportWidth } = useWindowDimensions();
+  const { width: windowWidth } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const viewportWidth = windowWidth - insets.left - insets.right;
   const visibleSidebarWidth = resolveDesktopSidebarWidth({
     requestedWidth: sidebarWidth,
     viewportWidth,
@@ -748,8 +719,11 @@ function DesktopSidebar({
     [active, resizeAnimatedStyle],
   );
   const desktopSidebarBorderStyle = useMemo(
-    () => [styles.desktopSidebarBorder, { flex: 1, paddingTop: insetsTop }],
-    [insetsTop],
+    () => [
+      styles.desktopSidebarBorder,
+      { flex: 1, paddingTop: insetsTop, paddingBottom: insets.bottom },
+    ],
+    [insetsTop, insets.bottom],
   );
   const sidebarHeaderGroupStyle = useMemo(
     () => [styles.sidebarHeaderGroup, ownsTopLeft && styles.sidebarHeaderGroupBelowChrome],

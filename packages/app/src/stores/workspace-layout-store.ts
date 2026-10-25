@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { create } from "zustand";
 import { persist, type StateStorage } from "zustand/middleware";
 import type { z } from "zod";
@@ -123,9 +123,17 @@ export interface SheetTab {
   parentTabId: string | null;
 }
 
+export type WorkspaceTabDestination =
+  | { kind: "pane"; paneId: string; host: "main" | "explorer"; tabId: string }
+  | { kind: "sheet"; tabId: string };
+
 interface WorkspaceLayoutStore {
+  panelRevisionByWorkspace: Record<string, Record<string, number>>;
   /** Published once by the app shell; callers never pass a form factor to open a tab. */
   layoutMode: WorkspaceLayoutMode;
+  pendingOpenByWorkspace: Record<string, OpenWorkspaceTabInput>;
+  deferOpenTab: (input: OpenWorkspaceTabInput) => null;
+  consumePendingOpen: (workspaceKey: string) => string | null;
   /**
    * Each workspace's sheet tabs in the order they opened, so the last is the sheet on top. The
    * list never reorders: the stack belongs to the sheet primitive, and moving a sheet would remount
@@ -161,11 +169,13 @@ interface WorkspaceLayoutStore {
     resolvePlacement: () => Pick<OpenWorkspaceTabInput, "placement" | "insertionPosition">,
   ) => string | null;
   /** Reveals the Explorer sidebar without selecting a view. Returns its pane id. */
+  ensureExplorerSidebar: (workspaceKey: string) => string | null;
   showExplorerSidebar: (workspaceKey: string) => string | null;
   hideExplorerSidebar: (workspaceKey: string) => void;
   /** Returns the ordinary right-side workspace pane, creating it when absent. */
   ensureSidePane: (workspaceKey: string, options?: { focus: boolean }) => string | null;
   closeTab: (workspaceKey: string, tabId: string) => void;
+  getTabDestination: (workspaceKey: string, tabId: string) => WorkspaceTabDestination | null;
   focusTab: (workspaceKey: string, tabId: string) => void;
   selectTabInPane: (workspaceKey: string, paneId: string, tabId: string) => void;
   replaceTab: (
@@ -988,6 +998,22 @@ function createPersistedStateProjection() {
   };
 }
 
+function advancePanelRevision(
+  state: WorkspaceLayoutStore,
+  workspaceKey: string,
+  tabId: string,
+  target: WorkspaceTabTarget,
+) {
+  if (target.kind !== "file" && target.kind !== "plugin") return {};
+  const revisions = state.panelRevisionByWorkspace[workspaceKey] ?? {};
+  return {
+    panelRevisionByWorkspace: {
+      ...state.panelRevisionByWorkspace,
+      [workspaceKey]: { ...revisions, [tabId]: (revisions[tabId] ?? 0) + 1 },
+    },
+  };
+}
+
 export function createWorkspaceLayoutStore(
   ids: WorkspaceLayoutIdSource = defaultWorkspaceLayoutIds,
   storage: StateStorage = AsyncStorage,
@@ -1014,6 +1040,27 @@ export function createWorkspaceLayoutStore(
           }
           return tabId;
         },
+        panelRevisionByWorkspace: {},
+        pendingOpenByWorkspace: {},
+        deferOpenTab: (input) => {
+          set((state) => ({
+            pendingOpenByWorkspace: {
+              ...state.pendingOpenByWorkspace,
+              [input.workspaceKey]: input,
+            },
+          }));
+          return null;
+        },
+        consumePendingOpen: (workspaceKey) => {
+          const pending = get().pendingOpenByWorkspace[workspaceKey];
+          if (!pending) return null;
+          set((state) => {
+            const { [workspaceKey]: _pending, ...pendingOpenByWorkspace } =
+              state.pendingOpenByWorkspace;
+            return { pendingOpenByWorkspace };
+          });
+          return get().openTab(pending);
+        },
         layoutMode: "split-panes",
         sheetsByWorkspace: {},
         layoutByWorkspace: {},
@@ -1036,12 +1083,15 @@ export function createWorkspaceLayoutStore(
             normalizedWorkspaceKey,
             input.parentTabId,
           );
-          const sheetPlacement = resolveSheetPlacement(
-            get(),
-            normalizedWorkspaceKey,
-            normalizedTarget,
-            input.intent,
-          );
+          const sheetPlacement =
+            input.placement?.mode === "pane"
+              ? null
+              : resolveSheetPlacement(
+                  get(),
+                  normalizedWorkspaceKey,
+                  normalizedTarget,
+                  input.intent,
+                );
           if (sheetPlacement) {
             const sheets = getSheets(get(), normalizedWorkspaceKey);
             const { keptIndex } = sheetPlacement;
@@ -1063,7 +1113,15 @@ export function createWorkspaceLayoutStore(
                       ? [existing]
                       : [];
                   });
-            set((state) => withSheets(state, normalizedWorkspaceKey, next));
+            set((state) => ({
+              ...withSheets(state, normalizedWorkspaceKey, next),
+              ...advancePanelRevision(
+                state,
+                normalizedWorkspaceKey,
+                sheet.tab.tabId,
+                normalizedTarget,
+              ),
+            }));
             return sheet.tab.tabId;
           }
           const placement = getOpenTabPlacement(
@@ -1101,14 +1159,25 @@ export function createWorkspaceLayoutStore(
           if (!result) {
             return null;
           }
+          const openedLayout =
+            get().layoutMode === "compact" && placement.explorerSidebarPaneId
+              ? (setPaneHiddenInLayout({
+                  layout: result.layout,
+                  paneId: placement.explorerSidebarPaneId,
+                  hidden:
+                    findPaneById(placement.layout.root, placement.explorerSidebarPaneId)?.hidden ===
+                    true,
+                }) ?? result.layout)
+              : result.layout;
           const nextLayout = keepWorkspaceFocusOutOfExplorerSidebar(
-            result.layout,
+            openedLayout,
             placement.explorerSidebarPaneId,
             placement.layout.focusedPaneId,
           );
           const shouldPinAgent = input.pin === true && normalizedTarget.kind === "agent";
           set((state) => ({
             ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+            ...advancePanelRevision(state, normalizedWorkspaceKey, result.tabId, normalizedTarget),
             // A tab brought to the front dismisses the sheet over it.
             ...(input.intent === "background" ? {} : dismissSheets(state, normalizedWorkspaceKey)),
             hiddenAgentIdsByWorkspace:
@@ -1175,7 +1244,7 @@ export function createWorkspaceLayoutStore(
           set(promoted.patch);
           return promoted.tabId;
         },
-        showExplorerSidebar: (workspaceKey) => {
+        ensureExplorerSidebar: (workspaceKey) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
           if (!normalizedWorkspaceKey) {
             return null;
@@ -1196,14 +1265,11 @@ export function createWorkspaceLayoutStore(
               state.layoutByWorkspace,
               normalizedWorkspaceKey,
             );
-            const revealedLayout =
-              setPaneHiddenInLayout({ layout: currentLayout, paneId, hidden: false }) ??
-              currentLayout;
             return {
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
                 [normalizedWorkspaceKey]: keepWorkspaceFocusOutOfExplorerSidebar(
-                  revealedLayout,
+                  currentLayout,
                   paneId,
                   currentLayout.focusedPaneId,
                 ),
@@ -1213,6 +1279,18 @@ export function createWorkspaceLayoutStore(
                 [normalizedWorkspaceKey]: paneId,
               },
             };
+          });
+          return paneId;
+        },
+        showExplorerSidebar: (workspaceKey) => {
+          const paneId = get().ensureExplorerSidebar(workspaceKey);
+          if (!paneId || get().layoutMode === "compact") return paneId;
+          set((state) => {
+            const layout = state.layoutByWorkspace[workspaceKey];
+            const next = setPaneHiddenInLayout({ layout, paneId, hidden: false });
+            return next
+              ? { layoutByWorkspace: { ...state.layoutByWorkspace, [workspaceKey]: next } }
+              : state;
           });
           return paneId;
         },
@@ -1367,6 +1445,26 @@ export function createWorkspaceLayoutStore(
             };
           });
         },
+        getTabDestination: (workspaceKey, tabId) => {
+          const state = get();
+          if (state.sheetsByWorkspace[workspaceKey]?.some((sheet) => sheet.tab.tabId === tabId)) {
+            return { kind: "sheet", tabId };
+          }
+          const layout = state.layoutByWorkspace[workspaceKey];
+          if (!layout) return null;
+          const pane = findPaneContainingTab(layout.root, tabId);
+          if (!pane) return null;
+          const explorerId = resolveExplorerSidebarPaneId(
+            layout,
+            state.explorerSidebarPaneIdByWorkspace[workspaceKey],
+          );
+          return {
+            kind: "pane",
+            paneId: pane.id,
+            host: pane.id === explorerId ? "explorer" : "main",
+            tabId,
+          };
+        },
         focusTab: (workspaceKey, tabId) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
           const normalizedTabId = trimNonEmpty(tabId);
@@ -1387,7 +1485,7 @@ export function createWorkspaceLayoutStore(
                 setPaneHiddenInLayout({
                   layout,
                   paneId: explorerSidebarPaneId,
-                  hidden: false,
+                  hidden: state.layoutMode === "compact" ? tabPane.hidden === true : false,
                 }) ?? layout;
               nextLayout =
                 selectTabInPaneInLayout({
@@ -1459,7 +1557,15 @@ export function createWorkspaceLayoutStore(
               })),
             };
             if (policy) {
-              set({ sheetsByWorkspace: next.sheetsByWorkspace });
+              set((state) => ({
+                sheetsByWorkspace: next.sheetsByWorkspace,
+                ...advancePanelRevision(
+                  state,
+                  normalizedWorkspaceKey,
+                  normalizedTabId,
+                  normalizedTarget,
+                ),
+              }));
               return normalizedTabId;
             }
             // A target sheets do not host becomes the tab it would have opened as.
@@ -1477,6 +1583,7 @@ export function createWorkspaceLayoutStore(
           if (!result) return null;
           set((state) => ({
             ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+            ...advancePanelRevision(state, normalizedWorkspaceKey, result.tabId, normalizedTarget),
             hiddenAgentIdsByWorkspace:
               normalizedTarget.kind !== "agent"
                 ? state.hiddenAgentIdsByWorkspace
@@ -2112,6 +2219,7 @@ export function createWorkspaceLayoutStore(
 
           set((state) => {
             const hasAny =
+              normalizedWorkspaceKey in state.pendingOpenByWorkspace ||
               normalizedWorkspaceKey in state.layoutByWorkspace ||
               normalizedWorkspaceKey in state.splitSizesByWorkspace ||
               normalizedWorkspaceKey in state.explorerSidebarWidthByWorkspace ||
@@ -2125,6 +2233,8 @@ export function createWorkspaceLayoutStore(
             if (!hasAny) {
               return state;
             }
+            const { [normalizedWorkspaceKey]: _pendingOpen, ...pendingOpenByWorkspace } =
+              state.pendingOpenByWorkspace;
             const {
               [normalizedWorkspaceKey]: _autoOpened,
               ...pullRequestTabAutoOpenedByWorkspace
@@ -2151,6 +2261,7 @@ export function createWorkspaceLayoutStore(
               state.sidePaneIdByWorkspace;
             return {
               ...withSheets(state, normalizedWorkspaceKey, NO_SHEETS),
+              pendingOpenByWorkspace,
               pullRequestTabAutoOpenedByWorkspace,
               layoutByWorkspace,
               splitSizesByWorkspace,
@@ -2299,4 +2410,30 @@ export function useWorkspaceLayoutStoreHydrated(): boolean {
   }, []);
 
   return hasHydrated;
+}
+
+interface PendingWorkspaceOpenReadiness {
+  workspaceKey: string | null;
+  hasHydratedWorkspaces: boolean;
+  workspaceExists: boolean;
+  onOpened: (workspaceKey: string, tabId: string | null) => void;
+}
+
+export function usePendingWorkspaceOpen({
+  workspaceKey,
+  hasHydratedWorkspaces,
+  workspaceExists,
+  onOpened,
+}: PendingWorkspaceOpenReadiness): WorkspaceTabTarget | null {
+  const workspaceReady = hasHydratedWorkspaces && workspaceExists;
+  const pending = useWorkspaceLayoutStore((state) =>
+    workspaceKey ? state.pendingOpenByWorkspace[workspaceKey] : undefined,
+  );
+  const layoutHydrated = useWorkspaceLayoutStoreHydrated();
+  useLayoutEffect(() => {
+    if (workspaceKey && workspaceReady && layoutHydrated && pending) {
+      onOpened(workspaceKey, useWorkspaceLayoutStore.getState().consumePendingOpen(workspaceKey));
+    }
+  }, [workspaceKey, workspaceReady, layoutHydrated, pending, onOpened]);
+  return pending ? pending.target : null;
 }

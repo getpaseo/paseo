@@ -604,12 +604,18 @@ async function expectMissingLocalMergeTarget({ client, cwd }: RestorableWorkspac
   ).toContain("No local merge target is recorded");
 }
 
+function setupCommandOutput(detail: { commands: Array<{ log: string }> }): string {
+  return detail.commands.map((command) => command.log).join("\n");
+}
+
 // Setup output is opt-in even for multiple sockets sharing one logical client.
 test("setup details follow one workspace/source and restore after reconnect with minimal directory status", async () => {
   const daemon = await createTestPaseoDaemon({ mcpEnabled: true });
   const { repoDir, tempRoot } = createGitRepoWithBranch();
   const clients: SocketDaemonClient[] = [];
   const sockets = new Map<string, WebSocket[]>();
+  const setupWireTypes = new Set<string>();
+  const setupWireDetails: Array<{ log: string; commands: Array<{ log: string }> }> = [];
   const observations: Array<{ release(): Promise<void> }> = [];
   const workspaces: Array<{ id: string; workspaceDirectory?: string }> = [];
   const mcp = new Client({ name: "setup-test", version: "1.0.0" });
@@ -625,8 +631,9 @@ test("setup details follow one workspace/source and restore after reconnect with
       path.join(repoDir, "setup.cjs"),
       `
 const fs = require('node:fs');
+// Exercise a real child start beyond Vitest's default one-second polling window.
+setTimeout(() => {
 console.log('setup started');
-fs.writeFileSync('started.txt', 'ready');
 let wave = 0;
 const timer = setInterval(() => {
   if (fs.existsSync('wave-' + wave)) {
@@ -636,6 +643,7 @@ const timer = setInterval(() => {
   }
   if (fs.existsSync('finish.txt')) { clearInterval(timer); process.exit(1); }
 }, 20);
+}, 1500);
 `,
     );
     writeFileSync(path.join(repoDir, ".gitignore"), "*.txt\nwave-*\nemitted-*\n");
@@ -651,6 +659,24 @@ const timer = setInterval(() => {
         reconnect: { baseDelayMs: 10, maxDelayMs: 10 },
         webSocketFactory: (url) => {
           const socket = new WebSocket(url);
+          socket.on("message", (data, isBinary) => {
+            if (isBinary) return;
+            const frame = JSON.parse(data.toString());
+            const message = frame.message ?? frame;
+            if (message.type === "workspace_setup_progress") {
+              setupWireTypes.add(message.type);
+              setupWireDetails.push(message.payload.detail);
+            }
+            if (
+              message.type === "workspace_setup_status_response" ||
+              message.type === "workspace.setup.subscribe.response"
+            ) {
+              if (message.payload.snapshot) {
+                setupWireTypes.add(message.type);
+                setupWireDetails.push(message.payload.snapshot.detail);
+              }
+            }
+          });
           sockets.set(clientId, [...(sockets.get(clientId) ?? []), socket]);
           return socket as unknown as WebSocketLike;
         },
@@ -672,15 +698,28 @@ const timer = setInterval(() => {
     const directory = quiet.observeWorkspaces();
     observations.push(directory);
     await directory.ready;
+    const waitForSetupStarted = async (workspaceId: string) => {
+      // Process startup is asynchronous, especially under Windows PowerShell. The daemon's
+      // output snapshot is the readiness barrier; a marker file can precede PTY delivery.
+      await expect
+        .poll(async () => (await viewer.fetchWorkspaceSetupStatus(workspaceId)).snapshot, {
+          timeout: 30000,
+        })
+        .toMatchObject({
+          status: "running",
+          detail: {
+            log: "",
+            commands: [expect.objectContaining({ log: expect.stringContaining("setup started") })],
+          },
+        });
+    };
     for (const worktreeSlug of ["noisy-a", "noisy-b", "noisy-c"]) {
       const result = await creator.createWorkspace({
         source: { kind: "worktree", cwd: repoDir, worktreeSlug },
       });
       if (!result.workspace || result.error) throw new Error(result.error ?? "No workspace");
       workspaces.push(result.workspace);
-      await expect
-        .poll(() => existsSync(path.join(result.workspace!.workspaceDirectory!, "started.txt")))
-        .toBe(true);
+      await waitForSetupStarted(result.workspace.id);
     }
     const external = await mcp.callTool({
       name: "create_workspace",
@@ -693,23 +732,17 @@ const timer = setInterval(() => {
     );
     if (!externalWorkspace) throw new Error("Missing MCP directory entry");
     workspaces.unshift(externalWorkspace);
-    await expect
-      .poll(() => existsSync(path.join(externalWorkspace.workspaceDirectory!, "started.txt")))
-      .toBe(true);
+    await waitForSetupStarted(externalWorkspace.id);
     const workspace = workspaces[0]!;
-    // The child writes its marker before the terminal's output is delivered.
-    // Wait for the daemon snapshot, rather than treating the file as an output barrier.
-    await expect
-      .poll(async () => (await viewer.fetchWorkspaceSetupStatus(workspace.id)).snapshot, {
-        timeout: 30000,
-      })
-      .toMatchObject({ detail: { log: expect.stringContaining("setup started") } });
     const details = viewer.observeWorkspaceSetup(workspace.id);
     observations.push(details);
     const initial = await details.ready;
     expect(initial.snapshot).toMatchObject({
       status: "running",
-      detail: { log: expect.stringContaining("setup started") },
+      detail: {
+        log: "",
+        commands: [expect.objectContaining({ log: expect.stringContaining("setup started") })],
+      },
     });
     await expect
       .poll(
@@ -742,7 +775,7 @@ const timer = setInterval(() => {
           viewerMessages.filter(
             (message) =>
               message.type === "workspace_setup_progress" &&
-              message.payload.detail.log.includes("wave-0:"),
+              setupCommandOutput(message.payload.detail).includes("wave-0:"),
           ).length,
       )
       .toBeGreaterThan(0);
@@ -773,10 +806,12 @@ const timer = setInterval(() => {
       .filter(
         (message) =>
           message.type === "workspace_setup_progress" &&
-          message.payload.detail.log.includes("wave-0:"),
+          setupCommandOutput(message.payload.detail).includes("wave-0:"),
       )
       .map((message) =>
-        message.type === "workspace_setup_progress" ? message.payload.detail.log : "",
+        message.type === "workspace_setup_progress"
+          ? setupCommandOutput(message.payload.detail)
+          : "",
       );
     expect(waveLogs.length).toBe(new Set(waveLogs).size);
     const restoredSnapshots: unknown[] = [];
@@ -789,7 +824,12 @@ const timer = setInterval(() => {
     await expect.poll(() => restoredSnapshots.length, { timeout: 10000 }).toBe(2);
     expect(details.subscriptionId).not.toBe(beforeReconnect);
     expect(restoredSnapshots[1]).toMatchObject({
-      snapshot: { detail: { log: expect.stringContaining("wave-0:") } },
+      snapshot: {
+        detail: {
+          log: "",
+          commands: [expect.objectContaining({ log: expect.stringContaining("wave-0:") })],
+        },
+      },
     });
     const subscriptionId = details.subscriptionId;
     await details.release();
@@ -801,7 +841,8 @@ const timer = setInterval(() => {
     // Wait until the daemon has consumed the output before checking wire silence.
     await expect
       .poll(
-        async () => (await viewer.fetchWorkspaceSetupStatus(workspace.id)).snapshot?.detail.log,
+        async () =>
+          (await viewer.fetchWorkspaceSetupStatus(workspace.id)).snapshot?.detail.commands[0]?.log,
         {
           timeout: 30000,
         },
@@ -812,8 +853,22 @@ const timer = setInterval(() => {
     );
     const resumed = viewer.observeWorkspaceSetup(workspace.id);
     observations.push(resumed);
-    expect((await resumed.ready).snapshot?.detail.log).toContain("wave-1:");
+    expect((await resumed.ready).snapshot?.detail.commands[0]?.log).toContain("wave-1:");
     expect(resumed.subscriptionId).not.toBe(subscriptionId);
+    expect(setupWireTypes).toEqual(
+      new Set([
+        "workspace_setup_progress",
+        "workspace_setup_status_response",
+        "workspace.setup.subscribe.response",
+      ]),
+    );
+    expect(setupWireDetails.length).toBeGreaterThan(0);
+    expect(setupWireDetails.every((detail) => detail.log === "")).toBe(true);
+    expect(
+      setupWireDetails.some((detail) =>
+        detail.commands.some((command) => command.log.includes("wave-1:")),
+      ),
+    ).toBe(true);
     writeFileSync(path.join(workspaces[1]!.workspaceDirectory!, "finish.txt"), "fail");
     await expect
       .poll(
@@ -846,3 +901,30 @@ const timer = setInterval(() => {
     await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 180000);
+
+test("agent creation rejects legacy worktree intent without provisioning or executing setup", async () => {
+  const daemon = await createTestPaseoDaemon();
+  const { repoDir, tempRoot } = createGitRepoWithBranch();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    await expect(
+      client.createAgent({
+        provider: "codex",
+        cwd: repoDir,
+        git: {
+          createWorktree: true,
+          createNewBranch: true,
+          baseBranch: "main",
+          newBranchName: "legacy-setup",
+          worktreeSlug: "legacy-setup",
+        },
+      }),
+    ).rejects.toThrow("createWorkspace");
+    expect((await client.fetchWorkspaces()).entries).toEqual([]);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});

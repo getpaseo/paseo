@@ -119,6 +119,20 @@ const SessionsContext = createContext<ComposerEditingSessions | null>(null);
 const WorkspaceContext = createContext<string | null>(null);
 const ScopeContext = createContext<{ tabId: string; targetKey: string } | null>(null);
 
+/** Keep the workspace's editing identity when a sheet renders in the app overlay host. */
+export function useComposerEditingEnvironmentBridge() {
+  const sessions = useContext(SessionsContext);
+  const workspaceKey = useContext(WorkspaceContext);
+  return useCallback(
+    (children: ReactNode) => (
+      <SessionsContext.Provider value={sessions}>
+        <WorkspaceContext.Provider value={workspaceKey}>{children}</WorkspaceContext.Provider>
+      </SessionsContext.Provider>
+    ),
+    [sessions, workspaceKey],
+  );
+}
+
 /** App-container ownership survives replacement of both the gesture shell and tab layout. */
 export function ComposerEditingSessionsProvider({ children }: { children: ReactNode }) {
   const [sessions] = useState(() => new ComposerEditingSessions());

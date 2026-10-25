@@ -196,14 +196,14 @@ const styles = StyleSheet.create((theme) => ({
     display: "none",
   },
   highlightPinned: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: -1,
     borderRadius: theme.borderRadius.md,
     backgroundColor: theme.colors.surface2,
   },
   // The pinned surface at half strength: a separate layer, so the text keeps full opacity.
   highlightHovered: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: -1,
     borderRadius: theme.borderRadius.md,
     backgroundColor: theme.colors.surface2,

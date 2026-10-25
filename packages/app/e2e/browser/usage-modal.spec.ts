@@ -608,7 +608,10 @@ for (const compact of [false, true]) {
       if (compact) await openCompactSidebar(page);
       await openUsageFromIcon(page);
       await expectLoginErrors(page, ["Claude: Initial failure"]);
-      await expectLoginUsageFreshness(page, "No successful update", compact);
+      await test.step("developer errors do not interrupt freshness inspection", async () => {
+        await page.evaluate(() => console.error("E2E: developer toast while Usage is open"));
+        await expectLoginUsageFreshness(page, "No successful update", compact);
+      });
 
       await fixture.setReport({
         status: "available",

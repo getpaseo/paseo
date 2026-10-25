@@ -104,17 +104,24 @@ Do not collapse this topology with a catch-all, `getId`, or
 
 ## Agent Targets
 
-Notifications and agent URLs enter the router with different authoritative
-targets.
+Notifications and agent URLs name a host and agent. Both use
+`navigateToAgent()`, which reads the agent's current workspace from the store
+or routes through `/h/[serverId]/agent/[agentId]`. The agent route waits for
+the named host, demands its directory, and waits for workspace and layout
+hydration before opening the tab. Keep the stable agent URL free of a workspace
+hint. [Notifications](notifications.md) owns tap delivery and native lifecycle
+constraints.
 
-- Notifications carry `serverId`, `workspaceId`, and `agentId`. Route them
-  directly to the workspace with the agent open intent.
-- Agent URLs carry only `serverId` and `agentId`. Route them through
-  `/h/[serverId]/agent/[agentId]`; that route waits for the named host, resolves
-  the agent's workspace from the host, and then opens the agent there.
+When a workspace target cannot open yet, `navigateToWorkspace()` records a
+pending open in the layout model under that host and workspace key. The owning
+workspace screen consumes it once after hydration. Archived-workspace recovery
+reads the same pending target, so startup redirects cannot discard it and a
+retained screen cannot consume another workspace's request.
 
-Both paths converge on `navigateToAgent()`. Do not make notification routing
-guess a workspace, and do not add a workspace to the stable agent URL format.
+Legacy `?open=` links seed this model state at the matched route boundary and
+then lose the query parameter. Internal navigation does not use the query as a
+handoff. Read matched route params locally; global search params let retained
+workspace screens observe requests for other workspaces.
 
 ## Params
 
@@ -157,7 +164,9 @@ a small `withUnistyles` boundary without subscribing the route tree itself to
 every Unistyles runtime update.
 
 Navigators keep their identity across appearance changes. `ThemedStack` remounts
-each screen's content below the native stack when appearance tokens change; a
+each ordinary screen's content below the native stack when appearance tokens change.
+Workspace screens own retained panel lifetimes and update appearance at their
+leaves through `screenOwnedAppearance` ([Explorer](explorer-sidebar.md)). A
 keyed wrapper above a stack remounts the stack itself, and Android crashes when
 that happens while a FragmentManager transaction is running, which settings
 hydration at startup makes likely. A screen that mounts a nested navigator (the

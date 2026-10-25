@@ -8,7 +8,7 @@ import {
   type PluginSvgIcon,
 } from "@getpaseo/plugin";
 import type { PluginIcon } from "@getpaseo/plugin/client";
-import type { IconProps } from "@getpaseo/plugin/client/react-native";
+import type { IconProps } from "@getpaseo/plugin/client/ui";
 import { SvgIcon } from "@/components/provider-icons";
 
 /** Host surfaces may thin a Lucide stroke; SVG and plugin components ignore it. */

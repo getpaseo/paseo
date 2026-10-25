@@ -585,7 +585,7 @@ export class FileBackedWorkspaceRegistry
   override async remove(workspaceId: string): Promise<void> {
     const workspace = await this.removeIfPresent(workspaceId);
     if (!workspace) return;
-    await this.notifyMutation({ kind: "remove", workspaceId, workspace: null });
+    await this.notifyMutation({ kind: "remove", workspaceId, workspace });
   }
 
   async commitWorkspaceLabelMutation<TResult>(input: {

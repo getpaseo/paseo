@@ -1,3 +1,5 @@
+import { defineTranslations } from "@getpaseo/plugin/client";
+import { PluginTranslationRuntime } from "@getpaseo/plugin/client/host";
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import type { PluginButton } from "@getpaseo/plugin/client";
@@ -7,6 +9,8 @@ import { PluginButtonStore, buttonMatches } from "./model";
 function installation(): InstalledPlugin {
   return {
     lifetime: new AbortController(),
+    locale: "en",
+    i18n: new PluginTranslationRuntime({ getLocale: () => "en", subscribe: () => () => {} }),
     id: "review",
     serverId: "host-a",
     clientBundle: "bundle",
@@ -18,6 +22,7 @@ function installation(): InstalledPlugin {
     surfaces: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
+    filePanels: [],
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
@@ -171,4 +176,81 @@ describe("plugin buttons", () => {
     await buttons.run(key, ["nested", "run"]);
     expect(calls).toBe(2);
   });
+});
+
+it("updates translated tooltips and nested menu labels without closing open content", () => {
+  let locale = "en";
+  const listeners = new Set<() => void>();
+  const plugin = installation();
+  plugin.i18n.dispose();
+  plugin.i18n = new PluginTranslationRuntime({
+    getLocale: () => locale,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  });
+  const translations = defineTranslations({
+    resources: {
+      en: { title: "Notes", menu: "Open notes" },
+      "zh-CN": { title: "笔记", menu: "打开笔记" },
+    },
+  });
+  const buttons = store();
+  const registration = buttons.addHeaderButton(plugin, {
+    id: "notes",
+    workspaceId: "workspace",
+    button: {
+      title: translations.message("title"),
+      icon: "Scan",
+      behavior: {
+        kind: "menu",
+        items: [
+          {
+            kind: "item",
+            id: "open",
+            title: translations.message("menu"),
+            behavior: { kind: "action", onPress() {} },
+          },
+        ],
+      },
+    },
+  });
+  const original = buttons.getSnapshot()[0];
+  buttons.setOpen(original.key, true);
+  locale = "zh-CN";
+  for (const listener of listeners) listener();
+  const translated = buttons.getSnapshot()[0];
+  expect(translated.key).toBe(original.key);
+  expect(translated.open).toBe(true);
+  expect(translated.button.title).toBe("笔记");
+  expect(translated.button.behavior).toMatchObject({
+    kind: "menu",
+    items: [{ title: "打开笔记" }],
+  });
+  registration.update({ disabled: false });
+  locale = "en";
+  for (const listener of listeners) listener();
+  expect(buttons.getSnapshot()[0].button.title).toBe("Notes");
+  registration.remove();
+  plugin.i18n.dispose();
+  expect(listeners.size).toBe(0);
+  expect(buttons.getSnapshot()).toEqual([]);
+});
+
+it("keeps the previous descriptor after rejecting an invalid update", () => {
+  const buttons = store();
+  const plugin = installation();
+  const registration = buttons.addHeaderButton(plugin, {
+    id: "review",
+    workspaceId: "workspace",
+    button: button(),
+  });
+  expect(() => registration.update({ title: "" })).toThrow("Plugin button needs title");
+  expect(() => registration.update({ disabled: true })).not.toThrow();
+  expect(buttons.getSnapshot()[0].button.title).toBe("Review");
+  registration.remove();
+  plugin.i18n.dispose();
 });
