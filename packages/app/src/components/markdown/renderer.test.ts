@@ -249,6 +249,35 @@ describe("bare URL sentence punctuation", () => {
     ]);
   });
 
+  it.each([
+    ["http://127.0.0.1:8059/?token=t-1", ""],
+    ["http://example.com:8080/a", "."],
+    ["http://localhost:8059/?token=t-1", "."],
+    ["http://localhost:8059/?token=t-1", ")"],
+    ["http://user@127.0.0.1:8059/?token=t-1", '"'],
+    ["http://user:pass@127.0.0.1:8059/?token=t-1", ""],
+    ["http://localhost", ":"],
+    ["http://[::1]:8059/?token=t-1", "'"],
+    ["https://github.com/o/r/compare/main...user:repo:fix/branch", ""],
+    ["https://example.com/a:b/c", ":"],
+  ])("links %s whole and leaves %j outside", async (url, punctuation) => {
+    const prepared = prepareMarkdownSource(`See ${url}${punctuation} now`);
+    const tree = recognizeTextLinks(
+      await parseMarkdown(prepared.render(), { latexMath: false }),
+      prepared.linkRecognition.text,
+      prepared.linkRecognition.inlineCode,
+    );
+    expect(tree.children?.[0]?.children).toEqual([
+      { type: "Text", content: "See " },
+      {
+        type: "Link",
+        attributes: expect.objectContaining({ url }),
+        children: [{ type: "Text", content: url }],
+      },
+      { type: "Text", content: `${punctuation} now` },
+    ]);
+  });
+
   it.each(["[Authored](https://example.com/a.)", "<https://example.com/a.>"])(
     "preserves punctuation in explicit destinations: %s",
     async (source) => {
