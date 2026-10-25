@@ -421,6 +421,8 @@ export const es: TranslationResources = {
       loading: "Cargando sesiones recientes...",
       failedProvider: "No se pudieron cargar las sesiones de {{provider}}",
       failedImport: "No se pudo importar la sesión seleccionada.",
+      activeWriter:
+        "Otra instancia de Codex/Paseo está usando esta sesión. Libérala en la aplicación original antes de reintentar o elige otra sesión.",
     },
     actions: {
       refresh: "Actualizar sesiones",

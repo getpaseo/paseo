@@ -421,6 +421,8 @@ export const fr: TranslationResources = {
       loading: "Chargement des sessions récentes…",
       failedProvider: "Impossible de charger les sessions {{provider}}",
       failedImport: "Impossible d’importer la session sélectionnée.",
+      activeWriter:
+        "Cette session est utilisée par un autre processus Codex/Paseo. Libérez-la dans l’application d’origine avant de réessayer, ou choisissez une autre session.",
     },
     actions: {
       refresh: "Actualiser les sessions",

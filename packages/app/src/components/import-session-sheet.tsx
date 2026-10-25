@@ -136,7 +136,8 @@ interface SheetStatusMessagesProps {
   hasNoImportableProviders: boolean;
   isLoadingSessions: boolean;
   hasRows: boolean;
-  importErrored: boolean;
+  importError: Error | null;
+  onRetryImport: () => void;
 }
 
 function SheetStatusMessages({
@@ -145,7 +146,8 @@ function SheetStatusMessages({
   hasNoImportableProviders,
   isLoadingSessions,
   hasRows,
-  importErrored,
+  importError,
+  onRetryImport,
 }: SheetStatusMessagesProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -166,8 +168,23 @@ function SheetStatusMessages({
           <Text style={styles.statusText}>{t("importSession.status.loading")}</Text>
         </View>
       ) : null}
-      {importErrored ? (
-        <Text style={styles.statusText}>{t("importSession.status.failedImport")}</Text>
+      {importError ? (
+        <View style={styles.errorBanner} testID="import-session-error" accessibilityRole="alert">
+          <Text style={styles.errorText}>{t("importSession.status.failedImport")}</Text>
+          <Text style={styles.statusText} selectable>
+            {importError.message.includes("already has an active writer")
+              ? t("importSession.status.activeWriter")
+              : importError.message}
+          </Text>
+          <Button
+            variant="ghost"
+            size="xs"
+            onPress={onRetryImport}
+            testID="import-session-retry-import"
+          >
+            {t("common.actions.retry")}
+          </Button>
+        </View>
       ) : null}
     </>
   );
@@ -642,6 +659,12 @@ export function ImportSessionSheet({
     [importMutation],
   );
 
+  const handleRetryImport = useCallback(() => {
+    if (importMutation.variables) {
+      importMutation.mutate(importMutation.variables);
+    }
+  }, [importMutation]);
+
   const providerErrorRows = useMemo(
     () => collectProviderErrorRows(providersToFetch, queries, providerLabelById),
     [queries, providersToFetch, providerLabelById],
@@ -776,7 +799,8 @@ export function ImportSessionSheet({
         hasNoImportableProviders={hasNoImportableProviders}
         isLoadingSessions={isLoadingSessions}
         hasRows={visibleEntries.length > 0}
-        importErrored={importMutation.isError}
+        importError={importMutation.isError ? importMutation.error : null}
+        onRetryImport={handleRetryImport}
       />
       {providerErrorRows.length > 0 ? (
         <ProviderErrorBanner rows={providerErrorRows} onRetry={handleRetryProvider} />
