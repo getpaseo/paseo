@@ -50,6 +50,10 @@ export interface StructuredTextGenerationRequest<T> {
   schema: z.ZodType<T>;
   schemaName: string;
   agentTitle: string;
+  // The last-resort model; defaults to whatever is focused for this cwd.
+  currentSelection?: ResolveStructuredGenerationProvidersOptions["currentSelection"];
+  selectionPolicy?: ResolveStructuredGenerationProvidersOptions["selectionPolicy"];
+  configKey?: ResolveStructuredGenerationProvidersOptions["configKey"];
 }
 
 interface GitMetadataLogger {
@@ -159,6 +163,7 @@ export function createGitMetadataGenerator(deps: {
           schema: COMMIT_MESSAGE_SCHEMA,
           schemaName: "CommitMessage",
           agentTitle: "Commit generator",
+          configKey: "commitMessage",
         },
         { message: COMMIT_MESSAGE_FALLBACK },
       );
@@ -182,6 +187,7 @@ export function createGitMetadataGenerator(deps: {
           schema: PULL_REQUEST_SCHEMA,
           schemaName: "PullRequest",
           agentTitle: "PR generator",
+          configKey: "pullRequest",
         },
         PULL_REQUEST_FALLBACK,
       );
@@ -204,12 +210,26 @@ export function createAgentStructuredTextGeneration(deps: {
   logger: StructuredGenerationLogger;
 }): StructuredTextGeneration {
   return {
-    async generate({ cwd, prompt, schema, schemaName, agentTitle }) {
+    async generate({
+      cwd,
+      prompt,
+      schema,
+      schemaName,
+      agentTitle,
+      currentSelection,
+      selectionPolicy,
+      configKey,
+    }) {
       const providers = await resolveStructuredGenerationProviders({
         cwd,
         providerSnapshotManager: deps.providerSnapshotManager,
         daemonConfig: deps.readDaemonConfig(),
-        currentSelection: deps.getFocusedSelection(cwd),
+        ...(configKey ? { configKey } : {}),
+        selectionPolicy,
+        currentSelection:
+          selectionPolicy === "configured-only"
+            ? undefined
+            : (currentSelection ?? deps.getFocusedSelection(cwd)),
       });
       return generateStructuredAgentResponseWithFallback({
         manager: deps.agentManager,

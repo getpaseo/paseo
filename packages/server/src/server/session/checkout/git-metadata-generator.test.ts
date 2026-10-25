@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
+import type { AgentManager } from "../../agent/agent-manager.js";
+import { createStub } from "../../test-utils/class-mocks.js";
 import {
   StructuredAgentFallbackError,
   StructuredAgentResponseError,
@@ -8,6 +11,7 @@ import type { WorkspaceGitService } from "../../workspace-git-service.js";
 import {
   createGitMetadataGenerator,
   type GitMetadataGenerator,
+  createAgentStructuredTextGeneration,
   type StructuredTextGeneration,
   type StructuredTextGenerationRequest,
 } from "./git-metadata-generator.js";
@@ -65,6 +69,42 @@ const DIFF_WITH_ONE_FILE: CheckoutDiffResult = {
     },
   ],
 };
+
+describe("createAgentStructuredTextGeneration", () => {
+  it("skips focused selection for suggestions but consults it for commit text", async () => {
+    const focusedCalls: string[] = [];
+    const generation = createAgentStructuredTextGeneration({
+      agentManager: createStub<AgentManager>({}),
+      providerSnapshotManager: { listProviders: async () => [] },
+      readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
+      getFocusedSelection: (cwd) => {
+        focusedCalls.push(cwd);
+        throw new Error("focused selection consulted");
+      },
+    });
+    const request = {
+      cwd: "/repo",
+      prompt: "suggest",
+      schema: z.object({ suggestions: z.array(z.string()) }),
+      schemaName: "PromptSuggestions",
+      agentTitle: "Prompt suggestions",
+    };
+
+    await expect(
+      generation.generate({
+        ...request,
+        configKey: "promptSuggestions",
+        selectionPolicy: "configured-only",
+      }),
+    ).rejects.toBeInstanceOf(StructuredAgentFallbackError);
+    expect(focusedCalls).toEqual([]);
+
+    await expect(generation.generate({ ...request, configKey: "commitMessage" })).rejects.toThrow(
+      "focused selection consulted",
+    );
+    expect(focusedCalls).toEqual(["/repo"]);
+  });
+});
 
 describe("createGitMetadataGenerator", () => {
   it("generateCommitMessage returns the generated message from an uncommitted-diff prompt", async () => {

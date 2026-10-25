@@ -5,15 +5,18 @@ import type {
 } from "./agent-sdk-types.js";
 import type { StructuredGenerationProvider } from "./agent-response-loop.js";
 import type { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
+import type { MetadataConfigKey } from "../../utils/build-metadata-prompt.js";
+
+export interface StructuredGenerationProviderConfigEntry {
+  provider: string;
+  model?: string;
+  thinkingOptionId?: string;
+}
 
 export interface StructuredGenerationDaemonConfig {
   metadataGeneration?: {
-    providers?: Array<{
-      provider: string;
-      model?: string;
-      thinkingOptionId?: string;
-    }>;
-  };
+    providers?: StructuredGenerationProviderConfigEntry[];
+  } & Partial<Record<MetadataConfigKey, { providers?: StructuredGenerationProviderConfigEntry[] }>>;
 }
 
 export interface StructuredGenerationProviderIdentifier {
@@ -33,6 +36,10 @@ export interface ResolveStructuredGenerationProvidersOptions {
   cwd: string;
   providerSnapshotManager: Pick<ProviderSnapshotManager, "listProviders">;
   daemonConfig?: StructuredGenerationDaemonConfig | null;
+  // Which artifact is being generated; its own configured providers win over the
+  // shared list. One call can produce two artifacts, so several keys are allowed.
+  configKey?: MetadataConfigKey | MetadataConfigKey[];
+  selectionPolicy?: "configured-only";
   currentSelection?: {
     provider?: AgentProvider | null;
     model?: string | null;
@@ -47,7 +54,7 @@ export interface ResolveStructuredGenerationProvidersOptions {
 export async function resolveStructuredGenerationProviders(
   options: ResolveStructuredGenerationProvidersOptions,
 ): Promise<StructuredGenerationProvider[]> {
-  const configuredProviders = readConfiguredProviders(options.daemonConfig);
+  const configuredProviders = readConfiguredProviders(options.daemonConfig, options.configKey);
   const providerEntries = await options.providerSnapshotManager.listProviders({
     cwd: options.cwd,
     wait: true,
@@ -71,20 +78,22 @@ export async function resolveStructuredGenerationProviders(
     return dedupeProviders(providers);
   }
 
-  for (const identifier of DEFAULT_STRUCTURED_GENERATION_PROVIDERS) {
-    const resolved = resolveByModelSubstring(modelEntries, identifier);
-    if (resolved) {
-      providers.push(resolved);
+  if (options.selectionPolicy !== "configured-only") {
+    for (const identifier of DEFAULT_STRUCTURED_GENERATION_PROVIDERS) {
+      const resolved = resolveByModelSubstring(modelEntries, identifier);
+      if (resolved) {
+        providers.push(resolved);
+      }
     }
-  }
 
-  const currentSelection = resolveCurrentSelection(
-    options.currentSelection,
-    modelEntries,
-    entriesByProvider,
-  );
-  if (currentSelection) {
-    providers.push(currentSelection);
+    const currentSelection = resolveCurrentSelection(
+      options.currentSelection,
+      modelEntries,
+      entriesByProvider,
+    );
+    if (currentSelection) {
+      providers.push(currentSelection);
+    }
   }
 
   return dedupeProviders(providers);
@@ -250,13 +259,30 @@ function resolveByModelSubstring(
 
 function readConfiguredProviders(
   daemonConfig: ResolveStructuredGenerationProvidersOptions["daemonConfig"],
-): Array<{ provider: string; model?: string; thinkingOptionId?: string }> {
+  configKey: ResolveStructuredGenerationProvidersOptions["configKey"],
+): StructuredGenerationProviderConfigEntry[] {
   const metadataGeneration = daemonConfig?.metadataGeneration;
   if (!metadataGeneration || typeof metadataGeneration !== "object") {
     return [];
   }
+  const keys = toArray(configKey);
+  for (const key of keys) {
+    const perKind = metadataGeneration[key]?.providers;
+    if (Array.isArray(perKind) && perKind.length > 0) {
+      return perKind;
+    }
+  }
   const providers = "providers" in metadataGeneration ? metadataGeneration.providers : undefined;
   return Array.isArray(providers) ? providers : [];
+}
+
+function toArray(
+  configKey: ResolveStructuredGenerationProvidersOptions["configKey"],
+): MetadataConfigKey[] {
+  if (configKey === undefined) {
+    return [];
+  }
+  return Array.isArray(configKey) ? configKey : [configKey];
 }
 
 function selectDefaultModel(models: readonly AgentModelDefinition[]): AgentModelDefinition | null {

@@ -121,6 +121,10 @@ export const ar: TranslationResources = {
       fallback: "رسالة...",
       terminal: "Prompt",
     },
+    promptSuggestions: {
+      a11yLabel: "اقتراح رسالة، اضغط Tab للقبول",
+      chipAccessibilityLabel: "استخدام الاقتراح: {{text}}",
+    },
     input: {
       accessibilityLabel: "وكيل الرسائل...",
       terminalAccessibilityLabel: "Terminal prompt",
@@ -2256,7 +2260,7 @@ export const ar: TranslationResources = {
     metadataGeneration: {
       title: "إنشاء البيانات الوصفية",
       description:
-        "اختر النموذج الذي يستخدمه Paseo لعناوين مساحات العمل وأسماء الفروع ورسائل الالتزام ومسودات طلبات السحب",
+        "اختر النموذج الذي يستخدمه Paseo لعناوين مساحات العمل وأسماء الفروع ورسائل الالتزام ومسودات طلبات السحب واقتراحات المطالبات",
       selection: "اختيار النموذج",
       automatic: "تلقائي",
       preferred: "يدوي",
@@ -2266,6 +2270,11 @@ export const ar: TranslationResources = {
       modelHint: "يُستخدم هذا النموذج فقط. إذا فشل، لا يجرّب Paseo نموذجًا آخر",
       docs: "الوثائق",
       saveError: "تعذر تحديث إنشاء البيانات الوصفية",
+      suggestionSection: "اقتراحات الرسائل",
+      suggestionSharedHint: "متوقف حتى تختار نموذجًا هنا أو في إنشاء البيانات الوصفية",
+      suggestionCustomHint:
+        "تستخدم الاقتراحات والإجابات المقترحة وأفكار المحادثة الجديدة هذا النموذج",
+      suggestionModelHint: "يُجرَّب أولًا؛ وتظل النماذج الاحتياطية المدرجة في config.json سارية",
     },
     general: {
       title: "عام",
@@ -2669,6 +2678,11 @@ export const ar: TranslationResources = {
           title: "تمكين أدوات Paseo",
           hint: "سيتمكن الوكلاء من إدارة أشجار العمل والوكلاء والجداول الزمنية",
           accessibilityLabel: "حقن أدوات Paseo",
+        },
+        promptSuggestions: {
+          title: "اقتراح الرسائل التالية",
+          hint: "اقتراح ما يمكن إرساله عندما يكون مربع الكتابة فارغًا. يتطلب نموذجًا في البيانات الوصفية",
+          accessibilityLabel: "اقتراح الرسائل التالية",
         },
         systemPrompt: {
           title: "موجه النظام",

@@ -121,6 +121,10 @@ export const zhCN: TranslationResources = {
       fallback: "输入消息...",
       terminal: "Prompt",
     },
+    promptSuggestions: {
+      a11yLabel: "建议的提示词，按 Tab 采用",
+      chipAccessibilityLabel: "使用建议：{{text}}",
+    },
     input: {
       accessibilityLabel: "给 Agent 发消息...",
       terminalAccessibilityLabel: "Terminal prompt",
@@ -2197,7 +2201,7 @@ export const zhCN: TranslationResources = {
     plugins: pluginSettings["zh-CN"],
     metadataGeneration: {
       title: "元数据生成",
-      description: "选择 Paseo 用于工作区标题、分支名称、提交消息和拉取请求草稿的模型",
+      description: "选择 Paseo 用于工作区标题、分支名称、提交消息、拉取请求草稿和提示建议的模型",
       selection: "模型选择",
       automatic: "自动",
       preferred: "手动",
@@ -2207,6 +2211,10 @@ export const zhCN: TranslationResources = {
       modelHint: "只使用此模型。如果失败，Paseo 不会尝试其他模型",
       docs: "文档",
       saveError: "无法更新元数据生成设置",
+      suggestionSection: "消息建议",
+      suggestionSharedHint: "在此处或元数据生成中选择模型前保持关闭",
+      suggestionCustomHint: "建议、草拟回答和新对话提示都使用此模型",
+      suggestionModelHint: "优先尝试此模型；config.json 中列出的备用模型仍然生效",
     },
     general: {
       title: "通用",
@@ -2605,6 +2613,11 @@ export const zhCN: TranslationResources = {
           title: "启用 Paseo tools",
           hint: "Agent 将能够管理 worktree、Agent 和计划",
           accessibilityLabel: "注入 Paseo tools",
+        },
+        promptSuggestions: {
+          title: "建议下一条提示",
+          hint: "输入框为空时，建议接下来可以发送什么。需要在元数据中选择模型",
+          accessibilityLabel: "建议下一条提示",
         },
         systemPrompt: {
           title: "System prompt",

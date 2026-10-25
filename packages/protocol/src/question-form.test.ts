@@ -2,11 +2,12 @@ import { describe, expect, test } from "vitest";
 import {
   areQuestionsAnswered,
   buildQuestionFormAnswers,
+  draftsForQuestion,
   parseQuestionFormQuestions,
   questionShowsTextInput,
   resolveDismissLabel,
   shouldSubmitEmptyOnDismiss,
-} from "./question-form-card-core";
+} from "./question-form.js";
 
 describe("question form card core", () => {
   test("treats optional input prompts as skippable empty answers", () => {
@@ -171,5 +172,51 @@ describe("question form card core", () => {
       { label: "Tabs", description: "One tab per section", preview: "<Tabs>\n  <Tab />\n</Tabs>" },
       { label: "Single page", description: undefined, preview: undefined },
     ]);
+  });
+});
+
+describe("draftsForQuestion", () => {
+  const free = (question: string) => ({ question, header: question, options: [] });
+  const pickOnly = { question: "Which?", header: "Which", options: [{ label: "A" }] };
+
+  function parse(questions: unknown[]) {
+    const parsed = parseQuestionFormQuestions({ questions });
+    if (!parsed) throw new Error("questions did not parse");
+    return parsed;
+  }
+
+  test("shows each question only the drafts that name it", () => {
+    const questions = parse([free("Which database?"), free("Which region?")]);
+    const drafts = [
+      { id: "s1", text: "Postgres", questionIndex: 0 },
+      { id: "s2", text: "eu-west-1", questionIndex: 1 },
+      { id: "s3", text: "SQLite", questionIndex: 0 },
+    ];
+
+    expect(draftsForQuestion(drafts, 0, questions).map((d) => d.text)).toEqual([
+      "Postgres",
+      "SQLite",
+    ]);
+    expect(draftsForQuestion(drafts, 1, questions).map((d) => d.text)).toEqual(["eu-west-1"]);
+  });
+
+  test("keeps an unnamed draft only where one question takes typed text", () => {
+    const legacy = [{ id: "s1", text: "Postgres" }];
+
+    const sole = parse([pickOnly, free("Which database?")]);
+    expect(draftsForQuestion(legacy, 1, sole)).toEqual(legacy);
+    expect(draftsForQuestion(legacy, 0, sole)).toEqual([]);
+
+    const two = parse([free("Which database?"), free("Which region?")]);
+    expect(draftsForQuestion(legacy, 0, two)).toEqual([]);
+    expect(draftsForQuestion(legacy, 1, two)).toEqual([]);
+  });
+
+  test("offers nothing for a question without an answer box or out of range", () => {
+    const questions = parse([pickOnly]);
+    const drafts = [{ id: "s1", text: "B", questionIndex: 0 }];
+
+    expect(draftsForQuestion(drafts, 0, questions)).toEqual([]);
+    expect(draftsForQuestion(drafts, 3, questions)).toEqual([]);
   });
 });

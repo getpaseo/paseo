@@ -122,6 +122,10 @@ export const ru: TranslationResources = {
       fallback: "Сообщение...",
       terminal: "Prompt",
     },
+    promptSuggestions: {
+      a11yLabel: "Предлагаемое сообщение, нажмите Tab, чтобы принять",
+      chipAccessibilityLabel: "Использовать подсказку: {{text}}",
+    },
     input: {
       accessibilityLabel: "Написать агенту...",
       terminalAccessibilityLabel: "Terminal prompt",
@@ -2253,7 +2257,7 @@ export const ru: TranslationResources = {
     metadataGeneration: {
       title: "Генерация метаданных",
       description:
-        "Выберите модель, которую Paseo будет использовать для названий рабочих пространств и веток, сообщений коммитов и черновиков PR",
+        "Выберите модель, которую Paseo будет использовать для названий рабочих пространств и веток, сообщений коммитов, черновиков PR и подсказок для запросов",
       selection: "Выбор модели",
       automatic: "Автоматически",
       preferred: "Вручную",
@@ -2264,6 +2268,13 @@ export const ru: TranslationResources = {
         "Используется только эта модель. Если она не сработает, Paseo не будет пробовать другую модель",
       docs: "Документация",
       saveError: "Не удалось обновить настройки генерации метаданных",
+      suggestionSection: "Подсказки сообщений",
+      suggestionSharedHint:
+        "Выключено, пока вы не выберете модель здесь или в разделе генерации метаданных",
+      suggestionCustomHint:
+        "Подсказки, черновики ответов и идеи для нового чата используют эту модель",
+      suggestionModelHint:
+        "Пробуется первой; резервные модели из config.json по-прежнему применяются",
     },
     general: {
       title: "Основные",
@@ -2680,6 +2691,11 @@ export const ru: TranslationResources = {
           title: "Включить инструменты Paseo",
           hint: "Агенты смогут управлять worktree, агентами и расписаниями.",
           accessibilityLabel: "Добавить инструменты Paseo",
+        },
+        promptSuggestions: {
+          title: "Предлагать следующие сообщения",
+          hint: "Предлагать, что отправить, когда поле ввода пустое. Нужна модель в разделе «Метаданные»",
+          accessibilityLabel: "Предлагать следующие сообщения",
         },
         systemPrompt: {
           title: "Системный промпт",

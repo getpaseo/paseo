@@ -122,6 +122,10 @@ export const ptBR: TranslationResources = {
       fallback: "Mensagem...",
       terminal: "Prompt",
     },
+    promptSuggestions: {
+      a11yLabel: "Sugestão de mensagem, pressione Tab para aceitar",
+      chipAccessibilityLabel: "Usar sugestão: {{text}}",
+    },
     input: {
       accessibilityLabel: "Enviar mensagem ao agente...",
       terminalAccessibilityLabel: "Terminal prompt",
@@ -2253,7 +2257,7 @@ export const ptBR: TranslationResources = {
     metadataGeneration: {
       title: "Geração de metadados",
       description:
-        "Escolha o modelo usado pelo Paseo para títulos de espaços de trabalho, nomes de branches, mensagens de commit e rascunhos de pull request",
+        "Escolha o modelo usado pelo Paseo para títulos de espaços de trabalho, nomes de branches, mensagens de commit, rascunhos de pull request e sugestões de prompts",
       selection: "Seleção de modelo",
       automatic: "Automática",
       preferred: "Manual",
@@ -2263,6 +2267,13 @@ export const ptBR: TranslationResources = {
       modelHint: "Somente este modelo é usado. Se ele falhar, o Paseo não tenta outro modelo",
       docs: "Documentação",
       saveError: "Não foi possível atualizar a geração de metadados",
+      suggestionSection: "Sugestões de mensagens",
+      suggestionSharedHint:
+        "Desativado até você escolher um modelo aqui ou em Geração de metadados",
+      suggestionCustomHint:
+        "Sugestões, respostas propostas e ideias para novos chats usam este modelo",
+      suggestionModelHint:
+        "Tentado primeiro; os modelos de reserva listados no config.json continuam valendo",
     },
     general: {
       title: "Geral",
@@ -2671,6 +2682,11 @@ export const ptBR: TranslationResources = {
           title: "Ativar ferramentas do Paseo",
           hint: "Agentes poderão gerenciar worktrees, agentes e agendamentos",
           accessibilityLabel: "Injetar ferramentas do Paseo",
+        },
+        promptSuggestions: {
+          title: "Sugerir próximas mensagens",
+          hint: "Sugerir o que enviar quando o campo de mensagem estiver vazio. Requer um modelo em Metadados",
+          accessibilityLabel: "Sugerir próximas mensagens",
         },
         systemPrompt: {
           title: "Prompt do sistema",
