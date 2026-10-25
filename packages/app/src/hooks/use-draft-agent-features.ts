@@ -1,19 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import type { AgentProvider, AgentSessionConfig } from "@getpaseo/protocol/agent-types";
+import type {
+  AgentComposerControl,
+  AgentProvider,
+  AgentSessionConfig,
+} from "@getpaseo/protocol/agent-types";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useHostFeature } from "@/runtime/host-features";
 import { mergeProviderPreferences, useFormPreferences } from "./use-form-preferences";
 import {
+  applyControlValues,
   applyFeatureValues,
+  pruneControlValues,
   pruneFeatureValues,
+  resolveControlValues,
   resolveFeatureValues,
+  serializeControlValues,
 } from "./feature-preferences";
 
 type DraftFeatureConfig = Pick<
   AgentSessionConfig,
-  "provider" | "cwd" | "modeId" | "model" | "thinkingOptionId"
->;
+  "provider" | "cwd" | "modeId" | "model" | "thinkingOptionId" | "controlValues"
+> & { surface: "draft" };
 
 export function useDraftAgentFeatures(input: {
   serverId: string | null | undefined;
@@ -23,15 +32,28 @@ export function useDraftAgentFeatures(input: {
   modelId: string | null | undefined;
   thinkingOptionId: string | null | undefined;
   initialFeatureValues?: Record<string, unknown>;
+  initialControlValues?: Record<string, unknown>;
 }) {
   const { t } = useTranslation();
-  const { serverId, provider, cwd, modeId, modelId, thinkingOptionId, initialFeatureValues } =
-    input;
+  const {
+    serverId,
+    provider,
+    cwd,
+    modeId,
+    modelId,
+    thinkingOptionId,
+    initialFeatureValues,
+    initialControlValues,
+  } = input;
   const [localFeatureValues, setLocalFeatureValues] = useState<Record<string, unknown>>(
     () => initialFeatureValues ?? {},
   );
+  const [localControlValues, setLocalControlValues] = useState<Record<string, unknown>>(
+    () => initialControlValues ?? {},
+  );
   const client = useHostRuntimeClient(serverId ?? "");
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
+  const controlsSupported = useHostFeature(serverId, "providerComposerControls");
   const { preferences, updatePreferences } = useFormPreferences();
   const normalizedCwd = cwd?.trim() || "";
   const normalizedProvider = provider ?? null;
@@ -40,11 +62,16 @@ export function useDraftAgentFeatures(input: {
     () => (provider ? (preferences.providerPreferences?.[provider]?.featureValues ?? {}) : {}),
     [preferences.providerPreferences, provider],
   );
+  const persistedControlValues = useMemo(
+    () => (provider ? (preferences.providerPreferences?.[provider]?.controlValues ?? {}) : {}),
+    [preferences.providerPreferences, provider],
+  );
 
   const draftConfig = useMemo<DraftFeatureConfig | null>(() => {
     if (!normalizedProvider || !normalizedCwd) {
       return null;
     }
+    const controlValues = { ...persistedControlValues, ...localControlValues };
 
     return {
       provider: normalizedProvider,
@@ -52,8 +79,18 @@ export function useDraftAgentFeatures(input: {
       ...(modeId ? { modeId } : {}),
       ...(modelId ? { model: modelId } : {}),
       ...(thinkingOptionId ? { thinkingOptionId } : {}),
+      ...(Object.keys(controlValues).length > 0 ? { controlValues } : {}),
+      surface: "draft",
     };
-  }, [modeId, modelId, normalizedCwd, normalizedProvider, thinkingOptionId]);
+  }, [
+    localControlValues,
+    modeId,
+    modelId,
+    normalizedCwd,
+    normalizedProvider,
+    persistedControlValues,
+    thinkingOptionId,
+  ]);
 
   const featuresQuery = useQuery({
     queryKey: [
@@ -64,9 +101,17 @@ export function useDraftAgentFeatures(input: {
       modeId ?? null,
       modelId ?? null,
       thinkingOptionId ?? null,
+      // Held control values are part of the listing request: a plugin may
+      // reveal controls or change options based on a toggle, so changing a
+      // value must refetch instead of serving the previous listing.
+      serializeControlValues(draftConfig?.controlValues),
     ],
     enabled: Boolean(serverId && client && isConnected && draftConfig),
     staleTime: 5 * 60 * 1000,
+    // The listing key includes held values (dependent controls), so every
+    // toggle refetches. Keep the previous listing across the key change so
+    // the toolbar and the resolved values never blank out mid-refresh.
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       if (!client || !draftConfig) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
@@ -75,11 +120,31 @@ export function useDraftAgentFeatures(input: {
       if (payload.error) {
         throw new Error(payload.error);
       }
-      return payload.features ?? [];
+      return {
+        features: payload.features ?? [],
+        composerControls: payload.composerControls ?? [],
+        controlsError: payload.controlsError ?? null,
+      };
     },
   });
-  const availableFeaturesRaw = featuresQuery.data;
+  const availableFeaturesRaw = featuresQuery.data?.features;
   const availableFeatures = useMemo(() => availableFeaturesRaw ?? [], [availableFeaturesRaw]);
+  const availableControlsRaw = featuresQuery.data?.composerControls;
+  const controlsListingFailed = Boolean(featuresQuery.data?.controlsError);
+  // A failed listing must not wipe held values: fall back to the last good
+  // listing instead of pruning against an empty one.
+  const lastGoodControlsRef = useRef<AgentComposerControl[]>([]);
+  useEffect(() => {
+    const data = featuresQuery.data;
+    if (data && !data.controlsError) {
+      lastGoodControlsRef.current = data.composerControls;
+    }
+  }, [featuresQuery.data]);
+  const availableControls = useMemo<AgentComposerControl[]>(() => {
+    if (!controlsSupported) return [];
+    if (controlsListingFailed) return lastGoodControlsRef.current;
+    return availableControlsRaw ?? [];
+  }, [availableControlsRaw, controlsListingFailed, controlsSupported]);
   const featureValues = useMemo(
     () =>
       resolveFeatureValues({
@@ -93,6 +158,18 @@ export function useDraftAgentFeatures(input: {
   const features = useMemo(() => {
     return applyFeatureValues(availableFeatures, featureValues);
   }, [availableFeatures, featureValues]);
+  const controlValues = useMemo(
+    () =>
+      resolveControlValues({
+        controls: availableControls,
+        persistedControlValues,
+        localControlValues,
+      }),
+    [availableControls, localControlValues, persistedControlValues],
+  );
+  const resolvedControls = useMemo(() => {
+    return applyControlValues(availableControls, controlValues);
+  }, [availableControls, controlValues]);
 
   useEffect(() => {
     const previousProvider = previousProviderRef.current;
@@ -102,6 +179,7 @@ export function useDraftAgentFeatures(input: {
     }
     if (previousProvider !== normalizedProvider) {
       setLocalFeatureValues({});
+      setLocalControlValues({});
     }
   }, [normalizedProvider]);
 
@@ -113,9 +191,26 @@ export function useDraftAgentFeatures(input: {
     if (next !== localFeatureValues) {
       setLocalFeatureValues(next);
     }
-  }, [availableFeatures, availableFeaturesRaw, localFeatureValues]);
+    // Skip control pruning while the listing is failed (values resolve
+    // against the last good listing instead).
+    if (controlsListingFailed) {
+      return;
+    }
+    const nextControls = pruneControlValues(localControlValues, availableControls);
+    if (nextControls !== localControlValues) {
+      setLocalControlValues(nextControls);
+    }
+  }, [
+    availableControls,
+    availableFeatures,
+    availableFeaturesRaw,
+    controlsListingFailed,
+    localControlValues,
+    localFeatureValues,
+  ]);
 
   const effectiveFeatureValues = Object.keys(featureValues).length > 0 ? featureValues : undefined;
+  const effectiveControlValues = Object.keys(controlValues).length > 0 ? controlValues : undefined;
   const setFeatureValue = useCallback(
     (featureId: string, value: unknown) => {
       setLocalFeatureValues((current) => {
@@ -149,11 +244,48 @@ export function useDraftAgentFeatures(input: {
     setLocalFeatureValues(values);
   }, []);
 
+  const setControlValue = useCallback(
+    (controlId: string, value: unknown) => {
+      setLocalControlValues((current) => {
+        if (Object.is(current[controlId], value)) {
+          return current;
+        }
+
+        return { ...current, [controlId]: value };
+      });
+      if (!provider) {
+        return;
+      }
+      void updatePreferences((current) =>
+        mergeProviderPreferences({
+          preferences: current,
+          provider,
+          updates: {
+            controlValues: {
+              [controlId]: value,
+            },
+          },
+        }),
+      ).catch((error) => {
+        console.warn("[useDraftAgentFeatures] persist control preference failed", error);
+      });
+    },
+    [provider, updatePreferences],
+  );
+
+  const applyProfileControlValues = useCallback((values: Record<string, unknown>) => {
+    setLocalControlValues(values);
+  }, []);
+
   return {
     features,
     featureValues: effectiveFeatureValues,
+    controls: resolvedControls,
+    controlValues: effectiveControlValues,
     isLoading: featuresQuery.isLoading,
     setFeatureValue,
+    setControlValue,
     applyProfileFeatureValues,
+    applyProfileControlValues,
   };
 }

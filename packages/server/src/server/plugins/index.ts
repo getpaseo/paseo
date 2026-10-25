@@ -51,6 +51,8 @@ interface PluginRuntimePort {
   connectProvider: PluginRuntime["connectProvider"];
   getProviderCatalogCacheKey?: PluginRuntime["getProviderCatalogCacheKey"];
   getProviderStatus?: PluginRuntime["getProviderStatus"];
+  getProviderComposerControls?: PluginRuntime["getProviderComposerControls"];
+  invokeProviderComposerControl?: PluginRuntime["invokeProviderComposerControl"];
   validatePlugin?(path: string): Promise<void>;
   startPlugin(pluginId: string, path: string, canPublish: () => boolean): Promise<void>;
   startBuiltinPlugin?(plugin: BuiltinPlugin): Promise<void>;
@@ -646,6 +648,28 @@ export class PluginService {
             : undefined,
           icon: provider.iconPath
             ? await readPluginProviderIcon(pluginDirectory, provider.iconPath)
+            : undefined,
+          composerControls: provider.hasComposerControls
+            ? {
+                getControls: (context) => {
+                  if (!this.runtime.getProviderComposerControls)
+                    throw new Error("Plugin runtime cannot resolve composer controls");
+                  return this.runtime.getProviderComposerControls(pluginId, provider.id, context);
+                },
+                onControlEvent: async (event) => {
+                  if (!this.runtime.invokeProviderComposerControl)
+                    throw new Error("Plugin runtime cannot invoke composer controls");
+                  return {
+                    controls: await this.runtime.invokeProviderComposerControl(
+                      pluginId,
+                      provider.id,
+                      event.controlId,
+                      event.value,
+                      event.context,
+                    ),
+                  };
+                },
+              }
             : undefined,
           connect: (request) => this.runtime.connectProvider(pluginId, provider.id, request),
         }),

@@ -2,12 +2,14 @@ import { z } from "zod";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 
 const featureValuesSchema = z.record(z.string(), z.union([z.boolean(), z.string(), z.null()]));
+const controlValuesSchema = z.record(z.string(), z.union([z.boolean(), z.string(), z.null()]));
 
 export interface ProviderPreferences {
   model?: string;
   mode?: string;
   thinkingByModel?: Record<string, string>;
   featureValues?: Record<string, unknown>;
+  controlValues?: Record<string, unknown>;
 }
 
 export type LaunchTarget = { kind: "chat" } | { kind: "terminal"; profileId: string };
@@ -25,6 +27,7 @@ const providerPreferencesSchema: z.ZodType<ProviderPreferences> = z.strictObject
   mode: z.string().optional(),
   thinkingByModel: z.record(z.string(), z.string()).optional(),
   featureValues: featureValuesSchema.optional(),
+  controlValues: controlValuesSchema.optional(),
 });
 
 const launchTargetSchema: z.ZodType<LaunchTarget> = z.discriminatedUnion("kind", [
@@ -117,6 +120,7 @@ function applyProviderPreferenceUpdates(
   const next: ProviderPreferences = { ...existing };
   const nextThinkingByModel = mergeDefinedRecord(existing.thinkingByModel, updates.thinkingByModel);
   const nextFeatureValues = mergeDefinedRecord(existing.featureValues, updates.featureValues);
+  const nextControlValues = mergeDefinedRecord(existing.controlValues, updates.controlValues);
 
   if (updates.model !== undefined) {
     next.model = updates.model;
@@ -131,6 +135,9 @@ function applyProviderPreferenceUpdates(
   }
   if (nextFeatureValues !== undefined) {
     next.featureValues = nextFeatureValues;
+  }
+  if (nextControlValues !== undefined) {
+    next.controlValues = nextControlValues;
   }
 
   return next;
@@ -162,6 +169,7 @@ export function mergeCreateAgentSelectionPreferences(args: {
   modeId?: string | null;
   thinkingOptionId?: string | null;
   featureValues?: Record<string, unknown>;
+  controlValues?: Record<string, unknown>;
 }): FormPreferences {
   if (!args.provider) {
     return args.preferences;
@@ -171,6 +179,7 @@ export function mergeCreateAgentSelectionPreferences(args: {
   const modeId = args.modeId?.trim() ?? "";
   const thinkingOptionId = args.thinkingOptionId?.trim() ?? "";
   const featureValues = featureValuesSchema.safeParse(args.featureValues);
+  const controlValues = controlValuesSchema.safeParse(args.controlValues);
 
   return mergeProviderPreferences({
     preferences: args.preferences,
@@ -180,6 +189,7 @@ export function mergeCreateAgentSelectionPreferences(args: {
       mode: args.modeId === undefined ? undefined : modeId || null,
       ...(modelId && thinkingOptionId ? { thinkingByModel: { [modelId]: thinkingOptionId } } : {}),
       ...(featureValues.success ? { featureValues: featureValues.data } : {}),
+      ...(controlValues.success ? { controlValues: controlValues.data } : {}),
     },
   });
 }
@@ -193,6 +203,7 @@ export function applyAgentProfilePreferences(args: {
   modeId: string;
   thinkingOptionId: string;
   featureValues: Record<string, unknown>;
+  controlValues?: Record<string, unknown>;
 }): FormPreferences {
   let next = args.preferences;
   if (args.previousProvider) {
@@ -216,6 +227,7 @@ export function applyAgentProfilePreferences(args: {
         ? { thinkingByModel: { [args.modelId]: args.thinkingOptionId } }
         : {}),
       featureValues: args.featureValues,
+      ...(args.controlValues ? { controlValues: args.controlValues } : {}),
     },
   });
 }

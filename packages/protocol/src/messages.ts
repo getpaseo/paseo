@@ -298,6 +298,7 @@ const AgentSelectOptionSchema = z.object({
   id: z.string(),
   label: z.string(),
   description: z.string().optional(),
+  icon: z.string().optional(),
   isDefault: z.boolean().optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
@@ -333,6 +334,48 @@ export const AgentFeatureSelectSchema = z.object({
 export const AgentFeatureSchema = z.discriminatedUnion("type", [
   AgentFeatureToggleSchema,
   AgentFeatureSelectSchema,
+]);
+
+export const AgentComposerControlActionSchema = z.object({
+  kind: z.literal("action"),
+  id: z.string(),
+  label: z.string(),
+  description: z.string().optional(),
+  tooltip: z.string().optional(),
+  icon: z.string().optional(),
+  disabled: z.boolean().optional(),
+  visible: z.boolean().optional(),
+});
+
+export const AgentComposerControlToggleSchema = z.object({
+  kind: z.literal("toggle"),
+  id: z.string(),
+  label: z.string(),
+  description: z.string().optional(),
+  tooltip: z.string().optional(),
+  icon: z.string().optional(),
+  disabled: z.boolean().optional(),
+  visible: z.boolean().optional(),
+  value: z.boolean(),
+});
+
+export const AgentComposerControlSelectSchema = z.object({
+  kind: z.literal("select"),
+  id: z.string(),
+  label: z.string(),
+  description: z.string().optional(),
+  tooltip: z.string().optional(),
+  icon: z.string().optional(),
+  disabled: z.boolean().optional(),
+  visible: z.boolean().optional(),
+  value: z.string().nullable(),
+  options: z.array(AgentSelectOptionSchema).min(1),
+});
+
+export const AgentComposerControlSchema = z.discriminatedUnion("kind", [
+  AgentComposerControlActionSchema,
+  AgentComposerControlToggleSchema,
+  AgentComposerControlSelectSchema,
 ]);
 
 const AgentModelDefinitionSchema = z.object({
@@ -465,6 +508,7 @@ const AgentSessionConfigSchema = z.object({
   model: z.string().optional(),
   thinkingOptionId: z.string().optional(),
   featureValues: z.record(z.string(), z.unknown()).optional(),
+  controlValues: z.record(z.string(), z.unknown()).optional(),
   title: z.string().trim().min(1).max(MAX_EXPLICIT_AGENT_TITLE_CHARS).optional().nullable(),
   providerOptions: ProviderOptionsSchema.optional(),
   toolPolicy: ToolPolicySchema.optional(),
@@ -839,6 +883,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   workspaceId: z.string().optional(),
   model: z.string().nullable(),
   features: z.array(AgentFeatureSchema).optional(),
+  composerControls: z.array(AgentComposerControlSchema).optional(),
   thinkingOptionId: z.string().nullable().optional(),
   effectiveThinkingOptionId: z.string().nullable().optional(),
   createdAt: z.string(),
@@ -2006,6 +2051,21 @@ export const SetAgentFeatureResponseMessageSchema = z.object({
   payload: AgentActionResponsePayloadSchema,
 });
 
+export const AgentComposerControlInvokeRequestMessageSchema = z.object({
+  type: z.literal("agent.composer_control.invoke.request"),
+  agentId: z.string(),
+  controlId: z.string(),
+  value: z.unknown().optional(),
+  requestId: z.string(),
+});
+
+export const AgentComposerControlInvokeResponseMessageSchema = z.object({
+  type: z.literal("agent.composer_control.invoke.response"),
+  payload: AgentActionResponsePayloadSchema.extend({
+    controls: z.array(AgentComposerControlSchema).optional(),
+  }),
+});
+
 /**
  * Every agent-config value a client can change in one shot. Each field is
  * optional and an omitted field is left alone; `null` on model and thinking
@@ -2932,6 +2992,8 @@ const ListCommandsDraftConfigSchema = z.object({
   model: z.string().optional(),
   thinkingOptionId: z.string().optional(),
   featureValues: z.record(z.string(), z.unknown()).optional(),
+  controlValues: z.record(z.string(), z.unknown()).optional(),
+  surface: z.enum(["draft", "profile"]).optional(),
 });
 
 export const ListProviderFeaturesRequestMessageSchema = z.object({
@@ -3341,6 +3403,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentModelRequestMessageSchema,
   SetAgentThinkingRequestMessageSchema,
   SetAgentFeatureRequestMessageSchema,
+  AgentComposerControlInvokeRequestMessageSchema,
   AgentConfigApplyRequestMessageSchema,
   AgentDetachRequestMessageSchema,
   AgentRewindRequestMessageSchema,
@@ -3692,6 +3755,8 @@ export const ServerInfoStatusPayloadSchema = z
         pluginThemes: z.boolean().optional(),
         pluginSettings: z.boolean().optional(),
         pluginTimelineItems: z.boolean().optional(),
+        // COMPAT(providerComposerControls): added in v0.9.0, remove gate after 2027-09-01.
+        providerComposerControls: z.boolean().optional(),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
@@ -6235,6 +6300,8 @@ export const ListProviderFeaturesResponseMessageSchema = z.object({
   payload: z.object({
     provider: AgentProviderSchema,
     features: z.array(AgentFeatureSchema).optional(),
+    composerControls: z.array(AgentComposerControlSchema).optional(),
+    controlsError: z.string().nullable().optional(),
     error: z.string().nullable().optional(),
     fetchedAt: z.string(),
     requestId: z.string(),
@@ -7051,6 +7118,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentModelResponseMessageSchema,
   SetAgentThinkingResponseMessageSchema,
   SetAgentFeatureResponseMessageSchema,
+  AgentComposerControlInvokeResponseMessageSchema,
   AgentConfigApplyResponseMessageSchema,
   AgentDetachResponseMessageSchema,
   AgentRewindResponseMessageSchema,
@@ -7252,6 +7320,9 @@ export type SetAgentModeResponseMessage = z.infer<typeof SetAgentModeResponseMes
 export type SetAgentModelResponseMessage = z.infer<typeof SetAgentModelResponseMessageSchema>;
 export type SetAgentThinkingResponseMessage = z.infer<typeof SetAgentThinkingResponseMessageSchema>;
 export type SetAgentFeatureResponseMessage = z.infer<typeof SetAgentFeatureResponseMessageSchema>;
+export type AgentComposerControlInvokeResponseMessage = z.infer<
+  typeof AgentComposerControlInvokeResponseMessageSchema
+>;
 export type AgentConfigApplyResponseMessage = z.infer<typeof AgentConfigApplyResponseMessageSchema>;
 export type AgentDetachResponseMessage = z.infer<typeof AgentDetachResponseMessageSchema>;
 export type AgentRewindResponseMessage = z.infer<typeof AgentRewindResponseMessageSchema>;
@@ -7421,6 +7492,9 @@ export type SetAgentModeRequestMessage = z.infer<typeof SetAgentModeRequestMessa
 export type SetAgentModelRequestMessage = z.infer<typeof SetAgentModelRequestMessageSchema>;
 export type SetAgentThinkingRequestMessage = z.infer<typeof SetAgentThinkingRequestMessageSchema>;
 export type SetAgentFeatureRequestMessage = z.infer<typeof SetAgentFeatureRequestMessageSchema>;
+export type AgentComposerControlInvokeRequestMessage = z.infer<
+  typeof AgentComposerControlInvokeRequestMessageSchema
+>;
 export type AgentConfigApplyRequestMessage = z.infer<typeof AgentConfigApplyRequestMessageSchema>;
 export type AgentDetachRequestMessage = z.infer<typeof AgentDetachRequestMessageSchema>;
 export type AgentPermissionResponseMessage = z.infer<typeof AgentPermissionResponseMessageSchema>;

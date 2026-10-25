@@ -26,6 +26,7 @@ import type { ComposerAttachment } from "@/attachments/types";
 import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
 import type {
   AgentPermissionRequest,
+  AgentComposerControl,
   AgentFeature,
   AgentProvider,
   AgentMode,
@@ -92,6 +93,7 @@ export interface Agent {
   workspaceId?: string;
   model: string | null;
   features?: AgentFeature[];
+  composerControls?: AgentComposerControl[];
   thinkingOptionId?: string | null;
   requiresAttention?: boolean;
   attentionReason?: "finished" | "error" | "permission" | null;

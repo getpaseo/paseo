@@ -13,6 +13,8 @@ import {
 } from "../../agent/provider-snapshot-manager.js";
 import {
   filterSelectableAgentModels,
+  type AgentComposerControl,
+  type AgentComposerControlContext,
   type AgentFeature,
   type AgentProvider,
   type AgentSessionConfig,
@@ -50,6 +52,10 @@ export interface ProviderCatalogSessionHost {
   publishSnapshot(project: () => SessionOutboundMessage | null): void;
   listProviderAvailability(): Promise<ProviderAvailability[]>;
   listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]>;
+  listDraftComposerControls(
+    config: AgentSessionConfig,
+    surface?: AgentComposerControlContext["surface"],
+  ): Promise<AgentComposerControl[]>;
 }
 
 export interface ProviderCatalogSessionOptions {
@@ -340,6 +346,7 @@ export class ProviderCatalogSession {
     model?: string;
     thinkingOptionId?: string;
     featureValues?: Record<string, unknown>;
+    controlValues?: Record<string, unknown>;
   }): AgentSessionConfig {
     return {
       provider: draftConfig.provider,
@@ -348,6 +355,7 @@ export class ProviderCatalogSession {
       ...(draftConfig.model ? { model: draftConfig.model } : {}),
       ...(draftConfig.thinkingOptionId ? { thinkingOptionId: draftConfig.thinkingOptionId } : {}),
       ...(draftConfig.featureValues ? { featureValues: draftConfig.featureValues } : {}),
+      ...(draftConfig.controlValues ? { controlValues: draftConfig.controlValues } : {}),
     };
   }
 
@@ -358,11 +366,31 @@ export class ProviderCatalogSession {
     try {
       const sessionConfig = this.buildDraftAgentSessionConfig(msg.draftConfig);
       const features = await this.host.listDraftFeatures(sessionConfig);
+      // Controls are best-effort: a failing plugin must not take down the
+      // feature response the composer and profile editor depend on. Report
+      // the failure explicitly so clients keep previously resolved values
+      // instead of pruning against an empty list.
+      let composerControls: AgentComposerControl[] = [];
+      let controlsError: string | null = null;
+      try {
+        composerControls = await this.host.listDraftComposerControls(
+          sessionConfig,
+          msg.draftConfig.surface ?? "draft",
+        );
+      } catch (error) {
+        controlsError = getErrorMessage(error);
+        this.logger.error(
+          { err: error, provider: msg.draftConfig.provider },
+          `Failed to list composer controls for ${msg.draftConfig.provider}`,
+        );
+      }
       this.host.emit({
         type: "list_provider_features_response",
         payload: {
           provider: msg.draftConfig.provider,
           features,
+          ...(composerControls.length > 0 ? { composerControls } : {}),
+          ...(controlsError ? { controlsError } : {}),
           error: null,
           fetchedAt,
           requestId: msg.requestId,

@@ -69,6 +69,12 @@ export function buildDraftAgentSetup(agent: Agent): WorkspaceDraftTabSetup {
   for (const feature of agent.features ?? []) {
     featureValues[feature.id] = feature.value;
   }
+  const controlValues: Record<string, unknown> = {};
+  for (const control of agent.composerControls ?? []) {
+    if (control.kind === "toggle" || control.kind === "select") {
+      controlValues[control.id] = control.value;
+    }
+  }
 
   return {
     provider: agent.provider,
@@ -77,5 +83,6 @@ export function buildDraftAgentSetup(agent: Agent): WorkspaceDraftTabSetup {
     model: agent.model ?? agent.runtimeInfo?.model ?? null,
     thinkingOptionId: agent.thinkingOptionId ?? agent.runtimeInfo?.thinkingOptionId ?? null,
     featureValues,
+    controlValues,
   };
 }

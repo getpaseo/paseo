@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import type {
   AgentCapabilityFlags,
+  AgentComposerControl,
   AgentFeature,
   AgentProvider,
 } from "@getpaseo/protocol/agent-types";
@@ -23,6 +24,7 @@ export interface AgentScreenAgent {
     thinkingOptionId?: string | null;
   } | null;
   features?: readonly AgentFeature[];
+  composerControls?: readonly AgentComposerControl[];
   lastError?: string | null;
   projectPlacement?: {
     projectKey?: string;
