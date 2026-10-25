@@ -1162,3 +1162,52 @@ test.skipIf(process.platform === "win32")(
   },
   60_000,
 );
+
+async function closedManagedAgent() {
+  const h = await managedMcpHarness();
+  const agent = await h.client.createAgent({
+    provider: "omp",
+    cwd: h.directory,
+    model: "anthropic/claude-haiku-5-5",
+    title: "managed",
+  });
+  const manager = h.daemon.daemon.agentManager;
+  const handle = manager.getAgent(agent.id)!.persistence!;
+  await manager.closeAgent(agent.id);
+  const agentLaunches = () =>
+    h.runtime.recordedLaunches.filter((launch) => launch.env?.PASEO_AGENT_ID).length;
+  return { h, agent, manager, handle, agentLaunches };
+}
+
+test.skipIf(process.platform === "win32")(
+  "list commands and provider subagent reads never open or mint for a managed agent",
+  async () => {
+    const { h, agent, manager, agentLaunches } = await closedManagedAgent();
+    const binds = h.bindings.size;
+    const events = h.events.length;
+    const launches = agentLaunches();
+    await h.client.listCommands(agent.id);
+    await h.client.listProviderSubagents(agent.id);
+    await h.client.fetchProviderSubagentTimeline(agent.id, "missing-subagent").catch(() => null);
+    expect(manager.getAgent(agent.id)?.historyOnly).toBe(true);
+    expect(h.bindings.size).toBe(binds);
+    expect(h.events).toHaveLength(events);
+    expect(agentLaunches()).toBe(launches);
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === "win32")(
+  "an explicit resume reopens a history-only managed agent interactively",
+  async () => {
+    const { h, agent, manager, handle } = await closedManagedAgent();
+    await h.client.listProviderSubagents(agent.id);
+    expect(manager.getAgent(agent.id)?.historyOnly).toBe(true);
+    const binds = h.bindings.size;
+    await h.client.resumeAgent(handle);
+    expect(manager.getAgent(agent.id)?.historyOnly).toBeFalsy();
+    expect(h.bindings.size).toBe(binds + 1);
+    expect([...h.bindings.values()].at(-1)?.reason).toBe("resume");
+  },
+  60_000,
+);

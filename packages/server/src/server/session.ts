@@ -1046,6 +1046,7 @@ export class Session {
       },
       operations: {
         ensureLoaded: async (agentId) => {
+          // Interactive on purpose: mode, model and feature changes act on a live session.
           await ensureUnarchivedAgentLoaded(agentId, {
             agentManager,
             agentStorage,
@@ -4583,20 +4584,23 @@ export class Session {
       try {
         if (matched?.record.config?.managedMcpServers) {
           const record = matched.record;
+          const resident = this.agentManager.getAgent(record.id);
+          // A history-only resident cannot run; an explicit resume reopens it interactively.
           snapshot =
-            this.agentManager.getAgent(record.id) ??
-            (await this.agentManager.resumeAgentFromPersistence(
-              handle,
-              effectiveOverrides,
-              record.id,
-              {
-                ...extractTimestamps(record),
-                attention: extractAttention(record),
-                workspaceId: record.workspaceId,
-                labels: record.labels,
-                owner: record.owner,
-              },
-            ));
+            resident && !resident.historyOnly
+              ? resident
+              : await this.agentManager.resumeAgentFromPersistence(
+                  handle,
+                  effectiveOverrides,
+                  record.id,
+                  {
+                    ...extractTimestamps(record),
+                    attention: extractAttention(record),
+                    workspaceId: record.workspaceId,
+                    labels: record.labels,
+                    owner: record.owner,
+                  },
+                );
         } else {
           snapshot = await this.agentManager.resumeAgentFromPersistence(handle, effectiveOverrides);
         }
@@ -5114,6 +5118,7 @@ export class Session {
               agentManager: this.agentManager,
               agentStorage: this.agentStorage,
               logger: this.sessionLogger,
+              readOnly: true,
             })
           : null;
 
@@ -8084,6 +8089,7 @@ export class Session {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
+        readOnly: true,
       });
       this.emit({
         type: "agent.provider_subagents.list.response",
@@ -8117,6 +8123,7 @@ export class Session {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
+        readOnly: true,
       });
       const descriptor = this.agentManager.getProviderSubagent(msg.parentAgentId, msg.subagentId);
       if (!descriptor) {
