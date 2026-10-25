@@ -27,10 +27,16 @@ const PROSE_PATH = String.raw`(?:${PATH_PREFIX}${HAS_PATH_LETTER}${SEPARATED_PAT
 function createFilePattern(path: string): RegExp {
   // The native adapter mistakes a literal + in lookbehind for a quantifier; use its hex escape.
   return new RegExp(
-    String.raw`(?:https?://[^\s<>]+|(?<![a-zA-Z0-9\u0080-\uFFFF_@.%\x2b~:/\\-])(?:${path}|${FILE_NAME})${LINE_SUFFIX}(?![a-zA-Z0-9\u0080-\uFFFF_@%+:/\\-]|\.${PATH_CHARACTER}))`,
+    String.raw`(?:${BARE_URL}|(?<![a-zA-Z0-9\u0080-\uFFFF_@.%\x2b~:/\\-])(?:${path}|${FILE_NAME})${LINE_SUFFIX}(?![a-zA-Z0-9\u0080-\uFFFF_@%+:/\\-]|\.${PATH_CHARACTER}))`,
     "g",
   );
 }
+
+// Matches bare URLs that MD4C does not autolink, like single-label or bracketed hosts.
+// Quotes and unbalanced closing parentheses end the URL. Trailing sentence punctuation stays outside.
+const URL_CHARACTER = String.raw`[^\s<>()"'\x60]`;
+const URL_GROUP = String.raw`\(${URL_CHARACTER}*\)`;
+const BARE_URL = String.raw`https?://(?:${URL_CHARACTER}|${URL_GROUP})*(?:[^\s<>()"'\x60.,;:!?]|${URL_GROUP})`;
 
 const FILE_PATTERN = createFilePattern(PROSE_PATH);
 function linkMetadata(inlineCodePaths: ReadonlySet<string>) {
