@@ -327,8 +327,8 @@ export interface CreateAgentOptions {
   // undefined is an explicit decision: the agent never appears in the sidebar.
   workspaceId: string | undefined;
   owner?: AgentOwner;
-  /** Set only by native creation dispatch after CreationService has durably reserved the ID. */
-  managedCreationReserved?: boolean;
+  /** Issued by CreationService; republish its exact ID/in-flight receipt durably before managed gates. */
+  ensureManagedCreationReservation?: () => Promise<void>;
 }
 
 export interface AgentManagerOptions {
@@ -1333,10 +1333,14 @@ export class AgentManager {
         "Managed agent already exists; reconcile the original creation instead of recreating it",
       );
     }
-    if (config.managedMcpServers && !options.managedCreationReserved) {
-      throw new Error(
-        "Managed MCP creation requires a durable native creation receipt; use SDK createAgent or keyed native creation",
-      );
+    if (config.managedMcpServers) {
+      const reserve = options.ensureManagedCreationReservation;
+      if (!reserve) {
+        throw new Error(
+          "Managed MCP creation requires a durable native creation receipt; use SDK createAgent or keyed native creation",
+        );
+      }
+      await reserve();
     }
     await this.deleteAgentState(resolvedAgentId);
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(

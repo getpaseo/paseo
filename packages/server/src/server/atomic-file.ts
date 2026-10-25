@@ -8,9 +8,9 @@ export async function writeFileAtomic(
   options?: { durable: boolean },
 ): Promise<void> {
   const directoryPath = path.dirname(filePath);
-  const created = await fs.mkdir(directoryPath, {
+  await fs.mkdir(directoryPath, {
     recursive: true,
-    ...(options?.durable ? { mode: 0o700 } : {}),
+    mode: options?.durable ? 0o700 : undefined,
   });
   const tempPath = path.join(
     path.dirname(filePath),
@@ -34,7 +34,6 @@ export async function writeFileAtomic(
     }
     await fs.rename(tempPath, filePath);
     if (options?.durable) {
-      const stop = created ? path.dirname(created) : directoryPath;
       let current = directoryPath;
       while (true) {
         const handle = await fs.open(current, "r");
@@ -43,8 +42,9 @@ export async function writeFileAtomic(
         } finally {
           await handle.close();
         }
-        if (current === stop) break;
-        current = path.dirname(current);
+        const parent = path.dirname(current);
+        if (parent === current) break;
+        current = parent;
       }
     }
   } catch (error) {

@@ -194,6 +194,7 @@ interface StartTurnResult {
 interface OmpAgentSessionOptions {
   runtimeSession: OmpRuntimeSession;
   hostTools?: OmpHostToolRouter;
+  requireExitOnClose?: boolean;
   restartRuntime: (
     sessionFile: string | null,
     modeId: string,
@@ -456,6 +457,7 @@ function buildResumeStartInput(input: {
     cwd: input.resumeConfig.cwd,
     protocolMode: "rpc-ui",
     env: input.launchContext?.env,
+    requireExitOnClose: input.launchContext?.mcpAuthorization ? true : undefined,
     session: input.sessionFile,
     thinkingOptionId: normalizeOmpThinkingOption(input.resumeConfig.thinkingOptionId) ?? undefined,
     ...(input.launchMode.modeId ? { modeId: input.launchMode.modeId } : {}),
@@ -731,6 +733,8 @@ export class OmpAgentSession implements AgentSession {
   private readonly noTurnScheduler: OmpNoTurnScheduler;
   private readonly usagePoller: OmpUsagePoller;
   private closed = false;
+  private readonly requireExitOnClose: boolean;
+  private closing: Promise<void> | null = null;
   private live: boolean;
   private readonly emittedUserMessageIds = new Set<string>();
 
@@ -751,6 +755,7 @@ export class OmpAgentSession implements AgentSession {
     this.runtimeSession = options.runtimeSession;
     this.hostTools = options.hostTools;
     this.restartRuntime = options.restartRuntime;
+    this.requireExitOnClose = options.requireExitOnClose === true;
     this.config = options.config;
     this.state = options.initialState;
     this.currentModeId = options.currentModeId ?? null;
@@ -1173,14 +1178,18 @@ export class OmpAgentSession implements AgentSession {
     this.activeToolCalls.clear();
   }
 
-  async close(): Promise<void> {
-    if (this.closed) {
-      return;
-    }
+  close(): Promise<void> {
+    if (this.closed && this.requireExitOnClose && this.closing) return this.closing;
+    if (this.closed) return Promise.resolve();
     this.closed = true;
     this.unsubscribeRuntime?.();
     this.usagePoller.close();
     this.cancelNoTurnPromptCompletion();
+    this.closing = this.closeRuntimeSession();
+    return this.closing;
+  }
+
+  private async closeRuntimeSession(): Promise<void> {
     try {
       await this.runtimeSession.close();
     } finally {
@@ -2310,6 +2319,7 @@ export class OmpAgentClient implements AgentClient {
       extraArgs: launchMode.extraArgs,
       systemPrompt: composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt),
       env: launchContext?.env,
+      requireExitOnClose: launchContext?.mcpAuthorization ? true : undefined,
     };
     const runtimeSession = await this.resolveRuntime(config.providerOptions).startSession(
       startInput,
@@ -2332,6 +2342,7 @@ export class OmpAgentClient implements AgentClient {
       return new OmpAgentSession({
         runtimeSession,
         hostTools,
+        requireExitOnClose: startInput.requireExitOnClose,
         restartRuntime: this.buildRestartRuntime(startInput, config, launchContext),
         config,
         initialState,
@@ -2407,6 +2418,7 @@ export class OmpAgentClient implements AgentClient {
       return new OmpAgentSession({
         runtimeSession,
         hostTools,
+        requireExitOnClose: startInput.requireExitOnClose,
         restartRuntime: this.buildRestartRuntime(startInput, config, launchContext),
         config,
         initialState,

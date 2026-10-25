@@ -1,8 +1,9 @@
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, onTestFinished, test } from "vitest";
+import { expect, onTestFinished, test, vi } from "vitest";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { resolveDaemonVersion } from "../daemon-version.js";
@@ -1005,4 +1006,46 @@ test("reloaded hook ownership fences queued host tool dispatch without requiring
   });
   expect(await result).toMatchObject({ isError: true, result: { isError: true } });
   expect(h.consumed).toHaveLength(consumed);
+}, 60_000);
+
+test("unsupported directory sync refuses managed bind without affecting ordinary creation", async () => {
+  const h = await managedMcpHarness();
+  const input = {
+    agentId: randomUUID(),
+    idempotencyKey: "managed-durability-failure",
+    provider: "omp",
+    cwd: h.directory,
+    title: "managed",
+    model: "anthropic/claude-haiku-5-5",
+  };
+  const open = fs.open.bind(fs);
+  const root = path.parse(h.directory).root;
+  const fault = vi
+    .spyOn(fs, "open")
+    .mockImplementation((file, flags, mode) =>
+      file === root
+        ? Promise.reject(
+            Object.assign(new Error("directory sync unsupported"), { code: "ENOTSUP" }),
+          )
+        : open(file, flags, mode),
+    );
+  try {
+    await expect(h.client.createAgent(input)).rejects.toThrow();
+    expect(h.bindings.size).toBe(0);
+    expect(h.consumed).toEqual([]);
+    expect(
+      h.runtime.recordedLaunches.some((launch) => launch.env?.PASEO_AGENT_ID === input.agentId),
+    ).toBe(false);
+    expect(await h.daemon.daemon.agentStorage.get(input.agentId)).toBeNull();
+    const ordinary = await h.client.createAgent({
+      provider: "omp",
+      cwd: h.directory,
+      model: "anthropic/claude-haiku-5-5",
+    });
+    expect(ordinary.provider).toBe("omp");
+  } finally {
+    fault.mockRestore();
+  }
+  await expect(h.client.createAgent(input)).rejects.toThrow();
+  expect(h.bindings.size).toBe(0);
 }, 60_000);

@@ -4115,12 +4115,13 @@ export class Session {
           const record = await this.agentStorage.get(id);
           return record ? this.buildStoredAgentPayload(record) : null;
         },
-        createAgent: async (id, _workspace, onReady) => {
+        createAgent: async (id, _workspace, onReady, ensureDurableReservation) => {
           try {
             return await this.createSessionAgent(
               { ...request, type: "create_agent_request" },
               id,
               onReady,
+              ensureDurableReservation,
             );
           } catch (error) {
             throw new WorktreeRequestError(toWorktreeWireError(error));
@@ -4219,7 +4220,7 @@ export class Session {
             };
           },
           createAgent: agentInput
-            ? async (id, workspace, onReady) => {
+            ? async (id, workspace, onReady, ensureDurableReservation) => {
                 if (!workspace?.workspaceDirectory)
                   throw new Error("Created workspace has no directory");
                 const sourceCwd =
@@ -4246,6 +4247,7 @@ export class Session {
                   },
                   id,
                   onReady,
+                  ensureDurableReservation,
                 );
               }
             : undefined,
@@ -4366,6 +4368,7 @@ export class Session {
     msg: CreateAgentRequestMessage,
     agentId?: string,
     onAgentReady?: (agent: AgentSnapshotPayload) => Promise<void>,
+    ensureManagedCreationReservation?: () => Promise<void>,
   ): Promise<CreatedAgent> {
     const {
       config,
@@ -4440,6 +4443,7 @@ export class Session {
             await onAgentReady?.(await this.buildAgentPayload(agent));
           },
           agentId,
+          ensureManagedCreationReservation,
           config: resolvedIntent.config,
           workspaceId: resolvedIntent.intent.workspaceId,
           initialPrompt,

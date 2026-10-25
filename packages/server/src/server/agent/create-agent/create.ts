@@ -47,6 +47,7 @@ export interface CreateAgentFromSessionInput {
   kind: "session";
   onAgentReady?: (agent: ManagedAgent) => Promise<void>;
   agentId?: string;
+  ensureManagedCreationReservation?: () => Promise<void>;
   config: AgentSessionConfig;
   workspaceId: string;
   initialPrompt?: string;
@@ -167,7 +168,8 @@ export async function createAgentCommand(
     input.kind === "session" ? input.agentId : undefined,
     {
       ...resolved.createOptions,
-      managedCreationReserved: input.kind === "session" && input.agentId !== undefined,
+      ensureManagedCreationReservation:
+        input.kind === "session" ? input.ensureManagedCreationReservation : undefined,
     },
   );
 

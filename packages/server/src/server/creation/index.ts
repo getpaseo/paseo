@@ -32,6 +32,7 @@ interface CreationRequest {
     agentId: string,
     workspace: WorkspaceDescriptorPayload | undefined,
     onReady: (agent: AgentSnapshotPayload) => Promise<void>,
+    ensureDurableReservation: () => Promise<void>,
   ) => Promise<CreatedAgent>;
 }
 export type CreationInput = CreationRequest &
@@ -43,7 +44,21 @@ const RecordSchema = z.object({
   fingerprint: z.string(),
   snapshot: CreationSnapshotSchema,
   inFlight: z.enum(["workspace", "agent", "prompt"]).nullable(),
+  managedReservation: z.literal(true).optional(),
 });
+async function creationOutcomeUnknown(
+  record: Record,
+  input: CreationInput,
+  stage: NonNullable<Record["inFlight"]>,
+  code: string | undefined,
+): Promise<boolean> {
+  if (record.managedReservation || stage === "prompt") return true;
+  if (stage === "workspace" && code !== "directory_not_found" && code !== "source_required")
+    return true;
+  const id = stage === "workspace" ? record.snapshot.workspaceId : record.snapshot.agentId;
+  return id !== null && (await input.exists(stage, id));
+}
+
 type Record = z.infer<typeof RecordSchema>;
 
 /** Owns creation across socket lifetimes. Resource owners perform work; this module commits its milestones. */
@@ -182,6 +197,10 @@ export class CreationService {
               workspaceId: readyAgent.workspaceId ?? record.snapshot.workspaceId,
             });
           },
+          async () => {
+            record.managedReservation = true;
+            await this.write(identity, record);
+          },
         );
         record.inFlight = null;
         if (initialPromptStarted)
@@ -192,19 +211,13 @@ export class CreationService {
       await this.publish(identity, record, { phase: "completed" });
     } catch (error) {
       const stage = record.inFlight ?? "agent";
-      const resourceId =
-        stage === "workspace" ? record.snapshot.workspaceId : record.snapshot.agentId;
       const code =
         error instanceof Error && "code" in error && typeof error.code === "string"
           ? error.code
           : undefined;
-      const rejectedBeforeProvision = code === "directory_not_found" || code === "source_required";
-      const unknown =
-        stage === "prompt" ||
-        (stage === "workspace" && !rejectedBeforeProvision) ||
-        (resourceId !== null && (await input.exists(stage, resourceId)));
-      // A failed provider startup with no registered resource can retry under the same ID.
-      // A partially provisioned resource or an attempted prompt needs reconciliation.
+      const unknown = await creationOutcomeUnknown(record, input, stage, code);
+      // Ordinary startup can retry the same ID before registration. Managed gates can already
+      // have external effects, so an unregistered managed attempt still needs reconciliation.
       if (!unknown) record.inFlight = null;
       await this.publish(identity, record, {
         phase: "failed",
@@ -313,7 +326,11 @@ export class CreationService {
     // Serialize now: the runner mutates the record after queueing this write.
     const contents = JSON.stringify(record, null, 2);
     return this.accessReceipt(identity, () =>
-      writeFileAtomic(join(this.directory, `${identity}.json`), contents),
+      writeFileAtomic(
+        join(this.directory, `${identity}.json`),
+        contents,
+        record.managedReservation ? { durable: true } : undefined,
+      ),
     );
   }
   private read(identity: string): Promise<Record | null> {

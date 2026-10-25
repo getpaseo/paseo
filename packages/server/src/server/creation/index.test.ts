@@ -1,5 +1,6 @@
 import pino from "pino";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -219,6 +220,65 @@ test("omitted resource IDs are generated once and preserved on replay", async ()
   );
   expect(await new CreationService(f.directory, silentLogger).create(f.input)).toEqual(result);
 });
+
+test.skipIf(process.platform === "win32")(
+  "a process killed after managed reservation cannot recreate the reserved agent",
+  async () => {
+    const f = await fixture();
+    const intent = {
+      kind: "agent" as const,
+      key: "managed-process-crash",
+      request: { config: { cwd: "/project", provider: "omp" } },
+      hasAgent: true,
+      hasPrompt: false,
+    };
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "--eval",
+        `
+      import { CreationService } from ${JSON.stringify(new URL("./index.ts", import.meta.url).href)};
+      import pino from "pino";
+      import { writeSync } from "node:fs";
+      await new CreationService(${JSON.stringify(f.directory)}, pino({ level: "silent" })).create({
+        ...${JSON.stringify(intent)}, exists: async () => false, readAgent: async () => null,
+        createAgent: async (id, workspace, onReady, ensureDurableReservation) => {
+          await ensureDurableReservation();
+          writeSync(1, JSON.stringify({ agentId: id }));
+          process.kill(process.pid, "SIGKILL");
+        },
+      });
+    `,
+      ],
+      { encoding: "utf8", timeout: 10_000 },
+    );
+    expect(child.signal).toBe("SIGKILL");
+    const reserved = JSON.parse(child.stdout) as { agentId: string };
+    let starts = 0;
+    const input: CreationInput = {
+      ...intent,
+      exists: async () => false,
+      readAgent: async () => null,
+      createAgent: async (id) => {
+        starts++;
+        return { agent: { ...agent, id }, initialPromptStarted: false };
+      },
+    };
+    const reloaded = new CreationService(f.directory, silentLogger);
+    const result = await reloaded.create(input);
+    expect(result).toMatchObject({
+      agentId: reserved.agentId,
+      phase: "failed",
+      failedStage: "agent",
+      outcomeUnknown: true,
+    });
+    expect(await reloaded.create(input)).toEqual(result);
+    expect(starts).toBe(0);
+  },
+);
 
 test("restart after a committed agent without a prompt completes without recreating the agent", async () => {
   const f = await fixture();

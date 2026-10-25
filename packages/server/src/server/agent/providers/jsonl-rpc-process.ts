@@ -51,6 +51,7 @@ export interface JsonlRpcProcessOptions {
   logger: Logger;
   diagnosticName?: string;
   defaultRequestTimeoutMs?: number;
+  requireExitOnClose?: boolean;
   spawn?: (launch: JsonlRpcLaunch) => ChildProcessWithoutNullStreams;
 }
 
@@ -224,7 +225,11 @@ export class JsonlRpcProcess {
   }
 
   async close(error = new Error(`${this.diagnosticName} process is closed`)): Promise<void> {
-    if (this.disposed) return;
+    if (this.closing) {
+      if (this.options.requireExitOnClose) await this.closing;
+      return;
+    }
+    if (this.exited || (!this.options.requireExitOnClose && this.disposed)) return;
     this.failAll(error);
     this.closing = this.terminate();
     await this.closing;
@@ -251,6 +256,11 @@ export class JsonlRpcProcess {
         { timeoutMs: FORCE_SHUTDOWN_TIMEOUT_MS },
         `${this.diagnosticName} process did not report exit after SIGKILL`,
       );
+      if (this.options.requireExitOnClose) {
+        throw new Error(
+          `${this.diagnosticName} process exit is unconfirmed; replacement is refused`,
+        );
+      }
     }
   }
 
@@ -300,7 +310,18 @@ export class JsonlRpcProcess {
     }
     const err = error instanceof Error ? error : new Error(String(error));
     this.options.logger.warn({ err }, `${this.diagnosticName} stdin write failed`);
-    void this.close(err);
+    void this.closeAfterStdinFailure(err);
+  }
+
+  private async closeAfterStdinFailure(err: Error): Promise<void> {
+    try {
+      await this.close(err);
+    } catch (closeError) {
+      this.options.logger.warn(
+        { err: closeError },
+        `${this.diagnosticName} shutdown is unconfirmed`,
+      );
+    }
   }
 
   private failAll(error: Error): void {

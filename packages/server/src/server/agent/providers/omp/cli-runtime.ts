@@ -90,6 +90,7 @@ export class OmpCliRuntime implements OmpRuntime {
       logger: this.options.logger,
       diagnosticName: "OMP RPC",
       defaultRequestTimeoutMs: this.options.requestTimeoutMs,
+      requireExitOnClose: input.requireExitOnClose,
       ...(spawn ? { spawn: () => spawn(launch) } : {}),
     };
     const process = new JsonlRpcProcess(processOptions);

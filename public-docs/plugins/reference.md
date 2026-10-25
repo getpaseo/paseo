@@ -1032,14 +1032,18 @@ a binding. Plugins remain trusted same-user code; this is not a sandbox against 
 plugins or unrestricted shell access. Never log credentials or include them in errors.
 
 Refresh binds while the old provider still exists, then obtains the new credential, closes and
-drains the old writer, and starts the replacement. The credential service must fence old and
-already queued authority **at bind**, and reauthorize mutation commits and replay receipts.
+drains the old writer, and starts the replacement. Unconfirmed native process exit refuses the
+replacement, including repeated close calls; reconcile rather than opening another writer.
+The credential service must fence old and already queued authority **at bind**, and reauthorize
+mutation commits and replay receipts.
 A failed replacement does not restore old authority or establish that no external effects occurred.
 Host ordering alone does not implement a credential service's generation fence.
 
 The daemon durably records pending/committed opening disposition under
-`agents/.managed-openings/`, with private files and file/directory sync. Callback-local retries
-must reuse the same opening and body. There is no automatic hook or provider replay.
+`agents/.managed-openings/`. Managed creation also makes its exact native reservation durable
+before bind. These private records require file and ancestor-directory sync; a host whose
+filesystem cannot provide it refuses managed opening. Callback-local retries must reuse the
+same opening and body. There is no automatic hook or provider replay.
 A crash, lost callback acknowledgment, or gate failure leaves a pending opening quarantined:
 the next interactive attempt reports its ID and digest and refuses before further bind/mint.
 Quarantine alone neither revokes external authority nor stops an orphan provider. Reconcile and
