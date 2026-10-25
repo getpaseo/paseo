@@ -76,6 +76,10 @@ export default defineConfig({
       },
       {
         extends: true,
+        // App components rely on Expo/Metro's automatic JSX runtime and don't
+        // all import default React; esbuild's classic transform (the default)
+        // would throw `React is not defined` when rendering them for real.
+        esbuild: { jsx: "automatic" },
         test: {
           name: "browser",
           fileParallelism: false,
@@ -137,8 +141,12 @@ export default defineConfig({
       ],
     },
     // Bundle the CJS dependencies of the excluded gesture-handler package for the browser.
+    // jsx-dev-runtime: the browser project's automatic JSX transform imports it in dev mode,
+    // and discovering it mid-run makes Vite re-optimize and reload, which kills the import
+    // of whatever test file is in flight.
     include: [
       "react/jsx-runtime",
+      "react/jsx-dev-runtime",
       "react/compiler-runtime",
       "expo-router/react-navigation",
       "@testing-library/react",
@@ -267,6 +275,10 @@ export default defineConfig({
       {
         find: /^lucide-react-native$/,
         replacement: path.resolve(__dirname, "test-stubs/lucide-react-native.ts"),
+      },
+      {
+        find: /^expo-clipboard$/,
+        replacement: path.resolve(__dirname, "test-stubs/expo-clipboard.ts"),
       },
     ],
   },

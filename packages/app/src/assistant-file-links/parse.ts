@@ -154,6 +154,32 @@ export function parseInlinePathToken(value: string): InlinePathTarget | null {
   };
 }
 
+function splitColonLineSuffix(
+  value: string,
+): { basePath: string; lineStart: number; lineEnd?: number } | null {
+  const match = INLINE_COLON_LINE_SUFFIX.exec(value);
+  if (!match) {
+    return null;
+  }
+
+  const basePath = match[1]?.trim();
+  if (!basePath) {
+    return null;
+  }
+
+  const lineStart = match[2] ? parseInt(match[2], 10) : Number.NaN;
+  if (!Number.isFinite(lineStart) || lineStart <= 0) {
+    return null;
+  }
+
+  const lineEnd = match[3] ? parseInt(match[3], 10) : undefined;
+  if (lineEnd !== undefined && (!Number.isFinite(lineEnd) || lineEnd <= 0 || lineEnd < lineStart)) {
+    return null;
+  }
+
+  return { basePath, lineStart, lineEnd };
+}
+
 export function parseFileProtocolUrl(value: string): InlinePathTarget | null {
   const trimmed = value?.trim();
   if (!trimmed) {
@@ -181,10 +207,25 @@ export function parseFileProtocolUrl(value: string): InlinePathTarget | null {
     return null;
   }
 
+  // Agents and terminals emit VS Code-style `file:///C:/dir/file.ts:95` links although the
+  // line suffix is not part of the URL spec: `new URL()` keeps it in the pathname, so a
+  // path that still carries `:95` would be opened verbatim and fail with ENOENT.
+  let path = normalizedPath;
+  let { lineStart, lineEnd } = lines;
+  const suffix = splitColonLineSuffix(path);
+  if (suffix && isAbsolutePath(suffix.basePath)) {
+    path = suffix.basePath;
+    if (lineStart === undefined) {
+      lineStart = suffix.lineStart;
+      lineEnd = suffix.lineEnd;
+    }
+  }
+
   return {
     raw: value,
-    path: normalizedPath,
-    ...lines,
+    path,
+    lineStart,
+    lineEnd,
   };
 }
 
@@ -238,7 +279,10 @@ export function classifyAssistantFileLink(
     return null;
   }
 
-  if (!options.explicitLink && isAmbiguousWorkspaceCandidate(trimmed, target, options)) {
+  if (
+    (!options.explicitLink && isAmbiguousWorkspaceCandidate(trimmed, target, options)) ||
+    isWorkspaceFolderNamePrefixedCandidate(trimmed, target, options)
+  ) {
     return {
       kind: "ambiguousFileCandidate",
       target,
@@ -575,7 +619,42 @@ function isAmbiguousWorkspaceCandidate(
     return false;
   }
 
-  return !parsed.path.includes("/");
+  if (!parsed.path.includes("/")) {
+    return true;
+  }
+
+  return isWorkspaceFolderNamePrefixedPath(parsed.path, normalizedWorkspaceRoot);
+}
+
+// Agents often prefix workspace-relative paths with the workspace folder's own name
+// ("myapp/src/main.ts" while working inside "myapp"). A real subfolder can carry that
+// name too, so hand the decision to the daemon's suffix search instead of guessing
+// which file exists. This holds even for authored links, so it is checked outside
+// the explicitLink gate.
+function isWorkspaceFolderNamePrefixedCandidate(
+  value: string,
+  target: InlinePathTarget,
+  options: AssistantHrefParseOptions = {},
+): boolean {
+  const normalizedWorkspaceRoot = normalizePathInput(options.workspaceRoot);
+  if (!normalizedWorkspaceRoot || !isAllowedAbsolutePath(target.path, normalizedWorkspaceRoot)) {
+    return false;
+  }
+  const parsed = parseLocalPathParts(value, options);
+  if (!parsed || isAbsolutePath(parsed.path) || !parsed.path.includes("/")) {
+    return false;
+  }
+  return isWorkspaceFolderNamePrefixedPath(parsed.path, normalizedWorkspaceRoot);
+}
+
+function isWorkspaceFolderNamePrefixedPath(path: string, workspaceRoot: string): boolean {
+  const trimmedRoot = workspaceRoot.replace(/\/+$/, "");
+  const rootFolderName = trimmedRoot === "/" ? null : (trimmedRoot.split("/").pop() ?? null);
+  if (!rootFolderName) {
+    return false;
+  }
+  const firstSegment = path.split("/")[0];
+  return !!firstSegment && firstSegment.toLowerCase() === rootFolderName.toLowerCase();
 }
 
 function getHeuristicLocalPath(value: string): string | null {

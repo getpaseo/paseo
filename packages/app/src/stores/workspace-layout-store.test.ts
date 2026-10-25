@@ -25,6 +25,7 @@ import { defaultChangesState, type ChangesState } from "@/panels/changes/state";
 import { defaultFileState, type FileState } from "@/panels/file/state";
 import {
   canDismissPaneInLayout,
+  clampChildFractionInSizes,
   collectAllPanes,
   collectAllTabs,
   selectPaneFocusSuspended,
@@ -585,6 +586,7 @@ describe("workspace-layout-store version 2 migration", () => {
       const persisted = JSON.parse((await AsyncStorage.getItem("workspace-layout-state")) ?? "{}");
       expect(persisted.version).toBe(2);
       expect(Object.keys(persisted.state).sort()).toEqual([
+        "bottomPaneIdByWorkspace",
         "explorerPaneIdByWorkspace",
         "explorerSidebarWidthByWorkspace",
         "layoutByWorkspace",
@@ -1140,6 +1142,7 @@ describe("workspace-layout-store actions", () => {
       hiddenAgentIdsByWorkspace: {},
       focusRestorationByWorkspace: {},
       explorerSidebarPaneIdByWorkspace: {},
+      bottomPaneIdByWorkspace: {},
     });
   });
 
@@ -3185,6 +3188,7 @@ describe("workspace-layout-store actions", () => {
       explorerPaneIdByWorkspace: {},
       pullRequestTabAutoOpenedByWorkspace: currentState.pullRequestTabAutoOpenedByWorkspace,
       sidePaneIdByWorkspace: currentState.sidePaneIdByWorkspace,
+      bottomPaneIdByWorkspace: currentState.bottomPaneIdByWorkspace,
     });
     expect(layout && collectAllTabs(layout.root).map((tab) => tab.target)).toEqual([
       {
@@ -3419,6 +3423,7 @@ describe("workspace-layout-store actions", () => {
       explorerSidebarWidthByWorkspace: {},
       explorerPaneIdByWorkspace: {},
       sidePaneIdByWorkspace: {},
+      bottomPaneIdByWorkspace: {},
     });
   });
 
@@ -4451,6 +4456,81 @@ describe("workspace-layout-store actions", () => {
     expect(layout).toBe(before);
     expect(findPaneById(layout.root, "main")?.tabIds).toEqual([agentTabId]);
     expect(collectAllPanes(layout.root).map((pane) => pane.id)).toEqual(["main"]);
+  });
+
+  it("ensureBottomPane docks a quarter-height pane below the workspace", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey: workspaceKey,
+      target: { kind: "agent", agentId: "only" },
+      intent: "reveal",
+    });
+    workspaceLayoutIds.useValues(["dock-pane", "dock-group"]);
+
+    const bottomPaneId = store.ensureBottomPane(workspaceKey);
+
+    expect(bottomPaneId).toBe("pane_dock-pane");
+    expect(workspaceLayoutStore.getState().bottomPaneIdByWorkspace[workspaceKey]).toBe(
+      "pane_dock-pane",
+    );
+    const root = expectGroup(workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey].root);
+    expect(root.group.direction).toBe("vertical");
+    expect(root.group.sizes).toEqual([0.75, 0.25]);
+    expect(findPaneById(root, "pane_dock-pane")?.tabIds).toHaveLength(1);
+    expect(collectAllPanes(root).map((pane) => pane.id)).toContain("main");
+  });
+
+  it("ensureBottomPane reuses the dock pane across calls", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    workspaceLayoutIds.useValues(["dock-pane", "dock-group"]);
+    const firstPaneId = store.ensureBottomPane(workspaceKey);
+    const before = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+
+    const secondPaneId = store.ensureBottomPane(workspaceKey);
+
+    expect(secondPaneId).toBe(firstPaneId);
+    expect(workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey]).toBe(before);
+  });
+
+  it("caps a child fraction and hands the excess back share by share", () => {
+    expect(
+      clampChildFractionInSizes({ sizes: [0.3, 0.7], childIndex: 1, maxFraction: 0.25 }),
+    ).toEqual([0.75, 0.25]);
+    expect(
+      clampChildFractionInSizes({ sizes: [0.2, 0.6, 0.2], childIndex: 1, maxFraction: 0.3 }),
+    ).toEqual([0.35, 0.3, 0.35]);
+  });
+
+  it("leaves children under the cap untouched", () => {
+    const sizes = [0.8, 0.2];
+    expect(clampChildFractionInSizes({ sizes, childIndex: 1, maxFraction: 0.5 })).toBe(sizes);
+  });
+
+  it("clears the remembered dock when its pane closes and re-docks on the next open", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey: workspaceKey,
+      target: { kind: "agent", agentId: "only" },
+      intent: "reveal",
+    });
+    workspaceLayoutIds.useValues(["dock-pane", "dock-group"]);
+    const dockPaneId = store.ensureBottomPane(workspaceKey) as string;
+    const dockTabId = findPaneById(
+      workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey].root,
+      dockPaneId,
+    )?.focusedTabId as string;
+
+    store.closeTab(workspaceKey, dockTabId);
+
+    expect(workspaceLayoutStore.getState().bottomPaneIdByWorkspace[workspaceKey]).toBeNull();
+
+    workspaceLayoutIds.useValues(["dock-pane-2", "dock-group-2"]);
+    const redockedPaneId = store.ensureBottomPane(workspaceKey);
+    expect(redockedPaneId).toBe("pane_dock-pane-2");
+    expect(redockedPaneId).not.toBe(dockPaneId);
   });
 });
 

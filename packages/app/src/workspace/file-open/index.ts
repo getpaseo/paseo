@@ -147,6 +147,11 @@ export interface ResolvedWorkspaceFilePaths {
   relativePath: string | null;
 }
 
+/** Converts a normalized forward-slash drive path back to the host's native separators. */
+export function toNativeAbsolutePath(value: string): string {
+  return /^[A-Za-z]:\//.test(value) ? value.replace(/\//g, "\\") : value;
+}
+
 /**
  * Resolves a file tab's path (which may be workspace-relative) against the workspace
  * root. Returns null when an absolute host path cannot be derived — e.g. a `~`-relative

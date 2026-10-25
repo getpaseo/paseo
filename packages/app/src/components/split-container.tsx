@@ -46,6 +46,8 @@ import {
 } from "@/screens/workspace/workspace-desktop-tabs-row";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import {
+  BOTTOM_DOCK_DEFAULT_HEIGHT_PX,
+  clampChildFractionInSizes,
   collectAllPanes,
   createDefaultLayout,
   useWorkspaceLayoutStore,
@@ -117,6 +119,7 @@ interface SplitNodeViewProps extends Omit<
   maximizedPaneId: string | null;
   workspaceHasMultiplePanes: boolean;
   onTogglePaneMaximized: (paneId: string) => void;
+  bottomPaneId: string | null;
 }
 
 interface SplitPaneViewProps extends Omit<
@@ -129,6 +132,7 @@ interface SplitPaneViewProps extends Omit<
   | "dropPreview"
   | "onResizeSplit"
   | "windowChromeCorners"
+  | "bottomPaneId"
 > {
   pane: SplitPane;
   uiTabs: WorkspaceTab[];
@@ -185,6 +189,9 @@ export function SplitContainer({
     maximizedPane?.workspaceKey === workspaceKey ? maximizedPane.paneId : null;
   const explorerSidebarPaneId = useWorkspaceLayoutStore(
     (state) => state.explorerSidebarPaneIdByWorkspace[workspaceKey] ?? null,
+  );
+  const bottomPaneId = useWorkspaceLayoutStore(
+    (state) => state.bottomPaneIdByWorkspace[workspaceKey] ?? null,
   );
 
   const mainRoot = useMemo(
@@ -276,6 +283,7 @@ export function SplitContainer({
                 maximizedPaneId={maximizedPaneId}
                 workspaceHasMultiplePanes={workspaceHasMultiplePanes}
                 onTogglePaneMaximized={handleTogglePaneMaximized}
+                  bottomPaneId={bottomPaneId}
                 focusModeEnabled={focusModeEnabled}
                 onExitFocusMode={onExitFocusMode}
               />
@@ -407,6 +415,7 @@ function SplitNodeView({
   maximizedPaneId,
   workspaceHasMultiplePanes,
   onTogglePaneMaximized,
+  bottomPaneId,
   focusModeEnabled,
   onExitFocusMode,
 }: SplitNodeViewProps) {
@@ -420,9 +429,40 @@ function SplitNodeView({
   const groupChildren = node.kind === "group" ? node.group.children : EMPTY_SPLIT_NODES;
   const groupSizes =
     storedGroupSizes ?? (node.kind === "group" ? node.group.sizes : EMPTY_SPLIT_SIZES);
+  const dockChildIndex =
+    node.kind === "group" && bottomPaneId
+      ? node.group.children.findIndex(
+          (child) => child.kind === "pane" && child.pane.id === bottomPaneId,
+        )
+      : -1;
+  // The dock's pixel height is a seed, not a ceiling: it caps the untouched default so a
+  // fraction cannot grow with tall windows, but the user's own resizes win afterwards -
+  // free to drag taller, bounded only by the sibling panes' minimums at commit. Vertical
+  // groups only: splitting the dock left or right puts it in a horizontal group whose
+  // width must stay untouched.
+  const maxDockFraction =
+    dockChildIndex >= 0 && groupDirection === "vertical" && groupContainerSize > 0
+      ? BOTTOM_DOCK_DEFAULT_HEIGHT_PX / groupContainerSize
+      : null;
+  const clampDockSizes = useCallback(
+    (sizes: number[]) =>
+      maxDockFraction !== null
+        ? clampChildFractionInSizes({
+            sizes,
+            childIndex: dockChildIndex,
+            maxFraction: maxDockFraction,
+          })
+        : sizes,
+    [dockChildIndex, maxDockFraction],
+  );
+  const effectiveGroupSizes = useMemo(
+    // Stored sizes mean the user has resized this group; their sizes are law.
+    () => (storedGroupSizes ? groupSizes : clampDockSizes(groupSizes)),
+    [clampDockSizes, groupSizes, storedGroupSizes],
+  );
   const visibleFlex = useMemo(
-    () => resolveVisibleGroupFlex(groupChildren, groupSizes, maximizedPaneId),
-    [groupChildren, groupSizes, maximizedPaneId],
+    () => resolveVisibleGroupFlex(groupChildren, effectiveGroupSizes, maximizedPaneId),
+    [effectiveGroupSizes, groupChildren, maximizedPaneId],
   );
   const resizeFlex = useSharedValue(visibleFlex);
   useEffect(() => {
@@ -433,6 +473,15 @@ function SplitNodeView({
       resizeFlex.value = resolveVisibleGroupFlex(groupChildren, sizes, maximizedPaneId);
     },
     [groupChildren, maximizedPaneId, resizeFlex],
+  );
+  const handleResizeSplit = useCallback(
+    (_groupId: string, sizes: number[]) => {
+      if (!groupId) {
+        return;
+      }
+      onResizeSplit(groupId, sizes);
+    },
+    [groupId, onResizeSplit],
   );
   const handleGroupLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -547,6 +596,7 @@ function SplitNodeView({
               maximizedPaneId={maximizedPaneId}
               workspaceHasMultiplePanes={workspaceHasMultiplePanes}
               onTogglePaneMaximized={onTogglePaneMaximized}
+              bottomPaneId={bottomPaneId}
               focusModeEnabled={focusModeEnabled}
               onExitFocusMode={onExitFocusMode}
             />
@@ -559,10 +609,10 @@ function SplitNodeView({
               direction={node.group.direction}
               groupId={node.group.id}
               index={index}
-              sizes={groupSizes}
+              sizes={effectiveGroupSizes}
               containerSize={groupContainerSize}
               onPreviewResizeSplit={previewResizeSplit}
-              onResizeSplit={onResizeSplit}
+              onResizeSplit={handleResizeSplit}
             />
           ) : null}
         </Fragment>

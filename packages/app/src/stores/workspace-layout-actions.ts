@@ -2029,6 +2029,63 @@ export function splitWorkspaceRootRightInLayout(
   };
 }
 
+/**
+ * The bottom dock opens at a fixed pixel height (never more than the default fraction),
+ * seeded at render time; the user's own resizes win afterwards without a ceiling.
+ */
+export const BOTTOM_DOCK_DEFAULT_SIZE = 0.25;
+export const BOTTOM_DOCK_DEFAULT_HEIGHT_PX = 280;
+
+/** Creates a full-width ordinary pane below the complete workspace split tree. */
+export function splitWorkspaceRootBottomInLayout(
+  input: SplitWorkspaceRootRightInLayoutInput,
+): SplitPaneInLayoutResult | null {
+  const layout = asInternalLayout(input.layout);
+  const paneId = input.createNodeId("pane");
+  const root = createGroupNode({
+    id: input.createNodeId("group"),
+    direction: "vertical",
+    children: [layout.root, createPaneNode({ id: paneId, tabs: [createNewWorkspaceTab()] })],
+    sizes: [1 - BOTTOM_DOCK_DEFAULT_SIZE, BOTTOM_DOCK_DEFAULT_SIZE],
+  });
+  if (getTreeDepth(root) > input.maxTreeDepth) return null;
+  return {
+    paneId,
+    layout: withNormalizedParentTabMap({
+      root,
+      focusedPaneId: paneId,
+      parentTabIdByTabId: input.layout.parentTabIdByTabId,
+    }),
+  };
+}
+
+/**
+ * Caps one child's fraction and hands the excess back to its siblings, share by share.
+ * The caller owns the pixel-to-fraction math; this is pure list shaping.
+ */
+export function clampChildFractionInSizes(input: {
+  sizes: number[];
+  childIndex: number;
+  maxFraction: number;
+}): number[] {
+  const size = input.sizes[input.childIndex];
+  if (size === undefined || size <= input.maxFraction) {
+    return input.sizes;
+  }
+  const excess = size - input.maxFraction;
+  const next = input.sizes.slice();
+  next[input.childIndex] = input.maxFraction;
+  const otherIndexes = input.sizes
+    .map((_, index) => index)
+    .filter((index) => index !== input.childIndex);
+  const otherTotal = otherIndexes.reduce((total, index) => total + (input.sizes[index] ?? 0), 0);
+  for (const index of otherIndexes) {
+    const share = otherTotal > 0 ? (input.sizes[index] ?? 0) / otherTotal : 1 / otherIndexes.length;
+    next[index] = (input.sizes[index] ?? 0) + excess * share;
+  }
+  return next;
+}
+
 export function moveTabToPaneInLayout(input: MoveTabToPaneInLayoutInput): WorkspaceLayout | null {
   const layout = asInternalLayout(input.layout);
   const sourcePane = findPaneContainingTab(layout.root, input.tabId);

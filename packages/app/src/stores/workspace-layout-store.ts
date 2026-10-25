@@ -48,7 +48,10 @@ import {
   selectTabInPaneInLayout,
   splitPaneEmptyInLayout,
   splitWorkspaceRootRightInLayout,
+  splitWorkspaceRootBottomInLayout,
   splitPaneInLayout,
+  BOTTOM_DOCK_DEFAULT_HEIGHT_PX,
+  clampChildFractionInSizes,
   stripEphemeralTabsFromLayout,
   type SplitGroup,
   type SplitNode,
@@ -70,7 +73,9 @@ import { panelTargetSupportsHostForWorkspaceKey } from "@/plugins/workspace-pane
 
 export {
   AMBIENT_PLACEMENT,
+  BOTTOM_DOCK_DEFAULT_HEIGHT_PX,
   canDismissPaneInLayout,
+  clampChildFractionInSizes,
   collectAllPanes,
   collectAllTabs,
   createDefaultLayout,
@@ -151,6 +156,7 @@ interface WorkspaceLayoutStore {
   sidePaneIdByWorkspace: Record<string, string | null>;
   /** Workspaces where PR detection already added its tab once; a closed tab never returns. */
   pullRequestTabAutoOpenedByWorkspace: Record<string, true>;
+  bottomPaneIdByWorkspace: Record<string, string | null>;
   /**
    * The one entry point for showing a target. On compact layouts a target whose panel declares
    * `compactSheet` opens in a sheet; the returned tab id is the sheet tab's id.
@@ -174,6 +180,8 @@ interface WorkspaceLayoutStore {
   hideExplorerSidebar: (workspaceKey: string) => void;
   /** Returns the ordinary right-side workspace pane, creating it when absent. */
   ensureSidePane: (workspaceKey: string, options?: { focus: boolean }) => string | null;
+  /** Returns the ordinary bottom workspace pane, creating it when absent. */
+  ensureBottomPane: (workspaceKey: string) => string | null;
   closeTab: (workspaceKey: string, tabId: string) => void;
   getTabDestination: (workspaceKey: string, tabId: string) => WorkspaceTabDestination | null;
   focusTab: (workspaceKey: string, tabId: string) => void;
@@ -672,6 +680,20 @@ function reconcileRememberedSidePane(
   };
 }
 
+function reconcileRememberedBottomPane(
+  state: WorkspaceLayoutStore,
+  workspaceKey: string,
+  layout: WorkspaceLayout,
+): Pick<WorkspaceLayoutStore, "bottomPaneIdByWorkspace"> {
+  const paneId = state.bottomPaneIdByWorkspace[workspaceKey];
+  return {
+    bottomPaneIdByWorkspace:
+      paneId && !findPaneById(layout.root, paneId)
+        ? { ...state.bottomPaneIdByWorkspace, [workspaceKey]: null }
+        : state.bottomPaneIdByWorkspace,
+  };
+}
+
 function attachParentTab(input: {
   layout: WorkspaceLayout;
   childTabId: string | null;
@@ -958,6 +980,7 @@ const PERSISTED_SLICES = [
   "explorerSidebarPaneIdByWorkspace",
   "sidePaneIdByWorkspace",
   "pullRequestTabAutoOpenedByWorkspace",
+  "bottomPaneIdByWorkspace",
 ] as const;
 
 // Zustand persist re-runs partialize after every set, including ones that return the state
@@ -992,6 +1015,7 @@ function createPersistedStateProjection() {
       explorerPaneIdByWorkspace: source.explorerSidebarPaneIdByWorkspace,
       sidePaneIdByWorkspace: source.sidePaneIdByWorkspace,
       pullRequestTabAutoOpenedByWorkspace: source.pullRequestTabAutoOpenedByWorkspace,
+      bottomPaneIdByWorkspace: source.bottomPaneIdByWorkspace,
     };
     previous = { source, state };
     return state;
@@ -1072,6 +1096,7 @@ export function createWorkspaceLayoutStore(
         explorerSidebarPaneIdByWorkspace: {},
         sidePaneIdByWorkspace: {},
         pullRequestTabAutoOpenedByWorkspace: {},
+        bottomPaneIdByWorkspace: {},
         openTab: (input) => {
           const normalizedWorkspaceKey = trimNonEmpty(input.workspaceKey);
           const normalizedTarget = normalizeWorkspaceTabTarget(input.target);
@@ -1364,6 +1389,46 @@ export function createWorkspaceLayoutStore(
           }));
           return result.paneId;
         },
+        ensureBottomPane: (workspaceKey) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          if (!normalizedWorkspaceKey) {
+            return null;
+          }
+          const currentState = get();
+          const layout = getWorkspaceLayout(currentState.layoutByWorkspace, normalizedWorkspaceKey);
+          const explorerPaneId = resolveExplorerSidebarPaneId(
+            layout,
+            currentState.explorerSidebarPaneIdByWorkspace[normalizedWorkspaceKey],
+          );
+          const rememberedPaneId = trimNonEmpty(
+            currentState.bottomPaneIdByWorkspace[normalizedWorkspaceKey],
+          );
+          const rememberedPane = findPaneById(layout.root, rememberedPaneId);
+          if (rememberedPane && rememberedPane.id !== explorerPaneId) {
+            return rememberedPane.id;
+          }
+
+          const result = splitWorkspaceRootBottomInLayout({
+            layout,
+            maxTreeDepth: MAX_TREE_DEPTH,
+            createNodeId: ids.createNodeId,
+          });
+          if (!result) {
+            return null;
+          }
+          set((state) => ({
+            ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+            layoutByWorkspace: {
+              ...state.layoutByWorkspace,
+              [normalizedWorkspaceKey]: result.layout,
+            },
+            bottomPaneIdByWorkspace: {
+              ...state.bottomPaneIdByWorkspace,
+              [normalizedWorkspaceKey]: result.paneId,
+            },
+          }));
+          return result.paneId;
+        },
         closeTab: (workspaceKey, tabId) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
           const normalizedTabId = trimNonEmpty(tabId);
@@ -1403,6 +1468,7 @@ export function createWorkspaceLayoutStore(
               return {
                 ...withoutFocusRestoration(state, normalizedWorkspaceKey),
                 ...reconcileRememberedSidePane(state, normalizedWorkspaceKey, nextLayout),
+                ...reconcileRememberedBottomPane(state, normalizedWorkspaceKey, nextLayout),
                 layoutByWorkspace: {
                   ...state.layoutByWorkspace,
                   [normalizedWorkspaceKey]: nextLayout,
@@ -1438,6 +1504,7 @@ export function createWorkspaceLayoutStore(
             return {
               ...withoutFocusRestoration(state, normalizedWorkspaceKey),
               ...reconcileRememberedSidePane(state, normalizedWorkspaceKey, nextLayout),
+              ...reconcileRememberedBottomPane(state, normalizedWorkspaceKey, nextLayout),
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
                 [normalizedWorkspaceKey]: nextLayout,
@@ -1900,6 +1967,7 @@ export function createWorkspaceLayoutStore(
               layout.focusedPaneId,
             );
             const rememberedSidePaneId = state.sidePaneIdByWorkspace[normalizedWorkspaceKey];
+            const rememberedBottomPaneId = state.bottomPaneIdByWorkspace[normalizedWorkspaceKey];
 
             return {
               ...withoutFocusRestoration(state, normalizedWorkspaceKey),
@@ -1912,6 +1980,11 @@ export function createWorkspaceLayoutStore(
                 !findPaneById(normalizedNextLayout.root, rememberedSidePaneId)
                   ? { ...state.sidePaneIdByWorkspace, [normalizedWorkspaceKey]: null }
                   : state.sidePaneIdByWorkspace,
+              bottomPaneIdByWorkspace:
+                rememberedBottomPaneId &&
+                !findPaneById(normalizedNextLayout.root, rememberedBottomPaneId)
+                  ? { ...state.bottomPaneIdByWorkspace, [normalizedWorkspaceKey]: null }
+                  : state.bottomPaneIdByWorkspace,
             };
           });
         },
@@ -1955,6 +2028,13 @@ export function createWorkspaceLayoutStore(
                       [normalizedWorkspaceKey]: null,
                     }
                   : state.sidePaneIdByWorkspace,
+              bottomPaneIdByWorkspace:
+                state.bottomPaneIdByWorkspace[normalizedWorkspaceKey] === normalizedPaneId
+                  ? {
+                      ...state.bottomPaneIdByWorkspace,
+                      [normalizedWorkspaceKey]: null,
+                    }
+                  : state.bottomPaneIdByWorkspace,
             };
           });
         },
@@ -2229,6 +2309,7 @@ export function createWorkspaceLayoutStore(
               normalizedWorkspaceKey in state.explorerSidebarPaneIdByWorkspace ||
               normalizedWorkspaceKey in state.sidePaneIdByWorkspace ||
               normalizedWorkspaceKey in state.pullRequestTabAutoOpenedByWorkspace ||
+              normalizedWorkspaceKey in state.bottomPaneIdByWorkspace ||
               normalizedWorkspaceKey in state.sheetsByWorkspace;
             if (!hasAny) {
               return state;
@@ -2259,6 +2340,8 @@ export function createWorkspaceLayoutStore(
             } = state.explorerSidebarPaneIdByWorkspace;
             const { [normalizedWorkspaceKey]: _sidePane, ...sidePaneIdByWorkspace } =
               state.sidePaneIdByWorkspace;
+            const { [normalizedWorkspaceKey]: _bottomPane, ...bottomPaneIdByWorkspace } =
+              state.bottomPaneIdByWorkspace;
             return {
               ...withSheets(state, normalizedWorkspaceKey, NO_SHEETS),
               pendingOpenByWorkspace,
@@ -2271,6 +2354,7 @@ export function createWorkspaceLayoutStore(
               focusRestorationByWorkspace,
               explorerSidebarPaneIdByWorkspace,
               sidePaneIdByWorkspace,
+              bottomPaneIdByWorkspace,
             };
           });
         },
@@ -2336,6 +2420,7 @@ export function createWorkspaceLayoutStore(
             sidePaneIdByWorkspace: result.data.sidePaneIdByWorkspace ?? {},
             pullRequestTabAutoOpenedByWorkspace:
               result.data.pullRequestTabAutoOpenedByWorkspace ?? {},
+            bottomPaneIdByWorkspace: result.data.bottomPaneIdByWorkspace ?? {},
           };
         },
       },
