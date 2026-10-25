@@ -219,7 +219,7 @@ test(
 );
 
 test(
-  "real Pi daemon queues a prompt during manual compact",
+  "real Pi daemon accepts a prompt after manual compact",
   async () => {
     const cwd = tmpCwd("pi-manual-compact-");
 
@@ -247,20 +247,11 @@ test(
         await waitForTimelineItem(
           client,
           agent.id,
-          (item) => item.type === "compaction" && item.status === "loading",
-        );
-        expect(await fetchCanonicalTimeline(client, agent.id)).not.toContainEqual(
-          expect.objectContaining({ type: "compaction", status: "completed" }),
-        );
-        await client.sendMessage(agent.id, "Reply exactly: queued-after-compaction");
-        const queuedFinish = await client.waitForFinish(agent.id, PI_TEST_TIMEOUT_MS);
-        expect(queuedFinish.status).toBe("idle");
-
-        await waitForTimelineItem(
-          client,
-          agent.id,
           (item) => item.type === "compaction" && item.status === "completed",
         );
+        await client.sendMessage(agent.id, "Reply exactly: after-compaction");
+        const followUpFinish = await client.waitForFinish(agent.id, PI_TEST_TIMEOUT_MS);
+        expect(followUpFinish.status).toBe("idle");
 
         const items = await fetchCanonicalTimeline(client, agent.id);
         expect(items).toEqual(
@@ -279,7 +270,7 @@ test(
         expect(items).toContainEqual(
           expect.objectContaining({
             type: "assistant_message",
-            text: "queued-after-compaction",
+            text: "after-compaction",
           }),
         );
         expect(

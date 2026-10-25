@@ -3071,10 +3071,8 @@ describe("PiRpcAgentClient", () => {
     onTestFinished(() => session.close());
     const fakeSession = pi.latestSession();
     fakeSession.compactError = error;
-    let finishCompaction!: () => void;
-    fakeSession.compactCompletion = new Promise<void>((resolve) => {
-      finishCompaction = resolve;
-    });
+    const compactionFinished = Promise.withResolvers<void>();
+    fakeSession.compactCompletion = compactionFinished.promise;
     const handler = session.tryHandleOutOfBand("/compact");
     const compaction = handler!.run({ emit: () => {} });
 
@@ -3083,7 +3081,7 @@ describe("PiRpcAgentClient", () => {
     expect(fakeSession.compactRequests).toEqual([{}]);
     expect(fakeSession.prompts).toEqual([]);
 
-    finishCompaction();
+    compactionFinished.resolve();
     await compaction;
     await flushTurnScheduling();
     expect(fakeSession.prompts).toEqual([{ message: "continue after compaction", imageCount: 0 }]);
@@ -3100,16 +3098,14 @@ describe("PiRpcAgentClient", () => {
       const { pi, session } = await createSession();
       onTestFinished(() => session.close());
       const fakeSession = pi.latestSession();
-      let finishCompaction!: () => void;
-      fakeSession.compactCompletion = new Promise<void>((resolve) => {
-        finishCompaction = resolve;
-      });
+      const compactionFinished = Promise.withResolvers<void>();
+      fakeSession.compactCompletion = compactionFinished.promise;
       const handler = session.tryHandleOutOfBand("/compact");
       const compaction = handler!.run({ emit: () => {} });
 
       await session.startTurn("do not send this prompt");
       await session[action]();
-      finishCompaction();
+      compactionFinished.resolve();
       await compaction;
       await flushTurnScheduling();
 
@@ -3121,26 +3117,22 @@ describe("PiRpcAgentClient", () => {
     const { pi, session, events } = await createSession();
     onTestFinished(() => session.close());
     const fakeSession = pi.latestSession();
-    let finishCompaction!: () => void;
-    fakeSession.compactCompletion = new Promise<void>((resolve) => {
-      finishCompaction = resolve;
-    });
-    let finishClearQueue!: () => void;
-    fakeSession.clearQueueCompletion = new Promise<void>((resolve) => {
-      finishClearQueue = resolve;
-    });
+    const compactionFinished = Promise.withResolvers<void>();
+    fakeSession.compactCompletion = compactionFinished.promise;
+    const clearQueueFinished = Promise.withResolvers<void>();
+    fakeSession.clearQueueCompletion = clearQueueFinished.promise;
     const handler = session.tryHandleOutOfBand("/compact");
     const compaction = handler!.run({ emit: () => {} });
     const { turnId } = await session.startTurn("do not send this prompt");
 
     const interruption = session.interrupt();
-    finishCompaction();
+    compactionFinished.resolve();
     await compaction;
     await flushTurnScheduling();
     expect(fakeSession.controlRequests).toEqual(["clear_queue"]);
     expect(fakeSession.prompts).toEqual([]);
 
-    finishClearQueue();
+    clearQueueFinished.resolve();
     await interruption;
     expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_canceled", turnId }]);
     expect(fakeSession.prompts).toEqual([]);
