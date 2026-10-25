@@ -3063,6 +3063,89 @@ describe("PiRpcAgentClient", () => {
     ]);
   });
 
+  test.each([
+    { outcome: "successful", error: null },
+    { outcome: "failed", error: new Error("summarizer failed") },
+  ])("waits for $outcome manual compaction before sending a new prompt", async ({ error }) => {
+    const { pi, session, events } = await createSession();
+    onTestFinished(() => session.close());
+    const fakeSession = pi.latestSession();
+    fakeSession.compactError = error;
+    let finishCompaction!: () => void;
+    fakeSession.compactCompletion = new Promise<void>((resolve) => {
+      finishCompaction = resolve;
+    });
+    const handler = session.tryHandleOutOfBand("/compact");
+    const compaction = handler!.run({ emit: () => {} });
+
+    const { turnId } = await session.startTurn("continue after compaction");
+    await flushTurnScheduling();
+    expect(fakeSession.compactRequests).toEqual([{}]);
+    expect(fakeSession.prompts).toEqual([]);
+
+    finishCompaction();
+    await compaction;
+    await flushTurnScheduling();
+    expect(fakeSession.prompts).toEqual([{ message: "continue after compaction", imageCount: 0 }]);
+
+    fakeSession.finishTurn();
+    await events.nextTurnCompletion();
+    expect(events.turnLifecycleEvents()).toContainEqual({ type: "turn_completed", turnId });
+    expect(events.eventTypes()).not.toContain("turn_failed");
+  });
+
+  test.each(["interrupt", "close"] as const)(
+    "does not send a prompt waiting on compaction after %s",
+    async (action) => {
+      const { pi, session } = await createSession();
+      onTestFinished(() => session.close());
+      const fakeSession = pi.latestSession();
+      let finishCompaction!: () => void;
+      fakeSession.compactCompletion = new Promise<void>((resolve) => {
+        finishCompaction = resolve;
+      });
+      const handler = session.tryHandleOutOfBand("/compact");
+      const compaction = handler!.run({ emit: () => {} });
+
+      await session.startTurn("do not send this prompt");
+      await session[action]();
+      finishCompaction();
+      await compaction;
+      await flushTurnScheduling();
+
+      expect(fakeSession.prompts).toEqual([]);
+    },
+  );
+
+  test("does not send a prompt when compaction finishes during interruption", async () => {
+    const { pi, session, events } = await createSession();
+    onTestFinished(() => session.close());
+    const fakeSession = pi.latestSession();
+    let finishCompaction!: () => void;
+    fakeSession.compactCompletion = new Promise<void>((resolve) => {
+      finishCompaction = resolve;
+    });
+    let finishClearQueue!: () => void;
+    fakeSession.clearQueueCompletion = new Promise<void>((resolve) => {
+      finishClearQueue = resolve;
+    });
+    const handler = session.tryHandleOutOfBand("/compact");
+    const compaction = handler!.run({ emit: () => {} });
+    const { turnId } = await session.startTurn("do not send this prompt");
+
+    const interruption = session.interrupt();
+    finishCompaction();
+    await compaction;
+    await flushTurnScheduling();
+    expect(fakeSession.controlRequests).toEqual(["clear_queue"]);
+    expect(fakeSession.prompts).toEqual([]);
+
+    finishClearQueue();
+    await interruption;
+    expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_canceled", turnId }]);
+    expect(fakeSession.prompts).toEqual([]);
+  });
+
   test("closes Pi compact loading marker when RPC rejects after compaction starts", async () => {
     const { pi, session } = await createSession();
     const fakeSession = pi.latestSession();

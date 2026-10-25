@@ -219,7 +219,7 @@ test(
 );
 
 test(
-  "real Pi daemon executes manual compact out-of-band instead of prompt text",
+  "real Pi daemon queues a prompt during manual compact",
   async () => {
     const cwd = tmpCwd("pi-manual-compact-");
 
@@ -234,14 +234,27 @@ test(
           cwd,
           title: "pi-manual-compact",
           provider: "pi",
-          model: PI_COMPACTION_TEST_MODEL,
+          model: PI_REAL_TEST_MODEL,
         });
 
         await client.sendMessage(agent.id, "Reply exactly: compact-ready");
         const finish = await client.waitForFinish(agent.id, PI_TEST_TIMEOUT_MS);
-        expect(finish.status).toBe("idle");
+        expect(finish.status, JSON.stringify(await fetchCanonicalTimeline(client, agent.id))).toBe(
+          "idle",
+        );
 
         await client.sendMessage(agent.id, "/compact summarize this e2e run");
+        await waitForTimelineItem(
+          client,
+          agent.id,
+          (item) => item.type === "compaction" && item.status === "loading",
+        );
+        expect(await fetchCanonicalTimeline(client, agent.id)).not.toContainEqual(
+          expect.objectContaining({ type: "compaction", status: "completed" }),
+        );
+        await client.sendMessage(agent.id, "Reply exactly: queued-after-compaction");
+        const queuedFinish = await client.waitForFinish(agent.id, PI_TEST_TIMEOUT_MS);
+        expect(queuedFinish.status).toBe("idle");
 
         await waitForTimelineItem(
           client,
@@ -263,9 +276,12 @@ test(
             }),
           ]),
         );
-        expect(
-          items.some((item) => item.type === "user_message" && item.text.includes("/compact")),
-        ).toBe(false);
+        expect(items).toContainEqual(
+          expect.objectContaining({
+            type: "assistant_message",
+            text: "queued-after-compaction",
+          }),
+        );
         expect(
           items
             .filter((item) => item.type === "assistant_message")
