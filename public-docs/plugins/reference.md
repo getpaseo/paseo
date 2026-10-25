@@ -1041,9 +1041,11 @@ Host ordering alone does not implement a credential service's generation fence.
 
 The daemon durably records pending/committed opening disposition under
 `agents/.managed-openings/`. Managed creation also makes its exact native reservation durable
-before bind. These private records require file and ancestor-directory sync; a host whose
-filesystem cannot provide it refuses managed opening. Callback-local retries must reuse the
-same opening and body. There is no automatic hook or provider replay.
+before bind. These private records require file and ancestor-directory sync on POSIX hosts; a
+POSIX filesystem that cannot provide it refuses managed opening. Windows cannot sync directories,
+so rename durability there is unproven and managed opening is unqualified on Windows.
+Callback-local retries must reuse the same opening and body. There is no automatic hook or
+provider replay.
 A crash, lost callback acknowledgment, or gate failure leaves a pending opening quarantined:
 the next interactive attempt reports its ID and digest and refuses before further bind/mint.
 Quarantine alone neither revokes external authority nor stops an orphan provider. Reconcile and

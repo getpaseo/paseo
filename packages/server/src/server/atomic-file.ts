@@ -33,7 +33,9 @@ export async function writeFileAtomic(
       await fs.writeFile(tempPath, data, "utf8");
     }
     await fs.rename(tempPath, filePath);
-    if (options?.durable) {
+    // Windows cannot open or fsync a directory; the file is synced and the rename is not
+    // proven durable there, so managed creation is unqualified on Windows hosts.
+    if (options?.durable && process.platform !== "win32") {
       let current = directoryPath;
       while (true) {
         const handle = await fs.open(current, "r");

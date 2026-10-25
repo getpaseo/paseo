@@ -1008,44 +1008,48 @@ test("reloaded hook ownership fences queued host tool dispatch without requiring
   expect(h.consumed).toHaveLength(consumed);
 }, 60_000);
 
-test("unsupported directory sync refuses managed bind without affecting ordinary creation", async () => {
-  const h = await managedMcpHarness();
-  const input = {
-    agentId: randomUUID(),
-    idempotencyKey: "managed-durability-failure",
-    provider: "omp",
-    cwd: h.directory,
-    title: "managed",
-    model: "anthropic/claude-haiku-5-5",
-  };
-  const open = fs.open.bind(fs);
-  const root = path.parse(h.directory).root;
-  const fault = vi
-    .spyOn(fs, "open")
-    .mockImplementation((file, flags, mode) =>
-      file === root
-        ? Promise.reject(
-            Object.assign(new Error("directory sync unsupported"), { code: "ENOTSUP" }),
-          )
-        : open(file, flags, mode),
-    );
-  try {
-    await expect(h.client.createAgent(input)).rejects.toThrow();
-    expect(h.bindings.size).toBe(0);
-    expect(h.consumed).toEqual([]);
-    expect(
-      h.runtime.recordedLaunches.some((launch) => launch.env?.PASEO_AGENT_ID === input.agentId),
-    ).toBe(false);
-    expect(await h.daemon.daemon.agentStorage.get(input.agentId)).toBeNull();
-    const ordinary = await h.client.createAgent({
+test.skipIf(process.platform === "win32")(
+  "unsupported directory sync refuses managed bind without affecting ordinary creation",
+  async () => {
+    const h = await managedMcpHarness();
+    const input = {
+      agentId: randomUUID(),
+      idempotencyKey: "managed-durability-failure",
       provider: "omp",
       cwd: h.directory,
+      title: "managed",
       model: "anthropic/claude-haiku-5-5",
-    });
-    expect(ordinary.provider).toBe("omp");
-  } finally {
-    fault.mockRestore();
-  }
-  await expect(h.client.createAgent(input)).rejects.toThrow();
-  expect(h.bindings.size).toBe(0);
-}, 60_000);
+    };
+    const open = fs.open.bind(fs);
+    const root = path.parse(h.directory).root;
+    const fault = vi
+      .spyOn(fs, "open")
+      .mockImplementation((file, flags, mode) =>
+        file === root
+          ? Promise.reject(
+              Object.assign(new Error("directory sync unsupported"), { code: "ENOTSUP" }),
+            )
+          : open(file, flags, mode),
+      );
+    try {
+      await expect(h.client.createAgent(input)).rejects.toThrow();
+      expect(h.bindings.size).toBe(0);
+      expect(h.consumed).toEqual([]);
+      expect(
+        h.runtime.recordedLaunches.some((launch) => launch.env?.PASEO_AGENT_ID === input.agentId),
+      ).toBe(false);
+      expect(await h.daemon.daemon.agentStorage.get(input.agentId)).toBeNull();
+      const ordinary = await h.client.createAgent({
+        provider: "omp",
+        cwd: h.directory,
+        model: "anthropic/claude-haiku-5-5",
+      });
+      expect(ordinary.provider).toBe("omp");
+    } finally {
+      fault.mockRestore();
+    }
+    await expect(h.client.createAgent(input)).rejects.toThrow();
+    expect(h.bindings.size).toBe(0);
+  },
+  60_000,
+);
