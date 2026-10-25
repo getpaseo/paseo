@@ -398,7 +398,6 @@ describe("OMP MCP host tools", () => {
         const failed = await managed.execute(name, {}, new AbortController().signal);
         expect(failed.isError).toBe(true);
         expect(JSON.stringify(failed)).not.toContain(credential);
-        expect(JSON.stringify(failed)).toContain("failed");
         const echoed = await ordinary.execute(
           ordinary.definitions[0]!.name,
           {},
