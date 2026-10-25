@@ -7,6 +7,7 @@ import { forkPaseoHomeMetadata, resolvePaseoHomePath } from "./paseo-home-fork";
 import { startIsolatedHostDaemon } from "./isolated-host-daemon";
 
 export interface E2EWorker {
+  restart(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -211,6 +212,7 @@ export async function startE2EWorker(
       `[e2e] Worker ${workerIndex} daemon started on port ${daemon.port}, home: ${daemon.paseoHome}`,
     );
     return {
+      restart: () => daemon.restart(),
       close: async () => {
         await daemon.close();
         await rm(fakeEditorBin, { recursive: true, force: true });

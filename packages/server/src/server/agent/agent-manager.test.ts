@@ -11108,6 +11108,18 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
       return { turnId };
     }
 
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: this.provider,
+        item: {
+          type: "user_message",
+          messageId: "provider-message-1",
+          text: "hello from composer\nHidden attachment context",
+        },
+      };
+    }
+
     override async interrupt(): Promise<void> {
       this.interruptCount += 1;
       this.pushEvent({
@@ -11219,6 +11231,21 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
       "provider-message-1",
       "provider-native-message",
     ]);
+
+    for (let replay = 0; replay < 2; replay++) {
+      await manager.hydrateTimelineFromProvider(snapshot.id, { force: true });
+      expect(manager.fetchTimeline(snapshot.id, { limit: 20 }).rows).toMatchObject([
+        {
+          providerMessageId: "provider-message-1",
+          item: {
+            type: "user_message",
+            text: "hello from composer",
+            messageId: "msg-client-1",
+            clientMessageId: "msg-client-1",
+          },
+        },
+      ]);
+    }
   } finally {
     await manager.flush().catch(() => undefined);
     await storage.flush().catch(() => undefined);

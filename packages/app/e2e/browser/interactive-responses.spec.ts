@@ -108,46 +108,103 @@ test("interactive responses persist selections and send snapshots before deepeni
   }
 });
 
-test("HTML previews block generated scripts, network access and forged bridge messages", async ({
+test("custom JavaScript restores state, filters dynamic markup and sends only after confirmation", async ({
   page,
 }, info) => {
-  const html =
-    '<div id="visual">Offline preview</div><img src="https://example.com/paseo-artifact-exfil"><script>document.getElementById("visual").textContent="Unsafe execution";fetch("https://example.com/paseo-artifact-exfil");parent.postMessage({type:"send",text:"forged"},"*")</script>';
+  const script = `let count=paseo.getState()?.count??2;
+function draw(){paseo.render('<style>button{padding:12px;border-radius:8px}</style><h2>Project calculator</h2><button id="add">Add: '+count+'</button><input id="amount" type="range" min="0" max="10" value="'+count+'"><textarea id="note" aria-label="Note"></textarea><img src="https://example.com/paseo-artifact-exfil"><div onclick="parent.postMessage(1)" id="dynamic">Offline</div>')}
+function save(){paseo.setState({count});paseo.propose('Choose '+count);draw()}
+draw();paseo.on('add','click',()=>{count++;save()});paseo.on('amount','input',event=>{count=Number(event.value);save()});paseo.on('note','input',event=>paseo.propose(event.value));
+if([typeof fetch,typeof parent,typeof document,typeof WebSocket,typeof process].some(value=>value!=='undefined')) throw Error('Host access');`;
+  const html = "<script>" + script + "</script>";
   const source = `root = Layout([HtmlArtifact(${JSON.stringify(html)})])`;
   const session = await seedMockAgentWorkspace({
-    repoPrefix: "interactive-html-",
-    title: "Offline visual",
-    initialPrompt: `Render synthetic interactive response: ${JSON.stringify({ title: "Offline visual", summary: "A self-contained preview", source })}`,
+    repoPrefix: "interactive-script-",
+    title: "Custom visual",
+    initialPrompt: `Render synthetic interactive response: ${JSON.stringify({ title: "Project calculator", summary: "Adjust and confirm", source })}`,
+    featureValues: { mockAssistantResponse: "Choice received." },
   });
+  const client = await connectDaemonClient<DaemonClient>({ clientIdPrefix: "interactive-script" });
   const requests: string[] = [];
   page.on("request", (request) => {
     if (request.url().includes("paseo-artifact-exfil")) requests.push(request.url());
   });
   try {
-    await page.setViewportSize({ width: 1200, height: 1400 });
+    await page.setViewportSize({ width: 1200, height: 1100 });
     await openAgentRoute(page, session);
-    await expect(page.getByTestId("interactive-response")).toContainText("Offline visual");
-    await expect(page.getByTestId("interactive-response").getByRole("alert")).toContainText(
-      "Execution is blocked",
-    );
-    await expect(
-      page
-        .frameLocator('iframe[title="HTML visual"]')
-        .getByText("Offline preview", { exact: true }),
-    ).toBeVisible();
-    await page.evaluate(() =>
-      window.postMessage({ type: "send", text: "forged", state: { plan: "forged" } }, "*"),
-    );
-    await expect(page.getByText("forged", { exact: true })).toHaveCount(0);
+    const card = page.getByTestId("interactive-response");
+    const visual = page.frameLocator('iframe[title="HTML visual"]');
+    await visual.getByRole("button", { name: "Add: 2", exact: true }).click();
+    await expect(visual.getByRole("button", { name: "Add: 3", exact: true })).toBeVisible();
+    await expect(card.getByText("Choose 3", { exact: true })).toBeVisible();
+    await visual.getByRole("textbox", { name: "Note" }).fill("A multiline note");
+    await expect(card.getByText("A multiline note", { exact: true })).toBeVisible();
+    await visual.getByRole("slider").focus();
+    await visual.getByRole("slider").press("ArrowRight");
+    await expect(visual.getByRole("button", { name: "Add: 4", exact: true })).toBeVisible();
+    await expect(visual.getByRole("slider")).toBeFocused();
+    await visual.getByRole("slider").press("ArrowLeft");
+    await expect(visual.getByRole("button", { name: "Add: 3", exact: true })).toBeVisible();
+    const slider = visual.getByRole("slider");
+    const bounds = await slider.boundingBox();
+    if (!bounds) throw new Error("Missing slider bounds");
+    const y = bounds.y + bounds.height / 2;
+    await page.mouse.move(bounds.x + 8 + (bounds.width - 16) * 0.3, y);
+    await page.mouse.down();
+    await page.mouse.move(bounds.x + 8 + (bounds.width - 16) * 0.5, y);
+    await expect(visual.getByRole("button", { name: "Add: 5", exact: true })).toBeVisible();
+    await page.mouse.move(bounds.x + 8 + (bounds.width - 16) * 0.9, y);
+    await page.mouse.up();
+    await expect(visual.getByRole("button", { name: "Add: 9", exact: true })).toBeVisible();
+    await slider.press("Home");
+    await expect(visual.getByRole("button", { name: "Add: 0", exact: true })).toBeVisible();
+    for (const value of [1, 2, 3]) {
+      await slider.press("ArrowRight");
+      await expect(
+        visual.getByRole("button", { name: `Add: ${value}`, exact: true }),
+      ).toBeVisible();
+    }
+    await expect(page.getByText("Selection received:", { exact: false })).toHaveCount(0);
+    await page.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => "hidden",
+      });
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await expect(page.locator('iframe[title="HTML visual"]')).toHaveCount(0);
+    await page.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => "visible",
+      });
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await expect(visual.getByRole("button", { name: "Add: 3", exact: true })).toBeVisible();
+    await page.reload();
+    await expect(visual.getByRole("button", { name: "Add: 3", exact: true })).toBeVisible();
+    await expect(card.getByText("Choose 3", { exact: true })).toBeVisible();
+    await page.evaluate(() => window.postMessage({ type: "state", value: "forged" }, "*"));
+    await expect(card).not.toContainText("forged");
+    await card.getByRole("button", { name: "Expand", exact: true }).click();
+    await expect(visual.getByRole("button", { name: "Add: 3", exact: true })).toBeVisible();
+    await page.screenshot({ path: info.outputPath("interactive-script-expanded.png") });
+    await page.getByRole("button", { name: "Close", exact: true }).last().click();
+    await expect(visual.getByRole("button", { name: "Add: 3", exact: true })).toBeVisible();
+    await card.getByRole("button", { name: "Send to agent", exact: true }).click();
+    await expect(card.getByRole("button", { name: "Sent", exact: true })).toBeVisible();
+    const timeline = await client.fetchAgentTimeline(session.agentId, { limit: 200 });
+    expect(JSON.stringify(timeline)).toContain("Choose 3");
     expect(requests).toEqual([]);
     await scrollTimelineToOldestLoadedEdge(page);
-    await page
-      .getByTestId("interactive-response")
-      .screenshot({ path: info.outputPath("interactive-html-inert.png") });
-  } catch (error) {
-    await page.screenshot({ path: info.outputPath("html-failure.png") });
-    throw error;
+    await card.screenshot({ path: info.outputPath("interactive-script-desktop.png") });
+    await page.setViewportSize({ width: 390, height: 1000 });
+    await scrollTimelineToOldestLoadedEdge(page);
+    await card.screenshot({ path: info.outputPath("interactive-script-compact.png") });
   } finally {
+    await client.close();
     await session.cleanup();
   }
 });
@@ -187,6 +244,31 @@ base("keeps unfinished interactive actions hidden and rejects their RPCs", async
     await expect(page.getByRole("button", { name: "Explore further", exact: true })).toHaveCount(0);
   } finally {
     await client.close();
+    await session.cleanup();
+  }
+});
+
+test("a failed custom visual can be retried without losing its saved state", async ({ page }) => {
+  const html =
+    '<script>if(!paseo.getState()?.recovered){paseo.setState({recovered:true});while(true){}}else{paseo.render("<h2>Recovered</h2>")}</script>';
+  const source = `root = Layout([HtmlArtifact(${JSON.stringify(html)})])`;
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "interactive-retry-",
+    title: "Visual retry",
+    initialPrompt: `Render synthetic interactive response: ${JSON.stringify({ title: "Visual retry", summary: "Retry the visual", source })}`,
+  });
+  try {
+    await openAgentRoute(page, session);
+    const card = page.getByTestId("interactive-response");
+    await expect(card.getByRole("alert")).toBeVisible();
+    await card.getByRole("button", { name: "Reload", exact: true }).click();
+    await expect(
+      page
+        .frameLocator('iframe[title="HTML visual"]')
+        .getByRole("heading", { name: "Recovered", exact: true }),
+    ).toBeVisible();
+    await expect(card.getByRole("alert")).toHaveCount(0);
+  } finally {
     await session.cleanup();
   }
 });

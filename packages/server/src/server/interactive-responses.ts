@@ -9,9 +9,11 @@ import {
   type InteractiveDocument,
   type InteractiveState,
 } from "@getpaseo/protocol/interactive-response";
+import { AgentTimelineItemPayloadSchema } from "@getpaseo/protocol/messages";
+import type { AgentTimelineItem } from "./agent/agent-sdk-types.js";
 import { writeJsonFileAtomic } from "./atomic-file.js";
 
-// Keep the unfinished JavaScript runtime out of normal releases.
+// Keep the feature experimental until cross-platform QA and final review are signed off.
 export function interactiveResponsesEnabled(): boolean {
   return process.env.PASEO_EXPERIMENTAL_INTERACTIVE_RESPONSES === "1";
 }
@@ -102,6 +104,31 @@ export class InteractiveResponseStore {
       }
       await writeJsonFileAtomic(file, { reference, text });
       return text;
+    });
+  }
+  private submittedMessagesFile(agentId: string): string {
+    const key = createHash("sha256").update(agentId).digest("hex");
+    return path.join(this.directory, "messages", `${key}.json`);
+  }
+  async submittedMessages(agentId: string): Promise<Record<string, AgentTimelineItem>> {
+    try {
+      return z
+        .record(z.string(), AgentTimelineItemPayloadSchema)
+        .parse(JSON.parse(await fs.readFile(this.submittedMessagesFile(agentId), "utf8")));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+      throw error;
+    }
+  }
+  rememberSubmittedMessage(
+    agentId: string,
+    providerMessageId: string,
+    item: Extract<AgentTimelineItem, { type: "user_message" }>,
+  ): Promise<void> {
+    return this.serialize(async () => {
+      const messages = await this.submittedMessages(agentId);
+      messages[providerMessageId] = item;
+      await writeJsonFileAtomic(this.submittedMessagesFile(agentId), messages);
     });
   }
   snapshot(

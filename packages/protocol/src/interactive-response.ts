@@ -44,7 +44,7 @@ export const interactiveComponentSchemas = {
   BarChart: z.object({ data: points, title: shortText }),
   LineChart: z.object({ data: points, title: shortText }),
   Mermaid: z.object({ source: z.string().max(30000) }),
-  HtmlArtifact: z.object({ html: z.string().max(100000) }),
+  HtmlArtifact: z.object({ html: z.string().max(100000), name: fieldId.optional() }),
 };
 export const interactiveLibrary = createLibrary({
   root: "Layout",
@@ -55,7 +55,7 @@ export const interactiveLibrary = createLibrary({
 export const interactiveInstructions =
   generateSystemPrompt(interactiveLibrary.toSpec()) +
   `
-Use plain text for simple answers. When comparison, decisions or explanation benefit from an interface, call render_interactive_response with a title, textual summary and complete OpenUI source. Use only the listed components and static literals/references; do not use Query, Mutation, actions, reactive expressions or external resources. Field names must be unique. Each proposal creates a new document. HtmlArtifact documents must be self-contained. Currently only static HTML/CSS previews run; generated JavaScript is kept inert until an offline execution sandbox is available. Paseo owns sending choices to the agent; changing fields never sends a message. Existing tool restrictions still apply.`;
+Use plain text for simple answers. When comparison, decisions or explanation benefit from an interface, call render_interactive_response with a title, textual summary and complete OpenUI source. Use only the listed components and static literals/references; do not use Query, Mutation, actions, reactive expressions or external resources. Field names must be unique. Each proposal creates a new document. HtmlArtifact documents must be self-contained. Inline classic scripts run in an isolated JavaScript interpreter, never in the browser. There is no document, window, fetch, storage, navigation, imports or external library loading. Use the frozen paseo API: getState() returns restored JSON or null; setState(json) persists JSON; propose(text) prepares a message shown outside the visual for explicit user sending; render(html) replaces the visual with filtered HTML/CSS/SVG; on(id, "click"|"input"|"change", callback) receives {id,type,value,checked}. Give controls unique ids. Use setTimeout/clearTimeout or requestAnimationFrame/cancelAnimationFrame for bounded animation (at most 16 timers, minimum 32ms); there is no setInterval. Scripts have finite CPU/memory limits. Keep state under 64KB including the proposed text (at most 10000 characters). For multiple HtmlArtifact components provide a unique optional second argument name to each (default "artifact"). Render self-contained markup with style tags and inline styles, never event-handler attributes. Initialize from getState() and re-render on events. Example script: let n=paseo.getState()?.n??0; function draw(){paseo.render('<button id="add">'+n+'</button>')} draw(); paseo.on('add','click',()=>{n++;paseo.setState({n});paseo.propose('Choose '+n);draw()}); Paseo owns sending choices to the agent; changing fields never sends a message. Existing tool restrictions still apply.`;
 const parser = createParser(interactiveLibrary.toJSONSchema());
 
 export function validateInteractiveSource(source: string): ElementNode {
@@ -81,7 +81,7 @@ export function validateInteractiveSource(source: string): ElementNode {
       interactiveComponentSchemas[node.typeName as keyof typeof interactiveComponentSchemas];
     if (!schema) throw new Error("Unknown OpenUI component");
     const props = schema.parse(node.props);
-    if ("name" in props) {
+    if ("name" in props && typeof props.name === "string") {
       if (fields.has(props.name)) throw new Error("Duplicate field name");
       fields.add(props.name);
     }
@@ -104,7 +104,8 @@ export function validateInteractiveState(source: string, state: unknown): Intera
   const fields = new Map<string, ElementNode>();
   function visit(node: ElementNode): void {
     if (typeof node.props.name === "string") fields.set(node.props.name, node);
-    if (node.typeName === "HtmlArtifact") fields.set("artifact", node);
+    if (node.typeName === "HtmlArtifact")
+      fields.set(typeof node.props.name === "string" ? node.props.name : "artifact", node);
     if (Array.isArray(node.props.children))
       for (const child of node.props.children) visit(child as ElementNode);
   }

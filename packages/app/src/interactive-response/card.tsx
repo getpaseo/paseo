@@ -10,7 +10,7 @@ import {
 } from "react";
 import { Text, View } from "react-native";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
-import { Renderer } from "@openuidev/react-lang";
+import { InteractiveRenderer } from "./renderer";
 import { useTranslation } from "react-i18next";
 import { useFetchQuery } from "@/data/query";
 import {
@@ -24,7 +24,9 @@ import { Button } from "@/components/ui/button";
 import { describeToolCall } from "@/tool-calls/detail-level/grouping";
 import { useInteractiveConversation } from "./context";
 import { interactiveToolDocumentId } from "./tool-result";
-import { InteractiveFields, library } from "./library";
+import { library } from "./library";
+import { InteractiveFields } from "./fields";
+import { artifactProposal } from "./artifact";
 import { styles } from "./styles";
 import { sendConversationAction } from "./send";
 
@@ -110,6 +112,13 @@ function DocumentView({
     interactiveReference: { documentId: string; revision: number };
   } | null>(null);
   const sending = useRef(false);
+  const runtimes = useRef(new Set<() => Promise<void>>());
+  const registerRuntime = useCallback((flush: () => Promise<void>) => {
+    runtimes.current.add(flush);
+    return () => {
+      runtimes.current.delete(flush);
+    };
+  }, []);
   const alive = useRef(true);
   const [writer] = useState(
     () =>
@@ -140,14 +149,7 @@ function DocumentView({
   }, []);
   const change = useCallback(
     (name: string, value: string | number) => {
-      if (
-        blocked.current ||
-        sending.current ||
-        context.readOnly ||
-        status !== "idle" ||
-        request.current
-      )
-        return;
+      if (blocked.current || context.readOnly || status !== "idle" || request.current) return;
       const next: InteractiveState = { ...latestState.current, [name]: value };
       latestState.current = next;
       setState(next);
@@ -161,13 +163,16 @@ function DocumentView({
     setPending(true);
     setError("");
     try {
+      await Promise.all(Array.from(runtimes.current, (flush) => flush()));
       await writer.flush();
       if (blocked.current) throw new Error(t("interactive.reloadConflict"));
       request.current ??= {
         id: crypto.randomUUID(),
-        text: `${document.title} — ${document.summary}\n${Object.entries(latestState.current)
-          .map(([key, value]) => `${key}: ${String(value)}`)
-          .join("\n")}`,
+        text:
+          artifactProposal(latestState.current) ||
+          `${document.title} — ${document.summary}\n${Object.entries(latestState.current)
+            .map(([key, value]) => `${key}: ${String(value)}`)
+            .join("\n")}`,
         interactiveReference: { documentId: document.id, revision: writer.revision },
       };
       setStatus(await sendConversationAction(context, request.current));
@@ -192,9 +197,10 @@ function DocumentView({
     () => ({
       state,
       change,
+      registerRuntime,
       disabled: context.readOnly || pending || status !== "idle" || Boolean(error),
     }),
-    [state, change, context.readOnly, pending, status, error],
+    [state, change, registerRuntime, context.readOnly, pending, status, error],
   );
   const fallback = useMemo(
     () => (
@@ -204,16 +210,12 @@ function DocumentView({
     ),
     [t],
   );
+  const proposal = artifactProposal(state);
   const label = status === "idle" ? "interactive.send" : (`interactive.${status}` as const);
   const content = (
     <RenderBoundary fallback={fallback}>
       <InteractiveFields.Provider value={fields}>
-        <Renderer
-          response={document.source}
-          library={library}
-          isStreaming={false}
-          publishObservability={false}
-        />
+        <InteractiveRenderer source={document.source} library={library} />
       </InteractiveFields.Provider>
     </RenderBoundary>
   );
@@ -222,6 +224,7 @@ function DocumentView({
       <Text style={styles.title}>{document.title}</Text>
       <Text style={styles.muted}>{document.summary}</Text>
       {!expanded ? content : null}
+      {proposal ? <Text style={styles.text}>{proposal}</Text> : null}
       <View style={styles.row}>
         <Button size="sm" variant="ghost" onPress={open}>
           {t("interactive.expand")}

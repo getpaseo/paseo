@@ -144,9 +144,12 @@ export class OwnedSubscriptions {
         if (id) this.routes.delete(id);
         reject(new Error("Subscription released"));
         teardown = (async () => {
-          await pending;
-          await releaseId();
-          this.registrations.delete(registration);
+          try {
+            await pending;
+            await releaseId();
+          } finally {
+            this.registrations.delete(registration);
+          }
         })();
         return teardown;
       },

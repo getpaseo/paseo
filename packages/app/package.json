@@ -36,7 +36,8 @@
     "profile:workspace-tabs": "node ./scripts/profile-workspace-tabs.mjs",
     "deploy:web": "npm run build:web && wrangler pages deploy dist --project-name paseo-app --branch main",
     "build:terminal-webview": "node ./scripts/build-terminal-webview-html.mjs",
-    "build:mermaid-runtime": "node ./src/components/markdown/fence/mermaid/build-runtime.mjs"
+    "build:mermaid-runtime": "node ./src/components/markdown/fence/mermaid/build-runtime.mjs",
+    "build:interactive-runtime": "node ./src/interactive-response/runtime/build.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "6.10.4",
@@ -55,6 +56,7 @@
     "@getpaseo/protocol": "*",
     "@gorhom/bottom-sheet": "^5.2.14",
     "@gorhom/portal": "^1.0.14",
+    "@jitl/quickjs-singlefile-browser-release-sync": "0.32.0",
     "@marijn/find-cluster-break": "^1.0.2",
     "@mattermost/react-native-paste-input": "2.0.1",
     "@openuidev/react-lang": "^1.0.0",
@@ -107,7 +109,9 @@
     "markdown-it": "^10.0.0",
     "mermaid": "^11.16.0",
     "mnemonic-id": "^3.2.7",
+    "morphdom": "2.7.8",
     "qrcode": "^1.5.4",
+    "quickjs-emscripten-core": "0.32.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-freeze": "1.0.4",

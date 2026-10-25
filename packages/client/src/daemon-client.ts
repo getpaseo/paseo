@@ -1218,14 +1218,18 @@ export class DaemonClient {
       ),
     release: async (subscriptionId) => {
       if (!this.isConnected) return;
+      const releaseTransport = this.transport;
       try {
         await this.sendCorrelatedSessionRequest({
           message: { type: "subscription.release.request", subscriptionId },
           responseType: "subscription.release.response",
         });
       } catch (error) {
-        this.disposeTransport(1001, "Subscription release failed");
-        this.scheduleReconnect({ reason: "Subscription release failed" });
+        // A release from a disconnected transport cannot tear down its replacement.
+        if (this.transport === releaseTransport && this.isConnected) {
+          this.disposeTransport(1001, "Subscription release failed");
+          this.scheduleReconnect({ reason: "Subscription release failed" });
+        }
         throw error;
       }
     },

@@ -1,5 +1,8 @@
 import { agentBrowserEnv } from "../agent-browser-env.js";
-import { interactiveResponsesEnabled } from "../interactive-responses.js";
+import {
+  interactiveResponsesEnabled,
+  interactiveResponsesForHome,
+} from "../interactive-responses.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
 import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
@@ -4730,19 +4733,41 @@ export class AgentManager {
       | AsyncIterable<AgentStreamEvent>
       | Iterable<AgentStreamEvent> = agent.session.streamHistory(),
   ): AsyncGenerator<CompletedTurnHistoryEvent> {
+    const submitted = new Map<string, Extract<AgentTimelineItem, { type: "user_message" }>>();
+    for (const row of this.timelineStore.getRows(agent.id)) {
+      if (row.item.type === "user_message" && row.item.clientMessageId && row.providerMessageId)
+        submitted.set(row.providerMessageId, row.item);
+    }
+    if (this.paseoHome && interactiveResponsesEnabled()) {
+      const persisted = await interactiveResponsesForHome(this.paseoHome).submittedMessages(
+        agent.id,
+      );
+      for (const [id, item] of Object.entries(persisted))
+        if (item.type === "user_message" && !submitted.has(id)) submitted.set(id, item);
+    }
+    const restoreSubmittedText = (event: CompletedTurnHistoryEvent): CompletedTurnHistoryEvent => {
+      if (event.type !== "timeline" || event.item.type !== "user_message") return event;
+      const providerMessageId = event.restoredProviderMessageId ?? event.item.messageId;
+      const original = providerMessageId ? submitted.get(providerMessageId) : undefined;
+      // Provider replay includes hidden attachments; Paseo owns the submitted display text.
+      return original
+        ? { ...event, item: original, restoredProviderMessageId: providerMessageId }
+        : event;
+    };
     if (
       !agent.lastCompletedTurnEvidence &&
       (!agent.syntheticPlanDecisions || !Object.keys(agent.syntheticPlanDecisions).length)
     ) {
-      yield* source;
+      for await (const event of source) yield restoreSubmittedText(event);
       return;
     }
     const history: AgentStreamEvent[] = [];
     for await (const event of source) history.push(limitAgentStreamEventContent(event));
-    yield* restoreCompletedTurnEvidence(
+    for (const event of restoreCompletedTurnEvidence(
       restoreSyntheticPlanDecisions(history, agent.syntheticPlanDecisions ?? {}),
       agent.lastCompletedTurnEvidence,
-    );
+    ))
+      yield restoreSubmittedText(event);
   }
 
   private notifyForegroundTurnWaiters(agentId: string, event: AgentStreamEvent): void {
@@ -5027,7 +5052,7 @@ export class AgentManager {
     if (
       event.item.type === "user_message" &&
       event.item.clientMessageId &&
-      this.reconcileSubmittedPromptEcho(agent, event.item, event.turnId)
+      (await this.reconcileSubmittedPromptEcho(agent, event.item, event.turnId))
     ) {
       flags.shouldDispatchEvent = false;
       flags.shouldNotifyWaiters = false;
@@ -5379,11 +5404,11 @@ export class AgentManager {
     this.recordAndDispatchTimelineItem(agent.id, item, agent.provider, options?.turnId, options);
   }
 
-  private reconcileSubmittedPromptEcho(
+  private async reconcileSubmittedPromptEcho(
     agent: ActiveManagedAgent,
     item: Extract<AgentTimelineItem, { type: "user_message" }>,
     turnId?: string,
-  ): AgentTimelineRow | null {
+  ): Promise<AgentTimelineRow | null> {
     const { clientMessageId, messageId } = item;
     if (!clientMessageId) return null;
     let existing = this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId);
@@ -5404,6 +5429,17 @@ export class AgentManager {
       );
       if (enriched) this.enqueueDurableTimelineUpdate(agent.id, enriched);
     }
+    if (
+      this.paseoHome &&
+      interactiveResponsesEnabled() &&
+      messageId &&
+      item.text !== existing.item.text
+    )
+      await interactiveResponsesForHome(this.paseoHome).rememberSubmittedMessage(
+        agent.id,
+        messageId,
+        existing.item,
+      );
     return existing;
   }
 

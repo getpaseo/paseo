@@ -2,13 +2,10 @@
 import { withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import { InteractiveSlider } from "./slider";
-import { createContext, useContext, useCallback } from "react";
+import { useContext, useCallback } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { createLibrary, defineComponent } from "@openuidev/react-lang";
-import {
-  interactiveComponentSchemas,
-  type InteractiveState,
-} from "@getpaseo/protocol/interactive-response";
+import { interactiveComponentSchemas } from "@getpaseo/protocol/interactive-response";
 import { EditingTextInput } from "@/components/ui/text-input";
 import { Button } from "@/components/ui/button";
 import { MermaidFence } from "@/components/markdown/fence/mermaid";
@@ -16,11 +13,9 @@ import Svg, { Line, Polyline, Rect, Text as SvgText } from "react-native-svg";
 import { styles } from "./styles";
 import { HtmlArtifact } from "./html-artifact";
 
-export const InteractiveFields = createContext<{
-  state: InteractiveState;
-  disabled: boolean;
-  change: (name: string, value: string | number) => void;
-}>({ state: {}, disabled: true, change: () => {} });
+import { InteractiveFields } from "./fields";
+const ThemedHtmlArtifact = withUnistyles(HtmlArtifact);
+const artifactColors = (theme: Theme) => ({ colorScheme: theme.colorScheme });
 function SelectionOption({ name, option }: { name: string; option: string }) {
   const { state, change, disabled } = useContext(InteractiveFields);
   const select = useCallback(() => change(name, option), [change, name, option]);
@@ -251,7 +246,13 @@ export const library = createLibrary({
       name: "HtmlArtifact",
       description: "HtmlArtifact",
       props: interactiveComponentSchemas.HtmlArtifact,
-      component: ({ props }) => <HtmlArtifact html={props.html} />,
+      component: ({ props }) => (
+        <ThemedHtmlArtifact
+          html={props.html}
+          name={props.name ?? "artifact"}
+          uniProps={artifactColors}
+        />
+      ),
     }),
   ],
 });

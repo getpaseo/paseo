@@ -3,10 +3,11 @@
 Approved handoff: `04eea85d-8531-46ad-99b5-7bc38d192b49`, plan
 `01a13aed-8972-7fb1-a4e7-a51a2d9e8625-plan`. Base: `20863c767`.
 
-This work is partial. Preserve it in the release with its capability, agent tool, prompt guidance,
-RPC operations and deepening button disabled by default. Isolated development tests opt in with
-`PASEO_EXPERIMENTAL_INTERACTIVE_RESPONSES=1`; normal installations must leave it unset.
-Do not treat the approved feature as completed or enable it for this delivery.
+The implementation was resumed on 2026-10-24. Custom JavaScript now runs in an isolated
+QuickJS WebAssembly worker behind filtered HTML/CSS/SVG rendering. Normal installations still
+leave `PASEO_EXPERIMENTAL_INTERACTIVE_RESPONSES` unset: Android device validation, full Electron
+lifecycle validation and the required Paseo final review remain outstanding. Do not announce the approved feature as completed.
+Development checks opt in with `PASEO_EXPERIMENTAL_INTERACTIVE_RESPONSES=1`.
 
 ## Implemented locally
 
@@ -26,28 +27,68 @@ Do not treat the approved feature as completed or enable it for this delivery.
   Pending, accepted, queued and error states remain distinct. Completed response footers expose
   “Explore further” / “Approfondir”. The daemon reconstructs the full historical response rather
   than trusting the client's mounted page, and attaches the associated document state as context.
-- Inert HTML/CSS previews use a sandboxed iframe or native WebView. Generated scripts remain
-  disabled, navigation/resource entry points are removed, and the UI explains the limitation.
+- DOM updates preserve keyed controls during continuous slider gestures. Delegated events include
+  multiline input; browser regressions cover both cases.
+- Custom visuals use a trusted iframe/WebView shell and a separate QuickJS worker. Generated
+  scripts receive serialized events and a bounded rendering/state/proposal API, never browser
+  objects. Each mounted visual owns its worker; failures destroy it and expose retry.
+- The renderer uses OpenUI’s runtime and render-node hook without its DOM presentation; even the
+  package’s native entry otherwise emits `div` elements. A regression checks the container boundary.
+- Submitted proposals use readable text. Provider message identities preserve that text during
+  history replay; hidden snapshot attachments stay in agent context across daemon restarts.
+- Sending waits for a worker barrier before flushing saves and selecting a revision. That barrier
+  stops animation timers so later ticks cannot change the confirmed decision. Proposals are
+  visible outside the visual and never send messages themselves.
 
-## Functional blocker
+## Execution boundary
 
-The approved arbitrary HTML/CSS/JavaScript runtime is **not implemented**. Neither its serialized
-state bridge nor its interaction proposal bridge is available. Enabling scripts in a `srcdoc`
-iframe with CSP alone does not satisfy the no-network contract.
+Do not enable browser JavaScript for generated HTML. A script can navigate its own iframe despite
+`connect-src 'none'`; the original Chromium probe observed a completed HTTP navigation with that
+policy. The shell instead executes only its hashed trusted bootstrap. Generated scripts run in
+QuickJS, without network, DOM, filesystem, Electron or daemon bindings. Every rendered update is
+filtered and remains under the shell's resource CSP. The same shell is bundled for web and native;
+`npm run build:interactive-runtime --workspace=@getpaseo/app` regenerates its checked-in HTML.
 
-A Chromium probe against an isolated local HTTP server used `sandbox="allow-scripts"`,
-`default-src 'none'`, `connect-src 'none'`, `base-uri 'none'`, and `form-action 'none'`. A script assigning
-its own `location.href` still completed one HTTP navigation:
+The supported API is defined in the shared catalog in
+`packages/protocol/src/interactive-response.ts`. This is a Paseo visual runtime, not compatibility
+with arbitrary browser pages or external JavaScript libraries. Source and runtime assets are
+self-contained; no CDN or runtime download is required.
 
-```json
-{ "sandbox": "allow-scripts", "connectSrc": "none", "navigationRequests": 1 }
-```
+## Resumption evidence — 2026-10-24
 
-The tool instructions describe the implemented static subset. Full execution needs an offline
-runtime that prevents navigation, not only a resource CSP. The current preview has no script bridge
-and accepts no bridge messages.
+| Check                                                 | Result                                                                                                                                                                                                                                         |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| App artifact/state/HTML/interpreter unit files        | 16 passed, including native container boundaries, prepared text, legacy state, blocked host APIs, loop interruption, memory/output/timer bounds and isolated lexical scope                                                                     |
+| Protocol and server document/context files            | 9 passed, including named visuals, immutable choices and store recreation                                                                                                                                                                      |
+| `packages/client/src/daemon-client.test.ts`           | 161 passed; old release failures preserve replacement transports, and failed registrations do not poison later cleanup                                                                                                                         |
+| Browser `interactive-responses.spec.ts`               | 4 passed: structured history/deepening, scripted controls, keyboard focus, background teardown/restoration, explicit sending, resource/bridge filtering, error/retry and default-off behavior                                                  |
+| Real Codex `interactive-responses.codex.real.spec.ts` | Passed with the configured `gpt-6.1-sol` model: generates a custom visual, receives the confirmed count, then restores the response, selected state and readable submitted text after an isolated daemon process restart                       |
+| Separate Electron runtime                             | Passed: SVG, controls, bounded animation, saved state and prepared proposal                                                                                                                                                                    |
+| Physical iPhone 17 Pro Max (iOS 27.0.1)               | Passed: QuickJS/WebView rendering, button and continuous slider drag, keyboard/SwiftKey input, expansion/close, app relaunch restoration, confirmed choices `CHOIX_RECU_9`/`CHOIX_RECU_10`, readable submission and state after daemon restart |
+| iOS and Android Metro bundles                         | Compiled on the final runtime; not device interaction evidence                                                                                                                                                                                 |
+| Typecheck, lint and formatting                        | Global checks run; final app/server typechecks and affected-file lint passed after corrections. Formatting and diff checked                                                                                                                    |
 
-## Validation
+The canonical-history regression and store persistence checks also pass. They match provider
+message identities, never prompt-text prefixes. Pre-fix QA messages already reconstructed without
+the display mapping remain unchanged; the final native submission is stored and restored cleanly.
+
+The deterministic mock provider keeps its history in memory. Process-restart UI evidence therefore
+uses the real provider; store-only recreation checks stay in the server suite. Restarting the test
+worker also requires reconnecting its seeding clients before fixture cleanup.
+
+The client suite's existing hello expectation omitted the already-advertised
+`workspace_conflict_model` capability; that stale expectation was corrected without changing the
+advertised capabilities.
+
+Chrome is selected through an artifact-only Playwright config because this checkout's expected
+Chromium binary is unavailable. Electron evidence comes from a separate isolated process, not the
+installed Paseo app or main daemon. No publication, installed Mac app rebuild or main-daemon restart was performed. The user separately
+authorized a native iOS test build and installation on the unlocked paired iPhone.
+
+Current artifacts, isolated runtime drivers and browser configuration live under
+`packages/app/.artifacts/openui/`. Final command logs are copied to its `validation/` directory.
+
+## Original validation — 2026-10-14
 
 Run from the repository root unless a working directory is specified. Full suites were not run.
 
@@ -75,34 +116,42 @@ paid model. Store recreation tests are not a complete daemon process restart/rec
 
 ## Remaining validation and delivery
 
-- Real Electron execution and iOS/Android device interaction, keyboard, touch, WebView navigation,
-  reconnection/process restart, scroll stability and performance have not been signed off. No iOS
-  simulator was booted and `adb` was unavailable during this execution. Native bundle compilation
-  does not replace those checks.
-- Arbitrary JavaScript/state restoration is blocked as described above. Do not publish this as the
-  complete approved feature.
-- OpenUI Lang Core 1.0.0 has opt-out installation telemetry. Dependency installation here used
-  `--ignore-scripts`; only the repository patch script was run afterward. Set
-  `OPENUI_TELEMETRY_DISABLED=1` for release-time dependency installation. Upstream runtime telemetry
-  is opt-in and was not enabled; renderer observability is disabled.
-- The release preparation preserves this work in a separate commit with default-off exposure,
-  allowing Jalons to ship without activating an unfinished feature. Publication, installation and
-  active-version verification are tracked with the Jalons delivery.
-- Concurrent To-do work, including `packages/app/src/workspace-todos/`, its routes and related
-  protocol/server changes, was preserved. Temporary incomplete files there interrupted one validation run; later global checks
-  passed after that work advanced.
+- Complete actual Android keyboard, touch, WebView, reconnection and performance validation.
+  iOS functional checks ran on the physical device; interruption/performance soak remains limited.
+  Check the full Electron application lifecycle in addition to the isolated runtime proof.
+- Complete the required Paseo final review. Its inventory lacks `paseo-workflow-final-review`,
+  `paseo-workflow-audit-deep` and `paseo-workflow-audit-security`. The skill forbids a replacement
+  profile. Repair through Settings → Plugins → paseo-workflow → Workflow profiles → Install / repair
+  profiles before lifting this gate.
+- Keep publication, Mac installation and main-daemon restarts outside this local implementation task.
+  The separately authorized iOS test app compiled and installed successfully on the physical
+  iPhone 17 Pro Max (iOS 27.0.1). After unlocking and enabling host Developer Tools security, XCTest inspection and
+  actual WebView interaction succeeded. The required test runner is separately signed. It uses a unique local identifier because `sh.paseo.debug` is
+  reserved by another signing team. Remote notifications are disabled only in its ignored generated
+  Xcode project; tracked app configuration and the production iPhone app remain unchanged.
+- OpenUI Lang Core 1.0.0 has opt-out installation telemetry. Set `OPENUI_TELEMETRY_DISABLED=1` for
+  release-time dependency installation. Dependency installation for this resumption used
+  `--ignore-scripts`; runtime renderer observability remains disabled.
 
 ## Screenshots
 
-Representative captures are in the Playwright output for `interactive-reviewed` (adaptive enlargement and completed form-save checks):
+Artifacts live under `packages/app/.artifacts/openui/`. Browser compact captures are viewport tests;
+Electron evidence is an isolated runtime, not the installed app. Native images below come from the
+physical iPhone. In the last capture, the old pre-fix QA message remains above the clean final send.
 
-- `interactive-desktop.png`: structured response and accepted submission.
-- `interactive-expanded.png`: enlarged structured response.
-- `interactive-conflict.png`: concurrent edit error and reload.
-- `interactive-mobile-web.png`: restored form in a compact browser viewport.
-- `interactive-dark.png`: restored response in the dark theme.
-- `interactive-html-inert.png`: static preview and explicit JavaScript restriction.
+| Native keyboard                                                          | Expanded visual                                                           | Restored after app relaunch                                              |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| ![SwiftKey input](../../packages/app/.artifacts/openui/ios-keyboard.png) | ![Expanded visual](../../packages/app/.artifacts/openui/ios-expanded.png) | ![Restored state](../../packages/app/.artifacts/openui/ios-restored.png) |
 
-These are browser captures, not Electron or native device screenshots.
+| Reconnection during isolated restart                                       | Agent receipt after final restart                                                 |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| ![Reconnection](../../packages/app/.artifacts/openui/ios-reconnecting.png) | ![Confirmed receipt](../../packages/app/.artifacts/openui/ios-final-received.png) |
 
-Raw validation logs are copied to `packages/app/.artifacts/interactive-responses-validation/`.
+| Real agent/browser after daemon restart                                                                                                                                                | Isolated Electron simulation                                                         |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| ![Restored real visual](../../packages/app/.artifacts/openui/display-final-real/interactive-responses.code-1eb96-s-an-isolated-custom-visual-real-provider/interactive-real-agent.png) | ![Electron simulation](../../packages/app/.artifacts/openui/electron-simulation.png) |
+
+Browser card, expansion and compact captures are also available under `nativefix-browser/`.
+`ios-final-proof.json` verifies count10, note, readable submitted text and agent receipt after the
+final isolated daemon restart. Full Electron application lifecycle and Android device interaction
+remain outstanding.
