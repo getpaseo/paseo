@@ -372,6 +372,47 @@ describe("OMP MCP host tools", () => {
       await redirecting.close();
     }
   });
+
+  test("a managed error result is generic while an ordinary server's error is untouched", async () => {
+    const server = await startRedirectingMcpServer();
+    const credential = "Bearer error-result-credential";
+    const url = `http://127.0.0.1:${server.port}/mcp`;
+    const logger = pino({ level: "silent" });
+    try {
+      const managed = await OmpMcpBridge.connect(
+        { memory: { type: "http", url } },
+        process.cwd(),
+        logger,
+        {},
+        { memory: credential },
+        () => undefined,
+      );
+      const ordinary = await OmpMcpBridge.connect(
+        { memory: { type: "http", url, headers: { Authorization: "Bearer ordinary" } } },
+        process.cwd(),
+        logger,
+        {},
+      );
+      try {
+        const name = managed.definitions[0]!.name;
+        const failed = await managed.execute(name, {}, new AbortController().signal);
+        expect(failed.isError).toBe(true);
+        expect(JSON.stringify(failed)).not.toContain(credential);
+        expect(JSON.stringify(failed)).toContain("failed");
+        const echoed = await ordinary.execute(
+          ordinary.definitions[0]!.name,
+          {},
+          new AbortController().signal,
+        );
+        expect(JSON.stringify(echoed)).toContain("Synthetic service rejected Bearer ordinary");
+      } finally {
+        await managed.close();
+        await ordinary.close();
+      }
+    } finally {
+      await server.close();
+    }
+  });
 });
 
 interface SeenRequest {
@@ -380,22 +421,36 @@ interface SeenRequest {
   authorization?: string;
 }
 
-function answerJsonRpc(res: ServerResponse, body: string): void {
+function rpcResult(
+  message: { method: string; params?: { protocolVersion?: string } },
+  authorization?: string,
+) {
+  if (message.method === "initialize") {
+    return {
+      protocolVersion: message.params?.protocolVersion,
+      capabilities: { tools: {} },
+      serverInfo: { name: "redirecting", version: "1" },
+    };
+  }
+  if (message.method === "tools/call") {
+    return {
+      isError: true,
+      content: [{ type: "text", text: `Synthetic service rejected ${authorization}` }],
+    };
+  }
+  return { tools: [{ name: "probe", inputSchema: { type: "object" } }] };
+}
+
+function answerJsonRpc(res: ServerResponse, body: string, authorization?: string): void {
   const message = body ? JSON.parse(body) : {};
   if (message.id === undefined) {
     res.writeHead(202).end();
     return;
   }
-  const result =
-    message.method === "initialize"
-      ? {
-          protocolVersion: message.params.protocolVersion,
-          capabilities: { tools: {} },
-          serverInfo: { name: "redirecting", version: "1" },
-        }
-      : { tools: [] };
   res.writeHead(200, { "content-type": "application/json" });
-  res.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
+  res.end(
+    JSON.stringify({ jsonrpc: "2.0", id: message.id, result: rpcResult(message, authorization) }),
+  );
 }
 
 function handleRedirectingRequest(req: IncomingMessage, res: ServerResponse): void {
@@ -406,7 +461,9 @@ function handleRedirectingRequest(req: IncomingMessage, res: ServerResponse): vo
   }
   const chunks: Buffer[] = [];
   req.on("data", (chunk: Buffer) => chunks.push(chunk));
-  req.on("end", () => answerJsonRpc(res, Buffer.concat(chunks).toString("utf8")));
+  req.on("end", () =>
+    answerJsonRpc(res, Buffer.concat(chunks).toString("utf8"), req.headers.authorization),
+  );
 }
 
 // A streamable HTTP MCP server whose GET stream answers with a same-origin redirect.

@@ -116,6 +116,8 @@ export class OmpMcpBridge {
       throw managedToolFailure(name);
     }
     const result = CallToolResultSchema.parse(raw);
+    // A managed server's error content can echo request material, so only a generic result leaves.
+    if (this.assertAuthorized && result.isError) return managedToolErrorResult(name);
     return {
       content: result.content.map((item) => ({ ...item })),
       ...(result.structuredContent !== undefined
@@ -135,6 +137,10 @@ export class OmpMcpBridge {
 
 function managedToolFailure(name: string): Error {
   return new Error(`Managed MCP tool ${name} failed`);
+}
+
+function managedToolErrorResult(name: string): PaseoToolResult {
+  return { content: [{ type: "text", text: `Managed MCP tool ${name} failed` }], isError: true };
 }
 
 function makeTransport(
