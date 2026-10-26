@@ -20,11 +20,9 @@ import { filterSelectableModels } from "@/provider-selection/model-catalog";
  * `keyof` with an `as` filter drops the index signature and the id together.
  */
 export type AgentProfileValue = {
-  [K in keyof AgentProfile as string extends K
-    ? never
-    : K extends "id"
-      ? never
-      : K]: AgentProfile[K];
+  [
+    K in keyof AgentProfile as string extends K ? never : K extends "id" ? never : K
+  ]: AgentProfile[K];
 };
 
 export interface AgentProfileFormDisplay {

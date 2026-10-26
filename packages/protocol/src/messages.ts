@@ -5875,7 +5875,7 @@ export const PullRequestTimelineResponseSchema = z.object({
       // daemon floor is >= v0.2.0.
       authState: ForgeAuthStateSchema,
     })
-    .optional()
+    // No .optional() here: since zod 4.6.2 that would make the output type optional too.
     .prefault({}),
 });
 

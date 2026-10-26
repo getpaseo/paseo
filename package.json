@@ -128,14 +128,14 @@
     "@types/ws": "^8.5.14",
     "@typescript/native-preview": "7.0.0-dev.20260423.1",
     "@vercel/nft": "^1.5.0",
-    "concurrently": "^9.2.1",
+    "concurrently": "^9.2.5",
     "cross-env": "^10.1.0",
-    "electron": "44.2.0",
+    "electron": "44.9.3",
     "get-port-cli": "^3.0.0",
     "js-yaml": "^4.1.1",
     "knip": "^5.82.1",
     "lefthook": "^2.1.6",
-    "oxfmt": "0.46.0",
+    "oxfmt": "0.74.0",
     "oxlint": "1.61.0",
     "oxlint-tsgolint": "^0.22.1",
     "patch-package": "^8.0.1",
@@ -151,10 +151,15 @@
     "expo-router": "~57.0.28",
     "lightningcss": "1.30.1",
     "react": "19.2.3",
+    "react-devtools-core": {
+      "ws": "^7.5.13"
+    },
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
     "react-native-gesture-handler": "~2.32.0",
     "react-native-reanimated": "4.5.1",
-    "react-native-worklets": "0.10.1"
+    "react-native-worklets": "0.10.1",
+    "undici": "^7.30.1",
+    "vite": "^7.3.7"
   }
 }

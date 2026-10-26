@@ -3150,8 +3150,8 @@ test("snapshot records share provider results across targets while retaining tar
       ),
     );
     const snapshots = targets.map((cwd) => manager.getSnapshot(cwd));
-    const shared = snapshots.map(
-      ({ records }) => records.find(({ entry }) => entry.provider === "codex")!,
+    const shared = snapshots.map(({ records }) =>
+      records.find(({ entry }) => entry.provider === "codex")!,
     );
     expect(shared[0]).toBe(shared[1]);
     expect(shared[1]).toBe(shared[2]);

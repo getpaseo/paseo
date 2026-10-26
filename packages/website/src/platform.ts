@@ -30,6 +30,6 @@ export function detectPlatform(userAgent: string): VisitorPlatform {
  * cache-control, so varying the markup on the user agent is safe — if the
  * homepage ever gains an edge cache, it has to vary on `user-agent` too.
  */
-export const getVisitorPlatform = createServerFn({ method: "GET" }).handler(
-  (): VisitorPlatform => detectPlatform(getRequestHeader("user-agent") ?? ""),
+export const getVisitorPlatform = createServerFn({ method: "GET" }).handler((): VisitorPlatform =>
+  detectPlatform(getRequestHeader("user-agent") ?? ""),
 );

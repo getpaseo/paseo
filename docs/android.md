@@ -262,11 +262,11 @@ Beta tags like `v0.1.1-beta.1` trigger the GitHub APK workflow and EAS `Release 
 cd packages/app
 
 # Recent builds
-npx eas build:list --limit 10 --non-interactive --json | jq '.[] | {platform, status, appVersion, gitCommitHash}'
+npx eas-cli@latest build:list --limit 10 --non-interactive --json | jq '.[] | {platform, status, appVersion, gitCommitHash}'
 
 # Inspect a build (the printed `Logs` URL opens the build's Expo dashboard page,
 # which has a Submissions section showing the auto-submit to the Play Store).
-npx eas build:view <build-id>
+npx eas-cli@latest build:view <build-id>
 ```
 
 The Play Console (Internal testing → Production tracks) is the final confirmation that the binary reached the store.

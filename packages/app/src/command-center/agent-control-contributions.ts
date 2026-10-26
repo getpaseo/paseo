@@ -174,16 +174,14 @@ function buildModelGroup(source: AgentControlContributionSource): CommandCenterC
 function buildThinkingGroup(source: AgentControlContributionSource): CommandCenterChoiceGroup {
   const choices =
     source.thinking.options.length > 1
-      ? source.thinking.options.map(
-          (option): CommandCenterChoice => ({
-            id: option.id,
-            path: [formatThinkingOptionLabel(option)],
-            icon: source.icons.thinking,
-            selected: option.id === source.thinking.selectedId,
-            testId: `command-center-thinking-${source.serverId}:${source.ownerKey}:${option.id}`,
-            select: () => source.thinking.select(option.id),
-          }),
-        )
+      ? source.thinking.options.map((option): CommandCenterChoice => ({
+          id: option.id,
+          path: [formatThinkingOptionLabel(option)],
+          icon: source.icons.thinking,
+          selected: option.id === source.thinking.selectedId,
+          testId: `command-center-thinking-${source.serverId}:${source.ownerKey}:${option.id}`,
+          select: () => source.thinking.select(option.id),
+        }))
       : [];
   return {
     id: "thinking",
@@ -199,16 +197,14 @@ function buildModeGroup(source: AgentControlContributionSource): CommandCenterCh
   const choices = modes
     ? modes.options
         .filter((mode) => !isPlanningAgentMode(mode))
-        .map(
-          (mode): CommandCenterChoice => ({
-            id: mode.id,
-            path: [formatAgentModeLabel(mode)],
-            icon: source.icons.mode(mode.id),
-            selected: mode.id === modes.selectedId,
-            testId: `command-center-mode-${source.serverId}:${source.ownerKey}:${mode.id}`,
-            select: () => modes.select(mode.id),
-          }),
-        )
+        .map((mode): CommandCenterChoice => ({
+          id: mode.id,
+          path: [formatAgentModeLabel(mode)],
+          icon: source.icons.mode(mode.id),
+          selected: mode.id === modes.selectedId,
+          testId: `command-center-mode-${source.serverId}:${source.ownerKey}:${mode.id}`,
+          select: () => modes.select(mode.id),
+        }))
     : [];
   return {
     id: "modes",

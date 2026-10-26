@@ -45,7 +45,7 @@ The component renders state and dispatches intent. That is all it does.
    effects. Input plumbing is fine; orchestration effects are not — the sheet
    itself has zero `useEffect`/`useRef`, and that is the target for every form.
 4. **Resolution is explicit model state, per host** (`idle | pending |
-complete`), keyed off the opened snapshot's serverId. Waiting for data is a
+   complete`), keyed off the opened snapshot's serverId. Waiting for data is a
    state you can render, not an effect race.
 5. **Displays are owned state.** The selected option's label is captured at
    selection/seed time (`setProject(value, display)`), never re-derived from a
