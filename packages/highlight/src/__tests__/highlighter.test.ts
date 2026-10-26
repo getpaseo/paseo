@@ -31,6 +31,35 @@ describe("highlightCode", () => {
     expect(stringToken?.style).toBe("string");
   });
 
+  it("highlights Ruby code", () => {
+    const code = [
+      "class Greeter < Base",
+      "  # say hello",
+      "  def greet(name)",
+      '    puts "hello #{name}" if name',
+      "  end",
+      "end",
+    ].join("\n");
+    const result = highlightCode(code, "greeter.rb");
+
+    expect(result).toHaveLength(6);
+    expect(result[0].find((t) => t.text === "class")?.style).toBe("keyword");
+    expect(result[1].find((t) => t.text.includes("say hello"))?.style).toBe("comment");
+    expect(result[2].find((t) => t.text === "def")?.style).toBe("keyword");
+    expect(result[3].find((t) => t.text.includes("hello"))?.style).toBe("string");
+    expect(result[3].find((t) => t.text === "if")?.style).toBe("keyword");
+  });
+
+  it("highlights extensionless Ruby files by name", () => {
+    const code = 'source "https://rubygems.org"\n\ngem "rails", "~> 7.1"';
+    for (const filename of ["Gemfile", "app/Gemfile", "tasks.rake", "app.gemspec"]) {
+      const result = highlightCode(code, filename);
+      expect(result).toHaveLength(3);
+      expect(result[0].find((t) => t.text.includes("rubygems"))?.style).toBe("string");
+      expect(result[2].find((t) => t.text.includes("rails"))?.style).toBe("string");
+    }
+  });
+
   it("highlights Swift code", () => {
     const code = 'struct Greeter {\n    let message = "hello"\n}';
     const result = highlightCode(code, "test.swift");
