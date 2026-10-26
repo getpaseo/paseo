@@ -4269,6 +4269,132 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
   });
 });
 
+describe("ACP abandoned foreground turn", () => {
+  /**
+   * A session whose spawn is stubbed, so tests can hold a foreground turn that never settles
+   * while asserting what the release path does to the runtime that owned it.
+   */
+  function makeDownturnSession(options: { terminator?: ProcessTerminator } = {}) {
+    const loadSession = vi.fn().mockResolvedValue({
+      sessionId: "session-1",
+      modes: null,
+      models: null,
+      configOptions: [],
+    });
+    const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
+
+    class TestSession extends ACPAgentSession {
+      spawnedChildren = 0;
+
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        this.spawnedChildren += 1;
+        return {
+          child: createProbeChildStub(),
+          connection: {
+            prompt,
+            loadSession,
+            unstable_resumeSession: loadSession,
+          } as unknown as ClientSideConnection,
+          initialize: { agentCapabilities: { loadSession: true } },
+        } as SpawnedACPProcess;
+      }
+    }
+
+    const session = new TestSession(
+      { provider: "claude-acp", cwd: "/tmp/paseo-acp-test" },
+      {
+        provider: "claude-acp",
+        logger: createTestLogger(),
+        defaultCommand: ["claude", "--acp"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+        handle: { sessionId: "session-1", provider: "claude-acp" },
+        ...(options.terminator ? { terminateProcess: options.terminator } : {}),
+      },
+    );
+    return { session, prompt, loadSession };
+  }
+
+  test("releases the turn slot and stops the runtime that never answered cancel", async () => {
+    const terminator = new FakeTerminator();
+    const { session } = makeDownturnSession({ terminator: terminator.terminate });
+    await session.initializeResumedSession();
+    await session.startTurn("first");
+    expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeTruthy();
+
+    await session.abandonForegroundTurn();
+
+    expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+    expect(terminator.terminated).toHaveLength(1);
+  });
+
+  test("the next prompt reconnects in a new process instead of failing on the held slot", async () => {
+    const terminator = new FakeTerminator();
+    const { session } = makeDownturnSession({ terminator: terminator.terminate });
+    await session.initializeResumedSession();
+    await session.startTurn("first");
+    await session.abandonForegroundTurn();
+
+    await expect(session.startTurn("second")).resolves.toEqual({ turnId: expect.any(String) });
+
+    expect(terminator.terminated).toHaveLength(1);
+    // One spawn for the first turn, one for the resume the release forced.
+    expect((session as unknown as { spawnedChildren: number }).spawnedChildren).toBe(2);
+    expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeTruthy();
+  });
+
+  test("does not replay history a second time when it reconnects", async () => {
+    const terminator = new FakeTerminator();
+    const { session } = makeDownturnSession({ terminator: terminator.terminate });
+    await session.initializeResumedSession();
+    const historyBefore = [];
+    for await (const event of session.streamHistory()) {
+      historyBefore.push(event);
+    }
+    await session.startTurn("first");
+    await session.abandonForegroundTurn();
+    await session.startTurn("second");
+
+    const replay = [];
+    for await (const event of session.streamHistory()) {
+      replay.push(event);
+    }
+    expect(replay).toEqual([]);
+  });
+
+  test("rejects when the provider process cannot be stopped", async () => {
+    let attempts = 0;
+    const session = makeDownturnSession({
+      terminator: async () => {
+        attempts += 1;
+        return attempts === 1 ? "kill-timeout" : "terminated";
+      },
+    }).session;
+    await session.initializeResumedSession();
+    await session.startTurn("first");
+
+    await expect(session.abandonForegroundTurn()).rejects.toThrow(
+      "the provider process did not exit",
+    );
+    expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+    // The process is still alive and nothing else holds it: close() must be able to retry.
+    await expect(session.close()).resolves.toBeUndefined();
+    expect(attempts).toBe(2);
+  });
+
+  test("is a no-op on a session that has no id yet", async () => {
+    const session = makeDownturnSession().session;
+    await expect(session.abandonForegroundTurn()).resolves.toBeUndefined();
+  });
+});
+
 const SILENT_CLOSE_ACP_AGENT = `
 import { readFileSync, writeFileSync } from "node:fs";
 import { Readable, Writable } from "node:stream";

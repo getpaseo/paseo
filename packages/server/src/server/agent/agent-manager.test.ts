@@ -1364,6 +1364,7 @@ class McpCapableTestAgentClient extends TestAgentClient {
 
 class ControlledInterruptSession extends TestAgentSession {
   interruptCalled = false;
+  abandonCalls = 0;
 
   constructor(
     config: AgentSessionConfig,
@@ -1383,6 +1384,16 @@ class ControlledInterruptSession extends TestAgentSession {
   override async interrupt(): Promise<void> {
     this.interruptCalled = true;
     await this.interruptBehavior(this);
+  }
+
+  override async abandonForegroundTurn(): Promise<void> {
+    this.abandonCalls += 1;
+    this.pushEvent({
+      type: "turn_canceled",
+      provider: this.provider,
+      reason: "Interrupted",
+      turnId: this.turnId,
+    });
   }
 }
 
@@ -2780,6 +2791,91 @@ test("cancelAgentRun succeeds when the provider queues completion before rejecti
       lifecycle: "idle",
       activeForegroundTurnId: null,
     });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a force-canceled foreground turn releases the provider turn it never settled", async () => {
+  const fixture = await createControlledInterruptFixture({
+    name: "interrupt-acknowledged-no-settle",
+    agentId: "00000000-0000-4000-8000-000000000307",
+    turnId: "stuck-after-cancel-turn",
+    // The provider answers cancel but never answers session/prompt, so the run stays unsettled
+    // and the manager has to force-cancel its own side of the turn.
+    interrupt: async () => {},
+  });
+
+  try {
+    await fixture.startForegroundRun();
+    expect(fixture.manager.getAgent(fixture.agentId)?.activeForegroundTurnId).toBe(
+      "stuck-after-cancel-turn",
+    );
+
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
+      status: "settled",
+    });
+    expect(fixture.session.abandonCalls).toBe(1);
+    expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+
+    // The session must accept the next prompt: that is the bug this release exists for.
+    await fixture.startForegroundRun();
+    expect(fixture.manager.getAgent(fixture.agentId)?.lifecycle).toBe("running");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a settled cancel does not release the provider turn", async () => {
+  let fixture!: ControlledInterruptFixture;
+  fixture = await createControlledInterruptFixture({
+    name: "interrupt-settled",
+    agentId: "00000000-0000-4000-8000-000000000308",
+    turnId: "settled-turn",
+    interrupt: async (session) => {
+      session.pushEvent({
+        type: "turn_canceled",
+        provider: session.provider,
+        reason: "Interrupted",
+        turnId: "settled-turn",
+      });
+    },
+  });
+
+  try {
+    await fixture.startForegroundRun();
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
+      status: "settled",
+    });
+    expect(fixture.session.abandonCalls).toBe(0);
+    expect(fixture.manager.getAgent(fixture.agentId)?.lifecycle).toBe("idle");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a provider that cannot release the turn still settles the cancel", async () => {
+  const fixture = await createControlledInterruptFixture({
+    name: "interrupt-release-rejected",
+    agentId: "00000000-0000-4000-8000-000000000309",
+    turnId: "release-rejected-turn",
+    interrupt: async () => {},
+  });
+  let releaseAttempts = 0;
+  fixture.session.abandonForegroundTurn = async () => {
+    releaseAttempts += 1;
+    throw new Error("The provider process did not exit");
+  };
+
+  try {
+    await fixture.startForegroundRun();
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
+      status: "settled",
+    });
+    expect(releaseAttempts).toBe(1);
   } finally {
     await fixture.cleanup();
   }

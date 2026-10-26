@@ -1734,7 +1734,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly toolCalls = new Map<string, ACPToolSnapshot>();
   private readonly terminalEntries = new Map<string, TerminalEntry>();
   private readonly persistedHistory: AgentTimelineItem[] = [];
-  private readonly initialHandle?: AgentPersistenceHandle;
+  private initialHandle?: AgentPersistenceHandle;
   private readonly resumePurpose: AgentResumePurpose;
 
   private readonly config: AgentSessionConfig;
@@ -1927,6 +1927,33 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.settleCommandsReady();
   }
 
+  /**
+   * Resume the durable session in a fresh process after `abandonForegroundTurn()` killed the
+   * runtime that owned the abandoned turn.
+   *
+   * The replay that `initializeResumedSession()` drains is duplicate history: the daemon already
+   * has every row up to the abandoned turn. Drop the replayed rows and keep the prior
+   * `historyPending` flag so the timeline is not appended twice.
+   */
+  private async reconnectAbandonedRuntime(): Promise<void> {
+    if (this.connection || !this.sessionId || this.closed) {
+      return;
+    }
+    // A session created in this process never received a resume handle; its durable id is the
+    // handle, the same object `describePersistence()` publishes.
+    this.initialHandle ??= {
+      provider: this.provider,
+      sessionId: this.sessionId,
+      nativeHandle: this.sessionId,
+    };
+    const historyLength = this.persistedHistory.length;
+    const historyPending = this.historyPending;
+    await this.initializeResumedSession();
+    this.persistedHistory.length = historyLength;
+    this.historyPending = historyPending;
+    this.bootstrapThreadEventPending = false;
+  }
+
   private async closeAfterInitializationFailure(error: unknown): Promise<never> {
     try {
       await this.close();
@@ -1963,6 +1990,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (this.closed) {
       throw new Error(`${this.provider} session is closed`);
     }
+    await this.reconnectAbandonedRuntime();
     if (!this.connection || !this.sessionId) {
       throw new Error(`${this.provider} session is not initialized`);
     }
@@ -2551,6 +2579,50 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     if (this.activeForegroundTurnId) {
       await this.connection.cancel({ sessionId: this.sessionId });
+    }
+  }
+
+  /**
+   * ACP turns end when `session/prompt` returns. The manager force-cancels after two seconds
+   * without that answer, so an agent that keeps working after `session/cancel` leaves this
+   * session's turn slot held. The next `startTurn` would then throw "A foreground turn is
+   * already active" on every later prompt, because the daemon believes the agent is idle.
+   *
+   * The runtime that still owns that turn cannot be trusted, so this kills it and drops the
+   * slot. The next prompt respawns through `initializeResumedSession()`; `startTurn` also
+   * reconnects when it finds no connection, which covers the very next message.
+   */
+  async abandonForegroundTurn(): Promise<void> {
+    if (!this.sessionId) {
+      return;
+    }
+
+    this.synthesizeCanceledToolCalls();
+    this.activeForegroundTurnId = null;
+    this.fallbackAssistantMessageId = null;
+    this.submittedUserMessageTurnId = null;
+
+    const child = this.child;
+    this.connection = null;
+    this.child = null;
+    // A command from createTerminal is a peer of the agent process. The dead connection can no
+    // longer release it, so stop those terminals here as well.
+    const terminations = Array.from(this.terminalEntries.values(), (terminal) =>
+      this.terminateProcess(terminal.child, { gracefulTimeoutMs: 200, forceTimeoutMs: 500 }),
+    );
+    this.terminalEntries.clear();
+    if (child) {
+      terminations.push(
+        this.terminateProcess(child, { gracefulTimeoutMs: 200, forceTimeoutMs: 500 }),
+      );
+    }
+    const results = await Promise.all(terminations);
+    if (results.includes("kill-timeout")) {
+      // Keep the child registered so close() can retry; a cleared handle loses the only reference
+      // to a process that is still running.
+      this.child = child;
+      this.connection = null;
+      throw new Error("ACP abandoned turn: the provider process did not exit");
     }
   }
 

@@ -694,6 +694,17 @@ export interface AgentSession {
    * still uncertain.
    */
   interrupt(): Promise<void>;
+  /**
+   * Drop ownership of a foreground turn the provider did not confirm as ended, after `interrupt()`
+   * was acknowledged but the run never settled. The manager calls this only when it has already
+   * force-canceled its own side of that run, so the daemon and the provider must not stay split.
+   *
+   * A provider that implements this must make the session usable again: release the turn slot and
+   * stop trusting the runtime that owned it (kill, replace, or resume it). Reject when the runtime
+   * cannot be released, which keeps the agent in its previous state. Omit it when the provider has
+   * no safe way to reconcile; the manager keeps today's behavior.
+   */
+  abandonForegroundTurn?(): Promise<void>;
   /** Release live runtime resources without archiving or deleting the durable native session. */
   close(): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;

@@ -50,6 +50,15 @@ older cancellation from settling a newer turn. If interruption is rejected or ti
 keeps its active foreground turn and replacement, reload, rewind, and Stop report the failure.
 Accepting new work after an ambiguous interruption would create a split-brain session.
 
+A forced settlement leaves two owners of "is a turn running": the manager has settled the run, while
+the provider session still holds the turn slot it never confirmed ending. `AgentSession.abandonForegroundTurn`
+is the optional seam for that case. The manager calls it after force-canceling, and only then. A
+provider that implements it must make the session usable again, not just clear a local flag: the ACP
+adapter kills the process that owned the turn and drops the slot, and its next `startTurn` resumes the
+durable session in a new process. Clearing the slot while reusing a runtime that may still be working
+would be the split-brain shape this section forbids. Providers that omit the hook keep today's
+behavior, and a rejected release is logged without undoing the settlement.
+
 ## Relationships
 
 Agents can launch other agents via the agent-scoped `create_agent` MCP tool. Agent-scoped creation is always asynchronous and always stamps `paseo.parent-agent-id`, pointing back at the caller. Omit `workspaceId` to use the caller's workspace, or pass an existing workspace ID returned by `create_workspace`. Placement never changes parentage.
