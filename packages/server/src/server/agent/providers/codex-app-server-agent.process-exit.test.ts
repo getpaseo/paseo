@@ -115,23 +115,23 @@ class ProcessExitCodexClient extends CodexAppServerAgentClient implements AgentC
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
-    const session = new CodexAppServerAgentSession(
-      config,
-      null,
-      logger,
-      async () => {
+    const session = new CodexAppServerAgentSession({
+      config: config,
+      resumeHandle: null,
+      logger: logger,
+      spawnAppServer: async () => {
         const appServer = this.appServers.shift();
         if (!appServer) {
           throw new Error("No fake Codex app-server available");
         }
         return appServer.child;
       },
-      {},
-      false,
-      false,
-      false,
-      launchContext?.agentId,
-    );
+      deps: {},
+      ephemeral: false,
+      goalsEnabled: false,
+      autoReviewEnabled: false,
+      agentId: launchContext?.agentId,
+    });
     await session.connect();
     return session;
   }
@@ -591,11 +591,11 @@ test("concurrent session APIs share one reconnect after an idle provider exit", 
   const reconnectGate = new Promise<void>((resolve) => {
     releaseReconnect = resolve;
   });
-  const session = new CodexAppServerAgentSession(
-    { provider: "codex", cwd: workdir, modeId: "auto", model: "gpt-5.4" },
-    null,
-    logger,
-    async () => {
+  const session = new CodexAppServerAgentSession({
+    config: { provider: "codex", cwd: workdir, modeId: "auto", model: "gpt-5.4" },
+    resumeHandle: null,
+    logger: logger,
+    spawnAppServer: async () => {
       const appServer = appServers[spawnCount];
       if (!appServer) {
         throw new Error("No fake Codex app-server available");
@@ -606,7 +606,7 @@ test("concurrent session APIs share one reconnect after an idle provider exit", 
       }
       return appServer.child;
     },
-  );
+  });
 
   try {
     await session.connect();
@@ -640,11 +640,11 @@ test("session close disposes a provider that arrives from an in-flight reconnect
   const reconnectGate = new Promise<void>((resolve) => {
     releaseReconnect = resolve;
   });
-  const session = new CodexAppServerAgentSession(
-    { provider: "codex", cwd: workdir, modeId: "auto", model: "gpt-5.4" },
-    null,
-    logger,
-    async () => {
+  const session = new CodexAppServerAgentSession({
+    config: { provider: "codex", cwd: workdir, modeId: "auto", model: "gpt-5.4" },
+    resumeHandle: null,
+    logger: logger,
+    spawnAppServer: async () => {
       spawnCount += 1;
       if (spawnCount === 1) {
         return initialAppServer.child;
@@ -653,7 +653,7 @@ test("session close disposes a provider that arrives from an in-flight reconnect
       await reconnectGate;
       return lateAppServer.child;
     },
-  );
+  });
   const events: AgentManagerEvent[] = [];
   session.subscribe((event) => {
     events.push({ type: "agent_stream", agentId: "test-agent", event });
