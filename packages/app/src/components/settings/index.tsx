@@ -29,11 +29,16 @@ import { useSettingsRowLayout } from "./row-density";
 export { SettingsGroup } from "./headings/settings-group";
 export { SettingsSection } from "./headings/settings-section";
 export { SettingsCollapsibleRow } from "./collapsible-row";
+export { SettingsDetailRow } from "./detail-row";
 export { SettingsInfoTip } from "./headings/settings-info-tip";
 
-interface AppSettingsRowProps extends Omit<SettingsRowProps, "hint"> {
-  hint?: ReactNode;
+/** What app screens can add to a plugin-facing row: an accessory beside the label, such as an info tip. */
+interface AppRowExtras {
   labelAccessory?: ReactNode;
+}
+
+interface AppSettingsRowProps extends Omit<SettingsRowProps, "hint">, AppRowExtras {
+  hint?: ReactNode;
 }
 
 export function SettingsCard({ children, testID }: { children: ReactNode; testID?: string }) {
@@ -126,7 +131,7 @@ export function SettingsSelect<Value extends string>({
   onValueChange,
   disabled,
   ...row
-}: SettingsSelectProps<Value>) {
+}: SettingsSelectProps<Value> & AppRowExtras) {
   const selectedLabel = options.find((option) => option.value === value)?.label ?? value;
   return (
     <SettingsRow {...row}>
@@ -161,7 +166,7 @@ export function SettingsInput({
   secureTextEntry,
   ref,
   ...row
-}: SettingsInputProps) {
+}: SettingsInputProps & AppRowExtras) {
   const compact = useIsCompactFormFactor();
   const input = useRef<EditingTextInputHandle>(null);
   useImperativeHandle(

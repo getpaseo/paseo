@@ -1,4 +1,8 @@
-import type { LocalSpeechModel } from "@getpaseo/protocol/speech/rpc-schemas";
+import type {
+  LocalSpeechModel,
+  SpeechSettings,
+  SpeechSettingsPatch,
+} from "@getpaseo/protocol/speech/rpc-schemas";
 
 // What the Voice page needs to know about speech providers and models, kept free of React
 // so the option lists and model states are testable on their own.
@@ -7,6 +11,82 @@ export type SpeechProvider = "local" | "openai";
 export type SpeechModelKind = "stt" | "tts";
 
 export const SPEECH_PROVIDERS: readonly SpeechProvider[] = ["local", "openai"];
+
+// The three places that use speech. Each carries its own provider settings in config.json
+// under `features.<site>`.
+export type SpeechSiteId = "dictation.stt" | "voiceMode.stt" | "voiceMode.tts";
+
+export const SPEECH_SITE_KIND: Record<SpeechSiteId, SpeechModelKind> = {
+  "dictation.stt": "stt",
+  "voiceMode.stt": "stt",
+  "voiceMode.tts": "tts",
+};
+
+/** The config path the daemon names in `envOverrides` for a field of a site. */
+export function speechSiteFieldPath(siteId: SpeechSiteId, field: string): string {
+  return `features.${siteId}.${field}`;
+}
+
+/** One site's settings as the daemon reports them, narrowed to what the app can edit. */
+export type SpeechSite =
+  | { provider: "local"; model?: string }
+  | {
+      provider: "openai";
+      hasApiKey: boolean;
+      baseUrl?: string;
+      model?: string;
+      language?: string;
+      voice?: string;
+    }
+  | { provider: "unknown"; id: string };
+
+type SpeechSiteSettings = SpeechSettings["dictation"]["stt"] | SpeechSettings["voiceMode"]["tts"];
+
+export function getSpeechSite(features: SpeechSettings, siteId: SpeechSiteId): SpeechSite {
+  switch (siteId) {
+    case "dictation.stt":
+      return toSpeechSite(features.dictation.stt);
+    case "voiceMode.stt":
+      return toSpeechSite(features.voiceMode.stt);
+    case "voiceMode.tts":
+      return toSpeechSite(features.voiceMode.tts);
+  }
+}
+
+function toSpeechSite(settings: SpeechSiteSettings): SpeechSite {
+  const text = (value: unknown) => (typeof value === "string" && value ? value : undefined);
+  if (settings.provider === "local") return { provider: "local", model: text(settings.model) };
+  if (settings.provider === "openai") {
+    return {
+      provider: "openai",
+      hasApiKey: settings.hasApiKey === true,
+      baseUrl: text(settings.baseUrl),
+      model: text(settings.model),
+      language: text(settings.language),
+      voice: text(settings.voice),
+    };
+  }
+  return { provider: "unknown", id: settings.provider };
+}
+
+export type SpeechSitePatch = NonNullable<
+  | NonNullable<SpeechSettingsPatch["voiceMode"]>["stt"]
+  | NonNullable<SpeechSettingsPatch["voiceMode"]>["tts"]
+>;
+
+export function buildSpeechSitePatch(
+  siteId: SpeechSiteId,
+  patch: SpeechSitePatch,
+): SpeechSettingsPatch {
+  switch (siteId) {
+    case "dictation.stt":
+      return { dictation: { stt: patch } };
+    case "voiceMode.stt":
+      return { voiceMode: { stt: patch } };
+    case "voiceMode.tts":
+      return { voiceMode: { tts: patch } };
+  }
+}
 
 // OpenAI accepts free-form ids so self-hosted servers can use their own; these are the
 // ones the page offers. A saved id outside the list is still shown as an option.
@@ -26,43 +106,31 @@ export interface SpeechModelOption {
   label: string;
 }
 
-export function toSpeechProvider(provider: string): SpeechProvider {
-  return provider === "openai" ? "openai" : "local";
+export function resolveOpenAiModel(kind: SpeechModelKind, model: string | undefined): string {
+  return model ?? OPENAI_MODELS[kind].defaultId;
 }
 
-export function resolveSelectedModel(input: {
+export function resolveLocalModel(input: {
   kind: SpeechModelKind;
-  provider: SpeechProvider;
   model: string | undefined;
   localModels: readonly LocalSpeechModel[];
-}): string {
-  if (input.model) return input.model;
-  if (input.provider === "openai") return OPENAI_MODELS[input.kind].defaultId;
-  return input.localModels.find((m) => m.kind === input.kind && m.isDefault)?.id ?? "";
+}): LocalSpeechModel | undefined {
+  const kindModels = input.localModels.filter((model) => model.kind === input.kind);
+  if (input.model) return kindModels.find((model) => model.id === input.model);
+  return kindModels.find((model) => model.isDefault);
 }
 
-export function buildModelOptions(input: {
-  kind: SpeechModelKind;
-  provider: SpeechProvider;
-  selected: string;
-  localModels: readonly LocalSpeechModel[];
-  notDownloadedLabel: (label: string) => string;
-}): SpeechModelOption[] {
-  if (input.provider === "openai") {
-    return withSelected(
-      OPENAI_MODELS[input.kind].ids.map((id) => ({ value: id, label: id })),
-      input.selected,
-    );
-  }
-  return input.localModels
-    .filter((model) => model.kind === input.kind)
-    .map((model) => ({
-      value: model.id,
-      label: model.status === "installed" ? model.label : input.notDownloadedLabel(model.label),
-    }));
+export function buildOpenAiModelOptions(
+  kind: SpeechModelKind,
+  selected: string,
+): SpeechModelOption[] {
+  return withSelected(
+    OPENAI_MODELS[kind].ids.map((id) => ({ value: id, label: id })),
+    selected,
+  );
 }
 
-export function resolveSelectedVoice(voice: string | undefined): string {
+export function resolveOpenAiVoice(voice: string | undefined): string {
   return voice ?? DEFAULT_OPENAI_VOICE;
 }
 
@@ -76,6 +144,36 @@ export function buildOpenAiVoiceOptions(selected: string): SpeechModelOption[] {
 function withSelected(options: SpeechModelOption[], selected: string): SpeechModelOption[] {
   if (!selected || options.some((option) => option.value === selected)) return options;
   return [...options, { value: selected, label: selected }];
+}
+
+// What a page row says about a site before it is opened.
+export type SpeechSiteSummary =
+  | { kind: "local"; model: string | null }
+  | { kind: "openai"; model: string; missingKey: boolean }
+  | { kind: "unknown"; provider: string };
+
+export function summarizeSpeechSite(input: {
+  siteId: SpeechSiteId;
+  site: SpeechSite;
+  envOverrides: Record<string, string>;
+  localModels: readonly LocalSpeechModel[];
+}): SpeechSiteSummary {
+  const { site, siteId } = input;
+  const kind = SPEECH_SITE_KIND[siteId];
+  switch (site.provider) {
+    case "local": {
+      const model = resolveLocalModel({ kind, model: site.model, localModels: input.localModels });
+      return { kind: "local", model: model?.label ?? site.model ?? null };
+    }
+    case "openai":
+      return {
+        kind: "openai",
+        model: resolveOpenAiModel(kind, site.model),
+        missingKey: !site.hasApiKey && !input.envOverrides[speechSiteFieldPath(siteId, "apiKey")],
+      };
+    case "unknown":
+      return { kind: "unknown", provider: site.id };
+  }
 }
 
 export type LocalModelState =
@@ -108,29 +206,6 @@ export function getLocalModelState(model: LocalSpeechModel): LocalModelState {
 
 export function isLocalModelBusy(model: LocalSpeechModel): boolean {
   return model.status === "downloading" || model.status === "extracting";
-}
-
-// What a collapsed local provider row says: an active download wins over the count.
-export type LocalModelsSummary =
-  | { kind: "downloading"; percent: number | null }
-  | { kind: "extracting" }
-  | { kind: "downloaded"; count: number };
-
-export function summarizeLocalModels(
-  models: readonly LocalSpeechModel[],
-  kind: SpeechModelKind,
-): LocalModelsSummary {
-  const kindModels = models.filter((model) => model.kind === kind);
-  const busy = kindModels.find(isLocalModelBusy);
-  if (busy) {
-    const state = getLocalModelState(busy);
-    if (state.kind === "downloading") return state;
-    return { kind: "extracting" };
-  }
-  return {
-    kind: "downloaded",
-    count: kindModels.filter((model) => model.status === "installed").length,
-  };
 }
 
 export function formatModelSize(bytes: number): string {

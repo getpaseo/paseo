@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { LocalSpeechModel } from "@getpaseo/protocol/speech/rpc-schemas";
 import {
-  buildModelOptions,
+  buildOpenAiModelOptions,
   formatLanguages,
   formatModelSize,
   getLocalModelState,
-  resolveSelectedModel,
-  summarizeLocalModels,
+  summarizeSpeechSite,
 } from "./voice-settings";
 
 function model(overrides: Partial<LocalSpeechModel>): LocalSpeechModel {
@@ -37,49 +36,42 @@ const catalog = [
 ];
 
 describe("voice settings", () => {
-  it("falls back to the catalog default when no local model is saved", () => {
-    expect(
-      resolveSelectedModel({
-        kind: "stt",
-        provider: "local",
-        model: undefined,
+  it("summarizes a local site by its model, falling back to the catalog default", () => {
+    const summary = (modelId?: string) =>
+      summarizeSpeechSite({
+        siteId: "dictation.stt",
+        site: { provider: "local", model: modelId },
+        envOverrides: {},
         localModels: catalog,
-      }),
-    ).toBe("parakeet-tdt-0.6b-v2-int8");
-    expect(
-      resolveSelectedModel({
-        kind: "tts",
-        provider: "openai",
-        model: undefined,
-        localModels: catalog,
-      }),
-    ).toBe("tts-1");
+      });
+    expect(summary()).toEqual({ kind: "local", model: "Parakeet v2" });
+    expect(summary("parakeet-tdt-110m-en-int8")).toEqual({
+      kind: "local",
+      model: "Parakeet Small",
+    });
   });
 
-  it("marks local models that still need a download", () => {
-    expect(
-      buildModelOptions({
-        kind: "stt",
-        provider: "local",
-        selected: "parakeet-tdt-0.6b-v2-int8",
+  it("flags an OpenAI site with no saved key and no env key", () => {
+    const summary = (envOverrides: Record<string, string>) =>
+      summarizeSpeechSite({
+        siteId: "voiceMode.tts",
+        site: { provider: "openai", hasApiKey: false },
+        envOverrides,
         localModels: catalog,
-        notDownloadedLabel: (label) => `${label} (not downloaded)`,
-      }),
-    ).toEqual([
-      { value: "parakeet-tdt-0.6b-v2-int8", label: "Parakeet v2" },
-      { value: "parakeet-tdt-110m-en-int8", label: "Parakeet Small (not downloaded)" },
-    ]);
+      });
+    expect(summary({})).toEqual({ kind: "openai", model: "tts-1", missingKey: true });
+    expect(summary({ "features.voiceMode.tts.apiKey": "OPENAI_API_KEY" })).toEqual({
+      kind: "openai",
+      model: "tts-1",
+      missingKey: false,
+    });
   });
 
   it("keeps a custom OpenAI-compatible model id selectable", () => {
-    const options = buildModelOptions({
-      kind: "stt",
-      provider: "openai",
-      selected: "my-whisper",
-      localModels: catalog,
-      notDownloadedLabel: (label) => label,
+    expect(buildOpenAiModelOptions("stt", "my-whisper").at(-1)).toEqual({
+      value: "my-whisper",
+      label: "my-whisper",
     });
-    expect(options.at(-1)).toEqual({ value: "my-whisper", label: "my-whisper" });
   });
 
   it("reports download progress as a percentage", () => {
@@ -90,22 +82,6 @@ describe("voice settings", () => {
       kind: "downloading",
       percent: null,
     });
-  });
-
-  it("summarizes each local provider by its downloads", () => {
-    expect(summarizeLocalModels(catalog, "stt")).toEqual({ kind: "downloaded", count: 1 });
-    expect(summarizeLocalModels(catalog, "tts")).toEqual({ kind: "downloaded", count: 1 });
-    const downloading = [
-      ...catalog,
-      model({
-        id: "parakeet-tdt-0.6b-v3-int8",
-        status: "downloading",
-        receivedBytes: 1,
-        totalBytes: 4,
-      }),
-    ];
-    expect(summarizeLocalModels(downloading, "stt")).toEqual({ kind: "downloading", percent: 25 });
-    expect(summarizeLocalModels(downloading, "tts")).toEqual({ kind: "downloaded", count: 1 });
   });
 
   it("formats download sizes", () => {

@@ -42,6 +42,7 @@ type HostSection =
   | "pair-device"
   | "agents"
   | "metadata"
+  | "voice"
   | "workspaces"
   | "providers"
   | "usage"
