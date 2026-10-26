@@ -2684,6 +2684,10 @@ export const ar: TranslationResources = {
       },
       agents: {
         unavailable: "Connect to this host to manage agents",
+        idleRuntimeCleanup: {
+          title: "تحرير الوكلاء الخاملين",
+          hint: "يوقف عملية الوكيل بعد ساعة من الخمول. تُحفظ المحادثة وتُستأنف مع رسالتك التالية. يبقى الوكيل قيد التشغيل أثناء العمل النشط أو الإشعارات المعلّقة أو فحوصات المزوّد. يسري التغيير فورًا.",
+        },
       },
       workspaces: {
         unavailable: "Connect to this host to manage workspaces",

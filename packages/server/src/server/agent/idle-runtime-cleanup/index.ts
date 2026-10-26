@@ -37,6 +37,8 @@ export function createIdleRuntimeCleanup(options: Options) {
   const protectedAt = new WeakMap<object, { at: number; protected: boolean }>();
   let collection: Promise<CollectionResult> | null = null;
   let stopped = false;
+  let enabled = options.enabled;
+  let generation = 0;
   const isProtected = options.isProtected ?? (() => false);
   const now = options.now ?? Date.now;
 
@@ -52,8 +54,12 @@ export function createIdleRuntimeCleanup(options: Options) {
   function baselineAllows(family: readonly RuntimeCleanupCandidate[]) {
     return family.every((runtime) => runtime.isEligible() && !isProtected(runtime.agentId));
   }
-  async function providersAllow(family: readonly RuntimeCleanupCandidate[]) {
+  async function providersAllow(
+    family: readonly RuntimeCleanupCandidate[],
+    isCurrent: () => boolean,
+  ) {
     for (const runtime of family) {
+      if (!isCurrent()) return false;
       if (!runtime.canStopRuntime) continue;
       const allowed = await withTimeout(
         runtime.canStopRuntime(),
@@ -66,14 +72,19 @@ export function createIdleRuntimeCleanup(options: Options) {
   }
   async function collect(): Promise<CollectionResult> {
     const result: CollectionResult = { collected: [], failures: [] };
-    if (!options.enabled || stopped) return result;
+    const sweepGeneration = generation;
+    const isCurrent = () => enabled && !stopped && generation === sweepGeneration;
+    if (!isCurrent()) return result;
     const timestamp = now();
     const runtimes = options.runtimes();
     for (const runtime of runtimes) {
+      if (!isCurrent()) break;
       if (!runtime.sessionId) continue;
       const family = familyOf(runtime, runtimes);
       try {
-        if (!baselineAllows(family) || !(await providersAllow(family))) {
+        const allowed = baselineAllows(family) && (await providersAllow(family, isCurrent));
+        if (!isCurrent()) break;
+        if (!allowed) {
           protectedAt.set(runtime.identity, { at: timestamp, protected: true });
           options.logger.debug(
             { agentId: runtime.agentId },
@@ -92,6 +103,7 @@ export function createIdleRuntimeCleanup(options: Options) {
         const revalidate = () => {
           const currentFamily = familyOf(runtime, options.runtimes());
           return (
+            isCurrent() &&
             currentFamily.length === family.length &&
             currentFamily.every((current) =>
               family.some((captured) => captured.identity === current.identity),
@@ -107,10 +119,11 @@ export function createIdleRuntimeCleanup(options: Options) {
           };
           result.collected.push(entry);
           options.logger.info(entry, "Collected idle agent runtime");
-        } else {
+        } else if (isCurrent()) {
           protectedAt.set(runtime.identity, { at: timestamp, protected: true });
         }
       } catch (error) {
+        if (!isCurrent()) break;
         protectedAt.set(runtime.identity, { at: timestamp, protected: true });
         result.failures.push({ agentId: runtime.agentId, error });
         options.logger.warn(
@@ -140,6 +153,11 @@ export function createIdleRuntimeCleanup(options: Options) {
   }, 60_000);
   return {
     sweep,
+    setEnabled(value: boolean) {
+      if (enabled === value) return;
+      enabled = value;
+      generation++;
+    },
     async close() {
       stopped = true;
       cancel();

@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { DaemonConfigStore, applyMutableProviderConfigToOverrides } from "./daemon-config-store.js";
+import { loadConfig } from "./config.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 import type { PersistedConfig } from "./persisted-config.js";
 import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
@@ -26,6 +27,7 @@ function reloadableConfig(
     metadataGeneration: { providers: agents.metadataGeneration?.providers ?? [] },
     autoArchiveAfterMerge: daemon.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: daemon.enableTerminalAgentHooks ?? false,
+    idleRuntimeCleanup: agents.idleRuntimeCleanup !== false,
     appendSystemPrompt: daemon.appendSystemPrompt ?? "",
     terminalProfiles: daemon.terminalProfiles,
     agentProfiles: daemon.agentProfiles,
@@ -902,6 +904,43 @@ describe("DaemonConfigStore", () => {
     expect(persisted.agents?.metadataGeneration).toEqual({ providers: [] });
   });
 
+  test("patch persists the host idle runtime cleanup opt-out for the next daemon start", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    writeFileSync(
+      path.join(paseoHome, "config.json"),
+      `${JSON.stringify({
+        version: 1,
+        agents: { metadataGeneration: { providers: [{ provider: "claude" }] } },
+      })}\n`,
+    );
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        idleRuntimeCleanup: true,
+        appendSystemPrompt: "",
+        metadataGeneration: { providers: [{ provider: "claude" }] },
+      },
+      undefined,
+    );
+
+    expect(store.patch({ idleRuntimeCleanup: false }).idleRuntimeCleanup).toBe(false);
+
+    expect(loadPersistedConfig(paseoHome).agents).toEqual({
+      metadataGeneration: { providers: [{ provider: "claude" }] },
+      idleRuntimeCleanup: false,
+    });
+    expect(loadConfig(paseoHome, { env: {} }).idleRuntimeCleanup).toBe(false);
+
+    store.patch({ idleRuntimeCleanup: true });
+    expect(loadConfig(paseoHome, { env: {} }).idleRuntimeCleanup).toBe(true);
+  });
+
   test("patch persists custom ACP provider overrides into config.json", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);
@@ -1011,6 +1050,29 @@ describe("DaemonConfigStore reload", () => {
     });
     expect(store.get().browserTools.enabled).toBe(true);
     expect(store.get().git).toEqual({ maxProcessesPerSecond: 12, maxProcessConcurrency: 3 });
+  });
+
+  test("reloads idle runtime cleanup in both directions without requiring a restart", () => {
+    const { paseoHome, store, persisted } = createReloadableStore();
+    const changes: unknown[] = [];
+    store.onFieldChange("idleRuntimeCleanup", (value) => changes.push(value));
+    for (const enabled of [false, true]) {
+      writeConfig(paseoHome, { ...persisted, agents: { idleRuntimeCleanup: enabled } });
+      expect(store.reload()).toEqual({
+        appliedPaths: ["agents.idleRuntimeCleanup"],
+        restartRequiredPaths: [],
+        overrideControlledPaths: [],
+      });
+      expect(store.get().idleRuntimeCleanup).toBe(enabled);
+    }
+    expect(changes).toEqual([false, true]);
+    store.patch({ idleRuntimeCleanup: false });
+    expect(store.reload()).toEqual({
+      appliedPaths: [],
+      restartRequiredPaths: [],
+      overrideControlledPaths: [],
+    });
+    expect(store.get().idleRuntimeCleanup).toBe(false);
   });
 
   test("applies the global plugin switch in both directions", () => {

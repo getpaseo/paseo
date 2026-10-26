@@ -17,6 +17,8 @@ class Runtime {
   activity = 0;
   parentAgentId: string | undefined;
   probe: (() => Promise<boolean>) | undefined;
+  admitClose: (() => Promise<void>) | undefined;
+  finishClose: (() => Promise<void>) | undefined;
   constructor(readonly id = "agent") {}
   capture(): RuntimeCleanupCandidate {
     const activity = this.activity;
@@ -30,8 +32,10 @@ class Runtime {
       isEligible: () => !this.closed && !this.busy && this.activity === activity,
       canStopRuntime: this.probe,
       closeIfEligible: async (eligible) => {
+        await this.admitClose?.();
         if (!eligible()) return false;
         this.closed = true;
+        await this.finishClose?.();
         return true;
       },
     };
@@ -193,4 +197,98 @@ test("a managed descendant without persistence still protects its parent while w
     { agentId: "agent", provider: "test", sessionId: "agent" },
   ]);
   expect(child.closed).toBe(false);
+});
+
+test("the live host switch retains eligible runtimes and re-enables with their existing idle clocks", async () => {
+  const s = scenario();
+  s.cleanup.setEnabled(false);
+  expect((await s.sweep(61)).collected).toEqual([]);
+  expect(s.runtime.closed).toBe(false);
+  s.cleanup.setEnabled(true);
+  s.tick();
+  expect((await s.cleanup.sweep()).collected).toHaveLength(1);
+});
+
+test.each([false, true])(
+  "disabling during a probe invalidates the sweep (re-enable: %s)",
+  async (reEnable) => {
+    const s = scenario();
+    const probe = deferred<boolean>();
+    s.runtime.probe = () => probe.promise;
+    const collecting = s.sweep(61);
+    s.cleanup.setEnabled(false);
+    if (reEnable) s.cleanup.setEnabled(true);
+    probe.resolve(true);
+    expect((await collecting).collected).toEqual([]);
+    expect(s.runtime.closed).toBe(false);
+    s.cleanup.setEnabled(true);
+    expect((await s.sweep(62)).collected).toHaveLength(1);
+  },
+);
+
+test.each([false, true])(
+  "disabling while waiting for lifecycle admission prevents closure (re-enable: %s)",
+  async (reEnable) => {
+    const s = scenario();
+    const admitted = deferred<void>();
+    const waiting = deferred<void>();
+    s.runtime.admitClose = () => {
+      waiting.resolve();
+      return admitted.promise;
+    };
+    const collecting = s.sweep(61);
+    await waiting.promise;
+    s.cleanup.setEnabled(false);
+    if (reEnable) s.cleanup.setEnabled(true);
+    admitted.resolve();
+    expect((await collecting).collected).toEqual([]);
+    expect(s.runtime.closed).toBe(false);
+    s.cleanup.setEnabled(true);
+    expect((await s.sweep(62)).collected).toHaveLength(1);
+  },
+);
+
+test.each(["veto", "error"])(
+  "an invalidated provider %s does not reset the idle clock",
+  async (outcome) => {
+    const s = scenario();
+    const probe = deferred<boolean>();
+    s.runtime.probe = async () => {
+      await probe.promise;
+      if (outcome === "error") throw new Error("Old probe failed");
+      return false;
+    };
+    const collecting = s.sweep(61);
+    s.cleanup.setEnabled(false);
+    s.cleanup.setEnabled(true);
+    probe.resolve(false);
+    expect(await collecting).toEqual({ collected: [], failures: [] });
+    s.runtime.probe = async () => true;
+    expect((await s.sweep(62)).collected).toHaveLength(1);
+  },
+);
+
+test("disabling lets a started close finish but prevents the next closure in that sweep", async () => {
+  const s = scenario();
+  const sibling = new Runtime("sibling");
+  s.runtimes.push(sibling);
+  const closing = deferred<void>();
+  const finished = deferred<void>();
+  s.runtime.finishClose = () => {
+    closing.resolve();
+    return finished.promise;
+  };
+  const collecting = s.sweep(61);
+  await closing.promise;
+  expect(s.runtime.closed).toBe(true);
+  s.cleanup.setEnabled(false);
+  finished.resolve();
+  expect((await collecting).collected).toEqual([
+    { agentId: "agent", provider: "test", sessionId: "agent" },
+  ]);
+  expect(sibling.closed).toBe(false);
+  s.cleanup.setEnabled(true);
+  expect((await s.sweep(62)).collected).toEqual([
+    { agentId: "sibling", provider: "test", sessionId: "sibling" },
+  ]);
 });

@@ -2704,6 +2704,10 @@ export const es: TranslationResources = {
       },
       agents: {
         unavailable: "Connect to this host to manage agents",
+        idleRuntimeCleanup: {
+          title: "Liberar agentes inactivos",
+          hint: "Detiene el proceso de un agente tras una hora de inactividad. La conversación se conserva y se reanuda con tu próximo mensaje. El trabajo activo, las notificaciones pendientes y las comprobaciones del proveedor lo mantienen en ejecución. Los cambios se aplican de inmediato.",
+        },
       },
       workspaces: {
         unavailable: "Connect to this host to manage workspaces",

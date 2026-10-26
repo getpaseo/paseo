@@ -88,15 +88,17 @@ See [Providers](/docs/providers) for the mental model and [Supported providers](
 
 Paseo releases resumable idle agent processes after one hour when its daemon baseline allows
 cleanup and any implemented provider check agrees. Your next prompt resumes the same conversation. Disable this
-for the entire host with:
+for the entire host by turning off **Release idle agents** in **Settings → your host → Agents**, or with:
 
 ```json
 { "agents": { "idleRuntimeCleanup": false } }
 ```
 
-This setting defaults to `true` and requires a daemon restart to change. There is no per-agent
-setting. Providers without a runtime safety check use the same daemon baseline and one-hour idle
-period. Active work, descendants and pending finish notifications prevent cleanup.
+This setting defaults to `true`. Changes in Settings apply immediately; config-file edits apply
+on config reload. Re-enabling keeps existing idle timestamps. There is no per-agent setting. Providers without a runtime safety check use the same daemon baseline and one-hour idle
+period. Active work, descendants and pending finish notifications prevent cleanup. ACP adapters
+also retain runtimes with running ACP terminals, including silent ones; exited terminals do not
+prevent cleanup. This check does not inspect processes launched internally by the provider.
 
 ## Worktrees
 

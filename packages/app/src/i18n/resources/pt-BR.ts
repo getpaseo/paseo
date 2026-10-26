@@ -2686,6 +2686,10 @@ export const ptBR: TranslationResources = {
       },
       agents: {
         unavailable: "Conecte-se a este host para gerenciar agentes",
+        idleRuntimeCleanup: {
+          title: "Liberar agentes ociosos",
+          hint: "Encerra o processo de um agente após uma hora ociosa. A conversa é mantida e retomada na sua próxima mensagem. Trabalho ativo, notificações pendentes e verificações do provedor o mantêm em execução. As alterações entram em vigor imediatamente.",
+        },
       },
       workspaces: {
         unavailable: "Conecte-se a este host para gerenciar workspaces",

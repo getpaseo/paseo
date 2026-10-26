@@ -326,6 +326,25 @@ export async function expectHostInjectMcpCard(page: Page): Promise<void> {
   await expect(card.getByRole("switch", { name: "Inject Paseo tools" })).toBeVisible();
 }
 
+function idleAgentReleaseSwitch(page: Page) {
+  return page
+    .getByTestId("host-page-idle-runtime-cleanup-card")
+    .getByRole("switch", { name: "Release idle agents" });
+}
+
+export async function expectIdleAgentRelease(page: Page, enabled: boolean): Promise<void> {
+  const toggle = idleAgentReleaseSwitch(page);
+  await expect(toggle).toBeEnabled();
+  await expect(toggle).toHaveAttribute("aria-checked", String(enabled));
+}
+
+export async function setIdleAgentRelease(page: Page, enabled: boolean): Promise<void> {
+  const toggle = idleAgentReleaseSwitch(page);
+  await expect(toggle).toHaveAttribute("aria-checked", String(!enabled));
+  await toggle.click();
+  await expectIdleAgentRelease(page, enabled);
+}
+
 export async function openHostSection(
   page: Page,
   serverId: string,

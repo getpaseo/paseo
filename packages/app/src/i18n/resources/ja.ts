@@ -2673,6 +2673,10 @@ export const ja: TranslationResources = {
       },
       agents: {
         unavailable: "エージェントを管理するにはこのホストに接続してください",
+        idleRuntimeCleanup: {
+          title: "アイドル状態のエージェントを解放",
+          hint: "1 時間操作がないエージェントのプロセスを停止します。会話は保持され、次のメッセージで再開します。実行中の作業、保留中の通知、プロバイダーのチェックがある間は停止しません。変更はすぐに反映されます。",
+        },
       },
       workspaces: {
         unavailable: "ワークスペースを管理するにはこのホストに接続してください",

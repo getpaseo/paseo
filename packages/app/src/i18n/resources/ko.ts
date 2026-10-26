@@ -2659,6 +2659,10 @@ export const ko: TranslationResources = {
       },
       agents: {
         unavailable: "에이전트를 관리하려면 이 호스트에 연결하세요",
+        idleRuntimeCleanup: {
+          title: "유휴 에이전트 해제",
+          hint: "1시간 동안 활동이 없는 에이전트의 프로세스를 중지합니다. 대화는 유지되며 다음 메시지에서 이어집니다. 진행 중인 작업, 대기 중인 알림, 프로바이더 검사가 있으면 계속 실행됩니다. 변경 사항은 즉시 적용됩니다.",
+        },
       },
       workspaces: {
         unavailable: "워크스페이스를 관리하려면 이 호스트에 연결하세요",

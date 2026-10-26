@@ -28,7 +28,9 @@ replacement. Once closure succeeds, a failed resume leaves the durable agent clo
 Idle resumable runtimes are collected after one hour without activity, checked once a minute.
 Collection releases the process and preserves the agent record, conversation, relationships, and
 provider session. The next prompt resumes that session. Set `agents.idleRuntimeCleanup: false` in
-host config to disable automatic collection; this setting takes effect at daemon startup.
+host config to disable automatic collection. The host setting applies immediately; config-file edits
+apply on reload. Disabling invalidates pending safety checks and close admission. A close already
+started finishes. Re-enabling keeps the existing idle timestamps.
 
 Foreground runs, permissions and responses, queued deliveries, lifecycle operations, and working
 managed or native descendants prevent collection. Outstanding local or remote finish subscriptions
@@ -65,7 +67,9 @@ Provider checks follow the signals their runtimes expose:
   injection, and admitted or scheduled continuations that can re-wake the session. Older OMP
   runtimes without either field stay resident. These signals are not an inventory of arbitrary
   processes.
-- ACP has no provider safety check, so its adapters use baseline-only collection.
+- ACP checks adapter-owned foreground turns, permissions, buffered user messages, and running
+  ACP terminals, including quiet terminals. Exited or failed-to-spawn terminal records do not
+  prevent collection. This does not inspect processes launched internally by the provider.
 
 These checks do not discover arbitrary detached processes or work hidden by third-party
 extensions. A provider plugin adds its own veto through the [runtime safety contract](../public-docs/plugins/providers.md#permit-idle-runtime-cleanup).
