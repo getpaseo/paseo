@@ -125,14 +125,30 @@ export function runDefaultSendAction(ctx: SendActionContext): void {
   ctx.handleSendMessage();
 }
 
+export type AlternateSendAction = "queue" | "send";
+
+/**
+ * What Mod+Enter and a long-press on Send do instead of the default send. Null while
+ * no turn is running, where both fall back to the default send.
+ */
+export function resolveAlternateSendAction(
+  ctx: Pick<SendActionContext, "defaultSendBehavior" | "isAgentRunning" | "onQueue">,
+): AlternateSendAction | null {
+  if (!ctx.isAgentRunning || !ctx.onQueue) return null;
+  return ctx.defaultSendBehavior === "queue" ? "send" : "queue";
+}
+
 export function runAlternateSendAction(ctx: SendActionContext): void {
-  if (ctx.defaultSendBehavior === "queue") {
+  const action = resolveAlternateSendAction(ctx);
+  if (action === "queue") {
+    ctx.handleQueueMessage();
+    return;
+  }
+  if (action === "send") {
     ctx.handleSendMessage();
     return;
   }
-  if (ctx.isAgentRunning && ctx.onQueue) {
-    ctx.handleQueueMessage();
-  }
+  runDefaultSendAction(ctx);
 }
 
 export function runMessageInputKeyboardAction(

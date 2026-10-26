@@ -134,6 +134,8 @@ export const ptBR: TranslationResources = {
       sendAndInterrupt: "Enviar e interromper",
       sendAndSteer: "Enviar e orientar",
       sendMessage: "Enviar mensagem",
+      longPressToQueue: "Mantenha pressionado para enfileirar",
+      longPressToSendNow: "Mantenha pressionado para enviar agora",
       queue: "Fila",
       send: "Enviar",
     },

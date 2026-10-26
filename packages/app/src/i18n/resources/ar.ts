@@ -133,6 +133,8 @@ export const ar: TranslationResources = {
       sendAndInterrupt: "إرسال ومقاطعة",
       sendAndSteer: "إرسال وتوجيه",
       sendMessage: "أرسل رسالة",
+      longPressToQueue: "اضغط مطولًا لإضافتها إلى الطابور",
+      longPressToSendNow: "اضغط مطولًا للإرسال الآن",
       queue: "طابور",
       send: "يرسل",
     },
