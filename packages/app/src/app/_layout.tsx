@@ -68,6 +68,8 @@ import {
   resolveDesktopAppContentMinimum,
   resolveDesktopSidebarVisibility,
   resolveSidebarActivity,
+  resolveDesktopSidebarWidth,
+  resolveSidebarPresentation,
 } from "@/components/desktop-sidebar-layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { HorizontalScrollProvider } from "@/contexts/horizontal-scroll-context";
@@ -441,6 +443,12 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       viewportWidth,
     }),
   });
+  const sidebarPresentation = resolveSidebarPresentation({
+    chromeEnabled,
+    isCompactLayout,
+    isFocusModeEnabled: isWorkspaceFocusModeEnabled,
+    desktopSidebarVisible,
+  });
   const hasTopLeftWindowControls = useHasWindowChromeObstruction("top-left");
   const appChromeLayout = resolveDesktopAppChromeLayout({
     desktopSidebarRendered: desktopSidebarVisible,
@@ -450,7 +458,8 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const sidebarChrome = (
     <SidebarChrome
       mounted={isCompactLayout ? chromeEnabled : desktopSidebarMounted}
-      visible={isCompactLayout ? chromeEnabled : desktopSidebarVisible}
+      visible={sidebarPresentation.visible}
+      desktopOverlay={sidebarPresentation.desktopOverlay}
       keyboardShortcutsEnabled={keyboardShortcutsEnabled}
     />
   );
@@ -531,7 +540,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   );
 
   return (
-    <AppContainerLifetime compactGesturesEnabled={chromeEnabled && isCompactLayout}>
+    <AppContainerLifetime sidebarGesturesEnabled={sidebarPresentation.openGesturesEnabled}>
       <SheetHostScope enabled={isCompactLayout}>{surface}</SheetHostScope>
     </AppContainerLifetime>
   );
@@ -539,15 +548,15 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
 
 function AppContainerLifetime({
   children,
-  compactGesturesEnabled,
+  sidebarGesturesEnabled,
 }: {
   children: ReactNode;
-  compactGesturesEnabled: boolean;
+  sidebarGesturesEnabled: boolean;
 }) {
   return (
     <ComposerEditingSessionsProvider>
       <CommandCenterProvider>
-        <MobileGestureWrapper chromeEnabled={compactGesturesEnabled}>
+        <MobileGestureWrapper chromeEnabled={sidebarGesturesEnabled}>
           {children}
         </MobileGestureWrapper>
       </CommandCenterProvider>
@@ -559,21 +568,31 @@ function SidebarChrome({
   mounted,
   visible,
   keyboardShortcutsEnabled,
+  desktopOverlay,
 }: {
   mounted: boolean;
   visible: boolean;
   keyboardShortcutsEnabled: boolean;
+  desktopOverlay: boolean;
 }) {
   const isCompactLayout = useIsCompactFormFactor();
   const isMobileActive = useIsMobilePanelActive("agent-list");
-  const active = resolveSidebarActivity(visible, isCompactLayout, isMobileActive);
+  const overlay = isCompactLayout || desktopOverlay;
+  const active = resolveSidebarActivity(visible, overlay, isMobileActive);
   const hardwareKeyboardPresent = useHardwareKeyboardPresent();
+  const mobilePanelTarget = usePanelStore((state) => state.mobilePanel.target);
+  const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
+  useEffect(() => {
+    if (!overlay && mobilePanelTarget === "agent-list") {
+      showMobileAgent();
+    }
+  }, [overlay, mobilePanelTarget, showMobileAgent]);
   return (
     <SidebarModelProvider
       active={active}
       keyboardNavigationActive={keyboardShortcutsEnabled && hardwareKeyboardPresent}
     >
-      {mounted ? <LeftSidebar active={active} /> : null}
+      {mounted ? <LeftSidebar active={active} desktopOverlay={desktopOverlay} /> : null}
       <WorkspaceShortcutTargetsSubscriber enabled={keyboardShortcutsEnabled} />
     </SidebarModelProvider>
   );
@@ -586,8 +605,21 @@ function MobileGestureWrapper({
   children: ReactNode;
   chromeEnabled: boolean;
 }) {
-  const openGesture = useOpenAgentListGesture(chromeEnabled);
   const isCompactLayout = useIsCompactFormFactor();
+  const { width: windowWidth } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
+  const panelWidth = isCompactLayout
+    ? windowWidth
+    : resolveDesktopSidebarWidth({
+        requestedWidth: sidebarWidth,
+        viewportWidth: windowWidth - insets.left - insets.right,
+      });
+  const openGesture = useOpenAgentListGesture({
+    enabled: chromeEnabled,
+    panelWidth,
+    edgeOnly: isWeb || !isCompactLayout,
+  });
 
   return (
     <GestureDetector gesture={openGesture} touchAction={MOBILE_WEB_GESTURE_TOUCH_ACTION}>

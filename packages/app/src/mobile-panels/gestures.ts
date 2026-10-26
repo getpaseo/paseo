@@ -9,7 +9,7 @@ import { canBeginMobilePanelGesture, isMobilePanelGestureCurrent } from "./model
 import { useMobilePanelsRuntime } from "./provider";
 import { resolveMobilePanelGestureIntent } from "./gesture-intent";
 
-const MOBILE_WEB_EDGE_SWIPE_WIDTH = 32;
+const PANEL_OPEN_EDGE_WIDTH = 32;
 
 function isCurrentSelection(startedRevision: number): boolean {
   return usePanelStore.getState().mobilePanel.revision === startedRevision;
@@ -34,7 +34,15 @@ function useRevisionCommit(action: () => void) {
   );
 }
 
-export function useOpenAgentListGesture(enabled: boolean) {
+export function useOpenAgentListGesture({
+  enabled,
+  panelWidth,
+  edgeOnly = isWeb,
+}: {
+  enabled: boolean;
+  panelWidth?: number;
+  edgeOnly?: boolean;
+}) {
   const {
     beginGesture,
     finishGesture,
@@ -45,6 +53,7 @@ export function useOpenAgentListGesture(enabled: boolean) {
     updateGesture,
     windowWidth,
   } = useMobilePanelsRuntime();
+  const width = panelWidth ?? windowWidth;
   const horizontalScroll = useHorizontalScrollOptional();
   const { startedRevision, touchStartX, touchStartY } = useGestureState();
   const showMobileAgentList = usePanelStore((state) => state.showMobileAgentList);
@@ -84,7 +93,7 @@ export function useOpenAgentListGesture(enabled: boolean) {
           if (
             !canBeginMobilePanelGesture(motionState.value, "agent", position.value) ||
             horizontalScroll?.isAnyScrolledRight.value ||
-            (isWeb && touchStartX.value > MOBILE_WEB_EDGE_SWIPE_WIDTH) ||
+            (edgeOnly && touchStartX.value > PANEL_OPEN_EDGE_WIDTH) ||
             panIntent === "fail"
           ) {
             stateManager.fail();
@@ -98,10 +107,10 @@ export function useOpenAgentListGesture(enabled: boolean) {
           startedRevision.value = beginGesture({ origin: "agent" });
         })
         .onUpdate((event) => {
-          updateGesture(startedRevision.value, -event.translationX / windowWidth);
+          updateGesture(startedRevision.value, -event.translationX / width);
         })
         .onEnd((event, success) => {
-          const shouldOpen = event.translationX > windowWidth / 3 || event.velocityX > 500;
+          const shouldOpen = event.translationX > width / 3 || event.velocityX > 500;
           const result = finishGesture({
             startedRevision: startedRevision.value,
             target: shouldOpen ? "agent-list" : "agent",
@@ -114,6 +123,7 @@ export function useOpenAgentListGesture(enabled: boolean) {
     [
       commit,
       enabled,
+      edgeOnly,
       beginGesture,
       finishGesture,
       horizontalScroll?.isAnyScrolledRight,
@@ -125,12 +135,15 @@ export function useOpenAgentListGesture(enabled: boolean) {
       touchStartX,
       touchStartY,
       updateGesture,
-      windowWidth,
+      width,
     ],
   );
 }
 
-export function useCloseAgentListGesture() {
+export function useCloseAgentListGesture({
+  enabled = true,
+  panelWidth,
+}: { enabled?: boolean; panelWidth?: number } = {}) {
   const {
     beginGesture,
     finishGesture,
@@ -140,6 +153,7 @@ export function useCloseAgentListGesture() {
     updateGesture,
     windowWidth,
   } = useMobilePanelsRuntime();
+  const width = panelWidth ?? windowWidth;
   const { startedRevision, touchStartX, touchStartY } = useGestureState();
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
   const commit = useRevisionCommit(showMobileAgent);
@@ -148,6 +162,7 @@ export function useCloseAgentListGesture() {
     () =>
       Gesture.Pan()
         .withRef(leftCloseGestureRef)
+        .enabled(enabled)
         .manualActivation(true)
         .onTouchesDown((event) => {
           const touch = event.changedTouches[0];
@@ -191,10 +206,10 @@ export function useCloseAgentListGesture() {
           });
         })
         .onUpdate((event) => {
-          updateGesture(startedRevision.value, -1 - event.translationX / windowWidth);
+          updateGesture(startedRevision.value, -1 - event.translationX / width);
         })
         .onEnd((event, success) => {
-          const shouldClose = event.translationX < -windowWidth / 3 || event.velocityX < -500;
+          const shouldClose = event.translationX < -width / 3 || event.velocityX < -500;
           const result = finishGesture({
             startedRevision: startedRevision.value,
             target: shouldClose ? "agent" : "agent-list",
@@ -207,6 +222,7 @@ export function useCloseAgentListGesture() {
     [
       beginGesture,
       commit,
+      enabled,
       finishGesture,
       leftCloseGestureRef,
       motionState,
@@ -215,7 +231,7 @@ export function useCloseAgentListGesture() {
       touchStartX,
       touchStartY,
       updateGesture,
-      windowWidth,
+      width,
     ],
   );
 
@@ -276,7 +292,7 @@ export function useOpenFileExplorerGesture({ enabled, onOpen }: OpenFileExplorer
           });
           if (
             !canBeginMobilePanelGesture(motionState.value, "agent", position.value) ||
-            (isWeb && touchStartX.value < windowWidth - MOBILE_WEB_EDGE_SWIPE_WIDTH) ||
+            (isWeb && touchStartX.value < windowWidth - PANEL_OPEN_EDGE_WIDTH) ||
             panIntent === "fail"
           ) {
             stateManager.fail();
