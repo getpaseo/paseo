@@ -702,14 +702,21 @@ export class ScheduleService {
       const runningRun: ScheduleRun = {
         id: runId,
         scheduledFor: manual ? now.toISOString() : (schedule.nextRunAt ?? now.toISOString()),
-        startedAt: now.toISOString(),
+        startedAt: this.now().toISOString(),
         endedAt: null,
         status: "running",
         agentId: null,
         output: null,
         error: null,
       };
-      const scheduleWithRun = await this.appendRunningRun(schedule.id, runningRun);
+      const scheduleWithRun = await this.appendRunningRun({
+        scheduleId: schedule.id,
+        runningRun,
+        manual,
+      });
+      if (!scheduleWithRun) {
+        return;
+      }
 
       try {
         const result = await this.runner(scheduleWithRun, runId);
@@ -740,16 +747,35 @@ export class ScheduleService {
     }
   }
 
-  private async appendRunningRun(
-    scheduleId: string,
-    runningRun: ScheduleRun,
-  ): Promise<StoredSchedule> {
-    const updated = await this.store.update(scheduleId, (schedule) => ({
-      ...schedule,
-      updatedAt: runningRun.startedAt,
-      runs: [...schedule.runs, runningRun],
-    }));
-    return requireSchedule(updated, scheduleId);
+  private async appendRunningRun(params: {
+    scheduleId: string;
+    runningRun: ScheduleRun;
+    manual: boolean;
+  }): Promise<StoredSchedule | null> {
+    let claimed = false;
+    const updated = await this.store.update(params.scheduleId, (schedule) => {
+      // Another tick may have handled this occurrence while this tick awaited an earlier task.
+      if (
+        !params.manual &&
+        (schedule.status !== "active" ||
+          schedule.nextRunAt !== params.runningRun.scheduledFor ||
+          shouldCompleteSchedule(schedule, this.now()))
+      ) {
+        return schedule;
+      }
+      claimed = true;
+      return {
+        ...schedule,
+        updatedAt: params.runningRun.startedAt,
+        runs: [...schedule.runs, params.runningRun],
+      };
+    });
+    if (!updated && !params.manual) {
+      // Deletion while a tick awaited an earlier run must not block other due schedules.
+      return null;
+    }
+    const schedule = requireSchedule(updated, params.scheduleId);
+    return claimed ? schedule : null;
   }
 
   private async finishRun(params: {
@@ -782,6 +808,7 @@ export class ScheduleService {
         lastRunAt: now.toISOString(),
         updatedAt: now.toISOString(),
       };
+      const finishedRun = completedRuns.find((run) => run.id === params.runId);
 
       if (params.targetGone) {
         // The target is permanently gone; retrying only burns the schedule down to
@@ -799,7 +826,9 @@ export class ScheduleService {
           ...updated,
           nextRunAt: null,
         };
-      } else {
+      } else if (updated.nextRunAt === finishedRun?.scheduledFor) {
+        // An edit/resume during this run may already have selected the next occurrence.
+        // Only consume the occurrence that this run actually claimed.
         const after = new Date(schedule.nextRunAt ?? now.toISOString());
         let nextRunAt = computeNextRunAt(updated.cadence, after);
         while (nextRunAt.getTime() <= now.getTime()) {

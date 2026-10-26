@@ -345,6 +345,178 @@ describe("ScheduleService", () => {
     expect(inspected.nextRunAt).toBe("2026-01-01T00:02:00.000Z");
   });
 
+  test("overlapping ticks run each due occurrence once without skipping the next day", async () => {
+    let releaseFirstRun = () => {};
+    let notifyFirstRun = () => {};
+    const firstRunStarted = new Promise<void>((resolve) => {
+      notifyFirstRun = resolve;
+    });
+    const firstRunBlocked = new Promise<void>((resolve) => {
+      releaseFirstRun = resolve;
+    });
+    const executions: string[] = [];
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async (schedule) => {
+        executions.push(schedule.prompt);
+        if (schedule.prompt === "slow task") {
+          notifyFirstRun();
+          await firstRunBlocked;
+        }
+        return { agentId: null, output: "ran" };
+      },
+    });
+    now = new Date("2026-10-24T08:00:00.000Z");
+    await service.create({
+      prompt: "slow task",
+      cadence: { type: "cron", expression: "0 9 * * *", timezone: "Europe/Paris" },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+    now = new Date("2026-10-24T08:00:00.001Z");
+    const audit = await service.create({
+      prompt: "audit",
+      cadence: { type: "cron", expression: "0 9 * * *", timezone: "Europe/Paris" },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+
+    now = new Date("2026-10-25T08:00:00.000Z");
+    const firstTick = service.tick();
+    await firstRunStarted;
+    now = new Date("2026-10-25T08:00:02.000Z");
+    try {
+      await service.tick();
+    } finally {
+      releaseFirstRun();
+      await firstTick;
+    }
+
+    const inspected = await service.inspect(audit.id);
+    expect(executions).toEqual(["slow task", "audit"]);
+    expect(inspected.runs).toHaveLength(1);
+    expect(inspected.runs[0]).toMatchObject({
+      scheduledFor: "2026-10-25T08:00:00.000Z",
+      status: "succeeded",
+    });
+    expect(inspected.nextRunAt).toBe("2026-10-26T08:00:00.000Z");
+  });
+
+  test("queued schedules honor edits, pauses, deletion and expiry before launching", async () => {
+    let release = () => {};
+    let notifyStarted = () => {};
+    const started = new Promise<void>((resolve) => {
+      notifyStarted = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const executions: string[] = [];
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async (schedule) => {
+        executions.push(schedule.prompt);
+        if (schedule.prompt === "slow") {
+          notifyStarted();
+          await blocked;
+        }
+        return { agentId: null, output: "ran" };
+      },
+    });
+    const schedules: StoredSchedule[] = [];
+    for (const prompt of ["slow", "paused", "rescheduled", "deleted", "expired", "old prompt"]) {
+      schedules.push(
+        await service.create({
+          prompt,
+          cadence: { type: "every", everyMs: 60_000 },
+          target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+        }),
+      );
+      now = new Date(now.getTime() + 1);
+    }
+    const [, paused, rescheduled, deleted, expired, edited] = schedules;
+    now = new Date("2026-01-01T00:01:00.000Z");
+    const tick = service.tick();
+    await started;
+    now = new Date("2026-01-01T00:01:05.000Z");
+    try {
+      await service.pause(paused.id);
+      await service.update({ id: rescheduled.id, cadence: { type: "every", everyMs: 300_000 } });
+      await service.delete(deleted.id);
+      await service.update({ id: expired.id, expiresAt: "2026-01-01T00:01:04.000Z" });
+      await service.update({ id: edited.id, prompt: "new prompt" });
+    } finally {
+      release();
+    }
+    await tick;
+
+    expect(executions).toEqual(["slow", "new prompt"]);
+    expect((await service.inspect(paused.id)).runs).toEqual([]);
+    expect(await service.inspect(rescheduled.id)).toMatchObject({
+      runs: [],
+      nextRunAt: "2026-01-01T00:06:05.000Z",
+    });
+    await expect(service.inspect(deleted.id)).rejects.toThrow("Schedule not found");
+    expect((await service.inspect(expired.id)).runs).toEqual([]);
+    expect((await service.inspect(edited.id)).runs[0]).toMatchObject({
+      startedAt: "2026-01-01T00:01:05.000Z",
+      status: "succeeded",
+    });
+  });
+
+  test("finishing a run preserves the next occurrence selected while it was running", async () => {
+    let release = () => {};
+    let notifyStarted = () => {};
+    const started = new Promise<void>((resolve) => {
+      notifyStarted = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => {
+        notifyStarted();
+        await blocked;
+        return { agentId: null, output: "ran" };
+      },
+    });
+    const schedule = await service.create({
+      prompt: "rescheduled while running",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+    const tick = service.tick();
+    await started;
+    now = new Date("2026-01-01T00:00:10.000Z");
+    try {
+      await service.update({
+        id: schedule.id,
+        cadence: { type: "cron", expression: "0 9 * * *", timezone: "Europe/Paris" },
+      });
+    } finally {
+      release();
+    }
+    await tick;
+    expect(await service.inspect(schedule.id)).toMatchObject({
+      nextRunAt: "2026-01-01T08:00:00.000Z",
+      runs: [{ status: "succeeded", output: "ran" }],
+    });
+  });
+
   test("pause and resume update persisted schedule state", async () => {
     const service = createScheduleService({
       paseoHome: tempDir,
