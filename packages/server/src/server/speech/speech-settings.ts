@@ -66,6 +66,13 @@ export function readSpeechSettings(persisted: PersistedConfig, env: NodeJS.Proce
     const { apiKey, ...fields } = configured ?? {};
     const openaiModelEnv = kind === "stt" ? "STT_MODEL" : "TTS_MODEL";
     recordOverride(`${path}.model`, [provider === "openai" ? openaiModelEnv : localModelEnv]);
+    if (kind === "stt") {
+      const languageVars =
+        path === "features.dictation.stt"
+          ? ["PASEO_DICTATION_LANGUAGE"]
+          : ["PASEO_VOICE_LANGUAGE", "PASEO_DICTATION_LANGUAGE"];
+      recordOverride(`${path}.language`, languageVars);
+    }
     if (provider === "openai") {
       for (const [field, suffix] of [
         ["apiKey", "API_KEY"],
@@ -78,11 +85,6 @@ export function readSpeechSettings(persisted: PersistedConfig, env: NodeJS.Proce
         );
       }
       if (kind === "stt") {
-        const languageVars =
-          path === "features.dictation.stt"
-            ? ["PASEO_DICTATION_LANGUAGE"]
-            : ["PASEO_VOICE_LANGUAGE", "PASEO_DICTATION_LANGUAGE"];
-        recordOverride(`${path}.language`, languageVars);
         recordOverride(`${path}.confidenceThreshold`, ["STT_CONFIDENCE_THRESHOLD"]);
       } else recordOverride(`${path}.voice`, ["TTS_VOICE"]);
     } else if (kind === "tts") {

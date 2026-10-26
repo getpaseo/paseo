@@ -23,6 +23,48 @@ async function savedPatch(
 }
 
 describe("speech provider form", () => {
+  it("edits and clears local STT language from the saved snapshot", async () => {
+    const form = open({ site: { provider: "local", language: "fr" } });
+    expect(form.getState()).toMatchObject({ language: "fr", canSave: false });
+    form.setLanguage(" de ");
+    expect(await savedPatch(form)).toEqual({
+      voiceMode: { stt: { provider: "local", language: "de" } },
+    });
+    const clear = open({ site: { provider: "local", language: "fr" } });
+    clear.setLanguage("");
+    expect(await savedPatch(clear)).toEqual({
+      voiceMode: { stt: { provider: "local", language: null } },
+    });
+  });
+
+  it("keeps STT language when switching either provider", async () => {
+    for (const provider of ["local", "openai"] as const) {
+      const form = open({
+        site:
+          provider === "local"
+            ? { provider, language: "fr" }
+            : { provider, hasApiKey: false, language: "fr" },
+      });
+      form.setProvider(provider === "local" ? "openai" : "local");
+      expect(await savedPatch(form)).toEqual({
+        voiceMode: { stt: { provider: provider === "local" ? "openai" : "local", language: "fr" } },
+      });
+    }
+  });
+
+  it("keeps env-controlled language read-only after switching providers", async () => {
+    const form = open({
+      site: { provider: "local", language: "fr" },
+      envOverrides: { "features.voiceMode.stt.language": "PASEO_VOICE_LANGUAGE" },
+    });
+    form.setProvider("openai");
+    expect(form.getState().fields.language).toEqual({
+      envVar: "PASEO_VOICE_LANGUAGE",
+      readOnly: true,
+    });
+    expect(await savedPatch(form)).toEqual({ voiceMode: { stt: { provider: "openai" } } });
+  });
+
   it("switches a site to OpenAI with a key and base URL", async () => {
     const form = open();
     expect(form.getState().canSave).toBe(false);

@@ -1255,6 +1255,35 @@ describe("DaemonConfigStore speech settings", () => {
     return { paseoHome, store, applied, persisted };
   }
 
+  test("reads, patches, and clears local STT language without losing it on other saves", () => {
+    const { paseoHome, store } = createSpeechStore({
+      features: { dictation: { stt: { language: "fr" } } },
+    });
+    expect(store.get().features?.dictation.stt).toEqual({ provider: "local", language: "fr" });
+    store.patch({ features: { voiceMode: { enabled: true } } });
+    expect(loadPersistedConfig(paseoHome).features?.dictation?.stt).toEqual({
+      provider: "local",
+      language: "fr",
+    });
+    const patched = store.patch({
+      features: { dictation: { stt: { provider: "local", language: "de" } } },
+    });
+    expect(patched.features?.dictation.stt).toEqual({ provider: "local", language: "de" });
+    store.patch({ features: { dictation: { stt: { language: null } } } });
+    expect(loadPersistedConfig(paseoHome).features?.dictation?.stt).toEqual({ provider: "local" });
+  });
+
+  test("reports language env overrides for both local STT sites", () => {
+    const { store } = createSpeechStore(
+      {},
+      { PASEO_DICTATION_LANGUAGE: "fr", PASEO_VOICE_LANGUAGE: "de" },
+    );
+    expect(store.get().envOverrides).toMatchObject({
+      "features.dictation.stt.language": "PASEO_DICTATION_LANGUAGE",
+      "features.voiceMode.stt.language": "PASEO_VOICE_LANGUAGE",
+    });
+  });
+
   test("keeps voice mode off until it is turned on", () => {
     const { paseoHome, store } = createSpeechStore();
 

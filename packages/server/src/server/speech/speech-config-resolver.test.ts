@@ -132,38 +132,41 @@ describe("resolveSpeechConfig", () => {
     expect(result.openai?.stt?.model).toBe("gpt-4o-transcribe");
   });
 
-  test("resolves STT language from env, settings, and voice-to-dictation fallback", () => {
-    const persisted = PersistedConfigSchema.parse({
-      features: {
-        dictation: {
-          stt: {
-            provider: "openai",
-            language: "fr",
+  test.each(["local", "openai"])(
+    "resolves STT language from env, settings, and voice-to-dictation fallback (%s)",
+    (provider) => {
+      const persisted = PersistedConfigSchema.parse({
+        features: {
+          dictation: {
+            stt: {
+              provider,
+              language: "fr",
+            },
+          },
+          voiceMode: {
+            stt: {
+              provider,
+              language: "de",
+            },
           },
         },
-        voiceMode: {
-          stt: {
-            provider: "openai",
-            language: "de",
-          },
-        },
-      },
-    });
+      });
 
-    const result = resolveSpeechConfig({
-      paseoHome: "/tmp/paseo-home",
-      env: {
-        PASEO_DICTATION_LANGUAGE: "es",
-        PASEO_VOICE_LANGUAGE: "  ",
-      } as NodeJS.ProcessEnv,
-      persisted,
-    });
+      const result = resolveSpeechConfig({
+        paseoHome: "/tmp/paseo-home",
+        env: {
+          PASEO_DICTATION_LANGUAGE: "es",
+          PASEO_VOICE_LANGUAGE: "  ",
+        } as NodeJS.ProcessEnv,
+        persisted,
+      });
 
-    expect(result.speech.sttLanguages).toEqual({
-      dictation: "es",
-      voice: "es",
-    });
-  });
+      expect(result.speech.sttLanguages).toEqual({
+        dictation: "es",
+        voice: "es",
+      });
+    },
+  );
 
   test("respects disabled dictation and voice mode feature flags", () => {
     const persisted = PersistedConfigSchema.parse({

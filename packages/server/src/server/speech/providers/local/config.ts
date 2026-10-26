@@ -123,20 +123,14 @@ function buildLocalSpeechLanguageResolutionInput(params: {
   return {
     dictationLanguage: firstNonEmptyString([
       env.PASEO_DICTATION_LANGUAGE,
-      persisted.features?.dictation?.stt?.provider === "openai"
-        ? persisted.features.dictation.stt.language
-        : undefined,
+      persisted.features?.dictation?.stt?.language,
       DEFAULT_STT_LANGUAGE,
     ]),
     voiceLanguage: firstNonEmptyString([
       env.PASEO_VOICE_LANGUAGE,
       env.PASEO_DICTATION_LANGUAGE,
-      persisted.features?.voiceMode?.stt?.provider === "openai"
-        ? persisted.features.voiceMode.stt.language
-        : undefined,
-      persisted.features?.dictation?.stt?.provider === "openai"
-        ? persisted.features.dictation.stt.language
-        : undefined,
+      persisted.features?.voiceMode?.stt?.language,
+      persisted.features?.dictation?.stt?.language,
       DEFAULT_STT_LANGUAGE,
     ]),
   };

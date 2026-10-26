@@ -81,7 +81,6 @@ export interface SpeechProviderFormModel {
 interface OpenAiValues {
   baseUrl: string;
   openAiModel: string;
-  language: string;
   voice: string;
 }
 
@@ -94,13 +93,17 @@ export function openSpeechProviderForm(
   const initialOpenAi: OpenAiValues = {
     baseUrl: savedOpenAi?.baseUrl ?? "",
     openAiModel: resolveOpenAiModel(kind, savedOpenAi?.model),
-    language: savedOpenAi?.language ?? "",
     voice: resolveOpenAiVoice(savedOpenAi?.voice),
   };
+  const initialLanguage = site.language ?? "";
   // The daemon reports env vars for the provider that is in effect, so they only describe the
-  // fields while that provider is the one selected here.
+  // provider-specific fields while that provider is selected. Language applies to either STT provider.
   const savedFields = buildFieldSources(siteId, envOverrides);
-  const switchedFields = { ...buildFieldSources(siteId, {}), provider: savedFields.provider };
+  const switchedFields = {
+    ...buildFieldSources(siteId, {}),
+    provider: savedFields.provider,
+    language: savedFields.language,
+  };
   const listeners = new Set<() => void>();
   let closed = false;
 
@@ -112,6 +115,7 @@ export function openSpeechProviderForm(
     apiKey: "",
     hasSavedApiKey: savedOpenAi?.hasApiKey ?? false,
     ...initialOpenAi,
+    language: initialLanguage,
     fields: savedFields,
     saving: false,
     canSave: false,
@@ -127,6 +131,7 @@ export function openSpeechProviderForm(
 
   function isChanged(next: SpeechProviderFormState): boolean {
     if (next.provider !== site.provider) return true;
+    if (kind === "stt" && next.language.trim() !== initialLanguage) return true;
     if (next.provider === "local") {
       return next.localModel !== null && next.localModel !== next.savedLocalModel;
     }
@@ -135,20 +140,28 @@ export function openSpeechProviderForm(
 
   function changedOpenAiFields(next: SpeechProviderFormState): (keyof OpenAiValues)[] {
     const keys: (keyof OpenAiValues)[] =
-      kind === "stt" ? ["baseUrl", "openAiModel", "language"] : ["baseUrl", "openAiModel", "voice"];
+      kind === "stt" ? ["baseUrl", "openAiModel"] : ["baseUrl", "openAiModel", "voice"];
     return keys.filter((key) => next[key].trim() !== initialOpenAi[key]);
   }
 
   function buildSitePatch(next: SpeechProviderFormState): SpeechSitePatch {
+    const language = next.language.trim();
+    const languagePatch: Record<string, string | null> =
+      kind === "stt" &&
+      !next.fields.language.readOnly &&
+      (language !== initialLanguage || (next.provider !== site.provider && language.length > 0))
+        ? { language: language || null }
+        : {};
     if (next.provider === "local") {
       return {
         provider: "local",
+        ...languagePatch,
         ...(next.localModel !== null && !next.fields.model.readOnly
           ? { model: next.localModel }
           : {}),
       };
     }
-    const patch: Record<string, string | null> = { provider: "openai" };
+    const patch: Record<string, string | null> = { provider: "openai", ...languagePatch };
     const apiKey = next.apiKey.trim();
     if (apiKey) patch.apiKey = apiKey;
     for (const key of changedOpenAiFields(next)) {

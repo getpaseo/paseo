@@ -528,6 +528,16 @@ test("released setup clients parse empty combined logs and retain command output
   ).toBe("old daemon combined output");
 });
 
+test("local STT language survives wire reads and patches", () => {
+  const patch = {
+    features: {
+      dictation: { stt: { provider: "local", language: "fr" } },
+      voiceMode: { stt: { provider: "local", language: null } },
+    },
+  };
+  expect(MutableDaemonConfigPatchSchema.parse(patch)).toEqual(patch);
+});
+
 test("speech config reads remain compatible with clients before features and future providers", () => {
   const oldSchema = MutableDaemonConfigSchema.omit({ features: true, envOverrides: true });
   const oldRead = oldSchema.parse({
@@ -538,7 +548,7 @@ test("speech config reads remain compatible with clients before features and fut
   const read = {
     ...oldRead,
     features: {
-      dictation: { enabled: true, stt: { provider: "local" } },
+      dictation: { enabled: true, stt: { provider: "local", language: "fr" } },
       voiceMode: {
         enabled: false,
         stt: { provider: "future", model: "future-model", region: "eu" },
@@ -549,6 +559,9 @@ test("speech config reads remain compatible with clients before features and fut
   };
   expect(oldSchema.parse(read)).toEqual(read);
   expect(MutableDaemonConfigSchema.parse(oldRead)).toEqual(oldRead);
+  expect(MutableDaemonConfigSchema.parse(read).features?.dictation.stt).toEqual(
+    read.features.dictation.stt,
+  );
   expect(MutableDaemonConfigSchema.parse(read).features?.voiceMode.stt).toEqual(
     read.features.voiceMode.stt,
   );

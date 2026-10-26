@@ -15,7 +15,9 @@ const SttReadFields = {
 const LocalTtsFields = { speakerId: z.number().int().optional(), speed: z.number().optional() };
 
 export const SpeechSttSettingsSchema = z.union([
-  z.object({ provider: z.literal("local"), ...ModelFields }).passthrough(),
+  z
+    .object({ provider: z.literal("local"), ...ModelFields, language: z.string().optional() })
+    .passthrough(),
   z.object({ provider: z.literal("openai"), ...OpenAiReadFields, ...SttReadFields }).passthrough(),
   z.object({ provider: z.string(), ...ModelFields }).passthrough(),
 ]);
@@ -60,7 +62,13 @@ const LocalTtsPatchFields = {
   speed: z.number().nullable().optional(),
 };
 const SpeechSttSettingsPatchSchema = z.union([
-  z.object({ provider: z.literal("local"), ...ModelPatchFields }).passthrough(),
+  z
+    .object({
+      provider: z.literal("local"),
+      ...ModelPatchFields,
+      language: z.string().nullable().optional(),
+    })
+    .passthrough(),
   z
     .object({ provider: z.literal("openai"), ...OpenAiPatchFields, ...SttPatchFields })
     .passthrough(),

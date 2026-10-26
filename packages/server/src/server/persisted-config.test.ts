@@ -903,6 +903,37 @@ describe.skipIf(process.platform === "win32")(
 );
 
 describe("speech provider config normalization", () => {
+  test.each([undefined, "local"])(
+    "preserves local STT language on load and save (provider: %s)",
+    (provider) => {
+      const home = createTempHome();
+      try {
+        writeFileSync(
+          path.join(home, "config.json"),
+          JSON.stringify({
+            features: { dictation: { stt: { provider, language: "fr" } } },
+          }),
+        );
+        const loaded = loadPersistedConfig(home);
+        expect(loaded.features?.dictation?.stt).toEqual({ provider: "local", language: "fr" });
+        expect(
+          resolveSpeechConfig({ paseoHome: home, env: {}, persisted: loaded }).speech.sttLanguages
+            .dictation,
+        ).toBe("fr");
+        savePersistedConfig(home, loaded);
+        expect(loadPersistedConfig(home).features?.dictation?.stt).toEqual({
+          provider: "local",
+          language: "fr",
+        });
+        expect(
+          JSON.parse(readFileSync(path.join(home, "config.json"), "utf8")).features.dictation.stt,
+        ).toEqual({ provider: "local", language: "fr" });
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
   test("loads and resolves legacy fields ignored by each site's provider", () => {
     const home = mkdtempSync(path.join(tmpdir(), "speech-unused-options-"));
     try {
@@ -917,7 +948,7 @@ describe("speech provider config normalization", () => {
       };
       writeFileSync(path.join(home, "config.json"), JSON.stringify(legacy));
       const local = loadPersistedConfig(home);
-      expect(local.features?.dictation?.stt).toEqual({ provider: "local" });
+      expect(local.features?.dictation?.stt).toEqual({ provider: "local", language: "fr" });
       expect(local.features?.voiceMode?.tts).toEqual({
         provider: "local",
         speakerId: 3,
@@ -1011,7 +1042,11 @@ describe("speech provider config normalization", () => {
         }),
       );
       const config = loadPersistedConfig(home);
-      expect(config.features?.dictation?.stt).toEqual({ provider: "local", model: "whisper-base" });
+      expect(config.features?.dictation?.stt).toEqual({
+        provider: "local",
+        model: "whisper-base",
+        language: "en",
+      });
       expect(config.features?.voiceMode?.stt).toEqual({
         provider: "openai",
         apiKey: "stt-key",

@@ -91,7 +91,13 @@ const OpenAiConnectionFields = {
 };
 
 export const SpeechSttConfigSchema = z.discriminatedUnion("provider", [
-  z.object({ provider: z.literal("local"), model: SpeechModelSchema }).strict(),
+  z
+    .object({
+      provider: z.literal("local"),
+      model: SpeechModelSchema,
+      language: z.string().trim().min(1).optional(),
+    })
+    .strict(),
   z
     .object({
       provider: z.literal("openai"),
@@ -439,7 +445,6 @@ function normalizeSpeechSite(
       ? site.provider.trim().toLowerCase()
       : (site.provider ?? "local");
   if (kind === "stt" && site.provider === "local") {
-    delete site.language;
     delete site.confidenceThreshold;
   }
   if (kind === "tts") {

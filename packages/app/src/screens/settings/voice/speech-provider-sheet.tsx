@@ -141,7 +141,14 @@ export function SpeechProviderSheet({
         <ProviderRow state={state} model={model} />
       </SettingsCard>
       {state.provider === "local" ? (
-        <LocalModelList state={state} model={model} localModels={localModels} />
+        <>
+          {state.kind === "stt" ? (
+            <SettingsCard>
+              <LanguageField state={state} model={model} />
+            </SettingsCard>
+          ) : null}
+          <LocalModelList state={state} model={model} localModels={localModels} />
+        </>
       ) : (
         <OpenAiFields state={state} model={model} />
       )}
@@ -179,6 +186,20 @@ function ProviderRow({ state, model }: FormProps) {
         testID="voice-provider-picker"
       />
     </SettingsRow>
+  );
+}
+
+function LanguageField({ state, model }: FormProps) {
+  const { t } = useTranslation();
+  return (
+    <SettingsInput
+      label={t("settings.voice.language")}
+      hint={setByHint(t, state.fields.language)}
+      initialValue={state.language}
+      onChangeText={model.setLanguage}
+      placeholder={t("settings.voice.languagePlaceholder")}
+      disabled={state.fields.language.readOnly}
+    />
   );
 }
 
@@ -244,14 +265,7 @@ function OpenAiFields({ state, model }: FormProps) {
         disabled={state.fields.model.readOnly}
       />
       {state.kind === "stt" ? (
-        <SettingsInput
-          label={t("settings.voice.language")}
-          hint={setByHint(t, state.fields.language)}
-          initialValue={state.language}
-          onChangeText={model.setLanguage}
-          placeholder={t("settings.voice.languagePlaceholder")}
-          disabled={state.fields.language.readOnly}
-        />
+        <LanguageField state={state} model={model} />
       ) : (
         <SettingsSelect
           label={t("settings.voice.voice")}

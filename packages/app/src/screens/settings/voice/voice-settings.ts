@@ -29,7 +29,7 @@ export function speechSiteFieldPath(siteId: SpeechSiteId, field: string): string
 
 /** One site's settings as the daemon reports them, narrowed to what the app can edit. */
 export type SpeechSite =
-  | { provider: "local"; model?: string }
+  | { provider: "local"; model?: string; language?: string }
   | {
       provider: "openai";
       hasApiKey: boolean;
@@ -55,7 +55,8 @@ export function getSpeechSite(features: SpeechSettings, siteId: SpeechSiteId): S
 
 function toSpeechSite(settings: SpeechSiteSettings): SpeechSite {
   const text = (value: unknown) => (typeof value === "string" && value ? value : undefined);
-  if (settings.provider === "local") return { provider: "local", model: text(settings.model) };
+  if (settings.provider === "local")
+    return { provider: "local", model: text(settings.model), language: text(settings.language) };
   if (settings.provider === "openai") {
     return {
       provider: "openai",

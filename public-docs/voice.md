@@ -33,7 +33,7 @@ Missing models for enabled features are downloaded at daemon startup into `$PASE
 
 ### Local STT models and language support
 
-**Settings > Voice** lists every local STT model with the languages it supports. The default, `parakeet-tdt-0.6b-v2-int8`, is English-only. For other languages, pick a multilingual model such as `parakeet-tdt-0.6b-v3-int8` (25 European languages) or `whisper-base` (99 languages). Local models detect the spoken language themselves; the `language` field below only applies to the OpenAI STT provider.
+**Settings > Voice** lists every local STT model with the languages it supports. The default, `parakeet-tdt-0.6b-v2-int8`, is English-only. For other languages, pick a multilingual model such as `parakeet-tdt-0.6b-v3-int8` (25 European languages) or `whisper-base` (99 languages). The `language` field is passed to STT sessions for both providers. Local recognizers currently detect the spoken language themselves; setting `language` does not expand a model’s supported languages.
 
 ```json
 {
@@ -69,7 +69,7 @@ For multilingual local dictation, set a multilingual model. No `language` field 
 }
 ```
 
-The `language` field applies only to the OpenAI STT provider: set `features.dictation.stt.language` for dictation and `features.voiceMode.stt.language` for voice mode. If voice language is omitted, Paseo uses the dictation language before falling back to `en`. It has no effect on local models.
+For either STT provider, set `features.dictation.stt.language` for dictation and `features.voiceMode.stt.language` for voice mode. If voice language is omitted, Paseo uses the dictation language before falling back to `en`.
 
 ## OpenAI Voice Option
 
@@ -100,7 +100,7 @@ Dictation, listening and speaking each own their key, base URL and model:
 
 | Provider | Speech-to-text fields                                           | Text-to-speech fields                 |
 | -------- | --------------------------------------------------------------- | ------------------------------------- |
-| `local`  | `model`                                                         | `model`, `speakerId`, `speed`         |
+| `local`  | `model`, `language`                                             | `model`, `speakerId`, `speed`         |
 | `openai` | `apiKey`, `baseUrl`, `model`, `language`, `confidenceThreshold` | `apiKey`, `baseUrl`, `model`, `voice` |
 
 Fields other than `provider` are optional. Omit `model` to use the provider's default.
@@ -140,8 +140,8 @@ Keys and base URLs follow the fallback rule above.
 - `PASEO_LOCAL_MODELS_DIR`, local model storage directory
 - `PASEO_DICTATION_LOCAL_STT_MODEL`, local dictation STT model ID
 - `PASEO_VOICE_LOCAL_STT_MODEL`, `PASEO_VOICE_LOCAL_TTS_MODEL`, local voice STT/TTS model IDs
-- `PASEO_DICTATION_LANGUAGE`, dictation STT language (OpenAI STT only; ignored by local models)
-- `PASEO_VOICE_LANGUAGE`, voice mode STT language; falls back to `PASEO_DICTATION_LANGUAGE` when unset (OpenAI STT only; ignored by local models)
+- `PASEO_DICTATION_LANGUAGE`, dictation STT language
+- `PASEO_VOICE_LANGUAGE`, voice mode STT language; falls back to `PASEO_DICTATION_LANGUAGE` when unset
 - `PASEO_VOICE_LOCAL_TTS_SPEAKER_ID`, `PASEO_VOICE_LOCAL_TTS_SPEED`, optional local voice TTS tuning
 
 ## Operational Notes

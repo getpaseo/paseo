@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { LocalSpeechModel } from "@getpaseo/protocol/speech/rpc-schemas";
 import {
   buildOpenAiModelOptions,
+  getSpeechSite,
   formatLanguages,
   formatModelSize,
   getLocalModelState,
@@ -36,6 +37,25 @@ const catalog = [
 ];
 
 describe("voice settings", () => {
+  it("keeps local STT language from the wire when opening a provider sheet", () => {
+    const features = {
+      dictation: { enabled: true, stt: { provider: "local", language: "fr" } },
+      voiceMode: {
+        enabled: false,
+        stt: { provider: "local", language: "de" },
+        tts: { provider: "local" },
+      },
+    };
+    expect(getSpeechSite(features, "dictation.stt")).toMatchObject({
+      provider: "local",
+      language: "fr",
+    });
+    expect(getSpeechSite(features, "voiceMode.stt")).toMatchObject({
+      provider: "local",
+      language: "de",
+    });
+  });
+
   it("summarizes a local site by its model, falling back to the catalog default", () => {
     const summary = (modelId?: string) =>
       summarizeSpeechSite({

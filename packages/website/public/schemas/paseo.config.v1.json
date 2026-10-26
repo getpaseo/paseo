@@ -605,6 +605,10 @@
                     "model": {
                       "type": "string",
                       "minLength": 1
+                    },
+                    "language": {
+                      "type": "string",
+                      "minLength": 1
                     }
                   },
                   "required": ["provider"],
@@ -674,6 +678,10 @@
                       "const": "local"
                     },
                     "model": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "language": {
                       "type": "string",
                       "minLength": 1
                     }

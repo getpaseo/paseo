@@ -351,7 +351,8 @@ remains authoritative during reload.
 
 Each use site owns its provider settings: `features.dictation.stt`,
 `features.voiceMode.stt`, and `features.voiceMode.tts`. `provider` selects a strict
-`local` or `openai` variant. `providers.local.modelsDir` remains shared storage.
+`local` or `openai` variant. Both STT variants carry `language`; normalization preserves
+it regardless of provider. `providers.local.modelsDir` remains shared storage.
 See [Voice configuration](../public-docs/voice.md) for fields, examples and env precedence.
 
 On load, `persisted-config.ts` folds legacy `providers.openai` credentials and URLs
