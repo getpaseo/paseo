@@ -54,11 +54,13 @@ class FakeRealtimeSession extends EventEmitter implements StreamingTranscription
 class FakeSttProvider implements SpeechToTextProvider {
   public readonly id = "fake";
   public lastLanguage?: string;
+  public lastPrompt?: string;
   constructor(private readonly session: FakeRealtimeSession) {}
   createSession(
     params: Parameters<SpeechToTextProvider["createSession"]>[0],
   ): StreamingTranscriptionSession {
     this.lastLanguage = params.language;
+    this.lastPrompt = params.prompt;
     return this.session;
   }
 }
@@ -584,4 +586,59 @@ it("closes every dictation stream when one provider cleanup fails", async () => 
   expect(first.closed).toBe(true);
   expect(second.closed).toBe(true);
   expect(manager.hasDemand).toBe(false);
+});
+
+describe("DictationStreamManager (transcription prompt)", () => {
+  const originalPromptEnv = process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT;
+
+  afterEach(() => {
+    if (originalPromptEnv === undefined) {
+      delete process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT;
+    } else {
+      process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT = originalPromptEnv;
+    }
+  });
+
+  const startDictation = async (
+    options: { language?: string } = {},
+  ): Promise<{ provider: FakeSttProvider; manager: DictationStreamManager }> => {
+    const session = new FakeRealtimeSession();
+    const provider = new FakeSttProvider(session);
+    const manager = new DictationStreamManager({
+      logger: pino({ level: "silent" }),
+      emit: () => {},
+      sessionId: "prompt",
+      stt: provider,
+      ...(options.language ? { language: options.language } : {}),
+    });
+    await manager.handleStart("d1", "audio/pcm;rate=24000;bits=16");
+    manager.cleanupAll();
+    return { provider, manager };
+  };
+
+  it("sends no prompt by default", async () => {
+    delete process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT;
+    const { provider } = await startDictation();
+    expect(provider.lastPrompt).toBeUndefined();
+  });
+
+  it("sends no prompt for non-English dictation by default", async () => {
+    delete process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT;
+    const { provider } = await startDictation({ language: "zh" });
+    expect(provider.lastLanguage).toBe("zh");
+    expect(provider.lastPrompt).toBeUndefined();
+  });
+
+  it("passes an explicit prompt override through", async () => {
+    process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT =
+      "  Vocabulary: Paseo, Dokploy, Kubernetes.  ";
+    const { provider } = await startDictation();
+    expect(provider.lastPrompt).toBe("Vocabulary: Paseo, Dokploy, Kubernetes.");
+  });
+
+  it.each(["", "   "])("treats a blank override (%j) as no prompt", async (value) => {
+    process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT = value;
+    const { provider } = await startDictation();
+    expect(provider.lastPrompt).toBeUndefined();
+  });
 });
