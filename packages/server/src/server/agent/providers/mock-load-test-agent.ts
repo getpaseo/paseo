@@ -295,6 +295,35 @@ function parseMockQuestionPrompt(prompt: AgentPromptInput): MockQuestionPromptRe
     return null;
   }
 
+  if (/with\s+links/i.test(text)) {
+    return {
+      questions: [
+        {
+          question:
+            "Sign in at https://example.com/login, then follow [the setup guide](https://example.com/setup). Done?",
+          header: "signIn",
+          options: [
+            {
+              label: "Done",
+              description: "Logs are at https://example.com/logs if sign-in fails.",
+            },
+            { label: "Not yet, see [status](https://example.com/status)" },
+          ],
+          multiSelect: false,
+        },
+        {
+          question: "Which checks should run?",
+          header: "checks",
+          options: [
+            { label: "Lint", description: "Rules: https://example.com/lint" },
+            { label: "Typecheck" },
+          ],
+          multiSelect: true,
+        },
+      ],
+    };
+  }
+
   if (/free[-\s]?write|freeform|text[-\s]?only/i.test(text)) {
     return {
       questions: [

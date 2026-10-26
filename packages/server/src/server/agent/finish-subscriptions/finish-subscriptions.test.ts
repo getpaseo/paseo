@@ -1,3 +1,4 @@
+import { createIdleRuntimeCleanup } from "../idle-runtime-cleanup/index.js";
 import { HostObservationError } from "../host-operations/index.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -67,7 +68,7 @@ afterEach(async () => {
   for (const service of services.splice(0)) await service.close();
   await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
 });
-async function scenario(directory?: string, removalFailures = 0) {
+async function scenario(directory?: string, removalFailures = 0, retryDelayMs = 1) {
   const home = directory ?? (await mkdtemp(join(tmpdir(), "finish-recovery-")));
   if (!directory) homes.push(home);
   const durableStore = createJsonFinishSubscriptionStore(home);
@@ -91,7 +92,7 @@ async function scenario(directory?: string, removalFailures = 0) {
     callerIsActive: async () => active,
     serverId: "origin",
     logger: createTestLogger(),
-    retryDelayMs: 1,
+    retryDelayMs,
   });
   services.push(service);
   await service.start();
@@ -387,13 +388,13 @@ test("removed-host notice retries parent dispatch without observing again or del
 });
 
 test("failed removal after dispatch acknowledgment retries only storage, preserving the accepted outcome", async () => {
-  const state = await scenario(undefined, 1);
+  const state = await scenario(undefined, 2, 1000);
   await state.service.register(intent);
   await until(() => state.observation.waits.length === 1);
   state.observation.waits[0]!.result.resolve(outcome("idle"));
   await until(() => state.delivery.prompts.length === 1);
   state.delivery.acknowledgments[0]!.resolve("steered");
-  await expect.poll(async () => (await state.store.list()).length).toBe(0);
+  await expect.poll(async () => (await state.store.list()).length, { timeout: 10000 }).toBe(0);
   expect(state.delivery.prompts).toHaveLength(1);
   expect(state.delivery.prompts[0]).toContain("finished.");
   expect(state.observation.waits).toHaveLength(1);
@@ -411,4 +412,88 @@ test("shutdown during observation setup owns rejection of the already-canceled n
   await closing;
   expect(await state.store.list()).toHaveLength(1);
   expect(state.delivery.prompts).toEqual([]);
+});
+
+test("remote finish intent protects its caller through registration, observation and delivery", async () => {
+  const s = await scenario();
+  let time = 61 * 60_000;
+  let collected = false;
+  const runtime = {
+    identity: {},
+    agentId: "parent",
+    parentAgentId: undefined,
+    provider: "test",
+    sessionId: "parent",
+    lastActivityAt: 0,
+    isEligible: () => !collected,
+    closeIfEligible: async (revalidate: () => boolean) => {
+      if (!revalidate()) return false;
+      collected = true;
+      return true;
+    },
+  };
+  const cleanup = createIdleRuntimeCleanup({
+    enabled: true,
+    logger: createTestLogger(),
+    now: () => time,
+    runtimes: () => (collected ? [] : [runtime]),
+    isProtected: (agentId) => s.service.hasPendingForCaller(agentId),
+    schedule: () => () => {},
+  });
+  const savedPut = s.store.put.bind(s.store);
+  const writing = deferred<void>();
+  s.store.put = async (record) => {
+    await writing.promise;
+    await savedPut(record);
+  };
+  const registration = s.service.register({ ...intent, serverId: "remote" }, true);
+  const protectedDuringRegistration = s.service.hasPendingForCaller?.("parent") ?? false;
+  writing.resolve();
+  const accepted = await registration;
+  expect(protectedDuringRegistration).toBe(true);
+  expect((await cleanup.sweep()).collected).toEqual([]);
+  expect(s.service.hasPendingForCaller("parent")).toBe(true);
+  accepted.accept();
+  await until(() => s.observation.waits.length === 1);
+  expect(s.service.hasPendingForCaller("parent")).toBe(true);
+  s.observation.waits[0]!.result.resolve(outcome());
+  await until(() => s.delivery.prompts.length === 1);
+  expect(s.service.hasPendingForCaller("parent")).toBe(true);
+  s.delivery.acknowledgments[0]!.resolve("steered");
+  await until(() => !s.service.hasPendingForCaller("parent"));
+  expect(await s.store.list()).toEqual([]);
+  time = 62 * 60_000;
+  expect((await cleanup.sweep()).collected).toEqual([]);
+  time = 122 * 60_000;
+  expect((await cleanup.sweep()).collected).toHaveLength(1);
+  await cleanup.close();
+});
+
+test("finish recovery protects callers before durable intent has loaded", async () => {
+  const s = await scenario();
+  await s.service.register({ ...intent, serverId: "remote" });
+  await s.service.close();
+  const loading = deferred<void>();
+  const recovered = createFinishSubscriptions({
+    store: {
+      ...s.store,
+      list: async () => {
+        await loading.promise;
+        return s.store.list();
+      },
+    },
+    messages: () => s.delivery,
+    open: s.observation.open.bind(s.observation),
+    callerIsActive: async () => true,
+    serverId: "origin",
+    logger: createTestLogger(),
+  });
+  services.push(recovered);
+  expect(recovered.hasPendingForCaller("parent")).toBe(true);
+  const starting = recovered.start();
+  expect(recovered.hasPendingForCaller("parent")).toBe(true);
+  loading.resolve();
+  await starting;
+  expect(recovered.hasPendingForCaller("parent")).toBe(true);
+  expect(recovered.hasPendingForCaller("unrelated")).toBe(false);
 });

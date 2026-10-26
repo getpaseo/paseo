@@ -1,3 +1,4 @@
+import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
 import {
   chmodSync,
   lstatSync,
@@ -149,26 +150,33 @@ describe("PersistedConfigSchema worktrees config", () => {
 });
 
 describe("PersistedConfigSchema provider credentials", () => {
-  test("accepts separate OpenAI STT and TTS credentials", () => {
+  test("accepts separate inline STT and TTS credentials", () => {
     const parsed = PersistedConfigSchema.parse({
-      providers: {
-        openai: {
+      features: {
+        voiceMode: {
           stt: {
+            provider: "openai",
             apiKey: " stt-secret ",
             baseUrl: " https://stt.example.com/v1 ",
           },
           tts: {
+            provider: "openai",
             apiKey: " tts-secret ",
             baseUrl: " https://tts.example.com/v1 ",
           },
         },
       },
     });
-
-    expect(parsed.providers?.openai?.stt?.apiKey).toBe("stt-secret");
-    expect(parsed.providers?.openai?.stt?.baseUrl).toBe("https://stt.example.com/v1");
-    expect(parsed.providers?.openai?.tts?.apiKey).toBe("tts-secret");
-    expect(parsed.providers?.openai?.tts?.baseUrl).toBe("https://tts.example.com/v1");
+    expect(parsed.features?.voiceMode?.stt).toEqual({
+      provider: "openai",
+      apiKey: "stt-secret",
+      baseUrl: "https://stt.example.com/v1",
+    });
+    expect(parsed.features?.voiceMode?.tts).toEqual({
+      provider: "openai",
+      apiKey: "tts-secret",
+      baseUrl: "https://tts.example.com/v1",
+    });
   });
 });
 
@@ -660,19 +668,21 @@ describe("PersistedConfigSchema voice mode config", () => {
       features: {
         dictation: {
           stt: {
+            provider: "openai",
             language: " fr ",
           },
         },
         voiceMode: {
           stt: {
+            provider: "openai",
             language: " de ",
           },
         },
       },
     });
 
-    expect(parsed.features?.dictation?.stt?.language).toBe("fr");
-    expect(parsed.features?.voiceMode?.stt?.language).toBe("de");
+    expect(parsed.features?.dictation?.stt).toMatchObject({ language: "fr" });
+    expect(parsed.features?.voiceMode?.stt).toMatchObject({ language: "de" });
   });
 
   test("accepts a voice and model from a self-hosted OpenAI-compatible server", () => {
@@ -685,7 +695,7 @@ describe("PersistedConfigSchema voice mode config", () => {
     });
 
     expect(parsed.features?.voiceMode?.tts?.model).toBe("kokoro-v1:Q8_0");
-    expect(parsed.features?.voiceMode?.tts?.voice).toBe("aiden");
+    expect(parsed.features?.voiceMode?.tts).toMatchObject({ voice: "aiden" });
   });
 });
 
@@ -754,10 +764,7 @@ describe("loadPersistedConfig", () => {
 
       const config = loadPersistedConfig(home);
 
-      expect(config.providers?.openai?.apiKey).toBe("global-key");
-      expect((config.providers?.openai as Record<string, unknown>)?.voice).toBeUndefined();
-      expect(config.providers?.openai?.stt).toBeUndefined();
-      expect(config.providers?.openai?.tts).toBeUndefined();
+      expect(config.providers).not.toHaveProperty("openai");
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -852,11 +859,7 @@ describe.skipIf(process.platform === "win32")("persisted config file permissions
     const home = path.join(parent, "home");
     try {
       savePersistedConfig(home, {
-        providers: {
-          openai: {
-            apiKey: "secret",
-          },
-        },
+        features: { dictation: { stt: { provider: "openai", apiKey: "secret" } } },
       });
 
       expect(modeOf(home)).toBe(PRIVATE_DIRECTORY_MODE);
@@ -898,3 +901,173 @@ describe.skipIf(process.platform === "win32")(
     });
   },
 );
+
+describe("speech provider config normalization", () => {
+  test.each([undefined, "local"])(
+    "preserves local STT language on load and save (provider: %s)",
+    (provider) => {
+      const home = createTempHome();
+      try {
+        writeFileSync(
+          path.join(home, "config.json"),
+          JSON.stringify({
+            features: { dictation: { stt: { provider, language: "fr" } } },
+          }),
+        );
+        const loaded = loadPersistedConfig(home);
+        expect(loaded.features?.dictation?.stt).toEqual({ provider: "local", language: "fr" });
+        expect(
+          resolveSpeechConfig({ paseoHome: home, env: {}, persisted: loaded }).speech.sttLanguages
+            .dictation,
+        ).toBe("fr");
+        savePersistedConfig(home, loaded);
+        expect(loadPersistedConfig(home).features?.dictation?.stt).toEqual({
+          provider: "local",
+          language: "fr",
+        });
+        expect(
+          JSON.parse(readFileSync(path.join(home, "config.json"), "utf8")).features.dictation.stt,
+        ).toEqual({ provider: "local", language: "fr" });
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("loads and resolves legacy fields ignored by each site's provider", () => {
+    const home = mkdtempSync(path.join(tmpdir(), "speech-unused-options-"));
+    try {
+      const legacy = {
+        features: {
+          dictation: { stt: { provider: "local", language: "fr", confidenceThreshold: -1 } },
+          voiceMode: {
+            enabled: true,
+            tts: { provider: "local", voice: "alloy", speakerId: 3, speed: 1.2 },
+          },
+        },
+      };
+      writeFileSync(path.join(home, "config.json"), JSON.stringify(legacy));
+      const local = loadPersistedConfig(home);
+      expect(local.features?.dictation?.stt).toEqual({ provider: "local", language: "fr" });
+      expect(local.features?.voiceMode?.tts).toEqual({
+        provider: "local",
+        speakerId: 3,
+        speed: 1.2,
+      });
+      expect(
+        resolveSpeechConfig({ paseoHome: home, env: {}, persisted: local }).speech.local?.models,
+      ).toMatchObject({ voiceTtsSpeakerId: 3, voiceTtsSpeed: 1.2 });
+      writeFileSync(
+        path.join(home, "config.json"),
+        JSON.stringify({
+          features: {
+            voiceMode: {
+              enabled: true,
+              tts: { provider: "openai", apiKey: "key", voice: "alloy", speakerId: 3, speed: 1.2 },
+            },
+          },
+        }),
+      );
+      const openai = loadPersistedConfig(home);
+      expect(openai.features?.voiceMode?.tts).toEqual({
+        provider: "openai",
+        apiKey: "key",
+        voice: "alloy",
+      });
+      expect(
+        resolveSpeechConfig({ paseoHome: home, env: {}, persisted: openai }).openai?.tts,
+      ).toMatchObject({ apiKey: "key", voice: "alloy" });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("warns with the path, never the discarded legacy key", () => {
+    const home = mkdtempSync(path.join(tmpdir(), "speech-warning-"));
+    try {
+      writeFileSync(
+        path.join(home, "config.json"),
+        JSON.stringify({
+          providers: { openai: { apiKey: "discarded-secret" } },
+          features: { voiceMode: { enabled: true, tts: { provider: "local" } } },
+        }),
+      );
+      const warnings: unknown[][] = [];
+      const logger = {
+        child: () => logger,
+        info: () => {},
+        warn: (...args: unknown[]) => {
+          warnings.push(args);
+        },
+      };
+      const config = loadPersistedConfig(home, logger);
+      expect(config.providers).not.toHaveProperty("openai");
+      expect(warnings).toHaveLength(1);
+      expect(JSON.stringify(warnings)).toContain("providers.openai.apiKey");
+      expect(JSON.stringify(warnings)).toContain("no use site in config.json selects OpenAI");
+      const resolved = resolveSpeechConfig({
+        paseoHome: home,
+        persisted: config,
+        env: { PASEO_VOICE_TTS_PROVIDER: "openai" },
+      });
+      expect(resolved.speech.providers.voiceTts.provider).toBe("openai");
+      expect(resolved.openai).toBeUndefined();
+      expect(JSON.stringify(warnings)).not.toContain("discarded-secret");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("folds legacy endpoint credentials into OpenAI sites on load and saves inline", () => {
+    const home = mkdtempSync(path.join(tmpdir(), "speech-normalize-"));
+    try {
+      writeFileSync(
+        path.join(home, "config.json"),
+        JSON.stringify({
+          providers: {
+            openai: {
+              apiKey: "global-key",
+              baseUrl: "https://global/v1",
+              stt: { apiKey: "stt-key" },
+            },
+          },
+          features: {
+            dictation: { stt: { model: "whisper-base", language: "en" } },
+            voiceMode: {
+              enabled: true,
+              stt: { provider: "OPENAI", baseUrl: "https://site/v1" },
+              tts: { provider: "openai" },
+            },
+          },
+        }),
+      );
+      const config = loadPersistedConfig(home);
+      expect(config.features?.dictation?.stt).toEqual({
+        provider: "local",
+        model: "whisper-base",
+        language: "en",
+      });
+      expect(config.features?.voiceMode?.stt).toEqual({
+        provider: "openai",
+        apiKey: "stt-key",
+        baseUrl: "https://site/v1",
+      });
+      expect(config.features?.voiceMode?.tts).toEqual({
+        provider: "openai",
+        apiKey: "global-key",
+        baseUrl: "https://global/v1",
+      });
+      expect(config.providers).not.toHaveProperty("openai");
+      const resolved = resolveSpeechConfig({ paseoHome: home, env: {}, persisted: config });
+      expect(resolved.openai?.stt?.apiKey).toBe("stt-key");
+      expect(resolved.speech.providers.voiceStt).toMatchObject({
+        provider: "openai",
+        enabled: true,
+      });
+      savePersistedConfig(home, config);
+      expect(JSON.parse(readFileSync(path.join(home, "config.json"), "utf8"))).toEqual(config);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import pino from "pino";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -9,6 +10,47 @@ import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo
 import type { HostDirectory } from "@getpaseo/protocol/hosts";
 
 const cleanup: (() => Promise<unknown>)[] = [];
+
+// These asynchronous failures otherwise disappear into the fixture's silent logger.
+// Only completion errors and filesystem metadata belong in CI, never prompts or credentials.
+function completionLogger() {
+  return pino(
+    {
+      level: "warn",
+      serializers: {
+        err: (error) => ({
+          type: error.name,
+          code: error.code,
+          syscall: error.syscall,
+          path: typeof error.path === "string" ? basename(error.path) : undefined,
+          dest: typeof error.dest === "string" ? basename(error.dest) : undefined,
+        }),
+      },
+    },
+    {
+      write(line) {
+        const record = JSON.parse(line);
+        if (
+          record.context !== "Failed to dispatch queued agent message" &&
+          ![
+            "Agent message batch dispatch failed",
+            "Retrying finish subscription",
+            "Finish subscription failed",
+          ].includes(record.msg)
+        )
+          return;
+        console.error("Completion diagnostic", {
+          time: record.time,
+          message: record.msg,
+          agentId: record.agentId,
+          messageIds: record.messageIds,
+          subscription: record.subscription,
+          error: record.err,
+        });
+      },
+    },
+  );
+}
 afterEach(async () => {
   for (const close of cleanup.splice(0).toReversed()) await close();
 });
@@ -1512,6 +1554,7 @@ test(
       finishChild.resolve();
     });
     const a = await daemon({
+      logger: completionLogger(),
       agentClients: createTestAgentClients({
         onStartTurn: (prompt, config) => {
           if (config.title === "Batch parent")
@@ -1635,7 +1678,12 @@ test(
     expect(parentPrompts[0]).toContain("LOCAL_CLI_REPORT");
     expect(parentPrompts[0]).toContain('event="finished"');
     expect(parentPrompts[0]).toContain(`source-agent-id="${child.id}"`);
-    await expect.poll(receiptStates, { timeout: 10000 }).toEqual(["completed", "completed"]);
+    await expect
+      .poll(receiptStates, {
+        timeout: 10000,
+        message: "Parent accepted the batch; waiting for durable receipt commits",
+      })
+      .toEqual(["completed", "completed"]);
     const timeline = await origin.client.fetchAgentTimeline(parent.id);
     const messages = timeline.entries.flatMap((row) =>
       row.item.type === "tool_call" && row.item.agentMessage ? [row.item.agentMessage] : [],
@@ -1957,6 +2005,7 @@ test.each(["removed", "disabled"] as const)(
     cleanup.push(async () => finish.resolve());
     const a = await daemon({
       mcpEnabled: true,
+      logger: completionLogger(),
       agentClients: createTestAgentClients({
         onStartTurn: (prompt) => {
           if (String(prompt).includes('kind="agent-notification"'))
@@ -2015,8 +2064,10 @@ test.each(["removed", "disabled"] as const)(
     expect(parentPrompts[0]).toContain("is unknown.");
     expect(parentPrompts[0]).not.toContain("finished.");
     await expect
-      .poll(async () =>
-        JSON.parse(await readFile(join(a.paseoHome, "finish-subscriptions.json"), "utf8")),
+      .poll(
+        async () =>
+          JSON.parse(await readFile(join(a.paseoHome, "finish-subscriptions.json"), "utf8")),
+        { timeout: 10000 },
       )
       .toEqual([]);
     if (availability === "removed")
