@@ -97,7 +97,6 @@ function ompRows(path: string, lookup: StoreLookup) {
       if (!row.success) return [];
       try {
         const oauth = oauthSchema.parse(JSON.parse(row.data.data));
-        if (oauth.expires === undefined || oauth.expires <= (lookup.now ?? Date.now)()) return [];
         return [{ id: row.data.id, oauth }];
       } catch {
         return [];

@@ -272,6 +272,39 @@ lines.on("line", (line) => {
     }
   });
 
+  it("still reports initialization failures for workspace-only global discovery", async () => {
+    let unavailable = false;
+    const { connector } = connectorHarness({
+      handleRequest(instance, request) {
+        if (unavailable && request.method === "initialize") {
+          instance.reject(request, "Bridge unavailable");
+          return true;
+        }
+        return false;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "workspace-acp",
+      label: "Workspace ACP",
+      connector,
+      acpOptions: { workspaceOnlyCatalog: true },
+    });
+    const connection = await registration.connect({ versions: [1], capabilities: [] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      unavailable = true;
+      await connection.send({ type: "catalog", requestId: "global" });
+      expect(await waitForEvent(events, (event) => event.type === "request.failed")).toMatchObject({
+        requestId: "global",
+        error: { message: expect.stringContaining("Bridge unavailable") },
+      });
+      expect(events.some((event) => event.type === "catalog")).toBe(false);
+    } finally {
+      await connection.close();
+    }
+  });
+
   it("rejects connection cleanly when the ACP executable does not exist", async () => {
     const registration = runAcpProvider({
       id: "missing-acp",
@@ -616,6 +649,146 @@ lines.on("line", (line) => {
     );
     expect(firstTerminal).toBeGreaterThan(-1);
     expect(firstTerminal).toBeLessThan(secondAdmission);
+    await connection.close();
+  });
+
+  it.each([
+    ["end_turn", "completed", "completed"],
+    ["cancelled", "canceled", "canceled"],
+  ] as const)(
+    "closes a transformer's running tool row when the turn ends with %s",
+    async (stopReason, turnState, rowStatus) => {
+      const harness = connectorHarness({
+        handleMessage(instance, message) {
+          if (!("method" in message) || !("id" in message)) return false;
+          if (message.method !== "session/prompt") return false;
+          instance.notify("vendor/phase", { id: "phase-1", label: "Preparing" });
+          instance.respond(message as AcpRequestMessage, { stopReason });
+          return true;
+        },
+      });
+      const registration = runAcpProvider({
+        id: "vendor-row-acp",
+        label: "Vendor row ACP",
+        connector: harness.connector,
+        transformers: [
+          {
+            notification(notification) {
+              if (notification.method !== "vendor/phase") return null;
+              return {
+                type: "timeline",
+                item: {
+                  type: "tool_call",
+                  id: "phase-1",
+                  callId: "phase-1",
+                  name: "Vendor phase",
+                  detail: { type: "plain_text", label: "Preparing" },
+                  status: "running",
+                  error: null,
+                },
+              };
+            },
+          },
+        ],
+      });
+      const connection = await registration.connect({
+        versions: [1],
+        capabilities: ["prompt.message"],
+      });
+      const events: ProviderEvent[] = [];
+      connection.onEvent((event) => events.push(event));
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "first",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "first" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "session.turn" && event.state === turnState,
+      );
+
+      const rows = events.flatMap((event) =>
+        event.type === "timeline.item" && event.item.id === "phase-1" ? [event.item] : [],
+      );
+      expect(rows.map((row) => row.type === "tool_call" && row.status)).toEqual([
+        "running",
+        rowStatus,
+      ]);
+      const closed = events.findIndex(
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.id === "phase-1" &&
+          event.item.type === "tool_call" &&
+          event.item.status === rowStatus,
+      );
+      const terminal = events.findIndex(
+        (event) => event.type === "session.turn" && event.state === turnState,
+      );
+      expect(closed).toBeLessThan(terminal);
+      // The wire contract only accepts a failed tool call with a non-null error.
+      expect(rows.at(-1)).toMatchObject({ error: null });
+      await connection.close();
+    },
+  );
+
+  it("cancels an in-progress ACP tool call with the canceled turn instead of failing it without an error", async () => {
+    const harness = connectorHarness({
+      handleMessage(instance, message) {
+        if (!("method" in message) || !("id" in message)) return false;
+        if (message.method !== "session/prompt") return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "tool-1",
+            title: "Run tests",
+            kind: "execute",
+            status: "in_progress",
+          },
+        });
+        instance.respond(message as AcpRequestMessage, { stopReason: "cancelled" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "cancel-tool-acp",
+      label: "Cancel tool ACP",
+      connector: harness.connector,
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    await connection.send(openInput());
+    await waitForEvent(events, (event) => event.type === "session.ready");
+
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "session-1",
+      prompt: {
+        clientMessageId: "first",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "first" }] },
+      },
+    });
+    await waitForEvent(
+      events,
+      (event) => event.type === "session.turn" && event.state === "canceled",
+    );
+
+    const rows = events.flatMap((event) =>
+      event.type === "timeline.item" && event.item.id === "tool-1" ? [event.item] : [],
+    );
+    expect(rows.at(-1)).toMatchObject({ type: "tool_call", status: "canceled", error: null });
     await connection.close();
   });
 
@@ -1326,4 +1499,188 @@ describe("ACP streamed message boundaries", () => {
       ]);
     },
   );
+});
+
+function userChunk(text: string, messageId?: string): SessionUpdate {
+  return {
+    sessionUpdate: "user_message_chunk",
+    content: { type: "text", text },
+    ...(messageId === undefined ? {} : { messageId }),
+  };
+}
+
+async function openReplaySession(
+  replay: SessionUpdate[],
+  history: "replay" | "skip",
+): Promise<{ connection: ProviderConnection; events: ProviderEvent[] }> {
+  const harness = connectorHarness({
+    capabilities: { loadSession: true },
+    handleRequest(instance, request) {
+      if (request.method !== "session/load") return false;
+      for (const update of replay) {
+        instance.notify("session/update", { sessionId: "connector-session", update });
+      }
+      instance.respond(request, {
+        sessionId: "connector-session",
+        modes: null,
+        configOptions: [],
+      });
+      return true;
+    },
+  });
+  const registration = runAcpProvider({
+    id: "replay-acp",
+    label: "Replay ACP",
+    connector: harness.connector,
+  });
+  const connection = await registration.connect({
+    versions: [1],
+    capabilities: ["prompt.message", "session.persistence"],
+  });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  const input = openInput();
+  input.persistence = { version: 1, data: { sessionId: "connector-session" } };
+  input.history = history;
+  await connection.send(input);
+  await waitForEvent(events, (event) => event.type === "session.ready");
+  return { connection, events };
+}
+
+function timelineProjection(events: ProviderEvent[]): Array<Record<string, string>> {
+  return events.flatMap((event) => {
+    if (event.type !== "timeline.item") return [];
+    const item = event.item;
+    if (
+      item.type === "user_message" ||
+      item.type === "assistant_message" ||
+      item.type === "reasoning"
+    ) {
+      return [{ type: item.type, id: item.id, text: item.text }];
+    }
+    if (item.type === "tool_call") return [{ type: item.type, id: item.id, status: item.status }];
+    return [{ type: item.type, id: item.id }];
+  });
+}
+
+describe("ACP session history replay", () => {
+  it("restores the timeline replayed before session/load resolves", async () => {
+    const { connection, events } = await openReplaySession(
+      [
+        userChunk("What is the ", "user-1"),
+        userChunk("temperature?", "user-1"),
+        textChunk("Checking the sensor", "agent_thought_chunk"),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-1",
+          title: "Read sensor",
+          kind: "read",
+          status: "in_progress",
+        },
+        { sessionUpdate: "tool_call_update", toolCallId: "tool-1", status: "completed" },
+        textChunk("It is 25°C"),
+      ],
+      "replay",
+    );
+    try {
+      expect(timelineProjection(events)).toEqual([
+        { type: "user_message", id: "user-1", text: "What is the " },
+        { type: "user_message", id: "user-1", text: "What is the temperature?" },
+        { type: "reasoning", id: "agent_thought_chunk:1", text: "Checking the sensor" },
+        { type: "tool_call", id: "tool-1", status: "running" },
+        { type: "tool_call", id: "tool-1", status: "completed" },
+        { type: "assistant_message", id: "agent_message_chunk:2", text: "It is 25°C" },
+      ]);
+      const lastReplayed = events.findLastIndex((event) => event.type === "timeline.item");
+      const opened = events.findIndex((event) => event.type === "session.opened");
+      expect(lastReplayed).toBeLessThan(opened);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("continues anonymous user chunks into one message and starts a new one after an agent reply", async () => {
+    const { connection, events } = await openReplaySession(
+      [
+        userChunk("first "),
+        userChunk("question"),
+        textChunk("answer"),
+        userChunk("second question"),
+      ],
+      "replay",
+    );
+    try {
+      expect(timelineProjection(events)).toEqual([
+        { type: "user_message", id: "user_message_chunk:1", text: "first " },
+        { type: "user_message", id: "user_message_chunk:1", text: "first question" },
+        { type: "assistant_message", id: "agent_message_chunk:2", text: "answer" },
+        { type: "user_message", id: "user_message_chunk:3", text: "second question" },
+      ]);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("does not duplicate the live prompt echo when the agent echoes it as a user chunk", async () => {
+    const harness = connectorHarness({
+      capabilities: { loadSession: true },
+      promptUpdates: (promptText) => [
+        { sessionUpdate: "user_message_chunk", content: { type: "text", text: promptText } },
+        { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Acknowledged" } },
+      ],
+    });
+    const registration = runAcpProvider({
+      id: "echo-acp",
+      label: "Echo ACP",
+      connector: harness.connector,
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "session.persistence"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    const input = openInput();
+    input.persistence = { version: 1, data: { sessionId: "connector-session" } };
+    input.history = "replay";
+    await connection.send(input);
+    await waitForEvent(events, (event) => event.type === "session.ready");
+
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "session-1",
+      prompt: {
+        clientMessageId: "echo-1",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "hello" }] },
+      },
+    });
+    try {
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:echo-1" &&
+          event.state === "completed",
+      );
+      expect(timelineProjection(events)).toEqual([
+        { type: "user_message", id: "echo-1", text: "hello" },
+        { type: "assistant_message", id: "agent_message_chunk:1", text: "Acknowledged" },
+      ]);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("drops replayed updates when the open request asks to skip history", async () => {
+    const { connection, events } = await openReplaySession(
+      [userChunk("What is in the README?", "user-1"), textChunk("It describes the project.")],
+      "skip",
+    );
+    try {
+      expect(timelineProjection(events)).toEqual([]);
+    } finally {
+      await connection.close();
+    }
+  });
 });

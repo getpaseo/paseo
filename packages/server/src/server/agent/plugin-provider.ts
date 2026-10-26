@@ -113,9 +113,15 @@ function providerError(error: ProviderError): Error {
 
 function isProviderRequestReply(
   event: ProviderEvent,
-): event is Extract<ProviderEvent, { type: "request.completed" | "catalog" | "sessions" }> {
+): event is Extract<
+  ProviderEvent,
+  { type: "request.completed" | "catalog" | "sessions" | "session.can_stop_runtime" }
+> {
   return (
-    event.type === "request.completed" || event.type === "catalog" || event.type === "sessions"
+    event.type === "request.completed" ||
+    event.type === "catalog" ||
+    event.type === "sessions" ||
+    event.type === "session.can_stop_runtime"
   );
 }
 
@@ -564,10 +570,21 @@ class ProviderRuntime {
   }
 
   private finishRequest(
-    event: Extract<ProviderEvent, { type: "request.completed" | "catalog" | "sessions" }>,
+    event: Extract<
+      ProviderEvent,
+      { type: "request.completed" | "catalog" | "sessions" | "session.can_stop_runtime" }
+    >,
   ): void {
     const request = this.requests.get(event.requestId);
     if (!request) return;
+    if (
+      event.type === "session.can_stop_runtime" &&
+      this.providerSessions.get(event.sessionId)?.id !== request.sessionId
+    ) {
+      this.requests.delete(event.requestId);
+      request.reject(new Error("Runtime safety response belongs to another session"));
+      return;
+    }
     this.requests.delete(event.requestId);
     request.resolve(event);
   }
@@ -633,6 +650,27 @@ class ProviderRuntimeSession {
     } finally {
       this.prompts.delete(prompt.clientMessageId);
     }
+  }
+
+  async canStopRuntime(): Promise<boolean> {
+    if (
+      this.terminal ||
+      this.prompts.size ||
+      this.activeTurnIds.size ||
+      !this.capabilities.includes("session.can_stop_runtime")
+    )
+      return false;
+    const event = await this.runtime.complete(
+      {
+        type: "session.can_stop_runtime",
+        requestId: randomUUID(),
+        sessionId: this.providerSessionId,
+      },
+      AbortSignal.timeout(10_000),
+    );
+    if (event.type !== "session.can_stop_runtime")
+      throw new Error("Invalid runtime safety response");
+    return event.canStop;
   }
 
   async configure(changes: ProviderConfigChanges): Promise<void> {
@@ -885,6 +923,7 @@ function createPluginProviderDefinition(
     label: registration.label,
     description: registration.description ?? `Plugin provider ${registration.label}`,
     iconSvg: registration.icon,
+    requiresConfiguration: registration.requiresConfiguration,
     defaultModeId: null,
     modes: [],
     supportsExactMcpPreapproval: true,
@@ -1174,6 +1213,9 @@ class PluginAgentSession implements AgentSession {
     prompt: AgentPromptInput,
     options: SteerActiveTurnOptions,
   ): Promise<SteerResult> {
+    if (!this.bridge.negotiatedCapabilities.includes("prompt.steer")) {
+      return { status: "unavailable" };
+    }
     const result = await this.bridge.prompt({
       clientMessageId: options.clientMessageId ?? randomUUID(),
       delivery: "steer",
@@ -1195,6 +1237,11 @@ class PluginAgentSession implements AgentSession {
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
     for (const event of this.history) yield event;
+  }
+
+  get canStopRuntime(): (() => Promise<boolean>) | undefined {
+    if (!this.bridge.negotiatedCapabilities.includes("session.can_stop_runtime")) return undefined;
+    return () => this.bridge.canStopRuntime();
   }
 
   async getRuntimeInfo() {

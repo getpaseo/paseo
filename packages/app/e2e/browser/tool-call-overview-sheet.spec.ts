@@ -143,7 +143,7 @@ async function configureOverviewToolCalls(page: Page): Promise<void> {
   await page.addInitScript(() => {
     localStorage.setItem(
       "@paseo:app-settings",
-      JSON.stringify({ toolCallDetailLevel: "overview" }),
+      JSON.stringify({ chatDisplay: "collapseToolCalls" }),
     );
   });
 }
@@ -266,14 +266,22 @@ test("keeps overview tool calls inline on desktop", async ({ page }) => {
   const agent = await createOverviewAgent(page, "Desktop overview tool calls");
 
   try {
+    const gate = await holdStreamAfterFirstCompletedToolCall(page, agent.agentId);
     await openOverviewAgent(page, agent);
     await agent.client.sendAgentMessage(agent.agentId, "Exercise desktop overview tool calls.");
+    await gate.waitForFirstCompleted();
     const group = page.getByTestId("tool-call-group").first();
     await expect(group).toBeVisible();
 
-    await group.click();
-    await expect(page.getByTestId("tool-call-group-sheet")).toHaveCount(0);
+    // Keep streaming layout changes out of the pointer-down/pointer-up interval.
+    const header = group.getByRole("button").first();
+    await header.click();
     await expect(group.getByTestId("tool-call-badge").first()).toBeVisible();
+    await expect(page.getByTestId("tool-call-group-sheet")).toHaveCount(0);
+
+    gate.release(1);
+    await expect.poll(() => group.getByTestId("tool-call-badge").count()).toBeGreaterThanOrEqual(2);
+    await expect(page.getByTestId("tool-call-group-sheet")).toHaveCount(0);
   } finally {
     await agent.cleanup();
   }

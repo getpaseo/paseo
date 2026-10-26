@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ZodType } from "zod";
+import { z, type ZodType } from "zod";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 
 export interface UsageWindow {
@@ -38,24 +38,52 @@ export interface UsageDetail {
   tone?: UsageWindow["tone"];
 }
 
-export interface UsageReport {
-  status: "available" | "unavailable" | "error";
-  planLabel?: string;
-  windows: UsageWindow[];
-  balances?: UsageBalance[];
-  details?: UsageDetail[];
-  error?: string;
+export type UsageProblem =
+  | { kind: "expired"; expiresAt: string; refreshedBy?: string }
+  | { kind: "rejected"; status: number; refreshedBy?: string }
+  | { kind: "no_quota"; detail: string };
+
+export type UsageReport =
+  | {
+      status: "available";
+      planLabel?: string;
+      windows: UsageWindow[];
+      balances?: UsageBalance[];
+      details?: UsageDetail[];
+    }
+  | { status: "unavailable"; problem: UsageProblem }
+  | { status: "error"; error: string };
+
+export interface UsageAccount {
+  /** Stable across token rotation; [A-Za-z0-9._-]{1,128}. Never a credential or raw email. */
+  key: string;
+  label?: string;
+  /** Harness owning this login, e.g. Codex, OpenCode, Pi or OMP. */
+  harness?: string;
+  /** Store locator, opaque to the daemon. */
+  input: JsonValue;
 }
+
+export const UsageScopeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("global") }),
+  z.object({
+    kind: z.literal("session"),
+    provider: z.string(),
+    model: z.string().optional(),
+    env: z.record(z.string(), z.string()),
+  }),
+]);
+export type UsageScope = z.infer<typeof UsageScopeSchema>;
 
 export interface UsageSourceRegistration {
   id: string;
   label: string;
   icon?: string;
   input: ZodType;
-  /** Stable account identity, resolved without fetching usage. */
-  identify(input: unknown): Promise<{ key: string; label?: string } | null>;
+  /** Accounts for this scope only. The same key in any scope identifies the same account. */
+  discover(scope: UsageScope): Promise<UsageAccount[]>;
+  /** Re-reads the login store; never writes it. */
   fetch(input: unknown): Promise<UsageReport>;
-  discover(): Promise<JsonValue[]>;
 }
 
 export function windowFromUsedPct(input: {
@@ -79,6 +107,55 @@ export function windowFromUsedPct(input: {
   if (input.summary) window.summary = true;
   if (input.tone) window.tone = input.tone;
   return window;
+}
+
+/**
+ * Numeric provider windows have one identity and vocabulary, independent of response slots.
+ * Pass null when the provider omits the duration; reset countdowns are not window lengths.
+ * Named API fields (weekly, monthly, etc.) use windowFromUsedPct instead.
+ */
+export function windowFromReportedDuration(input: {
+  durationSeconds: number | null;
+  /** Stable quota identity and provider name for a model- or feature-scoped limit. */
+  scope?: { id: string; label: string };
+  /** Neutral identity and names when the provider does not report a positive duration. */
+  unknown: { id: string; label: string; shortLabel: string };
+  utilizationPct: number | null | undefined;
+  resetsAt?: string | null;
+  summary?: boolean;
+  tone?: UsageWindow["tone"];
+}): UsageWindow {
+  const duration = input.durationSeconds;
+  const name =
+    duration !== null && Number.isFinite(duration) && duration > 0
+      ? durationWindowName(duration)
+      : input.unknown;
+  const scope = input.scope;
+  return windowFromUsedPct({
+    id: scope ? `${scope.id}:${name.id}` : name.id,
+    label: scope ? `${scope.label} · ${name.label}` : name.label,
+    shortLabel: scope
+      ? `${scope.label}${name.shortLabel ? ` ${name.shortLabel}` : ""}`
+      : name.shortLabel,
+    utilizationPct: input.utilizationPct,
+    resetsAt: input.resetsAt,
+    summary: input.summary,
+    tone: input.tone,
+  });
+}
+
+function durationWindowName(seconds: number): { id: string; label: string; shortLabel: string } {
+  if (seconds === 604800) return { id: "weekly", label: "Weekly", shortLabel: "wk" };
+  const id = seconds === 18000 ? "five_hour" : `${seconds}s`;
+  const units = [
+    [86400, "day", "d"],
+    [3600, "hour", "h"],
+    [60, "minute", "m"],
+    [1, "second", "s"],
+  ] as const;
+  const unit = units.find(([size]) => seconds % size === 0) ?? units[units.length - 1]!;
+  const amount = seconds / unit[0];
+  return { id, label: `${amount}-${unit[1]}`, shortLabel: `${amount}${unit[2]}` };
 }
 
 /**
@@ -122,11 +199,6 @@ export function hashAccountKey(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-export function unavailableUsage(): UsageReport {
-  return {
-    status: "unavailable",
-    windows: [],
-    balances: [],
-    details: [],
-  };
+export function unavailable(problem: UsageProblem): UsageReport {
+  return { status: "unavailable", problem };
 }

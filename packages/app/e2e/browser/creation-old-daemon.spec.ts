@@ -116,6 +116,7 @@ for (const version of ["0.2.5", "0.7.2", "0.8.0"]) {
       );
       expect(workspaces).toHaveLength(1);
       gate.release();
+      await gate.waitForCreated();
       await expect.poll(async () => (await client.fetchAgents()).entries.length).toBe(1);
       const first = (await client.fetchAgents()).entries[0]!.agent;
       await client.waitForFinish(first.id, 20_000);
@@ -128,6 +129,7 @@ for (const version of ["0.2.5", "0.7.2", "0.8.0"]) {
       const secondPrompt = "Create another agent: emit 1 coalesced agent stream updates";
       await fillComposerDraft(page, secondPrompt);
       await pressSubmitBeforeTheNextRender(page, "Send message");
+      await gate.waitForCreated();
       await expect.poll(async () => (await client.fetchAgents()).entries.length).toBe(2);
       const second = (await client.fetchAgents()).entries.find(
         ({ agent }) => agent.id !== first.id,
@@ -206,21 +208,40 @@ for (const version of ["0.2.5", "0.7.2", "0.8.0"]) {
 async function holdLegacyAgentCreation(page: Page, port: number) {
   const readers = await loadSessionMessageReaders();
   const arrived = Promise.withResolvers<void>();
+  let created = Promise.withResolvers<void>();
+  let createRequestId: string | undefined;
   let release = () => {};
   let holding = true;
   await page.routeWebSocket(new RegExp(`:${port}/ws`), (browser) => {
     const server = browser.connectToServer();
     browser.onMessage((frame) => {
-      if (holding && readers.client(frame)?.type === "create_agent_request") {
+      const message = readers.client(frame);
+      if (message?.type === "create_agent_request") createRequestId = message.requestId;
+      if (holding && message?.type === "create_agent_request") {
         holding = false;
         release = () => server.send(frame);
         arrived.resolve();
       } else server.send(frame);
     });
-    server.onMessage((frame) => browser.send(frame));
+    server.onMessage((frame) => {
+      const message = readers.server(frame);
+      if (
+        message?.type === "status" &&
+        message.payload.status === "agent_created" &&
+        message.payload.requestId === createRequestId
+      ) {
+        created.resolve();
+      }
+      browser.send(frame);
+    });
   });
   return {
     waitForRequest: () => arrived.promise,
+    async waitForCreated() {
+      // Agent-list membership includes initialization, before the initial prompt starts.
+      await created.promise;
+      created = Promise.withResolvers<void>();
+    },
     release() {
       const send = release;
       release = () => {};

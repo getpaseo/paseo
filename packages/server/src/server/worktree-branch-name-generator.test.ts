@@ -4,7 +4,10 @@ import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import type { AgentManager } from "./agent/agent-manager.js";
-import type { StructuredAgentGenerationWithFallbackOptions } from "./agent/agent-response-loop.js";
+import {
+  StructuredAgentFallbackError,
+  type StructuredAgentGenerationWithFallbackOptions,
+} from "./agent/agent-response-loop.js";
 import {
   attemptFirstAgentBranchAutoName,
   type AttemptFirstAgentBranchAutoNameResult,
@@ -225,6 +228,52 @@ describe("generateBranchNameFromFirstAgentContext", () => {
     expect(firstCall.providers).toEqual([
       { provider: "focused-provider", model: "selected-model", thinkingOptionId: "medium" },
     ]);
+  });
+
+  test("tries only the manual model and logs its failure", async () => {
+    const logger = createLogger();
+    const failure = new StructuredAgentFallbackError([
+      { provider: "local-llm", model: "qwen-local", available: true, error: "connection refused" },
+    ]);
+    const calls: StructuredAgentGenerationWithFallbackOptions<unknown>[] = [];
+
+    const result = await generateBranchNameFromFirstAgentContext({
+      agentManager: {} as AgentManager,
+      cwd: "/tmp/repo",
+      providerSnapshotManager: {
+        listProviders: vi.fn(async () => [
+          {
+            provider: "opencode",
+            status: "ready" as const,
+            enabled: true,
+            models: [
+              { provider: "opencode", id: "minimax-m3", label: "MiniMax M3", isDefault: true },
+            ],
+          },
+        ]),
+      },
+      daemonConfig: {
+        metadataGeneration: { providers: [{ provider: "local-llm", model: "qwen-local" }] },
+      },
+      currentSelection: { provider: "opencode", model: "minimax-m3" },
+      firstAgentContext: { prompt: "Fix the login flow" },
+      logger,
+      deps: {
+        generateStructuredAgentResponseWithFallback: async (options) => {
+          calls.push(options as StructuredAgentGenerationWithFallbackOptions<unknown>);
+          throw failure;
+        },
+      },
+    });
+
+    expect(result).toBeNull();
+    expect(calls.map((call) => call.providers)).toEqual([
+      [{ provider: "local-llm", model: "qwen-local" }],
+    ]);
+    expect(logger.error).toHaveBeenCalledWith(
+      { err: failure, attempts: failure.attempts },
+      "Structured branch name generation failed",
+    );
   });
 
   test.each([

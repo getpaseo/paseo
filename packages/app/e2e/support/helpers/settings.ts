@@ -24,6 +24,7 @@ const SECTION_LABELS = {
   appearance: "Appearance",
   sidebar: "Sidebar",
   editor: "Editor",
+  files: "Files",
   terminal: "Terminal",
   browser: "Browser",
   shortcuts: "Shortcuts",
@@ -41,6 +42,7 @@ type HostSection =
   | "pair-device"
   | "agents"
   | "metadata"
+  | "voice"
   | "workspaces"
   | "providers"
   | "usage"
@@ -54,6 +56,92 @@ export async function openSettingsSection(page: Page, section: SettingsSection):
 
   await sidebar.getByRole("button", { name: SECTION_LABELS[section], exact: true }).click();
   await expectAppRoute(page, buildSettingsSectionRoute(section));
+}
+
+export async function revealSettingsSidebarSection(
+  page: Page,
+  section: SettingsSection,
+): Promise<number> {
+  await page
+    .getByRole("navigation", { name: "Settings" })
+    .getByRole("button", { name: SECTION_LABELS[section], exact: true })
+    .scrollIntoViewIfNeeded();
+  const offset = await page
+    .getByTestId("settings-sidebar-scroll-body")
+    .evaluate((node) => node.scrollTop);
+  expect(offset).toBeGreaterThan(0);
+  return offset;
+}
+
+export async function expectSettingsSidebarScrollSettled(
+  page: Page,
+  offset: number,
+): Promise<void> {
+  // RN Web emits its final scroll callback 100 ms after scrolling stops.
+  await page.waitForTimeout(200);
+  await expectSettingsSidebarScrollOffset(page, offset);
+}
+
+export async function selectSettingsHostSectionsRapidly(page: Page): Promise<void> {
+  for (let selection = 0; selection < 5; selection += 1) {
+    await page
+      .getByRole("navigation", { name: "Settings" })
+      .getByRole("button", { name: "Providers", exact: true })
+      .click();
+    await page
+      .getByRole("navigation", { name: "Settings" })
+      .getByRole("button", { name: "Terminals", exact: true })
+      .click();
+    await expectSettingsHeader(page, "Terminals");
+  }
+}
+
+export async function scrollSettingsSidebarUp(page: Page, pixels: number): Promise<void> {
+  await page.getByTestId("settings-sidebar-scroll-body").hover();
+  await page.mouse.wheel(0, -pixels);
+}
+
+export async function changeSettingsInterfaceFontSize(page: Page, size: number): Promise<void> {
+  const input = page.getByRole("textbox", { name: "Interface font size" });
+  await input.fill(String(size));
+  await input.press("Tab");
+  await expect(input).toHaveValue(String(size));
+}
+
+export async function scrollSettingsSidebarToEnd(page: Page): Promise<number> {
+  const scrollBody = page.locator('[data-testid="settings-sidebar-scroll-body"]:visible');
+  await scrollBody.hover();
+  await page.mouse.wheel(0, 2000);
+  await expect
+    .poll(() =>
+      scrollBody.evaluate((node) => node.scrollHeight - node.clientHeight - node.scrollTop),
+    )
+    .toBe(0);
+  const offset = await scrollBody.evaluate((node) => node.scrollTop);
+  expect(offset).toBeGreaterThan(0);
+  return offset;
+}
+
+export async function expectSettingsSidebarScrollOffset(page: Page, offset: number): Promise<void> {
+  const scrollBody = page.locator('[data-testid="settings-sidebar-scroll-body"]:visible');
+  await expect.poll(() => scrollBody.evaluate((node) => node.scrollTop)).toBe(offset);
+}
+
+export async function scrollSettingsDetailDown(page: Page): Promise<number> {
+  const scrollBody = page.getByTestId("settings-detail-scroll-body");
+  await expect
+    .poll(() => scrollBody.evaluate((node) => node.scrollHeight - node.clientHeight))
+    .toBeGreaterThan(0);
+  await scrollBody.hover();
+  await page.mouse.wheel(0, 1000);
+  await expect.poll(() => scrollBody.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+  const offset = await scrollBody.evaluate((node) => node.scrollTop);
+  return offset;
+}
+
+export async function expectSettingsDetailScrollOffset(page: Page, offset: number): Promise<void> {
+  const scrollBody = page.getByTestId("settings-detail-scroll-body");
+  await expect.poll(() => scrollBody.evaluate((node) => node.scrollTop)).toBe(offset);
 }
 
 export async function openSettingsHost(page: Page, serverId: string): Promise<void> {
@@ -325,6 +413,25 @@ export async function expectHostInjectMcpCard(page: Page): Promise<void> {
   await expect(card.getByRole("switch", { name: "Inject Paseo tools" })).toBeVisible();
 }
 
+function idleAgentReleaseSwitch(page: Page) {
+  return page
+    .getByTestId("host-page-idle-runtime-cleanup-card")
+    .getByRole("switch", { name: "Release idle agents" });
+}
+
+export async function expectIdleAgentRelease(page: Page, enabled: boolean): Promise<void> {
+  const toggle = idleAgentReleaseSwitch(page);
+  await expect(toggle).toBeEnabled();
+  await expect(toggle).toHaveAttribute("aria-checked", String(enabled));
+}
+
+export async function setIdleAgentRelease(page: Page, enabled: boolean): Promise<void> {
+  const toggle = idleAgentReleaseSwitch(page);
+  await expect(toggle).toHaveAttribute("aria-checked", String(!enabled));
+  await toggle.click();
+  await expectIdleAgentRelease(page, enabled);
+}
+
 export async function openHostSection(
   page: Page,
   serverId: string,
@@ -370,7 +477,7 @@ export async function findAcpCatalogProvider(page: Page, providerName: string): 
 
 export async function installAcpCatalogProvider(page: Page, providerName: string): Promise<void> {
   await findAcpCatalogProvider(page, providerName);
-  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page.getByRole("button", { name: `Add ${providerName}`, exact: true }).click();
 }
 
 export async function expectProviderInstalledInSettings(

@@ -14,7 +14,6 @@ import {
   selectWorkspaceDirectory,
   selectWorkspaceFields,
   selectWorkspaceKeys,
-  selectWorkspaceOrderByScope,
   selectWorkspaceStatusesForBadges,
   selectWorkspaceStructureProjects,
   workspaceEqualityFns,
@@ -36,6 +35,8 @@ function createWorkspace(
   input: Partial<WorkspaceDescriptor> & Pick<WorkspaceDescriptor, "id">,
 ): WorkspaceDescriptor {
   return {
+    createdAt: null,
+    lastUserMessageAt: null,
     id: input.id,
     projectId: input.projectId ?? "project-1",
     projectDisplayName: input.projectDisplayName ?? "Project 1",
@@ -118,7 +119,6 @@ function trackSelector<S, T>(
 function emptySidebarOrder(): SidebarOrderSnapshot {
   return {
     projectOrder: [],
-    workspaceOrderByProject: {},
   };
 }
 
@@ -364,7 +364,6 @@ describe("workspace structure composition", () => {
     return composeWorkspaceStructure({
       projects: selectWorkspaceStructureProjects(useSessionStore.getState(), [serverId]),
       projectOrder: selectProjectOrder(sidebar),
-      workspaceOrderByScope: selectWorkspaceOrderByScope(sidebar),
     });
   }
 
@@ -618,4 +617,50 @@ describe("selectWorkspaceStatusesForBadges", () => {
 
     tracked.stop();
   });
+});
+
+it("a prompt changes only its project's structure and output preserves both project identities", () => {
+  const a = { ...createWorkspace({ id: "a", projectId: "p" }), createdAt: new Date("2026-01-01") };
+  const b = { ...createWorkspace({ id: "b", projectId: "p" }), createdAt: new Date("2026-02-01") };
+  const c = { ...createWorkspace({ id: "c", projectId: "q" }), createdAt: new Date("2026-02-01") };
+  const projects = new Map([a, c].map((w) => [w.projectId, projectDescriptorFromTestWorkspace(w)]));
+  const select = createWorkspaceStructureProjectsSelector([SERVER_ID], "lastPrompt");
+  const state = (workspaces: WorkspaceDescriptor[]) => ({
+    sessions: { [SERVER_ID]: { projects, workspaces: new Map(workspaces.map((w) => [w.id, w])) } },
+  });
+  const before = select(state([a, b, c]));
+  const prompted = { ...a, lastUserMessageAt: new Date("2026-03-01") };
+  const after = select(state([prompted, b, c]));
+  expect(after.find((p) => p.viewKey === "p")?.workspaceKeys).toEqual([
+    `${SERVER_ID}:a`,
+    `${SERVER_ID}:b`,
+  ]);
+  expect(after.find((p) => p.viewKey === "q")).toBe(before.find((p) => p.viewKey === "q"));
+  const output = select(state([{ ...prompted, status: "running" }, b, c]));
+  expect(output[0]).toBe(after[0]);
+  expect(output[1]).toBe(after[1]);
+});
+
+it("applies manual order only when requested without mutating the automatic baseline", () => {
+  const project = {
+    viewKey: "p",
+    projectKey: "p",
+    projectName: "P",
+    projectKind: "git" as const,
+    iconWorkingDir: "/repo",
+    hosts: [],
+    workspaceKeys: ["h:new", "h:b", "h:a"],
+  };
+  const input = { projects: [project], projectOrder: ["p"] };
+  expect(
+    composeWorkspaceStructure({
+      ...input,
+      workspaceOrderByProject: { p: ["h:filtered", "h:a", "h:b"] },
+    }).projects[0].workspaceKeys,
+  ).toEqual(["h:new", "h:a", "h:b"]);
+  expect(composeWorkspaceStructure(input).projects[0].workspaceKeys).toEqual([
+    "h:new",
+    "h:b",
+    "h:a",
+  ]);
 });

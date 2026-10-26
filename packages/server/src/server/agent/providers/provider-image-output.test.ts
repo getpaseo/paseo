@@ -1,5 +1,7 @@
 import { existsSync, rmSync } from "node:fs";
 import path from "node:path";
+import MarkdownIt from "markdown-it";
+import { projectTimelineRows } from "../timeline-projection.js";
 import { describe, expect, test } from "vitest";
 
 import {
@@ -44,7 +46,7 @@ describe("isProviderImageMarkdown", () => {
     );
 
     expect(markdown).toBe(
-      `![Image](file:///C:/Users/me/AppData/Local/Temp/paseo-attachments/${HASH}.png)`,
+      `\n\n![Image](file:///C:/Users/me/AppData/Local/Temp/paseo-attachments/${HASH}.png)\n\n`,
     );
     expect(isProviderImageMarkdown(markdown)).toBe(true);
   });
@@ -53,20 +55,20 @@ describe("isProviderImageMarkdown", () => {
     const markdown = renderImageMarkdown("/home/user/Projects/Project With Spaces/screenshot.png");
 
     expect(markdown).toBe(
-      "![Image](file:///home/user/Projects/Project%20With%20Spaces/screenshot.png)",
+      "\n\n![Image](file:///home/user/Projects/Project%20With%20Spaces/screenshot.png)\n\n",
     );
   });
 
   test("encodes URI-significant characters in POSIX file paths", () => {
     const markdown = renderImageMarkdown("/tmp/screenshot#1?draft.png");
 
-    expect(markdown).toBe("![Image](file:///tmp/screenshot%231%3Fdraft.png)");
+    expect(markdown).toBe("\n\n![Image](file:///tmp/screenshot%231%3Fdraft.png)\n\n");
   });
 
   test("preserves double-leading slashes in POSIX file paths", () => {
     const markdown = renderImageMarkdown("//tmp/screenshot#1.png");
 
-    expect(markdown).toBe("![Image](file:////tmp/screenshot%231.png)");
+    expect(markdown).toBe("\n\n![Image](file:////tmp/screenshot%231.png)\n\n");
   });
 
   test.each([
@@ -77,7 +79,7 @@ describe("isProviderImageMarkdown", () => {
       "file://server/share/shot%3Fdraft.png",
     ],
   ])("encodes %s image paths as file URIs", (_label, imagePath, expectedSource) => {
-    expect(renderImageMarkdown(imagePath)).toBe(`![Image](${expectedSource})`);
+    expect(renderImageMarkdown(imagePath)).toBe(`\n\n![Image](${expectedSource})\n\n`);
   });
 
   test("rejects user-authored markdown that is not a materialized attachment", () => {
@@ -112,4 +114,53 @@ describe("materializeProviderImage", () => {
       rmSync(secondDir, { recursive: true, force: true });
     }
   });
+});
+
+describe("provider image paragraph boundaries", () => {
+  test.each(["", "\n"])("keeps image outputs separate from prose ending in %j", (ending) => {
+    const image = renderProviderImageOutputAsAssistantMarkdown({
+      url: "https://example.com/chart.png",
+    });
+    if (!image) throw new Error("Expected image output");
+    const projected = projectTimelineRows({
+      mode: "projected",
+      rows: [
+        {
+          seq: 1,
+          timestamp: "2026-10-16T15:08:23Z",
+          item: { type: "assistant_message", text: `Before${ending}`, messageId: "commentary" },
+        },
+        { seq: 2, timestamp: "2026-10-16T15:08:24Z", item: image },
+        {
+          seq: 3,
+          timestamp: "2026-10-16T15:08:25Z",
+          item: { type: "assistant_message", text: "After" },
+        },
+      ],
+    });
+    expect(projected).toHaveLength(1);
+    const item = projected[0]!.item;
+    if (item.type !== "assistant_message") throw new Error("Expected assistant message");
+    const paragraphs = new MarkdownIt()
+      .parse(item.text, {})
+      .filter((token) => token.type === "inline");
+    expect(paragraphs.map((token) => token.content)).toEqual([
+      "Before",
+      "![Image](https://example.com/chart.png)",
+      "After",
+    ]);
+  });
+});
+
+test("materialized image output retains paragraph boundaries and attachment recognition", () => {
+  const item = renderProviderImageOutputAsAssistantMarkdown(
+    { data: "YWJjMTIz", mimeType: "image/png" },
+    { materialize: () => ({ path: `/tmp/paseo-attachments/${HASH}.png` }) },
+  );
+  expect(item).toEqual({
+    type: "assistant_message",
+    text: `\n\n![Image](file:///tmp/paseo-attachments/${HASH}.png)\n\n`,
+  });
+  if (!item || item.type !== "assistant_message") throw new Error("Expected image output");
+  expect(isProviderImageMarkdown(item.text)).toBe(true);
 });

@@ -1,3 +1,8 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { AgentStorage } from "./agent-storage.js";
+import { createIdleRuntimeCleanup } from "./idle-runtime-cleanup/index.js";
 import { relative } from "node:path";
 import type {
   ProviderConnection,
@@ -761,6 +766,72 @@ describe("PluginAgentClientRegistry", () => {
     await expect.poll(harness.closeCount).toBe(1);
     expect(harness.inputs.map((input) => input.type)).toContain("session.close");
   });
+
+  test("delivers a supported steer to the active turn", async () => {
+    const harness = createProviderHarness({
+      capabilities: [...CAPABILITIES, "prompt.steer"],
+      handleInput: async (input, emit) => {
+        if (input.type !== "session.prompt") return false;
+        emit({
+          type: "session.prompt_result",
+          sessionId: input.sessionId,
+          clientMessageId: input.prompt.clientMessageId,
+          result: { type: "steer", turnId: "turn-1" },
+        });
+        return true;
+      },
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const client = registry.clients()[harness.registration.id]!;
+    const session = await client.createSession({ provider: harness.registration.id, cwd: "/tmp" });
+    try {
+      await expect(
+        session.steerActiveTurn!("follow up", {
+          expectedTurnId: "turn-1",
+          clientMessageId: "steer-1",
+          clearPendingPermissions: true,
+        }),
+      ).resolves.toEqual({ status: "accepted" });
+      expect(harness.inputs.find((input) => input.type === "session.prompt")).toMatchObject({
+        prompt: {
+          delivery: "steer",
+          clientMessageId: "steer-1",
+          input: { type: "message", content: [{ type: "text", text: "follow up" }] },
+          clearPendingPermissions: true,
+        },
+      });
+    } finally {
+      await session.close();
+      registry.replace([]);
+    }
+  });
+
+  test("returns unavailable when steering a provider without prompt.steer capability", async () => {
+    const harness = createProviderHarness({
+      capabilities: [
+        "prompt.message",
+        "session.configure",
+        "session.persistence",
+        "session.subsession",
+        "permission",
+      ],
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const session = await registry.clients()[harness.registration.id]!.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+    try {
+      const result = await session.steerActiveTurn!("hello", { expectedTurnId: "turn-1" });
+      expect(result).toEqual({ status: "unavailable" });
+      expect(harness.inputs.filter((input) => input.type === "session.prompt")).toHaveLength(0);
+    } finally {
+      await session.close();
+      registry.replace([]);
+    }
+  });
 });
 
 type RequestKind = "session.open" | "catalog" | "session.configure" | "session.prompt";
@@ -1120,4 +1191,133 @@ describe("plugin provider launch and status", () => {
       }
     },
   );
+});
+
+test("config-required plugin membership is independent of enablement and other providers", async () => {
+  const logger = createTestLogger();
+  const plugins = new PluginAgentClientRegistry(logger);
+  const harness = createProviderHarness();
+  let connections = 0;
+  let probes = 0;
+  plugins.replace([
+    {
+      ...harness.registration,
+      requiresConfiguration: true,
+      async status() {
+        probes++;
+        return { available: true };
+      },
+      async connect(request) {
+        connections++;
+        return harness.registration.connect(request);
+      },
+    },
+  ]);
+  const build = (providerOverrides = {}) =>
+    buildProviderRegistry(logger, {
+      pluginProviders: plugins.definitions(),
+      providerOverrides,
+    });
+  try {
+    const before = build();
+    expect(before["plugin-direct"]).toBeUndefined();
+    expect({ probes, connections }).toEqual({ probes: 0, connections: 0 });
+    const added = build({ "plugin-direct": {} });
+    expect(added["plugin-direct"].enabled).toBe(true);
+    const client = added["plugin-direct"].createClient(logger);
+    expect(await client.isAvailable()).toBe(true);
+    const catalog = await client.fetchCatalog({ scope: "global" });
+    expect(catalog.models.map((model) => model.id)).toEqual(["plugin-model"]);
+    expect({ probes, connections }).toEqual({ probes: 1, connections: 1 });
+    const disabled = build({ "plugin-direct": { enabled: false } });
+    expect(disabled["plugin-direct"].enabled).toBe(false);
+    expect(Object.keys(build())).toEqual(Object.keys(before));
+    for (const id of Object.keys(before)) {
+      expect(added[id].enabled).toBe(before[id].enabled);
+    }
+  } finally {
+    await plugins.shutdown();
+  }
+});
+
+test.each([true, false, "error", "wrong-session", "missing"] as const)(
+  "plugin runtime safety query: %s",
+  async (answer) => {
+    const harness = createProviderHarness({
+      capabilities:
+        answer === "missing" ? CAPABILITIES : [...CAPABILITIES, "session.can_stop_runtime"],
+      handleInput: async (input, emit) => {
+        if (input.type !== "session.can_stop_runtime") return false;
+        if (answer === "error")
+          emit({
+            type: "request.failed",
+            requestId: input.requestId,
+            error: { message: "Probe failed" },
+          });
+        else
+          emit({
+            type: "session.can_stop_runtime",
+            requestId: input.requestId,
+            sessionId: answer === "wrong-session" ? "child-1" : input.sessionId,
+            canStop: answer === true,
+          });
+        return true;
+      },
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const client = registry.clients()[harness.registration.id]!;
+    const session = await client.createSession({ provider: harness.registration.id, cwd: "/tmp" });
+    try {
+      if (answer === "error" || answer === "wrong-session") {
+        await expect(session.canStopRuntime!()).rejects.toThrow(
+          answer === "error" ? "Probe failed" : "another session",
+        );
+      } else if (answer === "missing") expect(session.canStopRuntime).toBeUndefined();
+      else expect(await session.canStopRuntime!()).toBe(answer === true);
+      const requests = harness.inputs.filter((input) => input.type === "session.can_stop_runtime");
+      expect(requests).toHaveLength(answer === "missing" ? 0 : 1);
+      if (answer !== "missing")
+        expect(requests[0]).toMatchObject({
+          sessionId: harness.inputs.find((input) => input.type === "session.open")?.sessionId,
+        });
+    } finally {
+      await session.close();
+      await registry.shutdown();
+    }
+  },
+);
+
+test("plugin without a runtime safety capability uses baseline collection without a query", async () => {
+  const home = await mkdtemp(join(tmpdir(), "plugin-baseline-cleanup-"));
+  const logger = createTestLogger();
+  const storage = new AgentStorage(join(home, "agents"), logger);
+  const harness = createProviderHarness();
+  const registry = new PluginAgentClientRegistry(logger);
+  registry.replace([harness.registration]);
+  const manager = new AgentManager({ clients: registry.clients(), registry: storage, logger });
+  const agent = await manager.createAgent(
+    { provider: harness.registration.id, cwd: home },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const cleanup = createIdleRuntimeCleanup({
+    enabled: true,
+    logger,
+    runtimes: () => manager.getRuntimeCleanupCandidates(),
+    now: () => agent.updatedAt.getTime() + 60 * 60_000,
+    schedule: () => () => {},
+  });
+  try {
+    expect(agent.session?.canStopRuntime).toBeUndefined();
+    expect((await cleanup.sweep()).collected).toHaveLength(1);
+    expect(manager.getAgent(agent.id)).toBeNull();
+    expect(harness.inputs.filter((input) => input.type === "session.can_stop_runtime")).toEqual([]);
+  } finally {
+    await cleanup.close();
+    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+    await registry.shutdown();
+    await storage.flush();
+    await rm(home, { recursive: true, force: true });
+  }
 });

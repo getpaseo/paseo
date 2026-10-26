@@ -21,8 +21,13 @@ test("lists built-in and subprocess usage; validates input and isolates fetch er
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.9.2" });
   try {
     await client.connect();
-    const first = await client.listUsageReports();
-    expect(first.reports).toHaveLength(3);
+    const updates: string[] = [];
+    const first = await client.listUsageReports({}, (report) => updates.push(report.id));
+    expect(updates).toEqual(first.reports.map((report) => report.id));
+    await expect(client.listUsageReports({ agentId: "missing-agent" })).rejects.toThrow(
+      "Unknown agent",
+    );
+    expect(first.reports).toHaveLength(4);
     expect(first.reports[0]?.icon).toContain("<svg");
     expect(first.reports[0]?.fetchedAt).toMatch(/^\d{4}-/);
     expect(
@@ -41,12 +46,31 @@ test("lists built-in and subprocess usage; validates input and isolates fetch er
     expect(
       (await client.listUsageReports({ reportIds: ["fixture:throws"] })).reports[0]?.report.status,
     ).toBe("error");
+    const expired = first.reports.find((entry) => entry.id === "fixture:expired");
+    expect(expired?.report).toEqual({
+      status: "unavailable",
+      problem: { kind: "expired", expiresAt: expect.any(String), refreshedBy: "claude" },
+    });
+    const legacy = await client.listProviderUsage();
+    expect(legacy.providers.find((provider) => provider.displayName === "Fixture")?.status).toBe(
+      "available",
+    );
+    expect(legacy.providers.find((provider) => provider.status === "unavailable")?.error).toBe(
+      "Login expired 1h ago. Run claude to refresh it.",
+    );
     await client.patchDaemonConfig({ pluginsEnabled: true });
     await client.installDirectoryPlugin(subprocessDirectory, "fixture-directory");
     const both = await client.listUsageReports({ forceRefresh: true });
-    expect(both.reports).toHaveLength(6);
+    expect(both.reports).toHaveLength(8);
+    for (const id of ["fixture:one", "fixture-directory:one"]) {
+      expect(both.reports.find((entry) => entry.id === id)?.report.windows[0]).toMatchObject({
+        id: "weekly",
+        label: "Weekly",
+        shortLabel: "wk",
+      });
+    }
     await client.patchDaemonConfig({ pluginsEnabled: false });
-    await expect.poll(async () => (await client.listUsageReports()).reports.length).toBe(3);
+    await expect.poll(async () => (await client.listUsageReports()).reports.length).toBe(4);
   } finally {
     await client.close();
     await daemon.close();
@@ -81,8 +105,7 @@ import { account } from './server/account.js';
 export default function contribute(server) {
   server.registerUsageSource({
     id: 'fixture', label: 'Fixture', input: z.object({}),
-    discover: async () => [{}],
-    identify: async () => account,
+    discover: async () => [{...account, input: {}}],
     fetch: async () => ({ status: 'available', windows: [{ id: 'session', label: 'Session', usedPct: 37 }] }),
   });
   return () => {};
@@ -183,16 +206,12 @@ test("built-in sources deduplicate cross-harness accounts and fall back without 
     await cp(path.join(resolveBuiltinPluginsRoot(), `${source}-usage-source`), directory, {
       recursive: true,
     });
-    const identifyCall =
-      source === "codex"
-        ? "identify(inputSchema.parse(input), lookup)"
-        : "identify(inputSchema.parse(input), fetchApi, Date.now, lookup)";
     // Inject home/env/HTTP at the source boundary; compile and register the real readers.
     await writeFile(
       path.join(directory, "index.server.ts"),
       `
 import { inputSchema } from './shared/input.js';
-import { discover, identify, fetchUsage } from './server/usage.js';
+import { discover, fetchUsage } from './server/usage.js';
 const lookup = { home: ${JSON.stringify(home)}, env: ${JSON.stringify(env)}, platform: 'linux' };
 async function fetchApi(url, init) {
   const token = new Headers(init.headers).get('Authorization');
@@ -206,8 +225,7 @@ async function fetchApi(url, init) {
 }
 export default function contribute(server) {
   server.registerUsageSource({ id: '${source}', label: '${source}', input: inputSchema,
-    discover: () => discover(lookup),
-    identify: (input) => ${identifyCall},
+    discover: (scope) => discover(scope, lookup${source === "claude" ? ", fetchApi" : ""}),
     fetch: (input) => fetchUsage(inputSchema.parse(input), fetchApi, lookup),
   });
   return () => {};
@@ -265,6 +283,55 @@ export default function contribute(server) {
   } finally {
     await client.close();
     await daemon.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("a killed discovery subprocess logs kimi once and produces no provider card", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const { default: pino } = await import("pino");
+  const root = await mkdtemp(path.join(os.tmpdir(), "usage-crash-"));
+  const log = path.join(root, "daemon.log");
+  const destination = pino.destination({ dest: log, sync: true });
+  const daemon = await createTestPaseoDaemon({
+    daemonVersion: "0.9.2",
+    pluginsEnabled: true,
+    logger: pino({ level: "warn" }, destination),
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.9.2" });
+  try {
+    await writeFile(
+      path.join(root, "paseo-plugin.json"),
+      JSON.stringify({ id: "crashing-usage", requirements: { paseo: ">=0.9.2" } }),
+    );
+    await writeFile(
+      path.join(root, "index.server.ts"),
+      `
+import {z} from "zod";
+export default function contribute(server) {
+  server.registerUsageSource({id: "kimi", label: "Kimi", input: z.object({}),
+    discover: async () => {process.exit(1);},
+    fetch: async () => {throw new Error("discovery must never produce an account");},
+  });
+  return () => {};
+}`,
+    );
+    await client.connect();
+    await client.installDirectoryPlugin(root, "crashing-usage");
+    expect((await client.listUsageReports({ forceRefresh: true })).reports).toEqual([]);
+    const warnings = (await readFile(log, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .filter((entry) => entry.msg === "Usage source discovery failed");
+    expect(warnings.map(({ level, sourceId }) => ({ level, sourceId }))).toEqual([
+      { level: 40, sourceId: "kimi" },
+    ]);
+    expect((await client.listUsageReports({ forceRefresh: true })).reports).toEqual([]);
+  } finally {
+    await client.close();
+    await daemon.close();
+    destination.end();
     await rm(root, { recursive: true, force: true });
   }
 }, 60_000);

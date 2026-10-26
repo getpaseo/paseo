@@ -7,7 +7,11 @@ import {
   installUsageReportsFixture,
   type UsageReportsFixture,
 } from "../support/helpers/usage-reports";
-import { refreshAllUsage, showUsageAs } from "../support/helpers/usage-sidebar-item";
+import {
+  openUsageFromIcon,
+  refreshAllUsage,
+  showUsageAs,
+} from "../support/helpers/usage-sidebar-item";
 
 const ICON = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="currentColor"/></svg>';
 
@@ -18,7 +22,9 @@ function forcedRefreshCount(usage: UsageReportsFixture): number {
 function report(input: {
   sourceId: string;
   sourceLabel: string;
-  report: Partial<UsageReportEntry["report"]>;
+  report:
+    | Partial<Extract<UsageReportEntry["report"], { status: "available" }>>
+    | Exclude<UsageReportEntry["report"], { status: "available" }>;
 }): UsageReportEntry {
   return {
     id: `${input.sourceId}:account`,
@@ -27,11 +33,14 @@ function report(input: {
     sourceId: input.sourceId,
     sourceLabel: input.sourceLabel,
     icon: ICON,
-    report: {
-      status: "available",
-      windows: [],
-      ...input.report,
-    },
+    report:
+      input.report.status === "error" || input.report.status === "unavailable"
+        ? input.report
+        : {
+            status: "available",
+            windows: [],
+            ...input.report,
+          },
   };
 }
 
@@ -84,13 +93,19 @@ test.describe("usage settings", () => {
     await expect(card.getByText("Alpha plan", { exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(card.getByText("dev@example.com", { exact: true })).toBeVisible();
     await expect(card.getByText("Beta plan", { exact: true })).toBeVisible();
-    await expect(card.getByText("70%")).toBeVisible();
+    await expect(card.getByText("70% used")).toBeVisible();
     await expect(card.getByText("1,234 left", { exact: true })).toBeVisible();
     await expect(card.getByText("$5.00 / $20.00", { exact: true })).toBeVisible();
     await expect(card.getByText("2026-12-31", { exact: true })).toBeVisible();
     await expect(card.getByText("Gamma auth expired", { exact: true })).toBeVisible();
 
+    // The shared percentages setting applies to the host section.
+    await expect(page.getByTestId("usage-options-menu")).toBeVisible();
+    const hostUsageUrl = page.url();
+    await gotoAppShell(page);
+    await openUsageFromIcon(page);
     await showUsageAs(page, "remaining");
+    await page.goto(hostUsageUrl);
     await expect(card.getByText("30% left")).toBeVisible();
     await expect(card.getByText("93% left")).toBeVisible();
   });
@@ -116,11 +131,11 @@ test.describe("usage settings", () => {
     await openSettings(page);
     await openSettingsHostSection(page, serverId, "usage");
     const card = page.getByTestId("usage-card");
-    await expect(card.getByText("23%")).toBeVisible({ timeout: 10_000 });
+    await expect(card.getByText("23% used")).toBeVisible({ timeout: 10_000 });
 
     await refreshAllUsage(page);
     await expect.poll(() => forcedRefreshCount(usage)).toBe(1);
-    await expect(card.getByText("64%")).toBeVisible();
+    await expect(card.getByText("64% used")).toBeVisible();
   });
 
   test("asks to update a host without usage support and never calls it", async ({ page }) => {

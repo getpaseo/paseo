@@ -128,3 +128,46 @@ for (const scenario of [
     await creation.expectAgentCount(1);
   });
 }
+
+for (const entry of [
+  {
+    name: "agent draft",
+    open: (creation: Awaited<ReturnType<typeof createCreationScenario>>) =>
+      creation.openAgentDraft(),
+    button: "Send message",
+    settled: async (_creation: Awaited<ReturnType<typeof createCreationScenario>>) => {},
+  },
+  {
+    name: "new workspace",
+    open: (creation: Awaited<ReturnType<typeof createCreationScenario>>) =>
+      creation.openWorkspaceForm("local"),
+    button: "Create",
+    settled: (creation: Awaited<ReturnType<typeof createCreationScenario>>) =>
+      creation.expectOneCreatedWorkspace(),
+  },
+]) {
+  test(`${entry.name} becomes an agent tab when the first prompt is rejected`, async ({
+    creation,
+    promptRejection,
+    page,
+  }, testInfo) => {
+    void promptRejection;
+    const prompt =
+      "Continue the attached conversation.\n" + "Earlier conversation context.\n".repeat(100);
+    await entry.open(creation);
+    await creation.submitPrompt(prompt, entry.button);
+    await entry.settled(creation);
+    await creation.expectCreatedAgentError();
+    await creation.expectPromptBeforeError(prompt);
+    await page.screenshot({ path: testInfo.outputPath("created-agent-prompt-error.png") });
+    await creation.reloadAgent();
+    await creation.expectPromptBeforeError(prompt);
+    await creation.submitPrompt("emit 1 coalesced agent stream updates for a corrected prompt.");
+    await creation.expectPromptVisible(
+      "emit 1 coalesced agent stream updates for a corrected prompt.",
+    );
+    await creation.expectAssistantReply();
+    await creation.expectAgentCount(1);
+    await expect(page.getByText("agent_request_key_conflict", { exact: true })).toHaveCount(0);
+  });
+}

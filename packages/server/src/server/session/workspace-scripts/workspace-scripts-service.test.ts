@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pino } from "pino";
 import { afterEach, describe, expect, test } from "vitest";
-import type { SessionOutboundMessage, StartWorkspaceScriptRequest } from "../../messages.js";
+import type {
+  ScriptStatusUpdateMessage,
+  SessionOutboundMessage,
+  StartWorkspaceScriptRequest,
+} from "../../messages.js";
 import { createServiceProxySubsystem, type ServiceProxySubsystem } from "../../service-proxy.js";
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
 import type {
@@ -18,11 +22,11 @@ import type {
   SpawnWorkspaceScriptOptions,
   WorktreeScriptResult,
 } from "../../worktree-bootstrap.js";
-import type { WorkspaceGitService } from "../../workspace-git-service.js";
+import type { WorkspaceRuntimeStore } from "../../workspace-runtime-store/index.js";
 import { createWorkspaceScriptsService } from "./workspace-scripts-service.js";
 import { deriveProjectServiceSlug } from "../../workspace-git-metadata.js";
 
-// The production module reads only WorkspaceGitService.{peekSnapshot,getProjectSlug},
+// The production module reads only WorkspaceRuntimeStore.get,
 // WorkspaceRegistry.get, and forwards the launcher + opaque managers to the injected
 // spawnWorkspaceScript port. The fakes below implement exactly that slice; the service proxy and
 // runtime store are the real in-memory implementations, and spawning is injected so no process runs.
@@ -47,7 +51,7 @@ function fakeProjectRegistry(record: PersistedProjectRecord | null): Pick<Projec
   };
 }
 
-function fakeGitService() {
+function fakeRuntimeStore() {
   const snapshot = createNoGitWorkspaceRuntimeSnapshot("/tmp/repo");
   snapshot.git = {
     ...snapshot.git,
@@ -59,7 +63,7 @@ function fakeGitService() {
   };
 
   return {
-    peekSnapshot() {
+    get() {
       return snapshot;
     },
   };
@@ -76,12 +80,13 @@ interface BuildOptions {
   workspace?: PersistedWorkspaceRecord | null;
   project?: PersistedProjectRecord | null;
   spawnThrows?: string;
-  gitService?: Pick<WorkspaceGitService, "peekSnapshot">;
+  runtimeStore?: Pick<WorkspaceRuntimeStore, "get">;
   automationError?: Error;
 }
 
 function buildService(options: BuildOptions = {}) {
   const emitted: SessionOutboundMessage[] = [];
+  const published: ScriptStatusUpdateMessage[] = [];
   const spawnCalls: SpawnWorkspaceScriptOptions[] = [];
   const workspace =
     options.workspace === undefined
@@ -101,13 +106,14 @@ function buildService(options: BuildOptions = {}) {
       options.terminalManager === undefined ? availableTerminalManager : options.terminalManager,
     workspaceRegistry: fakeWorkspaceRegistry(workspace),
     projectRegistry: fakeProjectRegistry(options.project ?? null),
-    workspaceGitService: options.gitService ?? fakeGitService(),
+    workspaceRuntimeStore: options.runtimeStore ?? fakeRuntimeStore(),
     getDaemonTcpPort: () => 6767,
     getDaemonTcpHost: () => "127.0.0.1",
     serviceProxyPublicBaseUrl: null,
     resolveScriptHealth: null,
     logger,
     emit: (message) => emitted.push(message),
+    publishStatusUpdate: (message) => published.push(message),
     async spawnWorkspaceScript(spawnOptions): Promise<WorktreeScriptResult> {
       spawnCalls.push(spawnOptions);
       if (options.spawnThrows) {
@@ -126,7 +132,7 @@ function buildService(options: BuildOptions = {}) {
     },
   });
 
-  return { service, emitted, spawnCalls };
+  return { service, emitted, published, spawnCalls };
 }
 
 const request: StartWorkspaceScriptRequest = {
@@ -198,7 +204,7 @@ describe("buildSnapshot", () => {
       workspace,
       project,
       serviceProxy,
-      gitService: { peekSnapshot: () => undefined },
+      runtimeStore: { get: () => null },
     });
 
     expect(service.buildSnapshot(workspace, project)[0]?.hostname).toBe(
@@ -215,10 +221,11 @@ describe("buildSnapshot", () => {
 });
 
 describe("emitStatusUpdate", () => {
-  test("emits one script_status_update carrying the snapshot", async () => {
-    const { service, emitted } = buildService();
+  test("publishes one script_status_update carrying the snapshot", async () => {
+    const { service, emitted, published } = buildService();
     await service.emitStatusUpdate("ws-1", "/tmp/repo");
-    expect(emitted).toEqual([
+    expect(emitted).toEqual([]);
+    expect(published).toEqual([
       { type: "script_status_update", payload: { workspaceId: "ws-1", scripts: [] } },
     ]);
   });
@@ -332,7 +339,7 @@ describe("start", () => {
   });
 
   test("spawns the script with resolved git metadata and reports success", async () => {
-    const { service, emitted, spawnCalls } = buildService();
+    const { service, emitted, published, spawnCalls } = buildService();
     await service.start(request);
 
     expect(spawnCalls).toHaveLength(1);
@@ -345,7 +352,7 @@ describe("start", () => {
       daemonPort: 6767,
       daemonListenHost: "127.0.0.1",
     });
-    expect(emitted).toContainEqual({
+    expect(published).toContainEqual({
       type: "script_status_update",
       payload: { workspaceId: "ws-1", scripts: [] },
     });

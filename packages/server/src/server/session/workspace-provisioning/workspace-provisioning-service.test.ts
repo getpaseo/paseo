@@ -53,7 +53,6 @@ let provisioning: WorkspaceProvisioningService;
 
 function gitService() {
   return createNoopWorkspaceGitService({
-    peekSnapshot: () => null,
     getSnapshot: async (cwd: string) => {
       const snapshot = createNoGitWorkspaceRuntimeSnapshot(cwd);
       if (!restoredMergedChangeRequestUrl) return snapshot;
@@ -145,6 +144,46 @@ test("fresh non-git directory creates a directory workspace at the exact path", 
   expect(workspace.cwd).toBe(dir);
 });
 
+test("background workspace creation preserves hooks, inheritance and durable visibility", async () => {
+  const dir = path.join(tmpDir, "plain");
+  const events: string[] = [];
+  provisioning = createWorkspaceProvisioningService({
+    workspaceRegistry,
+    projectRegistry,
+    workspaceGitService: gitService(),
+    isDirectory,
+    logger,
+    lifecycle: {
+      emit: (name) => {
+        events.push(name);
+      },
+      before: async (_name, request) => request,
+    },
+  });
+  const parent = await provisioning.createWorkspaceForDirectory(dir, null, undefined, {
+    background: true,
+  });
+  const child = await provisioning.createWorkspaceForDirectory(dir, null, undefined, {
+    callerWorkspaceId: parent.workspaceId,
+  });
+  const visible = await provisioning.createWorkspaceForDirectory(dir, null, undefined, {
+    callerWorkspaceId: parent.workspaceId,
+    background: false,
+  });
+  const human = await provisioning.createWorkspaceForDirectory(dir);
+  expect(parent.background).toBe(true);
+  expect(child.background).toBe(true);
+  expect(visible.background).toBe(false);
+  expect(human.background).toBe(false);
+  expect(events).toEqual(Array(4).fill("workspace.created"));
+  const reloaded = new FileBackedWorkspaceRegistry(
+    path.join(tmpDir, "projects", "workspaces.json"),
+    logger,
+  );
+  await reloaded.initialize();
+  expect((await reloaded.get(child.workspaceId))?.background).toBe(true);
+});
+
 test("re-opening an active workspace by exact path returns the same record without duplicating", async () => {
   const repo = path.join(tmpDir, "repo");
   gitRoots.add(repo);
@@ -202,7 +241,6 @@ test("persists manual worktree ownership separately from its workspace kind", as
     projectRegistry,
     isDirectory,
     workspaceGitService: createNoopWorkspaceGitService({
-      peekSnapshot: () => null,
       getCheckout: async () => ({
         cwd,
         isGit: true,
@@ -236,6 +274,30 @@ test("re-opening an archived workspace by its exact path unarchives it and keeps
   expect(reopened.archivedAt).toBeNull();
 });
 
+test("default directory open skips archived background workspaces while explicit recovery preserves their visibility", async () => {
+  const cwd = path.join(tmpDir, "repo");
+  mkdirSync(cwd, { recursive: true });
+  const background = await provisioning.createWorkspaceForDirectory(cwd, undefined, undefined, {
+    background: true,
+  });
+  await workspaceRegistry.archive(background.workspaceId, ARCHIVED_AT);
+
+  const opened = await provisioning.findOrCreateWorkspaceForDirectory(cwd);
+  expect(opened).toMatchObject({ background: false, archivedAt: null });
+  expect(opened.workspaceId).not.toBe(background.workspaceId);
+  const archived = await workspaceRegistry.get(background.workspaceId);
+  expect(archived).toMatchObject({ background: true, archivedAt: ARCHIVED_AT });
+  const recovered = await provisioning.ensureWorkspaceRecordUnarchived(archived!);
+  expect(recovered).toMatchObject({
+    workspaceId: background.workspaceId,
+    background: true,
+    archivedAt: null,
+  });
+  expect((await provisioning.findOrCreateWorkspaceForDirectory(cwd)).workspaceId).toBe(
+    opened.workspaceId,
+  );
+});
+
 test("reopening archived exact-root records restores the fresh Git project", async () => {
   const cwd = path.join(tmpDir, "repo");
   mkdirSync(cwd, { recursive: true });
@@ -266,7 +328,6 @@ test("reopening archived exact-root records restores the fresh Git project", asy
     projectRegistry,
     isDirectory,
     workspaceGitService: createNoopWorkspaceGitService({
-      peekSnapshot: () => null,
       getCheckout: async () => ({
         cwd,
         isGit: true,
@@ -822,7 +883,6 @@ test("a failed import keeps an archived worktree's placement when its directory 
     logger,
     isDirectory,
     workspaceGitService: createNoopWorkspaceGitService({
-      peekSnapshot: () => null,
       getCheckout: async (cwd: string) => {
         const status = await getCheckoutStatus(cwd, { logger });
         return checkoutLiteFromGitSnapshot(
@@ -896,7 +956,6 @@ test("a directory that goes away while the git read is in flight keeps its place
     isDirectory,
     logger,
     workspaceGitService: createNoopWorkspaceGitService({
-      peekSnapshot: () => null,
       getCheckout: async (cwd: string) => {
         rmSync(repo, { recursive: true, force: true });
         return {

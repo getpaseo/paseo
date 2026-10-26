@@ -1,5 +1,4 @@
 import type { StreamItem } from "@/types/stream";
-import type { ToolCallDetailLevel } from "@/hooks/use-settings/storage";
 import {
   groupLiveToolCalls,
   prepareGroupedHistory,
@@ -8,7 +7,8 @@ import {
 } from "./grouping";
 import { buildOverviewGroup, type OverviewToolCallGroup } from "./overview/model";
 
-export type { ToolCallDetailLevel } from "@/hooks/use-settings/storage";
+/** Whether consecutive tool calls show one by one or as one summary row. */
+export type ToolCallDetailLevel = "overview" | "detailed";
 export type ToolCallDetailGroup = OverviewToolCallGroup;
 
 export interface PreparedToolCallHistory {

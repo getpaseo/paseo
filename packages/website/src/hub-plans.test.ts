@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 // The documented `GET /api/billing/plans` response, copied from getpaseo/hub docs/public-api.md.
 import documentedResponse from "./hub-plans.fixture.json" with { type: "json" };
+import { getTranslator } from "./i18n";
 import { formatPlanPrice, parseHubPlansResponse, planPriceQualifier } from "./hub-plans";
 
 describe("parseHubPlansResponse", () => {
@@ -56,10 +57,20 @@ describe("parseHubPlansResponse", () => {
 describe("plan price copy", () => {
   it("shows Free as $0 a month and Pro as $15 per seat a month", () => {
     const plans = parseHubPlansResponse(documentedResponse);
+    const t = getTranslator("en");
 
-    expect(formatPlanPrice(plans.free.price)).toBe("$0");
-    expect(planPriceQualifier(plans.free)).toBe("/ month");
-    expect(formatPlanPrice(plans.paid.price)).toBe("$15");
-    expect(planPriceQualifier(plans.paid)).toBe("per seat / month");
+    expect(formatPlanPrice(plans.free.price, "en")).toBe("$0");
+    expect(planPriceQualifier(plans.free, t)).toBe("/ month");
+    expect(formatPlanPrice(plans.paid.price, "en")).toBe("$15");
+    expect(planPriceQualifier(plans.paid, t)).toBe("per seat / month");
+  });
+
+  it("describes the same prices in Chinese around the catalog's unit label", () => {
+    const plans = parseHubPlansResponse(documentedResponse);
+    const t = getTranslator("zh-CN");
+
+    expect(formatPlanPrice(plans.paid.price, "zh-CN")).toBe("US$15");
+    expect(planPriceQualifier(plans.free, t)).toBe("/ 月");
+    expect(planPriceQualifier(plans.paid, t)).toBe("每席位 / 月");
   });
 });

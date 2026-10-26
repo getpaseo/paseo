@@ -1,0 +1,787 @@
+{
+  "common": {
+    "breadcrumb": "面包屑导航",
+    "untranslated": "此页面尚未翻译成你的语言，因此以英文显示。",
+    "notFound": "页面不存在。",
+    "notFoundTitle": "页面不存在 - Paseo",
+    "more": "还有 {{count}} 个",
+    "copy": "复制",
+    "copied": "已复制",
+    "close": "关闭",
+    "loading": "加载中…",
+    "copyToClipboard": "复制到剪贴板",
+    "backHome": "返回首页"
+  },
+  "languageSelector": {
+    "label": "语言",
+    "current": "语言：{{language}}",
+    "names": {
+      "en": "英语",
+      "zh-CN": "简体中文"
+    }
+  },
+  "nav": {
+    "plugins": "插件",
+    "blog": "博客",
+    "docs": "文档",
+    "changelog": "更新日志",
+    "download": "下载",
+    "sponsor": "赞助",
+    "hub": "Hub",
+    "githubStars": "GitHub，{{stars}} 颗星"
+  },
+  "footer": {
+    "product": "产品",
+    "blog": "博客",
+    "docs": "文档",
+    "plugins": "插件",
+    "changelog": "更新日志",
+    "hub": "Hub",
+    "cli": "CLI",
+    "privacy": "隐私",
+    "terms": "条款",
+    "sponsor": "赞助",
+    "agents": "Agent",
+    "allProviders": "所有 Provider",
+    "alternatives": "替代方案",
+    "community": "社区",
+    "download": "下载",
+    "desktop": "桌面版",
+    "webApp": "网页版"
+  },
+  "docs": {
+    "headingAnchor": "链接到此部分",
+    "onThisPage": "本页内容",
+    "copyMarkdown": "复制为 Markdown",
+    "copied": "已复制",
+    "viewMarkdown": "查看 Markdown",
+    "viewOnGitHub": "在 GitHub 上查看",
+    "openMenu": "打开菜单",
+    "closeMenu": "关闭菜单",
+    "notFound": "文档不存在。",
+    "notFoundTitle": "页面不存在 - Paseo 文档",
+    "pageTitle": "{{title}} - Paseo 文档",
+    "categories": {
+      "Getting started": "快速上手",
+      "Workspaces": "工作区",
+      "Providers": "Provider",
+      "Orchestration": "编排",
+      "Browser": "浏览器",
+      "Schedules": "定时任务",
+      "Configuration": "配置",
+      "Plugins": "插件",
+      "TypeScript SDK": "TypeScript SDK",
+      "Hub": "Hub",
+      "Troubleshooting": "故障排查"
+    }
+  },
+  "agentPages": {
+    "claude-code": {
+      "title": "Claude Code 的开源应用",
+      "subtitle": "在你的机器上运行 Claude Code，从手机或桌面端操控。随时随地启动 Agent、查看进展、审查并合并代码。",
+      "metaTitle": "Claude Code 开源移动端与桌面端应用",
+      "metaDescription": "Claude Code 的开源移动端与桌面端应用。在你的机器上运行 Agent，随时随地跟踪进度、审查 diff 并合并。自托管，代码留在本地。"
+    },
+    "codex": {
+      "title": "Codex 的开源应用",
+      "subtitle": "在你的机器上运行 OpenAI 的 Codex，从手机或桌面端操控。同样的配置，同一台机器，不必守在笔记本前。",
+      "metaTitle": "Codex 开源移动端与桌面端应用",
+      "metaDescription": "OpenAI Codex 的开源移动端与桌面端应用。在你的机器上启动 Agent，随时随地跟踪进度、交付代码。自托管。"
+    },
+    "opencode": {
+      "title": "OpenCode 的开源应用",
+      "subtitle": "在你的机器上运行 OpenCode，从手机或桌面端操控。两端都开源，代码留在本地。",
+      "metaTitle": "OpenCode 开源移动端与桌面端应用",
+      "metaDescription": "OpenCode 的开源移动端与桌面端应用。在你的机器上启动 Agent，观察它们工作，随时随地交付代码。自托管。"
+    },
+    "pi": {
+      "title": "Pi 编程 Agent 的开源应用",
+      "subtitle": "在你的机器上运行 Pi 编程 Agent，从手机或桌面端操控。自托管且开源。",
+      "metaTitle": "Pi Agent 开源移动端与桌面端应用",
+      "metaDescription": "Pi 编程 Agent 的开源移动端与桌面端应用。在你的机器上启动会话，随时随地跟踪进度并合并。自托管。"
+    },
+    "omp": {
+      "title": "OMP (Oh My Pi) 的开源应用",
+      "subtitle": "在你的机器上运行 OMP (Oh My Pi)，从手机或桌面端操控。自托管且开源。",
+      "metaTitle": "OMP (Oh My Pi) 开源移动端与桌面端应用",
+      "metaDescription": "OMP (Oh My Pi) 的开源移动端与桌面端应用。在你的机器上启动会话，随时随地跟踪进度并合并。自托管。"
+    },
+    "cursor": {
+      "title": "Cursor 的开源应用",
+      "subtitle": "把任务发给你机器上的 Cursor，从手机或桌面端操控。随时随地审查 diff。",
+      "metaTitle": "Cursor 开源移动端与桌面端应用",
+      "metaDescription": "Cursor 的开源移动端与桌面端应用。在你的机器上启动任务，随时随地查看输出、审查 diff 并合并。自托管。"
+    },
+    "muse-code": {
+      "title": "Muse Code 的开源应用",
+      "subtitle": "在你的机器上运行 Meta 的 Muse Code，从手机或桌面端操控。随时随地选择模型、审查工具调用并处理审批。",
+      "metaTitle": "Muse Code 开源移动端与桌面端应用",
+      "metaDescription": "Meta Muse Code 的开源移动端与桌面端应用。运行你已安装的 Muse CLI，查看流式输出的轮次并处理审批。设置方法与版本限制见文档。"
+    },
+    "antigravity": {
+      "title": "Antigravity 的开源应用",
+      "subtitle": "在你的机器上运行已安装的 Antigravity CLI，从手机或桌面端操控。",
+      "metaTitle": "Antigravity 开源移动端与桌面端应用",
+      "metaDescription": "通过 Paseo 运行你已安装的 Antigravity CLI。在手机或桌面端观察 Agent 工作并审查改动。自托管，代码留在你的机器上。"
+    },
+    "copilot": {
+      "title": "GitHub Copilot 的开源应用",
+      "subtitle": "从手机或桌面端操控 GitHub Copilot。同一个账号，同一台机器，不必坐在桌前也能交付。",
+      "metaTitle": "GitHub Copilot 开源移动端与桌面端应用",
+      "metaDescription": "GitHub Copilot 的开源移动端与桌面端应用。在你的机器上启动会话，随时随地跟踪进度并合并。"
+    },
+    "gemini": {
+      "title": "Gemini CLI 的开源应用",
+      "subtitle": "在你的机器上运行 Google 的 Gemini CLI，从手机或桌面端操控。真正的编程工作，不必守在笔记本前。",
+      "metaTitle": "Gemini CLI 开源移动端与桌面端应用",
+      "metaDescription": "Google Gemini CLI 的开源移动端与桌面端应用。在你的机器上启动 Agent，随时随地跟踪进度并交付。自托管。"
+    },
+    "hermes": {
+      "title": "Hermes Agent 的开源应用",
+      "subtitle": "在你的机器上运行 Nous Research 的 Hermes Agent，从手机或桌面端操控。",
+      "metaTitle": "Hermes Agent 开源移动端与桌面端应用",
+      "metaDescription": "Nous Research Hermes Agent 的开源移动端与桌面端应用。在你的机器上启动会话，随时随地跟踪进度、交付代码。"
+    },
+    "qwen-code": {
+      "title": "Qwen Code 的开源应用",
+      "subtitle": "在你的机器上运行阿里巴巴的 Qwen Code，从手机或桌面端操控。",
+      "metaTitle": "Qwen Code 开源移动端与桌面端应用",
+      "metaDescription": "阿里巴巴 Qwen Code 的开源移动端与桌面端应用。在你的机器上启动 Agent，随时随地跟踪进度并合并。"
+    },
+    "kimi": {
+      "title": "Kimi Code CLI 的开源应用",
+      "subtitle": "在你的机器上运行月之暗面的 Kimi Code CLI，从手机或桌面端操控。",
+      "metaTitle": "Kimi Code CLI 开源移动端与桌面端应用",
+      "metaDescription": "月之暗面 Kimi Code CLI 的开源移动端与桌面端应用。在你的机器上启动会话，随时随地跟踪进度并交付。"
+    },
+    "amp": {
+      "title": "Amp 编程 Agent 的开源应用",
+      "subtitle": "在你的机器上运行 Sourcegraph 的 Amp，从手机或桌面端操控。前沿的编程能力，不必守在笔记本前。",
+      "metaTitle": "Amp Agent 开源移动端与桌面端应用",
+      "metaDescription": "Amp 的开源移动端与桌面端应用，Amp 是 Sourcegraph 的前沿编程 Agent。在你的机器上启动任务，随时随地跟踪进度并交付。"
+    },
+    "auggie": {
+      "title": "Auggie CLI 的开源应用",
+      "subtitle": "在你的机器上运行 Augment Code 的 Auggie CLI，从手机或桌面端操控。",
+      "metaTitle": "Auggie CLI 开源移动端与桌面端应用",
+      "metaDescription": "Augment Code Auggie CLI 的开源移动端与桌面端应用。在你的机器上启动会话，随时随地跟踪进度并交付。"
+    },
+    "cline": {
+      "title": "Cline 编程 Agent 的开源应用",
+      "subtitle": "在你的机器上运行 Cline 编程 Agent，从手机或桌面端操控。观察它工作，需要时随时介入。",
+      "metaTitle": "Cline Agent 开源移动端与桌面端应用",
+      "metaDescription": "自主编程 Agent Cline 的开源移动端与桌面端应用。随时随地启动任务、查看输出、审查 diff。"
+    },
+    "codebuddy": {
+      "title": "Codebuddy Code 的开源应用",
+      "subtitle": "在你的机器上运行腾讯云的 Codebuddy，从手机或桌面端操控。",
+      "metaTitle": "Codebuddy Code 开源移动端与桌面端应用",
+      "metaDescription": "腾讯云 Codebuddy Code 的开源移动端与桌面端应用。在你的机器上启动会话，随时随地跟踪进度并交付。"
+    },
+    "cortex-code": {
+      "title": "Cortex Code 的开源应用",
+      "subtitle": "在你的机器上运行 Snowflake 的 Cortex Code，从手机或桌面端操控。不必守在笔记本前。",
+      "metaTitle": "Cortex Code 开源移动端与桌面端应用",
+      "metaDescription": "Snowflake Cortex Code 的开源移动端与桌面端应用。在你的机器上启动 Agent，随时随地跟踪进度并交付。"
+    },
+    "corust": {
+      "title": "Corust Agent 的开源应用",
+      "subtitle": "在你的机器上用 Corust Agent 构建 Rust 项目，从手机或桌面端操控。",
+      "metaTitle": "Corust Agent 开源移动端与桌面端应用",
+      "metaDescription": "专注 Rust 的 Corust 编程 Agent 的开源移动端与桌面端应用。在你的机器上启动任务，随时随地交付。"
+    },
+    "crow": {
+      "title": "crow-cli 的开源应用",
+      "subtitle": "在你的机器上运行 crow-cli，一个精简的原生 ACP 编程 Agent。从手机或桌面端操控。",
+      "metaTitle": "Crow-CLI 开源移动端与桌面端应用",
+      "metaDescription": "crow-cli 的开源移动端与桌面端应用，crow-cli 是一个精简的原生 ACP 编程 Agent。在你的机器上启动任务，随时随地查看。"
+    },
+    "deepagents": {
+      "title": "DeepAgents 的开源应用",
+      "subtitle": "在你的机器上运行 LangChain 的 DeepAgents，从手机或桌面端操控。开箱即用。",
+      "metaTitle": "DeepAgents 开源移动端与桌面端应用",
+      "metaDescription": "LangChain DeepAgents 编程 Agent 的开源移动端与桌面端应用。在你的机器上启动会话，随时随地跟踪进度并交付。"
+    },
+    "deepseek-tui": {
+      "title": "CodeWhale 的开源应用",
+      "subtitle": "在你的机器上运行 CodeWhale 基于 DeepSeek V4 的终端编程 Agent，从手机或桌面端操控。",
+      "metaTitle": "CodeWhale 开源移动端与桌面端应用",
+      "metaDescription": "CodeWhale 的开源移动端与桌面端应用。在你的机器上启动编程会话，随时随地跟踪进度并交付。"
+    },
+    "dimcode": {
+      "title": "DimCode 的开源应用",
+      "subtitle": "领先模型，一条命令。在你的机器上运行 DimCode，从手机或桌面端操控。",
+      "metaTitle": "DimCode 开源移动端与桌面端应用",
+      "metaDescription": "多模型编程 Agent DimCode 的开源移动端与桌面端应用。在你的机器上启动任务，随时随地交付。"
+    },
+    "dirac": {
+      "title": "Dirac 编程 Agent 的开源应用",
+      "subtitle": "在你的机器上运行 Dirac 基于哈希锚点的并行编辑，从手机或桌面端操控。",
+      "metaTitle": "Dirac Agent 开源移动端与桌面端应用",
+      "metaDescription": "Dirac 编程 Agent 的开源移动端与桌面端应用。基于哈希锚点的并行编辑与 AST 操作，随时随地交付。"
+    },
+    "factory-droid": {
+      "title": "Factory Droid 的开源应用",
+      "subtitle": "在你的机器上运行 Factory 的 Droid 编程 Agent，从手机或桌面端操控。",
+      "metaTitle": "Factory Droid 开源移动端与桌面端应用",
+      "metaDescription": "Factory AI Droid 编程 Agent 的开源移动端与桌面端应用。在你的机器上启动会话，随时随地跟踪进度并交付。"
+    },
+    "fast-agent": {
+      "title": "fast-agent 的开源应用",
+      "subtitle": "在你的机器上运行多 Provider 编程 Agent fast-agent，从手机或桌面端操控。",
+      "metaTitle": "Fast-Agent 开源移动端与桌面端应用",
+      "metaDescription": "多 Provider 编程 Agent fast-agent 的开源移动端与桌面端应用。在你的机器上启动任务，随时随地查看。"
+    },
+    "glm": {
+      "title": "GLM Agent 的开源应用",
+      "subtitle": "在你的机器上运行智谱 AI 的 GLM 编程 Agent，从手机或桌面端操控。支持流式输出，可在会话中切换模型。",
+      "metaTitle": "GLM Agent 开源移动端与桌面端应用",
+      "metaDescription": "智谱 AI GLM 编程 Agent 的开源移动端与桌面端应用。在你的机器上启动会话，随时随地跟踪进度、交付代码。"
+    },
+    "goose": {
+      "title": "goose 编程 Agent 的开源应用",
+      "subtitle": "在你的机器上运行 Block 的 goose，从手机或桌面端操控。本地运行、可扩展、开源。",
+      "metaTitle": "Goose Agent 开源移动端与桌面端应用",
+      "metaDescription": "Block 的本地开源 AI Agent goose 的开源移动端与桌面端应用。在你的机器上启动任务，随时随地交付。"
+    },
+    "junie": {
+      "title": "Junie 编程 Agent 的开源应用",
+      "subtitle": "在你的机器上运行 JetBrains 的 Junie，从手机或桌面端操控。真正的工作，不需要 IDE。",
+      "metaTitle": "Junie Agent 开源移动端与桌面端应用",
+      "metaDescription": "JetBrains Junie 编程 Agent 的开源移动端与桌面端应用。在你的机器上启动会话，随时随地跟踪进度并交付。"
+    },
+    "kilo": {
+      "title": "Kilo Code 的开源应用",
+      "subtitle": "在你的机器上运行 Kilo Code，从手机或桌面端操控。发送任务，看着它们交付。",
+      "metaTitle": "Kilo Code 开源移动端与桌面端应用",
+      "metaDescription": "Kilo Code 的开源移动端与桌面端应用。通过 Kilo CLI 在你的机器上启动任务，随时随地跟踪进度并合并。"
+    },
+    "minion-code": {
+      "title": "Minion Code 的开源应用",
+      "subtitle": "在你的机器上运行 Minion Code 基于框架的 Agent，从手机或桌面端操控。",
+      "metaTitle": "Minion Code 开源移动端与桌面端应用",
+      "metaDescription": "基于 Minion 框架的编程 Agent Minion Code 的开源移动端与桌面端应用。在你的机器上启动会话，随时随地交付。"
+    },
+    "mistral-vibe": {
+      "title": "Mistral Vibe 的开源应用",
+      "subtitle": "在你的机器上运行 Mistral 开源的 Vibe 助手，从手机或桌面端操控。",
+      "metaTitle": "Mistral Vibe 开源移动端与桌面端应用",
+      "metaDescription": "Mistral Vibe 编程助手的开源移动端与桌面端应用。在你的机器上启动会话，随时随地跟踪进度并交付。"
+    },
+    "nova": {
+      "title": "Nova 编程 Agent 的开源应用",
+      "subtitle": "在你的机器上运行 Compass AI 的 Nova，从手机或桌面端操控。",
+      "metaTitle": "Nova Agent 开源移动端与桌面端应用",
+      "metaDescription": "Compass AI Nova 编程 Agent 的开源移动端与桌面端应用。在你的机器上启动会话，随时随地跟踪进度并合并。"
+    },
+    "poolside": {
+      "title": "Poolside 编程 Agent 的开源应用",
+      "subtitle": "从手机或桌面端操控 Poolside 的编程 Agent。启动工作，看着它落地。",
+      "metaTitle": "Poolside Agent 开源移动端与桌面端应用",
+      "metaDescription": "Poolside 编程 Agent 的开源移动端与桌面端应用。在你的机器上启动任务，随时随地跟踪进度并交付。"
+    },
+    "qoder": {
+      "title": "Qoder CLI 的开源应用",
+      "subtitle": "在你的机器上运行 Qoder 智能编程助手，从手机或桌面端操控。",
+      "metaTitle": "Qoder CLI 开源移动端与桌面端应用",
+      "metaDescription": "智能编程助手 Qoder 的开源移动端与桌面端应用。在你的机器上启动会话，随时随地交付。"
+    },
+    "sigit": {
+      "title": "siGit Code 的开源应用",
+      "subtitle": "在你的机器上运行 siGit 本地优先的编程 Agent，从手机或桌面端操控。可选在设备端进行 LLM 推理。",
+      "metaTitle": "SiGit Code 开源移动端与桌面端应用",
+      "metaDescription": "本地优先编程 Agent siGit Code 的开源移动端与桌面端应用。在你的机器上启动会话，随时随地交付。"
+    },
+    "stakpak": {
+      "title": "Stakpak DevOps Agent 的开源应用",
+      "subtitle": "在你的机器上运行 Stakpak 基于 Rust 的 DevOps Agent，从手机或桌面端操控。",
+      "metaTitle": "Stakpak DevOps Agent 开源移动端与桌面端应用",
+      "metaDescription": "基于 Rust 的 DevOps Agent Stakpak 的开源移动端与桌面端应用。在你的机器上启动任务，随时随地查看。"
+    },
+    "vtcode": {
+      "title": "VT Code 的开源应用",
+      "subtitle": "在你的机器上运行 VT Code 的多 Provider 编程 Agent，从手机或桌面端操控。",
+      "metaTitle": "VT Code 开源移动端与桌面端应用",
+      "metaDescription": "多 Provider 编程 Agent VT Code 的开源移动端与桌面端应用。在你的机器上启动会话，随时随地交付。"
+    },
+    "agoragentic": {
+      "title": "Agoragentic 的开源应用",
+      "subtitle": "在你的机器上运行 Agoragentic 的 174+ 项 AI 能力，从手机或桌面端操控。",
+      "metaTitle": "Agoragentic 开源移动端与桌面端应用",
+      "metaDescription": "AI Agent 市场 Agoragentic 的开源移动端与桌面端应用。在你的机器上启动会话，随时随地交付。"
+    },
+    "autohand": {
+      "title": "Autohand Code 的开源应用",
+      "subtitle": "在你的机器上运行 Autohand AI 的编程 Agent，从手机或桌面端操控。",
+      "metaTitle": "Autohand Code 开源移动端与桌面端应用",
+      "metaDescription": "Autohand AI 编程 Agent 的开源移动端与桌面端应用。在你的机器上启动会话，随时随地跟踪进度并交付。"
+    },
+    "grok": {
+      "title": "Grok 的开源应用",
+      "subtitle": "在你的机器上运行 xAI 的 Grok Build 编程 Agent，从手机或桌面端操控。",
+      "metaTitle": "Grok 开源移动端与桌面端应用",
+      "metaDescription": "xAI Grok Build 编程 Agent 的开源移动端与桌面端应用。在你的机器上启动会话，随时随地跟踪进度并交付。自托管。"
+    }
+  },
+  "home": {
+    "metaTitle": "Paseo – 随时随地运行 Claude Code、Codex、Copilot、OpenCode",
+    "metaDescription": "面向 Claude Code、Codex、OpenCode、Pi 以及另外 30 多个编程 Agent 的开源应用。在你自己的机器上并行运行多个 Agent。编辑器、终端、diff、拉取请求和浏览器集于一个窗口。桌面端一次下载即可使用，iOS 和 Android 上提供完整应用。",
+    "title": "面向 Agent 的<br/>开发环境",
+    "subtitle": "同时运行多个编程 Agent，<mobileBreak/>在任何机器上。<br/>在桌前，也在手机上。"
+  },
+  "agents": {
+    "metaTitle": "支持的 Agent – Paseo 可运行的所有编程 Agent",
+    "metaDescription": "在手机上运行 Claude Code、Codex、OpenCode、Pi、OMP、Cursor、Muse Code、Antigravity 以及数十个其他编程 Agent。自托管，代码留在你的机器上。",
+    "title": "支持的 Agent",
+    "intro": "Paseo 原生支持许多 Agent，可以运行任何 <acp>ACP Agent</acp>，你还可以通过<plugins>插件</plugins>实现新的 Provider。"
+  },
+  "landing": {
+    "socialProof": {
+      "title": "深受开发者喜爱",
+      "description": "看看开发者们怎么评价 Paseo",
+      "readPost": "阅读 {{name}} 的原帖"
+    },
+    "providers": {
+      "title": "与你的工具协同工作",
+      "description": "沿用你的订阅、技能和配置"
+    },
+    "runAnywhere": {
+      "title": "随处运行",
+      "description": "在本机、在另一台机器上，或与团队一起使用 Paseo",
+      "desktopTitle": "桌面应用",
+      "desktopDescription": "一键体验，下载应用即可使用，无需服务器",
+      "mobileTitle": "移动端",
+      "mobileDescription": "功能完整的原生客户端，不是 WebView",
+      "mobileCta": "下载",
+      "remoteTitle": "远程机器",
+      "remoteDescription": "在家庭实验室或云主机上运行 Paseo",
+      "remoteCta": "文档",
+      "teamsTitle": "团队与触发器",
+      "teamsDescription": "共享访问权限，或从 GitHub、Slack 和 Discord 发起工作",
+      "teamsCta": "Paseo Hub"
+    },
+    "automation": {
+      "title": "为自动化而生",
+      "description": "使用 MCP、CLI 或 TypeScript SDK 自动化 Paseo",
+      "mcpCaption": "由另一个 Agent 调用",
+      "cliCaption": "在终端中使用",
+      "sdkCaption": "在代码中使用",
+      "mcpDocs": "MCP 文档",
+      "cliDocs": "CLI 文档",
+      "sdkDocs": "SDK 文档",
+      "transcriptRequest": "把标记为 ready 的 GitHub 未关闭 issue 分发给各自独立的 worktree Agent。",
+      "transcriptPlan": "我找到了两个 ready 的 issue，会分别在各自的 worktree 中运行。",
+      "transcriptDone": "完成，两个 Agent 正在运行。它们结束时我会通知你。",
+      "otherHostComment": "# 指定另一台主机"
+    },
+    "plugins": {
+      "title": "用插件扩展",
+      "description": "添加新的面板和功能，在桌面端、网页端和移动端都能使用",
+      "lead": "插件",
+      "browse": "浏览插件",
+      "docs": "插件文档",
+      "license": "Paseo 采用 Apache 2.0 许可证。",
+      "fork": "Fork 仓库",
+      "uiTitle": "界面",
+      "uiDescription": "页面、工作区面板、侧边栏项目、斜杠命令和主题",
+      "lifecycleTitle": "Agent 生命周期",
+      "lifecycleDescription": "修改配置和 MCP 服务器、响应权限请求、发送后续消息",
+      "providersTitle": "Provider",
+      "providersDescription": "把编程 Agent 添加为 Provider，用法与内置 Provider 相同"
+    },
+    "philosophy": {
+      "title": "理念",
+      "description": "Paseo 的立场，也是每项功能的基础",
+      "privateTitle": "私密",
+      "privateDescription": "没有遥测、没有追踪、不强制登录。代码留在你的机器上。",
+      "independentTitle": "独立",
+      "independentDescription": "Paseo 不对投资人负责，由用户决定开发什么。",
+      "polishedTitle": "精致",
+      "polishedDescription": "安装应用即可开始工作，不需要知道 daemon 是什么。",
+      "unifiedTitle": "统一",
+      "unifiedDescription": "所有编程 Agent，用法都一样。随时切换 Provider。",
+      "composableTitle": "可组合",
+      "composableDescription": "在笔记本或服务器上运行 Agent，从任何设备连接。",
+      "extensibleTitle": "可扩展",
+      "extensibleDescription": "如果 Paseo 不符合你的工作方式，用插件或 fork 来改变它。"
+    },
+    "getStarted": {
+      "supports": "支持",
+      "downloadFor": "下载 {{platform}} 版",
+      "getStoreApp": "获取 {{store}} 应用",
+      "desktopApp": "桌面应用",
+      "serverInstallLabel": "在远程机器上安装 daemon",
+      "serverInstallTitle": "在远程机器上运行 Agent",
+      "serverInstallDescription": "适用于你想从 Paseo 应用连接的无界面机器。桌面应用已内置 daemon",
+      "serverInstallFootnote": "需要 Node.js 18+。运行 <code>paseo</code> 启动 daemon。"
+    },
+    "showcase": {
+      "heading": "想离开桌前时，随时都可以。",
+      "subheading": "原生移动应用的功能与桌面端完全一致。",
+      "sidebarLabel": "Paseo 工作区抽屉",
+      "chatLabel": "Paseo Agent 对话",
+      "diffLabel": "Paseo diff 视图"
+    },
+    "faq": {
+      "title": "常见问题",
+      "freeQuestion": "Paseo 免费吗？",
+      "freeAnswer": "是的。Paseo 免费且开源。你需要安装 AgentProvider 并使用自己的凭据。语音默认在本地处理，配置后也可以选择使用云端语音服务。",
+      "codeQuestion": "我的代码会离开我的机器吗？",
+      "codeAnswer": "Paseo 不会把你的代码发送到任何地方。Agent 在本地运行，像平常一样调用各自的 API。远程访问时，你可以使用可选的<relay>端到端加密中继</relay>，也可以通过局域网直连，或使用你自己的隧道。",
+      "agentsQuestion": "支持哪些 Agent？",
+      "agentsAnswer": "Paseo 支持很多 Provider。它为 Claude、Codex、OpenCode、Pi、OMP、Antigravity 和 Muse Code 提供了专门的实现，并通过 ACP 支持更多 Agent。完整列表见：<agents>所有支持的 Provider</agents>。另见 <muse>Muse Code 的设置与限制</muse>。",
+      "providersQuestion": "Paseo 如何运行 Provider？",
+      "providersAnswer": "Paseo 按你平常的方式运行你机器上已安装的 Provider，不会修改或改变它们的行为。",
+      "desktopQuestion": "我需要桌面应用吗？",
+      "desktopAnswer": "不需要。你可以无界面运行 daemon，并用任意客户端连接。桌面应用只是把 daemon 和界面打包在一起。",
+      "voiceQuestion": "语音功能如何工作？",
+      "voiceAnswer": "语音默认在你的设备本地运行。你说话，应用转写后以文本形式发送给 Agent。你也可以配置 OpenAI 语音服务，获得更高质量的转写和语音合成。详见<voice>语音文档</voice>。",
+      "networkQuestion": "可以从外部网络连接吗？",
+      "networkAnswer": "可以。你可以使用托管中继（端到端加密，Paseo 无法读取你的流量），搭建自己的隧道（Tailscale、Cloudflare Tunnel 等），或直接暴露 daemon 端口。详见<configuration>配置</configuration>。",
+      "gitQuestion": "我需要 git 或 GitHub 吗？",
+      "gitAnswer": "不需要。Paseo 可在任意目录中工作。worktree 是可选的，只在使用 git 时才相关。你可以在平常工作的任何地方运行 Agent。",
+      "banQuestion": "使用 Paseo 会被封号吗？",
+      "banAnswer": "Paseo 的设计是使用各 Provider 官方支持的集成方式，不会试图绕过其服务条款。它不会提取令牌，也不会直接调用推理 API。",
+      "worktreesQuestion": "worktree 如何工作？",
+      "worktreesAnswer": "当你使用 worktree 选项启动 Agent 时（无论从应用、桌面端还是 CLI），Paseo 会创建一个 git worktree 并在其中运行 Agent。Agent 在隔离的分支上工作，不会影响你的主工作目录。详见<worktrees>worktree 文档</worktrees>。"
+    },
+    "mockup": {
+      "alt": "Paseo 桌面应用，并排打开了编程 Agent、一段对话和一份代码 diff",
+      "build": "构建",
+      "review": "审查",
+      "ship": "发布",
+      "extend": "扩展",
+      "app": {
+        "newWorkspace": "新建工作区",
+        "history": "历史",
+        "schedules": "计划",
+        "pinned": "已置顶",
+        "readyToReview": "待查看",
+        "working": "运行中",
+        "done": "已完成",
+        "addProject": "添加 project",
+        "files": "文件",
+        "changes": "变更",
+        "uncommitted": "未 commit",
+        "commits": "提交",
+        "viewPr": "查看",
+        "prOpen": "开放",
+        "checksPassed": "所有检查均已通过",
+        "checksDetail": "检查：{{successful}} 个成功，{{skipped}} 个已跳过",
+        "successfulChecks": "{{count}} 个成功的检查",
+        "activity": "动态",
+        "noActivity": "暂无动态",
+        "tasksProgress": "{{completed}}/{{total}} 项任务",
+        "composerPlaceholder": "给 Agent 发消息，标记 @files，或使用 /commands 和 /skills",
+        "mobileComposerPlaceholder": "发消息，@files，/commands",
+        "plugin": "插件",
+        "mergedWeek": "已合并 · 7 天",
+        "inReview": "审查中",
+        "failing": "失败",
+        "mergesWeek": "合并 · 最近 7 天",
+        "recentlyMerged": "最近合并",
+        "minutesAgo": "{{count}} 分钟前",
+        "hoursAgo": "{{count}} 小时前",
+        "reviewing": "审查中",
+        "subagents": "{{count}} 个 subagent",
+        "checksPassedShort": "通过"
+      }
+    }
+  },
+  "sponsor": {
+    "metaTitle": "赞助 Paseo",
+    "metaDescription": "Paseo 是一个独立项目，每天有数万名开发者在使用，由一个人维护、由社区塑造，没有投资人。你可以通过 GitHub Sponsors、Open Collective 或 Buy Me a Coffee 赞助，也可以以公司身份赞助。",
+    "title": "赞助 Paseo",
+    "sponsors": "赞助商",
+    "becomeSponsor": "成为赞助商",
+    "maintainer": "维护者 <maintainer>Mo</maintainer>",
+    "note": {
+      "independent": "Paseo 是一个独立项目，每天有数万名开发者在使用。",
+      "maintained": "它由一个人全职维护，并由社区共同塑造。没有投资人、没有董事会，背后也没有公司。为了保持这一点，我拒绝过融资邀约。",
+      "community": "社区通过反馈、测试、问题报告、代码贡献和插件帮助 Paseo 成长。你的赞助让我能够持续改进和维护它。",
+      "neutral": "一个位于你与代码、密钥和机器之间的工具必须保持中立，而一旦有人要从中获得回报，这就很难做到。融资会带来变现的压力，这种压力会改变产品的方向。",
+      "selfFunded": "Paseo 自筹资金：开发工作由赞助和可选的托管服务 <hub>Paseo Hub</hub> 支付。正是你的支持让我能够继续投入。"
+    },
+    "shortNote": {
+      "maintained": "它由一个人全职维护，并由社区共同塑造。没有投资人，背后也没有公司。为了保持这一点，我拒绝过融资。一个位于你与代码、密钥和机器之间的工具必须保持中立，而融资会带来变现的压力。",
+      "selfFunded": "Paseo 通过赞助和 <hub>Paseo Hub</hub> 自筹资金。正是你的支持让我能够继续投入。"
+    },
+    "company": {
+      "title": "以公司身份赞助",
+      "description": "在资金上支持 Paseo，同时提升你公司的曝光度",
+      "perMonth": "每月",
+      "homepage": "你的 Logo 出现在 paseo.sh 首页和文档中，每月约 70,000 名访客",
+      "readme": "你的 Logo 出现在 GitHub README 中，每月约 30,000 名访客",
+      "discord": "在 Discord 社区发布公告，约 2,000 名成员",
+      "x": "我在 X 上发布一条公告",
+      "emailFirst": "或先给我发邮件",
+      "emailWhenOpen": "发邮件给我，名额空出时通知你"
+    }
+  },
+  "download": {
+    "metaTitle": "下载适用于 macOS、Windows、Linux、iOS 和 Android 的 Paseo",
+    "metaDescription": "在所有平台上安装 Paseo。提供 macOS、Windows 和 Linux 原生桌面应用，以及 iOS 和 Android 移动应用。自托管、开源、免费下载。",
+    "title": "下载",
+    "whatsNew": "更新内容",
+    "desktop": "桌面端",
+    "desktopDescription": "推荐，包含所需的一切",
+    "macRequirement": "需要 macOS 13 或更高版本",
+    "download": "下载",
+    "mobile": "移动端",
+    "web": "网页端",
+    "webDescription": "从任意浏览器连接到服务器",
+    "webApp": "网页应用",
+    "open": "打开",
+    "server": "服务器",
+    "serverDescription": "在任何地方运行 Paseo 服务器，从任意客户端连接",
+    "allReleases": "所有版本都可以在 <github>GitHub</github> 上获取。",
+    "releaseChannel": "发布通道",
+    "stable": "稳定版",
+    "beta": "测试版",
+    "betaWarning": "测试版先于稳定版发布，可能存在问题。",
+    "betaSettings": "已经在使用桌面应用？前往 <setting>设置 → 发布通道 → Beta</setting>，之后它会自动从这里更新。"
+  },
+  "thanks": {
+    "metaTitle": "感谢下载 Paseo",
+    "metaDescription": "你的 Paseo 下载即将开始。欢迎加入 Discord、GitHub 和 Reddit 社区，或赞助 Paseo。",
+    "title": "感谢下载 Paseo",
+    "intro": "获取帮助、分享反馈、关注最新动态。",
+    "didNotStart": "下载没有开始？",
+    "tryAgain": "重试",
+    "discord": "获取帮助、分享反馈。",
+    "github": "点 Star、报告问题、参与贡献。",
+    "reddit": "工作流与问答。"
+  },
+  "hub": {
+    "metaTitle": "Paseo Hub - GitHub、Slack 和 Discord 触发器",
+    "metaDescription": "自行运行 Paseo Hub，从 GitHub、Slack 和 Discord 在你自己的机器上启动 Agent。",
+    "title": "Paseo Hub",
+    "intro": "一个可选服务，位于你的 daemon 之上，为它们提供额外能力。",
+    "runIt": "可以自行运行，也可以使用托管服务。",
+    "pricing": {
+      "title": "选择 Hub 的运行方式",
+      "unavailable": "方案对比暂时不可用。",
+      "selfHost": "自托管 Hub",
+      "selfHosted": "自托管",
+      "free": "免费",
+      "openSource": "/ 开源",
+      "getStarted": "开始使用",
+      "operateHub": "由你运营 Hub",
+      "ownApps": "由你创建和控制的 Provider 应用",
+      "openSourceFeature": "开源",
+      "unlimitedRuns": "无限次 Agent 运行",
+      "runsPerMonth": "每月 {{value}} 次 Agent 运行",
+      "unlimitedUnits": "无限{{unit}}",
+      "units_one": "{{value}} 个{{unit}}",
+      "units_other": "{{value}} 个{{unit}}",
+      "perMonth": "/ 月",
+      "perMonths": "/ {{count}} 个月",
+      "perUnitMonth": "每{{unit}} / 月",
+      "perUnitMonths": "每{{unit}} / {{count}} 个月",
+      "seat": "席位"
+    },
+    "triggers": {
+      "title": "触发器，运行在你的机器上",
+      "description": "在 GitHub、Slack 或 Discord 中提及机器人，就会在你的 daemon 上启动一个 Agent。",
+      "github": "Issue、PR 和代码审查。",
+      "slack": "频道和讨论串。",
+      "discord": "频道和讨论串。"
+    },
+    "demo": {
+      "showIssues": "<mention/> 给我看看最新的 P0 issue",
+      "issuesOpen": "目前有三个未关闭的 P0 issue：",
+      "createPr": "<mention/> 为第一个创建一个拉取请求",
+      "ranOn": "已在 <host>macbook-pro</host> 上运行。已创建 <pr>getpaseo/paseo#1234</pr>，修复了终端写入问题。",
+      "filesChanged": "3 个文件已更改",
+      "testsPassed": "测试通过",
+      "bot": "机器人",
+      "caption": "Agent 在你的 daemon 上运行，使用你的密钥。"
+    },
+    "agents": {
+      "title": "运行你已有的 Agent",
+      "description": "Hub 本身不附带任何 Agent，因此你的团队使用的是 daemon 上已配置好的 Provider、订阅和技能。"
+    },
+    "shape": {
+      "title": "适配你现有的基础设施",
+      "description": "Hub 连接到你已在运行的 daemon，你的应用也继续连接这些 daemon。",
+      "triggersRow": "触发器和团队成员",
+      "yourTeam": "你的团队",
+      "futureIntegrations": "未来的集成",
+      "webhooks": "webhook 和提及",
+      "hub": "Hub",
+      "hubHosting": "自托管或托管",
+      "sameRpcs": "与应用和 CLI 相同的 RPC",
+      "daemonsRow": "你的 daemon",
+      "directOrRelay": "直连或中继",
+      "appsRow": "Paseo 应用",
+      "desktop": "桌面端",
+      "web": "网页端",
+      "mobile": "移动端",
+      "cli": "CLI"
+    },
+    "faq": {
+      "title": "常见问题",
+      "whatQuestion": "Hub 是什么？",
+      "whatAnswer": "一个独立的服务，位于你的 Paseo daemon 之上。你把一个或多个 daemon 连接到它，它就为这些 daemon 提供 GitHub、Slack 和 Discord 触发器，协作功能也在计划中。没有它，Paseo 也能完整工作。",
+      "separateQuestion": "为什么它是独立服务，而不是 daemon 的一部分？",
+      "separateAnswer1": "daemon 保持为单台机器上的一个精简可执行程序。Hub 通过与应用和 CLI 相同的 RPC 与 daemon 通信，所以任何人都可以基于 Paseo 构建自己的 hub。",
+      "separateAnswer2": "它的职责也不同。Hub 需要暴露在互联网上、与团队共享，并以多租户方式运行。这些都不属于单机 daemon 的职责。",
+      "selfHostQuestion": "我可以自己运行吗？",
+      "selfHostAnswer": "可以。运行 <code>npx @getpaseo/hub</code>，然后在浏览器中完成设置。源代码在 <github>GitHub</github> 上，更复杂的部署请参阅<guide>自托管指南</guide>。",
+      "needQuestion": "运行它需要什么？",
+      "needAnswer": "Node.js 和一个正在运行的 Paseo daemon。Hub 会引导你连接需要的 Provider 应用。",
+      "hostedQuestion": "有托管版本吗？",
+      "hostedAnswer": "有。托管服务运行的就是你可以自托管的同一套 Hub 软件。",
+      "plannedQuestion": "还计划了什么？",
+      "plannedIntro": "以下尚未实现，列出来是为了让你了解方向。",
+      "plannedProvisioning": "为团队预配 daemon",
+      "plannedSharing": "在团队内共享设置和技能",
+      "plannedIntegrations": "更多集成",
+      "moveQuestion": "我需要把团队迁移到新工具吗？",
+      "moveAnswer": "不需要。Hub 在你团队已在使用的 Slack 或 Discord 中工作，运行在你已有的 daemon 上。工作变得复杂时，你可以在同样的 daemon 上切换到 Paseo 应用。",
+      "agentsQuestion": "它运行哪些 Agent？",
+      "agentsAnswer": "你的 daemon 上配置了哪些就运行哪些，使用你自己的订阅和技能。Hub 本身不附带任何 Agent。",
+      "codeQuestion": "Hub 能在我的机器上运行代码吗？",
+      "codeAnswer": "能，但仅限于你连接到它的 daemon，其他地方都不行。这正是触发器的意义，也是测试版访问范围保持小而可信的原因。",
+      "accessQuestion": "如何获得访问权限？",
+      "accessAnswer": "你现在就可以自托管，或<hosted>登录托管版 Hub</hosted> 获取免费账户。需要更多 Agent 运行次数或更多席位时，可在 Hub 内的账单页面升级。"
+    }
+  },
+  "changelog": {
+    "metaTitle": "更新日志 - Paseo",
+    "metaDescription": "每个 Paseo 版本发布的产品更新、问题修复和改进。了解新的 Agent Provider、移动端功能和 daemon 变化。",
+    "title": "更新日志",
+    "linkTo": "链接到 Paseo {{version}}",
+    "untranslatedRelease": "此版本的发布说明尚未翻译，因此以英文显示。"
+  },
+  "blog": {
+    "metaTitle": "博客 – 来自 Paseo 团队的更新与公告",
+    "metaDescription": "来自 Paseo 团队的产品更新、技术文章和公告。记录如何打造一个可在手机上使用的自托管多 Agent 开发环境。",
+    "postTitle": "{{title}} - Paseo",
+    "notFoundTitle": "未找到 - Paseo",
+    "notFound": "未找到文章。",
+    "draft": "草稿",
+    "showingDrafts": "正在显示草稿文章",
+    "noPosts": "暂无文章。"
+  },
+  "legal": {
+    "lastUpdated": "最后更新：{{date}}"
+  },
+  "plugins": {
+    "meta": {
+      "indexTitle": "插件 – 用社区插件扩展 Paseo",
+      "indexDescription": "由 Paseo 社区构建的主题、Provider、面板和自动化。每一个都只需一条命令即可安装。",
+      "allTitle": "全部插件 – Paseo 插件",
+      "allDescription": "Paseo 的全部社区插件，可按安装量或最新排序。",
+      "categoryTitle": "{{category}} – Paseo 插件",
+      "authorTitle": "{{author}} – Paseo 插件",
+      "authorDescription": "{{author}} 发布的 Paseo 插件。",
+      "pluginTitle": "{{name}} – Paseo 插件",
+      "authorNotFoundTitle": "未找到作者 – Paseo",
+      "authorNotFoundDescription": "未找到作者。",
+      "pluginNotFoundTitle": "未找到插件 – Paseo",
+      "pluginNotFoundDescription": "未找到插件。",
+      "categoryNotFoundTitle": "未找到分类 – Paseo",
+      "categoryNotFoundDescription": "未找到分类。"
+    },
+    "title": "插件",
+    "pluginCount_other": "{{count}} 个插件",
+    "authorCount_other": "{{count}} 位作者",
+    "counts": "{{authors}}，共 {{plugins}}",
+    "lead": "浏览社区插件，为 Paseo 添加新功能。",
+    "readDocs": "阅读文档",
+    "submit": "提交插件",
+    "buildTitle": "构建你自己的插件",
+    "buildDescription": "插件可以为 Paseo 添加主题、工作区面板、斜杠命令和 Agent 钩子。参照插件文档编写一个插件，然后提交，即可在这里上架。",
+    "featured": "精选",
+    "featuredDescription": "人工挑选的插件",
+    "seeAll": "查看全部",
+    "whatsNew": "最新上架",
+    "recentlyUpdated": "最近更新",
+    "categoriesTitle": "分类",
+    "mostInstalled": "安装最多",
+    "newest": "最新",
+    "allPlugins": "全部插件",
+    "allChip": "全部",
+    "results": "“{{term}}”的搜索结果",
+    "resultsInCategory": "{{category}}中“{{term}}”的搜索结果",
+    "clear": "清除",
+    "noMatches": "没有匹配的插件。",
+    "clearFilters": "清除筛选",
+    "noneUpdated": "上架以来还没有插件更新过。",
+    "noneInCategory": "这个分类还没有插件。",
+    "window": {
+      "label": "时间范围",
+      "week": "本周",
+      "month": "本月",
+      "all": "全部时间"
+    },
+    "search": "搜索插件",
+    "clearSearch": "清除搜索",
+    "installs": "次安装",
+    "back": "插件",
+    "reportBug": "报告问题",
+    "source": "源代码",
+    "screenshot": "{{name}} 截图 {{index}}",
+    "video": "{{name}} 视频 {{index}}",
+    "previous": "上一个",
+    "next": "下一个",
+    "untranslatedOverview": "该插件的概览尚未翻译为你的语言，因此以英文显示。",
+    "notFound": {
+      "crumb": "未找到",
+      "browseAll": "浏览全部插件",
+      "authorTitle": "未找到作者",
+      "authorBody": "没有使用该 GitHub 所有者发布的插件。",
+      "pluginTitle": "未找到插件",
+      "pluginBody": "这个地址下没有已上架的插件。",
+      "categoryTitle": "未找到分类",
+      "categoryBody": "这里没有插件分类。"
+    },
+    "ago": {
+      "today": "今天",
+      "yesterday": "昨天",
+      "days": "{{count}} 天前",
+      "weeks": "{{count}} 周前"
+    },
+    "categories": {
+      "daemon-management": {
+        "label": "daemon 管理",
+        "description": "管理主机、daemon 任务、资源、审批和 MCP 服务器。"
+      },
+      "themes": {
+        "label": "主题",
+        "description": "更改应用的配色方案。"
+      },
+      "providers": {
+        "label": "Provider",
+        "description": "接入编程 Agent、ACP 服务器和模型路由，并支持账户与配额回退。"
+      },
+      "orchestration": {
+        "label": "编排",
+        "description": "协调 Agent、委派工作，并在主机之间发送消息。"
+      },
+      "git": {
+        "label": "Git",
+        "description": "处理分支、worktree、PR、堆叠、diff 和审查。"
+      },
+      "workspaces": {
+        "label": "工作区",
+        "description": "为看板、浏览器、文档和终端添加工作区面板与标签页。"
+      },
+      "sidebar": {
+        "label": "侧边栏",
+        "description": "添加用于用量、通知、定价和链接的侧边栏项目与面板。"
+      },
+      "extras": {
+        "label": "趣味",
+        "description": "添加在线状态、宠物、谜题、健康提醒和演示。"
+      },
+      "utils": {
+        "label": "工具",
+        "description": "为 Composer 和时间线添加命令、提示词、技能和小工具。"
+      }
+    },
+    "pluginCount_one": "{{count}} 个插件",
+    "authorCount_one": "{{count}} 位作者"
+  }
+}

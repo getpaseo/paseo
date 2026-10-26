@@ -1,8 +1,9 @@
+import { UsageSourceRegistry } from "../../../packages/server/src/server/plugins/usage-sources/index.js";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { fetchUsage, identify } from "./usage.js";
+import { fetchUsage, discover } from "./usage.js";
 
 import { inputSchema, type CodexUsageInput } from "../shared/input.js";
 
@@ -39,7 +40,9 @@ function response(headers: HeadersInit, accountId?: string): Promise<Response> {
     new Response(
       JSON.stringify({
         plan_type: "plus",
-        rate_limit: { primary_window: { used_percent: 30, reset_at: 1700000000 } },
+        rate_limit: {
+          primary_window: { used_percent: 30, limit_window_seconds: 18000, reset_at: 1700000000 },
+        },
       }),
       { status: 200 },
     ),
@@ -62,7 +65,7 @@ test("explicit route reads Codex auth and preserves the usage request", async ()
     expect(report).toMatchObject({
       status: "available",
       planLabel: "plus",
-      windows: [{ id: "session", usedPct: 30 }],
+      windows: [{ id: "five_hour", usedPct: 30 }],
     });
   } finally {
     await rm(home, { recursive: true, force: true });
@@ -80,12 +83,12 @@ test("discovery input requires a route and rejects raw credentials", () => {
   expect(() => inputSchema.parse({})).toThrow();
 });
 
-test("identify returns a key when fetch finds Codex token credentials", async () => {
+test("discovery returns a key when fetch finds Codex token credentials", async () => {
   await writeAuth("fixture-supplied", "account-supplied");
   await fetchUsage(authInput(fixtureHome), (_url, init) =>
     response(init?.headers ?? {}, "account-supplied"),
   );
-  expect(await identify(authInput(fixtureHome))).toEqual({ key: "account-supplied" });
+  expect(await accountFor(authInput(fixtureHome))).toEqual({ key: "account-supplied" });
 });
 
 test("coerces credit balance and marks a 96 percent window dangerous", async () => {
@@ -95,8 +98,8 @@ test("coerces credit balance and marks a 96 percent window dangerous", async () 
       new Response(
         JSON.stringify({
           rate_limit: {
-            primary_window: { used_percent: 12 },
-            secondary_window: { used_percent: 96 },
+            primary_window: { used_percent: 12, limit_window_seconds: 18000 },
+            secondary_window: { used_percent: 96, limit_window_seconds: 604800 },
           },
           credits: { balance: "0" },
         }),
@@ -105,7 +108,7 @@ test("coerces credit balance and marks a 96 percent window dangerous", async () 
   );
   expect(report.windows).toEqual(
     expect.arrayContaining([
-      expect.objectContaining({ id: "session", tone: "ok" }),
+      expect.objectContaining({ id: "five_hour", tone: "ok" }),
       expect.objectContaining({ id: "weekly", tone: "danger" }),
     ]),
   );
@@ -121,8 +124,8 @@ test("summarizes the session and weekly windows by default, not code review", as
       new Response(
         JSON.stringify({
           rate_limit: {
-            primary_window: { used_percent: 12 },
-            secondary_window: { used_percent: 40 },
+            primary_window: { used_percent: 12, limit_window_seconds: 18000 },
+            secondary_window: { used_percent: 40, limit_window_seconds: 604800 },
           },
           code_review_rate_limit: { primary_window: { used_percent: 5 } },
         }),
@@ -130,18 +133,16 @@ test("summarizes the session and weekly windows by default, not code review", as
       ),
   );
   expect(report.windows.map((window) => [window.id, window.summary ?? false])).toEqual([
-    ["session", true],
+    ["five_hour", true],
     ["weekly", true],
-    ["code_review", false],
+    ["code_review:unknown_primary", false],
   ]);
 });
 
-test("HTML usage body is unavailable", async () => {
-  const report = await fetchUsage(
-    authInput(fixtureHome),
-    async () => new Response("<html>Login</html>", { status: 200 }),
-  );
-  expect(report.status).toBe("unavailable");
+test("HTML usage body is an error", async () => {
+  await expect(
+    fetchUsage(authInput(fixtureHome), async () => new Response("<html>Login</html>")),
+  ).rejects.toThrow("Codex usage API returned HTML");
 });
 
 test("401 leaves auth.json byte for byte unchanged and makes no refresh request", async () => {
@@ -178,14 +179,16 @@ test("auth account claim survives token rotation", async () => {
   const token = (suffix: string) =>
     `header.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "work-id" }, suffix })).toString("base64url")}.signature`;
   await writeAuth(token("first"));
-  expect(await identify(authInput(fixtureHome))).toEqual({ key: "work-id" });
+  expect(await accountFor(authInput(fixtureHome))).toEqual({ key: "work-id" });
   await writeAuth(token("second"));
-  expect(await identify(authInput(fixtureHome))).toEqual({ key: "work-id" });
+  expect(await accountFor(authInput(fixtureHome))).toEqual({ key: "work-id" });
   await writeAuth("opaque-token");
-  expect(await identify(authInput(fixtureHome))).toBeNull();
+  expect(await accountFor(authInput(fixtureHome))).toEqual({
+    key: expect.stringMatching(/^[a-f0-9]{64}$/),
+  });
 });
 
-test("identify reads an email label from auth id_token when access token has no profile", async () => {
+test("discovery reads an email label from auth id_token when access token has no profile", async () => {
   const home = await mkdtemp(join(tmpdir(), "usage-codex-label-"));
   try {
     process.env["CODEX_HOME"] = home;
@@ -196,7 +199,7 @@ test("identify reads an email label from auth id_token when access token has no 
         tokens: { account_id: "account-id", access_token: "opaque-token", id_token: idToken },
       }),
     );
-    expect(await identify(authInput(home))).toEqual({
+    expect(await accountFor(authInput(home))).toEqual({
       key: "account-id",
       label: "id-owner@example.test",
     });
@@ -206,7 +209,6 @@ test("identify reads an email label from auth id_token when access token has no 
 });
 
 test("discovers a Pi OAuth login independently of the CLI login", async () => {
-  const { discover } = await import("./usage.js");
   const directory = await mkdtemp(join(tmpdir(), "usage-pi-discovery-"));
   try {
     await mkdir(join(directory, ".pi", "agent"), { recursive: true });
@@ -216,11 +218,250 @@ test("discovers a Pi OAuth login independently of the CLI login", async () => {
         "openai-codex": { type: "oauth", access: "fixture-pi", accountId: "pi-account" },
       }),
     );
-    const inputs = await discover({ home: directory, env: {}, platform: "linux" });
-    expect(inputs).toContainEqual({
+    const inputs = await discover(
+      { kind: "global" },
+      { home: directory, env: {}, platform: "linux" },
+    );
+    expect(inputs.map((account) => account.input)).toContainEqual({
       route: { store: "pi", path: join(directory, ".pi", "agent", "auth.json") },
     });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+async function accountFor(input: CodexUsageInput) {
+  const accounts = await discover(
+    { kind: "global" },
+    {
+      home: fixtureHome,
+      env: {
+        CODEX_HOME:
+          input.route.store === "codex"
+            ? (await import("node:path")).dirname(input.route.path)
+            : fixtureHome,
+      },
+      platform: "linux",
+    },
+  );
+  const account = accounts.find(
+    (candidate) => JSON.stringify(candidate.input) === JSON.stringify(input),
+  );
+  if (!account) throw new Error("Expected discovered login");
+  return { key: account.key, ...(account.label ? { label: account.label } : {}) };
+}
+
+test.each(["empty home", "unrelated files"])(
+  "discovers no Codex accounts in %s",
+  async (scenario) => {
+    const home = await mkdtemp(join(tmpdir(), "codex-no-login-"));
+    try {
+      if (scenario === "unrelated files") await writeFile(join(home, "unrelated.json"), "{}");
+      expect(await discover({ kind: "global" }, { home, env: {}, platform: "linux" })).toEqual([]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each([401, 403])("reports a Codex login rejected with HTTP %i", async (status) => {
+  expect(
+    await fetchUsage(authInput(fixtureHome), async () => new Response(null, { status })),
+  ).toEqual({ status: "unavailable", problem: { kind: "rejected", status, refreshedBy: "codex" } });
+});
+
+// Issue #4165: the primary slot contains the only weekly window.
+test("names a seven-day-only primary window from its reported duration", async () => {
+  const report = await fetchUsage(authInput(fixtureHome), async () =>
+    Response.json({
+      rate_limit: {
+        primary_window: { used_percent: 1, limit_window_seconds: 604800 },
+        secondary_window: null,
+      },
+    }),
+  );
+  expect(report).toMatchObject({
+    status: "available",
+    windows: [{ id: "weekly", label: "Weekly", shortLabel: "wk", usedPct: 1 }],
+  });
+});
+
+test("reports every named additional limit with its own duration identity", async () => {
+  const report = await fetchUsage(authInput(fixtureHome), async () =>
+    Response.json({
+      additional_rate_limits: [
+        {
+          limit_name: "GPT-5.3-Codex-Spark",
+          metered_feature: "codex_bengalfox",
+          rate_limit: {
+            primary_window: { used_percent: 0, limit_window_seconds: 18000 },
+            secondary_window: { used_percent: 0, limit_window_seconds: 604800 },
+          },
+        },
+        {
+          limit_name: "Another limit",
+          metered_feature: "another",
+          rate_limit: {
+            primary_window: { used_percent: 4, limit_window_seconds: 7200 },
+          },
+        },
+      ],
+    }),
+  );
+  expect(report).toMatchObject({
+    status: "available",
+    windows: [
+      {
+        id: "limit:codex_bengalfox:five_hour",
+        label: "GPT-5.3-Codex-Spark · 5-hour",
+        shortLabel: "GPT-5.3-Codex-Spark 5h",
+      },
+      {
+        id: "limit:codex_bengalfox:weekly",
+        label: "GPT-5.3-Codex-Spark · Weekly",
+        shortLabel: "GPT-5.3-Codex-Spark wk",
+      },
+      { id: "limit:another:7200s", label: "Another limit · 2-hour" },
+    ],
+  });
+});
+
+test("a weekly pin means weekly after the provider moves it between slots", async () => {
+  const { resolvePinnedUsage } = await import("../../../packages/app/src/usage/pinned.js");
+  const preferences = {
+    displayAs: "used" as const,
+    serverId: null,
+    pins: [{ sourceId: "codex", windowId: "weekly" }],
+  };
+  for (const primaryWeekly of [false, true]) {
+    const weekly = { used_percent: 11, limit_window_seconds: 604800 };
+    const report = await fetchUsage(authInput(fixtureHome), async () =>
+      Response.json({
+        rate_limit: {
+          primary_window: primaryWeekly ? weekly : { used_percent: 4, limit_window_seconds: 18000 },
+          secondary_window: primaryWeekly ? null : weekly,
+        },
+      }),
+    );
+    const entry = {
+      id: "codex:account",
+      sourceId: "codex",
+      sourceLabel: "Codex",
+      account: { key: "account" },
+      fetchedAt: "2026-10-02T00:00:00Z",
+      report,
+    };
+    expect(resolvePinnedUsage([entry], preferences)).toMatchObject([
+      { windows: [{ key: "codex:account/weekly", percentText: "11%", shortLabel: "wk" }] },
+    ]);
+    // The old slot ID is ambiguous: do not silently retarget a saved Session pin.
+    expect(
+      resolvePinnedUsage([entry], {
+        ...preferences,
+        pins: [{ sourceId: "codex", windowId: "session" }],
+      }),
+    ).toEqual([]);
+  }
+});
+
+test("unknown lengths and code review never get a duration from their slot", async () => {
+  const report = await fetchUsage(authInput(fixtureHome), async () =>
+    Response.json({
+      rate_limit: {
+        primary_window: { used_percent: 11 },
+        secondary_window: { used_percent: 22, limit_window_seconds: null },
+      },
+      code_review_rate_limit: {
+        primary_window: { used_percent: 3, limit_window_seconds: 604800 },
+        secondary_window: { used_percent: 4, limit_window_seconds: 18000 },
+      },
+    }),
+  );
+  expect(report).toMatchObject({
+    windows: [
+      { id: "unknown_primary", label: "Primary limit", shortLabel: "" },
+      { id: "unknown_secondary", label: "Secondary limit", shortLabel: "" },
+      { id: "code_review:weekly", label: "Code review · Weekly", shortLabel: "Code review wk" },
+      { id: "code_review:five_hour", label: "Code review · 5-hour", shortLabel: "Code review 5h" },
+    ],
+  });
+});
+
+test("session discovery isolates CODEX_HOME and excludes foreign routes", async () => {
+  const home = await mkdtemp(join(tmpdir(), "codex-session-scope-"));
+  try {
+    await writeFile(
+      join(home, "auth.json"),
+      JSON.stringify({ tokens: { access_token: "session-token", account_id: "session-account" } }),
+    );
+    const scope = {
+      kind: "session" as const,
+      provider: "codex",
+      env: { HOME: home, CODEX_HOME: home },
+    };
+    const accounts = await discover(scope, { home: "/unused-default-home", env: {} });
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.input).toEqual(authInput(home));
+    expect(
+      await discover({ ...scope, env: { ...scope.env, OPENAI_BASE_URL: "https://other.test" } }),
+    ).toEqual([]);
+    expect(await discover({ ...scope, provider: "claude" })).toEqual([]);
+    expect(
+      await discover({ ...scope, env: { HOME: home, CODEX_HOME: join(home, "missing") } }),
+    ).toEqual([]);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("#6155: real Codex and OpenCode stores share an account but keep agent failures separate", async () => {
+  await writeAuth("fixture-codex", "same-account");
+  const data = join(fixtureHome, "data");
+  await mkdir(join(data, "opencode"), { recursive: true });
+  await writeFile(
+    join(data, "opencode", "auth.json"),
+    JSON.stringify({
+      openai: { type: "oauth", access: "fixture-opencode", accountId: "same-account", expires: 0 },
+    }),
+  );
+  const env = { HOME: fixtureHome, CODEX_HOME: fixtureHome, XDG_DATA_HOME: data };
+  const lookup = { home: fixtureHome, env, platform: "linux" as const, now: () => 1_000 };
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: (id) => id === "agent",
+    usageSession: () => ({ provider: "codex", env, sessionKey: "launch" }),
+  });
+  registry.register({
+    id: "codex",
+    label: "Codex",
+    discover: (scope) => discover(scope, lookup),
+    fetch: (input) =>
+      fetchUsage(inputSchema.parse(input), async () => new Response(null, { status: 401 }), lookup),
+  });
+  const [host] = await registry.listReports();
+  expect(host?.loginErrors).toEqual([
+    {
+      harness: "Codex",
+      report: {
+        status: "unavailable",
+        problem: { kind: "rejected", status: 401, refreshedBy: "codex" },
+      },
+    },
+    {
+      harness: "OpenCode",
+      report: {
+        status: "unavailable",
+        problem: {
+          kind: "expired",
+          expiresAt: "1970-01-01T00:00:00.000Z",
+          refreshedBy: "opencode",
+        },
+      },
+    },
+  ]);
+  const [agent] = await registry.listReports({ agentId: "agent" });
+  expect(agent?.report).toEqual({
+    status: "unavailable",
+    problem: { kind: "rejected", status: 401, refreshedBy: "codex" },
+  });
+  expect(agent?.loginErrors).toEqual([host!.loginErrors![0]]);
 });

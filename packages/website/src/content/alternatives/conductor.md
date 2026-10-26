@@ -9,7 +9,7 @@ order: 50
 
 Conductor is a proprietary macOS app for running Claude Code, Codex, Cursor, and OpenCode in parallel Git worktrees and managed cloud workspaces.
 
-Paseo is an app for orchestrating coding agents, with native clients on desktop, mobile, web, and the CLI. Open source (Apache-2.0).
+Paseo is an open source agentic development environment. Run parallel agents in separate worktrees, edit files, review diffs and pull requests, and test your app with terminals and a built-in desktop browser. Available on desktop, mobile, web, and CLI under Apache-2.0.
 
 ![Paseo desktop and mobile app](/hero-mockup.png)
 
@@ -67,11 +67,11 @@ Conductor lists its API as a Pro feature but does not document a user-facing CLI
 
 Both tools isolate parallel agents in git worktrees.
 
-Paseo also gives each worktree its own dev server URL. Two agents running their dev servers at the same time get `web.fix-auth.my-app.localhost` and `web.add-search.my-app.localhost` instead of port collisions.
+Paseo also gives each worktree its own dev server URL. Two agents running their dev servers at the same time get `web--fix-auth--my-app.localhost` and `web--add-search--my-app.localhost` instead of port collisions.
 
 ## Mobile
 
-Paseo ships native iOS and Android apps today. Conductor lists its mobile app as coming soon under the Pro plan.
+The mobile app is the full app, native on iOS and Android, with full feature parity with desktop. Conductor lists its mobile app as coming soon under the Pro plan.
 
 ## Voice
 
@@ -79,21 +79,31 @@ Paseo supports local speech-to-text and text-to-speech. Conductor does not curre
 
 ## Comparison
 
-|                              | Paseo                                                                                   | Conductor                            |
-| ---------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------ |
-| License                      | Open source (Apache-2.0)                                                                | Closed source                        |
-| Platforms                    | macOS, Linux, Windows                                                                   | macOS only                           |
-| Native mobile                | iOS, Android                                                                            | Coming soon under Pro                |
-| Providers                    | Claude Code, Codex, OpenCode, Pi, Antigravity, Muse Code + 30+ via ACP catalog + custom | Claude Code, Codex, Cursor, OpenCode |
-| Git worktrees                | Yes                                                                                     | Yes                                  |
-| Per-worktree dev server URLs | Yes                                                                                     | —                                    |
-| Split panes and tabs         | Yes                                                                                     | —                                    |
-| In-app terminal              | Yes                                                                                     | Yes                                  |
-| In-app browser               | Yes                                                                                     | —                                    |
-| GitHub workflow in app       | Commit, push, PR, checks, reviews, merge                                                | Yes                                  |
-| CLI                          | Run, `--host`, ls, send, schedule, loop                                                 | —                                    |
-| Application plugins          | Server code and native client components                                                | No                                   |
-| Local voice                  | Yes                                                                                     | Not documented                       |
-| Self-hosted daemon           | Yes                                                                                     | —                                    |
+|                              | Paseo                                                                                              | Conductor                               |
+| ---------------------------- | -------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| License                      | Open source (Apache-2.0)                                                                           | Closed source                           |
+| Account required             | No                                                                                                 | Yes                                     |
+| Desktop app                  | Yes (one click install, daemon bundled)                                                            | Yes (macOS only)                        |
+| Mobile app                   | Yes (native, full parity with desktop)                                                             | Coming soon under Pro                   |
+| CLI                          | Yes (everything the app does)                                                                      | API under Pro                           |
+| Remote machines              | Yes (install the daemon anywhere)                                                                  | No (managed cloud workspaces under Pro) |
+| Built-in relay               | Yes (opt-in, end-to-end encrypted, no account)                                                     | -                                       |
+| Direct network access        | Yes (LAN, Tailscale, VPN)                                                                          | No                                      |
+| SSH access                   | Yes                                                                                                | No                                      |
+| Providers                    | Claude Code, Codex, OpenCode, Pi, Antigravity, Muse Code, 30+ more                                 | Claude Code, Codex, Cursor, OpenCode    |
+| Parallel agents              | Yes (isolated worktrees, across machines)                                                          | Yes (Git worktrees)                     |
+| Terminal agents              | Yes (run any agent in a terminal, get notified when it finishes)                                   | -                                       |
+| Agent orchestration          | Yes (agents create worktrees and launch other agents, across providers)                            | -                                       |
+| Editor                       | Yes                                                                                                | -                                       |
+| Terminals                    | Yes                                                                                                | Yes                                     |
+| Diff review                  | Yes (comments go to the agent)                                                                     | -                                       |
+| Pull requests in app         | GitHub, GitLab, Gitea, Forgejo, Codeberg                                                           | GitHub                                  |
+| In-app browser               | Yes (element picker, agent browser tools)                                                          | -                                       |
+| Per-worktree dev server URLs | Yes (`web--fix-auth--my-app.localhost`)                                                            | -                                       |
+| Schedules and heartbeats     | Yes                                                                                                | -                                       |
+| Plan usage                   | Yes                                                                                                | -                                       |
+| Plugins                      | Yes (new screens, panels, agent hooks, and providers, one plugin runs on desktop, web, and mobile) | No                                      |
+| Voice                        | Yes (local dictation, realtime voice)                                                              | -                                       |
+| Telemetry                    | None                                                                                               | -                                       |
 
 See also: [Paseo vs Superset](/alternatives/superset), [Paseo vs OpenChamber](/alternatives/openchamber), [Paseo vs Happy Coder](/alternatives/happy-coder).

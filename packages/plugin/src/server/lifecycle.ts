@@ -50,6 +50,10 @@ export interface PluginLifecycleEvents {
     agent: PluginHookAgent;
     turnId: string | null;
     outcome: PluginTurnOutcome;
+    /**
+     * @deprecated Always empty. Fetch history on demand with
+     * context.paseo.agents.ref(agent.id).timeline.refetch({ direction: "tail", limit: 20 }).
+     */
     timeline: readonly AgentTimelineItem[];
   };
   "agent.permission_requested": { agent: PluginHookAgent; request: AgentPermissionRequest };
@@ -60,6 +64,7 @@ export interface PluginLifecycleEvents {
   };
   "agent.archived": { agent: PluginHookAgent; archivedAt: string };
   "agent.created": { agent: PluginHookAgent };
+  "agent.closed": { agent: PluginHookAgent };
   "workspace.created": { workspace: PluginHookWorkspace };
   "workspace.archived": { workspace: PluginHookWorkspace };
 }

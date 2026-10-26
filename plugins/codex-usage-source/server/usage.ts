@@ -3,8 +3,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   balanceToneFromRemaining,
+  hashAccountKey,
+  unavailable,
+  type UsageAccount,
+  type UsageScope,
   toneFromUsedPct,
-  windowFromUsedPct,
+  windowFromReportedDuration,
   type UsageReport,
   type UsageWindow,
 } from "@getpaseo/plugin/server/usage";
@@ -21,14 +25,29 @@ const authSchema = z.object({
     .optional(),
 });
 const number = z.coerce.number().finite();
-const windowSchema = z.object({ used_percent: number.optional(), reset_at: number.optional() });
+const windowSchema = z.object({
+  used_percent: number.optional(),
+  reset_at: number.optional(),
+  limit_window_seconds: number.nullish(),
+});
+const rateLimitSchema = z.object({
+  primary_window: windowSchema.nullish(),
+  secondary_window: windowSchema.nullish(),
+});
 const responseSchema = z.object({
   plan_type: z.string().optional(),
   email: z.string().optional(),
-  rate_limit: z
-    .object({ primary_window: windowSchema.nullish(), secondary_window: windowSchema.nullish() })
+  rate_limit: rateLimitSchema.nullish(),
+  additional_rate_limits: z
+    .array(
+      z.object({
+        limit_name: z.string().optional(),
+        metered_feature: z.string().optional(),
+        rate_limit: rateLimitSchema.nullish(),
+      }),
+    )
     .nullish(),
-  code_review_rate_limit: z.object({ primary_window: windowSchema.nullish() }).nullish(),
+  code_review_rate_limit: rateLimitSchema.nullish(),
   credits: z.object({ balance: number.optional() }).nullish(),
 });
 
@@ -39,7 +58,27 @@ interface Auth {
   expires?: number;
 }
 
-export async function discover(lookup: StoreLookup = {}): Promise<CodexUsageInput[]> {
+export async function discover(
+  scope: UsageScope,
+  lookup: StoreLookup = {},
+): Promise<UsageAccount[]> {
+  if (scope.kind === "session")
+    lookup = {
+      ...lookup,
+      env: scope.env,
+      home: scope.env.HOME || scope.env.USERPROFILE || homedir(),
+    };
+  const candidates = scope.kind === "global" ? globalRoutes(lookup) : sessionRoutes(scope, lookup);
+  const present: UsageAccount[] = [];
+  for (const input of candidates) {
+    const auth = await readAuth(input, lookup);
+    if (auth)
+      present.push({ ...accountIdentity(auth, input), harness: harnessLabel(input), input });
+  }
+  return present;
+}
+
+function globalRoutes(lookup: StoreLookup): CodexUsageInput[] {
   const env = lookup.env ?? process.env;
   const home = lookup.home ?? homedir();
   const paths = [
@@ -59,9 +98,36 @@ export async function discover(lookup: StoreLookup = {}): Promise<CodexUsageInpu
     { route: { store: "pi", path: piAuthPath(lookup) } },
     ...discoverOmp(lookup).map((route) => ({ route })),
   );
-  const present: CodexUsageInput[] = [];
-  for (const input of candidates) if (await readAuth(input, lookup)) present.push(input);
-  return present;
+  return candidates;
+}
+
+function sessionRoutes(
+  scope: Extract<UsageScope, { kind: "session" }>,
+  lookup: StoreLookup,
+): CodexUsageInput[] {
+  const env = scope.env;
+  const home = lookup.home ?? homedir();
+  if (scope.provider === "codex") {
+    if (env.OPENAI_BASE_URL) return [];
+    return [
+      {
+        route: { store: "codex", path: join(env.CODEX_HOME || join(home, ".codex"), "auth.json") },
+      },
+    ];
+  }
+  if (!scope.model?.startsWith("openai/")) return [];
+  if (scope.provider === "pi") return [{ route: { store: "pi", path: piAuthPath(lookup) } }];
+  if (scope.provider === "omp") return discoverOmp(lookup).map((route) => ({ route }));
+  if (scope.provider === "opencode")
+    return [
+      {
+        route: {
+          store: "opencode",
+          path: join(env.XDG_DATA_HOME || join(home, ".local", "share"), "opencode", "auth.json"),
+        },
+      },
+    ];
+  return [];
 }
 
 export async function readAuth(
@@ -84,17 +150,37 @@ export async function readAuth(
   };
 }
 
-function usageWindow(
-  spec: { id: string; label: string; shortLabel: string; summary?: boolean },
-  value: z.infer<typeof windowSchema> | null | undefined,
-): UsageWindow | null {
-  if (!value) return null;
-  const usedPct = value.used_percent ?? 0;
-  return windowFromUsedPct({
-    ...spec,
-    utilizationPct: usedPct,
-    resetsAt: value.reset_at != null ? new Date(value.reset_at * 1000).toISOString() : null,
-    tone: toneFromUsedPct(usedPct),
+function usageWindows({
+  rateLimit,
+  scope,
+  summary = false,
+}: {
+  rateLimit: z.infer<typeof rateLimitSchema> | null | undefined;
+  scope?: { id: string; label: string };
+  summary?: boolean;
+}): UsageWindow[] {
+  if (!rateLimit) return [];
+  return (["primary_window", "secondary_window"] as const).flatMap((slot) => {
+    const value = rateLimit[slot];
+    if (!value) return [];
+    const primary = slot === "primary_window";
+    // Codex does not always report a length. A slot is then only an unknown limit,
+    // never evidence of a five-hour or weekly period.
+    return [
+      windowFromReportedDuration({
+        durationSeconds: value.limit_window_seconds ?? null,
+        unknown: {
+          id: primary ? "unknown_primary" : "unknown_secondary",
+          label: primary ? "Primary limit" : "Secondary limit",
+          shortLabel: "",
+        },
+        scope,
+        summary,
+        utilizationPct: value.used_percent,
+        resetsAt: value.reset_at != null ? new Date(value.reset_at * 1000).toISOString() : null,
+        tone: toneFromUsedPct(value.used_percent),
+      }),
+    ];
   });
 }
 
@@ -104,8 +190,14 @@ export async function fetchUsage(
   lookup: StoreLookup = {},
 ): Promise<UsageReport> {
   const auth = await readAuth(input, lookup);
-  if (!auth || (auth.expires !== undefined && auth.expires <= (lookup.now ?? Date.now)()))
-    return { status: "unavailable", windows: [] };
+  if (!auth) throw new Error("Codex login store no longer exists");
+  const refreshedBy = input.route.store;
+  if (auth.expires !== undefined && auth.expires <= (lookup.now ?? Date.now)())
+    return unavailable({
+      kind: "expired",
+      expiresAt: new Date(auth.expires).toISOString(),
+      refreshedBy,
+    });
   const headers: Record<string, string> = {
     Authorization: `Bearer ${auth.token}`,
     Accept: "application/json",
@@ -117,25 +209,29 @@ export async function fetchUsage(
     signal: AbortSignal.timeout(15_000),
   });
   if (response.status === 401 || response.status === 403)
-    return { status: "unavailable", windows: [] };
+    return unavailable({ kind: "rejected", status: response.status, refreshedBy });
   if (!response.ok) throw new Error(`Codex usage API returned ${response.status}`);
   const text = await response.text();
-  if (text.trim().startsWith("<")) return { status: "unavailable", windows: [] };
+  if (text.trim().startsWith("<")) throw new Error("Codex usage API returned HTML");
   const usage = responseSchema.parse(JSON.parse(text));
   const windows = [
-    usageWindow(
-      { id: "session", label: "Session", shortLabel: "5h", summary: true },
-      usage.rate_limit?.primary_window,
-    ),
-    usageWindow(
-      { id: "weekly", label: "Weekly", shortLabel: "wk", summary: true },
-      usage.rate_limit?.secondary_window,
-    ),
-    usageWindow(
-      { id: "code_review", label: "Code review", shortLabel: "review" },
-      usage.code_review_rate_limit?.primary_window,
-    ),
-  ].filter((window): window is UsageWindow => window !== null);
+    ...usageWindows({ rateLimit: usage.rate_limit, summary: true }),
+    ...(usage.additional_rate_limits ?? []).flatMap((limit) => {
+      const identity = limit.metered_feature || limit.limit_name;
+      if (!identity) return []; // An unnamed limit has no stable quota identity.
+      return usageWindows({
+        rateLimit: limit.rate_limit,
+        scope: {
+          id: `limit:${encodeURIComponent(identity)}`,
+          label: limit.limit_name || identity,
+        },
+      });
+    }),
+    ...usageWindows({
+      rateLimit: usage.code_review_rate_limit,
+      scope: { id: "code_review", label: "Code review" },
+    }),
+  ];
   const balance = usage.credits?.balance;
   return {
     status: "available",
@@ -181,9 +277,7 @@ function claimString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-export async function identify(input: CodexUsageInput, lookup: StoreLookup = {}) {
-  const auth = await readAuth(input, lookup);
-  if (!auth) return null;
+function accountIdentity(auth: Auth, input: CodexUsageInput): { key: string; label?: string } {
   const access = jwtClaims(auth.token);
   const id = jwtClaims(auth.idToken);
   const accessAuth = claimObject(access, "https://api.openai.com/auth");
@@ -193,11 +287,16 @@ export async function identify(input: CodexUsageInput, lookup: StoreLookup = {})
     claimString(accessAuth?.["chatgpt_account_id"]) ??
     claimString(access?.["chatgpt_account_id"]) ??
     claimString(idAuth?.["chatgpt_account_id"]);
-  if (!key) return null;
+
   const label =
     claimString(claimObject(access, "https://api.openai.com/profile")?.["email"]) ??
     claimString(access?.["email"]) ??
     claimString(claimObject(id, "https://api.openai.com/profile")?.["email"]) ??
     claimString(id?.["email"]);
-  return { key, ...(label ? { label } : {}) };
+  return { key: key ?? hashAccountKey(JSON.stringify(input.route)), ...(label ? { label } : {}) };
+}
+
+function harnessLabel(input: CodexUsageInput): string {
+  const labels = { codex: "Codex", opencode: "OpenCode", pi: "Pi", omp: "OMP" };
+  return labels[input.route.store];
 }

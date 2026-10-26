@@ -10,7 +10,9 @@ Keep a bundled provider in `plugins/<id>/` and register it through
 import rules belong to [plugins.md](plugins.md#built-in-plugins); the
 [public provider guide](../public-docs/plugins/providers.md) covers the provider contract.
 
-The plugin owns the CLI transport, session state, catalog, and capabilities. The daemon owns
+The plugin owns the CLI transport, session state, catalog, and capabilities. Launch CLI transports
+and probes through the [SDK process helpers](../public-docs/plugins/providers.md#launch-the-provider-cli),
+which share Windows launcher handling with core providers. The daemon owns
 executable resolution and applies `agents.providers.<provider-id>.command` and `env` before
 connecting. Register the provider's icon with the plugin rather than adding it to the app's
 provider icon map. You do not need a core manifest entry or provider factory.
@@ -59,6 +61,8 @@ Core direct providers: `claude` (in `providers/claude/agent.ts`), `codex` (`code
 
 Claude first-party model metadata lives in `packages/server/src/server/agent/providers/claude/model-manifest.ts`. When adding or updating a Claude model, update that manifest only; the model picker thinking options and Claude-specific feature gates are derived from the manifest. Do not add model-specific Claude capability lists in feature code.
 
+Keep the curated Claude catalog: `supportedModels()` has historically omitted older versions and carries less metadata. Discovery is only an opt-in visibility gate, not a replacement catalog or an entitlement guarantee. Claude Code v2.1.197 added `resolvedModel` to disambiguate alias rows; a bare family alias does not establish access to a particular version. Explicit user-configured models must remain selectable when discovery fails or omits them.
+
 Paseo tools are not implemented as MCP tools internally. They live in a shared tool catalog under `packages/server/src/server/agent/tools/`; MCP is only the fallback adapter. The daemon resolves `agents.providers.<provider>.paseoTools` by the exact provider ID. The catalog policy belongs to the caller: it filters the tools exposed to the current agent. When that agent calls `create_agent`, the child receives the policy for the child provider ID; the caller's policy is not inherited.
 
 A provider that can register runtime tools directly should set `supportsNativePaseoTools: true` and consume the already-filtered `launchContext.paseoTools` in `createSession`/`resumeSession`. When native tools are present, `AgentManager` strips the internal Paseo MCP server from the provider launch config so the provider does not receive the same tools twice. Providers that only know MCP should keep `supportsMcpServers: true` and let the daemon inject `/mcp/agents`; the MCP server builds the same policy-filtered catalog for that caller. Filtering is enforced at catalog registration in both paths. Browser tools remain subject to the daemon browser-tools setting and browser-host availability.
@@ -91,7 +95,7 @@ Use OpenCode v2 execution events to trigger turn completion, with active-state a
 
 V2.0.4 also removed the activation endpoint that gated a cold location, and a cold location registers its config-derived commands, skills, and providers asynchronously. Wait until `plugin.list` returns a populated inventory before reading the catalog or commands; an empty inventory means the location is still warming. Fail when the readiness deadline expires, including when an inventory request stalls.
 
-Paseo installs its OpenCode tool bridge through `OPENCODE_CONFIG_CONTENT`. V1 accepts a plugin file; v2 silently skips configured files and requires a package directory with a server entry point. Both versions use the daemon's private loopback bridge for caller-scoped tools. Bridge context lives only in daemon memory and is removed when the Paseo session closes. The content-addressed plugin artifacts contain no session data or secrets. V2 also needs this plugin when native Paseo tools are disabled: its prompt API has no structured-output format, so the plugin supplies a schema-validated final-answer tool.
+Paseo installs its OpenCode tool bridge through `OPENCODE_CONFIG_CONTENT`. V1 accepts a plugin file; v2 silently skips configured files and requires a package directory with a server entry point. Both versions use the daemon's private loopback bridge for caller-scoped tools. The global manifest must use agent-scoped schemas before a session is bound, because every bridge call executes in an agent session. Bridge context lives only in daemon memory and is removed when the Paseo session closes. The content-addressed plugin artifacts contain no session data or secrets. V2 also needs this plugin when native Paseo tools are disabled: its prompt API has no structured-output format, so the plugin supplies a schema-validated final-answer tool.
 
 An agent with custom environment variables or user-configured MCP servers gets a dedicated OpenCode server. V2 supports session environment, but its MCP configuration remains location-scoped, so separate servers still prevent one agent from changing another agent's MCP setup. Configure custom MCP with `mcp.add`; do not follow it with `mcp.connect`, which only toggles config-backed servers.
 
@@ -101,7 +105,7 @@ OpenCode owns user message IDs. Do not pass Paseo-generated IDs to OpenCode prom
 
 Active-turn steering is an optional `AgentSession.steerActiveTurn` operation. The manager owns admission against its exact foreground turn, canonical user-message creation, echo reconciliation, and falls back to the normal interrupt-and-replace path only when the adapter reports `unavailable`. An adapter error leaves the steer's fate ambiguous and must surface without an interrupt or retry. Codex calls `turn/steer` with the native expected turn and Paseo client user-message ID. Claude pushes an admitted steer into the exact active SDK query input; isolated control commands remain unavailable. OpenCode calls `session/prompt_async` with an OpenCode-generated message ID; the server queues the prompt while busy and the next LLM call in the same Paseo turn includes it. Pi sends its native `steer` RPC, which queues the message for delivery after the in-flight assistant turn's tool calls. Slash-command inputs report `unavailable` because pi rejects extension commands on the steer path, and echo identity is correlated by message text because pi's steer RPC takes no message ID. A missing session reports `unavailable` and uses the normal interrupt fallback.
 
-A steering adapter also owes its interrupt: stopping a turn must discard the steers the provider has not read yet, or one of them resumes the turn the user just stopped. Codex clears pending input when it aborts a turn; Claude does not, so its adapter cancels the SDK messages it queued before calling `query.interrupt()`. Pi requires `clear_queue` before `abort`; older binaries without that RPC retain their native queue behavior until the pi compatibility floor reaches 0.84.4.
+A steering adapter also owes its interrupt: stopping a turn must discard the steers the provider has not read yet, or one of them resumes the turn the user just stopped. Codex clears pending input when it aborts a turn; Claude does not, so its adapter cancels the SDK messages it queued before calling `query.interrupt()`. It calls `query.interrupt()` only while a main-session turn is in flight (between `system/init` and that turn's `result`): with the main session idle, an interrupt reaches only background subagents and no result follows it, so the adapter withdraws its unstarted messages and stops there. The adapter also declares `perTaskStopAffordance`, because without it the CLI kills every background subagent on interrupt. Pi requires `clear_queue` before `abort`; older binaries without that RPC retain their native queue behavior until the pi compatibility floor reaches 0.84.4.
 
 `SteerActiveTurnOptions.clearPendingPermissions` makes permission release part of the provider contract. A provider that accepts such a steer queues it first, denies permissions blocking its delivery, and stops once the steer is read. Steers without the flag leave permissions open. A denied plan remains in the timeline because the pending card was the only other copy of its text.
 
@@ -187,15 +191,10 @@ promise for completion: equal results, including equal discovery timestamps, emi
 
 ## Usage sources
 
-Usage is fetched on demand from plugin usage sources. Each source registers through `server.registerUsageSource()` with an input schema, `fetch(input)`, and required `discover()`. The daemon discovers configured accounts, validates inputs in the plugin runtime, caches each source/input result for five minutes, and returns `usage.list_reports.response`. A source report has an account key, availability status, plan label, windows, balances, and details.
-
-Create a built-in source under `plugins/<name>-usage-source/` with the same manifest, entry, `server/`, `shared/`, and `icon.svg` layout as an external plugin. Add its ID to `builtinPlugins` in `packages/server/src/server/plugins/builtin/index.ts`. Keep credential discovery, API parsing, and normalization inside the source; use helpers from `@getpaseo/plugin/server/usage`. The wire shape remains source agnostic. See [plugin usage sources](plugins.md#usage-sources).
-
-`provider.usage.list` remains a compatibility RPC for older apps. It maps discovered reports to `ProviderUsage`. New clients use `usage.list_reports` after checking `server_info.features.usageSources`.
-
-### Credentials are read only
-
-A source reads provider credentials without writing them. On 401 or 403 it returns `unavailable` and leaves refresh to the provider CLI. Redeeming a refresh token here would invalidate the CLI's copy; rewriting a parsed credential file could drop fields the source does not model.
+See the [public usage source reference](../public-docs/plugins/reference.md#usage-sources) for the
+contract, account and window identity, provider-derived period names, login fallback, and
+read-only credential rules. Usage adapters own the interpretation of provider fields; the app
+renders their names and resolves pins without provider-specific duration guesses.
 
 ---
 

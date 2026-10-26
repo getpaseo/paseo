@@ -46,10 +46,10 @@ function windows(reports: UsageReportEntry[], prefs: UsagePreferences): PinnedUs
 }
 
 function preferences(
-  pinned: UsagePreferences["pinned"],
+  pinned: UsagePreferences["pins"],
   displayAs: UsagePreferences["displayAs"] = "used",
 ): UsagePreferences {
-  return { displayAs, pinned, serverId: null };
+  return { displayAs, pins: pinned, serverId: null };
 }
 
 describe("choosePinnedUsageLayout", () => {
@@ -73,7 +73,7 @@ describe("choosePinnedUsageLayout", () => {
 });
 
 describe("resolvePinnedUsage", () => {
-  it("defaults to the first window with a percent for each source account", () => {
+  it("defaults to source-wide pins collected from each account", () => {
     const work = report({
       sourceId: "claude",
       sourceLabel: "Claude",
@@ -89,12 +89,13 @@ describe("resolvePinnedUsage", () => {
       windows: [{ id: "empty", label: "Empty" }],
     });
     expect(
-      windows([claude, codex, work, empty], preferences([])).map((item) => [
+      windows([claude, codex, work, empty], preferences(null)).map((item) => [
         item.key,
         item.percentText,
       ]),
     ).toEqual([
       ["claude:default/five-hour", "31%"],
+      ["claude:default/weekly", "80%"],
       ["claude:work/weekly", "90%"],
       ["codex:default/weekly", "12%"],
     ]);
@@ -107,7 +108,7 @@ describe("resolvePinnedUsage", () => {
         (item) => item.key,
       ),
     ).toEqual(["claude:default/weekly"]);
-    expect(windows(reports, preferences([])).map((item) => item.key)).toEqual([
+    expect(windows(reports, preferences(null)).map((item) => item.key)).toEqual([
       "claude:default/five-hour",
       "codex:default/weekly",
     ]);
@@ -176,7 +177,7 @@ describe("resolvePinnedUsage", () => {
       ],
     });
 
-    expect(windows([marked, codex], preferences([])).map((item) => item.key)).toEqual([
+    expect(windows([marked, codex], preferences(null)).map((item) => item.key)).toEqual([
       "claude:default/five-hour",
       "claude:default/weekly",
       "codex:default/weekly",
@@ -189,7 +190,7 @@ describe("resolvePinnedUsage", () => {
       sourceLabel: "OpenCode Go",
       windows: [{ id: "rolling", label: "Rolling", shortLabel: "", usedPct: 21 }],
     });
-    const items = windows([opencode], preferences([]));
+    const items = windows([opencode], preferences(null));
 
     expect(items.map((item) => item.shortLabel)).toEqual([""]);
   });
@@ -254,4 +255,49 @@ describe("resolvePinnedUsage", () => {
       ["Claude (work) 5-hour 90% used", "90%"],
     ]);
   });
+});
+
+it("keeps unavailable and error reports out of the sidebar summary even with retained data", () => {
+  if (claude.report.status !== "available" || codex.report.status !== "available")
+    throw new Error("fixtures must be available");
+  const expired: UsageReportEntry = {
+    ...claude,
+    lastSuccessful: { fetchedAt: claude.fetchedAt, report: claude.report },
+    report: {
+      status: "unavailable",
+      problem: { kind: "expired", expiresAt: "2026-10-01T00:00:00.000Z", refreshedBy: "claude" },
+    },
+  };
+  const failed: UsageReportEntry = {
+    ...codex,
+    lastSuccessful: { fetchedAt: codex.fetchedAt, report: codex.report },
+    report: { status: "error", error: "Store deleted" },
+  };
+  expect(resolvePinnedUsage([expired, failed], preferences(null))).toEqual([]);
+});
+
+it("localizes pinned labels and meanings while preserving custom window names", async () => {
+  const { i18n } = await import("@/i18n/i18next");
+  await i18n.changeLanguage("ja");
+  try {
+    const entries = [
+      report({
+        sourceId: "test",
+        sourceLabel: "Test",
+        windows: [
+          { id: "session", label: "Session", summary: true, usedPct: 70 },
+          { id: "weekly", label: "My allowance", summary: true, usedPct: 20 },
+        ],
+      }),
+    ];
+    expect(windows(entries, preferences(null)).map((w) => [w.label, w.shortLabel])).toEqual([
+      ["Test セッション 70% 使用済み", "セッション"],
+      ["Test My allowance 20% 使用済み", "My allowance"],
+    ]);
+    expect(windows(entries, preferences(null, "remaining"))[0].label).toBe(
+      "Test セッション 残り 30%",
+    );
+  } finally {
+    await i18n.changeLanguage("en");
+  }
 });
