@@ -111,6 +111,7 @@ class PluginCompiler {
             resolve(reply.value as TaskResult[T["kind"]]);
           } else {
             const error = reply.issues ? new ZodError(reply.issues) : reply.error;
+            Object.assign(error, reply.properties);
             if (reply.errors) Object.assign(error, { errors: reply.errors });
             if (reply.warnings) Object.assign(error, { warnings: reply.warnings });
             // Promise.all can reject while the other target is still compiling.

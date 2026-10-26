@@ -1015,3 +1015,14 @@ it("preserves manifest validation errors across the compiler boundary", async ()
   await writeFile(path.join(directory, "paseo-plugin.json"), "{");
   await expect(compileDirectoryPlugin(directory, "0.13.2")).rejects.toBeInstanceOf(SyntaxError);
 });
+
+it("preserves filesystem error metadata for a missing entry", async () => {
+  const { server } = await createSplitPlugin();
+  await rm(server);
+  await expect(compilePlugin({ client: null, server })).rejects.toMatchObject({
+    code: "ENOENT",
+    errno: expect.any(Number),
+    syscall: "realpath",
+    path: server,
+  });
+});

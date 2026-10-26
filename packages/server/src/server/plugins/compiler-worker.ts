@@ -10,6 +10,7 @@ export type CompilerReply =
   | {
       kind: "error";
       error: Error;
+      properties: Record<string, unknown>;
       issues?: ZodIssue[];
       errors?: unknown[];
       warnings?: unknown[];
@@ -50,6 +51,9 @@ async function run(task: CompilerTask): Promise<void> {
     port.postMessage({
       kind: "error",
       error,
+      // Error cloning drops own metadata such as filesystem code/path. Zod's
+      // readonly issues are reconstructed separately by the compiler owner.
+      properties: Object.fromEntries(Object.entries(error).filter(([key]) => key !== "issues")),
       ...("issues" in error ? { issues: error.issues as ZodIssue[] } : {}),
       ...("errors" in error ? { errors: error.errors as unknown[] } : {}),
       ...("warnings" in error ? { warnings: error.warnings as unknown[] } : {}),
