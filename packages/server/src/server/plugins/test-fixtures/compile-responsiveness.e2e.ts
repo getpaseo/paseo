@@ -71,12 +71,13 @@ try {
     let longestBlockingWindow = { wallMs: 0, cpuMs: 0, resource: "" };
     let probe: ReturnType<typeof setInterval>;
     const callbacks = new Map<number, { wall: number; cpu: NodeJS.CpuUsage; resource: string }>();
-    const recordBlocking = (wallMs: number, cpuMs: number, resource: string) => {
-      // Coarse Windows CPU accounting cannot charge work more than its wall time.
-      const blockingMs = Math.min(wallMs, cpuMs);
+    const recordBlocking = (
+      blockingMs: number,
+      window: { wallMs: number; cpuMs: number; resource: string },
+    ) => {
       if (blockingMs > longestBlocking) {
         longestBlocking = blockingMs;
-        longestBlockingWindow = { wallMs, cpuMs, resource };
+        longestBlockingWindow = window;
       }
     };
     let longestGc = 0;
@@ -110,7 +111,9 @@ try {
         const wallMs = performance.now() - start.wall;
         const { user, system } = threadCpuUsage(start.cpu);
         const cpuMs = (user + system) / 1_000;
-        recordBlocking(wallMs, cpuMs, start.resource);
+        // A callback prevents the loop from serving IO for its entire span.
+        // Use the high-resolution clock, not Windows' coarse CPU increments.
+        recordBlocking(wallMs, { wallMs, cpuMs, resource: start.resource });
       },
     }).enable();
     const sample = () => {
@@ -120,7 +123,13 @@ try {
       const cpuMs = (currentCpu.user - cpu.user + currentCpu.system - cpu.system) / 1_000;
       // Native worker construction and message deserialization can precede
       // async_hooks.before. Include their interval when those events occurred.
-      if (workerStarts || portCallbacks) recordBlocking(wallMs, cpuMs, "worker/port interval");
+      if (workerStarts || portCallbacks) {
+        recordBlocking(Math.min(wallMs, cpuMs), {
+          wallMs,
+          cpuMs,
+          resource: "worker/port interval",
+        });
+      }
       if (wallMs > longestWall) {
         longestWall = wallMs;
         longestWallCpu = cpuMs;
@@ -133,10 +142,22 @@ try {
     };
     // Sleep between probes: a continuously runnable setImmediate loop consumes
     // a core while the worker compiles. Raw gaps remain diagnostics; the
-    // assertion measures CPU work within daemon-thread callbacks.
+    // assertion measures elapsed daemon-thread callback spans and GC pauses.
     probe = setInterval(sample, 1);
     try {
-      await action();
+      // The caller's current callback began before the hook was enabled.
+      // Include synchronous work before the action's first await explicitly.
+      const actionStartedAt = performance.now();
+      const actionCpu = threadCpuUsage();
+      const pending = action();
+      const actionWallMs = performance.now() - actionStartedAt;
+      const actionCost = threadCpuUsage(actionCpu);
+      recordBlocking(actionWallMs, {
+        wallMs: actionWallMs,
+        cpuMs: (actionCost.user + actionCost.system) / 1_000,
+        resource: "action()",
+      });
+      await pending;
       await new Promise<void>((resolve) => setImmediate(resolve));
       sample();
       observeGc(gc.takeRecords());
