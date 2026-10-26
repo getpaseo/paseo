@@ -1,6 +1,7 @@
 import { defineLanguageFacet, Language, StreamLanguage } from "@codemirror/language";
 import { dart } from "@codemirror/legacy-modes/mode/clike";
 import { dockerFile } from "@codemirror/legacy-modes/mode/dockerfile";
+import { ruby } from "@codemirror/legacy-modes/mode/ruby";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { swift } from "@codemirror/legacy-modes/mode/swift";
 import { parser as jsParser } from "@lezer/javascript";
@@ -32,6 +33,7 @@ function language(parser: Parser): Language {
 
 const shellLanguage = StreamLanguage.define(shell);
 const dockerfileLanguage = StreamLanguage.define(dockerFile);
+const rubyLanguage = StreamLanguage.define(ruby);
 
 const languagesByExtension: Record<string, Language> = {
   // JavaScript/TypeScript
@@ -90,6 +92,15 @@ const languagesByExtension: Record<string, Language> = {
   swift: StreamLanguage.define(swift),
   // Dart
   dart: StreamLanguage.define(dart),
+  // Ruby
+  rb: rubyLanguage,
+  rbw: rubyLanguage,
+  rake: rubyLanguage,
+  gemspec: rubyLanguage,
+  ru: rubyLanguage,
+  jbuilder: rubyLanguage,
+  podspec: rubyLanguage,
+  thor: rubyLanguage,
   // C#
   cs: csharpLanguage,
   // Nix
@@ -106,11 +117,30 @@ const languagesByExtension: Record<string, Language> = {
   mdx: language(markdownParser),
 };
 
+/** Extensionless files whose whole name identifies the language, matched case-sensitively. */
+const languagesByFilename = new Map<string, Language>([
+  // Ruby
+  ["Gemfile", rubyLanguage],
+  ["Rakefile", rubyLanguage],
+  ["Guardfile", rubyLanguage],
+  ["Capfile", rubyLanguage],
+  ["Podfile", rubyLanguage],
+  ["Vagrantfile", rubyLanguage],
+  ["Brewfile", rubyLanguage],
+  ["Berksfile", rubyLanguage],
+  ["Thorfile", rubyLanguage],
+  ["Fastfile", rubyLanguage],
+  ["Appfile", rubyLanguage],
+  ["Dangerfile", rubyLanguage],
+]);
+
 export function getLanguageForFile(filename: string): Language | null {
   const basename = filename.slice(
     Math.max(filename.lastIndexOf("/"), filename.lastIndexOf("\\")) + 1,
   );
   if (basename.toLowerCase() === "dockerfile") return dockerfileLanguage;
+  const byFilename = languagesByFilename.get(basename);
+  if (byFilename) return byFilename;
 
   const dot = basename.lastIndexOf(".");
   // Callers also pass bare language keys for code fences.
