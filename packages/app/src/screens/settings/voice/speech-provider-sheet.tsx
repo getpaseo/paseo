@@ -6,7 +6,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
+import { Text, View, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { buttonControlHeight } from "@/components/ui/control-geometry";
 import { useContainedControlSize } from "@/components/ui/control-size";
 import { foregroundIconColorMapping } from "@/components/ui/icon-color";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -484,7 +485,7 @@ function LocalModelRow({
   );
 
   return (
-    <Pressable
+    <PressHighlight
       accessibilityRole="radio"
       accessibilityLabel={model.label}
       accessibilityState={accessibilityState}
@@ -492,6 +493,7 @@ function LocalModelRow({
       disabled={selectionLocked}
       onPress={select}
       style={rowStyle}
+      highlightStyle={styles.rowPressed}
       testID={`voice-model-${model.id}`}
     >
       <SettingsRow
@@ -509,7 +511,7 @@ function LocalModelRow({
           </View>
         </TrailingControls>
       </SettingsRow>
-    </Pressable>
+    </PressHighlight>
   );
 }
 

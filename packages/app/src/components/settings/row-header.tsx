@@ -1,14 +1,9 @@
 import { ChevronRight } from "lucide-react-native";
 import { useCallback, useMemo } from "react";
-import {
-  Pressable,
-  Text,
-  View,
-  type AccessibilityState,
-  type PressableStateCallbackType,
-} from "react-native";
+import { Text, View, type AccessibilityState, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { mutedIconColorMapping } from "@/components/ui/icon-color";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import { settingsStyles } from "@/styles/settings";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { useSettingsRowLayout } from "./row-density";
@@ -61,7 +56,7 @@ export function SettingsRowHeader({
     [expanded],
   );
   return (
-    <Pressable
+    <PressHighlight
       {...webAccessibilityProps}
       accessibilityRole="button"
       accessibilityLabel={summary ? `${label}, ${summary}` : label}
@@ -69,6 +64,7 @@ export function SettingsRowHeader({
       disabled={disabled}
       onPress={onPress}
       style={rowStyle}
+      highlightStyle={styles.pressed}
       testID={testID}
     >
       {({ hovered }: HoverState) => (
@@ -91,7 +87,7 @@ export function SettingsRowHeader({
           )}
         </>
       )}
-    </Pressable>
+    </PressHighlight>
   );
 }
 
