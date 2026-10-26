@@ -137,6 +137,12 @@ type ThinkingOption = NonNullable<AgentModelDefinition["thinkingOptions"]>[numbe
 // and rejects it for every other model id, so a borrowed option list must not offer it.
 const CLAUDE_DISABLED_THINKING_OPTION_ID = "off";
 
+// A provider id can be an arbitrary profile alias; the daemon annotates the models of
+// derived providers with the provider they extend.
+function isClaudeBackedModel(model: AgentModelDefinition): boolean {
+  return model.provider === "claude" || model.metadata?.underlyingProvider === "claude";
+}
+
 function resolveEffectiveThinking(
   thinkingOptions: ThinkingOption[] | null,
   resolvedThinkingId: string | null,
@@ -214,11 +220,11 @@ export function resolveAgentModelSelection(input: {
   const thinkingModel = selectedModel ?? fallbackModel;
 
   const borrowedThinkingOptions = thinkingModel?.thinkingOptions ?? null;
-  // The Claude provider accepts "off" only for catalog ids flagged supportsThinkingDisabled
-  // and rejects it for every other model id, so a borrowed option list must not offer it.
-  // Other providers have no such gate; Pi even lists Off natively.
   const thinkingOptions =
-    selectedModel || borrowedThinkingOptions === null || thinkingModel?.provider !== "claude"
+    selectedModel ||
+    borrowedThinkingOptions === null ||
+    !thinkingModel ||
+    !isClaudeBackedModel(thinkingModel)
       ? borrowedThinkingOptions
       : borrowedThinkingOptions.filter(
           (option) => option.id !== CLAUDE_DISABLED_THINKING_OPTION_ID,

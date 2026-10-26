@@ -619,11 +619,20 @@ function createRegistryEntry(
   resolved: ResolvedProvider,
 ): ProviderDefinition {
   const modelClient = createResolvedProviderClient(logger, provider, resolved);
-  const profileModels = resolveConfiguredModels(provider, modelClient, resolved.profileModels);
-  const additionalModels = resolveConfiguredModels(
-    provider,
-    modelClient,
-    resolved.additionalModels,
+  // A derived provider's id is an arbitrary alias, so models carry the provider they
+  // extend in metadata; clients cannot recover the base from the id alone.
+  const annotateWithDerivedProvider = (models: AgentModelDefinition[]): AgentModelDefinition[] =>
+    resolved.derivedFromProviderId === null
+      ? models
+      : models.map((model) => ({
+          ...model,
+          metadata: { ...model.metadata, underlyingProvider: resolved.derivedFromProviderId },
+        }));
+  const profileModels = annotateWithDerivedProvider(
+    resolveConfiguredModels(provider, modelClient, resolved.profileModels),
+  );
+  const additionalModels = annotateWithDerivedProvider(
+    resolveConfiguredModels(provider, modelClient, resolved.additionalModels),
   );
   const hasReplacementModels = profileModels.length > 0 && !resolved.profileModelsAreAdditive;
   const replacementModels = hasReplacementModels
@@ -703,9 +712,15 @@ function createRegistryEntry(
       const catalog = await catalogClient.fetchCatalog(options, context);
       return {
         ...catalog,
-        models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
-          profileModelsAreAdditive: resolved.profileModelsAreAdditive,
-        }),
+        models: mergeModels(
+          provider,
+          profileModels,
+          additionalModels,
+          annotateWithDerivedProvider(catalog.models),
+          {
+            profileModelsAreAdditive: resolved.profileModelsAreAdditive,
+          },
+        ),
         modes: decorateModes(catalog.modes),
       };
     },

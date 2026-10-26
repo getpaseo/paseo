@@ -363,6 +363,40 @@ describe("resolveAgentModelSelection", () => {
     expect(selection.displayThinking).toBe("High");
   });
 
+  it("filters Off for a Claude profile whose provider id is not claude", () => {
+    const selection = resolveAgentModelSelection({
+      models: [
+        {
+          id: "claude-opus-5",
+          provider: "claude-work",
+          label: "Opus 5",
+          isDefault: true,
+          metadata: { underlyingProvider: "claude" },
+          thinkingOptions: [
+            { id: "off", label: "Off" },
+            { id: "low", label: "Low" },
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High" },
+          ],
+          defaultThinkingOptionId: "high",
+        },
+      ],
+      runtimeModelId: "gateway-model-x",
+      configuredModelId: "gateway-model-x",
+      runtimeThinkingOptionId: null,
+      explicitThinkingOptionId: null,
+    });
+
+    expect(selection.selectedModel).toBeNull();
+    expect(selection.thinkingOptions).toEqual([
+      { id: "low", label: "Low" },
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High" },
+    ]);
+    expect(selection.selectedThinkingId).toBe("high");
+    expect(selection.displayThinking).toBe("High");
+  });
+
   it("keeps Off in borrowed options for a non-Claude provider without the daemon gate", () => {
     const selection = resolveAgentModelSelection({
       models: [
