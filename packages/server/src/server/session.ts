@@ -1,3 +1,4 @@
+import { ManagedOpeningReplayError, type ManagedOpeningRequest } from "./agent/managed-opening.js";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
 import { AgentDirectory } from "./agent/directory.js";
@@ -57,6 +58,8 @@ import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech
 import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js";
 import {
   buildConfigOverrides,
+  extractAttention,
+  extractTimestamps,
   isStoredAgentProviderAvailable,
   resolveStoredAgentUpdatedAt,
   toAgentPersistenceHandle,
@@ -1043,6 +1046,7 @@ export class Session {
       },
       operations: {
         ensureLoaded: async (agentId) => {
+          // Interactive on purpose: mode, model and feature changes act on a live session.
           await ensureUnarchivedAgentLoaded(agentId, {
             agentManager,
             agentStorage,
@@ -4112,12 +4116,13 @@ export class Session {
           const record = await this.agentStorage.get(id);
           return record ? this.buildStoredAgentPayload(record) : null;
         },
-        createAgent: async (id, _workspace, onReady) => {
+        createAgent: async (id, _workspace, onReady, ensureDurableReservation) => {
           try {
             return await this.createSessionAgent(
               { ...request, type: "create_agent_request" },
               id,
               onReady,
+              ensureDurableReservation,
             );
           } catch (error) {
             throw new WorktreeRequestError(toWorktreeWireError(error));
@@ -4216,7 +4221,7 @@ export class Session {
             };
           },
           createAgent: agentInput
-            ? async (id, workspace, onReady) => {
+            ? async (id, workspace, onReady, ensureDurableReservation) => {
                 if (!workspace?.workspaceDirectory)
                   throw new Error("Created workspace has no directory");
                 const sourceCwd =
@@ -4243,6 +4248,7 @@ export class Session {
                   },
                   id,
                   onReady,
+                  ensureDurableReservation,
                 );
               }
             : undefined,
@@ -4363,6 +4369,7 @@ export class Session {
     msg: CreateAgentRequestMessage,
     agentId?: string,
     onAgentReady?: (agent: AgentSnapshotPayload) => Promise<void>,
+    ensureManagedCreationReservation?: () => Promise<void>,
   ): Promise<CreatedAgent> {
     const {
       config,
@@ -4437,6 +4444,7 @@ export class Session {
             await onAgentReady?.(await this.buildAgentPayload(agent));
           },
           agentId,
+          ensureManagedCreationReservation,
           config: resolvedIntent.config,
           workspaceId: resolvedIntent.intent.workspaceId,
           initialPrompt,
@@ -4574,7 +4582,28 @@ export class Session {
         : overrides;
       let snapshot: ManagedAgent;
       try {
-        snapshot = await this.agentManager.resumeAgentFromPersistence(handle, effectiveOverrides);
+        if (matched?.record.config?.managedMcpServers) {
+          const record = matched.record;
+          const resident = this.agentManager.getAgent(record.id);
+          // A history-only resident cannot run; an explicit resume reopens it interactively.
+          snapshot =
+            resident && !resident.historyOnly
+              ? resident
+              : await this.agentManager.resumeAgentFromPersistence(
+                  handle,
+                  effectiveOverrides,
+                  record.id,
+                  {
+                    ...extractTimestamps(record),
+                    attention: extractAttention(record),
+                    workspaceId: record.workspaceId,
+                    labels: record.labels,
+                    owner: record.owner,
+                  },
+                );
+        } else {
+          snapshot = await this.agentManager.resumeAgentFromPersistence(handle, effectiveOverrides);
+        }
       } catch (error) {
         if (matched?.didUnarchive && matched.originalArchivedAt) {
           await this.agentManager.archiveSnapshot(matched.record.id, matched.originalArchivedAt);
@@ -4700,6 +4729,31 @@ export class Session {
     this.sessionLogger.info({ agentId }, `Refreshing agent ${agentId} from persistence`);
 
     try {
+      const managedRecord = await this.agentStorage.get(agentId);
+      const openingRequest: ManagedOpeningRequest | undefined =
+        requestId && managedRecord?.config?.managedMcpServers
+          ? {
+              key: JSON.stringify(["refresh", this.getHostSourceId(), requestId]),
+              fingerprint: "refresh",
+            }
+          : undefined;
+      if (
+        openingRequest &&
+        (await this.agentStorage.managedOpenings.checkRequest(agentId, openingRequest))
+      ) {
+        this.emit({
+          type: "status",
+          payload: {
+            status: "agent_refreshed",
+            agentId,
+            requestId,
+            timelineSize: this.agentManager.getAgent(agentId)
+              ? this.agentManager.getTimeline(agentId).length
+              : 0,
+          },
+        });
+        return;
+      }
       await this.restoreOwningWorkspaceForLegacyAgentRefresh(agentId);
       await unarchiveAgentState(this.agentStorage, this.agentManager, agentId);
       let snapshot: ManagedAgent;
@@ -4708,6 +4762,7 @@ export class Session {
         await this.interruptAgentIfRunning(agentId);
         snapshot = await this.agentManager.reloadAgentSession(agentId, undefined, {
           rehydrateFromDisk: true,
+          openingRequest,
         });
       } else {
         const record = await this.agentStorage.get(agentId);
@@ -4729,6 +4784,7 @@ export class Session {
           agentStorage: this.agentStorage,
           broadcastTimeline: true,
           logger: this.sessionLogger,
+          openingRequest,
         });
       }
       await this.agentManager.hydrateTimelineFromProvider(agentId, { broadcast: true });
@@ -4746,6 +4802,20 @@ export class Session {
         });
       }
     } catch (error) {
+      if (error instanceof ManagedOpeningReplayError) {
+        this.emit({
+          type: "status",
+          payload: {
+            status: "agent_refreshed",
+            agentId,
+            requestId,
+            timelineSize: this.agentManager.getAgent(agentId)
+              ? this.agentManager.getTimeline(agentId).length
+              : 0,
+          },
+        });
+        return;
+      }
       const message = getErrorMessage(error);
       this.sessionLogger.error({ err: error, agentId }, `Failed to refresh agent ${agentId}`);
       if (requestId) {
@@ -4945,6 +5015,7 @@ export class Session {
             agentManager: this.agentManager,
             agentStorage: this.agentStorage,
             logger: this.sessionLogger,
+            readOnly: true,
           }),
         ),
       );
@@ -5047,6 +5118,7 @@ export class Session {
               agentManager: this.agentManager,
               agentStorage: this.agentStorage,
               logger: this.sessionLogger,
+              readOnly: true,
             })
           : null;
 
@@ -7783,6 +7855,7 @@ export class Session {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
+        readOnly: true,
       });
       const agentPayload = await this.buildAgentPayload(snapshot);
 
@@ -7913,6 +7986,7 @@ export class Session {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
+        readOnly: true,
       });
       const rows = await this.agentManager.getTimelineRows(msg.agentId);
       const { epoch } = this.agentManager.fetchTimeline(msg.agentId, {
@@ -7966,6 +8040,7 @@ export class Session {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
+        readOnly: true,
       });
       const rows = await this.agentManager.getTimelineRows(msg.agentId);
       const timeline = this.agentManager.fetchTimeline(msg.agentId, {
@@ -8014,6 +8089,7 @@ export class Session {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
+        readOnly: true,
       });
       this.emit({
         type: "agent.provider_subagents.list.response",
@@ -8047,6 +8123,7 @@ export class Session {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
+        readOnly: true,
       });
       const descriptor = this.agentManager.getProviderSubagent(msg.parentAgentId, msg.subagentId);
       if (!descriptor) {
@@ -8145,6 +8222,7 @@ export class Session {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
+        readOnly: true,
       });
       const agentPayload = await this.buildAgentPayload(snapshot);
       const timeline = this.agentManager.fetchTimeline(msg.agentId, {

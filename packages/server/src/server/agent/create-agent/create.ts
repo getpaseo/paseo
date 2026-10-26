@@ -47,6 +47,7 @@ export interface CreateAgentFromSessionInput {
   kind: "session";
   onAgentReady?: (agent: ManagedAgent) => Promise<void>;
   agentId?: string;
+  ensureManagedCreationReservation?: () => Promise<void>;
   config: AgentSessionConfig;
   workspaceId: string;
   initialPrompt?: string;
@@ -165,7 +166,11 @@ export async function createAgentCommand(
   const snapshot = await dependencies.agentManager.createAgent(
     resolved.config,
     input.kind === "session" ? input.agentId : undefined,
-    resolved.createOptions,
+    {
+      ...resolved.createOptions,
+      ensureManagedCreationReservation:
+        input.kind === "session" ? input.ensureManagedCreationReservation : undefined,
+    },
   );
 
   if (input.kind === "session") await input.onAgentReady?.(snapshot);

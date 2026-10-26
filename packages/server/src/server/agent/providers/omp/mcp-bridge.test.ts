@@ -2,8 +2,11 @@ import { fileURLToPath } from "node:url";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import pino from "pino";
 import { describe, expect, test, vi } from "vitest";
 import { OmpHarness } from "./test-utils/omp-harness.js";
+import { OmpMcpBridge } from "./mcp-bridge.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
 
 const fixture = fileURLToPath(new URL("./test-utils/echo-mcp-server.mjs", import.meta.url));
@@ -342,4 +345,142 @@ describe("OMP MCP host tools", () => {
       await omp.close();
     }
   });
+
+  test("managed streams never follow a redirect with the credential", async () => {
+    const redirecting = await startRedirectingMcpServer();
+    const credential = "Bearer redirect-test-credential";
+    try {
+      const bridge = await OmpMcpBridge.connect(
+        { memory: { type: "http", url: `http://127.0.0.1:${redirecting.port}/mcp` } },
+        process.cwd(),
+        pino({ level: "silent" }),
+        {},
+        { memory: credential },
+        () => undefined,
+      );
+      const sawGet = () => redirecting.seen.some((entry) => entry.method === "GET");
+      await vi.waitFor(() => expect(sawGet()).toBe(true));
+      // A redirect follow is issued right after the 302 arrives; this round trip on the same
+      // loopback server is queued behind it, so no timed wait is needed.
+      await fetch(`http://127.0.0.1:${redirecting.port}/sync`);
+      await bridge.close();
+      expect(redirecting.seen.filter((entry) => entry.path === "/leak")).toEqual([]);
+      expect(
+        redirecting.seen.filter((entry) => entry.authorization === credential).length,
+      ).toBeGreaterThan(0);
+    } finally {
+      await redirecting.close();
+    }
+  });
+
+  test("a managed error result is generic while an ordinary server's error is untouched", async () => {
+    const server = await startRedirectingMcpServer();
+    const credential = "Bearer error-result-credential";
+    const url = `http://127.0.0.1:${server.port}/mcp`;
+    const logger = pino({ level: "silent" });
+    try {
+      const managed = await OmpMcpBridge.connect(
+        { memory: { type: "http", url } },
+        process.cwd(),
+        logger,
+        {},
+        { memory: credential },
+        () => undefined,
+      );
+      const ordinary = await OmpMcpBridge.connect(
+        { memory: { type: "http", url, headers: { Authorization: "Bearer ordinary" } } },
+        process.cwd(),
+        logger,
+        {},
+      );
+      try {
+        const name = managed.definitions[0]!.name;
+        const failed = await managed.execute(name, {}, new AbortController().signal);
+        expect(failed.isError).toBe(true);
+        expect(JSON.stringify(failed)).not.toContain(credential);
+        const echoed = await ordinary.execute(
+          ordinary.definitions[0]!.name,
+          {},
+          new AbortController().signal,
+        );
+        expect(JSON.stringify(echoed)).toContain("Synthetic service rejected Bearer ordinary");
+      } finally {
+        await managed.close();
+        await ordinary.close();
+      }
+    } finally {
+      await server.close();
+    }
+  });
 });
+
+interface SeenRequest {
+  method: string;
+  path: string;
+  authorization?: string;
+}
+
+function rpcResult(
+  message: { method: string; params?: { protocolVersion?: string } },
+  authorization?: string,
+) {
+  if (message.method === "initialize") {
+    return {
+      protocolVersion: message.params?.protocolVersion,
+      capabilities: { tools: {} },
+      serverInfo: { name: "redirecting", version: "1" },
+    };
+  }
+  if (message.method === "tools/call") {
+    return {
+      isError: true,
+      content: [{ type: "text", text: `Synthetic service rejected ${authorization}` }],
+    };
+  }
+  return { tools: [{ name: "probe", inputSchema: { type: "object" } }] };
+}
+
+function answerJsonRpc(res: ServerResponse, body: string, authorization?: string): void {
+  const message = body ? JSON.parse(body) : {};
+  if (message.id === undefined) {
+    res.writeHead(202).end();
+    return;
+  }
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(
+    JSON.stringify({ jsonrpc: "2.0", id: message.id, result: rpcResult(message, authorization) }),
+  );
+}
+
+function handleRedirectingRequest(req: IncomingMessage, res: ServerResponse): void {
+  if (req.method === "GET" && req.url === "/mcp") {
+    res.writeHead(302, { location: "/leak" });
+    res.end();
+    return;
+  }
+  const chunks: Buffer[] = [];
+  req.on("data", (chunk: Buffer) => chunks.push(chunk));
+  req.on("end", () =>
+    answerJsonRpc(res, Buffer.concat(chunks).toString("utf8"), req.headers.authorization),
+  );
+}
+
+// A streamable HTTP MCP server whose GET stream answers with a same-origin redirect.
+async function startRedirectingMcpServer() {
+  const seen: SeenRequest[] = [];
+  const server = createServer((req, res) => {
+    seen.push({
+      method: req.method ?? "",
+      path: req.url ?? "",
+      authorization: req.headers.authorization,
+    });
+    handleRedirectingRequest(req, res);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as { port: number };
+  return {
+    port,
+    seen,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}

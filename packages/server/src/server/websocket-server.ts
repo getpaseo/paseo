@@ -1,4 +1,5 @@
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
+import { managedMcpAuthorizationProviders } from "./managed-mcp-support.js";
 import {
   createAgentMessageDelivery,
   type AgentMessageDelivery,
@@ -2006,6 +2007,8 @@ export class VoiceAssistantWebSocketServer {
         pluginThemes: true,
         pluginSettings: true,
         pluginTimelineItems: true,
+        pluginManagedMcpAuthorization: managedMcpAuthorizationProviders().length > 0,
+        pluginManagedMcpAuthorizationProviders: managedMcpAuthorizationProviders(),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: true,
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.

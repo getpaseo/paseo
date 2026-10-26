@@ -4,6 +4,7 @@ import path from "node:path";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { promises as fs } from "node:fs";
 
+import { randomUUID } from "node:crypto";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentStorage } from "./agent-storage.js";
 import { buildConfigOverrides, buildSessionConfig } from "../persistence-hooks.js";
@@ -574,5 +575,90 @@ describe("AgentStorage", () => {
     const afterReload = new AgentStorage(storagePath, logger);
     const after = await afterReload.list();
     expect(after.some((r) => r.id === agentId)).toBe(false);
+  });
+  test("unfinished managed opening survives restart and blocks replay without creating an agent", async () => {
+    const opening = { id: randomUUID(), digest: "a".repeat(64) };
+    await storage.managedOpenings.begin("agent-1", opening);
+    const reloaded = new AgentStorage(storagePath, logger);
+    await expect(
+      reloaded.managedOpenings.begin("agent-1", {
+        id: randomUUID(),
+        digest: opening.digest,
+      }),
+    ).rejects.toThrow(`opening ${opening.id} (${opening.digest}) has an unknown outcome`);
+    await expect(reloaded.managedOpenings.assertUnusedIdentity("agent-1")).rejects.toThrow(
+      "unknown outcome",
+    );
+    expect(await reloaded.list()).toEqual([]);
+    const directory = path.join(storagePath, ".managed-openings");
+    const files = await fs.readdir(directory);
+    const record = JSON.parse(await fs.readFile(path.join(directory, files[0]!), "utf8"));
+    expect(record).toEqual({ opening, status: "pending" });
+    if (process.platform !== "win32") {
+      expect((await fs.stat(path.join(directory, files[0]!))).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  test("only the exact pending opening can commit and a later physical opening has a new identity", async () => {
+    const first = { id: randomUUID(), digest: "a".repeat(64) };
+    const commitFirst = await storage.managedOpenings.begin("agent-1", first);
+    await commitFirst();
+    const second = { id: randomUUID(), digest: first.digest };
+    const commitSecond = await storage.managedOpenings.begin("agent-1", second);
+    await expect(commitFirst()).rejects.toThrow("commit conflict");
+    await commitSecond();
+    await expect(storage.managedOpenings.assertUnusedIdentity("agent-1")).rejects.toThrow(
+      "already used",
+    );
+  });
+
+  test("same-directory agents have independent managed opening reservations", async () => {
+    await storage.managedOpenings.begin("agent-1", { id: randomUUID(), digest: "a".repeat(64) });
+    const commit = await storage.managedOpenings.begin("agent-2", {
+      id: randomUUID(),
+      digest: "a".repeat(64),
+    });
+    await commit();
+    await expect(
+      storage.managedOpenings.begin("agent-1", {
+        id: randomUUID(),
+        digest: "a".repeat(64),
+      }),
+    ).rejects.toThrow("unknown outcome");
+  });
+
+  test("managed refresh retry receipts retain opening identity across restart and reject body conflicts", async () => {
+    const opening = { id: randomUUID(), digest: "a".repeat(64) };
+    const request = { key: "authenticated-source:refresh-1", fingerprint: "refresh" };
+    const commit = await storage.managedOpenings.begin("agent-1", opening, request);
+    await commit();
+    const reloaded = new AgentStorage(storagePath, logger);
+    expect(await reloaded.managedOpenings.checkRequest("agent-1", request)).toEqual(opening);
+    await expect(
+      reloaded.managedOpenings.begin(
+        "agent-1",
+        {
+          id: randomUUID(),
+          digest: opening.digest,
+        },
+        request,
+      ),
+    ).rejects.toThrow(`opening ${opening.id} (${opening.digest}) was already committed`);
+    await expect(
+      reloaded.managedOpenings.checkRequest("agent-1", {
+        ...request,
+        fingerprint: "different-body",
+      }),
+    ).rejects.toThrow("body conflicts");
+    const next = await reloaded.managedOpenings.begin(
+      "agent-1",
+      {
+        id: randomUUID(),
+        digest: "b".repeat(64),
+      },
+      { key: "authenticated-source:refresh-2", fingerprint: "refresh" },
+    );
+    await next();
+    expect(await reloaded.managedOpenings.checkRequest("agent-1", request)).toEqual(opening);
   });
 });

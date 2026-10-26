@@ -1,4 +1,5 @@
 import { PluginHookHandlers } from "./lifecycle/index.js";
+import { managedMcpAuthorizationProviders } from "../managed-mcp-support.js";
 import { evaluateBundle } from "./bundle-evaluator.js";
 import {
   PluginProcessRequestSchema,
@@ -280,11 +281,21 @@ export function createPluginWorker(options: {
           send({ type: "settings.changed", settingsId }),
         )
       : null;
+    const managedProviders = managedMcpAuthorizationProviders();
     const contributedCleanup = contribute({
       handle: (contract, handler) =>
         register(contract, (input, context) => handler(contract.input.parse(input), context)),
       registerProvider,
       registerUsageSource,
+      capabilities: Object.freeze(
+        managedProviders.length > 0
+          ? {
+              managedMcpAuthorization: Object.freeze({
+                providers: Object.freeze(managedProviders),
+              }),
+            }
+          : {},
+      ),
       registerSettings,
       on: hooks.on,
       before: hooks.before,
@@ -523,14 +534,27 @@ export function createPluginWorker(options: {
         });
         return;
       }
-      void hooks.invoke(message.requestId, message.kind, message.name, message.input, paseo).then(
-        (output) => {
-          return send({ type: "result", requestId: message.requestId, output });
-        },
-        (error) => {
-          return send({ type: "error", requestId: message.requestId, error: describeError(error) });
-        },
-      );
+      void hooks
+        .invoke(
+          message.requestId,
+          message.kind,
+          message.name,
+          message.input,
+          paseo,
+          message.managedMcp,
+        )
+        .then(
+          (output) => {
+            return send({ type: "result", requestId: message.requestId, output });
+          },
+          (error) => {
+            return send({
+              type: "error",
+              requestId: message.requestId,
+              error: describeError(error),
+            });
+          },
+        );
       return;
     }
   }

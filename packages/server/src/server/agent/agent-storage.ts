@@ -9,6 +9,7 @@ import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
 import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./agent-owner.js";
+import { ManagedOpeningStore } from "./managed-opening.js";
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
   .object({
@@ -28,6 +29,29 @@ const SERIALIZABLE_CONFIG_SCHEMA = z
       .optional(),
     systemPrompt: z.string().nullable().optional(),
     mcpServers: z.record(z.string(), z.any()).nullable().optional(),
+    managedMcpServers: z
+      .record(
+        z.string(),
+        z
+          .object({
+            ownerPluginId: z.string(),
+            bindPluginId: z.string(),
+            server: z.any(),
+            bootstrapEnvKeys: z.array(z.string()).optional(),
+            toolPolicy: z
+              .object({
+                preapproved: z.array(
+                  z
+                    .object({ kind: z.literal("mcp"), server: z.string(), tool: z.string() })
+                    .strict(),
+                ),
+              })
+              .strict()
+              .optional(),
+          })
+          .strict(),
+      )
+      .optional(),
   })
   .nullable()
   .optional();
@@ -87,6 +111,7 @@ export type SerializableAgentConfig = Pick<
   | "toolPolicy"
   | "systemPrompt"
   | "mcpServers"
+  | "managedMcpServers"
 >;
 
 export type StoredAgentRecord = z.infer<typeof STORED_AGENT_SCHEMA>;
@@ -105,10 +130,12 @@ export class AgentStorage {
   private loaded = false;
   private baseDir: string;
   private loadPromise: Promise<StoredAgentRecord[]> | null = null;
+  readonly managedOpenings: ManagedOpeningStore;
   private logger: Logger;
 
   constructor(baseDir: string, logger: Logger) {
     this.baseDir = baseDir;
+    this.managedOpenings = new ManagedOpeningStore(path.join(baseDir, ".managed-openings"));
     this.logger = logger.child({ module: "agent", component: "agent-storage" });
   }
 
@@ -189,7 +216,11 @@ export class AgentStorage {
     const nextPath = this.buildRecordPath(record);
     const previousPath = this.pathById.get(agentId);
 
-    await writeJsonFileAtomic(nextPath, record);
+    await writeJsonFileAtomic(
+      nextPath,
+      record,
+      record.config?.managedMcpServers ? { durable: true } : undefined,
+    );
     this.addIndexedPath(agentId, nextPath);
 
     if (previousPath && previousPath !== nextPath) {
@@ -330,7 +361,7 @@ export class AgentStorage {
       .map((entry) => path.join(this.baseDir, entry.name));
 
     const projectDirs = entries
-      .filter((entry) => entry.isDirectory())
+      .filter((entry) => entry.isDirectory() && entry.name !== ".managed-openings")
       .map((entry) => path.join(this.baseDir, entry.name));
 
     const projectFileLists = await Promise.all(

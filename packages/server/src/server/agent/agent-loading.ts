@@ -3,6 +3,7 @@ import type { Logger } from "pino";
 import type { AgentProvider } from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
+import type { ManagedOpeningRequest } from "./managed-opening.js";
 import {
   buildConfigOverrides,
   buildSessionConfig,
@@ -21,7 +22,11 @@ export class AgentNotFoundError extends Error {
 
 interface PendingAgentInitialization {
   promise: Promise<ManagedAgent>;
-  options: { broadcastTimeline: boolean };
+  options: {
+    broadcastTimeline: boolean;
+    openingRequest?: ManagedOpeningRequest;
+    readOnly?: boolean;
+  };
 }
 
 const pendingAgentInitializations = new Map<string, PendingAgentInitialization>();
@@ -42,6 +47,9 @@ export interface EnsureAgentLoadedDeps {
   validProviders?: Iterable<AgentProvider>;
   broadcastTimeline?: boolean;
   logger: Logger;
+  openingRequest?: ManagedOpeningRequest;
+  /** Reads state only: a managed agent loads without reserving an opening or minting a credential. */
+  readOnly?: boolean;
 }
 
 export async function ensureUnarchivedAgentLoaded(
@@ -67,6 +75,25 @@ export async function ensureUnarchivedAgentLoaded(
   return agent;
 }
 
+async function joinInflight(
+  agentId: string,
+  inflight: PendingAgentInitialization,
+  deps: EnsureAgentLoadedDeps,
+): Promise<ManagedAgent> {
+  if (inflight.options.readOnly && !deps.readOnly) {
+    // A reading-only load cannot satisfy a caller that may run the agent.
+    await inflight.promise.catch(() => undefined);
+    return ensureAgentLoaded(agentId, deps);
+  }
+  if (deps.openingRequest && inflight.options.openingRequest?.key !== deps.openingRequest.key) {
+    throw new Error(
+      "Managed opening is already in progress; reconcile before requesting another refresh",
+    );
+  }
+  inflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
+  return inflight.promise;
+}
+
 export async function ensureAgentLoaded(
   agentId: string,
   deps: EnsureAgentLoadedDeps,
@@ -74,13 +101,20 @@ export async function ensureAgentLoaded(
   await deps.agentManager.waitForAgentClose?.(agentId);
 
   const inflight = pendingAgentInitializations.get(agentId);
-  if (inflight) {
-    inflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
-    return inflight.promise;
-  }
+  if (inflight) return joinInflight(agentId, inflight, deps);
 
   const existing = deps.agentManager.getAgent(agentId);
-  if (existing) {
+  // A reading-only managed resident never ran an opening, so a caller that may run it reloads.
+  if (existing && !(existing.historyOnly && !deps.readOnly)) {
+    if (
+      deps.openingRequest &&
+      existing.config.managedMcpServers &&
+      !(await deps.agentStorage.managedOpenings.checkRequest(agentId, deps.openingRequest))
+    ) {
+      throw new Error(
+        "Managed agent became resident without this refresh receipt; reconcile before another refresh",
+      );
+    }
     return existing;
   }
 
@@ -90,13 +124,12 @@ export async function ensureAgentLoaded(
   await deps.agentManager.waitForAgentClose?.(agentId);
 
   const laterInflight = pendingAgentInitializations.get(agentId);
-  if (laterInflight) {
-    laterInflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
-    return laterInflight.promise;
-  }
+  if (laterInflight) return joinInflight(agentId, laterInflight, deps);
 
   const pendingOptions = {
     broadcastTimeline: deps.broadcastTimeline === true,
+    openingRequest: deps.openingRequest,
+    readOnly: deps.readOnly === true,
   };
   const initPromise = (async () => {
     const record = await deps.agentStorage.get(agentId);
@@ -117,14 +150,21 @@ export async function ensureAgentLoaded(
         handle,
         buildConfigOverrides(record),
         agentId,
-        { ...extractTimestamps(record), attention: extractAttention(record) },
-        record.archivedAt ? { purpose: "history" } : undefined,
+        {
+          ...extractTimestamps(record),
+          attention: extractAttention(record),
+          openingRequest: deps.openingRequest,
+        },
+        record.archivedAt || deps.readOnly ? { purpose: "history" } : undefined,
       );
       deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
     } else {
       // No provider handle to resume: this starts the agent's first session rather than
       // bringing one back, so it stamps activity and carries no stored attention. Records
       // without a handle never got far enough to accumulate either.
+      if (deps.readOnly && record.config?.managedMcpServers) {
+        throw new Error("Managed agent has no resumable session to read; start a fresh execution");
+      }
       const config = buildSessionConfig(record, {
         validProviders,
       });

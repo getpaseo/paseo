@@ -800,6 +800,69 @@ Creation request
 
 没有自动的深度合并。后面的回调可以覆盖前面的值。Agent 配置会被保存；环境变量覆盖项不会随之持久化。
 
+### 托管 HTTP MCP 授权 {#managed-http-mcp-authorization}
+
+**未发布的 API。** 请使用由此变更构建的 daemon 和 `@getpaseo/plugin`。未修改的 0.13.0 源码、daemon 0.13.0-beta.2 和 SDK 0.11.1 都不提供此契约。待引入它的版本确定后，再把 manifest 的最低版本设置为该版本；仅靠版本匹配不会协商此功能。
+
+注册新的钩子之前，先检查 `server.capabilities?.managedMcpAuthorization`。它的 `providers` 列表包含受支持的原生适配器，目前为 `["omp"]`，在 Windows 上为空。客户端通过 `server_info.features.pluginManagedMcpAuthorization` 和 `pluginManagedMcpAuthorizationProviders` 发现同一契约。Provider 是否可用仍需单独检查。不同的 Provider 会在托管绑定或凭据回调运行之前失败。
+
+托管创建需要 daemon 的持久化原生创建回执。请使用 SDK 的 `createAgent`、工作区的初始 Agent 创建，或带键的原生创建。不带键的旧式创建，以及直接的进程内/MCP 命令创建，会在绑定、凭据回调或 Provider 启动之前拒绝托管声明；它们对未声明 Agent 的普通行为保持不变。
+
+`agent.create` 钩子可以声明一个**由该插件贡献的新服务器**：
+
+```ts
+return {
+  ...request,
+  config: {
+    ...request.config,
+    mcpServers: {
+      ...request.config.mcpServers,
+      records: {
+        type: "http",
+        url: "https://records.example/mcp",
+        headers: { Authorization: "PASEO_MANAGED_MCP_INERT" },
+      },
+    },
+  },
+  managedMcpServers: {
+    ...request.managedMcpServers,
+    records: {
+      bindPluginId: "execution-owner",
+      bootstrapEnvKeys: ["PASEO_RECORDS_BOOTSTRAP_REF"],
+    },
+  },
+};
+```
+
+daemon 根据已认证的贡献写入 `ownerPluginId`。请不要自己提供它。已有的调用方服务器、其他插件的服务器、相同的名称或 URL，或导入的 Provider 元数据，都无法确立所有权。来源未知的旧式数据需要重新执行。持久化的配置只包含惰性占位符和所有权信息，从不包含真实凭据。只接受规范的 HTTP(S) URL：不允许 URL 凭据、片段、daemon 的 `/mcp/agents` 端点、SSE、stdio、cookie、代理凭据，或大小写不同的重复请求头。URL、传输方式、服务器选项和确切的工具策略在重新打开时保持不变。更改动态端点需要重新执行；此 API 无法重新暂存其 URL。
+
+导入使用选择加入的 `agent.mcp_stage` 钩子，而不是重放普通的 `agent.create` 钩子。如果你的工作流允许原生导入，请在那里注册一个暂存回调。暂存不会授权已导入的会话；实际的导入打开会话仍然需要下面的两道关卡。
+
+对于已声明的托管交互式打开会话，daemon 会：
+
+1. 在准入之前保留一个由主机签发的不可变 `opening: {id, digest}`。摘要涵盖规范的启动意图，以及实际身份、放置位置、原因、用途和输入覆盖项，但不包括输出凭据。该 ID 不是 Provider 会话 ID，也不是控制器纪元。
+2. 运行普通的 `agent.session_open` 钩子，其请求结构不变。`context.managedMcp` 描述此次打开会话已证明的服务器、所有者以及所需的绑定插件。如果控制器的持久化计划需要托管工具，它必须拒绝缺失或不匹配的描述符；不能假定之后会运行绑定回调。
+3. 在所有普通准入完成之后，对每个所需插件的 `agent.mcp_bind` 回调各调用一次。其请求携带最终的普通钩子 env 快照，以及为该绑定方声明的引导键。它只能移除这些键，不能添加覆盖项、更改值，或移除无关的覆盖项。在凭据回调之前，所有已声明的引导键都必须已被移除。
+4. 要求已认证的绑定方返回 `binding: {openingId, sessionEpoch, bindRequestId}`。`sessionEpoch` 是由控制器拥有的正安全整数；零不是激活。`bindRequestId` 是与控制器已提交绑定相关联的非授权关联标识，作用域限定在实际配置的使用方。它不是其他插件线路协议中的新字段。
+5. 只对每个贡献服务器的所有者调用 `agent.mcp_authorization`。其不可变请求为 `{session, binding, server: {name, url}}`；`session` 包含实际身份、原因、用途和打开会话信息，不含 env，也没有重复的 binding。所有者需独立验证类型化的已提交绑定、打开会话摘要、执行、纪元、当前围栏、授权和确切的服务器。返回 `{...request, authorization}`。仅有纪元或未解析的请求 ID 不会授予任何权限。
+6. 验证每个结果，然后在原生 Provider/MCP 启动之前应用完整的临时 Authorization 集合。OMP 使用 daemon 侧的 HTTP 传输；子进程只收到工具定义和结果，不会收到凭据。托管重定向会被拒绝。插件卸载/重新加载会使已暂存的授权和排队中的主机侧工具分发失效。
+
+这两个专用回调也会收到 `context.managedMcp`。把另一个插件指定为绑定方并不等于冒充它：该插件必须先认证自己的持久化声明，才能返回绑定。插件仍是受信任的同用户代码；这不是针对恶意插件或不受限 shell 访问的沙箱。切勿记录凭据，也不要把它们放进错误信息。
+
+刷新时，在旧 Provider 仍然存在时进行绑定，然后获取新凭据，关闭并排空旧的写入方，再启动替代者。未确认的原生进程退出会拒绝替代者，包括重复的关闭调用；请先对账，而不是再打开另一个写入方。凭据服务必须**在绑定时**对旧的和已排队的权限设置围栏，并对变更提交和重放回执重新授权。失败的替换既不会恢复旧权限，也不能证明没有发生外部影响。仅靠主机排序并不能实现凭据服务的世代围栏。
+
+daemon 会在 `agents/.managed-openings/` 下持久记录待处理/已提交的打开会话状态。托管创建同样会在绑定之前持久化其确切的原生预留。这些私有记录要求在 POSIX 主机上对文件及其上级目录执行同步；无法提供该能力的 POSIX 文件系统会拒绝托管打开会话。Windows 无法同步目录，因此 Windows 主机不会声明托管 MCP 授权，并会在绑定、签发和 Provider 启动之前拒绝已声明托管的创建、恢复、刷新和导入。普通 agent 和历史记录不受影响。回调内部的重试必须复用同一个打开会话和同一个请求体。不会自动重放钩子或 Provider。崩溃、回调确认丢失或关卡失败，会让待处理的打开会话进入隔离状态：下一次交互式尝试会报告其 ID 和摘要，并在进一步绑定/签发之前拒绝。仅隔离既不会撤销外部权限，也不会停止孤立的 Provider。请通过所属控制器对账并为该打开会话设置围栏，然后重新执行；不要删除它的标记，也不要为了重试而重新创建 Agent 身份。已提交指主机注册/配置已保存，不代表工具已被使用、任务成功或没有产生影响。之后明确发起的物理打开会话会获得新的 ID。托管 OMP 的内部运行时重启和自动的过期会话提示词重放会被拒绝；请在对账之后使用显式的主机刷新。
+
+使用相同已认证来源和 `requestId` 重试已提交的原生刷新，会返回原始确认，不会再次绑定、签发或启动另一个 Provider，重新连接或 daemon 重启之后也是如此。回执随托管身份一起保留；请求体改变则会冲突。若要明确发起新的刷新，请使用新的 `requestId`。该确认并不证明 Provider 已使用。
+
+只读请求（时间线、搜索、提示词列表、分叉上下文、清除注意状态以及 `get_agent_activity` 工具）会把未驻留的托管 agent 作为历史记录加载。它们不会预留打开会话，也不会签发凭据；之后的提示词、计划任务、刷新或恢复会重新打开它。托管工具失败时，模型只会收到通用消息，而不是服务的响应文本。
+
+历史记录会绕过执行钩子、预留、绑定、签发和 MCP 连接，即使插件不可用或交互式打开会话处于隔离状态也是如此。托管服务器只会从实际的历史记录启动中移除，而不会从已存储的声明中移除。历史会话不能被复用来执行提示词。
+
+不要降级后就地重新打开托管 Agent。较旧的主机可能忽略所有权，并用惰性占位符启动 Provider；这并不能证明已阻止 Provider 启动。请归档该 Agent，撤销尚未失效的服务权限，并在受支持的主机上重新执行。没有托管声明的独立 Agent 保留其现有的启动行为。
+
+此 API 不验证任何 Bots/Memory 集成。它们的类型化绑定解析器、世代签发/围栏，以及实际配对的 Provider 矩阵，需要单独实现并提供证据。
+
 ### context 与清理 {#context-and-cleanup}
 
 | 契约                       | 行为                                                                                |

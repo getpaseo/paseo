@@ -2,7 +2,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import pino from "pino";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { JsonlRpcProcess, type JsonlRpcExit } from "./jsonl-rpc-process.js";
 
@@ -71,6 +71,7 @@ interface InMemoryChildProcess extends ChildProcessWithoutNullStreams {
 interface StartProcessOptions {
   child?: ChildProcessWithoutNullStreams;
   defaultRequestTimeoutMs?: number;
+  requireExitOnClose?: boolean;
   source?: string;
 }
 
@@ -100,6 +101,7 @@ function startProcess(options: StartProcessOptions = {}): JsonlRpcProcess {
     },
     logger: pino({ level: "silent" }),
     defaultRequestTimeoutMs: options.defaultRequestTimeoutMs,
+    requireExitOnClose: options.requireExitOnClose,
     ...(child ? { spawn: () => child } : {}),
   });
 }
@@ -323,6 +325,47 @@ describe("JsonlRpcProcess", () => {
     await expect(transport.requestStopWork({ type: "abort" })).rejects.toThrow(
       "JSONL RPC process is closed",
     );
+  });
+
+  test("strict concurrent close waits until the native child exits", async () => {
+    const child = createInMemoryChildProcess();
+    child.kill = () => true;
+    const transport = startProcess({ child, requireExitOnClose: true });
+    let closed = false;
+    const first = transport.close();
+    const second = (async () => {
+      await transport.close();
+      closed = true;
+    })();
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    child.emit("exit", 0, null);
+    await Promise.all([first, second]);
+    expect(closed).toBe(true);
+  });
+
+  test("strict close refuses replacement when child termination cannot be confirmed", async () => {
+    vi.useFakeTimers();
+    const child = createInMemoryChildProcess();
+    child.kill = () => true;
+    const transport = startProcess({ child, requireExitOnClose: true });
+    try {
+      const first = transport.close().then(
+        () => null,
+        (error: unknown) => error,
+      );
+      const second = transport.close().then(
+        () => null,
+        (error: unknown) => error,
+      );
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await first).toBeInstanceOf(Error);
+      expect(await second).toBeInstanceOf(Error);
+      await expect(transport.close()).rejects.toThrow();
+    } finally {
+      child.emit("exit", null, "SIGKILL");
+      vi.useRealTimers();
+    }
   });
 
   test("stdin error events close the transport instead of becoming uncaught exceptions", async () => {

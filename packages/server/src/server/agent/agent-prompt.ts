@@ -117,7 +117,7 @@ export async function startAgentRun(
   try {
     return await startAgentRunInner(agentManager, agentId, prompt, logger, options);
   } catch (error) {
-    if (!isStaleProviderSessionError(error)) throw error;
+    if (!isStaleProviderSessionError(error) || snapshot?.config.managedMcpServers) throw error;
     logger.info({ agentId, err: error }, "Provider session went stale; reopening from persistence");
     // The live session belongs to a retired plugin runtime. Reload swaps in a
     // fresh session on the current runtime while preserving history and labels.
@@ -157,7 +157,7 @@ async function startAgentRunInner(
       try {
         await drainAgentRunIterator(iterator);
       } catch (error) {
-        if (!isStaleProviderSessionError(error)) throw error;
+        if (!isStaleProviderSessionError(error) || snapshot?.config.managedMcpServers) throw error;
         logger.info(
           { agentId, err: error },
           "Provider session went stale; reopening from persistence",

@@ -878,11 +878,14 @@ type PluginTurnOutcome =
 
 ### Before hooks
 
-| Name                 | Request fields                                                          | Editable                                |
-| -------------------- | ----------------------------------------------------------------------- | --------------------------------------- |
-| `agent.create`       | `config`, optional `env`                                                | Public agent config except `cwd`; `env` |
-| `agent.session_open` | `agentId`, `workspaceId`, `provider`, `cwd`, `reason`, `purpose`, `env` | Only `env`                              |
-| `workspace.create`   | `source`, optional `title`, `firstAgentContext`                         | Entire explicit creation request        |
+| Name                      | Request fields                                                                    | Editable                                                          |
+| ------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `agent.create`            | `config`, optional `env`, optional `managedMcpServers`                            | Public agent config except `cwd`; `env`; new managed declarations |
+| `agent.session_open`      | `agentId`, `workspaceId`, `provider`, `cwd`, `reason`, `purpose`, `env`           | Only `env`                                                        |
+| `workspace.create`        | `source`, optional `title`, `firstAgentContext`                                   | Entire explicit creation request                                  |
+| `agent.mcp_stage`         | Import staging: same shape as `agent.create`                                      | Opt-in managed MCP declarations; provider and `cwd` stay fixed    |
+| `agent.mcp_bind`          | Actual session identity, `env`, `opening`, `bootstrapEnvKeys`, optional `binding` | One binding and removal of declared bootstrap keys                |
+| `agent.mcp_authorization` | Immutable session identity and opening, one `binding`, owned `server`             | Literal `authorization` only                                      |
 
 **`agent.create.config`** uses `AgentSessionConfig`:
 
@@ -937,6 +940,146 @@ Creation request
 
 No automatic deep merge. Later callbacks can overwrite earlier values. Agent configuration is
 saved; environment overrides are not persisted with it.
+
+### Managed HTTP MCP authorization
+
+**Unreleased API.** Use a daemon and `@getpaseo/plugin` built from this change. The unmodified
+0.13.0 source, daemon 0.13.0-beta.2, and SDK 0.11.1 do not provide this contract.
+Set your manifest's minimum to the introducing release when it is assigned; version matching
+alone does not negotiate this feature.
+
+Before registering the new hooks, check
+`server.capabilities?.managedMcpAuthorization`. Its `providers` list contains supported native
+adapters, currently `["omp"]` and empty on Windows. Clients discover the same contract through
+`server_info.features.pluginManagedMcpAuthorization` and
+`pluginManagedMcpAuthorizationProviders`. Provider availability is still a separate discovery
+check. A different provider fails before managed bind or credential callbacks run.
+
+Managed creation requires the daemon's durable native creation receipt. Use SDK `createAgent`,
+workspace initial-agent creation, or keyed native creation. Unkeyed legacy creation and direct
+in-process/MCP command creation reject managed declarations before bind, credential callbacks,
+or provider launch; their ordinary undeclared-agent behavior is unchanged.
+
+An `agent.create` hook can declare a **new server contributed by that plugin**:
+
+```ts
+return {
+  ...request,
+  config: {
+    ...request.config,
+    mcpServers: {
+      ...request.config.mcpServers,
+      records: {
+        type: "http",
+        url: "https://records.example/mcp",
+        headers: { Authorization: "PASEO_MANAGED_MCP_INERT" },
+      },
+    },
+  },
+  managedMcpServers: {
+    ...request.managedMcpServers,
+    records: {
+      bindPluginId: "execution-owner",
+      bootstrapEnvKeys: ["PASEO_RECORDS_BOOTSTRAP_REF"],
+    },
+  },
+};
+```
+
+The daemon stamps `ownerPluginId` from the authenticated contribution. Do not supply it yourself.
+An existing caller server, another plugin's server, matching name or URL, or imported provider
+metadata cannot establish ownership. Unknown legacy provenance requires a fresh execution.
+Persisted configuration contains the inert placeholder and ownership, never the live credential.
+Only canonical HTTP(S) URLs are accepted: no URL credentials, fragments, daemon `/mcp/agents`
+endpoint, SSE, stdio, cookies, proxy credentials, or competing header casing.
+The URL, transport, server options, and exact tool policy stay fixed across reopen.
+Changing a dynamic endpoint requires a fresh execution; this API cannot restage its URL.
+
+Imports use the opt-in `agent.mcp_stage` hook instead of replaying ordinary `agent.create`
+hooks. Register a staging callback there if your workflow admits a native import. Staging does
+not authorize an imported session; the actual import opening still requires both gates below.
+
+For a declared managed interactive opening, the daemon:
+
+1. Reserves a host-issued immutable `opening: {id, digest}` before admission. The digest covers
+   canonical launch intent and actual identity, placement, reason, purpose, and input overrides,
+   excluding output credentials. The ID is not a provider session ID or a controller epoch.
+2. Runs ordinary `agent.session_open` hooks with their unchanged request shape.
+   `context.managedMcp` describes this opening's attested servers, owners, and required bind
+   plugins. A controller whose durable plan requires managed tools must reject an absent or
+   mismatched descriptor; it must not assume a later bind callback will run.
+3. Invokes each required plugin's `agent.mcp_bind` callback once, after all ordinary admissions.
+   Its request carries the final ordinary-hook env snapshot and the bootstrap keys declared
+   for that binder. It may remove only those keys, not add overrides, change values, or remove
+   unrelated overrides. All declared bootstrap keys must be gone before credential callbacks.
+4. Requires `binding: {openingId, sessionEpoch, bindRequestId}` from that authenticated binder.
+   `sessionEpoch` is a controller-owned positive safe integer; zero is not an activation.
+   `bindRequestId` is nonauthorizing correlation to the controller's committed bind, scoped to
+   the actual configured consumer. It is not a new field in another plugin's wire protocol.
+5. Invokes `agent.mcp_authorization` only on each contributing owner. Its immutable request is
+   `{session, binding, server: {name, url}}`; `session` contains actual identity, reason, purpose,
+   and opening, with no env or duplicate binding. The owner independently validates the typed
+   committed bind, opening digest, execution, epoch, current fence, grants, and exact server.
+   Return `{...request, authorization}`. An epoch or unresolved request ID alone grants nothing.
+6. Validates every result, then applies the complete transient Authorization set before native
+   provider/MCP startup. OMP uses daemon-side HTTP transports; the child receives tool definitions
+   and results, not credentials. Managed redirects are refused. Plugin unload/reload invalidates
+   staged authorization and queued host-side tool dispatch.
+
+Both dedicated callbacks also receive `context.managedMcp`. Naming another plugin as a binder
+does not impersonate it: that plugin must authenticate its own durable claims before returning
+a binding. Plugins remain trusted same-user code; this is not a sandbox against malicious
+plugins or unrestricted shell access. Never log credentials or include them in errors.
+
+Refresh binds while the old provider still exists, then obtains the new credential, closes and
+drains the old writer, and starts the replacement. Unconfirmed native process exit refuses the
+replacement, including repeated close calls; reconcile rather than opening another writer.
+The credential service must fence old and already queued authority **at bind**, and reauthorize
+mutation commits and replay receipts.
+A failed replacement does not restore old authority or establish that no external effects occurred.
+Host ordering alone does not implement a credential service's generation fence.
+
+The daemon durably records pending/committed opening disposition under
+`agents/.managed-openings/`. Managed creation also makes its exact native reservation durable
+before bind. These private records require file and ancestor-directory sync on POSIX hosts; a
+POSIX filesystem that cannot provide it refuses managed opening. Windows cannot sync directories,
+so a Windows host advertises no managed MCP authorization and refuses declared managed create,
+resume, refresh, and import before bind, mint, and provider launch. Ordinary agents and history
+are unchanged.
+Callback-local retries must reuse the same opening and body. There is no automatic hook or
+provider replay.
+A crash, lost callback acknowledgment, or gate failure leaves a pending opening quarantined:
+the next interactive attempt reports its ID and digest and refuses before further bind/mint.
+Quarantine alone neither revokes external authority nor stops an orphan provider. Reconcile and
+fence that opening through the owning controller and start a fresh execution; do not delete its
+marker or recreate the agent identity to retry. Committed means host registration/config save,
+not tool consumption, task success, or absence of effects. An explicitly later physical opening gets a
+new ID. Managed OMP internal runtime restart and automatic stale-session prompt replay are
+refused; use an explicit host refresh after reconciliation.
+
+A committed native refresh retried with the same authenticated source and `requestId` returns
+the original acknowledgment without binding, minting, or starting another provider, including
+after reconnect or daemon restart. Receipts are retained with the managed identity; a changed
+body conflicts. Use a fresh `requestId` for an explicitly new refresh. The acknowledgment does
+not prove provider consumption.
+
+Read-only requests (timeline, search, prompt list, fork context, attention clear, and the
+`get_agent_activity` tool) load a non-resident managed agent as history. They never reserve an
+opening or mint a credential; a later prompt, schedule, refresh, or resume reopens it. A managed
+tool failure reaches the model as a generic message, never the service's response text.
+
+History bypasses execution hooks, reservation, binding, minting, and MCP connection even if
+plugins are unavailable or an interactive opening is quarantined. Managed servers are removed
+only from the effective history launch, not from stored declarations. A history session cannot
+be reused to execute a prompt.
+
+Do not downgrade and reopen managed agents in place. An older host may ignore ownership and
+start a provider with an inert placeholder; that does not prove provider-start prevention.
+Archive the agent, revoke outstanding service authority, and use a fresh execution on a supported
+host. Standalone agents without managed declarations retain their existing launch behavior.
+
+This API does not qualify any Bots/Memory integration. Their typed bind resolver, generation
+minting/fencing, and actual paired provider matrix require separate implementation and evidence.
 
 ### Context and cleanup
 

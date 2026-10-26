@@ -4,8 +4,18 @@ import {
   type ProviderStatus,
   type ProviderStatusRequest,
 } from "@getpaseo/plugin/server/provider";
-import type { PluginBeforeRequests, PluginLifecycleEvents } from "@getpaseo/plugin/server";
+import type {
+  PluginBeforeRequests,
+  PluginLifecycleEvents,
+  PluginHookContext,
+} from "@getpaseo/plugin/server";
 import { validateBeforeRequest, validateBeforeResult } from "./lifecycle/index.js";
+import {
+  attestManagedMcpContribution,
+  requireMcpBinding,
+  type ManagedMcpServers,
+} from "./lifecycle/managed-mcp.js";
+import type { PluginMcpBindRequest } from "@getpaseo/plugin/server";
 import { fork } from "node:child_process";
 import { stat } from "node:fs/promises";
 import path from "node:path";
@@ -549,6 +559,7 @@ export class PluginRuntime {
   async before<Name extends keyof PluginBeforeRequests>(
     name: Name,
     input: PluginBeforeRequests[Name],
+    context?: Pick<PluginHookContext, "managedMcp">,
   ): Promise<PluginBeforeRequests[Name]> {
     let request = validateBeforeRequest(name, input);
     const plugins = [...this.plugins.values()].sort((left, right) => {
@@ -565,8 +576,17 @@ export class PluginRuntime {
           kind: "before",
           name,
           input: request,
+          managedMcp: context?.managedMcp,
         });
-        request = validateBeforeResult(name, request, output);
+        const next = validateBeforeResult(name, request, output);
+        if (name === "agent.create" || name === "agent.mcp_stage") {
+          attestManagedMcpContribution(
+            request as PluginBeforeRequests["agent.create"],
+            next as PluginBeforeRequests["agent.create"],
+            loaded.id,
+          );
+        }
+        request = next;
       } catch (error) {
         throw new Error(`Plugin ${loaded.id} before ${name} failed: ${describeError(error)}`, {
           cause: error,
@@ -574,6 +594,112 @@ export class PluginRuntime {
       }
     }
     return request;
+  }
+
+  async authorizeMcp(
+    session: PluginMcpBindRequest,
+    servers: ManagedMcpServers,
+  ): Promise<{
+    headers: Readonly<Record<string, string>>;
+    env: Record<string, string>;
+    assertCurrent: () => void;
+  }> {
+    const participants = new Map<string, LoadedPlugin>();
+    for (const server of Object.values(servers)) {
+      for (const [id, hook] of [
+        [server.bindPluginId, "agent.mcp_bind"],
+        [server.ownerPluginId, "agent.mcp_authorization"],
+      ] as const) {
+        const plugin = this.plugins.get(id);
+        if (!plugin?.child || !plugin.hooks.before.includes(hook)) {
+          throw new Error(
+            "Required managed MCP plugin hook is unavailable; start a fresh execution",
+          );
+        }
+        participants.set(id, plugin);
+      }
+    }
+    const assertLoaded = () => {
+      for (const [id, plugin] of participants) {
+        if (this.plugins.get(id) !== plugin || !plugin.child) {
+          throw new Error(
+            "Managed MCP plugin changed during authorization; start a fresh execution",
+          );
+        }
+      }
+    };
+    const managedMcp: PluginHookContext["managedMcp"] = {
+      opening: session.opening,
+      servers: Object.entries(servers).map(([serverName, owned]) => ({
+        name: serverName,
+        url: owned.server.type === "http" ? owned.server.url : "",
+        ownerPluginId: owned.ownerPluginId,
+        bindPluginId: owned.bindPluginId,
+      })),
+    };
+    const invoke = async <Name extends "agent.mcp_bind" | "agent.mcp_authorization">(
+      pluginId: string,
+      hookName: Name,
+      input: PluginBeforeRequests[Name],
+    ): Promise<PluginBeforeRequests[Name]> => {
+      assertLoaded();
+      try {
+        const output = await this.request(participants.get(pluginId)!, {
+          type: "hook",
+          requestId: randomUUID(),
+          kind: "before",
+          name: hookName,
+          input,
+          managedMcp,
+        });
+        assertLoaded();
+        return validateBeforeResult(hookName, input, output);
+      } catch {
+        // A hook or remote endpoint can include the bearer in its error text.
+        throw new Error(`Managed MCP ${hookName} failed; authorization was not applied`);
+      }
+    };
+    const bindings = new Map<string, PluginMcpBindRequest>();
+    let admittedEnv = session.env;
+    for (const server of Object.values(servers)) {
+      if (bindings.has(server.bindPluginId)) continue;
+      const bootstrapEnvKeys = [
+        ...new Set(
+          Object.values(servers)
+            .filter((owned) => owned.bindPluginId === server.bindPluginId)
+            .flatMap((owned) => owned.bootstrapEnvKeys ?? []),
+        ),
+      ];
+      const bound = await invoke(server.bindPluginId, "agent.mcp_bind", {
+        ...session,
+        env: admittedEnv,
+        binding: undefined,
+        bootstrapEnvKeys,
+      });
+      requireMcpBinding(bound);
+      if (bootstrapEnvKeys.some((key) => key in bound.env)) {
+        throw new Error("Managed MCP bind did not remove its bootstrap environment reference");
+      }
+      bindings.set(server.bindPluginId, bound);
+      admittedEnv = bound.env;
+    }
+    const authorization: Record<string, string> = {};
+    for (const [name, server] of Object.entries(servers)) {
+      if (server.server.type !== "http") throw new Error("Invalid managed MCP transport");
+      const bound = bindings.get(server.bindPluginId)!;
+      const { env: _env, bootstrapEnvKeys: _keys, binding: _binding, ...identity } = bound;
+      const result = await invoke(server.ownerPluginId, "agent.mcp_authorization", {
+        session: identity,
+        binding: requireMcpBinding(bound),
+        server: { name, url: server.server.url },
+      });
+      if (!result.authorization || result.authorization === "PASEO_MANAGED_MCP_INERT") {
+        throw new Error("Required managed MCP authorization was not supplied");
+      }
+      authorization[name] = result.authorization;
+    }
+    assertLoaded();
+    return { headers: Object.freeze(authorization), env: admittedEnv, assertCurrent: assertLoaded };
   }
 
   async getProviderCatalogCacheKey(

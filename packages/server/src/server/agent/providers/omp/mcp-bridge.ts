@@ -27,29 +27,46 @@ export class OmpMcpBridge {
   private readonly tools = new Map<string, BridgedTool>();
   private readonly clients: Client[] = [];
   private closed = false;
+  private assertAuthorized?: () => void;
 
   static async connect(
     servers: Record<string, McpServerConfig> | undefined,
     cwd: string,
     logger: Logger,
     env: NodeJS.ProcessEnv,
+    authorization?: Readonly<Record<string, string>>,
+    assertAuthorized?: () => void,
   ): Promise<OmpMcpBridge> {
     const bridge = new OmpMcpBridge();
+    bridge.assertAuthorized = assertAuthorized;
+    assertAuthorized?.();
     const connections = await Promise.all(
       Object.entries(servers ?? {}).map(async ([serverName, config]) => {
         const client = new Client({ name: "paseo-omp-mcp", version: "1.0.0" });
         try {
-          const transport = makeTransport(config, cwd, env);
+          const credential = authorization?.[serverName];
+          const transport = makeTransport(config, cwd, env, credential);
+          assertAuthorized?.();
           await client.connect(transport, { timeout: SERVER_TIMEOUT_MS });
           const listed = await client.listTools(undefined, { timeout: SERVER_TIMEOUT_MS });
           return { serverName, client, tools: listed.tools };
         } catch (error) {
+          if (authorization?.[serverName]) {
+            await client.close().catch(() => undefined);
+            return { serverName, client, tools: [], failedManaged: true };
+          }
           logger.warn({ err: error, server: serverName }, "OMP MCP server unavailable");
           await client.close().catch(() => undefined);
           return null;
         }
       }),
     );
+    if (connections.some((connection) => connection?.failedManaged)) {
+      await Promise.all(
+        connections.map((connection) => connection?.client.close().catch(() => undefined)),
+      );
+      throw new Error("Managed MCP connection failed; authorization was not restored or replayed");
+    }
     for (const connection of connections) {
       if (!connection) continue;
       const { serverName, client, tools } = connection;
@@ -85,12 +102,22 @@ export class OmpMcpBridge {
     args: Record<string, unknown>,
     signal: AbortSignal,
   ): Promise<PaseoToolResult> {
+    this.assertAuthorized?.();
     const entry = this.tools.get(name);
     if (!entry || this.closed) throw new Error(`MCP tool ${name} is unavailable`);
-    const raw = await entry.client.callTool({ name: entry.tool, arguments: args }, undefined, {
-      signal,
-    });
+    let raw: unknown;
+    try {
+      raw = await entry.client.callTool({ name: entry.tool, arguments: args }, undefined, {
+        signal,
+      });
+    } catch (error) {
+      // A managed server's failure text can echo request material; abort stays observable.
+      if (!this.assertAuthorized || signal.aborted) throw error;
+      throw managedToolFailure(name);
+    }
     const result = CallToolResultSchema.parse(raw);
+    // A managed server's error content can echo request material, so only a generic result leaves.
+    if (this.assertAuthorized && result.isError) return managedToolErrorResult(name);
     return {
       content: result.content.map((item) => ({ ...item })),
       ...(result.structuredContent !== undefined
@@ -108,7 +135,20 @@ export class OmpMcpBridge {
   }
 }
 
-function makeTransport(config: McpServerConfig, cwd: string, env: NodeJS.ProcessEnv) {
+function managedToolFailure(name: string): Error {
+  return new Error(`Managed MCP tool ${name} failed`);
+}
+
+function managedToolErrorResult(name: string): PaseoToolResult {
+  return { content: [{ type: "text", text: `Managed MCP tool ${name} failed` }], isError: true };
+}
+
+function makeTransport(
+  config: McpServerConfig,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  authorization?: string,
+) {
   if (config.type === "stdio") {
     return new StdioClientTransport({
       command: config.command,
@@ -120,7 +160,15 @@ function makeTransport(config: McpServerConfig, cwd: string, env: NodeJS.Process
   }
   if (config.type === "http") {
     return new StreamableHTTPClientTransport(new URL(config.url), {
-      requestInit: { headers: config.headers },
+      requestInit: {
+        headers: authorization
+          ? { ...config.headers, Authorization: authorization }
+          : config.headers,
+      },
+      // The SDK uses this for GET streams and DELETE as well, which requestInit alone misses.
+      ...(authorization
+        ? { fetch: (url, init) => fetch(url, { ...init, redirect: "error" as const }) }
+        : {}),
     });
   }
   return new SSEClientTransport(new URL(config.url), {

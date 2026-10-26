@@ -397,6 +397,9 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
   if (config.mcpServers) {
     serializable.mcpServers = config.mcpServers;
   }
+  if (config.managedMcpServers) {
+    serializable.managedMcpServers = config.managedMcpServers;
+  }
   return Object.keys(serializable).length ? serializable : null;
 }
 

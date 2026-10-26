@@ -40,6 +40,7 @@ interface PluginRuntimePort {
   emit?: PluginLifecycle["emit"];
   drainEvents?: PluginRuntime["drainEvents"];
   before?: PluginLifecycle["before"];
+  authorizeMcp?: PluginLifecycle["authorizeMcp"];
   catalog: PluginRuntime["catalog"];
   invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
   getLogs(pluginId: string): PluginLogEntry[];
@@ -135,11 +136,21 @@ export class PluginService {
     await this.runtime.drainEvents?.();
   }
 
-  readonly before: PluginLifecycle["before"] = async (name, request) => {
+  readonly before: PluginLifecycle["before"] = async (name, request, context) => {
     if (this.runtime.before) {
-      return this.runtime.before(name, request);
+      return this.runtime.before(name, request, context);
     }
     return request;
+  };
+
+  readonly authorizeMcp: NonNullable<PluginLifecycle["authorizeMcp"]> = async (
+    session,
+    servers,
+  ) => {
+    if (!this.runtime.authorizeMcp) {
+      throw new Error("This host cannot authorize managed MCP servers");
+    }
+    return this.runtime.authorizeMcp(session, servers);
   };
 
   subscribeSettings(listener: (pluginId: string, settingsId: string) => void): () => void {
