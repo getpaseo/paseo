@@ -9,7 +9,8 @@ import { join, relative } from "node:path";
 // the patch's node_modules/... paths relative to its working directory.
 const patchedPackages = [
   // Backport for expo-modules-core 57.0.23: https://github.com/expo/expo/pull/49634.
-  // Remove when the installed Expo SDK includes the Activity recreation fix.
+  // Also retain in-flight picker callbacks across same-process Activity recreation (#7557).
+  // Remove when the installed Expo SDK includes both Activity recreation fixes.
   {
     nodeModulesPath: "node_modules/expo-modules-core",
     patchPrefix: "expo-modules-core+",
