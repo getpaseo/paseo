@@ -159,7 +159,9 @@ function mergeSite(
   patch: Record<string, unknown>,
   kind: "stt" | "tts",
 ) {
-  const next = mergeFields(patch.provider === undefined ? current : undefined, patch);
+  const providerChanged =
+    patch.provider !== undefined && patch.provider !== (current?.provider ?? "local");
+  const next = mergeFields(providerChanged ? undefined : current, patch);
   next.provider ??= "local";
   const site = (kind === "stt" ? SpeechSttConfigSchema : SpeechTtsConfigSchema).parse(next);
   if (site.provider === "local" && site.model !== undefined) {

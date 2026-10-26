@@ -956,7 +956,10 @@ describe("speech provider config normalization", () => {
     try {
       writeFileSync(
         path.join(home, "config.json"),
-        JSON.stringify({ providers: { openai: { apiKey: "discarded-secret" } } }),
+        JSON.stringify({
+          providers: { openai: { apiKey: "discarded-secret" } },
+          features: { voiceMode: { enabled: true, tts: { provider: "local" } } },
+        }),
       );
       const warnings: unknown[][] = [];
       const logger = {
@@ -970,6 +973,14 @@ describe("speech provider config normalization", () => {
       expect(config.providers).not.toHaveProperty("openai");
       expect(warnings).toHaveLength(1);
       expect(JSON.stringify(warnings)).toContain("providers.openai.apiKey");
+      expect(JSON.stringify(warnings)).toContain("no use site in config.json selects OpenAI");
+      const resolved = resolveSpeechConfig({
+        paseoHome: home,
+        persisted: config,
+        env: { PASEO_VOICE_TTS_PROVIDER: "openai" },
+      });
+      expect(resolved.speech.providers.voiceTts.provider).toBe("openai");
+      expect(resolved.openai).toBeUndefined();
       expect(JSON.stringify(warnings)).not.toContain("discarded-secret");
     } finally {
       rmSync(home, { recursive: true, force: true });

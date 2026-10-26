@@ -1333,7 +1333,7 @@ describe("DaemonConfigStore speech settings", () => {
     expect(store.get().features?.voiceMode.enabled).toBe(false);
     expect(applied).toHaveLength(1);
   });
-  test("merges fields without provider and replaces the whole variant when provider is supplied", () => {
+  test("merges same-provider fields and replaces the whole variant when provider changes", () => {
     const { paseoHome, store } = createSpeechStore();
     store.patch({
       features: {
@@ -1352,12 +1352,32 @@ describe("DaemonConfigStore speech settings", () => {
     expect(store.get().features?.voiceMode.stt).toEqual({
       provider: "openai",
       model: "third",
-      hasApiKey: false,
+      hasApiKey: true,
     });
     store.patch({ features: { voiceMode: { stt: { apiKey: "new-secret" } } } });
     store.patch({ features: { voiceMode: { stt: { provider: "local" } } } });
     store.patch({ features: { voiceMode: { stt: { provider: "openai" } } } });
     expect(store.get().features?.voiceMode.stt).toEqual({ provider: "openai", hasApiKey: false });
+  });
+
+  test("keeps a saved OpenAI key when a full variant patch omits the write-only key", () => {
+    const { paseoHome, store } = createSpeechStore({
+      features: { voiceMode: { stt: { provider: "openai", apiKey: "saved-secret" } } },
+    });
+    const result = store.patch({
+      features: { voiceMode: { stt: { provider: "openai", model: "whisper-1" } } },
+    });
+    expect(result.features?.voiceMode.stt).toEqual({
+      provider: "openai",
+      model: "whisper-1",
+      hasApiKey: true,
+    });
+    expect(loadPersistedConfig(paseoHome).features?.voiceMode?.stt).toEqual({
+      provider: "openai",
+      apiKey: "saved-secret",
+      model: "whisper-1",
+    });
+    expect(JSON.stringify(result)).not.toContain("saved-secret");
   });
 
   test("loads a legacy host, redacts its key and writes the normalized config after any save", () => {

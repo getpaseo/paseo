@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import pino from "pino";
 import { afterEach, describe, expect, test } from "vitest";
 
+import { mergeSpeechSettingsPatch } from "../../speech-settings.js";
 import { PersistedConfigSchema } from "../../../persisted-config.js";
 import type { SpeechToTextProvider } from "../../speech-provider.js";
 import { resolveOpenAiSpeechConfig } from "./config.js";
@@ -98,7 +99,7 @@ describe("OpenAI speech-to-text models", () => {
   test("dictation and voice mode each transcribe with the model chosen for them", async () => {
     const endpoint = await startTranscriptionServer();
     server = endpoint.server;
-    const persisted = PersistedConfigSchema.parse({
+    let persisted = PersistedConfigSchema.parse({
       features: {
         dictation: {
           stt: {
@@ -118,6 +119,9 @@ describe("OpenAI speech-to-text models", () => {
           },
         },
       },
+    });
+    persisted = mergeSpeechSettingsPatch(persisted, {
+      voiceMode: { stt: { provider: "openai", model: "whisper-1" } },
     });
     const providers = {
       dictationStt: { provider: "openai", explicit: true },

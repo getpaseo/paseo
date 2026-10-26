@@ -363,9 +363,9 @@ that names its path, without logging its value.
 
 `speech-settings.ts` owns mutable config reads and patches. The wire uses the same
 `features` structure. Reads replace OpenAI keys with `hasApiKey` (saved in config)
-and report effective env sources in `envOverrides`. A site patch with `provider`
-replaces the entire object; omitting `provider` merges fields into the current
-variant. `null` clears a value. Switching providers discards credentials and
+and report effective env sources in `envOverrides`. A site patch that changes
+`provider` replaces the entire object. The same or omitted `provider` merges fields
+into the current variant, preserving the write-only key when a form re-saves it. `null` clears a value. Switching providers discards credentials and
 options from the previous variant.
 
 ---

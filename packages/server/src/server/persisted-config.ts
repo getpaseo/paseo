@@ -477,7 +477,7 @@ function warnDiscardedSpeechKeys(
   ] as const;
   for (const [keyPath, key] of keys) {
     if (key && typeof keyPath === "string" && !foldedKeys.has(keyPath)) {
-      const message = `Dropped ${keyPath}: no OpenAI use site needs this legacy key; re-enter it when selecting OpenAI.`;
+      const message = `Dropped ${keyPath}: no use site in config.json selects OpenAI; re-enter it when selecting OpenAI.`;
       if (logger?.warn) logger.warn(message);
       else console.warn(message);
     }
