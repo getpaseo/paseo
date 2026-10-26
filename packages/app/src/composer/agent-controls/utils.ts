@@ -113,7 +113,29 @@ function resolveThinkingId(
   return selectedModel?.defaultThinkingOptionId ?? null;
 }
 
+// The daemon reports the runtime effort for an uncataloged model regardless of the
+// borrowed catalog options, so it never needs the membership check the cataloged
+// path applies.
+function resolveUnknownModelThinkingId(
+  runtimeThinkingOptionId: string | null | undefined,
+  explicitThinkingOptionId: string | null | undefined,
+  fallbackModel: AgentModelDefinition | null,
+): string | null {
+  const normalizedRuntimeId = normalizeModelId(runtimeThinkingOptionId);
+  if (normalizedRuntimeId) {
+    return normalizedRuntimeId;
+  }
+  if (explicitThinkingOptionId && explicitThinkingOptionId !== "default") {
+    return explicitThinkingOptionId;
+  }
+  return fallbackModel?.defaultThinkingOptionId ?? null;
+}
+
 type ThinkingOption = NonNullable<AgentModelDefinition["thinkingOptions"]>[number];
+
+// The Claude provider accepts "off" only for catalog ids flagged supportsThinkingDisabled
+// and rejects it for every other model id, so a borrowed option list must not offer it.
+const CLAUDE_DISABLED_THINKING_OPTION_ID = "off";
 
 function resolveEffectiveThinking(
   thinkingOptions: ThinkingOption[] | null,
@@ -191,13 +213,25 @@ export function resolveAgentModelSelection(input: {
   // falls back to the catalog default's options instead of disappearing.
   const thinkingModel = selectedModel ?? fallbackModel;
 
-  const thinkingOptions = thinkingModel?.thinkingOptions ?? null;
-  const resolvedThinkingId = resolveThinkingId(
-    runtimeThinkingOptionId,
-    explicitThinkingOptionId,
-    thinkingModel,
-  );
-  const effectiveThinking = resolveEffectiveThinking(thinkingOptions, resolvedThinkingId);
+  const borrowedThinkingOptions = thinkingModel?.thinkingOptions ?? null;
+  const thinkingOptions =
+    selectedModel || borrowedThinkingOptions === null
+      ? borrowedThinkingOptions
+      : borrowedThinkingOptions.filter(
+          (option) => option.id !== CLAUDE_DISABLED_THINKING_OPTION_ID,
+        );
+  const resolvedThinkingId = selectedModel
+    ? resolveThinkingId(runtimeThinkingOptionId, explicitThinkingOptionId, thinkingModel)
+    : resolveUnknownModelThinkingId(
+        runtimeThinkingOptionId,
+        explicitThinkingOptionId,
+        fallbackModel,
+      );
+  // A persisted or runtime effort outside the borrowed list is still what the agent
+  // runs, so show it as-is instead of substituting the first borrowed option.
+  const effectiveThinking = selectedModel
+    ? resolveEffectiveThinking(thinkingOptions, resolvedThinkingId)
+    : (thinkingOptions?.find((option) => option.id === resolvedThinkingId) ?? null);
   const selectedThinkingId = effectiveThinking?.id ?? resolvedThinkingId;
   const displayThinking = resolveThinkingDisplay(
     effectiveThinking,
