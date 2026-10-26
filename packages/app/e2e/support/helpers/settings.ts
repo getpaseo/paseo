@@ -57,6 +57,30 @@ export async function openSettingsSection(page: Page, section: SettingsSection):
   await expectAppRoute(page, buildSettingsSectionRoute(section));
 }
 
+export async function revealSettingsSidebarSection(
+  page: Page,
+  section: SettingsSection,
+): Promise<number> {
+  await page
+    .getByRole("navigation", { name: "Settings" })
+    .getByRole("button", { name: SECTION_LABELS[section], exact: true })
+    .scrollIntoViewIfNeeded();
+  const offset = await page
+    .getByTestId("settings-sidebar-scroll-body")
+    .evaluate((node) => node.scrollTop);
+  expect(offset).toBeGreaterThan(0);
+  return offset;
+}
+
+export async function expectSettingsSidebarScrollSettled(
+  page: Page,
+  offset: number,
+): Promise<void> {
+  // RN Web emits its final scroll callback 100 ms after scrolling stops.
+  await page.waitForTimeout(200);
+  await expectSettingsSidebarScrollOffset(page, offset);
+}
+
 export async function selectSettingsHostSectionsRapidly(page: Page): Promise<void> {
   for (let selection = 0; selection < 5; selection += 1) {
     await page

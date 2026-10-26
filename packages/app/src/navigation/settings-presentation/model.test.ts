@@ -112,6 +112,7 @@ describe("Settings sidebar presentation", () => {
     expect(currentSidebar.offset).toBe(246);
     oldSidebar.remember(0);
     oldSidebar.detach();
+    expect(currentSidebar.offset).toBe(246);
     currentSidebar.remember(190);
     currentSidebar.detach();
     currentSidebar.remember(0);

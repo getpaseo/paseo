@@ -11,6 +11,8 @@ import { getE2EDaemonPort } from "../support/helpers/daemon-port";
 import {
   closeCompactSettings,
   scrollSettingsSidebarToEnd,
+  revealSettingsSidebarSection,
+  expectSettingsSidebarScrollSettled,
   scrollSettingsSidebarUp,
   changeSettingsInterfaceFontSize,
   selectSettingsHostSectionsRapidly,
@@ -113,9 +115,7 @@ test.describe("Settings sidebar scroll position", () => {
     await selectSettingsHostSectionsRapidly(page);
     await expectSettingsSidebarScrollOffset(page, scrollTop);
 
-    // React Native Web emits a final scroll event 100 ms after the last scroll.
-    await page.waitForTimeout(200);
-    await expectSettingsSidebarScrollOffset(page, scrollTop);
+    await expectSettingsSidebarScrollSettled(page, scrollTop);
   });
 
   test("keeps the sidebar position when switching between app and host sections", async ({
@@ -124,7 +124,6 @@ test.describe("Settings sidebar scroll position", () => {
     await gotoAppShell(page);
     await openSettings(page);
 
-    const sidebarScroll = page.getByTestId("settings-sidebar-scroll-body");
     const hostScrollTop = await scrollSettingsSidebarToEnd(page);
     await expect(page.getByTestId("settings-host-section-providers")).toBeInViewport();
 
@@ -143,12 +142,8 @@ test.describe("Settings sidebar scroll position", () => {
     }
 
     const sidebar = page.getByTestId("settings-sidebar");
-    await sidebar
-      .getByRole("button", { name: "Diagnostics", exact: true })
-      .scrollIntoViewIfNeeded();
+    const appScrollTop = await revealSettingsSidebarSection(page, "diagnostics");
     await expect(sidebar.getByRole("button", { name: "About", exact: true })).toBeInViewport();
-    const appScrollTop = await sidebarScroll.evaluate((node) => node.scrollTop);
-    expect(appScrollTop).toBeGreaterThan(0);
 
     await openSettingsSection(page, "about");
     await expectAboutContent(page);
