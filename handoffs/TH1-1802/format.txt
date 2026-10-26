@@ -1,5 +1,0 @@
-npm notice run paseo@0.13.0-beta.2 format:files
-npm notice run oxfmt --threads=2 packages/app/src/components/sidebar/sidebar-nav-rows.tsx packages/app/e2e/browser/sidebar-nav-settings.spec.ts
-Finished in 5ms on 2 files using 2 threads.
-
-EXIT_CODE=0

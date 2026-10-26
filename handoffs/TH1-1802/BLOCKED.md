@@ -1,1 +1,0 @@
-Pre-existing macOS Ctrl+O/Ctrl+N assertions render ⌘O/⌘N: both fail on unchanged production source too; no worker blocker, unrelated fixes excluded. Lead owns exact-head reviewer confirmation, required adversarial review, CI and PR finalization.

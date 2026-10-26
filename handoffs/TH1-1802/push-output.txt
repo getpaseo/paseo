@@ -1,2 +1,0 @@
-To https://github.com/hteo1337/paseo.git
-   18dd03ab7..8efa9f2dd  HEAD -> feat/sidebar-nav-group-resize
