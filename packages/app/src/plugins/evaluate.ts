@@ -18,6 +18,7 @@ import {
   type PluginClientContext,
   type PluginAgentPanelContribution,
   type PluginWorkspacePanelContribution as WorkspacePanelInput,
+  type PluginForgeClientProviderContribution,
   type PluginScreenProps,
   type PluginScreenTitle,
   type PluginText,
@@ -26,6 +27,7 @@ import {
   type PluginTimelineTransformerContribution,
   type PluginButtonRegistration,
 } from "@getpaseo/plugin/client";
+import { normalizeHost } from "@getpaseo/protocol/git-remote";
 import type {
   EvaluatedPlugin,
   PluginSidebarSection,
@@ -74,6 +76,9 @@ function normalizePanelLocations(
   }
   return normalized;
 }
+const FORGE_ID = /^[a-z0-9][a-z0-9._-]*$/;
+const FORGE_COLOR = /^(?:#[0-9a-f]{6}|#[0-9a-f]{8})$/i;
+const MAX_FORGE_ICON_PATH_LENGTH = 16_384;
 
 function isComponentType(value: unknown): boolean {
   return (
@@ -84,6 +89,13 @@ function isComponentType(value: unknown): boolean {
 
 function normalizePluginText(text: import("@getpaseo/plugin/client").PluginText) {
   return typeof text === "string" ? text.trim() : requirePluginText(text);
+}
+
+/** Badges count things, so anything that is not a positive whole number means "no badge". */
+function normalizeSidebarBadge(badge: number | null | undefined): number | undefined {
+  if (typeof badge !== "number" || !Number.isFinite(badge)) return undefined;
+  const count = Math.floor(badge);
+  return count > 0 ? count : undefined;
 }
 
 function requireId(value: string, label: string): string {
@@ -99,6 +111,142 @@ function requireScreenTitle(screenId: string, title: unknown): PluginScreenTitle
     return requirePluginText(title);
   } catch {}
   throw new Error(`Screen ${screenId} needs a title: a non-empty string or a function of params`);
+}
+
+function requireForgeId(value: string, label: string): string {
+  const id = value.trim();
+  if (!FORGE_ID.test(id)) throw new Error(`Invalid ${label}: ${value}`);
+  return id;
+}
+
+function requireForgeText(value: string, providerId: string, label: string): string {
+  const normalized = value.trim();
+  if (!normalized) {
+    throw new Error(`Forge provider ${providerId} has no ${label}`);
+  }
+  return normalized;
+}
+
+function normalizeForgeDefinition(
+  contribution: PluginForgeClientProviderContribution,
+): PluginForgeClientProviderContribution["definition"] {
+  const definition = contribution.definition;
+  const id = requireForgeId(definition.id, "Forge provider id");
+  const signIn = definition.signIn
+    ? {
+        cli: definition.signIn.cli.trim(),
+        command: definition.signIn.command.trim(),
+        hostnameFlag: definition.signIn.hostnameFlag?.trim() || undefined,
+      }
+    : null;
+  if (signIn && (!signIn.cli || !signIn.command)) {
+    throw new Error(`Forge provider ${id} has an invalid sign-in recipe`);
+  }
+  const cloudHosts = definition.cloudHosts?.map(normalizeHost);
+  if (cloudHosts?.some((host) => !host)) {
+    throw new Error(`Forge provider ${id} has an empty cloud host`);
+  }
+  if (cloudHosts && new Set(cloudHosts).size !== cloudHosts.length) {
+    throw new Error(`Forge provider ${id} has duplicate cloud hosts`);
+  }
+  return {
+    ...definition,
+    id,
+    displayName: requireForgeText(definition.displayName, id, "display name"),
+    changeRequestAbbrev: requireForgeText(
+      definition.changeRequestAbbrev,
+      id,
+      "change-request abbreviation",
+    ),
+    changeRequestNoun: requireForgeText(definition.changeRequestNoun, id, "change-request noun"),
+    changeRequestNumberPrefix: requireForgeText(
+      definition.changeRequestNumberPrefix,
+      id,
+      "change-request number prefix",
+    ),
+    issueNumberPrefix: requireForgeText(definition.issueNumberPrefix, id, "issue number prefix"),
+    signIn,
+    cloudHosts,
+  };
+}
+
+function normalizeForgeFacts(
+  contribution: PluginForgeClientProviderContribution,
+  providerId: string,
+): PluginForgeClientProviderContribution["facts"] {
+  const facts = contribution.facts;
+  if (!facts) return undefined;
+  const family = requireForgeId(facts.family, "Forge facts family");
+  if (typeof facts.schema?.safeParse !== "function") {
+    throw new Error(`Forge provider ${providerId} has no valid facts schema`);
+  }
+  if (
+    facts.deriveMergeCapability !== undefined &&
+    typeof facts.deriveMergeCapability !== "function"
+  ) {
+    throw new Error(`Forge provider ${providerId} has an invalid merge capability callback`);
+  }
+  return { ...facts, family };
+}
+
+function validateForgeUrlGrammar(
+  contribution: PluginForgeClientProviderContribution,
+  providerId: string,
+): void {
+  const grammar = contribution.urlGrammar;
+  if (!grammar) return;
+  if (!grammar.treeInfix.startsWith("/")) {
+    throw new Error(`Forge provider ${providerId} tree URL infix must start with /`);
+  }
+  if (!grammar.blobInfix.startsWith("/")) {
+    throw new Error(`Forge provider ${providerId} blob URL infix must start with /`);
+  }
+  if (grammar.changeRequestChecksSuffix && !grammar.changeRequestChecksSuffix.startsWith("/")) {
+    throw new Error(`Forge provider ${providerId} checks URL suffix must start with /`);
+  }
+  for (const referencePath of grammar.referencePaths ?? []) {
+    if (referencePath.kind !== "change_request" && referencePath.kind !== "issue") {
+      throw new Error(`Forge provider ${providerId} has an invalid reference path kind`);
+    }
+    if (!referencePath.infix.startsWith("/") || !referencePath.infix.endsWith("/")) {
+      throw new Error(
+        `Forge provider ${providerId} reference path infix must start and end with /`,
+      );
+    }
+  }
+}
+
+function validateForgeView(
+  contribution: PluginForgeClientProviderContribution,
+  providerId: string,
+): void {
+  const view = contribution.view;
+  if (!view) return;
+  const { icon, brandColor } = view;
+  const validIcon =
+    icon.kind === "svg-path" &&
+    icon.viewBox.length === 4 &&
+    icon.viewBox.every(Number.isFinite) &&
+    icon.viewBox[2] > 0 &&
+    icon.viewBox[3] > 0 &&
+    icon.path.trim().length > 0 &&
+    icon.path.length <= MAX_FORGE_ICON_PATH_LENGTH;
+  if (!validIcon) {
+    throw new Error(`Forge provider ${providerId} has an invalid SVG path icon`);
+  }
+  if (brandColor && (!FORGE_COLOR.test(brandColor.light) || !FORGE_COLOR.test(brandColor.dark))) {
+    throw new Error(`Forge provider ${providerId} has invalid brand colors`);
+  }
+}
+
+function normalizeForgeClientProvider(
+  contribution: PluginForgeClientProviderContribution,
+): PluginForgeClientProviderContribution {
+  const definition = normalizeForgeDefinition(contribution);
+  const facts = normalizeForgeFacts(contribution, definition.id);
+  validateForgeUrlGrammar(contribution, definition.id);
+  validateForgeView(contribution, definition.id);
+  return { ...contribution, definition, ...(facts ? { facts } : {}) };
 }
 
 export type PluginClientRuntime = Pick<
@@ -138,6 +286,7 @@ export function runPluginClientBundle(
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    forgeClientProviders: [],
   };
   const surfaceIds = new Set<string>();
   const settingsScreenIds = new Set<string>();
@@ -153,6 +302,7 @@ export function runPluginClientBundle(
   const themeIds = new Set<string>();
   const timelineTransformerIds = new Set<string>();
   const timelineRendererIds = new Set<string>();
+  const forgeProviderIds = new Set<string>();
   const removals = new Set<PluginCleanup>();
   let setupComplete = false;
   let stopped = false;
@@ -293,6 +443,7 @@ export function runPluginClientBundle(
         title: normalizePluginText(contribution.title),
         icon: parsePluginIcon(`Sidebar item ${normalizedId}`, contribution.icon),
         surface: requireId(contribution.surface, "sidebar surface id"),
+        badge: normalizeSidebarBadge(contribution.badge),
       };
       // Shares the header's ids: the sidebar orders both kinds of item under one key.
       const ids = sidebarItemIds.header;
@@ -300,6 +451,17 @@ export function runPluginClientBundle(
       if (!legacy.title) throw new Error(`Sidebar item ${normalizedId} has no title`);
       ids.add(normalizedId);
       return register(collector.legacySidebarItems, legacy, () => ids.delete(normalizedId));
+    },
+    setSidebarBadge(itemId: string, badge: number | null) {
+      if (stopped) return;
+      const item = collector.legacySidebarItems.find((candidate) => candidate.id === itemId.trim());
+      if (!item) throw new Error(`Sidebar item is unavailable: ${itemId}`);
+      const next = normalizeSidebarBadge(badge);
+      if (item.badge === next) return;
+      // Mutated in place: `register` removes contributions by identity, so the array entry has to
+      // stay the same object. The registry republishes a fresh snapshot, which is what re-renders.
+      item.badge = next;
+      notifyChange();
     },
     addFilePanel(contribution) {
       const panelId = requireId(contribution.id, "file panel id");
@@ -497,6 +659,17 @@ export function runPluginClientBundle(
         timelineRendererIds.delete(rendererId),
       );
     },
+    addForgeClientProvider(contribution: PluginForgeClientProviderContribution) {
+      const normalized = normalizeForgeClientProvider(contribution);
+      const providerId = normalized.definition.id;
+      if (forgeProviderIds.has(providerId)) {
+        throw new Error(`Duplicate Forge provider: ${providerId}`);
+      }
+      forgeProviderIds.add(providerId);
+      return register(collector.forgeClientProviders, normalized, () =>
+        forgeProviderIds.delete(providerId),
+      );
+    },
     addComposerPill(contribution) {
       if (stopped) throw new Error("Plugin has stopped");
       return trackButton(runtime.addComposerPill(contribution));
@@ -592,5 +765,6 @@ export function runPluginClientBundle(
     themes: collector.themes,
     timelineTransformers: collector.timelineTransformers,
     timelineRenderers: collector.timelineRenderers,
+    forgeClientProviders: collector.forgeClientProviders,
   };
 }

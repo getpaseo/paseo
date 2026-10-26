@@ -36,6 +36,25 @@ interface SidebarHeaderRowProps {
    */
   trailing?: ReactNode;
   rowRef?: Ref<View>;
+  /** Trailing count. Zero, null and undefined render nothing. */
+  badge?: number | null;
+}
+
+function resolveSidebarTrailing(input: {
+  trailing?: ReactNode;
+  badge: number | null;
+  shortcutKeys: ShortcutKey[][] | null;
+  isHovered: boolean;
+}): ReactNode {
+  const { trailing, badge, shortcutKeys, isHovered } = input;
+  if (trailing !== undefined && trailing !== null) return trailing;
+  if (!badge && !(shortcutKeys && isHovered)) return null;
+  return (
+    <>
+      {badge ? <Text style={styles.badge}>{badge > 99 ? "99+" : badge}</Text> : null}
+      {shortcutKeys && isHovered ? <Shortcut chord={shortcutKeys} /> : null}
+    </>
+  );
 }
 
 export function SidebarHeaderRow({
@@ -50,6 +69,7 @@ export function SidebarHeaderRow({
   shortcutKeys = null,
   trailing,
   rowRef,
+  badge = null,
 }: SidebarHeaderRowProps) {
   const [isHovered, setIsHovered] = useState(false);
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
@@ -61,10 +81,7 @@ export function SidebarHeaderRow({
   const isHighlighted = isHovered || isActive;
   const iconSize = variant === "header" ? "md" : "sm";
 
-  let right = trailing ?? null;
-  if (right === null && shortcutKeys && isHovered) {
-    right = <Shortcut chord={shortcutKeys} />;
-  }
+  const right = resolveSidebarTrailing({ trailing, badge, shortcutKeys, isHovered });
 
   return (
     <View ref={rowRef} collapsable={false} style={getContainerStyle(variant)}>
@@ -181,6 +198,13 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[1],
     paddingRight: theme.spacing[2],
+  },
+  badge: {
+    marginLeft: "auto",
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
+    color: theme.colors.foregroundMuted,
+    fontVariant: ["tabular-nums"],
   },
 }));
 

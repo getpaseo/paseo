@@ -429,6 +429,23 @@ describe("routeKeyboardShortcut — toggle dialogs", () => {
   });
 });
 
+describe("routeKeyboardShortcut — plugin commands", () => {
+  it("routes a plugin command to its contribution id", () => {
+    expect(
+      routeKeyboardShortcut(
+        { action: "plugin.command", payload: { pluginCommandId: "todo:capture" } },
+        makeCtx(),
+      ),
+    ).toEqual<ShortcutAction>({ kind: "plugin-command", commandId: "todo:capture" });
+  });
+
+  it("returns none without a command id", () => {
+    expect(
+      routeKeyboardShortcut({ action: "plugin.command", payload: null }, makeCtx()),
+    ).toEqual<ShortcutAction>({ kind: "none" });
+  });
+});
+
 describe("routeKeyboardShortcut — unknown actions", () => {
   it("returns none for unknown action ids", () => {
     expect(

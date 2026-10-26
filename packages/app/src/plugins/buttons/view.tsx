@@ -2,7 +2,7 @@ import type {
   ResolvedPluginButtonBehavior as PluginButtonBehavior,
   ResolvedPluginButtonMenuEntry as PluginButtonMenuEntry,
 } from "./validation";
-import type { PluginButtonIcon, PluginHostProps } from "@getpaseo/plugin/client";
+import type { PluginButtonIcon, PluginNavigableHostProps } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import {
   useCallback,
@@ -38,6 +38,8 @@ import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import { createPluginClientStateSource } from "../client-state/source";
 import { pluginIconComponent } from "../icons";
+import { buildPluginHostNavigation } from "../host-navigation";
+import { usePluginLayout } from "../layout";
 import {
   PluginEnvironmentProvider,
   PluginPopoverContent,
@@ -48,16 +50,17 @@ import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
 import { buttonMatches, type RegisteredPluginButton } from "./model";
 import { pluginButtonStore } from "./store";
-import { resolvePluginPlatform } from "../platform";
 
 interface ButtonView {
   entry: RegisteredPluginButton;
-  props: PluginHostProps & RegisteredPluginButton["context"];
+  props: PluginNavigableHostProps & RegisteredPluginButton["context"];
   environment: PluginEnvironment;
   toast: ReturnType<typeof useToast>;
 }
 
 const ROOT_PATH: readonly string[] = [];
+/** Room kept between a sized popover and the window edges. */
+const POPOVER_WINDOW_MARGIN = 16;
 
 const pluginThemeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -75,6 +78,8 @@ function headerButtonStyle(compact: boolean, state: IconButtonChromeState, disab
   ];
 }
 
+// These providers live inside the surface content as well as around its trigger. Native sheets
+// teleport their children, so providers around MenuRoot alone cannot reach the plugin body.
 function ButtonEnvironment({ view, children }: { view: ButtonView; children: ReactNode }) {
   return (
     <PluginEnvironmentProvider environment={view.environment}>{children}</PluginEnvironmentProvider>
@@ -241,6 +246,17 @@ function buttonPages(
   });
 }
 
+/** A popover may drop the phone sheet's title and ask for an exact width on wide layouts. */
+function useSurfaceFrame(behavior: PluginButtonBehavior, title: string) {
+  const { width: windowWidth } = useWindowDimensions();
+  const popover = behavior.kind === "popover" ? behavior : null;
+  const sheetTitle = popover?.sheetTitle === false ? undefined : title;
+  if (!popover?.width) return { sheetTitle, minWidth: 280, maxWidth: 420 };
+  // Exact, but never wider than the window it opens in.
+  const width = Math.min(popover.width, windowWidth - POPOVER_WINDOW_MARGIN);
+  return { sheetTitle, minWidth: width, maxWidth: width };
+}
+
 function ButtonControl({ view }: { view: ButtonView }) {
   const { entry, props } = view;
   const { button } = entry;
@@ -322,6 +338,7 @@ function ButtonControl({ view }: { view: ButtonView }) {
       )),
     [view, entry.key, button.behavior],
   );
+  const frame = useSurfaceFrame(button.behavior, button.title);
   return (
     <MenuRoot compactMode="sheet" open={entry.open} onOpenChange={setOpen}>
       <Tooltip enabledOnMobile={false}>
@@ -332,10 +349,12 @@ function ButtonControl({ view }: { view: ButtonView }) {
       </Tooltip>
       {expanded ? (
         <PluginPopoverSurface
-          sheetTitle={button.title}
+          sheetTitle={frame.sheetTitle}
           side={composer ? "top" : "bottom"}
           align={composer ? "start" : "end"}
           offset={composer ? 12 : 4}
+          minWidth={frame.minWidth}
+          maxWidth={frame.maxWidth}
           pages={pages}
         >
           <ButtonSurfaceBody view={view} behavior={button.behavior} path={ROOT_PATH} />
@@ -375,14 +394,14 @@ function createButtonView({
   entry,
   client,
   toast,
-  compact,
+  layout,
   hostLabel,
   theme,
 }: {
   entry: RegisteredPluginButton;
   client: ReturnType<typeof useHostRuntimeClient>;
   toast: ReturnType<typeof useToast>;
-  compact: boolean;
+  layout: PluginNavigableHostProps["layout"];
   hostLabel: string;
   theme: PluginTheme;
 }): ButtonView | null {
@@ -399,7 +418,8 @@ function createButtonView({
       ...entry.context,
       theme,
       host: { id: entry.installation.serverId, label: hostLabel },
-      layout: { compact, platform: resolvePluginPlatform() },
+      navigation: buildPluginHostNavigation(entry.installation.serverId, entry.installation.id),
+      layout,
     },
   };
 }
@@ -417,9 +437,10 @@ function PluginButtonHost({
 }) {
   const client = useHostRuntimeClient(entry.installation.serverId);
   const toast = useToast();
+  const layout = usePluginLayout(compact);
   const view = useMemo(
-    () => createButtonView({ entry, client, toast, compact, hostLabel, theme }),
-    [entry, client, toast, compact, hostLabel, theme],
+    () => createButtonView({ entry, client, toast, layout, hostLabel, theme }),
+    [entry, client, toast, layout, hostLabel, theme],
   );
   const renderError = useCallback(
     (error: string) => <BrokenButton title={entry.button.title} error={error} compact={compact} />,
@@ -449,12 +470,13 @@ function useMenuButtonView(entry: RegisteredPluginButton, theme: PluginTheme): B
   const client = useHostRuntimeClient(entry.installation.serverId);
   const toast = useToast();
   const compact = useIsCompactFormFactor();
+  const layout = usePluginLayout(compact);
   const hosts = useHosts();
   const serverId = entry.installation.serverId;
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
   return useMemo(
-    () => createButtonView({ entry, client, toast, compact, hostLabel, theme }),
-    [entry, client, toast, compact, hostLabel, theme],
+    () => createButtonView({ entry, client, toast, layout, hostLabel, theme }),
+    [entry, client, toast, layout, hostLabel, theme],
   );
 }
 

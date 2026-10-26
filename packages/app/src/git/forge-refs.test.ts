@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { GITHUB_LINE_ANCHOR } from "@getpaseo/plugin";
 import { extractForgeRefs, parseForgeRef } from "./forge-refs";
+import { ClientForgeRegistry } from "./client-forge-registry";
 
 describe("parseForgeRef", () => {
   it.each([
@@ -56,6 +58,41 @@ describe("parseForgeRef", () => {
         "ssh://git@ssh.github.com/getpaseo/paseo.git",
       ),
     ).toEqual({ kind: "change_request", number: 994 });
+  });
+
+  it("uses a host-scoped plugin route grammar", () => {
+    const registry = new ClientForgeRegistry();
+    registry.replaceHost("host", [
+      {
+        pluginId: "acme-plugin",
+        contribution: {
+          definition: {
+            id: "acme",
+            displayName: "Acme",
+            changeRequestAbbrev: "MR",
+            changeRequestNoun: "merge request",
+            changeRequestNumberPrefix: "!",
+            issueNumberPrefix: "#",
+            signIn: null,
+            cloudHosts: ["forge.example.com"],
+          },
+          urlGrammar: {
+            treeInfix: "/tree/",
+            blobInfix: "/blob/",
+            lineAnchor: GITHUB_LINE_ANCHOR,
+            referencePaths: [{ kind: "change_request", infix: "/merge_requests/" }],
+          },
+        },
+      },
+    ]);
+
+    expect(
+      parseForgeRef(
+        "https://forge.example.com/acme/project/merge_requests/42",
+        "git@forge.example.com:acme/project.git",
+        registry.getHostSnapshot("host"),
+      ),
+    ).toEqual({ kind: "change_request", number: 42 });
   });
 
   it("ignores another host, repository, and malformed local id", () => {

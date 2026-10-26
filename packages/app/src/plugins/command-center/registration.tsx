@@ -1,7 +1,8 @@
 import { usePathname } from "expo-router";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useCommandCenterActions } from "@/command-center/provider";
 import { useToast } from "@/contexts/toast-context";
+import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useSessionStore } from "@/stores/session-store";
@@ -11,8 +12,12 @@ import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 import { createPluginClientStateSource } from "../client-state/source";
 import { hostIdFromPathname } from "../routes";
 import { useInstalledPlugins } from "../registry";
-import { buildPluginCommandCenterContributions } from "./contributions";
+import {
+  buildPluginCommandCenterContributions,
+  buildPluginCommandShortcuts,
+} from "./contributions";
 import { getFocusedAgentId } from "./context";
+import { setPluginCommandShortcuts } from "./shortcuts";
 import { createPluginNavigation } from "../navigation";
 
 export function PluginCommandCenterActions() {
@@ -48,6 +53,17 @@ export function PluginCommandCenterActions() {
     [serverId],
   );
   const toast = useToast();
+  const { overrides } = useKeyboardShortcutOverrides();
+  // Storage is unvalidated JSON: anything that is not a string and not an explicit null means the
+  // plugin's own combo still stands.
+  const resolveShortcutCombo = useMemo(
+    () => (bindingId: string, declared: string) => {
+      const override = overrides[bindingId];
+      if (override === null) return null;
+      return typeof override === "string" ? override : declared;
+    },
+    [overrides],
+  );
   const actions = useMemo(() => {
     if (!client || !serverId || !stateSource) return [];
     return buildPluginCommandCenterContributions({
@@ -59,18 +75,27 @@ export function PluginCommandCenterActions() {
       reportError(error) {
         toast.error(error instanceof Error ? error.message : String(error));
       },
+      resolveShortcutCombo,
     });
   }, [
     agentExists,
     client,
     focusedAgentId,
     plugins,
+    resolveShortcutCombo,
     serverId,
     stateSource,
     toast,
     workspaceExists,
     workspaceId,
   ]);
+
+  useEffect(() => {
+    setPluginCommandShortcuts(
+      buildPluginCommandShortcuts({ plugins, contributions: actions, resolveShortcutCombo }),
+    );
+    return () => setPluginCommandShortcuts([]);
+  }, [actions, plugins, resolveShortcutCombo]);
 
   useCommandCenterActions({
     sourceId: serverId ? `plugins:${serverId}` : "plugins",
