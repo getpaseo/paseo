@@ -4,6 +4,7 @@ import {
   rename,
   mkdir,
   mkdtemp,
+  open as openFile,
   readFile,
   readdir,
   rm,
@@ -1598,3 +1599,51 @@ async function applyReviewedUpdate(service: PluginService, pluginId: string) {
   expect(preview?.outcome).toBe("update");
   return service.applyUpdates([preview!.proposal!]);
 }
+
+it("keeps reload and enable responsive while compiling a real plugin", async () => {
+  const directory = await createPlugin("responsive-build", "export default () => {};");
+  // Syntax-dense input exercises TypeScript's AST walk, not just esbuild's subprocess.
+  await rm(path.join(directory, "index.server.ts"));
+  const entry = await openFile(path.join(directory, "index.client.ts"), "w");
+  try {
+    await entry.write("const values = [");
+    for (let offset = 0; offset < 350_000; offset += 10_000) {
+      await entry.write(
+        Array.from({ length: 10_000 }, (_, index) => offset + index).join(",") + ",",
+      );
+    }
+    await entry.write("]; export default () => values;");
+  } finally {
+    await entry.close();
+  }
+  const service = createService(directory, {
+    "responsive-build": { source: "directory", path: directory, enabled: false },
+  });
+  await service.start();
+  try {
+    for (const action of [
+      () => service.enablePlugin("responsive-build"),
+      () => service.reloadPlugin("responsive-build"),
+    ]) {
+      let previous = performance.now();
+      let longest = 0;
+      const sample = () => {
+        const now = performance.now();
+        longest = Math.max(longest, now - previous);
+        previous = now;
+      };
+      const timer = setInterval(sample, 1);
+      try {
+        await action();
+        sample();
+      } finally {
+        clearInterval(timer);
+      }
+      process.stderr.write(`plugin compile longest loop gap: ${longest.toFixed(2)} ms\n`);
+      expect(service.catalog()[0]?.clientBundle).toContain("349999");
+      expect(longest).toBeLessThan(20);
+    }
+  } finally {
+    await service.stopAllPlugins();
+  }
+});

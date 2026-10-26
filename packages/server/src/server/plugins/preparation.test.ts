@@ -1,6 +1,8 @@
 import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { Writable } from "node:stream";
+import pino from "pino";
 import { afterEach, describe, expect, it } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { runPluginBuild } from "./preparation.js";
@@ -115,6 +117,30 @@ describe("runPluginBuild", () => {
         logger,
       ),
     ).rejects.toThrow(/Plugin build command failed \(exit 2\)/);
+  });
+
+  it("forwards build progress and output from the worker to the caller's logger", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-build-"));
+    directories.push(directory);
+    const records: Array<{ msg: string; output?: string }> = [];
+    const logger = pino(
+      new Writable({
+        write(chunk, _encoding, callback) {
+          records.push(JSON.parse(chunk.toString()));
+          callback();
+        },
+      }),
+    );
+    await runPluginBuild(
+      directory,
+      [[process.execPath, "-e", 'console.log("prepared"); console.error("diagnostic");']],
+      logger,
+    );
+    expect(records).toMatchObject([
+      { msg: "Running plugin build command" },
+      { msg: "Plugin build stdout", output: "prepared\n" },
+      { msg: "Plugin build stderr", output: expect.stringContaining("diagnostic\n") },
+    ]);
   });
 
   it("handles empty or undefined build commands gracefully", async () => {

@@ -13,7 +13,6 @@ import type {
 } from "@getpaseo/plugin/server";
 import { validateBeforeRequest, validateBeforeResult } from "./lifecycle/index.js";
 import { fork } from "node:child_process";
-import { stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -28,10 +27,8 @@ import {
   type ProviderInput,
 } from "@getpaseo/plugin/server/provider";
 import type { PluginLogEntry } from "@getpaseo/protocol/messages";
-import { compilePlugin } from "./compiler.js";
-import { readPluginManifest } from "./manifest.js";
+import { compileDirectoryPlugin } from "./compiler.js";
 import type { PluginRequirements } from "@getpaseo/protocol/messages";
-import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
 import type {
   PluginProcessMessage,
   PluginProcessRequest,
@@ -43,8 +40,6 @@ import { PluginSessionSocket } from "./session-socket.js";
 import { InternalPluginChild } from "./internal-child.js";
 import { evaluateBundle } from "./bundle-evaluator.js";
 
-const CLIENT_ENTRY_FILENAMES = ["index.client.ts", "index.client.tsx"] as const;
-const SERVER_ENTRY_FILENAMES = ["index.server.ts", "index.server.tsx"] as const;
 const REQUEST_TIMEOUT_MS = 30_000;
 const TOOL_CALL_TIMEOUT_MS = 10 * 60_000;
 const MAX_LOG_ENTRIES = 500;
@@ -273,35 +268,6 @@ function send(child: PluginChild, message: PluginProcessRequest): Promise<void> 
   });
 }
 
-async function findEntry(directory: string, filenames: readonly string[]): Promise<string | null> {
-  for (const filename of filenames) {
-    const filePath = path.join(directory, filename);
-    const info = await stat(filePath).catch(() => null);
-    if (info?.isFile()) return filePath;
-  }
-  return null;
-}
-
-async function resolveEntryPaths(directory: string): Promise<{
-  client: string | null;
-  server: string | null;
-}> {
-  const [client, server] = await Promise.all([
-    findEntry(directory, CLIENT_ENTRY_FILENAMES),
-    findEntry(directory, SERVER_ENTRY_FILENAMES),
-  ]);
-  if (client || server) return { client, server };
-  const legacyEntry = await findEntry(directory, ["index.ts", "index.tsx"]);
-  if (legacyEntry) {
-    throw new Error(
-      "This plugin was made for an older version of Paseo and cannot run on Paseo v0.8. Ask its author to update it. Plugin authors can follow the migration guide: https://paseo.sh/docs/plugins/migration",
-    );
-  }
-  throw new Error(
-    `Plugin entry points are missing: expected ${CLIENT_ENTRY_FILENAMES.join(" or ")} and/or ${SERVER_ENTRY_FILENAMES.join(" or ")} in ${directory}`,
-  );
-}
-
 export class PluginRuntime {
   private readonly plugins = new Map<string, LoadedPlugin>();
   private readonly pendingEvents = new Set<Promise<void>>();
@@ -350,10 +316,16 @@ export class PluginRuntime {
   ): Promise<void> {
     if (this.plugins.has(pluginId)) throw new Error(`Plugin is already running: ${pluginId}`);
     this.appendLog(pluginId, "stdout", "[paseo] Loading plugin");
-    const loaded = await this.loadDirectoryPlugin(pluginId, configuredPath).catch((error) => {
-      this.appendLog(pluginId, "stderr", `[paseo] Plugin failed to load: ${describeError(error)}`);
-      throw error;
-    });
+    const loaded = await this.loadDirectoryPlugin(pluginId, configuredPath, canPublish).catch(
+      (error) => {
+        this.appendLog(
+          pluginId,
+          "stderr",
+          `[paseo] Plugin failed to load: ${describeError(error)}`,
+        );
+        throw error;
+      },
+    );
     if (!canPublish()) {
       await this.stopPlugin(loaded);
       throw new Error(`Plugin start cancelled: ${pluginId}`);
@@ -367,12 +339,8 @@ export class PluginRuntime {
     if (this.plugins.has(input.id)) throw new Error(`Plugin is already running: ${input.id}`);
     this.appendLog(input.id, "stdout", "[paseo] Loading plugin");
     const directory = path.resolve(input.directory);
-    const manifest = await readPluginManifest(directory);
-    if (manifest.id !== input.id) {
-      throw new Error(`Built-in plugin ${input.id} has manifest ID ${manifest.id}`);
-    }
-    assertPluginCompatibility({ ...manifest, version: this.daemonVersion, runtime: "daemon" });
-    const bundles = await compilePlugin(await resolveEntryPaths(directory));
+    const bundles = await compileDirectoryPlugin(directory, this.daemonVersion, input.id);
+    const { manifest } = bundles;
     if (!bundles.serverBundle) throw new Error(`Built-in plugin ${input.id} needs a server entry`);
     const loaded = await this.launchPlugin({
       pluginId: input.id,
@@ -388,11 +356,7 @@ export class PluginRuntime {
   }
 
   async validatePlugin(configuredPath: string): Promise<void> {
-    const directory = path.resolve(configuredPath);
-    const manifest = await readPluginManifest(directory);
-    assertPluginCompatibility({ ...manifest, version: this.daemonVersion, runtime: "daemon" });
-    const entryPaths = await resolveEntryPaths(directory);
-    await compilePlugin(entryPaths);
+    await compileDirectoryPlugin(path.resolve(configuredPath), this.daemonVersion);
   }
 
   async stopPluginById(pluginId: string): Promise<boolean> {
@@ -738,12 +702,12 @@ export class PluginRuntime {
   private async loadDirectoryPlugin(
     pluginId: string,
     configuredPath: string,
+    canPublish: () => boolean,
   ): Promise<LoadedPlugin> {
     const directory = path.resolve(configuredPath);
-    const manifest = await readPluginManifest(directory);
-    assertPluginCompatibility({ ...manifest, version: this.daemonVersion, runtime: "daemon" });
-    const entryPaths = await resolveEntryPaths(directory);
-    const bundles = await compilePlugin(entryPaths);
+    const bundles = await compileDirectoryPlugin(directory, this.daemonVersion);
+    const { manifest } = bundles;
+    if (!canPublish()) throw new Error(`Plugin start cancelled: ${pluginId}`);
     const serverBundle = bundles.serverBundle;
     if (!serverBundle) {
       return {
