@@ -1,12 +1,16 @@
 import { expect } from "@playwright/test";
 
-export async function runSettingsScrollRegression(page) {
-  const original = page.viewportSize() ?? { width: 1280, height: 800 };
+export async function runSettingsScrollRegression(page, resizeWindow) {
+  // Device-metrics emulation also pins later webview guests. Resize the real
+  // window so the following browser regression starts without an override.
+  const original = await resizeWindow({ width: 1000, height: 500 });
   const sidebar = () => page.locator('[data-testid="settings-sidebar-scroll-body"]:visible');
   const offset = () => sidebar().evaluate((node) => node.scrollTop);
   const observations = [];
   try {
-    await page.setViewportSize({ width: 1000, height: 500 });
+    await expect
+      .poll(() => page.evaluate(() => ({ width: innerWidth, height: innerHeight })))
+      .toEqual({ width: 1000, height: 500 });
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     await sidebar().hover();
     await page.mouse.wheel(0, 2000);
@@ -56,6 +60,9 @@ export async function runSettingsScrollRegression(page) {
     await page.locator('[data-testid="settings-back-to-workspace"]:visible').click();
     return observations;
   } finally {
-    await page.setViewportSize(original);
+    await resizeWindow(original);
+    await expect
+      .poll(() => page.evaluate(() => ({ width: innerWidth, height: innerHeight })))
+      .toEqual(original);
   }
 }
