@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import { z } from "zod";
 import {
+  MutableDaemonConfigSchema,
+  MutableDaemonConfigPatchSchema,
   UsageReportEntrySchema,
   AgentSnapshotPayloadSchema,
   AgentTimelineItemPayloadSchema,
@@ -524,4 +526,38 @@ test("released setup clients parse empty combined logs and retain command output
       error: null,
     }).detail.log,
   ).toBe("old daemon combined output");
+});
+
+test("speech config reads remain compatible with clients before features and future providers", () => {
+  const oldSchema = MutableDaemonConfigSchema.omit({ features: true, envOverrides: true });
+  const oldRead = oldSchema.parse({
+    providers: {},
+    relay: { enabled: false },
+    mcp: { enabled: true, injectIntoAgents: true },
+  });
+  const read = {
+    ...oldRead,
+    features: {
+      dictation: { enabled: true, stt: { provider: "local" } },
+      voiceMode: {
+        enabled: false,
+        stt: { provider: "future", model: "future-model", region: "eu" },
+        tts: { provider: "openai", hasApiKey: false },
+      },
+    },
+    envOverrides: { "features.voiceMode.stt.provider": "PASEO_VOICE_STT_PROVIDER" },
+  };
+  expect(oldSchema.parse(read)).toEqual(read);
+  expect(MutableDaemonConfigSchema.parse(oldRead)).toEqual(oldRead);
+  expect(MutableDaemonConfigSchema.parse(read).features?.voiceMode.stt).toEqual(
+    read.features.voiceMode.stt,
+  );
+  const oldPatchSchema = MutableDaemonConfigPatchSchema.omit({ features: true });
+  const oldPatch = oldPatchSchema.parse({ relay: { enabled: true } });
+  expect(MutableDaemonConfigPatchSchema.parse(oldPatch)).toEqual(oldPatch);
+  expect(
+    MutableDaemonConfigPatchSchema.parse({
+      features: { voiceMode: { stt: { provider: "future", region: "eu" } } },
+    }).features?.voiceMode?.stt,
+  ).toEqual({ provider: "future", region: "eu" });
 });

@@ -37,7 +37,7 @@ function resolveOpenAiCredentials(
   return {
     openaiSttApiKey: sttApiKey,
     openaiTtsApiKey: openaiConfig?.tts?.apiKey,
-    openaiDictationApiKey: sttApiKey,
+    openaiDictationApiKey: openaiConfig?.dictationStt?.apiKey,
   };
 }
 
@@ -104,12 +104,10 @@ function createOpenAiStt(params: {
   feature: OpenAiSttFeature;
   logger: Logger;
 }): SpeechToTextProvider {
-  const { apiKey: _sttApiKey, ...sttConfig } = params.openaiConfig?.stt ?? {};
-  const model = params.openaiConfig?.sttModels?.[params.feature];
-  return new OpenAISTT(
-    { apiKey: params.apiKey, ...sttConfig, ...(model ? { model } : {}) },
-    params.logger,
-  );
+  const site =
+    params.feature === "dictation" ? params.openaiConfig?.dictationStt : params.openaiConfig?.stt;
+  const { apiKey: _sttApiKey, ...sttConfig } = site ?? {};
+  return new OpenAISTT({ apiKey: params.apiKey, ...sttConfig }, params.logger);
 }
 
 function createOpenAiTts(

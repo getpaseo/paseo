@@ -40,12 +40,12 @@ import {
   resolveSelectedVoice,
   summarizeLocalModels,
   toSpeechProvider,
-  usesOpenAi,
   type SpeechModelKind,
   type SpeechProvider,
 } from "./voice-settings";
 
 type SavePatch = (patch: SpeechSettingsPatch) => void;
+const EMPTY_ENV_OVERRIDES: Record<string, string> = {};
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -61,7 +61,7 @@ export function HostVoicePage({ serverId }: { serverId: string }) {
 
   const save = useCallback<SavePatch>(
     (patch) => {
-      patchConfig({ speech: patch })
+      patchConfig({ features: patch })
         .then(refreshModels)
         .catch((error: unknown) => {
           NativeAlert.alert(t("settings.voice.saveError"), errorMessage(error));
@@ -76,7 +76,7 @@ export function HostVoicePage({ serverId }: { serverId: string }) {
   if (!supported) {
     return <Alert size="md" variant="warning" title={t("settings.voice.updateHost")} />;
   }
-  const speech = config?.speech;
+  const speech = config?.features;
   if (!speech) {
     return (
       <View style={styles.loading}>
@@ -85,11 +85,29 @@ export function HostVoicePage({ serverId }: { serverId: string }) {
     );
   }
 
+  const unknownProvider = [speech.dictation.stt, speech.voiceMode.stt, speech.voiceMode.tts].find(
+    (site) => site.provider !== "local" && site.provider !== "openai",
+  );
+  if (unknownProvider) {
+    return (
+      <Alert
+        size="md"
+        variant="warning"
+        title={`Update the app to configure speech provider: ${unknownProvider.provider}`}
+      />
+    );
+  }
+
   return (
     <View testID="voice-settings">
       <DictationSection speech={speech} localModels={localModels.models} save={save} />
       <VoiceModeSection speech={speech} localModels={localModels.models} save={save} />
-      <ProvidersSection speech={speech} localModels={localModels} save={save} />
+      <ProvidersSection
+        speech={speech}
+        envOverrides={config?.envOverrides ?? EMPTY_ENV_OVERRIDES}
+        localModels={localModels}
+        save={save}
+      />
     </View>
   );
 }
@@ -176,7 +194,12 @@ function VoiceModeSection({ speech, localModels, save }: FeatureSectionProps) {
     [save],
   );
   const voiceOptions = useMemo(
-    () => buildOpenAiVoiceOptions(resolveSelectedVoice(voiceMode.tts.voice)),
+    () =>
+      buildOpenAiVoiceOptions(
+        resolveSelectedVoice(
+          typeof voiceMode.tts.voice === "string" ? voiceMode.tts.voice : undefined,
+        ),
+      ),
     [voiceMode.tts.voice],
   );
 
@@ -234,7 +257,9 @@ function VoiceModeSection({ speech, localModels, save }: FeatureSectionProps) {
         {voiceMode.enabled && ttsProvider === "openai" ? (
           <SettingsSelect
             label={t("settings.voice.voice")}
-            value={resolveSelectedVoice(voiceMode.tts.voice)}
+            value={resolveSelectedVoice(
+              typeof voiceMode.tts.voice === "string" ? voiceMode.tts.voice : undefined,
+            )}
             options={voiceOptions}
             onValueChange={setTtsVoice}
           />
@@ -317,15 +342,36 @@ function ModelRow({
 
 function ProvidersSection({
   speech,
+  envOverrides,
   localModels,
   save,
 }: {
   speech: SpeechSettings;
+  envOverrides: Record<string, string>;
   localModels: LocalSpeechModels;
   save: SavePatch;
 }) {
   const { t } = useTranslation();
-  const missingKey = usesOpenAi(speech) && !speech.openai.apiKeyConfigured;
+  const saveDictation = useCallback(
+    (patch: ConnectionPatch) => save({ dictation: { stt: { ...patch } } }),
+    [save],
+  );
+  const saveListening = useCallback(
+    (patch: ConnectionPatch) => save({ voiceMode: { stt: { ...patch } } }),
+    [save],
+  );
+  const saveSpeaking = useCallback(
+    (patch: ConnectionPatch) => save({ voiceMode: { tts: { ...patch } } }),
+    [save],
+  );
+  const missingKey = [
+    { site: speech.dictation.stt, path: "features.dictation.stt" },
+    { site: speech.voiceMode.stt, path: "features.voiceMode.stt" },
+    { site: speech.voiceMode.tts, path: "features.voiceMode.tts" },
+  ].some(
+    ({ site, path }) =>
+      site.provider === "openai" && !site.hasApiKey && !envOverrides[`${path}.apiKey`],
+  );
   return (
     <SettingsSection
       title={t("settings.voice.providerSettings.title")}
@@ -340,7 +386,27 @@ function ProvidersSection({
       <SettingsCard>
         <LocalProviderRow kind="stt" localModels={localModels} />
         <LocalProviderRow kind="tts" localModels={localModels} />
-        <OpenAiProviderRow speech={speech} save={save} />
+        {speech.dictation.stt.provider === "openai" ? (
+          <OpenAiProviderRow
+            site={speech.dictation.stt}
+            label={t("settings.voice.dictation.title")}
+            save={saveDictation}
+          />
+        ) : null}
+        {speech.voiceMode.stt.provider === "openai" ? (
+          <OpenAiProviderRow
+            site={speech.voiceMode.stt}
+            label={t("settings.voice.voiceMode.sttProvider")}
+            save={saveListening}
+          />
+        ) : null}
+        {speech.voiceMode.tts.provider === "openai" ? (
+          <OpenAiProviderRow
+            site={speech.voiceMode.tts}
+            label={t("settings.voice.voiceMode.ttsProvider")}
+            save={saveSpeaking}
+          />
+        ) : null}
       </SettingsCard>
     </SettingsSection>
   );
@@ -407,15 +473,29 @@ function localSummaryLabel(
   }
 }
 
-function OpenAiProviderRow({ speech, save }: { speech: SpeechSettings; save: SavePatch }) {
+interface ConnectionPatch {
+  apiKey?: string | null;
+  baseUrl?: string | null;
+}
+
+function OpenAiProviderRow({
+  site,
+  label,
+  save,
+}: {
+  site: SpeechSettings["dictation"]["stt"] | SpeechSettings["voiceMode"]["tts"];
+  label: string;
+  save: (patch: ConnectionPatch) => void;
+}) {
   const { t } = useTranslation();
-  const { apiKeyConfigured, baseUrl } = speech.openai;
+  const apiKeyConfigured = site.hasApiKey === true;
+  const baseUrl = typeof site.baseUrl === "string" ? site.baseUrl : undefined;
   const keyInput = useRef<EditingTextInputHandle>(null);
   const [draftKey, setDraftKey] = useState("");
   const [draftBaseUrl, setDraftBaseUrl] = useState<string | null>(null);
 
   const saveKey = useCallback(() => {
-    save({ openai: { apiKey: draftKey } });
+    save({ apiKey: draftKey });
     keyInput.current?.replaceText("");
     setDraftKey("");
   }, [draftKey, save]);
@@ -426,13 +506,13 @@ function OpenAiProviderRow({ speech, save }: { speech: SpeechSettings; save: Sav
       confirmLabel: t("settings.voice.openai.removeKey"),
       destructive: true,
     }).then((confirmed) => {
-      if (confirmed) save({ openai: { apiKey: null } });
+      if (confirmed) save({ apiKey: null });
       return undefined;
     });
   }, [save, t]);
   const saveBaseUrl = useCallback(() => {
     if (draftBaseUrl === null) return;
-    save({ openai: { baseUrl: draftBaseUrl.trim() || null } });
+    save({ baseUrl: draftBaseUrl.trim() || null });
     setDraftBaseUrl(null);
   }, [draftBaseUrl, save]);
 
@@ -457,7 +537,7 @@ function OpenAiProviderRow({ speech, save }: { speech: SpeechSettings; save: Sav
 
   return (
     <SettingsCollapsibleRow
-      label={t("settings.voice.providerSettings.openai")}
+      label={`${t("settings.voice.providerSettings.openai")} · ${label}`}
       summary={
         apiKeyConfigured
           ? t("settings.voice.providerSettings.configured")

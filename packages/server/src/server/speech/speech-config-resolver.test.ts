@@ -63,11 +63,8 @@ describe("resolveSpeechConfig", () => {
         voiceMode: {
           enabled: true,
           turnDetection: { provider: "local" },
-          stt: { provider: "openai", model: "gpt-4o-transcribe" },
+          stt: { provider: "openai", apiKey: "persisted-key", model: "gpt-4o-transcribe" },
         },
-      },
-      providers: {
-        openai: { apiKey: "persisted-key" },
       },
     });
     const env = {
@@ -131,8 +128,8 @@ describe("resolveSpeechConfig", () => {
       voice: "pt",
     });
     expect(result.openai?.stt?.apiKey).toBe("persisted-key");
-    expect(result.openai?.tts?.apiKey).toBe("persisted-key");
-    expect(result.openai?.sttModels).toEqual({ voiceMode: "gpt-4o-transcribe" });
+    expect(result.openai?.tts?.apiKey).toBe("env-key");
+    expect(result.openai?.stt?.model).toBe("gpt-4o-transcribe");
   });
 
   test("resolves STT language from env, settings, and voice-to-dictation fallback", () => {
@@ -140,11 +137,13 @@ describe("resolveSpeechConfig", () => {
       features: {
         dictation: {
           stt: {
+            provider: "openai",
             language: "fr",
           },
         },
         voiceMode: {
           stt: {
+            provider: "openai",
             language: "de",
           },
         },

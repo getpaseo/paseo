@@ -69,12 +69,12 @@ const LocalSpeechResolutionSchema = z.object({
 function persistedLocalFeatureModel(
   provider: RequestedSpeechProviders[keyof RequestedSpeechProviders]["provider"],
   enabled: boolean | undefined,
-  model: string | undefined,
+  site: { provider: string; model?: string } | undefined,
 ): string | undefined {
   if (provider !== "local" || enabled === false) {
     return undefined;
   }
-  return model;
+  return site?.provider === "local" ? site.model : undefined;
 }
 
 function shouldIncludeLocalProviderConfig(params: {
@@ -123,14 +123,20 @@ function buildLocalSpeechLanguageResolutionInput(params: {
   return {
     dictationLanguage: firstNonEmptyString([
       env.PASEO_DICTATION_LANGUAGE,
-      persisted.features?.dictation?.stt?.language,
+      persisted.features?.dictation?.stt?.provider === "openai"
+        ? persisted.features.dictation.stt.language
+        : undefined,
       DEFAULT_STT_LANGUAGE,
     ]),
     voiceLanguage: firstNonEmptyString([
       env.PASEO_VOICE_LANGUAGE,
       env.PASEO_DICTATION_LANGUAGE,
-      persisted.features?.voiceMode?.stt?.language,
-      persisted.features?.dictation?.stt?.language,
+      persisted.features?.voiceMode?.stt?.provider === "openai"
+        ? persisted.features.voiceMode.stt.language
+        : undefined,
+      persisted.features?.dictation?.stt?.provider === "openai"
+        ? persisted.features.dictation.stt.language
+        : undefined,
       DEFAULT_STT_LANGUAGE,
     ]),
   };
@@ -144,6 +150,8 @@ function buildLocalSpeechResolutionInput(params: {
   includeProviderConfig: boolean;
 }): Record<string, unknown> {
   const { paseoHome, env, persisted, providers, includeProviderConfig } = params;
+  const tts = persisted.features?.voiceMode?.tts;
+  const localTts = tts?.provider === "local" ? tts : undefined;
   return {
     includeProviderConfig,
     modelsDir: firstDefinedValue<string>([
@@ -156,7 +164,7 @@ function buildLocalSpeechResolutionInput(params: {
       persistedLocalFeatureModel(
         providers.dictationStt.provider,
         providers.dictationStt.enabled,
-        persisted.features?.dictation?.stt?.model,
+        persisted.features?.dictation?.stt,
       ),
       DEFAULT_LOCAL_STT_MODEL,
     ]),
@@ -165,7 +173,7 @@ function buildLocalSpeechResolutionInput(params: {
       persistedLocalFeatureModel(
         providers.voiceStt.provider,
         providers.voiceStt.enabled,
-        persisted.features?.voiceMode?.stt?.model,
+        persisted.features?.voiceMode?.stt,
       ),
       DEFAULT_LOCAL_STT_MODEL,
     ]),
@@ -174,18 +182,18 @@ function buildLocalSpeechResolutionInput(params: {
       persistedLocalFeatureModel(
         providers.voiceTts.provider,
         providers.voiceTts.enabled,
-        persisted.features?.voiceMode?.tts?.model,
+        persisted.features?.voiceMode?.tts,
       ),
       DEFAULT_LOCAL_TTS_MODEL,
     ]),
     ...buildLocalSpeechLanguageResolutionInput({ env, persisted }),
     voiceLocalTtsSpeakerId: firstDefinedValue<string | number>([
       env.PASEO_VOICE_LOCAL_TTS_SPEAKER_ID,
-      persisted.features?.voiceMode?.tts?.speakerId,
+      localTts?.speakerId,
     ]),
     voiceLocalTtsSpeed: firstDefinedValue<string | number>([
       env.PASEO_VOICE_LOCAL_TTS_SPEED,
-      persisted.features?.voiceMode?.tts?.speed,
+      localTts?.speed,
     ]),
   };
 }

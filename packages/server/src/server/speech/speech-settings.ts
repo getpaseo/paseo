@@ -1,34 +1,24 @@
 import type { SpeechSettings, SpeechSettingsPatch } from "@getpaseo/protocol/speech/rpc-schemas";
 
-import type { PersistedConfig } from "../persisted-config.js";
 import {
-  DICTATION_ENABLED_BY_DEFAULT,
-  VOICE_MODE_ENABLED_BY_DEFAULT,
-  resolveSpeechConfig,
-} from "./speech-config-resolver.js";
+  PersistedConfigSchema,
+  SpeechSttConfigSchema,
+  SpeechTtsConfigSchema,
+  type PersistedConfig,
+} from "../persisted-config.js";
+import { resolveRequestedSpeechProviders, resolveSpeechConfig } from "./speech-config-resolver.js";
 import type { SpeechService } from "./speech-runtime.js";
 import { LocalSttModelIdSchema, LocalTtsModelIdSchema } from "./providers/local/models.js";
-import { SpeechProviderIdSchema, type SpeechProviderId } from "./speech-types.js";
 
-// The `speech` section of the mutable daemon config is a view over three persisted
-// blocks: features.dictation, features.voiceMode and providers.openai. This module owns
-// both directions of that mapping.
+interface SpeechRead {
+  features: SpeechSettings;
+  envOverrides: Record<string, string>;
+}
 
-type PersistedFeatures = NonNullable<PersistedConfig["features"]>;
-type PersistedDictation = NonNullable<PersistedFeatures["dictation"]>;
-type PersistedVoiceMode = NonNullable<PersistedFeatures["voiceMode"]>;
-type PersistedStt = NonNullable<PersistedDictation["stt"]>;
-type PersistedTts = NonNullable<PersistedVoiceMode["tts"]>;
-type PersistedOpenAi = NonNullable<NonNullable<PersistedConfig["providers"]>["openai"]>;
-type SttPatch = NonNullable<NonNullable<SpeechSettingsPatch["dictation"]>["stt"]>;
-type TtsPatch = NonNullable<NonNullable<SpeechSettingsPatch["voiceMode"]>["tts"]>;
-
-const DEFAULT_SPEECH_PROVIDER = "local";
-
-// The daemon config store derives the speech view through this owner (the OpenAI key is
-// write-only) and calls apply when the persisted speech blocks change.
+// Owns the per-site wire boundary: credential redaction, env provenance and patch
+// semantics. The store never assembles or merges provider objects itself.
 export interface SpeechSettingsOwner {
-  read(persisted: PersistedConfig): SpeechSettings;
+  read(persisted: PersistedConfig): SpeechRead;
   apply(persisted: PersistedConfig): void;
 }
 
@@ -47,165 +37,162 @@ export function createSpeechSettingsOwner(params: {
   };
 }
 
-export function readSpeechSettings(
-  persisted: PersistedConfig,
-  env: NodeJS.ProcessEnv,
-): SpeechSettings {
+export function readSpeechSettings(persisted: PersistedConfig, env: NodeJS.ProcessEnv): SpeechRead {
   const dictation = persisted.features?.dictation;
   const voiceMode = persisted.features?.voiceMode;
+  const providers = resolveRequestedSpeechProviders({ persisted, env });
+  const envOverrides: Record<string, string> = {};
+  const recordOverride = (path: string, names: string[], fallback?: unknown) => {
+    if (fallback !== undefined) return;
+    const name = names.find((candidate) => env[candidate]?.trim());
+    if (name) envOverrides[path] = name;
+  };
+  recordOverride("features.dictation.enabled", ["PASEO_DICTATION_ENABLED"]);
+  recordOverride("features.voiceMode.enabled", ["PASEO_VOICE_MODE_ENABLED"]);
+  recordOverride("features.voiceMode.turnDetection.provider", [
+    "PASEO_VOICE_TURN_DETECTION_PROVIDER",
+  ]);
+
+  function readSite(
+    site: Record<string, unknown> | undefined,
+    provider: string,
+    path: string,
+    kind: "stt" | "tts",
+    providerEnv: string,
+    localModelEnv: string,
+  ) {
+    recordOverride(`${path}.provider`, [providerEnv]);
+    const configured = site?.provider === provider ? site : undefined;
+    const { apiKey, ...fields } = configured ?? {};
+    const openaiModelEnv = kind === "stt" ? "STT_MODEL" : "TTS_MODEL";
+    recordOverride(`${path}.model`, [provider === "openai" ? openaiModelEnv : localModelEnv]);
+    if (provider === "openai") {
+      for (const [field, suffix] of [
+        ["apiKey", "API_KEY"],
+        ["baseUrl", "BASE_URL"],
+      ] as const) {
+        recordOverride(
+          `${path}.${field}`,
+          [`OPENAI_${kind.toUpperCase()}_${suffix}`, `OPENAI_${suffix}`],
+          configured?.[field],
+        );
+      }
+      if (kind === "stt") {
+        const languageVars =
+          path === "features.dictation.stt"
+            ? ["PASEO_DICTATION_LANGUAGE"]
+            : ["PASEO_VOICE_LANGUAGE", "PASEO_DICTATION_LANGUAGE"];
+        recordOverride(`${path}.language`, languageVars);
+        recordOverride(`${path}.confidenceThreshold`, ["STT_CONFIDENCE_THRESHOLD"]);
+      } else recordOverride(`${path}.voice`, ["TTS_VOICE"]);
+    } else if (kind === "tts") {
+      recordOverride(`${path}.speakerId`, ["PASEO_VOICE_LOCAL_TTS_SPEAKER_ID"]);
+      recordOverride(`${path}.speed`, ["PASEO_VOICE_LOCAL_TTS_SPEED"]);
+    }
+    return {
+      ...fields,
+      provider,
+      ...(provider === "openai"
+        ? { hasApiKey: typeof apiKey === "string" && apiKey.trim().length > 0 }
+        : {}),
+    };
+  }
+
   return {
-    dictation: {
-      enabled: dictation?.enabled ?? DICTATION_ENABLED_BY_DEFAULT,
-      stt: readStt(dictation?.stt),
+    features: {
+      dictation: {
+        enabled: providers.dictationStt.enabled !== false,
+        stt: readSite(
+          dictation?.stt,
+          providers.dictationStt.provider,
+          "features.dictation.stt",
+          "stt",
+          "PASEO_DICTATION_STT_PROVIDER",
+          "PASEO_DICTATION_LOCAL_STT_MODEL",
+        ),
+      },
+      voiceMode: {
+        enabled: providers.voiceStt.enabled !== false,
+        ...(voiceMode?.llm ? { llm: voiceMode.llm } : {}),
+        ...(voiceMode?.turnDetection
+          ? {
+              turnDetection: {
+                ...voiceMode.turnDetection,
+                provider: providers.voiceTurnDetection.provider,
+              },
+            }
+          : {}),
+        stt: readSite(
+          voiceMode?.stt,
+          providers.voiceStt.provider,
+          "features.voiceMode.stt",
+          "stt",
+          "PASEO_VOICE_STT_PROVIDER",
+          "PASEO_VOICE_LOCAL_STT_MODEL",
+        ),
+        tts: readSite(
+          voiceMode?.tts,
+          providers.voiceTts.provider,
+          "features.voiceMode.tts",
+          "tts",
+          "PASEO_VOICE_TTS_PROVIDER",
+          "PASEO_VOICE_LOCAL_TTS_MODEL",
+        ),
+      },
     },
-    voiceMode: {
-      enabled: voiceMode?.enabled ?? VOICE_MODE_ENABLED_BY_DEFAULT,
-      stt: readStt(voiceMode?.stt),
-      tts: readTts(voiceMode?.tts),
-    },
-    openai: readOpenAi(persisted.providers?.openai, env),
+    envOverrides,
   };
 }
 
-function readTts(tts: PersistedTts | undefined): SpeechSettings["voiceMode"]["tts"] {
-  return {
-    provider: tts?.provider ?? DEFAULT_SPEECH_PROVIDER,
-    ...(tts?.model ? { model: tts.model } : {}),
-    ...(tts?.voice ? { voice: tts.voice } : {}),
-  };
+function mergeFields(current: Record<string, unknown> | undefined, patch: Record<string, unknown>) {
+  const next = { ...current };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) continue;
+    if (value === null || (typeof value === "string" && !value.trim())) delete next[key];
+    else next[key] = typeof value === "string" ? value.trim() : value;
+  }
+  return next;
 }
 
-function readOpenAi(
-  openai: PersistedOpenAi | undefined,
-  env: NodeJS.ProcessEnv,
-): SpeechSettings["openai"] {
-  const keys = [
-    openai?.apiKey,
-    openai?.stt?.apiKey,
-    openai?.tts?.apiKey,
-    env.OPENAI_API_KEY,
-    env.OPENAI_STT_API_KEY,
-    env.OPENAI_TTS_API_KEY,
-  ];
-  return {
-    apiKeyConfigured: keys.some((key) => Boolean(key?.trim())),
-    ...(openai?.baseUrl ? { baseUrl: openai.baseUrl } : {}),
-  };
-}
-
-function readStt(stt: PersistedStt | undefined): SpeechSettings["dictation"]["stt"] {
-  return {
-    provider: stt?.provider ?? DEFAULT_SPEECH_PROVIDER,
-    ...(stt?.model ? { model: stt.model } : {}),
-    ...(stt?.language ? { language: stt.language } : {}),
-  };
+function mergeSite(
+  current: Record<string, unknown> | undefined,
+  patch: Record<string, unknown>,
+  kind: "stt" | "tts",
+) {
+  const next = mergeFields(patch.provider === undefined ? current : undefined, patch);
+  next.provider ??= "local";
+  const site = (kind === "stt" ? SpeechSttConfigSchema : SpeechTtsConfigSchema).parse(next);
+  if (site.provider === "local" && site.model !== undefined) {
+    const schema = kind === "stt" ? LocalSttModelIdSchema : LocalTtsModelIdSchema;
+    if (!schema.safeParse(site.model).success) {
+      throw new Error(
+        `Unknown local ${kind === "stt" ? "speech-to-text" : "voice"} model: ${site.model}`,
+      );
+    }
+  }
+  return site;
 }
 
 export function mergeSpeechSettingsPatch(
   persisted: PersistedConfig,
   patch: SpeechSettingsPatch,
 ): PersistedConfig {
-  const features: PersistedFeatures = { ...persisted.features };
+  const features = { ...persisted.features };
   if (patch.dictation) {
-    const current = features.dictation;
-    const stt = patch.dictation.stt ? mergeStt(current?.stt, patch.dictation.stt) : current?.stt;
-    features.dictation = withoutUndefined({
-      ...current,
-      enabled: patch.dictation.enabled ?? current?.enabled,
-      stt,
-    });
+    const { stt, ...rest } = patch.dictation;
+    const next = mergeFields(features.dictation, rest);
+    if (stt) next.stt = mergeSite(features.dictation?.stt, stt, "stt");
+    features.dictation = PersistedConfigSchema.shape.features.unwrap().shape.dictation.parse(next);
   }
   if (patch.voiceMode) {
-    const current = features.voiceMode;
-    features.voiceMode = withoutUndefined({
-      ...current,
-      enabled: patch.voiceMode.enabled ?? current?.enabled,
-      stt: patch.voiceMode.stt ? mergeStt(current?.stt, patch.voiceMode.stt) : current?.stt,
-      tts: patch.voiceMode.tts ? mergeTts(current?.tts, patch.voiceMode.tts) : current?.tts,
-    });
+    const { stt, tts, llm, turnDetection, ...rest } = patch.voiceMode;
+    const next = mergeFields(features.voiceMode, rest);
+    if (stt) next.stt = mergeSite(features.voiceMode?.stt, stt, "stt");
+    if (tts) next.tts = mergeSite(features.voiceMode?.tts, tts, "tts");
+    if (llm) next.llm = mergeFields(features.voiceMode?.llm, llm);
+    if (turnDetection)
+      next.turnDetection = mergeFields(features.voiceMode?.turnDetection, turnDetection);
+    features.voiceMode = PersistedConfigSchema.shape.features.unwrap().shape.voiceMode.parse(next);
   }
-
-  const providers = { ...persisted.providers };
-  if (patch.openai) {
-    providers.openai = mergeOpenAi(providers.openai, patch.openai);
-  }
-
-  return { ...persisted, features, providers };
-}
-
-function mergeStt(current: PersistedStt | undefined, patch: SttPatch): PersistedStt {
-  const provider = parseProvider(patch.provider) ?? current?.provider;
-  const providerChanged = patch.provider !== undefined && patch.provider !== current?.provider;
-  const model = resolvePatchedValue(providerChanged ? undefined : current?.model, patch.model);
-  assertLocalModelKind(provider, model, "stt");
-  return withoutUndefined({
-    ...current,
-    provider,
-    model,
-    language: resolvePatchedValue(current?.language, patch.language),
-  });
-}
-
-function mergeTts(current: PersistedTts | undefined, patch: TtsPatch): PersistedTts {
-  const provider = parseProvider(patch.provider) ?? current?.provider;
-  const providerChanged = patch.provider !== undefined && patch.provider !== current?.provider;
-  const model = resolvePatchedValue(providerChanged ? undefined : current?.model, patch.model);
-  assertLocalModelKind(provider, model, "tts");
-  return withoutUndefined({
-    ...current,
-    provider,
-    model,
-    voice: resolvePatchedValue(providerChanged ? undefined : current?.voice, patch.voice),
-  });
-}
-
-function mergeOpenAi(
-  current: PersistedOpenAi | undefined,
-  patch: NonNullable<SpeechSettingsPatch["openai"]>,
-): PersistedOpenAi | undefined {
-  const next = withoutUndefined({
-    ...current,
-    apiKey: resolvePatchedValue(current?.apiKey, trimToNull(patch.apiKey)),
-    baseUrl: resolvePatchedValue(current?.baseUrl, trimToNull(patch.baseUrl)),
-  });
-  return Object.keys(next).length > 0 ? next : undefined;
-}
-
-// A local model id that is not in the catalog would stop the daemon from resolving its
-// speech config at the next start, so reject it before it is written.
-function assertLocalModelKind(
-  provider: string | undefined,
-  model: string | undefined,
-  kind: "stt" | "tts",
-): void {
-  if ((provider ?? DEFAULT_SPEECH_PROVIDER) !== "local" || model === undefined) {
-    return;
-  }
-  const schema = kind === "stt" ? LocalSttModelIdSchema : LocalTtsModelIdSchema;
-  if (!schema.safeParse(model).success) {
-    throw new Error(`Unknown local ${kind === "stt" ? "speech-to-text" : "voice"} model: ${model}`);
-  }
-}
-
-function parseProvider(provider: string | undefined): SpeechProviderId | undefined {
-  return provider === undefined ? undefined : SpeechProviderIdSchema.parse(provider);
-}
-
-// undefined keeps the current value; null clears it.
-function resolvePatchedValue(
-  current: string | undefined,
-  patch: string | null | undefined,
-): string | undefined {
-  if (patch === undefined) return current;
-  return patch ?? undefined;
-}
-
-function trimToNull(value: string | null | undefined): string | null | undefined {
-  if (typeof value !== "string") return value;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function withoutUndefined<T extends object>(value: T): T {
-  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
+  return { ...persisted, features };
 }

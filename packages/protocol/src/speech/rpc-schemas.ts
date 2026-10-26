@@ -1,91 +1,120 @@
 import { z } from "zod";
 
-// ---------------------------------------------------------------------------
-// Speech settings: the `speech` section of the mutable daemon config.
-// ---------------------------------------------------------------------------
+// Per-site settings mirror config.json. Unknown providers remain parseable by older
+// clients; the feature UI decides whether it knows how to edit them.
+const ModelFields = { model: z.string().optional() };
+const OpenAiReadFields = {
+  ...ModelFields,
+  hasApiKey: z.boolean(),
+  baseUrl: z.string().optional(),
+};
+const SttReadFields = {
+  language: z.string().optional(),
+  confidenceThreshold: z.number().optional(),
+};
+const LocalTtsFields = { speakerId: z.number().int().optional(), speed: z.number().optional() };
 
-// Provider ids stay plain strings so an old client can parse a daemon that adds one.
-const SpeechSttSettingsSchema = z
-  .object({
-    provider: z.string(),
-    // Omitted means the provider's default model.
-    model: z.string().optional(),
-    language: z.string().optional(),
-  })
-  .passthrough();
-
-const SpeechTtsSettingsSchema = z
-  .object({
-    provider: z.string(),
-    model: z.string().optional(),
-    voice: z.string().optional(),
-  })
-  .passthrough();
+export const SpeechSttSettingsSchema = z.union([
+  z.object({ provider: z.literal("local"), ...ModelFields }).passthrough(),
+  z.object({ provider: z.literal("openai"), ...OpenAiReadFields, ...SttReadFields }).passthrough(),
+  z.object({ provider: z.string(), ...ModelFields }).passthrough(),
+]);
+export const SpeechTtsSettingsSchema = z.union([
+  z.object({ provider: z.literal("local"), ...ModelFields, ...LocalTtsFields }).passthrough(),
+  z
+    .object({ provider: z.literal("openai"), ...OpenAiReadFields, voice: z.string().optional() })
+    .passthrough(),
+  z.object({ provider: z.string(), ...ModelFields }).passthrough(),
+]);
 
 export const SpeechSettingsSchema = z
   .object({
-    dictation: z
-      .object({
-        enabled: z.boolean(),
-        stt: SpeechSttSettingsSchema,
-      })
-      .passthrough(),
+    dictation: z.object({ enabled: z.boolean(), stt: SpeechSttSettingsSchema }).passthrough(),
     voiceMode: z
       .object({
         enabled: z.boolean(),
         stt: SpeechSttSettingsSchema,
         tts: SpeechTtsSettingsSchema,
+        llm: z
+          .object({ provider: z.string().optional(), model: z.string().optional() })
+          .passthrough()
+          .optional(),
+        turnDetection: z.object({ provider: z.string().optional() }).passthrough().optional(),
       })
       .passthrough(),
-    openai: z
-      .object({
-        // The key itself is write-only; readers only learn whether one is set.
-        apiKeyConfigured: z.boolean(),
-        baseUrl: z.string().optional(),
-      })
-      .passthrough(),
   })
   .passthrough();
 
-// null clears a field back to its default. Changing `provider` without `model` clears
-// the model, because model ids belong to one provider.
-const SpeechSttSettingsPatchSchema = z
-  .object({
-    provider: z.string().optional(),
-    model: z.string().nullable().optional(),
-    language: z.string().nullable().optional(),
-  })
-  .passthrough();
-
-const SpeechTtsSettingsPatchSchema = z
-  .object({
-    provider: z.string().optional(),
-    model: z.string().nullable().optional(),
-    voice: z.string().nullable().optional(),
-  })
-  .passthrough();
-
+const ModelPatchFields = { model: z.string().nullable().optional() };
+const OpenAiPatchFields = {
+  ...ModelPatchFields,
+  apiKey: z.string().nullable().optional(),
+  baseUrl: z.string().nullable().optional(),
+};
+const SttPatchFields = {
+  language: z.string().nullable().optional(),
+  confidenceThreshold: z.number().nullable().optional(),
+};
+const LocalTtsPatchFields = {
+  speakerId: z.number().int().nullable().optional(),
+  speed: z.number().nullable().optional(),
+};
+const SpeechSttSettingsPatchSchema = z.union([
+  z.object({ provider: z.literal("local"), ...ModelPatchFields }).passthrough(),
+  z
+    .object({ provider: z.literal("openai"), ...OpenAiPatchFields, ...SttPatchFields })
+    .passthrough(),
+  z.object({ provider: z.string().nullable() }).passthrough(),
+  z
+    .object({ provider: z.undefined().optional(), ...OpenAiPatchFields, ...SttPatchFields })
+    .passthrough(),
+]);
+const SpeechTtsSettingsPatchSchema = z.union([
+  z
+    .object({ provider: z.literal("local"), ...ModelPatchFields, ...LocalTtsPatchFields })
+    .passthrough(),
+  z
+    .object({
+      provider: z.literal("openai"),
+      ...OpenAiPatchFields,
+      voice: z.string().nullable().optional(),
+    })
+    .passthrough(),
+  z.object({ provider: z.string().nullable() }).passthrough(),
+  z
+    .object({
+      provider: z.undefined().optional(),
+      ...OpenAiPatchFields,
+      ...LocalTtsPatchFields,
+      voice: z.string().nullable().optional(),
+    })
+    .passthrough(),
+]);
 export const SpeechSettingsPatchSchema = z
   .object({
     dictation: z
       .object({
-        enabled: z.boolean().optional(),
+        enabled: z.boolean().nullable().optional(),
         stt: SpeechSttSettingsPatchSchema.optional(),
       })
       .passthrough()
       .optional(),
     voiceMode: z
       .object({
-        enabled: z.boolean().optional(),
+        enabled: z.boolean().nullable().optional(),
         stt: SpeechSttSettingsPatchSchema.optional(),
         tts: SpeechTtsSettingsPatchSchema.optional(),
-      })
-      .passthrough()
-      .optional(),
-    openai: z
-      .object({
-        apiKey: z.string().nullable().optional(),
-        baseUrl: z.string().nullable().optional(),
+        llm: z
+          .object({
+            provider: z.string().nullable().optional(),
+            model: z.string().nullable().optional(),
+          })
+          .passthrough()
+          .optional(),
+        turnDetection: z
+          .object({ provider: z.string().nullable().optional() })
+          .passthrough()
+          .optional(),
       })
       .passthrough()
       .optional(),

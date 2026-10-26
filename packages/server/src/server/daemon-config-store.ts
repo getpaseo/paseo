@@ -9,7 +9,7 @@ import {
   MutableDaemonConfigPatchSchema,
 } from "@getpaseo/protocol/messages";
 import type { AgentSkillSelection } from "@getpaseo/protocol/messages";
-import type { SpeechSettings, SpeechSettingsPatch } from "@getpaseo/protocol/speech/rpc-schemas";
+import type { SpeechSettingsPatch } from "@getpaseo/protocol/speech/rpc-schemas";
 import { mergeSpeechSettingsPatch, type SpeechSettingsOwner } from "./speech/speech-settings.js";
 
 export type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
@@ -33,10 +33,10 @@ interface SupportedMutableConfigPatch {
   skills?: MutableDaemonConfig["skills"];
   pluginsEnabled?: boolean;
   plugins?: MutableDaemonConfig["plugins"];
-  speech?: SpeechSettingsPatch;
+  features?: SpeechSettingsPatch;
 }
 
-const SPEECH_PERSISTED_PATHS = ["features.dictation", "features.voiceMode", "providers.openai"];
+const SPEECH_PERSISTED_PATHS = ["features.dictation", "features.voiceMode"];
 
 interface LoggerLike {
   child(bindings: Record<string, unknown>): LoggerLike;
@@ -295,7 +295,7 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
     ...(patch.agentProfiles !== undefined ? { agentProfiles: patch.agentProfiles } : {}),
     ...(patch.pluginsEnabled !== undefined ? { pluginsEnabled: patch.pluginsEnabled } : {}),
     ...(patch.plugins !== undefined ? { plugins: patch.plugins } : {}),
-    ...(patch.speech !== undefined ? { speech: patch.speech } : {}),
+    ...(patch.features !== undefined ? { features: patch.features } : {}),
   };
 }
 
@@ -386,10 +386,10 @@ export class DaemonConfigStore {
       );
     }
     const { removeProviders = [], ...patch } = parsedPatch;
-    const { speech: speechPatch, ...configPatch } = patch;
+    const { features: speechPatch, ...configPatch } = patch;
     const removedProviders = Array.from(new Set(removeProviders));
     const merged = deepMerge(this.current, configPatch);
-    if (speechPatch !== undefined) merged.speech = this.readPatchedSpeech(speechPatch);
+    if (speechPatch !== undefined) Object.assign(merged, this.readPatchedSpeech(speechPatch));
     if (parsedPatch.skills?.selection !== undefined) {
       merged.skills = { selection: parsedPatch.skills.selection };
     }
@@ -427,11 +427,15 @@ export class DaemonConfigStore {
     return this.current;
   }
 
-  private readSpeech(persisted: PersistedConfig): Pick<MutableDaemonConfig, "speech"> {
-    return this.speechOwner ? { speech: this.speechOwner.read(persisted) } : {};
+  private readSpeech(
+    persisted: PersistedConfig,
+  ): Pick<MutableDaemonConfig, "features" | "envOverrides"> {
+    return this.speechOwner ? this.speechOwner.read(persisted) : {};
   }
 
-  private readPatchedSpeech(speechPatch: SpeechSettingsPatch): SpeechSettings {
+  private readPatchedSpeech(
+    speechPatch: SpeechSettingsPatch,
+  ): Pick<MutableDaemonConfig, "features" | "envOverrides"> {
     if (!this.speechOwner) {
       throw new Error("Speech settings are unavailable for this daemon instance");
     }
@@ -639,7 +643,9 @@ function mergeMutablePatchIntoPersistedConfig(params: {
   const { persisted, patch, removeProviders, persistRelayEnabled } = params;
   const daemon = mergeMutableDaemonPatch(persisted.daemon, patch, persistRelayEnabled);
   const agents = mergeMutableAgentPatch(persisted.agents, patch, removeProviders);
-  const withSpeech = patch.speech ? mergeSpeechSettingsPatch(persisted, patch.speech) : persisted;
+  const withSpeech = patch.features
+    ? mergeSpeechSettingsPatch(persisted, patch.features)
+    : persisted;
   return {
     ...withSpeech,
     ...(patch.pluginsEnabled !== undefined ? { pluginsEnabled: patch.pluginsEnabled } : {}),

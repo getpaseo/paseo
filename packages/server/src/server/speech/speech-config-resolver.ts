@@ -126,7 +126,7 @@ function buildRequestedFeatureProvider(
   };
 }
 
-function resolveRequestedSpeechProviders(params: {
+export function resolveRequestedSpeechProviders(params: {
   env: NodeJS.ProcessEnv;
   persisted: PersistedConfig;
 }): RequestedSpeechProviders {

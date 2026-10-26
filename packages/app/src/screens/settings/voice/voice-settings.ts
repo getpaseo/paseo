@@ -1,4 +1,4 @@
-import type { LocalSpeechModel, SpeechSettings } from "@getpaseo/protocol/speech/rpc-schemas";
+import type { LocalSpeechModel } from "@getpaseo/protocol/speech/rpc-schemas";
 
 // What the Voice page needs to know about speech providers and models, kept free of React
 // so the option lists and model states are testable on their own.
@@ -76,15 +76,6 @@ export function buildOpenAiVoiceOptions(selected: string): SpeechModelOption[] {
 function withSelected(options: SpeechModelOption[], selected: string): SpeechModelOption[] {
   if (!selected || options.some((option) => option.value === selected)) return options;
   return [...options, { value: selected, label: selected }];
-}
-
-export function usesOpenAi(settings: SpeechSettings): boolean {
-  return (
-    (settings.dictation.enabled && settings.dictation.stt.provider === "openai") ||
-    (settings.voiceMode.enabled &&
-      (settings.voiceMode.stt.provider === "openai" ||
-        settings.voiceMode.tts.provider === "openai"))
-  );
 }
 
 export type LocalModelState =

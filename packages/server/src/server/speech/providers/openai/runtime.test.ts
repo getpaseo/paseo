@@ -21,6 +21,7 @@ describe("initializeOpenAiSpeechServices", () => {
       },
       openaiConfig: {
         stt: { apiKey: "sk-test" },
+        dictationStt: { apiKey: "sk-test" },
         tts: { apiKey: "sk-test" },
       },
       existing: {
@@ -43,8 +44,12 @@ async function startTranscriptionServer(): Promise<{
   server: Server;
   baseUrl: string;
   models: string[];
+  keys: (string | undefined)[];
+  paths: (string | undefined)[];
 }> {
   const models: string[] = [];
+  const keys: (string | undefined)[] = [];
+  const paths: (string | undefined)[] = [];
   const server = createServer((request, response) => {
     let body = "";
     request.on("data", (chunk: Buffer) => {
@@ -53,13 +58,15 @@ async function startTranscriptionServer(): Promise<{
     request.on("end", () => {
       const model = /name="model"\r\n\r\n([^\r]*)/.exec(body)?.[1];
       models.push(model ?? "<none>");
+      keys.push(request.headers.authorization);
+      paths.push(request.url);
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ text: "hello" }));
     });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
-  return { server, baseUrl: `http://127.0.0.1:${port}/v1`, models };
+  return { server, baseUrl: `http://127.0.0.1:${port}/v1`, models, keys, paths };
 }
 
 async function transcribeOnce(stt: SpeechToTextProvider | null): Promise<void> {
@@ -93,10 +100,24 @@ describe("OpenAI speech-to-text models", () => {
     server = endpoint.server;
     const persisted = PersistedConfigSchema.parse({
       features: {
-        dictation: { stt: { provider: "openai", model: "gpt-4o-mini-transcribe" } },
-        voiceMode: { enabled: true, stt: { provider: "openai", model: "whisper-1" } },
+        dictation: {
+          stt: {
+            provider: "openai",
+            apiKey: "dictation-key",
+            baseUrl: `${endpoint.baseUrl}/dictation`,
+            model: "gpt-4o-mini-transcribe",
+          },
+        },
+        voiceMode: {
+          enabled: true,
+          stt: {
+            provider: "openai",
+            apiKey: "listening-key",
+            baseUrl: `${endpoint.baseUrl}/listening`,
+            model: "whisper-1",
+          },
+        },
       },
-      providers: { openai: { apiKey: "sk-test", baseUrl: endpoint.baseUrl } },
     });
     const providers = {
       dictationStt: { provider: "openai", explicit: true },
@@ -120,5 +141,10 @@ describe("OpenAI speech-to-text models", () => {
     await transcribeOnce(services.sttService);
 
     expect(endpoint.models).toEqual(["gpt-4o-mini-transcribe", "whisper-1"]);
+    expect(endpoint.keys).toEqual(["Bearer dictation-key", "Bearer listening-key"]);
+    expect(endpoint.paths).toEqual([
+      "/v1/dictation/audio/transcriptions",
+      "/v1/listening/audio/transcriptions",
+    ]);
   });
 });

@@ -40,11 +40,11 @@ Missing models for enabled features are downloaded at daemon startup into `$PASE
   "version": 1,
   "features": {
     "dictation": {
-      "stt": { "provider": "local", "model": "parakeet-tdt-0.6b-v2-int8", "language": "en" }
+      "stt": { "provider": "local", "model": "parakeet-tdt-0.6b-v2-int8" }
     },
     "voiceMode": {
       "llm": { "provider": "claude", "model": "haiku" },
-      "stt": { "provider": "local", "model": "parakeet-tdt-0.6b-v2-int8", "language": "en" },
+      "stt": { "provider": "local", "model": "parakeet-tdt-0.6b-v2-int8" },
       "tts": { "provider": "local", "model": "kokoro-en-v0_19", "speakerId": 0 }
     }
   },
@@ -73,34 +73,49 @@ The `language` field applies only to the OpenAI STT provider: set `features.dict
 
 ## OpenAI Voice Option
 
-You can switch dictation, voice STT, and voice TTS to OpenAI by setting provider fields to `openai` and providing OpenAI credentials.
+Set `provider` to `openai` and enter credentials at each use site that needs them.
+Dictation, listening and speaking each own their key, base URL and model:
 
 ```json
 {
   "version": 1,
   "features": {
-    "dictation": { "stt": { "provider": "openai" } },
+    "dictation": {
+      "stt": { "provider": "openai", "apiKey": "sk-...", "model": "gpt-4o-mini-transcribe" }
+    },
     "voiceMode": {
-      "stt": { "provider": "openai" },
-      "tts": { "provider": "openai" }
-    }
-  },
-  "providers": {
-    "openai": {
+      "enabled": true,
       "stt": {
-        "apiKey": "...",
-        "baseUrl": "https://api.openai.com/v1"
+        "provider": "openai",
+        "apiKey": "sk-...",
+        "baseUrl": "https://api.openai.com/v1",
+        "model": "gpt-4o-transcribe",
+        "language": "en"
       },
-      "tts": {
-        "apiKey": "...",
-        "baseUrl": "https://api.openai.com/v1"
-      }
+      "tts": { "provider": "openai", "apiKey": "sk-...", "model": "tts-1", "voice": "alloy" }
     }
   }
 }
 ```
 
-`providers.openai.stt` covers dictation and voice mode speech-to-text, and `providers.openai.tts` covers voice mode text-to-speech. Because they resolve independently, you can point STT and TTS at different endpoints. Each falls back to `providers.openai.apiKey`/`baseUrl`, then `OPENAI_API_KEY`/`OPENAI_BASE_URL`, when unset. These settings configure only Paseo OpenAI speech traffic, without changing Codex or other OpenAI-backed tools.
+| Provider | Speech-to-text fields                                           | Text-to-speech fields                 |
+| -------- | --------------------------------------------------------------- | ------------------------------------- |
+| `local`  | `model`                                                         | `model`, `speakerId`, `speed`         |
+| `openai` | `apiKey`, `baseUrl`, `model`, `language`, `confidenceThreshold` | `apiKey`, `baseUrl`, `model`, `voice` |
+
+Fields other than `provider` are optional. Omit `model` to use the provider's default.
+OpenAI model and voice names accept custom IDs from compatible servers. Keys saved
+on the host are write-only in the app.
+
+A saved `apiKey` or `baseUrl` wins over env settings. Without a saved value, STT
+uses `OPENAI_STT_API_KEY` / `OPENAI_STT_BASE_URL`, TTS uses
+`OPENAI_TTS_API_KEY` / `OPENAI_TTS_BASE_URL`, and both fall back to
+`OPENAI_API_KEY` / `OPENAI_BASE_URL`. These settings affect Paseo speech traffic.
+
+Existing `providers.openai` settings load automatically into OpenAI use sites that
+lack inline values. Endpoint settings take precedence over the old shared settings.
+The next save writes the inline shape. A legacy key without an OpenAI site to
+receive it is dropped with a warning; enter a key when you later select OpenAI.
 
 Paseo uses these paths under the configured OpenAI base URL:
 
@@ -110,6 +125,14 @@ Paseo uses these paths under the configured OpenAI base URL:
 
 ## Environment Variables
 
+Provider, enablement, model, language, voice and tuning env vars override config.
+Keys and base URLs follow the fallback rule above.
+
+- `PASEO_DICTATION_ENABLED`, `PASEO_VOICE_MODE_ENABLED`, feature enablement
+- `STT_MODEL`, model override for both OpenAI STT sites
+- `STT_CONFIDENCE_THRESHOLD`, confidence threshold for both OpenAI STT sites
+- `TTS_MODEL`, `TTS_VOICE`, OpenAI speaking model and voice
+
 - `PASEO_VOICE_LLM_PROVIDER`, voice agent provider override
 - `PASEO_DICTATION_STT_PROVIDER`, `PASEO_VOICE_STT_PROVIDER`, `PASEO_VOICE_TTS_PROVIDER`, speech provider selection (`local` or `openai`)
 - `OPENAI_STT_API_KEY`, `OPENAI_STT_BASE_URL`, OpenAI speech-to-text endpoint (dictation + voice mode STT)
@@ -117,8 +140,8 @@ Paseo uses these paths under the configured OpenAI base URL:
 - `PASEO_LOCAL_MODELS_DIR`, local model storage directory
 - `PASEO_DICTATION_LOCAL_STT_MODEL`, local dictation STT model ID
 - `PASEO_VOICE_LOCAL_STT_MODEL`, `PASEO_VOICE_LOCAL_TTS_MODEL`, local voice STT/TTS model IDs
-- `PASEO_DICTATION_LANGUAGE`, dictation STT language (OpenAI STT only; ignored by local Parakeet)
-- `PASEO_VOICE_LANGUAGE`, voice mode STT language; falls back to `PASEO_DICTATION_LANGUAGE` when unset (OpenAI STT only; ignored by local Parakeet)
+- `PASEO_DICTATION_LANGUAGE`, dictation STT language (OpenAI STT only; ignored by local models)
+- `PASEO_VOICE_LANGUAGE`, voice mode STT language; falls back to `PASEO_DICTATION_LANGUAGE` when unset (OpenAI STT only; ignored by local models)
 - `PASEO_VOICE_LOCAL_TTS_SPEAKER_ID`, `PASEO_VOICE_LOCAL_TTS_SPEED`, optional local voice TTS tuning
 
 ## Operational Notes
