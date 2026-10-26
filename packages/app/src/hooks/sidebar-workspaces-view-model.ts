@@ -1,3 +1,5 @@
+import { deriveEffectiveWorkspaceStatus } from "@/workspace-status";
+import equal from "fast-deep-equal";
 import type { PrHint } from "@/git/pr-hint";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
 import { type HostProjectListItem } from "@/projects/host-project-model";
@@ -123,11 +125,6 @@ export function areSidebarWorkspaceSessionsEqual(
   return true;
 }
 
-interface EffectiveWorkspaceStatus {
-  status: WorkspaceDescriptor["status"];
-  enteredAt: Date | null;
-}
-
 function projectNameForWorkspace(workspace: WorkspaceDescriptor): string {
   return (
     workspace.projectCustomName ??
@@ -188,51 +185,6 @@ export function createSidebarWorkspaceEntry(input: {
 
 const EMPTY_WORKSPACE_LABELS: string[] = [];
 
-function deriveEffectiveWorkspaceStatus(input: {
-  serverId: string;
-  workspace: WorkspaceDescriptor;
-  pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
-  workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
-}): EffectiveWorkspaceStatus {
-  if (input.workspace.status !== "done") {
-    return { status: input.workspace.status, enteredAt: input.workspace.statusEnteredAt };
-  }
-
-  const pendingStartedAt = getPendingInitialAgentCreateStartedAt({
-    serverId: input.serverId,
-    workspaceId: input.workspace.id,
-    pendingCreateAttempts: input.pendingCreateAttempts,
-  });
-  if (pendingStartedAt) {
-    return { status: "running", enteredAt: pendingStartedAt };
-  }
-
-  const rootAgentActivity = input.workspaceAgentActivity?.get(input.workspace.id);
-  if (rootAgentActivity && rootAgentActivity.status !== "done") {
-    return rootAgentActivity;
-  }
-
-  return { status: input.workspace.status, enteredAt: input.workspace.statusEnteredAt };
-}
-
-function getPendingInitialAgentCreateStartedAt(input: {
-  serverId: string;
-  workspaceId: string;
-  pendingCreateAttempts: Record<string, PendingCreateAttempt> | undefined;
-}): Date | null {
-  let latestStartedAt: Date | null = null;
-  for (const pending of Object.values(input.pendingCreateAttempts ?? {})) {
-    if (pending.serverId !== input.serverId) continue;
-    if (pending.workspaceId !== input.workspaceId) continue;
-    if (pending.lifecycle === "abandoned") continue;
-    const startedAt = new Date(pending.timestamp);
-    if (!latestStartedAt || startedAt > latestStartedAt) {
-      latestStartedAt = startedAt;
-    }
-  }
-  return latestStartedAt;
-}
-
 export interface ProjectStatusSession {
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
@@ -285,6 +237,34 @@ export function deriveProjectStatusBucket(input: {
   }
 
   return aggregateSidebarStateBuckets(buckets);
+}
+
+/** One bounded projection per sidebar; unchanged placements survive project reordering. */
+export function createSidebarWorkspacePlacementSelector(): (
+  projects: readonly HostProjectListItem[],
+) => SidebarWorkspacePlacementModel {
+  let previous: SidebarWorkspacePlacementModel | null = null;
+  return (projects) => {
+    const next = buildSidebarWorkspacePlacementModel({ projects });
+    const previousProjects = new Map(
+      previous?.projects.map((project) => [project.viewKey, project]),
+    );
+    const previousWorkspaces = new Map(
+      previous?.workspaces.map((workspace) => [workspace.workspaceKey, workspace]),
+    );
+    next.projects = next.projects.map((project) => {
+      const prior = previousProjects.get(project.viewKey);
+      if (prior && equal(prior, project)) return prior;
+      project.workspaces = project.workspaces.map((workspace) => {
+        const priorWorkspace = previousWorkspaces.get(workspace.workspaceKey);
+        return priorWorkspace && equal(priorWorkspace, workspace) ? priorWorkspace : workspace;
+      });
+      return project;
+    });
+    next.workspaces = next.projects.flatMap((project) => project.workspaces);
+    previous = next;
+    return next;
+  };
 }
 
 export function buildSidebarWorkspacePlacementModel(input: {
@@ -580,7 +560,7 @@ export interface SidebarOrderUpdates {
 export function computeSidebarOrderUpdates(input: {
   projects: SidebarProjectEntry[];
   persistedProjectOrder: string[];
-  getWorkspaceOrder: (projectViewKey: string) => string[];
+  getWorkspaceOrder?: (projectViewKey: string) => string[];
 }): SidebarOrderUpdates {
   if (input.projects.length === 0) {
     return { projectOrder: null, workspaceOrders: [] };
@@ -594,6 +574,7 @@ export function computeSidebarOrderUpdates(input: {
 
   const workspaceOrders: Array<{ projectViewKey: string; order: string[] }> = [];
   for (const project of input.projects) {
+    if (!input.getWorkspaceOrder) break;
     const persistedWorkspaceOrder = input.getWorkspaceOrder(project.viewKey);
     const nextWorkspaceOrder = prependMissingOrderKeys({
       currentOrder: persistedWorkspaceOrder,

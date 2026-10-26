@@ -1,3 +1,4 @@
+import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -204,7 +205,10 @@ test("recursive observation updates tracked state and prunes ignored storms", as
       runGitCommand,
     } as never,
   });
+  const workspaceRuntimeStore = createWorkspaceRuntimeStore();
+  service.onSnapshotUpdated((snapshot) => workspaceRuntimeStore.set(snapshot));
   const diffManager = new CheckoutDiffManager({
+    workspaceRuntimeStore: workspaceRuntimeStore,
     logger: createLogger(),
     paseoHome: path.join(tempDir, "paseo-home"),
     workspaceGitService: service,
@@ -229,7 +233,7 @@ test("recursive observation updates tracked state and prunes ignored storms", as
   await vi.waitFor(
     () => {
       expect(activeWatcherCount).toBe(2);
-      expect(service.peekSnapshot(repoDir)).not.toBeNull();
+      expect(workspaceRuntimeStore.get(repoDir)).not.toBeNull();
       expect(service.getMetrics()).toMatchObject({
         workspaceObservationSetupInFlightCount: 0,
         workspaceRefreshInFlightCount: 0,

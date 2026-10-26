@@ -40,10 +40,9 @@ export function buildFilePanelSettingsRows<Candidate extends FilePanelCandidate>
 }
 
 /**
- * The panels offered under a key, by the resolver's matching rule. A panel claiming every file of
- * a kind (Source) is offered unless a built-in panel claiming the key reads another kind: without a
- * file, that is the only knowledge of the key's kind. A remembered panel that does not fit the file
- * when it opens is ignored there.
+ * The panels offered under a key, by the resolver's matching rule. The built-in floor (Source) is
+ * offered only when no built-in panel claims the key. A remembered panel that does not fit the
+ * file when it opens is ignored there.
  */
 function offeredCandidates<Candidate extends FilePanelCandidate>(
   candidates: readonly Candidate[],
@@ -55,7 +54,7 @@ function offeredCandidates<Candidate extends FilePanelCandidate>(
   );
   return candidates.filter((candidate) =>
     candidate.files === "all"
-      ? !claiming.some((claimant) => claimant.builtin && claimant.fileKind !== candidate.fileKind)
+      ? !claiming.some((claimant) => claimant.builtin)
       : claiming.includes(candidate),
   );
 }

@@ -7,7 +7,6 @@ import {
   BUILTIN_MARKDOWN_OPTION,
   MARKDOWN_PANEL_ID,
   PLUGIN_MARKDOWN_OPTION,
-  SOURCE_OPTION,
   expectPluginMarkdown,
   filePanelPicker,
   installMarkdownPanelPlugin,
@@ -18,6 +17,7 @@ import { seedWorkspace } from "../support/helpers/seed-client";
 import { openSettingsSection } from "../support/helpers/settings";
 
 const ASK_EVERY_TIME = "Ask every time";
+const SOURCE_OPTION = "Source — Paseo";
 
 function markdownRow(page: Page) {
   return page.getByTestId("file-panel-settings-row-ext:md");
@@ -69,7 +69,7 @@ test("Settings > Files chooses which panel opens .md and asks again on request",
     await markdownDropdown(page, ASK_EVERY_TIME).click();
     await expect(page.getByRole("menuitem", { name: BUILTIN_MARKDOWN_OPTION })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: PLUGIN_MARKDOWN_OPTION })).toBeVisible();
-    await expect(page.getByRole("menuitem", { name: SOURCE_OPTION })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: SOURCE_OPTION })).toHaveCount(0);
     await expectMenuOpen(page);
     await capture(page, testInfo, "file-panel-settings-wide-menu");
     await page.getByRole("menuitem", { name: PLUGIN_MARKDOWN_OPTION }).click();
@@ -94,11 +94,11 @@ test("Settings > Files chooses which panel opens .md and asks again on request",
     await expect(askAgain(page)).toBeInViewport({ ratio: 1 });
     await capture(page, testInfo, "file-panel-settings-compact");
     await markdownDropdown(page, PLUGIN_MARKDOWN_OPTION).click();
-    await expect(page.getByRole("menuitem", { name: SOURCE_OPTION })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: BUILTIN_MARKDOWN_OPTION })).toBeVisible();
     await expectMenuOpen(page);
     await capture(page, testInfo, "file-panel-settings-compact-menu");
     await page.keyboard.press("Escape");
-    await expect(page.getByRole("menuitem", { name: SOURCE_OPTION })).toBeHidden();
+    await expect(page.getByRole("menuitem", { name: BUILTIN_MARKDOWN_OPTION })).toBeHidden();
 
     // Ask again forgets the choice; the next open asks.
     await askAgain(page).click();

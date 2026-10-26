@@ -3,6 +3,7 @@ import { test, expect } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
+import { revealSidebarProjectWorkspaces } from "../support/helpers/sidebar";
 import {
   expectSidebarWorkspaceSelected,
   switchWorkspaceViaSidebar,
@@ -46,6 +47,7 @@ test("previous and next traverse every visible workspace while digit shortcuts s
     }
     await page.setViewportSize({ width: 1440, height: 1100 });
     await gotoAppShell(page);
+    await revealSidebarProjectWorkspaces(page, project.projectKey);
     const order = await readVisibleWorkspaceOrder(page);
 
     await test.step("next crosses the ninth workspace and previous returns to it", async () => {
@@ -68,7 +70,25 @@ test("previous and next traverse every visible workspace while digit shortcuts s
         workspaceId: order[8],
       });
     });
+    await test.step("hidden Done rows remain shortcut targets without expanding the project", async () => {
+      await expectHiddenWorkspaceShortcuts(page, order);
+    });
   } finally {
     await project.cleanup();
   }
 });
+
+async function expectHiddenWorkspaceShortcuts(page: Page, order: string[]) {
+  await page.getByLabel("Show less", { exact: true }).click();
+  const rows = page.getByRole("button", { name: /^Workspace \d{2}$/ });
+  await expect(rows).toHaveCount(7);
+  await switchWorkspaceViaSidebar({ page, serverId: getServerId(), workspaceId: order[0] });
+  await page.keyboard.press("Alt+9");
+  await expect(page).toHaveURL(new RegExp(`/workspace/${order[8]}$`));
+  await expect(page.getByTestId(`sidebar-workspace-row-${getServerId()}:${order[8]}`)).toHaveCount(
+    0,
+  );
+  await page.keyboard.press("Alt+]");
+  await expect(page).toHaveURL(new RegExp(`/workspace/${order[9]}$`));
+  await expect(rows).toHaveCount(7);
+}

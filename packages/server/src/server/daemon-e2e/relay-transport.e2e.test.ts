@@ -7,7 +7,10 @@ import {
   encodeTerminalStreamFrame,
   TerminalStreamOpcode,
 } from "@getpaseo/protocol/binary-frames/index";
-import type { DaemonClient as HostClient } from "@getpaseo/client/internal/daemon-client";
+import {
+  getDaemonAuthFailureReason,
+  type DaemonClient as HostClient,
+} from "@getpaseo/client/internal/daemon-client";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { describe, expect, test } from "vitest";
 import { withTimeout } from "../../utils/promise-timeout.js";
@@ -26,7 +29,12 @@ import os from "node:os";
 import { generateLocalPairingOffer } from "../pairing-offer.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { FILE_EXPLORER_STREAM_CHUNK_BYTES } from "../file-explorer/service.js";
-import { createClientChannel, type Transport } from "@getpaseo/relay/e2ee";
+import {
+  createClientChannel,
+  openClientSecureChannel,
+  type SecureChannel,
+  type Transport,
+} from "@getpaseo/relay/e2ee";
 import {
   deriveSharedKey,
   decrypt,
@@ -59,6 +67,7 @@ async function getPairingOfferUrl(args: {
   relayEnabled?: boolean;
   relayEndpoint?: string;
   relayPublicEndpoint?: string;
+  relayRequireProtectedSecurity?: boolean;
   appBaseUrl?: string;
 }): Promise<string> {
   const pairing = await generateLocalPairingOffer({
@@ -66,6 +75,7 @@ async function getPairingOfferUrl(args: {
     relayEnabled: args.relayEnabled,
     relayEndpoint: args.relayEndpoint,
     relayPublicEndpoint: args.relayPublicEndpoint,
+    relayRequireProtectedSecurity: args.relayRequireProtectedSecurity,
     appBaseUrl: args.appBaseUrl,
     includeQr: false,
   });
@@ -88,6 +98,113 @@ function decodeOfferFromFragmentUrl(url: string): {
   const json = Buffer.from(encoded, "base64url").toString("utf8");
   const offer = ConnectionOfferSchema.parse(JSON.parse(json));
   return { serverId: offer.serverId, daemonPublicKeyB64: offer.daemonPublicKeyB64 };
+}
+
+/**
+ * An updated relay client: the shared secure channel over a raw relay socket.
+ * Resolves once the daemon answers the app hello with server_info.
+ */
+async function openUpdatedRelayClient(args: {
+  relayPort: number;
+  serverId: string;
+  daemonPublicKeyB64: string;
+  clientId: string;
+  minimumMode?: "protected";
+}): Promise<{
+  channel: SecureChannel;
+  serverInfo: { features?: Record<string, unknown> };
+  messages: unknown[];
+  waitFor: (predicate: (message: unknown) => boolean) => Promise<unknown>;
+  close: () => void;
+}> {
+  const ws = new WebSocket(
+    buildRelayWebSocketUrl({
+      endpoint: `127.0.0.1:${args.relayPort}`,
+      useTls: false,
+      serverId: args.serverId,
+      role: "client",
+    }),
+  );
+  const transport: Transport = {
+    send: (data) => ws.send(data),
+    close: (code?: number, reason?: string) => ws.close(code, reason),
+    onmessage: null,
+    onclose: null,
+    onerror: null,
+  };
+  ws.on("message", (data, isBinary) => {
+    const buffer = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as Buffer);
+    transport.onmessage?.({
+      data: isBinary
+        ? buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+        : buffer.toString("utf8"),
+      isBinary,
+    });
+  });
+  ws.on("close", (code, reason) => transport.onclose?.(code, reason.toString()));
+  ws.on("error", (error) => transport.onerror?.(error));
+  await once(ws, "open");
+
+  const messages: unknown[] = [];
+  const waiters: Array<{
+    predicate: (message: unknown) => boolean;
+    resolve: (m: unknown) => void;
+  }> = [];
+  const deliver = (message: unknown) => {
+    messages.push(message);
+    for (const waiter of waiters.slice()) {
+      if (!waiter.predicate(message)) continue;
+      waiters.splice(waiters.indexOf(waiter), 1);
+      waiter.resolve(message);
+    }
+  };
+  const waitFor = (predicate: (message: unknown) => boolean) =>
+    withTimeout(
+      new Promise<unknown>((resolve) => {
+        const existing = messages.find(predicate);
+        if (existing !== undefined) resolve(existing);
+        else waiters.push({ predicate, resolve });
+      }),
+      20_000,
+      "relay client message",
+    );
+  const isServerInfo = (message: unknown) => {
+    const parsed = WSOutboundMessageSchema.safeParse(message);
+    return (
+      parsed.success &&
+      parsed.data.type === "session" &&
+      parsed.data.message.type === "status" &&
+      parsed.data.message.payload?.status === "server_info"
+    );
+  };
+
+  const channel = await openClientSecureChannel(transport, {
+    daemonPublicKeyB64: args.daemonPublicKeyB64,
+    ...(args.minimumMode ? { minimumMode: args.minimumMode } : {}),
+    events: {
+      onmessage: (data) => {
+        if (typeof data === "string") deliver(JSON.parse(data));
+      },
+    },
+  });
+  await channel.send(
+    JSON.stringify({
+      type: "hello",
+      clientId: args.clientId,
+      clientType: "cli",
+      protocolVersion: 1,
+    }),
+  );
+  const serverInfoMessage = (await waitFor(isServerInfo)) as {
+    message: { payload: { features?: Record<string, unknown> } };
+  };
+  return {
+    channel,
+    serverInfo: serverInfoMessage.message.payload,
+    messages,
+    waitFor,
+    close: () => ws.close(),
+  };
 }
 
 function sha256(bytes: Uint8Array): string {
@@ -204,9 +321,18 @@ async function waitForCapturedLog(
   let relayPort: number;
   let relayProcess: ChildProcess | null = null;
   let relayStdoutLines: string[] = [];
+  // PASEO_RELAY_E2E_PORT points at an already-running relay (for example the
+  // Elixir relay) so the same daemon/client exchanges run against both.
+  const externalRelayPort = Number(process.env.PASEO_RELAY_E2E_PORT ?? "");
+  const usesExternalRelay = Number.isInteger(externalRelayPort) && externalRelayPort > 0;
 
   const startRelay = async (options: { useLocalRelay?: boolean; port?: number } = {}) => {
     relayStdoutLines = [];
+    if (usesExternalRelay) {
+      relayPort = externalRelayPort;
+      await waitForRelayWebSocketReady(relayPort, 60000);
+      return;
+    }
     relayPort = options.port ?? (await getAvailablePort());
     const relayDir = path.resolve(process.cwd(), "../relay");
     const relayArgs = [
@@ -273,144 +399,199 @@ async function waitForCapturedLog(
     await withTimeout(exited, 10000, "Local relay did not stop");
   };
 
-  test("connected hosts route RPC and binary traffic through local E2EE relay and recover scopes", async () => {
-    let a: Awaited<ReturnType<typeof createTestPaseoDaemon>> | undefined;
-    let b: Awaited<ReturnType<typeof createTestPaseoDaemon>> | undefined;
-    let origin: ReturnType<typeof createHostClient> | undefined;
-    let api: PaseoApi | undefined;
-    let remote: PaseoApi | undefined;
-    let sibling: PaseoApi | undefined;
-    let terminalRoute: Awaited<ReturnType<typeof openConnectedHostTerminal>> | undefined;
-    let wire: Awaited<ReturnType<typeof relayWire>> | undefined;
+  // Needs to stop and restart the relay, which only the spawned wrangler relay allows.
+  test.skipIf(usesExternalRelay)(
+    "connected hosts route RPC and binary traffic through local E2EE relay and recover scopes",
+    async () => {
+      let a: Awaited<ReturnType<typeof createTestPaseoDaemon>> | undefined;
+      let b: Awaited<ReturnType<typeof createTestPaseoDaemon>> | undefined;
+      let origin: ReturnType<typeof createHostClient> | undefined;
+      let api: PaseoApi | undefined;
+      let remote: PaseoApi | undefined;
+      let sibling: PaseoApi | undefined;
+      let terminalRoute: Awaited<ReturnType<typeof openConnectedHostTerminal>> | undefined;
+      let wire: Awaited<ReturnType<typeof relayWire>> | undefined;
+      try {
+        await startRelay({ useLocalRelay: true });
+        const port = relayPort;
+        b = await createTestPaseoDaemon({
+          relayEnabled: true,
+          relayEndpoint: `127.0.0.1:${port}`,
+          relayUseTls: false,
+          relayPublicUseTls: false,
+          auth: { password: hashSync("relay-password", 4) },
+        });
+        a = await createTestPaseoDaemon();
+        origin = createHostClient(`127.0.0.1:${a.port}`, { clientId: crypto.randomUUID() });
+        await origin.connect();
+        api = createPaseoApi(origin);
+        const offerUrl = await getPairingOfferUrl({
+          paseoHome: b.paseoHome,
+          relayEnabled: true,
+          relayEndpoint: b.config.relayEndpoint,
+        });
+        const { serverId, daemonPublicKeyB64 } = decodeOfferFromFragmentUrl(offerUrl);
+        wire = await relayWire(port);
+        const connection = new URL(`relay://127.0.0.1:${wire.port}/${serverId}`);
+        connection.searchParams.set("key", daemonPublicKeyB64);
+        connection.searchParams.set("password", "wrong-password");
+        const saved = await api.hosts.add({ connection: connection.toString() });
+        await expect
+          .poll(async () => (await api!.hosts.list()).hosts[0]?.error?.code, { timeout: 20000 })
+          .toBe("authentication_failed");
+        expect(JSON.stringify(await api.hosts.list())).not.toMatch(/wrong-password|relay-password/);
+        connection.searchParams.set("password", "relay-password");
+        await api.hosts.update(saved.registrationId, { connection: connection.toString() });
+        await expect
+          .poll(async () => (await api!.hosts.list()).hosts[0]?.status, { timeout: 20000 })
+          .toBe("online");
+        const admittedConnections = wire.connections();
+        expect(wire.active()).toBe(1);
+        remote = await api.hosts.client(serverId);
+        sibling = await api.hosts.client(serverId);
+        expect(wire.connections()).toBe(admittedConnections);
+        expect(wire.active()).toBe(1);
+        expect((await remote.workspaces.list()).entries).toEqual([]);
+        const observed = await remote.workspaces.list({ subscribe: {} });
+        let snapshots = 0;
+        observed.subscription.subscribe({
+          snapshot: () => {
+            snapshots++;
+          },
+          update() {},
+        });
+        const workspace = await remote.workspaces.create({
+          source: { kind: "directory", path: b.staticDir },
+          title: "Relayed workspace",
+        });
+        const terminal = await workspace.terminals.create({
+          command: process.execPath,
+          args: ["-e", "process.stdin.on('data', data => process.stdout.write(data))"],
+        });
+        terminalRoute = await openConnectedHostTerminal(origin, serverId, terminal.id);
+        expect(wire.connections()).toBe(admittedConnections);
+        terminalRoute.write("ENCRYPTED_BINARY_BEFORE\n");
+        await expect.poll(() => terminalRoute!.output()).toContain("ENCRYPTED_BINARY_BEFORE");
+        terminalRoute.close();
+        terminalRoute = undefined;
+        const before = snapshots;
+        await stopRelay();
+        await expect
+          .poll(
+            async () => {
+              try {
+                await remote!.workspaces.list();
+                return "online";
+              } catch (error) {
+                return (error as { code: string }).code;
+              }
+            },
+            { timeout: 15000 },
+          )
+          .toBe("DAEMON_CONNECTION_LOST");
+        await startRelay({ useLocalRelay: true, port });
+        await expect
+          .poll(
+            async () => {
+              try {
+                return (await remote!.workspaces.list()).entries.length;
+              } catch {
+                return -1;
+              }
+            },
+            { timeout: 30000 },
+          )
+          .toBe(1);
+        await expect.poll(() => snapshots, { timeout: 15000 }).toBeGreaterThan(before);
+        expect(wire.active()).toBe(1);
+        terminalRoute = await openConnectedHostTerminal(origin, serverId, terminal.id);
+        terminalRoute.write("ENCRYPTED_BINARY_AFTER\n");
+        await expect.poll(() => terminalRoute!.output()).toContain("ENCRYPTED_BINARY_AFTER");
+        terminalRoute.close();
+        terminalRoute = undefined;
+        await remote.dispose();
+        remote = undefined;
+        expect((await sibling.workspaces.list()).entries).toHaveLength(1);
+        await sibling.terminals.ref(terminal.id).kill();
+        await api.dispose();
+        await expect(sibling.workspaces.list()).rejects.toThrow();
+        const direct = createHostClient(`127.0.0.1:${b.port}`, {
+          clientId: crypto.randomUUID(),
+          password: "relay-password",
+          reconnect: { enabled: false },
+        });
+        try {
+          await direct.connect();
+          const directApi = createPaseoApi(direct);
+          expect((await directApi.workspaces.list()).entries).toHaveLength(1);
+          await directApi.dispose();
+        } finally {
+          await direct.close();
+        }
+      } finally {
+        terminalRoute?.close();
+        await remote?.dispose();
+        await sibling?.dispose();
+        await api?.dispose();
+        await origin?.close();
+        await a?.close();
+        await b?.close();
+        await wire?.close();
+        await stopRelay();
+      }
+    },
+    120000,
+  );
+
+  test("password-protected daemon refuses a relay client without the password", async () => {
+    let daemon: Awaited<ReturnType<typeof createTestPaseoDaemon>> | undefined;
+    const clients: HostClient[] = [];
     try {
       await startRelay({ useLocalRelay: true });
-      const port = relayPort;
-      b = await createTestPaseoDaemon({
+      daemon = await createTestPaseoDaemon({
         relayEnabled: true,
-        relayEndpoint: `127.0.0.1:${port}`,
+        relayEndpoint: `127.0.0.1:${relayPort}`,
         relayUseTls: false,
         relayPublicUseTls: false,
         auth: { password: hashSync("relay-password", 4) },
       });
-      a = await createTestPaseoDaemon();
-      origin = createHostClient(`127.0.0.1:${a.port}`, { clientId: crypto.randomUUID() });
-      await origin.connect();
-      api = createPaseoApi(origin);
       const offerUrl = await getPairingOfferUrl({
-        paseoHome: b.paseoHome,
+        paseoHome: daemon.paseoHome,
         relayEnabled: true,
-        relayEndpoint: b.config.relayEndpoint,
+        relayEndpoint: daemon.config.relayEndpoint,
       });
       const { serverId, daemonPublicKeyB64 } = decodeOfferFromFragmentUrl(offerUrl);
-      wire = await relayWire(port);
-      const connection = new URL(`relay://127.0.0.1:${wire.port}/${serverId}`);
-      connection.searchParams.set("key", daemonPublicKeyB64);
-      connection.searchParams.set("password", "wrong-password");
-      const saved = await api.hosts.add({ connection: connection.toString() });
-      await expect
-        .poll(async () => (await api!.hosts.list()).hosts[0]?.error?.code, { timeout: 20000 })
-        .toBe("authentication_failed");
-      expect(JSON.stringify(await api.hosts.list())).not.toMatch(/wrong-password|relay-password/);
-      connection.searchParams.set("password", "relay-password");
-      await api.hosts.update(saved.registrationId, { connection: connection.toString() });
-      await expect
-        .poll(async () => (await api!.hosts.list()).hosts[0]?.status, { timeout: 20000 })
-        .toBe("online");
-      const admittedConnections = wire.connections();
-      expect(wire.active()).toBe(1);
-      remote = await api.hosts.client(serverId);
-      sibling = await api.hosts.client(serverId);
-      expect(wire.connections()).toBe(admittedConnections);
-      expect(wire.active()).toBe(1);
-      expect((await remote.workspaces.list()).entries).toEqual([]);
-      const observed = await remote.workspaces.list({ subscribe: {} });
-      let snapshots = 0;
-      observed.subscription.subscribe({
-        snapshot: () => {
-          snapshots++;
-        },
-        update() {},
-      });
-      const workspace = await remote.workspaces.create({
-        source: { kind: "directory", path: b.staticDir },
-        title: "Relayed workspace",
-      });
-      const terminal = await workspace.terminals.create({
-        command: process.execPath,
-        args: ["-e", "process.stdin.on('data', data => process.stdout.write(data))"],
-      });
-      terminalRoute = await openConnectedHostTerminal(origin, serverId, terminal.id);
-      expect(wire.connections()).toBe(admittedConnections);
-      terminalRoute.write("ENCRYPTED_BINARY_BEFORE\n");
-      await expect.poll(() => terminalRoute!.output()).toContain("ENCRYPTED_BINARY_BEFORE");
-      terminalRoute.close();
-      terminalRoute = undefined;
-      const before = snapshots;
-      await stopRelay();
-      await expect
-        .poll(
-          async () => {
-            try {
-              await remote!.workspaces.list();
-              return "online";
-            } catch (error) {
-              return (error as { code: string }).code;
-            }
-          },
-          { timeout: 15000 },
-        )
-        .toBe("DAEMON_CONNECTION_LOST");
-      await startRelay({ useLocalRelay: true, port });
-      await expect
-        .poll(
-          async () => {
-            try {
-              return (await remote!.workspaces.list()).entries.length;
-            } catch {
-              return -1;
-            }
-          },
-          { timeout: 30000 },
-        )
-        .toBe(1);
-      await expect.poll(() => snapshots, { timeout: 15000 }).toBeGreaterThan(before);
-      expect(wire.active()).toBe(1);
-      terminalRoute = await openConnectedHostTerminal(origin, serverId, terminal.id);
-      terminalRoute.write("ENCRYPTED_BINARY_AFTER\n");
-      await expect.poll(() => terminalRoute!.output()).toContain("ENCRYPTED_BINARY_AFTER");
-      terminalRoute.close();
-      terminalRoute = undefined;
-      await remote.dispose();
-      remote = undefined;
-      expect((await sibling.workspaces.list()).entries).toHaveLength(1);
-      await sibling.terminals.ref(terminal.id).kill();
-      await api.dispose();
-      await expect(sibling.workspaces.list()).rejects.toThrow();
-      const direct = createHostClient(`127.0.0.1:${b.port}`, {
-        clientId: crypto.randomUUID(),
-        password: "relay-password",
-        reconnect: { enabled: false },
-      });
-      try {
-        await direct.connect();
-        const directApi = createPaseoApi(direct);
-        expect((await directApi.workspaces.list()).entries).toHaveLength(1);
-        await directApi.dispose();
-      } finally {
-        await direct.close();
-      }
+      const connectOverRelay = (password?: string): Promise<void> => {
+        const connection = new URL(`relay://127.0.0.1:${relayPort}/${serverId}`);
+        connection.searchParams.set("key", daemonPublicKeyB64);
+        if (password) connection.searchParams.set("password", password);
+        const client = createHostClient(connection.toString(), {
+          clientId: crypto.randomUUID(),
+          reconnect: { enabled: false },
+        });
+        clients.push(client);
+        return client.connect();
+      };
+
+      // The pairing offer alone must not grant access to a password-protected daemon.
+      const rejection = await connectOverRelay().then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(getDaemonAuthFailureReason(rejection)).toBe("password_required");
+      await expect(connectOverRelay("wrong-password")).rejects.toThrow("Incorrect password");
+
+      await connectOverRelay("relay-password");
+      expect((await createPaseoApi(clients.at(-1)!).workspaces.list()).entries).toEqual([]);
     } finally {
-      terminalRoute?.close();
-      await remote?.dispose();
-      await sibling?.dispose();
-      await api?.dispose();
-      await origin?.close();
-      await a?.close();
-      await b?.close();
-      await wire?.close();
-      await stopRelay();
+      try {
+        await Promise.all(clients.map((client) => client.close()));
+        await daemon?.close();
+      } finally {
+        await stopRelay();
+      }
     }
-  }, 120000);
+  }, 90000);
 
   test("oversized attachments fail without disconnecting or resubmitting over the relay", async () => {
     await startRelay({ useLocalRelay: true });
@@ -620,11 +801,11 @@ async function waitForCapturedLog(
     }
   }, 90000);
 
-  test("daemon closes a relay client that sends an unsupported handshake key", async () => {
+  test("updated client negotiates protected endpoint security through the relay", async () => {
     process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
 
     const { logger, lines } = createCapturingLogger();
-    await startRelay({ useLocalRelay: true });
+    await startRelay();
 
     const daemon = await createTestPaseoDaemon({
       listen: "127.0.0.1",
@@ -641,8 +822,76 @@ async function waitForCapturedLog(
         relayPublicEndpoint: daemon.config.relayPublicEndpoint,
         appBaseUrl: daemon.config.appBaseUrl,
       });
-      const { serverId } = decodeOfferFromFragmentUrl(offerUrl);
-      const ws = new WebSocket(
+      const { serverId, daemonPublicKeyB64 } = decodeOfferFromFragmentUrl(offerUrl);
+      const client = await openUpdatedRelayClient({
+        relayPort,
+        serverId,
+        daemonPublicKeyB64,
+        clientId: "cid_relay_protected_client",
+      });
+      try {
+        expect(client.channel.securityMode()).toBe("protected");
+        expect(client.serverInfo.features?.relayProtectedSecurity).toBe(true);
+
+        await client.channel.send(JSON.stringify({ type: "ping" }));
+        const pong = await client.waitFor(
+          (message) => (message as { type?: string }).type === "pong",
+        );
+        expect(pong).toEqual({ type: "pong" });
+        await waitForCapturedLog(
+          lines,
+          (line) => line.includes('"securityMode":"protected"'),
+          5_000,
+        );
+      } finally {
+        client.close();
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("daemon logs (tail):\n", lines.slice(-50).join(""));
+      throw err;
+    } finally {
+      await daemon.close();
+      await stopRelay();
+    }
+  }, 90000);
+
+  test("daemon requiring protected security rejects a legacy relay client and admits an updated one", async () => {
+    process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
+
+    const { logger, lines } = createCapturingLogger();
+    await startRelay();
+
+    const daemon = await createTestPaseoDaemon({
+      listen: "127.0.0.1",
+      logger,
+      relayEnabled: true,
+      relayEndpoint: `127.0.0.1:${relayPort}`,
+      relayRequireProtectedSecurity: true,
+    });
+
+    try {
+      const offerUrl = await getPairingOfferUrl({
+        paseoHome: daemon.paseoHome,
+        relayEnabled: daemon.config.relayEnabled,
+        relayEndpoint: daemon.config.relayEndpoint,
+        relayPublicEndpoint: daemon.config.relayPublicEndpoint,
+        relayRequireProtectedSecurity: daemon.config.relayRequireProtectedSecurity,
+        appBaseUrl: daemon.config.appBaseUrl,
+      });
+      const offer = ConnectionOfferSchema.parse(
+        JSON.parse(
+          Buffer.from(
+            offerUrl.slice(offerUrl.indexOf("#offer=") + "#offer=".length),
+            "base64url",
+          ).toString("utf8"),
+        ),
+      );
+      expect(offer.minimumSecurityMode).toBe("protected");
+      const { serverId, daemonPublicKeyB64 } = offer;
+
+      // A client that only speaks the legacy construction is refused before admission.
+      const legacyWs = new WebSocket(
         buildRelayWebSocketUrl({
           endpoint: `127.0.0.1:${relayPort}`,
           useTls: false,
@@ -650,91 +899,187 @@ async function waitForCapturedLog(
           role: "client",
         }),
       );
-
-      let receivedServerInfo = false;
-      const isRelayDataConnectedLog = (line: string) => line.includes("relay_data_connected");
-      const outcome = await new Promise<
-        { type: "closed"; code: number; reason: string } | { type: "errored"; error: Error }
-      >((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          ws.close();
-          reject(new Error("timed out waiting for daemon to reject unsupported handshake key"));
-        }, 20_000);
-
-        ws.on("open", async () => {
-          try {
-            await waitForCapturedLog(lines, isRelayDataConnectedLog);
-            ws.send(
-              JSON.stringify({
-                type: "e2ee_hello",
-                key: exportPublicKey(new Uint8Array(32)),
-              }),
-            );
-            ws.send(
-              encodeCiphertext(
-                encrypt(
-                  UNSUPPORTED_PEER_TRANSPORT_KEY,
-                  JSON.stringify({
-                    type: "hello",
-                    clientId: "cid_relay_unsupported_key",
-                    clientType: "cli",
-                    protocolVersion: 1,
-                  }),
-                ),
-              ),
-            );
-          } catch (error) {
-            clearTimeout(timeout);
-            reject(error);
-          }
-        });
-
-        ws.on("message", (data) => {
-          try {
-            const parsed = WSOutboundMessageSchema.parse(
-              parseEncryptedJson(UNSUPPORTED_PEER_TRANSPORT_KEY, data.toString()),
-            );
-            if (
-              parsed.type === "session" &&
-              parsed.message.type === "status" &&
-              parsed.message.payload?.status === "server_info"
-            ) {
-              receivedServerInfo = true;
-              clearTimeout(timeout);
-              reject(
-                new Error("daemon sent server_info after accepting an unsupported handshake key"),
-              );
-            }
-          } catch {
-            // Plaintext e2ee_ready cannot be decrypted and is irrelevant to this assertion.
-          }
-        });
-        ws.on("close", (code, reason) => {
-          clearTimeout(timeout);
-          resolve({ type: "closed", code, reason: reason.toString() });
-        });
-        ws.on("error", (error) => {
-          clearTimeout(timeout);
-          resolve({ type: "errored", error });
+      const legacyTransport: Transport = {
+        send: (data) => legacyWs.send(data),
+        close: (code?: number, reason?: string) => legacyWs.close(code, reason),
+        onmessage: null,
+        onclose: null,
+        onerror: null,
+      };
+      legacyWs.on("message", (data, isBinary) => {
+        const buffer = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as Buffer);
+        legacyTransport.onmessage?.({
+          data: isBinary
+            ? buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+            : buffer.toString("utf8"),
+          isBinary,
         });
       });
+      const legacyClosed = new Promise<{ code: number; reason: string }>((resolve) => {
+        legacyWs.on("close", (code, reason) => resolve({ code, reason: reason.toString() }));
+      });
+      await once(legacyWs, "open");
+      const legacyMessages: unknown[] = [];
+      void createClientChannel(legacyTransport, daemonPublicKeyB64, {
+        onmessage: (data) => legacyMessages.push(data),
+      }).catch(() => undefined);
+      const closed = await withTimeout(legacyClosed, 20_000, "legacy client close");
+      // The daemon closes its side with 1008; the relay reports its own close code to
+      // the client (the wrangler relay sends 1012 "Server disconnected"), so only the
+      // daemon log carries the policy reason.
+      expect(closed.code).not.toBe(1000);
+      expect(legacyMessages).toEqual([]);
+      await waitForCapturedLog(
+        lines,
+        (line) =>
+          line.includes("relay_e2ee_handshake_rejected") &&
+          line.includes("legacy endpoint security"),
+      );
 
-      expect(receivedServerInfo).toBe(false);
-      if (outcome.type === "closed") {
-        expect(outcome.code).toBeGreaterThan(0);
-      } else {
-        expect(outcome.error).toBeInstanceOf(Error);
+      // An updated client pinned by the offer is admitted in protected mode.
+      const client = await openUpdatedRelayClient({
+        relayPort,
+        serverId,
+        daemonPublicKeyB64,
+        clientId: "cid_relay_protected_required",
+        minimumMode: offer.minimumSecurityMode,
+      });
+      try {
+        expect(client.channel.securityMode()).toBe("protected");
+        expect(client.serverInfo.features?.relayProtectedSecurity).toBe(true);
+      } finally {
+        client.close();
       }
-
-      const isRejectedHandshakeLog = (line: string) =>
-        line.includes("relay_e2ee_handshake_failed") && line.includes("Invalid peer public key");
-      await waitForCapturedLog(lines, isRejectedHandshakeLog);
-      expect(lines.some(isRejectedHandshakeLog)).toBe(true);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("daemon logs (tail):\n", lines.slice(-50).join(""));
+      throw err;
     } finally {
       await daemon.close();
       await stopRelay();
     }
   }, 90000);
+
+  // The Elixir relay rejects the invalid key itself, so the daemon never sees this hello.
+  test.skipIf(usesExternalRelay)(
+    "daemon closes a relay client that sends an unsupported handshake key",
+    async () => {
+      process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
+
+      const { logger, lines } = createCapturingLogger();
+      await startRelay({ useLocalRelay: true });
+
+      const daemon = await createTestPaseoDaemon({
+        listen: "127.0.0.1",
+        logger,
+        relayEnabled: true,
+        relayEndpoint: `127.0.0.1:${relayPort}`,
+      });
+
+      try {
+        const offerUrl = await getPairingOfferUrl({
+          paseoHome: daemon.paseoHome,
+          relayEnabled: daemon.config.relayEnabled,
+          relayEndpoint: daemon.config.relayEndpoint,
+          relayPublicEndpoint: daemon.config.relayPublicEndpoint,
+          appBaseUrl: daemon.config.appBaseUrl,
+        });
+        const { serverId } = decodeOfferFromFragmentUrl(offerUrl);
+        const ws = new WebSocket(
+          buildRelayWebSocketUrl({
+            endpoint: `127.0.0.1:${relayPort}`,
+            useTls: false,
+            serverId,
+            role: "client",
+          }),
+        );
+
+        let receivedServerInfo = false;
+        const isRelayDataConnectedLog = (line: string) => line.includes("relay_data_connected");
+        const outcome = await new Promise<
+          { type: "closed"; code: number; reason: string } | { type: "errored"; error: Error }
+        >((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            ws.close();
+            reject(new Error("timed out waiting for daemon to reject unsupported handshake key"));
+          }, 20_000);
+
+          ws.on("open", async () => {
+            try {
+              await waitForCapturedLog(lines, isRelayDataConnectedLog);
+              ws.send(
+                JSON.stringify({
+                  type: "e2ee_hello",
+                  key: exportPublicKey(new Uint8Array(32)),
+                }),
+              );
+              ws.send(
+                encodeCiphertext(
+                  encrypt(
+                    UNSUPPORTED_PEER_TRANSPORT_KEY,
+                    JSON.stringify({
+                      type: "hello",
+                      clientId: "cid_relay_unsupported_key",
+                      clientType: "cli",
+                      protocolVersion: 1,
+                    }),
+                  ),
+                ),
+              );
+            } catch (error) {
+              clearTimeout(timeout);
+              reject(error);
+            }
+          });
+
+          ws.on("message", (data) => {
+            try {
+              const parsed = WSOutboundMessageSchema.parse(
+                parseEncryptedJson(UNSUPPORTED_PEER_TRANSPORT_KEY, data.toString()),
+              );
+              if (
+                parsed.type === "session" &&
+                parsed.message.type === "status" &&
+                parsed.message.payload?.status === "server_info"
+              ) {
+                receivedServerInfo = true;
+                clearTimeout(timeout);
+                reject(
+                  new Error("daemon sent server_info after accepting an unsupported handshake key"),
+                );
+              }
+            } catch {
+              // Plaintext e2ee_ready cannot be decrypted and is irrelevant to this assertion.
+            }
+          });
+          ws.on("close", (code, reason) => {
+            clearTimeout(timeout);
+            resolve({ type: "closed", code, reason: reason.toString() });
+          });
+          ws.on("error", (error) => {
+            clearTimeout(timeout);
+            resolve({ type: "errored", error });
+          });
+        });
+
+        expect(receivedServerInfo).toBe(false);
+        if (outcome.type === "closed") {
+          expect(outcome.code).toBeGreaterThan(0);
+        } else {
+          expect(outcome.error).toBeInstanceOf(Error);
+        }
+
+        const isRejectedHandshakeLog = (line: string) =>
+          line.includes("relay_e2ee_handshake_failed") && line.includes("Invalid peer public key");
+        await waitForCapturedLog(lines, isRejectedHandshakeLog);
+        expect(lines.some(isRejectedHandshakeLog)).toBe(true);
+      } finally {
+        await daemon.close();
+        await stopRelay();
+      }
+    },
+    90000,
+  );
 
   test("daemon keeps relay socket open while idle (no handshake timeout loop)", async () => {
     process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
