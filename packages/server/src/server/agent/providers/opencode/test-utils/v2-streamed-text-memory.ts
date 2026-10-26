@@ -21,16 +21,18 @@ for (let index = 0; index < chunks; index++) {
   const event =
     mode === "delta"
       ? timeline.delta({ ...part, delta })
-      : timeline.messages([
-          {
-            id: "answer",
-            type: "assistant",
-            agent: "build",
-            model: { providerID: "test", id: "model" },
-            time: { created: 2 },
-            content: [{ type: "reasoning", text }],
-          },
-        ])[0];
+      : (
+          await timeline.messages([
+            {
+              id: "answer",
+              type: "assistant",
+              agent: "build",
+              model: { providerID: "test", id: "model" },
+              time: { created: 2 },
+              content: [{ type: "reasoning", text }],
+            },
+          ])
+        )[0];
   if (event?.type !== "timeline") throw new Error("Expected a timeline event");
   projection.append({
     seq: index + 1,

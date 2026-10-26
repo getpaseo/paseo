@@ -1638,3 +1638,40 @@ test.each([
     expect(await session.canStopRuntime!()).toBe(expected);
   },
 );
+
+test.each([false, true])(
+  "image prompt keeps OMP's vision capability contract (vision: %s)",
+  async (vision) => {
+    const runtime = new FakeOmp();
+    runtime.queueSessionSetup((session) => {
+      session.state = {
+        ...session.state,
+        model: {
+          provider: "test",
+          id: "image-model",
+          input: vision ? ["text", "image"] : ["text"],
+        },
+      };
+    });
+    const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+    const session = await client.createSession({ provider: "omp", cwd: process.cwd() });
+    onTestFinished(() => session.close());
+    const bytes = Buffer.from("OMP attachment fixture");
+    const first = session.startTurn([
+      { type: "text", text: "Describe this image." },
+      { type: "image", data: bytes.toString("base64"), mimeType: "image/png" },
+    ]);
+    await expect(session.startTurn("overlapping prompt")).rejects.toThrow("already active");
+    await first;
+    const [prompt] = runtime.latestSession().prompts;
+    expect(prompt.imageCount).toBe(vision ? 1 : 0);
+    if (vision) expect(prompt.message).toBe("Describe this image.");
+    else {
+      const imagePath = prompt.message.match(/\[Image available at: (.+)\]/)?.[1];
+      expect(imagePath).toBeTruthy();
+      const { readFile, rm } = await import("node:fs/promises");
+      expect(await readFile(imagePath!)).toEqual(bytes);
+      await rm(imagePath!);
+    }
+  },
+);

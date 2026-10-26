@@ -15,7 +15,7 @@ function assistant(content: SessionMessageAssistant["content"]): SessionMessageA
   };
 }
 
-test("a completed edit carries the replaced and replacement text", () => {
+test("a completed edit carries the replaced and replacement text", async () => {
   // Captured from OpenCode 2.0.18, whose edit tool takes `path` instead of `filePath`.
   const edit = assistant([
     {
@@ -45,7 +45,7 @@ test("a completed edit carries the replaced and replacement text", () => {
     },
   ]);
 
-  expect(new V2Timeline().messages([edit])).toMatchObject([
+  expect(await new V2Timeline().messages([edit])).toMatchObject([
     {
       item: {
         type: "tool_call",
@@ -57,7 +57,7 @@ test("a completed edit carries the replaced and replacement text", () => {
   ]);
 });
 
-test("a tool's image output is shown as an image, not as base64 in the tool output", () => {
+test("a tool's image output is shown as an image, not as base64 in the tool output", async () => {
   const png =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
   const screenshot = assistant([
@@ -80,7 +80,7 @@ test("a tool's image output is shown as an image, not as base64 in the tool outp
   ]);
   const timeline = new V2Timeline();
 
-  const events = timeline.messages([screenshot]);
+  const events = await timeline.messages([screenshot]);
 
   expect(JSON.stringify(events)).not.toContain(png);
   expect(events.map((event) => event.type === "timeline" && event.item)).toMatchObject([
@@ -95,7 +95,7 @@ test("a tool's image output is shown as an image, not as base64 in the tool outp
       text: expect.stringMatching(/^\n\n!\[Image\]\(file:\/\/.*paseo-attachments.*\.png\)\n\n$/),
     },
   ]);
-  expect(timeline.messages([screenshot])).toEqual([]);
+  expect(await timeline.messages([screenshot])).toEqual([]);
 });
 
 test("a surrogate pair split across deltas streams back intact", () => {

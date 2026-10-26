@@ -131,7 +131,7 @@ export class OpenCodeV2Session implements AgentSession {
     await this.configureConnection();
     const location = { directory: this.config.cwd };
     this.modes = modesFromV2((await this.client.agent.list({ location })).data);
-    this.timeline.messages(await messages(this.client, this.id));
+    await this.timeline.messages(await messages(this.client, this.id));
     await this.startStream();
     await this.children.reconcile(this.id);
   }
@@ -261,7 +261,7 @@ export class OpenCodeV2Session implements AgentSession {
   async *streamHistory() {
     await this.reconnectIfExited();
     const history = new V2Timeline(false);
-    yield* history.messages(await messages(this.client, this.id));
+    yield* await history.messages(await messages(this.client, this.id));
   }
   async getRuntimeInfo() {
     await this.reconnectIfExited();
@@ -417,7 +417,7 @@ export class OpenCodeV2Session implements AgentSession {
     ]);
     this.info = info;
     this.history = history;
-    for (const event of this.timeline.messages(history)) this.emitTimeline(event);
+    for (const event of await this.timeline.messages(history)) this.emitTimeline(event);
     await this.permissions.reconcile(this.id);
   }
   private async reconcile() {

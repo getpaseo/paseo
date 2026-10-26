@@ -92,7 +92,7 @@ export class SessionChildren {
       this.childStates.set(info.id, signature);
       this.options.emit({ type: "provider_subagent", provider: "opencode", event: presentation });
     }
-    for (const event of timeline.messages(await messages(this.options.client(), info.id))) {
+    for (const event of await timeline.messages(await messages(this.options.client(), info.id))) {
       if (event.type === "timeline")
         this.options.emit({
           type: "provider_subagent",

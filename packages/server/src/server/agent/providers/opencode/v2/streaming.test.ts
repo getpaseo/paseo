@@ -80,7 +80,7 @@ describe("OpenCode v2 token streaming", () => {
     }
   });
 
-  test("deduplicates snapshots before and after deltas using per-type ordinals", () => {
+  test("deduplicates snapshots before and after deltas using per-type ordinals", async () => {
     const timeline = new V2Timeline();
     const text = { assistantMessageID: "answer", type: "text", ordinal: 0 } as const;
     const reasoning = { ...text, type: "reasoning" } as const;
@@ -99,24 +99,24 @@ describe("OpenCode v2 token streaming", () => {
       },
       { type: "text", text: "Hello" },
     ]);
-    expect(timeline.messages([snapshot])).toMatchObject([{ item: { text: "lo" } }]);
+    expect(await timeline.messages([snapshot])).toMatchObject([{ item: { text: "lo" } }]);
     expect(timeline.delta({ ...text, delta: "lo" })).toBeNull();
-    expect(timeline.messages([snapshot])).toEqual([]);
+    expect(await timeline.messages([snapshot])).toEqual([]);
     expect(timeline.delta({ ...text, delta: "!" })).toMatchObject({ item: { text: "!" } });
-    expect(timeline.messages([snapshot])).toEqual([]);
+    expect(await timeline.messages([snapshot])).toEqual([]);
   });
 
-  test("recovers missed fragments from snapshots after reconnect", () => {
+  test("recovers missed fragments from snapshots after reconnect", async () => {
     const timeline = new V2Timeline();
     const part = { assistantMessageID: "answer", type: "text", ordinal: 0 } as const;
     timeline.startPart(part);
     expect(timeline.delta({ ...part, delta: "Hel" })).toMatchObject({ item: { text: "Hel" } });
     timeline.resetStreams();
     expect(timeline.delta({ ...part, delta: "!" })).toBeNull();
-    expect(timeline.messages([assistant([{ type: "text", text: "Hello!" }])])).toMatchObject([
+    expect(await timeline.messages([assistant([{ type: "text", text: "Hello!" }])])).toMatchObject([
       { item: { text: "lo!" } },
     ]);
-    expect(timeline.messages([assistant([{ type: "text", text: "Hello!" }])])).toEqual([]);
+    expect(await timeline.messages([assistant([{ type: "text", text: "Hello!" }])])).toEqual([]);
   });
 
   test("withholds streamed prose during a structured-output turn", async () => {

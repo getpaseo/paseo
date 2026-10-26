@@ -3583,3 +3583,14 @@ test("pi runtime safety protects queued replies and runtime-owned activity", asy
   native.getStateError = new Error("Unable to prove idle");
   await expect(session.canStopRuntime!()).rejects.toThrow("Unable to prove idle");
 });
+
+test("reserves the Pi turn while an image prompt is materialized", async () => {
+  const { pi, session } = await createSession();
+  onTestFinished(() => session.close());
+  const first = session.startTurn([
+    { type: "image", data: ONE_BY_ONE_PNG_BASE64, mimeType: "image/png" },
+  ]);
+  await expect(session.startTurn("overlapping prompt")).rejects.toThrow("already active");
+  await first;
+  expect(pi.latestSession().prompts).toHaveLength(1);
+});
