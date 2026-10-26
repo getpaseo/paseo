@@ -25,8 +25,23 @@ Reload releases the old runtime before resuming its durable session: an idle pro
 still own an exclusive writer. A close failure retains that runtime for cleanup and blocks the
 replacement. Once closure succeeds, a failed resume leaves the durable agent closed and retryable.
 
-Idle agents remain resident indefinitely. Runtime closure happens only through an explicit lifecycle
-action such as archive, replacement, reload, workspace teardown, or daemon shutdown.
+Idle agents remain resident indefinitely by default, except eligible Codex runtimes, which close
+after one hour of inactivity. Runtime closure also happens through an explicit lifecycle action
+such as archive, replacement, reload, workspace teardown, or daemon shutdown. Codex idle-backend
+eviction closes a persisted runtime without archiving its agent. The next open or prompt resumes the
+same agent and provider thread. Before closing, Paseo checks every thread loaded in the app-server
+for Codex-tracked background terminals and retains the runtime if any are running or if the check
+fails. Detached commands that Codex does not track remain outside this guard. Set
+`agents.codexIdleBackendTimeoutMs` to `0` to retain Codex runtimes between turns.
+
+Claude runtimes use the same eviction path when `agents.claudeIdleBackendTimeoutMs` is positive; it
+defaults to `0` (resident). The Claude guard reads Claude Code's own task protocol: every
+`task_started` (background Bash, `Monitor`, workflows, backgrounded subagents) stays live until a
+terminal `task_updated` or `task_notification`, and a `session_state_changed` of `running` or
+`requires_action` also retains the process. The tracker is scoped to one Claude process and resets
+when a new process starts. If a turn ran but Claude never reported its session state, idleness
+cannot be proven and the process is retained. Detached commands that Claude does not announce as
+tasks remain outside this guard.
 
 A provider runtime can still die on its own — crash, OOM kill, host suspend. Work the agent parked
 inside that process dies with it: Claude Code's background Bash shells, `Monitor` watches, and
