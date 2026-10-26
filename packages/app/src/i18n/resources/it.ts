@@ -132,6 +132,8 @@ export const it: TranslationResources = {
       sendAndInterrupt: "Invia e interrompi",
       sendAndSteer: "Aggiungi indicazioni",
       sendMessage: "Invia messaggio",
+      longPressToQueue: "Tieni premuto per mettere in coda",
+      longPressToSendNow: "Tieni premuto per inviare subito",
       queue: "Metti in coda",
       send: "Invia",
     },
@@ -1201,6 +1203,7 @@ export const it: TranslationResources = {
       sort: {
         label: "Ordina",
         created: "Data di creazione",
+        manual: "Manuale",
         lastPrompt: "Ultimo prompt",
         updateHost: "Aggiorna gli host per ordinare gli ambienti di lavoro",
       },
@@ -1971,6 +1974,13 @@ export const it: TranslationResources = {
     backdrop: "Sfondo del menu",
   },
   subagents: {
+    parent: {
+      backToParent: "Torna all'agente principale",
+      backTo: "Torna a {{label}}",
+      parent: "Principale",
+      parentAgent: "Agente principale",
+      openParent: "Apri agente principale",
+    },
     title: "Sottoagenti",
     pillLabelOne: "1 sottoagente",
     pillLabelMany: "{{count}} sottoagenti",
@@ -2072,6 +2082,12 @@ export const it: TranslationResources = {
     subAgentActivity: "Attività del sottoagente",
     input: "Input",
     output: "Output",
+  },
+  turnSummary: {
+    messages: {
+      one: "scritto {{count}} messaggio",
+      other: "scritti {{count}} messaggi",
+    },
   },
   toolCallGroup: {
     editedFiles: {
@@ -2317,6 +2333,7 @@ export const it: TranslationResources = {
       connections: "Connessioni",
       agents: "Agenti",
       metadata: "Metadati",
+      voice: "Voce",
       workspaces: "Ambienti di lavoro",
       providers: "Provider",
       usage: "Utilizzo",
@@ -2402,6 +2419,69 @@ export const it: TranslationResources = {
       docs: "Documentazione",
       saveError: "Impossibile aggiornare la generazione dei metadati",
     },
+    voice: {
+      offline: "Connettiti a questo host per configurare la voce.",
+      updateHost: "Aggiorna l'host per configurare la voce.",
+      saveError: "Impossibile aggiornare le impostazioni vocali",
+      provider: "Provider",
+      providers: {
+        local: "Locale",
+        openai: "OpenAI",
+      },
+      voice: "Voce",
+      save: "Salva",
+      retry: "Riprova",
+      cancel: "Annulla",
+      model: "Modello",
+      language: "Lingua",
+      languagePlaceholder: "Rilevamento automatico",
+      setBy: "Impostato da {{name}}",
+      unknownProvider: "Aggiorna l'app per configurare {{provider}}",
+      sites: {
+        dictationStt: "Da voce a testo",
+        voiceModeStt: "Ascolto",
+        voiceModeTts: "Riproduzione vocale",
+      },
+      dictation: {
+        title: "Dettatura",
+        enabled: "Dettatura",
+        enabledHint: "Parla nel campo del messaggio invece di scrivere",
+      },
+      voiceMode: {
+        title: "Modalità vocale",
+        info: "La modalità vocale trascrive ciò che dici e legge ad alta voce le risposte dell'agente.",
+        enabled: "Modalità vocale",
+        enabledHint: "Parla con gli agenti senza usare le mani",
+      },
+      openai: {
+        apiKey: "Chiave API",
+        apiKeyHint: "Viene salvata sull'host e non viene più mostrata.",
+        keyPlaceholder: "sk-...",
+        savedKeyPlaceholder: "Salvata",
+        missingKey: "Chiave API mancante",
+        baseUrl: "URL di base",
+        baseUrlHint: "Per server compatibili con OpenAI. Lascia vuoto per usare OpenAI.",
+      },
+      models: {
+        loading: "Caricamento dei modelli...",
+        loadError: "Impossibile caricare i modelli locali",
+        none: "Nessun modello disponibile",
+        downloaded: "Scaricato",
+        inUse: "In uso",
+        recommended: "Consigliato",
+        download: "Scarica",
+        downloadAction: "Scarica {{label}}",
+        downloading: "Download in corso...",
+        downloadingPercent: "Download: {{percent}}%",
+        extracting: "Estrazione in corso...",
+        delete: "Elimina",
+        deleteAction: "Elimina {{label}}",
+        deleteTitle: "Eliminare {{label}}?",
+        deleteMessage: "Libera {{size}}. Puoi scaricarlo di nuovo in seguito.",
+        languages: "{{label}} lingue",
+        moreLanguages: "{{languages}} e altre {{count}}",
+      },
+    },
     general: {
       title: "Generali",
       sending: "Invio",
@@ -2450,12 +2530,13 @@ export const it: TranslationResources = {
         description:
           "Mostra per intero, per impostazione predefinita, i blocchi di ragionamento e le catene di pensiero dell'agente",
       },
-      toolCallDetail: {
-        label: "Visualizzazione delle chiamate agli strumenti",
-        description: "Come appaiono le chiamate agli strumenti nella cronologia",
+      chatDisplay: {
+        label: "Visualizzazione della chat",
+        description: "Quanto lavoro dell'agente viene mostrato nella chat",
         options: {
-          overview: "Sintesi",
-          detailed: "Dettagli completi",
+          full: "Completa",
+          collapseToolCalls: "Comprimi le chiamate agli strumenti",
+          collapseTurns: "Comprimi i turni",
         },
       },
       language: {
@@ -2832,6 +2913,11 @@ export const it: TranslationResources = {
       },
       agents: {
         unavailable: "Connettiti a questo host per gestire gli agenti",
+        idleRuntimeCleanup: {
+          title: "Libera gli agenti inattivi",
+          hint: "Libera memoria dopo un'ora di inattività.",
+          info: "Ferma il processo dell'agente mantenendo la conversazione. Invia un messaggio per riprendere.\n\nLe attività in corso, le notifiche in attesa e i controlli di sicurezza del provider impediscono la pulizia.",
+        },
       },
       workspaces: {
         unavailable: "Connettiti a questo host per gestire gli ambienti di lavoro",
