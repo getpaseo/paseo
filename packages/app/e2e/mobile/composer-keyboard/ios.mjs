@@ -14,7 +14,8 @@ const env = (name, fallback) => process.env[`PASEO_COMPOSER_KEYBOARD_${name}`] ?
 const serverId = env("SERVER_ID");
 const agentId = env("AGENT_ID");
 const workspaceId = env("WORKSPACE_ID");
-if (!serverId || !agentId || !workspaceId) {
+const scenario = env("SCENARIO", "all");
+if (!serverId || !workspaceId || (scenario === "all" && !agentId)) {
   throw new Error(
     "Set PASEO_COMPOSER_KEYBOARD_SERVER_ID, _AGENT_ID (an idle chat) and _WORKSPACE_ID (its workspace)",
   );
@@ -22,7 +23,12 @@ if (!serverId || !agentId || !workspaceId) {
 const draftId = env("DRAFT_ID", "composer-keyboard");
 const session = env("SESSION", "composer-keyboard-ios");
 const device = env("DEVICE", "iPhone 16 Pro");
-const artifactsDir = path.join(repoRoot, ".dev/agent-device-artifacts/composer-keyboard-ios");
+const udid = env("UDID");
+const deviceArgs = udid ? ["--udid", udid] : ["--device", device];
+const artifactsDir = env(
+  "ARTIFACTS_DIR",
+  path.join(repoRoot, ".dev/agent-device-artifacts/composer-keyboard-ios"),
+);
 const grownPrefix = "grown line one\ngrown line two\ngrown line three\n";
 // Partial queries with known best matches. `inserted` is the composer text after
 // tapping the best match.
@@ -35,7 +41,7 @@ const chatCommandCase = { text: "/mo", expected: "/mock", inserted: "/mock " };
 fs.mkdirSync(artifactsDir, { recursive: true });
 
 function ad(...args) {
-  return execFileSync("agent-device", [...args, "--session", session], {
+  return execFileSync("agent-device", [args[0], "--session", session, ...args.slice(1)], {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
   });
@@ -77,7 +83,7 @@ async function settledPlacement(name, keyboard) {
 }
 
 function assertPlacement(name, snap, expected) {
-  const placement = resolveAutocompletePlacement(snap, { expected });
+  const placement = resolveAutocompletePlacement(snap, { expected, anchorGap: 12 });
   process.stdout.write(
     `PASS ${name}: popover ${Math.round(placement.popover.y)}-${Math.round(
       placement.popover.y + placement.popover.height,
@@ -123,21 +129,34 @@ async function clearInput(name) {
   )?.rect;
   if (!deleteKey) throw new Error("Missing keyboard delete key");
   const length = composerText(keyboard).length;
-  ad(
-    "press",
-    String(Math.round(deleteKey.x + deleteKey.width / 2)),
-    String(Math.round(deleteKey.y + deleteKey.height / 2)),
-    "--count",
-    String(length + 2),
-    "--interval-ms",
-    "40",
-  );
+  for (let remaining = length + 2; remaining > 0; remaining -= 100) {
+    ad(
+      "press",
+      String(Math.round(deleteKey.x + deleteKey.width / 2)),
+      String(Math.round(deleteKey.y + deleteKey.height / 2)),
+      "--count",
+      String(Math.min(remaining, 100)),
+      "--interval-ms",
+      "40",
+    );
+  }
 }
 
 // The accessibility value drops a trailing space.
 const sameText = (actual, expected) => actual.trimEnd() === expected.trimEnd();
 
-async function runCase(host, kind, { text, expected, inserted }) {
+async function selectRow(name, row, inserted) {
+  ad("press", String(row.x), String(row.y));
+  const selected = await waitFor(`${name}-selected`, (snap) =>
+    sameText(composerText(snap), inserted),
+  );
+  if (!keyboardShown(selected)) throw new Error(`Selecting ${row.label} closed the keyboard`);
+  process.stdout.write(
+    `PASS ${name}: tapped ${row.label}, composer now ${JSON.stringify(inserted)}\n`,
+  );
+}
+
+async function runCase(host, kind, { text, expected, inserted, selectionKeyboard = "reopened" }) {
   const name = `${host}-${kind}`;
   await clearInput(name);
   await dismissKeyboard(snapshot(`${name}-empty`));
@@ -151,31 +170,32 @@ async function runCase(host, kind, { text, expected, inserted }) {
   await clearInput(`${name}-settled`);
   await waitFor(`${name}-settled-empty`, (snap) => composerText(snap) === "");
   ad("type", text);
-  assertPlacement(
+  const opened = assertPlacement(
     `${name} opened after keyboard settled`,
     await settledPlacement(`${name}-open`, true),
     expected,
   );
+  if (selectionKeyboard === "shown") {
+    await selectRow(name, opened, inserted);
+    return;
+  }
   await dismissKeyboard(snapshot(`${name}-before-close`));
-  assertPlacement(
+  const closed = assertPlacement(
     `${name} keyboard closed`,
     await settledPlacement(`${name}-closed`, false),
     expected,
   );
+  if (selectionKeyboard === "hidden") {
+    await selectRow(name, closed, inserted);
+    return;
+  }
   focusAtEnd(snapshot(`${name}-before-reopen`));
   const reopened = assertPlacement(
     `${name} keyboard opened under open suggestions`,
     await settledPlacement(`${name}-reopened`, true),
     expected,
   );
-  ad("press", String(reopened.x), String(reopened.y));
-  const selected = await waitFor(`${name}-selected`, (snap) =>
-    sameText(composerText(snap), inserted),
-  );
-  if (!keyboardShown(selected)) throw new Error(`Selecting ${expected} closed the keyboard`);
-  process.stdout.write(
-    `PASS ${name}: tapped ${expected}, composer now ${JSON.stringify(inserted)}\n`,
-  );
+  await selectRow(name, reopened, inserted);
 }
 
 // Drafts list commands for their selected provider, and a fresh install selects none.
@@ -216,13 +236,104 @@ async function runHost(host) {
   await dismissKeyboard(snapshot(`${host}-done`));
 }
 
+// These cases use the selected draft provider's real skills. Run on a 402pt-wide
+// iPhone for growth and a small phone (SE) for previews, with Codex selected.
+async function runLiveGrowth() {
+  await clearInput("live-growth");
+  ad("type", "Please do the following now /paseo");
+  const before = await settledPlacement("live-growth-before", true);
+  assertPlacement("before growth", before, "/paseo");
+  const inputHeight = (snap) =>
+    snap.data.nodes.find((node) => node.type === "TextView").rect.height;
+  ad("type", "--", "-committee");
+  const grown = await settledPlacement("live-growth-after", true);
+  if (inputHeight(grown) <= inputHeight(before))
+    throw new Error("Draft did not wrap onto a new line");
+  assertPlacement("live growth without reopening", grown, "/paseo-committee");
+  const deleteKey = grown.data.nodes.find(
+    (node) => node.type === "Key" && node.label === "delete",
+  ).rect;
+  ad(
+    "press",
+    String(deleteKey.x + deleteKey.width / 2),
+    String(deleteKey.y + deleteKey.height / 2),
+    "--count",
+    "10",
+    "--interval-ms",
+    "40",
+  );
+  const shrunk = await settledPlacement("live-growth-shrunk", true);
+  if (inputHeight(shrunk) !== inputHeight(before))
+    throw new Error("Draft did not shrink back to one line");
+  assertPlacement("live shrink without reopening", shrunk, "/paseo");
+  ad("type", "--", "-committ");
+  const partial = await settledPlacement("live-growth-partial", true);
+  if (!sameText(composerText(partial), "Please do the following now /paseo-committ")) {
+    throw new Error("Could not prepare a partial command for selection");
+  }
+  const row = assertPlacement("partial command after growth", partial, "/paseo-committee");
+  ad("press", String(row.x), String(row.y));
+  await waitFor("live-growth-selected", (snap) =>
+    sameText(composerText(snap), "Please do the following now /paseo-committee "),
+  );
+  await clearInput("live-growth-done");
+}
+
+async function runBoundedPreview() {
+  const prefix =
+    "Please do the following / testing inline selection.\n" +
+    "Line two with details.\nLine three with details.\nLine four with details.\n" +
+    "Line five with details.\nLine six with details.\nLine seven with details.\nPlease use ";
+  await runCase("preview", "long", {
+    text: `${prefix}/openai`,
+    expected: "/openai-docs",
+    inserted: `${prefix}/openai-docs `,
+    selectionKeyboard: "shown",
+  });
+  await runCase("preview", "long-hidden", {
+    text: `${prefix}/openai`,
+    expected: "/openai-docs",
+    inserted: `${prefix}/openai-docs `,
+    selectionKeyboard: "hidden",
+  });
+  await runCase("preview", "longest", {
+    text: `${prefix}/paseo-plug`,
+    expected: "/paseo-plugin",
+    inserted: `${prefix}/paseo-plugin `,
+    selectionKeyboard: "shown",
+  });
+  await runCase("preview", "short", {
+    text: `${prefix}/com`,
+    expected: "/commit",
+    inserted: `${prefix}/commit `,
+    selectionKeyboard: "shown",
+  });
+  await runCase("preview", "files", fileCase);
+}
+
+if (scenario !== "all") {
+  ad(
+    "open",
+    `paseo://h/${serverId}/workspace/${workspaceId}?open=draft%3A${draftId}`,
+    "--platform",
+    "ios",
+    ...deviceArgs,
+  );
+  await waitFor("draft", (snap) => Boolean(nodeById(snap, "message-input-root")), 60_000);
+  if (scenario === "growth") await runLiveGrowth();
+  else if (scenario === "previews") await runBoundedPreview();
+  else throw new Error(`Unknown scenario: ${scenario}`);
+  process.stdout.write(`Composer ${scenario} regression passed. Artifacts: ${artifactsDir}\n`);
+  process.exit(0);
+}
+
 const hosts = [
   ["chat", `paseo://h/${serverId}/agent/${agentId}`],
   ["workspace-draft", `paseo://h/${serverId}/workspace/${workspaceId}?open=draft%3A${draftId}`],
   ["new-workspace", `paseo://new?serverId=${serverId}`],
 ];
 for (const [host, url] of hosts) {
-  ad("open", url, "--platform", "ios", "--device", device);
+  ad("open", url, "--platform", "ios", ...deviceArgs);
   await waitFor(host, (snap) => Boolean(nodeById(snap, "message-input-root")), 60_000);
   await runHost(host);
 }
