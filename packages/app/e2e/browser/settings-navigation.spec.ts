@@ -147,6 +147,28 @@ test.describe("Settings sidebar navigation", () => {
     await expect(page).not.toHaveURL(/\/settings(\/|$)/);
   });
 
+  test("host choice survives app sections and host screen replacements", async ({ page }) => {
+    const primaryServerId = getServerId();
+    const secondaryServerId = "srv_e2e_settings_secondary";
+    const endpoint = `127.0.0.1:${getE2EDaemonPort()}`;
+    await seedSavedSettingsHosts(page, [
+      { serverId: primaryServerId, label: "First horse", endpoint },
+      { serverId: secondaryServerId, label: "Stable horse", endpoint },
+    ]);
+    await gotoAppShell(page);
+    await openSettings(page);
+    await selectSettingsHost(page, secondaryServerId);
+    await openSettingsHostSection(page, secondaryServerId, "connections");
+    await openSettingsSection(page, "appearance");
+    await expectSettingsHostPickerLabel(page, "Stable horse");
+    await openSettingsSection(page, "general");
+    await expectSettingsHostPickerLabel(page, "Stable horse");
+    await openSettingsHostSection(page, secondaryServerId, "connections");
+    await selectSettingsHost(page, primaryServerId);
+    await openSettingsSection(page, "about");
+    await expectSettingsHostPickerLabel(page, "First horse");
+  });
+
   test("/h/[serverId]/settings redirects to the host connections section", async ({ page }) => {
     await gotoAppShell(page);
     await verifyLegacyHostSettingsRedirect(page);
@@ -329,6 +351,15 @@ test.describe("Settings — compact master-detail", () => {
     await expectSettingsHostPickerLabel(page, secondaryHostLabel);
 
     await openSettingsHostSection(page, secondaryServerId, "connections");
+    await goBackInSettings(page);
+    await expectSettingsHostPickerLabel(page, secondaryHostLabel);
+
+    await openSettingsSection(page, "appearance");
+    await goBackInSettings(page);
+    await expectSettingsHostPickerLabel(page, secondaryHostLabel);
+    await openSettingsHostSection(page, secondaryServerId, "connections");
+    await goBackInSettings(page);
+    await expectSettingsHostPickerLabel(page, secondaryHostLabel);
   });
 
   test("removing the last active host returns to welcome after settings closes", async ({
