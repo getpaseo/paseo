@@ -22,6 +22,7 @@ import {
 } from "../executable-resolution/executable-resolution.js";
 import type { TerminalCell, TerminalState } from "@getpaseo/protocol/messages";
 import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
+import { renderTerminalSnapshotToAnsi } from "@getpaseo/protocol/terminal-snapshot";
 import { TerminalActivityTracker } from "./activity/terminal-activity-tracker.js";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 
@@ -68,6 +69,9 @@ export interface TerminalStateSnapshot {
   // Input-mode replay preamble at snapshot time. Populated by the terminal
   // worker so the daemon main loop doesn't have to re-derive it from output.
   replayPreamble?: string;
+  // The state rendered to ANSI, set when `renderAnsi` was requested. The grid and
+  // scrollback are then empty.
+  ansi?: string;
 }
 
 export interface TerminalStateSnapshotOptions {
@@ -76,6 +80,10 @@ export interface TerminalStateSnapshotOptions {
   // can reflow restored content on resize. Gated on a client capability, so old
   // clients never receive the extra fields.
   includeWrapFlags?: boolean;
+  // Render the snapshot to ANSI where the terminal lives instead of returning its
+  // cells. Structured-cloning the cell grid across the worker IPC boundary is ~90%
+  // of the cost of a restore.
+  renderAnsi?: boolean;
 }
 
 export interface TerminalSubscribeOptions {
@@ -149,6 +157,7 @@ export interface CreateTerminalOptions {
   activityEnv?: Record<string, string>;
   rows?: number;
   cols?: number;
+  scrollbackLines?: number;
   name?: string;
   title?: string;
   command?: string;
@@ -976,6 +985,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     activityEnv = {},
     rows = 24,
     cols = 80,
+    scrollbackLines = 1000,
     name = "Terminal",
     title: presetTitle,
     command,
@@ -1016,7 +1026,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   const terminal = new Terminal({
     rows,
     cols,
-    scrollback: 1000,
+    scrollback: scrollbackLines,
     allowProposedApi: true,
   });
 
@@ -1348,10 +1358,15 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   }
 
   function getStateSnapshot(snapshotOptions?: TerminalStateSnapshotOptions): TerminalStateSnapshot {
-    return {
-      state: getState(snapshotOptions),
-      revision: stateRevision,
-    };
+    const state = getState(snapshotOptions);
+    if (snapshotOptions?.renderAnsi) {
+      return {
+        state: { ...state, grid: [], scrollback: [] },
+        revision: stateRevision,
+        ansi: renderTerminalSnapshotToAnsi(state),
+      };
+    }
+    return { state, revision: stateRevision };
   }
 
   function getSize(): { rows: number; cols: number } {
