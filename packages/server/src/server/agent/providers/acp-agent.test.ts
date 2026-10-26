@@ -35,7 +35,11 @@ import {
   resolveACPModelSelection,
   summarizeACPRequestError,
 } from "./acp-agent.js";
-import type { ProcessTerminator, TreeKillTarget } from "../../../utils/tree-kill.js";
+import type {
+  ProcessTerminator,
+  TerminateWithTreeKillOptions,
+  TreeKillTarget,
+} from "../../../utils/tree-kill.js";
 import {
   COPILOT_AGENT_FEATURE_OPTION,
   COPILOT_ALLOW_ALL_MODE_ID,
@@ -173,12 +177,14 @@ function createSession(
 // terminations hang until releaseAll(), letting tests observe parallelism.
 class FakeTerminator {
   readonly terminated: TreeKillTarget[] = [];
+  readonly options = new Map<TreeKillTarget, TerminateWithTreeKillOptions>();
   private readonly pending: Array<() => void> = [];
 
   constructor(private readonly mode: "immediate" | "deferred" = "immediate") {}
 
-  readonly terminate: ProcessTerminator = async (child) => {
+  readonly terminate: ProcessTerminator = async (child, options) => {
     this.terminated.push(child);
+    this.options.set(child, options);
     if (this.mode === "deferred") {
       await new Promise<void>((resolve) => this.pending.push(resolve));
     }
@@ -3516,6 +3522,9 @@ describe("ACPAgentSession close() tree-kill", () => {
 
     expect(terminator.terminated).toContain(child);
     expect(child.kill).not.toHaveBeenCalled();
+    // The provider may front a daemon other sessions share; a hung adapter
+    // must not take it down on the force signal.
+    expect(terminator.options.get(child)?.spareDetachedOnForce).toBe(true);
   });
 
   test("close() terminates the provider when cancel and closeSession never settle", async () => {
@@ -3561,6 +3570,8 @@ describe("ACPAgentSession close() tree-kill", () => {
 
     expect(terminator.terminated).toContain(terminalChild);
     expect(terminalChild.kill).not.toHaveBeenCalled();
+    // Terminal commands are tool processes: reap anything they detached.
+    expect(terminator.options.get(terminalChild)?.spareDetachedOnForce).toBeUndefined();
   });
 
   test("close() terminates terminal child processes in parallel", async () => {

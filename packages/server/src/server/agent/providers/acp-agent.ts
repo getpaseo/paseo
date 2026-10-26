@@ -322,6 +322,14 @@ const ACP_PROBE_CLOSE_TIMEOUT_MS = 2_000;
 // request when the provider never answers, so these calls must be bounded
 // or the provider process is never terminated.
 const ACP_CLOSE_REQUEST_TIMEOUT_MS = 2_000;
+// An ACP adapter can front a daemon shared by other sessions: every `jcode acp`
+// attaches to one setsid'd `jcode serve`, parented by whichever adapter started
+// it. Terminating that adapter must not take the shared daemon down with it.
+const ACP_PROVIDER_TERMINATION = {
+  gracefulTimeoutMs: 2_000,
+  forceTimeoutMs: 2_000,
+  spareDetachedOnForce: true,
+} as const;
 const ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS = 30_000;
 const ACP_IMPORT_HISTORY_BUDGET_MS = 60_000;
 
@@ -1911,10 +1919,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private async releaseHistoryRuntime(): Promise<void> {
     const child = this.child;
     if (child) {
-      const result = await this.terminateProcess(child, {
-        gracefulTimeoutMs: 2_000,
-        forceTimeoutMs: 2_000,
-      });
+      const result = await this.terminateProcess(child, ACP_PROVIDER_TERMINATION);
       if (result === "kill-timeout") {
         // Keep the child registered so close() can retry the shutdown.
         this.logger.warn("ACP history resume could not release the provider process");
@@ -2599,7 +2604,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.terminalEntries.clear();
 
     if (this.child) {
-      await this.terminateProcess(this.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
+      await this.terminateProcess(this.child, ACP_PROVIDER_TERMINATION);
     }
 
     this.subscribers.clear();
@@ -4164,7 +4169,11 @@ async function terminateChildProcess(
   terminate: ProcessTerminator,
 ): Promise<void> {
   try {
-    await terminate(child, { gracefulTimeoutMs: timeoutMs, forceTimeoutMs: timeoutMs });
+    await terminate(child, {
+      ...ACP_PROVIDER_TERMINATION,
+      gracefulTimeoutMs: timeoutMs,
+      forceTimeoutMs: timeoutMs,
+    });
   } finally {
     child.stdin.destroy();
     child.stdout.destroy();
