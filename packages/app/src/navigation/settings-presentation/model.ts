@@ -9,10 +9,28 @@ interface SettingsSelectionState {
   selectedServerId: string | null;
 }
 
-export function createSettingsSelection() {
+export function createSettingsPresentation() {
   const store = createStore<SettingsSelectionState>(() => ({ selectedServerId: null }));
   const enteredRoutes = new Map<string, string>();
   let inSettings = false;
+  let sidebarOffset = 0;
+  let sidebarOwner: object | null = null;
+
+  function attachSidebar() {
+    const owner = {};
+    sidebarOwner = owner;
+    return {
+      get offset() {
+        return sidebarOffset;
+      },
+      remember(offset: number) {
+        if (sidebarOwner === owner) sidebarOffset = offset;
+      },
+      detach() {
+        if (sidebarOwner === owner) sidebarOwner = null;
+      },
+    };
+  }
 
   function enterRoute(
     { key, pathname }: SettingsRouteEntry,
@@ -20,6 +38,8 @@ export function createSettingsSelection() {
   ): void {
     const isSettings = pathname === "/settings" || pathname.startsWith("/settings/");
     if (!isSettings) {
+      sidebarOffset = 0;
+      sidebarOwner = null;
       inSettings = false;
       enteredRoutes.clear();
       return;
@@ -42,5 +62,5 @@ export function createSettingsSelection() {
     store.setState({ selectedServerId: serverId });
   }
 
-  return { store, enterRoute, selectHost };
+  return { store, enterRoute, selectHost, attachSidebar };
 }

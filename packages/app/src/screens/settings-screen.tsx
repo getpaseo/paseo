@@ -133,7 +133,11 @@ import {
   type HostSectionSlug,
   type SettingsSectionSlug,
 } from "@/utils/host-routes";
-import { selectSettingsHost, useSettingsHostSelection } from "@/navigation/settings-selection";
+import {
+  selectSettingsHost,
+  useSettingsHostSelection,
+  useSettingsSidebarScroll,
+} from "@/navigation/settings-presentation";
 import { returnFromSettings, type SettingsView } from "@/navigation/settings-navigation";
 import { isWeb } from "@/constants/platform";
 
@@ -945,6 +949,7 @@ function SettingsSidebar({
   const items = SIDEBAR_SECTION_ITEMS.filter((item) => isSectionAvailable(item, isDesktopApp));
   const insets = useSafeAreaInsets();
   const isDesktop = layout === "desktop";
+  const sidebarScroll = useSettingsSidebarScroll(isDesktop);
   const outerContainerStyle = useMemo(
     () => [isDesktop ? sidebarStyles.desktopContainer : sidebarStyles.mobileContainer],
     [isDesktop],
@@ -1057,6 +1062,7 @@ function SettingsSidebar({
             style={sidebarStyles.scrollBody}
             showsVerticalScrollIndicator={false}
             testID="settings-sidebar-scroll-body"
+            {...sidebarScroll}
           >
             {sidebarBody}
           </ScrollView>
@@ -1457,7 +1463,11 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
         </WindowChromeRegion>
         <WindowChromeRegion corners="top-right">
           <View style={desktopStyles.contentPane} testID="settings-detail-pane">
-            <PageLayout title={detailTitle} titleTestID="settings-detail-header-title">
+            <PageLayout
+              title={detailTitle}
+              titleTestID="settings-detail-header-title"
+              testID="settings-detail-scroll-body"
+            >
               {content}
             </PageLayout>
           </View>

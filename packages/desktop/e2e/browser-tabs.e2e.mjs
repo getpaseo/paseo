@@ -14,6 +14,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { chromium } from "playwright";
 import { hideDeveloperToasts } from "../../app/e2e/support/developer-ui.mjs";
 import { runAppearanceFontSizeRegression } from "./appearance-font-size.electron.mjs";
+import { runSettingsScrollRegression } from "./settings-scroll.electron.mjs";
 import { runSettingsMemoryRegression } from "./settings-memory.electron.mjs";
 
 import { seedPluginLinks, runPluginLinksRegression } from "./plugin-links.electron.mjs";
@@ -1206,6 +1207,12 @@ async function main() {
       const pluginLinks = await checkPluginLinks();
       writeJson(path.join(artifactDir, "result.json"), { pluginLinks });
       console.log("Plugin external links and workspace browser passed.");
+      return;
+    }
+    const settingsScroll = await runSettingsScrollRegression(page);
+    if (process.env.PASEO_DESKTOP_SETTINGS_SCROLL_ONLY === "1") {
+      writeJson(path.join(artifactDir, "result.json"), { settingsScroll });
+      console.log("Desktop Settings scroll regression passed.");
       return;
     }
     const settingsMemory = await runSettingsMemoryRegression(page);
