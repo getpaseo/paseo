@@ -68,7 +68,7 @@ afterEach(async () => {
   for (const service of services.splice(0)) await service.close();
   await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })));
 });
-async function scenario(directory?: string, removalFailures = 0) {
+async function scenario(directory?: string, removalFailures = 0, retryDelayMs = 1) {
   const home = directory ?? (await mkdtemp(join(tmpdir(), "finish-recovery-")));
   if (!directory) homes.push(home);
   const durableStore = createJsonFinishSubscriptionStore(home);
@@ -92,7 +92,7 @@ async function scenario(directory?: string, removalFailures = 0) {
     callerIsActive: async () => active,
     serverId: "origin",
     logger: createTestLogger(),
-    retryDelayMs: 1,
+    retryDelayMs,
   });
   services.push(service);
   await service.start();
@@ -388,13 +388,13 @@ test("removed-host notice retries parent dispatch without observing again or del
 });
 
 test("failed removal after dispatch acknowledgment retries only storage, preserving the accepted outcome", async () => {
-  const state = await scenario(undefined, 1);
+  const state = await scenario(undefined, 2, 1000);
   await state.service.register(intent);
   await until(() => state.observation.waits.length === 1);
   state.observation.waits[0]!.result.resolve(outcome("idle"));
   await until(() => state.delivery.prompts.length === 1);
   state.delivery.acknowledgments[0]!.resolve("steered");
-  await expect.poll(async () => (await state.store.list()).length).toBe(0);
+  await expect.poll(async () => (await state.store.list()).length, { timeout: 10000 }).toBe(0);
   expect(state.delivery.prompts).toHaveLength(1);
   expect(state.delivery.prompts[0]).toContain("finished.");
   expect(state.observation.waits).toHaveLength(1);

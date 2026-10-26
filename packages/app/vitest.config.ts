@@ -161,6 +161,7 @@ export default defineConfig({
       "i18next",
       "@marijn/find-cluster-break",
       "tiny-invariant",
+      "react/jsx-dev-runtime",
       "react-native-gesture-handler > hoist-non-react-statics",
       "react-native-gesture-handler > invariant",
     ],
@@ -171,6 +172,8 @@ export default defineConfig({
       "react-native-keyboard-controller",
     ],
   },
+  // babel-preset-expo compiles JSX with the automatic runtime, so app modules don't import React.
+  esbuild: { jsx: "automatic" },
   // The globals a React Native bundler defines, which esbuild is no longer there to supply for
   // the package excluded above.
   define: {

@@ -116,7 +116,7 @@ Relative paths are resolved against `PASEO_HOME`. Existing worktrees remain wher
 
 ## Voice
 
-Voice is configured through `features.dictation` and `features.voiceMode`, with provider credentials under `providers`.
+Voice is configured through `features.dictation` and `features.voiceMode`. Provider credentials and options live inline at `features.dictation.stt`, `features.voiceMode.stt`, and `features.voiceMode.tts`.
 
 For voice philosophy, architecture, and complete local/OpenAI setup examples, see [Voice docs](/docs/voice).
 
@@ -269,9 +269,9 @@ Set the persisted value in `config.json`:
 - `PASEO_LOG_FILE_ROTATE_SIZE`, override `log.file.rotate.maxSize`
 - `PASEO_LOG_FILE_ROTATE_COUNT`, override `log.file.rotate.maxFiles`
 - `PASEO_LOG`, `PASEO_LOG_FORMAT`, legacy log overrides (still supported)
-- `OPENAI_API_KEY`, override OpenAI provider key
-- `OPENAI_STT_API_KEY`, `OPENAI_STT_BASE_URL`, OpenAI speech-to-text endpoint (dictation + voice mode STT)
-- `OPENAI_TTS_API_KEY`, `OPENAI_TTS_BASE_URL`, OpenAI text-to-speech endpoint (voice mode TTS)
+- `OPENAI_API_KEY`, `OPENAI_BASE_URL`, fallback speech credentials and base URL when neither a site value nor an endpoint env value is set
+- `OPENAI_STT_API_KEY`, `OPENAI_STT_BASE_URL`, speech-to-text key and base URL fallbacks when no value is saved at the dictation or voice-mode STT site
+- `OPENAI_TTS_API_KEY`, `OPENAI_TTS_BASE_URL`, text-to-speech key and base URL fallbacks when no value is saved at the voice-mode TTS site
 - `PASEO_VOICE_LLM_PROVIDER`, override voice LLM provider (`claude`, `codex`, `opencode`)
 - `PASEO_DICTATION_STT_PROVIDER`, `PASEO_VOICE_STT_PROVIDER`, `PASEO_VOICE_TTS_PROVIDER`, override voice provider selection (`local` or `openai`)
 - `PASEO_LOCAL_MODELS_DIR`, control local model directory

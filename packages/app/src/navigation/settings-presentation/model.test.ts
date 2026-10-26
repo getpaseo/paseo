@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createSettingsSelection } from "./model";
+import { createSettingsPresentation } from "./model";
 
 describe("Settings host selection", () => {
   it("keeps picker choices across sections, replacement and Back", () => {
-    const settings = createSettingsSelection();
+    const settings = createSettingsPresentation();
     settings.enterRoute({ key: "/settings", pathname: "/settings" }, "workspace-host");
     expect(settings.store.getState().selectedServerId).toBe("workspace-host");
     settings.selectHost("chosen-host");
@@ -27,7 +27,7 @@ describe("Settings host selection", () => {
   });
 
   it("applies explicit host links once, including project and plugin screens", () => {
-    const settings = createSettingsSelection();
+    const settings = createSettingsPresentation();
     settings.enterRoute(
       {
         key: "/settings/hosts/linked-host/projects/project",
@@ -56,7 +56,7 @@ describe("Settings host selection", () => {
   });
 
   it("seeds each new visit from the workspace, including a retained settings route", () => {
-    const settings = createSettingsSelection();
+    const settings = createSettingsPresentation();
     settings.enterRoute(
       { key: "/settings/general", pathname: "/settings/general" },
       "first-workspace-host",
@@ -77,7 +77,7 @@ describe("Settings host selection", () => {
   });
 
   it("does not replay a retained host route after a newer picker choice", () => {
-    const settings = createSettingsSelection();
+    const settings = createSettingsPresentation();
     const oldRoute = { key: "old-host-screen", pathname: "/settings/hosts/first/host" };
     settings.enterRoute(oldRoute, "workspace-host");
     settings.selectHost("second");
@@ -93,10 +93,40 @@ describe("Settings host selection", () => {
   });
 
   it("does not reseed a visit when remembered workspace state changes", () => {
-    const settings = createSettingsSelection();
+    const settings = createSettingsPresentation();
     settings.enterRoute({ key: "/settings", pathname: "/settings" }, null);
     settings.selectHost("chosen-host");
     settings.enterRoute({ key: "/settings", pathname: "/settings" }, "workspace-host");
     expect(settings.store.getState().selectedServerId).toBe("chosen-host");
+  });
+});
+
+describe("Settings sidebar presentation", () => {
+  it("restores across replacements and rejects callbacks from older sidebars", () => {
+    const settings = createSettingsPresentation();
+    settings.enterRoute({ key: "app", pathname: "/settings/general" }, "host");
+    const oldSidebar = settings.attachSidebar();
+    oldSidebar.remember(246);
+    settings.enterRoute({ key: "host", pathname: "/settings/hosts/host/providers" }, "host");
+    const currentSidebar = settings.attachSidebar();
+    expect(currentSidebar.offset).toBe(246);
+    oldSidebar.remember(0);
+    oldSidebar.detach();
+    expect(currentSidebar.offset).toBe(246);
+    currentSidebar.remember(190);
+    currentSidebar.detach();
+    currentSidebar.remember(0);
+    expect(settings.attachSidebar().offset).toBe(190);
+  });
+
+  it("resets on leaving Settings and rejects callbacks from a previous visit", () => {
+    const settings = createSettingsPresentation();
+    settings.enterRoute({ key: "app", pathname: "/settings/general" }, "host");
+    const previousVisit = settings.attachSidebar();
+    previousVisit.remember(246);
+    settings.enterRoute({ key: "workspace", pathname: "/h/host/workspace/workspace" }, "host");
+    settings.enterRoute({ key: "app", pathname: "/settings/general" }, "host");
+    previousVisit.remember(246);
+    expect(settings.attachSidebar().offset).toBe(0);
   });
 });

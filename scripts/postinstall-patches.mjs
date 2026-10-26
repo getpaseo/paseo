@@ -19,11 +19,20 @@ const patchedPackages = [
     patchPrefix: "react-native-enriched-markdown+",
     cwd: "packages/app",
   },
-  // Remove after react-native-unistyles ships
+  // Registry cleanup: remove after react-native-unistyles ships
   // https://github.com/jpudysz/react-native-unistyles/pull/1203.
+  // withUnistyles: also keep the uniProps filter until upstream consumes its control prop.
   {
     nodeModulesPath: "node_modules/react-native-unistyles",
     patchPrefix: "react-native-unistyles+",
+  },
+  // Backport of https://github.com/software-mansion/react-native-reanimated/pull/10435
+  // (Reanimated 4.7.1): skip synchronous Android prop updates for unmounted view tags
+  // instead of throwing and printing a full stack trace on the UI thread per tag per event.
+  // Remove when the installed Reanimated is >= 4.7.1.
+  {
+    nodeModulesPath: "node_modules/react-native-reanimated",
+    patchPrefix: "react-native-reanimated+",
   },
   {
     nodeModulesPath: "node_modules/react-native-draggable-flatlist",

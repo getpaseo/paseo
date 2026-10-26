@@ -233,6 +233,11 @@ export function ComposerTrackRow({
     [closeOnSelect, onPress, selectItem],
   );
 
+  const itemDataSet = useMemo(
+    () => ({ menuItem: "true", menuDisabled: disabled ? "true" : "false" }),
+    [disabled],
+  );
+
   const renderRow = useCallback(
     (active: boolean) => (
       <View style={active ? styles.rowActive : styles.row}>
@@ -253,7 +258,8 @@ export function ComposerTrackRow({
   return (
     <View onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave}>
       <Pressable
-        accessibilityRole="button"
+        accessibilityRole="menuitem"
+        dataSet={itemDataSet}
         accessibilityLabel={accessibilityLabel}
         testID={testID}
         disabled={disabled}

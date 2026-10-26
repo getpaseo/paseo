@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { DaemonConfigStore, applyMutableProviderConfigToOverrides } from "./daemon-config-store.js";
 import { loadConfig } from "./config.js";
 import { loadPersistedConfig } from "./persisted-config.js";
+import { readSpeechSettings } from "./speech/speech-settings.js";
 import type { PersistedConfig } from "./persisted-config.js";
 import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
 
@@ -1282,5 +1283,241 @@ describe("DaemonConfigStore reload", () => {
       restartRequiredPaths: [],
       overrideControlledPaths: [],
     });
+  });
+});
+
+describe("DaemonConfigStore speech settings", () => {
+  const tempDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function createSpeechStore(initialPersisted?: unknown, env: NodeJS.ProcessEnv = {}) {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-speech-"));
+    tempDirs.push(paseoHome);
+    if (initialPersisted) {
+      writeFileSync(
+        path.join(paseoHome, "config.json"),
+        `${JSON.stringify(initialPersisted, null, 2)}\n`,
+      );
+    }
+    const persisted = loadPersistedConfig(paseoHome);
+    const applied: PersistedConfig[] = [];
+    const speech = {
+      read: (next: PersistedConfig) => readSpeechSettings(next, env),
+      apply: (next: PersistedConfig) => applied.push(next),
+    };
+    const store = new DaemonConfigStore(paseoHome, reloadableConfig(persisted), undefined, {
+      speech,
+      reloadSource: {
+        resolve: (next) => ({ mutable: reloadableConfig(next), overrideControlledPaths: [] }),
+      },
+    });
+    return { paseoHome, store, applied, persisted };
+  }
+
+  test("reads, patches, and clears local STT language without losing it on other saves", () => {
+    const { paseoHome, store } = createSpeechStore({
+      features: { dictation: { stt: { language: "fr" } } },
+    });
+    expect(store.get().features?.dictation.stt).toEqual({ provider: "local", language: "fr" });
+    store.patch({ features: { voiceMode: { enabled: true } } });
+    expect(loadPersistedConfig(paseoHome).features?.dictation?.stt).toEqual({
+      provider: "local",
+      language: "fr",
+    });
+    const patched = store.patch({
+      features: { dictation: { stt: { provider: "local", language: "de" } } },
+    });
+    expect(patched.features?.dictation.stt).toEqual({ provider: "local", language: "de" });
+    store.patch({ features: { dictation: { stt: { language: null } } } });
+    expect(loadPersistedConfig(paseoHome).features?.dictation?.stt).toEqual({ provider: "local" });
+  });
+
+  test("reports language env overrides for both local STT sites", () => {
+    const { store } = createSpeechStore(
+      {},
+      { PASEO_DICTATION_LANGUAGE: "fr", PASEO_VOICE_LANGUAGE: "de" },
+    );
+    expect(store.get().envOverrides).toMatchObject({
+      "features.dictation.stt.language": "PASEO_DICTATION_LANGUAGE",
+      "features.voiceMode.stt.language": "PASEO_VOICE_LANGUAGE",
+    });
+  });
+
+  test("keeps voice mode off until it is turned on", () => {
+    const { paseoHome, store } = createSpeechStore();
+
+    expect(store.get().features?.dictation.enabled).toBe(true);
+    expect(store.get().features?.voiceMode.enabled).toBe(false);
+
+    const result = store.patch({ features: { voiceMode: { enabled: true } } });
+
+    expect(result.features?.voiceMode.enabled).toBe(true);
+    expect(loadPersistedConfig(paseoHome).features?.voiceMode?.enabled).toBe(true);
+  });
+
+  test("stores the OpenAI key without ever returning it", () => {
+    const { paseoHome, store, applied } = createSpeechStore();
+
+    const result = store.patch({
+      features: { dictation: { stt: { provider: "openai", apiKey: " sk-test " } } },
+    });
+
+    expect(result.features?.dictation.stt).toEqual({ provider: "openai", hasApiKey: true });
+    expect(JSON.stringify(result)).not.toContain("sk-test");
+    expect(loadPersistedConfig(paseoHome).features?.dictation?.stt).toMatchObject({
+      apiKey: "sk-test",
+    });
+    expect(applied).toHaveLength(1);
+  });
+
+  test("applies a replaced key even though the visible settings do not change", () => {
+    const { store, applied } = createSpeechStore({
+      version: 1,
+      features: { dictation: { stt: { provider: "openai", apiKey: "sk-old" } } },
+    });
+
+    store.patch({ features: { dictation: { stt: { apiKey: "sk-new" } } } });
+
+    expect(applied.map((next) => next.features?.dictation?.stt)).toEqual([
+      { provider: "openai", apiKey: "sk-new" },
+    ]);
+  });
+
+  test("switching provider clears the previous provider's model", () => {
+    const { paseoHome, store } = createSpeechStore({
+      version: 1,
+      features: { dictation: { stt: { provider: "local", model: "parakeet-tdt-0.6b-v3-int8" } } },
+    });
+
+    const result = store.patch({ features: { dictation: { stt: { provider: "openai" } } } });
+
+    expect(result.features?.dictation.stt).toEqual({ provider: "openai", hasApiKey: false });
+    expect(loadPersistedConfig(paseoHome).features?.dictation?.stt).toEqual({
+      provider: "openai",
+    });
+  });
+
+  test("rejects a local model id outside the catalog without persisting it", () => {
+    const { paseoHome, store, applied } = createSpeechStore();
+
+    expect(() =>
+      store.patch({ features: { voiceMode: { tts: { provider: "local", model: "nope" } } } }),
+    ).toThrow("Unknown local voice model: nope");
+    expect(loadPersistedConfig(paseoHome).features?.voiceMode).toBeUndefined();
+    expect(applied).toEqual([]);
+  });
+
+  test("reload applies hand-edited speech settings without a restart", () => {
+    const { paseoHome, store, applied, persisted } = createSpeechStore();
+    writeFileSync(
+      path.join(paseoHome, "config.json"),
+      `${JSON.stringify({ ...persisted, features: { voiceMode: { enabled: false } } }, null, 2)}\n`,
+    );
+
+    const result = store.reload();
+
+    expect(result.appliedPaths).toContain("features.voiceMode");
+    expect(result.restartRequiredPaths).toEqual([]);
+    expect(store.get().features?.voiceMode.enabled).toBe(false);
+    expect(applied).toHaveLength(1);
+  });
+  test("merges same-provider fields and replaces the whole variant when provider changes", () => {
+    const { paseoHome, store } = createSpeechStore();
+    store.patch({
+      features: {
+        voiceMode: {
+          stt: { provider: "openai", apiKey: "secret", baseUrl: "https://site/v1", model: "first" },
+        },
+      },
+    });
+    store.patch({ features: { voiceMode: { stt: { model: "second", baseUrl: null } } } });
+    expect(loadPersistedConfig(paseoHome).features?.voiceMode?.stt).toEqual({
+      provider: "openai",
+      apiKey: "secret",
+      model: "second",
+    });
+    store.patch({ features: { voiceMode: { stt: { provider: "openai", model: "third" } } } });
+    expect(store.get().features?.voiceMode.stt).toEqual({
+      provider: "openai",
+      model: "third",
+      hasApiKey: true,
+    });
+    store.patch({ features: { voiceMode: { stt: { apiKey: "new-secret" } } } });
+    store.patch({ features: { voiceMode: { stt: { provider: "local" } } } });
+    store.patch({ features: { voiceMode: { stt: { provider: "openai" } } } });
+    expect(store.get().features?.voiceMode.stt).toEqual({ provider: "openai", hasApiKey: false });
+  });
+
+  test("keeps a saved OpenAI key when a full variant patch omits the write-only key", () => {
+    const { paseoHome, store } = createSpeechStore({
+      features: { voiceMode: { stt: { provider: "openai", apiKey: "saved-secret" } } },
+    });
+    const result = store.patch({
+      features: { voiceMode: { stt: { provider: "openai", model: "whisper-1" } } },
+    });
+    expect(result.features?.voiceMode.stt).toEqual({
+      provider: "openai",
+      model: "whisper-1",
+      hasApiKey: true,
+    });
+    expect(loadPersistedConfig(paseoHome).features?.voiceMode?.stt).toEqual({
+      provider: "openai",
+      apiKey: "saved-secret",
+      model: "whisper-1",
+    });
+    expect(JSON.stringify(result)).not.toContain("saved-secret");
+  });
+
+  test("loads a legacy host, redacts its key and writes the normalized config after any save", () => {
+    const { paseoHome, store } = createSpeechStore({
+      providers: { openai: { apiKey: "legacy-secret", stt: { baseUrl: "https://old/v1" } } },
+      features: { voiceMode: { enabled: true, stt: { provider: "openai" } } },
+    });
+    expect(store.get().features?.voiceMode.stt).toEqual({
+      provider: "openai",
+      baseUrl: "https://old/v1",
+      hasApiKey: true,
+    });
+    expect(JSON.stringify(store.get())).not.toContain("legacy-secret");
+    store.patch({ autoArchiveAfterMerge: true });
+    const disk = JSON.parse(readFileSync(path.join(paseoHome, "config.json"), "utf8"));
+    expect(disk.providers).not.toHaveProperty("openai");
+    expect(disk.features.voiceMode.stt.apiKey).toBe("legacy-secret");
+  });
+
+  test("reports env overrides and removes fallback provenance after saving a key", () => {
+    const { store } = createSpeechStore(
+      { features: { voiceMode: { stt: { provider: "openai", model: "configured" } } } },
+      {
+        PASEO_VOICE_STT_PROVIDER: "local",
+        OPENAI_API_KEY: "env-secret",
+      },
+    );
+    expect(store.get().features?.voiceMode.stt.provider).toBe("local");
+    expect(store.get().envOverrides).toEqual({
+      "features.voiceMode.stt.provider": "PASEO_VOICE_STT_PROVIDER",
+    });
+    const other = createSpeechStore(
+      { features: { voiceMode: { stt: { provider: "openai" } } } },
+      {
+        OPENAI_API_KEY: "env-secret",
+        OPENAI_STT_BASE_URL: "https://env/v1",
+        STT_MODEL: "override",
+      },
+    ).store;
+    expect(other.get().envOverrides).toEqual({
+      "features.voiceMode.stt.apiKey": "OPENAI_API_KEY",
+      "features.voiceMode.stt.baseUrl": "OPENAI_STT_BASE_URL",
+      "features.voiceMode.stt.model": "STT_MODEL",
+    });
+    expect(other.get().features?.voiceMode.stt.hasApiKey).toBe(false);
+    other.patch({
+      features: { voiceMode: { stt: { apiKey: "saved-secret", baseUrl: "https://saved/v1" } } },
+    });
+    expect(other.get().envOverrides).toEqual({ "features.voiceMode.stt.model": "STT_MODEL" });
+    expect(JSON.stringify(other.get())).not.toContain("secret");
   });
 });
