@@ -2,6 +2,8 @@ import { useCallback } from "react";
 import { Text, View } from "react-native";
 import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { StyleSheet } from "react-native-unistyles";
+import { SettingsInfoTip } from "@/components/settings/headings/settings-info-tip";
 import { Switch } from "@/components/ui/switch";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useHostFeature } from "@/runtime/host-features";
@@ -37,9 +39,15 @@ export function IdleRuntimeCleanupCard({ serverId }: { serverId: string }) {
     <View style={settingsStyles.card} testID="host-page-idle-runtime-cleanup-card">
       <View style={settingsStyles.row}>
         <View style={settingsStyles.rowContent}>
-          <Text style={settingsStyles.rowTitle}>
-            {t("settings.host.agents.idleRuntimeCleanup.title")}
-          </Text>
+          <View style={styles.titleRow}>
+            <Text style={settingsStyles.rowTitle}>
+              {t("settings.host.agents.idleRuntimeCleanup.title")}
+            </Text>
+            <SettingsInfoTip
+              title={t("settings.host.agents.idleRuntimeCleanup.title")}
+              info={t("settings.host.agents.idleRuntimeCleanup.info")}
+            />
+          </View>
           <Text style={settingsStyles.rowHint}>
             {t("settings.host.agents.idleRuntimeCleanup.hint")}
           </Text>
@@ -60,3 +68,11 @@ export function IdleRuntimeCleanupCard({ serverId }: { serverId: string }) {
     </View>
   );
 }
+
+const styles = StyleSheet.create((theme) => ({
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+}));

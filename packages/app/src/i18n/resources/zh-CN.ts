@@ -2622,7 +2622,8 @@ export const zhCN: TranslationResources = {
         unavailable: "连接到这个 Host 以管理 Agent",
         idleRuntimeCleanup: {
           title: "释放空闲 Agent",
-          hint: "Agent 空闲一小时后停止其进程。对话会保留，并在你发送下一条消息时恢复。进行中的工作、待处理的通知和 Provider 检查会让它继续运行。更改立即生效。",
+          hint: "空闲一小时后释放内存。",
+          info: "停止 Agent 进程，但保留对话。发送消息即可继续。\n\n进行中的工作、待处理的通知和 Provider 安全检查会阻止清理。",
         },
       },
       workspaces: {

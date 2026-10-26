@@ -2777,7 +2777,8 @@ export const en = {
         unavailable: "Connect to this host to manage agents",
         idleRuntimeCleanup: {
           title: "Release idle agents",
-          hint: "Stops an agent's process after one idle hour. The conversation is kept and resumes on your next message. Active work, pending notifications, and provider checks keep it running. Changes apply immediately.",
+          hint: "Free up memory after an hour of inactivity.",
+          info: "Stops the agent's process while keeping its conversation. Send a message to resume.\n\nActive work, pending notifications, and provider safety checks prevent cleanup.",
         },
       },
       workspaces: {

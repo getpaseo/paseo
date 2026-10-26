@@ -2688,7 +2688,8 @@ export const ptBR: TranslationResources = {
         unavailable: "Conecte-se a este host para gerenciar agentes",
         idleRuntimeCleanup: {
           title: "Liberar agentes ociosos",
-          hint: "Encerra o processo de um agente após uma hora ociosa. A conversa é mantida e retomada na sua próxima mensagem. Trabalho ativo, notificações pendentes e verificações do provedor o mantêm em execução. As alterações entram em vigor imediatamente.",
+          hint: "Libera memória após uma hora de inatividade.",
+          info: "Encerra o processo do agente e mantém a conversa. Envie uma mensagem para retomar.\n\nTrabalho ativo, notificações pendentes e verificações de segurança do provedor impedem a limpeza.",
         },
       },
       workspaces: {
