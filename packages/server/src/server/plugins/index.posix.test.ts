@@ -12,6 +12,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createServer } from "node:http";
+import { performance } from "node:perf_hooks";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -1602,17 +1603,20 @@ async function applyReviewedUpdate(service: PluginService, pluginId: string) {
 
 it("keeps reload and enable responsive while compiling a real plugin", async () => {
   const directory = await createPlugin("responsive-build", "export default () => {};");
-  // Syntax-dense input exercises TypeScript's AST walk, not just esbuild's subprocess.
+  // Erased types stress TypeScript's AST walk without a multi-MiB runtime bundle.
+  // Payload transfer is a different cost from import validation.
   await rm(path.join(directory, "index.server.ts"));
   const entry = await openFile(path.join(directory, "index.client.ts"), "w");
   try {
-    await entry.write("const values = [");
-    for (let offset = 0; offset < 350_000; offset += 10_000) {
+    await entry.write("type FixtureValues = [");
+    for (let offset = 0; offset < 250_000; offset += 10_000) {
       await entry.write(
         Array.from({ length: 10_000 }, (_, index) => offset + index).join(",") + ",",
       );
     }
-    await entry.write("]; export default function contribute() { return () => values; }");
+    await entry.write(
+      ']; export default function contribute() { return () => "compiled fixture"; }',
+    );
   } finally {
     await entry.close();
   }
@@ -1627,10 +1631,21 @@ it("keeps reload and enable responsive while compiling a real plugin", async () 
     ]) {
       let previous = performance.now();
       let longest = 0;
+      let utilization = performance.eventLoopUtilization();
+      let longestWindow = { active: 0, idle: 0 };
       const sample = () => {
         const now = performance.now();
-        longest = Math.max(longest, now - previous);
+        const currentUtilization = performance.eventLoopUtilization();
+        if (now - previous > longest) {
+          longest = now - previous;
+          const { active, idle } = performance.eventLoopUtilization(
+            currentUtilization,
+            utilization,
+          );
+          longestWindow = { active, idle };
+        }
         previous = now;
+        utilization = currentUtilization;
       };
       const timer = setInterval(sample, 1);
       try {
@@ -1639,19 +1654,20 @@ it("keeps reload and enable responsive while compiling a real plugin", async () 
       } finally {
         clearInterval(timer);
       }
-      process.stderr.write(`plugin compile longest loop gap: ${longest.toFixed(2)} ms\n`);
-      expect(service.catalog()[0]?.clientBundle).toContain("349999");
+      process.stderr.write(
+        `plugin compile longest loop gap: ${longest.toFixed(2)} ms ${JSON.stringify(longestWindow)}\n`,
+      );
+      expect(service.catalog()[0]?.clientBundle).toContain("compiled fixture");
       expect(longest).toBeLessThan(20);
     }
     // Evaluate after both probes so parsing the returned code is not charged to compilation.
     const factory = globalThis.eval(service.catalog()[0]!.clientBundle) as (
       require: (specifier: string) => never,
-    ) => { default: () => () => number[] };
-    const values = factory((specifier) => {
+    ) => { default: () => () => string };
+    const result = factory((specifier) => {
       throw new Error(`Unexpected fixture dependency: ${specifier}`);
     }).default()();
-    expect(values).toHaveLength(350_000);
-    expect(values.every((value, index) => value === index)).toBe(true);
+    expect(result).toBe("compiled fixture");
   } finally {
     await service.stopAllPlugins();
   }

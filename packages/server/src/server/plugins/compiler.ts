@@ -30,6 +30,16 @@ interface TaskResult {
 }
 
 const IDLE_TIMEOUT_MS = 1_000;
+const source = import.meta.url.endsWith(".ts");
+const workerUrl = new URL(
+  source ? "./compiler-worker.ts" : "./compiler-worker.js",
+  import.meta.url,
+);
+// Resolve the development loader once at module initialization, never during a
+// compile request. Packaged workers execute ordinary JavaScript without tsx.
+const workerEntrypoint = source
+  ? `import(${JSON.stringify(pathToFileURL(createRequire(import.meta.url).resolve("tsx/esm/api")).href)}).then(({ register }) => { register(); return import(${JSON.stringify(workerUrl.href)}); });`
+  : workerUrl;
 
 // Reuse the isolate during a build batch (notably daemon bootstrap), then release
 // TypeScript's heap when idle. Only this owner admits work or stops the worker.
@@ -64,16 +74,7 @@ class PluginCompiler {
   }
 
   private startWorker(): Worker {
-    const source = import.meta.url.endsWith(".ts");
-    const url = new URL(source ? "./compiler-worker.ts" : "./compiler-worker.js", import.meta.url);
-    // Node workers do not inherit tsx's in-process loader registration. Register
-    // it inside development/test isolates; dist workers execute ordinary JS.
-    const worker = source
-      ? new Worker(
-          `import(${JSON.stringify(pathToFileURL(createRequire(import.meta.url).resolve("tsx/esm/api")).href)}).then(({ register }) => { register(); return import(${JSON.stringify(url.href)}); });`,
-          { eval: true, execArgv: [] },
-        )
-      : new Worker(url, { execArgv: [] });
+    const worker = new Worker(workerEntrypoint, { eval: source, execArgv: [] });
     this.worker = worker;
     // Keep error/exit ownership while idle too. The next caller gets a fresh
     // isolate after a crash; author build commands are never retried.
