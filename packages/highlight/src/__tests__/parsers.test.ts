@@ -29,6 +29,10 @@ describe("isLanguageSupported", () => {
     expect(isLanguageSupported("main.tf")).toBe(true);
     expect(isLanguageSupported("prod.tfvars")).toBe(true);
     expect(isLanguageSupported("terragrunt.hcl")).toBe(true);
+    expect(isLanguageSupported("test.rb")).toBe(true);
+    expect(isLanguageSupported("tasks.rake")).toBe(true);
+    expect(isLanguageSupported("paseo.gemspec")).toBe(true);
+    expect(isLanguageSupported("config.ru")).toBe(true);
     expect(isLanguageSupported("test.ex")).toBe(true);
     expect(isLanguageSupported("Counter.svelte")).toBe(true);
     expect(isLanguageSupported("Page.astro")).toBe(true);
@@ -45,6 +49,18 @@ describe("isLanguageSupported", () => {
     expect(isLanguageSupported("Makefile")).toBe(false);
     expect(isLanguageSupported("src/ts")).toBe(false);
     expect(isLanguageSupported("bin/bash")).toBe(false);
+  });
+
+  it("recognizes Ruby files identified by their whole name", () => {
+    for (const name of ["Gemfile", "Rakefile", "Guardfile", "Capfile", "Podfile", "Vagrantfile"]) {
+      expect(isLanguageSupported(name)).toBe(true);
+      expect(isLanguageSupported(`app/${name}`)).toBe(true);
+      expect(isLanguageSupported(`dir.with.dots/${name}`)).toBe(true);
+    }
+    expect(getLanguageForFile("Gemfile")).toBe(getLanguageForFile("app.rb"));
+    // Names are case-sensitive, and a lockfile is not Ruby.
+    expect(isLanguageSupported("gemfile")).toBe(false);
+    expect(isLanguageSupported("Gemfile.lock")).toBe(false);
   });
 
   it("handles nested paths", () => {
@@ -79,6 +95,10 @@ describe("getSupportedExtensions", () => {
     expect(extensions).toContain("tf");
     expect(extensions).toContain("tfvars");
     expect(extensions).toContain("hcl");
+    expect(extensions).toContain("rb");
+    expect(extensions).toContain("rake");
+    expect(extensions).toContain("gemspec");
+    expect(extensions).toContain("ru");
     expect(extensions).toContain("json");
     expect(extensions).toContain("svelte");
     expect(extensions).toContain("astro");
