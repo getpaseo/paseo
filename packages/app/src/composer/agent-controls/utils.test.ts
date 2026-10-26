@@ -290,5 +290,63 @@ describe("resolveAgentModelSelection", () => {
     expect(selection.activeModelId).toBe("gpt-6.1-sol");
     expect(selection.displayModel).toBe("gpt-6.1-sol");
     expect(selection.displayThinking).toBe("Max");
+    expect(selection.thinkingOptions).toEqual([
+      { id: "medium", label: "medium" },
+      { id: "max", label: "max" },
+    ]);
+    expect(selection.selectedThinkingId).toBe("max");
+  });
+
+  it("offers the catalog default's thinking options when the agent's model is not listed", () => {
+    const selection = resolveAgentModelSelection({
+      models: [
+        {
+          id: "claude-opus-5",
+          provider: "claude",
+          label: "Opus 5",
+          isDefault: true,
+          thinkingOptions: [
+            { id: "low", label: "Low" },
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High" },
+          ],
+          defaultThinkingOptionId: "medium",
+        },
+      ],
+      runtimeModelId: "grok-4.6",
+      configuredModelId: "grok-4.6",
+      runtimeThinkingOptionId: null,
+      explicitThinkingOptionId: null,
+    });
+
+    expect(selection.selectedModel).toBeNull();
+    expect(selection.displayModel).toBe("grok-4.6");
+    expect(selection.thinkingOptions).toEqual([
+      { id: "low", label: "Low" },
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High" },
+    ]);
+    expect(selection.selectedThinkingId).toBe("medium");
+    expect(selection.displayThinking).toBe("Medium");
+  });
+
+  it("keeps thinking hidden for a cataloged model that has no thinking options", () => {
+    const selection = resolveAgentModelSelection({
+      models: [
+        {
+          id: "claude-haiku-4-5",
+          provider: "claude",
+          label: "Haiku 4.5",
+          isDefault: true,
+        },
+      ],
+      runtimeModelId: "claude-haiku-4-5",
+      configuredModelId: "claude-haiku-4-5",
+      runtimeThinkingOptionId: null,
+      explicitThinkingOptionId: null,
+    });
+
+    expect(selection.selectedModel).not.toBeNull();
+    expect(selection.thinkingOptions).toBeNull();
   });
 });

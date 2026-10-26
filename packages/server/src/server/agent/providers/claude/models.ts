@@ -83,7 +83,9 @@ export async function getClaudeModelsWithSettings(
     const manifestModel = getClaudeModels(claudeCodeVersion).find(
       (candidate) => candidate.id === model.id,
     );
-    models.push({ ...manifestModel, ...model });
+    // Settings models are not manifest entries, so without this they reach the
+    // composer with no thinkingOptions and the thinking selector never renders.
+    models.push(resolveConfiguredClaudeModel({ ...manifestModel, ...model }));
   }
 
   return models;

@@ -186,11 +186,16 @@ export function resolveAgentModelSelection(input: {
     i18n.t("agentControls.model.unknown"),
   );
 
-  const thinkingOptions = selectedModel?.thinkingOptions ?? null;
+  // The chip keeps showing the agent's own model id when the catalog lacks it, but
+  // the daemon still accepts effort changes for unknown ids, so the thinking selector
+  // falls back to the catalog default's options instead of disappearing.
+  const thinkingModel = selectedModel ?? fallbackModel;
+
+  const thinkingOptions = thinkingModel?.thinkingOptions ?? null;
   const resolvedThinkingId = resolveThinkingId(
     runtimeThinkingOptionId,
     explicitThinkingOptionId,
-    selectedModel,
+    thinkingModel,
   );
   const effectiveThinking = resolveEffectiveThinking(thinkingOptions, resolvedThinkingId);
   const selectedThinkingId = effectiveThinking?.id ?? resolvedThinkingId;
