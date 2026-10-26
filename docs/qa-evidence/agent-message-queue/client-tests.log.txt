@@ -1,5 +1,5 @@
 
- RUN  v4.1.7 /Users/joechen/src/tests/paseo/packages/client
+ RUN  v4.1.7 <checkout>/packages/client
 
 
  Test Files  1 passed (1)

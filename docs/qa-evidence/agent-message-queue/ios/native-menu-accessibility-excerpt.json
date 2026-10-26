@@ -1,0 +1,36 @@
+{
+  "label": "Derived structural excerpt of the failed Maestro hierarchy; full hierarchy intentionally excluded.",
+  "source": "/tmp/paseo-native-queue-ui/queue-output/2026-10-26_131715/commands-(queue.yaml).json",
+  "failedCommand": {
+    "assertConditionCommand": {
+      "condition": {
+        "visible": {
+          "idRegex": "composer-send-options-queue",
+          "optional": false
+        }
+      },
+      "optional": false
+    }
+  },
+  "status": "FAILED",
+  "errorMessage": "Assertion is false: id: composer-send-options-queue is visible",
+  "hierarchyNodeCount": 178,
+  "exactAttributeSubstringMatchCounts": {
+    "composer-send-options-queue": 0,
+    "composer-send-options-now": 0,
+    "Queue message": 0
+  },
+  "expandedTriggerAttributes": [
+    {
+      "accessibilityText": "Send options",
+      "value": "expanded",
+      "text": "expanded",
+      "resource-id": "composer-send-options",
+      "bounds": "[315,783][347,815]",
+      "enabled": "true",
+      "focused": "false",
+      "selected": "false",
+      "checked": "false"
+    }
+  ]
+}

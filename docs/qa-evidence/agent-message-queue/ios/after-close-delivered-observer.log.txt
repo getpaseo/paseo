@@ -1,0 +1,18 @@
+{
+  "assertion": "drained",
+  "phase": "delivered",
+  "passed": true,
+  "activeTurnId": "796a4af8-7d2f-4391-925a-e69573f02c89",
+  "queueIds": [],
+  "canonicalPromptIds": [
+    "native-baseline",
+    "msg_1792992167905_lziqjo5ng",
+    "msg_1792992277489_q4s8kc2q5",
+    "msg_1792992570292_mnzmu538e"
+  ],
+  "artifact": "/tmp/paseo-native-queue-observer/delivered.json",
+  "dequeuedMessageId": "msg_1792992570292_mnzmu538e",
+  "canonicalPromptCount": 1,
+  "providerTurnCount": 1,
+  "newActiveTurnId": "796a4af8-7d2f-4391-925a-e69573f02c89"
+}

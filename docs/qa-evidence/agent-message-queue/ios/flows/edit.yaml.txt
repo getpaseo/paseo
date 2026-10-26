@@ -1,0 +1,8 @@
+appId: sh.paseo.debug
+---
+- tapOn: "Edit queued message"
+- extendedWaitUntil:
+    notVisible: "Edit queued message"
+    timeout: 15000
+- assertVisible: "Native queue follow-up"
+- takeScreenshot: native-edited

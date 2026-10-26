@@ -1,0 +1,8 @@
+appId: sh.paseo.debug
+---
+- tapOn:
+    point: "50%,20%"
+- extendedWaitUntil:
+    visible: "Message agent..."
+    timeout: 60000
+- takeScreenshot: native-composer

@@ -1216,7 +1216,7 @@ Running 7 tests using 1 worker
       1431 |       await expect(page.getByRole("button", { name: "Send queued message now" })).toHaveCount(0);
       1432 |       await expect(page.getByTestId("user-message").filter({ hasText: prompt })).toHaveCount(0);
       1433 |       await testInfo.attach("queue-admission-failure", {
-        at /Users/joechen/src/tests/paseo/packages/app/e2e/browser/agent-message-submission.spec.ts:1430:45
+        at <checkout>/packages/app/e2e/browser/agent-message-submission.spec.ts:1430:45
 
     [31mTest timeout of 60000ms exceeded.[39m
 
@@ -1261,7 +1261,7 @@ Running 7 tests using 1 worker
       1474 |       await expectComposerDraft(page, prompt);
       1475 |       await expect(page.getByTestId("composer-send-error")).toHaveText("Update the host to queue messages.");
       1476 |       expect(gate.getClientRequestCount("agent.queue.enqueue.request")).toBe(0);
-        at /Users/joechen/src/tests/paseo/packages/app/e2e/browser/agent-message-submission.spec.ts:1473:45
+        at <checkout>/packages/app/e2e/browser/agent-message-submission.spec.ts:1473:45
 
     [31mTest timeout of 60000ms exceeded.[39m
 
@@ -1290,8 +1290,8 @@ Running 7 tests using 1 worker
   5 passed (4.9m)
 npm error Lifecycle script `test:e2e` failed with error:
 npm error code 1
-npm error path /Users/joechen/src/tests/paseo/packages/app
+npm error path <checkout>/packages/app
 npm error workspace @getpaseo/app@0.13.0
-npm error location /Users/joechen/src/tests/paseo/packages/app
+npm error location <checkout>/packages/app
 npm error command failed
 npm error command sh -c playwright test --project=browser --config .playwright-queue.config.ts e2e/browser/agent-message-submission.spec.ts --grep 'compact send options share|queued messages survive an isolated|queue admission failure|queueing on an older host|editing a queue entry|holds a queued turn after Stop|retains queued sends'

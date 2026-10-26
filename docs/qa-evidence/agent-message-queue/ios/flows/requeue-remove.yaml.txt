@@ -1,0 +1,13 @@
+appId: sh.paseo.debug
+---
+- tapOn:
+    id: "composer-send-options"
+- tapOn: "Queue message"
+- extendedWaitUntil:
+    visible: "Remove queued message"
+    timeout: 15000
+- tapOn: "Remove queued message"
+- extendedWaitUntil:
+    notVisible: "Remove queued message"
+    timeout: 15000
+- takeScreenshot: native-removed

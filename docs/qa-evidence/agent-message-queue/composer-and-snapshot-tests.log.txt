@@ -1,5 +1,5 @@
 
- RUN  v4.1.7 /Users/joechen/src/tests/paseo/packages/app
+ RUN  v4.1.7 <checkout>/packages/app
 
 
  Test Files  3 passed (3)

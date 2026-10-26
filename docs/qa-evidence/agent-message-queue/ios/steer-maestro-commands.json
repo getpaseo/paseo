@@ -1,0 +1,222 @@
+[
+  {
+    "command": {
+      "tapOnElement": {
+        "selector": {
+          "textRegex": "Send and steer",
+          "optional": false
+        },
+        "retryIfNoChange": false,
+        "waitUntilVisible": false,
+        "longPress": false,
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992166501,
+      "duration": 2558,
+      "sequenceNumber": 5,
+      "evaluatedCommand": {
+        "tapOnElement": {
+          "selector": {
+            "textRegex": "Send and steer",
+            "optional": false
+          },
+          "retryIfNoChange": false,
+          "waitUntilVisible": false,
+          "longPress": false,
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "tapOnElement": {
+        "selector": {
+          "idRegex": "composer-send-options",
+          "optional": false
+        },
+        "retryIfNoChange": false,
+        "waitUntilVisible": false,
+        "longPress": false,
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992163051,
+      "duration": 3449,
+      "sequenceNumber": 4,
+      "evaluatedCommand": {
+        "tapOnElement": {
+          "selector": {
+            "idRegex": "composer-send-options",
+            "optional": false
+          },
+          "retryIfNoChange": false,
+          "waitUntilVisible": false,
+          "longPress": false,
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "tapOnElement": {
+        "selector": {
+          "textRegex": "Message agent.*",
+          "optional": false
+        },
+        "retryIfNoChange": false,
+        "waitUntilVisible": false,
+        "longPress": false,
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992155922,
+      "duration": 3642,
+      "sequenceNumber": 2,
+      "evaluatedCommand": {
+        "tapOnElement": {
+          "selector": {
+            "textRegex": "Message agent.*",
+            "optional": false
+          },
+          "retryIfNoChange": false,
+          "waitUntilVisible": false,
+          "longPress": false,
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "assertConditionCommand": {
+        "condition": {
+          "visible": {
+            "textRegex": "Edit queued message",
+            "optional": false
+          }
+        },
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992169060,
+      "duration": 307,
+      "sequenceNumber": 6,
+      "evaluatedCommand": {
+        "assertConditionCommand": {
+          "condition": {
+            "visible": {
+              "textRegex": "Edit queued message",
+              "optional": false
+            }
+          },
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "applyConfigurationCommand": {
+        "config": {
+          "appId": "sh.paseo.debug"
+        },
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992155920,
+      "duration": 2,
+      "sequenceNumber": 1,
+      "evaluatedCommand": {
+        "applyConfigurationCommand": {
+          "config": {
+            "appId": "sh.paseo.debug"
+          },
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "inputTextCommand": {
+        "text": "Native steer follow-up",
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992159566,
+      "duration": 3485,
+      "sequenceNumber": 3,
+      "evaluatedCommand": {
+        "inputTextCommand": {
+          "text": "Native steer follow-up",
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "takeScreenshotCommand": {
+        "path": "native-steered",
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992169367,
+      "duration": 128,
+      "sequenceNumber": 7,
+      "evaluatedCommand": {
+        "takeScreenshotCommand": {
+          "path": "native-steered",
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "defineVariablesCommand": {
+        "env": {
+          "MAESTRO_FILENAME": "steer",
+          "MAESTRO_DEVICE_UDID": "<simulator-id>",
+          "MAESTRO_SHARD_ID": "1",
+          "MAESTRO_SHARD_INDEX": "0"
+        },
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992155913,
+      "duration": 6,
+      "sequenceNumber": 0,
+      "evaluatedCommand": {
+        "defineVariablesCommand": {
+          "env": {
+            "MAESTRO_FILENAME": "steer",
+            "MAESTRO_DEVICE_UDID": "<simulator-id>",
+            "MAESTRO_SHARD_ID": "1",
+            "MAESTRO_SHARD_INDEX": "0"
+          },
+          "optional": false
+        }
+      }
+    }
+  }
+]

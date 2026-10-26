@@ -1,0 +1,67 @@
+{
+  "artifact": "/tmp/paseo-queue-compact-web-0gUgH2",
+  "url": "http://localhost:53572/h/srv_LQ14aqZhKNEU/workspace/wks_eaf59009cac4549a?open=agent%3A327b9315-5c52-4d20-bfd6-ea531202d001",
+  "viewport": {
+    "width": 390,
+    "height": 844
+  },
+  "checks": [
+    "Both compact sheet action test IDs are visible and entirely inside the viewport",
+    "Queue message and Send and steer are discoverable as individually named accessible menuitems",
+    "Only local draft text was filled; no delivery action was selected"
+  ],
+  "blockedMutations": [
+    "client_heartbeat",
+    "client_heartbeat",
+    "checkout_status_request",
+    "client_heartbeat",
+    "client_heartbeat"
+  ],
+  "forwardedSessionTypes": [
+    "session.events.set_subscription.request",
+    "workspace.label.list.request",
+    "hosts.list.request",
+    "usage.list_reports.request",
+    "fetch_agents_request",
+    "project.list.request",
+    "fetch_workspaces_request",
+    "workspace.script.list.request",
+    "plugin.catalog.get.request",
+    "agent.timeline.set_subscription.request",
+    "get_daemon_config_request",
+    "subscribe_terminals_request",
+    "list_terminals_request",
+    "get_providers_snapshot_request",
+    "fetch_agent_timeline_request",
+    "agent.timeline.list_prompts.request",
+    "agent.provider_subagents.list.request"
+  ],
+  "consoleErrors": [
+    "React does not recognize the `%s` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `%s` instead. If you accidentally passed it from a parent component, remove it from the DOM element. uniProps uniprops",
+    "React does not recognize the `%s` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `%s` instead. If you accidentally passed it from a parent component, remove it from the DOM element. accessibilityElementsHidden accessibilityelementshidden",
+    "React does not recognize the `%s` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `%s` instead. If you accidentally passed it from a parent component, remove it from the DOM element. importantForAccessibility importantforaccessibility"
+  ],
+  "pageErrors": [],
+  "initialActiveTurnId": "c06a1927-951b-4168-86d0-7b47e43b772a",
+  "queueMenuItem": {
+    "role": "menuitem",
+    "text": "Queue message",
+    "box": {
+      "x": 4,
+      "y": 760.2654418945312,
+      "width": 382,
+      "height": 40
+    }
+  },
+  "steerMenuItem": {
+    "role": "menuitem",
+    "text": "Send and steer",
+    "box": {
+      "x": 4,
+      "y": 799.2991333007812,
+      "width": 382,
+      "height": 40
+    }
+  },
+  "success": true
+}

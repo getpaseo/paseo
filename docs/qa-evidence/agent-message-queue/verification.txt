@@ -44,12 +44,15 @@ browser viewport, not an Electron verification claim.
 Coverage:
 Web: compact 390x844 and wide 1280x900, real installed Chrome.
 Daemon: macOS, real storage/lifecycle and isolated process restart.
-iOS/Android: not run; no usable simulator runtimes or Android emulator available.
-Electron and desktop Windows/Linux: not run.
+Electron macOS: passed with real production main/preload/IPC; see electron/verification.txt.
+iOS: native iPhone 16 Pro / iOS 26.2 workflow passed; see ios/verification.txt.
+The iOS evidence also includes the final shared-menu compact browser smoke.
+Android and desktop Windows/Linux: not run; no suitable emulator or machines available.
 
 Focused tests use existing suites and CI jobs. No full local test suite was run.
 Additional raw logs in this directory record the targeted unit/protocol/client
-checks, final build, formatting, lint, typecheck checks.
+checks, final build, formatting, lint, typecheck checks. The local checkout prefix
+in text logs is replaced with <checkout>; the remaining output is unchanged.
 
 The final durable storage/lifecycle describe passed 14 tests, including a provider
 whose interrupt reports normal completion. Stop still retains the queue.

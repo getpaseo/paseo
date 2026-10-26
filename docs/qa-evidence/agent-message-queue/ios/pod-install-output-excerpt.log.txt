@@ -1,0 +1,59 @@
+OUTPUT EXCERPT: final 55 lines of the successful CocoaPods installation output.
+Local user paths and device identifiers are redacted; the excerpt is otherwise unchanged.
+Source: /tmp/paseo-ios-pods.log
+
+Pod install took 94 [s] to run
+Integrating client project
+
+[!] Please close any current Xcode sessions and use `PaseoDebug.xcworkspace` for this project from now on.
+[Expo] Installing the build script for target PaseoDebug
+Pod installation complete! There are 134 dependencies from the Podfile and 133 total pods installed.
+[Expo-precompiled] Precompiled modules:
+[Expo-precompiled]   📦 ExpoCamera (57.0.6)
+[Expo-precompiled]   📦 ExpoCameraBarcodeScanning (57.0.6)
+[Expo-precompiled]       ∟ ZXingObjC.xcframework (3.6.9)
+[Expo-precompiled]   📦 ExpoFileSystem (57.0.7)
+[Expo-precompiled]   📦 ExpoFont (57.0.4)
+[Expo-precompiled]   📦 ExpoImage (57.0.5)
+[Expo-precompiled]       ∟ SDWebImage.xcframework (5.21.6)
+[Expo-precompiled]       ∟ SDWebImageAVIFCoder.xcframework (0.12.0)
+[Expo-precompiled]       ∟ SDWebImageSVGCoder.xcframework (1.8.0)
+[Expo-precompiled]       ∟ SDWebImageWebPCoder.xcframework (0.15.0)
+[Expo-precompiled]       ∟ libavif.xcframework (1.0.0)
+[Expo-precompiled]   📦 ExpoImageManipulator (57.0.21)
+[Expo-precompiled]       ∟ SDWebImage.xcframework (5.21.1)
+[Expo-precompiled]       ∟ SDWebImageWebPCoder.xcframework (0.14.6)
+[Expo-precompiled]   📦 ExpoModulesCore (57.0.23)
+[Expo-precompiled]   📦 ExpoModulesWorklets (57.0.23)
+[Expo] Disabling SWIFT_EMIT_MODULE_INTERFACE for pod targets (prebuilt React compatibility)
+[Expo-precompiled] Looking for ExpoModulesCore.xcframework at: <checkout>/packages/app/ios/Pods/ExpoModulesCore/ExpoModulesCore.xcframework
+[Expo-precompiled] Adding ExpoModulesJSI header search paths to all targets
+[Expo] Adding '[Expo] Remove duplicate codegen output' build phase to ReactCodegen
+[Expo] Raised deployment target for Expo modules matching ExpoModulesCore:
+  ExpoTwoWayAudio (iOS=16.4)
+  PaseoHardwareKeyboard (iOS=16.4)
+[Expo] Raised resource bundle deployment targets to match their pods: RNCAsyncStorage-RNCAsyncStorage_resources, RNSVG-RNSVGFilters
+
+[!] [ReactNativeEnrichedMarkdown] LaTeX math disabled via "enriched-markdown".enableMath = false in your app package.json.
+
+[!] ExpoCamera has added 2 script phases. Please inspect before executing a build. See `https://guides.cocoapods.org/syntax/podspec.html#script_phases` for more information.
+
+[!] ExpoCameraBarcodeScanning has added 2 script phases. Please inspect before executing a build. See `https://guides.cocoapods.org/syntax/podspec.html#script_phases` for more information.
+
+[!] ExpoFileSystem has added 2 script phases. Please inspect before executing a build. See `https://guides.cocoapods.org/syntax/podspec.html#script_phases` for more information.
+
+[!] ExpoFont has added 2 script phases. Please inspect before executing a build. See `https://guides.cocoapods.org/syntax/podspec.html#script_phases` for more information.
+
+[!] ExpoImage has added 2 script phases. Please inspect before executing a build. See `https://guides.cocoapods.org/syntax/podspec.html#script_phases` for more information.
+
+[!] ExpoImageManipulator has added 2 script phases. Please inspect before executing a build. See `https://guides.cocoapods.org/syntax/podspec.html#script_phases` for more information.
+
+[!] ExpoModulesCore has added 2 script phases. Please inspect before executing a build. See `https://guides.cocoapods.org/syntax/podspec.html#script_phases` for more information.
+
+[!] ExpoModulesWorklets has added 2 script phases. Please inspect before executing a build. See `https://guides.cocoapods.org/syntax/podspec.html#script_phases` for more information.
+
+[!] React-Core-prebuilt has added 1 script phase. Please inspect before executing a build. See `https://guides.cocoapods.org/syntax/podspec.html#script_phases` for more information.
+
+[!] ReactNativeDependencies has added 1 script phase. Please inspect before executing a build. See `https://guides.cocoapods.org/syntax/podspec.html#script_phases` for more information.
+
+[!] hermes-engine has added 1 script phase. Please inspect before executing a build. See `https://guides.cocoapods.org/syntax/podspec.html#script_phases` for more information.

@@ -1,0 +1,326 @@
+[
+  {
+    "command": {
+      "tapOnElement": {
+        "selector": {
+          "textRegex": "Send queued message now",
+          "optional": false
+        },
+        "retryIfNoChange": false,
+        "waitUntilVisible": false,
+        "longPress": false,
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992498805,
+      "duration": 2432,
+      "sequenceNumber": 7,
+      "evaluatedCommand": {
+        "tapOnElement": {
+          "selector": {
+            "textRegex": "Send queued message now",
+            "optional": false
+          },
+          "retryIfNoChange": false,
+          "waitUntilVisible": false,
+          "longPress": false,
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "defineVariablesCommand": {
+        "env": {
+          "MAESTRO_FILENAME": "send-now-keyboard-fixed",
+          "MAESTRO_DEVICE_UDID": "<simulator-id>",
+          "MAESTRO_SHARD_ID": "1",
+          "MAESTRO_SHARD_INDEX": "0"
+        },
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992494081,
+      "duration": 6,
+      "sequenceNumber": 0,
+      "evaluatedCommand": {
+        "defineVariablesCommand": {
+          "env": {
+            "MAESTRO_FILENAME": "send-now-keyboard-fixed",
+            "MAESTRO_DEVICE_UDID": "<simulator-id>",
+            "MAESTRO_SHARD_ID": "1",
+            "MAESTRO_SHARD_INDEX": "0"
+          },
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "takeScreenshotCommand": {
+        "path": "native-before-send-now-keyboard",
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992498666,
+      "duration": 138,
+      "sequenceNumber": 6,
+      "evaluatedCommand": {
+        "takeScreenshotCommand": {
+          "path": "native-before-send-now-keyboard",
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "assertConditionCommand": {
+        "condition": {
+          "notVisible": {
+            "textRegex": "Edit queued message",
+            "optional": false
+          }
+        },
+        "timeout": "15000",
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992501238,
+      "duration": 902,
+      "sequenceNumber": 8,
+      "evaluatedCommand": {
+        "assertConditionCommand": {
+          "condition": {
+            "notVisible": {
+              "textRegex": "Edit queued message",
+              "optional": false
+            }
+          },
+          "timeout": "15000",
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "assertConditionCommand": {
+        "condition": {
+          "visible": {
+            "textRegex": "Native stop-held follow-up",
+            "optional": false
+          }
+        },
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992495698,
+      "duration": 603,
+      "sequenceNumber": 4,
+      "evaluatedCommand": {
+        "assertConditionCommand": {
+          "condition": {
+            "visible": {
+              "textRegex": "Native stop-held follow-up",
+              "optional": false
+            }
+          },
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "applyConfigurationCommand": {
+        "config": {
+          "appId": "sh.paseo.debug"
+        },
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992494087,
+      "duration": 3,
+      "sequenceNumber": 1,
+      "evaluatedCommand": {
+        "applyConfigurationCommand": {
+          "config": {
+            "appId": "sh.paseo.debug"
+          },
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "tapOnPointV2Command": {
+        "point": "92%,93%",
+        "retryIfNoChange": false,
+        "longPress": false,
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992494531,
+      "duration": 1166,
+      "sequenceNumber": 3,
+      "evaluatedCommand": {
+        "tapOnPointV2Command": {
+          "point": "92%,93%",
+          "retryIfNoChange": false,
+          "longPress": false,
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "tapOnElement": {
+        "selector": {
+          "textRegex": "Message agent.*",
+          "optional": false
+        },
+        "retryIfNoChange": false,
+        "waitUntilVisible": false,
+        "longPress": false,
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992496301,
+      "duration": 2364,
+      "sequenceNumber": 5,
+      "evaluatedCommand": {
+        "tapOnElement": {
+          "selector": {
+            "textRegex": "Message agent.*",
+            "optional": false
+          },
+          "retryIfNoChange": false,
+          "waitUntilVisible": false,
+          "longPress": false,
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "assertConditionCommand": {
+        "condition": {
+          "visible": {
+            "textRegex": "Stop agent",
+            "optional": false
+          }
+        },
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992502141,
+      "duration": 309,
+      "sequenceNumber": 9,
+      "evaluatedCommand": {
+        "assertConditionCommand": {
+          "condition": {
+            "visible": {
+              "textRegex": "Stop agent",
+              "optional": false
+            }
+          },
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "runFlowCommand": {
+        "commands": [
+          {
+            "tapOnPointV2Command": {
+              "point": "92%,93%",
+              "retryIfNoChange": false,
+              "longPress": false,
+              "optional": false
+            }
+          }
+        ],
+        "condition": {
+          "visible": {
+            "textRegex": "(?s).*ERR_NOTIFICATIONS_KEYCHAIN_ACCESS.*",
+            "optional": false
+          }
+        },
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992494091,
+      "duration": 1607,
+      "sequenceNumber": 2,
+      "evaluatedCommand": {
+        "runFlowCommand": {
+          "commands": [
+            {
+              "tapOnPointV2Command": {
+                "point": "92%,93%",
+                "retryIfNoChange": false,
+                "longPress": false,
+                "optional": false
+              }
+            }
+          ],
+          "condition": {
+            "visible": {
+              "textRegex": "(?s).*ERR_NOTIFICATIONS_KEYCHAIN_ACCESS.*",
+              "optional": false
+            }
+          },
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "takeScreenshotCommand": {
+        "path": "native-send-now-keyboard",
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992502450,
+      "duration": 150,
+      "sequenceNumber": 10,
+      "evaluatedCommand": {
+        "takeScreenshotCommand": {
+          "path": "native-send-now-keyboard",
+          "optional": false
+        }
+      }
+    }
+  }
+]

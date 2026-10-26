@@ -1,0 +1,16 @@
+{
+  "assertion": "queue",
+  "phase": "stopqueued",
+  "passed": true,
+  "activeTurnId": "fae5e5df-8062-4335-93ee-20141d45cc28",
+  "queueIds": [
+    "msg_1792992277489_q4s8kc2q5"
+  ],
+  "canonicalPromptIds": [
+    "native-baseline",
+    "msg_1792992167905_lziqjo5ng"
+  ],
+  "artifact": "/tmp/paseo-native-queue-observer/stopqueued.json",
+  "queuedMessageId": "msg_1792992277489_q4s8kc2q5",
+  "activeTurnUnchanged": true
+}

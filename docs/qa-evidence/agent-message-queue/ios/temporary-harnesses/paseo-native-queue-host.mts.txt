@@ -1,0 +1,173 @@
+import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
+import { mkdtemp, mkdir, writeFile, appendFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { resolve, join } from "node:path";
+import { pathToFileURL } from "node:url";
+
+const repo = process.env.PASEO_QUEUE_NATIVE_QA_REPO ?? "<checkout>";
+const metroPort = Number(process.env.PASEO_QUEUE_NATIVE_QA_METRO_PORT);
+if (!Number.isInteger(metroPort) || metroPort <= 0) throw new Error("Set PASEO_QUEUE_NATIVE_QA_METRO_PORT before launching this isolated QA host");
+const require = createRequire(join(repo, "package.json"));
+const pino = require("pino");
+const load = (file: string) => import(pathToFileURL(resolve(repo, file)).href);
+const { createTestPaseoDaemon } = await load("packages/server/src/server/test-utils/paseo-daemon.ts");
+const { DaemonClient } = await load("packages/server/src/server/test-utils/daemon-client.ts");
+const { createTestAgentClient } = await load("packages/server/src/server/test-utils/fake-agent-client.ts");
+const { parseAgentMessage } = await load("packages/server/src/server/agent/agent-messages/index.ts");
+
+const root = await mkdtemp(join(tmpdir(), "paseo-native-queue-qa-"));
+const workspacePath = join(root, "Native Queue QA");
+await mkdir(workspacePath, { recursive: true });
+const logPath = join(root, "daemon.log");
+const eventsPath = join(root, "fixture-events.jsonl");
+const metadataPath = "/tmp/paseo-native-queue-host.json";
+const base = createTestAgentClient("codex");
+const sessions = new Map<string, any>();
+const turns: any[] = [];
+const responseErrors: any[] = [];
+const log = (entry: unknown) => { void appendFile(eventsPath, `${JSON.stringify({ at: new Date().toISOString(), ...entry as object })}\n`); };
+const promptText = (prompt: any) => typeof prompt === "string" ? (parseAgentMessage(prompt)?.text ?? prompt) : JSON.stringify(prompt);
+
+function fixtureSession(config: any, sessionId = randomUUID()) {
+  const listeners = new Set<(event: any) => void>();
+  const history: any[] = [];
+  let active: any = null;
+  let mode = config.modeId ?? "full-access";
+  const emit = (event: any) => { history.push(event); log({ kind: "provider-event", event }); for (const listener of listeners) listener(event); };
+  const session = {
+    provider: "codex", id: sessionId, capabilities: base.capabilities,
+    async startTurn(prompt: any, options: any = {}) {
+      if (active) throw new Error("Native QA fixture already has an active turn");
+      const turnId = randomUUID();
+      let settle: any;
+      const completed = new Promise((complete) => { settle = complete; });
+      active = { turnId, prompt: promptText(prompt), clientMessageId: options.clientMessageId ?? null,
+        status: "running", steers: [], startedAt: new Date().toISOString(), settle, completed };
+      turns.push(active);
+      log({ kind: "start", turnId, prompt: active.prompt, clientMessageId: active.clientMessageId });
+      setTimeout(() => {
+        if (active?.turnId !== turnId) return;
+        emit({ type: "thread_started", provider: "codex", sessionId });
+        emit({ type: "turn_started", provider: "codex", turnId });
+        emit({ type: "timeline", provider: "codex", turnId, item: { type: "assistant_message", text: "Native QA fixture is running. It waits for explicit release." } });
+      }, 0);
+      return { turnId };
+    },
+    async run(prompt: any, options: any) { await session.startTurn(prompt, options); return active.completed; },
+    async steerActiveTurn(prompt: any, options: any) {
+      if (!active || active.turnId !== options.expectedTurnId) return { status: "unavailable" };
+      const steer = { text: promptText(prompt), clientMessageId: options.clientMessageId ?? null, at: new Date().toISOString() };
+      active.steers.push(steer);
+      log({ kind: "steer", turnId: active.turnId, ...steer });
+      emit({ type: "timeline", provider: "codex", turnId: active.turnId, item: { type: "assistant_message", text: `Steering received: ${steer.text}` } });
+      return { status: "accepted" };
+    },
+    release() {
+      if (!active) return null;
+      const turn = active; active = null; turn.status = "completed"; turn.finishedAt = new Date().toISOString();
+      emit({ type: "timeline", provider: "codex", turnId: turn.turnId, item: { type: "assistant_message", text: `Finished: ${turn.prompt}` } });
+      emit({ type: "turn_completed", provider: "codex", turnId: turn.turnId, usage: { inputTokens: 1, outputTokens: 1 } });
+      turn.settle({ sessionId, finalText: `Finished: ${turn.prompt}`, timeline: [] });
+      return turn.turnId;
+    },
+    async interrupt() {
+      if (!active) return;
+      const turn = active; active = null; turn.status = "canceled"; turn.finishedAt = new Date().toISOString();
+      emit({ type: "turn_canceled", provider: "codex", turnId: turn.turnId, reason: "Interrupted by native UI" });
+      turn.settle({ sessionId, finalText: "", timeline: [], canceled: true });
+    },
+    subscribe(callback: any) { listeners.add(callback); return () => listeners.delete(callback); },
+    async *streamHistory() { yield* history; },
+    async getRuntimeInfo() { return { provider: "codex", sessionId, model: config.model ?? "gpt-5.4-mini", modeId: mode }; },
+    async getAvailableModes() { return [{ id: "full-access", label: "Full access", description: "Synthetic QA fixture" }]; },
+    async getCurrentMode() { return mode; }, async setMode(value: string) { mode = value; },
+    getPendingPermissions() { return []; }, async respondToPermission() {},
+    describePersistence() { return { provider: "codex", sessionId, metadata: { cwd: config.cwd } }; },
+    async close() { await session.interrupt(); listeners.clear(); }, async listCommands() { return []; },
+  };
+  sessions.set(sessionId, session);
+  return session;
+}
+
+const provider = {
+  provider: "codex", capabilities: base.capabilities,
+  createSession: async (config: any) => fixtureSession(config),
+  resumeSession: async (handle: any, config: any) => fixtureSession({ provider: "codex", cwd: workspacePath, ...config }, handle.sessionId),
+  fetchCatalog: base.fetchCatalog.bind(base), isAvailable: async () => true,
+};
+const host = await createTestPaseoDaemon({
+  daemonVersion: "0.13.0", agentClients: { codex: provider }, mcpEnabled: false, relayEnabled: false,
+  logger: pino({ level: "info" }, pino.destination(logPath)),
+  corsAllowedOrigins: [`http://localhost:${metroPort}`, `http://127.0.0.1:${metroPort}`],
+  providerOverrides: { codex: { enabled: true, label: "Native QA fixture" }, claude: { enabled: false }, opencode: { enabled: false }, copilot: { enabled: false }, pi: { enabled: false }, omp: { enabled: false } },
+});
+const client = new DaemonClient({ url: `ws://127.0.0.1:${host.port}/ws`, appVersion: "0.13.0", clientId: "native-queue-qa-observer" });
+await client.connect();
+await client.fetchAgents({ subscribe: {} });
+client.subscribeRawMessages((message: any) => {
+  const payload = message.payload;
+  if (payload && (payload.error || payload.success === false || payload.accepted === false)) {
+    responseErrors.push({ at: new Date().toISOString(), type: message.type, payload });
+    log({ kind: "response-error", type: message.type, payload });
+  }
+});
+const added = await client.addProject(workspacePath);
+if (!added.project) throw new Error(added.error ?? "Project creation failed");
+const created = await client.createWorkspace({ source: { kind: "directory", path: workspacePath, projectId: added.project.projectId }, title: "Native Queue QA" });
+if (!created.workspace) throw new Error(created.error ?? "Workspace creation failed");
+const workspaceId = created.workspace.id;
+const agent = await client.createAgent({ provider: "codex", cwd: workspacePath, workspaceId,
+  title: "Native queue controls", model: "gpt-5.4-mini", modeId: "full-access" });
+await client.sendAgentMessage(agent.id, "Native baseline task: keep working until explicit release.", { messageId: "native-baseline" });
+
+let metadata: any;
+let closing = false;
+async function status() {
+  const [snapshot, queue, timeline] = await Promise.all([
+    client.fetchAgent({ agentId: agent.id }), client.listQueuedAgentMessages(agent.id), client.fetchAgentTimeline(agent.id, { limit: 200 }),
+  ]);
+  return { metadata, agent: snapshot?.agent ?? null, queue, timeline,
+    turns: turns.map(({ settle, completed, ...turn }) => turn), responseErrors };
+}
+async function close() {
+  if (closing) return; closing = true;
+  await writeFile(join(root, "final-status.json"), JSON.stringify(await status(), null, 2)).catch(() => undefined);
+  await client.close(); await host.close();
+  control.close();
+  process.exit(0);
+}
+const control = createServer(async (request, response) => {
+  try {
+    let body = ""; for await (const chunk of request) body += chunk;
+    const input = body ? JSON.parse(body) : {};
+    let result: any;
+    if (request.method === "GET" && request.url === "/status") result = await status();
+    else if (request.method === "POST" && request.url === "/release") {
+      result = { releasedTurnIds: [...sessions.values()].map((session) => session.release()).filter(Boolean) };
+    } else if (request.method === "POST" && request.url === "/start") {
+      await client.sendAgentMessage(agent.id, input.text ?? "Native QA next task, held until release.", { messageId: input.messageId ?? randomUUID(), activeTurnBehavior: input.activeTurnBehavior ?? "interrupt" });
+      result = await status();
+    } else if (request.method === "POST" && request.url === "/shutdown") {
+      response.writeHead(200, { "content-type": "application/json" }); response.end('{"closing":true}'); void close(); return;
+    } else { response.writeHead(404); response.end(); return; }
+    response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify(result));
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error); responseErrors.push({ at: new Date().toISOString(), controlError: detail });
+    response.writeHead(500, { "content-type": "application/json" }); response.end(JSON.stringify({ error: detail }));
+  }
+});
+await new Promise<void>((ready) => control.listen(0, "127.0.0.1", ready));
+const controlAddress = control.address();
+if (!controlAddress || typeof controlAddress === "string") throw new Error("Control port not bound");
+metadata = { fixture: "Deterministic gated provider; no real agent/account", root, logPath, eventsPath, metroPort,
+  serverId: host.daemon.getServerId(), daemonPort: host.port, daemonEndpoint: `127.0.0.1:${host.port}`,
+  websocketUrl: `ws://127.0.0.1:${host.port}/ws`, controlPort: controlAddress.port,
+  controlUrl: `http://127.0.0.1:${controlAddress.port}`, projectId: added.project.projectId, workspaceId, workspacePath, agentId: agent.id,
+  paseoHome: host.paseoHome, metadataPath };
+await writeFile(metadataPath, JSON.stringify(metadata, null, 2));
+await writeFile(join(root, "metadata.json"), JSON.stringify(metadata, null, 2));
+console.log(JSON.stringify(metadata, null, 2));
+process.once("SIGINT", () => { void close(); });
+process.once("SIGTERM", () => { void close(); });

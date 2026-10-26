@@ -1,0 +1,281 @@
+{
+  "metadata": {
+    "fixture": "Deterministic gated provider; no real agent/account",
+    "root": "<qa-temp-root>",
+    "logPath": "<qa-temp-root>/daemon.log",
+    "eventsPath": "<qa-temp-root>/fixture-events.jsonl",
+    "metroPort": 53572,
+    "serverId": "srv_LQ14aqZhKNEU",
+    "daemonPort": 54585,
+    "daemonEndpoint": "127.0.0.1:54585",
+    "websocketUrl": "ws://127.0.0.1:54585/ws",
+    "controlPort": 54587,
+    "controlUrl": "http://127.0.0.1:54587",
+    "projectId": "prj_e3109400b7481337",
+    "workspaceId": "wks_eaf59009cac4549a",
+    "workspacePath": "<qa-temp-root>/Native Queue QA",
+    "agentId": "327b9315-5c52-4d20-bfd6-ea531202d001",
+    "paseoHome": "<qa-paseo-home>",
+    "metadataPath": "/tmp/paseo-native-queue-host.json"
+  },
+  "agent": {
+    "id": "327b9315-5c52-4d20-bfd6-ea531202d001",
+    "provider": "codex",
+    "cwd": "<qa-temp-root>/Native Queue QA",
+    "workspaceId": "wks_eaf59009cac4549a",
+    "model": "gpt-5.4-mini",
+    "thinkingOptionId": null,
+    "effectiveThinkingOptionId": null,
+    "runtimeInfo": {
+      "provider": "codex",
+      "sessionId": "ca776f1d-70c8-401b-9940-15f714add66e",
+      "model": "gpt-5.4-mini",
+      "modeId": "full-access"
+    },
+    "createdAt": "2026-10-26T04:18:35.520Z",
+    "updatedAt": "2026-10-26T05:22:47.963Z",
+    "lastUserMessageAt": "2026-10-26T05:22:47.962Z",
+    "status": "running",
+    "activeTurn": {
+      "turnId": "fae5e5df-8062-4335-93ee-20141d45cc28",
+      "startedAt": "2026-10-26T04:18:35.540Z"
+    },
+    "capabilities": {
+      "supportsStreaming": true,
+      "supportsSessionPersistence": true,
+      "supportsDynamicModes": true,
+      "supportsMcpServers": false,
+      "supportsReasoningStream": true,
+      "supportsToolInvocations": true,
+      "supportsRewindConversation": false,
+      "supportsRewindFiles": false,
+      "supportsRewindBoth": false
+    },
+    "currentModeId": "full-access",
+    "availableModes": [
+      {
+        "id": "full-access",
+        "label": "Full access",
+        "description": "Synthetic QA fixture"
+      }
+    ],
+    "features": [],
+    "pendingPermissions": [],
+    "persistence": {
+      "provider": "codex",
+      "sessionId": "ca776f1d-70c8-401b-9940-15f714add66e",
+      "metadata": {
+        "cwd": "<qa-temp-root>/Native Queue QA"
+      }
+    },
+    "title": "Native queue controls",
+    "labels": {},
+    "archivedAt": null,
+    "requiresAttention": false,
+    "attentionReason": null,
+    "attentionTimestamp": null,
+    "queuedMessages": [
+      {
+        "id": "msg_1792992126604_2qscjaup4",
+        "text": "Native queue follow-up",
+        "attachmentCount": 0,
+        "createdAt": "2026-10-26T05:22:06.608Z"
+      }
+    ]
+  },
+  "queue": [
+    {
+      "id": "msg_1792992126604_2qscjaup4",
+      "text": "Native queue follow-up",
+      "images": [],
+      "attachments": [],
+      "createdAt": "2026-10-26T05:22:06.608Z"
+    }
+  ],
+  "timeline": {
+    "requestId": "05d9fdbf-45a7-4d03-85fb-0d879d7def1c",
+    "agentId": "327b9315-5c52-4d20-bfd6-ea531202d001",
+    "agent": {
+      "id": "327b9315-5c52-4d20-bfd6-ea531202d001",
+      "provider": "codex",
+      "cwd": "<qa-temp-root>/Native Queue QA",
+      "workspaceId": "wks_eaf59009cac4549a",
+      "model": "gpt-5.4-mini",
+      "thinkingOptionId": null,
+      "effectiveThinkingOptionId": null,
+      "runtimeInfo": {
+        "provider": "codex",
+        "sessionId": "ca776f1d-70c8-401b-9940-15f714add66e",
+        "model": "gpt-5.4-mini",
+        "modeId": "full-access"
+      },
+      "createdAt": "2026-10-26T04:18:35.520Z",
+      "updatedAt": "2026-10-26T05:22:47.963Z",
+      "lastUserMessageAt": "2026-10-26T05:22:47.962Z",
+      "status": "running",
+      "activeTurn": {
+        "turnId": "fae5e5df-8062-4335-93ee-20141d45cc28",
+        "startedAt": "2026-10-26T04:18:35.540Z"
+      },
+      "capabilities": {
+        "supportsStreaming": true,
+        "supportsSessionPersistence": true,
+        "supportsDynamicModes": true,
+        "supportsMcpServers": false,
+        "supportsReasoningStream": true,
+        "supportsToolInvocations": true,
+        "supportsRewindConversation": false,
+        "supportsRewindFiles": false,
+        "supportsRewindBoth": false
+      },
+      "currentModeId": "full-access",
+      "availableModes": [
+        {
+          "id": "full-access",
+          "label": "Full access",
+          "description": "Synthetic QA fixture"
+        }
+      ],
+      "features": [],
+      "pendingPermissions": [],
+      "persistence": {
+        "provider": "codex",
+        "sessionId": "ca776f1d-70c8-401b-9940-15f714add66e",
+        "metadata": {
+          "cwd": "<qa-temp-root>/Native Queue QA"
+        }
+      },
+      "title": "Native queue controls",
+      "labels": {},
+      "archivedAt": null,
+      "requiresAttention": false,
+      "attentionReason": null,
+      "attentionTimestamp": null,
+      "queuedMessages": [
+        {
+          "id": "msg_1792992126604_2qscjaup4",
+          "text": "Native queue follow-up",
+          "attachmentCount": 0,
+          "createdAt": "2026-10-26T05:22:06.608Z"
+        }
+      ]
+    },
+    "direction": "tail",
+    "projection": "projected",
+    "epoch": "3f71ce2d-49a2-4162-b431-27b1f415797d",
+    "reset": false,
+    "staleCursor": false,
+    "gap": false,
+    "window": {
+      "minSeq": 1,
+      "maxSeq": 4,
+      "nextSeq": 5
+    },
+    "startCursor": {
+      "epoch": "3f71ce2d-49a2-4162-b431-27b1f415797d",
+      "seq": 1
+    },
+    "endCursor": {
+      "epoch": "3f71ce2d-49a2-4162-b431-27b1f415797d",
+      "seq": 4
+    },
+    "hasOlder": false,
+    "hasNewer": false,
+    "entries": [
+      {
+        "provider": "codex",
+        "item": {
+          "type": "user_message",
+          "text": "Native baseline task: keep working until explicit release.",
+          "clientMessageId": "native-baseline",
+          "messageId": "native-baseline"
+        },
+        "timestamp": "2026-10-26T04:18:35.541Z",
+        "seqStart": 1,
+        "seqEnd": 1,
+        "sourceSeqRanges": [
+          {
+            "startSeq": 1,
+            "endSeq": 1
+          }
+        ],
+        "turnId": "fae5e5df-8062-4335-93ee-20141d45cc28",
+        "collapsed": []
+      },
+      {
+        "provider": "codex",
+        "item": {
+          "type": "assistant_message",
+          "text": "Native QA fixture is running. It waits for explicit release."
+        },
+        "timestamp": "2026-10-26T04:18:35.543Z",
+        "seqStart": 2,
+        "seqEnd": 2,
+        "sourceSeqRanges": [
+          {
+            "startSeq": 2,
+            "endSeq": 2
+          }
+        ],
+        "turnId": "fae5e5df-8062-4335-93ee-20141d45cc28",
+        "collapsed": []
+      },
+      {
+        "provider": "codex",
+        "item": {
+          "type": "user_message",
+          "text": "Native steer follow-up",
+          "clientMessageId": "msg_1792992167905_lziqjo5ng",
+          "messageId": "msg_1792992167905_lziqjo5ng"
+        },
+        "timestamp": "2026-10-26T05:22:47.962Z",
+        "seqStart": 3,
+        "seqEnd": 3,
+        "sourceSeqRanges": [
+          {
+            "startSeq": 3,
+            "endSeq": 3
+          }
+        ],
+        "turnId": "fae5e5df-8062-4335-93ee-20141d45cc28",
+        "collapsed": []
+      },
+      {
+        "provider": "codex",
+        "item": {
+          "type": "assistant_message",
+          "text": "Steering received: Native steer follow-up"
+        },
+        "timestamp": "2026-10-26T05:22:47.963Z",
+        "seqStart": 4,
+        "seqEnd": 4,
+        "sourceSeqRanges": [
+          {
+            "startSeq": 4,
+            "endSeq": 4
+          }
+        ],
+        "turnId": "fae5e5df-8062-4335-93ee-20141d45cc28",
+        "collapsed": []
+      }
+    ],
+    "error": null
+  },
+  "turns": [
+    {
+      "turnId": "fae5e5df-8062-4335-93ee-20141d45cc28",
+      "prompt": "Native baseline task: keep working until explicit release.",
+      "clientMessageId": "native-baseline",
+      "status": "running",
+      "steers": [
+        {
+          "text": "Native steer follow-up",
+          "clientMessageId": "msg_1792992167905_lziqjo5ng",
+          "at": "2026-10-26T05:22:47.962Z"
+        }
+      ],
+      "startedAt": "2026-10-26T04:18:35.540Z"
+    }
+  ],
+  "responseErrors": []
+}

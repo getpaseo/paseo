@@ -386,7 +386,12 @@ function renderQueueTrack(args: RenderQueueTrackArgs): ReactElement | null {
     args;
   if (queuedMessages.length === 0) return null;
   return (
-    <ScrollView style={styles.queueScroll} contentContainerStyle={styles.queueTrack}>
+    <ScrollView
+      style={styles.queueScroll}
+      contentContainerStyle={styles.queueTrack}
+      // Queue actions must receive the first tap while the composer keyboard is open.
+      keyboardShouldPersistTaps="handled"
+    >
       {queuedMessages.map((item) => (
         <QueuedMessageRow
           key={item.id}

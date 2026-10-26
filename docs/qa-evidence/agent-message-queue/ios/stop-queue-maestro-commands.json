@@ -1,0 +1,254 @@
+[
+  {
+    "command": {
+      "tapOnElement": {
+        "selector": {
+          "idRegex": "composer-send-options-queue",
+          "optional": false
+        },
+        "retryIfNoChange": false,
+        "waitUntilVisible": false,
+        "longPress": false,
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992276081,
+      "duration": 2078,
+      "sequenceNumber": 5,
+      "evaluatedCommand": {
+        "tapOnElement": {
+          "selector": {
+            "idRegex": "composer-send-options-queue",
+            "optional": false
+          },
+          "retryIfNoChange": false,
+          "waitUntilVisible": false,
+          "longPress": false,
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "tapOnElement": {
+        "selector": {
+          "textRegex": "Message agent.*",
+          "optional": false
+        },
+        "retryIfNoChange": false,
+        "waitUntilVisible": false,
+        "longPress": false,
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992258514,
+      "duration": 3041,
+      "sequenceNumber": 2,
+      "evaluatedCommand": {
+        "tapOnElement": {
+          "selector": {
+            "textRegex": "Message agent.*",
+            "optional": false
+          },
+          "retryIfNoChange": false,
+          "waitUntilVisible": false,
+          "longPress": false,
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "tapOnElement": {
+        "selector": {
+          "idRegex": "composer-send-options",
+          "optional": false
+        },
+        "retryIfNoChange": false,
+        "waitUntilVisible": false,
+        "longPress": false,
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992272075,
+      "duration": 4005,
+      "sequenceNumber": 4,
+      "evaluatedCommand": {
+        "tapOnElement": {
+          "selector": {
+            "idRegex": "composer-send-options",
+            "optional": false
+          },
+          "retryIfNoChange": false,
+          "waitUntilVisible": false,
+          "longPress": false,
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "assertConditionCommand": {
+        "condition": {
+          "visible": {
+            "textRegex": "Edit queued message",
+            "optional": false
+          }
+        },
+        "timeout": "15000",
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992278160,
+      "duration": 315,
+      "sequenceNumber": 6,
+      "evaluatedCommand": {
+        "assertConditionCommand": {
+          "condition": {
+            "visible": {
+              "textRegex": "Edit queued message",
+              "optional": false
+            }
+          },
+          "timeout": "15000",
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "assertConditionCommand": {
+        "condition": {
+          "visible": {
+            "textRegex": "Native stop-held follow-up",
+            "optional": false
+          }
+        },
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992278475,
+      "duration": 289,
+      "sequenceNumber": 7,
+      "evaluatedCommand": {
+        "assertConditionCommand": {
+          "condition": {
+            "visible": {
+              "textRegex": "Native stop-held follow-up",
+              "optional": false
+            }
+          },
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "applyConfigurationCommand": {
+        "config": {
+          "appId": "sh.paseo.debug"
+        },
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992258511,
+      "duration": 3,
+      "sequenceNumber": 1,
+      "evaluatedCommand": {
+        "applyConfigurationCommand": {
+          "config": {
+            "appId": "sh.paseo.debug"
+          },
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "inputTextCommand": {
+        "text": "Native stop-held follow-up",
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992261556,
+      "duration": 10518,
+      "sequenceNumber": 3,
+      "evaluatedCommand": {
+        "inputTextCommand": {
+          "text": "Native stop-held follow-up",
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "takeScreenshotCommand": {
+        "path": "native-before-stop",
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992278765,
+      "duration": 127,
+      "sequenceNumber": 8,
+      "evaluatedCommand": {
+        "takeScreenshotCommand": {
+          "path": "native-before-stop",
+          "optional": false
+        }
+      }
+    }
+  },
+  {
+    "command": {
+      "defineVariablesCommand": {
+        "env": {
+          "MAESTRO_FILENAME": "stop-queue",
+          "MAESTRO_DEVICE_UDID": "<simulator-id>",
+          "MAESTRO_SHARD_ID": "1",
+          "MAESTRO_SHARD_INDEX": "0"
+        },
+        "optional": false
+      }
+    },
+    "metadata": {
+      "status": "COMPLETED",
+      "timestamp": 1792992258505,
+      "duration": 5,
+      "sequenceNumber": 0,
+      "evaluatedCommand": {
+        "defineVariablesCommand": {
+          "env": {
+            "MAESTRO_FILENAME": "stop-queue",
+            "MAESTRO_DEVICE_UDID": "<simulator-id>",
+            "MAESTRO_SHARD_ID": "1",
+            "MAESTRO_SHARD_INDEX": "0"
+          },
+          "optional": false
+        }
+      }
+    }
+  }
+]

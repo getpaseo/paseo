@@ -1,0 +1,60 @@
+{
+  "platform": "macOS arm64",
+  "artifact": "/tmp/paseo-queue-electron-qa-Kk5JST",
+  "runtime": {
+    "electron": "44.2.0",
+    "chrome": "152.0.7977.76",
+    "node": "24.20.0",
+    "appPath": "/private/tmp/paseo-queue-electron-qa-Kk5JST",
+    "userData": "/tmp/paseo-queue-electron-qa-Kk5JST/electron-user-data",
+    "windowCount": 1
+  },
+  "checks": [
+    {
+      "check": "real Electron production main/preload and IPC connected to isolated daemon",
+      "platform": "darwin",
+      "windowChromeMode": "native-mac",
+      "daemon": {
+        "serverId": "electron-queue-1792988411922",
+        "status": "running",
+        "listen": "127.0.0.1:54809",
+        "hostname": "<redacted local hostname>",
+        "pid": 31789,
+        "home": "/tmp/paseo-queue-electron-qa-Kk5JST/paseo-home",
+        "version": "0.13.0",
+        "desktopManaged": false,
+        "startedAt": "2026-10-26T04:20:12.194Z",
+        "ownedByDesktop": false,
+        "error": null
+      }
+    },
+    {
+      "check": "Queue admits a durable follow-up while the active turn continues"
+    },
+    {
+      "check": "Send and steer preserves the same active turn with Queue configured as default",
+      "initialTurnId": "60445c83-39b2-40bd-a8e3-855363ef670e"
+    },
+    {
+      "check": "Stop holds the queued follow-up"
+    },
+    {
+      "check": "Edit restores full text beyond summary limit, image, and context; requeue and Remove preserve expected state"
+    },
+    {
+      "check": "Queued follow-up dispatches once after the actual Electron process exits",
+      "millisecondsAfterClose": 7143
+    }
+  ],
+  "timing": {
+    "electronClosedAt": "2026-10-26T04:20:40.586Z"
+  },
+  "daemon": {
+    "port": 54809,
+    "serverId": "electron-queue-1792988411922",
+    "home": "/tmp/paseo-queue-electron-qa-Kk5JST/paseo-home"
+  },
+  "success": true,
+  "testedCommit": "8cc0f255a8b1054a64ccdb431d30d8631d96278a",
+  "runtimeSha256": "f906dff5d054b1b92e5711781b13cc206fd7139ce66467503b9d0a3e6fbc9b02"
+}

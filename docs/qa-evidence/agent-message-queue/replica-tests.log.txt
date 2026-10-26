@@ -1,7 +1,7 @@
 
- RUN  v4.1.7 /Users/joechen/src/tests/paseo/packages/app
+ RUN  v4.1.7 <checkout>/packages/app
 
-(node:59652) [DEP0151] DeprecationWarning: Package /Users/joechen/src/tests/paseo/node_modules/react-native-worklets/ has a "main" field set to "./lib/module/index", excluding the full filename and extension to the resolved file at "lib/module/index.js", imported from /Users/joechen/src/tests/paseo/node_modules/react-native-reanimated/lib/module/initializers.js.
+(node:59652) [DEP0151] DeprecationWarning: Package <checkout>/node_modules/react-native-worklets/ has a "main" field set to "./lib/module/index", excluding the full filename and extension to the resolved file at "lib/module/index.js", imported from <checkout>/node_modules/react-native-reanimated/lib/module/initializers.js.
  Automatic extension resolution of the "main" field is deprecated for ES modules.
 (Use `node --trace-deprecation ...` to show where the warning was created)
 

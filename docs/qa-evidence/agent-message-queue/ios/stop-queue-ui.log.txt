@@ -1,0 +1,9 @@
+Running on Paseo Queue QA 7890 - iOS 26.2 - <simulator-id>
+ > Flow stop-queue
+Tap on "Message agent.*"... COMPLETED
+Input text Native stop-held follow-up... COMPLETED
+Tap on id: composer-send-options... COMPLETED
+Tap on id: composer-send-options-queue... COMPLETED
+Assert that "Edit queued message" is visible... COMPLETED
+Assert that "Native stop-held follow-up" is visible... COMPLETED
+Take screenshot native-before-stop... COMPLETED

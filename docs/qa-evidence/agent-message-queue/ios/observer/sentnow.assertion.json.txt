@@ -1,0 +1,8 @@
+{
+  "assertion": "native single-tap Send now after Stop with keyboard open",
+  "passed": true,
+  "queuedMessageId": "msg_1792992277489_q4s8kc2q5",
+  "providerTurnCount": 1,
+  "canonicalPromptCount": 1,
+  "newTurnId": "c06a1927-951b-4168-86d0-7b47e43b772a"
+}

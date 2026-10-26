@@ -1,0 +1,30 @@
+Native iOS QA environment, 2026-10-26
+
+Queue workflow status: pending.
+Simulator model: iPhone 16 Pro.
+Simulator runtime: iOS 26.2.
+Host: macOS 26.6.2, arm64.
+Maestro: 2.6.0 (version supplied by the active native QA run).
+App: PaseoDebug, development Debug simulator build, bundle ID sh.paseo.debug.
+Build target: arm64 iOS Simulator; CODE_SIGNING_ALLOWED=NO.
+
+Xcode
+Xcode 26.2
+Build version 17C52
+
+Clang
+Apple clang version 17.0.0 (clang-1700.6.3.2)
+Target: arm64-apple-darwin25.6.0
+Thread model: posix
+InstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin
+
+Swift
+Apple Swift version 6.2.3 (swiftlang-6.2.3.3.21 clang-1700.6.3.2)
+Target: arm64-apple-macosx26.0
+swift-driver version: 1.127.14.1
+
+Isolation:
+Metro: 127.0.0.1:53572.
+Daemon: 127.0.0.1:54585.
+Deterministic provider control: 127.0.0.1:54587.
+Temporary QA state and the dedicated simulator are separate from the installed Paseo instance.

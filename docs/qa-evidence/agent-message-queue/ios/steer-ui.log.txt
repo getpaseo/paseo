@@ -1,0 +1,8 @@
+Running on Paseo Queue QA 7890 - iOS 26.2 - <simulator-id>
+ > Flow steer
+Tap on "Message agent.*"... COMPLETED
+Input text Native steer follow-up... COMPLETED
+Tap on id: composer-send-options... COMPLETED
+Tap on "Send and steer"... COMPLETED
+Assert that "Edit queued message" is visible... COMPLETED
+Take screenshot native-steered... COMPLETED

@@ -1,0 +1,17 @@
+appId: sh.paseo.debug
+---
+- runFlow:
+    when:
+      visible: "(?s).*ERR_NOTIFICATIONS_KEYCHAIN_ACCESS.*"
+    commands:
+      - tapOn:
+          point: "92%,93%"
+- assertVisible: "Native stop-held follow-up"
+- tapOn: "Message agent.*"
+- takeScreenshot: native-before-send-now-keyboard
+- tapOn: "Send queued message now"
+- extendedWaitUntil:
+    notVisible: "Edit queued message"
+    timeout: 15000
+- assertVisible: "Stop agent"
+- takeScreenshot: native-send-now-keyboard

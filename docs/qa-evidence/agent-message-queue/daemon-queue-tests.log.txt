@@ -1,7 +1,7 @@
 Command: npx vitest run src/server/agent/agent-storage.test.ts --bail=1 -t 'durable message queue'
 Working directory: packages/server
 
- RUN  v4.1.6 /Users/joechen/src/tests/paseo/packages/server
+ RUN  v4.1.6 <checkout>/packages/server
 
  Test Files  1 passed (1)
       Tests  14 passed | 18 skipped (32)

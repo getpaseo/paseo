@@ -1,0 +1,89 @@
+OUTPUT EXCERPT: final 85 lines of the successful local xcodebuild output.
+Local user paths and device identifiers are redacted; the excerpt is otherwise unchanged.
+Source: /tmp/paseo-ios-build.log
+
+ReactNativeDependencies.framework/ReactNativeDependencies_boost.bundle/_CodeSignature/CodeRequirements-1
+ReactNativeDependencies.framework/ReactNativeDependencies_boost.bundle/_CodeSignature/CodeResources
+ReactNativeDependencies.framework/ReactNativeDependencies_boost.bundle/_CodeSignature/CodeSignature
+ReactNativeDependencies.framework/ReactNativeDependencies_folly.bundle/
+ReactNativeDependencies.framework/ReactNativeDependencies_folly.bundle/Info.plist
+ReactNativeDependencies.framework/ReactNativeDependencies_folly.bundle/PrivacyInfo.xcprivacy
+ReactNativeDependencies.framework/ReactNativeDependencies_folly.bundle/_CodeSignature/
+ReactNativeDependencies.framework/ReactNativeDependencies_folly.bundle/_CodeSignature/CodeDirectory
+ReactNativeDependencies.framework/ReactNativeDependencies_folly.bundle/_CodeSignature/CodeRequirements
+ReactNativeDependencies.framework/ReactNativeDependencies_folly.bundle/_CodeSignature/CodeRequirements-1
+ReactNativeDependencies.framework/ReactNativeDependencies_folly.bundle/_CodeSignature/CodeResources
+ReactNativeDependencies.framework/ReactNativeDependencies_folly.bundle/_CodeSignature/CodeSignature
+ReactNativeDependencies.framework/ReactNativeDependencies_glog.bundle/
+ReactNativeDependencies.framework/ReactNativeDependencies_glog.bundle/Info.plist
+ReactNativeDependencies.framework/ReactNativeDependencies_glog.bundle/PrivacyInfo.xcprivacy
+ReactNativeDependencies.framework/ReactNativeDependencies_glog.bundle/_CodeSignature/
+ReactNativeDependencies.framework/ReactNativeDependencies_glog.bundle/_CodeSignature/CodeDirectory
+ReactNativeDependencies.framework/ReactNativeDependencies_glog.bundle/_CodeSignature/CodeRequirements
+ReactNativeDependencies.framework/ReactNativeDependencies_glog.bundle/_CodeSignature/CodeRequirements-1
+ReactNativeDependencies.framework/ReactNativeDependencies_glog.bundle/_CodeSignature/CodeResources
+ReactNativeDependencies.framework/ReactNativeDependencies_glog.bundle/_CodeSignature/CodeSignature
+ReactNativeDependencies.framework/_CodeSignature/
+ReactNativeDependencies.framework/_CodeSignature/CodeResources
+
+sent 6984416 bytes  received 596 bytes  134069328 bytes/sec
+total size is 6978742  speedup is 1.00
+Stripped <checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/PaseoDebug.app/Frameworks/ReactNativeDependencies.framework/ReactNativeDependencies of architectures: x86_64
+rsync --delete -av --filter P .*.?????? --links --filter "- CVS/" --filter "- .svn/" --filter "- .git/" --filter "- .hg/" --filter "- Headers" --filter "- PrivateHeaders" --filter "- Modules" "<checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/XCFrameworkIntermediates/hermes-engine/Pre-built/hermesvm.framework" "<checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/PaseoDebug.app/Frameworks"
+Transfer starting: 3 files
+hermesvm.framework/
+hermesvm.framework/Info.plist
+hermesvm.framework/hermesvm
+
+sent 12243523 bytes  received 70 bytes  167491012 bytes/sec
+total size is 12241626  speedup is 1.00
+Stripped <checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/PaseoDebug.app/Frameworks/hermesvm.framework/hermesvm of architectures: x86_64
+
+ExtractAppIntentsMetadata (in target 'PaseoDebug' from project 'PaseoDebug')
+    cd <checkout>/packages/app/ios
+    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/appintentsmetadataprocessor --toolchain-dir /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain --module-name PaseoDebug --sdk-root /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk --xcode-version 17C52 --platform-family iOS --deployment-target 16.4 --bundle-identifier sh.paseo.debug --output <checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/PaseoDebug.app --target-triple arm64-apple-ios16.4-simulator --binary-file <checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/PaseoDebug.app/PaseoDebug --dependency-file <checkout>/.dev/ios-build/queue-qa/Build/Intermediates.noindex/PaseoDebug.build/Debug-iphonesimulator/PaseoDebug.build/Objects-normal/arm64/PaseoDebug_dependency_info.dat --stringsdata-file <checkout>/.dev/ios-build/queue-qa/Build/Intermediates.noindex/PaseoDebug.build/Debug-iphonesimulator/PaseoDebug.build/Objects-normal/arm64/ExtractedAppShortcutsMetadata.stringsdata --source-file-list <checkout>/.dev/ios-build/queue-qa/Build/Intermediates.noindex/PaseoDebug.build/Debug-iphonesimulator/PaseoDebug.build/Objects-normal/arm64/PaseoDebug.SwiftFileList --metadata-file-list <checkout>/.dev/ios-build/queue-qa/Build/Intermediates.noindex/PaseoDebug.build/Debug-iphonesimulator/PaseoDebug.build/PaseoDebug.DependencyMetadataFileList --static-metadata-file-list <checkout>/.dev/ios-build/queue-qa/Build/Intermediates.noindex/PaseoDebug.build/Debug-iphonesimulator/PaseoDebug.build/PaseoDebug.DependencyStaticMetadataFileList --swift-const-vals-list <checkout>/.dev/ios-build/queue-qa/Build/Intermediates.noindex/PaseoDebug.build/Debug-iphonesimulator/PaseoDebug.build/Objects-normal/arm64/PaseoDebug.SwiftConstValuesFileList --compile-time-extraction --deployment-aware-processing --validate-assistant-intents --no-app-shortcuts-localization
+2026-10-26 12:31:37.200 appintentsmetadataprocessor[42678:179967864] Starting appintentsmetadataprocessor export
+2026-10-26 12:31:37.209 appintentsmetadataprocessor[42678:179967864] warning: Metadata extraction skipped. No AppIntents.framework dependency found.
+
+CopySwiftLibs <checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/PaseoDebug.app (in target 'PaseoDebug' from project 'PaseoDebug')
+    cd <checkout>/packages/app/ios
+    builtin-swiftStdLibTool --copy --verbose --scan-executable <checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/PaseoDebug.app/PaseoDebug.debug.dylib --scan-folder <checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/PaseoDebug.app/Frameworks --scan-folder <checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/PaseoDebug.app/PlugIns --scan-folder <checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/PaseoDebug.app/SystemExtensions --scan-folder <checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/PaseoDebug.app/Extensions --platform iphonesimulator --toolchain /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain --destination <checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/PaseoDebug.app/Frameworks --strip-bitcode --strip-bitcode-tool /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/bitcode_strip --emit-dependency-info <checkout>/.dev/ios-build/queue-qa/Build/Intermediates.noindex/PaseoDebug.build/Debug-iphonesimulator/PaseoDebug.build/SwiftStdLibToolInputDependencies.dep --filter-for-swift-os
+Ignoring --strip-bitcode because --sign was not passed
+
+AppIntentsSSUTraining (in target 'PaseoDebug' from project 'PaseoDebug')
+    cd <checkout>/packages/app/ios
+    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/appintentsnltrainingprocessor --infoplist-path <checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/PaseoDebug.app/Info.plist --temp-dir-path <checkout>/.dev/ios-build/queue-qa/Build/Intermediates.noindex/PaseoDebug.build/Debug-iphonesimulator/PaseoDebug.build/ssu --bundle-id sh.paseo.debug --product-path <checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/PaseoDebug.app --extracted-metadata-path <checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/PaseoDebug.app/Metadata.appintents --metadata-file-list <checkout>/.dev/ios-build/queue-qa/Build/Intermediates.noindex/PaseoDebug.build/Debug-iphonesimulator/PaseoDebug.build/PaseoDebug.DependencyMetadataFileList --archive-ssu-assets
+2026-10-26 12:31:37.338 appintentsnltrainingprocessor[42679:179967866] Parsing options for appintentsnltrainingprocessor
+2026-10-26 12:31:37.339 appintentsnltrainingprocessor[42679:179967866] No AppShortcuts found - Skipping.
+
+RegisterExecutionPolicyException <checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/PaseoDebug.app (in target 'PaseoDebug' from project 'PaseoDebug')
+    cd <checkout>/packages/app/ios
+    builtin-RegisterExecutionPolicyException <checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/PaseoDebug.app
+
+Validate <checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/PaseoDebug.app (in target 'PaseoDebug' from project 'PaseoDebug')
+    cd <checkout>/packages/app/ios
+    builtin-validationUtility <checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/PaseoDebug.app -shallow-bundle -infoplist-subpath Info.plist
+
+Touch <checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/PaseoDebug.app (in target 'PaseoDebug' from project 'PaseoDebug')
+    cd <checkout>/packages/app/ios
+    /usr/bin/touch -c <checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/PaseoDebug.app
+
+warning: Run script build phase '[CP-User] [Hermes] Replace Hermes for the right configuration, if needed' will be run during every build because it does not specify any outputs. To address this issue, either add output dependencies to the script phase, or configure it to run in every build by unchecking "Based on dependency analysis" in the script phase. (in target 'hermes-engine' from project 'Pods')
+note: Run script build phase '[CP-User] [RNDeps] Replace React Native Dependencies for the right configuration, if needed' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'ReactNativeDependencies' from project 'Pods')
+note: Run script build phase '[CP-User] [RN]Check FBReactNativeSpec' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'React-RCTFBReactNativeSpec' from project 'Pods')
+note: Run script build phase '[CP-User] [RNCore] Replace React Native Core for the right configuration, if needed' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'React-Core-prebuilt' from project 'Pods')
+note: Run script build phase '[CP-User] [Expo] Switch ExpoModulesWorklets XCFramework for build configuration' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'ExpoModulesWorklets' from project 'Pods')
+note: Run script build phase '[CP-User] Build ExpoModulesJSI xcframework' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'ExpoModulesJSI' from project 'Pods')
+note: Run script build phase '[CP-User] [Expo] Switch ExpoModulesCore XCFramework for build configuration' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'ExpoModulesCore' from project 'Pods')
+note: Run script build phase '[CP-User] [Expo] Switch ExpoImageManipulator XCFramework for build configuration' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'ExpoImageManipulator' from project 'Pods')
+note: Run script build phase '[CP-User] [Expo] Switch ExpoImage XCFramework for build configuration' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'ExpoImage' from project 'Pods')
+note: Run script build phase '[CP-User] [Expo] Switch ExpoFont XCFramework for build configuration' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'ExpoFont' from project 'Pods')
+note: Run script build phase '[CP-User] [Expo] Switch ExpoFileSystem XCFramework for build configuration' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'ExpoFileSystem' from project 'Pods')
+note: Run script build phase '[CP-User] [Expo] Switch ExpoCameraBarcodeScanning XCFramework for build configuration' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'ExpoCameraBarcodeScanning' from project 'Pods')
+note: Run script build phase '[CP-User] [Expo] Switch ExpoCamera XCFramework for build configuration' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'ExpoCamera' from project 'Pods')
+note: Run script build phase '[Expo] Configure project' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'PaseoDebug' from project 'PaseoDebug')
+note: Run script build phase 'Bundle React Native code and images' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'PaseoDebug' from project 'PaseoDebug')
+warning: Run script build phase '[Expo Dev Launcher] Strip Local Network Keys for Release' will be run during every build because it does not specify any outputs. To address this issue, either add output dependencies to the script phase, or configure it to run in every build by unchecking "Based on dependency analysis" in the script phase. (in target 'PaseoDebug' from project 'PaseoDebug')
+note: Run script build phase '[CP-User] Generate app.config for prebuilt Constants.manifest' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'EXConstants' from project 'Pods')
+** BUILD SUCCEEDED **
+

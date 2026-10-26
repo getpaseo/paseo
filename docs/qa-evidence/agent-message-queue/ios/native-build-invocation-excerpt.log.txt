@@ -1,0 +1,12 @@
+OUTPUT EXCERPT: first 8 lines of the successful local xcodebuild output.
+Local user paths and device identifiers are redacted; the excerpt is otherwise unchanged.
+Source: /tmp/paseo-ios-build.log
+
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -workspace PaseoDebug.xcworkspace -scheme PaseoDebug -configuration Debug -destination "platform=iOS Simulator,id=<simulator-id>" -derivedDataPath <checkout>/.dev/ios-build/queue-qa -jobs 2 CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=YES ARCHS=arm64 build
+
+Build settings from command line:
+    ARCHS = arm64
+    CODE_SIGNING_ALLOWED = NO
+    ONLY_ACTIVE_ARCH = YES
+

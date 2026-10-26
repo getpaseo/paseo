@@ -1,0 +1,17 @@
+{
+  "assertion": "queue",
+  "phase": "closequeued",
+  "passed": true,
+  "activeTurnId": "c06a1927-951b-4168-86d0-7b47e43b772a",
+  "queueIds": [
+    "msg_1792992570292_mnzmu538e"
+  ],
+  "canonicalPromptIds": [
+    "native-baseline",
+    "msg_1792992167905_lziqjo5ng",
+    "msg_1792992277489_q4s8kc2q5"
+  ],
+  "artifact": "/tmp/paseo-native-queue-observer/closequeued.json",
+  "queuedMessageId": "msg_1792992570292_mnzmu538e",
+  "activeTurnUnchanged": true
+}

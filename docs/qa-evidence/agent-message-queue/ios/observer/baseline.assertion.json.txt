@@ -1,0 +1,11 @@
+{
+  "assertion": "capture",
+  "phase": "baseline",
+  "passed": true,
+  "activeTurnId": "fae5e5df-8062-4335-93ee-20141d45cc28",
+  "queueIds": [],
+  "canonicalPromptIds": [
+    "native-baseline"
+  ],
+  "artifact": "/tmp/paseo-native-queue-observer/baseline.json"
+}

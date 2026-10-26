@@ -1,5 +1,5 @@
 
- RUN  v4.1.7 /Users/joechen/src/tests/paseo/packages/protocol
+ RUN  v4.1.7 <checkout>/packages/protocol
 
 
  Test Files  2 passed (2)

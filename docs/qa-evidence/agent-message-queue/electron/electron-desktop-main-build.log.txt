@@ -1,0 +1,4 @@
+
+> @getpaseo/desktop@0.13.0 build:main
+> tsc -p tsconfig.json
+

@@ -1,0 +1,7 @@
+Running on Paseo Queue QA 7890 - iOS 26.2 - <simulator-id>
+ > Flow stop
+Tap on "Stop agent"... COMPLETED
+Assert that "Stop agent" is not visible... COMPLETED
+Assert that "Edit queued message" is visible... COMPLETED
+Assert that "Native stop-held follow-up" is visible... COMPLETED
+Take screenshot native-stop-holds-queue... COMPLETED

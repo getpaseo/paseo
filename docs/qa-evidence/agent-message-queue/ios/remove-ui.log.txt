@@ -1,0 +1,8 @@
+Running on Paseo Queue QA 7890 - iOS 26.2 - <simulator-id>
+ > Flow requeue-remove
+Tap on id: composer-send-options... COMPLETED
+Tap on "Queue message"... COMPLETED
+Assert that "Remove queued message" is visible... COMPLETED
+Tap on "Remove queued message"... COMPLETED
+Assert that "Remove queued message" is not visible... COMPLETED
+Take screenshot native-removed... COMPLETED

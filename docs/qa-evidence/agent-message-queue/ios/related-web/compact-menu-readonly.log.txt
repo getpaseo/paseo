@@ -1,0 +1,3 @@
+ARTIFACT_DIR /tmp/paseo-queue-compact-web-0gUgH2
+PASS compact browser menu accessibility {"role":"menuitem","text":"Queue message","box":{"x":4,"y":760.2654418945312,"width":382,"height":40},"steer":{"role":"menuitem","text":"Send and steer","box":{"x":4,"y":799.2991333007812,"width":382,"height":40}}}
+RESULT {"success":true,"artifact":"/tmp/paseo-queue-compact-web-0gUgH2","blockedMutations":["client_heartbeat","client_heartbeat","checkout_status_request","client_heartbeat","client_heartbeat"]}

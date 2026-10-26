@@ -1,0 +1,23 @@
+Native QA commands and temporary artifact locations, 2026-10-26
+
+Run package commands from packages/app unless a command specifies another directory. <qa-simulator> identifies only the dedicated iPhone 16 Pro simulator; its UUID is intentionally omitted.
+
+APP_VARIANT=development CI=1 npx expo prebuild --platform ios --no-install
+(cd ios && pod install)
+(cd ios && xcodebuild -workspace PaseoDebug.xcworkspace -scheme PaseoDebug -configuration Debug -destination 'platform=iOS Simulator,id=<qa-simulator>' -derivedDataPath <checkout>/.dev/ios-build/queue-qa -jobs 2 CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=YES ARCHS=arm64 build)
+
+APP_VARIANT=development EXPO_PUBLIC_LOCAL_DAEMON=127.0.0.1:54585 REACT_NATIVE_PACKAGER_HOSTNAME=localhost EXPO_NO_DOTENV=1 EXPO_UNSTABLE_HEADLESS=1 BROWSER=none CI=1 npx expo start --port 53572 --localhost --max-workers 2
+
+xcrun simctl install <qa-simulator> <checkout>/.dev/ios-build/queue-qa/Build/Products/Debug-iphonesimulator/PaseoDebug.app
+xcrun simctl openurl <qa-simulator> 'paseo://expo-development-client/?url=http%3A%2F%2Flocalhost%3A53572'
+
+The app was then opened to the isolated fixture agent route. localhost is required for this Metro manifest URL: Expo --localhost listened on IPv6, and the earlier 127.0.0.1 manifest URL did not load.
+
+Each retained Maestro flow was run as:
+JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home <user-home>/.maestro/bin/maestro --device <qa-simulator> test --test-output-dir /tmp/paseo-native-queue-ui/<phase>-output /tmp/paseo-native-queue-ui/<phase>.yaml
+
+The phase-specific flow files are retained as flows/*.yaml.txt; their complete Maestro command results and CLI outputs are beside this file. The native queue/edit/remove/stop/send-now actions were UI taps. The read-only observer script independently fetched real daemon snapshot/queue/timeline state through the temporary fixture control server; observer/*.json.txt retain those full snapshots and assertions. Temporary harness source is labelled in temporary-harnesses/ and is not a new test suite or CI job.
+
+The QA app was terminated using xcrun simctl terminate <qa-simulator> sh.paseo.debug. After the termination record was saved, the gated active provider turn was released through POST http://127.0.0.1:54587/release. The observer then verified FIFO delivery exactly once. The observer connection remained available for these assertions; the mobile app was closed.
+
+Cleanup terminated only the scoped QA app, called the isolated fixture POST /shutdown, sent TERM to the exact owned Metro process, and shut down the dedicated simulator. The installed iOS runtime was retained. The main daemon on port 6767 was untouched.
