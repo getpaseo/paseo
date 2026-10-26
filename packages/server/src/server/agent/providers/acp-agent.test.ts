@@ -817,7 +817,7 @@ describe("ACPAgentSession terminal tools", () => {
     const terminal = await session.createTerminal({
       sessionId: "session-1",
       command: process.execPath,
-      args: ["-e", 'process.stdout.write("x".repeat(128 * 1024))'],
+      args: ["-e", 'process.stdout.write("x".repeat(1024 * 1024))'],
       cwd: process.cwd(),
       outputByteLimit: 1024,
     });
