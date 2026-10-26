@@ -26,7 +26,12 @@ Compact panel selection is not persisted; a cold start begins at `agent`.
 Wide layouts can reveal left navigation as an overlay when its dock is collapsed or yields width.
 This uses the same transient `agent-list` target without changing the saved dock preference.
 The overlay and its gesture travel use the resolved dock width; compact navigation remains full-width.
-Opening starts at the left edge on wide layouts so workspace horizontal interactions keep their space.
+Safe-area padding constrains sidebar and workspace content, not the backdrop or its dismiss target.
+Wide navigation overlays dismiss by swiping closed, tapping the backdrop, or selecting a destination.
+Navigation swipes accept touch input anywhere in the workspace, not just at its edge. Browser builds
+check `navigator.maxTouchPoints`; the gesture's `pointerType` also excludes mouse and pen input on
+hybrid devices. Keep mouse text selection independent of navigation. Horizontal-scroll ownership and
+interactive-surface blockers still take precedence over opening the sidebar.
 Returning to a dock clears the transient left target, preventing it from resurfacing on the next collapse.
 
 The UI worklet owns transient motion:

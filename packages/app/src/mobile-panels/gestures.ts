@@ -1,9 +1,10 @@
 import { createContext, useContext, useRef, type RefObject, useCallback, useMemo } from "react";
-import { Gesture, type GestureType } from "react-native-gesture-handler";
+import { Gesture, PointerType, type GestureType } from "react-native-gesture-handler";
 import { useSharedValue } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { isWeb } from "@/constants/platform";
 import { useHorizontalScrollOptional } from "@/contexts/horizontal-scroll-context";
+import { useHasTouchScreen } from "@/hooks/use-has-touch-screen";
 import { usePanelStore } from "@/stores/panel-store";
 import { canBeginMobilePanelGesture, isMobilePanelGestureCurrent } from "./model";
 import { useMobilePanelsRuntime } from "./provider";
@@ -37,11 +38,9 @@ function useRevisionCommit(action: () => void) {
 export function useOpenAgentListGesture({
   enabled,
   panelWidth,
-  edgeOnly = isWeb,
 }: {
   enabled: boolean;
   panelWidth?: number;
-  edgeOnly?: boolean;
 }) {
   const {
     beginGesture,
@@ -54,6 +53,7 @@ export function useOpenAgentListGesture({
     windowWidth,
   } = useMobilePanelsRuntime();
   const width = panelWidth ?? windowWidth;
+  const hasTouchScreen = useHasTouchScreen();
   const horizontalScroll = useHorizontalScrollOptional();
   const { startedRevision, touchStartX, touchStartY } = useGestureState();
   const showMobileAgentList = usePanelStore((state) => state.showMobileAgentList);
@@ -63,9 +63,13 @@ export function useOpenAgentListGesture({
     () =>
       Gesture.Pan()
         .withRef(leftOpenGestureRef)
-        .enabled(enabled)
+        .enabled(enabled && hasTouchScreen)
         .manualActivation(true)
-        .onTouchesDown((event) => {
+        .onTouchesDown((event, stateManager) => {
+          if (event.pointerType !== PointerType.TOUCH) {
+            stateManager.fail();
+            return;
+          }
           const touch = event.changedTouches[0];
           if (touch) {
             touchStartX.value = touch.absoluteX;
@@ -93,7 +97,6 @@ export function useOpenAgentListGesture({
           if (
             !canBeginMobilePanelGesture(motionState.value, "agent", position.value) ||
             horizontalScroll?.isAnyScrolledRight.value ||
-            (edgeOnly && touchStartX.value > PANEL_OPEN_EDGE_WIDTH) ||
             panIntent === "fail"
           ) {
             stateManager.fail();
@@ -123,9 +126,9 @@ export function useOpenAgentListGesture({
     [
       commit,
       enabled,
-      edgeOnly,
       beginGesture,
       finishGesture,
+      hasTouchScreen,
       horizontalScroll?.isAnyScrolledRight,
       leftOpenGestureRef,
       motionState,
@@ -154,6 +157,7 @@ export function useCloseAgentListGesture({
     windowWidth,
   } = useMobilePanelsRuntime();
   const width = panelWidth ?? windowWidth;
+  const hasTouchScreen = useHasTouchScreen();
   const { startedRevision, touchStartX, touchStartY } = useGestureState();
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
   const commit = useRevisionCommit(showMobileAgent);
@@ -162,9 +166,13 @@ export function useCloseAgentListGesture({
     () =>
       Gesture.Pan()
         .withRef(leftCloseGestureRef)
-        .enabled(enabled)
+        .enabled(enabled && hasTouchScreen)
         .manualActivation(true)
-        .onTouchesDown((event) => {
+        .onTouchesDown((event, stateManager) => {
+          if (event.pointerType !== PointerType.TOUCH) {
+            stateManager.fail();
+            return;
+          }
           const touch = event.changedTouches[0];
           if (touch) {
             touchStartX.value = touch.absoluteX;
@@ -223,6 +231,7 @@ export function useCloseAgentListGesture({
       beginGesture,
       commit,
       enabled,
+      hasTouchScreen,
       finishGesture,
       leftCloseGestureRef,
       motionState,

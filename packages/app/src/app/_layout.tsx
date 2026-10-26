@@ -592,7 +592,6 @@ function MobileGestureWrapper({
   const openGesture = useOpenAgentListGesture({
     enabled: chromeEnabled,
     panelWidth,
-    edgeOnly: isWeb || !isCompactLayout,
   });
 
   return (

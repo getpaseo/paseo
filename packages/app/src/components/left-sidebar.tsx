@@ -727,9 +727,10 @@ function DesktopSidebar({
   const resizeAnimatedStyle = useAnimatedStyle(() => ({
     width: resizeWidth.value,
   }));
-  // Removing an animated width does not unset its last native value.
+  // Percentage width excludes the shell's safe-area padding; the backdrop covers the whole window.
+  // Removing an animated width also leaves its last native value behind.
   const frameAnimatedStyle = useAnimatedStyle(() => ({
-    width: overlay ? "100%" : resizeWidth.value,
+    width: overlay ? windowWidth : resizeWidth.value,
   }));
 
   const desktopSidebarStyle = useMemo(
@@ -746,18 +747,6 @@ function DesktopSidebar({
   const sidebarHeaderGroupStyle = useMemo(
     () => [styles.sidebarHeaderGroup, ownsTopLeft && styles.sidebarHeaderGroupBelowChrome],
     [ownsTopLeft],
-  );
-  const closeButton = useMemo(
-    () => (
-      <SidebarCloseButton
-        label={labels.closeSidebar}
-        onPress={closeSidebar}
-        testID="sidebar-close"
-        nativeID="sidebar-close"
-        style={styles.mobileCloseButton}
-      />
-    ),
-    [labels.closeSidebar, closeSidebar],
   );
   return (
     <MobilePanelOverlay
@@ -791,11 +780,7 @@ function DesktopSidebar({
             ) : (
               <TitlebarDragRegion />
             )}
-            <SidebarNavRows
-              style={sidebarHeaderGroupStyle}
-              onBeforeNavigate={onBeforeNavigate}
-              firstRowTrailing={overlay ? closeButton : undefined}
-            />
+            <SidebarNavRows style={sidebarHeaderGroupStyle} onBeforeNavigate={onBeforeNavigate} />
           </View>
 
           {isInitialLoad && !hasActiveHostFilter ? (
