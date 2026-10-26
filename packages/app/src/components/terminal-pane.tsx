@@ -93,15 +93,16 @@ import {
   type TerminalRendererReadyChange,
 } from "@/utils/terminal-renderer-readiness";
 import { useAppSettings } from "@/hooks/use-settings";
+import { createInlinePathOpener } from "@/assistant-file-links/path-open";
 import { classifyForResolution, fetchDaemonResolution } from "@/assistant-file-links/resolver";
 import type {
   TerminalLocalFileLinkSource,
   TerminalLocalFileLinkTarget,
 } from "@/terminal/local-links/terminal-local-link-provider";
-import {
-  normalizeWorkspaceFileLocation,
-  type OpenFileDisposition,
-  type WorkspaceFileOpenRequest,
+import type {
+  OpenFileDisposition,
+  WorkspaceFileLocation,
+  WorkspaceFileOpenRequest,
 } from "@/workspace/file-open";
 
 interface TerminalPaneProps {
@@ -112,6 +113,7 @@ interface TerminalPaneProps {
   isPaneFocused: boolean;
   onOpenFileExplorer: () => void;
   onOpenWorkspaceFile: (request: WorkspaceFileOpenRequest) => void;
+  onOpenWorkspaceDirectory: (directoryPath: string) => void;
 }
 
 const TERMINAL_REFIT_DELAYS_MS = [0, 48, 144, 320];
@@ -266,6 +268,7 @@ export function TerminalPane({
   isPaneFocused,
   onOpenFileExplorer,
   onOpenWorkspaceFile,
+  onOpenWorkspaceDirectory,
 }: TerminalPaneProps) {
   const { t } = useTranslation();
   const retainedPanelActive = useRetainedPanelActive();
@@ -1069,15 +1072,30 @@ export function TerminalPane({
     },
     [client, cwd],
   );
-  const handleOpenLocalFileLink = useCallback(
-    (target: TerminalLocalFileLinkTarget, disposition: OpenFileDisposition) => {
-      const location = normalizeWorkspaceFileLocation(target);
-      if (!location) {
-        return;
-      }
+  const openLinkedFile = useStableEvent(
+    (location: WorkspaceFileLocation, disposition: OpenFileDisposition) => {
       onOpenWorkspaceFile({ location, disposition });
     },
-    [onOpenWorkspaceFile],
+  );
+  const openLinkedDirectory = useStableEvent((directoryPath: string) => {
+    onOpenWorkspaceDirectory(directoryPath);
+  });
+  const localLinkPathOpener = useMemo(
+    () =>
+      createInlinePathOpener({
+        workspaceRoot: cwd,
+        client,
+        openFile: openLinkedFile,
+        openDirectory: openLinkedDirectory,
+      }),
+    [cwd, client, openLinkedFile, openLinkedDirectory],
+  );
+  useEffect(() => () => localLinkPathOpener.cancel(), [localLinkPathOpener]);
+  const handleOpenLocalFileLink = useCallback(
+    (target: TerminalLocalFileLinkTarget, disposition: OpenFileDisposition) => {
+      void localLinkPathOpener.open({ raw: target.path, ...target }, disposition);
+    },
+    [localLinkPathOpener],
   );
 
   const toggleModifier = useCallback(

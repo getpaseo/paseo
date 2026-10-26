@@ -11,9 +11,10 @@ import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { queryClient } from "@/data/query-client";
 import { buildTerminalsQueryKey } from "@/screens/workspace/terminals/state";
-import { showExplorerSidebar } from "@/workspace-tabs/explorer-sidebar";
+import { openExplorerSidebarView, showExplorerSidebar } from "@/workspace-tabs/explorer-sidebar";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceDirectory, useWorkspaceFields } from "@/stores/session-store-hooks";
 
@@ -94,6 +95,22 @@ function TerminalPanel() {
       workspaceKey: buildWorkspaceTabPersistenceKey({ serverId, workspaceId }),
     });
   }, [isCompact, serverId, workspaceId, workspaceDirectory]);
+  const { revealDirectory } = useFileExplorerActions({
+    serverId,
+    workspaceId,
+    workspaceRoot: workspaceDirectory,
+  });
+  const handleOpenWorkspaceDirectory = useCallback(
+    (directoryPath: string) => {
+      void revealDirectory(directoryPath);
+      openExplorerSidebarView({
+        isCompact,
+        workspaceKey: buildWorkspaceTabPersistenceKey({ serverId, workspaceId }),
+        view: "files",
+      });
+    },
+    [isCompact, revealDirectory, serverId, workspaceId],
+  );
   invariant(target.kind === "terminal", "TerminalPanel requires terminal target");
 
   if (!workspaceDirectory) {
@@ -113,6 +130,7 @@ function TerminalPanel() {
       isPaneFocused={isPaneFocused}
       onOpenFileExplorer={handleOpenFileExplorer}
       onOpenWorkspaceFile={openFileInWorkspace}
+      onOpenWorkspaceDirectory={handleOpenWorkspaceDirectory}
     />
   );
 }

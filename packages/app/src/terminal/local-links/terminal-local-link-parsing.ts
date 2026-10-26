@@ -206,6 +206,8 @@ function getTrimPrefixAmount(prefixText: string, suffix: TerminalLinkSuffix): nu
   return 0;
 }
 
+const PROMPT_PREFIX_REGEX = /(?:^|\s)[^\s@]+@[^\s:]+[: ]$/;
+
 function detectPathsNoSuffix(line: string, clause: string): TerminalParsedLink[] {
   const results: TerminalParsedLink[] = [];
   const regex = new RegExp(clause, "g");
@@ -223,6 +225,16 @@ function detectPathsNoSuffix(line: string, clause: string): TerminalParsedLink[]
     ) {
       text = text.substring(2);
       index += 2;
+    }
+
+    // `user@host:~/dir$ cmd`: the prompt terminator is not part of the working directory.
+    const next = line[index + text.length];
+    if (
+      /[$#%]$/.test(text) &&
+      (next === undefined || /\s/.test(next)) &&
+      PROMPT_PREFIX_REGEX.test(line.slice(0, index))
+    ) {
+      text = text.slice(0, -1);
     }
 
     results.push({

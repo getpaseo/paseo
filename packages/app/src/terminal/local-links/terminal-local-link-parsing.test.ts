@@ -2,6 +2,24 @@ import { describe, expect, it } from "vitest";
 import { detectTerminalLocalLinks } from "./terminal-local-link-parsing";
 
 describe("detectTerminalLocalLinks", () => {
+  it.each([
+    ["user@host:~/projects$ ls", 10, "~/projects"],
+    ["root@host:/etc/nginx# ", 10, "/etc/nginx"],
+    ["user@host ~/src% ", 10, "~/src"],
+    ["(base) user@host:~/projects$", 17, "~/projects"],
+  ])("excludes the prompt marker in %s", (line, index, text) => {
+    expect(detectTerminalLocalLinks(line)).toMatchObject([
+      { path: { index, text }, suffix: undefined },
+    ]);
+  });
+
+  it.each(["$", "#", "%"])("preserves a filename ending in %s", (marker) => {
+    const path = `/tmp/report${marker}`;
+    expect(detectTerminalLocalLinks(`cat ${path}`)).toMatchObject([
+      { path: { index: 4, text: path }, suffix: undefined },
+    ]);
+  });
+
   it("detects VS Code-style filename and line suffixes", () => {
     expect(detectTerminalLocalLinks("file.ts:42")).toMatchObject([
       {

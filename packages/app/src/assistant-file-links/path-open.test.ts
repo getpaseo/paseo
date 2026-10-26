@@ -102,3 +102,22 @@ it("ignores a pending probe when its view is left", async () => {
   await pending;
   expect(opened).toEqual([]);
 });
+
+it("opens a home-relative folder at the workspace path the daemon lists", async () => {
+  const probes: string[] = [];
+  const client = {
+    listDirectory: async (_root: string, file: string) => {
+      probes.push(file);
+      return { path: ".", entries: [] };
+    },
+  };
+  await expect(
+    resolveInlinePathOpen({
+      file: "~/projects",
+      directory: "~",
+      workspaceRoot: "/home/me/projects",
+      client,
+    }),
+  ).resolves.toEqual({ kind: "directory", directoryPath: "." });
+  expect(probes).toEqual(["~/projects"]);
+});
