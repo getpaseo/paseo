@@ -1,6 +1,6 @@
 import { expect, test } from "../support/fixtures";
 import { clickNewChat } from "../support/helpers/launcher";
-import { expectComposerVisible } from "../support/helpers/composer";
+import { composerLocator, expectComposerVisible } from "../support/helpers/composer";
 import { expectAgentIdle } from "../support/helpers/agent-stream";
 import {
   openAttachmentMenu,
@@ -15,6 +15,10 @@ import {
   expectComposerDraft,
   expectComposerDisabled,
   expectComposerEditable,
+  expectComposerAcceptsKeyboardImages,
+  expectComposerRefusesKeyboardImages,
+  insertImageFromKeyboard,
+  typeIntoFocusedComposer,
   expectAttachButtonDisabled,
   fillComposerDraft,
   dropFileOnComposer,
@@ -308,5 +312,42 @@ test.describe("Composer attachments", () => {
       agentCreatedDelay.release();
       await workspace.cleanup();
     }
+  });
+});
+
+test.describe("Keyboard images", () => {
+  test("a mouse-driven window keeps the composer a plain text field", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const workspace = await withWorkspace({ prefix: "attach-keyboard-mouse-" });
+    await workspace.navigateTo();
+    await clickNewChat(page);
+    await expectComposerVisible(page);
+
+    await expectComposerRefusesKeyboardImages(page);
+  });
+
+  test.describe("on a touch screen", () => {
+    test.use({ viewport: { width: 1024, height: 768 }, isMobile: true, hasTouch: true });
+
+    test("an image the keyboard inserts attaches, and typing stays plain text", async ({
+      page,
+      withWorkspace,
+    }) => {
+      test.setTimeout(60_000);
+      const workspace = await withWorkspace({ prefix: "attach-keyboard-touch-" });
+      await workspace.navigateTo();
+      await clickNewChat(page);
+      await expectComposerVisible(page);
+
+      await expectComposerAcceptsKeyboardImages(page);
+      await composerLocator(page).tap();
+      await insertImageFromKeyboard(page, TEST_IMAGE);
+      await expectAttachmentPill(page, "composer-image-attachment-pill");
+
+      await typeIntoFocusedComposer(page, "look at this");
+      await expectComposerDraft(page, "look at this");
+    });
   });
 });
