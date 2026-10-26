@@ -1,6 +1,8 @@
 import path from "node:path";
 import { readFileSync } from "node:fs";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
+import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { connectDaemonClient } from "./daemon-client-loader";
 import { withProjectOwnership } from "./project-ownership";
 import { createTempDirectory, createTempGitRepo } from "./workspace";
@@ -27,7 +29,13 @@ interface SeedProjectDescriptor {
  * browser. Domain-specific helpers wrap it for their own flows; specs should
  * prefer those wrappers over reaching for this client directly.
  */
-export interface SeedDaemonClient {
+export interface SeedDaemonClient extends Pick<
+  DaemonClient,
+  | "enqueueAgentMessage"
+  | "listQueuedAgentMessages"
+  | "removeQueuedAgentMessage"
+  | "sendQueuedAgentMessageNow"
+> {
   connect(): Promise<void>;
   close(): Promise<void>;
   addProject(cwd: string): Promise<{
@@ -158,7 +166,7 @@ export interface SeedDaemonClient {
   refreshAgent(agentId: string): Promise<unknown>;
   fetchAgent(options: {
     agentId: string;
-  }): Promise<{ agent: { id: string; archivedAt?: string | null } } | null>;
+  }): Promise<{ agent: Pick<AgentSnapshotPayload, "id" | "archivedAt" | "activeTurn"> } | null>;
   getLastServerInfoMessage(): {
     features?: {
       projectAdd?: boolean;

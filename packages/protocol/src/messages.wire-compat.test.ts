@@ -63,7 +63,9 @@ const LegacyAgentCapabilityFlagsSchema = z.object({
   supportsToolInvocations: z.boolean(),
 });
 
-const LegacyAgentSnapshotPayloadSchema = AgentSnapshotPayloadSchema.extend({
+const LegacyAgentSnapshotPayloadSchema = AgentSnapshotPayloadSchema.omit({
+  queuedMessages: true,
+}).extend({
   capabilities: LegacyAgentCapabilityFlagsSchema,
 });
 
@@ -247,8 +249,18 @@ describe("wire schema compatibility", () => {
       persistence: null,
       title: null,
       labels: {},
+      queuedMessages: [
+        {
+          id: "queued-1",
+          text: "Run next",
+          images: [],
+          attachments: [],
+          createdAt: "2026-05-23T00:00:00.000Z",
+        },
+      ],
     });
 
+    expect("queuedMessages" in parsed).toBe(false);
     expect(parsed.capabilities).toEqual({
       supportsStreaming: true,
       supportsSessionPersistence: true,
@@ -290,6 +302,7 @@ describe("wire schema compatibility", () => {
     expect(parsed.capabilities.supportsRewindConversation).toBe(false);
     expect(parsed.capabilities.supportsRewindFiles).toBe(false);
     expect(parsed.capabilities.supportsRewindBoth).toBe(false);
+    expect(parsed.queuedMessages).toBeUndefined();
   });
 
   test("notification timeline items parse their level and message", () => {

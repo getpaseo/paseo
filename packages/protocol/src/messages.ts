@@ -832,41 +832,6 @@ const AgentActiveTurnPayloadSchema = z.object({
   startedAt: z.string().nullable(),
 });
 
-export const AgentSnapshotPayloadSchema = z.object({
-  id: z.string(),
-  provider: AgentProviderSchema,
-  cwd: z.string(),
-  workspaceId: z.string().optional(),
-  model: z.string().nullable(),
-  features: z.array(AgentFeatureSchema).optional(),
-  thinkingOptionId: z.string().nullable().optional(),
-  effectiveThinkingOptionId: z.string().nullable().optional(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-  lastUserMessageAt: z.string().nullable(),
-  status: AgentStatusSchema,
-  activeTurn: AgentActiveTurnPayloadSchema.nullable().optional(),
-  capabilities: AgentCapabilityFlagsSchema,
-  currentModeId: z.string().nullable(),
-  availableModes: z.array(AgentModeSchema),
-  pendingPermissions: z.array(AgentPermissionRequestPayloadSchema),
-  persistence: AgentPersistenceHandleSchema.nullable(),
-  runtimeInfo: AgentRuntimeInfoSchema.optional(),
-  lastUsage: AgentUsageSchema.optional(),
-  lastError: z.string().optional(),
-  title: z.string().nullable(),
-  labels: z.record(z.string(), z.string()).default({}),
-  requiresAttention: z.boolean().optional(),
-  attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
-  attentionTimestamp: z.string().nullable().optional(),
-  archivedAt: z.string().nullable().optional(),
-  providerUnavailable: z.boolean().optional(),
-  // Private helper marker, retained for exact-ID snapshots and older wire messages.
-  internal: z.boolean().optional(),
-});
-
-export type AgentSnapshotPayload = z.infer<typeof AgentSnapshotPayloadSchema>;
-
 export const AgentListItemPayloadSchema = z.object({
   id: z.string(),
   shortId: z.string(),
@@ -1134,19 +1099,21 @@ export const ExternalResourceAttachmentMetadataSchema = z.object({
   url: z.string(),
 });
 
-export const TextAttachmentSchema = z
-  .object({
-    type: z.literal("text"),
-    mimeType: z.literal("text/plain"),
-    contextKind: z.string().optional(),
-    title: z.string().nullable().optional(),
-    text: z.string(),
-    externalResource: ExternalResourceAttachmentMetadataSchema.optional(),
-  })
-  .transform(({ contextKind, ...attachment }) => ({
+const TextAttachmentWireSchema = z.object({
+  type: z.literal("text"),
+  mimeType: z.literal("text/plain"),
+  contextKind: z.string().optional(),
+  title: z.string().nullable().optional(),
+  text: z.string(),
+  externalResource: ExternalResourceAttachmentMetadataSchema.optional(),
+});
+
+export const TextAttachmentSchema = TextAttachmentWireSchema.transform(
+  ({ contextKind, ...attachment }) => ({
     ...attachment,
     ...(contextKind === "chat_history" ? { contextKind } : {}),
-  }));
+  }),
+);
 
 export const ReviewAttachmentContextLineSchema = z.object({
   oldLineNumber: z.number().int().positive().nullable(),
@@ -1195,6 +1162,16 @@ export const AgentAttachmentSchema = z.discriminatedUnion("type", [
   UploadedFileAttachmentSchema,
 ]);
 
+export const AgentAttachmentWireSchema = z.discriminatedUnion("type", [
+  ForgeChangeRequestAttachmentSchema,
+  ForgeIssueAttachmentSchema,
+  GitHubPrAttachmentSchema,
+  GitHubIssueAttachmentSchema,
+  TextAttachmentWireSchema,
+  ReviewAttachmentSchema,
+  UploadedFileAttachmentSchema,
+]);
+
 function normalizeAgentAttachments(input: unknown): AgentAttachment[] {
   if (!Array.isArray(input)) {
     return [];
@@ -1222,6 +1199,63 @@ const ImageAttachmentSchema = z.object({
   data: z.string(), // base64 encoded image
   mimeType: z.string(), // e.g., "image/jpeg", "image/png"
 });
+
+export const QueuedAgentMessageSchema = z.object({
+  id: z.string(),
+  text: z.string(),
+  images: z.array(ImageAttachmentSchema),
+  attachments: z.array(AgentAttachmentWireSchema),
+  sessionMode: z.string().optional(),
+  createdAt: z.string(),
+  error: z.string().optional(),
+});
+export type QueuedAgentMessage = z.infer<typeof QueuedAgentMessageSchema>;
+
+export const QueuedAgentMessageSummarySchema = QueuedAgentMessageSchema.pick({
+  id: true,
+  text: true,
+  createdAt: true,
+  error: true,
+}).extend({
+  attachmentCount: z.number().int().nonnegative(),
+});
+export type QueuedAgentMessageSummary = z.infer<typeof QueuedAgentMessageSummarySchema>;
+
+export const AgentSnapshotPayloadSchema = z.object({
+  id: z.string(),
+  provider: AgentProviderSchema,
+  cwd: z.string(),
+  workspaceId: z.string().optional(),
+  model: z.string().nullable(),
+  features: z.array(AgentFeatureSchema).optional(),
+  thinkingOptionId: z.string().nullable().optional(),
+  effectiveThinkingOptionId: z.string().nullable().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  lastUserMessageAt: z.string().nullable(),
+  status: AgentStatusSchema,
+  activeTurn: AgentActiveTurnPayloadSchema.nullable().optional(),
+  queuedMessages: z.array(QueuedAgentMessageSummarySchema).optional(),
+  capabilities: AgentCapabilityFlagsSchema,
+  currentModeId: z.string().nullable(),
+  availableModes: z.array(AgentModeSchema),
+  pendingPermissions: z.array(AgentPermissionRequestPayloadSchema),
+  persistence: AgentPersistenceHandleSchema.nullable(),
+  runtimeInfo: AgentRuntimeInfoSchema.optional(),
+  lastUsage: AgentUsageSchema.optional(),
+  lastError: z.string().optional(),
+  title: z.string().nullable(),
+  labels: z.record(z.string(), z.string()).default({}),
+  requiresAttention: z.boolean().optional(),
+  attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
+  attentionTimestamp: z.string().nullable().optional(),
+  archivedAt: z.string().nullable().optional(),
+  providerUnavailable: z.boolean().optional(),
+  // Private helper marker, retained for exact-ID snapshots and older wire messages.
+  internal: z.boolean().optional(),
+});
+
+export type AgentSnapshotPayload = z.infer<typeof AgentSnapshotPayloadSchema>;
 
 export const ActiveTurnBehaviorSchema = z.enum(["interrupt", "steer"]);
 export type ActiveTurnBehavior = z.infer<typeof ActiveTurnBehaviorSchema>;
@@ -1396,6 +1430,39 @@ export const SendAgentMessageRequestSchema = z.object({
   activeTurnBehavior: ActiveTurnBehaviorSchema.optional(),
   images: z.array(ImageAttachmentSchema).optional(),
   attachments: AgentAttachmentsSchema,
+});
+
+export const AgentQueueEnqueueRequestSchema = z.object({
+  type: z.literal("agent.queue.enqueue.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+  text: z.string(),
+  messageId: z.string().optional(),
+  sessionMode: z.string().optional(),
+  images: z.array(ImageAttachmentSchema).optional(),
+  attachments: z.array(AgentAttachmentWireSchema).optional(),
+});
+
+export const AgentQueueListRequestSchema = z.object({
+  type: z.literal("agent.queue.list.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+  queuedMessageId: z.string().optional(),
+});
+
+export const AgentQueueRemoveRequestSchema = z.object({
+  type: z.literal("agent.queue.remove.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+  queuedMessageId: z.string(),
+});
+
+export const AgentQueueSendNowRequestSchema = z.object({
+  type: z.literal("agent.queue.send_now.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+  queuedMessageId: z.string(),
+  activeTurnBehavior: ActiveTurnBehaviorSchema.optional(),
 });
 
 export const WaitForFinishRequestSchema = z.object({
@@ -3275,6 +3342,10 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceRecoveryRestoreRequestSchema,
   SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
+  AgentQueueEnqueueRequestSchema,
+  AgentQueueListRequestSchema,
+  AgentQueueRemoveRequestSchema,
+  AgentQueueSendNowRequestSchema,
   WaitForFinishRequestSchema,
   DaemonGetStatusRequestSchema,
   DaemonGetPairingOfferRequestSchema,
@@ -3734,6 +3805,8 @@ export const ServerInfoStatusPayloadSchema = z
         daemonSelfUpdate: z.boolean().optional(),
         // COMPAT(agentForkContext): added in v0.1.102, remove gate after 2026-12-28.
         agentForkContext: z.boolean().optional(),
+        // COMPAT(agentMessageQueue): added in v0.13.0, remove gate after 2027-04-26.
+        agentMessageQueue: z.boolean().optional(),
         // COMPAT(agentForkContextCursor): added in v0.1.108, remove gate after 2027-01-14.
         agentForkContextCursor: z.boolean().optional(),
         // COMPAT(providerSubagents): added in v0.1.107, remove gate after 2027-01-12.
@@ -5042,6 +5115,39 @@ export const SendAgentMessageResponseMessageSchema = z.object({
     deliveryStatus: z.literal("queued").optional(),
     error: z.string().nullable(),
   }),
+});
+
+const AgentQueueResponsePayloadSchema = z.object({
+  requestId: z.string(),
+  agentId: z.string(),
+  success: z.boolean(),
+  error: z.string().nullable(),
+});
+
+export const AgentQueueEnqueueResponseSchema = z.object({
+  type: z.literal("agent.queue.enqueue.response"),
+  payload: AgentQueueResponsePayloadSchema.extend({
+    queuedMessage: QueuedAgentMessageSchema.nullable(),
+  }),
+});
+
+export const AgentQueueListResponseSchema = z.object({
+  type: z.literal("agent.queue.list.response"),
+  payload: AgentQueueResponsePayloadSchema.extend({
+    messages: z.array(QueuedAgentMessageSchema),
+  }),
+});
+
+export const AgentQueueRemoveResponseSchema = z.object({
+  type: z.literal("agent.queue.remove.response"),
+  payload: AgentQueueResponsePayloadSchema.extend({
+    queuedMessage: QueuedAgentMessageSchema.nullable(),
+  }),
+});
+
+export const AgentQueueSendNowResponseSchema = z.object({
+  type: z.literal("agent.queue.send_now.response"),
+  payload: AgentQueueResponsePayloadSchema,
 });
 
 export const WaitForFinishResponseMessageSchema = z.object({
@@ -7034,6 +7140,10 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceClearAttentionResponseSchema,
   WorkspaceMarkUnreadResponseSchema,
   SendAgentMessageResponseMessageSchema,
+  AgentQueueEnqueueResponseSchema,
+  AgentQueueListResponseSchema,
+  AgentQueueRemoveResponseSchema,
+  AgentQueueSendNowResponseSchema,
   SetVoiceModeResponseMessageSchema,
   DaemonGetStatusResponseSchema,
   DaemonGetPairingOfferResponseSchema,
@@ -7354,6 +7464,14 @@ export type ProjectListRequestMessage = z.infer<typeof ProjectListRequestMessage
 export type FetchAgentRequestMessage = z.infer<typeof FetchAgentRequestMessageSchema>;
 export type AgentForkContextRequestMessage = z.infer<typeof AgentForkContextRequestMessageSchema>;
 export type SendAgentMessageRequest = z.infer<typeof SendAgentMessageRequestSchema>;
+export type AgentQueueEnqueueRequest = z.infer<typeof AgentQueueEnqueueRequestSchema>;
+export type AgentQueueEnqueueResponse = z.infer<typeof AgentQueueEnqueueResponseSchema>;
+export type AgentQueueListRequest = z.infer<typeof AgentQueueListRequestSchema>;
+export type AgentQueueListResponse = z.infer<typeof AgentQueueListResponseSchema>;
+export type AgentQueueRemoveRequest = z.infer<typeof AgentQueueRemoveRequestSchema>;
+export type AgentQueueRemoveResponse = z.infer<typeof AgentQueueRemoveResponseSchema>;
+export type AgentQueueSendNowRequest = z.infer<typeof AgentQueueSendNowRequestSchema>;
+export type AgentQueueSendNowResponse = z.infer<typeof AgentQueueSendNowResponseSchema>;
 export type WaitForFinishRequest = z.infer<typeof WaitForFinishRequestSchema>;
 export type DictationStreamStartMessage = z.infer<typeof DictationStreamStartMessageSchema>;
 export type DictationStreamChunkMessage = z.infer<typeof DictationStreamChunkMessageSchema>;

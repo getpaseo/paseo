@@ -11,7 +11,7 @@ export interface AgentInputSubmitActionInput<TAttachment> {
   forceSend?: boolean;
   isAgentRunning: boolean;
   canSubmit: boolean;
-  queueMessage: (input: { message: string; attachments: TAttachment[] }) => void;
+  queueMessage: (input: { message: string; attachments: TAttachment[] }) => Promise<void> | void;
   submitMessage: (input: { message: string; attachments: TAttachment[] }) => Promise<void>;
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
   setUserInput: (text: string) => void;
@@ -42,17 +42,9 @@ export async function submitAgentInput<TAttachment>(
     return "noop";
   }
 
-  if (input.isAgentRunning && !input.forceSend) {
-    input.queueMessage({ message: trimmedMessage, attachments });
-    if (shouldClearOnSubmit) {
-      input.setUserInput("");
-      input.setAttachments([]);
-    }
-    return "queued";
-  }
-
-  // Clear immediately so the submitted timeline row and composer state stay in sync.
-  if (shouldClearOnSubmit) {
+  const shouldQueue = input.isAgentRunning && !input.forceSend;
+  // Queued attachments stay owned by the draft until the daemon acknowledges admission.
+  if (shouldClearOnSubmit && !shouldQueue) {
     input.setUserInput("");
     input.setAttachments([]);
   }
@@ -60,10 +52,18 @@ export async function submitAgentInput<TAttachment>(
   input.setIsProcessing(true);
 
   try {
-    await input.submitMessage({ message: trimmedMessage, attachments });
+    if (shouldQueue) {
+      await input.queueMessage({ message: trimmedMessage, attachments });
+      if (shouldClearOnSubmit) {
+        input.setUserInput("");
+        input.setAttachments([]);
+      }
+    } else {
+      await input.submitMessage({ message: trimmedMessage, attachments });
+    }
     input.clearDraft("sent");
     input.setIsProcessing(false);
-    return "submitted";
+    return shouldQueue ? "queued" : "submitted";
   } catch (error) {
     input.onSubmitError?.(error);
     if (shouldClearOnSubmit) {

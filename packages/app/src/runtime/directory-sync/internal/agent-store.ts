@@ -156,7 +156,6 @@ export class AgentStoreProjection {
     clearArchiveAgentPending({ queryClient, serverId: this.serverId, agentId });
     store.setAgents(this.serverId, removeKey);
     store.setAgentDetails(this.serverId, removeKey);
-    store.setQueuedMessages(this.serverId, removeKey);
     store.setInitializingAgents(this.serverId, removeKey);
     store.setPendingPermissions(this.serverId, (current) => {
       const next = new Map(current);

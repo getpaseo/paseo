@@ -1,0 +1,9 @@
+
+ RUN  v4.1.7 /Users/joechen/src/tests/paseo/packages/client
+
+
+ Test Files  1 passed (1)
+      Tests  3 passed | 178 skipped (181)
+   Start at  11:45:17
+   Duration  4.58s (transform 3.84s, setup 0ms, import 4.40s, tests 25ms, environment 0ms)
+

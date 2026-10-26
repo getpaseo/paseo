@@ -61,6 +61,7 @@ interface FakeAgentSessionOptions {
   onStartTurn?: (prompt: AgentPromptInput, config: AgentSessionConfig) => void;
   beforeTurnComplete?: (prompt: AgentPromptInput) => Promise<void>;
   historyEvents?: readonly AgentStreamEvent[];
+  completeOnInterrupt?: boolean;
 }
 
 export interface TestAgentClientOptions {
@@ -70,6 +71,7 @@ export interface TestAgentClientOptions {
   beforeTurnComplete?: (prompt: AgentPromptInput) => Promise<void>;
   supportsMcpServers?: boolean;
   historyEvents?: readonly AgentStreamEvent[];
+  completeOnInterrupt?: boolean;
 }
 
 function createDeferred<T>(): Deferred<T> {
@@ -344,6 +346,7 @@ class FakeAgentSession implements AgentSession {
   private readonly onStartTurn: TestAgentClientOptions["onStartTurn"];
   private readonly beforeTurnComplete: ((prompt: AgentPromptInput) => Promise<void>) | undefined;
   private readonly historyEvents: readonly AgentStreamEvent[] | undefined;
+  private readonly completeOnInterrupt: boolean;
 
   constructor(options: FakeAgentSessionOptions) {
     this.capabilities = {
@@ -358,6 +361,7 @@ class FakeAgentSession implements AgentSession {
     this.onStartTurn = options.onStartTurn;
     this.beforeTurnComplete = options.beforeTurnComplete;
     this.historyEvents = options.historyEvents;
+    this.completeOnInterrupt = options.completeOnInterrupt === true;
     this.historyPath = path.join(
       tmpdir(),
       "paseo-fake-provider-history",
@@ -896,6 +900,10 @@ class FakeAgentSession implements AgentSession {
   }
 
   async interrupt(): Promise<void> {
+    if (this.completeOnInterrupt && this.activeForegroundTurnId) {
+      this.notifySubscribers({ type: "turn_completed", provider: this.providerName });
+      this.activeForegroundTurnId = null;
+    }
     this.interruptSignal.resolve();
   }
 
@@ -1235,6 +1243,7 @@ class FakeAgentClient implements AgentClient {
       onStartTurn: this.options.onStartTurn,
       beforeTurnComplete: this.options.beforeTurnComplete,
       historyEvents: this.options.historyEvents,
+      completeOnInterrupt: this.options.completeOnInterrupt,
     });
   }
 
@@ -1262,6 +1271,7 @@ class FakeAgentClient implements AgentClient {
       onStartTurn: this.options.onStartTurn,
       beforeTurnComplete: this.options.beforeTurnComplete,
       historyEvents: this.options.historyEvents,
+      completeOnInterrupt: this.options.completeOnInterrupt,
     });
   }
 

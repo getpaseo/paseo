@@ -63,6 +63,7 @@ import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { RenderProfile } from "@/utils/render-profiler";
 import { useComposerHeight } from "./height";
 import { ComposerInputPresentation } from "./presentation";
+import { SendOptions } from "./send-options";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
 import type { NativePastedFile } from "@/composer/native-pasted-image";
 import {
@@ -975,7 +976,6 @@ interface QueueMessageContext {
   attachments: ComposerAttachment[];
   cwd: string;
   onQueue: ((payload: MessagePayload) => void) | undefined;
-  replaceText: (text: string) => void;
   onMinimizeHeight: () => void;
   exitFullscreen: () => void;
 }
@@ -986,7 +986,6 @@ function queueMessageImpl(ctx: QueueMessageContext): void {
   if (!trimmed && ctx.attachments.length === 0) return;
   ctx.exitFullscreen();
   ctx.onQueue({ text: trimmed, attachments: ctx.attachments, cwd: ctx.cwd });
-  ctx.replaceText("");
   ctx.onMinimizeHeight();
 }
 
@@ -1674,11 +1673,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           attachments,
           cwd,
           onQueue,
-          replaceText,
           onMinimizeHeight: minimizeInputHeight,
           exitFullscreen,
         }),
-      [attachments, cwd, onQueue, replaceText, minimizeInputHeight, exitFullscreen],
+      [attachments, cwd, onQueue, minimizeInputHeight, exitFullscreen],
     );
 
     const handleDefaultSendAction = useCallback(() => {
@@ -1757,16 +1755,19 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       ],
     );
 
+    const hasSendableContent = hasSendableComposerContent({
+      hasText: hasLiveText,
+      attachments,
+      hasExternalContent,
+    });
     const primaryActionKind = resolvePrimaryActionKind({
-      hasSendableContent: hasSendableComposerContent({
-        hasText: hasLiveText,
-        attachments,
-        hasExternalContent,
-      }),
+      hasSendableContent,
       allowEmptySubmit,
       isAgentRunning,
       isSubmitLoading,
     });
+    const showSendOptions = isAgentRunning && hasSendableContent && Boolean(onQueue);
+    const immediateSendBehavior = defaultSendBehavior === "interrupt" ? "interrupt" : "steer";
     const { canPressLoadingButton, isSendButtonDisabled, defaultActionQueues } =
       computeSendButtonState({
         disabled,
@@ -1939,8 +1940,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       [isDictating, isRealtimeVoiceForCurrentAgent, voice?.isMuted, buttonIconSize],
     );
 
-    const sendButton = useMemo(
-      () => (
+    const sendButton = useMemo(() => {
+      const primaryAction = (
         <PrimaryAction
           kind={isFullscreen ? "send" : primaryActionKind}
           activeActionContent={activeActionContent}
@@ -1959,25 +1960,40 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           sendKeys={DEFAULT_SEND_KEYS}
           sendTooltipLabel={sendTooltipLabel}
         />
-      ),
-      [
-        isFullscreen,
-        primaryActionKind,
-        activeActionContent,
-        canPressLoadingButton,
-        onSubmitLoadingPress,
-        handleDefaultSendAction,
-        isPresentedSendDisabled,
-        submitAccessibilityLabel,
-        sendButtonCombinedStyle,
-        isSubmitLoading,
-        submitIcon,
-        submitLabel,
-        submitButtonTestID,
-        buttonIconSize,
-        sendTooltipLabel,
-      ],
-    );
+      );
+      if (!showSendOptions) return primaryAction;
+      return (
+        <View style={styles.sendActions}>
+          <SendOptions
+            disabled={isPresentedSendDisabled}
+            immediateBehavior={immediateSendBehavior}
+            onSend={handleSendMessage}
+            onQueue={handleQueueMessage}
+          />
+          {primaryAction}
+        </View>
+      );
+    }, [
+      showSendOptions,
+      immediateSendBehavior,
+      handleSendMessage,
+      handleQueueMessage,
+      isFullscreen,
+      primaryActionKind,
+      activeActionContent,
+      canPressLoadingButton,
+      onSubmitLoadingPress,
+      handleDefaultSendAction,
+      isPresentedSendDisabled,
+      submitAccessibilityLabel,
+      sendButtonCombinedStyle,
+      isSubmitLoading,
+      submitIcon,
+      submitLabel,
+      submitButtonTestID,
+      buttonIconSize,
+      sendTooltipLabel,
+    ]);
     const textSurface = useMemo(
       () => (
         <RenderProfile id="ComposerTextSurface">
@@ -2346,6 +2362,10 @@ const styles = StyleSheet.create((theme: Theme) => ({
     alignItems: "center",
     justifyContent: "center",
     marginLeft: theme.spacing[1],
+  },
+  sendActions: {
+    flexDirection: "row",
+    alignItems: "center",
   },
   sendButtonLabeled: {
     width: "auto",

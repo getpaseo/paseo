@@ -209,7 +209,7 @@ function useWorkspaceAttachmentBinding({
 
   const completeSubmit = useCallback(
     ({ result, outgoingAttachments }: CompleteSubmitInput) => {
-      if (result === "submitted") {
+      if (result === "submitted" || result === "queued") {
         clearSentAttachments(outgoingAttachments);
       }
       if (result === "queued" || result === "submitted" || result === "failed") {

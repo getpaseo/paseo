@@ -1,0 +1,9 @@
+
+ RUN  v4.1.7 /Users/joechen/src/tests/paseo/packages/app
+
+
+ Test Files  3 passed (3)
+      Tests  54 passed (54)
+   Start at  11:44:15
+   Duration  1.32s (transform 1.41s, setup 98ms, import 1.74s, tests 43ms, environment 1ms)
+

@@ -1,5 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
-import { expect, test as baseTest } from "../support/fixtures";
+import { randomUUID } from "node:crypto";
+import { daemonTest, expect, test as baseTest } from "../support/fixtures";
 import {
   awaitToolCall,
   expectAgentIdle,
@@ -13,18 +14,23 @@ import { gateNextAgentMessage } from "../support/helpers/agent-message-gate";
 import {
   attachImageFromMenu,
   expectComposerDraft,
+  expectComposerDisabled,
   expectComposerEditable,
   expectAttachmentPill,
   expectComposerVisible,
   cancelAgent,
   composerLocator,
+  configureComposerQueueSend,
   fillComposerDraft,
   sendDraftToQueue,
   startRunningMockAgent,
   submitMessage,
 } from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
-import { seedWorkspace } from "../support/helpers/seed-client";
+import { connectSeedClient, seedWorkspace } from "../support/helpers/seed-client";
+import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
+import { hideDeveloperToasts } from "../support/developer-ui.mjs";
+import { waitForSettledPosition } from "../support/helpers/sheet-layout";
 import {
   createAgentTabFromMenu,
   waitForWorkspaceTabsVisible,
@@ -422,7 +428,7 @@ async function expectInterruptedTurnOrderAfterReconnect(
     await page.getByRole("button", { name: "Send queued message now" }).click();
     const promptRow = page.getByTestId("user-message").filter({ hasText: prompt });
     await expect(promptRow).toBeVisible();
-    await gate.waitForServerMessage("send_agent_message_response");
+    await gate.waitForServerMessage("agent.queue.send_now.response");
     await gate.drop();
     await agent.client.waitForFinish(agent.agentId, 30_000);
     gate.setAgentStreamSuppressed(false);
@@ -1047,7 +1053,7 @@ test.describe("Agent message submission", () => {
     }
   });
 
-  test("makes the next queued turn interruptible after cancellation settles", async ({ page }) => {
+  test("holds a queued turn after Stop until it is explicitly sent", async ({ page }) => {
     const title = "Queued turn after interrupt";
     const secondPrompt = "Run the queued turn after interruption.";
     const agent = await seedMockAgentWorkspace({
@@ -1056,7 +1062,6 @@ test.describe("Agent message submission", () => {
       model: "one-minute-stream",
     });
     try {
-      const gate = await installDaemonWebSocketGate(page);
       await openAgentRoute(page, agent);
       await expectComposerVisible(page);
       await submitMessage(page, "Keep running until the queued turn is ready.");
@@ -1064,28 +1069,21 @@ test.describe("Agent message submission", () => {
       await queueMessage(page, secondPrompt);
       await expect(page.getByRole("button", { name: "Send queued message now" })).toBeVisible();
 
-      gate.holdNextServerMessage("cancel_agent_response");
       await page.getByRole("button", { name: "Stop agent", exact: true }).click();
-      await gate.waitForHeldServerMessage();
+      await expectVisibleAgentSurfacesIdle(page);
+      await expect(page.getByRole("button", { name: "Send queued message now" })).toBeVisible();
+      await expect(page.getByTestId("user-message").filter({ hasText: secondPrompt })).toHaveCount(
+        0,
+      );
 
+      await page.getByRole("button", { name: "Send queued message now" }).click();
       await expect(page.getByTestId("user-message").filter({ hasText: secondPrompt })).toHaveCount(
         1,
       );
       await expectRunningAgentChrome(page, title);
       await expectAgentReadyToInterrupt(page);
 
-      gate.holdNextClientRequest("cancel_agent_request");
       await page.getByRole("button", { name: "Stop agent", exact: true }).click();
-      await gate.waitForHeldClientRequest();
-      await expect(
-        page.getByRole("button", { name: "Canceling agent", exact: true }),
-      ).toBeVisible();
-
-      gate.releaseHeldServerMessage();
-      await expect(
-        page.getByRole("button", { name: "Canceling agent", exact: true }),
-      ).toBeVisible();
-      gate.releaseHeldClientRequest();
       await expectVisibleAgentSurfacesIdle(page);
     } finally {
       await agent.cleanup();
@@ -1300,7 +1298,7 @@ test.describe("Agent message submission", () => {
     await replaySteeredSleepTurnInBrowser(page, testInfo, "codex");
   });
 
-  test("restores overlapping queued sends when their connection fails", async ({
+  test("retains queued sends and blocks duplicate actions when their connection fails", async ({
     page,
   }, testInfo) => {
     test.setTimeout(120_000);
@@ -1316,8 +1314,13 @@ test.describe("Agent message submission", () => {
       await queueMessage(page, prompts[1]);
       await page.getByRole("button", { name: "Send queued message now" }).first().click();
       await gate.waitForRequest(1);
-      await page.getByRole("button", { name: "Send queued message now" }).first().click();
-      await gate.waitForRequest(2);
+      await expect(
+        page.getByRole("button", { name: "Send queued message now" }).first(),
+      ).toBeDisabled();
+      await expect(
+        page.getByRole("button", { name: "Send queued message now" }).last(),
+      ).toBeDisabled();
+      expect(gate.requestCount()).toBe(1);
       await gate.disconnect();
       await expectQueuedSendFailuresRestored(page, prompts);
     } finally {
@@ -1400,4 +1403,327 @@ test.describe("Agent message submission", () => {
   test("uses untracked optimistic rows for an old host", async ({ page }, testInfo) => {
     await expectOldHostSubmissionBehavior(page, testInfo);
   });
+
+  test("queue admission failure restores the draft and attachments with a retryable error", async ({
+    page,
+  }, testInfo) => {
+    const gate = await installDaemonWebSocketGate(page);
+    const agent = await startRunningMockAgent(page, {
+      prefix: "queue-admission-failure-",
+      model: "one-minute-stream",
+      prompt: "Keep running while the follow-up is queued.",
+    });
+    const prompt = "Keep this follow-up if the connection drops.";
+    try {
+      await attachImageFromMenu(page, IMAGE);
+      await expectAttachmentPill(page, "composer-image-attachment-pill");
+      gate.holdNextClientRequest("agent.queue.enqueue.request");
+      await queueMessage(page, prompt);
+      await gate.waitForHeldClientRequest();
+      await expectComposerDisabled(page);
+      await expectComposerDraft(page, prompt);
+      await expectAttachmentPill(page, "composer-image-attachment-pill");
+      await expect(page.getByRole("button", { name: "Send queued message now" })).toHaveCount(0);
+      expect(await agent.client.listQueuedAgentMessages(agent.agentId)).toEqual([]);
+      const directoryRequestsBeforeDrop = gate.getClientRequestCount("fetch_agents_request");
+      await gate.drop();
+      await expectComposerDraft(page, prompt);
+      await expectAttachmentPill(page, "composer-image-attachment-pill");
+      await expect(page.getByTestId("composer-send-error")).toHaveText(
+        "Dropped by reconnect test.",
+      );
+      await expect(page.getByRole("button", { name: "Send queued message now" })).toHaveCount(0);
+      await expect(page.getByTestId("user-message").filter({ hasText: prompt })).toHaveCount(0);
+      await testInfo.attach("queue-admission-failure", {
+        body: await page.screenshot({ path: testInfo.outputPath("queue-admission-failure.png") }),
+        contentType: "image/png",
+      });
+
+      gate.discardHeldClientRequest();
+      gate.restoreFresh();
+      await expect
+        .poll(() => gate.getClientRequestCount("fetch_agents_request"))
+        .toBeGreaterThan(directoryRequestsBeforeDrop);
+      await expectComposerEditable(page);
+      await sendDraftToQueue(page);
+      await expect(page.getByRole("button", { name: "Send queued message now" })).toHaveCount(1);
+      await expectComposerDraft(page, "");
+      await expect(page.getByTestId("composer-send-error")).toHaveCount(0);
+      await expect
+        .poll(() => agent.client.listQueuedAgentMessages(agent.agentId))
+        .toMatchObject([{ text: prompt, images: [{ mimeType: IMAGE.mimeType }] }]);
+    } finally {
+      gate.restore();
+      await agent.cleanup();
+    }
+  });
+
+  test("queueing on an older host explains the required update and preserves immediate sends", async ({
+    page,
+  }, testInfo) => {
+    const gate = await installDaemonWebSocketGate(page);
+    gate.setAgentMessageQueueStripped(true);
+    await configureComposerQueueSend(page);
+    const agent = await startRunningMockAgent(page, {
+      prefix: "queue-unsupported-host-",
+      model: "one-minute-stream",
+      prompt: "Keep running while the client checks queue support.",
+    });
+    const prompt = "Keep this draft until queueing is available.";
+    try {
+      await fillComposerDraft(page, prompt);
+      await page.getByRole("button", { name: "Queue message", exact: true }).click();
+      await expectComposerDraft(page, prompt);
+      await expect(page.getByTestId("composer-send-error")).toHaveText(
+        "Update the host to queue messages.",
+      );
+      expect(gate.getClientRequestCount("agent.queue.enqueue.request")).toBe(0);
+      await expect(page.getByRole("button", { name: "Send queued message now" })).toHaveCount(0);
+      await testInfo.attach("queue-unsupported-host", {
+        body: await page.screenshot({ path: testInfo.outputPath("queue-unsupported-host.png") }),
+        contentType: "image/png",
+      });
+      await page.getByTestId("composer-send-options").click();
+      await page.getByTestId("composer-send-options-now").click();
+      await expect(page.getByTestId("user-message").filter({ hasText: prompt })).toHaveCount(1);
+      await expectComposerDraft(page, "");
+      await expect(page.getByTestId("composer-send-error")).toHaveCount(0);
+    } finally {
+      gate.restore();
+      await agent.cleanup();
+    }
+  });
+
+  test("editing a queue entry restores full text and image context before requeue and removal", async ({
+    page,
+  }, testInfo) => {
+    const agent = await startRunningMockAgent(page, {
+      prefix: "queue-edit-attachments-",
+      model: "one-minute-stream",
+      prompt: "Keep running while I edit the queued follow-up.",
+    });
+    const prompt = `Retain the complete follow-up. ${"Additional context. ".repeat(150)}`;
+    const context = {
+      type: "text",
+      mimeType: "text/plain",
+      title: "Queued context",
+      text: "Do not lose this context when editing.",
+    } as const;
+    try {
+      await agent.client.enqueueAgentMessage(agent.agentId, prompt, {
+        images: [{ data: IMAGE.buffer.toString("base64"), mimeType: IMAGE.mimeType }],
+        attachments: [context],
+      });
+      await expect(page.getByRole("button", { name: "Edit queued message" })).toHaveCount(1);
+      await page.getByRole("button", { name: "Edit queued message" }).click();
+      await expectComposerDraft(page, prompt);
+      await expectAttachmentPill(page, "composer-image-attachment-pill");
+      await expect(page.getByRole("button", { name: "Queued context", exact: true })).toBeVisible();
+      expect(await agent.client.listQueuedAgentMessages(agent.agentId)).toEqual([]);
+      await testInfo.attach("queue-edit-restored-attachments", {
+        body: await page.screenshot({
+          path: testInfo.outputPath("queue-edit-restored-attachments.png"),
+        }),
+        contentType: "image/png",
+      });
+      const editedPrompt = `${prompt}Edited before requeue.`;
+      await fillComposerDraft(page, editedPrompt);
+      await sendDraftToQueue(page);
+      await expect
+        .poll(() => agent.client.listQueuedAgentMessages(agent.agentId))
+        .toMatchObject([
+          { text: editedPrompt, images: [{ mimeType: IMAGE.mimeType }], attachments: [context] },
+        ]);
+      await page.getByRole("button", { name: "Remove queued message" }).click();
+      await expect(page.getByRole("button", { name: "Send queued message now" })).toHaveCount(0);
+      expect(await agent.client.listQueuedAgentMessages(agent.agentId)).toEqual([]);
+      await expectComposerDraft(page, "");
+      await expect(page.getByTestId("composer-image-attachment-pill")).toHaveCount(0);
+      await testInfo.attach("queue-entry-removed", {
+        body: await page.screenshot({ path: testInfo.outputPath("queue-entry-removed.png") }),
+        contentType: "image/png",
+      });
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
+  test("compact send options share a queue that drains after its browser closes", async ({
+    page,
+    browser,
+  }, testInfo) => {
+    test.setTimeout(120_000);
+    await configureComposerQueueSend(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    const agent = await startRunningMockAgent(page, {
+      prefix: "shared-message-queue-",
+      model: "one-minute-stream",
+      prompt: "Finish this turn before the queued follow-up.",
+    });
+    const queuedPrompt = "Run regression tests after the current turn.";
+    const steerPrompt = "Keep the current work focused on this workspace.";
+    try {
+      const initialTurnId = (await agent.client.fetchAgent({ agentId: agent.agentId }))?.agent
+        .activeTurn?.turnId;
+      expect(initialTurnId).toEqual(expect.any(String));
+      await fillComposerDraft(page, queuedPrompt);
+      await page.getByTestId("composer-send-options").click();
+      const queueOption = page.getByTestId("composer-send-options-queue");
+      await expect(queueOption).toBeInViewport({ ratio: 1 });
+      await waitForSettledPosition(queueOption);
+      await testInfo.attach("compact-send-options", {
+        body: await page.screenshot({ path: testInfo.outputPath("compact-send-options.png") }),
+        contentType: "image/png",
+      });
+      await queueOption.click();
+      await expect(queueOption).not.toBeVisible();
+      await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
+      await expectComposerDraft(page, "");
+      await expect(page.getByRole("button", { name: "Send queued message now" })).toHaveCount(1);
+      await expect
+        .poll(() => agent.client.listQueuedAgentMessages(agent.agentId))
+        .toMatchObject([{ text: queuedPrompt }]);
+
+      await fillComposerDraft(page, steerPrompt);
+      await page.getByTestId("composer-send-options").click();
+      const steerOption = page.getByTestId("composer-send-options-now");
+      await expect(steerOption).toBeInViewport({ ratio: 1 });
+      await waitForSettledPosition(steerOption);
+      await steerOption.click();
+      await expect(steerOption).not.toBeVisible();
+      await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
+      await expect(page.getByTestId("user-message").filter({ hasText: steerPrompt })).toHaveCount(
+        1,
+      );
+      expect(
+        (await agent.client.fetchAgent({ agentId: agent.agentId }))?.agent.activeTurn?.turnId,
+      ).toBe(initialTurnId);
+      await expect(page.getByRole("button", { name: "Send queued message now" })).toHaveCount(1);
+      await testInfo.attach("compact-queued-follow-up", {
+        body: await page.screenshot({ path: testInfo.outputPath("compact-queued-follow-up.png") }),
+        contentType: "image/png",
+      });
+
+      const otherContext = await browser.newContext({
+        storageState: await page.context().storageState(),
+        viewport: { width: 1280, height: 900 },
+        recordVideo: { dir: testInfo.outputPath("other-client-video") },
+      });
+      const otherPage = await otherContext.newPage();
+      const video = otherPage.video();
+      try {
+        await hideDeveloperToasts(otherPage);
+        await otherPage.goto(page.url());
+        await expectComposerVisible(otherPage);
+        await expect(
+          otherPage.getByRole("button", { name: "Send queued message now" }),
+        ).toHaveCount(1);
+        await expect(otherPage.getByText(queuedPrompt, { exact: true })).toBeVisible();
+        await testInfo.attach("desktop-shared-queue", {
+          body: await otherPage.screenshot({
+            path: testInfo.outputPath("desktop-shared-queue.png"),
+          }),
+          contentType: "image/png",
+        });
+        await fillComposerDraft(otherPage, "Choose how this follow-up is sent.");
+        await otherPage.getByTestId("composer-send-options").click();
+        const desktopSendOption = otherPage.getByTestId("composer-send-options-now");
+        await expect(desktopSendOption).toBeInViewport({ ratio: 1 });
+        await waitForSettledPosition(desktopSendOption);
+        await testInfo.attach("desktop-send-options", {
+          body: await otherPage.screenshot({
+            path: testInfo.outputPath("desktop-send-options.png"),
+          }),
+          contentType: "image/png",
+        });
+        await otherPage.keyboard.press("Escape");
+        await expect(desktopSendOption).not.toBeVisible();
+        await fillComposerDraft(otherPage, "");
+        await page.close();
+        await expect(
+          otherPage.getByTestId("user-message").filter({ hasText: queuedPrompt }),
+        ).toHaveCount(1, { timeout: 75_000 });
+        await expect(
+          otherPage.getByRole("button", { name: "Send queued message now" }),
+        ).toHaveCount(0);
+        await expect.poll(() => agent.client.listQueuedAgentMessages(agent.agentId)).toEqual([]);
+        await testInfo.attach("desktop-queued-follow-up-sent", {
+          body: await otherPage.screenshot({
+            path: testInfo.outputPath("desktop-queued-follow-up-sent.png"),
+          }),
+          contentType: "image/png",
+        });
+      } finally {
+        await otherContext.close();
+        if (video)
+          await testInfo.attach("other-client-queue-recording", {
+            path: await video.path(),
+            contentType: "video/webm",
+          });
+      }
+    } finally {
+      await agent.cleanup();
+    }
+  });
 });
+
+daemonTest(
+  "queued messages survive an isolated daemon restart and wait for explicit send",
+  async ({ baseURL: _baseURL }, testInfo) => {
+    daemonTest.setTimeout(120_000);
+    const daemon = await startIsolatedHostDaemon(`queue-restart-${randomUUID()}`);
+    try {
+      const workspace = await seedWorkspace({
+        repoPrefix: "message-queue-restart-",
+        port: daemon.port,
+      });
+      try {
+        const agent = await workspace.client.createAgent({
+          provider: "mock",
+          cwd: workspace.repoPath,
+          workspaceId: workspace.workspaceId,
+          model: "one-minute-stream",
+        });
+        await workspace.client.sendAgentMessage(agent.id, "Keep this turn running before restart.");
+        await workspace.client.waitForAgentUpsert(
+          agent.id,
+          (snapshot) => snapshot.status === "running",
+        );
+        const queued = await workspace.client.enqueueAgentMessage(
+          agent.id,
+          "Continue only when I send this queued message.",
+          {
+            messageId: "restart-follow-up",
+            images: [{ data: IMAGE.buffer.toString("base64"), mimeType: IMAGE.mimeType }],
+            attachments: [
+              { type: "text", mimeType: "text/plain", text: "Context retained across restart." },
+            ],
+          },
+        );
+        await daemon.restart();
+        const observer = await connectSeedClient({ port: daemon.port, projectOwnership: "host" });
+        try {
+          const directory = await observer.fetchAgents({ scope: "active" });
+          expect(directory.entries.find((entry) => entry.agent.id === agent.id)?.agent.status).toBe(
+            "closed",
+          );
+          const restored = await observer.listQueuedAgentMessages(agent.id);
+          expect(restored).toEqual([queued]);
+          await testInfo.attach("queue-restart-observations", {
+            body: JSON.stringify({ accepted: queued, afterRestart: restored }, null, 2),
+            contentType: "application/json",
+          });
+          await observer.sendQueuedAgentMessageNow(agent.id, queued.id);
+          await observer.waitForAgentUpsert(agent.id, (snapshot) => snapshot.status === "running");
+          expect(await observer.listQueuedAgentMessages(agent.id)).toEqual([]);
+        } finally {
+          await observer.close();
+        }
+      } finally {
+        await workspace.cleanup();
+      }
+    } finally {
+      await daemon.close();
+    }
+  },
+);

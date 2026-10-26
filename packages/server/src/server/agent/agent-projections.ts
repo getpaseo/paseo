@@ -19,6 +19,7 @@ import type {
   ImportableProviderSession,
 } from "./agent-sdk-types.js";
 import type { ManagedAgent } from "./agent-manager.js";
+import { summarizeQueuedAgentMessages } from "./message-queue.js";
 import type { JsonValue } from "../json-utils.js";
 import {
   isStoredAgentProviderAvailable,
@@ -247,6 +248,7 @@ export function buildStoredAgentPayload(
     updatedAt: updatedAt.toISOString(),
     lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
     status: record.lastStatus,
+    queuedMessages: summarizeQueuedAgentMessages(record.queuedMessages),
     capabilities: defaultCapabilities,
     currentModeId: record.lastModeId ?? null,
     availableModes: [],

@@ -16,6 +16,40 @@ function createDeferredPromise<T>() {
 }
 
 describe("submitAgentInput", () => {
+  it("waits for durable queue admission and restores the draft if admission fails", async () => {
+    const deferred = createDeferredPromise<void>();
+    const setUserInput = vi.fn();
+    const setAttachments = vi.fn();
+    const setSendError = vi.fn();
+    const setIsProcessing = vi.fn();
+    const clearDraft = vi.fn();
+    const attachments = [{ id: "image" }];
+    const promise = submitAgentInput({
+      message: "next task",
+      attachments,
+      isAgentRunning: true,
+      canSubmit: true,
+      queueMessage: () => deferred.promise,
+      submitMessage: vi.fn(),
+      clearDraft,
+      setUserInput,
+      setAttachments,
+      setSendError,
+      setIsProcessing,
+    });
+    expect(setIsProcessing).toHaveBeenCalledWith(true);
+    expect(clearDraft).not.toHaveBeenCalled();
+    expect(setAttachments).not.toHaveBeenCalled();
+    expect(setUserInput).not.toHaveBeenCalled();
+    deferred.reject(new Error("Host disconnected"));
+    await expect(promise).resolves.toBe("failed");
+    expect(setUserInput).toHaveBeenLastCalledWith("next task");
+    expect(setAttachments).toHaveBeenLastCalledWith(attachments);
+    expect(setSendError).toHaveBeenLastCalledWith("Host disconnected");
+    expect(setIsProcessing).toHaveBeenLastCalledWith(false);
+    expect(clearDraft).not.toHaveBeenCalled();
+  });
+
   it("clears the composer before an in-flight submit resolves", async () => {
     const deferred = createDeferredPromise<void>();
     const queueMessage = vi.fn();
@@ -136,9 +170,9 @@ describe("submitAgentInput", () => {
     expect(submitMessage).not.toHaveBeenCalled();
     expect(setUserInput).toHaveBeenCalledWith("");
     expect(setAttachments).toHaveBeenCalledWith([]);
-    expect(setSendError).not.toHaveBeenCalled();
-    expect(setIsProcessing).not.toHaveBeenCalled();
-    expect(clearDraft).not.toHaveBeenCalled();
+    expect(setSendError).toHaveBeenCalledWith(null);
+    expect(setIsProcessing).toHaveBeenLastCalledWith(false);
+    expect(clearDraft).toHaveBeenCalledWith("sent");
   });
 
   it("restores the composer when submit fails", async () => {

@@ -1,3 +1,9 @@
+import { useMutation } from "@tanstack/react-query";
+import type { QueuedAgentMessageSummary } from "@getpaseo/protocol/messages";
+import { enqueueComposerMessage, restoreQueuedMessageAttachments } from "./queue/actions";
+import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
+import { ToolbarButton } from "@/components/ui/pane-content-toolbar";
+import { generateMessageId } from "@/types/stream";
 import {
   useComposerEditingSession,
   useComposerFullscreen,
@@ -10,7 +16,7 @@ import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
-  Pressable,
+  ScrollView,
   Text,
   StyleSheet as RNStyleSheet,
   type PressableStateCallbackType,
@@ -38,6 +44,7 @@ import {
   ArrowUp,
   Square,
   Pencil,
+  X,
   AudioLines,
   CircleDot,
   FileText,
@@ -73,19 +80,14 @@ import { focusWithRetries } from "@/utils/web-focus";
 import {
   cancelComposerAgent,
   dispatchComposerAgentMessage,
-  editQueuedComposerMessage,
   findForgeItemByOption,
   isAttachmentSelectedForForgeItem,
   openComposerAttachment,
   pickAndPersistImages,
-  queueComposerMessage,
   removeComposerAttachmentAtIndex,
-  sendQueuedComposerMessageNow,
   toggleForgeAttachmentFromPicker,
   uploadFileAttachments,
   type AttachmentPersister,
-  type QueueWriter,
-  type QueuedComposerMessage,
 } from "@/composer/actions";
 import { useVoiceOptional } from "@/contexts/voice-context";
 import { useToast } from "@/contexts/toast-context";
@@ -177,7 +179,7 @@ const composerImageAttachmentPersister: Pick<
   persistFromFileUri: persistAttachmentFromFileUri,
 };
 
-type QueuedMessage = QueuedComposerMessage;
+type QueuedMessage = QueuedAgentMessageSummary;
 
 type AttachmentListUpdater =
   | UserComposerAttachment[]
@@ -370,7 +372,11 @@ function renderAttachmentTray(args: RenderAttachmentTrayArgs): ReactElement | nu
 interface RenderQueueTrackArgs {
   queuedMessages: readonly QueuedMessage[];
   handleEditQueuedMessage: (id: string) => void;
-  handleSendQueuedNow: (id: string) => Promise<void>;
+  handleSendQueuedNow: (id: string) => void;
+  handleRemoveQueuedMessage: (id: string) => void;
+  pending: boolean;
+  pendingId: string | null;
+  removeLabel: string;
   editLabel: string;
   sendNowLabel: string;
 }
@@ -380,7 +386,7 @@ function renderQueueTrack(args: RenderQueueTrackArgs): ReactElement | null {
     args;
   if (queuedMessages.length === 0) return null;
   return (
-    <View style={styles.queueTrack}>
+    <ScrollView style={styles.queueScroll} contentContainerStyle={styles.queueTrack}>
       {queuedMessages.map((item) => (
         <QueuedMessageRow
           key={item.id}
@@ -389,9 +395,13 @@ function renderQueueTrack(args: RenderQueueTrackArgs): ReactElement | null {
           onSendNow={handleSendQueuedNow}
           editLabel={editLabel}
           sendNowLabel={sendNowLabel}
+          onRemove={args.handleRemoveQueuedMessage}
+          pending={args.pending}
+          busy={args.pendingId === item.id}
+          removeLabel={args.removeLabel}
         />
       ))}
-    </View>
+    </ScrollView>
   );
 }
 
@@ -418,6 +428,18 @@ function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): R
         onRemove={onRemove}
         openLabel={labels.openImage}
         removeLabel={labels.removeImage}
+      />
+    );
+  }
+  if (attachment.kind === "context") {
+    return (
+      <ContextAttachmentPill
+        key={`context:${index}`}
+        attachment={attachment}
+        index={index}
+        disabled={disabled}
+        onRemove={onRemove}
+        removeLabel={labels.removeFile}
       />
     );
   }
@@ -661,45 +683,87 @@ interface QueuedMessageRowProps {
   item: QueuedMessage;
   onEdit: (id: string) => void;
   onSendNow: (id: string) => void;
+  onRemove: (id: string) => void;
+  pending: boolean;
+  busy: boolean;
+  removeLabel: string;
   editLabel: string;
   sendNowLabel: string;
+}
+
+interface QueueActionInput {
+  action: "edit" | "remove" | "send";
+  id: string;
+}
+
+interface QueueAttempt {
+  key: string;
+  messageId: string;
 }
 
 function QueuedMessageRow({
   item,
   onEdit,
   onSendNow,
+  onRemove,
+  pending,
+  busy,
+  removeLabel,
   editLabel,
   sendNowLabel,
 }: QueuedMessageRowProps) {
+  const { t } = useTranslation();
+  const compact = useIsCompactFormFactor();
   const handleEdit = useCallback(() => {
     onEdit(item.id);
   }, [onEdit, item.id]);
   const handleSendNow = useCallback(() => {
     onSendNow(item.id);
   }, [onSendNow, item.id]);
+  const handleRemove = useCallback(() => onRemove(item.id), [onRemove, item.id]);
   return (
     <View style={styles.queueItem}>
-      <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
-        {item.text}
-      </Text>
+      <View style={styles.queueContent}>
+        <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
+          {item.text ||
+            t("composer.attachments.queuedAttachments", {
+              count: item.attachmentCount,
+            })}
+        </Text>
+        {item.error ? <Text style={styles.sendErrorText}>{item.error}</Text> : null}
+      </View>
       <View style={styles.queueActions}>
-        <Pressable
+        <ToolbarButton
           onPress={handleEdit}
-          style={styles.queueActionButton}
-          accessibilityLabel={editLabel}
-          accessibilityRole="button"
+          disabled={pending}
+          label={editLabel}
+          compact={compact}
+          round
         >
           <ThemedPencil size={ICON_SIZE.sm} uniProps={iconForegroundMapping} />
-        </Pressable>
-        <Pressable
-          onPress={handleSendNow}
-          style={[styles.queueActionButton, styles.queueSendButton]}
-          accessibilityLabel={sendNowLabel}
-          accessibilityRole="button"
+        </ToolbarButton>
+        <ToolbarButton
+          onPress={handleRemove}
+          disabled={pending}
+          label={removeLabel}
+          compact={compact}
+          round
         >
-          <ThemedArrowUp size={ICON_SIZE.sm} uniProps={iconAccentForegroundMapping} />
-        </Pressable>
+          <ThemedQueueRemove size={ICON_SIZE.sm} uniProps={iconForegroundMapping} />
+        </ToolbarButton>
+        <ToolbarButton
+          onPress={handleSendNow}
+          disabled={pending}
+          label={sendNowLabel}
+          compact={compact}
+          round
+        >
+          {busy ? (
+            <ThemedAttachmentSpinner size={ICON_SIZE.sm} uniProps={iconForegroundMapping} />
+          ) : (
+            <ThemedArrowUp size={ICON_SIZE.sm} uniProps={iconForegroundMapping} />
+          )}
+        </ToolbarButton>
       </View>
     </View>
   );
@@ -792,6 +856,31 @@ function GithubAttachmentPill({
         title={item.title}
         subtitle={`${subtitleKind} ${numberPrefix}${item.number}`}
       />
+    </AttachmentPill>
+  );
+}
+
+interface ContextAttachmentPillProps {
+  attachment: Extract<ComposerAttachment, { kind: "context" }>;
+  index: number;
+  disabled: boolean;
+  onRemove: (index: number) => void;
+  removeLabel: string;
+}
+
+function ContextAttachmentPill(props: ContextAttachmentPillProps) {
+  const { t } = useTranslation();
+  const content = getAgentAttachmentPillContent(props.attachment.attachment, t);
+  const handleRemove = useCallback(() => props.onRemove(props.index), [props]);
+  return (
+    <AttachmentPill
+      onOpen={noopCallback}
+      onRemove={handleRemove}
+      openAccessibilityLabel={content.title}
+      removeAccessibilityLabel={props.removeLabel}
+      disabled={props.disabled}
+    >
+      <AttachmentLabel {...content} />
     </AttachmentPill>
   );
 }
@@ -1288,12 +1377,16 @@ function ComposerContentImpl({
 
   const agentState = useSessionStore(useShallow(buildAgentStateSelector(serverId, agentId)));
 
-  const queuedMessagesRaw = useSessionStore((state) =>
-    state.sessions[serverId]?.queuedMessages?.get(agentId),
+  const queuedMessagesRaw = useSessionStore(
+    (state) =>
+      state.sessions[serverId]?.agents.get(agentId)?.queuedMessages ??
+      state.sessions[serverId]?.agentDetails.get(agentId)?.queuedMessages,
   );
   const queuedMessages = queuedMessagesRaw ?? EMPTY_ARRAY;
 
-  const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
+  const supportsAgentMessageQueue = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.agentMessageQueue === true,
+  );
 
   const isCompactFormFactor = useIsCompactFormFactor();
   const isCompactLayout = resolveCompactLayout(isCompactLayoutOverride, isCompactFormFactor);
@@ -1314,7 +1407,6 @@ function ComposerContentImpl({
     removeAttachment,
     openAttachment,
     beginSubmit,
-    clearSentAttachments,
     completeSubmit,
     resetSuppression,
   } = composerWorkspaceAttachment.useBinding({
@@ -1536,7 +1628,7 @@ function ComposerContentImpl({
         agentIdRef.current,
         text,
         submitAttachments,
-        appSettings.sendBehavior === "steer" ? "steer" : "interrupt",
+        appSettings.sendBehavior === "interrupt" ? "interrupt" : "steer",
       );
     },
     [appSettings.sendBehavior, cwd, onMessageSent, t],
@@ -1606,37 +1698,31 @@ function ComposerContentImpl({
   );
   const hasAgent = agentState.status !== null;
 
-  const queueWriter = useMemo<QueueWriter>(
-    () => ({
-      read: (id) => useSessionStore.getState().sessions[serverId]?.queuedMessages?.get(id) ?? [],
-      write: (updater) => setQueuedMessages(serverId, updater),
-    }),
-    [serverId, setQueuedMessages],
-  );
+  const requireQueueClient = useCallback(() => {
+    if (!supportsAgentMessageQueue) throw new Error(t("composer.errors.queueUnavailable"));
+    if (!client) throw new Error(t("workspace.terminal.hostDisconnected"));
+    return client;
+  }, [client, supportsAgentMessageQueue, t]);
 
+  const queueAttempt = useRef<QueueAttempt | null>(null);
   const queueMessage = useCallback(
-    (queuedMessage: string, queuedAttachments: ComposerAttachment[]) => {
-      const result = queueComposerMessage({
+    async (text: string, queuedAttachments: ComposerAttachment[]) => {
+      const key = JSON.stringify({ agentId, text, attachments: queuedAttachments });
+      if (queueAttempt.current?.key !== key) {
+        queueAttempt.current = { key, messageId: generateMessageId() };
+      }
+      const { messageId } = queueAttempt.current;
+      await enqueueComposerMessage({
+        client: requireQueueClient(),
         agentId,
-        text: queuedMessage,
+        text,
+        messageId,
         attachments: queuedAttachments,
-        queue: queueWriter,
+        encodeImages,
       });
-      if (!result.queued) return;
-
-      replaceUserInput("");
-      setSelectedAttachments([]);
-      resetSuppression();
-      clearSentAttachments(queuedAttachments);
+      queueAttempt.current = null;
     },
-    [
-      agentId,
-      clearSentAttachments,
-      queueWriter,
-      resetSuppression,
-      setSelectedAttachments,
-      replaceUserInput,
-    ],
+    [agentId, requireQueueClient],
   );
 
   const sendMessageWithContent = useCallback(
@@ -1656,9 +1742,8 @@ function ComposerContentImpl({
         // Parent-managed submits are still valid submit paths even when the
         // transport is disconnected, because the parent decides the failure mode.
         canSubmit: Boolean(sendAgentMessageRef.current || onSubmitMessageRef.current),
-        queueMessage: ({ message: queuedText, attachments: queuedAttachments }) => {
-          queueMessage(queuedText, queuedAttachments);
-        },
+        queueMessage: ({ message: queuedText, attachments: queuedAttachments }) =>
+          queueMessage(queuedText, queuedAttachments),
         submitMessage: async ({ message: submitText, attachments: submitAttachments }) => {
           if (submitBehavior !== "preserve-and-lock") {
             beginSubmit(submitAttachments);
@@ -1918,37 +2003,53 @@ function ComposerContentImpl({
     });
   }, [agentId, hasAgent, isConnected, serverId, voice]);
 
-  const handleEditQueuedMessage = useCallback(
-    (id: string) => {
-      const result = editQueuedComposerMessage({
-        agentId,
-        messageId: id,
-        queue: queueWriter,
-      });
-      if (!result) return;
-      replaceUserInput(result.text);
-      setSelectedAttachments(result.attachments);
-    },
-    [agentId, queueWriter, replaceUserInput, setSelectedAttachments],
-  );
-
-  const handleSendQueuedNow = useCallback(
-    async (id: string) => {
-      if (!sendAgentMessageRef.current && !onSubmitMessageRef.current) return;
-      // Reuse the regular send path; server-side send atomically interrupts any active run.
-      const result = await sendQueuedComposerMessageNow({
-        agentId,
-        messageId: id,
-        queue: queueWriter,
-        submitMessage: ({ text, attachments: queuedAttachments }) =>
-          submitMessage(text, queuedAttachments),
-        failedToSendMessage: t("composer.errors.failedToSend"),
-      });
-      if (result.status === "failed") {
-        setSendError(result.errorMessage);
+  const queueAction = useMutation({
+    mutationFn: async (input: QueueActionInput) => {
+      const queueClient = requireQueueClient();
+      if (input.action === "send") {
+        await queueClient.sendQueuedAgentMessageNow(agentId, input.id, {
+          activeTurnBehavior: appSettings.sendBehavior === "interrupt" ? "interrupt" : "steer",
+        });
+        return null;
       }
+      if (input.action === "remove") {
+        await queueClient.removeQueuedAgentMessage(agentId, input.id);
+        return null;
+      }
+      const [message] = await queueClient.listQueuedAgentMessages(agentId, {
+        queuedMessageId: input.id,
+      });
+      if (!message) return null;
+      // Prepare local attachment bytes before removing the durable copy.
+      const restoredAttachments = await restoreQueuedMessageAttachments({
+        message,
+        persister: composerImageAttachmentPersister,
+      });
+      const removed = await queueClient.removeQueuedAgentMessage(agentId, input.id);
+      if (!removed) return null;
+      return { text: removed.text, attachments: restoredAttachments };
     },
-    [agentId, queueWriter, submitMessage, t],
+    onMutate: () => setSendError(null),
+    onSuccess: (edited) => {
+      if (!edited) return;
+      replaceUserInput(edited.text);
+      setSelectedAttachments(edited.attachments);
+      focusInput();
+    },
+    onError: (error) => setSendError(error.message),
+  });
+  const mutateQueue = queueAction.mutate;
+  const handleEditQueuedMessage = useCallback(
+    (id: string) => mutateQueue({ action: "edit", id }),
+    [mutateQueue],
+  );
+  const handleRemoveQueuedMessage = useCallback(
+    (id: string) => mutateQueue({ action: "remove", id }),
+    [mutateQueue],
+  );
+  const handleSendQueuedNow = useCallback(
+    (id: string) => mutateQueue({ action: "send", id }),
+    [mutateQueue],
   );
 
   const handleQueue = useCallback(
@@ -1967,13 +2068,13 @@ function ComposerContentImpl({
         commands: pluginClientSlashCommands,
       });
       if (pluginSlashCommand && runPluginClientSlashCommand(pluginSlashCommand)) return;
-      queueMessage(payload.text, outgoingAttachments);
+      void sendMessageWithContent(payload.text, outgoingAttachments);
     },
     [
       attachments,
       buildOutgoingAttachments,
       pluginClientSlashCommands,
-      queueMessage,
+      sendMessageWithContent,
       runClientSlashCommand,
       runPluginClientSlashCommand,
     ],
@@ -2335,8 +2436,20 @@ function ComposerContentImpl({
         handleSendQueuedNow,
         editLabel: t("composer.attachments.editQueuedMessage"),
         sendNowLabel: t("composer.attachments.sendQueuedMessageNow"),
+        handleRemoveQueuedMessage,
+        pending: queueAction.isPending,
+        pendingId: queueAction.isPending ? queueAction.variables.id : null,
+        removeLabel: t("composer.attachments.removeQueuedMessage"),
       }),
-    [handleEditQueuedMessage, handleSendQueuedNow, queuedMessages, t],
+    [
+      handleEditQueuedMessage,
+      handleSendQueuedNow,
+      handleRemoveQueuedMessage,
+      queueAction.isPending,
+      queueAction.variables,
+      queuedMessages,
+      t,
+    ],
   );
 
   const autocompleteConfiguration = useMemo(
@@ -2385,7 +2498,7 @@ function ComposerContentImpl({
   const sendErrorNode = useMemo(
     () =>
       sendError ? (
-        <Text accessibilityRole="alert" style={styles.sendErrorText}>
+        <Text testID="composer-send-error" accessibilityRole="alert" style={styles.sendErrorText}>
           {sendError}
         </Text>
       ) : null,
@@ -2464,7 +2577,7 @@ function ComposerContentImpl({
                   placeholder={messagePlaceholder}
                   autoFocus={messageInputAutoFocus}
                   autoFocusKey={`${serverId}:${agentId}:${autoFocusKey ?? ""}`}
-                  disabled={isSubmitLoading}
+                  disabled={isSubmitLoadingVisible || queueAction.isPending}
                   leftContent={leftContent}
                   beforeVoiceContent={beforeVoiceContent}
                   rightContent={rightContent}
@@ -2629,6 +2742,8 @@ const styles = StyleSheet.create((theme: Theme) => ({
   buttonDisabled: {
     opacity: 0.5,
   },
+  queueScroll: { maxHeight: theme.spacing[32] },
+  queueContent: { flex: 1 },
   queueTrack: {
     flexDirection: "column",
     gap: theme.spacing[2],
@@ -2655,17 +2770,6 @@ const styles = StyleSheet.create((theme: Theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
   },
-  queueActionButton: {
-    width: 32,
-    height: 32,
-    borderRadius: theme.borderRadius.full,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: theme.colors.surface2,
-  },
-  queueSendButton: {
-    backgroundColor: theme.colors.accent,
-  },
   sendErrorText: {
     color: theme.colors.palette.red[500],
     fontSize: theme.fontSize.base,
@@ -2673,6 +2777,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
 })) as unknown as Record<string, object>;
 
 const ThemedAttachmentSpinner = withUnistyles(LoadingSpinner);
+const ThemedQueueRemove = withUnistyles(X);
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedArrowUp = withUnistyles(ArrowUp);
 const ThemedGitPullRequest = withUnistyles(GitPullRequest);
@@ -2684,7 +2789,6 @@ const ThemedClipboardPaste = withUnistyles(ClipboardPaste);
 const ThemedFileText = withUnistyles(FileText);
 const iconForegroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const iconForegroundMutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const iconAccentForegroundMapping = (theme: Theme) => ({ color: theme.colors.accentForeground });
 
 function renderForgeAttachmentIcon(icon: string): ReactElement {
   return (

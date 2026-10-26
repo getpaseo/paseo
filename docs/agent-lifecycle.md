@@ -77,7 +77,7 @@ Users can also detach an existing subagent from the subagents track. Detach is d
 
 `notifyOnFinish` defaults to `true` for agent-scoped creation and prompt follow-ups because most delegated work needs to report back to the creating agent. Set it to `false` for explicit reporting or no completion callback.
 
-Agent-originated messages and automatic notifications share a recipient-daemon delivery module. A queued receipt acknowledges admission before provider dispatch, allowing a child to report and finish in the same two-second quiet window. Human prompts dispatch directly. Conflicting explicit interruption or session-mode choices retain separate ordered dispatches.
+Agent-originated messages and automatic notifications share a recipient-daemon delivery module. A queued receipt acknowledges admission before provider dispatch, allowing a child to report and finish in the same two-second quiet window. Human prompts use the composer send or queue action described below. Conflicting explicit interruption or session-mode choices retain separate ordered dispatches.
 
 The pending message window is in memory. Clean shutdown flushes it before closing agents; an abrupt
 crash can lose queued prompts. A durable send receipt remains pending until actual dispatch
@@ -107,6 +107,25 @@ so that callback can repeat after restart. This is an at-least-once wakeup, with
 Permission requests are notification checkpoints, not the end of that subscription. The caller is notified again after a permission response when the child finishes, errors, or requests another permission.
 The permission notification includes the normalized request plus the child and request IDs, so the caller can inspect it and respond without fetching agent status.
 A watched child that closes before its finish event also notifies the caller so delegated work cannot disappear silently during archive or workspace teardown.
+
+## Human message queue
+
+Queue a follow-up when the current turn should finish before the agent receives it. The daemon
+persists accepted messages with their images, attachments, and session mode in the agent record.
+Every connected device sees the same queue; delivery does not depend on an open app.
+
+A successful turn completion sends the next message. If the turn finished before enqueue arrived,
+an idle live agent starts it immediately. Stop, a failed turn, archive, and daemon restart keep the
+remaining messages without starting work. Use **Send now**, or complete a later user-started turn,
+to continue. A closed agent stays closed after restart until an explicit action resumes it.
+
+The daemon records a dispatch claim before contacting the provider. If delivery fails, the message
+stays in the queue with an error. A claim found after restart has an uncertain outcome; check the
+conversation before sending it again. Do not automatically retry it: the provider may already have
+accepted the prompt. Editing removes the message atomically before returning it to the composer.
+
+Keep each queue at 100 messages or fewer. Admission retries reuse the message ID; the daemon retains
+every pending ID and the most recent 256 admission fingerprints to avoid duplicate enqueue.
 
 ## Provider-managed child agents
 

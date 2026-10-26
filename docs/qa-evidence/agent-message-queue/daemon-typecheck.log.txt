@@ -1,0 +1,4 @@
+
+> @getpaseo/server@0.13.0 typecheck
+> tsgo -p tsconfig.server.typecheck.json --noEmit
+

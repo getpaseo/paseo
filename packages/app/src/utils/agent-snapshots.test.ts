@@ -36,6 +36,23 @@ function createSnapshot(
 }
 
 describe("normalizeAgentSnapshot", () => {
+  it("preserves the daemon queue across replica snapshot round trips", () => {
+    const snapshot = createSnapshot();
+    snapshot.queuedMessages = [
+      {
+        id: "next-task",
+        text: "run regression tests",
+        attachmentCount: 0,
+        createdAt: "2026-10-26T00:00:00.000Z",
+        error: "Dispatch interrupted; send again to retry.",
+      },
+    ];
+    const agent = normalizeAgentSnapshot(snapshot, "host");
+    expect(agent.queuedMessages).toEqual(snapshot.queuedMessages);
+    expect(projectAgentSnapshot(agent).queuedMessages).toEqual(snapshot.queuedMessages);
+    expect(normalizeAgentSnapshot(createSnapshot(), "old-host").queuedMessages).toEqual([]);
+  });
+
   it("round-trips identified active turns through the canonical snapshot boundary", () => {
     const snapshot = createSnapshot({
       status: "running",
