@@ -25,6 +25,14 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/react-native-unistyles",
     patchPrefix: "react-native-unistyles+",
   },
+  // Backport of https://github.com/software-mansion/react-native-reanimated/pull/10435
+  // (Reanimated 4.7.1): skip synchronous Android prop updates for unmounted view tags
+  // instead of throwing and printing a full stack trace on the UI thread per tag per event.
+  // Remove when the installed Reanimated is >= 4.7.1.
+  {
+    nodeModulesPath: "node_modules/react-native-reanimated",
+    patchPrefix: "react-native-reanimated+",
+  },
   {
     nodeModulesPath: "node_modules/react-native-draggable-flatlist",
     patchPrefix: "react-native-draggable-flatlist+",
