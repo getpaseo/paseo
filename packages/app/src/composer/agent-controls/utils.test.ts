@@ -363,6 +363,38 @@ describe("resolveAgentModelSelection", () => {
     expect(selection.displayThinking).toBe("High");
   });
 
+  it("keeps Off in borrowed options for a non-Claude provider without the daemon gate", () => {
+    const selection = resolveAgentModelSelection({
+      models: [
+        {
+          id: "pi-model-a",
+          provider: "pi",
+          label: "Pi Model A",
+          isDefault: true,
+          thinkingOptions: [
+            { id: "off", label: "Off" },
+            { id: "low", label: "Low" },
+            { id: "high", label: "High" },
+          ],
+          defaultThinkingOptionId: "low",
+        },
+      ],
+      runtimeModelId: "pi-custom-model",
+      configuredModelId: "pi-custom-model",
+      runtimeThinkingOptionId: null,
+      explicitThinkingOptionId: null,
+    });
+
+    expect(selection.selectedModel).toBeNull();
+    expect(selection.thinkingOptions).toEqual([
+      { id: "off", label: "Off" },
+      { id: "low", label: "Low" },
+      { id: "high", label: "High" },
+    ]);
+    expect(selection.selectedThinkingId).toBe("low");
+    expect(selection.displayThinking).toBe("Low");
+  });
+
   it("keeps showing a persisted effort that the borrowed options do not include", () => {
     const selection = resolveAgentModelSelection({
       models: [

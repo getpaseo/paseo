@@ -214,8 +214,11 @@ export function resolveAgentModelSelection(input: {
   const thinkingModel = selectedModel ?? fallbackModel;
 
   const borrowedThinkingOptions = thinkingModel?.thinkingOptions ?? null;
+  // The Claude provider accepts "off" only for catalog ids flagged supportsThinkingDisabled
+  // and rejects it for every other model id, so a borrowed option list must not offer it.
+  // Other providers have no such gate; Pi even lists Off natively.
   const thinkingOptions =
-    selectedModel || borrowedThinkingOptions === null
+    selectedModel || borrowedThinkingOptions === null || thinkingModel?.provider !== "claude"
       ? borrowedThinkingOptions
       : borrowedThinkingOptions.filter(
           (option) => option.id !== CLAUDE_DISABLED_THINKING_OPTION_ID,
