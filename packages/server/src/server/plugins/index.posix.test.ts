@@ -1647,12 +1647,19 @@ it("keeps reload and enable responsive while compiling a real plugin", async () 
         previous = now;
         utilization = currentUtilization;
       };
-      const timer = setInterval(sample, 1);
+      // Check-phase callbacks measure loop availability without Windows timer
+      // wake-up granularity being counted as a busy event-loop stall.
+      let checkpoint: ReturnType<typeof setImmediate>;
+      const probe = () => {
+        sample();
+        checkpoint = setImmediate(probe);
+      };
+      checkpoint = setImmediate(probe);
       try {
         await action();
         sample();
       } finally {
-        clearInterval(timer);
+        clearImmediate(checkpoint);
       }
       process.stderr.write(
         `plugin compile longest loop gap: ${longest.toFixed(2)} ms ${JSON.stringify(longestWindow)}\n`,
