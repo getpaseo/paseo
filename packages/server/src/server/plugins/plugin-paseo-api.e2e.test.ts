@@ -571,23 +571,36 @@ test("keeps reload and enable responsive while compiling a real plugin", async (
       () => service.enablePlugin("responsive-build"),
       () => service.reloadPlugin("responsive-build"),
     ]) {
-      let previous = performance.now();
+      const startedAt = performance.now();
+      let previous = startedAt;
       let longest = 0;
+      // Node 22.19+ exposes per-thread CPU accounting; the repository's older
+      // Node declarations do not include it yet. CI uses current Node 22.
+      const threadCpuUsage: (previous?: NodeJS.CpuUsage) => NodeJS.CpuUsage = Reflect.get(
+        process,
+        "threadCpuUsage",
+      );
+      let cpu = threadCpuUsage();
+      let longestCpu = 0;
       let utilization = performance.eventLoopUtilization();
-      let longestWindow = { active: 0, idle: 0 };
-      const sample = () => {
+      let longestWindow = { active: 0, idle: 0, cpu: 0, at: 0, phase: "checkpoint" };
+      const sample = (phase = "checkpoint") => {
         const now = performance.now();
         const currentUtilization = performance.eventLoopUtilization();
+        const currentCpu = threadCpuUsage();
+        const cpuMs = (currentCpu.user - cpu.user + currentCpu.system - cpu.system) / 1_000;
+        longestCpu = Math.max(longestCpu, cpuMs);
         if (now - previous > longest) {
           longest = now - previous;
           const { active, idle } = performance.eventLoopUtilization(
             currentUtilization,
             utilization,
           );
-          longestWindow = { active, idle };
+          longestWindow = { active, idle, cpu: cpuMs, at: now - startedAt, phase };
         }
         previous = now;
         utilization = currentUtilization;
+        cpu = currentCpu;
       };
       // Check-phase callbacks measure loop availability without Windows timer
       // wake-up granularity being counted as a busy event-loop stall.
@@ -599,12 +612,12 @@ test("keeps reload and enable responsive while compiling a real plugin", async (
       checkpoint = setImmediate(probe);
       try {
         await action();
-        sample();
+        sample("completion");
       } finally {
         clearImmediate(checkpoint);
       }
       process.stderr.write(
-        `plugin compile longest loop gap: ${longest.toFixed(2)} ms ${JSON.stringify(longestWindow)}\n`,
+        `plugin compile longest loop gap: ${longest.toFixed(2)} ms ${JSON.stringify({ ...longestWindow, longestCpu, duration: performance.now() - startedAt })}\n`,
       );
       expect(service.catalog()[0]?.clientBundle).toContain("compiled fixture");
       expect(longest).toBeLessThan(20);
