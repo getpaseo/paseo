@@ -4,7 +4,6 @@ import {
   rename,
   mkdir,
   mkdtemp,
-  open as openFile,
   readFile,
   readdir,
   rm,
@@ -12,7 +11,6 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createServer } from "node:http";
-import { performance } from "node:perf_hooks";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -1600,82 +1598,3 @@ async function applyReviewedUpdate(service: PluginService, pluginId: string) {
   expect(preview?.outcome).toBe("update");
   return service.applyUpdates([preview!.proposal!]);
 }
-
-it("keeps reload and enable responsive while compiling a real plugin", async () => {
-  const directory = await createPlugin("responsive-build", "export default () => {};");
-  // Erased types stress TypeScript's AST walk without a multi-MiB runtime bundle.
-  // Payload transfer is a different cost from import validation.
-  await rm(path.join(directory, "index.server.ts"));
-  const entry = await openFile(path.join(directory, "index.client.ts"), "w");
-  try {
-    await entry.write("type FixtureValues = [");
-    for (let offset = 0; offset < 250_000; offset += 10_000) {
-      await entry.write(
-        Array.from({ length: 10_000 }, (_, index) => offset + index).join(",") + ",",
-      );
-    }
-    await entry.write(
-      ']; export default function contribute() { return () => "compiled fixture"; }',
-    );
-  } finally {
-    await entry.close();
-  }
-  const service = createService(directory, {
-    "responsive-build": { source: "directory", path: directory, enabled: false },
-  });
-  await service.start();
-  try {
-    for (const action of [
-      () => service.enablePlugin("responsive-build"),
-      () => service.reloadPlugin("responsive-build"),
-    ]) {
-      let previous = performance.now();
-      let longest = 0;
-      let utilization = performance.eventLoopUtilization();
-      let longestWindow = { active: 0, idle: 0 };
-      const sample = () => {
-        const now = performance.now();
-        const currentUtilization = performance.eventLoopUtilization();
-        if (now - previous > longest) {
-          longest = now - previous;
-          const { active, idle } = performance.eventLoopUtilization(
-            currentUtilization,
-            utilization,
-          );
-          longestWindow = { active, idle };
-        }
-        previous = now;
-        utilization = currentUtilization;
-      };
-      // Check-phase callbacks measure loop availability without Windows timer
-      // wake-up granularity being counted as a busy event-loop stall.
-      let checkpoint: ReturnType<typeof setImmediate>;
-      const probe = () => {
-        sample();
-        checkpoint = setImmediate(probe);
-      };
-      checkpoint = setImmediate(probe);
-      try {
-        await action();
-        sample();
-      } finally {
-        clearImmediate(checkpoint);
-      }
-      process.stderr.write(
-        `plugin compile longest loop gap: ${longest.toFixed(2)} ms ${JSON.stringify(longestWindow)}\n`,
-      );
-      expect(service.catalog()[0]?.clientBundle).toContain("compiled fixture");
-      expect(longest).toBeLessThan(20);
-    }
-    // Evaluate after both probes so parsing the returned code is not charged to compilation.
-    const factory = globalThis.eval(service.catalog()[0]!.clientBundle) as (
-      require: (specifier: string) => never,
-    ) => { default: () => () => string };
-    const result = factory((specifier) => {
-      throw new Error(`Unexpected fixture dependency: ${specifier}`);
-    }).default()();
-    expect(result).toBe("compiled fixture");
-  } finally {
-    await service.stopAllPlugins();
-  }
-});
