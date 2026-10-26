@@ -1,3 +1,4 @@
+import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { SessionDelivery } from "./session/owned-subscriptions/index.js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Server as HTTPServer } from "http";
@@ -71,6 +72,18 @@ const sessionMock = vi.hoisted(() => {
     wantsSourceEvent = (source: object) => !this.delivery.isModern(source);
     getSessionId = vi.fn(() => "mock-session-id");
     getPermissions = vi.fn(() => this.args.permissions as string[]);
+    setPermissions = (permissions: string[]) => {
+      this.args.permissions = permissions;
+    };
+    private routed = false;
+    setRouted = (routed: boolean) => {
+      this.routed = routed;
+    };
+    isRouted = () => this.routed;
+    setHostSource = (sourceId: string) => {
+      this.args.sourceId = sourceId;
+    };
+    getHostSourceId = () => this.args.sourceId as string;
     allowsInbound = vi.fn(() => true);
     allowsPermission = vi.fn(() => true);
     publish = vi.fn((message: unknown) => {
@@ -242,6 +255,7 @@ function createServer(options?: {
   speechReadiness?: SpeechReadinessSnapshot | null;
   logger?: ReturnType<typeof createLogger>;
   startPaused?: boolean;
+  auth?: { password: string; localCredential: () => string | null };
 }) {
   const speechReadiness = options?.speechReadiness ?? null;
   const daemonConfigStore = {
@@ -272,7 +286,8 @@ function createServer(options?: {
     null,
     { allowedOrigins: new Set(), startPaused: options?.startPaused },
     createWorkspaceAutoNameStub(),
-    undefined,
+    createWorkspaceRuntimeStore(),
+    options?.auth,
     speechReadiness
       ? {
           resolveStt: () => null,
@@ -426,7 +441,7 @@ async function attachRelayAndHello(params: {
 }) {
   await params.server.attachExternalSocket(params.socket, { transport: "relay" });
   params.socket.emit("message", JSON.stringify(createHelloMessage(params.clientId)));
-  expect(params.socket.sent.length).toBeGreaterThan(0);
+  await vi.waitFor(() => expect(params.socket.sent.length).toBeGreaterThan(0));
   const envelope = parseSentEnvelope(params.socket.sent[0]);
   expect(envelope.type).toBe("session");
   const serverInfo = parseServerInfoStatusPayload(envelope.message?.payload);
@@ -445,7 +460,7 @@ async function attachDirectAndHello(params: {
     createDirectRequest(),
   );
   params.socket.emit("message", JSON.stringify(createHelloMessage(params.clientId)));
-  expect(params.socket.sent.length).toBeGreaterThan(0);
+  await vi.waitFor(() => expect(params.socket.sent.length).toBeGreaterThan(0));
   const envelope = parseSentEnvelope(params.socket.sent[0]);
   expect(envelope.type).toBe("session");
   const serverInfo = parseServerInfoStatusPayload(envelope.message?.payload);
@@ -472,19 +487,106 @@ function holdNextSessionMessage(session: (typeof sessionMock.instances)[number])
 function holdSessionCleanup(session: (typeof sessionMock.instances)[number]): {
   finish: () => void;
 } {
-  let finish = () => {};
-  session.cleanup.mockImplementationOnce(
-    () =>
-      new Promise<void>((resolve) => {
-        finish = resolve;
-      }),
-  );
-  return {
-    finish: () => finish(),
-  };
+  let finish!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  session.cleanup.mockImplementationOnce(() => pending);
+  return { finish };
 }
 
 describe("relay external socket reconnect behavior", () => {
+  test("closes only a hello socket when post-admission setup throws", async () => {
+    const server = createServer();
+    class ThrowOnceSocket extends MockSocket {
+      private firstClose = true;
+      override close(code?: number, reason?: string): void {
+        if (this.firstClose) {
+          this.firstClose = false;
+          throw new Error("socket close failed during hello");
+        }
+        super.close(code, reason);
+      }
+    }
+    const failed = new ThrowOnceSocket();
+    try {
+      await server.attachExternalSocket(failed, { transport: "relay" });
+      failed.emit("message", JSON.stringify(createHelloMessage("plugin:not-a-plugin")));
+      await vi.waitFor(() => expect(failed.readyState).toBe(3));
+      const initiallyFailed = new ThrowOnceSocket();
+      await server.attachExternalSocket(
+        initiallyFailed,
+        { transport: "relay" },
+        null,
+        createHelloMessage("plugin:initially-invalid"),
+      );
+      await vi.waitFor(() => expect(initiallyFailed.readyState).toBe(3));
+      const healthy = new MockSocket();
+      await attachRelayAndHello({ server, socket: healthy, clientId: "still-running" });
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("does not log malformed pre-admission credential frames", async () => {
+    const logger = createLogger();
+    const server = createServer({ logger });
+    const socket = new MockSocket();
+    try {
+      await server.attachExternalSocket(socket, { transport: "relay" });
+      socket.emit("message", '{"type":"hello","auth":{"kind":"password","password":"log-secret"},');
+      await vi.waitFor(() => expect(socket.readyState).toBe(3));
+      expect(JSON.stringify(logger.error.mock.calls)).not.toContain("log-secret");
+    } finally {
+      await server.close();
+    }
+  });
+  test("admits a relay hello password, but rejects a wrong or missing password", async () => {
+    const server = createServer({
+      auth: {
+        password: "$2b$12$OLxyuuP9uLK30Uzc4wQX0O6liuU/Q1t5P2b0Ebf36mULvpVK3DRZW",
+        localCredential: () => "local-token",
+      },
+    });
+    try {
+      const passwordSocket = new MockSocket();
+      await server.attachExternalSocket(passwordSocket, { transport: "relay" });
+      passwordSocket.emit(
+        "message",
+        JSON.stringify({
+          ...createHelloMessage("relay-password"),
+          auth: { kind: "password", password: "correct-password" },
+        }),
+      );
+      await vi.waitFor(() => expect(sentServerInfoEnvelopes(passwordSocket)).toHaveLength(1));
+
+      const legacySocket = new MockSocket();
+      await server.attachExternalSocket(legacySocket, { transport: "relay" });
+      legacySocket.emit("message", JSON.stringify(createHelloMessage("relay-legacy")));
+      await vi.waitFor(() => expect(legacySocket.readyState).toBe(3));
+      expect(sentServerInfoEnvelopes(legacySocket)).toHaveLength(0);
+
+      const wrongSocket = new MockSocket();
+      await server.attachExternalSocket(wrongSocket, { transport: "relay" });
+      wrongSocket.emit(
+        "message",
+        JSON.stringify({
+          ...createHelloMessage("relay-wrong"),
+          auth: { kind: "password", password: "wrong" },
+        }),
+      );
+      await vi.waitFor(() => expect(wrongSocket.readyState).toBe(3));
+      expect(wrongSocket.sent).toContain(
+        JSON.stringify({
+          type: "hello.rejected",
+          reason: "incorrect_password",
+          accepts: ["password"],
+        }),
+      );
+    } finally {
+      await server.close();
+    }
+  });
   beforeEach(() => {
     sessionMock.instances.length = 0;
     vi.useFakeTimers();
@@ -535,7 +637,7 @@ describe("relay external socket reconnect behavior", () => {
     const secondAttachment = await server.attachPluginSocket("exclusive", secondSocket);
     secondSocket.emit("message", JSON.stringify(createHelloMessage("plugin:exclusive")));
 
-    expect(sessionMock.instances).toHaveLength(2);
+    await vi.waitFor(() => expect(sessionMock.instances).toHaveLength(2));
     firstSocket.emit("close", 1000, "plugin stopped");
     await firstAttachment.closed;
     expect(sessionMock.instances[0]?.cleanup).toHaveBeenCalledOnce();
@@ -552,6 +654,7 @@ describe("relay external socket reconnect behavior", () => {
     const socket = new MockSocket();
     await server.attachPluginSocket("stalled", socket);
     socket.emit("message", JSON.stringify(createHelloMessage("plugin:stalled")));
+    await vi.waitFor(() => expect(sentServerInfoEnvelopes(socket)).toHaveLength(1));
     socket.emit("message", JSON.stringify({ type: "ping" }));
 
     // Event loop starved past the lease: no further ping arrives.
@@ -579,7 +682,7 @@ describe("relay external socket reconnect behavior", () => {
     await server.attachExternalSocket(socket, { transport: "relay" });
     socket.emit("message", JSON.stringify(createHelloMessage("plugin:not-a-plugin")));
 
-    expect(socket.readyState).toBe(3);
+    await vi.waitFor(() => expect(socket.readyState).toBe(3));
     expect(sessionMock.instances).toHaveLength(0);
     await server.close();
   });
@@ -597,7 +700,7 @@ describe("relay external socket reconnect behavior", () => {
         }),
       ),
     );
-    expect(sessionMock.instances).toHaveLength(1);
+    await vi.waitFor(() => expect(sessionMock.instances).toHaveLength(1));
     const session = sessionMock.instances[0];
     expect(session.args.clientCapabilities).toEqual({
       [CLIENT_CAPS.reasoningMergeEnum]: true,
@@ -645,7 +748,7 @@ describe("relay external socket reconnect behavior", () => {
     const pluginSocket = new MockSocket();
     const attachment = await server.attachPluginSocket("startup", pluginSocket);
     pluginSocket.emit("message", JSON.stringify(createHelloMessage("plugin:startup")));
-    expect(sessionMock.instances).toHaveLength(1);
+    await vi.waitFor(() => expect(sessionMock.instances).toHaveLength(1));
 
     server.beginAcceptingConnections();
     const readySocket = new MockSocket();
@@ -736,6 +839,7 @@ describe("relay external socket reconnect behavior", () => {
       { principalId: "hub:daemon-1", permissions: ["hub.execute"] },
     );
     hubSocket.emit("message", JSON.stringify(createHelloMessage(clientId)));
+    await vi.waitFor(() => expect(hubSocket.sent.length).toBeGreaterThan(0));
     const hubEnvelope = parseSentEnvelope(hubSocket.sent[0]);
     const hubInfo = parseServerInfoStatusPayload(hubEnvelope.message?.payload);
 
@@ -782,6 +886,7 @@ describe("relay external socket reconnect behavior", () => {
       relayConnectionId: "relay-conn-1",
     });
     socket.emit("message", JSON.stringify(createHelloMessage("cid-control-log")));
+    await vi.waitFor(() => expect(sentServerInfoEnvelopes(socket)).toHaveLength(1));
     socket.emit(
       "message",
       JSON.stringify({
@@ -1047,6 +1152,7 @@ describe("relay external socket reconnect behavior", () => {
     expect(serverInfo.features?.stableProjectIdentity).toBe(true);
     expect(serverInfo.features?.canonicalSubmittedPrompts).toBe(true);
     expect(serverInfo.features?.providersSnapshotCwd).toBe(true);
+    expect(serverInfo.features?.hopliteProvider).toBe(false);
     expect(serverInfo.features?.pluginLogs).toBe(true);
     expect(serverInfo.features?.workspaceMarkUnread).toBe(true);
     expect(serverInfo.features?.["terminal-input-mode-replay"]).toBe(true);

@@ -15,11 +15,15 @@
       }
     },
     "production": {
+      "ios": {
+        "image": "macos-tahoe-26.6-xcode-27.1"
+      },
       "env": {
         "APP_VARIANT": "production"
       },
       "android": {
-        "resourceClass": "large"
+        "resourceClass": "large",
+        "gradleCommand": ":app:bundleRelease -x lint -x lintVitalAnalyzeRelease -x lintVitalRelease -x generateReleaseLintModel -x generateReleaseLintVitalModel"
       }
     },
     "production-apk": {

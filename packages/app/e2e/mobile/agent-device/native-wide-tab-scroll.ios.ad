@@ -1,0 +1,16 @@
+context platform=ios timeout=60000 retries=0
+env APP_ID=sh.paseo.debug
+
+open "${APP_ID}"
+wait "id=\"workspace-tabs-scroll\"" 20000
+press "id=\"workspace-tab-draft_${DRAFT_ID}\""
+wait "id=\"composer-import-agent-pill\"" 10000
+gesture pan 450 86 -210 0 280
+is visible "id=\"composer-import-agent-pill\""
+gesture pan 450 86 240 0 280
+longpress "id=\"workspace-tab-agent_${AGENT_ID}\"" 900
+wait "id=\"workspace-tab-context-${TAB_ID}-copy-agent-id\"" 10000
+press "label=\"Menu backdrop\""
+press "id=\"workspace-tab-agent_${OTHER_AGENT_ID}\""
+wait "id=\"agent-chat-scroll\"" 10000
+close

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -21,8 +21,6 @@ import type {
   AgentStreamEvent,
 } from "../agent/agent-sdk-types.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
-import { validateProviderOptions } from "../agent/provider-options.js";
-import { ClaudeProviderOptionsSchema } from "../agent/providers/claude/options.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { ProviderSnapshotManager } from "../agent/provider-snapshot-manager.js";
 import { createWorkspaceProvisioningService } from "../session/workspace-provisioning/workspace-provisioning-service.js";
@@ -46,6 +44,37 @@ interface ScheduleServiceInternals {
   executeSchedule(schedule: StoredSchedule, runId: string): Promise<ScheduleExecutionResult>;
 }
 
+class OverlappingTickRunner {
+  private resolveFirstRunStarted: () => void = () => {};
+  private resolveFirstRunBlocked: () => void = () => {};
+  private laterScheduleRunCount = 0;
+
+  readonly firstRunStarted = new Promise<void>((resolve) => {
+    this.resolveFirstRunStarted = resolve;
+  });
+  private readonly firstRunBlocked = new Promise<void>((resolve) => {
+    this.resolveFirstRunBlocked = resolve;
+  });
+
+  async run(schedule: StoredSchedule): Promise<ScheduleExecutionResult> {
+    if (schedule.prompt === "block the first tick") {
+      this.resolveFirstRunStarted();
+      await this.firstRunBlocked;
+    } else {
+      this.laterScheduleRunCount += 1;
+    }
+    return { agentId: null, output: "ok" };
+  }
+
+  unblockFirstRun(): void {
+    this.resolveFirstRunBlocked();
+  }
+
+  get laterScheduleRuns(): number {
+    return this.laterScheduleRunCount;
+  }
+}
+
 const SCHEDULE_TEST_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
@@ -66,12 +95,6 @@ const NO_UNATTENDED_SCHEDULE_POLICY: Pick<ProviderSnapshotManager, "resolveCreat
 
 const TEST_CLAUDE_PROVIDER_DEFINITION = {
   enabled: true,
-  validateOptions: (options: AgentSessionConfig["providerOptions"]) =>
-    validateProviderOptions("claude", ClaudeProviderOptionsSchema, options),
-  applyOptions: (config: AgentSessionConfig, options: AgentSessionConfig["providerOptions"]) => ({
-    ...config,
-    ...(options ? { providerOptions: options } : {}),
-  }),
 };
 
 let workspaceArchiveInProgress = false;
@@ -212,6 +235,7 @@ async function createRegistryBackedScheduleWorkspaceDeps(rootDir: string): Promi
     projectRegistry,
     workspaceRegistry,
     workspaceGitService,
+    isDirectory: async () => true,
   });
   return {
     workspaceRegistry,
@@ -351,6 +375,241 @@ describe("ScheduleService", () => {
     });
     expect(inspected.nextRunAt).toBe("2026-01-01T00:02:00.000Z");
   });
+
+  test.each(["new-agent", "agent", "maxRuns: 1"] as const)(
+    "dispatches a shared cron slot only once for %s after an earlier tick resumes",
+    async (targetKind) => {
+      const runner = new OverlappingTickRunner();
+      const service = createScheduleService({
+        paseoHome: tempDir,
+        logger: createTestLogger(),
+        agentManager: new AgentManager({ logger: createTestLogger() }),
+        agentStorage,
+        providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+        now: () => now,
+        runner: (schedule) => runner.run(schedule),
+      });
+      const cadence = { type: "cron" as const, expression: "0 6 * * 1", timezone: "Europe/Prague" };
+      await service.create({
+        prompt: "block the first tick",
+        cadence,
+        target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+      });
+      // Give the later schedule a distinct creation time so file ordering cannot affect the race.
+      now = new Date("2026-01-01T00:00:01.000Z");
+      const agentId = "00000000-0000-0000-0000-000000000001";
+      await agentStorage.upsert(
+        buildAgentRecord({ id: agentId, cwd: tempDir, iso: now.toISOString() }),
+      );
+      const later = await service.create({
+        prompt: "later due schedule",
+        cadence,
+        target:
+          targetKind === "agent"
+            ? { type: "agent", agentId }
+            : { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+        maxRuns: targetKind === "maxRuns: 1" ? 1 : undefined,
+      });
+      now = new Date("2026-01-05T05:00:00.000Z");
+      const delayedTick = service.tick();
+      await runner.firstRunStarted;
+      try {
+        now = new Date("2026-01-05T05:00:01.000Z");
+        await service.tick();
+      } finally {
+        runner.unblockFirstRun();
+        await delayedTick;
+      }
+      const result = await service.inspect(later.id);
+      expect.soft(runner.laterScheduleRuns).toBe(1);
+      expect.soft(result.runs).toHaveLength(1);
+      expect.soft(result.runs.map((run) => run.scheduledFor)).toEqual(["2026-01-05T05:00:00.000Z"]);
+      expect(result.nextRunAt).toBe(
+        targetKind === "maxRuns: 1" ? null : "2026-01-12T05:00:00.000Z",
+      );
+      expect(result.status).toBe(targetKind === "maxRuns: 1" ? "completed" : "active");
+    },
+  );
+
+  test("advances the next scheduled slot past a run that crosses a cadence boundary", async () => {
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => {
+        now = new Date("2026-01-01T00:02:00.000Z");
+        return { agentId: null, output: "ok" };
+      },
+    });
+
+    const created = await service.create({
+      prompt: "long-running task",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    expect((await service.inspect(created.id)).nextRunAt).toBe("2026-01-01T00:03:00.000Z");
+  });
+
+  test("runs the final allowed cron slot without requiring another occurrence", async () => {
+    let dispatches = 0;
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => {
+        dispatches += 1;
+        return { agentId: null, output: "done" };
+      },
+    });
+    const created = await service.create({
+      prompt: "Run once on January 5 when it is Monday",
+      cadence: { type: "cron", expression: "0 6 5 1 1" },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+      maxRuns: 1,
+    });
+    now = new Date("2026-01-05T06:00:00.000Z");
+    await service.tick();
+    const result = await service.inspect(created.id);
+    expect(dispatches).toBe(1);
+    expect(result.status).toBe("completed");
+    expect(result.nextRunAt).toBeNull();
+    expect(result.runs).toHaveLength(1);
+    expect(result.runs[0].status).toBe("succeeded");
+  });
+
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "keeps firing future slots after an outcome could not be saved",
+    async () => {
+      const schedulesDir = join(tempDir, "schedules");
+      let dispatches = 0;
+      const failOutcomeWrite = async (): Promise<ScheduleExecutionResult> => {
+        dispatches += 1;
+        if (dispatches === 1) {
+          await chmod(schedulesDir, 0o555);
+        }
+        return { agentId: null, output: "done" };
+      };
+      const service = createScheduleService({
+        paseoHome: tempDir,
+        logger: createTestLogger(),
+        agentManager: new AgentManager({ logger: createTestLogger() }),
+        agentStorage,
+        providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+        now: () => now,
+        runner: failOutcomeWrite,
+      });
+      const created = await service.create({
+        prompt: "Check status each minute",
+        runOnCreate: false,
+        cadence: { type: "every", everyMs: 60_000 },
+        target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+      });
+      now = new Date("2026-01-01T00:01:00.000Z");
+      try {
+        await expect(service.tick()).rejects.toThrow();
+      } finally {
+        await chmod(schedulesDir, 0o755);
+      }
+      expect((await service.inspect(created.id)).runs[0].status).toBe("running");
+      now = new Date("2026-01-01T00:02:00.000Z");
+      await service.tick();
+      const result = await service.inspect(created.id);
+      expect(dispatches).toBe(2);
+      expect(result.runs.map((run) => run.scheduledFor)).toEqual([
+        "2026-01-01T00:01:00.000Z",
+        "2026-01-01T00:02:00.000Z",
+      ]);
+      expect(result.nextRunAt).toBe("2026-01-01T00:03:00.000Z");
+    },
+  );
+
+  test("completes an interrupted final slot during restart recovery", async () => {
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "done" }),
+    });
+    const created = await service.create({
+      prompt: "Run once",
+      cadence: { type: "cron", expression: "0 6 5 1 1" },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+      maxRuns: 1,
+    });
+    now = new Date("2026-01-05T06:00:00.000Z");
+    const store = new ScheduleStore(join(tempDir, "schedules"), createTestLogger());
+    await store.update(created.id, (schedule) => ({
+      ...schedule,
+      nextRunAt: null,
+      runs: [
+        {
+          id: "interrupted-final-slot",
+          scheduledFor: now.toISOString(),
+          startedAt: now.toISOString(),
+          endedAt: null,
+          status: "running",
+          agentId: null,
+          output: null,
+          error: null,
+        },
+      ],
+    }));
+    now = new Date("2026-01-05T06:01:00.000Z");
+    await service.start();
+    try {
+      const result = await service.inspect(created.id);
+      expect(result.status).toBe("completed");
+      expect(result.nextRunAt).toBeNull();
+      expect(result.runs).toHaveLength(1);
+      expect(result.runs[0].status).toBe("failed");
+    } finally {
+      await service.stop();
+    }
+  });
+
+  test.each([2, null])(
+    "keeps a next slot when the final run's limit changes to %s",
+    async (maxRuns) => {
+      const service = createScheduleService({
+        paseoHome: tempDir,
+        logger: createTestLogger(),
+        agentManager: new AgentManager({ logger: createTestLogger() }),
+        agentStorage,
+        providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+        now: () => now,
+        runner: async (schedule) => {
+          await service.update({ id: schedule.id, maxRuns });
+          return { agentId: null, output: "done" };
+        },
+      });
+      const created = await service.create({
+        prompt: "Allow more runs during execution",
+        runOnCreate: false,
+        cadence: { type: "every", everyMs: 60_000 },
+        target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+        maxRuns: 1,
+      });
+      now = new Date("2026-01-01T00:01:30.000Z");
+      await service.tick();
+      const result = await service.inspect(created.id);
+      expect(result.status).toBe("active");
+      expect(result.nextRunAt).toBe("2026-01-01T00:02:00.000Z");
+      expect(result.runs).toHaveLength(1);
+    },
+  );
 
   test("pause and resume update persisted schedule state", async () => {
     const service = createScheduleService({
@@ -802,7 +1061,7 @@ describe("ScheduleService", () => {
     const runStarted = new Promise<void>((resolve) => {
       releaseRun = resolve;
     });
-    const store = new ScheduleStore(join(tempDir, "schedules"));
+    const store = new ScheduleStore(join(tempDir, "schedules"), createTestLogger());
     const legacy = await store.create({
       name: null,
       prompt: "finish/update race",
@@ -911,7 +1170,6 @@ describe("ScheduleService", () => {
           liveSnapshot: snapshot as Awaited<
             ReturnType<ScheduleServiceOptions["createAgent"]>
           >["liveSnapshot"],
-          background: true,
           initialPromptStarted: false,
           initialPromptError: null,
         };
@@ -989,7 +1247,6 @@ describe("ScheduleService", () => {
           liveSnapshot: snapshot as Awaited<
             ReturnType<ScheduleServiceOptions["createAgent"]>
           >["liveSnapshot"],
-          background: true,
           initialPromptStarted: false,
           initialPromptError: null,
         };
@@ -1059,7 +1316,6 @@ describe("ScheduleService", () => {
           liveSnapshot: snapshot as Awaited<
             ReturnType<ScheduleServiceOptions["createAgent"]>
           >["liveSnapshot"],
-          background: true,
           initialPromptStarted: false,
           initialPromptError: null,
         };
@@ -1119,7 +1375,6 @@ describe("ScheduleService", () => {
           liveSnapshot: snapshot as Awaited<
             ReturnType<ScheduleServiceOptions["createAgent"]>
           >["liveSnapshot"],
-          background: true,
           initialPromptStarted: false,
           initialPromptError: null,
         };
@@ -1901,6 +2156,51 @@ describe("ScheduleService", () => {
     await service2.stop();
   });
 
+  test("starts with the valid schedules when the schedules directory holds files that are not schedules", async () => {
+    const service1 = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+    const created = await service1.create({
+      prompt: "Still scheduled",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", cwd: tempDir },
+      },
+      runOnCreate: false,
+    });
+    await service1.stop();
+
+    const schedulesDir = join(tempDir, "schedules");
+    await writeFile(join(schedulesDir, "notes.json"), JSON.stringify({ hello: "world" }));
+    const { lastRunAt: _omitted, ...withoutLastRunAt } = created;
+    await writeFile(
+      join(schedulesDir, "deadbeef.json"),
+      JSON.stringify({ ...withoutLastRunAt, id: "deadbeef" }),
+    );
+    await writeFile(join(schedulesDir, "broken.json"), "{ not json");
+
+    const service2 = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+    await service2.start();
+
+    expect((await service2.list()).map((schedule) => schedule.id)).toEqual([created.id]);
+    await service2.stop();
+  });
+
   test("startup recovery archives an interrupted run workspace with an associated agent", async () => {
     const service1 = createScheduleService({
       paseoHome: tempDir,
@@ -1925,7 +2225,7 @@ describe("ScheduleService", () => {
     const interruptedAt = now.toISOString();
     const associatedAgentId = "11111111-1111-4111-8111-111111111111";
     const workspaceId = "wks_interrupted_with_agent";
-    const store = new ScheduleStore(join(tempDir, "schedules"));
+    const store = new ScheduleStore(join(tempDir, "schedules"), createTestLogger());
     await store.update(created.id, (schedule) => ({
       ...schedule,
       runs: [
@@ -1993,7 +2293,7 @@ describe("ScheduleService", () => {
 
     const interruptedAt = now.toISOString();
     const workspaceId = "wks_interrupted_without_agent";
-    const store = new ScheduleStore(join(tempDir, "schedules"));
+    const store = new ScheduleStore(join(tempDir, "schedules"), createTestLogger());
     await store.update(created.id, (schedule) => ({
       ...schedule,
       runs: [
@@ -2828,6 +3128,44 @@ describe("ScheduleService", () => {
     expect(inspected.runs[0]?.status).toBe("failed");
     expect(inspected.runs[0]?.error).toBe("network blip");
   });
+
+  // chmod cannot make a directory unwritable on Windows or for root.
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "fires again after a tick whose run could not be recorded",
+    async () => {
+      const service = createScheduleService({
+        paseoHome: tempDir,
+        logger: createTestLogger(),
+        agentManager: new AgentManager({ logger: createTestLogger() }),
+        agentStorage,
+        providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+        now: () => now,
+        runner: async () => ({ agentId: null, output: "ran" }),
+      });
+
+      const created = await service.create({
+        prompt: "ping target",
+        cadence: { type: "every", everyMs: 60_000 },
+        target: { type: "agent", agentId: "88888888-8888-4888-8888-888888888888" },
+      });
+
+      const schedulesDir = join(tempDir, "schedules");
+      now = new Date("2026-01-01T00:01:00.000Z");
+      await chmod(schedulesDir, 0o555);
+      try {
+        await expect(service.tick()).rejects.toThrow();
+      } finally {
+        await chmod(schedulesDir, 0o755);
+      }
+
+      await service.tick();
+
+      const inspected = await service.inspect(created.id);
+      expect(inspected.runs).toHaveLength(1);
+      expect(inspected.runs[0]?.status).toBe("succeeded");
+      expect(inspected.nextRunAt).toBe("2026-01-01T00:02:00.000Z");
+    },
+  );
 
   test("completes the schedule when a scheduled run targets an archived agent", async () => {
     const service = createScheduleService({

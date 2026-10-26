@@ -116,6 +116,9 @@ async function exerciseProviderSettingsStack(page: Page) {
 
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expectProviderSettingsVisible(page);
+  await expect(page.getByText("Updated just now", { exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
 }
 
 test.describe("provider settings overlay stack", () => {

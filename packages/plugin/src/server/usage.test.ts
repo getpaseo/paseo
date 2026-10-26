@@ -1,0 +1,107 @@
+import { describe, expect, it, test } from "vitest";
+import {
+  balanceToneFromRemaining,
+  toneFromUsedPct,
+  usedPctOf,
+  windowFromUsedPct,
+  windowFromReportedDuration,
+} from "./usage.js";
+
+test("shared usage tones preserve the app threshold contract", () => {
+  expect([null, 69.9, 70, 90, 90.1].map(toneFromUsedPct)).toEqual([
+    "default",
+    "ok",
+    "warning",
+    "warning",
+    "danger",
+  ]);
+  expect([null, 0, 0.01].map(balanceToneFromRemaining)).toEqual(["default", "danger", "ok"]);
+});
+
+test("shared windows retain percentage and reset time", () => {
+  expect(windowFromUsedPct({ id: "a", label: "A", utilizationPct: 30 })).toEqual({
+    id: "a",
+    label: "A",
+    usedPct: 30,
+    remainingPct: 70,
+    resetsAt: null,
+  });
+  expect(windowFromUsedPct({ id: "b", label: "B", utilizationPct: null })).toEqual({
+    id: "b",
+    label: "B",
+    usedPct: null,
+    remainingPct: null,
+    resetsAt: null,
+  });
+  expect(usedPctOf(25, 100)).toBe(25);
+  expect(usedPctOf(25, 0)).toBeNull();
+});
+
+describe("toneFromUsedPct", () => {
+  // Thresholds must match deriveTone in the app's provider-usage/tone.ts, which is what
+  // the client applies when a window arrives without a tone.
+  it.each([
+    [0, "ok"],
+    [69.9, "ok"],
+    [70, "warning"],
+    [90, "warning"],
+    [90.1, "danger"],
+    [100, "danger"],
+    [150, "danger"],
+  ])("%s%% used is %s", (usedPct, expected) => {
+    expect(toneFromUsedPct(usedPct)).toBe(expected);
+  });
+
+  it("is neutral when the percentage is unknown", () => {
+    expect(toneFromUsedPct(null)).toBe("default");
+    expect(toneFromUsedPct(undefined)).toBe("default");
+  });
+});
+
+describe("usedPctOf", () => {
+  it("computes a percentage of the limit", () => {
+    expect(usedPctOf(15.79, 42.5)).toBeCloseTo(37.15, 2);
+  });
+
+  it("is unknown when either side is missing", () => {
+    expect(usedPctOf(null, 100)).toBeNull();
+    expect(usedPctOf(50, null)).toBeNull();
+  });
+
+  // A zero limit would divide to Infinity and render as a full red bar.
+  it("is unknown when the limit is zero or negative", () => {
+    expect(usedPctOf(50, 0)).toBeNull();
+    expect(usedPctOf(50, -1)).toBeNull();
+  });
+});
+
+describe("balanceToneFromRemaining", () => {
+  // Kept for balances with no limit, where no percentage can be computed. It only
+  // escalates at exhaustion, which is why anything with a limit should use
+  // toneFromUsedPct instead.
+  it("stays ok until nothing is left", () => {
+    expect(balanceToneFromRemaining(0.01)).toBe("ok");
+    expect(balanceToneFromRemaining(0)).toBe("danger");
+    expect(balanceToneFromRemaining(null)).toBe("default");
+  });
+});
+
+test.each([
+  [18000, "five_hour", "5-hour", "5h"],
+  [604800, "weekly", "Weekly", "wk"],
+  [7200, "7200s", "2-hour", "2h"],
+  [86400, "86400s", "1-day", "1d"],
+  [90, "90s", "90-second", "90s"],
+  [null, "primary", "Primary limit", ""],
+])(
+  "duration %s owns the window's identity and both names",
+  (durationSeconds, id, label, shortLabel) => {
+    expect(
+      windowFromReportedDuration({
+        durationSeconds: durationSeconds as number | null,
+        unknown: { id: "primary", label: "Primary limit", shortLabel: "" },
+        utilizationPct: 11,
+      }),
+    ).toMatchObject({ id, label, shortLabel, usedPct: 11 });
+  },
+);

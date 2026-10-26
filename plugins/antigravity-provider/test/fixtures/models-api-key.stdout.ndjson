@@ -1,0 +1,11 @@
+{"t_ms": 248, "stream": "stdout", "data": "gemini-3.8-flash-high\tGemini 3.8 Flash (High)"}
+{"t_ms": 248, "stream": "stdout", "data": "gemini-3.8-flash-medium\tGemini 3.8 Flash (Medium)"}
+{"t_ms": 248, "stream": "stdout", "data": "gemini-3.8-flash-low\tGemini 3.8 Flash (Low)"}
+{"t_ms": 248, "stream": "stdout", "data": "gemini-3.7-flash-high\tGemini 3.7 Flash (High)"}
+{"t_ms": 248, "stream": "stdout", "data": "gemini-3.7-flash-medium\tGemini 3.7 Flash (Medium)"}
+{"t_ms": 248, "stream": "stdout", "data": "gemini-3.7-flash-low\tGemini 3.7 Flash (Low)"}
+{"t_ms": 248, "stream": "stdout", "data": "gemini-3.6-flash-high\tGemini 3.6 Flash (High)"}
+{"t_ms": 248, "stream": "stdout", "data": "gemini-3.6-flash-medium\tGemini 3.6 Flash (Medium)"}
+{"t_ms": 248, "stream": "stdout", "data": "gemini-3.6-flash-low\tGemini 3.6 Flash (Low)"}
+{"t_ms": 248, "stream": "stdout", "data": "gemini-3.1-pro-high\tGemini 3.1 Pro (High)"}
+{"t_ms": 248, "stream": "stdout", "data": "gemini-3.1-pro-low\tGemini 3.1 Pro (Low)"}

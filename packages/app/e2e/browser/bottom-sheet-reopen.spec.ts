@@ -84,6 +84,20 @@ async function openModelSelector(page: Page) {
   await expect(page.getByTestId("agent-controls-settings-list")).toBeVisible({ timeout: 10_000 });
 }
 
+async function dismissStackedModelPickerWithBackdrop(page: Page) {
+  await page
+    .getByTestId("agent-controls-settings-list")
+    .getByRole("button", { name: /Select model/ })
+    .click();
+  await expect(page.getByTestId("agent-controls-model-browser-sheet")).toBeInViewport();
+  await page.mouse.click(MOBILE_VIEWPORT.width / 2, 24);
+  // In CI, Gorhom retains the dismissed sheet below the viewport.
+  // Dismissal is complete when it leaves the displayed surface.
+  await expect(page.getByTestId("agent-controls-model-browser-sheet")).not.toBeInViewport();
+  await expect(page.getByTestId("agent-controls-model-sheet")).toBeVisible();
+  await expect(page.getByTestId("agent-controls-settings-list")).toBeVisible();
+}
+
 async function openAndCloseTabSwitcherTwice(page: Page) {
   await openTabSwitcher(page);
   await closeBottomSheetWithBackdrop(page);
@@ -114,6 +128,8 @@ test.describe("mobile bottom sheet reopen", () => {
         await openModelSelector(page);
         const sheet = page.getByTestId("agent-controls-model-sheet");
 
+        await dismissStackedModelPickerWithBackdrop(page);
+
         await page.getByTestId("model-search-all-input").click();
         const model = page.getByRole("button", { name: /^Ten second stream/ });
         await expect(model).toBeVisible({
@@ -125,7 +141,7 @@ test.describe("mobile bottom sheet reopen", () => {
         await expect(sheet).toBeVisible();
         await expect(page.getByTestId("agent-controls-settings-list")).toBeVisible();
         await expect(page.getByTestId("agent-controls-model")).toContainText("Ten second stream");
-        await expect(page.getByTestId("agent-controls-model-browser-sheet")).not.toBeVisible();
+        await expect(page.getByTestId("agent-controls-model-browser-sheet")).not.toBeInViewport();
       });
     } finally {
       await session.cleanup();

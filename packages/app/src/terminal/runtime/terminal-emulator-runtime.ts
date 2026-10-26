@@ -15,11 +15,13 @@ import {
 } from "@getpaseo/protocol/terminal-input-mode";
 import {
   type PendingTerminalModifiers,
+  hasPendingTerminalModifiers,
   isAppleHandheldPlatform,
   isTerminalModifierDomKey,
   mergeTerminalModifiers,
   normalizeDomTerminalKey,
   normalizeTerminalTransportKey,
+  resolveMacTerminalEditingShortcut,
   shouldInterceptDomTerminalKey,
 } from "@/utils/terminal-keys";
 import { renderTerminalSnapshotToAnsi } from "./terminal-snapshot";
@@ -28,8 +30,10 @@ import {
   type TerminalLocalFileLinkSource,
   type TerminalLocalFileLinkTarget,
 } from "../local-links/terminal-local-link-provider";
-import { isMac, isFindShortcut } from "./terminal-find-shortcut";
+import { isFindShortcut, type FindShortcutPlatform } from "@/pane-find/find-shortcut";
+import { isMacUserAgent } from "@/utils/mac-user-agent";
 import { resolveTerminalFontFamily, resolveTerminalFontSize } from "./terminal-font";
+import { imageExtension, readTerminalFile, type TerminalFile } from "../file-paste";
 
 export type TerminalOutputData = Uint8Array;
 
@@ -80,6 +84,8 @@ export interface TerminalEmulatorRuntimeCallbacks {
     disposition: "main" | "side",
   ) => Promise<void> | void;
   onInputModeChange?: (state: TerminalInputModeState) => Promise<void> | void;
+  /** A paste gesture that can carry a file; resolves to null when it carried none. */
+  onFilePaste?: (file: Promise<TerminalFile | null>) => void;
 }
 
 export interface TerminalResizeEvent {
@@ -119,6 +125,7 @@ interface TerminalEmulatorRuntimeDisposables {
   clearFitTimeouts: () => void;
   removeFontListeners: () => void;
   removeTouchListeners: () => void;
+  removeFilePasteListener: () => void;
   restoreDocumentStyles: () => void;
   restoreViewportStyles: () => void;
   disposeFitAddon: () => void;
@@ -177,8 +184,51 @@ function withOverviewRulerBorderHidden(theme: ITheme): ITheme {
   };
 }
 
+export interface TerminalClipboard {
+  readText(): Promise<string>;
+  read(): Promise<readonly Pick<ClipboardItem, "types" | "getType">[]>;
+  writeText(text: string): Promise<void>;
+}
+
+const browserClipboard: TerminalClipboard = {
+  readText: () => navigator.clipboard.readText(),
+  read: () => navigator.clipboard.read(),
+  writeText: (text) => navigator.clipboard.writeText(text),
+};
+
+async function readClipboardImage(clipboard: TerminalClipboard): Promise<TerminalFile | null> {
+  for (const item of await clipboard.read()) {
+    const mimeType = item.types.find((type) => type.startsWith("image/"));
+    if (mimeType) {
+      const blob = await item.getType(mimeType);
+      return {
+        fileName: `clipboard.${imageExtension(mimeType)}`,
+        mimeType,
+        bytes: new Uint8Array(await blob.arrayBuffer()),
+      };
+    }
+  }
+  return null;
+}
+
+/** The file of a paste that carries no text. xterm would paste it as empty text. */
+function findFileOnlyPaste(transfer: DataTransfer | null): File | null {
+  if (!transfer || transfer.getData("text/plain").length > 0) {
+    return null;
+  }
+  for (const item of Array.from(transfer.items)) {
+    if (item.kind === "file") {
+      return item.getAsFile();
+    }
+  }
+  return null;
+}
+
 export class TerminalEmulatorRuntime {
-  constructor(private readonly options: { isMac: boolean } = { isMac }) {}
+  constructor(
+    private readonly options: FindShortcutPlatform = { isMac: isMacUserAgent() },
+    private readonly clipboard: TerminalClipboard = browserClipboard,
+  ) {}
 
   private callbacks: TerminalEmulatorRuntimeCallbacks = {};
   private pendingModifiers: PendingTerminalModifiers = {
@@ -298,7 +348,12 @@ export class TerminalEmulatorRuntime {
   attachKeyEventHandler(
     terminal: Pick<
       Terminal,
-      "attachCustomKeyEventHandler" | "hasSelection" | "getSelection" | "paste"
+      | "attachCustomKeyEventHandler"
+      | "hasSelection"
+      | "getSelection"
+      | "paste"
+      | "input"
+      | "scrollToBottom"
     >,
   ): void {
     terminal.attachCustomKeyEventHandler((event) => {
@@ -319,23 +374,22 @@ export class TerminalEmulatorRuntime {
 
         // Ctrl+C: copy selection to clipboard if text is selected, otherwise let xterm send SIGINT
         if (key === "c" && terminal.hasSelection()) {
-          void navigator.clipboard.writeText(terminal.getSelection());
+          void this.clipboard.writeText(terminal.getSelection());
           return false;
         }
 
-        // Ctrl+V: paste from clipboard into terminal
+        // Ctrl+V: paste clipboard text, or the clipboard image when there is no text
         if (key === "v") {
           event.preventDefault();
-          void navigator.clipboard.readText().then((text) => {
-            if (text) {
-              terminal.paste(text);
-            }
-            return;
-          });
+          this.pasteClipboard(terminal);
           return false;
         }
 
         return true;
+      }
+
+      if (this.maybeSendMacEditingShortcut(terminal, event)) {
+        return false;
       }
 
       const normalizedKey = normalizeDomTerminalKey(event.key);
@@ -370,7 +424,7 @@ export class TerminalEmulatorRuntime {
         ...modifiers,
       });
 
-      if (this.pendingModifiers.ctrl || this.pendingModifiers.shift || this.pendingModifiers.alt) {
+      if (hasPendingTerminalModifiers(this.pendingModifiers)) {
         this.callbacks.onPendingModifiersConsumed?.();
       }
 
@@ -425,6 +479,26 @@ export class TerminalEmulatorRuntime {
     return this.inputModeTracker.getState();
   }
 
+  private maybeSendMacEditingShortcut(
+    terminal: Pick<Terminal, "input" | "scrollToBottom">,
+    event: KeyboardEvent,
+  ): boolean {
+    if (!this.options.isMac || hasPendingTerminalModifiers(this.pendingModifiers)) {
+      return false;
+    }
+    const editingShortcutData = resolveMacTerminalEditingShortcut(event);
+    if (editingShortcutData === null) {
+      return false;
+    }
+    // Routed through terminal.input() so the data takes the same path as typed
+    // keys: onData -> callbacks.onInput, selection clearing included.
+    terminal.input(editingShortcutData, true);
+    terminal.scrollToBottom();
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }
+
   mount(input: TerminalEmulatorRuntimeMountInput): void {
     this.unmount();
 
@@ -433,6 +507,10 @@ export class TerminalEmulatorRuntime {
     this.inputModeTracker.reset();
     this.emitInputModeChange();
 
+    const openExternalLink = (event: MouseEvent, uri: string) => {
+      event.preventDefault();
+      void this.callbacks.onOpenExternalUrl?.(uri);
+    };
     const terminal = new Terminal({
       allowProposedApi: true,
       convertEol: false,
@@ -440,6 +518,8 @@ export class TerminalEmulatorRuntime {
       cursorStyle: "bar",
       fontFamily: resolveTerminalFontFamily(input.fontFamily),
       fontSize: resolveTerminalFontSize(input.fontSize),
+      // OSC 8 hyperlinks; without a handler xterm prompts and calls window.open().
+      linkHandler: { activate: openExternalLink },
       lineHeight: 1.0,
       macOptionIsMeta: true,
       minimumContrastRatio: 1,
@@ -456,12 +536,7 @@ export class TerminalEmulatorRuntime {
     let imageAddon: ImageAddon | null = null;
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(unicode11Addon);
-    terminal.loadAddon(
-      new WebLinksAddon((event, uri) => {
-        event.preventDefault();
-        void this.callbacks.onOpenExternalUrl?.(uri);
-      }),
-    );
+    terminal.loadAddon(new WebLinksAddon(openExternalLink));
     const localFileLinkProvider = terminal.registerLinkProvider(
       createTerminalLocalFileLinkProvider(terminal, {
         resolveLink: async (source) => {
@@ -633,6 +708,20 @@ export class TerminalEmulatorRuntime {
 
     this.attachKeyEventHandler(terminal);
 
+    // Cmd+V and context-menu paste arrive as DOM paste events. Take file-only
+    // pastes before xterm's own listener consumes them as empty text.
+    const filePasteHandler = (event: ClipboardEvent): void => {
+      const onFilePaste = this.callbacks.onFilePaste;
+      const file = findFileOnlyPaste(event.clipboardData);
+      if (!onFilePaste || !file) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      onFilePaste(readTerminalFile(file));
+    };
+    input.host.addEventListener("paste", filePasteHandler, true);
+
     const removeTouchListeners = this.setupTouchScrollHandlers({
       root: input.root,
       host: input.host,
@@ -722,6 +811,9 @@ export class TerminalEmulatorRuntime {
         fontSet?.removeEventListener?.("loadingdone", fontReadyHandler);
       },
       removeTouchListeners,
+      removeFilePasteListener: () => {
+        input.host.removeEventListener("paste", filePasteHandler, true);
+      },
       restoreDocumentStyles,
       restoreViewportStyles,
       disposeFitAddon: () => {
@@ -751,6 +843,7 @@ export class TerminalEmulatorRuntime {
       disposables.clearFitTimeouts();
       disposables.removeFontListeners();
       disposables.removeTouchListeners();
+      disposables.removeFilePasteListener();
       disposables.disposeFitAddon();
       disposables.disposeWebglAddon();
       disposables.disposeTerminal();
@@ -789,6 +882,20 @@ export class TerminalEmulatorRuntime {
 
   paste(text: string): void {
     this.terminal?.paste(text);
+  }
+
+  private pasteClipboard(terminal: Pick<Terminal, "paste">): void {
+    const text = this.clipboard.readText().catch(() => "");
+    const onFilePaste = this.callbacks.onFilePaste;
+    // Report the gesture now so it keeps its place among earlier file pastes.
+    const file = text.then((value) => {
+      if (value) {
+        terminal.paste(value);
+        return null;
+      }
+      return onFilePaste ? readClipboardImage(this.clipboard).catch(() => null) : null;
+    });
+    onFilePaste?.(file);
   }
 
   renderSnapshot(input: { state: TerminalState | null; onCommitted?: () => void }): void {

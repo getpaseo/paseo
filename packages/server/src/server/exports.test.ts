@@ -24,7 +24,7 @@ test.each([
   ["desktop daemon management", "../../../desktop/src/daemon/daemon-manager.ts"],
   ["supervisor", "../../scripts/supervisor-entrypoint.ts"],
   ["daemon control", "@getpaseo/server/daemon-control"],
-  ["configuration", "@getpaseo/server/configuration"],
+  ["configuration without the session admission resolver", "@getpaseo/server/configuration"],
 ])("%s does not load the daemon runtime or wire schemas", async (_name, entry) => {
   const inputs = await runtimeDependencies(entry);
   expect(inputs.filter((file) => /\/(?:bootstrap|messages)\.[jt]s$/.test(file))).toEqual([]);

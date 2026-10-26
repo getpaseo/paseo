@@ -73,6 +73,32 @@ The connection has three operations:
 Keep the native SDK, process, and stream inside the connection implementation. Convert its output
 to `ProviderEvent` objects before publishing it.
 
+## Launch the provider CLI
+
+Use `spawnProcess` and `execCommand` from `@getpaseo/plugin/server` for process transports
+and CLI probes. Both handle Windows `.cmd`/`.bat` launchers and quote shell arguments.
+Raw Node `spawn` and `execFile` reject those launchers on Windows.
+
+The daemon supplies `request.launch` with the resolved command, argument prefix, and complete
+environment. Pass that environment explicitly; the helpers do not apply daemon environment policy.
+Keep the process lifecycle and protocol deadlines inside your provider. End stdin for graceful
+shutdown; use `terminateProcess(child)` for a forced stop. It kills the process tree on Windows,
+including the CLI behind a command-script launcher. Bound your final wait for closed streams.
+
+```ts
+import { spawnProcess, execCommand } from "@getpaseo/plugin/server";
+
+const child = spawnProcess(launch.command, [...launch.args, "serve"], {
+  env: launch.env,
+  cwd,
+  stdio: "pipe",
+});
+const { stdout } = await execCommand(launch.command, [...launch.args, "--version"], {
+  env: launch.env,
+  timeout: 5000,
+});
+```
+
 ## Return models, modes, and thinking options
 
 Paseo requests the catalog before creating a session. Return the choices needed by the agent form:
@@ -279,6 +305,52 @@ turn or finish as a side effect with a `completed` prompt result.
 
 Advertise only capabilities you implement. If steering is unsupported, omit `prompt.steer`; Paseo
 can replace the active turn instead.
+
+## Permit idle runtime cleanup
+
+Paseo can release an idle resumable session after one hour when its daemon baseline allows cleanup.
+Add a provider-owned veto by advertising `session.can_stop_runtime` on the connection and the
+session's `session.opened` capabilities. Without this capability, the same baseline and one-hour
+idle period apply, and the plugin receives no safety request.
+
+Handle the safety query in your existing `send(input)` handler. It addresses the provider's own
+session ID, including when one connection serves several sessions:
+
+```ts
+case "session.can_stop_runtime": {
+  try {
+    const session = sessions.get(input.sessionId);
+    if (!session) throw new Error("Session not found");
+    emit({
+      type: "session.can_stop_runtime",
+      requestId: input.requestId,
+      sessionId: input.sessionId,
+      canStop: await session.canStopRuntime(),
+    });
+  } catch (error) {
+    emit({
+      type: "request.failed",
+      requestId: input.requestId,
+      error: { message: error instanceof Error ? error.message : String(error) },
+    });
+  }
+  return;
+}
+```
+
+`canStopRuntime(): Promise<boolean>` belongs to your provider's session implementation. Return
+`true` only when releasing the runtime loses no background shells, monitors, native children,
+queued completion reports, or pending autonomous replies. This query must not stop or mutate the
+session. Return `false` while work remains. A rejected query, invalid response, or timeout also
+keeps the runtime alive. Never respond with `request.completed` for this query.
+
+Paseo always checks foreground work, permissions, queued deliveries, lifecycle operations,
+working managed/native descendants, and outstanding local or remote finish subscriptions for the
+caller. Subscription protection lasts through registration, recovery and notification dispatch
+acknowledgment. A positive provider response never overrides these blockers. Paseo rechecks
+activity before the existing `session.close` operation. After protected work finishes, a fresh
+one-hour idle period starts. The saved provider persistence must resume the same conversation.
+The host setting `agents.idleRuntimeCleanup: false` disables collection for every provider.
 
 ## Publish timeline items
 

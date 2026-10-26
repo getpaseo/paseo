@@ -112,6 +112,7 @@ function ChangelogBody({ state, shownReleases, onShowMore, onRetry }: ChangelogB
     return (
       <View style={styles.centered}>
         <Alert
+          size="md"
           variant="error"
           title={t("changelog.error.title")}
           description={t("changelog.error.description")}

@@ -1,10 +1,11 @@
-import { test } from "../support/fixtures";
+import { expect, test } from "../support/fixtures";
 import type { FormPreferences } from "@/create-agent-preferences/preferences";
 import { closeCommandCenter, openCommandCenter } from "../support/helpers/command-center";
 import {
   applyCommandCenterAgentControls,
   chooseCommandCenterAgentControl,
   openCommandCenterForAgent,
+  searchAgentControls,
   expectCommandCenterAgentControlSelected,
   expectFocusedAgentControls,
   expectWorkspaceAgentConfiguration,
@@ -79,6 +80,27 @@ test.describe("Command Center agent controls", () => {
     }
   });
 
+  test("shows an existing agent's only supported thinking level", async ({ page }) => {
+    const workspace = await seedMockAgentWorkspace({
+      repoPrefix: "agent-controls-single-thinking-",
+      title: "Single thinking level",
+      model: "max-only-thinking-stream",
+      thinkingOptionId: "max",
+    });
+    try {
+      await openAgentRoute(page, {
+        workspaceId: workspace.workspaceId,
+        agentId: workspace.agentId,
+      });
+
+      await expect(
+        page.getByTestId("agent-thinking-selector").filter({ visible: true }),
+      ).toHaveAccessibleName("Select thinking option (Max)");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   test("activates the best-matching row, not the highest-ranked group", async ({ page }) => {
     // "Mode › Load Test" matches "load" at offset 0; every "Model › Mock Load Test › …" row
     // matches at offset 5. Models used to outrank modes by fixed group rank, so Enter picked a
@@ -90,8 +112,8 @@ test.describe("Command Center agent controls", () => {
     });
     try {
       await workspace.client.setAgentMode(workspace.agentId, "approval-test");
-      const input = await openCommandCenterForAgent(page, workspace);
-      await input.fill("load");
+      await openCommandCenterForAgent(page, workspace);
+      await searchAgentControls(page, "load");
       await page.keyboard.press("Enter");
 
       await expectWorkspaceAgentConfiguration(workspace, {
@@ -163,7 +185,7 @@ test.describe("Command Center agent controls", () => {
     try {
       await workspace.client.setAgentMode(workspace.agentId, "approval-test");
       const input = await openCommandCenterForAgent(page, workspace);
-      await input.fill("loa");
+      await searchAgentControls(page, "loa");
       // Moves the highlight onto a model row, which still matches after the next keystroke.
       await page.keyboard.press("ArrowDown");
       await input.fill("load");

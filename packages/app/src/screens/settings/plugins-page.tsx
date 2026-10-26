@@ -230,6 +230,7 @@ function PluginLogsSheet({
   if (logs.isError) {
     content = (
       <Alert
+        size="sm"
         variant="error"
         title={t("settings.plugins.logs.errorTitle")}
         description={errorMessage(logs.error)}
@@ -412,6 +413,7 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
   if (pageState === "offline") {
     return (
       <Alert
+        size="md"
         variant="warning"
         title={t("settings.plugins.states.offlineTitle")}
         description={t("settings.plugins.states.offlineDescription")}
@@ -419,13 +421,14 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
     );
   }
   if (pageState === "unsupported") {
-    return <Alert variant="warning" title={t("settings.plugins.states.updateTitle")} />;
+    return <Alert size="md" variant="warning" title={t("settings.plugins.states.updateTitle")} />;
   }
 
-  let catalogContent = <Alert title={t("settings.plugins.states.loading")} />;
+  let catalogContent = <Alert size="sm" title={t("settings.plugins.states.loading")} />;
   if (pageState === "error") {
     catalogContent = (
       <Alert
+        size="sm"
         variant="error"
         title={t("settings.plugins.states.errorTitle")}
         description={errorMessage(plugins.error)}
@@ -469,6 +472,7 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
     <View>
       <SettingsSection title={t("settings.plugins.title")}>
         <Alert
+          size="sm"
           variant="warning"
           title={t("settings.plugins.trustedTitle")}
           description={t("settings.plugins.trustedDescription")}
@@ -508,10 +512,15 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
             </Button>
           </View>
         ) : (
-          <Alert variant="warning" title={t("settings.plugins.states.sourceUpdateTitle")} />
+          <Alert
+            size="sm"
+            variant="warning"
+            title={t("settings.plugins.states.sourceUpdateTitle")}
+          />
         )}
         {feedback ? (
           <Alert
+            size="sm"
             variant={feedback.kind}
             title={feedback.message}
             testID="plugin-management-feedback"

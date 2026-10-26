@@ -1,5 +1,7 @@
+import { type WorkspaceRuntimeStore } from "../../workspace-runtime-store/index.js";
 import type pino from "pino";
 import type {
+  ScriptStatusUpdateMessage,
   SessionOutboundMessage,
   StartWorkspaceScriptRequest,
   WorkspaceDescriptorPayload,
@@ -9,7 +11,6 @@ import type { TerminalManager } from "../../../terminal/terminal-manager.js";
 import type { ServiceProxySubsystem } from "../../service-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "../../workspace-script-runtime-store.js";
 import type { ScriptHealthState } from "../../script-health-monitor.js";
-import type { WorkspaceGitService } from "../../workspace-git-service.js";
 import type {
   PersistedProjectRecord,
   PersistedWorkspaceRecord,
@@ -31,7 +32,7 @@ type WorkspaceScriptsPayload = WorkspaceDescriptorPayload["scripts"];
 
 /**
  * The service-proxy-backed scripts a workspace exposes: build the scripts payload
- * snapshot, emit a script_status_update to clients, and start a script.
+ * snapshot, publish a script_status_update to every client, and start a script.
  *
  * The workspace descriptor builder, the script-status emission path, and the
  * start-script RPC all funnel through one assembly of buildWorkspaceScriptPayloads'
@@ -50,15 +51,13 @@ export interface WorkspaceScriptsService {
   start(request: StartWorkspaceScriptRequest): Promise<void>;
 }
 
-type WorkspaceScriptsGitSource = Pick<WorkspaceGitService, "peekSnapshot">;
-
 export function createWorkspaceScriptsService(deps: {
   serviceProxy: ServiceProxySubsystem | null;
   scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
   terminalManager: TerminalManager | null;
   workspaceRegistry: Pick<WorkspaceRegistry, "get">;
   projectRegistry: Pick<ProjectRegistry, "get">;
-  workspaceGitService: WorkspaceScriptsGitSource;
+  workspaceRuntimeStore: Pick<WorkspaceRuntimeStore, "get">;
   getDaemonTcpPort: (() => number | null) | null;
   getDaemonTcpHost: (() => string | null) | null;
   serviceProxyPublicBaseUrl: string | null;
@@ -66,7 +65,8 @@ export function createWorkspaceScriptsService(deps: {
   globalServicePorts?: PaseoServicePortAllocation;
   logger: pino.Logger;
   emit: (message: SessionOutboundMessage) => void;
-  wantsStatusUpdates?: () => boolean;
+  // Script status is daemon state, so it reaches every client, not only the requester.
+  publishStatusUpdate: (message: ScriptStatusUpdateMessage) => void;
   spawnWorkspaceScript: (options: SpawnWorkspaceScriptOptions) => Promise<WorktreeScriptResult>;
   assertAutomationAllowed: (workspaceId: string) => Promise<void>;
 }): WorkspaceScriptsService {
@@ -76,7 +76,7 @@ export function createWorkspaceScriptsService(deps: {
     terminalManager,
     workspaceRegistry,
     projectRegistry,
-    workspaceGitService,
+    workspaceRuntimeStore,
     getDaemonTcpPort,
     getDaemonTcpHost,
     serviceProxyPublicBaseUrl,
@@ -84,6 +84,7 @@ export function createWorkspaceScriptsService(deps: {
     globalServicePorts,
     logger,
     emit,
+    publishStatusUpdate,
     spawnWorkspaceScript,
     assertAutomationAllowed,
   } = deps;
@@ -92,7 +93,7 @@ export function createWorkspaceScriptsService(deps: {
     workspace: PersistedWorkspaceRecord,
     project: { projectId: string; rootPath: string } | null,
   ) {
-    const snapshot = workspaceGitService.peekSnapshot(workspace.cwd);
+    const snapshot = workspaceRuntimeStore.get(workspace.cwd);
     const currentBranch = snapshot?.git.currentBranch ?? workspace.branch ?? null;
     if (project) {
       return {
@@ -130,12 +131,11 @@ export function createWorkspaceScriptsService(deps: {
   }
 
   async function emitStatusUpdate(workspaceId: string, _workspaceDirectory: string): Promise<void> {
-    if (deps.wantsStatusUpdates && !deps.wantsStatusUpdates()) return;
     try {
       const workspace = await workspaceRegistry.get(workspaceId);
       if (!workspace) return;
       const project = await projectRegistry.get(workspace.projectId);
-      emit({
+      publishStatusUpdate({
         type: "script_status_update",
         payload: { workspaceId, scripts: buildSnapshot(workspace, project) },
       });

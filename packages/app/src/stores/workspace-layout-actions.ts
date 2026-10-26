@@ -1192,7 +1192,10 @@ export function restoreWorkspaceLayout(
   const normalized = normalizeLayout(layout);
   let root = asInternalNode(normalized.root);
   let focusedPaneId = normalized.focusedPaneId;
-  if (!collectAllPanes(root).some((pane) => pane.id !== explorerSidebarPaneId)) {
+  const visibleOrdinaryPane = collectAllPanes(root).find(
+    (pane) => pane.id !== explorerSidebarPaneId,
+  );
+  if (!visibleOrdinaryPane) {
     const ordinaryPane = findOrdinaryPane(root, explorerSidebarPaneId);
     if (ordinaryPane) {
       root = updatePaneInTree(root, {
@@ -1214,6 +1217,9 @@ export function restoreWorkspaceLayout(
         sizes: [0.78, 0.22],
       });
     }
+  } else if (focusedPaneId === null) {
+    // Parked focus has an in-memory restoration record that cannot survive reload.
+    focusedPaneId = visibleOrdinaryPane.id;
   }
   return {
     ...normalized,

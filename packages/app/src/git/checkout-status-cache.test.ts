@@ -16,6 +16,7 @@ import {
   resolveWorkingDiffComparison,
   selectWorkingDiffComparison,
 } from "@/git/working-diff-comparison";
+import { draftAgentCommandsQueryKey } from "@/hooks/agent-commands-query";
 import {
   applyCheckoutStatusUpdateFromEvent,
   ensureCheckoutStatus,
@@ -91,12 +92,11 @@ function checkoutStatusUpdate(
   };
 }
 
-function selectBaseComparison(isDirtyAtSelection: boolean): void {
+function selectBaseComparison(): void {
   selectWorkingDiffComparison({
     serverId,
     cwd,
     comparison: "base",
-    isDirty: isDirtyAtSelection,
   });
 }
 
@@ -119,14 +119,13 @@ describe("fetchCheckoutStatus", () => {
     expect(client.getCheckoutStatus).toHaveBeenCalledExactlyOnceWith(cwd);
   });
 
-  it("expires a manual working-diff comparison when the fetched dirty state flipped", async () => {
-    selectBaseComparison(true);
+  it("keeps a manual working-diff comparison when the fetched dirty state flips", async () => {
+    selectBaseComparison();
     const client = { getCheckoutStatus: vi.fn(async () => checkoutStatus({ isDirty: false })) };
 
     await fetchCheckoutStatus({ client, serverId, cwd });
 
-    expect(resolveWorkingDiffComparison({ serverId, cwd, isDirty: false })).toBe("base");
-    expect(resolveWorkingDiffComparison({ serverId, cwd, isDirty: true })).toBe("uncommitted");
+    expect(resolveWorkingDiffComparison({ serverId, cwd })).toBe("base");
   });
 });
 
@@ -197,6 +196,51 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
     ).toBe(false);
   });
 
+  it("drops the checkout's cached draft slash commands when its branch changes", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      checkoutStatusQueryKey(serverId, cwd),
+      checkoutStatus({ currentBranch: "chore/build-paseo" }),
+    );
+    const thisCheckout = draftAgentCommandsQueryKey({
+      serverId,
+      draftConfig: { provider: "claude", cwd, model: "haiku" },
+    });
+    const otherCheckout = draftAgentCommandsQueryKey({
+      serverId,
+      draftConfig: { provider: "claude", cwd: "/repo2", model: "haiku" },
+    });
+    queryClient.setQueryData(thisCheckout, [{ name: "build-paseo" }]);
+    queryClient.setQueryData(otherCheckout, [{ name: "build-paseo" }]);
+
+    applyCheckoutStatusUpdateFromEvent({
+      queryClient,
+      serverId,
+      message: checkoutStatusUpdate(checkoutStatus({ currentBranch: "main" })),
+    });
+
+    expect(queryClient.getQueryData(thisCheckout)).toBeUndefined();
+    expect(queryClient.getQueryData(otherCheckout)).toEqual([{ name: "build-paseo" }]);
+  });
+
+  it("keeps the checkout's draft slash commands when a push leaves its branch unchanged", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(checkoutStatusQueryKey(serverId, cwd), checkoutStatus());
+    const thisCheckout = draftAgentCommandsQueryKey({
+      serverId,
+      draftConfig: { provider: "claude", cwd, model: "haiku" },
+    });
+    queryClient.setQueryData(thisCheckout, [{ name: "build-paseo" }]);
+
+    applyCheckoutStatusUpdateFromEvent({
+      queryClient,
+      serverId,
+      message: checkoutStatusUpdate(checkoutStatus({ isDirty: true })),
+    });
+
+    expect(queryClient.getQueryData(thisCheckout)).toEqual([{ name: "build-paseo" }]);
+  });
+
   it("writes the PR status cache when prStatus is present, and skips it otherwise", () => {
     const queryClient = createQueryClient();
     const pushedPr = prStatus({ requestId: "pr-1" });
@@ -240,31 +284,25 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
     ).toBe("unauthenticated");
   });
 
-  it("expires a manual working-diff comparison when the pushed dirty state flipped", () => {
-    const queryClient = createQueryClient();
-    selectBaseComparison(false);
-
-    applyCheckoutStatusUpdateFromEvent({
-      queryClient,
-      serverId,
-      message: checkoutStatusUpdate(checkoutStatus({ isDirty: true })),
-    });
-
-    expect(resolveWorkingDiffComparison({ serverId, cwd, isDirty: true })).toBe("uncommitted");
-  });
-
-  it("keeps a manual working-diff comparison while the pushed dirty state still matches", () => {
-    const queryClient = createQueryClient();
-    selectBaseComparison(true);
-
-    applyCheckoutStatusUpdateFromEvent({
-      queryClient,
-      serverId,
-      message: checkoutStatusUpdate(checkoutStatus({ isDirty: true })),
-    });
-
-    expect(resolveWorkingDiffComparison({ serverId, cwd, isDirty: true })).toBe("base");
-  });
+  it.each(["base", "uncommitted"] as const)(
+    "keeps %s selected across dirty and clean pushes",
+    (comparison) => {
+      const queryClient = createQueryClient();
+      selectWorkingDiffComparison({ serverId, cwd, comparison });
+      applyCheckoutStatusUpdateFromEvent({
+        queryClient,
+        serverId,
+        message: checkoutStatusUpdate(checkoutStatus({ isDirty: true })),
+      });
+      expect(resolveWorkingDiffComparison({ serverId, cwd })).toBe(comparison);
+      applyCheckoutStatusUpdateFromEvent({
+        queryClient,
+        serverId,
+        message: checkoutStatusUpdate(checkoutStatus({ isDirty: false })),
+      });
+      expect(resolveWorkingDiffComparison({ serverId, cwd })).toBe(comparison);
+    },
+  );
 
   it("invalidates PR detail queries when the prStatus changes, ignoring the volatile requestId", () => {
     const queryClient = createQueryClient();

@@ -369,4 +369,25 @@ describe("AgentDirectoryReplica", () => {
     ).toEqual(directoryPlacement);
     store.clearSession(serverId);
   });
+
+  it("keeps a timeline-hydrated agent when a sequenced catch-up carries no entries", () => {
+    const serverId = "agent-replica-timeline-membership";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null as unknown as DaemonClient);
+    const replica = new AgentDirectoryReplica(
+      serverId,
+      () => undefined,
+      () => undefined,
+    );
+
+    // A conversation opened from history arrives over its timeline, without the
+    // project placement the directory carries, and is a member from then on.
+    replica.submitTimelineAgent(replica.captureTimeline("agent"), payload("timeline only"));
+    expect(useSessionStore.getState().sessions[serverId]?.agents.has("agent")).toBe(true);
+
+    replica.commitChanges([], [], []);
+
+    expect(useSessionStore.getState().sessions[serverId]?.agents.has("agent")).toBe(true);
+    store.clearSession(serverId);
+  });
 });

@@ -4,6 +4,9 @@ import {
   computeCanStartDictation,
   resolveActiveSendBehavior,
   resolveComposerSurfacePresentation,
+  resolveComposerSurfaceText,
+  resolveGlyphRailOffset,
+  resolveRetainedSelection,
   runAlternateSendAction,
   runDefaultSendAction,
   runMessageInputKeyboardAction,
@@ -314,5 +317,48 @@ describe("stopRealtimeVoice", () => {
     });
 
     expect(calls).toEqual(["cancel agent", "stop voice"]);
+  });
+});
+
+describe("composer surface text", () => {
+  it("measures a new nonempty replacement before it reaches the editing handle", () => {
+    const replacement = { kind: "replace" as const, key: "draft:2", text: "First\nSecond\nThird" };
+    expect(resolveComposerSurfaceText("Short draft", replacement, "draft:1")).toBe(
+      replacement.text,
+    );
+  });
+
+  it("keeps live typing once the replacement is applied", () => {
+    const replacement = { kind: "replace" as const, key: "draft:2", text: "First\nSecond\nThird" };
+    expect(resolveComposerSurfaceText("Edited live draft", replacement, "draft:2")).toBe(
+      "Edited live draft",
+    );
+  });
+
+  it("keeps the live buffer when the initial publication is already applied", () => {
+    const replacement = { kind: "initial" as const, key: "draft:0", text: "Stale publication" };
+    expect(resolveComposerSurfaceText("Live edited draft", replacement, "draft:0")).toBe(
+      "Live edited draft",
+    );
+  });
+});
+
+describe("retained selection", () => {
+  it("keeps a caret that fits and clamps one that no longer does", () => {
+    expect(resolveRetainedSelection({ start: 4, end: 17 }, 40)).toEqual({ start: 4, end: 17 });
+    expect(resolveRetainedSelection({ start: 4, end: 17 }, 10)).toEqual({ start: 4, end: 10 });
+    expect(resolveRetainedSelection({ start: 12, end: 17 }, 10)).toEqual({ start: 10, end: 10 });
+    expect(resolveRetainedSelection({ start: -1, end: 3 }, 10)).toEqual({ start: 0, end: 3 });
+  });
+});
+
+describe("fullscreen glyph rail", () => {
+  it("nudges 16px fullscreen glyphs onto the Send arrow's ink edge", () => {
+    expect(
+      resolveGlyphRailOffset({ controlSize: 28, sendIconSize: 16, glyphIconSize: 16 }),
+    ).toBeCloseTo(4 / 3);
+    expect(
+      resolveGlyphRailOffset({ controlSize: 28, sendIconSize: 20, glyphIconSize: 16 }),
+    ).toBeCloseTo(1 / 6);
   });
 });

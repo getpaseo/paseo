@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { StateStorage } from "zustand/middleware";
 import {
   createSidebarViewStorage,
@@ -7,14 +7,6 @@ import {
   SIDEBAR_UNLABELLED_LABEL_KEY,
   useSidebarViewStore,
 } from "./sidebar-view-store";
-
-vi.mock("@react-native-async-storage/async-storage", () => ({
-  default: {
-    getItem: vi.fn().mockResolvedValue(null),
-    setItem: vi.fn().mockResolvedValue(undefined),
-    removeItem: vi.fn().mockResolvedValue(undefined),
-  },
-}));
 
 interface MemoryStorage extends StateStorage<Promise<void>> {
   reads: string[];
@@ -40,6 +32,8 @@ function createMemoryStorage(entries: Record<string, string | null>): MemoryStor
 describe("sidebar view store", () => {
   beforeEach(() => {
     useSidebarViewStore.setState({
+      workspaceSort: "created",
+      showBackground: false,
       groupMode: "project",
       hostFilters: [],
       projectFilters: [],
@@ -92,6 +86,8 @@ describe("sidebar view store", () => {
         },
       }),
     ).toEqual({
+      workspaceSort: "created",
+      showBackground: false,
       groupMode: "status",
       hostFilters: [],
       projectFilters: [],
@@ -106,6 +102,8 @@ describe("sidebar view store", () => {
         hostFilter: "host-a",
       }),
     ).toEqual({
+      workspaceSort: "created",
+      showBackground: false,
       groupMode: "status",
       hostFilters: ["host-a"],
       projectFilters: [],
@@ -120,6 +118,8 @@ describe("sidebar view store", () => {
         hostFilters: ["host-a", "host-b"],
       }),
     ).toEqual({
+      workspaceSort: "created",
+      showBackground: false,
       groupMode: "status",
       hostFilters: ["host-a", "host-b"],
       projectFilters: [],
@@ -230,6 +230,8 @@ describe("sidebar view store", () => {
         projectFilters: ["project-a", "project-b"],
       }),
     ).toEqual({
+      workspaceSort: "created",
+      showBackground: false,
       groupMode: "project",
       hostFilters: ["host-a"],
       projectFilters: ["project-a", "project-b"],
@@ -239,6 +241,8 @@ describe("sidebar view store", () => {
 
   it("never keeps project filters from state the schema rejects", () => {
     expect(migrateSidebarViewState({ projectFilters: "project-a" })).toEqual({
+      workspaceSort: "created",
+      showBackground: false,
       groupMode: "project",
       hostFilters: [],
       projectFilters: [],
@@ -288,4 +292,15 @@ describe("sidebar view store", () => {
     );
     expect(storage.reads).toEqual(["sidebar-view"]);
   });
+});
+
+it("defaults to Created and persists the Last prompt choice across migration", () => {
+  expect(migrateSidebarViewState({}).workspaceSort).toBe("created");
+  expect(
+    migrateSidebarViewState({ workspaceSort: "lastPrompt", groupMode: "status" }),
+  ).toMatchObject({ workspaceSort: "lastPrompt", groupMode: "status" });
+});
+
+it("retains the manual sorting preference on reload", () => {
+  expect(migrateSidebarViewState({ workspaceSort: "manual" }).workspaceSort).toBe("manual");
 });

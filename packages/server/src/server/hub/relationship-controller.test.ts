@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { hostname, platform } from "node:os";
+import { platform } from "node:os";
 import { afterEach, describe, expect, test } from "vitest";
+import { getHostName } from "../host-name.js";
 import { HubRelationshipHarness } from "./test-utils/relationship-harness.js";
 
 async function captureUnhandledRejections(action: () => Promise<void>): Promise<unknown[]> {
@@ -88,7 +89,7 @@ describe("Hub relationship", () => {
         .update(secret ?? "")
         .digest("base64url"),
     );
-    expect(enrollment.hostname).toBe(hostname());
+    expect(enrollment.hostname).toBe(getHostName());
     relationship.completeEnrollment();
     await connecting.result;
     await relationship.socketDialed();
@@ -772,8 +773,12 @@ describe("Hub relationship", () => {
     const second = await relationship.ownedCreateResult("second-create");
 
     expect(relationship.relationshipFile()?.relationship.daemonId).toBe(daemonId);
-    expect(first).toMatchObject({ payload: { success: true, executionId: "first-execution" } });
-    expect(second).toMatchObject({ payload: { success: true, executionId: "second-execution" } });
+    expect(first).toMatchObject({
+      payload: { success: true, executionId: "first-execution", error: null },
+    });
+    expect(second).toMatchObject({
+      payload: { success: true, executionId: "second-execution", error: null },
+    });
     expect(await relationship.durableOwnedAgentIds()).toHaveLength(2);
   });
 

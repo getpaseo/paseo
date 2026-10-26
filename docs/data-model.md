@@ -48,6 +48,7 @@ $PASEO_HOME/
 ├── server-id                            # Stable daemon identifier (plain text, "srv_<base64url>")
 ├── daemon-keypair.json                  # E2EE keypair for relay (mode 0600)
 ├── paseo.pid                            # Daemon PID lock file
+├── local-credential                     # Per-run local client credential (mode 0600)
 ├── daemon.log                           # Default log file (path configurable)
 ├── agents/
 │   └── {sanitized-cwd}/
@@ -181,8 +182,10 @@ Terminal activity contributes to the workspace status bucket **per `workspaceId`
 Single file, validated with `PersistedConfigSchema`.
 
 `agents.skills.selection` is the daemon host's orchestration-skill preference. Missing means
-`{ mode: "all" }`. Installed state is not persisted; the daemon derives it from its three managed
-skill directories and keeps config plus filesystem convergence behind one serialized owner.
+`{ mode: "all" }`. Installed state is not persisted; the daemon derives it from the shared
+`~/.agents/skills` and Claude skill directories and keeps config plus filesystem convergence behind
+one serialized owner. Codex discovers the shared directory. Updates retire unchanged files from
+Paseo-managed copies in `~/.codex/skills`, preserving user edits and untracked files.
 
 `paseo reload` reads and validates this file once inside the daemon. That snapshot drives resolution,
 classification, application, and reload bookkeeping. `DaemonConfigStore` owns applying runtime-safe
@@ -314,7 +317,7 @@ Paseo tools; otherwise the provider policy applies. Provider and global policy a
 session is created, resumed, imported, or reloaded, so configuration changes affect the next
 session rather than an already-running one.
 
-`agents.metadataGeneration.providers` controls the preferred structured-generation fallback order for daemon-side metadata tasks such as commit messages, PR text, branch names, and generated agent titles. Entries are tried first in the configured order, then Paseo falls through to dynamically discovered defaults and finally the current selection when available.
+`agents.metadataGeneration.providers` selects the models for daemon-side metadata tasks: commit messages, PR text, branch names, and generated titles. An empty list is Automatic; a non-empty list is Manual and only those models are tried. See [public-docs/metadata-generation.md](../public-docs/metadata-generation.md#how-a-model-is-chosen).
 
 ### Git process limits
 
@@ -349,8 +352,6 @@ Environment variables override `config.json`:
 `PASEO_GIT_MAX_PROCESS_CONCURRENCY` wins when it and the legacy alias are both set. Run `paseo reload`
 after changing `config.json`. Environment changes require a daemon restart; the launch environment
 remains authoritative during reload.
-
-`agents.metadataGeneration.providers` controls the preferred structured-generation fallback order for daemon-side metadata tasks such as commit messages, PR text, branch names, and generated agent titles. Entries are tried first in the configured order, then Paseo falls through to dynamically discovered defaults and finally the current selection when available.
 
 Local speech model ids are intentionally narrow: STT uses `parakeet-tdt-0.6b-v2-int8`, TTS uses `kokoro-en-v0_19`, and turn detection uses the bundled Silero VAD model.
 
@@ -557,6 +558,7 @@ These small files are not validated as full Zod schemas but are persisted under 
 | `server-id`           | Plain text, e.g. `srv_<base64url>`                             | Stable per-`$PASEO_HOME` daemon ID. Overridable via `PASEO_SERVER_ID` env.        |
 | `daemon-keypair.json` | `{ v: 2, publicKeyB64, secretKeyB64 }` (libsodium box keypair) | E2EE relay identity. Written with mode `0600`. Regenerated if file is unreadable. |
 | `paseo.pid`           | JSON `{ pid, startedAt, ... }`                                 | PID lock; prevents two daemons sharing one `$PASEO_HOME`.                         |
+| `local-credential`    | 32 random bytes encoded as base64url text                      | Rotated before each listen and deleted on shutdown; mode `0600`.                  |
 | `daemon.log`          | Pino log output                                                | Default location; path/rotation configurable via `log.file` in `config.json`.     |
 
 ---
@@ -585,7 +587,10 @@ host, kinds, and ids. Opening a cached workspace uses exact workspace and projec
 directory scan. One invalid row is deleted and returned as a miss without affecting other rows.
 An invalid directory row and its affected checkpoint cursor are repaired in one transaction, so a
 later launch cannot accept a checkpoint for a partial baseline. Directory changes and their
-checkpoint are also applied in one transaction.
+checkpoint are also applied in one transaction. Reads wait for accepted changes to reach storage,
+then retry only when a requested row changes during the read. Unrelated agent streams do not
+invalidate the read. Directory baseline replacements and host removal or renaming still invalidate
+the affected reads.
 
 The cache is capped at 32 MiB and evicts whole hosts in least-recently-written order. Budget
 bookkeeping may scan opaque row sizes during a deferred write, never during host registry startup or

@@ -8,6 +8,7 @@ const PAGE_SIZE = 200;
 interface SearchLocation {
   seq: number;
   role: "user" | "assistant";
+  count: number;
 }
 interface SearchInput {
   rows: readonly AgentTimelineRow[];
@@ -15,8 +16,13 @@ interface SearchInput {
   cursor?: number;
 }
 
-// Discovery is deliberately approximate. Only the client can verify displayed text.
-function searchableMarkdown(text: string): string {
+// Discovery is deliberately approximate. Only the client can verify displayed text, so
+// `count` estimates rendered occurrences and the client replaces it with the rendered
+// count once the message is on screen. Blocks are counted separately, and the Markdown
+// source is never searched whole, because a match the client cannot highlight — across
+// a block boundary, or on syntax the reader never sees — still inflates the total until
+// navigation reaches that message and drops it.
+function searchableBlocks(text: string): string[] {
   return markdown
     .parse(text, {})
     .map((token) => {
@@ -32,28 +38,44 @@ function searchableMarkdown(text: string): string {
       if (token.type === "fence" || token.type === "code_block") return token.content;
       return "";
     })
-    .filter(Boolean)
-    .join("\n");
+    .filter(Boolean);
+}
+
+function searchPattern(query: string): RegExp {
+  const source = query
+    .trim()
+    .split(/\s+/)
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("\\s+");
+  return new RegExp(source, "giu");
+}
+
+function countMatches(text: string, pattern: RegExp): number {
+  let count = 0;
+  for (const _ of text.matchAll(pattern)) count += 1;
+  return count;
 }
 
 export async function searchTimeline({ rows, query, cursor = 0 }: SearchInput) {
   const locations: SearchLocation[] = [];
   if (!query.trim()) return { locations, nextCursor: null };
-  const needle = normalizeSearchText(query);
+  const pattern = searchPattern(query);
   let lastYield = performance.now();
   for (const entry of projectTimelineRows({ rows, mode: "projected" })) {
     if (entry.seqEnd <= cursor) continue;
     const item = entry.item;
     if (item.type !== "user_message" && item.type !== "assistant_message") continue;
     const raw = item.text.replace(/\r/g, "");
-    const text = item.type === "assistant_message" ? searchableMarkdown(raw) : raw;
-    if (normalizeSearchText(raw).includes(needle) || normalizeSearchText(text).includes(needle)) {
+    const blocks = item.type === "assistant_message" ? searchableBlocks(raw) : [raw];
+    const count = blocks.reduce((sum, block) => sum + countMatches(block, pattern), 0);
+    if (count) {
       if (locations.length === PAGE_SIZE) {
         return { locations, nextCursor: locations[PAGE_SIZE - 1]!.seq };
       }
       locations.push({
         seq: entry.seqEnd,
         role: item.type === "user_message" ? "user" : "assistant",
+        count,
       });
     }
     if (performance.now() - lastYield >= 8) {
@@ -62,8 +84,4 @@ export async function searchTimeline({ rows, query, cursor = 0 }: SearchInput) {
     }
   }
   return { locations, nextCursor: null };
-}
-
-function normalizeSearchText(text: string): string {
-  return text.replace(/\s+/g, " ").trim().toLowerCase();
 }

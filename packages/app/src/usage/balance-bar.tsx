@@ -1,0 +1,153 @@
+import { useMemo } from "react";
+import type { TFunction } from "i18next";
+import { useTranslation } from "react-i18next";
+import { Text, View, type StyleProp, type ViewStyle } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
+import { clampPct, formatAmount, formatProviderUsageLabel, formatResetLabel } from "./format";
+import type { UsageBalance, UsageTone } from "./types";
+import { useRelativeTimeTick } from "./use-relative-time-tick";
+
+interface ResolvedBalance {
+  amountText: string;
+  usedPct: number | null;
+}
+
+function resolveBalance({
+  balance,
+  t,
+  locale,
+}: {
+  balance: UsageBalance;
+  t: TFunction;
+  locale?: string;
+}): ResolvedBalance {
+  const { used, remaining, limit, unit } = balance;
+  const format = (value: number) => formatAmount(value, unit, locale);
+  if (limit != null && limit > 0) {
+    const usedAmount = used ?? (remaining != null ? limit - remaining : null);
+    const usedPct = usedAmount != null ? (usedAmount / limit) * 100 : null;
+    const usedText = usedAmount != null ? format(usedAmount) : "—";
+    return { amountText: `${usedText} / ${format(limit)}`, usedPct };
+  }
+  if (remaining != null) {
+    return {
+      amountText: t("providerUsage.values.remaining", { amount: format(remaining) }),
+      usedPct: null,
+    };
+  }
+  if (used != null) {
+    return { amountText: format(used), usedPct: null };
+  }
+  return { amountText: "—", usedPct: null };
+}
+
+function fillToneStyle(tone: UsageTone) {
+  switch (tone) {
+    case "ok":
+      return styles.fillOk;
+    case "warning":
+      return styles.fillWarning;
+    case "danger":
+      return styles.fillDanger;
+    default:
+      return styles.fillDefault;
+  }
+}
+
+export function UsageBalanceBar({
+  balance,
+  retained = false,
+}: {
+  balance: UsageBalance;
+  retained?: boolean;
+}) {
+  const { t, i18n } = useTranslation();
+  const now = useRelativeTimeTick({ enabled: balance.resetsAt != null });
+  const { amountText, usedPct } = resolveBalance({ balance, t, locale: i18n.resolvedLanguage });
+  const tone = balance.tone ?? "default";
+  const resetLabel = formatResetLabel(balance.resetsAt, retained, now, t);
+
+  const fillStyle = useMemo<StyleProp<ViewStyle>>(
+    () => [styles.fill, fillToneStyle(tone), { width: `${clampPct(usedPct ?? 0)}%` }],
+    [usedPct, tone],
+  );
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.labelRow}>
+        <Text style={styles.label} numberOfLines={1}>
+          {formatProviderUsageLabel(balance.id, balance.label, t)}
+        </Text>
+        <View style={styles.value} testID={`provider-usage-balance-${balance.id}-value`}>
+          <Text style={styles.amount} numberOfLines={1} ellipsizeMode="tail">
+            {amountText}
+          </Text>
+          {resetLabel ? (
+            <Text style={styles.reset} testID={`provider-usage-balance-${balance.id}-reset`}>
+              {resetLabel}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+      {usedPct != null ? (
+        <View style={styles.track}>
+          <View style={fillStyle} />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create((theme) => ({
+  container: {
+    gap: 3,
+  },
+  labelRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  label: {
+    flexShrink: 1,
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  value: {
+    flexShrink: 1,
+    alignItems: "flex-end",
+  },
+  amount: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+  },
+  reset: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
+    textAlign: "right",
+  },
+  track: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: theme.colors.surface3,
+    overflow: "hidden",
+  },
+  fill: {
+    height: 4,
+    borderRadius: 2,
+  },
+  fillDefault: {
+    backgroundColor: theme.colors.foregroundMuted,
+  },
+  fillOk: {
+    backgroundColor: theme.colors.statusSuccess,
+  },
+  fillWarning: {
+    backgroundColor: theme.colors.statusWarning,
+  },
+  fillDanger: {
+    backgroundColor: theme.colors.statusDanger,
+  },
+}));

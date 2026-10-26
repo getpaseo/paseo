@@ -210,7 +210,7 @@ async function blockAgentsDir(targets: SkillTargets): Promise<void> {
 }
 
 async function isInstalled(targets: SkillTargets, name: string): Promise<boolean> {
-  const dirs = [targets.agentsDir, targets.claudeDir, targets.codexDir];
+  const dirs = [targets.agentsDir, targets.claudeDir];
   const present = await Promise.all(
     dirs.map((dir) =>
       access(path.join(dir, name))
@@ -454,7 +454,7 @@ describe("skills controller", () => {
     expect(await installedEverywhere(readOnly.targets)).toEqual([
       ["paseo", "paseo-loop"],
       ["paseo", "paseo-loop"],
-      ["paseo", "paseo-loop"],
+      ["paseo-loop"],
     ]);
     expect(await readUserFile(readOnly.targets, "paseo-loop", "notes/mine.md")).toEqual([
       "hand written",
@@ -575,6 +575,7 @@ describe("skills controller", () => {
       };
       const next: SkillSelection = { mode: "custom", skills: ["paseo"] };
       await harness.controller.save(previous);
+      await writeUserFile(harness.targets, "paseo-loop", "SKILL.md", "paseo-loop-v1");
       const livePaths = [
         harness.targets.agentsDir,
         harness.targets.claudeDir,
@@ -601,6 +602,7 @@ describe("skills controller", () => {
     };
     const next: SkillSelection = { mode: "custom", skills: ["paseo"] };
     await harness.controller.save(previous);
+    await writeUserFile(harness.targets, "paseo-loop", "SKILL.md", "paseo-loop-v1");
 
     const transaction = await beginSkillsTransaction(harness.targets, previous, next, [
       { kind: "delete", name: "paseo-loop" },
@@ -666,6 +668,7 @@ describe("skills controller", () => {
     };
     const next: SkillSelection = { mode: "custom", skills: ["paseo"] };
     await harness.controller.save(previous);
+    await writeUserFile(harness.targets, "paseo-loop", "SKILL.md", "paseo-loop-v1");
     await writeUserFile(harness.targets, "paseo-loop", "notes/mine.md", "staged notes");
 
     const transaction = await beginSkillsTransaction(harness.targets, previous, next, [
@@ -1115,7 +1118,7 @@ describe("skills controller", () => {
     expect(await installedEverywhere(harness.targets)).toEqual([
       ["paseo", "paseo-advisor", "paseo-loop"],
       ["paseo", "paseo-advisor", "paseo-loop"],
-      ["paseo", "paseo-advisor", "paseo-loop"],
+      ["paseo-advisor"],
     ]);
     expect(result.selection).toEqual({ mode: "custom", skills: ["paseo", "paseo-loop"] });
   });
@@ -1131,7 +1134,7 @@ describe("skills controller", () => {
 
     expect(result.confirmationRequired).toBeNull();
     expect(result.selection).toEqual({ mode: "custom", skills: ["paseo"] });
-    expect(await installedEverywhere(harness.targets)).toEqual([["paseo"], ["paseo"], ["paseo"]]);
+    expect(await installedEverywhere(harness.targets)).toEqual([["paseo"], ["paseo"], []]);
   });
 
   it("asks again when another directory appears before the retry", async () => {
@@ -1150,7 +1153,7 @@ describe("skills controller", () => {
     expect(await installedEverywhere(harness.targets)).toEqual([
       ["paseo", "paseo-advisor", "paseo-chat", "paseo-loop"],
       ["paseo", "paseo-advisor", "paseo-chat", "paseo-loop"],
-      ["paseo", "paseo-advisor", "paseo-chat", "paseo-loop"],
+      ["paseo-chat"],
     ]);
   });
 
@@ -1179,7 +1182,7 @@ describe("skills controller", () => {
     const result = await harness.controller.save({ mode: "custom", skills: ["paseo"] });
 
     expect(result.confirmationRequired).toBeNull();
-    expect(await installedEverywhere(harness.targets)).toEqual([["paseo"], ["paseo"], ["paseo"]]);
+    expect(await installedEverywhere(harness.targets)).toEqual([["paseo"], ["paseo"], []]);
   });
 
   it("preserves a regular file at a skill path when save convergence fails", async () => {
@@ -1211,7 +1214,7 @@ describe("skills controller", () => {
     ]);
 
     expect(saved.selection).toEqual({ mode: "custom", skills: ["paseo"] });
-    expect(await installedEverywhere(harness.targets)).toEqual([["paseo"], ["paseo"], ["paseo"]]);
+    expect(await installedEverywhere(harness.targets)).toEqual([["paseo"], ["paseo"], []]);
     expect(await harness.controller.status()).toEqual({
       state: "up-to-date",
       ops: [],

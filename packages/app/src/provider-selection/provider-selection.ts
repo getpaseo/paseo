@@ -5,7 +5,7 @@ import type {
   ProviderSnapshotEntry,
 } from "@getpaseo/protocol/agent-types";
 import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
-import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
+import type { DraftCommandTarget } from "@/hooks/use-agent-commands-query";
 import { i18n } from "@/i18n/i18next";
 import { compareMatchScores, scoreTextFields } from "@getpaseo/protocol/search/text-match";
 import { filterSelectableModels } from "./model-catalog";
@@ -103,6 +103,7 @@ function buildModelSelection(
 function buildEntryModelSelection(
   entry: ProviderSnapshotEntry,
   label: string,
+  isConnected: boolean,
 ): ProviderModelSelection {
   if ((entry.models?.length ?? 0) > 0) {
     return buildModelSelection(entry.provider, label, entry.models ?? null);
@@ -111,7 +112,9 @@ function buildEntryModelSelection(
     return buildModelSelection(entry.provider, label, entry.models ?? null);
   }
   if (entry.status === "loading") {
-    return { kind: "loading" };
+    return isConnected
+      ? { kind: "loading" }
+      : { kind: "error", message: i18n.t("providerSelection.readiness.hostDisconnected") };
   }
   return {
     kind: "error",
@@ -142,6 +145,7 @@ export function buildProviderSelectorProviders(input: {
 
 export function buildSelectableProviderSelectorProviders(
   entries: ProviderSnapshotEntry[] | undefined,
+  isConnected = true,
 ): ProviderSelectorProvider[] {
   return (entries ?? [])
     .filter((entry) => entry.enabled)
@@ -150,7 +154,7 @@ export function buildSelectableProviderSelectorProviders(
       return {
         id: entry.provider,
         label,
-        modelSelection: buildEntryModelSelection(entry, label),
+        modelSelection: buildEntryModelSelection(entry, label, isConnected),
       };
     });
 }
@@ -272,6 +276,23 @@ export function resolveEffectiveComposerModelId(selection: ProviderSelectionStat
   );
 }
 
+// The mode picker shows the first offered mode when the selected one isn't
+// offered (e.g. a remembered mode the provider no longer advertises), so the
+// submitted mode must match that display. A provider with no modes gets none.
+// While the provider is still loading its modes aren't known yet, so the
+// selected mode is kept.
+export function resolveEffectiveComposerModeId(
+  selection: ProviderSelectionState,
+  isModelLoading: boolean,
+): string {
+  const selectedModeId = selection.modeId.trim();
+  if (isModelLoading) {
+    return selectedModeId;
+  }
+  const modeIds = selection.modeOptions.map((mode) => mode.id);
+  return modeIds.includes(selectedModeId) ? selectedModeId : (modeIds[0] ?? "");
+}
+
 export function resolveEffectiveComposerThinkingOptionId(
   selection: ProviderSelectionState,
   effectiveModelId: string,
@@ -286,19 +307,22 @@ export function resolveEffectiveComposerThinkingOptionId(
   return selectedModelDefinition?.defaultThinkingOptionId ?? "";
 }
 
-export function buildDraftCommandConfig(input: {
+export function buildDraftCommandTarget(input: {
   selection: ProviderSelectionState;
   cwd: string;
   effectiveModelId: string;
   effectiveThinkingOptionId: string;
   featureValues?: Record<string, unknown>;
-}): DraftCommandConfig | undefined {
+}): DraftCommandTarget {
   const cwd = input.cwd.trim();
-  if (!input.selection.provider || !cwd) {
-    return undefined;
+  if (!cwd) {
+    return { status: "needs-project" };
+  }
+  if (!input.selection.provider) {
+    return { status: "needs-provider" };
   }
 
-  return {
+  const config = {
     provider: input.selection.provider,
     cwd,
     ...(input.selection.modeOptions.length > 0 && input.selection.modeId !== ""
@@ -310,6 +334,7 @@ export function buildDraftCommandConfig(input: {
       : {}),
     ...(input.featureValues ? { featureValues: input.featureValues } : {}),
   };
+  return { status: "ready", config };
 }
 
 export function resolveSubmissionReadiness(input: {
@@ -324,10 +349,13 @@ export function resolveSubmissionReadiness(input: {
   };
   autoSubmitConfig: { provider: string; model: string | null } | null;
   workspaceDirectory: string | null;
-  hasClient: boolean;
+  isConnected: boolean;
 }): ProviderSelectionReadiness {
   if (!input.allowsEmptyAutoSubmit && !input.text.trim()) {
     return { ok: false, reason: i18n.t("providerSelection.readiness.initialPromptRequired") };
+  }
+  if (!input.isConnected) {
+    return { ok: false, reason: i18n.t("providerSelection.readiness.hostDisconnected") };
   }
   if (input.providerCount === 0) {
     return { ok: false, reason: i18n.t("providerSelection.readiness.noProviders") };
@@ -344,9 +372,6 @@ export function resolveSubmissionReadiness(input: {
   }
   if (!input.workspaceDirectory) {
     return { ok: false, reason: i18n.t("providerSelection.readiness.workspaceDirectoryNotFound") };
-  }
-  if (!input.hasClient) {
-    return { ok: false, reason: i18n.t("providerSelection.readiness.hostDisconnected") };
   }
   return { ok: true };
 }

@@ -1,3 +1,12 @@
+import {
+  HOST_ROUTE_OPCODE,
+  encodeHostRouteFrame,
+  decodeHostRouteFrame,
+  type HostRouteFrame,
+} from "@getpaseo/protocol/binary-frames/index";
+import { messageTooLargeError } from "./daemon-client-transport-utils.js";
+import type { HostAdd, HostUpdate, HostDirectory } from "@getpaseo/protocol/hosts";
+import { legacyUsageIcon } from "./legacy-usage-icons.js";
 import { subscribeTimeline, type TimelineMessage } from "./timeline-subscription/index.js";
 import { ProviderSnapshotUpdates } from "./provider-snapshots/index.js";
 import {
@@ -10,8 +19,9 @@ import { CreationClient } from "./creation/index.js";
 import type { CreationSnapshot } from "@getpaseo/protocol/messages";
 import type { z } from "zod";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
-import type { ClientCapability } from "@getpaseo/protocol/client-capabilities";
+import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import type { AgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
+import { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
 import {
   AgentCreateFailedStatusPayloadSchema,
   AgentCreatedStatusPayloadSchema,
@@ -94,6 +104,7 @@ import type {
   RefreshProvidersSnapshotResponseMessage,
   ProviderDiagnosticResponseMessage,
   ProviderUsageListResponseMessage,
+  UsageReportEntry,
   DaemonGetStatusResponse,
   DaemonGetPairingOfferResponse,
   DaemonConfigReloadResponse,
@@ -151,9 +162,11 @@ import {
 } from "@getpaseo/protocol/binary-frames/index";
 import {
   createRelayE2eeTransportFactory,
+  createRelayUpgradeTransportFactory,
   createWebSocketTransportFactory,
   decodeMessageData,
   defaultWebSocketFactory,
+  describeEndpointSecurityClose,
   describeTransportClose,
   describeTransportError,
   type DaemonTransport,
@@ -216,6 +229,68 @@ function normalizePassword(value: string | undefined): string | null {
   return value.length > 0 ? value : null;
 }
 
+function compatibleBearerPassword(password: string | null): string | null {
+  return password && /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(password) ? password : null;
+}
+
+type HelloAuth =
+  | { kind: "password"; password: string }
+  | { kind: "localCredential"; token: string }
+  | undefined;
+
+export type DaemonAuthFailureReason = "password_required" | "incorrect_password";
+
+export class DaemonAuthenticationError extends Error {
+  readonly reason: DaemonAuthFailureReason;
+
+  constructor(reason: DaemonAuthFailureReason) {
+    super(reason === "password_required" ? "Password required" : "Incorrect password");
+    this.name = "DaemonAuthenticationError";
+    this.reason = reason;
+  }
+}
+
+export function getDaemonAuthFailureReason(error: unknown): DaemonAuthFailureReason | null {
+  return error instanceof DaemonAuthenticationError ? error.reason : null;
+}
+
+function authFailureFromLegacyClose(event: unknown): DaemonAuthFailureReason | null {
+  if (!event || typeof event !== "object" || !("reason" in event)) return null;
+  if (event.reason === "Password required") return "password_required";
+  if (event.reason === "Incorrect password") return "incorrect_password";
+  return null;
+}
+
+function chooseConnectionAuth(
+  config: DaemonClientConfig,
+  localCredential: string | undefined,
+): { helloAuth: HelloAuth; headers: Record<string, string>; protocols?: string[] } {
+  const password = normalizePassword(config.password);
+  let helloAuth: HelloAuth;
+  if (localCredential) helloAuth = { kind: "localCredential", token: localCredential };
+  else if (password) helloAuth = { kind: "password", password };
+  const headers: Record<string, string> = {};
+  const compatibleBearer = localCredential ? null : compatibleBearerPassword(password);
+  // COMPAT(headerAuth): added in v0.9.1, remove after 2027-03-24.
+  if (compatibleBearer) headers.Authorization = `Bearer ${compatibleBearer}`;
+  else if (!localCredential && config.authHeader) headers.Authorization = config.authHeader;
+  return {
+    helloAuth,
+    headers,
+    ...(compatibleBearer ? { protocols: [`paseo.bearer.${compatibleBearer}`] } : {}),
+  };
+}
+
+function resolveConnectionAuth(
+  config: DaemonClientConfig,
+): ReturnType<typeof chooseConnectionAuth> | Promise<ReturnType<typeof chooseConnectionAuth>> {
+  const resolution = config.localCredential?.();
+  if (resolution instanceof Promise) {
+    return resolution.then((credential) => chooseConnectionAuth(config, credential));
+  }
+  return chooseConnectionAuth(config, resolution);
+}
+
 function extractCorrelatedResponseIdentity(input: unknown): CorrelatedResponseIdentity | null {
   if (!input || typeof input !== "object") {
     return null;
@@ -266,7 +341,7 @@ export type ConnectionState =
   | { status: "idle" }
   | { status: "connecting"; attempt: number }
   | { status: "connected" }
-  | { status: "disconnected"; reason?: string }
+  | { status: "disconnected"; reason?: string; nextRetryAt?: string; failureCode?: string }
   | { status: "disposed" };
 
 export type DaemonEvent =
@@ -320,16 +395,21 @@ export type DaemonEventHandler = (event: DaemonEvent) => void;
 export type BrowserAutomationExecuteRequestMessage = BrowserAutomationExecuteRequest;
 export type BrowserAutomationExecuteResponseMessage = BrowserAutomationExecuteResponse;
 
+/** Endpoint security negotiated on a relay connection. See docs/relay-endpoint-security.md. */
+export type RelaySecurityMode = "legacy" | "protected";
+
 export interface DaemonClientConfig {
   /** Deliver compact bodies/hash references to a caller-owned snapshot cache.
    * The default keeps public SDK snapshot entries expanded. */
   providerSnapshots?: "wire";
+  sessionPermissions?: import("@getpaseo/protocol/messages").DaemonPermission[];
   url: string;
   clientId: string;
   clientType?: "mobile" | "browser" | "cli" | "mcp" | "hub";
   appVersion?: string;
   runtimeGeneration?: number | null;
   password?: string;
+  localCredential?: () => string | undefined | Promise<string | undefined>;
   authHeader?: string;
   suppressSendErrors?: boolean;
   transportFactory?: DaemonTransportFactory;
@@ -339,6 +419,10 @@ export interface DaemonClientConfig {
   e2ee?: {
     enabled?: boolean;
     daemonPublicKeyB64?: string;
+    /** Refuse connections whose negotiated endpoint security is below this mode. */
+    minimumMode?: RelaySecurityMode;
+    /** Called with the negotiated mode after each authenticated relay handshake. */
+    onSecurityMode?: (mode: RelaySecurityMode) => void;
   };
   reconnect?: {
     enabled?: boolean;
@@ -358,7 +442,11 @@ export interface DaemonClientTrace {
 }
 
 export interface SendMessageOptions {
+  sourceAgentId?: string;
+  sourceAgentServerId?: string;
+  sessionMode?: string;
   messageId?: string;
+  /** What happens when the agent is mid-turn. The daemon interrupts the turn when omitted. */
   activeTurnBehavior?: ActiveTurnBehavior;
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
@@ -389,11 +477,12 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   outputSchema?: Record<string, unknown>;
   images?: CreateAgentRequestMessage["images"];
   attachments?: CreateAgentRequestMessage["attachments"];
+  /** @deprecated Use createWorkspace({ source, agent, idempotencyKey }); rejected by createAgent. */
   git?: GitSetupOptions;
   worktree?: CreateAgentRequestMessage["worktree"];
   autoArchive?: CreateAgentRequestMessage["autoArchive"];
-  // COMPAT(createAgentWorktree): low-level old callers may still send the
-  // create-agent worktree field. Added in v0.2.0; remove after 2027-01-17.
+  background?: CreateAgentRequestMessage["background"];
+  /** @deprecated Use createWorkspace({ source, agent, idempotencyKey }); rejected by createAgent. */
   worktreeName?: string;
   requestId?: string;
   labels?: Record<string, string>;
@@ -402,6 +491,9 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
 export interface CreateWorkspaceRequestOptions {
   source: WorkspaceCreateRequest["source"];
   title?: string;
+  /** Workspace discovery visibility; contents retain normal durability. */
+  background?: boolean;
+  callerAgentId?: string;
   idempotencyKey?: string;
   workspaceId?: string;
   agent?: Omit<
@@ -495,6 +587,10 @@ type GetProvidersSnapshotPayload = GetProvidersSnapshotResponseMessage["payload"
 type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["payload"];
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
 type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
+interface UsageListReportsPayload {
+  requestId: string;
+  reports: UsageReportEntry[];
+}
 type DaemonStatusPayload = DaemonGetStatusResponse["payload"];
 type DaemonPairingOfferPayload = DaemonGetPairingOfferResponse["payload"];
 type DiagnosticsPayload = DiagnosticsResponse["payload"];
@@ -860,6 +956,7 @@ interface Waiter<T> {
   reject(error: Error): void;
   timeoutHandle: ReturnType<typeof setTimeout> | null;
   requestId?: string;
+  submitted: boolean;
 }
 
 interface WaitHandle<T> {
@@ -917,11 +1014,16 @@ type CorrelatedResponsePayload<TType extends CorrelatedResponseType> =
   CorrelatedResponsePayloads[TType];
 
 export class DaemonConnectionError extends Error {
+  readonly serverId?: string;
+  readonly outcome?: "unknown";
   constructor(
     message: string,
     readonly code: "DAEMON_CONNECTION_LOST" | "DAEMON_REQUEST_TIMEOUT" = "DAEMON_CONNECTION_LOST",
+    context?: { serverId?: string; outcome?: "unknown"; cause?: Error },
   ) {
-    super(message);
+    super(message, context?.cause ? { cause: context.cause } : undefined);
+    this.serverId = context?.serverId;
+    this.outcome = context?.outcome;
     this.name = "DaemonConnectionError";
   }
 }
@@ -930,8 +1032,16 @@ class DaemonRpcError extends Error {
   readonly requestId: string;
   readonly requestType?: string;
   readonly code?: string;
+  readonly serverId?: string;
+  readonly userMessage: string;
 
-  constructor(params: { requestId: string; error: string; requestType?: string; code?: string }) {
+  constructor(params: {
+    requestId: string;
+    error: string;
+    requestType?: string;
+    code?: string;
+    serverId?: string;
+  }) {
     const parts = [params.error];
     if (params.requestType) parts.push(`requestType=${params.requestType}`);
     if (params.code) parts.push(`code=${params.code}`);
@@ -940,6 +1050,8 @@ class DaemonRpcError extends Error {
     this.requestId = params.requestId;
     this.requestType = params.requestType;
     this.code = params.code;
+    this.serverId = params.serverId;
+    this.userMessage = params.error;
   }
 }
 
@@ -1056,17 +1168,45 @@ function getTransportFrameSize(frame: string | Uint8Array | ArrayBuffer): number
   return frame.byteLength;
 }
 
-function describeInboundTransportFrame(
-  frame: unknown,
-  rawBytes: Uint8Array | null,
-): Record<string, string> {
-  if (typeof frame === "string") {
-    return { kind: "text", size: String(frame.length) };
+function assertTransportFrameFits(frame: string | Uint8Array | ArrayBuffer): void {
+  if (typeof frame !== "string") {
+    if (frame.byteLength > MAX_WEBSOCKET_MESSAGE_BYTES)
+      throw messageTooLargeError(frame.byteLength, MAX_WEBSOCKET_MESSAGE_BYTES);
+    return;
   }
-  if (rawBytes) {
-    return { kind: "binary", size: String(rawBytes.byteLength) };
+  // UTF-8 needs at most three bytes per UTF-16 unit, so only a string near the limit is measured.
+  if (frame.length * 3 <= MAX_WEBSOCKET_MESSAGE_BYTES) return;
+  const size = new TextEncoder().encode(frame).byteLength;
+  if (size > MAX_WEBSOCKET_MESSAGE_BYTES)
+    throw messageTooLargeError(size, MAX_WEBSOCKET_MESSAGE_BYTES);
+}
+
+function describeInboundTransportFrame(frame: unknown): Record<string, string> {
+  if (typeof frame === "string") {
+    return { kind: "text", size: String(frame.length), sizeUnit: "utf16-code-units" };
+  }
+  if (frame instanceof ArrayBuffer || ArrayBuffer.isView(frame)) {
+    return { kind: "binary", size: String(frame.byteLength), sizeUnit: "bytes" };
   }
   return { kind: "unknown", size: "0" };
+}
+
+function describeRequestIdentity(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object") return {};
+  const message = "message" in value ? value.message : value;
+  if (!message || typeof message !== "object") return {};
+  if ("requestId" in message && typeof message.requestId === "string")
+    return { requestId: message.requestId };
+  if (
+    "payload" in message &&
+    message.payload &&
+    typeof message.payload === "object" &&
+    "requestId" in message.payload &&
+    typeof message.payload.requestId === "string"
+  ) {
+    return { requestId: message.payload.requestId };
+  }
+  return {};
 }
 
 function hashForLog(value: string): string {
@@ -1101,7 +1241,7 @@ function toReasonCode(reason: string | null | undefined): string | null {
 }
 
 interface PendingSend {
-  message: SessionInboundMessage;
+  send: () => void;
   resolve: () => void;
   reject: (error: Error) => void;
   timeoutHandle: ReturnType<typeof setTimeout>;
@@ -1117,6 +1257,30 @@ interface PingProbe {
   // heartbeat sets this; a latency measurement never drives teardown, even when a
   // heartbeat tick shares (dedupes onto) an in-flight measurement ping.
   drivesLivenessFailure: boolean;
+}
+
+// COMPAT(providerUsageList): added in v0.1.98, remove after 2027-03-26.
+export function supportsUsageReports(features: ServerInfoStatusPayload["features"]): boolean {
+  return features?.usageSources === true || features?.providerUsageList === true;
+}
+
+function buildFetchAgentsRequest(
+  options: FetchAgentsOptions | undefined,
+  requestId: string,
+): SessionInboundMessage {
+  return SessionInboundMessageSchema.parse({
+    type: "fetch_agents_request",
+    requestId,
+    ...(options?.scope ? { scope: options.scope } : {}),
+    ...(options?.filter ? { filter: options.filter } : {}),
+    ...(options?.sort ? { sort: options.sort } : {}),
+    ...(options?.page ? { page: options.page } : {}),
+    ...(options?.subscribe ? { subscribe: options.subscribe } : {}),
+    ...(options?.sync ? { sync: options.sync } : {}),
+    ...(options?.includeBackground !== undefined
+      ? { includeBackground: options.includeBackground }
+      : {}),
+  });
 }
 
 export class DaemonClient {
@@ -1147,6 +1311,7 @@ export class DaemonClient {
     failed: (error) => this.logger.error({ err: error }, "Subscription failed"),
   });
   private transport: DaemonTransport | null = null;
+  private helloAuth: HelloAuth;
   private transportCleanup: Array<() => void> = [];
   private rawMessageListeners: Set<(message: SessionOutboundMessage) => void> = new Set();
   private messageHandlers: Map<
@@ -1161,11 +1326,15 @@ export class DaemonClient {
   private connectTimeout: ReturnType<typeof setTimeout> | null = null;
   private pendingGenericTransportErrorTimeout: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
+  private traceConnectionAttempt = 0;
   private shouldReconnect = true;
   private connectPromise: Promise<void> | null = null;
   private connectResolve: (() => void) | null = null;
   private connectReject: ((error: Error) => void) | null = null;
   private lastErrorValue: string | null = null;
+  private destinationServerId: string | undefined;
+  private connectionFailure: Error | undefined;
+  private authFailureReasonValue: DaemonAuthFailureReason | null = null;
   private connectionState: ConnectionState = { status: "idle" };
   private readonly terminalStreams = new TerminalStreamRouter();
   private pendingBinaryFileReads = new Map<string, PendingBinaryFileRead>();
@@ -1173,6 +1342,12 @@ export class DaemonClient {
   private completedBinaryFileReads = new Map<string, FileReadResult>();
   private logger: Logger;
   private pendingSendQueue: PendingSend[] = [];
+  /**
+   * Lowest relay endpoint security this client accepts on its next attempt.
+   * Starts at the configured minimum and rises to "protected" once a daemon
+   * negotiates it, so a later reconnect cannot be downgraded to legacy.
+   */
+  private relaySecurityFloorValue: RelaySecurityMode | undefined;
   private readonly logConnectionPath: "direct" | "relay";
   private readonly logServerId: string | null;
   private readonly logClientIdHash: string;
@@ -1188,6 +1363,7 @@ export class DaemonClient {
 
   constructor(private config: DaemonClientConfig) {
     this.logger = config.logger ?? consoleLogger;
+    this.relaySecurityFloorValue = config.e2ee?.minimumMode;
     this.logConnectionPath = isRelayClientWebSocketUrl(this.config.url) ? "relay" : "direct";
     let parsedUrlForLog: URL | null = null;
     try {
@@ -1257,7 +1433,7 @@ export class DaemonClient {
     return this.connectPromise;
   }
 
-  private attemptConnect(): void {
+  private async attemptConnect(): Promise<void> {
     if (this.connectionState.status === "disposed") {
       this.rejectConnect(new Error("Daemon client is disposed"));
       return;
@@ -1277,45 +1453,51 @@ export class DaemonClient {
       this.reconnectTimeout = null;
     }
 
-    const headers: Record<string, string> = {};
-    const password = normalizePassword(this.config.password);
-    if (password) {
-      headers.Authorization = `Bearer ${password}`;
-    } else if (this.config.authHeader) {
-      headers.Authorization = this.config.authHeader;
-    }
-    const protocols = password ? [`paseo.bearer.${password}`] : undefined;
-
     try {
+      const resolution = resolveConnectionAuth(this.config);
+      const selected = resolution instanceof Promise ? await resolution : resolution;
+      if (!this.shouldReconnect) return;
+      this.helloAuth = selected.helloAuth;
       // Reconnect can overlap with browser close/error delivery ordering.
       // Always dispose previous transport before constructing the next one.
       this.disposeTransport();
       const baseTransportFactory =
         this.config.transportFactory ??
         createWebSocketTransportFactory(this.config.webSocketFactory ?? defaultWebSocketFactory);
-      const shouldUseRelayE2ee =
-        this.config.e2ee?.enabled === true && isRelayClientWebSocketUrl(this.config.url);
+      const isRelayTransport = isRelayClientWebSocketUrl(this.config.url);
+      this.assertEncryptedRelayAuth(selected.helloAuth, isRelayTransport);
 
-      let transportFactory = baseTransportFactory;
-      if (shouldUseRelayE2ee) {
-        const daemonPublicKeyB64 = this.config.e2ee?.daemonPublicKeyB64;
+      // Relay upgrades are routing only: credentials never reach the relay socket.
+      let transportFactory = isRelayTransport
+        ? createRelayUpgradeTransportFactory(baseTransportFactory)
+        : baseTransportFactory;
+      // Endpoint security is selected by configuration, never inferred from the URL.
+      if (this.config.e2ee?.enabled === true) {
+        const daemonPublicKeyB64 = this.config.e2ee.daemonPublicKeyB64;
         if (!daemonPublicKeyB64) {
           throw new Error("daemonPublicKeyB64 is required for relay E2EE");
         }
         transportFactory = createRelayE2eeTransportFactory({
-          baseFactory: baseTransportFactory,
+          baseFactory: transportFactory,
           daemonPublicKeyB64,
           logger: this.logger,
+          ...(this.relaySecurityFloorValue ? { minimumMode: this.relaySecurityFloorValue } : {}),
+          onSecurityMode: (mode) => {
+            if (mode === "protected") this.relaySecurityFloorValue = "protected";
+            this.config.e2ee?.onSecurityMode?.(mode);
+          },
         });
       }
       const transportUrl = this.resolveTransportUrlForAttempt();
       const transport = transportFactory({
         url: transportUrl,
-        headers,
-        ...(protocols ? { protocols } : {}),
+        headers: selected.headers,
+        ...(selected.protocols ? { protocols: selected.protocols } : {}),
       });
+      this.traceConnectionAttempt += 1;
       this.transport = transport;
       this.lastServerInfoMessage = null;
+      this.authFailureReasonValue = null;
 
       this.updateConnectionState(
         {
@@ -1341,30 +1523,44 @@ export class DaemonClient {
 
       this.transportCleanup = [
         transport.onOpen(() => {
+          this.traceInstant("paseo.connection.open");
           if (this.pendingGenericTransportErrorTimeout) {
             clearTimeout(this.pendingGenericTransportErrorTimeout);
             this.pendingGenericTransportErrorTimeout = null;
           }
           this.lastErrorValue = null;
-          this.sendHelloMessage();
+          void this.sendHelloMessage();
         }),
         transport.onClose((event) => {
+          this.traceInstant("paseo.connection.close", {
+            code: String(
+              event && typeof event === "object" && "code" in event ? event.code : "unknown",
+            ),
+          });
           this.resetConnectTimeout();
           if (this.pendingGenericTransportErrorTimeout) {
             clearTimeout(this.pendingGenericTransportErrorTimeout);
             this.pendingGenericTransportErrorTimeout = null;
           }
-          const reason = describeTransportClose(event);
+          this.authFailureReasonValue ??= authFailureFromLegacyClose(event);
+          // An endpoint security policy close cannot be fixed by retrying.
+          const securityFailure = describeEndpointSecurityClose(event);
+          if (securityFailure) this.setReconnectEnabled(false);
+          const reason = this.authFailureReasonValue
+            ? new DaemonAuthenticationError(this.authFailureReasonValue).message
+            : (securityFailure ?? describeTransportClose(event));
           if (reason) {
             this.lastErrorValue = reason;
           }
           this.scheduleReconnect({
             reason,
+            failure: event instanceof Error ? event : undefined,
             event: "TRANSPORT_CLOSE",
             reasonCode: "transport_closed",
           });
         }),
         transport.onError((event) => {
+          this.traceInstant("paseo.connection.error");
           this.resetConnectTimeout();
           const reason = describeTransportError(event);
           const isGeneric = reason === "Transport error";
@@ -1383,6 +1579,7 @@ export class DaemonClient {
                   this.lastErrorValue = reason;
                   this.scheduleReconnect({
                     reason,
+                    failure: event instanceof Error ? event : undefined,
                     event: "TRANSPORT_ERROR",
                     reasonCode: "transport_error",
                   });
@@ -1399,6 +1596,7 @@ export class DaemonClient {
           this.lastErrorValue = reason;
           this.scheduleReconnect({
             reason,
+            failure: event instanceof Error ? event : undefined,
             event: "TRANSPORT_ERROR",
             reasonCode: "transport_error",
           });
@@ -1418,6 +1616,12 @@ export class DaemonClient {
       });
       this.rejectConnect(error instanceof Error ? error : new Error(message));
     }
+  }
+
+  private assertEncryptedRelayAuth(helloAuth: HelloAuth, isRelayTransport: boolean): void {
+    if (!isRelayTransport || !helloAuth || this.config.e2ee?.enabled === true) return;
+    this.setReconnectEnabled(false);
+    throw new Error("Relay credentials require E2EE");
   }
 
   private resolveConnect(): void {
@@ -1443,9 +1647,7 @@ export class DaemonClient {
       return;
     }
     this.shouldReconnect = false;
-    this.connectPromise = null;
-    this.connectResolve = null;
-    this.connectReject = null;
+    this.rejectConnect(new Error("Daemon client closed"));
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
@@ -1488,7 +1690,9 @@ export class DaemonClient {
       this.attemptConnect();
       return;
     }
-    void this.connect();
+    void this.connect().catch((error: unknown) =>
+      this.logger.debug({ err: error }, "Connection attempt ended"),
+    );
   }
 
   private verifyConnection(): void {
@@ -1513,6 +1717,119 @@ export class DaemonClient {
       });
   }
 
+  requireConnectedHosts(): void {
+    if (!this.isConnected)
+      throw Object.assign(new Error("The managing daemon is offline"), {
+        code: "host_offline",
+        serverId: this.destinationServerId,
+      });
+    if (this.lastServerInfoMessage?.features?.connectedHosts !== true)
+      throw Object.assign(new Error("Update the managing daemon to use connected hosts"), {
+        code: "unsupported_capability",
+      });
+  }
+  async listHosts(): Promise<HostDirectory> {
+    this.requireConnectedHosts();
+    return (
+      await this.sendCorrelatedSessionRequest({
+        message: { type: "hosts.list.request" },
+        responseType: "hosts.list.response",
+      })
+    ).directory;
+  }
+  observeHosts(): OwnedSubscription<HostDirectory> {
+    this.requireConnectedHosts();
+    return this.owned.observe(async (accept) => {
+      const result = await this.sendCorrelatedSessionRequest({
+        message: { type: "hosts.list.request", observe: true },
+        responseType: "hosts.list.response",
+      });
+      if (!result.subscriptionId) throw new Error("Host omitted subscription identity");
+      const snapshot = { ...result.directory, subscriptionId: result.subscriptionId };
+      accept(snapshot);
+      return snapshot;
+    });
+  }
+  async addHost(input: HostAdd) {
+    this.requireConnectedHosts();
+    return (
+      await this.sendCorrelatedSessionRequest({
+        message: { type: "hosts.add.request", input },
+        responseType: "hosts.add.response",
+      })
+    ).host;
+  }
+  async updateHost(registrationId: string, patch: HostUpdate) {
+    this.requireConnectedHosts();
+    return (
+      await this.sendCorrelatedSessionRequest({
+        message: { type: "hosts.update.request", registrationId, patch },
+        responseType: "hosts.update.response",
+      })
+    ).host;
+  }
+  async removeHost(registrationId: string): Promise<void> {
+    this.requireConnectedHosts();
+    await this.sendCorrelatedSessionRequest({
+      message: { type: "hosts.remove.request", registrationId },
+      responseType: "hosts.remove.response",
+    });
+  }
+  async openHostRoute(serverId: string, scopeId: string): Promise<string> {
+    this.requireConnectedHosts();
+    try {
+      return (
+        await this.sendCorrelatedSessionRequest({
+          message: { type: "hosts.route.open.request", serverId, scopeId },
+          responseType: "hosts.route.open.response",
+        })
+      ).routeId;
+    } catch (error) {
+      throw Object.assign(error instanceof Error ? error : new Error("Host route failed"), {
+        serverId,
+      });
+    }
+  }
+  async openHostLink(channelId: string): Promise<string> {
+    this.requireConnectedHosts();
+    if (this.getLastServerInfoMessage()?.features?.hostMultiplexing !== true)
+      throw Object.assign(new Error("Update the destination daemon"), {
+        code: "unsupported_capability",
+      });
+    return (
+      await this.sendCorrelatedSessionRequest({
+        message: { type: "hosts.link.open.request", channelId },
+        responseType: "hosts.link.open.response",
+      })
+    ).routeId;
+  }
+  sendHostFrame(routeId: string, data: string | Uint8Array): void {
+    if (typeof data === "string") {
+      this.sendSessionMessageStrict({
+        type: "hosts.route.frame.request",
+        routeId,
+        data,
+        binary: false,
+      });
+    } else {
+      if (!this.isConnected || !this.transport) throw this.unavailableError();
+      this.sendTransportFrame(encodeHostRouteFrame(routeId, data));
+    }
+  }
+  private readonly hostFrameListeners = new Set<(frame: HostRouteFrame) => void>();
+  subscribeHostFrames(handler: (frame: HostRouteFrame) => void): () => void {
+    this.hostFrameListeners.add(handler);
+    return () => this.hostFrameListeners.delete(handler);
+  }
+  cancelHostRoute(scopeId: string): void {
+    if (this.isConnected && this.transport)
+      this.sendSessionMessageStrict({ type: "hosts.route.close.request", scopeId });
+  }
+  closeHostRoute(routeId: string): void {
+    if (this.isConnected && this.transport)
+      this.sendSessionMessageStrict({ type: "hosts.route.close.request", routeId });
+  }
+
   getConnectionState(): ConnectionState {
     return this.connectionState;
   }
@@ -1533,8 +1850,17 @@ export class DaemonClient {
     return this.connectionState.status === "connecting";
   }
 
+  /** The relay endpoint security this client requires on its next attempt. */
+  get relaySecurityFloor(): RelaySecurityMode | undefined {
+    return this.relaySecurityFloorValue;
+  }
+
   get lastError(): string | null {
     return this.lastErrorValue;
+  }
+
+  get authFailureReason(): DaemonAuthFailureReason | null {
+    return this.authFailureReasonValue;
   }
 
   getLastLivenessRttMs(): number | null {
@@ -1626,7 +1952,7 @@ export class DaemonClient {
     if (!trace?.isEnabled()) {
       return false;
     }
-    trace.beginSection(name, args);
+    trace.beginSection(name, { ...args, connectionAttempt: String(this.traceConnectionAttempt) });
     return true;
   }
 
@@ -1641,23 +1967,58 @@ export class DaemonClient {
     this.endTraceSection(isOpen);
   }
 
-  private sendJsonMessage(envelopeType: string, messageType: string, message: unknown): void {
-    this.traceInstant("paseo.ws.message.outbound", {
-      envelopeType,
-      messageType,
-    });
-    this.sendTransportFrame(JSON.stringify(message));
+  private beginSessionDispatchTrace(message: SessionOutboundMessage): boolean {
+    if (!this.config.trace?.isEnabled()) return false;
+    const fields = { messageType: message.type, ...describeRequestIdentity(message) };
+    this.traceInstant("paseo.ws.message.inbound", { envelopeType: "session", ...fields });
+    return this.beginTraceSection("paseo.ws.dispatch", fields);
   }
 
-  private sendTransportFrame(frame: string | Uint8Array | ArrayBuffer): void {
-    if (!this.transport) {
-      throw new DaemonConnectionError("Transport not connected");
+  private sendJsonMessage(
+    envelopeType: string,
+    messageType: string,
+    message: unknown,
+    submitted?: () => void,
+  ): void {
+    const isOpen =
+      this.config.trace?.isEnabled() === true &&
+      this.beginTraceSection("paseo.ws.message.outbound", {
+        envelopeType,
+        messageType,
+        ...describeRequestIdentity(message),
+      });
+    try {
+      this.sendTransportFrame(JSON.stringify(message), submitted);
+    } finally {
+      this.endTraceSection(isOpen);
     }
+  }
+
+  private sendSessionPayload(payload: SessionInboundMessage): void {
+    this.sendJsonMessage("session", payload.type, { type: "session", message: payload }, () => {
+      if (!("requestId" in payload) || typeof payload.requestId !== "string") return;
+      for (const waiter of this.waiters) {
+        if (waiter.requestId === payload.requestId) waiter.submitted = true;
+      }
+    });
+  }
+
+  private sendTransportFrame(
+    frame: string | Uint8Array | ArrayBuffer,
+    submitted?: () => void,
+  ): void {
+    if (!this.transport) {
+      throw this.unavailableError();
+    }
+    // The daemon closes the connection on an oversized message, and creations resubmit on reconnect.
+    assertTransportFrameFits(frame);
     const isOpen = this.beginTraceSection("paseo.ws.frame.outbound", {
       kind: typeof frame === "string" ? "text" : "binary",
       size: String(getTransportFrameSize(frame)),
+      sizeUnit: typeof frame === "string" ? "utf16-code-units" : "bytes",
     });
     try {
+      submitted?.();
       this.transport.send(frame);
     } finally {
       this.endTraceSection(isOpen);
@@ -1678,7 +2039,7 @@ export class DaemonClient {
     }
     const payload = SessionInboundMessageSchema.parse(message);
     try {
-      this.sendJsonMessage("session", payload.type, { type: "session", message: payload });
+      this.sendSessionPayload(payload);
     } catch (error) {
       if (this.config.suppressSendErrors) {
         return;
@@ -1715,12 +2076,23 @@ export class DaemonClient {
    * This prevents waiters from hanging forever when called during connection.
    */
   private sendSessionMessageOrThrow(message: SessionInboundMessage): Promise<void> {
+    return this.sendWhenConnected(() => {
+      const payload = SessionInboundMessageSchema.parse(message);
+      this.sendSessionPayload(payload);
+    });
+  }
+
+  /** Resolves once connected, waiting out a connection that is still being established. */
+  private whenConnected(): Promise<void> {
+    return this.sendWhenConnected(() => undefined);
+  }
+
+  private sendWhenConnected(send: () => void): Promise<void> {
     const status = this.connectionState.status;
 
     // If connected, send immediately
     if (this.transport && status === "connected") {
-      const payload = SessionInboundMessageSchema.parse(message);
-      this.sendJsonMessage("session", payload.type, { type: "session", message: payload });
+      send();
       return Promise.resolve();
     }
 
@@ -1741,12 +2113,12 @@ export class DaemonClient {
           );
         }, DEFAULT_SEND_QUEUE_TIMEOUT_MS);
 
-        this.pendingSendQueue.push({ message, resolve, reject, timeoutHandle });
+        this.pendingSendQueue.push({ send, resolve, reject, timeoutHandle });
       });
     }
 
     // Not connected and not connecting - fail immediately
-    return Promise.reject(new DaemonConnectionError(`Transport not connected (status: ${status})`));
+    return Promise.reject(this.unavailableError());
   }
 
   /**
@@ -1760,8 +2132,7 @@ export class DaemonClient {
       clearTimeout(pending.timeoutHandle);
       try {
         if (this.transport && this.connectionState.status === "connected") {
-          const payload = SessionInboundMessageSchema.parse(pending.message);
-          this.sendJsonMessage("session", payload.type, { type: "session", message: payload });
+          pending.send();
           pending.resolve();
         } else {
           pending.reject(new DaemonConnectionError("Connection lost before message could be sent"));
@@ -1801,6 +2172,7 @@ export class DaemonClient {
             kind: "error",
             error: new DaemonRpcError({
               requestId: msg.payload.requestId,
+              serverId: this.destinationServerId,
               error: msg.payload.error,
               requestType: msg.payload.requestType,
               code: msg.payload.code,
@@ -1912,13 +2284,20 @@ export class DaemonClient {
     });
   }
 
+  private unavailableError(): DaemonConnectionError {
+    return new DaemonConnectionError("Transport not connected", "DAEMON_CONNECTION_LOST", {
+      serverId: this.destinationServerId,
+      cause: this.connectionFailure,
+    });
+  }
+
   private sendSessionMessageStrict(message: SessionInboundMessage): void {
     if (!this.transport || this.connectionState.status !== "connected") {
-      throw new DaemonConnectionError("Transport not connected");
+      throw this.unavailableError();
     }
     const payload = SessionInboundMessageSchema.parse(message);
     try {
-      this.sendJsonMessage("session", payload.type, { type: "session", message: payload });
+      this.sendSessionPayload(payload);
     } catch (error) {
       throw error instanceof Error ? error : new Error(String(error));
     }
@@ -2172,6 +2551,8 @@ export class DaemonClient {
       message,
       async (query, accept) => {
         resetSource = false;
+        if (query.type === "workspace.setup.subscribe.request")
+          this.requireWorkspaceSetupObservation();
         const requestId = this.createRequestId(options?.requestId);
         const request = SessionInboundMessageSchema.parse({ ...query, requestId });
         try {
@@ -2241,6 +2622,8 @@ export class DaemonClient {
   observeAgents(
     options: Omit<FetchAgentsOptions, "subscribe"> = {},
   ): OwnedSubscription<FetchAgentsPayload> {
+    if (options.includeBackground || options.filter?.includeBackground)
+      this.requireBackgroundWorkspaces();
     const { signal, requestId, timeout, ...query } = options;
     return this.observe(
       "fetch_agents_response",
@@ -2252,6 +2635,8 @@ export class DaemonClient {
   observeWorkspaces(
     options: Omit<FetchWorkspacesOptions, "subscribe"> = {},
   ): OwnedSubscription<FetchWorkspacesPayload> {
+    if (options.includeBackground || options.filter?.includeBackground)
+      this.requireBackgroundWorkspaces();
     const { signal, requestId, ...query } = options;
     return this.observe(
       "fetch_workspaces_response",
@@ -2267,6 +2652,8 @@ export class DaemonClient {
   async fetchAgents(
     options?: FetchAgentsOptions,
   ): Promise<FetchAgentsPayload & { subscription?: OwnedSubscription<FetchAgentsPayload> }> {
+    if (options?.includeBackground || options?.filter?.includeBackground)
+      this.requireBackgroundWorkspaces();
     if (options?.subscribe) {
       if (options.subscribe.subscriptionId !== undefined)
         throw new Error("Subscription IDs are assigned by the host");
@@ -2274,16 +2661,7 @@ export class DaemonClient {
       return { ...(await subscription.ready), subscription };
     }
     const resolvedRequestId = this.createRequestId(options?.requestId);
-    const message = SessionInboundMessageSchema.parse({
-      type: "fetch_agents_request",
-      requestId: resolvedRequestId,
-      ...(options?.scope ? { scope: options.scope } : {}),
-      ...(options?.filter ? { filter: options.filter } : {}),
-      ...(options?.sort ? { sort: options.sort } : {}),
-      ...(options?.page ? { page: options.page } : {}),
-      ...(options?.subscribe ? { subscribe: options.subscribe } : {}),
-      ...(options?.sync ? { sync: options.sync } : {}),
-    });
+    const message = buildFetchAgentsRequest(options, resolvedRequestId);
     return this.sendRequest({
       requestId: resolvedRequestId,
       message,
@@ -2302,6 +2680,7 @@ export class DaemonClient {
   }
 
   async fetchAgentHistory(options?: FetchAgentHistoryOptions): Promise<FetchAgentHistoryPayload> {
+    if (options?.filter?.includeBackground) this.requireBackgroundWorkspaces();
     const resolvedRequestId = this.createRequestId(options?.requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "fetch_agent_history_request",
@@ -2365,6 +2744,8 @@ export class DaemonClient {
   ): Promise<
     FetchWorkspacesPayload & { subscription?: OwnedSubscription<FetchWorkspacesPayload> }
   > {
+    if (options?.includeBackground || options?.filter?.includeBackground)
+      this.requireBackgroundWorkspaces();
     if (options?.subscribe) {
       if (options.subscribe.subscriptionId !== undefined)
         throw new Error("Subscription IDs are assigned by the host");
@@ -2374,12 +2755,8 @@ export class DaemonClient {
     const resolvedRequestId = this.createRequestId(options?.requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "fetch_workspaces_request",
+      ...options,
       requestId: resolvedRequestId,
-      ...(options?.filter ? { filter: options.filter } : {}),
-      ...(options?.sort ? { sort: options.sort } : {}),
-      ...(options?.page ? { page: options.page } : {}),
-      ...(options?.subscribe ? { subscribe: options.subscribe } : {}),
-      ...(options?.sync ? { sync: options.sync } : {}),
     });
     return this.sendRequest({
       requestId: resolvedRequestId,
@@ -2644,6 +3021,27 @@ export class DaemonClient {
     });
   }
 
+  observeWorkspaceSetup(
+    workspaceId: string,
+    options?: { signal?: AbortSignal },
+  ): OwnedSubscription<CorrelatedResponsePayload<"workspace.setup.subscribe.response">> {
+    return this.observe(
+      "workspace.setup.subscribe.response",
+      { type: "workspace.setup.subscribe.request", workspaceId },
+      options,
+    );
+  }
+
+  private requireWorkspaceSetupObservation(): void {
+    if (
+      this.lastServerInfoMessage?.features?.workspaceSetupObservation !== true ||
+      this.lastServerInfoMessage.features.ownedSubscriptions !== true ||
+      this.config.capabilities?.[CLIENT_CAPS.workspaceSetupObservation] === false ||
+      this.config.capabilities?.[CLIENT_CAPS.ownedSubscriptions] === false
+    )
+      throw new Error("Update the host to view workspace setup details");
+  }
+
   async fetchWorkspaceSetupStatus(
     workspaceId: string,
     requestId?: string,
@@ -2714,7 +3112,9 @@ export class DaemonClient {
   // ============================================================================
 
   private readonly creations = new CreationClient({
-    supports: (feature) => this.lastServerInfoMessage?.features?.[feature] === true,
+    supports: (feature) => {
+      return this.lastServerInfoMessage?.features?.[feature] === true;
+    },
     requestId: () => this.createRequestId(),
     request: (kind, input) =>
       kind === "workspace"
@@ -2752,7 +3152,24 @@ export class DaemonClient {
     legacyWorkspace: (input) => this.createLegacyWorkspace(input, input.requestId),
   });
 
+  // Background workspaces are gated once at the transport boundary.
+  private requireBackgroundWorkspaces(): void {
+    if (this.lastServerInfoMessage?.features?.backgroundWorkspaces !== true) {
+      throw new Error("Update the host to use background workspaces.");
+    }
+  }
+
+  supportsBackgroundWorkspaces(): boolean {
+    return this.lastServerInfoMessage?.features?.backgroundWorkspaces === true;
+  }
+
   async createAgent(options: CreateAgentRequestOptions): Promise<AgentSnapshotPayload> {
+    if (options.git !== undefined || options.worktreeName !== undefined) {
+      throw new Error(
+        "Legacy git/worktreeName agent placement was removed. Use createWorkspace({ source, agent, idempotencyKey }) or create a workspace first and pass workspaceId.",
+      );
+    }
+    if (options.background !== undefined) this.requireBackgroundWorkspaces();
     const result = await this.creations.createAgent({
       ...options,
       config: resolveAgentConfig(options),
@@ -2785,6 +3202,7 @@ export class DaemonClient {
       ...(options.git ? { git: options.git } : {}),
       ...(options.worktree ? { worktree: options.worktree } : {}),
       ...(options.autoArchive !== undefined ? { autoArchive: options.autoArchive } : {}),
+      ...(options.background !== undefined ? { background: options.background } : {}),
       ...(options.worktreeName ? { worktreeName: options.worktreeName } : {}),
       ...(options.labels && Object.keys(options.labels).length > 0
         ? { labels: options.labels }
@@ -3345,19 +3763,34 @@ export class DaemonClient {
   async sendAgentMessage(
     agentId: string,
     text: string,
-    options?: SendMessageOptions,
-  ): Promise<void> {
+    options: SendMessageOptions = {},
+  ): Promise<{ deliveryStatus?: "queued" }> {
+    if (
+      options.sourceAgentId &&
+      this.lastServerInfoMessage?.features?.agentMessageProvenance !== true
+    ) {
+      throw new Error("Update the Paseo host to send messages with agent provenance.");
+    }
+    if (
+      options.sourceAgentServerId &&
+      this.lastServerInfoMessage?.features?.agentMessageBatching !== true
+    ) {
+      throw new Error("Update the Paseo host to send messages with a qualified agent address.");
+    }
     const requestId = this.createRequestId();
-    const messageId = options?.messageId ?? crypto.randomUUID();
+    const messageId = options.messageId ?? crypto.randomUUID();
     const message = SessionInboundMessageSchema.parse({
       type: "send_agent_message_request",
       requestId,
       agentId,
       text,
+      sourceAgentId: options.sourceAgentId,
+      sourceAgentServerId: options.sourceAgentServerId,
+      sessionMode: options.sessionMode,
       ...(messageId ? { messageId } : {}),
-      ...(options?.activeTurnBehavior ? { activeTurnBehavior: options.activeTurnBehavior } : {}),
-      ...(options?.images ? { images: options.images } : {}),
-      ...(options?.attachments ? { attachments: options.attachments } : {}),
+      activeTurnBehavior: options.activeTurnBehavior,
+      images: options.images,
+      attachments: options.attachments,
     });
     const payload = await this.sendRequest({
       requestId,
@@ -3376,10 +3809,15 @@ export class DaemonClient {
     if (!payload.accepted) {
       throw new Error(payload.error ?? "sendAgentMessage rejected");
     }
+    return payload.deliveryStatus ? { deliveryStatus: payload.deliveryStatus } : {};
   }
 
-  async sendMessage(agentId: string, text: string, options?: SendMessageOptions): Promise<void> {
-    await this.sendAgentMessage(agentId, text, options);
+  async sendMessage(
+    agentId: string,
+    text: string,
+    options?: SendMessageOptions,
+  ): Promise<{ deliveryStatus?: "queued" }> {
+    return this.sendAgentMessage(agentId, text, options);
   }
 
   async rewindAgent(
@@ -3986,10 +4424,10 @@ export class DaemonClient {
   }
 
   private normalizeCheckoutDiffCompare(compare: {
-    mode: "uncommitted" | "base";
+    mode: "uncommitted" | "base" | "all";
     baseRef?: string;
     ignoreWhitespace?: boolean;
-  }): { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean } {
+  }): { mode: "uncommitted" | "base" | "all"; baseRef?: string; ignoreWhitespace?: boolean } {
     if (compare.mode === "uncommitted") {
       return compare.ignoreWhitespace === true
         ? { mode: "uncommitted", ignoreWhitespace: true }
@@ -3998,17 +4436,17 @@ export class DaemonClient {
     const trimmedBaseRef = compare.baseRef?.trim();
     if (!trimmedBaseRef) {
       return compare.ignoreWhitespace === true
-        ? { mode: "base", ignoreWhitespace: true }
-        : { mode: "base" };
+        ? { mode: compare.mode, ignoreWhitespace: true }
+        : { mode: compare.mode };
     }
     return compare.ignoreWhitespace === true
-      ? { mode: "base", baseRef: trimmedBaseRef, ignoreWhitespace: true }
-      : { mode: "base", baseRef: trimmedBaseRef };
+      ? { mode: compare.mode, baseRef: trimmedBaseRef, ignoreWhitespace: true }
+      : { mode: compare.mode, baseRef: trimmedBaseRef };
   }
 
   async getCheckoutDiff(
     cwd: string,
-    compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean },
+    compare: { mode: "uncommitted" | "base" | "all"; baseRef?: string; ignoreWhitespace?: boolean },
     requestId?: string,
   ): Promise<CheckoutDiffPayload> {
     return this.sendCorrelatedSessionRequest({
@@ -4024,7 +4462,7 @@ export class DaemonClient {
 
   observeCheckoutDiff(
     cwd: string,
-    compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean },
+    compare: { mode: "uncommitted" | "base" | "all"; baseRef?: string; ignoreWhitespace?: boolean },
     options?: { requestId?: string; signal?: AbortSignal },
   ): OwnedSubscription<SubscribeCheckoutDiffPayload> {
     return this.observe(
@@ -4452,6 +4890,9 @@ export class DaemonClient {
     requestId?: string,
   ): Promise<WorkspaceCreatePayload> {
     const resolvedRequestId = this.createRequestId(requestId ?? input.requestId);
+    if (input.background !== undefined || input.callerAgentId) this.requireBackgroundWorkspaces();
+    if (input.agent?.background !== undefined)
+      throw new Error("Configure background on the workspace, not its initial agent.");
     const result = await this.creations.createWorkspace({
       ...input,
       requestId: resolvedRequestId,
@@ -4483,6 +4924,8 @@ export class DaemonClient {
           ? { idempotencyKey: input.idempotencyKey }
           : {}),
         ...(input.title !== undefined ? { title: input.title } : {}),
+        ...(input.background !== undefined ? { background: input.background } : {}),
+        ...(input.callerAgentId ? { callerAgentId: input.callerAgentId } : {}),
         ...(input.firstAgentContext !== undefined
           ? { firstAgentContext: input.firstAgentContext }
           : {}),
@@ -4596,6 +5039,7 @@ export class DaemonClient {
     requestId?: string,
     acceptBinary = false,
     maxBytes?: number,
+    timeout?: number,
   ): Promise<FileExplorerPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
@@ -4608,6 +5052,7 @@ export class DaemonClient {
         ...(maxBytes ? { maxBytes } : {}),
       },
       responseType: "file_explorer_response",
+      timeout,
     });
   }
 
@@ -4626,11 +5071,17 @@ export class DaemonClient {
     return payload.directory;
   }
 
+  /**
+   * `timeout` bounds the whole transfer, not each frame. `0` disables the timer (as
+   * `workspace.create` does) for files that legitimately take longer than the default over a
+   * slow link; a dead connection still rejects on disconnect.
+   */
   async readFile(
     cwd: string,
     path: string,
     requestId?: string,
     maxBytes?: number,
+    timeout?: number,
   ): Promise<FileReadResult> {
     const resolvedRequestId = this.createRequestId(requestId);
     this.pendingBinaryFileReads.set(resolvedRequestId, { cwd, path, maxBytes });
@@ -4642,6 +5093,7 @@ export class DaemonClient {
         resolvedRequestId,
         true,
         maxBytes,
+        timeout,
       );
       if (payload.error) {
         throw new Error(payload.error);
@@ -4701,6 +5153,8 @@ export class DaemonClient {
     cwd: string;
     path: string;
     content: string;
+    /** `base64` requires `server_info.features.fileByteWrites`. */
+    contentEncoding?: "utf-8" | "base64";
     expectedModifiedAt: string;
     expectedRevision?: string;
   }): Promise<FileWriteResult> {
@@ -4764,6 +5218,8 @@ export class DaemonClient {
     if (!bytes) {
       throw new Error("File bytes are required.");
     }
+    // The file frames bypass the send queue, so start only on an open connection.
+    await this.whenConnected();
     const uploadTransport = this.transport;
     const resolvedRequestId = this.createRequestId(input.requestId);
     const modifiedAt = input.modifiedAt ?? new Date().toISOString();
@@ -5160,6 +5616,107 @@ export class DaemonClient {
     });
   }
 
+  async listUsageReports(
+    options?: {
+      agentId?: string;
+      requestId?: string;
+      forceRefresh?: boolean;
+      reportIds?: string[];
+    },
+    onReport?: (report: UsageReportEntry) => void,
+  ): Promise<UsageListReportsPayload> {
+    const features = this.getLastServerInfoMessage()?.features;
+    if (!supportsUsageReports(features)) {
+      throw new Error("Update the host to see usage.");
+    }
+    if (options?.agentId !== undefined && options.reportIds !== undefined)
+      throw new Error("agentId and reportIds cannot be combined");
+    // COMPAT(providerUsageList): added in v0.1.98, remove after 2027-03-26.
+    if (features?.usageSources !== true) {
+      if (options?.agentId !== undefined)
+        return { requestId: this.createRequestId(options.requestId), reports: [] };
+      // Released hosts serve a five-minute cache and have no forceRefresh option.
+      const payload = await this.listProviderUsage({ requestId: options?.requestId });
+      return {
+        requestId: payload.requestId,
+        reports: payload.providers
+          .filter(
+            (provider) => !options?.reportIds || options.reportIds.includes(provider.providerId),
+          )
+          .map((provider) => {
+            // COMPAT(providerUsageList): added in v0.1.98, remove after 2027-03-26.
+            // 0.10 reports have no typed problems; preserve their unavailable badge and error text.
+            let report: UsageListReportsPayload["reports"][number]["report"];
+            if (provider.status === "available") {
+              report = {
+                status: "available",
+                windows: provider.windows,
+                balances: provider.balances ?? undefined,
+                details: provider.details ?? undefined,
+                planLabel: provider.planLabel ?? undefined,
+              };
+            } else if (provider.status === "error") {
+              report = { status: "error", error: provider.error ?? "" };
+            } else {
+              report = {
+                status: "unavailable",
+                problem: { kind: "no_quota", detail: provider.error ?? "" },
+              };
+            }
+            return {
+              id: provider.providerId,
+              sourceId: provider.providerId,
+              sourceLabel: provider.displayName,
+              icon: legacyUsageIcon(provider.providerId),
+              account: {},
+              fetchedAt: provider.fetchedAt ?? payload.fetchedAt,
+              report,
+            };
+          }),
+      };
+    }
+    const requestId = this.createRequestId(options?.requestId);
+    const reports: UsageReportEntry[] = [];
+    let active = true;
+    const unsubscribe = this.subscribeRawMessages((message) => {
+      if (
+        !active ||
+        !("payload" in message) ||
+        !("requestId" in message.payload) ||
+        message.payload.requestId !== requestId
+      )
+        return;
+      if (message.type === "usage.list_reports.response" || message.type === "rpc_error") {
+        active = false;
+        return;
+      }
+      if (message.type !== "usage.list_reports.update") return;
+      reports.push(message.payload.report);
+      onReport?.(message.payload.report);
+    });
+    try {
+      const response = await this.sendRequest({
+        requestId,
+        message: {
+          type: "usage.list_reports.request",
+          requestId,
+          forceRefresh: options?.forceRefresh,
+          reportIds: options?.reportIds,
+          agentId: options?.agentId,
+        },
+        select: (message) =>
+          message.type === "usage.list_reports.response" && message.payload.requestId === requestId
+            ? message.payload
+            : null,
+      });
+      if (response.error !== null) throw new Error(response.error);
+      return { requestId, reports };
+    } finally {
+      active = false;
+      unsubscribe();
+    }
+  }
+
   async listCommands(options: ListCommandsOptions): Promise<ListCommandsPayload>;
   async listCommands(agentId: string, requestId?: string): Promise<ListCommandsPayload>;
   async listCommands(
@@ -5418,6 +5975,10 @@ export class DaemonClient {
       requestId,
       message: { type: `plugin.${action}.request`, requestId, pluginId },
       responseType: `plugin.${action}.response`,
+      // Reload tears the plugin down and starts it again before the daemon answers, and it queues
+      // behind other plugin lifecycle work. Wait for that answer instead of failing the reload at
+      // the request deadline while the daemon keeps loading it.
+      ...(action === "reload" ? { timeout: 0 } : {}),
     });
     return payload.plugin;
   }
@@ -5993,8 +6554,9 @@ export class DaemonClient {
     return this.config.url;
   }
 
-  private sendHelloMessage(): void {
-    if (!this.transport) {
+  private async sendHelloMessage(): Promise<void> {
+    const transport = this.transport;
+    if (!transport) {
       this.scheduleReconnect({
         reason: "Transport unavailable before hello",
         event: "HELLO_TRANSPORT_MISSING",
@@ -6004,11 +6566,17 @@ export class DaemonClient {
     }
 
     try {
+      if (this.transport !== transport) return;
+      const auth = this.helloAuth;
       this.sendJsonMessage("hello", "hello", {
         type: "hello",
+        ...(this.config.sessionPermissions
+          ? { sessionPermissions: this.config.sessionPermissions }
+          : {}),
         clientId: this.config.clientId,
         clientType: this.config.clientType ?? "cli",
         protocolVersion: 1,
+        ...(auth ? { auth } : {}),
         capabilities: {
           ...DEFAULT_CLIENT_CAPABILITIES,
           ...this.config.capabilities,
@@ -6087,12 +6655,13 @@ export class DaemonClient {
       return;
     }
 
-    const rawBytes = asUint8Array(rawData);
     const isOpen = this.beginTraceSection(
       "paseo.ws.frame.inbound",
-      describeInboundTransportFrame(rawData, rawBytes),
+      describeInboundTransportFrame(rawData),
     );
     try {
+      // Record arrival before conversion: encoding a large text frame is JS work too.
+      const rawBytes = asUint8Array(rawData);
       if (rawBytes && this.tryHandleBinaryFrame(rawBytes)) {
         return;
       }
@@ -6112,17 +6681,26 @@ export class DaemonClient {
     let parsedJson: unknown;
     const parseTraceOpen = this.beginTraceSection("paseo.ws.json.parse", {
       size: String(bytes),
+      sizeUnit: rawBytesLength === undefined ? "utf16-code-units" : "bytes",
     });
     try {
       parsedJson = JSON.parse(payload);
     } catch {
+      this.traceInstant("paseo.ws.json.invalid");
       return;
     } finally {
       this.endTraceSection(parseTraceOpen);
     }
 
-    const parsed = validateWSOutboundMessage(parsedJson);
+    const validationTrace = this.beginTraceSection("paseo.ws.validate");
+    let parsed: ReturnType<typeof validateWSOutboundMessage>;
+    try {
+      parsed = validateWSOutboundMessage(parsedJson);
+    } finally {
+      this.endTraceSection(validationTrace);
+    }
     if (!parsed.success) {
+      this.traceInstant("paseo.ws.validation.failed");
       const responseIdentity = extractCorrelatedResponseIdentity(parsedJson);
       const envelopeType =
         parsedJson != null &&
@@ -6154,11 +6732,25 @@ export class DaemonClient {
       return;
     }
 
-    this.traceInstant("paseo.ws.message.inbound", {
-      envelopeType: "session",
-      messageType: parsed.data.message.type,
-    });
-    this.handleSessionMessage(parsed.data.message);
+    if (parsed.data.type === "hello.rejected") {
+      this.traceInstant("paseo.connection.rejected", { reason: parsed.data.reason });
+      const reasonMessage = {
+        password_required: "Password required",
+        incorrect_password: "Incorrect password",
+        incompatible_protocol: "Incompatible protocol version",
+      };
+      this.lastErrorValue = reasonMessage[parsed.data.reason];
+      this.authFailureReasonValue =
+        parsed.data.reason === "incompatible_protocol" ? null : parsed.data.reason;
+      return;
+    }
+
+    const dispatchTrace = this.beginSessionDispatchTrace(parsed.data.message);
+    try {
+      this.handleSessionMessage(parsed.data.message);
+    } finally {
+      this.endTraceSection(dispatchTrace);
+    }
     const msgType = parsed.data.message.type;
     this.runtimeMetrics?.recordMessage(msgType, bytes, perfNow() - startMs);
     if (parsed.data.message.type === "agent_stream") {
@@ -6167,12 +6759,23 @@ export class DaemonClient {
   }
 
   private tryHandleBinaryFrame(rawBytes: Uint8Array): boolean {
+    const hostFrame = decodeHostRouteFrame(rawBytes);
+    if (rawBytes[0] === HOST_ROUTE_OPCODE && !hostFrame) {
+      this.disposeTransport(1008, "Invalid host routing frame");
+      this.scheduleReconnect({ reason: "Invalid host routing frame", event: "INVALID_HOST_FRAME" });
+      return true;
+    }
+    if (hostFrame) {
+      for (const handler of this.hostFrameListeners) handler(hostFrame);
+      return true;
+    }
     const fileFrame = decodeFileTransferFrame(rawBytes);
     if (fileFrame) {
       this.traceInstant("paseo.ws.message.inbound", {
         envelopeType: "binary",
         messageType: "file",
         opcode: String(fileFrame.opcode),
+        requestId: fileFrame.requestId,
       });
       this.consecutiveLivenessFailures = 0;
       this.handleFileTransferFrame(fileFrame);
@@ -6188,6 +6791,7 @@ export class DaemonClient {
       envelopeType: "binary",
       messageType: "terminal",
       opcode: String(frame.opcode),
+      slot: String(frame.slot),
     });
     this.consecutiveLivenessFailures = 0;
     const binaryStartMs = perfNow();
@@ -6259,6 +6863,18 @@ export class DaemonClient {
       return;
     }
 
+    const received = transfer.chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+    if (received !== transfer.size) {
+      this.activeBinaryFileTransfers.delete(frame.requestId);
+      this.rejectWaitersForRequestId(
+        frame.requestId,
+        new Error(
+          `File transfer incomplete: expected ${transfer.size} bytes, received ${received}.`,
+        ),
+      );
+      return;
+    }
+
     const bytes = concatByteChunks(transfer.chunks, transfer.size);
     this.activeBinaryFileTransfers.delete(frame.requestId);
     this.completedBinaryFileReads.set(frame.requestId, {
@@ -6294,6 +6910,12 @@ export class DaemonClient {
       next.status === "disconnected" && typeof next.reason === "string" ? next.reason : null;
     const reason = metadata?.reason ?? reasonFromNext;
     const reasonCode = metadata?.reasonCode ?? toReasonCode(reason);
+    this.traceInstant("paseo.connection.state", {
+      from: previous.status,
+      to: next.status,
+      event: metadata?.event ?? "STATE_UPDATE",
+      reasonCode: reasonCode ?? "none",
+    });
     this.logger.debug(
       {
         serverId: this.logServerId,
@@ -6326,6 +6948,7 @@ export class DaemonClient {
   }
 
   private scheduleReconnect(input?: {
+    failure?: Error;
     reason?: string;
     event?: string;
     reasonCode?: string;
@@ -6346,11 +6969,22 @@ export class DaemonClient {
 
     // Clear all pending waiters and queued sends since the connection was lost
     // and responses from the previous connection will never arrive.
-    this.clearWaiters(new DaemonConnectionError(reason ?? "Connection lost"));
-    this.rejectPendingSendQueue(new DaemonConnectionError(reason ?? "Connection lost"));
-    this.rejectPingProbe(new DaemonConnectionError(reason ?? "Connection lost"));
+    const connectionError = new DaemonConnectionError(
+      reason ?? "Connection lost",
+      "DAEMON_CONNECTION_LOST",
+      {
+        serverId: this.destinationServerId,
+        cause: input?.failure,
+      },
+    );
+    this.connectionFailure = input?.failure;
+    this.clearWaiters(connectionError, true);
+    this.rejectPendingSendQueue(connectionError);
+    this.rejectPingProbe(connectionError);
     this.terminalStreams.clearSlots();
     this.lastServerInfoMessage = null;
+
+    if (this.authFailureReasonValue) this.setReconnectEnabled(false);
 
     if (wasDisposed) {
       this.rejectConnect(new Error(reason ?? "Daemon client is disposed"));
@@ -6358,7 +6992,11 @@ export class DaemonClient {
     }
     this.emitDisconnectedStateForReconnect(reason, input);
     if (!this.shouldReconnect || this.config.reconnect?.enabled === false) {
-      this.rejectConnect(new Error(reason ?? "Transport disconnected before connect"));
+      this.rejectConnect(
+        this.authFailureReasonValue
+          ? new DaemonAuthenticationError(this.authFailureReasonValue)
+          : (input?.failure ?? new Error(reason ?? "Transport disconnected before connect")),
+      );
       return;
     }
 
@@ -6367,11 +7005,26 @@ export class DaemonClient {
 
   private emitDisconnectedStateForReconnect(
     reason: string | undefined,
-    input: { reason?: string; event?: string; reasonCode?: string } | undefined,
+    input: { reason?: string; event?: string; reasonCode?: string; failure?: Error } | undefined,
   ): void {
     this.updateConnectionState(
       {
         status: "disconnected",
+        ...(input?.failure && "code" in input.failure && typeof input.failure.code === "string"
+          ? { failureCode: input.failure.code }
+          : {}),
+        ...(this.shouldReconnect && this.config.reconnect?.enabled !== false
+          ? {
+              nextRetryAt: new Date(
+                Date.now() +
+                  Math.min(
+                    (this.config.reconnect?.baseDelayMs ?? DEFAULT_RECONNECT_BASE_DELAY_MS) *
+                      2 ** this.reconnectAttempt,
+                    this.config.reconnect?.maxDelayMs ?? DEFAULT_RECONNECT_MAX_DELAY_MS,
+                  ),
+              ).toISOString(),
+            }
+          : {}),
         ...(reason ? { reason } : {}),
       },
       {
@@ -6387,6 +7040,10 @@ export class DaemonClient {
     const baseDelay = this.config.reconnect?.baseDelayMs ?? DEFAULT_RECONNECT_BASE_DELAY_MS;
     const maxDelay = this.config.reconnect?.maxDelayMs ?? DEFAULT_RECONNECT_MAX_DELAY_MS;
     const delay = Math.min(baseDelay * 2 ** attempt, maxDelay);
+    this.traceInstant("paseo.connection.reconnect", {
+      attempt: String(attempt),
+      delayMs: String(delay),
+    });
     this.reconnectAttempt = attempt + 1;
     this.reconnectTimeout = setTimeout(() => {
       this.reconnectTimeout = null;
@@ -6465,6 +7122,8 @@ export class DaemonClient {
       const serverInfo = parseServerInfoStatusPayload(consumerMessage.payload);
       if (serverInfo) {
         this.lastServerInfoMessage = serverInfo;
+        this.destinationServerId = serverInfo.serverId;
+        this.connectionFailure = undefined;
         if (this.connectionState.status === "connecting") {
           this.resetConnectTimeout();
           this.reconnectAttempt = 0;
@@ -6548,12 +7207,20 @@ export class DaemonClient {
     }
   }
 
-  private clearWaiters(error: Error): void {
+  private clearWaiters(error: Error, connectionLost = false): void {
     for (const waiter of Array.from(this.waiters)) {
       if (waiter.timeoutHandle) {
         clearTimeout(waiter.timeoutHandle);
       }
-      waiter.reject(error);
+      waiter.reject(
+        connectionLost && waiter.submitted && error instanceof DaemonConnectionError
+          ? new DaemonConnectionError(error.message, error.code, {
+              serverId: error.serverId,
+              outcome: "unknown",
+              cause: error.cause instanceof Error ? error.cause : undefined,
+            })
+          : error,
+      );
     }
     this.waiters.clear();
   }
@@ -6660,6 +7327,7 @@ export class DaemonClient {
         reject: wrappedReject,
         timeoutHandle,
         requestId: options?.requestId,
+        submitted: false,
       };
       this.waiters.add(waiter);
     });
@@ -6707,6 +7375,7 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     attachments: _attachments,
     worktree: _worktree,
     autoArchive: _autoArchive,
+    background: _background,
     env: _env,
     workspaceId: _workspaceId,
     initialPrompt: _initialPrompt,

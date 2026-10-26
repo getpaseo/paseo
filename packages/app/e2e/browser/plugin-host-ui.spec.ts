@@ -1,19 +1,16 @@
+import { verifyPluginTranslations } from "../support/helpers/plugin-translations";
 import { pluginRequirements } from "../support/helpers/plugin-fixture";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
-import {
-  expectMobileAgentSidebarVisible,
-  openMobileAgentSidebar,
-} from "../support/helpers/sidebar";
 
 const PLUGIN_ID = "plugin-host-ui-e2e";
 
 const PLUGIN_SOURCE = `import { usePaseo } from "@getpaseo/plugin/client";
-import { Icon, Modal, useToast } from "@getpaseo/plugin/client/react-native";
+import { Icon, Modal, useToast, Markdown } from "@getpaseo/plugin/client/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import React, { useState } from "react";
 import { Pressable, Text, View } from "react-native";
@@ -30,15 +27,27 @@ function ModalBody({ onSaved }) {
 
   return <View>
     <Text>Plugin modal contexts ready</Text>
+    <Markdown>{"## Plugin report"}</Markdown>
+    <Markdown>{"Checks **passed**. [Documentation](https://paseo.sh/docs/plugins)"}</Markdown>
+    <Markdown>{""}</Markdown>
     <Pressable accessibilityRole="button" onPress={save}>
       <Text>Save issue</Text>
     </Pressable>
   </View>;
 }
 
-function Surface() {
+function Surface({ playAudio }) {
+  const [audioStatus, setAudioStatus] = useState("Audio ready");
+  async function play(base64) {
+    setAudioStatus("Playing audio");
+    try { await playAudio({ base64, mimeType: "audio/wav" }); setAudioStatus("Audio finished"); }
+    catch { setAudioStatus("Audio rejected"); }
+  }
   const [open, setOpen] = useState(false);
   return <View>
+    <Text>{audioStatus}</Text>
+    <Pressable accessibilityRole="button" onPress={() => play(AUDIO_BASE64)}><Text>Play plugin audio</Text></Pressable>
+    <Pressable accessibilityRole="button" onPress={() => play("UklGRg==")}><Text>Play invalid audio</Text></Pressable>
     <Pressable accessibilityRole="button" onPress={() => setOpen(true)}>
       <View style={{ flexDirection: "row" }}>
         <Icon name="Pencil" size={18} />
@@ -59,7 +68,7 @@ function Surface() {
 }
 
 export default function contribute(plugin) {
-  plugin.addSurface("main", Surface);
+  plugin.addSurface("main", () => <Surface playAudio={plugin.playAudio} />);
   plugin.addSidebarItem({
     id: "main",
     title: "Host UI",
@@ -82,20 +91,24 @@ async function useCompactLayout(page: Page): Promise<void> {
   await page.setViewportSize({ width: 390, height: 844 });
 }
 
-async function reopenHostUiPluginFromCompactSidebar(page: Page): Promise<void> {
-  await openMobileAgentSidebar(page);
-  await expectMobileAgentSidebarVisible(page);
-  await page.getByRole("button", { name: "Host UI", exact: true }).click();
-}
-
 async function openPluginModal(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Open plugin modal", exact: true }).click();
+}
+
+async function expectPluginMarkdown(page: Page): Promise<void> {
+  await expect(page.getByRole("heading", { name: "Plugin report" })).toBeVisible();
+  await expect(page.getByText("Checks passed.", { exact: false })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Documentation", exact: true })).toHaveAttribute(
+    "href",
+    "https://paseo.sh/docs/plugins",
+  );
 }
 
 async function expectCenteredPluginDialog(page: Page): Promise<void> {
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByText("Edit plugin issue", { exact: true })).toBeVisible();
   await expect(dialog.getByText("Plugin modal contexts ready", { exact: true })).toBeVisible();
+  await expectPluginMarkdown(page);
 }
 
 async function closeCenteredPluginDialog(page: Page): Promise<void> {
@@ -107,6 +120,7 @@ async function closeCenteredPluginDialog(page: Page): Promise<void> {
 async function expectCompactPluginSheet(page: Page): Promise<void> {
   await expect(page.getByText("Edit plugin issue", { exact: true })).toBeVisible();
   await expect(page.getByText("Plugin modal contexts ready", { exact: true })).toBeVisible();
+  await expectPluginMarkdown(page);
 }
 
 async function savePluginIssue(page: Page): Promise<void> {
@@ -123,13 +137,23 @@ test("plugin modal adapts its presentation and preserves host contexts", async (
     path.join(directory, "paseo-plugin.json"),
     JSON.stringify({ id: PLUGIN_ID, requirements: pluginRequirements }),
   );
-  await writeFile(path.join(directory, "index.client.tsx"), PLUGIN_SOURCE);
+  const audio = await readFile(path.resolve(__dirname, "../../assets/audio/thinking-tone.wav"));
+  await writeFile(
+    path.join(directory, "index.client.tsx"),
+    `const AUDIO_BASE64 = ${JSON.stringify(audio.toString("base64"))};\n${PLUGIN_SOURCE}`,
+  );
 
   try {
     await client.patchDaemonConfig({ pluginsEnabled: true });
     await client.installDirectoryPlugin(directory);
     await useNonCompactLayout(page);
     await openHostUiPlugin(page);
+
+    await test.step("plugin audio finishes, rejects corrupt files, and recovers", async () => {
+      await playPluginAudio(page, "Play plugin audio", "Audio finished");
+      await playPluginAudio(page, "Play invalid audio", "Audio rejected");
+      await playPluginAudio(page, "Play plugin audio", "Audio finished");
+    });
 
     await test.step("non-compact layouts use a centered dialog", async () => {
       await openPluginModal(page);
@@ -139,7 +163,6 @@ test("plugin modal adapts its presentation and preserves host contexts", async (
 
     await test.step("compact layouts preserve host contexts inside a sheet", async () => {
       await useCompactLayout(page);
-      await reopenHostUiPluginFromCompactSidebar(page);
       await openPluginModal(page);
       await expectCompactPluginSheet(page);
       await savePluginIssue(page);
@@ -152,4 +175,16 @@ test("plugin modal adapts its presentation and preserves host contexts", async (
     await client.close().catch(() => undefined);
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+async function playPluginAudio(page: Page, button: string, result: string) {
+  await page.getByRole("button", { name: button, exact: true }).click();
+  await expect(page.getByText(result, { exact: true })).toBeVisible();
+}
+
+test("plugin content and host labels follow app language without losing an open draft", async ({
+  page,
+}, info) => {
+  test.setTimeout(180_000);
+  await verifyPluginTranslations(page, info);
 });

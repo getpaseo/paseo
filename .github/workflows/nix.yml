@@ -36,7 +36,7 @@ jobs:
           PASEO_HOME="$(mktemp -d)"
           export PASEO_LISTEN=127.0.0.1:6767
 
-          WRAPPER_LOG="$PASEO_HOME/paseo-server-wrapper.log"
+          WRAPPER_LOG="$PASEO_HOME/paseo-cli.log"
 
           cleanup() {
             if [[ -n "${DAEMON_PID:-}" ]] && kill -0 "$DAEMON_PID" 2>/dev/null; then
@@ -47,7 +47,7 @@ jobs:
           }
           trap cleanup EXIT
 
-          PASEO_WEB_UI_ENABLED=true ./result/bin/paseo-server --no-relay >"$WRAPPER_LOG" 2>&1 &
+          PASEO_WEB_UI_ENABLED=true PASEO_RELAY_ENABLED=false ./result/bin/paseo daemon run >"$WRAPPER_LOG" 2>&1 &
           DAEMON_PID=$!
 
           deadline=$((SECONDS + 30))
@@ -57,7 +57,22 @@ jobs:
               echo "$STATUS_JSON"
               curl --fail --silent --show-error http://127.0.0.1:6767/ >"$PASEO_HOME/web-ui.html"
               [[ -s "$PASEO_HOME/web-ui.html" ]]
-              exit 0
+              if ! TERMINAL_JSON="$(./result/bin/paseo terminal create --cwd "$PASEO_HOME" --name nix-smoke --json)"; then
+                break
+              fi
+              TERMINAL_ID="$(jq -er '.id' <<<"$TERMINAL_JSON")"
+              ./result/bin/paseo terminal send-keys "$TERMINAL_ID" 'PATH= "$PASEO_HOOK_CLI" --version && printf "nix-terminal-%s\n" ok' Enter
+              deadline=$((SECONDS + 15))
+              while (( SECONDS < deadline )); do
+                if ./result/bin/paseo terminal capture "$TERMINAL_ID" --json \
+                  | jq -e '.lines | any(. == "nix-terminal-ok")' >/dev/null; then
+                  ./result/bin/paseo terminal kill "$TERMINAL_ID"
+                  exit 0
+                fi
+                sleep 1
+              done
+              echo "Nix terminal did not execute the command."
+              break
             fi
 
             if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
@@ -72,7 +87,7 @@ jobs:
           cat "$PASEO_HOME/daemon.log" 2>/dev/null || echo "<missing>"
           echo "::endgroup::"
 
-          echo "::group::paseo-server stdout/stderr"
+          echo "::group::paseo daemon run stdout/stderr"
           cat "$WRAPPER_LOG" 2>/dev/null || echo "<missing>"
           echo "::endgroup::"
 

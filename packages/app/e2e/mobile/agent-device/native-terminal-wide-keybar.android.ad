@@ -1,0 +1,24 @@
+context platform=android timeout=90000 retries=1
+env APP_ID=sh.paseo.debug
+
+open "${APP_ID}"
+wait "id=\"workspace-new-tab-button\"" 45000
+press "id=\"workspace-new-tab-button\""
+wait "id=\"workspace-new-tab-menu-terminal\"" 10000
+press "id=\"workspace-new-tab-menu-terminal\""
+wait "id=\"terminal-key-esc\"" 10000
+is visible "id=\"terminal-virtual-keyboard-native-wide\""
+is visible "id=\"terminal-key-esc\""
+is visible "id=\"terminal-key-ctrl\""
+is visible "id=\"terminal-key-enter\""
+is visible "id=\"terminal-paste\""
+press "id=\"terminal-keyboard-toggle\""
+type "printf '__AD_%s__\\n' NATIVE_WIDE_KEY_OK" --delay-ms 0
+press "id=\"terminal-key-enter\""
+wait "text" "__AD_NATIVE_WIDE_KEY_OK__" 10000
+press "id=\"terminal-key-ctrl\""
+type "c" --delay-ms 0
+type "printf '__AD_%s__\\n' MODIFIER_RESET_OK" --delay-ms 0
+press "id=\"terminal-key-enter\""
+wait "text" "__AD_MODIFIER_RESET_OK__" 10000
+close

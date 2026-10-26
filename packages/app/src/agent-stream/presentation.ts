@@ -1,29 +1,38 @@
-import type { AssistantMessageItem, StreamItem, UserMessageItem } from "@/types/stream";
+import type { ChatDisplay } from "@/hooks/use-settings";
 import type { TimelineItemTransform } from "@/plugins/timeline/model";
 import { projectPluginTimelineItems } from "@/plugins/timeline/projection";
-import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
 import {
   prepareToolCallHistory,
   projectToolCallDetailLevel,
   type PreparedToolCallHistory,
   type ToolCallDetailLevel,
+  type ToolCallDetailProjection,
 } from "@/tool-calls/detail-level/projection";
+import type { StreamItem, UserMessageItem } from "@/types/stream";
+import { collapseTurns, type TurnCollapse } from "./turn-collapse/model";
 
 interface PresentationInput {
   tail: StreamItem[];
   head: StreamItem[];
   transform: TimelineItemTransform | undefined;
-  level: ToolCallDetailLevel;
+  display: ChatDisplay;
+  /** User messages whose collapsed turn the reader opened. */
+  expandedTurnHostIds: ReadonlySet<string>;
   isTurnActive: boolean;
 }
 
-function retainItems(previous: StreamItem[], next: StreamItem[]): StreamItem[] {
-  return previous.length === next.length && previous.every((item, index) => item === next[index])
-    ? previous
-    : next;
+export interface StreamPresentation extends ToolCallDetailProjection {
+  turns: Omit<TurnCollapse, "tail">;
 }
 
-/** Source messages reach plugins before any Markdown splitting or Overview grouping. */
+const NO_COLLAPSED_TURNS: StreamPresentation["turns"] = collapseTurns({
+  tail: [],
+  isLatestTurnOpen: false,
+  expandedHostIds: new Set(),
+  getGroupedCalls: () => undefined,
+});
+
+/** Source messages reach plugins before display projection. */
 export function createStreamPresentation() {
   const userMessageCache = new WeakMap<UserMessageItem, UserMessageItem>();
 
@@ -42,115 +51,80 @@ export function createStreamPresentation() {
     return projected;
   }
 
-  const blocksBySource = new WeakMap<AssistantMessageItem, AssistantMessageItem[]>();
-  let liveSources = new Map<string, AssistantMessageItem>();
   let historySource: StreamItem[] | undefined;
   let historyTransform: TimelineItemTransform | undefined;
   let historyRows: StreamItem[] = [];
-  let displayTail: StreamItem[] = [];
-  let displayHistory: StreamItem[] | undefined;
-  let promotedRows: StreamItem[] = [];
   let preparedTail: StreamItem[] | undefined;
   let preparedLevel: ToolCallDetailLevel | undefined;
   let preparedHistory: PreparedToolCallHistory | null = null;
+  let collapsedSource: StreamItem[] | undefined;
+  let collapsedIsLatestTurnOpen = false;
+  let collapsedExpandedHostIds: ReadonlySet<string> | undefined;
+  let collapsed: TurnCollapse | undefined;
 
-  function nativeBlocks(item: StreamItem): StreamItem[] {
-    if (item.kind === "user_message") return [presentUserMessage(item)];
-    if (item.kind !== "assistant_message") return [item];
-    const cached = blocksBySource.get(item);
-    if (cached) return cached;
-    const previousSource = liveSources.get(item.id);
-    const previous = previousSource && blocksBySource.get(previousSource);
-    // Parse only the growing last block on append, as the old live reducer did.
-    // Canonical text replacements are parsed afresh instead of joining fragments.
-    const isAppend = previousSource && previous && item.text.startsWith(previousSource.text);
-    let prefix: AssistantMessageItem[] = [];
-    let growingText = item.text;
-    if (isAppend) {
-      prefix = previous.slice(0, -1);
-      growingText =
-        previous[previous.length - 1]!.text + item.text.slice(previousSource.text.length);
-    }
-    const textBlocks = splitMarkdownBlocks(growingText);
-    if (prefix.length + textBlocks.length < 2) {
-      blocksBySource.set(item, [item]);
-      return [item];
-    }
-
-    const blocks = [...prefix];
-    for (const [offset, text] of textBlocks.entries()) {
-      const index = prefix.length + offset;
-      let blockText = text;
-      if (offset === textBlocks.length - 1) {
-        const trailingNewlines = /\n+$/.exec(item.text)?.[0] ?? "";
-        blockText += trailingNewlines;
-      }
-      const existing = previous?.[index];
-      const id = `${item.id}:block:${index}`;
-      // Completed display blocks keep their first cursor and object identity while
-      // the source message grows. The source itself always retains the latest cursor.
-      if (existing?.id === id && existing.text === blockText && existing.turnId === item.turnId) {
-        blocks.push(existing);
-        continue;
-      }
-      blocks.push({
-        ...item,
-        id,
-        blockGroupId: item.id,
-        blockIndex: index,
-        text: blockText,
-      });
-    }
-    blocksBySource.set(item, blocks);
-    return blocks;
+  function presentRows(item: StreamItem): StreamItem[] {
+    return [item.kind === "user_message" ? presentUserMessage(item) : item];
   }
 
-  return (input: PresentationInput) => {
+  function collapse(
+    projection: ToolCallDetailProjection,
+    input: PresentationInput,
+  ): StreamPresentation {
+    if (input.display !== "collapseTurns") {
+      return { ...projection, turns: NO_COLLAPSED_TURNS };
+    }
+    // Live text updates reach the head only, so the folded history is reused until the
+    // retained rows, the latest turn's liveness, or the reader's expanded turns change.
+    const isLatestTurnOpen = input.isTurnActive || projection.head.length > 0;
+    if (
+      !collapsed ||
+      collapsedSource !== projection.tail ||
+      collapsedIsLatestTurnOpen !== isLatestTurnOpen ||
+      collapsedExpandedHostIds !== input.expandedTurnHostIds
+    ) {
+      collapsed = collapseTurns({
+        tail: projection.tail,
+        isLatestTurnOpen,
+        expandedHostIds: input.expandedTurnHostIds,
+        getGroupedCalls: (itemId) => projection.groupsByHostId.get(itemId)?.run.calls,
+      });
+      collapsedSource = projection.tail;
+      collapsedIsLatestTurnOpen = isLatestTurnOpen;
+      collapsedExpandedHostIds = input.expandedTurnHostIds;
+    }
+    const { tail, ...turns } = collapsed;
+    return { ...projection, tail, turns };
+  }
+
+  return (input: PresentationInput): StreamPresentation => {
+    const level: ToolCallDetailLevel = input.display === "full" ? "detailed" : "overview";
     // Retained history is not reprojected or regrouped on each live text update.
     if (historySource !== input.tail || historyTransform !== input.transform) {
       historyRows = projectPluginTimelineItems(input.tail, input.transform).flatMap<StreamItem>(
-        (item) => {
-          // Preserve live block identities at completion; fetched native Markdown
-          // stays whole so links and other cross-block constructs keep their context.
-          if (item.kind === "assistant_message") return blocksBySource.get(item) ?? [item];
-          return [item.kind === "user_message" ? presentUserMessage(item) : item];
-        },
+        (item) => presentRows(item),
       );
       historySource = input.tail;
       historyTransform = input.transform;
     }
     const head: StreamItem[] = [];
-    const promoted: StreamItem[] = [];
-    const nextLiveSources = new Map<string, AssistantMessageItem>();
     for (const item of projectPluginTimelineItems(input.head, input.transform, "streaming")) {
-      const blocks = nativeBlocks(item);
-      if (item.kind === "assistant_message") nextLiveSources.set(item.id, item);
-      if (item.kind === "assistant_message" && blocks.length > 1) {
-        promoted.push(...blocks.slice(0, -1));
-        head.push(blocks[blocks.length - 1]!);
-      } else {
-        head.push(...blocks);
-      }
+      const blocks = presentRows(item);
+      head.push(...blocks);
     }
-    liveSources = nextLiveSources;
-    const nextPromoted = retainItems(promotedRows, promoted);
-    if (displayHistory !== historyRows || nextPromoted !== promotedRows) {
-      displayTail = historyRows;
-      if (nextPromoted.length > 0) displayTail = [...historyRows, ...nextPromoted];
-      displayHistory = historyRows;
-      promotedRows = nextPromoted;
+    if (preparedTail !== historyRows || preparedLevel !== level) {
+      preparedHistory = prepareToolCallHistory(level, historyRows);
+      preparedTail = historyRows;
+      preparedLevel = level;
     }
-    if (preparedTail !== displayTail || preparedLevel !== input.level) {
-      preparedHistory = prepareToolCallHistory(input.level, displayTail);
-      preparedTail = displayTail;
-      preparedLevel = input.level;
-    }
-    return projectToolCallDetailLevel({
-      level: input.level,
-      tail: displayTail,
-      head,
-      preparedHistory,
-      isTurnActive: input.isTurnActive,
-    });
+    return collapse(
+      projectToolCallDetailLevel({
+        level,
+        tail: historyRows,
+        head,
+        preparedHistory,
+        isTurnActive: input.isTurnActive,
+      }),
+      input,
+    );
   };
 }

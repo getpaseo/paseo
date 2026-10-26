@@ -140,11 +140,11 @@ function imageMessages(items: AgentTimelineItem[]): string[] {
   return items
     .filter((item) => item.type === "assistant_message")
     .map((item) => (item as { text: string }).text)
-    .filter((text) => text.startsWith("!["));
+    .filter((text) => text.trimStart().startsWith("!["));
 }
 
 function markdownImageSource(markdown: string): string {
-  const match = markdown.match(/^!\[[^\]]*]\((.*)\)$/);
+  const match = markdown.trim().match(/^!\[[^\]]*]\((.*)\)$/);
   if (!match) {
     throw new Error(`Expected markdown image, got: ${markdown}`);
   }

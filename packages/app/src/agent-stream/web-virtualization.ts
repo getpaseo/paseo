@@ -10,21 +10,6 @@ export const DEFAULT_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD = 100;
 export const DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS = DEFAULT_MOUNTED_RECENT_STREAM_ITEMS;
 const COLLAPSED_TOOL_SEQUENCE_ROW_HEIGHT_ESTIMATE = 40;
 
-export function shouldAdjustScrollForVirtualRowResize(input: {
-  isHistoryStartPrependActive: boolean;
-  rowStart: number;
-  scrollOffset: number;
-  remainingDistanceFromBottom: number;
-  bottomThreshold: number;
-}): boolean {
-  if (input.isHistoryStartPrependActive) {
-    return false;
-  }
-  return (
-    input.remainingDistanceFromBottom > input.bottomThreshold && input.rowStart < input.scrollOffset
-  );
-}
-
 type BottomAnchorE2ETestGlobals = typeof globalThis & {
   __PASEO_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD?: unknown;
 };
@@ -58,12 +43,25 @@ export interface WebVirtualizedHistoryWindow {
   mountedEntries: IndexedStreamItem[];
 }
 
-export function estimateStreamItemHeight(item: StreamItem): number {
+interface StreamItemHeightEstimateInput {
+  item: StreamItem;
+  contentMaxWidth: number;
+}
+
+export function estimateStreamItemHeight({
+  item,
+  contentMaxWidth,
+}: StreamItemHeightEstimateInput): number {
   switch (item.kind) {
     case "user_message":
       return item.images && item.images.length > 0 ? 220 : 96;
     case "assistant_message":
-      return estimateAssistantMessageHeightFromCache(item.text) ?? 220;
+      return (
+        estimateAssistantMessageHeightFromCache({
+          markdown: item.text,
+          contentMaxWidth,
+        }) ?? 220
+      );
     case "tool_call":
       return COLLAPSED_TOOL_SEQUENCE_ROW_HEIGHT_ESTIMATE;
     case "thought":

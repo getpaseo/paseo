@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View } from "react-native";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect } from "expo-router/react-navigation";
 import { StyleSheet } from "react-native-unistyles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, MoreVertical, Pencil, Plus } from "lucide-react-native";
@@ -419,7 +419,7 @@ function ReadFailureCallout({ kind, error, onReload }: ReadFailureCalloutProps) 
   });
   return (
     <View style={styles.errorBlock}>
-      <Alert testID={testID} variant="error" title={title} description={description}>
+      <Alert size="md" testID={testID} variant="error" title={title} description={description}>
         <Button testID={`${testID}-action-0`} onPress={onReload} variant="outline" size="sm">
           {t("settings.project.actions.reload")}
         </Button>
@@ -702,6 +702,7 @@ function ProjectConfigForm({
         >
           {hasUncommittedWorktreeSetupChanges ? (
             <Alert
+              size="sm"
               variant="warning"
               title={t("settings.project.worktree.uncommittedTitle")}
               description={t("settings.project.worktree.uncommittedDescription")}
@@ -776,6 +777,7 @@ function ProjectConfigForm({
       {isStale ? (
         <View style={styles.calloutWrap}>
           <Alert
+            size="sm"
             testID="stale-callout"
             variant="error"
             title={t("settings.project.writeFailures.staleTitle")}
@@ -796,6 +798,7 @@ function ProjectConfigForm({
       {isWriteFailed ? (
         <View style={styles.calloutWrap}>
           <Alert
+            size="sm"
             testID="write-failed-callout"
             variant="error"
             title={t("settings.project.writeFailures.failedTitle")}

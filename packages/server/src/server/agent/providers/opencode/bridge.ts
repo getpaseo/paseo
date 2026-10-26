@@ -11,10 +11,21 @@ import {
   addModelVisibleStructuredContent,
   serializePaseoToolInputParameters,
 } from "../../tools/paseo-tool-serialization.js";
-import type { PaseoToolCatalog } from "../../tools/types.js";
+import { PaseoToolInputError, type PaseoToolCatalog } from "../../tools/types.js";
 
 const INTERNAL_PREFIX = "/_internal/opencode";
 const MAX_REQUEST_BYTES = 1024 * 1024;
+
+class OpenCodeBridgeClientError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+    readonly details?: unknown,
+  ) {
+    super(message);
+    this.name = "OpenCodeBridgeClientError";
+  }
+}
 
 interface OpenCodeBridgeOptions {
   paseoHome: string;
@@ -48,7 +59,8 @@ export class OpenCodeBridge {
   private server: Server | null = null;
   private baseUrl: string | null = null;
   private pluginUrl: string | null = null;
-  private manifestCatalog: PaseoToolCatalog | null = null;
+  private v2PluginUrl: string | null = null;
+  private manifestCatalog: Pick<PaseoToolCatalog, "tools"> | null = null;
 
   constructor(options: OpenCodeBridgeOptions) {
     this.paseoHome = options.paseoHome;
@@ -77,7 +89,7 @@ export class OpenCodeBridge {
     this.baseUrl = `http://127.0.0.1:${address.port}`;
   }
 
-  setManifestCatalog(catalog: PaseoToolCatalog | null): void {
+  setManifestCatalog(catalog: Pick<PaseoToolCatalog, "tools"> | null): void {
     this.manifestCatalog = catalog;
   }
 
@@ -115,6 +127,14 @@ export class OpenCodeBridge {
     };
   }
 
+  async decorateV2ServerEnv(env: Record<string, string>): Promise<Record<string, string>> {
+    this.v2PluginUrl ??= await this.materializePlugin(2);
+    return decorateOpenCodeV2Env(env, this.v2PluginUrl, {
+      baseUrl: this.requireBaseUrl(),
+      token: this.token,
+    });
+  }
+
   async close(): Promise<void> {
     const server = this.server;
     this.server = null;
@@ -123,7 +143,8 @@ export class OpenCodeBridge {
     if (server) await closeServer(server);
   }
 
-  private async materializePlugin(): Promise<string> {
+  private async materializePlugin(version: 1 | 2 = 1): Promise<string> {
+    if (version === 2) return materializeOpenCodeV2Plugin(this.paseoHome);
     const artifact = await loadOpenCodeBridgePluginArtifact(import.meta.url);
     const digest = createHash("sha256").update(artifact).digest("hex");
     const destination = path.join(this.paseoHome, "runtime", "opencode", `paseo-${digest}.mjs`);
@@ -152,7 +173,12 @@ export class OpenCodeBridge {
           sendJson(response, 404, { error: "OpenCode session is not bound to a Paseo agent" });
           return;
         }
-        sendJson(response, 200, { env: binding.env });
+        sendJson(response, 200, {
+          env: binding.env,
+          ...(url.searchParams.has("tools")
+            ? { tools: [...(binding.tools?.tools.keys() ?? [])] }
+            : {}),
+        });
         return;
       }
 
@@ -172,10 +198,26 @@ export class OpenCodeBridge {
       sendJson(response, 404, { error: "Not found" });
     } catch (error) {
       this.logger.warn({ err: error }, "OpenCode bridge request failed");
+      const failure = error instanceof Error ? error : new Error(String(error));
       if (!response.headersSent) {
-        sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) });
+        if (error instanceof OpenCodeBridgeClientError) {
+          sendJson(response, error.status, {
+            error: error.message,
+            ...(error.details === undefined ? {} : { details: error.details }),
+          });
+        } else if (error instanceof PaseoToolInputError) {
+          sendJson(
+            response,
+            error.status,
+            error.issues
+              ? { error: "Invalid tool input", issues: error.issues }
+              : { error: error.message },
+          );
+        } else {
+          sendJson(response, 500, { error: failure.message });
+        }
       } else {
-        response.destroy(error instanceof Error ? error : new Error(String(error)));
+        response.destroy(failure);
       }
     }
   }
@@ -209,6 +251,9 @@ export class OpenCodeBridge {
       sendJson(input.response, 403, { error: "Paseo tools are disabled for this session" });
       return;
     }
+    if (!binding.tools.getTool(input.toolName)) {
+      throw new OpenCodeBridgeClientError(404, `Paseo tool not found: ${input.toolName}`);
+    }
     const body = await readJsonBody(input.request);
     const controller = new AbortController();
     input.request.once("aborted", () =>
@@ -231,13 +276,63 @@ export class OpenCodeBridge {
   }
 }
 
+export async function materializeOpenCodeV2Plugin(paseoHome: string): Promise<string> {
+  const artifact = await loadOpenCodeBridgePluginArtifact(import.meta.url, undefined, 2);
+  const digest = createHash("sha256").update(artifact).digest("hex");
+  // V2 ignores configured file paths; it loads a package directory's server entry point.
+  const directory = path.join(paseoHome, "runtime", "opencode", `paseo-v2-${digest}`);
+  await writeFileAtomic(path.join(directory, "server.js"), artifact);
+  await writeFileAtomic(
+    path.join(directory, "package.json"),
+    JSON.stringify({
+      name: "paseo-opencode-bridge",
+      private: true,
+      type: "module",
+      exports: { "./server": "./server.js" },
+    }),
+  );
+  return pathToFileURL(directory).href;
+}
+
+export function decorateOpenCodeV2Env(
+  env: Record<string, string>,
+  pluginUrl: string,
+  options: Record<string, string> = {},
+): Record<string, string> {
+  const config = parseOpenCodeConfig(env.OPENCODE_CONFIG_CONTENT);
+  const plugins = config.plugins;
+  if (plugins !== undefined && !Array.isArray(plugins))
+    throw new Error("OpenCode v2 plugins must be an array");
+  return {
+    ...env,
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({
+      ...config,
+      plugins: [
+        ...(plugins ?? []).filter(
+          (plugin: unknown) =>
+            plugin !== pluginUrl &&
+            !(
+              typeof plugin === "object" &&
+              plugin !== null &&
+              "package" in plugin &&
+              plugin.package === pluginUrl
+            ),
+        ),
+        { package: pluginUrl, options },
+      ],
+    }),
+  };
+}
+
 type CompileOpenCodeBridgePlugin = (sourcePath: string) => Promise<Uint8Array>;
 
 export async function loadOpenCodeBridgePluginArtifact(
   moduleUrl: string,
   compileSource: CompileOpenCodeBridgePlugin = compileOpenCodeBridgePlugin,
+  version: 1 | 2 = 1,
 ): Promise<Uint8Array> {
-  const bundleUrl = new URL("./bridge-plugin.bundle.mjs", moduleUrl);
+  const directory = version === 2 ? "./v2/" : "./";
+  const bundleUrl = new URL(`${directory}bridge-plugin.bundle.mjs`, moduleUrl);
   try {
     return await readFile(bundleUrl);
   } catch (error) {
@@ -245,7 +340,7 @@ export async function loadOpenCodeBridgePluginArtifact(
       throw new Error("Bundled OpenCode bridge plugin artifact is missing", { cause: error });
     }
   }
-  return compileSource(fileURLToPath(new URL("./bridge-plugin.mjs", moduleUrl)));
+  return compileSource(fileURLToPath(new URL(`${directory}bridge-plugin.mjs`, moduleUrl)));
 }
 
 async function compileOpenCodeBridgePlugin(sourcePath: string): Promise<Uint8Array> {
@@ -260,6 +355,7 @@ async function compileOpenCodeBridgePlugin(sourcePath: string): Promise<Uint8Arr
     bundle: true,
     format: "esm",
     platform: "neutral",
+    mainFields: ["module", "main"],
     target: "es2022",
     write: false,
   });
@@ -283,11 +379,17 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += buffer.byteLength;
-    if (size > MAX_REQUEST_BYTES) throw new Error("OpenCode bridge request body is too large");
+    if (size > MAX_REQUEST_BYTES) {
+      throw new OpenCodeBridgeClientError(413, "OpenCode bridge request body is too large");
+    }
     chunks.push(buffer);
   }
   if (chunks.length === 0) return {};
-  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+  } catch {
+    throw new OpenCodeBridgeClientError(400, "Malformed JSON request body");
+  }
 }
 
 function sendJson(response: ServerResponse, status: number, body: unknown): void {

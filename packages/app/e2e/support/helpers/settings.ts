@@ -20,8 +20,13 @@ interface SavedSettingsHostInput {
 
 const SECTION_LABELS = {
   general: "General",
+  chat: "Chat",
   appearance: "Appearance",
+  sidebar: "Sidebar",
   editor: "Editor",
+  files: "Files",
+  terminal: "Terminal",
+  browser: "Browser",
   shortcuts: "Shortcuts",
   integrations: "Integrations",
   permissions: "Permissions",
@@ -70,7 +75,7 @@ export async function openSettingsHostSection(
 }
 
 export async function expectSettingsHeader(page: Page, title: string): Promise<void> {
-  await expect(page.getByTestId("settings-detail-header-title")).toHaveText(title);
+  await expect(page.getByTestId("page-title")).toHaveText(title);
 }
 
 export async function openAddHostFlow(page: Page): Promise<void> {
@@ -91,12 +96,15 @@ export async function selectHostConnectionType(
 
 export async function addDirectHostFromSettings(
   page: Page,
-  input: { host: string; port: number },
+  input: { host: string; port: number; password?: string },
 ): Promise<void> {
   await openAddHostFlow(page);
   await selectHostConnectionType(page, "direct");
   await page.getByTestId("direct-host-input").fill(input.host);
   await page.getByTestId("direct-port-input").fill(String(input.port));
+  if (input.password) {
+    await page.getByTestId("direct-password-input").fill(input.password);
+  }
   await page.getByTestId("direct-host-submit").click();
   await expect(page.getByTestId("add-host-modal")).toHaveCount(0, { timeout: 30_000 });
 }
@@ -318,6 +326,25 @@ export async function expectHostInjectMcpCard(page: Page): Promise<void> {
   await expect(card.getByRole("switch", { name: "Inject Paseo tools" })).toBeVisible();
 }
 
+function idleAgentReleaseSwitch(page: Page) {
+  return page
+    .getByTestId("host-page-idle-runtime-cleanup-card")
+    .getByRole("switch", { name: "Release idle agents" });
+}
+
+export async function expectIdleAgentRelease(page: Page, enabled: boolean): Promise<void> {
+  const toggle = idleAgentReleaseSwitch(page);
+  await expect(toggle).toBeEnabled();
+  await expect(toggle).toHaveAttribute("aria-checked", String(enabled));
+}
+
+export async function setIdleAgentRelease(page: Page, enabled: boolean): Promise<void> {
+  const toggle = idleAgentReleaseSwitch(page);
+  await expect(toggle).toHaveAttribute("aria-checked", String(!enabled));
+  await toggle.click();
+  await expectIdleAgentRelease(page, enabled);
+}
+
 export async function openHostSection(
   page: Page,
   serverId: string,
@@ -363,7 +390,7 @@ export async function findAcpCatalogProvider(page: Page, providerName: string): 
 
 export async function installAcpCatalogProvider(page: Page, providerName: string): Promise<void> {
   await findAcpCatalogProvider(page, providerName);
-  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page.getByRole("button", { name: `Add ${providerName}`, exact: true }).click();
 }
 
 export async function expectProviderInstalledInSettings(
@@ -417,4 +444,32 @@ export async function expectLocalHostEntryFirst(page: Page, _serverId: string): 
   const picker = sidebar.getByTestId("settings-host-picker");
   await expect(picker).toBeVisible();
   await expect(picker.getByText(TEST_HOST_LABEL, { exact: true })).toBeVisible();
+}
+
+export async function expectHostRejectedWithReAddGuidance(
+  page: Page,
+  reason: string,
+): Promise<void> {
+  const error = page.getByTestId("host-connection-error");
+  await expect(error).toContainText(reason);
+  await expect(error).toContainText(
+    "Remove this host and add it again with the password this daemon asks for.",
+  );
+}
+
+export async function expectNoHostPasswordControls(page: Page): Promise<void> {
+  await expect(page.getByText("Password", { exact: true })).toHaveCount(0);
+  await expect(page.locator('input[type="password"]')).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /password/i })).toHaveCount(0);
+}
+
+export async function removeHostFromHostPage(page: Page, serverId: string): Promise<void> {
+  await page.getByTestId("host-page-remove-host-button").click();
+  await page.getByTestId("remove-host-confirm").click();
+  await expect(page).not.toHaveURL(new RegExp(`/settings/hosts/${serverId}`));
+}
+
+export async function expectHostOnlineWithoutError(page: Page): Promise<void> {
+  await expect(page.getByTestId("host-page-identity")).toContainText("Online");
+  await expect(page.getByTestId("host-connection-error")).toHaveCount(0);
 }

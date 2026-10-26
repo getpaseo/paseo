@@ -198,15 +198,20 @@ describe("useAgentInputDraft live contract", () => {
     });
 
     expect(getLatest().composerState?.agentControls.selectedProvider).toBe("codex");
-    expect(getLatest().composerState?.commandDraftConfig).toEqual({
-      provider: "codex",
-      cwd: "/repo",
-      modeId: "auto",
-      model: "gpt-5.4",
-      thinkingOptionId: "high",
+    expect(getLatest().composerState?.commandDraft).toEqual({
+      status: "ready",
+      config: {
+        provider: "codex",
+        cwd: "/repo",
+        modeId: "auto",
+        model: "gpt-5.4",
+        thinkingOptionId: "high",
+      },
     });
 
     const hydratedTextReplacement = getLatest().textReplacement;
+    // The editor applies a retained caret to the hydrated text, so hydration announces itself.
+    expect(hydratedTextReplacement.kind).toBe("hydrated");
 
     await act(async () => {
       getLatest().editText("hello world");
@@ -220,6 +225,7 @@ describe("useAgentInputDraft live contract", () => {
     });
 
     expect(getLatest().textReplacement).not.toBe(hydratedTextReplacement);
+    expect(getLatest().textReplacement.kind).toBe("replace");
     expect(getLatest().textReplacement.text).toBe("replacement text");
 
     await act(async () => {

@@ -1,0 +1,117 @@
+{
+  "provenance": {
+    "package": "@tintinweb/pi-subagents",
+    "version": "0.19.0",
+    "sourceCommit": "4f572eaa04c09d3dbc16e4a5f13a16b295e84e14",
+    "piVersion": "0.84.4",
+    "captureDate": "2026-09-23"
+  },
+  "events": [
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "call_458926",
+      "toolName": "Agent",
+      "args": {
+        "subagent_type": "general-purpose",
+        "run_in_background": false,
+        "description": "List files in empty workspace",
+        "prompt": "list the files in this empty workspace"
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "call_458926",
+      "toolName": "Agent",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Agent completed in 6.6s (1 tool uses, 18.8k token).\n\nThe workspace directory `/tmp/paseo-pi-extension-phase3/workspace` is empty (no files or hidden dotfiles)."
+          }
+        ],
+        "details": {
+          "displayName": "Agent",
+          "description": "List files in empty workspace",
+          "subagentType": "general-purpose",
+          "modelName": "google: gemini 3.6 flash",
+          "tags": ["twin", "thinking: high"],
+          "toolUses": 1,
+          "tokens": "18.8k token",
+          "cost": 0.016011675,
+          "turnCount": 2,
+          "durationMs": 6637,
+          "status": "completed",
+          "agentId": "4f961541-49c3-430"
+        }
+      },
+      "isError": false
+    }
+  ],
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "call_458926",
+          "name": "Agent",
+          "arguments": {
+            "subagent_type": "general-purpose",
+            "run_in_background": false,
+            "description": "List files in empty workspace",
+            "prompt": "list the files in this empty workspace"
+          }
+        }
+      ],
+      "api": "openai-completions",
+      "provider": "openrouter",
+      "model": "google/gemini-3.6-flash",
+      "usage": {
+        "input": 13432,
+        "output": 49,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 0,
+        "totalTokens": 13481,
+        "cost": {
+          "input": 0.010074,
+          "output": 0.00018375,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0.01025775
+        }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 1790197658831,
+      "responseId": "gen-1790197658-itiLcQoBdeRe3YHKtihF",
+      "rawStopReason": "tool_calls"
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call_458926",
+      "toolName": "Agent",
+      "content": [
+        {
+          "type": "text",
+          "text": "Agent completed in 6.6s (1 tool uses, 18.8k token).\n\nThe workspace directory `/tmp/paseo-pi-extension-phase3/workspace` is empty (no files or hidden dotfiles)."
+        }
+      ],
+      "details": {
+        "displayName": "Agent",
+        "description": "List files in empty workspace",
+        "subagentType": "general-purpose",
+        "modelName": "google: gemini 3.6 flash",
+        "tags": ["twin", "thinking: high"],
+        "toolUses": 1,
+        "tokens": "18.8k token",
+        "cost": 0.016011675,
+        "turnCount": 2,
+        "durationMs": 6637,
+        "status": "completed",
+        "agentId": "4f961541-49c3-430"
+      },
+      "isError": false,
+      "timestamp": 1790197667103
+    }
+  ]
+}

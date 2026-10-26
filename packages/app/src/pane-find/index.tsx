@@ -33,6 +33,15 @@ import { paneContentToolbarIconSize, ToolbarButton } from "@/components/ui/pane-
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
+import { getShortcutOs } from "@/utils/shortcut-platform";
+import { isFindShortcut, type FindShortcutPlatform } from "./find-shortcut";
+
+export { isFindShortcut, type FindShortcutPlatform } from "./find-shortcut";
+
+/** The platform every Find surface judges the shortcut against. */
+export function findShortcutPlatform(): FindShortcutPlatform {
+  return { isMac: getShortcutOs() === "mac" };
+}
 
 const TextInput = withUnistyles(EditingTextInput, (theme) => ({
   placeholderTextColor: theme.colors.foregroundMuted,
@@ -166,12 +175,14 @@ export const PaneFind = forwardRef<PaneFindHandle, PaneFindProps>(function PaneF
         keyCode?: number;
       };
       if (isImeComposingKeyboardEvent(key)) return;
-      if (
-        (key.metaKey || key.ctrlKey) &&
-        !key.altKey &&
-        !key.shiftKey &&
-        key.key.toLowerCase() === "f"
-      ) {
+      const shortcut = {
+        key: key.key,
+        metaKey: key.metaKey === true,
+        ctrlKey: key.ctrlKey === true,
+        shiftKey: key.shiftKey === true,
+        altKey: key.altKey === true,
+      };
+      if (isFindShortcut(shortcut, findShortcutPlatform())) {
         // RN Web inputs stop keydown before the pane's document listener.
         event.preventDefault();
         event.stopPropagation();

@@ -17,7 +17,7 @@ type MutableDaemonConfigPatch = import("@getpaseo/protocol/messages").MutableDae
 type ProviderOverride = import("./agent/provider-launch-config.js").ProviderOverride;
 
 interface SupportedMutableConfigPatch {
-  relay?: { enabled?: boolean };
+  relay?: { enabled?: boolean; requireProtectedSecurity?: boolean };
   mcp?: { injectIntoAgents?: boolean };
   browserTools?: { enabled?: boolean };
   providers?: MutableDaemonConfig["providers"];
@@ -25,6 +25,7 @@ interface SupportedMutableConfigPatch {
   metadataGeneration?: MutableDaemonConfig["metadataGeneration"];
   autoArchiveAfterMerge?: boolean;
   enableTerminalAgentHooks?: boolean;
+  idleRuntimeCleanup?: boolean;
   appendSystemPrompt?: string;
   terminalProfiles?: MutableDaemonConfig["terminalProfiles"];
   agentProfiles?: MutableDaemonConfig["agentProfiles"];
@@ -170,6 +171,7 @@ function isEqualValue(a: unknown, b: unknown): boolean {
 
 const RELOADABLE_PATHS = [
   "daemon.relay.enabled",
+  "daemon.relay.requireProtectedSecurity",
   "daemon.mcp.enabled",
   "daemon.mcp.injectIntoAgents",
   "daemon.browserTools.enabled",
@@ -184,6 +186,7 @@ const RELOADABLE_PATHS = [
   "daemon.terminalProfiles",
   "daemon.agentProfiles",
   "app.baseUrl",
+  "agents.idleRuntimeCleanup",
   "agents.providers",
   "agents.catalogRefreshTimeoutMs",
   "agents.metadataGeneration",
@@ -193,6 +196,7 @@ const RELOADABLE_PATHS = [
 
 const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
   ["daemon.relay.enabled", "relay.enabled"],
+  ["daemon.relay.requireProtectedSecurity", "relay.requireProtectedSecurity"],
   ["daemon.mcp.enabled", "mcp.enabled"],
   ["daemon.mcp.injectIntoAgents", "mcp.injectIntoAgents"],
   ["daemon.browserTools.enabled", "browserTools.enabled"],
@@ -207,6 +211,7 @@ const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
   ["daemon.terminalProfiles", "terminalProfiles"],
   ["daemon.agentProfiles", "agentProfiles"],
   ["app.baseUrl", "app.baseUrl"],
+  ["agents.idleRuntimeCleanup", "idleRuntimeCleanup"],
   ["agents.providers", "providers"],
   ["agents.catalogRefreshTimeoutMs", "catalogRefreshTimeoutMs"],
   ["agents.metadataGeneration", "metadataGeneration"],
@@ -249,9 +254,21 @@ function compactOwnedPaths(paths: readonly string[], owners: readonly string[]):
   return Array.from(compacted).sort();
 }
 
+function pickRelayPatch(
+  relay: MutableDaemonConfigPatch["relay"],
+): Pick<SupportedMutableConfigPatch, "relay"> {
+  const picked: NonNullable<SupportedMutableConfigPatch["relay"]> = {
+    ...(relay?.enabled !== undefined ? { enabled: relay.enabled } : {}),
+    ...(relay?.requireProtectedSecurity !== undefined
+      ? { requireProtectedSecurity: relay.requireProtectedSecurity }
+      : {}),
+  };
+  return Object.keys(picked).length > 0 ? { relay: picked } : {};
+}
+
 function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMutableConfigPatch {
   return {
-    ...(patch.relay?.enabled !== undefined ? { relay: { enabled: patch.relay.enabled } } : {}),
+    ...pickRelayPatch(patch.relay),
     ...(patch.mcp?.injectIntoAgents !== undefined
       ? { mcp: { injectIntoAgents: patch.mcp.injectIntoAgents } }
       : {}),
@@ -268,6 +285,9 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
       : {}),
     ...(patch.enableTerminalAgentHooks !== undefined
       ? { enableTerminalAgentHooks: patch.enableTerminalAgentHooks }
+      : {}),
+    ...(patch.idleRuntimeCleanup !== undefined
+      ? { idleRuntimeCleanup: patch.idleRuntimeCleanup }
       : {}),
     ...(patch.appendSystemPrompt !== undefined
       ? { appendSystemPrompt: patch.appendSystemPrompt }
@@ -602,6 +622,7 @@ function mergeMutableAgentPatch(
     patch.providers === undefined &&
     patch.metadataGeneration === undefined &&
     patch.skills === undefined &&
+    patch.idleRuntimeCleanup === undefined &&
     removeProviders.length === 0
   ) {
     return persistedAgents;
@@ -634,6 +655,10 @@ function mergeMutableAgentPatch(
     next["skills"] = { selection: patch.skills.selection };
   }
 
+  if (patch.idleRuntimeCleanup !== undefined) {
+    next["idleRuntimeCleanup"] = patch.idleRuntimeCleanup;
+  }
+
   return Object.keys(next).length > 0 ? (next as PersistedConfig["agents"]) : undefined;
 }
 
@@ -645,6 +670,9 @@ function mergeMutableDaemonPatch(
   const next = { ...persistedDaemon } as NonNullable<PersistedConfig["daemon"]>;
   if (persistRelayEnabled && patch.relay?.enabled !== undefined) {
     next.relay = { ...next.relay, enabled: patch.relay.enabled };
+  }
+  if (patch.relay?.requireProtectedSecurity !== undefined) {
+    next.relay = { ...next.relay, requireProtectedSecurity: patch.relay.requireProtectedSecurity };
   }
   if (patch.mcp?.injectIntoAgents !== undefined) {
     next.mcp = { ...next.mcp, injectIntoAgents: patch.mcp.injectIntoAgents };

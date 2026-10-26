@@ -1,3 +1,4 @@
+import { useVoiceAudioEngineOptional } from "@/contexts/voice-context";
 import { pluginSettingsKey } from "./settings/use-settings";
 import { useEffect } from "react";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -12,13 +13,14 @@ export function PluginCatalogSync({
   serverId: string;
   client: DaemonClient;
 }) {
+  const audio = useVoiceAudioEngineOptional();
   const connected = useHostRuntimeIsConnected(serverId);
   const supported = useHostFeature(serverId, "plugins");
 
   useEffect(() => {
     let cancelled = false;
     let refreshQueue = Promise.resolve();
-    if (!supported) {
+    if (!supported || !audio) {
       pluginRegistry.removeHost(serverId);
       return;
     }
@@ -35,6 +37,7 @@ export function PluginCatalogSync({
               pluginRegistry.installCatalog(serverId, catalog, {
                 replacePluginId,
                 client,
+                audio,
               });
             }
             return undefined;
@@ -79,7 +82,7 @@ export function PluginCatalogSync({
         .release()
         .catch((error) => console.warn("[Plugins] Failed to release catalog", error));
     };
-  }, [client, connected, serverId, supported]);
+  }, [audio, client, connected, serverId, supported]);
 
   useEffect(() => () => pluginRegistry.removeHost(serverId), [serverId]);
   return null;

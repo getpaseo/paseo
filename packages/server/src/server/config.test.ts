@@ -27,6 +27,17 @@ describe("server config", () => {
     expect(standaloneConfig.desktopManaged).toBe(false);
   });
 
+  test("idle runtime cleanup defaults on and supports a host-wide opt-out", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-idle-cleanup-"));
+    roots.push(paseoHome);
+    expect(loadConfig(paseoHome, { env: {} }).idleRuntimeCleanup).toBe(true);
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({ agents: { idleRuntimeCleanup: false } }),
+    );
+    expect(loadConfig(paseoHome, { env: {} }).idleRuntimeCleanup).toBe(false);
+  });
+
   test("loads the provider catalog refresh timeout", async () => {
     const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-provider-timeout-"));
     roots.push(paseoHome);
@@ -199,4 +210,19 @@ describe("server config", () => {
       }),
     ).toBe(path.join(packageRoot, "app-dist"));
   });
+});
+
+test("loads private plugin registry settings through the configuration boundary", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "paseo-registry-config-"));
+  try {
+    const pluginRegistries = { "plugins.example.test": { authorization: "Bearer fixture" } };
+    await writeFile(path.join(home, "config.json"), JSON.stringify({ pluginRegistries }));
+    const config = loadConfig(home, {
+      env: { PASEO_PLUGIN_REGISTRY: "https://plugins.example.test/internal" },
+    });
+    expect(config.pluginRegistryUrl).toBe("https://plugins.example.test/internal");
+    expect(config.pluginRegistries).toEqual(pluginRegistries);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 });

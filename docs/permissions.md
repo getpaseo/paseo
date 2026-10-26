@@ -27,9 +27,13 @@ A pairing invitation is neither. It is an expiring, single-use exchange that cre
 | `workspace.write`   | Prompts, agent control, files, terminals, git operations, and scripts      |
 | `workspace.manage`  | Create, rename, archive, and remove projects and workspaces                |
 | `automation.manage` | Schedules, heartbeats, and loops                                           |
-| `hub.execute`       | Agent lifecycle, agent/workspace observation, and workspace recovery       |
+| `hub.execute`       | Agent lifecycle, workspace titling, observation, and recovery              |
 
 Agents and terminals use workspace authority. Both can execute code and mutate the workspace, so separate write permissions would claim an isolation boundary the daemon cannot enforce.
+
+Connected-host management uses `tunnel.manage`; source-owned connection and metadata replacement
+requires the producer or `access.manage`. Routed operations retain both caller and link authority,
+see [Connected hosts](connected-hosts.md#ownership-and-authority).
 
 Owner, operator, and viewer are UI presets expanded into explicit permissions. Do not persist them as roles. Adding a permission must not silently widen an existing principal.
 

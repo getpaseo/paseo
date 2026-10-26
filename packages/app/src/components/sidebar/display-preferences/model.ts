@@ -1,3 +1,4 @@
+import type { WorkspaceSort } from "@/projects/workspace-structure";
 import { useCallback, useMemo } from "react";
 import {
   useAppSettings,
@@ -16,7 +17,11 @@ import { DEFAULT_SIDEBAR_ROW_ITEMS, type SidebarRowItem, type SidebarRowItems } 
 export type SidebarTrailingChoice = Exclude<SidebarWorkspaceTrailing, "none">;
 
 export interface SidebarDisplayPreferences {
+  showBackground: boolean;
+  toggleBackground: () => void;
   grouping: SidebarGroupMode;
+  workspaceSort: WorkspaceSort;
+  setWorkspaceSort: (sort: WorkspaceSort) => void;
   setGrouping: (mode: SidebarGroupMode) => void;
   titleSource: WorkspaceTitleSource;
   setTitleSource: (source: WorkspaceTitleSource) => void;
@@ -48,6 +53,10 @@ export interface SidebarDisplayPreferences {
  * this for a value and set it; where it lands is this module's problem.
  */
 export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
+  const showBackground = useSidebarViewStore((state) => state.showBackground);
+  const toggleBackground = useSidebarViewStore((state) => state.toggleBackground);
+  const workspaceSort = useSidebarViewStore((state) => state.workspaceSort);
+  const setWorkspaceSort = useSidebarViewStore((state) => state.setWorkspaceSort);
   const grouping = useSidebarViewStore((state) => state.groupMode);
   const setGrouping = useSidebarViewStore((state) => state.setGroupMode);
   const hostFilters = useSidebarViewStore((state) => state.hostFilters);
@@ -104,7 +113,11 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
 
   return useMemo(
     () => ({
+      showBackground,
+      toggleBackground,
       grouping,
+      workspaceSort,
+      setWorkspaceSort,
       setGrouping,
       titleSource: workspaceTitleSource,
       setTitleSource,
@@ -125,7 +138,11 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       clearLabelFilter,
     }),
     [
+      showBackground,
+      toggleBackground,
       grouping,
+      workspaceSort,
+      setWorkspaceSort,
       setGrouping,
       workspaceTitleSource,
       setTitleSource,

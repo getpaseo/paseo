@@ -78,11 +78,15 @@ describe("SessionAuthorization", () => {
     const authorization = new SessionAuthorization(["hub.execute"]);
     for (const type of [
       "create_agent_request",
-      "send_agent_message_request",
+      "workspace.title.set.request",
+      "fetch_agents_request",
       "fetch_agent_request",
       "agent.timeline.set_subscription.request",
+      "send_agent_message_request",
       "workspace.recovery.inspect.request",
       "workspace.recovery.restore.request",
+      "archive_workspace_request",
+      "cancel_agent_request",
     ] as const) {
       expect(authorization.allowsInbound(inboundMessage(type))).toBe(true);
     }
@@ -90,8 +94,17 @@ describe("SessionAuthorization", () => {
       "status",
       "agent_update",
       "agent_stream",
+      "workspace_update",
+      "rpc_error",
+      "workspace.title.set.response",
+      "fetch_agents_response",
+      "fetch_agent_response",
+      "agent.timeline.set_subscription.response",
       "send_agent_message_response",
+      "workspace.recovery.inspect.response",
       "workspace.recovery.restore.response",
+      "archive_workspace_response",
+      "cancel_agent_response",
     ] as const) {
       expect(authorization.allowsOutbound(outboundMessage(type))).toBe(true);
     }

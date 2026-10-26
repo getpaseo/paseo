@@ -10,6 +10,8 @@ Two contracts follow from it.
 
 A schema change must not break parsing in either direction. An old app still parses messages from a new daemon. A new daemon still parses messages from an old app.
 
+`hello` carries an optional credential. The daemon accepts a client protocol version from its minimum through newer client versions, selects the lower of client and daemon maximum, and reports it as optional `server_info.protocolVersion`. A `hello.rejected` frame precedes an auth close only when the client sent `hello.auth` or advertised `hello_rejection`; older clients receive the existing WebSocket close code and reason. This avoids sending them a new top-level message their validator does not recognize.
+
 - New fields are `.optional()` with a sensible default.
 - Never flip optional to required, remove a field, or narrow a type. `string` to `enum` and nullable to non-null are both narrowing.
 - A field you stop sending stays accepted. You stop writing it, you don't stop reading it.
@@ -71,6 +73,14 @@ Old clients keep their existing wire shapes and slot behavior at the daemon's so
 The adapter keys legacy slots by physical socket, so an old connection cannot replace a modern
 sibling's observation even when both use the same logical client ID. Optional wire IDs stay accepted
 for parsing compatibility; modern requests cannot select their subscription ID.
+
+Workspace setup details negotiate `workspace_setup_observation` with
+`server_info.features.workspaceSetupObservation`. Capable clients cannot request details through
+the legacy session event category. The setup panel owns a workspace-scoped observation while
+active and visible; directory metadata signals failures without requesting output. Older clients
+retain their legacy event delivery. A new app makes no setup event demand on older hosts and
+requires a host update to view details. Subscription-capable older hosts honor that absence of
+demand; broadcast-era hosts require an update before wire silence is guaranteed.
 
 ## Every shim is tagged and dated
 

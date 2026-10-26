@@ -9,6 +9,7 @@ import {
   buildSidebarWorkspacePlacementModel,
   buildSidebarProjectsFromStructure,
   computeSidebarOrderUpdates,
+  createSidebarWorkspacePlacementSelector,
   createSidebarWorkspaceEntry,
   deriveProjectStatusBucket,
   deriveSidebarLoadingState,
@@ -20,6 +21,8 @@ import {
 
 function workspaceWithForge(forge: string | undefined, prUrl: string): WorkspaceDescriptor {
   return {
+    createdAt: null,
+    lastUserMessageAt: null,
     id: "ws-1",
     projectId: "proj",
     projectDisplayName: "repo",
@@ -150,6 +153,8 @@ function workspace(input: {
   statusEnteredAt?: Date | null;
 }): WorkspaceDescriptor {
   return {
+    createdAt: null,
+    lastUserMessageAt: null,
     id: input.id,
     projectId: input.projectId,
     projectDisplayName: input.projectDisplayName,
@@ -403,6 +408,57 @@ describe("shared sidebar workspace model", () => {
     expect(model.projectNamesByViewKey).toEqual(new Map([["getpaseo/paseo", "getpaseo/paseo"]]));
   });
 
+  it("preserves the collection when a retained sidebar reconnects to unchanged entries", () => {
+    const model = buildSidebarWorkspacePlacementModel({
+      projects: [project({ projectKey: "project", workspaceKeys: ["srv:one", "srv:two"] })],
+    });
+    const one = workspace({
+      id: "one",
+      name: "one",
+      projectId: "project",
+      projectDisplayName: "project",
+    });
+    const two = workspace({
+      id: "two",
+      name: "two",
+      projectId: "project",
+      projectDisplayName: "project",
+    });
+    const sessions = [
+      {
+        serverId: "srv",
+        workspaceAgentActivity: new Map(),
+        workspaces: new Map([
+          ["one", one],
+          ["two", two],
+        ]),
+      },
+    ];
+    const previousEntries = buildSidebarWorkspaceEntries({
+      placements: model.workspaces,
+      sessions,
+    });
+    expect(
+      buildSidebarWorkspaceEntries({
+        placements: model.workspaces,
+        sessions,
+        previousEntries,
+      }),
+    ).toBe(previousEntries);
+    const reordered = buildSidebarWorkspaceEntries({
+      placements: model.workspaces.toReversed(),
+      sessions,
+      previousEntries,
+    });
+    expect([...reordered.keys()]).toEqual(["srv:two", "srv:one"]);
+    const removed = buildSidebarWorkspaceEntries({
+      placements: model.workspaces.slice(0, 1),
+      sessions,
+      previousEntries,
+    });
+    expect([...removed.keys()]).toEqual(["srv:one"]);
+  });
+
   it("preserves unchanged row identities when another workspace updates", () => {
     const model = buildSidebarWorkspacePlacementModel({
       projects: [project({ projectKey: "project", workspaceKeys: ["srv:one", "srv:two"] })],
@@ -559,13 +615,12 @@ describe("computeSidebarOrderUpdates", () => {
     const updates = computeSidebarOrderUpdates({
       projects: [],
       persistedProjectOrder: ["stale-project"],
-      getWorkspaceOrder: () => [],
     });
 
     expect(updates).toEqual({ projectOrder: null, workspaceOrders: [] });
   });
 
-  it("appends unseen projects while putting unseen workspaces before the saved order", () => {
+  it("appends unseen projects without changing saved project order", () => {
     const projects = [
       sidebarProject({ projectKey: "project-a", workspaceKeys: ["ws-1", "ws-2"] }),
       sidebarProject({ projectKey: "project-b", workspaceKeys: ["ws-3"] }),
@@ -574,36 +629,9 @@ describe("computeSidebarOrderUpdates", () => {
     const updates = computeSidebarOrderUpdates({
       projects,
       persistedProjectOrder: ["project-a"],
-      getWorkspaceOrder: (projectKey) => (projectKey === "project-a" ? ["srv:ws-1"] : []),
     });
 
     expect(updates.projectOrder).toEqual(["project-a", "project-b"]);
-    expect(updates.workspaceOrders).toEqual([
-      { projectViewKey: "project-a", order: ["srv:ws-2", "srv:ws-1"] },
-      { projectViewKey: "project-b", order: ["srv:ws-3"] },
-    ]);
-  });
-
-  it("preserves the saved workspace order behind multiple newly discovered workspaces", () => {
-    const projects = [
-      sidebarProject({
-        projectKey: "project-a",
-        workspaceKeys: ["newest", "newer", "old-a", "old-b"],
-      }),
-    ];
-
-    const updates = computeSidebarOrderUpdates({
-      projects,
-      persistedProjectOrder: ["project-a"],
-      getWorkspaceOrder: () => ["srv:old-b", "srv:old-a"],
-    });
-
-    expect(updates.workspaceOrders).toEqual([
-      {
-        projectViewKey: "project-a",
-        order: ["srv:newest", "srv:newer", "srv:old-b", "srv:old-a"],
-      },
-    ]);
   });
 
   it("returns no project-order update when persisted order already covers visible keys", () => {
@@ -615,11 +643,9 @@ describe("computeSidebarOrderUpdates", () => {
     const updates = computeSidebarOrderUpdates({
       projects,
       persistedProjectOrder: ["project-b", "project-a"],
-      getWorkspaceOrder: (projectKey) => (projectKey === "project-a" ? ["srv:ws-1"] : ["srv:ws-2"]),
     });
 
     expect(updates.projectOrder).toBeNull();
-    expect(updates.workspaceOrders).toEqual([]);
   });
 });
 
@@ -941,4 +967,32 @@ describe("deriveProjectStatusBucket", () => {
       }),
     ).toBe("done");
   });
+});
+
+it("retains unrelated projects and keyed row placements when one project reorders", () => {
+  const select = createSidebarWorkspacePlacementSelector();
+  const a = project({ projectKey: "a", workspaceKeys: ["srv:a1", "srv:a2"] });
+  const b = project({ projectKey: "b", workspaceKeys: ["srv:b1"] });
+  const before = select([a, b]);
+  const after = select([{ ...a, workspaceKeys: ["srv:a2", "srv:a1"] }, b]);
+  expect(after.projects[1]).toBe(before.projects[1]);
+  expect(after.projects[0].workspaces[0]).toBe(before.projects[0].workspaces[1]);
+  expect(after.projects[0].workspaces[1]).toBe(before.projects[0].workspaces[0]);
+});
+
+it("prepends newly discovered manual workspaces without dropping filtered saved keys", () => {
+  const projects = [sidebarProject({ projectKey: "p", workspaceKeys: ["new", "b", "a"] })];
+  expect(
+    computeSidebarOrderUpdates({
+      projects,
+      persistedProjectOrder: ["p"],
+      getWorkspaceOrder: () => ["srv:hidden", "srv:a", "srv:b"],
+    }),
+  ).toEqual({
+    projectOrder: null,
+    workspaceOrders: [{ projectViewKey: "p", order: ["srv:new", "srv:hidden", "srv:a", "srv:b"] }],
+  });
+  expect(
+    computeSidebarOrderUpdates({ projects, persistedProjectOrder: ["p"] }).workspaceOrders,
+  ).toEqual([]);
 });

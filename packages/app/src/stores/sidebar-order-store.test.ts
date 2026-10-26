@@ -1,8 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { migrateSidebarOrderState } from "./sidebar-order-store";
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+  computeSidebarOrderUpdates,
+  type SidebarProjectEntry,
+} from "@/hooks/sidebar-workspaces-view-model";
+import { migrateSidebarOrderState, useSidebarOrderStore } from "./sidebar-order-store";
 
 describe("migrateSidebarOrderState", () => {
-  it("prefixes legacy per-server workspace order with the source server id", () => {
+  it("preserves legacy workspace ordering across hosts", () => {
     const migrated = migrateSidebarOrderState({
       projectOrderByServerId: {
         "host-a": ["project-a"],
@@ -17,17 +21,126 @@ describe("migrateSidebarOrderState", () => {
     expect(migrated).toEqual({
       projectOrder: ["project-a"],
       pinnedWorkspaceOrder: [],
-      workspaceOrderByProject: {
-        "project-a": ["host-a:main", "host-a:feature", "host-b:main"],
-      },
+      workspaceOrderByProject: { "project-a": ["host-a:main", "host-a:feature", "host-b:main"] },
     });
   });
 
-  it("normalizes pinned workspace order", () => {
+  it("deduplicates pinned workspace order without rewriting identities", () => {
     const migrated = migrateSidebarOrderState({
-      pinnedWorkspaceOrder: [" host-a:one ", "host-a:one", "", "host-b:two"],
+      pinnedWorkspaceOrder: ["host-a:one", "host-a:one", "", "host-b:two"],
     });
 
     expect(migrated.pinnedWorkspaceOrder).toEqual(["host-a:one", "host-b:two"]);
   });
+});
+
+// A directory whose name ends in a space produces a view key that ends in a
+// space. Trimming it on write used to make the sidebar's reconcile effect loop
+// forever, crashing the app with React error #185 (see #4880).
+describe("sidebar order keys that end in whitespace", () => {
+  const PROJECT_KEY = "host:srv-1:/home/u/Reklamation ";
+
+  beforeEach(() => {
+    useSidebarOrderStore.setState({
+      projectOrder: [],
+      pinnedWorkspaceOrder: [],
+    });
+  });
+
+  it("stores a project key exactly as given", () => {
+    useSidebarOrderStore.getState().setProjectOrder([PROJECT_KEY]);
+
+    expect(useSidebarOrderStore.getState().projectOrder).toEqual([PROJECT_KEY]);
+  });
+
+  it("settles the sidebar order reconcile instead of rewriting it forever", () => {
+    const projects: SidebarProjectEntry[] = [
+      {
+        viewKey: PROJECT_KEY,
+        projectName: "Reklamation ",
+        projectKind: "non_git",
+        iconWorkingDir: "/home/u/Reklamation ",
+        hosts: [],
+        workspaces: [],
+      },
+    ];
+    const runPass = () =>
+      computeSidebarOrderUpdates({
+        projects,
+        persistedProjectOrder: useSidebarOrderStore.getState().projectOrder,
+      });
+
+    // First pass adds the newly visible project.
+    const first = runPass();
+    expect(first.projectOrder).toEqual([PROJECT_KEY]);
+    useSidebarOrderStore.getState().setProjectOrder(first.projectOrder ?? []);
+
+    // Second pass must find nothing left to do; otherwise the effect that
+    // applies these updates re-runs on every render.
+    expect(runPass().projectOrder).toBeNull();
+  });
+
+  it("still trims legacy keys when migrating per-host persisted state", () => {
+    const migrated = migrateSidebarOrderState({
+      projectOrderByServerId: { host: [" host-a:one ", "host-a:one"] },
+    });
+
+    expect(migrated.projectOrder).toEqual(["host-a:one"]);
+  });
+});
+
+it("preserves project, pinned and ordinary workspace order", () => {
+  expect(
+    migrateSidebarOrderState({
+      projectOrder: ["b", "a"],
+      pinnedWorkspaceOrder: ["h:y", "h:x"],
+      workspaceOrderByProject: { a: ["h:old", "h:new"] },
+    }),
+  ).toEqual({
+    projectOrder: ["b", "a"],
+    pinnedWorkspaceOrder: ["h:y", "h:x"],
+    workspaceOrderByProject: { a: ["h:old", "h:new"] },
+  });
+});
+
+it("preserves whitespace in current project and pin identities during upgrade", () => {
+  expect(
+    migrateSidebarOrderState({
+      projectOrder: ["project "],
+      pinnedWorkspaceOrder: ["host:workspace "],
+      workspaceOrderByProject: {},
+    }),
+  ).toEqual({
+    projectOrder: ["project "],
+    pinnedWorkspaceOrder: ["host:workspace "],
+    workspaceOrderByProject: {},
+  });
+});
+
+it("retains a pre-beta manual order when upgrading", () => {
+  expect(
+    migrateSidebarOrderState({
+      projectOrder: ["project"],
+      pinnedWorkspaceOrder: [],
+      workspaceOrderByProject: { project: ["host:b", "host:a"] },
+    }),
+  ).toEqual({
+    projectOrder: ["project"],
+    pinnedWorkspaceOrder: [],
+    workspaceOrderByProject: { project: ["host:b", "host:a"] },
+  });
+});
+
+it("starts with an empty manual order for beta users whose order was discarded", () => {
+  expect(migrateSidebarOrderState({ projectOrder: ["p"], pinnedWorkspaceOrder: ["h:a"] })).toEqual({
+    projectOrder: ["p"],
+    pinnedWorkspaceOrder: ["h:a"],
+    workspaceOrderByProject: {},
+  });
+});
+it("preserves spaces in saved workspace scopes and identities", () => {
+  expect(
+    migrateSidebarOrderState({ workspaceOrderByProject: { "project ": ["host:b ", "host:a "] } })
+      .workspaceOrderByProject,
+  ).toEqual({ "project ": ["host:b ", "host:a "] });
 });

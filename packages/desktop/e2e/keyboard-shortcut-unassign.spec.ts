@@ -1,3 +1,5 @@
+import { clickNewChat, gotoWorkspace } from "../../app/e2e/support/helpers/launcher";
+import { clickSettingsBackToWorkspace } from "../../app/e2e/support/helpers/settings";
 import type { Page } from "@playwright/test";
 import { test, expect } from "../../app/e2e/support/fixtures";
 import { gotoAppShell, openSettings } from "../../app/e2e/support/helpers/app";
@@ -14,10 +16,13 @@ const SHORTCUTS_ROW = "show-shortcuts";
  * daemon is left unmanaged so the app talks to the E2E daemon instead of trying
  * to start one of its own.
  */
-async function installDesktopBridge(page: Page): Promise<void> {
-  await page.addInitScript(() => {
+async function installDesktopBridge(
+  page: Page,
+  platform: "darwin" | "win32" = "darwin",
+): Promise<void> {
+  await page.addInitScript((desktopPlatform) => {
     window.paseoDesktop = {
-      platform: "darwin",
+      platform: desktopPlatform,
       events: { on: () => () => {} },
       invoke: async (command: string) => {
         if (command === "get_desktop_settings") {
@@ -29,11 +34,11 @@ async function installDesktopBridge(page: Page): Promise<void> {
         return null;
       },
     };
-  });
+  }, platform);
 }
 
-async function openShortcutsSettings(page: Page) {
-  await installDesktopBridge(page);
+async function openShortcutsSettings(page: Page, platform: "darwin" | "win32" = "darwin") {
+  await installDesktopBridge(page, platform);
   await gotoAppShell(page);
   await openSettings(page);
   await openSettingsSection(page, "shortcuts");
@@ -65,6 +70,38 @@ async function openCheatSheet(page: Page) {
 async function closeRowMenu(page: Page) {
   await page.keyboard.press("Escape");
   await expect(page.getByTestId(`shortcut-bind-${SHORTCUTS_ROW}`)).toHaveCount(0);
+}
+
+async function clearShortcut(page: Page, label: string, action: string) {
+  await page.getByRole("button", { name: `Actions for ${label}` }).click();
+  await page.getByTestId(`shortcut-clear-${action}`).click();
+}
+
+async function captureShortcut(page: Page, label: string, action: string, keys: string) {
+  await page.getByRole("button", { name: `Actions for ${label}` }).click();
+  await page.getByTestId(`shortcut-bind-${action}`).click();
+  await page.keyboard.press(keys);
+}
+
+async function expectInterruptShortcut(page: Page, chord: string) {
+  const row = page.getByText("Interrupt agent", { exact: true }).locator("..");
+  await expect(row.getByText(chord, { exact: true })).toBeVisible();
+}
+
+async function finishInterruptCapture(page: Page, action: "Done" | "Cancel") {
+  const row = page.getByText("Interrupt agent", { exact: true }).locator("..");
+  await row.getByRole("button", { name: action }).click();
+}
+
+async function eraseLastCapturedCombo(page: Page, firstCombo: string, secondCombo: string) {
+  await captureShortcut(page, "Interrupt agent", "agent-interrupt", "Alt+K");
+  await page.keyboard.press("Alt+J");
+  await expectInterruptShortcut(page, firstCombo);
+  await expectInterruptShortcut(page, secondCombo);
+  await page.keyboard.press("Backspace");
+  await expectInterruptShortcut(page, firstCombo);
+  const row = page.getByText("Interrupt agent", { exact: true }).locator("..");
+  await expect(row.getByText(secondCombo, { exact: true })).toHaveCount(0);
 }
 
 test("unassigning a shortcut leaves it inert until it is reset", async ({ page }) => {
@@ -146,3 +183,115 @@ test("unassigning a shortcut leaves it inert until it is reset", async ({ page }
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible({ timeout: 10_000 });
 });
+
+for (const { platform, keys, label, firstCombo, secondCombo } of [
+  {
+    platform: "darwin",
+    keys: "Meta+Shift+Backspace",
+    label: "⇧⌘⌫",
+    firstCombo: "⌥K",
+    secondCombo: "⌥J",
+  },
+  {
+    platform: "win32",
+    keys: "Control+Shift+Backspace",
+    label: "Ctrl+Shift+⌫",
+    firstCombo: "Alt+K",
+    secondCombo: "Alt+J",
+  },
+] as const) {
+  test(`binds modified Backspace and erases a combo with bare Backspace on ${platform}`, async ({
+    page,
+  }) => {
+    await openShortcutsSettings(page, platform);
+    await clearShortcut(page, "Archive workspace", "archive-workspace");
+    await captureShortcut(page, "Interrupt agent", "agent-interrupt", keys);
+    await expectInterruptShortcut(page, label);
+    await finishInterruptCapture(page, "Done");
+    await expectInterruptShortcut(page, label);
+
+    await eraseLastCapturedCombo(page, firstCombo, secondCombo);
+    await finishInterruptCapture(page, "Cancel");
+    await expectInterruptShortcut(page, label);
+  });
+}
+
+async function rebindTabNumbers(page: Page) {
+  await captureShortcut(page, "Jump to tab", "workspace-tab-jump-index", "Control+1");
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+}
+
+async function expectTabNumberRange(page: Page) {
+  const row = page.getByText("Jump to tab", { exact: true }).locator("..");
+  await expect(row.getByText("⌃1-9", { exact: true })).toBeVisible();
+}
+
+async function openTwoDraftTabs(page: Page, workspaceId: string) {
+  await installDesktopBridge(page);
+  await gotoWorkspace(page, workspaceId);
+  await clickNewChat(page);
+  await clickNewChat(page);
+  await expect(
+    page.locator('[data-testid^="workspace-tab-draft_"]').filter({ visible: true }),
+  ).toHaveCount(2);
+  await openSettings(page);
+  await openSettingsSection(page, "shortcuts");
+}
+
+async function expectTabNumberNavigation(page: Page) {
+  const tabs = page.locator('[data-testid^="workspace-tab-draft_"]').filter({ visible: true });
+  await expect(page.getByTestId("settings-sidebar")).not.toBeVisible();
+  await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Control+1");
+  await expect(tabs.nth(0)).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Control+2");
+  await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
+}
+
+test("rebinding Jump to tab preserves the number group after reload", async ({
+  page,
+  withWorkspace,
+}) => {
+  const workspace = await withWorkspace({ prefix: "tab-number-rebind-" });
+  await openTwoDraftTabs(page, workspace.workspaceId);
+  await rebindTabNumbers(page);
+  await clickSettingsBackToWorkspace(page);
+  await expectTabNumberNavigation(page);
+  await page.reload();
+  await expectTabNumberNavigation(page);
+  await openSettings(page);
+  await openSettingsSection(page, "shortcuts");
+  await expectTabNumberRange(page);
+});
+
+async function expectNumberRequiredBeforeSaving(page: Page, label: string) {
+  const row = page.getByText(label, { exact: true }).locator("..");
+  await expect(row.getByRole("button", { name: "Done", exact: true })).toBeDisabled();
+  await expect(row.getByText("End with a number from 1 to 9.", { exact: true })).toBeVisible();
+}
+
+async function completeNumberShortcut(page: Page, label: string) {
+  const row = page.getByText(label, { exact: true }).locator("..");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.press("Control+2");
+  await expect(row.getByRole("button", { name: "Done", exact: true })).toBeEnabled();
+  await row.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(row.getByText("⌃K", { exact: true })).toBeVisible();
+  await expect(row.getByText("⌃1-9", { exact: true })).toBeVisible();
+}
+
+for (const { label, action } of [
+  { label: "Jump to tab", action: "workspace-tab-jump-index" },
+  { label: "Jump to workspace", action: "workspace-jump-index" },
+]) {
+  test(`${label} requires a final number before a recorded shortcut can be saved`, async ({
+    page,
+  }) => {
+    await openShortcutsSettings(page);
+    await captureShortcut(page, label, action, "Control+K");
+    await expectNumberRequiredBeforeSaving(page, label);
+    await page.keyboard.press("Control+0");
+    await expectNumberRequiredBeforeSaving(page, label);
+    await completeNumberShortcut(page, label);
+  });
+}

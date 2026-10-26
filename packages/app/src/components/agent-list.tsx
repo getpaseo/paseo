@@ -14,11 +14,11 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { formatTimeAgo } from "@/utils/time";
+import { useTimeAgo } from "@/hooks/use-time-ago";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useSessionStore } from "@/stores/session-store";
 import { Archive, ChevronRight } from "lucide-react-native";
-import { getProviderIcon } from "@/components/provider-icons";
+import { useProviderIcon } from "@/components/provider-icons";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { HighlightedText } from "@/components/ui/highlighted-text";
@@ -47,6 +47,8 @@ const DATE_SECTION_ORDER = [
   "thisMonth",
   "older",
 ] as const satisfies readonly DateSectionKey[];
+
+const HISTORY_MATCH_OPTIONS = { typoTolerant: true } as const;
 
 type FlatListItem =
   | { type: "header"; key: string; section: DateSectionKey }
@@ -181,20 +183,20 @@ function SessionRow({
 }) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const timeAgo = formatTimeAgo(agent.lastActivityAt);
   const agentKey = `${agent.serverId}:${agent.id}`;
   const isSelected = selectedAgentId === agentKey;
   const projectName = agent.projectPlacement?.projectName ?? "";
   const branch = agent.projectPlacement?.checkout.currentBranch ?? "";
   const workspaceName = agent.projectPlacement?.workspaceName ?? "";
-  const ProviderIcon = getProviderIcon(agent.provider, agent.serverId);
+  const ProviderIcon = useProviderIcon(agent.provider, agent.serverId);
   const pendingPermissionCount = agent.pendingPermissionCount ?? 0;
   const ranges = useMemo(
     () => ({
-      workspace: findHighlightRanges(search ?? "", workspaceName),
-      title: findHighlightRanges(search ?? "", agent.title ?? ""),
-      branch: findHighlightRanges(search ?? "", branch),
-      project: findHighlightRanges(search ?? "", projectName),
+      // History search matches typo-tolerantly on the daemon, so the marks do too.
+      workspace: findHighlightRanges(search ?? "", workspaceName, HISTORY_MATCH_OPTIONS),
+      title: findHighlightRanges(search ?? "", agent.title ?? "", HISTORY_MATCH_OPTIONS),
+      branch: findHighlightRanges(search ?? "", branch, HISTORY_MATCH_OPTIONS),
+      project: findHighlightRanges(search ?? "", projectName, HISTORY_MATCH_OPTIONS),
     }),
     [search, workspaceName, agent.title, branch, projectName],
   );
@@ -283,7 +285,7 @@ function SessionRow({
               testID={`agent-row-branch-${agent.serverId}-${agent.id}`}
             />
             <Text style={styles.sessionMetaSeparator}>·</Text>
-            <Text style={styles.sessionMetaText}>{timeAgo}</Text>
+            <AgentActivityTime date={agent.lastActivityAt} isMobile />
             {showHostColumn && agent.serverLabel ? (
               <>
                 <Text style={styles.sessionMetaSeparator}>·</Text>
@@ -316,9 +318,7 @@ function SessionRow({
             numberOfLines={1}
             testID={`agent-row-branch-${agent.serverId}-${agent.id}`}
           />
-          <Text style={styles.columnMetaFixed} numberOfLines={1}>
-            {timeAgo}
-          </Text>
+          <AgentActivityTime date={agent.lastActivityAt} isMobile={false} />
         </View>
       ) : null}
       <SessionRowTrailingAttention
@@ -327,6 +327,15 @@ function SessionRow({
         requiresAttention={agent.requiresAttention}
       />
     </Pressable>
+  );
+}
+
+function AgentActivityTime({ date, isMobile }: { date: Date; isMobile: boolean }) {
+  const label = useTimeAgo(date);
+  return (
+    <Text style={isMobile ? styles.sessionMetaText : styles.columnMetaFixed} numberOfLines={1}>
+      {label}
+    </Text>
   );
 }
 

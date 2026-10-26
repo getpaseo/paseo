@@ -3,7 +3,7 @@ import { buildDocsNavTree, getDoc, getDocs, getLegacyDocsRedirect } from "./docs
 
 describe("plugin documentation", () => {
   it("groups current guides by task without version navigation", () => {
-    const plugins = buildDocsNavTree(getDocs()).find(
+    const plugins = buildDocsNavTree(getDocs("en")).find(
       (node) => node.type === "category" && node.label === "Plugins",
     );
 
@@ -22,7 +22,7 @@ describe("plugin documentation", () => {
   it.each(["v0.7", "v0.8"])("redirects %s links to existing current pages", (version) => {
     for (const page of ["", "/index", "/reference", "/providers", "/migration"]) {
       const target = `/docs/plugins${page === "/index" ? "" : page}`;
-      expect(getDoc(target.slice("/docs/".length))).toBeDefined();
+      expect(getDoc(target.slice("/docs/".length), "en")).toBeDefined();
       for (const extension of ["", ".md"]) {
         const source = `/docs/plugins/${version}${page}${extension}`;
         expect(getLegacyDocsRedirect(source)).toBe(`${target}${extension}`);

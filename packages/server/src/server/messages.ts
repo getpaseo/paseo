@@ -16,7 +16,7 @@ function validateStreamEventPayload(payload: unknown): AgentStreamEventPayload |
 
 export function serializeAgentSnapshot(
   agent: ManagedAgent,
-  options?: { title?: string | null },
+  options?: { title?: string | null; archivedAt?: string | null },
 ): AgentSnapshotPayload {
   return toAgentPayload(agent, options);
 }

@@ -121,6 +121,7 @@ export type TerminalWorkerEvent =
       type: "terminalMessage";
       terminalId: string;
       message: ServerMessage;
+      replayPreamble: string;
     }
   | {
       type: "terminalExit";

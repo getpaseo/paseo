@@ -4,7 +4,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   getPidLockInfo,
-  isPidRunning,
+  isPidLockOwnerRunning,
   isSamePidLock,
   releasePidLock,
   type PidLockInfo,
@@ -28,6 +28,7 @@ const killTree = (pid: number, signal: string): Promise<void> =>
 export { resolvePaseoHome } from "./paseo-home.js";
 export { ensurePrivateDirectory } from "./private-files.js";
 export { daemonLaunchEnvironment } from "./config-environment.js";
+export { readLocalCredentialForTarget } from "./local-credential.js";
 export {
   isSamePidLock as isSameDaemonInstance,
   type PidLockInfo as DaemonInstance,
@@ -49,7 +50,7 @@ export class DaemonInstanceError extends Error {
  */
 export interface StopDaemonPorts {
   readInstance(home: string): Promise<PidLockInfo | null>;
-  isRunning(pid: number): boolean;
+  isLockOwnerRunning(instance: PidLockInfo): boolean;
   isSameInstance(left: PidLockInfo, right: PidLockInfo): boolean;
   releaseLock(home: string, owner: { ownerPid: number; startedAt: string }): Promise<void>;
   signalTerm(pid: number): Promise<void>;
@@ -62,8 +63,8 @@ export const defaultStopDaemonPorts: StopDaemonPorts = {
   readInstance(home) {
     return getPidLockInfo(home);
   },
-  isRunning(pid) {
-    return isPidRunning(pid);
+  isLockOwnerRunning(instance) {
+    return isPidLockOwnerRunning(instance);
   },
   isSameInstance(left, right) {
     return isSamePidLock(left, right);
@@ -85,7 +86,7 @@ export const defaultStopDaemonPorts: StopDaemonPorts = {
 
 export async function readDaemonInstance(home: string): Promise<PidLockInfo | null> {
   const lock = await getPidLockInfo(home);
-  return lock && isPidRunning(lock.pid) ? lock : null;
+  return lock && isPidLockOwnerRunning(lock) ? lock : null;
 }
 
 export function daemonLogPath(home: string): string {
@@ -152,6 +153,7 @@ function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
       (value) => {
         signal.removeEventListener("abort", onAbort);
         resolve(value);
+        return value;
       },
       (error) => {
         signal.removeEventListener("abort", onAbort);
@@ -261,7 +263,7 @@ async function waitForInstanceExit(input: {
 }): Promise<boolean | "cancelled"> {
   const { home, instance, ports, signal } = input;
   const exitDeadline = Date.now() + input.waitMs;
-  while (ports.isRunning(instance.pid)) {
+  while (ports.isLockOwnerRunning(instance)) {
     const current = await ports.readInstance(home);
     if (current && !ports.isSameInstance(instance, current))
       throw new DaemonInstanceError(
@@ -309,7 +311,7 @@ export async function stopDaemonInstance(
       `Supervisor changed for ${home}; refusing to stop PID ${instance.pid}.`,
     );
   }
-  if (!instance || !ports.isRunning(instance.pid)) {
+  if (!instance || !ports.isLockOwnerRunning(instance)) {
     return resolveNotRunningLock(ports, home, instance);
   }
   assertStoppableInstance(instance);

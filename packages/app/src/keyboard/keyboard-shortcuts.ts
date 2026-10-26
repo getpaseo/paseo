@@ -7,6 +7,7 @@ import type {
 } from "@/keyboard/actions";
 import {
   chordStringToShortcutKeys,
+  isModifierKeyCode,
   type KeyCombo,
   parseChordString,
 } from "@/keyboard/shortcut-string";
@@ -1209,6 +1210,21 @@ export const DEFAULT_BINDINGS: readonly ParsedShortcutBinding[] =
 
 export type ShortcutOverrides = Record<string, string | null>;
 
+/** Keep number-group actions bound to all nine indices when recording a new modifier. */
+export function normalizeCapturedShortcutCombo(bindingId: string, combo: string): string {
+  const binding = DEFAULT_BINDINGS.find((candidate) => candidate.id === bindingId);
+  if (binding?.payload?.type !== "index") return combo;
+  return combo.replace(/(^|\+)[1-9]$/, "$1Digit");
+}
+
+/** Index navigation needs a final number; earlier combos may be any chord prefix. */
+export function isShortcutCaptureComplete(bindingId: string, combos: readonly string[]): boolean {
+  const lastCombo = combos.at(-1);
+  if (!lastCombo) return false;
+  const binding = DEFAULT_BINDINGS.find((candidate) => candidate.id === bindingId);
+  return binding?.payload?.type !== "index" || /(^|\+)(Digit|[1-9])$/.test(lastCombo);
+}
+
 export function buildEffectiveBindings(overrides: ShortcutOverrides): ParsedShortcutBinding[] {
   return DEFAULT_BINDINGS.map(function (binding) {
     const override = overrides[binding.id];
@@ -1229,12 +1245,31 @@ export function buildEffectiveBindings(overrides: ShortcutOverrides): ParsedShor
     if (binding.repeat === false && lastCombo) {
       lastCombo.repeat = false;
     }
+    const when = withoutDefaultComboGuard(binding.when);
     if (!binding.help?.defaultDisplayKeys) {
-      return { ...binding, combo: override, parsedChord };
+      return { ...binding, combo: override, parsedChord, when };
     }
     const { defaultDisplayKeys: _defaultDisplayKeys, ...help } = binding.help;
-    return { ...binding, combo: override, parsedChord, help };
+    return { ...binding, combo: override, parsedChord, when, help };
   });
+}
+
+/**
+ * `editable: false` is a statement about a binding's *default* combo, not
+ * about its action: the pane-focus defaults carry it so that Cmd+Shift+Arrow
+ * keeps selecting text in a field instead of moving pane focus. An override
+ * replaces that combo, so the guard no longer describes anything and has to
+ * go, the same way `defaultDisplayKeys` does — otherwise the combo the user
+ * picked in Settings silently refuses to fire wherever they are typing.
+ *
+ * The other guards stay. Platform, command center, terminal and focus scope
+ * are properties of the action and of where it makes sense, and none of them
+ * change because the keys did.
+ */
+function withoutDefaultComboGuard(when: ShortcutWhen | undefined): ShortcutWhen | undefined {
+  if (when?.editable !== false) return when;
+  const { editable: _editable, ...rest } = when;
+  return rest;
 }
 
 // --- Matching engine ---
@@ -1264,6 +1299,12 @@ function matchesKeyOrCode(combo: KeyCombo, event: KeyboardShortcutInput): boolea
   if (eventKey === combo.key) return true;
   if (combo.shift === true && combo.shiftedKey !== undefined && eventKey === combo.shiftedKey) {
     return true;
+  }
+  // Recording an unsupported letter (for example Cyrillic и on KeyB)
+  // stores its physical A-Z key. Dispatch must accept that same key without
+  // giving Latin layouts such as Dvorak a second physical-key binding.
+  if (/^[a-z]$/.test(combo.key) && /^\p{Letter}$/u.test(event.key) && !/^[a-z]$/.test(eventKey)) {
+    return event.code === combo.code;
   }
   // macOS rewrites event.key when Option is held (Option+T -> "†",
   // Option+[ -> "“"), so Alt-bound letter / bracket bindings can only
@@ -1517,6 +1558,13 @@ export function resolveKeyboardShortcut(input: {
   preventDefault: boolean;
 } {
   const { event, context, chordState, onChordReset, bindings = DEFAULT_BINDINGS } = input;
+  // Pressing a modifier emits its own keydown before the combo that holds it,
+  // so a chord waiting on `Ctrl+J` sees a bare `Control` first. That keydown
+  // matches no combo, and resolving it would drop the chord back to its first
+  // step. It decides nothing: leave the chord where it is.
+  if (isModifierKeyCode(event.code)) {
+    return { match: null, nextChordState: chordState, preventDefault: false };
+  }
   if (chordState.step === 0) {
     return resolveInitialChordStep({ event, context, chordState, onChordReset, bindings });
   }

@@ -38,6 +38,7 @@ import { gotoAppShell, openSettings, selectModel } from "../support/helpers/app"
 import { observeTimelineSubscriptions } from "../support/helpers/timeline-delivery";
 import { rememberTimelineRequestCounts } from "../support/helpers/timeline-resume";
 import {
+  recordPanelToasts,
   switchWorkspaceViaSidebar,
   waitForWorkspaceInSidebar,
   workspaceDeckEntryLocator,
@@ -283,7 +284,6 @@ async function expectRejectedSubmissionRestored(
   await expectComposerDraft(page, input.prompt);
   await expectComposerEditable(page);
   await expectAttachmentPill(page, "composer-image-attachment-pill");
-  await expect(page.getByTestId("user-message").filter({ hasText: input.prompt })).toHaveCount(0);
   if (input.preservesActiveTurn) {
     await expect(page.getByTestId("turn-working-indicator")).toBeVisible();
     return;
@@ -294,11 +294,19 @@ async function expectRejectedSubmissionRestored(
 
 async function retryRestoredSubmission(page: Page, prompt: string): Promise<void> {
   await page.getByRole("textbox", { name: "Message agent..." }).first().press("Enter");
-  const userMessage = page.getByTestId("user-message").filter({ hasText: prompt });
-  await expect(userMessage).toHaveCount(1);
+  const attempts = page.getByTestId("user-message").filter({ hasText: prompt });
+  await expect(attempts).toHaveCount(2);
+  const userMessage = attempts.last();
   await expect(userMessage).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
   await expect(userMessage.getByRole("button", { name: "Open image attachment" })).toBeVisible();
   await expect(page.getByTestId("composer-image-attachment-pill")).toHaveCount(0);
+}
+
+async function expectRejectedPromptBeforeError(page: Page, prompt: string, errorMessage: string) {
+  const messages = page.getByTestId("user-message").or(page.getByTestId("assistant-message"));
+  await expect(messages).toHaveCount(2);
+  await expect(messages.nth(0)).toContainText(prompt);
+  await expect(messages.nth(1)).toContainText(`[System Error] ${errorMessage}`);
 }
 
 async function configureSteerInSettings(page: Page): Promise<void> {
@@ -1146,17 +1154,15 @@ test.describe("Agent message submission", () => {
       page,
       page.getByTestId("assistant-message").last(),
     );
-    const assistantMessageCount = await page.getByTestId("assistant-message").count();
-    const toolCallCount = await page.getByTestId("tool-call-badge").count();
     await composer.press("Enter");
     const userMessage = page.getByTestId("user-message").filter({ hasText: prompt }).last();
     await expect(userMessage).toBeVisible();
-    await expect
-      .poll(async () => page.getByTestId("assistant-message").count())
-      .toBeGreaterThan(assistantMessageCount);
-    await expect
-      .poll(async () => page.getByTestId("tool-call-badge").count())
-      .toBeGreaterThan(toolCallCount);
+    await expect(
+      page.getByTestId("assistant-message").filter({
+        hasText: "I'll take a look at the scroll anchor behavior you described.",
+      }),
+    ).toBeVisible();
+    await awaitToolCall(page, "Read");
     await finishTimelineRowStabilityCheck();
   });
 
@@ -1165,17 +1171,21 @@ test.describe("Agent message submission", () => {
     draftCreateScenario,
   }) => {
     test.setTimeout(120_000);
+    const toasts = await recordPanelToasts(page);
     const pending = await beginDraftCreateSubmission(page, draftCreateScenario);
     await completeDraftCreateSubmission(page, draftCreateScenario, pending);
+    // A chat this client just created is current by construction; it is never out of date.
+    await toasts.expectNeverShown("agent-updating-toast");
   });
 
-  test("restores a rejected submission and accepts its retry", async ({
+  test("retains a rejected submission before its error and accepts its retry", async ({
     page,
     rejectionScenario,
   }) => {
     const prompt = "Restore this rejected submission.";
     await submitMessageThatWillBeRejected(page, prompt);
     await expectRejectedSubmissionRestored(page, { prompt, ...rejectionScenario });
+    await expectRejectedPromptBeforeError(page, prompt, rejectionScenario.errorMessage);
     await retryRestoredSubmission(page, prompt);
   });
 
@@ -1205,6 +1215,7 @@ test.describe("Agent message submission", () => {
         errorMessage: "Requested mock steer transport failure",
         preservesActiveTurn: true,
       });
+      await expect(page.getByTestId("user-message").filter({ hasText: prompt })).toHaveCount(0);
 
       expect(gate.getClientRequestCount("send_agent_message_request")).toBe(sendsBefore + 1);
       expect(gate.getClientRequestCount("cancel_agent_request")).toBe(cancelsBefore);
@@ -1238,6 +1249,7 @@ test.describe("Agent message submission", () => {
       await gate.waitForHeldServerMessage("send_agent_message_response");
       await expect(page.getByText("hello", { exact: true })).toHaveCount(1);
       await expect(page.getByText(/^Worked for/)).toHaveCount(0);
+      await expectAgentReadyToInterrupt(page);
       gate.releaseHeldServerMessage("send_agent_message_response");
       await expect(page.getByText("hello", { exact: true })).toHaveCount(1);
     } finally {
