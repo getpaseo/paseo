@@ -1,0 +1,126 @@
+npm notice run @getpaseo/app@0.13.0-beta.2 test:e2e
+npm notice run playwright test --project=browser e2e/browser/sidebar-nav-settings.spec.ts --workers=1 --grep owner drags the navigation group taller and finds it that tall next time
+[metro] Skipping web setup: EXPO_NO_WEB_SETUP is enabled.
+[metro] Using src/app as the root directory for Expo Router.
+[metro] Waiting on http://localhost:55840
+[metro] Logs for your project will appear below.
+[metro] Web Bundled 48792ms packages/app/index.ts (5699 modules)
+[e2e] Metro warmed on port 55840
+
+Running 1 test using 1 worker
+
+(node:24771) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:24771) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[e2e] Worker 0 daemon started on port 56106, home: /var/folders/9z/jtl3ybm970jbvhs_tkn0f1_w0000gn/T/paseo-e2e-worker-0-mHQyOx
+[metro] Web Bundled 93ms packages/app/index.ts (1 module)
+[metro] Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[metro] Web  LOG  Running application "main" with appParams:
+[metro]  {"hydrate": undefined, "rootTag": "#root"}
+[metro] Development-level warnings: ON.
+[metro] Performance optimizations: OFF.
+[metro] Web  WARN  Require cycle: src/stores/workspace-layout-store.ts -> src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/client-runtime.ts -> src/runtime/host-runtime.ts -> src/desktop/browser/automation/handler.ts -> src/stores/workspace-layout-store.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/runtime/host-runtime.ts -> src/runtime/directory-sync/index.ts -> src/runtime/directory-sync/agent-replica.ts -> src/hooks/use-archive-agent.ts -> src/runtime/host-runtime.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/client-runtime.ts -> src/plugins/actions.ts -> src/plugins/workspace-panels/locations.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/stores/navigation-active-workspace-store/index.ts -> src/workspace-tabs/navigation.ts -> src/stores/workspace-layout-store.ts -> src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/client-runtime.ts -> src/plugins/navigation.ts -> src/stores/navigation-active-workspace-store/index.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/stores/workspace-layout-store.ts -> src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/client-runtime.ts -> src/plugins/navigation.ts -> src/stores/workspace-layout-store.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/plugins/registry.ts -> src/plugins/evaluate.ts -> src/plugins/themes/index.ts -> src/plugins/registry.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/components/sidebar-workspace-list.tsx -> src/components/sidebar/sidebar-status-list.tsx -> src/components/sidebar/sidebar-workspace-row-content.tsx -> src/components/workspace-hover-card.tsx -> src/components/sidebar-workspace-list.tsx
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/panels/register-panels.ts -> src/panels/agent-panel.tsx -> src/panels/agent-tracks.tsx -> src/subagents/track.tsx -> src/screens/workspace/workspace-tab-presentation.tsx -> src/panels/register-panels.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/panels/register-panels.ts -> src/panels/new-tab-panel.tsx -> src/workspace-tabs/launcher/index.tsx -> src/panels/register-panels.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+[metro] Web Bundled 48ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro] Web  WARN  Animated: `useNativeDriver` is not supported because the native animated module is missing. Falling back to JS-based animation. To resolve this, add `RCTAnimation` module to this app, or remove `useNativeDriver`. Make sure to run `bundle exec pod install` first. Read more about autolinking: https://github.com/react-native-community/cli/blob/master/docs/autolinking.md
+[metro] Web  ERROR
+[metro] Code: sidebar-menu-toggle.tsx
+[metro]   84 |       accessibilityState={accessibilityState}
+[metro]   85 |     >
+[metro] > 86 |       {isMobile ? (
+[metro]      |        ^
+[metro]   87 |         <MobileMenuIcon extraMuted={extraMutedIdleIcon} />
+[metro]   88 |       ) : (
+[metro]   89 |         <ThemedPanelLeft
+[metro] Call Stack
+[metro]   SidebarMenuToggleButton (packages/app/src/components/headers/sidebar-menu-toggle.tsx:86:8)
+[metro]   SidebarMenuToggle (packages/app/src/components/headers/sidebar-menu-toggle.tsx:121:10)
+[metro]   MenuHeader (packages/app/src/components/headers/menu-header.tsx:24:11)
+[metro]   OpenProjectScreen (packages/app/src/screens/open-project-screen.tsx:64:7)
+[metro]   OpenProjectRoute (packages/app/src/app/open-project.tsx:7:7)
+[metro]   ThemedStackBase (packages/app/src/navigation/themed-stack.tsx:64:5)
+[metro]   RootStack (packages/app/src/app/_layout.tsx:793:5)
+[metro]   AppShell (packages/app/src/app/_layout.tsx:839:11)
+[metro]   RootAppTree (packages/app/src/app/_layout.tsx:893:15)
+[metro]   RootLayout (packages/app/src/app/_layout.tsx:913:10)
+[metro]   RootRouter (packages/app/src/root-app.tsx:35:15)
+[metro]   RootApp (packages/app/src/root-app.tsx:19:7)
+[e2e] Worker 0 daemon stopped
+  ✘  1 [browser] › e2e/browser/sidebar-nav-settings.spec.ts:240:7 › The sidebar items group › owner drags the navigation group taller and finds it that tall next time (2.5s)
+[e2e] Metro stopped
+
+
+  1) [browser] › e2e/browser/sidebar-nav-settings.spec.ts:240:7 › The sidebar items group › owner drags the navigation group taller and finds it that tall next time
+
+    Error: dragging must not retain per-pixel CSS rules
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 69
+    Received: 79
+
+      257 |       contentType: "application/json",
+      258 |     });
+    > 259 |     expect(rulesAfterDrag, "dragging must not retain per-pixel CSS rules").toBe(rulesBeforeDrag);
+          |                                                                            ^
+      260 |
+      261 |     await page.reload();
+      262 |     await expectNavigationGroupHeight(page, resizedHeight);
+        at /Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/browser/sidebar-nav-settings.spec.ts:259:76
+
+    attachment #2: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/sidebar-nav-settings-The-s-34a84-inds-it-that-tall-next-time-browser/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #3: browser-console (text/plain) ────────────────────────────────────────────────────
+    [console:info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+    [console:log] Running application "main" with appParams:
+     {rootTag: #root, hydrate: undefined}
+    Development-level warnings: ON.
+    Performance optimizations: OFF.
+    [co...
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #4: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/sidebar-nav-settings-The-s-34a84-inds-it-that-tall-next-time-browser/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/sidebar-nav-settings-The-s-34a84-inds-it-that-tall-next-time-browser/error-context.md
+
+    attachment #6: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/sidebar-nav-settings-The-s-34a84-inds-it-that-tall-next-time-browser/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/sidebar-nav-settings-The-s-34a84-inds-it-that-tall-next-time-browser/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [browser] › e2e/browser/sidebar-nav-settings.spec.ts:240:7 › The sidebar items group › owner drags the navigation group taller and finds it that tall next time
+npm error Lifecycle script `test:e2e` failed with error:
+npm error code 1
+npm error path /Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app
+npm error workspace @getpaseo/app@0.13.0-beta.2
+npm error location /Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app
+npm error command failed
+npm error command sh -c playwright test --project=browser e2e/browser/sidebar-nav-settings.spec.ts --workers=1 --grep 'owner drags the navigation group taller and finds it that tall next time'
+
+EXIT_CODE=1

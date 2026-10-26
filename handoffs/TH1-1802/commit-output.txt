@@ -1,0 +1,73 @@
+╭───────────────────────────────────╮
+│ lefthook v2.1.6  hook: pre-commit │
+╰───────────────────────────────────╯
+sync hooks: ✔️ (pre-commit)
+┃  format ❯
+
+npm notice run paseo@0.13.0-beta.2 format:check:files
+npm notice run oxfmt --check --threads=2 handoffs/TH1-1802/BLOCKED.md handoffs/TH1-1802/CHECKLIST-6e8a18bb.md handoffs/TH1-1802/STATUS.md handoffs/TH1-1802/after-e2e.json handoffs/TH1-1802/after-resize.json handoffs/TH1-1802/before-resize.json handoffs/TH1-1802/lefthook-serial.yml packages/app/e2e/browser/sidebar-nav-settings.spec.ts packages/app/src/components/sidebar/sidebar-nav-rows.tsx
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 82ms on 9 files using 2 threads.
+
+┃  lint ❯
+
+npm notice run paseo@0.13.0-beta.2 lint
+npm notice run oxlint --threads=2 packages/app/e2e/browser/sidebar-nav-settings.spec.ts packages/app/src/components/sidebar/sidebar-nav-rows.tsx
+Found 0 warnings and 0 errors.
+Finished in 182ms on 2 files with 177 rules using 2 threads.
+
+┃  typecheck ❯
+
+npm notice run paseo@0.13.0-beta.2 typecheck
+npm notice run npm run typecheck --workspaces --if-present
+npm notice run @getpaseo/builtin-plugins@0.13.0-beta.2 typecheck
+npm notice run tsgo -p tsconfig.json --noEmit
+npm notice run @getpaseo/expo-two-way-audio@0.13.0-beta.2 typecheck
+npm notice run tsgo --noEmit
+npm notice run @getpaseo/highlight@0.13.0-beta.2 typecheck
+npm notice run @getpaseo/plugin@0.13.0-beta.2 typecheck
+npm notice run tsgo --noEmit && npm run typecheck:examples
+npm notice run @getpaseo/plugin@0.13.0-beta.2 typecheck:examples
+npm notice run npm --prefix ../../plugin-examples/markdown-panel install --ignore-scripts --no-audit --no-fund && tsgo -p tsconfig.examples.json --noEmit
+npm error code EALLOWSCRIPTS
+npm error --allow-scripts is not allowed in project-scoped installs. Add the entries to the "allowScripts" field in package.json, or to .npmrc, instead.
+npm error A complete log of this run can be found in: /Users/hteo/.npm/_logs/2026-10-26T09_25_17_880Z-debug-0.log
+npm error Lifecycle script `typecheck:examples` failed with error:
+npm error code 1
+npm error path /Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/plugin
+npm error workspace @getpaseo/plugin@0.13.0-beta.2
+npm error location /Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/plugin
+npm error command failed
+npm error command sh -c npm --prefix ../../plugin-examples/markdown-panel install --ignore-scripts --no-audit --no-fund && tsgo -p tsconfig.examples.json --noEmit
+npm error Lifecycle script `typecheck` failed with error:
+npm error code 1
+npm error path /Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/plugin
+npm error workspace @getpaseo/plugin@0.13.0-beta.2
+npm error location /Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/plugin
+npm error command failed
+npm error command sh -c tsgo --noEmit && npm run typecheck:examples
+
+npm notice run @getpaseo/protocol@0.13.0-beta.2 pretypecheck
+npm notice run npm run generate:validators
+npm notice run @getpaseo/protocol@0.13.0-beta.2 generate:validators
+npm notice run node scripts/generate-validation-aot.mjs
+generated src/generated/validation/ws-outbound.aot.ts: envelope + 234 session message validators
+npm notice run @getpaseo/protocol@0.13.0-beta.2 typecheck
+npm notice run @getpaseo/client@0.13.0-beta.2 typecheck
+npm notice run @getpaseo/server@0.13.0-beta.2 typecheck
+npm notice run tsgo -p tsconfig.server.typecheck.json --noEmit
+npm notice run @getpaseo/app@0.13.0-beta.2 typecheck
+npm notice run @getpaseo/relay@0.13.0-beta.2 typecheck
+npm notice run @getpaseo/website@0.13.0-beta.2 typecheck
+npm notice run @getpaseo/desktop@0.13.0-beta.2 typecheck
+npm notice run tsgo --noEmit -p tsconfig.json
+npm notice run @getpaseo/cli@0.13.0-beta.2 typecheck
+
+exit status 1
+  ────────────────────────────────────
+summary: (done in 17.39 seconds)
+✓ format (0.26 seconds)
+✓ lint (0.30 seconds)
+✗ typecheck (16.73 seconds)

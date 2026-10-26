@@ -1,0 +1,4 @@
+npm notice run @getpaseo/app@0.13.0-beta.2 typecheck
+npm notice run tsgo --noEmit
+
+EXIT_CODE=0

@@ -41,6 +41,7 @@ import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspac
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { usePanelStore } from "@/stores/panel-store";
 import { density } from "@/styles/density";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import {
   buildNewWorkspaceRoute,
@@ -98,7 +99,10 @@ export function SidebarNavRows({
   });
   const [measuredHeight, setMeasuredHeight] = useState<number | null>(null);
   const rowsStyle = useMemo(
-    () => [styles.rows, requestedHeight === null ? { maxHeight: height } : { height }],
+    () => [
+      styles.rows,
+      inlineUnistylesStyle(requestedHeight === null ? { maxHeight: height } : { height }),
+    ],
     [height, requestedHeight],
   );
   const handleRowsLayout = useCallback(

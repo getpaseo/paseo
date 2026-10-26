@@ -1,0 +1,6 @@
+npm notice run @getpaseo/plugin@0.13.0-beta.2 typecheck:examples
+npm notice run npm --prefix ../../plugin-examples/markdown-panel install --ignore-scripts --no-audit --no-fund && tsgo -p tsconfig.examples.json --noEmit
+
+added 22 packages in 648ms
+
+EXIT_CODE=0

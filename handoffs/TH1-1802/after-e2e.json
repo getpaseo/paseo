@@ -1,0 +1,596 @@
+{
+  "config": {
+    "configFile": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/playwright.config.ts",
+    "rootDir": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/browser",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/support/global-setup.ts",
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "browser",
+        "name": "browser",
+        "testDir": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/browser",
+        "testIgnore": ["**/*.real.spec.ts"],
+        "testMatch": ["**/*.@(spec|test).?(c|m)[jt]s?(x)"],
+        "timeout": 60000
+      },
+      {
+        "outputDir": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "real-provider",
+        "name": "real-provider",
+        "testDir": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/browser",
+        "testIgnore": ["**/relay-deployment-reconnect.real.spec.ts"],
+        "testMatch": ["**/*.real.spec.ts"],
+        "timeout": 60000
+      },
+      {
+        "outputDir": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "relay-deployment",
+        "name": "relay-deployment",
+        "testDir": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/browser",
+        "testIgnore": [],
+        "testMatch": ["**/relay-deployment-reconnect.real.spec.ts"],
+        "timeout": 60000
+      }
+    ],
+    "quiet": false,
+    "reporter": [["list"], ["json"]],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "runAgents": "none",
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.58.2",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "sidebar-nav-settings.spec.ts",
+      "file": "sidebar-nav-settings.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "developer toasts leave concurrent sidebar layout checks uninterrupted",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 60000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "browser",
+              "projectName": "browser",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1977,
+                  "errors": [],
+                  "stdout": [
+                    {
+                      "text": "[e2e] Worker 0 daemon started on port 56542, home: /var/folders/9z/jtl3ybm970jbvhs_tkn0f1_w0000gn/T/paseo-e2e-worker-0-ZsyYau\n"
+                    }
+                  ],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-26T09:17:00.456Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "5ed20de1b1d6f281077a-085c27750bbded588877",
+          "file": "sidebar-nav-settings.spec.ts",
+          "line": 68,
+          "column": 5
+        },
+        {
+          "title": "fixed footer line keeps its five icons, Help and Settings at the end",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 120000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "browser",
+              "projectName": "browser",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 12629,
+                  "error": {
+                    "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByTestId('sidebar-add-project-tooltip').getByText('Ctrl+O', { exact: true })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('sidebar-add-project-tooltip').getByText('Ctrl+O', { exact: true })\u001b[22m\n",
+                    "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByTestId('sidebar-add-project-tooltip').getByText('Ctrl+O', { exact: true })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('sidebar-add-project-tooltip').getByText('Ctrl+O', { exact: true })\u001b[22m\n\n    at hoverFooterAddProject (/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/support/helpers/sidebar-nav-settings.ts:291:62)\n    at /Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/browser/sidebar-nav-settings.spec.ts:88:3",
+                    "location": {
+                      "file": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/support/helpers/sidebar-nav-settings.ts",
+                      "column": 62,
+                      "line": 291
+                    },
+                    "snippet": "\u001b[90m   at \u001b[39m../support/helpers/sidebar-nav-settings.ts:291\n\n  289 |   const tooltip = page.getByTestId(\"sidebar-add-project-tooltip\");\n  290 |   await expect(tooltip.getByText(\"Add project\", { exact: true })).toBeVisible();\n> 291 |   await expect(tooltip.getByText(\"Ctrl+O\", { exact: true })).toBeVisible();\n      |                                                              ^\n  292 | }\n  293 |\n  294 | export async function footerScreenshot(page: Page, name: string): Promise<void> {"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/support/helpers/sidebar-nav-settings.ts",
+                        "column": 62,
+                        "line": 291
+                      },
+                      "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByTestId('sidebar-add-project-tooltip').getByText('Ctrl+O', { exact: true })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('sidebar-add-project-tooltip').getByText('Ctrl+O', { exact: true })\u001b[22m\n\n\n   at ../support/helpers/sidebar-nav-settings.ts:291\n\n  289 |   const tooltip = page.getByTestId(\"sidebar-add-project-tooltip\");\n  290 |   await expect(tooltip.getByText(\"Add project\", { exact: true })).toBeVisible();\n> 291 |   await expect(tooltip.getByText(\"Ctrl+O\", { exact: true })).toBeVisible();\n      |                                                              ^\n  292 | }\n  293 |\n  294 | export async function footerScreenshot(page: Page, name: string): Promise<void> {\n    at hoverFooterAddProject (/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/support/helpers/sidebar-nav-settings.ts:291:62)\n    at /Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/browser/sidebar-nav-settings.spec.ts:88:3"
+                    }
+                  ],
+                  "stdout": [
+                    {
+                      "text": "[e2e] Worker 0 daemon stopped\n"
+                    }
+                  ],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-26T09:17:19.411Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "screenshot",
+                      "contentType": "image/png",
+                      "path": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/test-results/sidebar-nav-settings-fixed-3a8ee-elp-and-Settings-at-the-end-browser/test-failed-1.png"
+                    },
+                    {
+                      "name": "browser-console",
+                      "contentType": "text/plain",
+                      "body": "W2NvbnNvbGU6aW5mb10gJWNEb3dubG9hZCB0aGUgUmVhY3QgRGV2VG9vbHMgZm9yIGEgYmV0dGVyIGRldmVsb3BtZW50IGV4cGVyaWVuY2U6IGh0dHBzOi8vcmVhY3QuZGV2L2xpbmsvcmVhY3QtZGV2dG9vbHMgZm9udC13ZWlnaHQ6Ym9sZApbY29uc29sZTpsb2ddIFJ1bm5pbmcgYXBwbGljYXRpb24gIm1haW4iIHdpdGggYXBwUGFyYW1zOgoge3Jvb3RUYWc6ICNyb290LCBoeWRyYXRlOiB1bmRlZmluZWR9IApEZXZlbG9wbWVudC1sZXZlbCB3YXJuaW5nczogT04uClBlcmZvcm1hbmNlIG9wdGltaXphdGlvbnM6IE9GRi4KW2NvbnNvbGU6d2FybmluZ10gUmVxdWlyZSBjeWNsZTogc3JjL3N0b3Jlcy93b3Jrc3BhY2UtbGF5b3V0LXN0b3JlLnRzIC0+IHNyYy9wbHVnaW5zL3dvcmtzcGFjZS1wYW5lbHMvbG9jYXRpb25zLnRzIC0+IHNyYy9wbHVnaW5zL3JlZ2lzdHJ5LnRzIC0+IHNyYy9wbHVnaW5zL2NsaWVudC1ydW50aW1lLnRzIC0+IHNyYy9ydW50aW1lL2hvc3QtcnVudGltZS50cyAtPiBzcmMvZGVza3RvcC9icm93c2VyL2F1dG9tYXRpb24vaGFuZGxlci50cyAtPiBzcmMvc3RvcmVzL3dvcmtzcGFjZS1sYXlvdXQtc3RvcmUudHMKClJlcXVpcmUgY3ljbGVzIGFyZSBhbGxvd2VkLCBidXQgY2FuIHJlc3VsdCBpbiB1bmluaXRpYWxpemVkIHZhbHVlcy4gQ29uc2lkZXIgcmVmYWN0b3JpbmcgdG8gcmVtb3ZlIHRoZSBuZWVkIGZvciBhIGN5Y2xlLgpbY29uc29sZTp3YXJuaW5nXSBSZXF1aXJlIGN5Y2xlOiBzcmMvcnVudGltZS9ob3N0LXJ1bnRpbWUudHMgLT4gc3JjL3J1bnRpbWUvZGlyZWN0b3J5LXN5bmMvaW5kZXgudHMgLT4gc3JjL3J1bnRpbWUvZGlyZWN0b3J5LXN5bmMvYWdlbnQtcmVwbGljYS50cyAtPiBzcmMvaG9va3MvdXNlLWFyY2hpdmUtYWdlbnQudHMgLT4gc3JjL3J1bnRpbWUvaG9zdC1ydW50aW1lLnRzCgpSZXF1aXJlIGN5Y2xlcyBhcmUgYWxsb3dlZCwgYnV0IGNhbiByZXN1bHQgaW4gdW5pbml0aWFsaXplZCB2YWx1ZXMuIENvbnNpZGVyIHJlZmFjdG9yaW5nIHRvIHJlbW92ZSB0aGUgbmVlZCBmb3IgYSBjeWNsZS4KW2NvbnNvbGU6d2FybmluZ10gUmVxdWlyZSBjeWNsZTogc3JjL3BsdWdpbnMvd29ya3NwYWNlLXBhbmVscy9sb2NhdGlvbnMudHMgLT4gc3JjL3BsdWdpbnMvcmVnaXN0cnkudHMgLT4gc3JjL3BsdWdpbnMvY2xpZW50LXJ1bnRpbWUudHMgLT4gc3JjL3BsdWdpbnMvYWN0aW9ucy50cyAtPiBzcmMvcGx1Z2lucy93b3Jrc3BhY2UtcGFuZWxzL2xvY2F0aW9ucy50cwoKUmVxdWlyZSBjeWNsZXMgYXJlIGFsbG93ZWQsIGJ1dCBjYW4gcmVzdWx0IGluIHVuaW5pdGlhbGl6ZWQgdmFsdWVzLiBDb25zaWRlciByZWZhY3RvcmluZyB0byByZW1vdmUgdGhlIG5lZWQgZm9yIGEgY3ljbGUuCltjb25zb2xlOndhcm5pbmddIFJlcXVpcmUgY3ljbGU6IHNyYy9zdG9yZXMvbmF2aWdhdGlvbi1hY3RpdmUtd29ya3NwYWNlLXN0b3JlL2luZGV4LnRzIC0+IHNyYy93b3Jrc3BhY2UtdGFicy9uYXZpZ2F0aW9uLnRzIC0+IHNyYy9zdG9yZXMvd29ya3NwYWNlLWxheW91dC1zdG9yZS50cyAtPiBzcmMvcGx1Z2lucy93b3Jrc3BhY2UtcGFuZWxzL2xvY2F0aW9ucy50cyAtPiBzcmMvcGx1Z2lucy9yZWdpc3RyeS50cyAtPiBzcmMvcGx1Z2lucy9jbGllbnQtcnVudGltZS50cyAtPiBzcmMvcGx1Z2lucy9uYXZpZ2F0aW9uLnRzIC0+IHNyYy9zdG9yZXMvbmF2aWdhdGlvbi1hY3RpdmUtd29ya3NwYWNlLXN0b3JlL2luZGV4LnRzCgpSZXF1aXJlIGN5Y2xlcyBhcmUgYWxsb3dlZCwgYnV0IGNhbiByZXN1bHQgaW4gdW5pbml0aWFsaXplZCB2YWx1ZXMuIENvbnNpZGVyIHJlZmFjdG9yaW5nIHRvIHJlbW92ZSB0aGUgbmVlZCBmb3IgYSBjeWNsZS4KW2NvbnNvbGU6d2FybmluZ10gUmVxdWlyZSBjeWNsZTogc3JjL3N0b3Jlcy93b3Jrc3BhY2UtbGF5b3V0LXN0b3JlLnRzIC0+IHNyYy9wbHVnaW5zL3dvcmtzcGFjZS1wYW5lbHMvbG9jYXRpb25zLnRzIC0+IHNyYy9wbHVnaW5zL3JlZ2lzdHJ5LnRzIC0+IHNyYy9wbHVnaW5zL2NsaWVudC1ydW50aW1lLnRzIC0+IHNyYy9wbHVnaW5zL25hdmlnYXRpb24udHMgLT4gc3JjL3N0b3Jlcy93b3Jrc3BhY2UtbGF5b3V0LXN0b3JlLnRzCgpSZXF1aXJlIGN5Y2xlcyBhcmUgYWxsb3dlZCwgYnV0IGNhbiByZXN1bHQgaW4gdW5pbml0aWFsaXplZCB2YWx1ZXMuIENvbnNpZGVyIHJlZmFjdG9yaW5nIHRvIHJlbW92ZSB0aGUgbmVlZCBmb3IgYSBjeWNsZS4KW2NvbnNvbGU6d2FybmluZ10gUmVxdWlyZSBjeWNsZTogc3JjL3BsdWdpbnMvcmVnaXN0cnkudHMgLT4gc3JjL3BsdWdpbnMvZXZhbHVhdGUudHMgLT4gc3JjL3BsdWdpbnMvdGhlbWVzL2luZGV4LnRzIC0+IHNyYy9wbHVnaW5zL3JlZ2lzdHJ5LnRzCgpSZXF1aXJlIGN5Y2xlcyBhcmUgYWxsb3dlZCwgYnV0IGNhbiByZXN1bHQgaW4gdW5pbml0aWFsaXplZCB2YWx1ZXMuIENvbnNpZGVyIHJlZmFjdG9yaW5nIHRvIHJlbW92ZSB0aGUgbmVlZCBmb3IgYSBjeWNsZS4KW2NvbnNvbGU6d2FybmluZ10gUmVxdWlyZSBjeWNsZTogc3JjL2NvbXBvbmVudHMvc2lkZWJhci13b3Jrc3BhY2UtbGlzdC50c3ggLT4gc3JjL2NvbXBvbmVudHMvc2lkZWJhci9zaWRlYmFyLXN0YXR1cy1saXN0LnRzeCAtPiBzcmMvY29tcG9uZW50cy9zaWRlYmFyL3NpZGViYXItd29ya3NwYWNlLXJvdy1jb250ZW50LnRzeCAtPiBzcmMvY29tcG9uZW50cy93b3Jrc3BhY2UtaG92ZXItY2FyZC50c3ggLT4gc3JjL2NvbXBvbmVudHMvc2lkZWJhci13b3Jrc3BhY2UtbGlzdC50c3gKClJlcXVpcmUgY3ljbGVzIGFyZSBhbGxvd2VkLCBidXQgY2FuIHJlc3VsdCBpbiB1bmluaXRpYWxpemVkIHZhbHVlcy4gQ29uc2lkZXIgcmVmYWN0b3JpbmcgdG8gcmVtb3ZlIHRoZSBuZWVkIGZvciBhIGN5Y2xlLgpbY29uc29sZTp3YXJuaW5nXSBSZXF1aXJlIGN5Y2xlOiBzcmMvcGFuZWxzL3JlZ2lzdGVyLXBhbmVscy50cyAtPiBzcmMvcGFuZWxzL2FnZW50LXBhbmVsLnRzeCAtPiBzcmMvcGFuZWxzL2FnZW50LXRyYWNrcy50c3ggLT4gc3JjL3N1YmFnZW50cy90cmFjay50c3ggLT4gc3JjL3NjcmVlbnMvd29ya3NwYWNlL3dvcmtzcGFjZS10YWItcHJlc2VudGF0aW9uLnRzeCAtPiBzcmMvcGFuZWxzL3JlZ2lzdGVyLXBhbmVscy50cwoKUmVxdWlyZSBjeWNsZXMgYXJlIGFsbG93ZWQsIGJ1dCBjYW4gcmVzdWx0IGluIHVuaW5pdGlhbGl6ZWQgdmFsdWVzLiBDb25zaWRlciByZWZhY3RvcmluZyB0byByZW1vdmUgdGhlIG5lZWQgZm9yIGEgY3ljbGUuCltjb25zb2xlOndhcm5pbmddIFJlcXVpcmUgY3ljbGU6IHNyYy9wYW5lbHMvcmVnaXN0ZXItcGFuZWxzLnRzIC0+IHNyYy9wYW5lbHMvbmV3LXRhYi1wYW5lbC50c3ggLT4gc3JjL3dvcmtzcGFjZS10YWJzL2xhdW5jaGVyL2luZGV4LnRzeCAtPiBzcmMvcGFuZWxzL3JlZ2lzdGVyLXBhbmVscy50cwoKUmVxdWlyZSBjeWNsZXMgYXJlIGFsbG93ZWQsIGJ1dCBjYW4gcmVzdWx0IGluIHVuaW5pdGlhbGl6ZWQgdmFsdWVzLiBDb25zaWRlciByZWZhY3RvcmluZyB0byByZW1vdmUgdGhlIG5lZWQgZm9yIGEgY3ljbGUuCltjb25zb2xlOndhcm5pbmddIHByb3BzLnBvaW50ZXJFdmVudHMgaXMgZGVwcmVjYXRlZC4gVXNlIHN0eWxlLnBvaW50ZXJFdmVudHMKW2NvbnNvbGU6d2FybmluZ10gQW5pbWF0ZWQ6IGB1c2VOYXRpdmVEcml2ZXJgIGlzIG5vdCBzdXBwb3J0ZWQgYmVjYXVzZSB0aGUgbmF0aXZlIGFuaW1hdGVkIG1vZHVsZSBpcyBtaXNzaW5nLiBGYWxsaW5nIGJhY2sgdG8gSlMtYmFzZWQgYW5pbWF0aW9uLiBUbyByZXNvbHZlIHRoaXMsIGFkZCBgUkNUQW5pbWF0aW9uYCBtb2R1bGUgdG8gdGhpcyBhcHAsIG9yIHJlbW92ZSBgdXNlTmF0aXZlRHJpdmVyYC4gTWFrZSBzdXJlIHRvIHJ1biBgYnVuZGxlIGV4ZWMgcG9kIGluc3RhbGxgIGZpcnN0LiBSZWFkIG1vcmUgYWJvdXQgYXV0b2xpbmtpbmc6IGh0dHBzOi8vZ2l0aHViLmNvbS9yZWFjdC1uYXRpdmUtY29tbXVuaXR5L2NsaS9ibG9iL21hc3Rlci9kb2NzL2F1dG9saW5raW5nLm1kCltjb25zb2xlOmVycm9yXSBSZWFjdCBkb2VzIG5vdCByZWNvZ25pemUgdGhlIGAlc2AgcHJvcCBvbiBhIERPTSBlbGVtZW50LiBJZiB5b3UgaW50ZW50aW9uYWxseSB3YW50IGl0IHRvIGFwcGVhciBpbiB0aGUgRE9NIGFzIGEgY3VzdG9tIGF0dHJpYnV0ZSwgc3BlbGwgaXQgYXMgbG93ZXJjYXNlIGAlc2AgaW5zdGVhZC4gSWYgeW91IGFjY2lkZW50YWxseSBwYXNzZWQgaXQgZnJvbSBhIHBhcmVudCBjb21wb25lbnQsIHJlbW92ZSBpdCBmcm9tIHRoZSBET00gZWxlbWVudC4gdW5pUHJvcHMgdW5pcHJvcHM="
+                    },
+                    {
+                      "name": "video",
+                      "contentType": "video/webm",
+                      "path": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/test-results/sidebar-nav-settings-fixed-3a8ee-elp-and-Settings-at-the-end-browser/video.webm"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/test-results/sidebar-nav-settings-fixed-3a8ee-elp-and-Settings-at-the-end-browser/error-context.md"
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/test-results/sidebar-nav-settings-fixed-3a8ee-elp-and-Settings-at-the-end-browser/trace.zip"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/support/helpers/sidebar-nav-settings.ts",
+                    "column": 62,
+                    "line": 291
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "5ed20de1b1d6f281077a-03eba7d14d86e2479f10",
+          "file": "sidebar-nav-settings.spec.ts",
+          "line": 75,
+          "column": 5
+        }
+      ],
+      "suites": [
+        {
+          "title": "Sidebar items in settings",
+          "file": "sidebar-nav-settings.spec.ts",
+          "line": 123,
+          "column": 6,
+          "specs": [
+            {
+              "title": "owner reorders and hides top-level sidebar items",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "browser",
+                  "projectName": "browser",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 12369,
+                      "error": {
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByTestId('sidebar-nav-item-new-workspace').getByText('Ctrl+N', { exact: true })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('sidebar-nav-item-new-workspace').getByText('Ctrl+N', { exact: true })\u001b[22m\n",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByTestId('sidebar-nav-item-new-workspace').getByText('Ctrl+N', { exact: true })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('sidebar-nav-item-new-workspace').getByText('Ctrl+N', { exact: true })\u001b[22m\n\n    at /Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/browser/sidebar-nav-settings.spec.ts:152:9\n    at /Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/browser/sidebar-nav-settings.spec.ts:131:5",
+                        "location": {
+                          "file": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/browser/sidebar-nav-settings.spec.ts",
+                          "column": 9,
+                          "line": 152
+                        },
+                        "snippet": "  150 |       await expect(\n  151 |         page.getByTestId(\"sidebar-nav-item-new-workspace\").getByText(\"Ctrl+N\", { exact: true }),\n> 152 |       ).toBeVisible();\n      |         ^\n  153 |     });\n  154 |\n  155 |     await test.step(\"moving Schedules up twice lifts it above History\", async () => {"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/browser/sidebar-nav-settings.spec.ts",
+                            "column": 9,
+                            "line": 152
+                          },
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByTestId('sidebar-nav-item-new-workspace').getByText('Ctrl+N', { exact: true })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('sidebar-nav-item-new-workspace').getByText('Ctrl+N', { exact: true })\u001b[22m\n\n\n  150 |       await expect(\n  151 |         page.getByTestId(\"sidebar-nav-item-new-workspace\").getByText(\"Ctrl+N\", { exact: true }),\n> 152 |       ).toBeVisible();\n      |         ^\n  153 |     });\n  154 |\n  155 |     await test.step(\"moving Schedules up twice lifts it above History\", async () => {\n    at /Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/browser/sidebar-nav-settings.spec.ts:152:9\n    at /Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/browser/sidebar-nav-settings.spec.ts:131:5"
+                        }
+                      ],
+                      "stdout": [
+                        {
+                          "text": "[e2e] Worker 1 daemon started on port 56649, home: /var/folders/9z/jtl3ybm970jbvhs_tkn0f1_w0000gn/T/paseo-e2e-worker-1-reHey0\n"
+                        },
+                        {
+                          "text": "[e2e] Worker 1 daemon stopped\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "steps": [
+                        {
+                          "title": "the sidebar starts in the default order",
+                          "duration": 166
+                        },
+                        {
+                          "title": "the Sidebar section lists every item in the same order",
+                          "duration": 10223,
+                          "error": {
+                            "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByTestId('sidebar-nav-item-new-workspace').getByText('Ctrl+N', { exact: true })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('sidebar-nav-item-new-workspace').getByText('Ctrl+N', { exact: true })\u001b[22m\n",
+                            "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByTestId('sidebar-nav-item-new-workspace').getByText('Ctrl+N', { exact: true })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('sidebar-nav-item-new-workspace').getByText('Ctrl+N', { exact: true })\u001b[22m\n\n    at /Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/browser/sidebar-nav-settings.spec.ts:152:9\n    at /Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/browser/sidebar-nav-settings.spec.ts:131:5",
+                            "location": {
+                              "file": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/browser/sidebar-nav-settings.spec.ts",
+                              "column": 9,
+                              "line": 152
+                            },
+                            "snippet": "  150 |       await expect(\n  151 |         page.getByTestId(\"sidebar-nav-item-new-workspace\").getByText(\"Ctrl+N\", { exact: true }),\n> 152 |       ).toBeVisible();\n      |         ^\n  153 |     });\n  154 |\n  155 |     await test.step(\"moving Schedules up twice lifts it above History\", async () => {"
+                          }
+                        }
+                      ],
+                      "startTime": "2026-10-26T09:17:32.510Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/test-results/sidebar-nav-settings-Sideb-fa703-des-top-level-sidebar-items-browser/test-failed-1.png"
+                        },
+                        {
+                          "name": "browser-console",
+                          "contentType": "text/plain",
+                          "body": "W2NvbnNvbGU6aW5mb10gJWNEb3dubG9hZCB0aGUgUmVhY3QgRGV2VG9vbHMgZm9yIGEgYmV0dGVyIGRldmVsb3BtZW50IGV4cGVyaWVuY2U6IGh0dHBzOi8vcmVhY3QuZGV2L2xpbmsvcmVhY3QtZGV2dG9vbHMgZm9udC13ZWlnaHQ6Ym9sZApbY29uc29sZTpsb2ddIFJ1bm5pbmcgYXBwbGljYXRpb24gIm1haW4iIHdpdGggYXBwUGFyYW1zOgoge3Jvb3RUYWc6ICNyb290LCBoeWRyYXRlOiB1bmRlZmluZWR9IApEZXZlbG9wbWVudC1sZXZlbCB3YXJuaW5nczogT04uClBlcmZvcm1hbmNlIG9wdGltaXphdGlvbnM6IE9GRi4KW2NvbnNvbGU6d2FybmluZ10gUmVxdWlyZSBjeWNsZTogc3JjL3N0b3Jlcy93b3Jrc3BhY2UtbGF5b3V0LXN0b3JlLnRzIC0+IHNyYy9wbHVnaW5zL3dvcmtzcGFjZS1wYW5lbHMvbG9jYXRpb25zLnRzIC0+IHNyYy9wbHVnaW5zL3JlZ2lzdHJ5LnRzIC0+IHNyYy9wbHVnaW5zL2NsaWVudC1ydW50aW1lLnRzIC0+IHNyYy9ydW50aW1lL2hvc3QtcnVudGltZS50cyAtPiBzcmMvZGVza3RvcC9icm93c2VyL2F1dG9tYXRpb24vaGFuZGxlci50cyAtPiBzcmMvc3RvcmVzL3dvcmtzcGFjZS1sYXlvdXQtc3RvcmUudHMKClJlcXVpcmUgY3ljbGVzIGFyZSBhbGxvd2VkLCBidXQgY2FuIHJlc3VsdCBpbiB1bmluaXRpYWxpemVkIHZhbHVlcy4gQ29uc2lkZXIgcmVmYWN0b3JpbmcgdG8gcmVtb3ZlIHRoZSBuZWVkIGZvciBhIGN5Y2xlLgpbY29uc29sZTp3YXJuaW5nXSBSZXF1aXJlIGN5Y2xlOiBzcmMvcnVudGltZS9ob3N0LXJ1bnRpbWUudHMgLT4gc3JjL3J1bnRpbWUvZGlyZWN0b3J5LXN5bmMvaW5kZXgudHMgLT4gc3JjL3J1bnRpbWUvZGlyZWN0b3J5LXN5bmMvYWdlbnQtcmVwbGljYS50cyAtPiBzcmMvaG9va3MvdXNlLWFyY2hpdmUtYWdlbnQudHMgLT4gc3JjL3J1bnRpbWUvaG9zdC1ydW50aW1lLnRzCgpSZXF1aXJlIGN5Y2xlcyBhcmUgYWxsb3dlZCwgYnV0IGNhbiByZXN1bHQgaW4gdW5pbml0aWFsaXplZCB2YWx1ZXMuIENvbnNpZGVyIHJlZmFjdG9yaW5nIHRvIHJlbW92ZSB0aGUgbmVlZCBmb3IgYSBjeWNsZS4KW2NvbnNvbGU6d2FybmluZ10gUmVxdWlyZSBjeWNsZTogc3JjL3BsdWdpbnMvd29ya3NwYWNlLXBhbmVscy9sb2NhdGlvbnMudHMgLT4gc3JjL3BsdWdpbnMvcmVnaXN0cnkudHMgLT4gc3JjL3BsdWdpbnMvY2xpZW50LXJ1bnRpbWUudHMgLT4gc3JjL3BsdWdpbnMvYWN0aW9ucy50cyAtPiBzcmMvcGx1Z2lucy93b3Jrc3BhY2UtcGFuZWxzL2xvY2F0aW9ucy50cwoKUmVxdWlyZSBjeWNsZXMgYXJlIGFsbG93ZWQsIGJ1dCBjYW4gcmVzdWx0IGluIHVuaW5pdGlhbGl6ZWQgdmFsdWVzLiBDb25zaWRlciByZWZhY3RvcmluZyB0byByZW1vdmUgdGhlIG5lZWQgZm9yIGEgY3ljbGUuCltjb25zb2xlOndhcm5pbmddIFJlcXVpcmUgY3ljbGU6IHNyYy9zdG9yZXMvbmF2aWdhdGlvbi1hY3RpdmUtd29ya3NwYWNlLXN0b3JlL2luZGV4LnRzIC0+IHNyYy93b3Jrc3BhY2UtdGFicy9uYXZpZ2F0aW9uLnRzIC0+IHNyYy9zdG9yZXMvd29ya3NwYWNlLWxheW91dC1zdG9yZS50cyAtPiBzcmMvcGx1Z2lucy93b3Jrc3BhY2UtcGFuZWxzL2xvY2F0aW9ucy50cyAtPiBzcmMvcGx1Z2lucy9yZWdpc3RyeS50cyAtPiBzcmMvcGx1Z2lucy9jbGllbnQtcnVudGltZS50cyAtPiBzcmMvcGx1Z2lucy9uYXZpZ2F0aW9uLnRzIC0+IHNyYy9zdG9yZXMvbmF2aWdhdGlvbi1hY3RpdmUtd29ya3NwYWNlLXN0b3JlL2luZGV4LnRzCgpSZXF1aXJlIGN5Y2xlcyBhcmUgYWxsb3dlZCwgYnV0IGNhbiByZXN1bHQgaW4gdW5pbml0aWFsaXplZCB2YWx1ZXMuIENvbnNpZGVyIHJlZmFjdG9yaW5nIHRvIHJlbW92ZSB0aGUgbmVlZCBmb3IgYSBjeWNsZS4KW2NvbnNvbGU6d2FybmluZ10gUmVxdWlyZSBjeWNsZTogc3JjL3N0b3Jlcy93b3Jrc3BhY2UtbGF5b3V0LXN0b3JlLnRzIC0+IHNyYy9wbHVnaW5zL3dvcmtzcGFjZS1wYW5lbHMvbG9jYXRpb25zLnRzIC0+IHNyYy9wbHVnaW5zL3JlZ2lzdHJ5LnRzIC0+IHNyYy9wbHVnaW5zL2NsaWVudC1ydW50aW1lLnRzIC0+IHNyYy9wbHVnaW5zL25hdmlnYXRpb24udHMgLT4gc3JjL3N0b3Jlcy93b3Jrc3BhY2UtbGF5b3V0LXN0b3JlLnRzCgpSZXF1aXJlIGN5Y2xlcyBhcmUgYWxsb3dlZCwgYnV0IGNhbiByZXN1bHQgaW4gdW5pbml0aWFsaXplZCB2YWx1ZXMuIENvbnNpZGVyIHJlZmFjdG9yaW5nIHRvIHJlbW92ZSB0aGUgbmVlZCBmb3IgYSBjeWNsZS4KW2NvbnNvbGU6d2FybmluZ10gUmVxdWlyZSBjeWNsZTogc3JjL3BsdWdpbnMvcmVnaXN0cnkudHMgLT4gc3JjL3BsdWdpbnMvZXZhbHVhdGUudHMgLT4gc3JjL3BsdWdpbnMvdGhlbWVzL2luZGV4LnRzIC0+IHNyYy9wbHVnaW5zL3JlZ2lzdHJ5LnRzCgpSZXF1aXJlIGN5Y2xlcyBhcmUgYWxsb3dlZCwgYnV0IGNhbiByZXN1bHQgaW4gdW5pbml0aWFsaXplZCB2YWx1ZXMuIENvbnNpZGVyIHJlZmFjdG9yaW5nIHRvIHJlbW92ZSB0aGUgbmVlZCBmb3IgYSBjeWNsZS4KW2NvbnNvbGU6d2FybmluZ10gUmVxdWlyZSBjeWNsZTogc3JjL2NvbXBvbmVudHMvc2lkZWJhci13b3Jrc3BhY2UtbGlzdC50c3ggLT4gc3JjL2NvbXBvbmVudHMvc2lkZWJhci9zaWRlYmFyLXN0YXR1cy1saXN0LnRzeCAtPiBzcmMvY29tcG9uZW50cy9zaWRlYmFyL3NpZGViYXItd29ya3NwYWNlLXJvdy1jb250ZW50LnRzeCAtPiBzcmMvY29tcG9uZW50cy93b3Jrc3BhY2UtaG92ZXItY2FyZC50c3ggLT4gc3JjL2NvbXBvbmVudHMvc2lkZWJhci13b3Jrc3BhY2UtbGlzdC50c3gKClJlcXVpcmUgY3ljbGVzIGFyZSBhbGxvd2VkLCBidXQgY2FuIHJlc3VsdCBpbiB1bmluaXRpYWxpemVkIHZhbHVlcy4gQ29uc2lkZXIgcmVmYWN0b3JpbmcgdG8gcmVtb3ZlIHRoZSBuZWVkIGZvciBhIGN5Y2xlLgpbY29uc29sZTp3YXJuaW5nXSBSZXF1aXJlIGN5Y2xlOiBzcmMvcGFuZWxzL3JlZ2lzdGVyLXBhbmVscy50cyAtPiBzcmMvcGFuZWxzL2FnZW50LXBhbmVsLnRzeCAtPiBzcmMvcGFuZWxzL2FnZW50LXRyYWNrcy50c3ggLT4gc3JjL3N1YmFnZW50cy90cmFjay50c3ggLT4gc3JjL3NjcmVlbnMvd29ya3NwYWNlL3dvcmtzcGFjZS10YWItcHJlc2VudGF0aW9uLnRzeCAtPiBzcmMvcGFuZWxzL3JlZ2lzdGVyLXBhbmVscy50cwoKUmVxdWlyZSBjeWNsZXMgYXJlIGFsbG93ZWQsIGJ1dCBjYW4gcmVzdWx0IGluIHVuaW5pdGlhbGl6ZWQgdmFsdWVzLiBDb25zaWRlciByZWZhY3RvcmluZyB0byByZW1vdmUgdGhlIG5lZWQgZm9yIGEgY3ljbGUuCltjb25zb2xlOndhcm5pbmddIFJlcXVpcmUgY3ljbGU6IHNyYy9wYW5lbHMvcmVnaXN0ZXItcGFuZWxzLnRzIC0+IHNyYy9wYW5lbHMvbmV3LXRhYi1wYW5lbC50c3ggLT4gc3JjL3dvcmtzcGFjZS10YWJzL2xhdW5jaGVyL2luZGV4LnRzeCAtPiBzcmMvcGFuZWxzL3JlZ2lzdGVyLXBhbmVscy50cwoKUmVxdWlyZSBjeWNsZXMgYXJlIGFsbG93ZWQsIGJ1dCBjYW4gcmVzdWx0IGluIHVuaW5pdGlhbGl6ZWQgdmFsdWVzLiBDb25zaWRlciByZWZhY3RvcmluZyB0byByZW1vdmUgdGhlIG5lZWQgZm9yIGEgY3ljbGUuCltjb25zb2xlOndhcm5pbmddIHByb3BzLnBvaW50ZXJFdmVudHMgaXMgZGVwcmVjYXRlZC4gVXNlIHN0eWxlLnBvaW50ZXJFdmVudHMKW2NvbnNvbGU6d2FybmluZ10gQW5pbWF0ZWQ6IGB1c2VOYXRpdmVEcml2ZXJgIGlzIG5vdCBzdXBwb3J0ZWQgYmVjYXVzZSB0aGUgbmF0aXZlIGFuaW1hdGVkIG1vZHVsZSBpcyBtaXNzaW5nLiBGYWxsaW5nIGJhY2sgdG8gSlMtYmFzZWQgYW5pbWF0aW9uLiBUbyByZXNvbHZlIHRoaXMsIGFkZCBgUkNUQW5pbWF0aW9uYCBtb2R1bGUgdG8gdGhpcyBhcHAsIG9yIHJlbW92ZSBgdXNlTmF0aXZlRHJpdmVyYC4gTWFrZSBzdXJlIHRvIHJ1biBgYnVuZGxlIGV4ZWMgcG9kIGluc3RhbGxgIGZpcnN0LiBSZWFkIG1vcmUgYWJvdXQgYXV0b2xpbmtpbmc6IGh0dHBzOi8vZ2l0aHViLmNvbS9yZWFjdC1uYXRpdmUtY29tbXVuaXR5L2NsaS9ibG9iL21hc3Rlci9kb2NzL2F1dG9saW5raW5nLm1kCltjb25zb2xlOmVycm9yXSBSZWFjdCBkb2VzIG5vdCByZWNvZ25pemUgdGhlIGAlc2AgcHJvcCBvbiBhIERPTSBlbGVtZW50LiBJZiB5b3UgaW50ZW50aW9uYWxseSB3YW50IGl0IHRvIGFwcGVhciBpbiB0aGUgRE9NIGFzIGEgY3VzdG9tIGF0dHJpYnV0ZSwgc3BlbGwgaXQgYXMgbG93ZXJjYXNlIGAlc2AgaW5zdGVhZC4gSWYgeW91IGFjY2lkZW50YWxseSBwYXNzZWQgaXQgZnJvbSBhIHBhcmVudCBjb21wb25lbnQsIHJlbW92ZSBpdCBmcm9tIHRoZSBET00gZWxlbWVudC4gdW5pUHJvcHMgdW5pcHJvcHM="
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/test-results/sidebar-nav-settings-Sideb-fa703-des-top-level-sidebar-items-browser/video.webm"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/test-results/sidebar-nav-settings-Sideb-fa703-des-top-level-sidebar-items-browser/error-context.md"
+                        },
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/test-results/sidebar-nav-settings-Sideb-fa703-des-top-level-sidebar-items-browser/trace.zip"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/Users/hteo/.paseo/worktrees/3eu1vvlp/a2166b1e85fb/packages/app/e2e/browser/sidebar-nav-settings.spec.ts",
+                        "column": 9,
+                        "line": 152
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "5ed20de1b1d6f281077a-fb06963aac066ff0d822",
+              "file": "sidebar-nav-settings.spec.ts",
+              "line": 124,
+              "column": 7
+            },
+            {
+              "title": "renders no top-level items when every one is turned off",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "browser",
+                  "projectName": "browser",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1952,
+                      "errors": [],
+                      "stdout": [
+                        {
+                          "text": "[e2e] Worker 2 daemon started on port 56778, home: /var/folders/9z/jtl3ybm970jbvhs_tkn0f1_w0000gn/T/paseo-e2e-worker-2-uj7HlI\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-26T09:18:02.102Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "5ed20de1b1d6f281077a-6bd1f9dee7cd48cb369f",
+              "file": "sidebar-nav-settings.spec.ts",
+              "line": 197,
+              "column": 7
+            }
+          ]
+        },
+        {
+          "title": "The sidebar items group",
+          "file": "sidebar-nav-settings.spec.ts",
+          "line": 217,
+          "column": 6,
+          "specs": [
+            {
+              "title": "owner folds the navigation group away and finds it folded next time",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "browser",
+                  "projectName": "browser",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3277,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-26T09:18:20.945Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "5ed20de1b1d6f281077a-cae413347f598c753215",
+              "file": "sidebar-nav-settings.spec.ts",
+              "line": 218,
+              "column": 7
+            },
+            {
+              "title": "navigation items scroll in place on a short window",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "browser",
+                  "projectName": "browser",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1955,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-26T09:18:24.227Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "5ed20de1b1d6f281077a-e4636dd76101fcddcfa8",
+              "file": "sidebar-nav-settings.spec.ts",
+              "line": 232,
+              "column": 7
+            },
+            {
+              "title": "owner drags the navigation group taller and finds it that tall next time",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "browser",
+                  "projectName": "browser",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3619,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-26T09:18:26.186Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "navigation-resize-stylesheet",
+                          "contentType": "application/json",
+                          "body": "eyJzdGFydEhlaWdodCI6MTE5LCJyZXNpemVkSGVpZ2h0IjoxOTksInJ1bGVzQmVmb3JlRHJhZyI6NjcsInJ1bGVzQWZ0ZXJEcmFnIjo2N30="
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "5ed20de1b1d6f281077a-0ed3d1bcdf2c589ea83b",
+              "file": "sidebar-nav-settings.spec.ts",
+              "line": 240,
+              "column": 7
+            }
+          ],
+          "suites": [
+            {
+              "title": "on a touch screen",
+              "file": "sidebar-nav-settings.spec.ts",
+              "line": 266,
+              "column": 8,
+              "specs": [
+                {
+                  "title": "owner drags the navigation group taller with a finger",
+                  "ok": true,
+                  "tags": [],
+                  "tests": [
+                    {
+                      "timeout": 60000,
+                      "annotations": [],
+                      "expectedStatus": "passed",
+                      "projectId": "browser",
+                      "projectName": "browser",
+                      "results": [
+                        {
+                          "workerIndex": 2,
+                          "parallelIndex": 0,
+                          "status": "passed",
+                          "duration": 3628,
+                          "errors": [],
+                          "stdout": [],
+                          "stderr": [],
+                          "retry": 0,
+                          "startTime": "2026-10-26T09:18:29.810Z",
+                          "annotations": [],
+                          "attachments": []
+                        }
+                      ],
+                      "status": "expected"
+                    }
+                  ],
+                  "id": "5ed20de1b1d6f281077a-9b49e9b42487efb13b57",
+                  "file": "sidebar-nav-settings.spec.ts",
+                  "line": 269,
+                  "column": 9
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Sidebar footer rows in Appearance settings",
+          "file": "sidebar-nav-settings.spec.ts",
+          "line": 285,
+          "column": 6,
+          "specs": [
+            {
+              "title": "owner reorders and hides footer rows; the icon row stays fixed",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 120000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "browser",
+                  "projectName": "browser",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 4451,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "steps": [
+                        {
+                          "title": "the Footer card lists only the footer rows",
+                          "duration": 469
+                        },
+                        {
+                          "title": "moving Sync up and hiding the Usage item changes the rows",
+                          "duration": 431
+                        },
+                        {
+                          "title": "the rows keep that shape across a reload",
+                          "duration": 1520
+                        }
+                      ],
+                      "startTime": "2026-10-26T09:18:33.442Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "5ed20de1b1d6f281077a-544a944efd4bee171c42",
+              "file": "sidebar-nav-settings.spec.ts",
+              "line": 298,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-10-26T09:16:56.512Z",
+    "duration": 101453.81999999999,
+    "expected": 7,
+    "skipped": 0,
+    "unexpected": 2,
+    "flaky": 0
+  }
+}

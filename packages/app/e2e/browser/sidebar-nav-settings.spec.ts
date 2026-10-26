@@ -243,9 +243,20 @@ test.describe("The sidebar items group", () => {
     await gotoAppShell(page);
     await expectNavigationGroupShowsItems(page);
 
-    const startHeight = await navigationGroupHeight(page);
+    const startHeight = await dragNavigationDivider(page, 1);
+    const stylesheetRuleCount = () =>
+      page
+        .locator("#unistyles-web")
+        .evaluate((element: HTMLStyleElement) => element.sheet!.cssRules.length);
+    const rulesBeforeDrag = await stylesheetRuleCount();
     const resizedHeight = await dragNavigationDivider(page, 80);
     await expectNavigationGroupTaller(page, startHeight);
+    const rulesAfterDrag = await stylesheetRuleCount();
+    await test.info().attach("navigation-resize-stylesheet", {
+      body: JSON.stringify({ startHeight, resizedHeight, rulesBeforeDrag, rulesAfterDrag }),
+      contentType: "application/json",
+    });
+    expect(rulesAfterDrag, "dragging must not retain per-pixel CSS rules").toBe(rulesBeforeDrag);
 
     await page.reload();
     await expectNavigationGroupHeight(page, resizedHeight);
