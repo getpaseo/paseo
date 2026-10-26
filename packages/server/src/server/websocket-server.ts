@@ -1034,6 +1034,18 @@ export class VoiceAssistantWebSocketServer {
     );
   }
 
+  // One entry per connected client socket, for GET /api/host-activity. Plugin
+  // processes connect over the same server but are not people.
+  public listClientPresence(): ClientPresenceState[] {
+    const presence: ClientPresenceState[] = [];
+    for (const [ws, connection] of this.sessions) {
+      if (connection.lifecycle === "reconnectable") {
+        presence.push(this.getClientActivityState(connection.session, ws));
+      }
+    }
+    return presence;
+  }
+
   public publishProjectUpdate(update: ProjectUpdate): void {
     for (const session of this.listSessions()) {
       void session

@@ -11,6 +11,7 @@ import type {
   TerminalActivityTransition,
   TerminalCommandFinishedInfo,
   TerminalExitInfo,
+  TerminalForeground,
   TerminalSession,
   TerminalStateSnapshot,
 } from "./terminal.js";
@@ -70,11 +71,15 @@ interface WorkerTerminalRecord {
   // in the worker process). Updated with streamed output and snapshot responses.
   replayPreamble: string;
   exitInfo: TerminalExitInfo | null;
+  // Seeded from the worker's terminal info, then mirrored from
+  // terminalForegroundChange events.
+  foreground: TerminalForeground;
   messageListeners: Set<(msg: ServerMessage) => void>;
   exitListeners: Set<(info: TerminalExitInfo) => void>;
   commandFinishedListeners: Set<(info: TerminalCommandFinishedInfo) => void>;
   titleChangeListeners: Set<(title?: string) => void>;
   activityChangeListeners: Set<(transition: TerminalActivityTransition) => void>;
+  foregroundChangeListeners: Set<(foreground: TerminalForeground) => void>;
   session: TerminalSession;
 }
 
@@ -135,6 +140,7 @@ function cloneTerminalInfo(info: RequiredWorkerTerminalInfo): RequiredWorkerTerm
     workspaceId: info.workspaceId,
     ...(info.title ? { title: info.title } : {}),
     activity: info.activity,
+    foreground: info.foreground,
   };
 }
 
@@ -228,6 +234,7 @@ export function createWorkerTerminalManager(
     if (existing) {
       existing.info = cloneTerminalInfo(input.info);
       existing.state = input.state;
+      existing.foreground = input.info.foreground;
       return existing.session;
     }
 
@@ -237,11 +244,13 @@ export function createWorkerTerminalManager(
       activity: input.info.activity,
       replayPreamble: "",
       exitInfo: null,
+      foreground: input.info.foreground,
       messageListeners: new Set(),
       exitListeners: new Set(),
       commandFinishedListeners: new Set(),
       titleChangeListeners: new Set(),
       activityChangeListeners: new Set(),
+      foregroundChangeListeners: new Set(),
       session: undefined as unknown as TerminalSession,
     };
 
@@ -321,6 +330,15 @@ export function createWorkerTerminalManager(
       },
       getActivity(): TerminalActivity | null {
         return record.activity;
+      },
+      onForegroundChange(listener: (foreground: TerminalForeground) => void): () => void {
+        record.foregroundChangeListeners.add(listener);
+        return () => {
+          record.foregroundChangeListeners.delete(listener);
+        };
+      },
+      getForeground(): TerminalForeground {
+        return record.foreground;
       },
       setActivity(state: TerminalActivityState): void {
         record.activity = { state, changedAt: Date.now() };
@@ -576,6 +594,18 @@ export function createWorkerTerminalManager(
         handleTerminalActivityChangeEvent(message);
         return;
       }
+
+      case "terminalForegroundChange": {
+        const record = recordsById.get(message.terminalId);
+        if (!record) {
+          return;
+        }
+        record.foreground = message.foreground;
+        for (const listener of Array.from(record.foregroundChangeListeners)) {
+          listener(message.foreground);
+        }
+        return;
+      }
     }
   }
 
@@ -730,6 +760,10 @@ export function createWorkerTerminalManager(
 
     getTerminal(id: string): TerminalSession | undefined {
       return recordsById.get(id)?.session;
+    },
+
+    listTerminals(): TerminalSession[] {
+      return Array.from(recordsById.values(), (record) => record.session);
     },
 
     async getTerminalState(

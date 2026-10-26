@@ -200,6 +200,7 @@ import { loadPersistedConfig, type PersistedConfig } from "./persisted-config.js
 import { createServiceProxySubsystem, type ServiceProxySubsystem } from "./service-proxy.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { ScriptHealthMonitor } from "./script-health-monitor.js";
+import { HostActivityMonitor } from "./host-activity.js";
 import { createScriptStatusEmitter } from "./script-status-projection.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import { createWorkspaceScriptsService } from "./session/workspace-scripts/workspace-scripts-service.js";
@@ -729,6 +730,9 @@ export async function createPaseoDaemon(
   });
   let wsServer: VoiceAssistantWebSocketServer | null = null;
   let serviceProxyListenTarget: ListenTarget | null = null;
+  // Late-bound: constructed once the agent manager exists below; the
+  // /api/host-activity route reads it through this variable.
+  let hostActivityMonitor: HostActivityMonitor | null = null;
   const scriptHealthMonitor = new ScriptHealthMonitor({
     serviceProxy,
     onChange: createScriptStatusEmitter({
@@ -846,6 +850,16 @@ export async function createPaseoDaemon(
       version: daemonVersion,
       listen: formatListenTarget(boundListenTarget ?? listenTarget),
     });
+  });
+
+  app.get("/api/host-activity", (_req, res) => {
+    // A caller must never read "quiescent" from a daemon that cannot see its
+    // agents yet; the monitor exists before the server listens.
+    if (!hostActivityMonitor) {
+      res.status(503).json({ error: "Host activity is not available yet" });
+      return;
+    }
+    res.json(hostActivityMonitor.snapshot());
   });
 
   const handleFileDownload = async (req: express.Request, res: express.Response): Promise<void> => {
@@ -1007,6 +1021,18 @@ export async function createPaseoDaemon(
       resolvePaseoToolPolicy(provider, daemonConfigStore.get().providers),
     logger,
   });
+  // Explicit program-reported busy state (agent runs, background work, working
+  // terminals) behind GET /api/host-activity. It needs both managers, so it is
+  // constructed here while the route above reads it through a late-bound variable.
+  hostActivityMonitor = new HostActivityMonitor({
+    agentManager,
+    terminalManager,
+    scriptRuntime: scriptRuntimeStore,
+    // The WebSocket server starts with the listener; before that no client can
+    // be connected.
+    clientPresence: () => wsServer?.listClientPresence() ?? [],
+  });
+
   const syncPluginProviders = () => {
     agentManager.updateProviderRegistry(
       providerSnapshotManager.replacePluginProviders(pluginRuntime.getProviderRegistrations()),
@@ -1933,6 +1959,7 @@ export async function createPaseoDaemon(
     // that is still open. Plugins themselves are stopped once every session
     // they serve has been closed, further down.
     unsubscribePluginProviders();
+    hostActivityMonitor?.dispose();
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();

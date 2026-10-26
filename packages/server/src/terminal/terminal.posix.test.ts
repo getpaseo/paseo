@@ -512,6 +512,27 @@ describe.skipIf(isPlatform("win32"))("terminal POSIX-only", () => {
       unsubscribeCommandFinished();
     });
 
+    it.skipIf(!hasZsh)("tracks the foreground command from Paseo's zsh integration", async () => {
+      const homeDir = mkdtempSync(join(tmpdir(), "terminal-foreground-home-"));
+      temporaryDirs.push(homeDir);
+      writeFileSync(join(homeDir, ".zshrc"), "PS1='$ '\n");
+      const session = trackSession(
+        await createTerminal({
+          workspaceId: "ws-test",
+          cwd: homeDir,
+          shell: "/bin/zsh",
+          env: { HOME: homeDir, ZDOTDIR: homeDir },
+        }),
+      );
+      const commandState = (): string => session.getForeground().commandState;
+      await waitForLines(session, ["$"]);
+      await waitForState(session, () => commandState() === "prompt");
+
+      session.send({ type: "input", data: "sleep 1\r" });
+      await waitForState(session, () => commandState() === "running");
+      await waitForState(session, () => commandState() === "prompt");
+    });
+
     it("ignores malformed VS Code OSC 633 command completion payloads", async () => {
       const packageRoot = mkdtempSync(join(tmpdir(), "terminal-command-finished-malformed-"));
       temporaryDirs.push(packageRoot);

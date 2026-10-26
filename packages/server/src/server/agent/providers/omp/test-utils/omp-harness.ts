@@ -479,6 +479,12 @@ export class OmpHarness {
     return this.events.filter((event) => event.type === "turn_completed").length;
   }
 
+  backgroundWorkChanges(): boolean[] {
+    return this.events.flatMap((event) =>
+      event.type === "background_work_changed" ? [event.pending] : [],
+    );
+  }
+
   usageUpdates() {
     return this.events.flatMap((event) => (event.type === "usage_updated" ? [event.usage] : []));
   }

@@ -157,6 +157,8 @@ export const OmpSessionStateSchema = z
     autoCompactionEnabled: z.boolean().optional(),
     fastModeEnabled: z.boolean().optional(),
     fastModeActive: z.boolean().optional(),
+    hasPendingAsyncWork: z.boolean().optional(),
+    isSettled: z.boolean().optional(),
     sessionFile: z.string().optional(),
     sessionId: z.string(),
     sessionName: z.string().optional(),
@@ -355,7 +357,13 @@ export const OmpAgentSessionEventSchema = z.discriminatedUnion("type", [
     })
     .passthrough(),
   z
-    .object({ type: z.literal("agent_end"), messages: z.array(OmpAgentMessageSchema).optional() })
+    .object({
+      type: z.literal("agent_end"),
+      messages: z.array(OmpAgentMessageSchema).optional(),
+      isTerminal: z.boolean().optional(),
+      yielded: z.boolean().optional(),
+      awaitingAsyncWork: z.boolean().optional(),
+    })
     .passthrough(),
 ]);
 
@@ -507,9 +515,11 @@ export const OmpRuntimeEventSchema = z.discriminatedUnion("type", [
       id: z.string().optional(),
       agentInvoked: z.boolean().optional(),
       status: z.string().optional(),
+      sessionSettled: z.boolean().optional(),
       error: z.object({ message: z.string() }).passthrough().optional(),
     })
     .passthrough(),
+  z.object({ type: z.literal("session_settled") }).passthrough(),
   z.object({ type: z.literal("process_exit"), error: z.string() }).passthrough(),
   OmpSubagentLifecycleEventSchema,
   OmpSubagentProgressEventSchema,

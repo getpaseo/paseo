@@ -6,6 +6,7 @@ import { describe, expect, test, vi } from "vitest";
 
 import { OmpCliRuntime } from "./cli-runtime.js";
 import type { OmpRuntimeLaunch } from "./runtime.js";
+import type { OmpRuntimeEvent } from "./rpc-types.js";
 
 type OmpChild = ChildProcessWithoutNullStreams & {
   stdin: PassThrough;
@@ -245,6 +246,29 @@ describe("OMP CLI runtime", () => {
     child.stdout.write(`${JSON.stringify({ type: "notice", level: "info", message: "ready" })}\n`);
 
     expect(eventTypes).toEqual(["notice"]);
+  });
+
+  test("emits OMP settle frames for background-work tracking", async () => {
+    const child = createOmpChild();
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    const received: OmpRuntimeEvent[] = [];
+    session.onEvent((event) => received.push(event));
+
+    child.stdout.write(
+      `${JSON.stringify({ type: "agent_end", messages: [], isTerminal: false })}\n`,
+    );
+    child.stdout.write(
+      `${JSON.stringify({ type: "prompt_result", id: "prompt-1", sessionSettled: false })}\n`,
+    );
+    child.stdout.write(`${JSON.stringify({ type: "session_settled" })}\n`);
+
+    expect(received.map((event) => event.type)).toEqual([
+      "agent_end",
+      "prompt_result",
+      "session_settled",
+    ]);
+    expect(received[0]).toMatchObject({ isTerminal: false });
+    expect(received[1]).toMatchObject({ sessionSettled: false });
   });
 
   test("emits agent_end for a run that contains an OMP developer message", async () => {

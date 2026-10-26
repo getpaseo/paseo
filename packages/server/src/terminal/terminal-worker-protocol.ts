@@ -2,6 +2,7 @@ import type {
   TerminalExitInfo,
   ServerMessage,
   ClientMessage,
+  TerminalForeground,
   TerminalStateSnapshot,
   TerminalStateSnapshotOptions,
 } from "./terminal.js";
@@ -16,6 +17,9 @@ export interface WorkerTerminalInfo {
   workspaceId?: string;
   title?: string;
   activity: TerminalActivity | null;
+  // Snapshot taken after the worker subscribes, so later
+  // terminalForegroundChange events are ordered after it.
+  foreground: TerminalForeground;
 }
 
 export interface WorkerCreateTerminalOptions {
@@ -145,6 +149,11 @@ export type TerminalWorkerEvent =
       terminalId: string;
       activity: TerminalActivity | null;
       previous: TerminalActivity | null;
+    }
+  | {
+      type: "terminalForegroundChange";
+      terminalId: string;
+      foreground: TerminalForeground;
     };
 
 export type TerminalWorkerToParentMessage = TerminalWorkerResponse | TerminalWorkerEvent;
