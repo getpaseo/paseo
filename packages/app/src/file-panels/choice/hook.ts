@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import { usePaneContext } from "@/panels/pane-context";
 import type { PanelInstanceIdentity } from "@/panels/panel-instance-attributes";
 import { useFilePanelAssociations } from "../associations";
-import { sourceFilePanel } from "../catalog";
 import { useFilePanels, type FilePanel } from "../panels";
 import { resolveFilePanel, type FilePanelFileKind } from "../resolve";
 import { chosenPanelFor, FilePanelChoiceModel, type FilePanelChoiceSnapshot } from "./model";
@@ -29,9 +28,7 @@ export function useFilePanelChoice(input: {
   const { serverId, workspaceId, tabId } = usePaneContext();
   const candidates = useFilePanels(input.serverId);
   const { associations, remember } = useFilePanelAssociations();
-  const [choice] = useState(
-    () => new FilePanelChoiceModel<FilePanel>({ remember, linePanelId: sourceFilePanel.id }),
-  );
+  const [choice] = useState(() => new FilePanelChoiceModel<FilePanel>({ remember }));
   // From the subscribed snapshot: React Compiler caches reads off the stable model object.
   const chosenPanelId = chosenPanelFor(useFilePanelChoiceSnapshot(choice), targetKey);
   const resolution = useMemo(

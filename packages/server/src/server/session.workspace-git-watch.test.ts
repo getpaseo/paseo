@@ -1,3 +1,4 @@
+import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { createAgentMessageDeliveryStub } from "./test-utils/session-stubs.js";
 import {
   createMessageReceiptsStub,
@@ -135,7 +136,7 @@ function createSessionForWorkspaceGitWatchTests(options?: {
   workspaces: Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>;
   workspaceGitService: WorkspaceGitService & {
     registerWorkspace: ReturnType<typeof vi.fn>;
-    peekSnapshot: ReturnType<typeof vi.fn>;
+
     getSnapshot: ReturnType<typeof vi.fn>;
     refresh: ReturnType<typeof vi.fn>;
     requestWorkingTreeWatch: ReturnType<typeof vi.fn>;
@@ -177,7 +178,7 @@ function createSessionForWorkspaceGitWatchTests(options?: {
         unsubscribe,
       };
     }),
-    peekSnapshot: vi.fn((cwd: string) => createWorkspaceRuntimeSnapshot(cwd)),
+
     getSnapshot: vi.fn(async (cwd: string) => createWorkspaceRuntimeSnapshot(cwd)),
     refresh: vi.fn(async () => {}),
     requestWorkingTreeWatch: vi.fn(async (cwd: string) => ({
@@ -189,6 +190,7 @@ function createSessionForWorkspaceGitWatchTests(options?: {
   };
 
   const session = new Session({
+    workspaceRuntimeStore: createWorkspaceRuntimeStore(),
     messageReceipts: createMessageReceiptsStub(),
     agentMessages: createAgentMessageDeliveryStub(),
     creationService: createTestCreationService(),

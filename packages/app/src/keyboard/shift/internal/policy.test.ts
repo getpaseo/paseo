@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   resolveStreamKeyboardInset,
   shouldReconcileHiddenKeyboardEnd,
+  resolveKeyboardLift,
   resolveKeyboardShift,
   reserveKeyboardLayoutShift,
 } from "./policy";
@@ -86,6 +87,21 @@ describe("resolveKeyboardShift", () => {
         iosMinHeight: 120,
       }),
     ).toBe(0);
+  });
+});
+
+describe("resolveKeyboardLift", () => {
+  it("lifts a docked view by the whole shift", () => {
+    expect(resolveKeyboardLift({ shift: 302, enabled: true, bottomClearance: 0 })).toBe(302);
+  });
+
+  it("lets the keyboard fill a centered form's clearance before lifting it", () => {
+    expect(resolveKeyboardLift({ shift: 403, enabled: true, bottomClearance: 267 })).toBe(136);
+    expect(resolveKeyboardLift({ shift: 403, enabled: true, bottomClearance: 455 })).toBe(0);
+  });
+
+  it("keeps a disabled view in place", () => {
+    expect(resolveKeyboardLift({ shift: 302, enabled: false, bottomClearance: 0 })).toBe(0);
   });
 });
 

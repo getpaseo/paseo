@@ -14,7 +14,7 @@ export function filePanelIcon(panel: FilePanel): PluginIcon {
   return panel.builtin ? BUILTIN_PRESENTATION[panel.id].icon : panel.contribution.icon;
 }
 
-/** "Markdown", "Rich Markdown": the panel switcher's label. */
+/** "Markdown", "Rich Markdown": the panel's title. */
 export function filePanelTitle(t: TFunction, panel: FilePanel): string {
   return panel.builtin
     ? t(`panels.file.filePanels.builtin.${BUILTIN_PRESENTATION[panel.id].title}`)

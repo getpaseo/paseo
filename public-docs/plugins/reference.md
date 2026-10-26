@@ -1771,7 +1771,8 @@ for immediate controls, a draft editor with validation, custom content, and Comm
 
 ## Workspace panels
 
-Register one panel for workspace or agent context:
+Register workspace panels with `addWorkspacePanel` and agent panels with `addAgentPanel`.
+Both receive the same panel contract as [file panels](#file-panels).
 
 `client/review.tsx`:
 
@@ -1780,9 +1781,9 @@ import { type PluginAgentPanelProps, useAgent, useWorkspace } from "@getpaseo/pl
 import { useMemo } from "react";
 import { Text, View } from "react-native";
 
-export function ReviewPanel({ theme, layout, workspaceId, agentId }: PluginAgentPanelProps) {
+export function ReviewPanel({ theme, layout, workspaceId, params }: PluginAgentPanelProps) {
   const workspaceName = useWorkspace(workspaceId, (workspace) => workspace.name);
-  const agent = useAgent(agentId, ({ id, title }) => ({ id, title }));
+  const agent = useAgent(params.agentId, ({ id, title }) => ({ id, title }));
   const styles = useMemo(
     () => ({
       screen: {
@@ -1811,11 +1812,10 @@ import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { ReviewPanel } from "./client/review";
 
 export default function contribute(client: PluginClientContext) {
-  client.addWorkspacePanel({
+  client.addAgentPanel({
     id: "review",
     title: "Review",
     icon: "Scan",
-    context: "agent",
     locations: ["workspace", "explorer"],
     Component: ReviewPanel,
   });
@@ -1823,20 +1823,43 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-`addWorkspacePanel` fields:
+`addWorkspacePanel` and `addAgentPanel` fields:
 
 | Field       | Required | Meaning                                                       |
 | ----------- | -------- | ------------------------------------------------------------- |
 | `id`        | Yes      | Plugin-local panel ID.                                        |
 | `title`     | Yes      | Workspace-tab title.                                          |
 | `icon`      | Yes      | Lucide name, `{ svg }`, or component. See [Icons](#icons).    |
-| `context`   | Yes      | `workspace` or `agent`.                                       |
 | `locations` | No       | `workspace` and/or `explorer`. Defaults to `workspace`.       |
 | `Component` | Yes      | React Native component matching the selected context's props. |
 
-A workspace panel receives `PluginWorkspacePanelProps`: `context: "workspace"`, `theme`, `host`, `layout`, and `workspaceId`. An agent panel receives `PluginAgentPanelProps`: `context: "agent"`, the same common fields and `workspaceId`, plus `agentId`.
+Every panel receives `PluginPanelProps<Params>` with `theme`, `host`, `layout`, `navigation`,
+`workspaceId`, read-only `params`, `revision`, and `tab`. Workspace panels have empty
+`PluginWorkspacePanelParams`; agent panels have `PluginAgentPanelParams` containing `agentId`.
+`revision` increments whenever params are re-sent to the same tab, including an identical request.
 
-Read cached state with `useWorkspace(workspaceId, selector)` and `useAgent(agentId, selector)`. A selector is required. Paseo compares its result shallowly, so selecting `{ name, status }` does not re-render when unrelated fields change. Select every field the component renders in one call; do not select the whole snapshot.
+`tab.setModified(boolean)` marks unsaved work and asks before closing. `tab.state` is opaque
+persisted JSON, initially `undefined`; `tab.setState(value)` replaces it. Each tab owns its state.
+Paseo stores it without interpreting it. Validate it with `useTabState(tab, schema, defaultState)`:
+
+```tsx
+const schema = z.object({ view: z.enum(["preview", "source"]) });
+const [state, setState] = useTabState(tab, schema, { view: "preview" });
+// Missing or invalid persisted state returns the default.
+// In an event handler, call setState({ view: "source" }).
+```
+
+Import `useTabState` from `@getpaseo/plugin/client` and `z` from `zod`. The setter replaces the
+entire JSON value. State survives tab restoration and app reloads.
+
+The unified props, `addAgentPanel`, and `useTabState` require Paseo 0.13.0 or later.
+
+**Deprecated until removal after 2027-04-23:** the 0.12 panel `context` and flat `agentId` props,
+`addWorkspacePanel({ context: "workspace" })`, and `addWorkspacePanel({ context: "agent" })`
+continue to work. Omit workspace `context`, register agent panels with `addAgentPanel`, and read
+`params.agentId`.
+
+Read cached state with `useWorkspace(workspaceId, selector)` and `useAgent(params.agentId, selector)`. A selector is required. Paseo compares its result shallowly, so selecting `{ name, status }` does not re-render when unrelated fields change. Select every field the component renders in one call; do not select the whole snapshot.
 
 Both hooks return `null` when the record is unavailable. Otherwise they run synchronously against normalized client state. Snapshot DTOs and their nested values are deeply readonly and frozen at runtime. Do not call plugin RPC to discover the current workspace or agent. Fetch optional or vendor-specific enrichment after the component renders.
 
@@ -1885,8 +1908,8 @@ Paseo owns tab focus, splitting, closing, persistence, query state, the API/RPC 
 
 Register a component that renders a file as the body of its file tab. Your component receives a
 handle to the file on the selected host, including remote hosts. It reads the file, shows its own
-loading state, and writes the file when the user edits it. The tab's bar shows the panel
-switcher, the overflow menu, and a dot while your panel reports unsaved changes.
+loading state, and writes the file when the user edits it. The tab shows a dot while your panel
+reports unsaved changes.
 
 ```tsx
 import type { PluginClientContext } from "@getpaseo/plugin/client";
@@ -1906,13 +1929,13 @@ export default function contribute(client: PluginClientContext) {
 `addFilePanel` takes a `PluginFilePanelContribution` and returns an idempotent cleanup function.
 Paseo also removes the registration when the client entry is unloaded.
 
-| Field       | Required | Meaning                                                                    |
-| ----------- | -------- | -------------------------------------------------------------------------- |
-| `id`        | Yes      | Plugin-local ID matching `^[a-z][a-z0-9-]*$`.                              |
-| `title`     | Yes      | Non-empty label in the panel switcher, the picker, and the Open with menu. |
-| `icon`      | Yes      | Lucide name, `{ svg }`, or component. See [Icons](#icons).                 |
-| `files`     | Yes      | `{ extensions: readonly string[]; filenames?: readonly string[] }`.        |
-| `Component` | Yes      | Component receiving `PluginFilePanelProps`.                                |
+| Field       | Required | Meaning                                                                  |
+| ----------- | -------- | ------------------------------------------------------------------------ |
+| `id`        | Yes      | Plugin-local ID matching `^[a-z][a-z0-9-]*$`.                            |
+| `title`     | Yes      | Non-empty label in the picker, the Open with menu, and Settings > Files. |
+| `icon`      | Yes      | Lucide name, `{ svg }`, or component. See [Icons](#icons).               |
+| `files`     | Yes      | `{ extensions: readonly string[]; filenames?: readonly string[] }`.      |
+| `Component` | Yes      | Component receiving `PluginFilePanelProps`.                              |
 
 Extensions have no leading dot and match without case sensitivity. Filenames match the exact
 basename, including case. Selectors contain no paths, globs, or wildcards. Use `extensions: []`
@@ -1923,12 +1946,13 @@ for a filename-only selector. At least one extension or filename is required.
 `PluginFilePanelProps` includes the common `theme`, `host`, `layout`, and optional `navigation`
 props described under [Theme and layout](#theme-and-layout), plus:
 
-| Prop          | Type                 | Meaning                                                                         |
-| ------------- | -------------------- | ------------------------------------------------------------------------------- |
-| `workspaceId` | `string`             | Workspace containing the file tab.                                              |
-| `file`        | `PluginFile`         | Handle to the file. Stable while the tab shows this file.                       |
-| `tab`         | `PluginFileTab`      | `setModified(modified)` shows the tab's unsaved dot and confirms before close.  |
-| `location`    | `PluginFileLocation` | `lineStart?`, `lineEnd?`, and `revision`, which increments on every navigation. |
+| Prop          | Type                    | Meaning                                                                                             |
+| ------------- | ----------------------- | --------------------------------------------------------------------------------------------------- |
+| `workspaceId` | `string`                | Workspace containing the file tab.                                                                  |
+| `params`      | `PluginFilePanelParams` | Read-only `path`, `lineStart?`, and `lineEnd?` from the opener.                                     |
+| `revision`    | `number`                | Increments each time params are re-sent to this tab, even for the same line.                        |
+| `file`        | `PluginFile`            | File capability resolved from `params.path`, stable while the tab shows this file.                  |
+| `tab`         | `PluginTab`             | `setModified`, opaque persisted `state`, and `setState`. See [Workspace panels](#workspace-panels). |
 
 Paseo mounts your panel once it knows the file exists and its size, without reading it. The
 `file` object is stable, and its stat fields hold the latest version Paseo knows. Read them while
@@ -2002,8 +2026,8 @@ A panel that holds unsaved edits reads with `readText()` once, then handles `wat
 5. On `PluginFileConflictError`, show the same conflict.
 6. On `{ type: "deleted" }` or `PluginFileDeletedError`, tell the user the file is gone.
 
-Write pending edits before the component unmounts: switching panels or closing the tab unmounts
-it. Paseo asks before closing a tab whose panel reports unsaved changes. The
+Write pending edits before the component unmounts: opening the tab with another panel or closing
+the tab unmounts it. Paseo asks before closing a tab whose panel reports unsaved changes. The
 [Markdown panel](https://github.com/getpaseo/paseo/tree/main/plugin-examples/markdown-panel)
 example implements these steps.
 
@@ -2011,28 +2035,30 @@ example implements these steps.
 
 A plugin panel is a candidate for every file its selector matches, text or binary. The built-in
 panels require the host's file kind: Markdown, HTML, and **Source** open text files; Image opens
-images. Candidates are ordered: the built-in Markdown, HTML, and Image panels, then plugin panels
-in host catalog order, then **Source**, which every text file has. Source opens a file by default
-only when nothing else claims it.
+images. The Markdown and HTML panels each have a Preview and a Source view of the file, switched
+in their toolbar. **Source**, Paseo's editor, is the built-in panel for text files that no other
+built-in panel claims; it is never offered beside another built-in panel. Candidates are ordered:
+the built-in panel that claims the file, then plugin panels in host catalog order, then Source
+when no other built-in claims the file.
 
 A remembered association selects its panel when that panel is available on the current host.
 Otherwise Paseo opens the first candidate. When a plugin panel is among several candidates and no
-association applies, Paseo asks once per tab open, over the panel it already opened. Built-in
-panels alone never ask: a Markdown file opens with Markdown and offers Source in the switcher. With
-a Markdown plugin installed, the picker offers **Markdown — Paseo**, **Rich Markdown —
-markdown-panel**, and **Source — Paseo**. A plugin that claims a text extension competes with
-Source, so its first open asks; a plugin that alone claims a binary file opens without asking.
+association applies, Paseo asks once per tab open, over the panel it already opened. A file with
+one candidate never asks. With a Markdown plugin installed, the picker offers **Markdown — Paseo**
+and **Rich Markdown — markdown-panel**. A plugin that claims a text extension no built-in panel
+claims competes with Source, so its first open asks; a plugin that alone claims a binary file
+opens without asking.
 
 **Don't ask me again** remembers the choice on this device for the extension. When a candidate
 matches an exact filename, the choice applies to that basename instead. An unavailable association
 is ignored on that host and retained for hosts where its panel is installed.
 
-Users switch the current tab with the bar's panel switcher, which shows up to three panels side by
-side (two on a phone) and a menu beyond that, or with **Open with…** in the tab menu. That choice
-wins over the remembered association for this tab until it is retargeted. **Always use**, in the
-bar's overflow menu and in Open with, remembers the shown panel. Opening a file at a line, from a
-link or a search result, switches the tab to Source. Files with no candidate show **Binary preview
-unavailable**; binary files have no Source panel.
+Users choose a panel three ways: the picker on first open, **Open with…** in the tab menu, and
+**Settings > Files**. Open with switches the current tab and wins over the remembered association
+for this tab until it is retargeted; its **Always use** remembers the shown panel. Opening a file
+at a line, from a link or a search result, switches the tab to its built-in panel, which shows the
+line in its Source view. Files with no candidate show **Binary preview unavailable**; binary files
+have no Source panel.
 
 ### DocumentFrame
 
@@ -2190,8 +2216,10 @@ review.remove();
 ```
 
 Omit `label` for an icon-only header button. Menus and popovers show a chevron on wide layouts.
-Compact header buttons use icons without labels or chevrons. Paseo moves excess contributions
-into a shared overflow menu. Placement and overflow are host decisions.
+Paseo moves excess contributions into a shared overflow menu. On phones and narrow windows the
+header has no room for plugin buttons, so each one is a row of the workspace menu (`···`), with its
+icon and title; its menus and popovers open as pages of that sheet. Placement and overflow are host
+decisions.
 
 ## Composer pills
 

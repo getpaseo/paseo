@@ -16,6 +16,7 @@ import { usePaneContext } from "@/panels/pane-context";
 import { PaneSubtitle } from "@/panels/pane-subtitle";
 import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { useSessionStore } from "@/stores/session-store";
+import { ParentAgentCallout } from "@/subagents/parent";
 import { type SubagentRow, useSubagentsForParent } from "@/subagents/select";
 import { useSubagentOpensInSheet } from "@/subagents/opens-in-sheet";
 import { SubagentsTrack } from "@/subagents/track";
@@ -253,33 +254,37 @@ function ProviderSubagentPanel() {
   return (
     <View style={styles.container} testID="provider-subagent-panel">
       {subtitle ? <PaneSubtitle text={subtitle} testID="provider-subagent-pane-subtitle" /> : null}
-      <AgentStreamView
-        agentId={streamId}
-        serverId={serverId}
-        context={streamContext}
-        streamItems={timeline?.tail ?? EMPTY_STREAM_ITEMS}
-        streamHead={timeline?.head ?? EMPTY_STREAM_ITEMS}
-        turnPresentation={turnPresentation}
-        pendingPermissions={EMPTY_PERMISSIONS}
-        isAuthoritativeHistoryReady
-        onOpenWorkspaceFile={openFileInWorkspace}
-        readOnly
-        historyPagination={historyPagination}
-        bottomOverlayTailClearance={childTrackClearance.tail}
-        bottomOverlayControlClearance={childTrackClearance.controls}
-      />
-      <ProviderSubagentChildTrack
-        serverId={serverId}
-        rows={childRows}
-        onOpenProviderSubagent={openProviderChild}
-        opensInSheet={opensInSheet}
-      />
+      <View style={styles.stream}>
+        <AgentStreamView
+          agentId={streamId}
+          serverId={serverId}
+          context={streamContext}
+          streamItems={timeline?.tail ?? EMPTY_STREAM_ITEMS}
+          streamHead={timeline?.head ?? EMPTY_STREAM_ITEMS}
+          turnPresentation={turnPresentation}
+          pendingPermissions={EMPTY_PERMISSIONS}
+          isAuthoritativeHistoryReady
+          onOpenWorkspaceFile={openFileInWorkspace}
+          readOnly
+          historyPagination={historyPagination}
+          bottomOverlayTailClearance={childTrackClearance.tail}
+          bottomOverlayControlClearance={childTrackClearance.controls}
+        />
+        <ProviderSubagentChildTrack
+          serverId={serverId}
+          rows={childRows}
+          onOpenProviderSubagent={openProviderChild}
+          opensInSheet={opensInSheet}
+        />
+      </View>
+      <ParentAgentCallout serverId={serverId} parentAgentId={target.parentAgentId} />
     </View>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
   container: { flex: 1, minHeight: 0 },
+  stream: { flex: 1, minHeight: 0 },
   unsupported: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
   unsupportedText: { color: theme.colors.foregroundMuted, textAlign: "center" },
 }));

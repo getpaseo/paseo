@@ -22,11 +22,11 @@ import type {
   SpawnWorkspaceScriptOptions,
   WorktreeScriptResult,
 } from "../../worktree-bootstrap.js";
-import type { WorkspaceGitService } from "../../workspace-git-service.js";
+import type { WorkspaceRuntimeStore } from "../../workspace-runtime-store/index.js";
 import { createWorkspaceScriptsService } from "./workspace-scripts-service.js";
 import { deriveProjectServiceSlug } from "../../workspace-git-metadata.js";
 
-// The production module reads only WorkspaceGitService.{peekSnapshot,getProjectSlug},
+// The production module reads only WorkspaceRuntimeStore.get,
 // WorkspaceRegistry.get, and forwards the launcher + opaque managers to the injected
 // spawnWorkspaceScript port. The fakes below implement exactly that slice; the service proxy and
 // runtime store are the real in-memory implementations, and spawning is injected so no process runs.
@@ -51,7 +51,7 @@ function fakeProjectRegistry(record: PersistedProjectRecord | null): Pick<Projec
   };
 }
 
-function fakeGitService() {
+function fakeRuntimeStore() {
   const snapshot = createNoGitWorkspaceRuntimeSnapshot("/tmp/repo");
   snapshot.git = {
     ...snapshot.git,
@@ -63,7 +63,7 @@ function fakeGitService() {
   };
 
   return {
-    peekSnapshot() {
+    get() {
       return snapshot;
     },
   };
@@ -80,7 +80,7 @@ interface BuildOptions {
   workspace?: PersistedWorkspaceRecord | null;
   project?: PersistedProjectRecord | null;
   spawnThrows?: string;
-  gitService?: Pick<WorkspaceGitService, "peekSnapshot">;
+  runtimeStore?: Pick<WorkspaceRuntimeStore, "get">;
   automationError?: Error;
 }
 
@@ -106,7 +106,7 @@ function buildService(options: BuildOptions = {}) {
       options.terminalManager === undefined ? availableTerminalManager : options.terminalManager,
     workspaceRegistry: fakeWorkspaceRegistry(workspace),
     projectRegistry: fakeProjectRegistry(options.project ?? null),
-    workspaceGitService: options.gitService ?? fakeGitService(),
+    workspaceRuntimeStore: options.runtimeStore ?? fakeRuntimeStore(),
     getDaemonTcpPort: () => 6767,
     getDaemonTcpHost: () => "127.0.0.1",
     serviceProxyPublicBaseUrl: null,
@@ -204,7 +204,7 @@ describe("buildSnapshot", () => {
       workspace,
       project,
       serviceProxy,
-      gitService: { peekSnapshot: () => undefined },
+      runtimeStore: { get: () => null },
     });
 
     expect(service.buildSnapshot(workspace, project)[0]?.hostname).toBe(

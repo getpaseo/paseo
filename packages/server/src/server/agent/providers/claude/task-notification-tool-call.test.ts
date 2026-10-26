@@ -97,4 +97,17 @@ describe("task-notification-tool-call", () => {
 
     expect(item).toBeNull();
   });
+
+  it("keeps notifications without task IDs distinct by their message IDs", () => {
+    const items = ["message-1", "message-2"].map((messageId) =>
+      mapTaskNotificationUserContentToToolCall({
+        content: "<task-notification><status>completed</status></task-notification>",
+        messageId,
+      }),
+    );
+    expect(items.map((item) => item?.callId)).toEqual([
+      "task_notification_message-1",
+      "task_notification_message-2",
+    ]);
+  });
 });
