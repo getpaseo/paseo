@@ -1,0 +1,75 @@
+╭───────────────────────────────────╮
+│ lefthook v2.1.6  hook: pre-commit │
+╰───────────────────────────────────╯
+┃  format ❯
+
+npm notice run paseo@0.13.0-beta.2 format:check:files
+npm notice run oxfmt --check --threads=2 handoffs/TH1-1802/BLOCKED.md handoffs/TH1-1802/CHECKLIST-6e8a18bb.md handoffs/TH1-1802/STATUS.md handoffs/TH1-1802/after-e2e.json handoffs/TH1-1802/after-resize.json handoffs/TH1-1802/before-resize.json handoffs/TH1-1802/lefthook-serial.yml packages/app/e2e/browser/sidebar-nav-settings.spec.ts packages/app/src/components/sidebar/sidebar-nav-rows.tsx
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 81ms on 9 files using 2 threads.
+
+┃  lint ❯
+
+npm notice run paseo@0.13.0-beta.2 lint
+npm notice run oxlint --threads=2 packages/app/e2e/browser/sidebar-nav-settings.spec.ts packages/app/src/components/sidebar/sidebar-nav-rows.tsx
+Found 0 warnings and 0 errors.
+Finished in 392ms on 2 files with 177 rules using 2 threads.
+
+┃  typecheck ❯
+
+npm notice run paseo@0.13.0-beta.2 typecheck
+npm notice run npm run typecheck --workspaces --if-present
+npm notice run @getpaseo/builtin-plugins@0.13.0-beta.2 typecheck
+npm notice run tsgo -p tsconfig.json --noEmit
+npm notice run @getpaseo/expo-two-way-audio@0.13.0-beta.2 typecheck
+npm notice run tsgo --noEmit
+npm notice run @getpaseo/highlight@0.13.0-beta.2 typecheck
+npm notice run @getpaseo/plugin@0.13.0-beta.2 typecheck
+npm notice run tsgo --noEmit && npm run typecheck:examples
+npm notice run @getpaseo/plugin@0.13.0-beta.2 typecheck:examples
+npm notice run npm --prefix ../../plugin-examples/markdown-panel install --ignore-scripts --no-audit --no-fund && tsgo -p tsconfig.examples.json --noEmit
+
+up to date in 252ms
+npm notice run @getpaseo/protocol@0.13.0-beta.2 pretypecheck
+npm notice run npm run generate:validators
+npm notice run @getpaseo/protocol@0.13.0-beta.2 generate:validators
+npm notice run node scripts/generate-validation-aot.mjs
+generated src/generated/validation/ws-outbound.aot.ts: envelope + 234 session message validators
+npm notice run @getpaseo/protocol@0.13.0-beta.2 typecheck
+npm notice run @getpaseo/client@0.13.0-beta.2 typecheck
+npm notice run @getpaseo/server@0.13.0-beta.2 typecheck
+npm notice run tsgo -p tsconfig.server.typecheck.json --noEmit
+npm notice run @getpaseo/app@0.13.0-beta.2 typecheck
+npm notice run @getpaseo/relay@0.13.0-beta.2 typecheck
+npm notice run @getpaseo/website@0.13.0-beta.2 typecheck
+npm notice run @getpaseo/desktop@0.13.0-beta.2 typecheck
+npm notice run tsgo --noEmit -p tsconfig.json
+npm notice run @getpaseo/cli@0.13.0-beta.2 typecheck
+
+
+  ────────────────────────────────────
+summary: (done in 18.13 seconds)
+✓ format (0.25 seconds)
+✓ lint (0.55 seconds)
+✓ typecheck (17.29 seconds)
+[feat/sidebar-nav-group-resize 8efa9f2dd] fix(sidebar): keep dragged navigation height inline
+ 19 files changed, 2280 insertions(+), 2 deletions(-)
+ create mode 100644 handoffs/TH1-1802/BLOCKED.md
+ create mode 100644 handoffs/TH1-1802/CHECKLIST-6e8a18bb.md
+ create mode 100644 handoffs/TH1-1802/STATUS.md
+ create mode 100644 handoffs/TH1-1802/after-e2e.json
+ create mode 100644 handoffs/TH1-1802/after-e2e.txt
+ create mode 100644 handoffs/TH1-1802/after-resize.json
+ create mode 100644 handoffs/TH1-1802/baseline-shortcuts.txt
+ create mode 100644 handoffs/TH1-1802/before-e2e.txt
+ create mode 100644 handoffs/TH1-1802/before-resize.json
+ create mode 100644 handoffs/TH1-1802/commit-output.txt
+ create mode 100644 handoffs/TH1-1802/format.txt
+ create mode 100644 handoffs/TH1-1802/lefthook-serial.yml
+ create mode 100644 handoffs/TH1-1802/lint.txt
+ create mode 100644 handoffs/TH1-1802/typecheck-examples-empty-policy.txt
+ create mode 100644 handoffs/TH1-1802/typecheck-examples.txt
+ create mode 100644 handoffs/TH1-1802/typecheck.txt
+ create mode 100644 handoffs/TH1-1802/worker-cap.cjs
