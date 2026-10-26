@@ -52,6 +52,7 @@ export function observeReplayWorkflows(input: {
   entriesByRunId?: ReadonlyMap<string, Iterable<ClaudeReplayEntry>>;
   convertEntry?: (entry: ClaudeReplayEntry) => AgentTimelineItem[];
 }): SubagentObservation[] {
+  if (input.workflows.length === 0) return [];
   const toolCallIdByRunId = readWorkflowLinks(input.parentEntries);
   const observations: SubagentObservation[] = [];
 
