@@ -53,6 +53,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useIosHardwareKeyboardSubmit } from "@/hooks/use-ios-hardware-keyboard-submit";
+import { hardwareKeyboardEnterRules } from "@/native/ios-hardware-keyboard-submit";
 import { formatShortcut, type ShortcutKey } from "@/utils/format-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
@@ -82,12 +83,15 @@ import {
 } from "./labels";
 import {
   applyDictationTranscript,
+  canOwnHardwareKeyboardSubmit,
   computeCanStartDictation,
+  resolveComposerEnterAction,
   resolveComposerSurfacePresentation,
   resolveComposerSurfaceText,
   resolveRetainedSelection,
   runAlternateSendAction,
   runDefaultSendAction,
+  runHardwareKeyboardEnter,
   runMessageInputKeyboardAction,
   stopRealtimeVoice,
 } from "./state";
@@ -427,18 +431,23 @@ function handleDesktopKeyPressImpl(
   }
 
   if (event.nativeEvent.key !== "Enter") return;
-  if (!ctx.submitOnEnter) return;
-  if (shiftKey) return;
 
-  if ((metaKey || ctrlKey) && ctx.isAgentRunning && ctx.onQueue) {
-    if (ctx.isSubmitDisabled || ctx.isSubmitLoading || ctx.disabled) return;
-    event.preventDefault();
+  const { shiftKey, metaKey, ctrlKey } = event.nativeEvent;
+  const action = resolveComposerEnterAction(
+    { shiftKey: Boolean(shiftKey), ctrlKey: Boolean(ctrlKey), metaKey: Boolean(metaKey) },
+    {
+      submitOnEnter: ctx.submitOnEnter,
+      isAgentRunning: ctx.isAgentRunning,
+      canQueue: Boolean(ctx.onQueue),
+      isSendBlocked: ctx.isSubmitDisabled || ctx.isSubmitLoading || ctx.disabled,
+    },
+  );
+  if (action === "pass-through") return;
+  event.preventDefault();
+  if (action === "alternate") {
     ctx.handleAlternateSendAction();
     return;
   }
-
-  if (ctx.isSubmitDisabled || ctx.isSubmitLoading || ctx.disabled) return;
-  event.preventDefault();
   ctx.handleDefaultSendAction();
 }
 
@@ -498,6 +507,66 @@ function usePasteImagesEffect(args: PasteImagesEffectArgs): void {
       textarea.removeEventListener?.("paste", handlePaste);
     };
   }, [disabled, textarea, isConnected, isDictating, isRealtimeVoiceForCurrentAgent, onAddImages]);
+}
+
+interface ComposerHardwareKeyboardSubmitArgs {
+  isAgentRunning: boolean;
+  onQueue: ((payload: MessagePayload) => void) | undefined;
+  isSubmitDisabled: boolean;
+  isSubmitLoading: boolean;
+  disabled: boolean;
+  isInputFocused: boolean;
+  isSendButtonDisabled: boolean;
+  readOnly: boolean;
+  isDictating: boolean;
+  showOverlay: boolean;
+  isRealtimeVoiceForCurrentAgent: boolean;
+  onKeyPressCallback: ((event: ComposerKeyPressEvent) => boolean) | undefined;
+  getInputSnapshot: () => ComposerKeyPressEvent["input"];
+  handleDefaultSendAction: () => void;
+  handleAlternateSendAction: () => void;
+}
+
+/**
+ * Wires native hardware-keyboard Enter to this composer. A physical keyboard follows the desktop
+ * Enter rules at every window width; touch and IME input are never routed here. Returns the
+ * nativeID for the text input.
+ */
+function useComposerHardwareKeyboardSubmit(
+  args: ComposerHardwareKeyboardSubmitArgs,
+): string | undefined {
+  const enterContext = {
+    isAgentRunning: args.isAgentRunning,
+    canQueue: Boolean(args.onQueue),
+    // Matches the desktop key handler: a loading submit blocks Enter even when the button cancels.
+    isSendBlocked: args.isSubmitDisabled || args.isSubmitLoading || args.disabled,
+  };
+  const { nativeID } = useIosHardwareKeyboardSubmit({
+    isEnabled: canOwnHardwareKeyboardSubmit({
+      rules: hardwareKeyboardEnterRules,
+      isInputFocused: args.isInputFocused,
+      isSendButtonDisabled: args.isSendButtonDisabled,
+      readOnly: args.readOnly,
+      isDictating: args.isDictating,
+      showOverlay: args.showOverlay,
+      isRealtimeVoiceForCurrentAgent: args.isRealtimeVoiceForCurrentAgent,
+      ...enterContext,
+    }),
+    onSubmit: (keys) =>
+      runHardwareKeyboardEnter(keys, {
+        rules: hardwareKeyboardEnterRules,
+        ...enterContext,
+        handleKeyPress: () =>
+          args.onKeyPressCallback?.({
+            key: "Enter",
+            preventDefault: () => {},
+            input: args.getInputSnapshot(),
+          }) ?? false,
+        handleDefaultSendAction: args.handleDefaultSendAction,
+        handleAlternateSendAction: args.handleAlternateSendAction,
+      }),
+  });
+  return nativeID;
 }
 
 function useAutoFocusOnWebEffect(
@@ -627,6 +696,7 @@ interface ComposerTextSurfaceProps {
   value: string;
   textReplacementKey: string;
   textInputRef: React.Ref<ComposerTextInputHandle>;
+  nativeID: string | undefined;
   textInputStyle: EditingTextInputProps["style"];
   readOnlyTextStyle: React.ComponentProps<typeof Text>["style"];
   placeholder: string;
@@ -695,6 +765,7 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
       ) : null}
       <ComposerTextInput
         ref={props.textInputRef}
+        nativeID={props.nativeID}
         dataSet={COMPOSER_INPUT_DATASET}
         initialValue={props.value}
         onChangeText={handleTextChange}
@@ -1780,9 +1851,23 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         defaultSendBehavior,
         isAgentRunning,
       });
-    useIosHardwareKeyboardSubmit({
-      isEnabled: isInputFocused && !isSendButtonDisabled,
-      onSubmit: handleDefaultSendAction,
+    const hardwareKeyboardSubmitNativeId = useComposerHardwareKeyboardSubmit({
+      isAgentRunning,
+      onQueue,
+      isSubmitDisabled,
+      isSubmitLoading,
+      disabled,
+      isInputFocused,
+      isSendButtonDisabled,
+      readOnly,
+      isDictating,
+      showOverlay,
+      isRealtimeVoiceForCurrentAgent,
+      onKeyPressCallback,
+      getInputSnapshot: () =>
+        getComposerInputSnapshot(textInputRef.current, valueRef.current, selectionRef.current),
+      handleDefaultSendAction,
+      handleAlternateSendAction,
     });
     const submitAccessibilityLabel = resolveSubmitAccessibilityLabel({
       submitButtonAccessibilityLabel,
@@ -1998,6 +2083,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             }
             textReplacementKey={textReplacement.key}
             textInputRef={assignTextInput}
+            nativeID={hardwareKeyboardSubmitNativeId}
             textInputStyle={textInputStyle}
             readOnlyTextStyle={readOnlyTextStyle}
             placeholder={placeholder ?? t("composer.placeholders.fallback")}
@@ -2027,6 +2113,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         readOnly,
         textReplacement,
         assignTextInput,
+        hardwareKeyboardSubmitNativeId,
         textInputStyle,
         readOnlyTextStyle,
         placeholder,

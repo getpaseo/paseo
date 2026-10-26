@@ -1,24 +1,37 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import {
   addHardwareKeyboardSubmitListener,
+  hardwareKeyboardSubmitTargetsNativeId,
   setHardwareKeyboardSubmitEnabled,
 } from "@/native/ios-hardware-keyboard-submit";
 import {
   createHardwareKeyboardSubmitController,
   type HardwareKeyboardSubmitController,
+  type HardwareKeyboardSubmitHandler,
 } from "./hardware-keyboard-submit-controller";
 
 interface UseIosHardwareKeyboardSubmitInput {
   isEnabled: boolean;
-  onSubmit: () => void;
+  onSubmit: HardwareKeyboardSubmitHandler;
 }
 
-export function useIosHardwareKeyboardSubmit(input: UseIosHardwareKeyboardSubmitInput) {
+interface UseIosHardwareKeyboardSubmitResult {
+  /** Pass to the composer's text input so native submission matches that exact view. */
+  nativeID: string | undefined;
+}
+
+export function useIosHardwareKeyboardSubmit(
+  input: UseIosHardwareKeyboardSubmitInput,
+): UseIosHardwareKeyboardSubmitResult {
+  const reactId = useId();
+  const targetNativeId = hardwareKeyboardSubmitTargetsNativeId
+    ? `paseo-hardware-keyboard-submit-${reactId}`
+    : null;
   const controllerRef = useRef<HardwareKeyboardSubmitController | null>(null);
   if (!controllerRef.current) {
     controllerRef.current = createHardwareKeyboardSubmitController({
-      addListener: addHardwareKeyboardSubmitListener,
-      setEnabled: setHardwareKeyboardSubmitEnabled,
+      addListener: (handler) => addHardwareKeyboardSubmitListener(handler, targetNativeId),
+      setEnabled: (enabled) => setHardwareKeyboardSubmitEnabled(enabled, targetNativeId),
     });
   }
   const controller = controllerRef.current;
@@ -32,4 +45,6 @@ export function useIosHardwareKeyboardSubmit(input: UseIosHardwareKeyboardSubmit
     controller.enable();
     return () => controller.disable();
   }, [controller, input.isEnabled]);
+
+  return { nativeID: targetNativeId ?? undefined };
 }

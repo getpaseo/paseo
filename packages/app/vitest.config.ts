@@ -83,6 +83,7 @@ export default defineConfig({
             "native-release-version.test.ts",
             "app.config.test.ts",
             "vitest-environment.test.ts",
+            "modules/*/app.plugin.test.ts",
           ],
           setupFiles: [path.resolve(__dirname, "vitest.setup.ts")],
           exclude: [...configDefaults.exclude, "e2e/**", "src/**/*.browser.{test,spec}.{ts,tsx}"],
