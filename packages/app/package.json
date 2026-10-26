@@ -40,7 +40,7 @@
     "dev:ios": "npm --prefix ../.. run build:client && cross-env APP_VARIANT=development expo run:ios",
     "build:apk": "npm --prefix ../.. run build:apk",
     "build:apk:arm64": "npm --prefix ../.. run build:apk:arm64",
-    "test:android": "expo prebuild --platform android --no-install && cd android && ./gradlew :paseo-native-trace:testReleaseUnitTest --no-daemon --max-workers=2 -Dorg.gradle.parallel=false"
+    "test:android": "expo prebuild --platform android --no-install && cd android && ./gradlew :paseo-native-trace:testReleaseUnitTest :react-native-enriched-markdown:testReleaseUnitTest --tests '*InlineCodeFormattingTest' --no-daemon --max-workers=2 -Dorg.gradle.parallel=false"
   },
   "dependencies": {
     "@codemirror/commands": "6.10.4",
