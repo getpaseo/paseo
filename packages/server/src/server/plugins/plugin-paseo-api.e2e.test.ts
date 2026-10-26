@@ -587,6 +587,7 @@ test("keeps reload and enable responsive while compiling a real plugin", async (
       let workerStarts = 0;
       let portCallbacks = 0;
       let longestWallEvents = { workerStarts: 0, portCallbacks: 0 };
+      let longestBlockingWindow = { wallMs: 0, cpuMs: 0, workerStarts: 0, portCallbacks: 0 };
       // Classify wall gaps without instrumenting the compiler implementation.
       const activity = createHook({
         init(_id, type) {
@@ -603,7 +604,11 @@ test("keeps reload and enable responsive while compiling a real plugin", async (
         const cpuMs = (currentCpu.user - cpu.user + currentCpu.system - cpu.system) / 1_000;
         // Windows accounts CPU time in coarser increments than this probe.
         // Work charged to a checkpoint cannot exceed its elapsed wall time.
-        longestBlocking = Math.max(longestBlocking, Math.min(wallMs, cpuMs));
+        const blockingMs = Math.min(wallMs, cpuMs);
+        if (blockingMs > longestBlocking) {
+          longestBlocking = blockingMs;
+          longestBlockingWindow = { wallMs, cpuMs, workerStarts, portCallbacks };
+        }
         if (wallMs > longestWall) {
           longestWall = wallMs;
           longestWallCpu = cpuMs;
@@ -626,7 +631,7 @@ test("keeps reload and enable responsive while compiling a real plugin", async (
         activity.disable();
       }
       process.stderr.write(
-        `plugin compile main-thread blocking: ${longestBlocking.toFixed(2)} ms ${JSON.stringify({ longestWall, longestWallCpu, ...longestWallEvents })}\n`,
+        `plugin compile main-thread blocking: ${longestBlocking.toFixed(2)} ms ${JSON.stringify({ longestWall, longestWallCpu, ...longestWallEvents, longestBlockingWindow })}\n`,
       );
       expect(service.catalog()[0]?.clientBundle).toContain("compiled fixture");
       expect(longestBlocking).toBeLessThan(20);
