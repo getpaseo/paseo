@@ -63,8 +63,9 @@ export async function seedSidebarFooterPreferences(
 ): Promise<void> {
   await page.addInitScript(
     ({ key, sidebarFooterItems }) => {
-      if (localStorage.getItem(key)) return;
-      localStorage.setItem(key, JSON.stringify({ sidebarFooterItems }));
+      const settings = JSON.parse(localStorage.getItem(key) ?? "{}");
+      if (settings.sidebarFooterItems) return;
+      localStorage.setItem(key, JSON.stringify({ ...settings, sidebarFooterItems }));
     },
     { key: APP_SETTINGS_KEY, sidebarFooterItems: preferences },
   );

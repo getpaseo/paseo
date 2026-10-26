@@ -49,6 +49,8 @@ export interface FinishRegistration {
 }
 export interface FinishSubscriptions {
   start(): Promise<void>;
+  /** Pending notification intent, including registration, recovery and unacknowledged delivery. */
+  hasPendingForCaller(agentId: string): boolean;
   register(
     input: Omit<FinishSubscription, "id">,
     pendingDispatch?: boolean,
@@ -72,6 +74,8 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
   const tasks = new Set<Promise<void>>();
   const watches = new Map<string, Set<Watch>>();
   let closed = false;
+  let recovering = true;
+  const registering = new Map<string, number>();
   let mutations = Promise.resolve();
   function serialize<T>(action: () => Promise<T>): Promise<T> {
     const result = mutations.then(action);
@@ -300,6 +304,13 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
   }
 
   return {
+    hasPendingForCaller(agentId) {
+      if (recovering || registering.has(agentId)) return true;
+      for (const group of watches.values()) {
+        for (const watch of group) if (watch.records[0]!.callerAgentId === agentId) return true;
+      }
+      return false;
+    },
     start: () =>
       serialize(async () => {
         const groups = new Map<string, FinishSubscription[]>();
@@ -309,9 +320,11 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
           groups.set(key(record), records);
         }
         for (const records of groups.values()) attach(records, false);
+        recovering = false;
       }),
-    register: (input, pendingDispatch = false) =>
-      serialize(async () => {
+    register: (input, pendingDispatch = false) => {
+      registering.set(input.callerAgentId, (registering.get(input.callerAgentId) ?? 0) + 1);
+      return serialize(async () => {
         if (closed) throw new Error("Finish subscriptions are closed");
         const record: FinishSubscription = {
           ...input,
@@ -337,13 +350,18 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
           },
           reject: () =>
             serialize(async () => {
-              stop(watch, actualGroup);
               await remove(watch);
+              stop(watch, actualGroup);
             }),
         };
         if (!pendingDispatch) registration.accept();
         return registration;
-      }),
+      }).finally(() => {
+        const remaining = registering.get(input.callerAgentId)! - 1;
+        if (remaining) registering.set(input.callerAgentId, remaining);
+        else registering.delete(input.callerAgentId);
+      });
+    },
     async close() {
       closed = true;
       await mutations;

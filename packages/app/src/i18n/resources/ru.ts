@@ -134,6 +134,8 @@ export const ru: TranslationResources = {
       sendAndInterrupt: "Отправить и прервать",
       sendAndSteer: "Отправить и направить",
       sendMessage: "Отправить сообщение",
+      longPressToQueue: "Удерживайте, чтобы поставить в очередь",
+      longPressToSendNow: "Удерживайте, чтобы отправить сейчас",
       queue: "Очередь",
       send: "Отправить",
     },
@@ -1940,6 +1942,13 @@ export const ru: TranslationResources = {
     backdrop: "Фон меню",
   },
   subagents: {
+    parent: {
+      backToParent: "Назад к родителю",
+      backTo: "Назад к {{label}}",
+      parent: "Родитель",
+      parentAgent: "Родительский агент",
+      openParent: "Открыть родителя",
+    },
     title: "Субагенты",
     pillLabelOne: "1 субагент",
     pillLabelMany: "Субагентов: {{count}}",
@@ -2040,6 +2049,12 @@ export const ru: TranslationResources = {
     subAgentActivity: "Активность субагента",
     input: "Входные данные",
     output: "Выходные данные",
+  },
+  turnSummary: {
+    messages: {
+      one: "написано {{count}} сообщение",
+      other: "написаны сообщения ({{count}})",
+    },
   },
   toolCallGroup: {
     editedFiles: {
@@ -2242,6 +2257,7 @@ export const ru: TranslationResources = {
       connections: "Подключения",
       agents: "Агенты",
       metadata: "Метаданные",
+      voice: "Голос",
       workspaces: "Рабочие пространства",
       providers: "Провайдеры",
       usage: "Использование",
@@ -2264,6 +2280,70 @@ export const ru: TranslationResources = {
         "Используется только эта модель. Если она не сработает, Paseo не будет пробовать другую модель",
       docs: "Документация",
       saveError: "Не удалось обновить настройки генерации метаданных",
+    },
+    voice: {
+      offline: "Подключитесь к этому хосту, чтобы настроить голос.",
+      updateHost: "Обновите хост, чтобы настроить голос.",
+      saveError: "Не удалось обновить голосовые настройки",
+      provider: "Провайдер",
+      providers: {
+        local: "Локально",
+        openai: "OpenAI",
+      },
+      voice: "Голос",
+      save: "Сохранить",
+      retry: "Повторить",
+      cancel: "Отмена",
+      model: "Модель",
+      language: "Язык",
+      languagePlaceholder: "Автоопределение",
+      setBy: "Задано через {{name}}",
+      unknownProvider: "Обновите приложение, чтобы настроить {{provider}}",
+      sites: {
+        dictationStt: "Распознавание речи",
+        voiceModeStt: "Прослушивание",
+        voiceModeTts: "Озвучивание",
+      },
+      dictation: {
+        title: "Диктовка",
+        enabled: "Диктовка",
+        enabledHint: "Говорите в поле сообщения вместо набора текста",
+      },
+      voiceMode: {
+        title: "Голосовой режим",
+        info: "Голосовой режим расшифровывает вашу речь и зачитывает ответы агента вслух.",
+        enabled: "Голосовой режим",
+        enabledHint: "Общайтесь с агентами без рук",
+      },
+      openai: {
+        apiKey: "API-ключ",
+        apiKeyHint: "Хранится на хосте и больше не показывается.",
+        keyPlaceholder: "sk-...",
+        savedKeyPlaceholder: "Сохранён",
+        missingKey: "Нет API-ключа",
+        baseUrl: "Базовый URL",
+        baseUrlHint:
+          "Для серверов, совместимых с OpenAI. Оставьте пустым, чтобы использовать OpenAI.",
+      },
+      models: {
+        loading: "Загрузка моделей...",
+        loadError: "Не удалось загрузить локальные модели",
+        none: "Нет доступных моделей",
+        downloaded: "Скачана",
+        inUse: "Используется",
+        recommended: "Рекомендуется",
+        download: "Скачать",
+        downloadAction: "Скачать {{label}}",
+        downloading: "Скачивание...",
+        downloadingPercent: "Скачивание {{percent}}%",
+        extracting: "Распаковка...",
+        delete: "Удалить",
+        deleteAction: "Удалить {{label}}",
+        deleteTitle: "Удалить {{label}}?",
+        deleteMessage: "Освободится {{size}}. Позже её можно скачать снова.",
+        languages: "Языки {{label}}",
+        moreLanguages: "{{languages}} и ещё {{count}}",
+      },
     },
     general: {
       title: "Основные",
@@ -2313,12 +2393,13 @@ export const ru: TranslationResources = {
         description:
           "По умолчанию полностью разворачивать блоки размышлений и хода рассуждений агента",
       },
-      toolCallDetail: {
-        label: "Отображение вызовов инструментов",
-        description: "Как вызовы инструментов отображаются на временной шкале",
+      chatDisplay: {
+        label: "Отображение чата",
+        description: "Какую часть работы агента показывает чат",
         options: {
-          overview: "Сводка",
-          detailed: "Все подробности",
+          full: "Полностью",
+          collapseToolCalls: "Сворачивать вызовы инструментов",
+          collapseTurns: "Сворачивать ходы",
         },
       },
       language: {
@@ -2695,6 +2776,11 @@ export const ru: TranslationResources = {
       },
       agents: {
         unavailable: "Подключитесь к этому хосту, чтобы управлять агентами",
+        idleRuntimeCleanup: {
+          title: "Освобождать неактивных агентов",
+          hint: "Освобождает память после часа бездействия.",
+          info: "Останавливает процесс агента, сохраняя разговор. Отправьте сообщение, чтобы продолжить.\n\nАктивная работа, ожидающие уведомления и проверки безопасности провайдера предотвращают очистку.",
+        },
       },
       workspaces: {
         unavailable: "Подключитесь к этому хосту, чтобы управлять рабочими пространствами",
