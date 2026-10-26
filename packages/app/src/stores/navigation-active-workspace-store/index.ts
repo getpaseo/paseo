@@ -38,9 +38,7 @@ function navigateDeps(): NavigateToWorkspaceDeps {
   return {
     revealTab: revealWorkspaceTab,
     revealWorkspace: () => {
-      if (useWorkspaceLayoutStore.getState().layoutMode === "compact") {
-        usePanelStore.getState().showMobileAgent();
-      }
+      usePanelStore.getState().showMobileAgent();
     },
     getSessionWorkspaces: (serverId) => useSessionStore.getState().sessions[serverId]?.workspaces,
     getSessionAgents: (serverId) =>

@@ -23,6 +23,12 @@ interface MobilePanelSelection {
 Every semantic target change increments `revision`. Repeating the current target is idempotent.
 Compact panel selection is not persisted; a cold start begins at `agent`.
 
+Wide layouts can reveal left navigation as an overlay when its dock is collapsed or yields width.
+This uses the same transient `agent-list` target without changing the saved dock preference.
+The overlay and its gesture travel use the resolved dock width; compact navigation remains full-width.
+Opening starts at the left edge on wide layouts so workspace horizontal interactions keep their space.
+Returning to a dock clears the transient left target, preventing it from resurfacing on the next collapse.
+
 The UI worklet owns transient motion:
 
 - one normalized position (`-1` left, `0` center, `1` right)
@@ -87,11 +93,10 @@ definition, no longer eligible to begin.
 - Keep `SidebarModelProvider` outside `MobileGestureWrapper`. The provider shares sidebar derivation
   across consumers, while Gesture Handler requires the wrapper's direct child to be a native `View`
   so its injected `collapsable={false}` reaches Android/Fabric.
-- Mobile sidebars render through `MobilePanelOverlay`; do not duplicate overlay lifecycle or motion
-  styles in sidebar components.
-- The desktop left sidebar is retained too. App chrome owns separate mounted and visible decisions:
-  closing it or yielding its width marks it inactive and applies `display: none` without conditionally
-  removing the sidebar tree.
+- Sidebars render through `MobilePanelOverlay`; do not duplicate overlay lifecycle or motion styles
+  in sidebar components. The wide left sidebar keeps the same content and gesture hosts when switching
+  between dock and overlay. App chrome owns mounting and presentation; settled panel activity owns
+  overlay work. Keep the native overlay laid out while hidden, as on compact layouts.
 - Animated panel nodes use React Native static styles plus inline theme values. Do not attach
   Unistyles-generated styles to those nodes; Unistyles and Reanimated patching the same Fabric node
   has caused native crashes.
