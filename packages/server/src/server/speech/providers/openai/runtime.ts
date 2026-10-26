@@ -100,7 +100,7 @@ function createOpenAiStt(
   logger: Logger,
 ): SpeechToTextProvider {
   const { apiKey: _sttApiKey, ...sttConfig } = openaiConfig?.stt ?? {};
-  return new OpenAISTT({ apiKey, ...sttConfig }, logger);
+  return new OpenAISTT({ config: { apiKey, ...sttConfig }, logger });
 }
 
 function createOpenAiTts(
