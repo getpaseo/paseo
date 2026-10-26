@@ -1,4 +1,3 @@
-// UPSTREAM: https://github.com/software-mansion/enriched-markdown/pull/997
 diff --git a/node_modules/react-native-enriched-markdown/android/generated/jni/react/renderer/components/EnrichedMarkdownTextSpec/EventEmitters.cpp b/node_modules/react-native-enriched-markdown/android/generated/jni/react/renderer/components/EnrichedMarkdownTextSpec/EventEmitters.cpp
 index 77465ad..94997f7 100644
 --- a/node_modules/react-native-enriched-markdown/android/generated/jni/react/renderer/components/EnrichedMarkdownTextSpec/EventEmitters.cpp
@@ -1884,10 +1883,22 @@ index 75b509cd2..c68da0c05 100644
 diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts
 --- a/node_modules/react-native-enriched-markdown/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts
 +++ b/node_modules/react-native-enriched-markdown/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts
-@@ -116,0 +117 @@
+@@ -114,6 +114,7 @@
+ interface CodeStyleInternal {
+     fontFamily: string;
+     fontSize: CodegenTypes.Float;
 +    fontScale: CodegenTypes.Float;
-@@ -237,0 +239 @@
+     color: ColorValue;
+     backgroundColor: ColorValue;
+     borderColor: ColorValue;
+@@ -235,6 +236,7 @@
+ }
+ export interface LinkPressEvent {
+     url: string;
 +    sourceType: string;
+ }
+ export interface LinkLongPressEvent {
+     url: string;
 diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts.map b/node_modules/react-native-enriched-markdown/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts.map
 index 8e380e9..5f342bd 100644
 --- a/node_modules/react-native-enriched-markdown/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts.map
@@ -1900,10 +1911,22 @@ index 8e380e9..5f342bd 100644
 diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts
 --- a/node_modules/react-native-enriched-markdown/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts
 +++ b/node_modules/react-native-enriched-markdown/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts
-@@ -116,0 +117 @@
+@@ -114,6 +114,7 @@
+ interface CodeStyleInternal {
+     fontFamily: string;
+     fontSize: CodegenTypes.Float;
 +    fontScale: CodegenTypes.Float;
-@@ -237,0 +239 @@
+     color: ColorValue;
+     backgroundColor: ColorValue;
+     borderColor: ColorValue;
+@@ -235,6 +236,7 @@
+ }
+ export interface LinkPressEvent {
+     url: string;
 +    sourceType: string;
+ }
+ export interface LinkLongPressEvent {
+     url: string;
 diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts.map b/node_modules/react-native-enriched-markdown/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts.map
 index b4a4797..29bab7c 100644
 --- a/node_modules/react-native-enriched-markdown/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts.map
@@ -2133,17 +2156,41 @@ index a32ca4e..279b944 100644
 diff --git a/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownNativeComponent.ts b/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownNativeComponent.ts
 --- a/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownNativeComponent.ts
 +++ b/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownNativeComponent.ts
-@@ -140,0 +141 @@
+@@ -138,6 +138,7 @@
+ interface CodeStyleInternal {
+   fontFamily: string;
+   fontSize: CodegenTypes.Float;
 +  fontScale: CodegenTypes.Float;
-@@ -277,0 +279 @@
+   color: ColorValue;
+   backgroundColor: ColorValue;
+   borderColor: ColorValue;
+@@ -275,6 +276,7 @@
+ 
+ export interface LinkPressEvent {
+   url: string;
 +  sourceType: string;
+ }
+ 
+ export interface LinkLongPressEvent {
 diff --git a/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownTextNativeComponent.ts b/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownTextNativeComponent.ts
 --- a/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownTextNativeComponent.ts
 +++ b/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownTextNativeComponent.ts
-@@ -140,0 +141 @@
+@@ -138,6 +138,7 @@
+ interface CodeStyleInternal {
+   fontFamily: string;
+   fontSize: CodegenTypes.Float;
 +  fontScale: CodegenTypes.Float;
-@@ -278,0 +280 @@
+   color: ColorValue;
+   backgroundColor: ColorValue;
+   borderColor: ColorValue;
+@@ -276,6 +277,7 @@
+ 
+ export interface LinkPressEvent {
+   url: string;
 +  sourceType: string;
+ }
+ 
+ export interface LinkLongPressEvent {
 diff --git a/node_modules/react-native-enriched-markdown/src/native/EnrichedMarkdownText.tsx b/node_modules/react-native-enriched-markdown/src/native/EnrichedMarkdownText.tsx
 index ca7157e..40581c1 100644
 --- a/node_modules/react-native-enriched-markdown/src/native/EnrichedMarkdownText.tsx
@@ -3200,40 +3247,80 @@ new file mode 100644
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/StrongSpan.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/StrongSpan.kt
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/StrongSpan.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/StrongSpan.kt
-@@ -26,2 +26 @@
+@@ -23,8 +23,7 @@
+   }
+ 
+   private fun applyStrongStyle(tp: TextPaint) {
 -    tp.textSize = blockStyle.fontSize
 -
 +    // Weight composes with the current run; its size belongs to the block or code span.
+     val currentTypeface = tp.typeface ?: Typeface.DEFAULT
+     val isItalic = (currentTypeface.style) and Typeface.ITALIC != 0
+     val style = if (isItalic) Typeface.BOLD_ITALIC else Typeface.BOLD
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/LinkSpan.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/LinkSpan.kt
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/LinkSpan.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/LinkSpan.kt
-@@ -15 +15 @@
+@@ -12,14 +12,14 @@
+ 
+ class LinkSpan(
+   val url: String,
 -  private val onLinkPress: ((String) -> Unit)?,
 +  private val onLinkPress: ((String, String) -> Unit)?,
-@@ -21,2 +21,2 @@
+   private val onLinkLongPress: ((String) -> Unit)?,
+   private val styleCache: SpanStyleCache,
+   private val blockStyle: BlockStyle,
+   private val context: Context,
+   val recognizedLink: Boolean = false,
 -  // A recognized code span keeps its code font unless a link or variant font is set.
 -  private val keepsCodeFont: Boolean = false,
 +  // Syntax context for recognized inline-code links is independent of typography.
 +  private val recognizedInlineCodeLink: Boolean = false,
-@@ -33 +33,2 @@
+ ) : ClickableSpan() {
+   @Volatile
+   private var longPressTriggered = false
+@@ -30,7 +30,8 @@
+       return
+     }
+ 
 -    onLinkPress?.invoke(url) ?: (widget as? EnrichedMarkdownText)?.emitOnLinkPress(url)
 +    val sourceType = if (recognizedInlineCodeLink) "inline-code" else if (recognizedLink) "text" else "markdown"
 +    onLinkPress?.invoke(url, sourceType) ?: (widget as? EnrichedMarkdownText)?.emitOnLinkPress(url, sourceType)
-@@ -53 +53,0 @@
+   }
+ 
+   fun onLongClick(widget: View): Boolean {
+@@ -50,11 +51,7 @@
+ 
+     val fontFamily = variant?.fontFamily?.takeIf { it.isNotEmpty() } ?: styleCache.linkFontFamily
+     if (fontFamily.isNotEmpty()) {
 -      textPaint.textSize = blockStyle.fontSize
-@@ -55,3 +54,0 @@
+       textPaint.applyBlockStyleFont(blockStyle.copy(fontFamily = fontFamily), context)
 -    } else if (!keepsCodeFont) {
 -      textPaint.textSize = blockStyle.fontSize
 -      textPaint.applyBlockStyleFont(blockStyle, context)
+     }
+ 
+     textPaint.color = variant?.color ?: styleCache.linkColor
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/LinkRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/LinkRenderer.kt
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/LinkRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/LinkRenderer.kt
-@@ -22 +22 @@
+@@ -19,7 +19,7 @@
+   override fun render(
+     node: MarkdownASTNode,
+     builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-@@ -59 +59 @@
+     onLinkLongPress: ((String) -> Unit)?,
+     factory: RendererFactory,
+   ) {
+@@ -56,7 +56,7 @@
+           blockStyle,
+           factory.context,
+           recognizedLink = recognizedLink,
 -          keepsCodeFont = recognizedLink && node.children.any { it.type == MarkdownASTNode.NodeType.Code },
 +          recognizedInlineCodeLink = recognizedLink && node.children.any { it.type == MarkdownASTNode.NodeType.Code },
+         ),
+         start,
+         end,
 diff --git a/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/InlineCodeFormattingTest.kt b/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/InlineCodeFormattingTest.kt
 new file mode 100644
 --- /dev/null
@@ -3331,73 +3418,160 @@ new file mode 100644
 diff --git a/node_modules/react-native-enriched-markdown/src/types/MarkdownStyle.ts b/node_modules/react-native-enriched-markdown/src/types/MarkdownStyle.ts
 --- a/node_modules/react-native-enriched-markdown/src/types/MarkdownStyle.ts
 +++ b/node_modules/react-native-enriched-markdown/src/types/MarkdownStyle.ts
-@@ -199,0 +200,2 @@
+@@ -197,6 +197,8 @@
+ interface CodeStyle {
+   fontFamily?: string;
+   fontSize?: number;
 +  /** Scales the inherited block size when fontSize is unset. */
 +  fontScale?: number;
+   color?: string;
+   backgroundColor?: string;
+   borderColor?: string;
 diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownStyle.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownStyle.d.ts
 --- a/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownStyle.d.ts
 +++ b/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownStyle.d.ts
-@@ -181,0 +182,2 @@
+@@ -179,6 +179,8 @@
+ interface CodeStyle {
+     fontFamily?: string;
+     fontSize?: number;
 +    /** Scales the inherited block size when fontSize is unset. */
 +    fontScale?: number;
+     color?: string;
+     backgroundColor?: string;
+     borderColor?: string;
 diff --git a/node_modules/react-native-enriched-markdown/src/types/MarkdownStyleInternal.ts b/node_modules/react-native-enriched-markdown/src/types/MarkdownStyleInternal.ts
 --- a/node_modules/react-native-enriched-markdown/src/types/MarkdownStyleInternal.ts
 +++ b/node_modules/react-native-enriched-markdown/src/types/MarkdownStyleInternal.ts
-@@ -152,0 +153 @@
+@@ -150,6 +150,7 @@
+ interface CodeStyleInternal {
+   fontFamily: string;
+   fontSize: number;
 +  fontScale: number;
+   color: string;
+   backgroundColor: string;
+   borderColor: string;
 diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownStyleInternal.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownStyleInternal.d.ts
 --- a/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownStyleInternal.d.ts
 +++ b/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownStyleInternal.d.ts
-@@ -119,0 +120 @@
+@@ -117,6 +117,7 @@
+ interface CodeStyleInternal {
+     fontFamily: string;
+     fontSize: number;
 +    fontScale: number;
+     color: string;
+     backgroundColor: string;
+     borderColor: string;
 diff --git a/node_modules/react-native-enriched-markdown/src/normalizeMarkdownStyle.ts b/node_modules/react-native-enriched-markdown/src/normalizeMarkdownStyle.ts
 --- a/node_modules/react-native-enriched-markdown/src/normalizeMarkdownStyle.ts
 +++ b/node_modules/react-native-enriched-markdown/src/normalizeMarkdownStyle.ts
-@@ -205,0 +206 @@
+@@ -203,6 +203,7 @@
+     // code doesn't fall back to the browser's default proportional font.
+     fontFamily: Platform.select({ web: getMonospaceFont(), default: '' })!,
+     fontSize: 0,
 +    fontScale: 1,
+     color: normalizeColor('#E01E5A')!,
+     backgroundColor: normalizeColor('#FDF2F4')!,
+     borderColor: normalizeColor('#F8D7DA')!,
 diff --git a/node_modules/react-native-enriched-markdown/src/normalizeMarkdownStyle.web.ts b/node_modules/react-native-enriched-markdown/src/normalizeMarkdownStyle.web.ts
 --- a/node_modules/react-native-enriched-markdown/src/normalizeMarkdownStyle.web.ts
 +++ b/node_modules/react-native-enriched-markdown/src/normalizeMarkdownStyle.web.ts
-@@ -167,0 +168 @@
+@@ -165,6 +165,7 @@
+   code: {
+     fontFamily: MONOSPACE_FONT,
+     fontSize: 0,
 +    fontScale: 1,
+     color: '#E01E5A',
+     backgroundColor: '#FDF2F4',
+     borderColor: '#F8D7DA',
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/normalizeMarkdownStyle.js b/node_modules/react-native-enriched-markdown/lib/module/normalizeMarkdownStyle.js
 --- a/node_modules/react-native-enriched-markdown/lib/module/normalizeMarkdownStyle.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/normalizeMarkdownStyle.js
-@@ -228,0 +229 @@
+@@ -226,6 +226,7 @@
+       default: ''
+     }),
+     fontSize: 0,
 +    fontScale: 1,
+     color: normalizeColor('#E01E5A'),
+     backgroundColor: normalizeColor('#FDF2F4'),
+     borderColor: normalizeColor('#F8D7DA')
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/normalizeMarkdownStyle.web.js b/node_modules/react-native-enriched-markdown/lib/module/normalizeMarkdownStyle.web.js
 --- a/node_modules/react-native-enriched-markdown/lib/module/normalizeMarkdownStyle.web.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/normalizeMarkdownStyle.web.js
-@@ -152,0 +153 @@
+@@ -150,6 +150,7 @@
+   code: {
+     fontFamily: MONOSPACE_FONT,
+     fontSize: 0,
 +    fontScale: 1,
+     color: '#E01E5A',
+     backgroundColor: '#FDF2F4',
+     borderColor: '#F8D7DA'
 diff --git a/node_modules/react-native-enriched-markdown/src/web/styles.ts b/node_modules/react-native-enriched-markdown/src/web/styles.ts
 --- a/node_modules/react-native-enriched-markdown/src/web/styles.ts
 +++ b/node_modules/react-native-enriched-markdown/src/web/styles.ts
-@@ -293 +293 @@
+@@ -290,7 +290,7 @@
+   const code = style.code;
+   return {
+     fontFamily: normalizeFontFamily(code.fontFamily),
 -    fontSize: code.fontSize || undefined,
 +    fontSize: code.fontSize || `${code.fontScale}em`,
+     color: code.color,
+     backgroundColor: code.backgroundColor,
+     border: `1px solid ${code.borderColor}`,
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/styles.js b/node_modules/react-native-enriched-markdown/lib/module/web/styles.js
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/styles.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/web/styles.js
-@@ -274 +274 @@
+@@ -271,7 +271,7 @@
+   const code = style.code;
+   return {
+     fontFamily: normalizeFontFamily(code.fontFamily),
 -    fontSize: code.fontSize || undefined,
 +    fontSize: code.fontSize || `${code.fontScale}em`,
+     color: code.color,
+     backgroundColor: code.backgroundColor,
+     border: `1px solid ${code.borderColor}`,
 diff --git a/node_modules/react-native-enriched-markdown/ios/styles/StyleConfig.h b/node_modules/react-native-enriched-markdown/ios/styles/StyleConfig.h
 --- a/node_modules/react-native-enriched-markdown/ios/styles/StyleConfig.h
 +++ b/node_modules/react-native-enriched-markdown/ios/styles/StyleConfig.h
-@@ -228,0 +229,2 @@
+@@ -226,6 +226,8 @@
+ // Code properties
+ - (NSString *)codeFontFamily;
+ - (void)setCodeFontFamily:(NSString *)newValue;
 +- (CGFloat)codeFontScale;
 +- (void)setCodeFontScale:(CGFloat)newValue;
+ - (CGFloat)codeFontSize;
+ - (void)setCodeFontSize:(CGFloat)newValue;
+ - (RCTUIColor *)codeColor;
 diff --git a/node_modules/react-native-enriched-markdown/ios/styles/StyleConfig.mm b/node_modules/react-native-enriched-markdown/ios/styles/StyleConfig.mm
 --- a/node_modules/react-native-enriched-markdown/ios/styles/StyleConfig.mm
 +++ b/node_modules/react-native-enriched-markdown/ios/styles/StyleConfig.mm
-@@ -141,0 +142 @@
+@@ -139,6 +139,7 @@
+   // Code properties
+   NSString *_codeFontFamily;
+   CGFloat _codeFontSize;
 +  CGFloat _codeFontScale;
-@@ -275,0 +277 @@
+   RCTUIColor *_codeColor;
+   RCTUIColor *_codeBackgroundColor;
+   RCTUIColor *_codeBorderColor;
+@@ -273,6 +274,7 @@
+ {
+   self = [super init];
+   _allowFontScaling = YES;
 +  _codeFontScale = 1;
-@@ -444,0 +447 @@
+   _maxFontSizeMultiplier = 0;
+   _paragraphTextAlign = NSTextAlignmentNatural;
+   _h1TextAlign = NSTextAlignmentNatural;
+@@ -442,6 +444,7 @@
+   copy->_underlineColor = [_underlineColor copy];
+   copy->_codeFontFamily = [_codeFontFamily copy];
+   copy->_codeFontSize = _codeFontSize;
 +  copy->_codeFontScale = _codeFontScale;
-@@ -1515,0 +1519,10 @@
+   copy->_codeColor = [_codeColor copy];
+   copy->_codeBackgroundColor = [_codeBackgroundColor copy];
+   copy->_codeBorderColor = [_codeBorderColor copy];
+@@ -1513,6 +1516,16 @@
+   _codeFontFamily = newValue;
+ }
+ 
 +- (CGFloat)codeFontScale
 +{
 +  return _codeFontScale;
@@ -3408,45 +3582,92 @@ diff --git a/node_modules/react-native-enriched-markdown/ios/styles/StyleConfig.
 +  _codeFontScale = newValue;
 +}
 +
+ - (CGFloat)codeFontSize
+ {
+   return _codeFontSize;
 diff --git a/node_modules/react-native-enriched-markdown/ios/utils/StylePropsUtils.h b/node_modules/react-native-enriched-markdown/ios/utils/StylePropsUtils.h
 --- a/node_modules/react-native-enriched-markdown/ios/utils/StylePropsUtils.h
 +++ b/node_modules/react-native-enriched-markdown/ios/utils/StylePropsUtils.h
-@@ -715,0 +716,5 @@
+@@ -713,6 +713,11 @@
+     changed = YES;
+   }
+ 
 +  if (newStyle.code.fontScale != oldStyle.code.fontScale) {
 +    [config setCodeFontScale:newStyle.code.fontScale];
 +    changed = YES;
 +  }
 +
+   if (newStyle.code.fontSize != oldStyle.code.fontSize) {
+     [config setCodeFontSize:newStyle.code.fontSize];
+     changed = YES;
 diff --git a/node_modules/react-native-enriched-markdown/ios/internals/MeasurementCache.h b/node_modules/react-native-enriched-markdown/ios/internals/MeasurementCache.h
 --- a/node_modules/react-native-enriched-markdown/ios/internals/MeasurementCache.h
 +++ b/node_modules/react-native-enriched-markdown/ios/internals/MeasurementCache.h
-@@ -146 +146 @@
+@@ -143,7 +143,7 @@
+   hashFields(s.codeBlock.fontFamily, s.codeBlock.fontSize, s.codeBlock.fontWeight, s.codeBlock.marginTop,
+              s.codeBlock.marginBottom, s.codeBlock.lineHeight, s.codeBlock.padding, s.codeBlock.borderRadius,
+              s.codeBlock.borderWidth);
 -  hashFields(s.code.fontFamily, s.code.fontSize);
 +  hashFields(s.code.fontFamily, s.code.fontSize, s.code.fontScale);
+   hashFields(s.link.fontFamily, s.strong.fontFamily, s.strong.fontWeight, s.em.fontFamily, s.em.fontStyle);
+   // Variants change link metrics: a font family, or a pill box around the label.
+   for (const auto &variant : s.linkVariants) {
 diff --git a/node_modules/react-native-enriched-markdown/ios/renderer/CodeRenderer.m b/node_modules/react-native-enriched-markdown/ios/renderer/CodeRenderer.m
 --- a/node_modules/react-native-enriched-markdown/ios/renderer/CodeRenderer.m
 +++ b/node_modules/react-native-enriched-markdown/ios/renderer/CodeRenderer.m
-@@ -27 +27 @@
+@@ -24,7 +24,7 @@
+   UIFontDescriptorSymbolicTraits traits = blockFont.fontDescriptor.symbolicTraits;
+   UIFontWeight weight = (traits & UIFontDescriptorTraitBold) ? UIFontWeightBold : UIFontWeightRegular;
+ 
 -  CGFloat codeFontSize = _config.codeFontSize > 0 ? _config.codeFontSize : blockStyle.fontSize;
 +  CGFloat codeFontSize = _config.codeFontSize > 0 ? _config.codeFontSize : blockStyle.fontSize * _config.codeFontScale;
+ 
+   // Both sizes above are unscaled; apply the same multiplier as the surrounding block font.
+   CGFloat fontScale = context.allowFontScaling ? RCTFontSizeMultiplierWithMax(context.maxFontSizeMultiplier) : 1.0;
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/styles/CodeStyle.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/styles/CodeStyle.kt
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/styles/CodeStyle.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/styles/CodeStyle.kt
-@@ -7,0 +8 @@
+@@ -5,6 +5,7 @@
+ data class CodeStyle(
+   val fontFamily: String,
+   val fontSize: Float,
 +  val fontScale: Float,
-@@ -19,0 +21 @@
+   val color: Int,
+   val backgroundColor: Int,
+   val borderColor: Int,
+@@ -17,10 +18,11 @@
+       val fontFamily = parser.parseString(map, "fontFamily")
+       val fontSizeRaw = parser.parseOptionalDouble(map, "fontSize").toFloat()
+       val fontSize = if (fontSizeRaw > 0) parser.toPixelFromSP(fontSizeRaw) else 0f
 +      val fontScale = parser.parseOptionalDouble(map, "fontScale", 1.0).toFloat()
-@@ -23 +25 @@
+       val color = parser.parseColor(map, "color")
+       val backgroundColor = parser.parseColor(map, "backgroundColor")
+       val borderColor = parser.parseColor(map, "borderColor")
 -      return CodeStyle(fontFamily, fontSize, color, backgroundColor, borderColor)
 +      return CodeStyle(fontFamily, fontSize, fontScale, color, backgroundColor, borderColor)
+     }
+   }
+ }
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/SpanStyleCache.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/SpanStyleCache.kt
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/SpanStyleCache.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/SpanStyleCache.kt
-@@ -42,0 +43 @@
+@@ -40,6 +40,7 @@
+ 
+   val codeFontFamily: String = style.codeStyle.fontFamily
+   val codeFontSize: Float = style.codeStyle.fontSize
 +  val codeFontScale: Float = style.codeStyle.fontScale
+   val codeColor: Int = style.codeStyle.color
+   val spoilerColor: Int = style.spoilerStyle.color
+   val spoilerParticleDensity: Float = style.spoilerStyle.particleDensity
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/CodeSpan.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/CodeSpan.kt
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/CodeSpan.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/CodeSpan.kt
-@@ -23 +23 @@
+@@ -20,7 +20,7 @@
+   }
+ 
+   private fun applyMonospacedFont(paint: TextPaint) {
 -    paint.textSize = if (styleCache.codeFontSize > 0) styleCache.codeFontSize else blockStyle.fontSize
 +    paint.textSize = if (styleCache.codeFontSize > 0) styleCache.codeFontSize else blockStyle.fontSize * styleCache.codeFontScale
+     val preservedStyle = (paint.typeface?.style ?: 0) and (Typeface.BOLD or Typeface.ITALIC)
+     paint.typeface =
+       if (styleCache.codeFontFamily.isNotEmpty()) {
