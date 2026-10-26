@@ -5,6 +5,7 @@ import pino from "pino";
 import { describe, expect, test } from "vitest";
 
 import { JsonlRpcProcess, type JsonlRpcExit } from "./jsonl-rpc-process.js";
+import type { ProcessTerminator, TerminateWithTreeKillOptions } from "../../../utils/tree-kill.js";
 
 const CHILD_SOURCE = String.raw`
 const readline = require("node:readline");
@@ -72,6 +73,7 @@ interface StartProcessOptions {
   child?: ChildProcessWithoutNullStreams;
   defaultRequestTimeoutMs?: number;
   source?: string;
+  terminate?: ProcessTerminator;
 }
 
 function createInMemoryChildProcess(): InMemoryChildProcess {
@@ -101,6 +103,7 @@ function startProcess(options: StartProcessOptions = {}): JsonlRpcProcess {
     logger: pino({ level: "silent" }),
     defaultRequestTimeoutMs: options.defaultRequestTimeoutMs,
     ...(child ? { spawn: () => child } : {}),
+    ...(options.terminate ? { terminate: options.terminate } : {}),
   });
 }
 
@@ -323,6 +326,80 @@ describe("JsonlRpcProcess", () => {
     await expect(transport.requestStopWork({ type: "abort" })).rejects.toThrow(
       "JSONL RPC process is closed",
     );
+  });
+
+  test("forceInterrupt escalates a wedged child from SIGINT and SIGTERM to SIGKILL", async () => {
+    const child = createInMemoryChildProcess();
+    const calls: TerminateWithTreeKillOptions[] = [];
+    const terminate: ProcessTerminator = async (_child, options) => {
+      calls.push(options);
+      return calls.length === 1 ? "kill-timeout" : "killed";
+    };
+    const transport = startProcess({ child, terminate });
+
+    await transport.forceInterrupt();
+
+    expect(calls).toEqual([
+      {
+        gracefulSignal: "SIGINT",
+        forceSignal: "SIGTERM",
+        gracefulTimeoutMs: 2_000,
+        forceTimeoutMs: 2_000,
+      },
+      {
+        gracefulSignal: "SIGKILL",
+        forceSignal: "SIGKILL",
+        gracefulTimeoutMs: 0,
+      },
+    ]);
+  });
+
+  test("forceInterrupt stops after the first pass when the child exits", async () => {
+    const child = createInMemoryChildProcess();
+    const calls: TerminateWithTreeKillOptions[] = [];
+    const terminate: ProcessTerminator = async (_child, options) => {
+      calls.push(options);
+      return "terminated";
+    };
+    const transport = startProcess({ child, terminate });
+
+    await transport.forceInterrupt();
+
+    expect(calls).toEqual([
+      {
+        gracefulSignal: "SIGINT",
+        forceSignal: "SIGTERM",
+        gracefulTimeoutMs: 2_000,
+        forceTimeoutMs: 2_000,
+      },
+    ]);
+  });
+
+  test("forceInterrupt is a no-op once the child has exited", async () => {
+    const child = createInMemoryChildProcess();
+    const calls: TerminateWithTreeKillOptions[] = [];
+    const terminate: ProcessTerminator = async (_child, options) => {
+      calls.push(options);
+      return "terminated";
+    };
+    const transport = startProcess({ child, terminate });
+
+    child.emit("exit", 1, null);
+    await transport.forceInterrupt();
+
+    expect(calls).toEqual([]);
+  });
+
+  test("forceInterrupt kills a real wedged child and publishes its exit", async () => {
+    const transport = startProcess();
+    const exit = nextExit(transport);
+    const request = transport.request({ type: "hang" }, null);
+
+    const rejection = expect(request).rejects.toThrow();
+    await transport.forceInterrupt();
+
+    await rejection;
+    await expect(exit).resolves.toMatchObject({ signal: "SIGINT" });
   });
 
   test("stdin error events close the transport instead of becoming uncaught exceptions", async () => {
