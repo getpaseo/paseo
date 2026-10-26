@@ -22,7 +22,7 @@ type AgentSkillsClient = Pick<
   "close" | "connect" | "getAgentSkillsStatus" | "saveAgentSkillsSelection"
 >;
 
-export type SkillTargetName = "agents" | "claude" | "codex";
+export type SkillTargetName = "agents" | "claude";
 
 export interface AgentSkillsSandbox {
   available: string[];
@@ -30,6 +30,7 @@ export interface AgentSkillsSandbox {
   daemon: IsolatedHostDaemon;
   home: string;
   targets: Record<SkillTargetName, string>;
+  codexSkillsDir: string;
   blockAgentsDirectory(): Promise<void>;
   unblockAgentsDirectory(): Promise<void>;
   close(): Promise<void>;
@@ -63,8 +64,8 @@ export async function startAgentSkillsSandbox(): Promise<AgentSkillsSandbox> {
   const targets = {
     agents: path.join(home, ".agents", "skills"),
     claude: path.join(home, ".claude", "skills"),
-    codex: path.join(home, ".codex", "skills"),
   };
+  const codexSkillsDir = path.join(home, ".codex", "skills");
 
   return {
     available,
@@ -72,6 +73,7 @@ export async function startAgentSkillsSandbox(): Promise<AgentSkillsSandbox> {
     daemon,
     home,
     targets,
+    codexSkillsDir,
     blockAgentsDirectory: async () => {
       await mkdir(path.dirname(targets.agents), { recursive: true });
       await writeFile(targets.agents, "not a directory", "utf8");
@@ -196,6 +198,7 @@ export async function expectInstalledSkills(
   for (const directory of Object.values(sandbox.targets)) {
     await expect.poll(() => readInstalledSkills(directory)).toEqual([...expected].sort());
   }
+  await expect.poll(() => readInstalledSkills(sandbox.codexSkillsDir)).toEqual([]);
 }
 
 export async function expectSavedSelection(

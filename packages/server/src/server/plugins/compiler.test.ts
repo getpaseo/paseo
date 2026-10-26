@@ -139,6 +139,51 @@ async function createRootAlias(directory: string): Promise<string> {
 
 describe("plugin runtime entries", () => {
   it.each([
+    'import type { AgentTimelineItem, ToolCallDetail } from "@getpaseo/protocol/agent-types"; export type Detail = ToolCallDetail; export type Item = AgentTimelineItem;',
+    'import { type AgentTimelineItem } from "@getpaseo/protocol/agent-types"; export type Item = AgentTimelineItem;',
+    'export type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";',
+    'export type Item = import("@getpaseo/protocol/agent-types").AgentTimelineItem;',
+    'export type { AgentAttachment } from "@getpaseo/protocol/messages";',
+  ])("compiles protocol types without local dependencies: %s", async (typeSource) => {
+    const entries = await createSplitPlugin();
+    await writeFile(
+      path.join(entries.directory, "shared", "labels.ts"),
+      `${typeSource}\nexport const clientLabel = "Client contribution"; export const serverLabel = "Server contribution";`,
+    );
+
+    const result = await compilePlugin(entries);
+
+    expect(result.clientBundle).toContain("Client contribution");
+    expect(result.serverBundle).toContain("Server contribution");
+    expect(result.clientBundle).not.toContain("@getpaseo/protocol");
+    expect(result.serverBundle).not.toContain("@getpaseo/protocol");
+  });
+
+  it("still requires local dependencies for protocol runtime imports", async () => {
+    const entries = await createSplitPlugin();
+    await writeFile(
+      entries.server,
+      'import { TOOL_CALL_ICON_NAMES } from "@getpaseo/protocol/agent-types"; export default () => TOOL_CALL_ICON_NAMES;',
+    );
+
+    await expect(compilePlugin(entries)).rejects.toThrow(
+      'Could not resolve "@getpaseo/protocol/agent-types"',
+    );
+  });
+
+  it("still rejects missing third-party type dependencies", async () => {
+    const entries = await createSplitPlugin();
+    await writeFile(
+      entries.client,
+      'import type { Item } from "missing-types"; export default (item: Item) => item;',
+    );
+
+    await expect(compilePlugin(entries)).rejects.toThrow(
+      'Could not resolve type dependency "missing-types"',
+    );
+  });
+
+  it.each([
     "react",
     "react/jsx-runtime",
     "react-native",
@@ -455,11 +500,57 @@ export type Value = string;`,
     expect(serverBundle).not.toContain("Client contribution");
   });
 
+  it.each(["main", "module"])(
+    "builds a dependency that declares only %s into both runtimes",
+    async (field) => {
+      const entries = await createSplitPlugin();
+      const dependency = path.join(entries.directory, "node_modules/legacy-entry");
+      await mkdir(dependency, { recursive: true });
+      await writeFile(
+        path.join(dependency, "package.json"),
+        JSON.stringify({ name: "legacy-entry", [field]: "lib/entry.js" }),
+      );
+      await mkdir(path.join(dependency, "lib"));
+      await writeFile(
+        path.join(dependency, "lib/entry.js"),
+        'exports.label = "legacy entry contribution";',
+      );
+      await writeFile(
+        path.join(entries.directory, "shared/labels.ts"),
+        'import { label } from "legacy-entry"; export const clientLabel = label; export const serverLabel = label;',
+      );
+
+      const { clientBundle, serverBundle } = await compilePlugin(entries);
+
+      expect(clientBundle).toContain("legacy entry contribution");
+      expect(serverBundle).toContain("legacy entry contribution");
+    },
+  );
+
   it("uses the automatic JSX runtime without a React import", async () => {
     const entries = await createSplitPlugin();
     const { clientBundle } = await compilePlugin(entries);
     expect(clientBundle).toContain("react/jsx-runtime");
     expect(clientBundle).not.toContain("React.createElement");
+  });
+
+  it("imports an SVG file from a runtime directory as its markup", async () => {
+    const entries = await createSplitPlugin();
+    const svg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" /></svg>';
+    await writeFile(path.join(entries.directory, "client", "icon.svg"), svg);
+    await writeFile(
+      entries.client,
+      `import icon from "./client/icon.svg";
+export default function contribute(client) {
+  client.addCommandCenterItem({ id: "open", title: "Open", icon: { svg: icon }, context: "global", onSelect() {} });
+  return () => undefined;
+}`,
+    );
+    const { clientBundle } = await compilePlugin(entries);
+    const registered: unknown[] = [];
+    const exports = new Function(`return ${clientBundle}`)()(() => undefined);
+    exports.default({ addCommandCenterItem: (item: unknown) => registered.push(item) });
+    expect(registered).toMatchObject([{ icon: { svg } }]);
   });
 
   it("lowers async callbacks before Hermes evaluates the client bundle", async () => {

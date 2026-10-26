@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import React, { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 import invariant from "tiny-invariant";
 import { buildDiffDocumentModel, retainReusableModels, reviewGeometryKey } from "./model";
 import type {
@@ -161,6 +161,16 @@ function paletteKey(palette: DiffPalette): string {
 }
 
 const WorkspaceCacheContext = createContext<DiffDocumentWorkspaceCache | null>(null);
+
+export function useDiffDocumentWorkspaceCacheBridge() {
+  const cache = useDiffDocumentWorkspaceCache();
+  return useCallback(
+    (children: ReactNode) => (
+      <WorkspaceCacheContext.Provider value={cache}>{children}</WorkspaceCacheContext.Provider>
+    ),
+    [cache],
+  );
+}
 
 export function DiffDocumentWorkspaceCacheProvider({ children }: { children: ReactNode }) {
   const [cache] = useState(createDiffDocumentWorkspaceCache);

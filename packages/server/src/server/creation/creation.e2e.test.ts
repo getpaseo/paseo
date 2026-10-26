@@ -1,17 +1,31 @@
 import { execFileSync } from "node:child_process";
 import type { z } from "zod";
+import { BUILTIN_PROVIDER_IDS } from "@getpaseo/protocol/provider-manifest";
 import { WebSocket } from "ws";
 import { SessionInboundMessageSchema, WSOutboundMessageSchema } from "@getpaseo/protocol/messages";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
 import pino from "pino";
 import type { CreationSnapshot, SessionOutboundMessage } from "@getpaseo/protocol/messages";
+import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+
+function createCreationDaemon(options: Parameters<typeof createTestPaseoDaemon>[0] = {}) {
+  const agentClients = options.agentClients ?? createTestAgentClients();
+  return createTestPaseoDaemon({
+    ...options,
+    agentClients,
+    // Installed provider CLIs must not change when background naming starts.
+    providerOverrides: Object.fromEntries(
+      BUILTIN_PROVIDER_IDS.map((id) => [id, { enabled: id in agentClients }]),
+    ),
+  });
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -29,7 +43,7 @@ test("creation progresses before agent readiness and continues after the disconn
   const directory = await mkdtemp(join(tmpdir(), "creation-wire-"));
   let agents = 0;
   let prompts = 0;
-  const daemon = await createTestPaseoDaemon({
+  const daemon = await createCreationDaemon({
     logger: pino(
       { level: "trace" },
       {
@@ -41,11 +55,13 @@ test("creation progresses before agent readiness and continues after the disconn
       },
     ),
     agentClients: createTestAgentClients({
-      beforeCreateSession: async () => {
+      beforeCreateSession: async (config) => {
+        if (config.internal) return;
         agents++;
         await provider.promise;
       },
-      onStartTurn: () => {
+      onStartTurn: (_prompt, config) => {
+        if (config.internal) return;
         prompts++;
       },
     }),
@@ -122,11 +138,12 @@ test("creation progresses before agent readiness and continues after the disconn
     await client.close();
     await observer.close();
     await daemon.close();
-    await rm(directory, { recursive: true, force: true });
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
 }, 60000);
 
 async function connectCreationPeer(port: number) {
+  const timeout = 30_000;
   const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   const frames: SessionOutboundMessage[] = [];
   socket.on("message", (data) => {
@@ -147,7 +164,9 @@ async function connectCreationPeer(port: number) {
     }),
   );
   await expect
-    .poll(() => frames.some((m) => m.type === "status" && m.payload.status === "server_info"))
+    .poll(() => frames.some((m) => m.type === "status" && m.payload.status === "server_info"), {
+      timeout,
+    })
     .toBe(true);
   return {
     close: () => socket.close(),
@@ -160,7 +179,7 @@ async function connectCreationPeer(port: number) {
           (m) =>
             "payload" in m && "requestId" in m.payload && m.payload.requestId === message.requestId,
         );
-      await expect.poll(response).toBeDefined();
+      await expect.poll(response, { timeout }).toBeDefined();
       return response()!;
     },
   };
@@ -170,7 +189,7 @@ test.each([false, true])(
   "workspace identity does not depend on subscribing (first subscribe=%s)",
   async (subscribe) => {
     const directory = await mkdtemp(join(tmpdir(), "creation-identity-"));
-    const daemon = await createTestPaseoDaemon();
+    const daemon = await createCreationDaemon();
     const peer = await connectCreationPeer(daemon.port);
     try {
       const request = {
@@ -188,7 +207,7 @@ test.each([false, true])(
     } finally {
       peer.close();
       await daemon.close();
-      await rm(directory, { recursive: true, force: true });
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
   },
   60000,
@@ -199,10 +218,13 @@ test.each(["create_agent_request", "agent.create.request"] as const)(
   async (type) => {
     const directory = await mkdtemp(join(tmpdir(), "creation-agent-identity-"));
     let creations = 0;
-    const daemon = await createTestPaseoDaemon({
+    const daemon = await createCreationDaemon({
       agentClients: createTestAgentClients({
-        beforeCreateSession: async () => {
+        beforeCreateSession: async (config) => {
+          if (config.internal) return;
           creations++;
+          // A real provider or Git checkout may take longer than Vitest's default 1s poll budget.
+          await new Promise((resolve) => setTimeout(resolve, 1_200));
         },
       }),
     });
@@ -241,7 +263,7 @@ test.each(["create_agent_request", "agent.create.request"] as const)(
     } finally {
       peer.close();
       await daemon.close();
-      await rm(directory, { recursive: true, force: true });
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
   },
   60000,
@@ -264,7 +286,7 @@ test("legacy keyed creation preserves checkout error codes", async () => {
     ],
     { cwd: directory, stdio: "pipe" },
   );
-  const daemon = await createTestPaseoDaemon({ agentClients: createTestAgentClients() });
+  const daemon = await createCreationDaemon({ agentClients: createTestAgentClients() });
   const peer = await connectCreationPeer(daemon.port);
   try {
     const result = await peer.request({
@@ -281,6 +303,273 @@ test("legacy keyed creation preserves checkout error codes", async () => {
   } finally {
     peer.close();
     await daemon.close();
-    await rm(directory, { recursive: true, force: true });
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+}, 60000);
+
+test.each(["agent", "workspace"] as const)(
+  "%s creation succeeds when the provider rejects its initial prompt",
+  async (kind) => {
+    const directory = await mkdtemp(join(tmpdir(), "creation-prompt-rejected-"));
+    const rejection = "Input exceeds the maximum length of 1048576 characters.";
+    let sessions = 0;
+    let prompts = 0;
+    const daemon = await createCreationDaemon({
+      agentClients: createTestAgentClients({
+        beforeCreateSession: async (config) => {
+          if (config.internal) return;
+          sessions++;
+        },
+        onStartTurn: (_prompt, config) => {
+          if (config.internal) return;
+          prompts++;
+          throw new Error(rejection);
+        },
+      }),
+    });
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      appVersion: "0.11.1",
+    });
+    const snapshots: CreationSnapshot[] = [];
+    const agent = {
+      config: { provider: "codex", cwd: directory },
+      initialPrompt: "Continue the attached conversation.",
+      clientMessageId: "draft:initial-message",
+    };
+    const streamed: AgentTimelineItem[] = [];
+    const unsubscribe = daemon.daemon.agentManager.subscribe((event) => {
+      if (event.type === "agent_stream" && event.event.type === "timeline") {
+        streamed.push(event.event.item);
+      }
+    });
+    try {
+      await client.connect();
+      const submit = async () => {
+        const common = {
+          idempotencyKey: "rejected-first-prompt",
+          onEvent: (snapshot: CreationSnapshot) => snapshots.push(snapshot),
+        };
+        if (kind === "agent") return client.createAgent({ ...common, ...agent });
+        const result = await client.createWorkspace({
+          ...common,
+          source: { kind: "directory", path: directory },
+          agent,
+        });
+        expect(result.error).toBeNull();
+        return result.agent!;
+      };
+      const created = await submit();
+      expect(created).toMatchObject({ status: "error", lastError: rejection });
+      expect(snapshots.map((snapshot) => snapshot.phase)).not.toContain("prompt_started");
+      expect(snapshots.at(-1)).toMatchObject({
+        phase: "completed",
+        error: null,
+        agent: { id: created.id },
+      });
+      const expectedTimeline = [
+        {
+          type: "user_message",
+          text: agent.initialPrompt,
+          clientMessageId: agent.clientMessageId,
+          messageId: agent.clientMessageId,
+        },
+        { type: "assistant_message", text: `[System Error] ${rejection}` },
+      ];
+      expect(
+        (await client.fetchAgentTimeline(created.id)).entries.map((entry) => entry.item),
+      ).toEqual(expectedTimeline);
+      expect(streamed).toEqual(expectedTimeline);
+      expect((await submit()).id).toBe(created.id);
+      expect(
+        (await client.fetchAgentTimeline(created.id)).entries.map((entry) => entry.item),
+      ).toEqual(expectedTimeline);
+      expect((await client.fetchAgents()).entries).toHaveLength(1);
+      expect({ sessions, prompts }).toEqual({ sessions: 1, prompts: 1 });
+    } finally {
+      unsubscribe();
+      await client.close();
+      await daemon.close();
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  },
+  60000,
+);
+
+test("combined worktree and agent creation owns setup on the workspace and replays one identity", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "workspace-owned-setup-"));
+  const daemon = await createCreationDaemon();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await initializeSetupRepository(directory);
+    await client.connect();
+    const input = {
+      idempotencyKey: "combined-workspace-setup",
+      source: { kind: "worktree" as const, cwd: directory, worktreeSlug: "combined-setup" },
+      agent: { config: { provider: "codex", cwd: directory } },
+    };
+    const first = await client.createWorkspace(input);
+    const replay = await client.createWorkspace(input);
+    expect(first.error).toBeNull();
+    expect(replay.error).toBeNull();
+    expect(replay.workspace?.id).toBe(first.workspace?.id);
+    expect(replay.agent?.id).toBe(first.agent?.id);
+    if (!first.workspace || !first.agent) throw new Error("Expected combined creation resources");
+    const observation = client.observeWorkspaceSetup(first.workspace.id);
+    await observation.ready;
+    await expect
+      .poll(async () => (await client.fetchWorkspaceSetupStatus(first.workspace!.id)).snapshot, {
+        timeout: 10000,
+      })
+      .toMatchObject({
+        status: "completed",
+        detail: {
+          log: "",
+          commands: [
+            expect.objectContaining({
+              log: expect.stringContaining("workspace setup output\n"),
+              status: "completed",
+            }),
+          ],
+        },
+      });
+    await observation.release();
+    expect(await readFile(join(first.workspace.workspaceDirectory!, "setup-runs"), "utf8")).toBe(
+      "once\n",
+    );
+    const timeline = await client.fetchAgentTimeline(first.agent.id);
+    expect(
+      timeline.entries.map((entry) => entry.item).filter((item) => item.type === "tool_call"),
+    ).toEqual([]);
+    expect(first.agent.workspaceId).toBe(first.workspace.id);
+    const conflict = await client.createWorkspace({
+      ...input,
+      source: { ...input.source, worktreeSlug: "different-intent" },
+    });
+    expect(conflict.error).toBe("workspace_request_key_conflict");
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+}, 60000);
+
+test.each(["create_agent_request", "agent.create.request"] as const)(
+  "%s rejects agent worktree placement at the wire boundary",
+  async (type) => {
+    const directory = await mkdtemp(join(tmpdir(), "agent-worktree-rejected-"));
+    const daemon = await createCreationDaemon();
+    const peer = await connectCreationPeer(daemon.port);
+    try {
+      for (const placement of [{ git: { createWorktree: true } }, { worktreeName: "legacy" }]) {
+        const response = await peer.request({
+          type,
+          requestId: randomUUID(),
+          config: { provider: "codex", cwd: directory },
+          ...placement,
+        });
+        if (response.type !== "agent.create.response" && response.type !== "status")
+          throw new Error("Expected agent creation response");
+        const error = response.payload.error;
+        expect(error).toContain("createWorkspace");
+      }
+    } finally {
+      peer.close();
+      await daemon.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+async function initializeSetupRepository(directory: string): Promise<void> {
+  execFileSync("git", ["init", "-b", "main", directory], { stdio: "pipe" });
+  await writeFile(
+    join(directory, "paseo.json"),
+    JSON.stringify({
+      worktree: {
+        setup: [
+          "node -e \"require('fs').appendFileSync('setup-runs', 'once\\n'); console.log('workspace setup output')\"",
+        ],
+      },
+    }),
+  );
+  execFileSync("git", ["add", "paseo.json"], { cwd: directory });
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "-m",
+      "setup fixture",
+    ],
+    { cwd: directory, stdio: "pipe" },
+  );
+}
+
+test("Hub-shaped keyed agent worktree creation uses workspace setup and preserves resource identity", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "keyed-agent-workspace-setup-"));
+  const daemon = await createCreationDaemon();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  const peer = await connectCreationPeer(daemon.port);
+  try {
+    await initializeSetupRepository(directory);
+    await client.connect();
+    const input = {
+      type: "create_agent_request" as const,
+      idempotencyKey: "keyed-agent-worktree",
+      config: { provider: "codex", cwd: directory },
+      worktree: { mode: "branch-off" as const, newBranch: "keyed-agent-setup", base: "main" },
+    };
+    const first = await peer.request({ ...input, requestId: "first" });
+    const replay = await peer.request({ ...input, requestId: "replay" });
+    if (
+      first.type !== "status" ||
+      first.payload.status !== "agent_created" ||
+      replay.type !== "status" ||
+      replay.payload.status !== "agent_created"
+    )
+      throw new Error("Expected agent creation responses");
+    expect(replay.payload.agent.id).toBe(first.payload.agent.id);
+    expect(replay.payload.agent.workspaceId).toBe(first.payload.agent.workspaceId);
+    const agent = first.payload.agent;
+    if (!agent.workspaceId) throw new Error("Expected agent workspace ownership");
+    await expect
+      .poll(async () => (await client.fetchWorkspaceSetupStatus(agent.workspaceId!)).snapshot, {
+        timeout: 10000,
+      })
+      .toMatchObject({
+        status: "completed",
+        detail: {
+          log: "",
+          commands: [
+            expect.objectContaining({ log: expect.stringContaining("workspace setup output\n") }),
+          ],
+        },
+      });
+    expect(await readFile(join(agent.cwd, "setup-runs"), "utf8")).toBe("once\n");
+    expect(
+      (await client.fetchAgentTimeline(agent.id)).entries
+        .map((entry) => entry.item)
+        .filter((item) => item.type === "tool_call"),
+    ).toEqual([]);
+    const conflict = await peer.request({
+      ...input,
+      requestId: "conflict",
+      worktree: { ...input.worktree, newBranch: "different-intent" },
+    });
+    expect(conflict).toMatchObject({
+      type: "status",
+      payload: { status: "agent_create_failed", error: "agent_request_key_conflict" },
+    });
+  } finally {
+    peer.close();
+    await client.close();
+    await daemon.close();
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
 }, 60000);

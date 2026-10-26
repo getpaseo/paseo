@@ -5,7 +5,7 @@ export type SidebarSection = PluginSidebarSection;
 
 /**
  * Each section's built-in items in their default order. The footer's bottom line
- * (Add project and the Hosts, Import session, Help and support, Settings icons) is fixed.
+ * (Add project and the Hosts, Help and support, Settings icons) is fixed.
  */
 export const BUILTIN_SIDEBAR_ITEM_IDS = {
   header: ["new-workspace", "history", "search", "schedules"],
@@ -69,6 +69,13 @@ export function builtinSidebarNavShortcutAction(id: BuiltinSidebarItemId): strin
   return BUILTIN_SHORTCUT_ACTIONS[id];
 }
 
+/** Builtins that start hidden until the user turns them on: the Usage summary is opt-in. */
+const HIDDEN_BY_DEFAULT: ReadonlySet<BuiltinSidebarItemId> = new Set(["usage"]);
+
+function builtinVisibleByDefault(id: BuiltinSidebarItemId): boolean {
+  return !HIDDEN_BY_DEFAULT.has(id);
+}
+
 export function pluginSidebarNavKey(
   group: Pick<PluginSidebarGroup, "pluginId" | "contributionId">,
 ): string {
@@ -115,7 +122,12 @@ export function resolveSidebarNavItems<Section extends SidebarSection>(input: {
 
   for (const id of builtinIds) {
     if (placed.has(id)) continue;
-    items.push({ kind: "builtin", key: id, id, visible: true });
+    items.push({
+      kind: "builtin",
+      key: id,
+      id,
+      visible: builtinVisibleByDefault(id),
+    });
   }
   for (const [key, group] of groupsByKey) {
     if (placed.has(key)) continue;

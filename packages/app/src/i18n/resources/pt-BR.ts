@@ -27,9 +27,11 @@ export const ptBR: TranslationResources = {
     total: "{{total}} correspondências",
   },
   common: {
+    bottomSheetBackdrop: "Fundo do painel inferior",
     back: "Voltar",
     loading: "Carregando...",
     actions: {
+      save: "Salvar",
       back: "Voltar",
       cancel: "Cancelar",
       close: "Fechar",
@@ -123,6 +125,8 @@ export const ptBR: TranslationResources = {
     input: {
       accessibilityLabel: "Enviar mensagem ao agente...",
       terminalAccessibilityLabel: "Terminal prompt",
+      fullscreen: "Tela cheia",
+      exitFullscreen: "Sair da tela cheia",
       focusHint: "{{shortcut}} para focar",
       addAttachment: "Adicionar anexo",
       interruptAgent: "Interromper agente",
@@ -130,6 +134,8 @@ export const ptBR: TranslationResources = {
       sendAndInterrupt: "Enviar e interromper",
       sendAndSteer: "Enviar e orientar",
       sendMessage: "Enviar mensagem",
+      longPressToQueue: "Mantenha pressionado para enfileirar",
+      longPressToSendNow: "Mantenha pressionado para enviar agora",
       queue: "Fila",
       send: "Enviar",
     },
@@ -360,6 +366,7 @@ export const ptBR: TranslationResources = {
       details: "Detalhes",
     },
     dictation: {
+      paused: "Microfone interrompido. Aguardando para retomar…",
       start: "Iniciar ditado por voz",
       cancel: "Cancelar ditado",
       retry: "Tentar ditado novamente",
@@ -369,6 +376,7 @@ export const ptBR: TranslationResources = {
       failedRetry: "Falha no ditado. Toque para tentar novamente.",
     },
     question: {
+      responseFailed: "Não foi possível enviar sua resposta. Tente novamente.",
       submit: "Enviar",
       next: "Próximo",
       answerPlaceholder: "Digite sua resposta...",
@@ -384,6 +392,9 @@ export const ptBR: TranslationResources = {
         started: "Iniciada",
         completed: "Concluída",
       },
+    },
+    turnFooter: {
+      workedFor: "Trabalhou por {{duration}}",
     },
     compaction: {
       loading: "Compactando...",
@@ -534,6 +545,7 @@ export const ptBR: TranslationResources = {
       },
     },
     setup: {
+      updateHost: "Atualize o host para ver os detalhes da configuração do espaço de trabalho",
       descriptor: {
         label: "Configuração",
         completed: "Configuração concluída",
@@ -610,6 +622,12 @@ export const ptBR: TranslationResources = {
       hostDisconnected: "Host não está conectado",
       updateHost: "Atualize o host para usar o renderizador de terminal nativo.",
       unableToSubscribe: "Não foi possível assinar o terminal",
+      fileUploaded: "Arquivo enviado",
+      pasteFileFailed: "Falha ao colar o arquivo: {{reason}}",
+      uploadingFile: "Enviando arquivo…",
+    },
+    sheet: {
+      openAsTab: "Abrir como aba",
     },
     tabs: {
       loading: "Carregando...",
@@ -626,7 +644,7 @@ export const ptBR: TranslationResources = {
       },
       switcher: {
         trigger: "Alternar abas ({{count}} abertas)",
-        title: "Alternar aba",
+        title: "Abas do workspace",
         searchPlaceholder: "Buscar abas",
       },
       menu: {
@@ -723,6 +741,7 @@ export const ptBR: TranslationResources = {
     header: {
       actions: {
         workspaceActions: "Ações do workspace",
+        workspaceActionsUnhealthy: "Ações do workspace, há um serviço com problema",
         newAgent: "Novo agente",
         newTerminal: "Novo terminal",
         newBrowser: "Nova aba de navegador",
@@ -770,6 +789,8 @@ export const ptBR: TranslationResources = {
         exitCode: "saída {{code}}",
         startFailed: "Falha ao iniciar {{scriptName}}",
         stopFailed: "Falha ao parar {{scriptName}}",
+        running: "Em execução",
+        runningCount: "{{count}} em execução",
       },
     },
     tree: {
@@ -963,6 +984,7 @@ export const ptBR: TranslationResources = {
         checkingRepository: "Verificando repositório...",
         notRepository: "Não é um repositório git",
         diffMode: "Modo de diff",
+        all: "Todas as alterações",
         uncommitted: "Sem commit",
         committed: "Com commit",
         branchUnknown: "Desconhecido",
@@ -992,6 +1014,47 @@ export const ptBR: TranslationResources = {
         actions: {
           viewPullRequest: "Ver",
           openOn: "Abrir no {{brand}}",
+          addToChat: "Adicionar ao chat",
+          addAllToChat: "Adicionar tudo ao chat",
+          addingToChat: "Adicionando...",
+        },
+        checksOverview: {
+          headline: {
+            actionRequired: "Algumas verificações precisam da sua atenção",
+            failure: "Algumas verificações não foram bem-sucedidas",
+            pending: "Algumas verificações ainda não terminaram",
+            success: "Todas as verificações foram aprovadas",
+            none: "Nenhuma verificação",
+          },
+          count: {
+            actionRequired: "{{count}} com ação pendente",
+            warning: "{{count}} com aviso",
+            failure: "{{count}} com falha",
+            pending: "{{count}} em andamento",
+            manual: "{{count}} manual(is)",
+            success: "{{count}} aprovada(s)",
+            ignored: "{{count}} ignorada(s)",
+          },
+          detailOne: "Verificação: {{parts}}",
+          detailMany: "Verificações: {{parts}}",
+          groupOne: {
+            actionRequired: "{{count}} verificação com ação pendente",
+            warning: "{{count}} verificação com aviso",
+            failure: "{{count}} verificação com falha",
+            pending: "{{count}} verificação em andamento",
+            manual: "{{count}} verificação manual",
+            success: "{{count}} verificação aprovada",
+            ignored: "{{count}} verificação ignorada",
+          },
+          groupMany: {
+            actionRequired: "{{count}} verificações com ação pendente",
+            warning: "{{count}} verificações com aviso",
+            failure: "{{count}} verificações com falha",
+            pending: "{{count}} verificações em andamento",
+            manual: "{{count}} verificações manuais",
+            success: "{{count}} verificações aprovadas",
+            ignored: "{{count}} verificações ignoradas",
+          },
         },
         checksSummary: {
           passedLabel: "passou",
@@ -1005,17 +1068,21 @@ export const ptBR: TranslationResources = {
           checks: "Verificações",
           pipeline: "Pipeline",
           reviews: "Revisões",
+          activity: "Atividade",
         },
         empty: {
           noJobs: "Sem jobs",
           loadingPipeline: "Carregando pipeline...",
           pipelineJobsLoadFailed: "Não foi possível carregar os jobs do pipeline",
           allowedToFail: "permitido falhar",
+          noActivity: "Nenhuma atividade ainda",
         },
         approvals: "{{given}} de {{required}} aprovações",
         accessibility: {
           pullRequest: "Pull request #{{number}}",
           pullRequest_mr: "Merge request !{{number}}",
+          commentActions: "Ações do comentário",
+          threadActions: "Ações da conversa",
           checkStatus: {
             passed: "Aprovado",
             failed: "Falhou",
@@ -1035,15 +1102,17 @@ export const ptBR: TranslationResources = {
         },
         activity: {
           commented: "Comentou",
-          approved: "Aprovado",
+          approved: "Aprovou",
           requestedChanges: "Solicitou alterações",
-          reviewed: "Revisado",
+          reviewed: "Revisou",
         },
         time: {
           justNow: "agora mesmo",
         },
         thread: {
           discussion: "Tópico de discussão",
+          resolved: "Resolvido",
+          outdated: "Desatualizado",
         },
         errors: {
           statusLoadFailed: "Não foi possível carregar o status da pull request",
@@ -1113,9 +1182,25 @@ export const ptBR: TranslationResources = {
     },
   },
   sidebar: {
+    statusGroupAccessibility: "Grupo {{label}}",
+    statusBucket: {
+      needsInput: "Precisa de resposta",
+      failed: "Com falha",
+      readyToReview: "Para revisar",
+      working: "Em execução",
+      done: "Concluído",
+    },
     display: {
+      showBackground: "Mostrar espaços em segundo plano",
       trigger: "Preferências de exibição",
       heading: "Exibição",
+      sort: {
+        label: "Ordenação",
+        created: "Criação",
+        manual: "Manual",
+        lastPrompt: "Último prompt",
+        updateHost: "Atualize os hosts para ordenar os espaços de trabalho",
+      },
       grouping: {
         label: "Agrupamento",
         project: "Projeto",
@@ -1289,8 +1374,9 @@ export const ptBR: TranslationResources = {
     },
     fields: {
       project: "Projeto",
-      base: "Base",
+      branch: "Branch",
       baseNotApplicable: "Não aplicável",
+      host: "Host",
     },
     titlePlaceholder: "Título (opcional)",
     errors: {
@@ -1622,13 +1708,18 @@ export const ptBR: TranslationResources = {
     title: "Adicionar provedor",
     search: "Buscar provedores",
     noProviders: "Nenhum provedor encontrado",
+    clearSearch: "Limpar pesquisa",
     actions: {
       add: "Adicionar",
+      addProvider: "Adicionar {{provider}}",
       adding: "Adicionando",
       installed: "Instalado",
       cancel: "Cancelar",
       installInstructions: "Instruções de instalação",
       installInstructionsFor: "Instruções de instalação de {{provider}}",
+    },
+    types: {
+      acp: "ACP",
     },
     errors: {
       unableToInstall: "Não foi possível instalar provedor",
@@ -1733,6 +1824,12 @@ export const ptBR: TranslationResources = {
       helper: "Conecte-se a um daemon Paseo no host remoto.",
       fields: {
         target: "Host SSH",
+        password: "Senha do daemon",
+        optional: "Opcional",
+      },
+      passwordVisibility: {
+        show: "Mostrar senha",
+        hide: "Ocultar senha",
       },
       actions: {
         cancel: "Cancelar",
@@ -1846,6 +1943,13 @@ export const ptBR: TranslationResources = {
     backdrop: "Fundo do menu",
   },
   subagents: {
+    parent: {
+      backToParent: "Voltar ao pai",
+      backTo: "Voltar para {{label}}",
+      parent: "Pai",
+      parentAgent: "Agente pai",
+      openParent: "Abrir pai",
+    },
     title: "Subagentes",
     pillLabelOne: "1 subagente",
     pillLabelMany: "{{count}} subagentes",
@@ -1867,14 +1971,35 @@ export const ptBR: TranslationResources = {
       creatingAgent: "Criando agente",
     },
     file: {
+      filePanels: {
+        pickerTitleExtension: "Abrir arquivos .{{extension}} com",
+        pickerTitleFilename: "Abrir {{filename}} com",
+        dontAskAgain: "Não perguntar novamente",
+        use: "Usar",
+        openWith: "Abrir com…",
+        alwaysUseExtension: "Sempre usar para .{{extension}}",
+        alwaysUseFilename: "Sempre usar para {{filename}}",
+        option: "{{title}} — {{owner}}",
+        builtin: {
+          owner: "Paseo",
+          markdown: "Markdown",
+          html: "HTML",
+          image: "Imagem",
+          source: "Fonte",
+        },
+      },
       directoryMissing: "Diretório do workspace não encontrado.",
       loading: "Carregando arquivo...",
       noPreview: "Nenhuma prévia disponível",
       binaryPreviewUnavailable: "Prévia binária indisponível",
       tooLargeToDisplay: "Este arquivo é grande demais para exibir",
+      documentUnsupported: "Arquivos {{type}} não podem ser exibidos neste dispositivo",
       failedToLoad: "Falha ao carregar arquivo",
+      notFound: "Arquivo não encontrado",
       failedToLoadPreview: "Falha ao carregar prévia do arquivo",
       editor: {
+        preview: "Prévia",
+        source: "Fonte",
         fileSize: "Tamanho {{size}}",
         lines: "{{count}} linhas",
         editorStatus: "Status do editor: {{status}}",
@@ -1884,10 +2009,7 @@ export const ptBR: TranslationResources = {
         changedOnDisk: "Alterado no disco",
         vimMode: "Modo Vim {{mode}}",
         cursor: "Linha {{line}}, coluna {{column}}",
-        preview: "Prévia",
-        source: "Fonte",
         deletedTitle: "Arquivo excluído do disco",
-        checkFailedTitle: "Não foi possível verificar o arquivo no disco",
         preservedDescription: "A cópia aberta foi preservada.",
         conflictDescription: "O conteúdo local foi preservado. Escolha qual versão manter.",
         overwrite: "Sobrescrever",
@@ -1928,6 +2050,12 @@ export const ptBR: TranslationResources = {
     input: "Entrada",
     output: "Saída",
   },
+  turnSummary: {
+    messages: {
+      one: "escreveu {{count}} mensagem",
+      other: "escreveu {{count}} mensagens",
+    },
+  },
   toolCallGroup: {
     editedFiles: {
       one: "editou {{count}} arquivo",
@@ -1963,6 +2091,8 @@ export const ptBR: TranslationResources = {
     dismiss: "Dispensar",
   },
   contextWindow: {
+    noData: "Sem dados de contexto",
+    accessibilityNoData: "Janela de contexto: sem dados de contexto",
     title: "Janela de contexto",
     used: "{{percentage}}% usado",
     tokens: "{{used}} / {{max}} tokens",
@@ -1970,6 +2100,17 @@ export const ptBR: TranslationResources = {
     accessibility: "Janela de contexto {{percentage}}% usada",
   },
   review: {
+    feedback: {
+      send: "Enviar comentários ({{count}})",
+      sending: "Enviando comentários ({{count}})",
+      chooseAgent: "Escolher um agente",
+      sent: "Comentários enviados para {{recipient}}",
+      "no-agents": "Abra uma aba de agente neste espaço de trabalho para enviar comentários.",
+      disconnected: "Conecte-se ao host para enviar comentários.",
+      "no-context": "Os comentários salvos não correspondem mais a este diff.",
+      failed: "Falha ao enviar comentários. Tente novamente.",
+      prompt: "Por favor, atenda a esta revisão de código.",
+    },
     comment: {
       add: "Adicionar comentário de revisão",
       edit: "Editar comentário de revisão",
@@ -1980,6 +2121,70 @@ export const ptBR: TranslationResources = {
       cancelAccessibility: "Cancelar comentário de revisão",
       save: "Comentar",
       saveAccessibility: "Salvar comentário de revisão",
+    },
+  },
+  providerUsage: {
+    options: "Configurações",
+    refreshFailed: "Não foi possível atualizar o uso",
+    noHosts: "Nenhum host conectado",
+    agentError: "Não foi possível carregar o uso: {{reason}}",
+    pin: "Fixar",
+    unpin: "Desafixar",
+    displayAs: "Porcentagens",
+    displayUsed: "Usado",
+    displayRemaining: "Restante",
+    showInSidebar: "Resumo na barra lateral",
+    showInSidebarHint: "Os períodos fixados aparecem no rodapé da barra lateral",
+    runToRefresh: "Execute {{command}} para atualizar.",
+    signInAgain: "Entre novamente.",
+    loginRejected: "Login rejeitado (HTTP {{status}}). {{remedy}}",
+    loginExpired: "O login expirou {{relativeTime}}. {{remedy}}",
+    title: "Uso do plano",
+    refresh: "Atualizar",
+    refreshAll: "Atualizar tudo",
+    refreshing: "Atualizando...",
+    loading: "Carregando uso...",
+    empty: "Sem dados de uso",
+    errorTitle: "Não foi possível carregar o uso",
+    hostUnavailable: "Conecte-se a {{host}} para ver o uso do provedor",
+    hostUpgradeRequired: "Atualize {{host}} para ver o uso do provedor",
+    clientUnavailable: "A conexão com o host não está pronta",
+    retry: "Tentar novamente",
+    tooltipLoading: "Carregando uso do plano...",
+    status: {
+      error: "Erro",
+      unavailable: "Indisponível",
+    },
+    values: {
+      used: "{{percentage}} usado",
+      remaining: "{{amount}} restantes",
+    },
+    labels: {
+      session: "Sessão",
+      weekly: "Semanal",
+      monthly: "Mensal",
+      codeReview: "Revisão de código",
+      credits: "Créditos",
+      monthlyCredits: "Créditos mensais",
+    },
+    duration: {
+      days: "{{value}} d",
+      hours: "{{value}} h",
+      minutes: "{{value}} min",
+    },
+    timing: {
+      lastUpdated: "Última atualização {{relativeTime}}",
+      noSuccessfulUpdate: "Nenhuma atualização bem-sucedida",
+      resetTimePassed: "O horário de redefinição passou",
+      resettingNow: "redefinindo agora",
+      resetsIn: "redefine em {{duration}}",
+      runsOutNow: "esgota agora",
+      runsOutIn: "esgota em {{duration}}",
+      justNow: "agora mesmo",
+      daysAgo: "há {{value}} d",
+      hoursAgo: "há {{value}} h",
+      minutesAgo: "há {{value}} min",
+      updated: "Atualizado {{relativeTime}}",
     },
   },
   settings: {
@@ -2010,6 +2215,7 @@ export const ptBR: TranslationResources = {
       terminal: "Terminal",
       browser: "Navegador",
       editor: "Editor",
+      files: "Arquivos",
       shortcuts: "Atalhos",
       integrations: "Integrações",
       notifications: "Notificações",
@@ -2022,6 +2228,14 @@ export const ptBR: TranslationResources = {
       title: "Editor",
       vimKeybindings: "Atalhos do Vim",
       vimHint: "Aplica-se a arquivos-fonte na web e no desktop.",
+    },
+    files: {
+      title: "Arquivos",
+      askEveryTime: "Perguntar sempre",
+      askAgain: "Perguntar de novo",
+      askAgainFor: "Perguntar de novo para {{label}}",
+      unavailable: "Não está em um host conectado",
+      empty: "Os painéis de arquivo aparecem aqui quando um plugin adiciona um",
     },
     notifications: {
       title: "Notificações",
@@ -2043,6 +2257,7 @@ export const ptBR: TranslationResources = {
       connections: "Conexões",
       agents: "Agentes",
       metadata: "Metadados",
+      voice: "Voz",
       workspaces: "Workspaces",
       providers: "Provedores",
       usage: "Uso",
@@ -2061,9 +2276,72 @@ export const ptBR: TranslationResources = {
       automaticHint: "O Paseo escolhe um modelo rápido disponível",
       preferredHint: "Escolha o modelo que o Paseo usa",
       model: "Modelo",
-      fallbackHint: "Se ele não estiver disponível, o Paseo usa outro modelo disponível",
+      modelHint: "Somente este modelo é usado. Se ele falhar, o Paseo não tenta outro modelo",
       docs: "Documentação",
       saveError: "Não foi possível atualizar a geração de metadados",
+    },
+    voice: {
+      offline: "Conecte-se a este host para configurar a voz.",
+      updateHost: "Atualize o host para configurar a voz.",
+      saveError: "Não foi possível atualizar as configurações de voz",
+      provider: "Provedor",
+      providers: {
+        local: "Local",
+        openai: "OpenAI",
+      },
+      voice: "Voz",
+      save: "Salvar",
+      retry: "Tentar novamente",
+      cancel: "Cancelar",
+      model: "Modelo",
+      language: "Idioma",
+      languagePlaceholder: "Detecção automática",
+      setBy: "Definido por {{name}}",
+      unknownProvider: "Atualize o app para configurar {{provider}}",
+      sites: {
+        dictationStt: "Fala para texto",
+        voiceModeStt: "Escuta",
+        voiceModeTts: "Fala",
+      },
+      dictation: {
+        title: "Ditado",
+        enabled: "Ditado",
+        enabledHint: "Fale na caixa de mensagem em vez de digitar",
+      },
+      voiceMode: {
+        title: "Modo de voz",
+        info: "O modo de voz transcreve o que você diz e lê em voz alta as respostas do agente.",
+        enabled: "Modo de voz",
+        enabledHint: "Converse com seus agentes sem usar as mãos",
+      },
+      openai: {
+        apiKey: "Chave de API",
+        apiKeyHint: "Salva no host e nunca mostrada novamente.",
+        keyPlaceholder: "sk-...",
+        savedKeyPlaceholder: "Salva",
+        missingKey: "Chave de API ausente",
+        baseUrl: "URL base",
+        baseUrlHint: "Para servidores compatíveis com a OpenAI. Deixe vazio para usar a OpenAI.",
+      },
+      models: {
+        loading: "Carregando modelos...",
+        loadError: "Não foi possível carregar os modelos locais",
+        none: "Nenhum modelo disponível",
+        downloaded: "Baixado",
+        inUse: "Em uso",
+        recommended: "Recomendado",
+        download: "Baixar",
+        downloadAction: "Baixar {{label}}",
+        downloading: "Baixando...",
+        downloadingPercent: "Baixando {{percent}}%",
+        extracting: "Extraindo...",
+        delete: "Excluir",
+        deleteAction: "Excluir {{label}}",
+        deleteTitle: "Excluir {{label}}?",
+        deleteMessage: "Isso libera {{size}}. Você pode baixá-lo de novo depois.",
+        languages: "Idiomas do {{label}}",
+        moreLanguages: "{{languages}} e mais {{count}}",
+      },
     },
     general: {
       title: "Geral",
@@ -2112,12 +2390,13 @@ export const ptBR: TranslationResources = {
         description:
           "Mostrar os blocos de pensamento e raciocínio do agente totalmente expandidos por padrão",
       },
-      toolCallDetail: {
-        label: "Exibição de chamadas de ferramentas",
-        description: "Como as chamadas de ferramentas aparecem na linha do tempo",
+      chatDisplay: {
+        label: "Exibição do chat",
+        description: "Quanto do trabalho do agente o chat mostra",
         options: {
-          overview: "Resumo",
-          detailed: "Detalhes completos",
+          full: "Completo",
+          collapseToolCalls: "Recolher chamadas de ferramentas",
+          collapseTurns: "Recolher turnos",
         },
       },
       language: {
@@ -2139,11 +2418,6 @@ export const ptBR: TranslationResources = {
     },
     diagnostics: {
       title: "Diagnósticos",
-      legacyTerminalRenderer: {
-        label: "Usar renderizador de terminal anterior",
-        description: "Usa o terminal WebView anterior após reabrir um terminal",
-        accessibilityLabel: "Usar renderizador de terminal anterior",
-      },
       testAudio: "Testar áudio",
       playTest: "Reproduzir teste",
       playing: "Reproduzindo...",
@@ -2272,6 +2546,7 @@ export const ptBR: TranslationResources = {
       searchPlaceholder: "Pesquisar atalhos",
       unavailableOnMobile: "Atalhos de teclado estão disponíveis apenas no desktop",
       capturePrompt: "Pressione o atalho...",
+      captureIndexPrompt: "Termine com um número de 1 a 9.",
       unassigned: "Não definido",
       actions: {
         menu: "Ações para {{name}}",
@@ -2491,6 +2766,11 @@ export const ptBR: TranslationResources = {
       },
       agents: {
         unavailable: "Conecte-se a este host para gerenciar agentes",
+        idleRuntimeCleanup: {
+          title: "Liberar agentes ociosos",
+          hint: "Libera memória após uma hora de inatividade.",
+          info: "Encerra o processo do agente e mantém a conversa. Envie uma mensagem para retomar.\n\nTrabalho ativo, notificações pendentes e verificações de segurança do provedor impedem a limpeza.",
+        },
       },
       workspaces: {
         unavailable: "Conecte-se a este host para gerenciar workspaces",

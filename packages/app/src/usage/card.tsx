@@ -1,5 +1,6 @@
 import { RotateCw } from "lucide-react-native";
 import { useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { Text, View, type StyleProp, type TextStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
@@ -12,19 +13,22 @@ import { ToolbarButton, paneContentToolbarIconSize } from "@/components/ui/pane-
 import { StatusBadge } from "@/components/ui/status-badge";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
-import { useCompactTimeAgo } from "@/hooks/use-time-ago";
+import type { TFunction } from "i18next";
 import { UsageBalanceBar } from "./balance-bar";
-import { usageCopy } from "./copy";
 import type { UsageDisplay } from "./display";
-import { formatUsageFreshness, type UsageRefresh } from "./model";
+import { formatAgo, formatProviderUsageLabel } from "./format";
+import { resolveUsageReport, type UsageRefresh } from "./model";
 import { useReportRefresh } from "./queries";
 import { UsageSourceIcon } from "./source-icon";
 import type { UsageReport, UsageReportEntry, UsageWindow } from "./types";
 import { UsageWindowBar } from "./window-bar";
+import { useRelativeTimeTick } from "./use-relative-time-tick";
 
-function statusText(report: UsageReport): string | null {
+function statusText(report: UsageReport, t: TFunction): string | null {
   if (report.status === "available") return null;
-  return report.status === "error" ? "Error" : "Unavailable";
+  return report.status === "error"
+    ? t("providerUsage.status.error")
+    : t("providerUsage.status.unavailable");
 }
 
 const ThemedRotateCw = withUnistyles(RotateCw);
@@ -32,24 +36,33 @@ const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 
 export function UsageCard({
   serverId,
+  agentId,
   entry,
   display,
+  pinnable,
+  refreshable,
   compact = false,
 }: {
   serverId: string;
+  agentId?: string;
   entry: UsageReportEntry;
   display: UsageDisplay;
+  /** Whether each window row pins the window to the sidebar. */
+  pinnable: boolean;
+  /** Whether the header has a Refresh button. Without one the freshness shows on the card. */
+  refreshable: boolean;
   compact?: boolean;
 }) {
+  const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
-  const { refresh, refreshState } = useReportRefresh(serverId, entry.id);
+  const { refresh, refreshState } = useReportRefresh(serverId, entry.id, agentId);
   // Where there is no hover the freshness is printed on the card; elsewhere the Refresh tooltip.
-  const showsFreshnessInline = isNative || isCompact;
+  const showsFreshnessInline = isNative || isCompact || !refreshable;
   const usage = entry.report;
-  const status = statusText(usage);
+  const status = statusText(usage, t);
   const footer = entry.account.label ?? null;
-  const balances = usage.balances ?? [];
-  const details = usage.details ?? [];
+  const { windows, balances, details, planLabel, successfulAt, retained, messages } =
+    resolveUsageReport(entry, t);
 
   const containerStyle = useMemo(
     () => [styles.container, compact ? styles.containerCompact : styles.containerPadded],
@@ -71,7 +84,7 @@ export function UsageCard({
         <Text style={styles.name} numberOfLines={1}>
           {entry.sourceLabel}
         </Text>
-        {usage.planLabel ? <StatusBadge label={usage.planLabel} variant="muted" size="xs" /> : null}
+        {planLabel ? <StatusBadge label={planLabel} variant="muted" size="xs" /> : null}
         <View style={styles.headerSpacer} />
         {status ? (
           <View style={styles.statusRow}>
@@ -79,28 +92,38 @@ export function UsageCard({
             <Text style={styles.statusLabel}>{status}</Text>
           </View>
         ) : null}
-        <UsageRefreshButton
-          sourceLabel={entry.sourceLabel}
-          fetchedAt={entry.fetchedAt}
-          refreshState={refreshState}
-          onRefresh={refresh}
-          compact={isCompact}
-        />
+        {refreshable ? (
+          <UsageRefreshButton
+            sourceLabel={entry.sourceLabel}
+            successfulAt={successfulAt}
+            retained={retained}
+            refreshState={refreshState}
+            onRefresh={refresh}
+            compact={isCompact}
+          />
+        ) : null}
       </View>
 
-      {usage.error ? (
-        <Text style={styles.error} numberOfLines={3}>
-          {usage.error}
+      {messages.length > 0 ? (
+        <Text style={styles.error} testID="usage-login-error">
+          {messages.join("\n")}
         </Text>
       ) : null}
 
-      {usage.windows.length > 0 || balances.length > 0 ? (
+      {windows.length > 0 || balances.length > 0 ? (
         <View style={styles.bars}>
-          {usage.windows.map((window) => (
-            <PinnableWindowBar key={window.id} entry={entry} window={window} display={display} />
+          {windows.map((window) => (
+            <CardWindowBar
+              key={window.id}
+              entry={entry}
+              window={window}
+              retained={retained}
+              display={display}
+              pinnable={pinnable}
+            />
           ))}
           {balances.map((balance) => (
-            <UsageBalanceBar key={balance.id} balance={balance} />
+            <UsageBalanceBar key={balance.id} balance={balance} retained={retained} />
           ))}
         </View>
       ) : null}
@@ -127,7 +150,8 @@ export function UsageCard({
           </Text>
           {showsFreshnessInline ? (
             <UsageFreshness
-              fetchedAt={entry.fetchedAt}
+              successfulAt={successfulAt}
+              retained={retained}
               style={styles.freshness}
               testID="usage-freshness"
             />
@@ -137,22 +161,27 @@ export function UsageCard({
 
       {refreshState === "failed" ? (
         <Text style={styles.error} testID="usage-refresh-error">
-          {usageCopy.refreshFailed}
+          {t("providerUsage.refreshFailed")}
         </Text>
       ) : null}
     </View>
   );
 }
 
-function PinnableWindowBar({
+function CardWindowBar({
   entry,
   window,
   display,
+  pinnable,
+  retained,
 }: {
+  retained: boolean;
   entry: UsageReportEntry;
   window: UsageWindow;
   display: UsageDisplay;
+  pinnable: boolean;
 }) {
+  const { t } = useTranslation();
   const pin = useMemo(
     () => ({ sourceId: entry.sourceId, windowId: window.id }),
     [entry.sourceId, window.id],
@@ -162,10 +191,12 @@ function PinnableWindowBar({
   return (
     <UsageWindowBar
       window={window}
+      retained={retained}
       displayAs={display.displayAs}
+      pinnable={pinnable}
       pinned={display.isPinned(pin)}
       onTogglePin={toggle}
-      pinLabel={`${usageCopy.pin} ${entry.sourceLabel} ${window.label}`}
+      pinLabel={`${t("providerUsage.pin")} ${entry.sourceLabel} ${formatProviderUsageLabel(window.id, window.label, t)}`}
       pinTestID={`usage-pin-${entry.sourceId}-${window.id}`}
     />
   );
@@ -174,32 +205,36 @@ function PinnableWindowBar({
 /** Refreshes this one report. Its tooltip says when the report on screen was fetched. */
 function UsageRefreshButton({
   sourceLabel,
-  fetchedAt,
+  successfulAt,
+  retained,
   refreshState,
   onRefresh,
   compact,
 }: {
   sourceLabel: string;
-  fetchedAt: string;
+  successfulAt: string | null;
+  retained: boolean;
   refreshState: UsageRefresh;
   onRefresh: () => void;
   compact: boolean;
 }) {
+  const { t } = useTranslation();
   const isPending = refreshState === "pending";
   const iconSize = paneContentToolbarIconSize(compact);
   const freshness = useMemo(
     () => (
       <UsageFreshness
-        fetchedAt={fetchedAt}
+        successfulAt={successfulAt}
+        retained={retained}
         style={styles.tooltipText}
         testID="usage-freshness-tooltip"
       />
     ),
-    [fetchedAt],
+    [successfulAt, retained],
   );
   return (
     <ToolbarButton
-      label={`${usageCopy.refresh} ${sourceLabel}`}
+      label={`${t("providerUsage.refresh")} ${sourceLabel}`}
       tooltip={freshness}
       tooltipSide="top"
       compact={compact}
@@ -219,18 +254,27 @@ function UsageRefreshButton({
 
 /** Its own component so the relative-time clock re-renders one `<Text>`, not the card. */
 function UsageFreshness({
-  fetchedAt,
+  successfulAt,
+  retained,
   style,
   testID,
 }: {
-  fetchedAt: string;
+  successfulAt: string | null;
+  retained: boolean;
   style: StyleProp<TextStyle>;
   testID: string;
 }) {
-  const elapsed = useCompactTimeAgo(new Date(fetchedAt));
+  const { t } = useTranslation();
+  const now = useRelativeTimeTick({ enabled: successfulAt != null });
+  const relativeTime = formatAgo(successfulAt, now, t);
+  const freshness = relativeTime
+    ? t(retained ? "providerUsage.timing.lastUpdated" : "providerUsage.timing.updated", {
+        relativeTime,
+      })
+    : t("providerUsage.timing.noSuccessfulUpdate");
   return (
     <Text style={style} numberOfLines={1} testID={testID}>
-      {formatUsageFreshness(elapsed)}
+      {freshness}
     </Text>
   );
 }

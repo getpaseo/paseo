@@ -2040,7 +2040,6 @@ export default function contribute(server) {
     id: "missing-discovery",
     label: "Missing discovery",
     input: { parseAsync: async (value) => value },
-    identify: async () => ({ key: "account" }),
     fetch: async () => ({ status: "available", windows: [] }),
   });
   return () => {};

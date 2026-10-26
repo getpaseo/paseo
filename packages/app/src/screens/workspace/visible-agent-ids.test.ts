@@ -110,3 +110,58 @@ test("pane retargeting replaces the viewed agent and duplicate panes collapse to
     }),
   }).toEqual({ duplicate: ["agent-a"], retargeted: ["agent-a", "agent-b"] });
 });
+
+test("the agent shown in the workspace sheet is viewed alongside the pane under it", () => {
+  const layout: WorkspaceLayout = {
+    focusedPaneId: "main",
+    root: { kind: "pane", pane: { id: "main", tabIds: ["a"], focusedTabId: "a" } },
+  };
+  const tabs: WorkspaceTab[] = [
+    { tabId: "a", target: { kind: "agent", agentId: "agent-a" }, createdAt: 1 },
+  ];
+  const sheetTab: WorkspaceTab = {
+    tabId: "sheet",
+    target: { kind: "agent", agentId: "agent-child" },
+    createdAt: 2,
+  };
+
+  expect(
+    selectVisibleAgentIds({ layout, tabs, sheetTab, routeFocused: true, focusedPaneOnly: true }),
+  ).toEqual(["agent-a", "agent-child"]);
+  expect(
+    selectVisibleAgentIds({ layout, tabs, sheetTab, routeFocused: false, focusedPaneOnly: true }),
+  ).toEqual([]);
+});
+
+test("single-pane tablet includes its visible Explorer agent without including other splits", () => {
+  const layout: WorkspaceLayout = {
+    focusedPaneId: "main",
+    root: {
+      kind: "group",
+      group: {
+        id: "root",
+        direction: "horizontal",
+        sizes: [0.5, 0.25, 0.25],
+        children: [
+          { kind: "pane", pane: { id: "main", tabIds: ["a"], focusedTabId: "a" } },
+          { kind: "pane", pane: { id: "explorer", tabIds: ["b"], focusedTabId: "b" } },
+          { kind: "pane", pane: { id: "other", tabIds: ["c"], focusedTabId: "c" } },
+        ],
+      },
+    },
+  };
+  const tabs: WorkspaceTab[] = ["a", "b", "c"].map((id) => ({
+    tabId: id,
+    createdAt: 1,
+    target: { kind: "agent", agentId: id },
+  }));
+  expect(
+    selectVisibleAgentIds({
+      layout,
+      tabs,
+      routeFocused: true,
+      focusedPaneOnly: true,
+      explorerPaneId: "explorer",
+    }),
+  ).toEqual(["a", "b"]);
+});

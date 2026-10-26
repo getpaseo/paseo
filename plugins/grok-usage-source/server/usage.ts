@@ -1,12 +1,13 @@
 import type { UsageInput } from "../shared/input.js";
-import { existsSync, promises as fs } from "node:fs";
+import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import {
   toneFromUsedPct,
   usedPctOf,
-  unavailableUsage,
+  unavailable,
+  type UsageAccount,
   windowFromUsedPct,
   type UsageReport,
   type UsageWindow,
@@ -73,15 +74,14 @@ export function extractGrokTokenFromAuth(auth: unknown): string | null {
   return null;
 }
 
-function grokMonthlyCreditBalance(
-  response: z.infer<typeof GrokUsageResponseSchema>,
-): UsageBalance | null {
+function grokCreditBalance(response: z.infer<typeof GrokUsageResponseSchema>): UsageBalance | null {
   const limit = response.config?.monthlyLimit?.val ?? null;
   const used = response.config?.used?.val ?? response.usage?.creditUsage ?? null;
   if (limit === null && used === null) return null;
   return {
-    id: "monthly_credits",
-    label: "Monthly credits",
+    // Only the named monthly allowance establishes a monthly credit bucket.
+    id: limit === null ? "credits" : "monthly_credits",
+    label: limit === null ? "Credits" : "Monthly credits",
     used,
     remaining: limit !== null && used !== null ? Math.max(0, limit - used) : null,
     limit,
@@ -94,10 +94,18 @@ function grokUsageWindow(response: z.infer<typeof GrokUsageResponseSchema>): Usa
   const percent = response.config?.creditUsagePercent;
   if (typeof percent !== "number") return null;
   const period = response.config?.currentPeriod;
-  const weekly = (period?.type ?? "").toUpperCase().includes("WEEKLY");
+  const names = {
+    USAGE_PERIOD_TYPE_WEEKLY: { id: "weekly", label: "Weekly", shortLabel: "wk" },
+    USAGE_PERIOD_TYPE_MONTHLY: { id: "monthly", label: "Monthly", shortLabel: "mo" },
+  };
+  // An absent or unfamiliar enum does not establish a monthly duration.
+  const name = names[period?.type as keyof typeof names] ?? {
+    id: `period:${period?.type || "unknown"}`,
+    label: period?.type || "Current period",
+    shortLabel: "",
+  };
   return windowFromUsedPct({
-    id: weekly ? "weekly" : "monthly",
-    label: weekly ? "Weekly" : "Monthly",
+    ...name,
     utilizationPct: percent,
     resetsAt: period?.end ?? null,
     tone: toneFromUsedPct(percent),
@@ -108,23 +116,8 @@ export async function fetchUsage(
   input: UsageInput,
   fetchApi: typeof fetch = fetch,
 ): Promise<UsageReport> {
-  void input;
-  const homeDir = homedir();
-
-  async function readGrokToken(): Promise<string | null> {
-    // homeDir override is for tests: Windows os.homedir() ignores $HOME (uses USERPROFILE).
-    const path = join(homeDir ?? homedir(), ".grok", "auth.json");
-    if (!existsSync(path)) return null;
-    try {
-      return extractGrokTokenFromAuth(JSON.parse(await fs.readFile(path, "utf8")));
-    } catch {
-      return null;
-    }
-  }
-
-  const token = process.env["GROK_API_KEY"] || process.env["GROK_TOKEN"] || (await readGrokToken());
-
-  if (!token) return unavailableUsage();
+  const token = await readToken(input);
+  if (!token) throw new Error("Grok login store no longer exists");
 
   // The Grok CLI's /usage uses ?format=credits; without it, unified-billing accounts
   // get a zeroed legacy monthly shape (monthlyLimit.val 0) instead of real usage.
@@ -137,12 +130,12 @@ export async function fetchUsage(
     },
   });
 
-  if (!res.ok) {
-    return unavailableUsage();
-  }
+  if (res.status === 401 || res.status === 403)
+    return unavailable({ kind: "rejected", status: res.status });
+  if (!res.ok) throw new Error(`Grok usage API returned ${res.status}`);
 
   const resp = GrokUsageResponseSchema.parse(await res.json());
-  const balance = grokMonthlyCreditBalance(resp);
+  const balance = grokCreditBalance(resp);
   const window = grokUsageWindow(resp);
 
   return {
@@ -154,12 +147,22 @@ export async function fetchUsage(
   };
 }
 
-export async function identify() {
-  if (process.env["GROK_API_KEY"] || process.env["GROK_TOKEN"]) return { key: "default" };
+async function readToken(input: UsageInput): Promise<string | undefined> {
+  if (input.store === "env") return process.env[input.locator];
   try {
-    const auth = JSON.parse(await fs.readFile(join(homedir(), ".grok", "auth.json"), "utf8"));
-    return extractGrokTokenFromAuth(auth) ? { key: "default" } : null;
+    return (
+      extractGrokTokenFromAuth(JSON.parse(await fs.readFile(input.locator, "utf8"))) ?? undefined
+    );
   } catch {
-    return null;
+    return undefined;
   }
+}
+export async function discover(): Promise<UsageAccount[]> {
+  const candidates: UsageInput[] = ["GROK_API_KEY", "GROK_TOKEN"].map((locator) => ({
+    store: "env",
+    locator,
+  }));
+  candidates.push({ store: "file", locator: join(homedir(), ".grok", "auth.json") });
+  for (const input of candidates) if (await readToken(input)) return [{ key: "default", input }];
+  return [];
 }

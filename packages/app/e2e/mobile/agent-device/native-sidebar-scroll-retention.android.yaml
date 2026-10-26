@@ -1,0 +1,4 @@
+appId: sh.paseo.debug
+---
+- launchApp
+- runFlow: ../../../maestro/sidebar-scroll-retention.yaml

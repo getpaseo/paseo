@@ -18,7 +18,8 @@ test("lists reports from usage sources", async () => {
     emit: (message) => emitted.push(message),
     runtime: {
       async listUsageReports(options) {
-        requested.push(options);
+        requested.push({ forceRefresh: options.forceRefresh, reportIds: options.reportIds });
+        options.onReport?.(entry);
         return [entry];
       },
       async listLegacyUsage() {
@@ -31,7 +32,8 @@ test("lists reports from usage sources", async () => {
   await usage.handleListReports({ type: "usage.list_reports.request", requestId: "list" });
   expect(requested).toEqual([{ forceRefresh: undefined, reportIds: undefined }]);
   expect(emitted).toEqual([
-    { type: "usage.list_reports.response", payload: { requestId: "list", reports: [entry] } },
+    { type: "usage.list_reports.update", payload: { requestId: "list", report: entry } },
+    { type: "usage.list_reports.response", payload: { requestId: "list", error: null } },
   ]);
 });
 
@@ -54,4 +56,19 @@ test("surfaces a legacy usage-list failure as an rpc_error envelope", async () =
     type: "rpc_error",
     payload: { requestId: "u1", code: "provider_usage_list_failed" },
   });
+});
+
+test("request failures terminate with an error response and no updates", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const usage = new UsageSession({
+    emit: (message) => emitted.push(message),
+    logger: pino({ level: "silent" }),
+  });
+  await usage.handleListReports({ type: "usage.list_reports.request", requestId: "failed" });
+  expect(emitted).toEqual([
+    {
+      type: "usage.list_reports.response",
+      payload: { requestId: "failed", error: "Plugin runtime is unavailable" },
+    },
+  ]);
 });

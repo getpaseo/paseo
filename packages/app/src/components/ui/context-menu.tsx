@@ -6,8 +6,6 @@ import {
   type Ref,
 } from "react";
 import {
-  Platform,
-  StatusBar,
   View,
   type GestureResponderEvent,
   type PressableProps,
@@ -133,10 +131,9 @@ export function ContextMenuTrigger({
       const point = coerceEventPoint(event);
       if (!point) return;
 
-      const statusBarHeight = Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0;
       ctx.setAnchorRect({
         x: point.pageX,
-        y: point.pageY + statusBarHeight,
+        y: point.pageY,
         width: 0,
         height: 0,
       });

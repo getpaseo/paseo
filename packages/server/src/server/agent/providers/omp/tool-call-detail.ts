@@ -57,9 +57,13 @@ interface OmpToolResultObject {
   details?: OmpToolResultDetails;
 }
 
+interface OmpToolResultStructuredError {
+  message: string;
+}
+
 interface OmpToolResultDetails {
   diff?: string;
-  error?: string;
+  error?: string | OmpToolResultStructuredError;
   mode?: string;
   xdev?: unknown;
 }
@@ -155,9 +159,17 @@ const OmpToolResultContentSchema = z.union([
   OmpToolResultUnknownContentSchema,
 ]);
 
+// OMP's own tools report a string error; Paseo host tools (browser_*) report
+// a structured `{ code, message, retryable }` error.
+const OmpToolResultErrorSchema = z.union([
+  z.string(),
+  z.object({ message: z.string() }).passthrough(),
+]);
+
 const OmpToolResultDetailsSchema = z
   .object({
     diff: z.string().optional(),
+    error: OmpToolResultErrorSchema.optional(),
   })
   .passthrough();
 
@@ -272,8 +284,10 @@ export function extractTextFromToolResult(result: OmpToolResult): string | undef
 }
 
 export function toolFailureMessage(result: OmpToolResult): string {
-  if (result && typeof result !== "string" && result.details?.error) {
-    return result.details.error.split("\n", 1)[0].slice(0, 240);
+  const error = result && typeof result !== "string" ? result.details?.error : undefined;
+  const errorMessage = typeof error === "string" ? error : error?.message;
+  if (errorMessage) {
+    return errorMessage.split("\n", 1)[0].slice(0, 240);
   }
   const output = extractTextFromToolResult(result);
   const exitMessage = output?.match(/(?:Command|Process) exited with code \d+/i)?.[0];

@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect } from "expo-router/react-navigation";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ArrowUpRight, Check, Terminal } from "lucide-react-native";
 import { Button } from "@/components/ui/button";

@@ -13,6 +13,7 @@ import {
   FileBackedWorkspaceRegistry,
   resolveWorkspaceDisplayName,
   resolveWorkspaceName,
+  type WorkspaceMutation,
 } from "./workspace-registry.js";
 
 describe("resolveWorkspaceName", () => {
@@ -26,6 +27,21 @@ describe("resolveWorkspaceName", () => {
     expect(resolveWorkspaceName({ title: null, derivedDisplayName: "feature/payments" })).toBe(
       "feature/payments",
     );
+  });
+
+  test("createPersistedWorkspaceRecord defaults background to false and preserves explicit intent", () => {
+    const base = {
+      workspaceId: "ws-1",
+      projectId: "proj-1",
+      cwd: "/tmp/repo",
+      kind: "local_checkout" as const,
+      displayName: "main",
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    };
+    expect(createPersistedWorkspaceRecord(base).background).toBe(false);
+    expect(createPersistedWorkspaceRecord({ ...base, background: false }).background).toBe(false);
+    expect(createPersistedWorkspaceRecord({ ...base, background: true }).background).toBe(true);
   });
 
   test("resolveWorkspaceDisplayName applies the same rule over the persisted record", () => {
@@ -415,6 +431,10 @@ describe("workspace registries", () => {
 
   test("creates, updates, archives, deletes, and lists workspace records", async () => {
     await workspaceRegistry.initialize();
+    const mutations: WorkspaceMutation[] = [];
+    workspaceRegistry.subscribeToMutations((mutation) => {
+      mutations.push(mutation);
+    });
     await workspaceRegistry.upsert(
       createPersistedWorkspaceRecord({
         workspaceId: "/tmp/repo",
@@ -445,6 +465,11 @@ describe("workspace registries", () => {
     expect(archived?.archivedAt).toBe("2026-03-03T00:00:00.000Z");
 
     await workspaceRegistry.remove("/tmp/repo");
+    expect(mutations.at(-1)).toEqual({
+      kind: "remove",
+      workspaceId: "/tmp/repo",
+      workspace: archived,
+    });
     expect(await workspaceRegistry.get("/tmp/repo")).toBeNull();
     expect(await workspaceRegistry.list()).toEqual([]);
   });

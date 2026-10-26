@@ -1,8 +1,12 @@
+import { filePanelTitle } from "@/file-panels/choice/presentation";
+import { i18n } from "@/i18n/i18next";
 import { createPluginHosts } from "./hosts";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { PaseoApi } from "@getpaseo/client";
 import { expect, test } from "vitest";
 import { PluginRegistry } from "./registry";
+
+const audio = { play: async () => 0 };
 
 /** A host client that records open event observations by their first event name. */
 function observingClient() {
@@ -24,9 +28,15 @@ function observingClient() {
   return { client, open };
 }
 
-function registry() {
+function registry(
+  localeSource: import("@getpaseo/plugin/client/host").PluginLocaleSource = {
+    getLocale: () => "en",
+    subscribe: () => () => {},
+  },
+) {
   const setupClients = new Map<string, PaseoApi>();
   const plugins = new PluginRegistry({
+    localeSource,
     version: "0.8.0",
     createRuntime: (installation) => {
       setupClients.set(installation.id, installation.paseo);
@@ -41,12 +51,14 @@ function registry() {
           installation.lifetime.signal,
         ),
         paseo: installation.paseo,
+        i18n: installation.i18n,
         rpc: async () => {
           throw new Error("Unexpected plugin RPC");
         },
         openScreen: () => {},
         openSurface: () => {},
         openSettings: () => {},
+        playAudio: async () => {},
         openPanel: () => {},
         addComposerPill: () => ({ update() {}, remove() {} }),
         addHeaderButton: () => ({ update() {}, remove() {} }),
@@ -67,7 +79,7 @@ function catalog(id: string, body = "return function() {};") {
 
 test("setup and every surface share the installation's one Paseo client", () => {
   const h = registry();
-  h.plugins.installCatalog("host", [catalog("deploys")], { client: h.client });
+  h.plugins.installCatalog("host", [catalog("deploys")], { client: h.client, audio });
 
   const [installation] = h.plugins.getSnapshot();
   expect(h.setupClients.get("deploys")).toBe(installation.paseo);
@@ -76,11 +88,14 @@ test("setup and every surface share the installation's one Paseo client", () => 
 
 test("teardown ends every subscription the plugin still holds", async () => {
   const h = registry();
-  h.plugins.installCatalog("host", [catalog("disabled"), catalog("kept")], { client: h.client });
+  h.plugins.installCatalog("host", [catalog("disabled"), catalog("kept")], {
+    client: h.client,
+    audio,
+  });
   expect(h.open).toEqual(new Set(["disabled", "kept"]));
 
   // Disabling one plugin removes it from the catalog.
-  h.plugins.installCatalog("host", [catalog("kept")], { client: h.client });
+  h.plugins.installCatalog("host", [catalog("kept")], { client: h.client, audio });
   await expect.poll(() => [...h.open]).toEqual(["kept"]);
 
   h.plugins.removeHost("host");
@@ -89,11 +104,12 @@ test("teardown ends every subscription the plugin still holds", async () => {
 
 test("reloading a plugin ends the old installation's subscriptions", async () => {
   const h = registry();
-  h.plugins.installCatalog("host", [catalog("reloaded")], { client: h.client });
+  h.plugins.installCatalog("host", [catalog("reloaded")], { client: h.client, audio });
   const [first] = h.plugins.getSnapshot();
 
   h.plugins.installCatalog("host", [catalog("reloaded")], {
     client: h.client,
+    audio,
     replacePluginId: "reloaded",
   });
 
@@ -109,6 +125,7 @@ test("failed plugin initialization ends the subscriptions it opened", async () =
   const h = registry();
   h.plugins.installCatalog("host", [catalog("failed", 'throw new Error("setup failed");')], {
     client: h.client,
+    audio,
   });
   await expect.poll(() => h.open.size).toBe(0);
   expect(h.plugins.getSnapshot()).toEqual([]);
@@ -118,8 +135,8 @@ test("unloading ends the subscriptions even when plugin cleanup throws, preservi
   const h = registry();
   const failing = catalog("failing", 'return function() { throw new Error("cleanup failed"); };');
   const surviving = catalog("surviving", "return function() {};");
-  h.plugins.installCatalog("host", [failing, surviving], { client: h.client });
-  h.plugins.installCatalog("host", [surviving], { client: h.client });
+  h.plugins.installCatalog("host", [failing, surviving], { client: h.client, audio });
+  h.plugins.installCatalog("host", [surviving], { client: h.client, audio });
   await expect.poll(() => [...h.open]).toEqual(["surviving"]);
   expect(h.plugins.getSnapshot().map((plugin) => plugin.id)).toEqual(["surviving"]);
   h.plugins.removeHost("host");
@@ -131,9 +148,80 @@ test("an invalid async client entry is disposed and its rejected continuation is
   h.plugins.installCatalog(
     "host",
     [catalog("async-entry", 'return Promise.reject(new Error("asynchronous setup failed"));')],
-    { client: h.client },
+    { client: h.client, audio },
   );
   await expect.poll(() => h.open.size).toBe(0);
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(h.plugins.getSnapshot()).toEqual([]);
+});
+
+test("locale snapshots preserve installation state and observations, then release locale subscriptions", async () => {
+  let locale = "en";
+  const listeners = new Set<() => void>();
+  const h = registry({
+    getLocale: () => locale,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  });
+  const translated = {
+    ...catalog("notes"),
+    clientBundle: `(function(require) {
+    const {defineTranslations} = require("@getpaseo/plugin/client");
+    const messages = defineTranslations({resources:{en:{title:"Notes"},"zh-CN":{title:"笔记"}}});
+    return {default(plugin) {
+      plugin.paseo.observeEvents(["notes"]);
+      plugin.addScreen({id:"notes",title:messages.message("title"),Component:function Notes(){return null;}});
+      plugin.addFilePanel({id:"notes",title:messages.message("title"),icon:"FileText",files:{extensions:["notes"]},Component:function NotesFile(){return null;}});
+      return function(){};
+    }};
+  })`,
+  };
+  h.plugins.installCatalog("host", [translated], { client: h.client, audio });
+  expect(h.plugins.getEvaluationError("host", "notes")).toBeUndefined();
+  const [before] = h.plugins.getSnapshot();
+  function fileTitle(plugin: typeof before) {
+    const contribution = plugin.filePanels[0];
+    return filePanelTitle(i18n.t, {
+      id: "plugin:notes/notes",
+      builtin: false,
+      files: contribution.files,
+      plugin,
+      contribution,
+    });
+  }
+  expect(fileTitle(before)).toBe("Notes");
+  expect(before.locale).toBe("en");
+  expect(
+    before.i18n.resolve(
+      before.surfaces[0].title as import("@getpaseo/plugin/client").PluginText,
+      before.locale,
+    ),
+  ).toBe("Notes");
+  locale = "zh-CN";
+  for (const listener of listeners) listener();
+  const [after] = h.plugins.getSnapshot();
+  expect(after.locale).toBe("zh-CN");
+  expect(fileTitle(after)).toBe("笔记");
+  expect(fileTitle(before)).toBe("Notes");
+  expect(after.filePanels[0].Component).toBe(before.filePanels[0].Component);
+  expect(
+    after.i18n.resolve(
+      after.surfaces[0].title as import("@getpaseo/plugin/client").PluginText,
+      after.locale,
+    ),
+  ).toBe("笔记");
+  expect(after.lifetime).toBe(before.lifetime);
+  expect(after.queryClient).toBe(before.queryClient);
+  expect(after.paseo).toBe(before.paseo);
+  expect(after.surfaces[0].Component).toBe(before.surfaces[0].Component);
+  expect(h.open).toEqual(new Set(["notes"]));
+  h.plugins.installCatalog("host", [translated], { client: h.client, audio });
+  expect(h.plugins.getSnapshot()[0].i18n).toBe(before.i18n);
+  h.plugins.removeHost("host");
+  expect(listeners.size).toBe(0);
+  await expect.poll(() => h.open.size).toBe(0);
 });

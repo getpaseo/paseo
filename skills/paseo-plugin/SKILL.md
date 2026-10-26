@@ -1,6 +1,6 @@
 ---
 name: paseo-plugin
-description: Build and manage trusted local Paseo plugins. Use when the user asks to create, edit, install, reload, enable, disable, remove, or troubleshoot a Paseo plugin; add lifecycle hooks; transform agent configuration, environment, MCP servers, or workspace creation; automate permissions or turn follow-ups; add a screen, sidebar header or footer item, or workspace panel; add Command Center items or slash commands; add composer pills or attachment sources; transform, render, or append agent timeline items; contribute a theme; use Paseo from plugin code; or add plugin RPCs.
+description: Build and manage trusted local Paseo plugins. Use when the user asks to create, edit, install, reload, enable, disable, remove, or troubleshoot a Paseo plugin; add lifecycle hooks; transform agent configuration, environment, MCP servers, or workspace creation; automate permissions or turn follow-ups; add a screen, sidebar header or footer item, workspace panel, or file panel; add Command Center items or slash commands; add composer pills or attachment sources; transform, render, or append agent timeline items; contribute a theme; use Paseo from plugin code; or add plugin RPCs.
 ---
 
 # Paseo plugins
@@ -31,6 +31,7 @@ Pick the contribution that matches the request. Each row names the registration,
 | ------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | Screen and sidebar item   | `addScreen` + `addSidebarHeaderItem`/`addSidebarFooterItem` | A full screen of plugin UI, or sidebar header or footer rows that open a screen or popover                    | reference.md → Screens and sidebar items                                                           |
 | Workspace panel           | `addWorkspacePanel`                                         | UI that lives as a tab beside agents, terminals, files, and diffs; `locations: ["explorer"]` for the Explorer | reference.md → Workspace panels                                                                    |
+| File panel                | `addFilePanel`                                              | View or edit a matching file inside the file tab through its file handle                                      | reference.md → File panels; `plugin-examples/pdf-panel`, `plugin-examples/markdown-panel`          |
 | Command Center item       | `addCommandCenterItem`                                      | A global, workspace, or agent action reachable from ⌘K                                                        | reference.md → Command Center items                                                                |
 | Client slash command      | `addSlashCommand`                                           | A `/command args` in the composer that runs plugin code instead of prompting the agent                        | reference.md → Slash commands                                                                      |
 | Composer pill             | `addComposerPill`                                           | A per-agent button in the composer track bar next to Tasks and Subagents                                      | reference.md → Composer pills                                                                      |
@@ -64,6 +65,7 @@ The generated project contains:
 ```text
 my-plugin/
   paseo-plugin.json
+  OVERVIEW.md
   package.json
   tsconfig.json
   index.client.tsx
@@ -254,12 +256,12 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-Icons are Lucide icon names. `theme` is a typed `PluginTheme` on every screen and panel. Primary text uses `theme.colors.foreground`; labels use `theme.colors.foregroundMuted`; the root view uses `theme.colors.surface0`. `layout.compact` is true on mobile and narrow windows. Paseo owns the route, header, host picker, close action, error boundary, and per-installation query client.
+Icons are Lucide icon names, inline SVG (`{ svg }`), or components; see [Icons](https://paseo.sh/docs/plugins/reference.md#icons). `theme` is a typed `PluginTheme` on every screen and panel. Primary text uses `theme.colors.foreground`; labels use `theme.colors.foregroundMuted`; the root view uses `theme.colors.surface0`. `layout.compact` is true on mobile and narrow windows. Paseo owns the route, header, host picker, close action, error boundary, and per-installation query client.
 
 Before writing imports, classify each module as shared, client, or server. Follow the
 [SDK import boundaries](https://paseo.sh/docs/plugins/reference.md#runtime-modules), including
 transitive and type dependencies. The root is shared-only; hooks and client contexts belong to
-`@getpaseo/plugin/client`, server contexts to `/server`, and host UI to `/client/react-native` or `/client/ui`.
+`@getpaseo/plugin/client`, server contexts to `/server`, and host UI to `/client/ui`.
 Install dependencies locally for typechecking; Paseo supplies host runtime modules. JSX uses the
 automatic runtime. Do not import `/client/host` from plugin code.
 
@@ -566,7 +568,7 @@ client.addTimelineRenderer({
 });
 ```
 
-Transformers run while the render model is built, on fetched history and on every live update, so `phase` is `"streaming"` for a loading thought or running tool call. Identity comes from the source item, so a streaming item keeps its mounted component; set an output `id` when one source explodes into several items. Transformers must be synchronous and deterministic, `data` must be JSON, and a transformer that throws is logged and skipped. Use `useRevealedText(text, phase)` from `@getpaseo/plugin/client/react-native` to pace streaming text. `plugin-examples/inline-thinking` replaces the thinking row with inline text; `plugin-examples/timeline-items` replaces a Pi todo tool call with a task card.
+Transformers run while the render model is built, on fetched history and on every live update, so `phase` is `"streaming"` for a loading thought or running tool call. Identity comes from the source item, so a streaming item keeps its mounted component; set an output `id` when one source explodes into several items. Transformers must be synchronous and deterministic, `data` must be JSON, and a transformer that throws is logged and skipped. Render `<StreamedText text={text} phase={phase} />` from `@getpaseo/plugin/client/ui` for paced assistant text; use its `style` prop to customize text appearance. `plugin-examples/inline-thinking` replaces the thinking row with inline text; `plugin-examples/timeline-items` replaces a todo tool call with a task card.
 
 ## Append a timeline row from the daemon
 
@@ -638,6 +640,47 @@ Do not edit a local config when the target is a remote daemon. Perform the edit 
 
 When the same screen or sidebar item exists on several connected hosts, Paseo shows it once. The screen header has a host picker; a sidebar item uses the host of the screen on display, else the host last picked in one of the plugin's screens. The selected host owns the bundle, SDK calls, RPCs, and query cache. An offline selected host does not fall through to another host. Attachment sources stay scoped to the composer's host.
 
+## Publishing a listing
+
+Write `OVERVIEW.md` beside `paseo-plugin.json` for the plugin page inside Paseo.
+It helps someone decide whether to install your plugin; the install command is already at
+the top of that page. A README assumes a GitHub audience and carries installation
+instructions, technical details, and badges. Long, AI-generated READMEs make people read
+past that material to understand what a plugin does.
+
+`OVERVIEW.md` is required to list your plugin in the registry. Commit it beside
+`paseo-plugin.json` in the source repository at the pinned commit. The registry resolves it
+relative to the manifest, under `pluginPath` for monorepos. Include it in the published npm
+package too; the scaffold's `files` list includes it. Replace the scaffold's guidance comment
+with useful facts before publishing.
+
+The repository overview takes precedence over a registry import stopgap. Online validation
+fails when the pinned commit has no `OVERVIEW.md`, except for unchanged imported records
+that already carry `plugins/<owner>/<slug>.md` in the registry repository. Every version bump
+requires a repository overview and removes the stopgap in the same PR. A bump without the
+repository overview fails validation. README files do not supply the overview.
+
+Author overviews and registry stopgaps follow the same content contract, in this order.
+Choose headings only when they help; length follows complexity. A theme needs one paragraph.
+
+1. Explain what the plugin is and does in plain terms first.
+2. Explain how it works only when that is not obvious.
+3. Explain setup when needed: settings, accounts, tokens, providers, external tools, or other
+   plugins. Include applicable daemon version and operating system requirements. Setup
+   guidance is allowed; installation instructions are not.
+4. Explain capabilities and settings worth understanding, what each option does, what the
+   plugin reads or sends and where, permissions, and known limits.
+
+Use sentence case and plain factual language, with no em dashes. Omit installation commands,
+badges, changelog, contributing or license sections, marketing, and unsupported claims.
+Avoid implementation filler such as empty cleanup functions, catalogs of theme-token fields,
+or lists of absent features. Keep only what helps someone choose the plugin.
+
+If your plugin is an unchanged imported record, you can propose an author-written overview
+to replace the registry stopgap. Do not add import credit to your own `OVERVIEW.md`.
+
+See [Your listing page](https://paseo.sh/docs/plugins/publishing.md#your-listing-page).
+
 ## Typecheck and manage
 
 When editing a plugin, typecheck its source before install or reload:
@@ -682,7 +725,7 @@ After a change:
 
 Common failures:
 
-- Missing sidebar item: wrong host, plugin not `running`, the item is hidden in Settings > Sidebar, or its component throws (an invalid Lucide icon name throws).
+- Missing sidebar item: wrong host, plugin not `running`, the item is hidden in Settings > Sidebar, or its component throws (a `SidebarRow` with an unknown Lucide name or unsafe SVG throws).
 - Unavailable client module: client bundles can use only the host-provided modules listed above.
 - RPC rejection: input or output failed its Zod schema, or the handler threw. Inspect `paseo plugin logs <id>` for handler output.
 - Plugin exits or reload fails: inspect `paseo plugin ls` for status and `paseo plugin logs <id>` for initialization, cleanup, or crash output.

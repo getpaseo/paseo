@@ -2,14 +2,10 @@
  * The states the hero mockup can be in, in pill order. Labels are copy — edit
  * them here and nothing else has to change.
  */
-export const MOCKUP_STATES = [
-  { id: "build", label: "Build" },
-  { id: "review", label: "Review" },
-  { id: "ship", label: "Ship" },
-  { id: "extend", label: "Extend" },
-] as const;
+/** The scenes the hero mockup can show; each pill's label is `landing.mockup.<id>`. */
+export const MOCKUP_STATES = ["build", "review", "ship", "extend"] as const;
 
-export type MockupStateId = (typeof MOCKUP_STATES)[number]["id"];
+export type MockupStateId = (typeof MOCKUP_STATES)[number];
 
 export const DEFAULT_MOCKUP_STATE: MockupStateId = "build";
 

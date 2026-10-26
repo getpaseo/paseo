@@ -9,6 +9,7 @@ import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 import type {
+  AgentClient,
   AgentLaunchContext,
   AgentPermissionRequest,
   AgentSession,
@@ -94,6 +95,7 @@ import {
 } from "./codex/test-utils/fake-app-server.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { asInternals as castInternals, createStub } from "../../test-utils/class-mocks.js";
+import { AgentManager } from "../agent-manager.js";
 import { buildProviderRegistry } from "../provider-registry.js";
 
 interface CollaborationModeRecord {
@@ -502,7 +504,7 @@ function asInternals(session: CodexTestSession): CodexSessionTestAccess {
 }
 
 function markdownImageSource(markdown: string): string {
-  const match = markdown.match(/^!\[[^\]]*]\((.*)\)$/);
+  const match = markdown.trim().match(/^!\[[^\]]*]\((.*)\)$/);
   if (!match) {
     throw new Error(`Expected markdown image, got: ${markdown}`);
   }
@@ -698,6 +700,11 @@ process.stdin.on("data", (chunk) => {
   });
 
   try {
+    expect(session.usageSession?.()).toMatchObject({
+      provider: "codex",
+      env: { CODEX_HOME: providerCodexHome },
+    });
+    expect(session.usageSession?.()?.sessionKey).toBe(session.usageSession?.()?.sessionKey);
     return await run({
       session,
       readCaptured: () =>
@@ -708,6 +715,7 @@ process.stdin.on("data", (chunk) => {
     });
   } finally {
     await session.close();
+    expect(session.usageSession?.()).toBeNull();
     vi.unstubAllEnvs();
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -1790,6 +1798,28 @@ describe("Codex app-server provider", () => {
     });
     appServer.assertNoErrors();
     await session.close();
+  });
+
+  test("resumed session exposes usage before connecting and not after close", async () => {
+    let spawns = 0;
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      { sessionId: "saved-thread" },
+      createTestLogger(),
+      async () => {
+        spawns++;
+        throw new Error("unexpected spawn");
+      },
+      { environment: { HOME: "/fixture/codex", CODEX_HOME: "/fixture/profile" } },
+    );
+    expect(session.usageSession()).toMatchObject({
+      provider: "codex",
+      env: { CODEX_HOME: "/fixture/profile" },
+      sessionKey: expect.any(String),
+    });
+    expect(spawns).toBe(0);
+    await session.close();
+    expect(session.usageSession()).toBeNull();
   });
 
   test("loads archived Codex history without resuming the native thread", async () => {
@@ -6085,7 +6115,7 @@ describe("Codex app-server provider", () => {
         turnId: "test-turn",
         item: {
           type: "assistant_message",
-          text: "![Image](file:///tmp/paseo%20image.png)",
+          text: "\n\n![Image](file:///tmp/paseo%20image.png)\n\n",
         },
       },
     ]);
@@ -6117,7 +6147,7 @@ describe("Codex app-server provider", () => {
           turnId: "test-turn",
           item: {
             type: "assistant_message",
-            text: `![Image](${expectedPath})`,
+            text: `\n\n![Image](${expectedPath})\n\n`,
           },
         },
       ]);
@@ -6301,6 +6331,107 @@ describe("Codex app-server provider", () => {
         provider: "codex",
         turnId: "test-turn",
         usage: undefined,
+      },
+    ]);
+  });
+
+  test.each([
+    [
+      "a usage limit",
+      { type: "usageLimitExceeded", limitId: "image_gen", resetsAt: 1786150800 },
+      { type: "usageLimitExceeded", limitId: "image_gen", resetsAt: 1786150800 },
+    ],
+    ["no failure details", null, { message: "Image generation failed" }],
+  ])(
+    "emits failed imageGeneration items with %s as failed tool calls",
+    (_label, failure, expectedError) => {
+      const session = createSession();
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+
+      asInternals(session).handleNotification("item/completed", {
+        item: {
+          id: "image-generation-failed",
+          type: "imageGeneration",
+          status: "failed",
+          revisedPrompt: "paint a blue whale",
+          result: "",
+          transparentBackground: null,
+          failure,
+          savedPath: null,
+        },
+      });
+
+      expect(events).toEqual([
+        {
+          type: "timeline",
+          provider: "codex",
+          turnId: "test-turn",
+          item: {
+            type: "tool_call",
+            callId: "image-generation-failed",
+            name: "image_generation",
+            status: "failed",
+            error: expectedError,
+            detail: {
+              type: "unknown",
+              input: { prompt: "paint a blue whale" },
+              output: null,
+            },
+          },
+        },
+      ]);
+    },
+  );
+
+  test("keeps failed imageGeneration items in persisted history", async () => {
+    const session = createSession();
+    session.client = {
+      request: vi.fn(async () => ({
+        thread: {
+          turns: [
+            {
+              items: [
+                {
+                  type: "imageGeneration",
+                  id: "image-generation-failed",
+                  status: "failed",
+                  revisedPrompt: "paint a blue whale",
+                  result: "",
+                  transparentBackground: null,
+                  failure: { type: "usageLimitExceeded", limitId: "image_gen", resetsAt: null },
+                  savedPath: null,
+                },
+              ],
+            },
+          ],
+        },
+      })),
+    };
+
+    await asInternals(session).loadPersistedHistory(session.client);
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "tool_call",
+          callId: "image-generation-failed",
+          name: "image_generation",
+          status: "failed",
+          error: { type: "usageLimitExceeded", limitId: "image_gen", resetsAt: null },
+          detail: {
+            type: "unknown",
+            input: { prompt: "paint a blue whale" },
+            output: null,
+          },
+        },
       },
     ]);
   });
@@ -7056,4 +7187,128 @@ describe("Codex denied plan approvals", () => {
       metadata: { approved: false },
     });
   });
+});
+
+describe("Codex interactive resume startup", () => {
+  test("delivers an autonomous turn that starts during resume to the first subscriber", async () => {
+    const appServer = createFakeCodexAppServer({
+      "turn/interrupt": () => ({}),
+      "thread/resume": () => {
+        appServer.startsTurn({ threadId: "saved-thread", turnId: "autonomous-turn" });
+        appServer.says({ threadId: "saved-thread", text: "Working on the goal" });
+        return { thread: { id: "saved-thread" } };
+      },
+      "thread/read": () => ({ thread: { turns: [] } }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ modeId: "full-access" }),
+      { sessionId: "saved-thread" },
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    try {
+      await session.connect();
+      const events: AgentStreamEvent[] = [];
+      const unsubscribe = session.subscribe((event) => events.push(event));
+      expect(events.some((event) => event.type === "turn_started")).toBe(true);
+      expect(
+        events.some(
+          (event) =>
+            event.type === "timeline" &&
+            event.item.type === "assistant_message" &&
+            event.item.text.includes("Working on the goal"),
+        ),
+      ).toBe(true);
+      await session.interrupt();
+      expect(
+        appServer.requests().find((request) => request.method === "turn/interrupt"),
+      ).toMatchObject({ params: { threadId: "saved-thread", turnId: "autonomous-turn" } });
+      unsubscribe();
+      const laterEvents: AgentStreamEvent[] = [];
+      session.subscribe((event) => laterEvents.push(event));
+      expect(laterEvents).toEqual([]);
+    } finally {
+      await session.close();
+      appServer.assertNoErrors();
+    }
+  });
+  test.each([false, true])(
+    "applies resumed goal events before returning (completed during resume: %s)",
+    async (completedDuringResume) => {
+      const appServer = createFakeCodexAppServer({
+        "thread/resume": () => {
+          appServer.startsTurn({ threadId: "saved-thread", turnId: "autonomous-turn" });
+          if (completedDuringResume) appServer.completeTurn({ threadId: "saved-thread" });
+          return { thread: { id: "saved-thread" } };
+        },
+        "thread/read": () => ({ thread: { turns: [] } }),
+      });
+      const session = new CodexAppServerAgentSession(
+        createConfig({ title: "Resumed goal", cwd: process.cwd() }),
+        { sessionId: "saved-thread" },
+        createTestLogger(),
+        async () => appServer.child,
+      );
+      const client: AgentClient = {
+        provider: "codex",
+        capabilities: session.capabilities,
+        isAvailable: async () => true,
+        fetchCatalog: async () => ({ models: [], modes: [] }),
+        createSession: async () => {
+          throw new Error("Unexpected create");
+        },
+        resumeSession: async () => {
+          await session.connect();
+          return session;
+        },
+      };
+      const manager = new AgentManager({ clients: { codex: client }, logger: createTestLogger() });
+      let id: string | undefined;
+      try {
+        const resumed = await manager.resumeAgentFromPersistence(
+          { provider: "codex", sessionId: "saved-thread" },
+          createConfig({ title: "Resumed goal", cwd: process.cwd() }),
+        );
+        id = resumed.id;
+        expect(resumed.lifecycle).toBe(completedDuringResume ? "idle" : "running");
+        expect(manager.getAgent(id)?.lifecycle).toBe(completedDuringResume ? "idle" : "running");
+      } finally {
+        if (id) await manager.closeAgent(id);
+        await session.close();
+        appServer.assertNoErrors();
+      }
+    },
+  );
+});
+
+test("Codex runtime safety queries live terminals and retains unsupported app servers", async () => {
+  let response: unknown = { data: [], nextCursor: null };
+  const appServer = createFakeCodexAppServer({ "thread/backgroundTerminals/list": () => response });
+  const session = new CodexAppServerAgentSession(
+    createConfig(),
+    null,
+    createTestLogger(),
+    async () => appServer.child,
+  );
+  try {
+    await session.startTurn("hello");
+    await appServer.waitForTurnStart();
+    expect(await session.canStopRuntime()).toBe(false);
+    appServer.completeTurn({ threadId: "thread-1" });
+    await expect.poll(() => session.canStopRuntime()).toBe(true);
+    response = { data: [{ processId: "shell-1" }], nextCursor: null };
+    expect(await session.canStopRuntime()).toBe(false);
+    response = {};
+    await expect(session.canStopRuntime()).rejects.toThrow();
+    response = { __jsonRpcError: { code: -32601, message: "Method not found" } };
+    await expect(session.canStopRuntime()).rejects.toThrow("Method not found");
+    expect(
+      appServer
+        .requests()
+        .findLast((request) => request.method === "thread/backgroundTerminals/list"),
+    ).toMatchObject({ params: { threadId: "thread-1" } });
+    appServer.assertNoErrors();
+  } finally {
+    await session.close();
+  }
 });

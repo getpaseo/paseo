@@ -44,6 +44,7 @@ export interface SeedDaemonClient {
   fetchWorkspaces(options?: { filter?: { projectId?: string } }): Promise<{
     entries: SeedWorkspaceDescriptor[];
   }>;
+  setWorkspaceTitle(workspaceId: string, title: string | null): Promise<{ title: string | null }>;
   setWorkspacePinned(workspaceId: string, pinned: boolean): Promise<{ pinnedAt: string | null }>;
   clearWorkspaceAttention(workspaceId: string): Promise<void>;
   setWorkspaceLabel(input: {
@@ -66,6 +67,7 @@ export interface SeedDaemonClient {
           worktreeSlug?: string;
         };
     title?: string;
+    background?: boolean;
   }): Promise<{
     workspace: SeedWorkspaceDescriptor | null;
     error: string | null;
@@ -146,6 +148,7 @@ export interface SeedDaemonClient {
     predicate: (snapshot: { status: string }) => boolean,
     timeout?: number,
   ): Promise<{ status: string }>;
+  cancelAgent(agentId: string): Promise<void>;
   sendAgentMessage(agentId: string, text: string): Promise<void>;
   waitForFinish(
     agentId: string,
@@ -223,6 +226,7 @@ export interface SeededWorkspace {
 export async function seedWorkspace(options: {
   repoPrefix: string;
   title?: string;
+  background?: boolean;
   port?: number;
   /** Repo fixture options; only applies to git projects (the default). */
   repo?: Parameters<typeof createTempGitRepo>[1];
@@ -238,6 +242,7 @@ export async function seedWorkspace(options: {
     const created = await client.createWorkspace({
       source: { kind: "directory", path: project.path },
       title: options.title,
+      background: options.background,
     });
     if (!created.workspace) {
       throw new Error(created.error ?? `Failed to create workspace ${project.path}`);

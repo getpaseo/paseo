@@ -33,7 +33,7 @@ type CheckoutDiffCachePayload = Omit<CheckoutDiffResponsePayload, "subscriptionI
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 
 interface CheckoutDiffCompare {
-  mode: "uncommitted" | "base";
+  mode: "uncommitted" | "base" | "all";
   baseRef?: string;
   ignoreWhitespace?: boolean;
 }
@@ -494,6 +494,14 @@ function getActiveServerDataRoute(
   if (query.getObserversCount() === 0) {
     return null;
   }
+  // Query metadata belongs to the last observer that updated its options. A
+  // retained hidden panel must not cancel demand from another visible panel.
+  const observerRoutes = query.observers
+    .map((observer) => getServerDataRoute({ meta: observer.options.meta }))
+    .filter((route): route is ServerDataRoute => route !== null);
+  if (observerRoutes.length > 0) {
+    return observerRoutes.find((route) => route.enabled && route.serverId === serverId) ?? null;
+  }
   const route = getServerDataRoute(query);
   if (route) {
     return route.enabled && route.serverId === serverId ? route : null;
@@ -590,7 +598,7 @@ function canEventChangeDesiredSubscriptions(type: QueryCacheNotifyEvent["type"])
   );
 }
 
-function getServerDataRoute(query: Query): ServerDataRoute | null {
+function getServerDataRoute(query: Pick<Query, "meta">): ServerDataRoute | null {
   const meta = query.meta;
   if (!isRecord(meta) || !isRecord(meta.serverData)) {
     return null;
@@ -647,7 +655,7 @@ function readCheckoutDiffCompare(value: unknown): CheckoutDiffCompare | null {
   const mode = value.mode;
   const baseRef = value.baseRef;
   const ignoreWhitespace = value.ignoreWhitespace;
-  if (mode !== "uncommitted" && mode !== "base") {
+  if (mode !== "uncommitted" && mode !== "base" && mode !== "all") {
     return null;
   }
   if (baseRef !== undefined && typeof baseRef !== "string") {

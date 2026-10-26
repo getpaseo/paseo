@@ -1,21 +1,12 @@
-import { RotateCw } from "lucide-react-native";
 import { View } from "react-native";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { StyleSheet } from "react-native-unistyles";
 import { HostFilter } from "@/components/hosts/host-filter";
-import { extraMutedIconColorMapping } from "@/components/ui/icon-button-chrome";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { ToolbarButton, paneContentToolbarIconSize } from "@/components/ui/pane-content-toolbar";
-import { useIsCompactFormFactor } from "@/constants/layout";
 import { useMemo, type ReactElement } from "react";
-import { usageCopy } from "./copy";
-import type { UsageDisplay } from "./display";
-import { UsageDisplayToggle } from "./display-toggle";
+import { UsageRefreshButton } from "./refresh-button";
+import { UsageOptions } from "./options";
 import type { UsageHost } from "./model";
 import { useHostUsage } from "./queries";
 import type { UsageView } from "./types";
-
-const ThemedRotateCw = withUnistyles(RotateCw);
-const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 
 /** The hosts to choose between, and which one is shown. */
 export interface UsageHostSelection {
@@ -26,26 +17,21 @@ export interface UsageHostSelection {
 
 /**
  * The controls on the right of every usage title row: the host filter when there is more than one
- * host, the used/remaining toggle and Refresh. A host that cannot report usage keeps only the
- * host filter.
+ * host, Refresh all, and the Settings cog. A host that cannot report usage keeps only the host filter.
  */
 export function UsageControls({
   view,
-  display,
   onRefresh,
   hostSelection,
 }: {
   view: UsageView;
-  display: UsageDisplay;
   onRefresh: () => void;
   hostSelection?: UsageHostSelection;
 }) {
   const busy = view.kind === "loading" || (view.kind === "ready" && view.isRefreshing);
-  const compact = useIsCompactFormFactor();
-  const iconSize = paneContentToolbarIconSize(compact);
   return (
     <View style={styles.controls}>
-      {hostSelection && hostSelection.hosts.length > 1 ? (
+      {hasHostChoice(hostSelection) ? (
         <HostFilter
           hosts={hostSelection.hosts}
           selectedHost={hostSelection.serverId}
@@ -57,25 +43,18 @@ export function UsageControls({
       ) : null}
       {view.kind === "unavailable" ? null : (
         <>
-          <UsageDisplayToggle display={display} />
-          {/* The Changes panel's refresh: an icon, with the label in its tooltip. */}
-          <ToolbarButton
-            label={busy ? usageCopy.refreshing : usageCopy.refresh}
-            compact={compact}
-            disabled={busy}
-            onPress={onRefresh}
-            testID="usage-refresh-all"
-          >
-            {busy ? (
-              <ThemedLoadingSpinner size={iconSize} uniProps={extraMutedIconColorMapping} />
-            ) : (
-              <ThemedRotateCw size={iconSize} uniProps={extraMutedIconColorMapping} />
-            )}
-          </ToolbarButton>
+          <UsageRefreshButton busy={busy} onRefresh={onRefresh} />
+          <UsageOptions />
         </>
       )}
     </View>
   );
+}
+
+function hasHostChoice(
+  hostSelection: UsageHostSelection | undefined,
+): hostSelection is UsageHostSelection {
+  return hostSelection !== undefined && hostSelection.hosts.length > 1;
 }
 
 function usageHostOptionTestID(serverId: string): string {
@@ -92,24 +71,22 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 /**
- * One host's usage and the title-row controls that go with it, for the Usage screen and the
- * compact usage sheet.
+ * One host’s usage and title-row controls for the Usage modal.
+ * Returns null when there is nothing to control, so headers leave no empty island.
  */
-export function useHostUsageWithControls(
-  hostSelection: UsageHostSelection,
-  display: UsageDisplay,
-): { view: UsageView; refresh: () => void; controls: ReactElement } {
+export function useHostUsageWithControls(hostSelection: UsageHostSelection): {
+  view: UsageView;
+  refresh: () => void;
+  controls: ReactElement | null;
+} {
   const { view, refresh } = useHostUsage(hostSelection.serverId);
+  const hasControls = hasHostChoice(hostSelection) || view.kind !== "unavailable";
   const controls = useMemo(
-    () => (
-      <UsageControls
-        view={view}
-        display={display}
-        onRefresh={refresh}
-        hostSelection={hostSelection}
-      />
-    ),
-    [display, hostSelection, refresh, view],
+    () =>
+      hasControls ? (
+        <UsageControls view={view} onRefresh={refresh} hostSelection={hostSelection} />
+      ) : null,
+    [hasControls, hostSelection, refresh, view],
   );
   return { view, refresh, controls };
 }

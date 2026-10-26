@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import MarkdownIt from "markdown-it";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   classifyForResolution,
   fetchDaemonResolution,
@@ -13,6 +17,126 @@ import {
 const CONTEXT: AssistantFileLinkContext = {
   workspaceRoot: "/Users/test/project",
 };
+
+it.each([
+  ["guide/details.md", "/repo/docs/guide/details.md"],
+  ["../README.md", "/repo/README.md"],
+  ["guide/details%20page.md", "/repo/docs/guide/details page.md"],
+])("resolves authored href %s from its document directory", (href, expected) => {
+  expect(
+    classifyForResolution({ href }, { workspaceRoot: "/repo", relativePathBase: "/repo/docs" }),
+  ).toMatchObject({ kind: "resolved", value: { kind: "file", target: { path: expected } } });
+});
+
+it.each([
+  ["C:/repo/docs", "../README.md", "C:/repo/README.md"],
+  ["C:/repo/docs", "../../", "C:/"],
+  ["~/.paseo/docs", "../guide.md", "~/.paseo/guide.md"],
+  ["/repo/docs", "/other/file.md", "/other/file.md"],
+  ["/repo/docs", "file:///other/file.md", "/other/file.md"],
+  ["/repo/docs", "guide/details.md#L3", "/repo/docs/guide/details.md"],
+])(
+  "resolves %s with href %s without changing absolute destinations",
+  (relativePathBase, href, expected) => {
+    expect(
+      classifyForResolution({ href }, { workspaceRoot: "/repo", relativePathBase }),
+    ).toMatchObject({
+      kind: "resolved",
+      value: { kind: "file", target: { path: expected } },
+    });
+  },
+);
+
+it("keeps inferred paths and chat links rooted at the workspace", () => {
+  const context = { workspaceRoot: "/repo", relativePathBase: "/repo/docs" };
+  expect(classifyForResolution({ href: "src/file.ts", markup: "linkify" }, context)).toMatchObject({
+    value: { kind: "file", target: { path: "/repo/src/file.ts" } },
+  });
+  expect(
+    classifyForResolution({ href: "guide/details.md" }, { workspaceRoot: "/repo" }),
+  ).toMatchObject({
+    value: { kind: "file", target: { path: "/repo/guide/details.md" } },
+  });
+  expect(classifyForResolution({ href: "https://example.com/docs" }, context)).toMatchObject({
+    value: { kind: "external", url: "https://example.com/docs" },
+  });
+});
+
+it.each(["docs/guides", "docs/guides/", "docs/%E6%8C%87%E5%8D%97"])(
+  "resolves an explicit extensionless folder href: %s",
+  (href) => {
+    expect(classifyForResolution({ href }, CONTEXT)).toMatchObject({
+      kind: "resolved",
+      value: {
+        kind: "file",
+        target: { path: `${CONTEXT.workspaceRoot}/${decodeURIComponent(href).replace(/\/$/, "")}` },
+      },
+    });
+  },
+);
+
+it.each(["docs/guides", "origin/main"])("leaves extensionless inline code alone: %s", (text) => {
+  expect(classifyForResolution({ href: text, text, sourceType: "inline-code" }, CONTEXT)).toEqual({
+    kind: "resolved",
+    value: { kind: "ignored" },
+  });
+});
+
+it.each([{ markup: "linkify" }, { sourceInfo: "auto" }])(
+  "keeps auto-recognized extensionless text ignored: %j",
+  (origin) => {
+    expect(
+      classifyForResolution({ href: "docs/guides", text: "docs/guides", ...origin }, CONTEXT),
+    ).toEqual({
+      kind: "resolved",
+      value: { kind: "ignored" },
+    });
+  },
+);
+
+it.each(["docs/guides?view=all"])(
+  "does not turn URL-like hrefs into workspace paths: %s",
+  (href) => {
+    expect(classifyForResolution({ href }, CONTEXT)).toEqual({
+      kind: "resolved",
+      value: { kind: "ignored" },
+    });
+  },
+);
+
+it.each([
+  ".dev/tablet-review/tablet-agent-draft.png",
+  "images/capture.jpg",
+  "downloads/archive.custom",
+  "assets/LICENSE",
+  "example.com/guides",
+  "capture.png",
+  "missing.png",
+])("opens explicit file link %s without filename guessing", (href) => {
+  expect(classifyForResolution({ href }, CONTEXT)).toMatchObject({
+    kind: "resolved",
+    value: { kind: "file", target: { path: `${CONTEXT.workspaceRoot}/${href}` } },
+  });
+});
+
+it("opens the existing non-ASCII file named by a rendered markdown link", async () => {
+  const workspaceRoot = await mkdtemp(path.join(tmpdir(), "assistant-file-link-"));
+  try {
+    await mkdir(path.join(workspaceRoot, "docs/reports"), { recursive: true });
+    await writeFile(path.join(workspaceRoot, "docs/reports/开户赠金.md"), "report content");
+    const tokens = new MarkdownIt().parseInline("[报告](docs/reports/开户赠金.md)", {});
+    const href = tokens[0].children?.find((token) => token.type === "link_open")?.attrGet("href");
+    expect(href).toBe("docs/reports/%E5%BC%80%E6%88%B7%E8%B5%A0%E9%87%91.md");
+    const resolution = classifyForResolution({ href: href! }, { workspaceRoot });
+    expect(resolution.kind).toBe("resolved");
+    if (resolution.kind !== "resolved" || resolution.value.kind !== "file") {
+      throw new Error("Expected a directly resolved file link");
+    }
+    expect(await readFile(resolution.value.target.path, "utf8")).toBe("report content");
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
 
 function resolvedSuggestions(
   entries: DirectorySuggestionResult["entries"],
@@ -52,6 +176,27 @@ const unavailableSuggestions: GetDirectorySuggestions = async () => {
 };
 
 describe("classifyForResolution", () => {
+  it.each([
+    ["C:/repo/my%20file.md", undefined],
+    ["C:\\repo\\my%20file.md", undefined],
+    ["C:/repo/my%20file.md:12", 12],
+    ["C:\\repo\\my%20file.md:12", 12],
+  ])("keeps the literal filename in Windows inline code %s", (href, lineStart) => {
+    for (const text of [href, undefined]) {
+      const result = classifyForResolution(
+        { href, text, sourceType: "inline-code" },
+        { workspaceRoot: "C:/repo" },
+      );
+      expect(result).toMatchObject({
+        kind: "resolved",
+        value: { kind: "file", target: { path: "C:/repo/my%20file.md", lineStart } },
+      });
+    }
+    expect(classifyForResolution({ href }, { workspaceRoot: "C:/repo" })).toMatchObject({
+      kind: "resolved",
+      value: { kind: "file", target: { path: "C:/repo/my file.md", lineStart } },
+    });
+  });
   it("returns the directFile target synchronously", () => {
     const result = classifyForResolution({ href: "src/components/message.tsx#L33" }, CONTEXT);
 
@@ -164,6 +309,46 @@ describe("classifyForResolution", () => {
     const result = classifyForResolution({ href: "" }, CONTEXT);
 
     expect(result).toEqual({ kind: "resolved", value: { kind: "ignored" } });
+  });
+
+  it("decodes percent-encoded markdown hrefs", () => {
+    const result = classifyForResolution({ href: "docs/my%20file.md" }, CONTEXT);
+
+    expect(result).toEqual({
+      kind: "resolved",
+      value: {
+        kind: "file",
+        target: {
+          raw: "docs/my%20file.md",
+          path: "/Users/test/project/docs/my file.md",
+          lineStart: undefined,
+          lineEnd: undefined,
+        },
+      },
+    });
+  });
+
+  it("keeps literal percent signs in inline-code paths", () => {
+    const result = classifyForResolution(
+      {
+        href: "docs/my%20file.md",
+        text: "docs/my%20file.md",
+        sourceType: "inline-code",
+      },
+      CONTEXT,
+    );
+
+    expect(result).toEqual({
+      kind: "needsLookup",
+      ambiguousQuery: "docs/my%20file.md",
+      token: "docs/my%20file.md",
+      target: {
+        raw: "docs/my%20file.md",
+        path: "/Users/test/project/docs/my%20file.md",
+        lineStart: undefined,
+        lineEnd: undefined,
+      },
+    });
   });
 });
 

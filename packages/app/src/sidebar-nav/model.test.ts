@@ -114,6 +114,16 @@ describe("resolveSidebarNavItems", () => {
   });
 });
 
+describe("resolveSidebarNavItems for the Usage item", () => {
+  it("hides the Usage item until it is turned on", () => {
+    const resolve = (preferences: SidebarNavPreference[]) =>
+      summarize(resolveSidebarNavItems({ section: "footer", pluginGroups: [], preferences }));
+
+    expect(resolve([])).toEqual([{ key: "usage", visible: false }]);
+    expect(resolve([{ key: "usage", visible: true }])).toEqual([{ key: "usage", visible: true }]);
+  });
+});
+
 describe("setSidebarNavItemVisible", () => {
   it("toggles one item and writes the full resolved order", () => {
     const items = resolveSidebarNavItems({
@@ -180,13 +190,21 @@ describe("setSidebarNavItemVisible", () => {
     ]);
     expect(
       summarize(
-        resolveSidebarNavItems({ section: "header", pluginGroups: [notes], preferences: next }),
+        resolveSidebarNavItems({
+          section: "header",
+          pluginGroups: [notes],
+          preferences: next,
+        }),
       ),
     ).toEqual(next);
   });
 
   it("returns the normalized list unchanged for an unknown key", () => {
-    const items = resolveSidebarNavItems({ section: "header", pluginGroups: [], preferences: [] });
+    const items = resolveSidebarNavItems({
+      section: "header",
+      pluginGroups: [],
+      preferences: [],
+    });
 
     const next = setSidebarNavItemVisible({ items, key: "bogus", visible: false, previous: [] });
 
@@ -279,7 +297,7 @@ describe("footer section", () => {
     });
 
     expect(summarize(items)).toEqual([
-      { key: "usage", visible: true },
+      { key: "usage", visible: false },
       { key: syncKey, visible: true },
     ]);
   });
@@ -291,7 +309,7 @@ describe("footer section", () => {
       preferences: [{ key: "history", visible: false }],
     });
 
-    expect(summarize(items)).toEqual([{ key: "usage", visible: true }]);
+    expect(summarize(items)).toEqual([{ key: "usage", visible: false }]);
   });
 
   it("ignores the footer icon buttons, which are fixed and not items", () => {
@@ -314,7 +332,7 @@ describe("footer section", () => {
     ]);
   });
 
-  it("moves and hides footer rows while keeping an unavailable plugin's entry", () => {
+  it("moves and shows footer rows while keeping an unavailable plugin's entry", () => {
     const notesPreference = { key: notesKey, visible: false };
     const previous: SidebarNavPreference[] = [notesPreference];
     const items = resolveSidebarNavItems({
@@ -324,21 +342,21 @@ describe("footer section", () => {
     });
 
     const moved = moveSidebarNavItem({ items, key: syncKey, direction: "up", previous });
-    const hidden = setSidebarNavItemVisible({
+    const shown = setSidebarNavItemVisible({
       items: resolveSidebarNavItems({
         section: "footer",
         pluginGroups: [sync],
         preferences: moved,
       }),
       key: "usage",
-      visible: false,
+      visible: true,
       previous: moved,
     });
 
-    expect(hidden).toEqual([
+    expect(shown).toEqual([
       notesPreference,
       { key: syncKey, visible: true },
-      { key: "usage", visible: false },
+      { key: "usage", visible: true },
     ]);
   });
 });
