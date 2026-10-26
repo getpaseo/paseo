@@ -32,7 +32,7 @@ class FakePermissionAgentManager {
     return this.permissionResult;
   }
 
-  tryRunOutOfBand(): boolean {
+  async tryRunOutOfBand(): Promise<boolean> {
     return this.outOfBandHandled;
   }
 

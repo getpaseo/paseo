@@ -10,6 +10,12 @@ import { QuestionFormCard } from "./question-form-card";
 // Load translations so controls expose their real accessible names.
 void testI18n;
 
+// The Markdown engine does not load in this harness; question and option text are covered by
+// e2e/browser/question-prompt-pagination.spec.ts. Plain text keeps these tests on the answers.
+vi.mock("@/components/markdown/renderer", () => ({
+  MarkdownRenderer: ({ text }: { text: string }) => <span>{text}</span>,
+}));
+
 // App sources compile against the classic JSX runtime, which expects React on the global.
 beforeEach(() => vi.stubGlobal("React", React));
 

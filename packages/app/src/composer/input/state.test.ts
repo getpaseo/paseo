@@ -7,6 +7,7 @@ import {
   resolveComposerSurfaceText,
   resolveGlyphRailOffset,
   resolveRetainedSelection,
+  resolveAlternateSendAction,
   runAlternateSendAction,
   runDefaultSendAction,
   runMessageInputKeyboardAction,
@@ -275,6 +276,47 @@ describe("composer send behavior", () => {
 
     expect(defaultAction.calls).toEqual(["queue"]);
     expect(alternateAction.calls).toEqual(["send"]);
+  });
+
+  it("sends with the alternate action while no turn is running", () => {
+    for (const defaultSendBehavior of ["steer", "interrupt", "queue"] as const) {
+      const alternateAction = actions();
+      runAlternateSendAction({
+        defaultSendBehavior,
+        isAgentRunning: false,
+        onQueue: alternateAction.onQueue,
+        handleSendMessage: alternateAction.handleSendMessage,
+        handleQueueMessage: alternateAction.handleQueueMessage,
+      });
+      expect(alternateAction.calls).toEqual(["send"]);
+    }
+  });
+
+  it("offers an alternate action only while a turn runs and the composer can queue", () => {
+    const onQueue = () => undefined;
+    expect(
+      resolveAlternateSendAction({ defaultSendBehavior: "steer", isAgentRunning: true, onQueue }),
+    ).toBe("queue");
+    expect(
+      resolveAlternateSendAction({
+        defaultSendBehavior: "interrupt",
+        isAgentRunning: true,
+        onQueue,
+      }),
+    ).toBe("queue");
+    expect(
+      resolveAlternateSendAction({ defaultSendBehavior: "queue", isAgentRunning: true, onQueue }),
+    ).toBe("send");
+    expect(
+      resolveAlternateSendAction({ defaultSendBehavior: "steer", isAgentRunning: false, onQueue }),
+    ).toBeNull();
+    expect(
+      resolveAlternateSendAction({
+        defaultSendBehavior: "queue",
+        isAgentRunning: true,
+        onQueue: undefined,
+      }),
+    ).toBeNull();
   });
 });
 

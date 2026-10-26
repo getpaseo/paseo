@@ -202,6 +202,7 @@ function createNewlineLineReader(
 
 export class CodexAppServerClient {
   private readonly stdoutLineReader: { close(): void };
+  private activeProviderRequests = 0;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly requestHandlers = new Map<string, RequestHandler>();
   private notificationHandler: NotificationHandler | null = null;
@@ -253,6 +254,10 @@ export class CodexAppServerClient {
 
   setRequestHandler(method: string, handler: RequestHandler): void {
     this.requestHandlers.set(method, handler);
+  }
+
+  hasPendingRequests(): boolean {
+    return this.pending.size > 0 || this.activeProviderRequests > 0;
   }
 
   request(method: string, params?: unknown, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<unknown> {
@@ -392,6 +397,7 @@ export class CodexAppServerClient {
         this.traceRawEvent(request);
         const handler = this.requestHandlers.get(request.method);
         try {
+          this.activeProviderRequests++;
           const result = handler ? await handler(request.params, request.id) : {};
           this.writeJsonRpcResponse({ id: request.id, result });
         } catch (error) {
@@ -399,6 +405,8 @@ export class CodexAppServerClient {
             id: request.id,
             error: { message: error instanceof Error ? error.message : String(error) },
           });
+        } finally {
+          this.activeProviderRequests--;
         }
         return;
       }

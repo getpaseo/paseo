@@ -7167,3 +7167,35 @@ describe("Codex interactive resume startup", () => {
     },
   );
 });
+
+test("Codex runtime safety queries live terminals and retains unsupported app servers", async () => {
+  let response: unknown = { data: [], nextCursor: null };
+  const appServer = createFakeCodexAppServer({ "thread/backgroundTerminals/list": () => response });
+  const session = new CodexAppServerAgentSession(
+    createConfig(),
+    null,
+    createTestLogger(),
+    async () => appServer.child,
+  );
+  try {
+    await session.startTurn("hello");
+    await appServer.waitForTurnStart();
+    expect(await session.canStopRuntime()).toBe(false);
+    appServer.completeTurn({ threadId: "thread-1" });
+    await expect.poll(() => session.canStopRuntime()).toBe(true);
+    response = { data: [{ processId: "shell-1" }], nextCursor: null };
+    expect(await session.canStopRuntime()).toBe(false);
+    response = {};
+    await expect(session.canStopRuntime()).rejects.toThrow();
+    response = { __jsonRpcError: { code: -32601, message: "Method not found" } };
+    await expect(session.canStopRuntime()).rejects.toThrow("Method not found");
+    expect(
+      appServer
+        .requests()
+        .findLast((request) => request.method === "thread/backgroundTerminals/list"),
+    ).toMatchObject({ params: { threadId: "thread-1" } });
+    appServer.assertNoErrors();
+  } finally {
+    await session.close();
+  }
+});

@@ -161,7 +161,7 @@ test("measures an overview heading that becomes loading after its idle mount", a
   await page.addInitScript(() => {
     localStorage.setItem(
       "@paseo:app-settings",
-      JSON.stringify({ toolCallDetailLevel: "overview" }),
+      JSON.stringify({ chatDisplay: "collapseToolCalls" }),
     );
   });
   const agent = await seedMockAgentWorkspace({

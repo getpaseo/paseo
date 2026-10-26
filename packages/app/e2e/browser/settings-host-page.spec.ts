@@ -1,3 +1,7 @@
+import { readFile, mkdir, rename, rm } from "node:fs/promises";
+import path from "node:path";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { getE2EDaemonPort } from "../support/helpers/daemon-port";
@@ -25,6 +29,8 @@ import {
   removeHostFromHostPage,
   addDirectHostFromSettings,
   expectHostOnlineWithoutError,
+  expectIdleAgentRelease,
+  setIdleAgentRelease,
 } from "../support/helpers/settings";
 
 test.describe("Settings host page", () => {
@@ -132,6 +138,100 @@ test.describe("Settings host page", () => {
         await openHostSection(page, daemon.serverId, "host");
         await expectHostOnlineWithoutError(page);
       });
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  test("idle agent release changes live on one host and stays saved without restarting", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const primaryServerId = getServerId();
+    const daemon = await startIsolatedHostDaemon("srv_e2e_idle_agent_release");
+    const client = await connectDaemonClient<DaemonClient>({
+      clientIdPrefix: "idle-release-settings",
+      port: daemon.port,
+    });
+    const originalPid = (await client.getDaemonStatus()).pid;
+    const expectLiveSavedSetting = async (enabled: boolean) => {
+      const saved = JSON.parse(await readFile(path.join(daemon.paseoHome, "config.json"), "utf8"));
+      expect(saved.agents.idleRuntimeCleanup).toBe(enabled);
+      expect((await client.getDaemonConfig()).config.idleRuntimeCleanup).toBe(enabled);
+      expect((await client.reloadDaemonConfig()).restartRequiredPaths).toEqual([]);
+      expect((await client.getDaemonStatus()).pid).toBe(originalPid);
+    };
+    const hosts = [
+      {
+        serverId: primaryServerId,
+        label: TEST_HOST_LABEL,
+        endpoint: `127.0.0.1:${getE2EDaemonPort()}`,
+      },
+      {
+        serverId: daemon.serverId,
+        label: "Idle release host",
+        endpoint: `127.0.0.1:${daemon.port}`,
+      },
+    ];
+    const openHostAgentsInFreshApp = async (serverId: string) => {
+      await seedSavedSettingsHosts(page, hosts);
+      await page.reload();
+      await openSettings(page);
+      await selectSettingsHost(page, serverId);
+      await openHostSection(page, serverId, "agents");
+    };
+    try {
+      await test.step("idle agent release starts on and turns off", async () => {
+        await openHostAgentsInFreshApp(daemon.serverId);
+        await expectIdleAgentRelease(page, true);
+        await setIdleAgentRelease(page, false);
+        await expectLiveSavedSetting(false);
+      });
+
+      await test.step("a fresh app reads the saved setting from the same running host", async () => {
+        await openHostAgentsInFreshApp(daemon.serverId);
+        await expectIdleAgentRelease(page, false);
+        await expectLiveSavedSetting(false);
+        await setIdleAgentRelease(page, true);
+        await expectLiveSavedSetting(true);
+        await setIdleAgentRelease(page, false);
+      });
+
+      await test.step("other hosts keep their own setting", async () => {
+        await selectSettingsHost(page, primaryServerId);
+        await openHostSection(page, primaryServerId, "agents");
+        await expectIdleAgentRelease(page, true);
+        await expectLiveSavedSetting(false);
+      });
+    } finally {
+      await client.close();
+      await daemon.close();
+    }
+  });
+
+  test("a failed idle release save stays visible and retry applies it live", async ({ page }) => {
+    const daemon = await startIsolatedHostDaemon("srv_e2e_idle_release_failure");
+    const configPath = path.join(daemon.paseoHome, "config.json");
+    try {
+      await seedSavedSettingsHosts(page, [
+        { serverId: daemon.serverId, label: "Failure host", endpoint: `127.0.0.1:${daemon.port}` },
+      ]);
+      await page.reload();
+      await openSettings(page);
+      await openHostSection(page, daemon.serverId, "agents");
+      await expectIdleAgentRelease(page, true);
+      // A real filesystem failure, with the daemon and RPC path intact.
+      await rename(configPath, `${configPath}.saved`);
+      await mkdir(configPath);
+      await page.getByRole("switch", { name: "Release idle agents" }).click();
+      await expect(page.getByTestId("host-page-idle-runtime-cleanup-error")).toContainText(
+        "Failed to read",
+      );
+      await expectIdleAgentRelease(page, true);
+      await rm(configPath, { recursive: true });
+      await rename(`${configPath}.saved`, configPath);
+      await setIdleAgentRelease(page, false);
+      await expect(page.getByTestId("host-page-idle-runtime-cleanup-error")).toHaveCount(0);
     } finally {
       await daemon.close();
     }

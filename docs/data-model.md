@@ -221,12 +221,6 @@ snapshot so a mixed edit can apply its live subset and still name the paths that
     }
   },
   providers: {
-    openai: {
-      apiKey?: string,
-      baseUrl?: string,
-      stt?: { apiKey?: string, baseUrl?: string },
-      tts?: { apiKey?: string, baseUrl?: string }
-    },
     local: { modelsDir: string }
   },
   agents: {
@@ -244,8 +238,8 @@ snapshot so a mixed edit can apply its live subset and still name the paths that
   pluginsEnabled: boolean,
   plugins: Record<pluginId, { source: "directory", path: string, enabled?: boolean }>,
   features: {
-    dictation: { enabled, stt: { provider, model, language, confidenceThreshold } },
-    voiceMode: { enabled, llm, stt: { provider, model, language }, turnDetection, tts: { provider, model, voice, speakerId, speed } }
+    dictation: { enabled, stt: SpeechSttConfig },
+    voiceMode: { enabled, llm, stt: SpeechSttConfig, turnDetection, tts: SpeechTtsConfig }
   },
   log: {
     level, format,
@@ -353,42 +347,27 @@ Environment variables override `config.json`:
 after changing `config.json`. Environment changes require a daemon restart; the launch environment
 remains authoritative during reload.
 
-Local speech model ids are intentionally narrow: STT uses `parakeet-tdt-0.6b-v2-int8`, TTS uses `kokoro-en-v0_19`, and turn detection uses the bundled Silero VAD model.
+### Speech configuration
 
-Set these to select OpenAI instead of local speech:
+Each use site owns its provider settings: `features.dictation.stt`,
+`features.voiceMode.stt`, and `features.voiceMode.tts`. `provider` selects a strict
+`local` or `openai` variant. Both STT variants carry `language`; normalization preserves
+it regardless of provider. `providers.local.modelsDir` remains shared storage.
+See [Voice configuration](../public-docs/voice.md) for fields, examples and env precedence.
 
-| Env var                        | Applies to                      |
-| ------------------------------ | ------------------------------- |
-| `PASEO_VOICE_STT_PROVIDER`     | Voice mode STT provider         |
-| `PASEO_DICTATION_STT_PROVIDER` | Composer dictation STT provider |
-| `PASEO_VOICE_TTS_PROVIDER`     | Voice mode TTS provider         |
+On load, `persisted-config.ts` folds legacy `providers.openai` credentials and URLs
+into OpenAI sites that lack their own values, using endpoint settings before shared
+settings. A provider-less site becomes local; provider names are lower-cased, and
+fields ignored by the selected speech provider are discarded. The next save writes only the
+inline shape. A legacy key with no site to receive it is discarded with a warning
+that names its path, without logging its value.
 
-OpenAI speech can be configured under `providers.openai`. STT and TTS resolve independently, so they can point at different endpoints:
-
-```json
-{
-  "providers": {
-    "openai": {
-      "stt": {
-        "apiKey": "sk-...",
-        "baseUrl": "https://stt.example.com/v1"
-      },
-      "tts": {
-        "apiKey": "sk-...",
-        "baseUrl": "https://api.openai.com/v1"
-      }
-    }
-  }
-}
-```
-
-`providers.openai.stt` is used for both composer dictation and voice mode speech-to-text; `providers.openai.tts` is used for voice mode text-to-speech. The equivalent env vars are `OPENAI_STT_API_KEY`/`OPENAI_STT_BASE_URL` and `OPENAI_TTS_API_KEY`/`OPENAI_TTS_BASE_URL`. Each feature falls back to `providers.openai.apiKey`/`providers.openai.baseUrl`, then `OPENAI_API_KEY`/`OPENAI_BASE_URL`, when its own fields are unset. These settings apply only to Paseo OpenAI speech features, not to Codex or other OpenAI-backed tools.
-
-Paseo uses these paths under the configured OpenAI base URL:
-
-- dictation STT: `/v1/audio/transcriptions`
-- voice mode STT: `/v1/audio/transcriptions`
-- voice mode TTS: `/v1/audio/speech`
+`speech-settings.ts` owns mutable config reads and patches. The wire uses the same
+`features` structure. Reads replace OpenAI keys with `hasApiKey` (saved in config)
+and report effective env sources in `envOverrides`. A site patch that changes
+`provider` replaces the entire object. The same or omitted `provider` merges fields
+into the current variant, preserving the write-only key when a form re-saves it. `null` clears a value. Switching providers discards credentials and
+options from the previous variant.
 
 ---
 

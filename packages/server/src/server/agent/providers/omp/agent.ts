@@ -1172,6 +1172,27 @@ export class OmpAgentSession implements AgentSession {
     this.activeToolCalls.clear();
   }
 
+  async canStopRuntime(): Promise<boolean> {
+    if (
+      this.closed ||
+      this.activeTurnId ||
+      this.activeToolCalls.size ||
+      this.pendingExtensionUiRequests.size ||
+      this.pendingClientMessages.length ||
+      this.pendingNoTurnOutputs.length ||
+      this.pendingNoTurnCompletionAbort
+    )
+      return false;
+    const state = await this.runtimeSession.getState();
+    return (
+      state.isSettled === true &&
+      state.hasPendingAsyncWork === false &&
+      !state.isStreaming &&
+      !state.isCompacting &&
+      state.queuedMessageCount === 0
+    );
+  }
+
   async close(): Promise<void> {
     if (this.closed) {
       return;

@@ -1,3 +1,5 @@
+import { ClaudeRuntimeSafety } from "./runtime-safety.js";
+import type { Query, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -705,4 +707,138 @@ describe("background Claude subagents", () => {
       );
     },
   );
+});
+
+test("Claude runtime safety protects silent shells, monitors and pending completion notifications", () => {
+  const safety = new ClaudeRuntimeSafety();
+  const observe = (message: unknown) => safety.observe(message as SDKMessage);
+  observe({ type: "system", subtype: "init", claude_code_version: "2.1.292" });
+  expect(safety.canStopRuntime()).toBe(true);
+  observe({
+    type: "system",
+    subtype: "background_tasks_changed",
+    tasks: [
+      { task_id: "quiet-shell", task_type: "local_bash", description: "sleep 7200" },
+      { task_id: "monitor", task_type: "local_bash", description: "watch build" },
+      { task_id: "native-child", task_type: "local_agent", description: "research" },
+    ],
+  });
+  expect(safety.canStopRuntime()).toBe(false);
+  observe({ type: "system", subtype: "background_tasks_changed", tasks: [] });
+  expect(safety.canStopRuntime()).toBe(false);
+  for (const task_id of ["quiet-shell", "monitor"])
+    observe({ type: "system", subtype: "task_notification", task_id });
+  expect(safety.canStopRuntime()).toBe(false);
+  observe({ type: "system", subtype: "task_notification", task_id: "native-child" });
+  expect(safety.canStopRuntime()).toBe(true);
+  safety.reset();
+  observe({ type: "system", subtype: "init", claude_code_version: "2.1.220" });
+  expect(safety.canStopRuntime()).toBe(false);
+  observe({ type: "system", subtype: "background_tasks_changed", tasks: [] });
+  expect(safety.canStopRuntime()).toBe(true);
+});
+
+test("Claude session runtime safety observes pumped background work and autonomous replies", async () => {
+  let wake: (() => void) | undefined;
+  const channel = { closed: false };
+  const queue: Array<{ message: SDKMessage; consumed(): void }> = [];
+  const pump = (async function* () {
+    while (!channel.closed) {
+      const entry = queue.shift();
+      if (!entry) {
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+        continue;
+      }
+      yield entry.message;
+      entry.consumed();
+    }
+  })();
+  const push = (message: unknown) =>
+    new Promise<void>((consumed) => {
+      queue.push({ message: message as SDKMessage, consumed });
+      wake?.();
+    });
+  const end = () => {
+    channel.closed = true;
+    wake?.();
+  };
+  let nativeInput!: AsyncIterator<SDKUserMessage>;
+  let connected!: () => void;
+  const connection = new Promise<void>((resolve) => {
+    connected = resolve;
+  });
+  // The SDK Query is injected through the production adapter's existing launch port.
+  const query = {
+    next: () => pump.next(),
+    return: async () => {
+      end();
+      return pump.return(undefined);
+    },
+    close: end,
+    interrupt: async () => {},
+    setPermissionMode: async () => {},
+    setModel: async () => {},
+    supportedModels: async () => [],
+    supportedCommands: async () => [],
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+  } as unknown as Query;
+  const session = await new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveBinary: async () => "/test/claude/bin",
+    queryFactory: ({ prompt }) => {
+      if (typeof prompt === "string") throw new Error("Expected streaming input");
+      nativeInput = prompt[Symbol.asyncIterator]();
+      connected();
+      return query;
+    },
+  }).createSession({ provider: "claude", cwd: process.cwd() });
+  const init = {
+    type: "system",
+    subtype: "init",
+    session_id: "runtime-safety",
+    claude_code_version: "2.1.292",
+    permissionMode: "default",
+  };
+  const result = {
+    type: "result",
+    subtype: "success",
+    usage: { input_tokens: 1, output_tokens: 1 },
+    total_cost_usd: 0,
+  };
+  try {
+    await session.startTurn("start background work");
+    await connection;
+    const input = await nativeInput.next();
+    await push({ type: "command_lifecycle", command_uuid: input.value.uuid, state: "started" });
+    await push(init);
+    await push(result);
+    expect(await session.canStopRuntime!()).toBe(true);
+    await push({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [{ task_id: "monitor", task_type: "local_bash", description: "quiet monitor" }],
+    });
+    expect(await session.canStopRuntime!()).toBe(false);
+    await push({ type: "system", subtype: "background_tasks_changed", tasks: [] });
+    expect(await session.canStopRuntime!()).toBe(false);
+    await push({
+      type: "system",
+      subtype: "task_notification",
+      task_id: "monitor",
+      status: "completed",
+      output: "ready",
+      summary: "ready",
+    });
+    // Completion can wake Claude autonomously after the foreground turn has ended.
+    await push(init);
+    expect(await session.canStopRuntime!()).toBe(false);
+    await push(result);
+    expect(await session.canStopRuntime!()).toBe(true);
+  } finally {
+    await session.close();
+  }
 });

@@ -3488,3 +3488,23 @@ describe("transformPiModels", () => {
     ]);
   });
 });
+
+test("pi runtime safety protects queued replies and runtime-owned activity", async () => {
+  const runtime = new FakePi();
+  const session = await createClient(runtime).createSession(createConfig());
+  onTestFinished(() => session.close());
+  const native = runtime.latestSession();
+  expect(await session.canStopRuntime!()).toBe(true);
+  native.state.pendingMessageCount = 1;
+  expect(await session.canStopRuntime!()).toBe(false);
+  native.state.pendingMessageCount = 0;
+  native.state.isStreaming = true;
+  expect(await session.canStopRuntime!()).toBe(false);
+  native.state.isStreaming = false;
+  native.state.isCompacting = true;
+  expect(await session.canStopRuntime!()).toBe(false);
+  native.state.isCompacting = false;
+  expect(await session.canStopRuntime!()).toBe(true);
+  native.getStateError = new Error("Unable to prove idle");
+  await expect(session.canStopRuntime!()).rejects.toThrow("Unable to prove idle");
+});
