@@ -4,7 +4,7 @@ import { daemonWsRoutePattern } from "./daemon-port";
 type WebSocketMessage = string | Buffer;
 
 interface SendAgentMessageRequest {
-  type: "send_agent_message_request";
+  type: "send_agent_message_request" | "agent.queue.send_now.request";
   requestId: string;
   text: unknown;
   attachments: unknown;
@@ -22,14 +22,15 @@ function readSendRequest(message: WebSocketMessage): SendAgentMessageRequest | n
     };
     const request = envelope.type === "session" ? envelope.message : null;
     if (
-      request?.type !== "send_agent_message_request" ||
+      (request?.type !== "send_agent_message_request" &&
+        request?.type !== "agent.queue.send_now.request") ||
       typeof request.requestId !== "string" ||
       typeof request.agentId !== "string"
     ) {
       return null;
     }
     return {
-      type: "send_agent_message_request",
+      type: request.type,
       requestId: request.requestId,
       text: request.text,
       attachments: request.attachments,

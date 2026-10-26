@@ -1,0 +1,29 @@
+Actual Electron QA, 2026-10-26
+
+Platform: macOS 26.6.2, arm64.
+Tested commit: 8cc0f255a8b1054a64ccdb431d30d8631d96278a
+Runtime: Electron 44.2.0, Chromium 152.0.7977.76, Node 24.20.0.
+Official archive: https://github.com/electron/electron/releases/download/v44.2.0/electron-v44.2.0-darwin-arm64.zip
+SHA256: f906dff5d054b1b92e5711781b13cc206fd7139ce66467503b9d0a3e6fbc9b02
+The checksum matches node_modules/electron/checksums.json.
+
+Build:
+npm run build:main --workspace=@getpaseo/desktop
+
+Temporary QA runner:
+node --import tsx /tmp/paseo-queue-electron-qa.mjs
+
+The runner launched the downloaded Electron executable with a temporary bootstrap importing the compiled production packages/desktop/dist/main.js and its real preload. The bootstrap normalized its own launch argv, set macOS accessory activation, hid the Dock icon, and used showInactive to avoid taking focus. No desktop bridge was injected into a browser.
+
+Metro used PASEO_WEB_PLATFORM=electron and --max-workers 1. The supervised daemon listened on 127.0.0.1:54809, and Metro used http://localhost:54808. PASEO_HOME, Electron userData, app logs, and the test git workspace were isolated under /tmp/paseo-queue-electron-qa-Kk5JST. The running installed Paseo and port 6767 were untouched. Only named screenshots, recording, result, and output logs are included here.
+
+Provider: development Mock Load Test. No claims of real model/provider execution.
+
+Observed workflow:
+1. Open the real desktop composer with Queue as its saved default; queue a follow-up during a running turn.
+2. Select Send and steer; verify the native active turn ID stays unchanged and the queued follow-up remains pending.
+3. Stop the turn; verify the agent is idle with the follow-up still queued.
+4. Edit the queue entry. Restore a full prompt beyond the 2000-character summary plus an image and text context; requeue it and remove it.
+5. Queue a follow-up in another running agent, close the actual Electron process, then observe exactly one dispatch through an independent SDK client 7143 ms after Electron exited.
+
+Result: six checks passed. The recording is 17.56 seconds. Screenshots were visually inspected. The menu PNG uses a fully rendered frame from the preceding run at the same tested commit; the final run's functional results and recording are included. All owned Electron, Metro, and isolated daemon processes exited during cleanup.

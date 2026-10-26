@@ -1,0 +1,8 @@
+{
+  "passed": true,
+  "appTerminationCompletedAt": "2026-10-26T05:29:47.739464+00:00",
+  "queuedProviderTurnStartedAt": "2026-10-26T05:30:01.238Z",
+  "millisecondsAfterAppTermination": 13499,
+  "providerTurnCount": 1,
+  "clientMessageId": "msg_1792992570292_mnzmu538e"
+}

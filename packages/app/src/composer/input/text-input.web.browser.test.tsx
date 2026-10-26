@@ -1,8 +1,10 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EditingTextInput as ComposerTextInput } from "@/components/ui/text-input/text-input.web";
 import type { EditingTextInputHandle as ComposerTextInputHandle } from "@/components/ui/text-input";
+import { i18n } from "@/i18n/i18next";
+import { SendOptions } from "./send-options";
 
 interface MountedInput {
   root: Root;
@@ -16,7 +18,35 @@ interface TextRecorder {
   onChangeText: (text: string) => void;
 }
 
+interface MountedMenu {
+  root: Root;
+  container: HTMLDivElement;
+}
+
 const mountedInputs: MountedInput[] = [];
+const mountedMenus: MountedMenu[] = [];
+
+beforeEach(async () => {
+  vi.stubGlobal("React", React);
+  await i18n.changeLanguage("en");
+});
+
+function mountSendOptions(props: React.ComponentProps<typeof SendOptions>): HTMLElement {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  mountedMenus.push({ root, container });
+  act(() => root.render(<SendOptions {...props} />));
+  const trigger = container.querySelector('[data-testid="composer-send-options"]');
+  if (!(trigger instanceof HTMLElement)) throw new Error("Send options trigger is missing");
+  return trigger;
+}
+
+function sendOption(testID: string): HTMLElement {
+  const item = document.querySelector(`[data-testid="${testID}"]`);
+  if (!(item instanceof HTMLElement)) throw new Error(`Send option ${testID} is missing`);
+  return item;
+}
 
 function mountInput(
   onChangeText: (text: string) => void,
@@ -79,6 +109,64 @@ afterEach(() => {
     act(() => mounted.root.unmount());
     mounted.container.remove();
   }
+  for (const mounted of mountedMenus.splice(0)) {
+    act(() => mounted.root.unmount());
+    mounted.container.remove();
+  }
+});
+
+describe("composer send options", () => {
+  it("queues a follow-up without sending it into the active turn", () => {
+    const onSend = vi.fn();
+    const onQueue = vi.fn();
+    const trigger = mountSendOptions({
+      disabled: false,
+      immediateBehavior: "steer",
+      onSend,
+      onQueue,
+    });
+
+    act(() => trigger.click());
+    const queue = sendOption("composer-send-options-queue");
+    act(() => queue.click());
+
+    expect(onQueue).toHaveBeenCalledTimes(1);
+    expect(onSend).not.toHaveBeenCalled();
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it.each(["steer", "interrupt"] as const)("offers an explicit %s action", (immediateBehavior) => {
+    const onSend = vi.fn();
+    const onQueue = vi.fn();
+    const trigger = mountSendOptions({ disabled: false, immediateBehavior, onSend, onQueue });
+
+    act(() => trigger.click());
+    const immediate = sendOption("composer-send-options-now");
+    expect(immediate.textContent).toBe(`Send and ${immediateBehavior}`);
+    act(() => immediate.click());
+
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onQueue).not.toHaveBeenCalled();
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("keeps send options unavailable while submitting", () => {
+    const onSend = vi.fn();
+    const onQueue = vi.fn();
+    const trigger = mountSendOptions({
+      disabled: true,
+      immediateBehavior: "steer",
+      onSend,
+      onQueue,
+    });
+
+    act(() => trigger.click());
+
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(document.querySelector('[data-testid="composer-send-options-queue"]')).toBeNull();
+    expect(onSend).not.toHaveBeenCalled();
+    expect(onQueue).not.toHaveBeenCalled();
+  });
 });
 
 describe("ComposerTextInput web IME composition", () => {

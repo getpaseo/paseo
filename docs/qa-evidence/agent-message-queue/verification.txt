@@ -1,0 +1,58 @@
+Queue verification, macOS arm64, Node 26.9.0, installed Google Chrome 155.
+
+Live browser scenarios used the existing npm test:e2e script and isolated daemons
+on random ports. Ports 6767 and 6768 were reserved; the installed daemon was not
+restarted. The providers in these scenarios were the repository's Mock provider.
+
+Commands:
+E2E_RECORD_VIDEO=1 E2E_WORKERS=1 npm run test:e2e --workspace=@getpaseo/app -- --config .playwright-queue.config.ts e2e/browser/agent-message-submission.spec.ts --grep 'compact send options share|queued messages survive an isolated|queue admission failure|queueing on an older host|editing a queue entry|holds a queued turn after Stop|retains queued sends'
+
+The local temporary config selected the installed Chrome channel because bundled
+Chromium was unavailable. It imported the existing playwright.config and set
+project.use.channel to "chrome"; no other test settings changed. It was removed
+after QA. In an environment with Playwright Chromium installed, omit --config.
+
+browser-first-pass.log.txt records five passing scenarios and two failures:
+- Stop retains queue; explicit Send now starts the selected item.
+- A lost Send now connection retains both items and prevents duplicate actions.
+- Editing fetches the full prompt, image and text context, despite bounded previews.
+  Requeue preserves all content, and Remove clears the shared queue.
+- With Queue as the default, compact Send options offers Queue and Steer. Steer
+  preserves the active turn ID. Another browser context sees the queue; after the
+  originating page closes, the daemon delivers the follow-up on turn completion.
+- An isolated daemon restart retains the full image/text payload and keeps the
+  agent closed until an explicit Send now.
+
+The failed assertions selected all page alerts, including the sidebar setup and
+reconnect alerts. They now select the composer error. That run also exposed image
+bytes being collected after clearing a draft before queue admission completed.
+The composer now keeps the locked draft and attachments until acknowledgment.
+The deferred-admission unit regression failed before that fix and passed after.
+
+The two failed cases were rerun with:
+E2E_RECORD_VIDEO=1 E2E_WORKERS=1 npm run test:e2e --workspace=@getpaseo/app -- --config .playwright-queue.config.ts e2e/browser/agent-message-submission.spec.ts --grep 'queue admission failure|queueing on an older host'
+
+browser-error-paths.log.txt: 2 passed. The disconnected enqueue retains draft and
+image bytes, shows a readable error, then accepts one successful retry. An older
+host refuses Queue without sending an unsupported RPC, preserves the draft and
+continues to accept immediate Steer.
+
+The PNGs and WEBM recordings were captured from these live runs. The black
+lightning button is Expo developer chrome. "desktop" image names mean a wide
+browser viewport, not an Electron verification claim.
+
+Coverage:
+Web: compact 390x844 and wide 1280x900, real installed Chrome.
+Daemon: macOS, real storage/lifecycle and isolated process restart.
+Electron macOS: passed with real production main/preload/IPC; see electron/verification.txt.
+iOS: native iPhone 16 Pro / iOS 26.2 workflow passed; see ios/verification.txt.
+The iOS evidence also includes the final shared-menu compact browser smoke.
+Android and desktop Windows/Linux: not run; no suitable emulator or machines available.
+
+Focused tests use existing suites and CI jobs. No full local test suite was run.
+Additional raw logs in this directory record the targeted unit/protocol/client
+checks, final build, formatting, lint, typecheck checks. The local checkout prefix
+in text logs is replaced with <checkout>; the remaining output is unchanged.
+
+The final durable storage/lifecycle describe passed 14 tests, including a provider
+whose interrupt reports normal completion. Stop still retains the queue.

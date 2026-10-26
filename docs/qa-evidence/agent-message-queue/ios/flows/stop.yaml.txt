@@ -1,0 +1,9 @@
+appId: sh.paseo.debug
+---
+- tapOn: "Stop agent"
+- extendedWaitUntil:
+    notVisible: "Stop agent"
+    timeout: 15000
+- assertVisible: "Edit queued message"
+- assertVisible: "Native stop-held follow-up"
+- takeScreenshot: native-stop-holds-queue

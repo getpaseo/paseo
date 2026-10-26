@@ -1,0 +1,9 @@
+Running on Paseo Queue QA 7890 - iOS 26.2 - <simulator-id>
+ > Flow after-close-queue
+Tap on "Message agent.*"... COMPLETED
+Input text Native after app termination... COMPLETED
+Tap on id: composer-send-options... COMPLETED
+Tap on id: composer-send-options-queue... COMPLETED
+Assert that "Edit queued message" is visible... COMPLETED
+Assert that "Native after app termination" is visible... COMPLETED
+Take screenshot native-queued-before-exit... COMPLETED

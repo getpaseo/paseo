@@ -1,0 +1,9 @@
+
+ RUN  v4.1.7 <checkout>/packages/app
+
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  11:50:10
+   Duration  518ms (transform 304ms, setup 31ms, import 335ms, tests 7ms, environment 0ms)
+

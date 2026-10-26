@@ -1,0 +1,384 @@
+
+> @getpaseo/app@0.13.0 test:e2e
+> playwright test --project=browser --config .playwright-queue.config.ts e2e/browser/agent-message-submission.spec.ts --grep queue admission failure|queueing on an older host
+
+(node:83748) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[metro] Skipping web setup: EXPO_NO_WEB_SETUP is enabled.
+[metro] Using src/app as the root directory for Expo Router.
+[metro] Waiting on http://localhost:50171
+[metro] Logs for your project will appear below.
+[metro] Web Bundled 2120ms packages/app/index.ts (5698 modules)
+[e2e] Metro warmed on port 50171
+
+Running 2 tests using 1 worker
+
+(node:83964) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:83964) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(node:83964) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[e2e] Worker 0 daemon started on port 50214, home: /var/folders/s7/wf8rntjj5zb76qh7djpm22280000gn/T/paseo-e2e-worker-0-iYyFji
+[metro] Web Bundled 91ms packages/app/index.ts (1 module)
+[metro] Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[metro] Web  LOG  Running application "main" with appParams:
+[metro]  {"hydrate": undefined, "rootTag": "#root"} 
+[metro] Development-level warnings: ON.
+[metro] Performance optimizations: OFF.
+[metro] Web  WARN  Require cycle: src/stores/workspace-layout-store.ts -> src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/client-runtime.ts -> src/runtime/host-runtime.ts -> src/desktop/browser/automation/handler.ts -> src/stores/workspace-layout-store.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/runtime/host-runtime.ts -> src/runtime/directory-sync/index.ts -> src/runtime/directory-sync/agent-replica.ts -> src/hooks/use-archive-agent.ts -> src/runtime/host-runtime.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/client-runtime.ts -> src/plugins/actions.ts -> src/plugins/workspace-panels/locations.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/stores/navigation-active-workspace-store/index.ts -> src/workspace-tabs/navigation.ts -> src/stores/workspace-layout-store.ts -> src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/client-runtime.ts -> src/plugins/navigation.ts -> src/stores/navigation-active-workspace-store/index.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/stores/workspace-layout-store.ts -> src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/client-runtime.ts -> src/plugins/navigation.ts -> src/stores/workspace-layout-store.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/plugins/registry.ts -> src/plugins/evaluate.ts -> src/plugins/themes/index.ts -> src/plugins/registry.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/components/sidebar-workspace-list.tsx -> src/components/sidebar/sidebar-status-list.tsx -> src/components/sidebar/sidebar-workspace-row-content.tsx -> src/components/workspace-hover-card.tsx -> src/components/sidebar-workspace-list.tsx
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/panels/register-panels.ts -> src/panels/agent-panel.tsx -> src/panels/agent-tracks.tsx -> src/subagents/track.tsx -> src/screens/workspace/workspace-tab-presentation.tsx -> src/panels/register-panels.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/panels/register-panels.ts -> src/panels/new-tab-panel.tsx -> src/workspace-tabs/launcher/index.tsx -> src/panels/register-panels.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+[metro] Web  WARN  Animated: `useNativeDriver` is not supported because the native animated module is missing. Falling back to JS-based animation. To resolve this, add `RCTAnimation` module to this app, or remove `useNativeDriver`. Make sure to run `bundle exec pod install` first. Read more about autolinking: https://github.com/react-native-community/cli/blob/master/docs/autolinking.md
+[metro] Web  ERROR  
+[metro] Code: sidebar-menu-toggle.tsx
+[metro] [0m [90m 84 |[39m       accessibilityState[33m=[39m{accessibilityState}
+[metro]  [90m 85 |[39m     [33m>[39m
+[metro] [31m[1m>[22m[39m[90m 86 |[39m       {isMobile [33m?[39m (
+[metro]  [90m    |[39m        [31m[1m^[22m[39m
+[metro]  [90m 87 |[39m         [33m<[39m[33mMobileMenuIcon[39m extraMuted[33m=[39m{extraMutedIdleIcon} [33m/[39m[33m>[39m
+[metro]  [90m 88 |[39m       ) [33m:[39m (
+[metro]  [90m 89 |[39m         [33m<[39m[33mThemedPanelLeft[39m[0m
+[metro] Call Stack
+[metro]   SidebarMenuToggleButton (packages/app/src/components/headers/sidebar-menu-toggle.tsx:86:8)
+[metro]   SidebarMenuToggle (packages/app/src/components/headers/sidebar-menu-toggle.tsx:121:10)
+[metro]   MenuHeader (packages/app/src/components/headers/menu-header.tsx:24:11)
+[metro]   WorkspaceScreenGateFrame (packages/app/src/screens/workspace/workspace-screen.tsx:756:7)
+[metro]   renderWorkspaceScreenGateShell (packages/app/src/screens/workspace/workspace-screen.tsx:816:13)
+[metro]   WorkspaceScreenContent (packages/app/src/screens/workspace/workspace-screen.tsx:3165:32)
+[metro]   WorkspaceScreen (packages/app/src/screens/workspace/workspace-screen.tsx:430:5)
+[metro]   WorkspaceDeckEntry (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:256:7)
+[metro]   renderedEntries.map$argument_0 (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:211:13)
+[metro]   WorkspaceDeck (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:209:25)
+[metro]   HostWorkspaceRouteContent (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:141:10)
+[metro]   HostWorkspaceIndexRoute (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:95:7)
+[metro]   ThemedStackBase (packages/app/src/navigation/themed-stack.tsx:64:5)
+[metro]   KnownHostRoute (packages/app/src/app/h/[serverId]/_layout.tsx:39:5)
+[metro]   HostRouteLayout (packages/app/src/app/h/[serverId]/_layout.tsx:18:10)
+[metro]   ThemedStackBase (packages/app/src/navigation/themed-stack.tsx:64:5)
+[metro]   RootStack (packages/app/src/app/_layout.tsx:793:5)
+[metro]   AppShell (packages/app/src/app/_layout.tsx:839:11)
+[metro]   RootAppTree (packages/app/src/app/_layout.tsx:893:15)
+[metro]   RootLayout (packages/app/src/app/_layout.tsx:913:10)
+[metro]   RootRouter (packages/app/src/root-app.tsx:35:15)
+[metro]   RootApp (packages/app/src/root-app.tsx:19:7)
+[metro] Web Bundled 99ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro] Web  ERROR  
+[metro] Code: context-window-meter.tsx
+[metro] [0m [90m 109 |[39m   [36mconst[39m circumference [33m=[39m [35m2[39m [33m*[39m [33mMath[39m[33m.[39m[33mPI[39m [33m*[39m radius[33m;[39m
+[metro]  [90m 110 |[39m   [36mreturn[39m (
+[metro] [31m[1m>[22m[39m[90m 111 |[39m     [33m<[39m[33mSvg[39m
+[metro]  [90m     |[39m     [31m[1m^[22m[39m
+[metro]  [90m 112 |[39m       width[33m=[39m{size}
+[metro]  [90m 113 |[39m       height[33m=[39m{size}
+[metro]  [90m 114 |[39m       viewBox[33m=[39m{[32m`0 0 ${size} ${size}`[39m}[0m
+[metro] Call Stack
+[metro]   ContextWindowRing (packages/app/src/components/context-window-meter.tsx:111:5)
+[metro]   ContextWindowMeter (packages/app/src/components/context-window-meter.tsx:186:5)
+[metro]   useMemo$argument_0 (packages/app/src/composer/index.tsx:2167:11)
+[metro]   ComposerContentImpl (packages/app/src/composer/index.tsx:2163:37)
+[metro]   Composer (packages/app/src/composer/index.tsx:1304:9)
+[metro]   ActiveAgentComposer (packages/app/src/panels/agent-panel.tsx:1578:7)
+[metro]   AgentComposerSection (packages/app/src/panels/agent-panel.tsx:1462:5)
+[metro]   ChatAgentReadyContent (packages/app/src/panels/agent-panel.tsx:1166:7)
+[metro]   ChatAgentContent (packages/app/src/panels/agent-panel.tsx:1012:5)
+[metro]   AgentPanelBody (packages/app/src/panels/agent-panel.tsx:654:5)
+[metro]   AgentPanelContent (packages/app/src/panels/agent-panel.tsx:499:5)
+[metro]   AgentPanel (packages/app/src/panels/agent-panel.tsx:312:7)
+[metro]   AgentConversationPanel (packages/app/src/panels/agent-panel.tsx:367:12)
+[metro]   WorkspacePaneContent (packages/app/src/screens/workspace/workspace-pane-content.tsx:164:13)
+[metro]   MountedTab (packages/app/src/screens/workspace/workspace-panel-host.tsx:55:9)
+[metro]   mountedIds.map$argument_0 (packages/app/src/screens/workspace/workspace-panel-host.tsx:126:7)
+[metro]   WorkspacePanelHost (packages/app/src/screens/workspace/workspace-panel-host.tsx:121:20)
+[metro]   SplitPaneView (packages/app/src/components/split-container.tsx:750:11)
+[metro]   SplitNodeView (packages/app/src/components/split-container.tsx:462:11)
+[metro]   node.group.children.map$argument_0 (packages/app/src/components/split-container.tsx:513:13)
+[metro]   SplitNodeView (packages/app/src/components/split-container.tsx:506:28)
+[metro]   SplitContainer (packages/app/src/components/split-container.tsx:241:14)
+[metro]   useMemo$argument_0 (packages/app/src/screens/workspace/workspace-screen.tsx:3445:7)
+[metro]   WorkspaceScreenContent (packages/app/src/screens/workspace/workspace-screen.tsx:3440:38)
+[metro]   WorkspaceScreen (packages/app/src/screens/workspace/workspace-screen.tsx:430:5)
+[metro]   WorkspaceDeckEntry (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:256:7)
+[metro]   renderedEntries.map$argument_0 (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:211:13)
+[metro]   WorkspaceDeck (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:209:25)
+[metro]   HostWorkspaceRouteContent (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:141:10)
+[metro]   HostWorkspaceIndexRoute (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:95:7)
+[metro]   ThemedStackBase (packages/app/src/navigation/themed-stack.tsx:64:5)
+[metro]   KnownHostRoute (packages/app/src/app/h/[serverId]/_layout.tsx:39:5)
+[metro]   HostRouteLayout (packages/app/src/app/h/[serverId]/_layout.tsx:18:10)
+[metro]   ThemedStackBase (packages/app/src/navigation/themed-stack.tsx:64:5)
+[metro]   RootStack (packages/app/src/app/_layout.tsx:793:5)
+[metro]   AppShell (packages/app/src/app/_layout.tsx:839:11)
+[metro]   RootAppTree (packages/app/src/app/_layout.tsx:893:15)
+[metro]   RootLayout (packages/app/src/app/_layout.tsx:913:10)
+[metro]   RootRouter (packages/app/src/root-app.tsx:35:15)
+[metro]   RootApp (packages/app/src/root-app.tsx:19:7)
+[metro] Web  ERROR  
+[metro] Code: context-window-meter.tsx
+[metro] [0m [90m 109 |[39m   [36mconst[39m circumference [33m=[39m [35m2[39m [33m*[39m [33mMath[39m[33m.[39m[33mPI[39m [33m*[39m radius[33m;[39m
+[metro]  [90m 110 |[39m   [36mreturn[39m (
+[metro] [31m[1m>[22m[39m[90m 111 |[39m     [33m<[39m[33mSvg[39m
+[metro]  [90m     |[39m     [31m[1m^[22m[39m
+[metro]  [90m 112 |[39m       width[33m=[39m{size}
+[metro]  [90m 113 |[39m       height[33m=[39m{size}
+[metro]  [90m 114 |[39m       viewBox[33m=[39m{[32m`0 0 ${size} ${size}`[39m}[0m
+[metro] Call Stack
+[metro]   ContextWindowRing (packages/app/src/components/context-window-meter.tsx:111:5)
+[metro]   ContextWindowMeter (packages/app/src/components/context-window-meter.tsx:186:5)
+[metro]   useMemo$argument_0 (packages/app/src/composer/index.tsx:2167:11)
+[metro]   ComposerContentImpl (packages/app/src/composer/index.tsx:2163:37)
+[metro]   Composer (packages/app/src/composer/index.tsx:1304:9)
+[metro]   ActiveAgentComposer (packages/app/src/panels/agent-panel.tsx:1578:7)
+[metro]   AgentComposerSection (packages/app/src/panels/agent-panel.tsx:1462:5)
+[metro]   ChatAgentReadyContent (packages/app/src/panels/agent-panel.tsx:1166:7)
+[metro]   ChatAgentContent (packages/app/src/panels/agent-panel.tsx:1012:5)
+[metro]   AgentPanelBody (packages/app/src/panels/agent-panel.tsx:654:5)
+[metro]   AgentPanelContent (packages/app/src/panels/agent-panel.tsx:499:5)
+[metro]   AgentPanel (packages/app/src/panels/agent-panel.tsx:312:7)
+[metro]   AgentConversationPanel (packages/app/src/panels/agent-panel.tsx:367:12)
+[metro]   WorkspacePaneContent (packages/app/src/screens/workspace/workspace-pane-content.tsx:164:13)
+[metro]   MountedTab (packages/app/src/screens/workspace/workspace-panel-host.tsx:55:9)
+[metro]   mountedIds.map$argument_0 (packages/app/src/screens/workspace/workspace-panel-host.tsx:126:7)
+[metro]   WorkspacePanelHost (packages/app/src/screens/workspace/workspace-panel-host.tsx:121:20)
+[metro]   SplitPaneView (packages/app/src/components/split-container.tsx:750:11)
+[metro]   SplitNodeView (packages/app/src/components/split-container.tsx:462:11)
+[metro]   node.group.children.map$argument_0 (packages/app/src/components/split-container.tsx:513:13)
+[metro]   SplitNodeView (packages/app/src/components/split-container.tsx:506:28)
+[metro]   SplitContainer (packages/app/src/components/split-container.tsx:241:14)
+[metro]   useMemo$argument_0 (packages/app/src/screens/workspace/workspace-screen.tsx:3445:7)
+[metro]   WorkspaceScreenContent (packages/app/src/screens/workspace/workspace-screen.tsx:3440:38)
+[metro]   WorkspaceScreen (packages/app/src/screens/workspace/workspace-screen.tsx:430:5)
+[metro]   WorkspaceDeckEntry (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:256:7)
+[metro]   renderedEntries.map$argument_0 (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:211:13)
+[metro]   WorkspaceDeck (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:209:25)
+[metro]   HostWorkspaceRouteContent (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:141:10)
+[metro]   HostWorkspaceIndexRoute (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:95:7)
+[metro]   ThemedStackBase (packages/app/src/navigation/themed-stack.tsx:64:5)
+[metro]   KnownHostRoute (packages/app/src/app/h/[serverId]/_layout.tsx:39:5)
+[metro]   HostRouteLayout (packages/app/src/app/h/[serverId]/_layout.tsx:18:10)
+[metro]   ThemedStackBase (packages/app/src/navigation/themed-stack.tsx:64:5)
+[metro]   RootStack (packages/app/src/app/_layout.tsx:793:5)
+[metro]   AppShell (packages/app/src/app/_layout.tsx:839:11)
+[metro]   RootAppTree (packages/app/src/app/_layout.tsx:893:15)
+[metro]   RootLayout (packages/app/src/app/_layout.tsx:913:10)
+[metro]   RootRouter (packages/app/src/root-app.tsx:35:15)
+[metro]   RootApp (packages/app/src/root-app.tsx:19:7)
+[metro] Web  ERROR  [AgentInput] Failed to send message: [DaemonConnectionError: Dropped by reconnect test.] 
+[metro] Code: daemon-client.js
+[metro] [0m [90m 5200 |[39m             }
+[metro]  [90m 5201 |[39m             waiter[33m.[39mreject(connectionLost [33m&&[39m waiter[33m.[39msubmitted [33m&&[39m error [36minstanceof[39m [33mDaemonConnectionError[39m
+[metro] [31m[1m>[22m[39m[90m 5202 |[39m                 [33m?[39m [36mnew[39m [33mDaemonConnectionError[39m(error[33m.[39mmessage[33m,[39m error[33m.[39mcode[33m,[39m {
+[metro]  [90m      |[39m                   [31m[1m^[22m[39m
+[metro]  [90m 5203 |[39m                     serverId[33m:[39m error[33m.[39mserverId[33m,[39m
+[metro]  [90m 5204 |[39m                     outcome[33m:[39m [32m"unknown"[39m[33m,[39m
+[metro]  [90m 5205 |[39m                     cause[33m:[39m error[33m.[39mcause [36minstanceof[39m [33mError[39m [33m?[39m error[33m.[39mcause [33m:[39m undefined[33m,[39m[0m
+[metro] Call Stack
+[metro]   DaemonClient#clearWaiters (packages/client/dist/daemon-client.js:5202:19)
+[metro]   DaemonClient#scheduleReconnect (packages/client/dist/daemon-client.js:4997:14)
+[metro]   transport.onClose$argument_0 (packages/client/dist/daemon-client.js:619:26)
+[metro]   WebSocket._apiClosePage (<anonymous>:260:12)
+[metro]   globalThis.__pwWebSocketDispatch (<anonymous>:89:10)
+[metro]   eval (packages/app:290:30)
+[metro]   UtilityScript.evaluate (<anonymous>:290:30)
+[metro]   UtilityScript.<anonymous> (<anonymous>:1:44)
+  ✓  1 [browser] › e2e/browser/agent-message-submission.spec.ts:1407:3 › Agent message submission › queue admission failure restores the draft and attachments with a retryable error (8.6s)
+[metro] Web Bundled 116ms packages/app/index.ts (1 module)
+[metro] Web Bundled 3ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro] Web  INFO  %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[metro] Web  LOG  Running application "main" with appParams:
+[metro]  {"hydrate": undefined, "rootTag": "#root"} 
+[metro] Development-level warnings: ON.
+[metro] Performance optimizations: OFF.
+[metro] Web  WARN  Require cycle: src/stores/workspace-layout-store.ts -> src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/client-runtime.ts -> src/runtime/host-runtime.ts -> src/desktop/browser/automation/handler.ts -> src/stores/workspace-layout-store.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/runtime/host-runtime.ts -> src/runtime/directory-sync/index.ts -> src/runtime/directory-sync/agent-replica.ts -> src/hooks/use-archive-agent.ts -> src/runtime/host-runtime.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/client-runtime.ts -> src/plugins/actions.ts -> src/plugins/workspace-panels/locations.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/stores/navigation-active-workspace-store/index.ts -> src/workspace-tabs/navigation.ts -> src/stores/workspace-layout-store.ts -> src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/client-runtime.ts -> src/plugins/navigation.ts -> src/stores/navigation-active-workspace-store/index.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/stores/workspace-layout-store.ts -> src/plugins/workspace-panels/locations.ts -> src/plugins/registry.ts -> src/plugins/client-runtime.ts -> src/plugins/navigation.ts -> src/stores/workspace-layout-store.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/plugins/registry.ts -> src/plugins/evaluate.ts -> src/plugins/themes/index.ts -> src/plugins/registry.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/components/sidebar-workspace-list.tsx -> src/components/sidebar/sidebar-status-list.tsx -> src/components/sidebar/sidebar-workspace-row-content.tsx -> src/components/workspace-hover-card.tsx -> src/components/sidebar-workspace-list.tsx
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/panels/register-panels.ts -> src/panels/agent-panel.tsx -> src/panels/agent-tracks.tsx -> src/subagents/track.tsx -> src/screens/workspace/workspace-tab-presentation.tsx -> src/panels/register-panels.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  Require cycle: src/panels/register-panels.ts -> src/panels/new-tab-panel.tsx -> src/workspace-tabs/launcher/index.tsx -> src/panels/register-panels.ts
+[metro] Require cycles are allowed, but can result in uninitialized values. Consider refactoring to remove the need for a cycle.
+[metro] Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
+[metro] Web  WARN  Animated: `useNativeDriver` is not supported because the native animated module is missing. Falling back to JS-based animation. To resolve this, add `RCTAnimation` module to this app, or remove `useNativeDriver`. Make sure to run `bundle exec pod install` first. Read more about autolinking: https://github.com/react-native-community/cli/blob/master/docs/autolinking.md
+[metro] Web  ERROR  
+[metro] Code: sidebar-menu-toggle.tsx
+[metro] [0m [90m 84 |[39m       accessibilityState[33m=[39m{accessibilityState}
+[metro]  [90m 85 |[39m     [33m>[39m
+[metro] [31m[1m>[22m[39m[90m 86 |[39m       {isMobile [33m?[39m (
+[metro]  [90m    |[39m        [31m[1m^[22m[39m
+[metro]  [90m 87 |[39m         [33m<[39m[33mMobileMenuIcon[39m extraMuted[33m=[39m{extraMutedIdleIcon} [33m/[39m[33m>[39m
+[metro]  [90m 88 |[39m       ) [33m:[39m (
+[metro]  [90m 89 |[39m         [33m<[39m[33mThemedPanelLeft[39m[0m
+[metro] Call Stack
+[metro]   SidebarMenuToggleButton (packages/app/src/components/headers/sidebar-menu-toggle.tsx:86:8)
+[metro]   SidebarMenuToggle (packages/app/src/components/headers/sidebar-menu-toggle.tsx:121:10)
+[metro]   MenuHeader (packages/app/src/components/headers/menu-header.tsx:24:11)
+[metro]   WorkspaceScreenGateFrame (packages/app/src/screens/workspace/workspace-screen.tsx:756:7)
+[metro]   renderWorkspaceScreenGateShell (packages/app/src/screens/workspace/workspace-screen.tsx:816:13)
+[metro]   WorkspaceScreenContent (packages/app/src/screens/workspace/workspace-screen.tsx:3165:32)
+[metro]   WorkspaceScreen (packages/app/src/screens/workspace/workspace-screen.tsx:430:5)
+[metro]   WorkspaceDeckEntry (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:256:7)
+[metro]   renderedEntries.map$argument_0 (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:211:13)
+[metro]   WorkspaceDeck (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:209:25)
+[metro]   HostWorkspaceRouteContent (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:141:10)
+[metro]   HostWorkspaceIndexRoute (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:95:7)
+[metro]   ThemedStackBase (packages/app/src/navigation/themed-stack.tsx:64:5)
+[metro]   KnownHostRoute (packages/app/src/app/h/[serverId]/_layout.tsx:39:5)
+[metro]   HostRouteLayout (packages/app/src/app/h/[serverId]/_layout.tsx:18:10)
+[metro]   ThemedStackBase (packages/app/src/navigation/themed-stack.tsx:64:5)
+[metro]   RootStack (packages/app/src/app/_layout.tsx:793:5)
+[metro]   AppShell (packages/app/src/app/_layout.tsx:839:11)
+[metro]   RootAppTree (packages/app/src/app/_layout.tsx:893:15)
+[metro]   RootLayout (packages/app/src/app/_layout.tsx:913:10)
+[metro]   RootRouter (packages/app/src/root-app.tsx:35:15)
+[metro]   RootApp (packages/app/src/root-app.tsx:19:7)
+[metro] Web  ERROR  
+[metro] Code: context-window-meter.tsx
+[metro] [0m [90m 109 |[39m   [36mconst[39m circumference [33m=[39m [35m2[39m [33m*[39m [33mMath[39m[33m.[39m[33mPI[39m [33m*[39m radius[33m;[39m
+[metro]  [90m 110 |[39m   [36mreturn[39m (
+[metro] [31m[1m>[22m[39m[90m 111 |[39m     [33m<[39m[33mSvg[39m
+[metro]  [90m     |[39m     [31m[1m^[22m[39m
+[metro]  [90m 112 |[39m       width[33m=[39m{size}
+[metro]  [90m 113 |[39m       height[33m=[39m{size}
+[metro]  [90m 114 |[39m       viewBox[33m=[39m{[32m`0 0 ${size} ${size}`[39m}[0m
+[metro] Call Stack
+[metro]   ContextWindowRing (packages/app/src/components/context-window-meter.tsx:111:5)
+[metro]   ContextWindowMeter (packages/app/src/components/context-window-meter.tsx:186:5)
+[metro]   useMemo$argument_0 (packages/app/src/composer/index.tsx:2167:11)
+[metro]   ComposerContentImpl (packages/app/src/composer/index.tsx:2163:37)
+[metro]   Composer (packages/app/src/composer/index.tsx:1304:9)
+[metro]   ActiveAgentComposer (packages/app/src/panels/agent-panel.tsx:1578:7)
+[metro]   AgentComposerSection (packages/app/src/panels/agent-panel.tsx:1462:5)
+[metro]   ChatAgentReadyContent (packages/app/src/panels/agent-panel.tsx:1166:7)
+[metro]   ChatAgentContent (packages/app/src/panels/agent-panel.tsx:1012:5)
+[metro]   AgentPanelBody (packages/app/src/panels/agent-panel.tsx:654:5)
+[metro]   AgentPanelContent (packages/app/src/panels/agent-panel.tsx:499:5)
+[metro]   AgentPanel (packages/app/src/panels/agent-panel.tsx:312:7)
+[metro]   AgentConversationPanel (packages/app/src/panels/agent-panel.tsx:367:12)
+[metro]   WorkspacePaneContent (packages/app/src/screens/workspace/workspace-pane-content.tsx:164:13)
+[metro]   MountedTab (packages/app/src/screens/workspace/workspace-panel-host.tsx:55:9)
+[metro]   mountedIds.map$argument_0 (packages/app/src/screens/workspace/workspace-panel-host.tsx:126:7)
+[metro]   WorkspacePanelHost (packages/app/src/screens/workspace/workspace-panel-host.tsx:121:20)
+[metro]   SplitPaneView (packages/app/src/components/split-container.tsx:750:11)
+[metro]   SplitNodeView (packages/app/src/components/split-container.tsx:462:11)
+[metro]   node.group.children.map$argument_0 (packages/app/src/components/split-container.tsx:513:13)
+[metro]   SplitNodeView (packages/app/src/components/split-container.tsx:506:28)
+[metro]   SplitContainer (packages/app/src/components/split-container.tsx:241:14)
+[metro]   useMemo$argument_0 (packages/app/src/screens/workspace/workspace-screen.tsx:3445:7)
+[metro]   WorkspaceScreenContent (packages/app/src/screens/workspace/workspace-screen.tsx:3440:38)
+[metro]   WorkspaceScreen (packages/app/src/screens/workspace/workspace-screen.tsx:430:5)
+[metro]   WorkspaceDeckEntry (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:256:7)
+[metro]   renderedEntries.map$argument_0 (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:211:13)
+[metro]   WorkspaceDeck (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:209:25)
+[metro]   HostWorkspaceRouteContent (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:141:10)
+[metro]   HostWorkspaceIndexRoute (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:95:7)
+[metro]   ThemedStackBase (packages/app/src/navigation/themed-stack.tsx:64:5)
+[metro]   KnownHostRoute (packages/app/src/app/h/[serverId]/_layout.tsx:39:5)
+[metro]   HostRouteLayout (packages/app/src/app/h/[serverId]/_layout.tsx:18:10)
+[metro]   ThemedStackBase (packages/app/src/navigation/themed-stack.tsx:64:5)
+[metro]   RootStack (packages/app/src/app/_layout.tsx:793:5)
+[metro]   AppShell (packages/app/src/app/_layout.tsx:839:11)
+[metro]   RootAppTree (packages/app/src/app/_layout.tsx:893:15)
+[metro]   RootLayout (packages/app/src/app/_layout.tsx:913:10)
+[metro]   RootRouter (packages/app/src/root-app.tsx:35:15)
+[metro]   RootApp (packages/app/src/root-app.tsx:19:7)
+[metro] Web  ERROR  
+[metro] Code: context-window-meter.tsx
+[metro] [0m [90m 109 |[39m   [36mconst[39m circumference [33m=[39m [35m2[39m [33m*[39m [33mMath[39m[33m.[39m[33mPI[39m [33m*[39m radius[33m;[39m
+[metro]  [90m 110 |[39m   [36mreturn[39m (
+[metro] [31m[1m>[22m[39m[90m 111 |[39m     [33m<[39m[33mSvg[39m
+[metro]  [90m     |[39m     [31m[1m^[22m[39m
+[metro]  [90m 112 |[39m       width[33m=[39m{size}
+[metro]  [90m 113 |[39m       height[33m=[39m{size}
+[metro]  [90m 114 |[39m       viewBox[33m=[39m{[32m`0 0 ${size} ${size}`[39m}[0m
+[metro] Call Stack
+[metro]   ContextWindowRing (packages/app/src/components/context-window-meter.tsx:111:5)
+[metro]   ContextWindowMeter (packages/app/src/components/context-window-meter.tsx:186:5)
+[metro]   useMemo$argument_0 (packages/app/src/composer/index.tsx:2167:11)
+[metro]   ComposerContentImpl (packages/app/src/composer/index.tsx:2163:37)
+[metro]   Composer (packages/app/src/composer/index.tsx:1304:9)
+[metro]   ActiveAgentComposer (packages/app/src/panels/agent-panel.tsx:1578:7)
+[metro]   AgentComposerSection (packages/app/src/panels/agent-panel.tsx:1462:5)
+[metro]   ChatAgentReadyContent (packages/app/src/panels/agent-panel.tsx:1166:7)
+[metro]   ChatAgentContent (packages/app/src/panels/agent-panel.tsx:1012:5)
+[metro]   AgentPanelBody (packages/app/src/panels/agent-panel.tsx:654:5)
+[metro]   AgentPanelContent (packages/app/src/panels/agent-panel.tsx:499:5)
+[metro]   AgentPanel (packages/app/src/panels/agent-panel.tsx:312:7)
+[metro]   AgentConversationPanel (packages/app/src/panels/agent-panel.tsx:367:12)
+[metro]   WorkspacePaneContent (packages/app/src/screens/workspace/workspace-pane-content.tsx:164:13)
+[metro]   MountedTab (packages/app/src/screens/workspace/workspace-panel-host.tsx:55:9)
+[metro]   mountedIds.map$argument_0 (packages/app/src/screens/workspace/workspace-panel-host.tsx:126:7)
+[metro]   WorkspacePanelHost (packages/app/src/screens/workspace/workspace-panel-host.tsx:121:20)
+[metro]   SplitPaneView (packages/app/src/components/split-container.tsx:750:11)
+[metro]   SplitNodeView (packages/app/src/components/split-container.tsx:462:11)
+[metro]   node.group.children.map$argument_0 (packages/app/src/components/split-container.tsx:513:13)
+[metro]   SplitNodeView (packages/app/src/components/split-container.tsx:506:28)
+[metro]   SplitContainer (packages/app/src/components/split-container.tsx:241:14)
+[metro]   useMemo$argument_0 (packages/app/src/screens/workspace/workspace-screen.tsx:3445:7)
+[metro]   WorkspaceScreenContent (packages/app/src/screens/workspace/workspace-screen.tsx:3440:38)
+[metro]   WorkspaceScreen (packages/app/src/screens/workspace/workspace-screen.tsx:430:5)
+[metro]   WorkspaceDeckEntry (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:256:7)
+[metro]   renderedEntries.map$argument_0 (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:211:13)
+[metro]   WorkspaceDeck (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:209:25)
+[metro]   HostWorkspaceRouteContent (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:141:10)
+[metro]   HostWorkspaceIndexRoute (packages/app/src/app/h/[serverId]/workspace/[workspaceId]/index.tsx:95:7)
+[metro]   ThemedStackBase (packages/app/src/navigation/themed-stack.tsx:64:5)
+[metro]   KnownHostRoute (packages/app/src/app/h/[serverId]/_layout.tsx:39:5)
+[metro]   HostRouteLayout (packages/app/src/app/h/[serverId]/_layout.tsx:18:10)
+[metro]   ThemedStackBase (packages/app/src/navigation/themed-stack.tsx:64:5)
+[metro]   RootStack (packages/app/src/app/_layout.tsx:793:5)
+[metro]   AppShell (packages/app/src/app/_layout.tsx:839:11)
+[metro]   RootAppTree (packages/app/src/app/_layout.tsx:893:15)
+[metro]   RootLayout (packages/app/src/app/_layout.tsx:913:10)
+[metro]   RootRouter (packages/app/src/root-app.tsx:35:15)
+[metro]   RootApp (packages/app/src/root-app.tsx:19:7)
+[metro] Web  ERROR  [AgentInput] Failed to send message: [Error: Update the host to queue messages.] 
+[metro] Code: index.tsx
+[metro] [0m [90m 1700 |[39m
+[metro]  [90m 1701 |[39m   [36mconst[39m requireQueueClient [33m=[39m useCallback(() [33m=>[39m {
+[metro] [31m[1m>[22m[39m[90m 1702 |[39m     [36mif[39m ([33m![39msupportsAgentMessageQueue) [36mthrow[39m [36mnew[39m [33mError[39m(t([32m"composer.errors.queueUnavailable"[39m))[33m;[39m
+[metro]  [90m      |[39m                                           [31m[1m^[22m[39m
+[metro]  [90m 1703 |[39m     [36mif[39m ([33m![39mclient) [36mthrow[39m [36mnew[39m [33mError[39m(t([32m"workspace.terminal.hostDisconnected"[39m))[33m;[39m
+[metro]  [90m 1704 |[39m     [36mreturn[39m client[33m;[39m
+[metro]  [90m 1705 |[39m   }[33m,[39m [client[33m,[39m supportsAgentMessageQueue[33m,[39m t])[33m;[39m[0m
+[metro] Call Stack
+[metro]   requireQueueClient (packages/app/src/composer/index.tsx:1702:43)
+[metro]   queueMessage (packages/app/src/composer/index.tsx:1716:17)
+[metro]   submitAgentInput$argument_0.queueMessage (packages/app/src/composer/index.tsx:1746:11)
+[metro]   submitAgentInput (packages/app/src/composer/submit.ts:56:19)
+[metro]   sendMessageWithContent (packages/app/src/composer/index.tsx:1734:44)
+[metro]   handleQueue (packages/app/src/composer/index.tsx:2071:12)
+[metro]   queueMessageImpl (packages/app/src/composer/input/input.tsx:988:7)
+[metro]   handleQueueMessage (packages/app/src/composer/input/input.tsx:1671:9)
+[metro]   runDefaultSendAction (packages/app/src/composer/input/state.ts:121:9)
+[metro]   handleDefaultSendAction (packages/app/src/composer/input/input.tsx:1683:27)
+[metro]   handlePress (packages/app/src/components/ui/tooltip.tsx:369:32)
+  ✓  2 [browser] › e2e/browser/agent-message-submission.spec.ts:1459:3 › Agent message submission › queueing on an older host explains the required update and preserves immediate sends (7.0s)
+[e2e] Worker 0 daemon stopped
+[e2e] Metro stopped
+
+  2 passed (31.2s)

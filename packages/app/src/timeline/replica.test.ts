@@ -50,7 +50,6 @@ function createOwner(storage: TimelineReplicaStorage): ViewedTimelineOwner {
     serverId: SERVER_ID,
     replica,
     replaceDemandedAgentIds: () => undefined,
-    drainQueuedAgentMessage: () => undefined,
     ports: {
       observe: () => ({ ready: Promise.resolve(), release: async () => undefined }),
       readCursor: () => undefined,
@@ -590,7 +589,6 @@ describe("create handoff lifetime", () => {
       serverId: SERVER_ID,
       replica,
       replaceDemandedAgentIds: () => undefined,
-      drainQueuedAgentMessage: () => undefined,
       ports: {
         observe: () => ({ ready: Promise.resolve(), release: async () => undefined }),
         readCursor: () => undefined,

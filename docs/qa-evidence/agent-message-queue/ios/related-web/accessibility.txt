@@ -1,0 +1,55 @@
+- button "Open menu"
+- text: Native Queue QA Native Queue QA ·
+- img
+- text: QA Host
+- button "Switch tabs (1 open)": "1"
+- button "Workspace actions":
+  - img
+- button "Open Explorer sidebar":
+  - img
+- text: "Native baseline task: keep working until explicit release. 12:18 PM"
+- button "Copy message":
+  - img
+- paragraph: Native QA fixture is running. It waits for explicit release.
+- text: Native steer follow-up 1:22 PM
+- button "Copy message":
+  - img
+- paragraph: "Steering received: Native steer follow-up"
+- button "Copy turn":
+  - img
+- button "Fork chat from here":
+  - img
+- button "Worked for 1h 4m, ended 1:22 PM": Worked for 1h 4m
+- text: Native stop-held follow-up 1:28 PM
+- button "Copy message":
+  - img
+- paragraph: Native QA fixture is running. It waits for explicit release.
+- button "Fork chat from here":
+  - img
+- text: 35s
+- textbox "Message agent...":
+  - /placeholder: Message, @files, /commands
+  - text: Local draft for compact send-menu accessibility smoke.
+- button "Add attachment":
+  - img
+- button "Select model (gpt-5.4-mini)":
+  - img
+  - text: gpt-5.4-mini
+- 'button "Context window: No context data"':
+  - img
+- button "Start dictation":
+  - img
+- button "Send options" [expanded]:
+  - img
+- button "Send and steer":
+  - img
+- img
+- text: Drop files here
+- status
+- button "Bottom sheet backdrop"
+- slider "Bottom Sheet"
+- slider "Bottom Sheet":
+  - text: Send options
+  - menuitem "Queue message"
+  - menuitem "Send and steer"
+- slider "Bottom sheet handle"

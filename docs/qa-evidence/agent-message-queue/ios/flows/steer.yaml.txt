@@ -1,0 +1,9 @@
+appId: sh.paseo.debug
+---
+- tapOn: "Message agent.*"
+- inputText: "Native steer follow-up"
+- tapOn:
+    id: "composer-send-options"
+- tapOn: "Send and steer"
+- assertVisible: "Edit queued message"
+- takeScreenshot: native-steered

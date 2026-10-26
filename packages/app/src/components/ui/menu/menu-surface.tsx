@@ -396,6 +396,8 @@ function MenuSheetSurface({
     <ThemedBottomSheetModal
       ref={sheetRef}
       contextBridge={contextBridge}
+      // The sheet's default accessible group hides its individual actions from VoiceOver.
+      accessible={false}
       // Content-sized rather than fixed snap points: a pushed page is rarely the same height
       // as the page it replaced, and a fixed sheet would either clip it or leave dead space.
       enableDynamicSizing

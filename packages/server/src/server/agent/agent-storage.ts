@@ -1,5 +1,6 @@
 import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { Logger } from "pino";
 
@@ -9,6 +10,10 @@ import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
 import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./agent-owner.js";
+import { QueuedAgentMessageSchema, type QueuedAgentMessage } from "@getpaseo/protocol/messages";
+
+const QUEUED_MESSAGE_LIMIT = 100;
+const QUEUED_MESSAGE_RECEIPT_LIMIT = 256;
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
   .object({
@@ -75,6 +80,11 @@ const STORED_AGENT_SCHEMA = z.object({
   internal: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
   owner: AgentOwnerSchema.optional(),
+  queuedMessages: z.array(QueuedAgentMessageSchema).optional(),
+  queuedMessageReceipts: z
+    .record(z.string(), z.object({ fingerprint: z.string(), createdAt: z.string() }))
+    .optional(),
+  dispatchingQueuedMessageId: z.string().optional(),
 });
 
 export type SerializableAgentConfig = Pick<
@@ -114,6 +124,15 @@ export class AgentStorage {
 
   async initialize(): Promise<void> {
     await this.load();
+    for (const record of this.cache.values()) {
+      if (record.dispatchingQueuedMessageId) {
+        await this.settleQueuedAgentMessage({
+          agentId: record.id,
+          messageId: record.dispatchingQueuedMessageId,
+          error: "Delivery was interrupted. Check the conversation before sending again.",
+        });
+      }
+    }
   }
 
   async list(): Promise<StoredAgentRecord[]> {
@@ -156,7 +175,14 @@ export class AgentStorage {
   }
 
   private queueRecordWrite(record: StoredAgentRecord): Promise<void> {
-    return this.queueRecordMutation(record.id, () => record);
+    return this.queueRecordMutation(record.id, (existing) => ({
+      ...record,
+      queuedMessages: existing?.queuedMessages ?? record.queuedMessages,
+      queuedMessageReceipts: existing?.queuedMessageReceipts ?? record.queuedMessageReceipts,
+      dispatchingQueuedMessageId: existing
+        ? existing.dispatchingQueuedMessageId
+        : record.dispatchingQueuedMessageId,
+    }));
   }
 
   private queueRecordMutation(
@@ -164,15 +190,17 @@ export class AgentStorage {
     mutate: (existing: StoredAgentRecord | null) => StoredAgentRecord,
   ): Promise<void> {
     const prev = this.pendingWrites.get(agentId) ?? Promise.resolve();
-    const next = prev.then(async () => {
-      if (this.deleting.has(agentId)) {
-        return undefined;
-      }
+    const next = prev
+      .catch(() => undefined)
+      .then(async () => {
+        if (this.deleting.has(agentId)) {
+          return undefined;
+        }
 
-      const record = mutate(this.cache.get(agentId) ?? null);
-      await this.writeRecord(record);
-      return undefined;
-    });
+        const record = mutate(this.cache.get(agentId) ?? null);
+        await this.writeRecord(record);
+        return undefined;
+      });
 
     const tracked = next.finally(() => {
       if (this.pendingWrites.get(agentId) === tracked) {
@@ -259,7 +287,123 @@ export class AgentStorage {
       if (existing && existing.archivedAt !== undefined) {
         record.archivedAt = existing.archivedAt;
       }
+      record.queuedMessages = existing?.queuedMessages;
+      record.queuedMessageReceipts = existing?.queuedMessageReceipts;
+      record.dispatchingQueuedMessageId = existing?.dispatchingQueuedMessageId;
       return record;
+    });
+  }
+
+  async enqueueAgentMessage(
+    agentId: string,
+    message: QueuedAgentMessage,
+  ): Promise<QueuedAgentMessage> {
+    await this.load();
+    let accepted = message;
+    const fingerprint = createHash("sha256")
+      .update(
+        JSON.stringify({
+          text: message.text,
+          images: message.images,
+          attachments: message.attachments,
+          sessionMode: message.sessionMode,
+        }),
+      )
+      .digest("hex");
+    await this.queueRecordMutation(agentId, (record) => {
+      if (!record) throw new Error(`Agent ${agentId} not found`);
+      if (record.archivedAt) throw new Error("Unarchive the agent before queueing a message");
+      const receipt = record.queuedMessageReceipts?.[message.id];
+      if (receipt) {
+        if (receipt.fingerprint !== fingerprint) throw new Error("agent_request_key_conflict");
+        accepted = record.queuedMessages?.find((item) => item.id === message.id) ?? {
+          ...message,
+          createdAt: receipt.createdAt,
+        };
+        return record;
+      }
+      if ((record.queuedMessages?.length ?? 0) >= QUEUED_MESSAGE_LIMIT)
+        throw new Error("Message queue is full");
+      const queuedMessages = [...(record.queuedMessages ?? []), message];
+      const receipts = Object.entries({
+        ...record.queuedMessageReceipts,
+        [message.id]: { fingerprint, createdAt: message.createdAt },
+      });
+      const queuedIds = new Set(queuedMessages.map((item) => item.id));
+      // Retain every pending admission plus the most recent completed admissions.
+      const queuedMessageReceipts = Object.fromEntries(
+        receipts.filter(
+          ([id], index) =>
+            queuedIds.has(id) || index >= receipts.length - QUEUED_MESSAGE_RECEIPT_LIMIT,
+        ),
+      );
+      return { ...record, queuedMessages, queuedMessageReceipts };
+    });
+    return accepted;
+  }
+
+  async removeQueuedAgentMessage(
+    agentId: string,
+    messageId: string,
+  ): Promise<QueuedAgentMessage | null> {
+    await this.load();
+    let removed: QueuedAgentMessage | null = null;
+    await this.queueRecordMutation(agentId, (record) => {
+      if (!record) throw new Error(`Agent ${agentId} not found`);
+      if (record.dispatchingQueuedMessageId === messageId) throw new Error("Message is being sent");
+      removed = record.queuedMessages?.find((message) => message.id === messageId) ?? null;
+      return {
+        ...record,
+        queuedMessages: (record.queuedMessages ?? []).filter((message) => message.id !== messageId),
+      };
+    });
+    return removed;
+  }
+
+  async claimQueuedAgentMessage(
+    agentId: string,
+    messageId: string,
+  ): Promise<QueuedAgentMessage | null> {
+    await this.load();
+    let claimed: QueuedAgentMessage | null = null;
+    await this.queueRecordMutation(agentId, (record) => {
+      if (!record) throw new Error(`Agent ${agentId} not found`);
+      if (record.archivedAt) throw new Error("Unarchive the agent before sending a queued message");
+      if (record.dispatchingQueuedMessageId)
+        throw new Error("A queued message is already being sent");
+      claimed = record.queuedMessages?.find((message) => message.id === messageId) ?? null;
+      return claimed ? { ...record, dispatchingQueuedMessageId: messageId } : record;
+    });
+    return claimed;
+  }
+
+  async settleQueuedAgentMessage(input: {
+    agentId: string;
+    messageId: string;
+    error?: string;
+  }): Promise<void> {
+    await this.load();
+    await this.queueRecordMutation(input.agentId, (record) => {
+      if (!record) throw new Error(`Agent ${input.agentId} not found`);
+      if (record.dispatchingQueuedMessageId !== input.messageId) return record;
+      const queuedMessages = input.error
+        ? (record.queuedMessages ?? []).map((message) =>
+            message.id === input.messageId
+              ? Object.assign({}, message, { error: input.error })
+              : message,
+          )
+        : (record.queuedMessages ?? []).filter((message) => message.id !== input.messageId);
+      return { ...record, queuedMessages, dispatchingQueuedMessageId: undefined };
+    });
+  }
+
+  async releaseQueuedAgentMessage(agentId: string, messageId: string): Promise<void> {
+    await this.load();
+    await this.queueRecordMutation(agentId, (record) => {
+      if (!record) throw new Error(`Agent ${agentId} not found`);
+      return record.dispatchingQueuedMessageId === messageId
+        ? { ...record, dispatchingQueuedMessageId: undefined }
+        : record;
     });
   }
 

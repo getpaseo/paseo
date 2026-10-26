@@ -7747,6 +7747,182 @@ test.each([false, true])(
   },
 );
 
+test("agent queues retain the complete dispatch payload and expose cross-client operations", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "agent-queue",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connected = client.connect();
+  transport.triggerOpen({ features: { agentMessageQueue: true } });
+  await connected;
+  const queuedMessage = {
+    id: "message-1",
+    text: "Run the tests next",
+    images: [{ data: "aW1hZ2U=", mimeType: "image/png" }],
+    attachments: [{ type: "text", mimeType: "text/plain", text: "Test context" }],
+    sessionMode: "default",
+    createdAt: "2026-10-26T00:00:00.000Z",
+  };
+  const enqueue = client.enqueueAgentMessage("agent-1", queuedMessage.text, {
+    messageId: queuedMessage.id,
+    images: queuedMessage.images,
+    attachments: [{ type: "text", mimeType: "text/plain", text: "Test context" }],
+    sessionMode: "default",
+  });
+  const enqueueRequest = parseSentFrame(transport.sent.at(-1));
+  expect(enqueueRequest).toMatchObject({
+    type: "agent.queue.enqueue.request",
+    agentId: "agent-1",
+    messageId: queuedMessage.id,
+    text: queuedMessage.text,
+    images: queuedMessage.images,
+    attachments: queuedMessage.attachments,
+    sessionMode: "default",
+  });
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.queue.enqueue.response",
+      payload: {
+        requestId: enqueueRequest.requestId,
+        agentId: "agent-1",
+        success: true,
+        error: null,
+        queuedMessage,
+      },
+    }),
+  );
+  await expect(enqueue).resolves.toEqual(queuedMessage);
+
+  const list = client.listQueuedAgentMessages("agent-1");
+  const listRequest = parseSentFrame(transport.sent.at(-1));
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.queue.list.response",
+      payload: {
+        requestId: listRequest.requestId,
+        agentId: "agent-1",
+        success: true,
+        error: null,
+        messages: [queuedMessage],
+      },
+    }),
+  );
+  await expect(list).resolves.toEqual([queuedMessage]);
+
+  const selected = client.listQueuedAgentMessages("agent-1", { queuedMessageId: queuedMessage.id });
+  const selectedRequest = parseSentFrame(transport.sent.at(-1));
+  expect(selectedRequest).toMatchObject({
+    type: "agent.queue.list.request",
+    queuedMessageId: queuedMessage.id,
+  });
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.queue.list.response",
+      payload: {
+        requestId: selectedRequest.requestId,
+        agentId: "agent-1",
+        success: true,
+        error: null,
+        messages: [queuedMessage],
+      },
+    }),
+  );
+  await expect(selected).resolves.toEqual([queuedMessage]);
+
+  const sendNow = client.sendQueuedAgentMessageNow("agent-1", queuedMessage.id);
+  const sendRequest = parseSentFrame(transport.sent.at(-1));
+  expect(sendRequest).toMatchObject({
+    type: "agent.queue.send_now.request",
+    queuedMessageId: queuedMessage.id,
+    activeTurnBehavior: "steer",
+  });
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.queue.send_now.response",
+      payload: { requestId: sendRequest.requestId, agentId: "agent-1", success: true, error: null },
+    }),
+  );
+  await sendNow;
+
+  const remove = client.removeQueuedAgentMessage("agent-1", queuedMessage.id);
+  const removeRequest = parseSentFrame(transport.sent.at(-1));
+  expect(removeRequest).toMatchObject({
+    type: "agent.queue.remove.request",
+    queuedMessageId: queuedMessage.id,
+  });
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.queue.remove.response",
+      payload: {
+        requestId: removeRequest.requestId,
+        agentId: "agent-1",
+        success: true,
+        error: null,
+        queuedMessage,
+      },
+    }),
+  );
+  await expect(remove).resolves.toEqual(queuedMessage);
+});
+
+test("agent queue requests fail before sending on hosts without the queue capability", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "agent-queue-old-host",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connected = client.connect();
+  transport.triggerOpen({ features: {} });
+  await connected;
+  await expect(client.enqueueAgentMessage("agent-1", "next")).rejects.toThrow("Update the host");
+  await expect(client.listQueuedAgentMessages("agent-1")).rejects.toThrow("Update the host");
+  await expect(client.removeQueuedAgentMessage("agent-1", "message-1")).rejects.toThrow(
+    "Update the host",
+  );
+  await expect(client.sendQueuedAgentMessageNow("agent-1", "message-1")).rejects.toThrow(
+    "Update the host",
+  );
+  expect(transport.sent).toEqual([]);
+});
+
+test("agent queue dispatch surfaces a rejection and preserves explicit interruption intent", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "agent-queue-failure",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connected = client.connect();
+  transport.triggerOpen({ features: { agentMessageQueue: true } });
+  await connected;
+  const sending = client.sendQueuedAgentMessageNow("agent-1", "message-1", {
+    activeTurnBehavior: "interrupt",
+  });
+  const request = parseSentFrame(transport.sent.at(-1));
+  expect(request.activeTurnBehavior).toBe("interrupt");
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.queue.send_now.response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "agent-1",
+        success: false,
+        error: "Provider rejected the queued message",
+      },
+    }),
+  );
+  await expect(sending).rejects.toThrow("Provider rejected the queued message");
+});
+
 test("measures an outbound message in UTF-8 bytes against the daemon's message limit", async () => {
   const mock = createMockTransport();
   const client = new DaemonClient({

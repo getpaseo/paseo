@@ -1,0 +1,13 @@
+appId: sh.paseo.debug
+---
+- tapOn: "Message agent.*"
+- inputText: "Native after app termination"
+- tapOn:
+    id: "composer-send-options"
+- tapOn:
+    id: "composer-send-options-queue"
+- extendedWaitUntil:
+    visible: "Edit queued message"
+    timeout: 15000
+- assertVisible: "Native after app termination"
+- takeScreenshot: native-queued-before-exit

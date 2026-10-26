@@ -41,6 +41,8 @@ import { validateWSOutboundMessage } from "@getpaseo/protocol/validation/ws-outb
 import type {
   AgentStreamEventPayload,
   AgentSnapshotPayload,
+  QueuedAgentMessage,
+  AgentQueueListRequest,
   ProjectPlacementPayload,
   AgentPermissionResolvedMessage,
   CreateAgentRequestMessage,
@@ -3820,6 +3822,99 @@ export class DaemonClient {
     return this.sendAgentMessage(agentId, text, options);
   }
 
+  async enqueueAgentMessage(
+    agentId: string,
+    text: string,
+    options: SendMessageOptions = {},
+  ): Promise<QueuedAgentMessage> {
+    this.requireAgentMessageQueueSupport();
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.queue.enqueue.response">({
+        message: {
+          type: "agent.queue.enqueue.request",
+          agentId,
+          text,
+          messageId: options.messageId ?? crypto.randomUUID(),
+          sessionMode: options.sessionMode,
+          images: options.images,
+          attachments: options.attachments,
+        },
+      });
+    if (!payload.success || !payload.queuedMessage) {
+      throw new DaemonRpcError({
+        requestId: payload.requestId,
+        requestType: "agent.queue.enqueue.request",
+        error: payload.error ?? "The host did not accept the queued message.",
+      });
+    }
+    return payload.queuedMessage;
+  }
+
+  async listQueuedAgentMessages(
+    agentId: string,
+    options: Pick<AgentQueueListRequest, "queuedMessageId"> = {},
+  ): Promise<QueuedAgentMessage[]> {
+    this.requireAgentMessageQueueSupport();
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"agent.queue.list.response">({
+      message: {
+        type: "agent.queue.list.request",
+        agentId,
+        queuedMessageId: options.queuedMessageId,
+      },
+    });
+    if (!payload.success) {
+      throw new DaemonRpcError({
+        requestId: payload.requestId,
+        requestType: "agent.queue.list.request",
+        error: payload.error ?? "The host could not load queued messages.",
+      });
+    }
+    return payload.messages;
+  }
+
+  async removeQueuedAgentMessage(
+    agentId: string,
+    queuedMessageId: string,
+  ): Promise<QueuedAgentMessage | null> {
+    this.requireAgentMessageQueueSupport();
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.queue.remove.response">({
+        message: { type: "agent.queue.remove.request", agentId, queuedMessageId },
+      });
+    if (!payload.success) {
+      throw new DaemonRpcError({
+        requestId: payload.requestId,
+        requestType: "agent.queue.remove.request",
+        error: payload.error ?? "The host could not remove the queued message.",
+      });
+    }
+    return payload.queuedMessage;
+  }
+
+  async sendQueuedAgentMessageNow(
+    agentId: string,
+    queuedMessageId: string,
+    options: Pick<SendMessageOptions, "activeTurnBehavior"> = {},
+  ): Promise<void> {
+    this.requireAgentMessageQueueSupport();
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.queue.send_now.response">({
+        message: {
+          type: "agent.queue.send_now.request",
+          agentId,
+          queuedMessageId,
+          activeTurnBehavior: options.activeTurnBehavior ?? "steer",
+        },
+      });
+    if (!payload.success) {
+      throw new DaemonRpcError({
+        requestId: payload.requestId,
+        requestType: "agent.queue.send_now.request",
+        error: payload.error ?? "The host could not send the queued message.",
+      });
+    }
+  }
+
   async rewindAgent(
     agentId: string,
     messageId: string,
@@ -6540,6 +6635,13 @@ export class DaemonClient {
     // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.
     if (this.lastServerInfoMessage?.features?.hubRelationship !== true) {
       throw new Error("Update the host to use Hub relationship management.");
+    }
+  }
+
+  private requireAgentMessageQueueSupport(): void {
+    // COMPAT(agentMessageQueue): added in v0.13.0, remove gate after 2027-04-26.
+    if (this.lastServerInfoMessage?.features?.agentMessageQueue !== true) {
+      throw new Error("Update the host to queue messages until the current turn finishes.");
     }
   }
 

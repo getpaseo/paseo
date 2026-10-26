@@ -1,0 +1,22 @@
+appId: sh.paseo.debug
+---
+- extendedWaitUntil:
+    visible: "Message agent.*"
+    timeout: 30000
+- tapOn: "Message agent.*"
+- inputText: "Native queue follow-up"
+- tapOn:
+    id: "composer-send-options"
+- assertVisible:
+    id: "composer-send-options-queue"
+- assertVisible:
+    id: "composer-send-options-now"
+- takeScreenshot: native-send-options-keyboard
+- tapOn:
+    id: "composer-send-options-queue"
+- extendedWaitUntil:
+    visible: "Edit queued message"
+    timeout: 15000
+- assertVisible: "Native queue follow-up"
+- assertVisible: "Remove queued message"
+- takeScreenshot: native-queued

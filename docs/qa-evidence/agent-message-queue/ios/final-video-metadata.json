@@ -1,0 +1,27 @@
+{
+  "programs": [],
+  "stream_groups": [],
+  "streams": [
+    {
+      "codec_name": "h264",
+      "width": 602,
+      "height": 1308,
+      "r_frame_rate": "15/1",
+      "tags": {
+        "language": "und",
+        "handler_name": "Core Media Video",
+        "encoder": "Lavc63.1.102 libx264"
+      }
+    }
+  ],
+  "format": {
+    "duration": "116.866667",
+    "size": "875629",
+    "tags": {
+      "major_brand": "isom",
+      "minor_version": "512",
+      "compatible_brands": "isomiso2avc1mp41",
+      "encoder": "Lavf63.1.102"
+    }
+  }
+}

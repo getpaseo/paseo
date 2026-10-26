@@ -1,0 +1,15 @@
+{
+  "assertion": "removed",
+  "phase": "edited",
+  "passed": true,
+  "activeTurnId": "fae5e5df-8062-4335-93ee-20141d45cc28",
+  "queueIds": [],
+  "canonicalPromptIds": [
+    "native-baseline",
+    "msg_1792992167905_lziqjo5ng"
+  ],
+  "artifact": "/tmp/paseo-native-queue-observer/edited.json",
+  "removedMessageId": "msg_1792992126604_2qscjaup4",
+  "notDispatched": true,
+  "nativeComposerRestorationMustBeAssertedInUI": true
+}

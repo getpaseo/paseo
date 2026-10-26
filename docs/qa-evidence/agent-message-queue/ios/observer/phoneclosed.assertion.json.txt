@@ -1,0 +1,8 @@
+{
+  "assertion": "phone app termination preserves host queue and held turn",
+  "passed": true,
+  "queuedIds": [
+    "msg_1792992570292_mnzmu538e"
+  ],
+  "activeTurnId": "c06a1927-951b-4168-86d0-7b47e43b772a"
+}

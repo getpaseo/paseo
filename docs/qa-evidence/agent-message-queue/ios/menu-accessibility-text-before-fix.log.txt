@@ -1,0 +1,16 @@
+Running on Paseo Queue QA 7890 - iOS 26.2 - <simulator-id>
+ > Flow queue-select
+Assert that "Queue message" is visible... FAILED
+
+Assertion is false: "Queue message" is visible
+
+Assertion '"Queue message" is visible' failed. Check the UI hierarchy in debug artifacts to verify the element state and properties.
+
+Possible causes:
+- Element selector may be incorrect - check if there are similar elements with slightly different names/properties.
+- Element may be temporarily unavailable due to loading state
+- This could be a real regression that needs to be addressed
+
+==== Debug output (logs & screenshots) ====
+
+/tmp/paseo-native-queue-ui/queue-select-output/2026-10-26_131819

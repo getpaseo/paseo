@@ -79,7 +79,11 @@ import {
   type PendingForegroundRun,
 } from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
-import { parseAgentMessage, projectAgentMessages } from "./agent-messages/index.js";
+import {
+  parseAgentMessage,
+  prepareAgentMessage,
+  projectAgentMessages,
+} from "./agent-messages/index.js";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
@@ -92,6 +96,11 @@ import {
 } from "./provider-subagents/store.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import { extractAttention } from "../persistence-hooks.js";
+import { AgentMessageQueue, QueuedMessageHeldError } from "./message-queue.js";
+import { startAgentRun, waitForAgentRunStartWithTimeout } from "./agent-prompt.js";
+import { buildAgentPrompt } from "./prompt-attachments.js";
+import { ensureAgentLoaded } from "./agent-loading.js";
+import type { ActiveTurnBehavior, QueuedAgentMessage } from "@getpaseo/protocol/messages";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -733,6 +742,7 @@ export interface RetiredInternalAgent {
 }
 
 export class AgentManager {
+  readonly messageQueue: AgentMessageQueue | null;
   private readonly pluginLifecycle: PluginLifecycle | undefined;
   private readonly retiredInternalAgents = new Map<
     string,
@@ -748,6 +758,7 @@ export class AgentManager {
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
   private readonly foregroundMutationTails = new Map<string, Promise<void>>();
+  private readonly queueCancellationTokens = new Map<string, symbol>();
   private readonly runs = new AgentRunState();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
@@ -791,6 +802,7 @@ export class AgentManager {
     this.resolvePaseoToolPolicy = options.resolvePaseoToolPolicy ?? (() => undefined);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
+    this.messageQueue = this.createMessageQueue();
     this.rescueTimeouts = {
       reloadSessionCloseMs:
         options.rescueTimeouts?.reloadSessionCloseMs ?? RELOAD_SESSION_CLOSE_TIMEOUT_MS,
@@ -810,6 +822,80 @@ export class AgentManager {
       providerDefinitions: options.providerDefinitions ?? {},
       clients: options.clients ?? {},
     });
+  }
+
+  private createMessageQueue(): AgentMessageQueue | null {
+    return this.registry
+      ? new AgentMessageQueue({
+          storage: this.registry,
+          isIdle: (agentId) => {
+            const agent = this.agents.get(agentId);
+            return (
+              agent?.lifecycle === "idle" &&
+              !agent.pendingReplacement &&
+              !agent.pendingPermissions.size &&
+              !this.hasInFlightRun(agentId)
+            );
+          },
+          dispatch: (agentId, message, activeTurnBehavior, canDispatch) =>
+            this.dispatchQueuedMessage(agentId, message, activeTurnBehavior, canDispatch),
+          publish: async (agentId) => {
+            const agent = this.agents.get(agentId);
+            if (agent) this.emitState(agent, { persist: false });
+            else {
+              const record = await this.requireRegistry().get(agentId);
+              if (record) this.dispatchStoredAgentState(record);
+            }
+          },
+          onError: (error, agentId) =>
+            this.logger.error({ err: error, agentId }, "Failed to send queued message"),
+        })
+      : null;
+  }
+
+  private async dispatchQueuedMessage(
+    agentId: string,
+    message: QueuedAgentMessage,
+    activeTurnBehavior: ActiveTurnBehavior,
+    canDispatch: () => boolean,
+  ): Promise<boolean> {
+    const registry = this.requireRegistry();
+    const record = await registry.get(agentId);
+    if (!record || record.archivedAt || !canDispatch()) return false;
+    // Loading owns the lifecycle lane itself; keep it outside the final admission.
+    await ensureAgentLoaded(agentId, {
+      agentManager: this,
+      agentStorage: registry,
+      logger: this.logger,
+    });
+    const dispatch = await this.runLifecycleMutation(agentId, async () => {
+      const current = await registry.get(agentId);
+      if (!current || current.archivedAt || !canDispatch()) return null;
+      if (message.sessionMode) await this.setAgentMode(agentId, message.sessionMode);
+      if (!canDispatch()) return null;
+      const prepared = prepareAgentMessage(
+        buildAgentPrompt(message.text, message.images, message.attachments),
+        undefined,
+        message.id,
+      );
+      const result = await startAgentRun(this, agentId, prepared.prompt, this.logger, {
+        replaceRunning: true,
+        activeTurnBehavior,
+        clearPendingPermissions: true,
+        runOptions: {
+          clientMessageId: message.id,
+          assertAdmission: () => {
+            if (!canDispatch()) throw new QueuedMessageHeldError();
+          },
+        },
+        recoverStaleSession: false,
+      });
+      return result;
+    });
+    if (!dispatch) return false;
+    if (dispatch.disposition === "turn_started")
+      await waitForAgentRunStartWithTimeout(this, agentId);
+    return true;
   }
 
   private configurePaseoTools(options: AgentManagerOptions): void {
@@ -873,6 +959,7 @@ export class AgentManager {
 
   prepareForShutdown(): void {
     this.acceptingAgentRegistrations = false;
+    this.messageQueue?.stop();
   }
 
   setPaseoToolsEnabled(enabled: boolean): void {
@@ -1748,6 +1835,7 @@ export class AgentManager {
   }
 
   closeAgent(agentId: string): Promise<void> {
+    this.messageQueue?.hold(agentId);
     const existing = this.inFlightAgentCloses.get(agentId);
     if (existing) {
       return existing;
@@ -1824,6 +1912,7 @@ export class AgentManager {
   }
 
   async archiveAgent(agentId: string): Promise<{ archivedAt: string }> {
+    this.messageQueue?.hold(agentId);
     return this.runLifecycleMutation(agentId, () => this.archiveAgentUnlocked(agentId));
   }
 
@@ -2272,6 +2361,7 @@ export class AgentManager {
   }
 
   async archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord> {
+    this.messageQueue?.hold(agentId);
     return this.runLifecycleMutation(agentId, () =>
       this.archiveSnapshotUnlocked(agentId, archivedAt),
     );
@@ -2548,6 +2638,7 @@ export class AgentManager {
   }): Promise<string> {
     const { agent, agentId, pendingRun, prompt, options } = params;
     try {
+      options?.assertAdmission?.();
       const result = await agent.session.startTurn(prompt, options);
       if (pendingRun.settled) {
         throw new Error(`Agent ${agentId} run was canceled before its turn started`);
@@ -2589,6 +2680,7 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): AsyncGenerator<AgentStreamEvent> {
+    options?.assertAdmission?.();
     const existingAgent = this.requireSessionAgent(agentId);
     this.logger.trace(
       {
@@ -2824,6 +2916,7 @@ export class AgentManager {
       return { status: "unavailable" };
     }
     const result = await this.runSteerAdmission(agent, expectedTurnId, async () => {
+      options?.assertAdmission?.();
       const admission = await agent.session.steerActiveTurn!(prompt, {
         ...options,
         expectedTurnId,
@@ -2854,6 +2947,7 @@ export class AgentManager {
 
     const result = agent.session.steerActiveTurn
       ? await this.runSteerAdmission(agent, expectedTurnId, async () => {
+          options?.assertAdmission?.();
           const admission = await agent.session.steerActiveTurn!(prompt, {
             ...options,
             expectedTurnId,
@@ -3128,7 +3222,16 @@ export class AgentManager {
   }
 
   async cancelAgentRun(agentId: string): Promise<AgentRunCancellationResult> {
-    return this.runForegroundMutation(agentId, () => this.cancelAgentRunNow(agentId));
+    this.messageQueue?.hold(agentId);
+    const token = Symbol();
+    this.queueCancellationTokens.set(agentId, token);
+    try {
+      return await this.runForegroundMutation(agentId, () => this.cancelAgentRunNow(agentId));
+    } finally {
+      if (this.queueCancellationTokens.get(agentId) === token) {
+        this.queueCancellationTokens.delete(agentId);
+      }
+    }
   }
 
   private async cancelAgentRunNow(agentId: string): Promise<AgentRunCancellationResult> {
@@ -3200,7 +3303,7 @@ export class AgentManager {
     agentId: string,
     action: "reload" | "replace" | "rewind",
   ): Promise<void> {
-    const result = await this.cancelAgentRun(agentId);
+    const result = await this.runForegroundMutation(agentId, () => this.cancelAgentRunNow(agentId));
     if (result.status === "refused") {
       throw new AgentRunCancellationError(agentId, action);
     }
@@ -4349,11 +4452,27 @@ export class AgentManager {
       if (flags.shouldDispatchEvent) {
         this.dispatchStream(agent.id, event, { timestamp: new Date().toISOString() });
       }
+      if (this.canDrainQueuedMessage(agent.id, event.type, terminalDisposition)) {
+        this.messageQueue?.drain(agent.id);
+      }
     }
 
     this.traceHandleStreamEventEnd(agent, event, eventTurnId, flags);
 
     return flags.shouldNotifyWaiters;
+  }
+
+  private canDrainQueuedMessage(
+    agentId: string,
+    eventType: AgentStreamEvent["type"],
+    disposition: ActiveTurnTerminalDisposition,
+  ): boolean {
+    return (
+      eventType === "turn_completed" &&
+      disposition !== "stale" &&
+      !this.queueCancellationTokens.has(agentId) &&
+      !this.inFlightAgentCloses.has(agentId)
+    );
   }
 
   private traceHandleStreamEventStart(
@@ -5090,6 +5209,7 @@ export class AgentManager {
    * either install them or close them.
    */
   async flushForShutdown(): Promise<void> {
+    await this.messageQueue?.flush();
     await this.flushTasks({ includeAgentRegistrations: true });
   }
 

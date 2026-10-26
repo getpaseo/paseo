@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Read-only SDK-observer assertions for the isolated native queue UI flow.
+
+Edit's composer restoration must also be asserted through native UI automation;
+the daemon can independently prove only atomic queue removal and no dispatch.
+"""
+import argparse
+import json
+from pathlib import Path
+from urllib.request import urlopen
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("action", choices=["capture", "queue", "steer", "removed", "stop", "drained", "clean"])
+parser.add_argument("phase", help="Artifact name, e.g. baseline, queued, steered, stopped")
+parser.add_argument("--ref", help="Previous artifact phase or JSON file")
+parser.add_argument("--text", help="Exact message text entered through the native UI")
+parser.add_argument("--out", default="/tmp/paseo-native-queue-observer")
+args = parser.parse_args()
+out = Path(args.out)
+out.mkdir(parents=True, exist_ok=True)
+metadata = json.loads(Path("/tmp/paseo-native-queue-host.json").read_text())
+with urlopen(metadata["controlUrl"] + "/status", timeout=15) as response:
+    current = json.load(response)
+(out / (args.phase + ".json")).write_text(json.dumps(current, indent=2) + "\n")
+
+def load_reference():
+    assert args.ref, "--ref is required for this assertion"
+    path = Path(args.ref)
+    if not path.is_file():
+        path = out / (args.ref + ".json")
+    return json.loads(path.read_text())
+
+def turn_id(snapshot):
+    return ((snapshot.get("agent") or {}).get("activeTurn") or {}).get("turnId")
+
+def prompts(snapshot):
+    return [entry for entry in snapshot["timeline"]["entries"] if entry["item"]["type"] == "user_message"]
+
+def matching_prompts(snapshot, text):
+    return [entry for entry in prompts(snapshot) if entry["item"]["text"] == text]
+
+def queue_ids(snapshot):
+    return [message["id"] for message in snapshot["queue"]]
+
+def assert_healthy(snapshot):
+    assert not snapshot["responseErrors"], snapshot["responseErrors"]
+    assert not snapshot["agent"].get("lastError"), snapshot["agent"].get("lastError")
+    assert all(not item.get("error") for item in snapshot["queue"]), snapshot["queue"]
+    assert not snapshot["timeline"].get("error"), snapshot["timeline"].get("error")
+
+reference = load_reference() if args.action not in ["capture", "clean"] else None
+detail = {}
+if args.action == "queue":
+    assert args.text, "--text is required"
+    assert turn_id(reference), "Reference has no active turn"
+    assert turn_id(current) == turn_id(reference), "Queue changed the running turn"
+    matches = [item for item in current["queue"] if item["text"] == args.text]
+    assert len(matches) == 1, f"Expected one queued message: {matches}"
+    assert len(matching_prompts(current, args.text)) == 0, "Queued message entered the transcript before delivery"
+    assert set(queue_ids(reference)).issubset(queue_ids(current)), "Queue dropped an earlier item"
+    detail = {"queuedMessageId": matches[0]["id"], "activeTurnUnchanged": True}
+elif args.action == "steer":
+    assert args.text, "--text is required"
+    assert turn_id(current) == turn_id(reference) and turn_id(current), "Steer replaced the active turn"
+    assert queue_ids(current) == queue_ids(reference), "Steer altered pending queue contents"
+    canonical = matching_prompts(current, args.text)
+    assert len(canonical) == 1, f"Expected one canonical steer: {canonical}"
+    provider_turn = next(turn for turn in current["turns"] if turn["turnId"] == turn_id(reference))
+    steers = [steer for steer in provider_turn["steers"] if steer["text"] == args.text]
+    assert len(steers) == 1, f"Provider did not accept exactly one steer: {steers}"
+    assert canonical[0]["turnId"] == turn_id(reference), "Canonical steer belongs to a different turn"
+    detail = {"activeTurnUnchanged": True, "canonicalMessageId": canonical[0]["item"].get("clientMessageId"), "providerAcceptedSteers": 1}
+elif args.action == "removed":
+    assert args.text, "--text is required"
+    matches = [item for item in reference["queue"] if item["text"] == args.text]
+    assert len(matches) == 1, "Reference must contain exactly one selected queued message"
+    selected = matches[0]
+    assert selected["id"] not in queue_ids(current), "Selected message remains queued"
+    assert queue_ids(current) == [item for item in queue_ids(reference) if item != selected["id"]], "Removal changed other queue items"
+    assert not matching_prompts(current, args.text), "Removal dispatched the message"
+    assert turn_id(current) == turn_id(reference), "Removal changed the active turn"
+    detail = {"removedMessageId": selected["id"], "notDispatched": True, "nativeComposerRestorationMustBeAssertedInUI": True}
+elif args.action == "stop":
+    assert not turn_id(current), "Stop left an active turn"
+    assert current["agent"]["status"] == "idle", current["agent"]["status"]
+    assert queue_ids(current) == queue_ids(reference), "Stop consumed or reordered queued work"
+    for message in reference["queue"]:
+        assert not matching_prompts(current, message["text"]), "Stop dispatched pending work"
+    old_turn = next(turn for turn in current["turns"] if turn["turnId"] == turn_id(reference))
+    assert old_turn["status"] == "canceled", old_turn
+    detail = {"queuePreserved": True, "canceledTurnId": old_turn["turnId"]}
+elif args.action == "drained":
+    assert args.text, "--text is required"
+    assert reference["queue"] and reference["queue"][0]["text"] == args.text, "Reference head must be the released follow-up"
+    selected = reference["queue"][0]
+    assert queue_ids(current) == queue_ids(reference)[1:], "Completion did not dequeue exactly the FIFO head"
+    canonical = matching_prompts(current, args.text)
+    assert len(canonical) == 1, f"Expected exactly one canonical dispatched prompt: {canonical}"
+    assert canonical[0]["item"].get("clientMessageId") == selected["id"], "Queued message identity changed at delivery"
+    provider_turns = [turn for turn in current["turns"] if turn["prompt"] == args.text]
+    assert len(provider_turns) == 1, f"Expected exactly one provider turn: {provider_turns}"
+    assert turn_id(current) == provider_turns[0]["turnId"], "Delivered follow-up is not the active held turn"
+    assert turn_id(current) != turn_id(reference), "Completion reused the preceding turn"
+    preceding = next(turn for turn in current["turns"] if turn["turnId"] == turn_id(reference))
+    assert preceding["status"] == "completed", preceding
+    detail = {"dequeuedMessageId": selected["id"], "canonicalPromptCount": 1, "providerTurnCount": 1, "newActiveTurnId": turn_id(current)}
+
+elif args.action == "clean":
+    assert not current["queue"], "Queue should be empty after Remove"
+    if args.text:
+        assert not matching_prompts(current, args.text), "Removed message was dispatched"
+    detail = {"queueEmpty": True, "removedPromptNotDispatched": bool(args.text)}
+
+assert_healthy(current)
+result = {"assertion": args.action, "phase": args.phase, "passed": True,
+          "activeTurnId": turn_id(current), "queueIds": queue_ids(current),
+          "canonicalPromptIds": [entry["item"].get("clientMessageId") for entry in prompts(current)],
+          "artifact": str(out / (args.phase + ".json")), **detail}
+(out / (args.phase + ".assertion.json")).write_text(json.dumps(result, indent=2) + "\n")
+print(json.dumps(result, indent=2))

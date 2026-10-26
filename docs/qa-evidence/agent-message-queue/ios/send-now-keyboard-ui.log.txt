@@ -1,0 +1,12 @@
+Running on Paseo Queue QA 7890 - iOS 26.2 - <simulator-id>
+ > Flow send-now-keyboard-fixed
+Run flow when "(?s).*ERR_NOTIFICATIONS_KEYCHAIN_ACCESS.*" is visible...
+  Tap on point (92%,93%)... COMPLETED
+Run flow when "(?s).*ERR_NOTIFICATIONS_KEYCHAIN_ACCESS.*" is visible... COMPLETED
+Assert that "Native stop-held follow-up" is visible... COMPLETED
+Tap on "Message agent.*"... COMPLETED
+Take screenshot native-before-send-now-keyboard... COMPLETED
+Tap on "Send queued message now"... COMPLETED
+Assert that "Edit queued message" is not visible... COMPLETED
+Assert that "Stop agent" is visible... COMPLETED
+Take screenshot native-send-now-keyboard... COMPLETED

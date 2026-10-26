@@ -1,5 +1,6 @@
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
+import { summarizeQueuedAgentMessages } from "./agent/message-queue.js";
 import { AgentDirectory } from "./agent/directory.js";
 import { ConnectedHostSession } from "./connected-hosts/index.js";
 import type { ConnectedHosts } from "./connected-hosts/index.js";
@@ -29,6 +30,7 @@ import {
   serializeAgentStreamEvent,
   type AgentSnapshotPayload,
   type AgentAttachment,
+  type QueuedAgentMessage,
   type FirstAgentContext,
   type SessionInboundMessage,
   type SessionOutboundMessage,
@@ -2111,6 +2113,7 @@ export class Session {
     const storedRecord = await this.agentStorage.get(payload.id);
     payload.title = storedRecord?.title ?? null;
     payload.archivedAt = storedRecord?.archivedAt ?? null;
+    payload.queuedMessages = summarizeQueuedAgentMessages(storedRecord?.queuedMessages);
     return payload;
   }
 
@@ -2842,6 +2845,22 @@ export class Session {
   }
 
   private dispatchAgentLifecycleMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    return this.dispatchAgentQueueMessage(msg) ?? this.dispatchAgentRecordMessage(msg);
+  }
+
+  private dispatchAgentQueueMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "agent.queue.enqueue.request":
+      case "agent.queue.list.request":
+      case "agent.queue.remove.request":
+      case "agent.queue.send_now.request":
+        return this.handleAgentQueueRequest(msg);
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchAgentRecordMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "fetch_agents_request":
         return this.handleFetchAgents(msg);
@@ -8203,6 +8222,62 @@ export class Session {
     if (stored && !stored.title && !stored.lastUserMessageAt) {
       const { provisionalTitle } = resolveCreateAgentTitles({ initialPrompt: text });
       if (provisionalTitle) await this.agentManager.setTitle(agentId, provisionalTitle);
+    }
+  }
+
+  private async handleAgentQueueRequest(
+    msg: Extract<
+      SessionInboundMessage,
+      {
+        type:
+          | "agent.queue.enqueue.request"
+          | "agent.queue.list.request"
+          | "agent.queue.remove.request"
+          | "agent.queue.send_now.request";
+      }
+    >,
+  ): Promise<void> {
+    const resolved = await this.resolveAgentIdentifier(msg.agentId);
+    const agentId = resolved.ok ? resolved.agentId : msg.agentId;
+    const base = { requestId: msg.requestId, agentId };
+    let error: string | null = resolved.ok ? null : resolved.error;
+    let queuedMessage: QueuedAgentMessage | null = null;
+    let messages: QueuedAgentMessage[] = [];
+    if (!error) {
+      try {
+        const queue = this.agentManager.messageQueue;
+        if (!queue) throw new Error("Message queue storage unavailable");
+        switch (msg.type) {
+          case "agent.queue.enqueue.request":
+            queuedMessage = await queue.enqueue({ ...msg, agentId });
+            break;
+          case "agent.queue.list.request":
+            messages = await queue.list(agentId, msg.queuedMessageId);
+            break;
+          case "agent.queue.remove.request":
+            queuedMessage = await queue.remove(agentId, msg.queuedMessageId);
+            break;
+          case "agent.queue.send_now.request":
+            await queue.sendNow(agentId, msg.queuedMessageId, msg.activeTurnBehavior);
+            break;
+        }
+      } catch (failure) {
+        error = errorToFriendlyMessage(failure);
+      }
+    }
+    const payload = { ...base, success: error === null, error };
+    switch (msg.type) {
+      case "agent.queue.enqueue.request":
+        this.emit({ type: "agent.queue.enqueue.response", payload: { ...payload, queuedMessage } });
+        return;
+      case "agent.queue.list.request":
+        this.emit({ type: "agent.queue.list.response", payload: { ...payload, messages } });
+        return;
+      case "agent.queue.remove.request":
+        this.emit({ type: "agent.queue.remove.response", payload: { ...payload, queuedMessage } });
+        return;
+      case "agent.queue.send_now.request":
+        this.emit({ type: "agent.queue.send_now.response", payload });
     }
   }
 

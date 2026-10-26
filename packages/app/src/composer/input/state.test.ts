@@ -169,6 +169,27 @@ describe("dictation keyboard behavior", () => {
 });
 
 describe("dictation transcript behavior", () => {
+  it("leaves queued transcript clearing and error restoration with the submission owner", () => {
+    const actions: string[] = [];
+
+    applyDictationTranscript("spoken follow-up", {
+      value: "typed context",
+      defaultSendBehavior: "queue",
+      isAgentRunning: true,
+      onQueue: (payload) => actions.push(`queue:${payload.text}`),
+      replaceText: (text) => actions.push(`replace:${text}`),
+      onSubmit: (payload) => actions.push(`submit:${payload.text}`),
+      attachments: [],
+      cwd: "/repo",
+      autoSend: true,
+    });
+
+    expect(actions).toEqual([
+      "replace:typed context spoken follow-up",
+      "queue:typed context spoken follow-up",
+    ]);
+  });
+
   it("publishes an auto-sent transcript to the composer before submitting it", () => {
     const actions: string[] = [];
 
@@ -193,7 +214,7 @@ describe("dictation transcript behavior", () => {
 
 describe("composer send behavior", () => {
   it("sends immediately when queue mode cannot advance past a permission", () => {
-    expect(resolveActiveSendBehavior("queue", true)).toBe("interrupt");
+    expect(resolveActiveSendBehavior("queue", true)).toBe("steer");
     expect(resolveActiveSendBehavior("queue", false)).toBe("queue");
     expect(resolveActiveSendBehavior("steer", true)).toBe("steer");
   });

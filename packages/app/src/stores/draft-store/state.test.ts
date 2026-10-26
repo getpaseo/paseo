@@ -97,6 +97,29 @@ describe("draft-store lifecycle", () => {
 });
 
 describe("draft-store normalization", () => {
+  it("preserves context restored from a daemon queue when hydrating an edited draft", () => {
+    const draft: DraftRecord = {
+      input: {
+        text: "Edit this follow-up",
+        attachments: [
+          {
+            kind: "context",
+            attachment: {
+              type: "text",
+              mimeType: "text/plain",
+              title: "Context",
+              text: "Original context",
+            },
+          },
+        ],
+      },
+      lifecycle: "active",
+      updatedAt: 1,
+      version: 1,
+    };
+    expect(toDraftInputIfReady(draft)).toEqual(draft.input);
+  });
+
   it("preserves plugin resources when hydrating a draft", () => {
     const attachment = {
       kind: "plugin_resource" as const,

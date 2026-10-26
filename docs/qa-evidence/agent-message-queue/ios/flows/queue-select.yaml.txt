@@ -1,0 +1,12 @@
+appId: sh.paseo.debug
+---
+- assertVisible: "Queue message"
+- assertVisible: "Send and steer"
+- takeScreenshot: native-send-options
+- tapOn: "Queue message"
+- extendedWaitUntil:
+    visible: "Edit queued message"
+    timeout: 15000
+- assertVisible: "Native queue follow-up"
+- assertVisible: "Remove queued message"
+- takeScreenshot: native-queued

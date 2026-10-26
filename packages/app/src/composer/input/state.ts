@@ -9,7 +9,7 @@ export function resolveActiveSendBehavior(
   sendBehavior: SendBehavior,
   hasPendingPermission: boolean,
 ): SendBehavior {
-  return sendBehavior === "queue" && hasPendingPermission ? "interrupt" : sendBehavior;
+  return sendBehavior === "queue" && hasPendingPermission ? "steer" : sendBehavior;
 }
 
 interface ComposerSurfaceState {
@@ -80,7 +80,6 @@ export function applyDictationTranscript(text: string, ctx: DictationTranscriptC
 
   if (ctx.defaultSendBehavior === "queue" && ctx.isAgentRunning && ctx.onQueue) {
     ctx.onQueue({ text: nextValue, attachments: ctx.attachments, cwd: ctx.cwd });
-    ctx.replaceText("");
     return;
   }
 

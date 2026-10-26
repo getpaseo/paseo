@@ -1951,6 +1951,7 @@ export class VoiceAssistantWebSocketServer {
         usageSources: true,
         ownedSubscriptions: true,
         agentRequestReceipts: true,
+        agentMessageQueue: this.agentManager.messageQueue !== null,
         workspaceRequestReceipts: true,
         creationLifecycle: true,
         hubAgentRpc: true,

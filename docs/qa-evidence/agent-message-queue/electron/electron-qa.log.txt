@@ -1,0 +1,11 @@
+(node:31690) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ARTIFACT_DIR /tmp/paseo-queue-electron-qa-Kk5JST
+METRO_READY http://localhost:54808
+PASS real Electron production main/preload and IPC connected to isolated daemon {"platform":"darwin","windowChromeMode":"native-mac","daemon":{"serverId":"electron-queue-1792988411922","status":"running","listen":"127.0.0.1:54809","hostname":"<redacted local hostname>","pid":31789,"home":"/tmp/paseo-queue-electron-qa-Kk5JST/paseo-home","version":"0.13.0","desktopManaged":false,"startedAt":"2026-10-26T04:20:12.194Z","ownedByDesktop":false,"error":null}}
+PASS Queue admits a durable follow-up while the active turn continues {}
+PASS Send and steer preserves the same active turn with Queue configured as default {"initialTurnId":"60445c83-39b2-40bd-a8e3-855363ef670e"}
+PASS Stop holds the queued follow-up {}
+PASS Edit restores full text beyond summary limit, image, and context; requeue and Remove preserve expected state {}
+PASS Queued follow-up dispatches once after the actual Electron process exits {"millisecondsAfterClose":7143}
+RESULT {"success":true,"artifact":"/tmp/paseo-queue-electron-qa-Kk5JST","checks":6}

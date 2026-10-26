@@ -1,0 +1,75 @@
+ffmpeg version 9.0.2 Copyright (c) 2000-2026 the FFmpeg developers
+  built with Apple clang version 21.0.0 (clang-2100.3.34.2)
+  configuration: --prefix=/opt/homebrew/Cellar/ffmpeg/9.0.2 --enable-shared --enable-pthreads --enable-version3 --cc=clang --host-cflags= --host-ldflags= --enable-ffplay --enable-gpl --enable-libsvtav1 --enable-libopus --enable-libx264 --enable-libmp3lame --enable-libdav1d --enable-libvmaf --enable-libvpx --enable-libx265 --enable-openssl --enable-videotoolbox --enable-audiotoolbox --enable-neon
+  libavutil      61.  1.102 / 61.  1.102
+  libavcodec     63.  1.102 / 63.  1.102
+  libavformat    63.  1.102 / 63.  1.102
+  libavdevice    63.  1.102 / 63.  1.102
+  libavfilter    12.  1.102 / 12.  1.102
+  libswscale     10.  1.102 / 10.  1.102
+  libswresample   7.  1.102 /  7.  1.102
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from '/tmp/paseo-native-queue-ui/native-fixed-recording.mov':
+  Metadata:
+    major_brand     : qt  
+    minor_version   : 0
+    compatible_brands: qt  
+    creation_time   : 2026-10-26T05:20:57.000000Z
+  Duration: 00:03:11.18, start: 0.000000, bitrate: 638 kb/s
+  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(tv, bt709/bt709/iec61966-2-1, progressive), 1206x2622, 636 kb/s, 9.38 fps, 600 tbr, 600 tbn (default)
+    Metadata:
+      creation_time   : 2026-10-26T05:20:57.000000Z
+      handler_name    : Core Media Video
+      vendor_id       : [0][0][0][0]
+      encoder         : H.264
+Stream mapping:
+  Stream #0:0 -> #0:0 (h264 (native) -> h264 (libx264))
+Press [q] to stop, [?] for help
+[libx264 @ 0xc7ac19500] using cpu capabilities: ARMv8 NEON DotProd
+[libx264 @ 0xc7ac19500] profile High, level 3.1, 4:2:0, 8-bit
+[libx264 @ 0xc7ac19500] 264 - core 165 r3222 b35605a - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=2 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=6 psy=1 psy_rd=1.00:0.00 mixed_ref=1 me_range=16 chroma_me=1 trellis=1 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=-2 threads=15 lookahead_threads=2 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=15 scenecut=40 intra_refresh=0 rc_lookahead=30 rc=crf mbtree=1 crf=26.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+Output #0, mp4, to '/tmp/paseo-native-queue-ui/native-queue-recording.mp4':
+  Metadata:
+    major_brand     : qt  
+    minor_version   : 0
+    compatible_brands: qt  
+    encoder         : Lavf63.1.102
+  Stream #0:0(und): Video: h264 (avc1 / 0x31637661), yuv420p(tv, bt709/bt709/iec61966-2-1, progressive), 602x1308, q=2-31, 15 fps, 15360 tbn (default)
+    Metadata:
+      encoder         : Lavc63.1.102 libx264
+      creation_time   : 2026-10-26T05:20:57.000000Z
+      handler_name    : Core Media Video
+      vendor_id       : [0][0][0][0]
+    Side data:
+      CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+frame=  265 fps=0.0 q=30.0 size=       0KiB time=00:00:17.53 bitrate=   0.0kbits/s dup=180 drop=0 speed=  35x elapsed=0:00:00.50    
+frame=  639 fps=633 q=30.0 size=       0KiB time=00:00:42.46 bitrate=   0.0kbits/s dup=389 drop=2 speed=42.1x elapsed=0:00:01.00    
+frame=  917 fps=606 q=30.0 size=       0KiB time=00:01:01.00 bitrate=   0.0kbits/s dup=514 drop=59 speed=40.3x elapsed=0:00:01.51    
+frame= 1171 fps=579 q=30.0 size=     256KiB time=00:01:17.93 bitrate=  26.9kbits/s dup=643 drop=128 speed=38.5x elapsed=0:00:02.02    
+frame= 1461 fps=577 q=30.0 size=     256KiB time=00:01:37.26 bitrate=  21.6kbits/s dup=802 drop=153 speed=38.4x elapsed=0:00:02.53    
+frame= 1583 fps=522 q=30.0 size=     256KiB time=00:01:45.40 bitrate=  19.9kbits/s dup=815 drop=297 speed=34.7x elapsed=0:00:03.03    
+frame= 1835 fps=519 q=30.0 size=     512KiB time=00:02:02.20 bitrate=  34.3kbits/s dup=947 drop=338 speed=34.5x elapsed=0:00:03.53    
+[vf#0:0 @ 0xc7ad28200] More than 1000 frames duplicated
+frame= 2197 fps=543 q=30.0 size=     512KiB time=00:02:26.33 bitrate=  28.7kbits/s dup=1143 drop=343 speed=36.2x elapsed=0:00:04.04    
+frame= 2423 fps=532 q=30.0 size=     768KiB time=00:02:41.40 bitrate=  39.0kbits/s dup=1254 drop=402 speed=35.4x elapsed=0:00:04.55    
+frame= 2765 fps=547 q=30.0 size=     768KiB time=00:03:04.20 bitrate=  34.2kbits/s dup=1446 drop=402 speed=36.4x elapsed=0:00:05.05    
+[mp4 @ 0xc7ac11180] Starting second pass: moving the moov atom to the beginning of the file
+[out#0/mp4 @ 0xc7ac1c180] video:946KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 3.614715%
+frame= 2869 fps=555 q=-1.0 Lsize=     981KiB time=00:03:11.13 bitrate=  42.0kbits/s dup=1477 drop=402 speed=  37x elapsed=0:00:05.17    
+[libx264 @ 0xc7ac19500] frame I:13    Avg QP:15.38  size: 23936
+[libx264 @ 0xc7ac19500] frame P:752   Avg QP:16.08  size:   708
+[libx264 @ 0xc7ac19500] frame B:2104  Avg QP:15.45  size:    60
+[libx264 @ 0xc7ac19500] consecutive B-frames:  1.9%  0.8%  0.7% 96.6%
+[libx264 @ 0xc7ac19500] mb I  I16..4: 22.6% 60.2% 17.2%
+[libx264 @ 0xc7ac19500] mb P  I16..4:  1.2%  1.9%  0.4%  P16..4:  0.8%  0.1%  0.1%  0.0%  0.0%    skip:95.6%
+[libx264 @ 0xc7ac19500] mb B  I16..4:  0.2%  0.0%  0.0%  B16..8:  0.2%  0.0%  0.0%  direct: 0.0%  skip:99.5%  L0:43.7% L1:53.8% BI: 2.5%
+[libx264 @ 0xc7ac19500] 8x8 transform intra:52.3% inter:38.9%
+[libx264 @ 0xc7ac19500] coded y,uvDC,uvAC intra: 8.2% 1.6% 0.5% inter: 0.1% 0.0% 0.0%
+[libx264 @ 0xc7ac19500] i16 v,h,dc,p: 60% 36%  4%  0%
+[libx264 @ 0xc7ac19500] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 47% 25% 26%  0%  0%  0%  0%  0%  0%
+[libx264 @ 0xc7ac19500] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 37% 22% 21%  2%  4%  4%  4%  3%  3%
+[libx264 @ 0xc7ac19500] i8c dc,h,v,p: 93%  6%  2%  0%
+[libx264 @ 0xc7ac19500] Weighted P-Frames: Y:4.8% UV:1.5%
+[libx264 @ 0xc7ac19500] ref P L0: 72.2% 27.8%
+[libx264 @ 0xc7ac19500] ref B L0: 89.6% 10.4%
+[libx264 @ 0xc7ac19500] ref B L1: 96.2%  3.8%
+[libx264 @ 0xc7ac19500] kb/s:40.51

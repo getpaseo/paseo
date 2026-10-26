@@ -1,0 +1,8 @@
+{
+  "action": "terminate only the QA simulator app",
+  "appId": "sh.paseo.debug",
+  "exitCode": 0,
+  "appTerminationCompletedAt": "2026-10-26T05:29:47.739464+00:00",
+  "stdout": "",
+  "stderr": ""
+}

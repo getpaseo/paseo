@@ -1,0 +1,15 @@
+{
+  "assertion": "queue",
+  "phase": "queued",
+  "passed": true,
+  "activeTurnId": "fae5e5df-8062-4335-93ee-20141d45cc28",
+  "queueIds": [
+    "msg_1792992126604_2qscjaup4"
+  ],
+  "canonicalPromptIds": [
+    "native-baseline"
+  ],
+  "artifact": "/tmp/paseo-native-queue-observer/queued.json",
+  "queuedMessageId": "msg_1792992126604_2qscjaup4",
+  "activeTurnUnchanged": true
+}

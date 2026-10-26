@@ -1,0 +1,8 @@
+appId: sh.paseo.debug
+---
+- tapOn: "Send queued message now"
+- extendedWaitUntil:
+    notVisible: "Edit queued message"
+    timeout: 15000
+- assertVisible: "Stop agent"
+- takeScreenshot: native-send-now

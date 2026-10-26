@@ -30,6 +30,8 @@ export interface StartAgentRunOptions {
   runOptions?: AgentRunOptions;
   /** Ask the provider to deny permissions blocking this steer. */
   clearPendingPermissions?: boolean;
+  /** A durable queue keeps failed attempts for an explicit retry. */
+  recoverStaleSession?: boolean;
 }
 
 export type PromptDispatchDisposition = "out_of_band" | "steered" | "turn_started";
@@ -117,7 +119,7 @@ export async function startAgentRun(
   try {
     return await startAgentRunInner(agentManager, agentId, prompt, logger, options);
   } catch (error) {
-    if (!isStaleProviderSessionError(error)) throw error;
+    if (!isStaleProviderSessionError(error) || options?.recoverStaleSession === false) throw error;
     logger.info({ agentId, err: error }, "Provider session went stale; reopening from persistence");
     // The live session belongs to a retired plugin runtime. Reload swaps in a
     // fresh session on the current runtime while preserving history and labels.
@@ -157,7 +159,8 @@ async function startAgentRunInner(
       try {
         await drainAgentRunIterator(iterator);
       } catch (error) {
-        if (!isStaleProviderSessionError(error)) throw error;
+        if (!isStaleProviderSessionError(error) || options?.recoverStaleSession === false)
+          throw error;
         logger.info(
           { agentId, err: error },
           "Provider session went stale; reopening from persistence",

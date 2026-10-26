@@ -1,0 +1,24 @@
+appId: sh.paseo.debug
+---
+- runFlow:
+    when:
+      visible: "(?s).*ERR_NOTIFICATIONS_KEYCHAIN_ACCESS.*"
+    commands:
+      - tapOn:
+          point: "92%,93%"
+- assertVisible: "Message agent.*Native queue follow-up.*"
+- tapOn:
+    id: "composer-send-options"
+- assertVisible:
+    id: "composer-send-options-queue"
+- assertVisible:
+    id: "composer-send-options-now"
+- takeScreenshot: native-send-options
+- tapOn:
+    id: "composer-send-options-queue"
+- extendedWaitUntil:
+    visible: "Edit queued message"
+    timeout: 15000
+- assertVisible: "Native queue follow-up"
+- assertVisible: "Remove queued message"
+- takeScreenshot: native-queued

@@ -1,0 +1,6 @@
+
+> paseo@0.13.0 lint
+> oxlint packages/server/src/server/agent/agent-manager.ts packages/server/src/server/agent/agent-projections.ts packages/server/src/server/agent/agent-storage.ts packages/server/src/server/agent/agent-storage.test.ts packages/server/src/server/agent/agent-prompt.ts packages/server/src/server/agent/agent-sdk-types.ts packages/server/src/server/agent/message-queue.ts packages/server/src/server/session.ts packages/server/src/server/authorization/operation-permissions.ts packages/server/src/server/websocket-server.ts packages/server/src/server/test-utils/fake-agent-client.ts
+
+Found 0 warnings and 0 errors.
+Finished in 236ms on 11 files with 177 rules using 10 threads.

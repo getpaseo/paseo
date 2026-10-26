@@ -1,3 +1,11 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { ActiveTurnBehavior, QueuedAgentMessage } from "@getpaseo/protocol/messages";
+import { AgentMessageQueue, summarizeQueuedAgentMessages } from "./message-queue.js";
+import { AgentManager } from "./agent-manager.js";
+import { sendPromptToAgent, waitForAgentRunStartWithTimeout } from "./agent-prompt.js";
+import { createTestAgentClient } from "../test-utils/fake-agent-client.js";
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import os from "node:os";
 import path from "node:path";
@@ -574,5 +582,473 @@ describe("AgentStorage", () => {
     const afterReload = new AgentStorage(storagePath, logger);
     const after = await afterReload.list();
     expect(after.some((r) => r.id === agentId)).toBe(false);
+  });
+});
+
+describe("durable message queue", () => {
+  let directory: string;
+  let storage: AgentStorage;
+
+  beforeEach(async () => {
+    directory = await mkdtemp(join(tmpdir(), "paseo-message-queue-"));
+    storage = new AgentStorage(directory, createTestLogger());
+    await storage.initialize();
+    await storage.upsert({
+      id: "agent",
+      provider: "codex",
+      cwd: directory,
+      createdAt: "2026-10-26T00:00:00.000Z",
+      updatedAt: "2026-10-26T00:00:00.000Z",
+      labels: {},
+      lastStatus: "idle",
+      config: null,
+    });
+  });
+
+  afterEach(async () => {
+    await storage.flush();
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  function fixture(dispatch?: (message: QueuedAgentMessage) => Promise<void>) {
+    const state = { idle: false };
+    const sent: Array<{ message: QueuedAgentMessage; behavior: ActiveTurnBehavior }> = [];
+    const errors: unknown[] = [];
+    const published: QueuedAgentMessage[][] = [];
+    const queue = new AgentMessageQueue({
+      storage,
+      isIdle: () => state.idle,
+      dispatch: async (_agentId, message, behavior) => {
+        sent.push({ message, behavior });
+        state.idle = false;
+        await dispatch?.(message);
+        return true;
+      },
+      publish: async (agentId) => {
+        published.push((await storage.get(agentId))?.queuedMessages ?? []);
+      },
+      onError: (error) => {
+        errors.push(error);
+      },
+    });
+    return { queue, state, sent, errors, published };
+  }
+
+  test("queued text, images, attachments and mode survive a new daemon storage instance", async () => {
+    const { queue } = fixture();
+    const message = await queue.enqueue({
+      agentId: "agent",
+      messageId: "first",
+      text: "Next task",
+      images: [{ data: "aGVsbG8=", mimeType: "image/png" }],
+      attachments: [
+        {
+          type: "uploaded_file",
+          id: "file",
+          fileName: "notes.txt",
+          mimeType: "text/plain",
+          size: 5,
+          path: "/tmp/notes.txt",
+        },
+      ],
+      sessionMode: "plan",
+    });
+    await queue.flush();
+    queue.stop();
+    const recovered = new AgentStorage(directory, createTestLogger());
+    await recovered.initialize();
+    expect((await recovered.get("agent"))?.queuedMessages).toEqual([message]);
+  });
+
+  test("each successful completion drains one FIFO message without any client", async () => {
+    const { queue, state, sent } = fixture();
+    await queue.enqueue({ agentId: "agent", messageId: "first", text: "one" });
+    await queue.enqueue({ agentId: "agent", messageId: "second", text: "two" });
+    await queue.flush();
+    expect(sent).toEqual([]);
+    state.idle = true;
+    queue.drain("agent");
+    queue.drain("agent");
+    await queue.flush();
+    expect(sent.map((entry) => entry.message.id)).toEqual(["first"]);
+    expect((await queue.list("agent")).map((message) => message.id)).toEqual(["second"]);
+    state.idle = true;
+    queue.drain("agent");
+    await queue.flush();
+    expect(sent.map((entry) => entry.message.id)).toEqual(["first", "second"]);
+    expect(sent.map((entry) => entry.behavior)).toEqual(["steer", "steer"]);
+    expect(await queue.list("agent")).toEqual([]);
+  });
+
+  test("enqueue arriving after a turn finished dispatches immediately and deduplicates retries after delivery", async () => {
+    const { queue, state, sent } = fixture();
+    state.idle = true;
+    const original = await queue.enqueue({ agentId: "agent", messageId: "same", text: "one" });
+    await queue.flush();
+    const repeated = await queue.enqueue({ agentId: "agent", messageId: "same", text: "one" });
+    await queue.flush();
+    expect(repeated).toEqual(original);
+    expect(sent).toHaveLength(1);
+    await expect(
+      queue.enqueue({ agentId: "agent", messageId: "same", text: "different" }),
+    ).rejects.toThrow("agent_request_key_conflict");
+    await queue.enqueue({ agentId: "agent", messageId: "new", text: "new" });
+    expect((await queue.list("agent")).map((message) => message.id)).toEqual(["new"]);
+  });
+
+  test("editing removes the selected message atomically and send now honors interruption", async () => {
+    const { queue, sent } = fixture();
+    const first = await queue.enqueue({ agentId: "agent", messageId: "first", text: "one" });
+    await queue.enqueue({ agentId: "agent", messageId: "second", text: "two" });
+    await queue.flush();
+    expect(await queue.remove("agent", "first")).toEqual(first);
+    expect(await queue.remove("agent", "first")).toBeNull();
+    await queue.sendNow("agent", "second", "interrupt");
+    expect(sent.map((entry) => ({ id: entry.message.id, behavior: entry.behavior }))).toEqual([
+      { id: "second", behavior: "interrupt" },
+    ]);
+    expect(await queue.list("agent")).toEqual([]);
+  });
+
+  test("failed dispatch retains an error and prevents automatic retry", async () => {
+    const { queue, state, sent, errors } = fixture(async () => {
+      throw new Error("Provider unavailable");
+    });
+    await queue.enqueue({ agentId: "agent", messageId: "first", text: "one" });
+    await queue.flush();
+    state.idle = true;
+    queue.drain("agent");
+    await queue.flush();
+    expect((await queue.list("agent"))[0]?.error).toBe("Provider unavailable");
+    expect(errors).toHaveLength(1);
+    state.idle = true;
+    queue.drain("agent");
+    await queue.flush();
+    expect(sent).toHaveLength(1);
+  });
+
+  test("a crash during dispatch retains the prompt with an explicit uncertain outcome", async () => {
+    const { queue } = fixture();
+    await queue.enqueue({ agentId: "agent", messageId: "first", text: "one" });
+    await queue.flush();
+    await storage.claimQueuedAgentMessage("agent", "first");
+    const recovered = new AgentStorage(directory, createTestLogger());
+    await recovered.initialize();
+    expect((await recovered.get("agent"))?.queuedMessages).toMatchObject([
+      {
+        id: "first",
+        error: "Delivery was interrupted. Check the conversation before sending again.",
+      },
+    ]);
+    expect((await recovered.get("agent"))?.dispatchingQueuedMessageId).toBeUndefined();
+  });
+
+  test("stale agent snapshots preserve queue mutations and shutdown leaves pending work", async () => {
+    const { queue, state, sent } = fixture();
+    const stale = await storage.get("agent");
+    expect(stale).not.toBeNull();
+    const message = await queue.enqueue({ agentId: "agent", messageId: "first", text: "one" });
+    if (!stale) throw new Error("Missing agent fixture");
+    await storage.upsert(stale);
+    expect(await queue.list("agent")).toEqual([message]);
+    queue.stop();
+    state.idle = true;
+    queue.drain("agent");
+    await queue.flush();
+    expect(sent).toEqual([]);
+    expect(await queue.list("agent")).toEqual([message]);
+  });
+
+  function deferred() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((complete) => {
+      resolve = complete;
+    });
+    return { promise, resolve };
+  }
+
+  test("AgentManager sends the next persisted message after completion with no connected app", async () => {
+    const firstFinished = deferred();
+    const nextStarted = deferred();
+    const nextFinished = deferred();
+    const prompts: string[] = [];
+    const client = createTestAgentClient("codex", {
+      onStartTurn: (prompt) => {
+        prompts.push(String(prompt));
+        if (prompts.length === 2) nextStarted.resolve();
+      },
+      beforeTurnComplete: async () => {
+        await (prompts.length === 1 ? firstFinished.promise : nextFinished.promise);
+      },
+    });
+    const manager = new AgentManager({
+      registry: storage,
+      clients: { codex: client },
+      logger: createTestLogger(),
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: directory }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      await sendPromptToAgent({
+        agentManager: manager,
+        agentStorage: storage,
+        agentId: agent.id,
+        prompt: "first task",
+        logger: createTestLogger(),
+      });
+      await waitForAgentRunStartWithTimeout(manager, agent.id);
+      if (!manager.messageQueue) throw new Error("Missing message queue");
+      await manager.messageQueue.enqueue({
+        agentId: agent.id,
+        messageId: "next",
+        text: "second task",
+      });
+      await manager.messageQueue.flush();
+      expect(prompts).toHaveLength(1);
+      firstFinished.resolve();
+      await nextStarted.promise;
+      await manager.messageQueue.flush();
+      expect(prompts).toHaveLength(2);
+      expect(prompts[1]).toContain("second task");
+      expect(await manager.messageQueue.list(agent.id)).toEqual([]);
+    } finally {
+      firstFinished.resolve();
+      nextFinished.resolve();
+      manager.prepareForShutdown();
+      await manager.closeAgent(agent.id);
+      await manager.flushForShutdown();
+    }
+  });
+
+  test("AgentManager Stop holds queued follow-ups instead of starting another turn", async () => {
+    const finish = deferred();
+    const prompts: string[] = [];
+    const client = createTestAgentClient("codex", {
+      onStartTurn: (prompt) => {
+        prompts.push(String(prompt));
+      },
+      beforeTurnComplete: async () => {
+        await finish.promise;
+      },
+    });
+    const manager = new AgentManager({
+      registry: storage,
+      clients: { codex: client },
+      logger: createTestLogger(),
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: directory }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      await sendPromptToAgent({
+        agentManager: manager,
+        agentStorage: storage,
+        agentId: agent.id,
+        prompt: "first task",
+        logger: createTestLogger(),
+      });
+      await waitForAgentRunStartWithTimeout(manager, agent.id);
+      if (!manager.messageQueue) throw new Error("Missing message queue");
+      await manager.messageQueue.enqueue({
+        agentId: agent.id,
+        messageId: "next",
+        text: "second task",
+      });
+      await manager.messageQueue.flush();
+      await manager.cancelAgentRun(agent.id);
+      await manager.messageQueue.flush();
+      expect(prompts).toHaveLength(1);
+      expect((await manager.messageQueue.list(agent.id)).map((message) => message.id)).toEqual([
+        "next",
+      ]);
+    } finally {
+      manager.prepareForShutdown();
+      finish.resolve();
+      await manager.closeAgent(agent.id);
+      await manager.flushForShutdown();
+    }
+  });
+
+  test("Stop holds the queue when interruption synchronously reports successful completion", async () => {
+    const finish = deferred();
+    const prompts: string[] = [];
+    const client = createTestAgentClient("codex", {
+      completeOnInterrupt: true,
+      onStartTurn: (prompt) => {
+        prompts.push(String(prompt));
+      },
+      beforeTurnComplete: async () => {
+        await finish.promise;
+      },
+    });
+    const manager = new AgentManager({
+      registry: storage,
+      clients: { codex: client },
+      logger: createTestLogger(),
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: directory }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      await sendPromptToAgent({
+        agentManager: manager,
+        agentStorage: storage,
+        agentId: agent.id,
+        prompt: "first task",
+        logger: createTestLogger(),
+      });
+      await waitForAgentRunStartWithTimeout(manager, agent.id);
+      const queue = manager.messageQueue;
+      if (!queue) throw new Error("Missing queue");
+      await queue.enqueue({ agentId: agent.id, messageId: "next", text: "second task" });
+      await queue.flush();
+      await manager.cancelAgentRun(agent.id);
+      await queue.flush();
+      expect(prompts).toHaveLength(1);
+      expect((await queue.list(agent.id)).map((message) => message.id)).toEqual(["next"]);
+    } finally {
+      manager.prepareForShutdown();
+      finish.resolve();
+      await manager.closeAgent(agent.id);
+      await manager.flushForShutdown();
+    }
+  });
+
+  class HeldMessageStorage extends AgentStorage {
+    readonly admitted = deferred();
+    readonly claimed = deferred();
+    admissionGate?: Promise<void>;
+    claimGate?: Promise<void>;
+
+    override async enqueueAgentMessage(
+      agentId: string,
+      message: QueuedAgentMessage,
+    ): Promise<QueuedAgentMessage> {
+      const result = await super.enqueueAgentMessage(agentId, message);
+      this.admitted.resolve();
+      await this.admissionGate;
+      return result;
+    }
+
+    override async claimQueuedAgentMessage(
+      agentId: string,
+      messageId: string,
+    ): Promise<QueuedAgentMessage | null> {
+      const result = await super.claimQueuedAgentMessage(agentId, messageId);
+      this.claimed.resolve();
+      await this.claimGate;
+      return result;
+    }
+  }
+
+  async function heldManager() {
+    const held = new HeldMessageStorage(directory, createTestLogger());
+    await held.initialize();
+    storage = held;
+    const prompts: string[] = [];
+    const manager = new AgentManager({
+      registry: held,
+      logger: createTestLogger(),
+      clients: {
+        codex: createTestAgentClient("codex", {
+          onStartTurn: (prompt) => {
+            prompts.push(String(prompt));
+          },
+        }),
+      },
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: directory }, undefined, {
+      workspaceId: undefined,
+    });
+    const queue = manager.messageQueue;
+    if (!queue) throw new Error("Missing queue");
+    return { held, prompts, manager, agent, queue };
+  }
+
+  test("Stop overtakes a persisted enqueue before its admission acknowledgment", async () => {
+    const { held, prompts, manager, agent, queue } = await heldManager();
+    const resume = deferred();
+    held.admissionGate = resume.promise;
+    try {
+      const enqueue = queue.enqueue({ agentId: agent.id, messageId: "next", text: "second task" });
+      await held.admitted.promise;
+      await manager.cancelAgentRun(agent.id);
+      resume.resolve();
+      await enqueue;
+      await queue.flush();
+      expect(prompts).toEqual([]);
+      expect(await queue.list(agent.id)).toMatchObject([{ id: "next" }]);
+    } finally {
+      resume.resolve();
+      manager.prepareForShutdown();
+      await manager.closeAgent(agent.id);
+      await manager.flushForShutdown();
+    }
+  });
+
+  test("Stop overtakes a durable dispatch claim and releases it without losing the prompt", async () => {
+    const { held, prompts, manager, agent, queue } = await heldManager();
+    const resume = deferred();
+    held.claimGate = resume.promise;
+    try {
+      await queue.enqueue({ agentId: agent.id, messageId: "next", text: "second task" });
+      await held.claimed.promise;
+      await manager.cancelAgentRun(agent.id);
+      resume.resolve();
+      await queue.flush();
+      expect(prompts).toEqual([]);
+      expect(await queue.list(agent.id)).toMatchObject([{ id: "next" }]);
+      expect((await held.get(agent.id))?.dispatchingQueuedMessageId).toBeUndefined();
+    } finally {
+      resume.resolve();
+      manager.prepareForShutdown();
+      await manager.closeAgent(agent.id);
+      await manager.flushForShutdown();
+    }
+  });
+
+  test("archive overtakes a durable claim without reviving the agent or consuming queued work", async () => {
+    const { held, prompts, manager, agent, queue } = await heldManager();
+    const resume = deferred();
+    held.claimGate = resume.promise;
+    try {
+      await queue.enqueue({ agentId: agent.id, messageId: "next", text: "second task" });
+      await held.claimed.promise;
+      await manager.archiveAgent(agent.id);
+      resume.resolve();
+      await queue.flush();
+      expect(prompts).toEqual([]);
+      expect(manager.getAgent(agent.id)).toBeNull();
+      expect((await held.get(agent.id))?.archivedAt).toBeTruthy();
+      expect(await queue.list(agent.id)).toMatchObject([{ id: "next" }]);
+      expect((await held.get(agent.id))?.dispatchingQueuedMessageId).toBeUndefined();
+    } finally {
+      resume.resolve();
+      manager.prepareForShutdown();
+      await manager.closeAgent(agent.id);
+      await manager.flushForShutdown();
+    }
+  });
+
+  test("queue summaries bound text previews and omit full attachment bytes", () => {
+    const summaries = summarizeQueuedAgentMessages([
+      {
+        id: "large",
+        text: "x".repeat(3_000_000),
+        images: [{ data: "a".repeat(8_000_000), mimeType: "image/png" }],
+        attachments: [{ type: "text", mimeType: "text/plain", text: "b".repeat(3_000_000) }],
+        createdAt: "2026-10-26T00:00:00.000Z",
+      },
+    ]);
+    expect(summaries).toEqual([
+      {
+        id: "large",
+        text: "x".repeat(2000),
+        attachmentCount: 2,
+        createdAt: "2026-10-26T00:00:00.000Z",
+      },
+    ]);
+    expect(JSON.stringify(summaries).length).toBeLessThan(2200);
   });
 });

@@ -1,0 +1,12 @@
+
+ RUN  v4.1.7 <checkout>/packages/app
+
+(node:60174) [DEP0151] DeprecationWarning: Package <checkout>/node_modules/react-native-worklets/ has a "main" field set to "./lib/module/index", excluding the full filename and extension to the resolved file at "lib/module/index.js", imported from <checkout>/node_modules/react-native-reanimated/lib/module/initializers.js.
+ Automatic extension resolution of the "main" field is deprecated for ES modules.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 96 skipped (97)
+   Start at  11:37:09
+   Duration  10.82s (transform 8.80s, setup 32ms, import 10.62s, tests 10ms, environment 0ms)
+

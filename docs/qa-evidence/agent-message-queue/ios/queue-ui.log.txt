@@ -1,0 +1,15 @@
+Running on Paseo Queue QA 7890 - iOS 26.2 - <simulator-id>
+ > Flow queue-fixed-rerun
+Run flow when "(?s).*ERR_NOTIFICATIONS_KEYCHAIN_ACCESS.*" is visible...
+Run flow when "(?s).*ERR_NOTIFICATIONS_KEYCHAIN_ACCESS.*" is visible... SKIPPED
+Assert that "Native queue follow-up" is visible... COMPLETED
+Tap on "Native queue follow-up"... COMPLETED
+Tap on id: composer-send-options... COMPLETED
+Assert that id: composer-send-options-queue is visible... COMPLETED
+Assert that id: composer-send-options-now is visible... COMPLETED
+Take screenshot native-send-options... COMPLETED
+Tap on id: composer-send-options-queue... COMPLETED
+Assert that "Edit queued message" is visible... COMPLETED
+Assert that "Native queue follow-up" is visible... COMPLETED
+Assert that "Remove queued message" is visible... COMPLETED
+Take screenshot native-queued... COMPLETED

@@ -1,0 +1,6 @@
+Running on Paseo Queue QA 7890 - iOS 26.2 - <simulator-id>
+ > Flow edit
+Tap on "Edit queued message"... COMPLETED
+Assert that "Edit queued message" is not visible... COMPLETED
+Assert that "Native queue follow-up" is visible... COMPLETED
+Take screenshot native-edited... COMPLETED
