@@ -8,10 +8,11 @@ export async function runPluginBuild(
   directory: string,
   commands: PluginManifest["build"],
   logger: { info(data: Record<string, unknown>, message: string): void },
+  environment: NodeJS.ProcessEnv,
 ): Promise<void> {
   for (const command of commands ?? []) {
     logger.info({ directory, command }, "Running plugin build command");
-    const result = await run(command, directory);
+    const result = await run(command, directory, environment);
     if (result.stdout)
       logger.info({ directory, command, output: result.stdout }, "Plugin build stdout");
     if (result.stderr)
@@ -29,11 +30,15 @@ export async function runPluginBuild(
   }
 }
 
-function run(command: string[], directory: string): Promise<CommandResult> {
+function run(
+  command: string[],
+  directory: string,
+  environment: NodeJS.ProcessEnv,
+): Promise<CommandResult> {
   return new Promise((resolve) => {
     const executable = command[0]!;
     const arguments_ = command.slice(1);
-    const child = spawnProcess(executable, arguments_, { cwd: directory });
+    const child = spawnProcess(executable, arguments_, { cwd: directory, env: environment });
     let stdout = "";
     let stderr = "";
     let error: Error | undefined;

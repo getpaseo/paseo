@@ -16,7 +16,12 @@ export {
 export type CompilerTask =
   | { kind: "entries"; entries: Parameters<typeof build.compilePlugin>[0] }
   | { kind: "directory"; directory: string; version: string; builtinId?: string }
-  | { kind: "prepare"; directory: string; commands: PluginManifest["build"] };
+  | {
+      kind: "prepare";
+      directory: string;
+      commands: PluginManifest["build"];
+      environment: NodeJS.ProcessEnv;
+    };
 
 interface TaskResult {
   entries: Awaited<ReturnType<typeof build.compilePlugin>>;
@@ -24,15 +29,41 @@ interface TaskResult {
   prepare: void;
 }
 
-// One active build per daemon, including preparation. A fresh isolate per task
-// releases TypeScript's ASTs and caches and inherits current command environment.
-const compileQueue = pLimit(1);
+const IDLE_TIMEOUT_MS = 1_000;
 
-export function runCompilerTask<T extends CompilerTask>(
-  task: T,
-  onLog?: (data: Record<string, unknown>, message: string) => void,
-): Promise<TaskResult[T["kind"]]> {
-  return compileQueue(async () => {
+// Reuse the isolate during a build batch (notably daemon bootstrap), then release
+// TypeScript's heap when idle. Only this owner admits work or stops the worker.
+class PluginCompiler {
+  private readonly queue = pLimit(1);
+  private worker: Worker | null = null;
+  private idleTimer: ReturnType<typeof setTimeout> | null = null;
+  private stopping: Promise<unknown> = Promise.resolve();
+
+  run<T extends CompilerTask>(
+    task: T,
+    onLog?: (data: Record<string, unknown>, message: string) => void,
+  ): Promise<TaskResult[T["kind"]]> {
+    return this.queue(async () => {
+      if (this.idleTimer) clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+      await this.stopping;
+      const worker = this.worker ?? this.startWorker();
+      worker.ref();
+      try {
+        return await this.request<T>(worker, task, onLog);
+      } finally {
+        if (this.worker === worker) {
+          worker.unref();
+          this.idleTimer = setTimeout(() => this.stopWorker(worker), IDLE_TIMEOUT_MS);
+          this.idleTimer.unref();
+        } else {
+          await this.stopping;
+        }
+      }
+    });
+  }
+
+  private startWorker(): Worker {
     const source = import.meta.url.endsWith(".ts");
     const url = new URL(source ? "./compiler-worker.ts" : "./compiler-worker.js", import.meta.url);
     // Node workers do not inherit tsx's in-process loader registration. Register
@@ -40,16 +71,40 @@ export function runCompilerTask<T extends CompilerTask>(
     const worker = source
       ? new Worker(
           `import(${JSON.stringify(pathToFileURL(createRequire(import.meta.url).resolve("tsx/esm/api")).href)}).then(({ register }) => { register(); return import(${JSON.stringify(url.href)}); });`,
-          { eval: true, execArgv: [], workerData: task },
+          { eval: true, execArgv: [] },
         )
-      : new Worker(url, { execArgv: [], workerData: task });
+      : new Worker(url, { execArgv: [] });
+    this.worker = worker;
+    // Keep error/exit ownership while idle too. The next caller gets a fresh
+    // isolate after a crash; author build commands are never retried.
+    worker.on("error", () => this.stopWorker(worker));
+    worker.on("exit", () => {
+      if (this.worker === worker) this.stopWorker(worker);
+    });
+    return worker;
+  }
+
+  private stopWorker(worker: Worker): void {
+    if (this.worker !== worker) return;
+    this.worker = null;
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = null;
+    this.stopping = worker.terminate();
+  }
+
+  private async request<T extends CompilerTask>(
+    worker: Worker,
+    task: T,
+    onLog?: (data: Record<string, unknown>, message: string) => void,
+  ): Promise<TaskResult[T["kind"]]> {
+    let onMessage: (reply: CompilerReply) => void;
+    let onError: (error: Error) => void;
+    let onExit: (code: number) => void;
     try {
       return await new Promise<TaskResult[T["kind"]]>((resolve, reject) => {
-        worker.on("error", reject);
-        worker.on("exit", (code) =>
-          reject(new Error(`Plugin compiler worker exited (code ${code})`)),
-        );
-        worker.on("message", (reply: CompilerReply) => {
+        onError = reject;
+        onExit = (code) => reject(new Error(`Plugin compiler worker exited (code ${code})`));
+        onMessage = (reply) => {
           if (reply.kind === "log") {
             onLog?.(reply.data, reply.message);
           } else if (reply.kind === "result") {
@@ -60,14 +115,27 @@ export function runCompilerTask<T extends CompilerTask>(
             if (reply.warnings) Object.assign(error, { warnings: reply.warnings });
             reject(error);
           }
-        });
+        };
+        worker.on("error", onError);
+        worker.on("exit", onExit);
+        worker.on("message", onMessage);
+        worker.postMessage(task, []);
       });
     } finally {
-      // A crash rejects only its task. The queue always advances and the next
-      // caller gets a new worker; no retries of author build commands.
-      await worker.terminate();
+      worker.off("message", onMessage!);
+      worker.off("error", onError!);
+      worker.off("exit", onExit!);
     }
-  });
+  }
+}
+
+const compiler = new PluginCompiler();
+
+export function runCompilerTask<T extends CompilerTask>(
+  task: T,
+  onLog?: (data: Record<string, unknown>, message: string) => void,
+): Promise<TaskResult[T["kind"]]> {
+  return compiler.run(task, onLog);
 }
 
 export function compilePlugin(entries: Parameters<typeof build.compilePlugin>[0]) {

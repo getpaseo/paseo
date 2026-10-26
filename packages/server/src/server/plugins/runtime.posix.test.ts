@@ -2059,8 +2059,10 @@ export default function contribute(server) {
 const examplesDirectory = fileURLToPath(
   new URL("../../../../../plugin-examples/", import.meta.url),
 );
+// The Markdown example owns npm preparation in the real app fixture:
+// packages/app/e2e/browser/plugin-file-panel-examples.spec.ts.
 const examples = (await readdir(examplesDirectory, { withFileTypes: true }))
-  .filter((entry) => entry.isDirectory())
+  .filter((entry) => entry.isDirectory() && entry.name !== "markdown-panel")
   .map((entry) => entry.name);
 
 it.each(examples)("builds and loads the %s plugin example", async (example) => {

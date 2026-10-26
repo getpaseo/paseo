@@ -143,6 +143,28 @@ describe("runPluginBuild", () => {
     ]);
   });
 
+  it("uses the caller's current environment across consecutive builds", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-build-"));
+    directories.push(directory);
+    const previous = process.env.PASEO_PLUGIN_TEST_BUILD_VALUE;
+    const command = [
+      process.execPath,
+      "-e",
+      'require("node:fs").writeFileSync(process.argv[1], process.env.PASEO_PLUGIN_TEST_BUILD_VALUE);',
+    ];
+    try {
+      process.env.PASEO_PLUGIN_TEST_BUILD_VALUE = "first";
+      await runPluginBuild(directory, [[...command, "first.txt"]], createTestLogger());
+      process.env.PASEO_PLUGIN_TEST_BUILD_VALUE = "second";
+      await runPluginBuild(directory, [[...command, "second.txt"]], createTestLogger());
+      expect(await readFile(path.join(directory, "first.txt"), "utf8")).toBe("first");
+      expect(await readFile(path.join(directory, "second.txt"), "utf8")).toBe("second");
+    } finally {
+      if (previous === undefined) delete process.env.PASEO_PLUGIN_TEST_BUILD_VALUE;
+      else process.env.PASEO_PLUGIN_TEST_BUILD_VALUE = previous;
+    }
+  });
+
   it("handles empty or undefined build commands gracefully", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-build-"));
     directories.push(directory);

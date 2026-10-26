@@ -1612,7 +1612,7 @@ it("keeps reload and enable responsive while compiling a real plugin", async () 
         Array.from({ length: 10_000 }, (_, index) => offset + index).join(",") + ",",
       );
     }
-    await entry.write("]; export default () => values;");
+    await entry.write("]; export default function contribute() { return () => values; }");
   } finally {
     await entry.close();
   }
@@ -1643,6 +1643,15 @@ it("keeps reload and enable responsive while compiling a real plugin", async () 
       expect(service.catalog()[0]?.clientBundle).toContain("349999");
       expect(longest).toBeLessThan(20);
     }
+    // Evaluate after both probes so parsing the returned code is not charged to compilation.
+    const factory = globalThis.eval(service.catalog()[0]!.clientBundle) as (
+      require: (specifier: string) => never,
+    ) => { default: () => () => number[] };
+    const values = factory((specifier) => {
+      throw new Error(`Unexpected fixture dependency: ${specifier}`);
+    }).default()();
+    expect(values).toHaveLength(350_000);
+    expect(values.every((value, index) => value === index)).toBe(true);
   } finally {
     await service.stopAllPlugins();
   }
