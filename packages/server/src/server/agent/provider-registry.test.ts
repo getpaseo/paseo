@@ -651,6 +651,39 @@ test("models of a derived provider carry the extended provider in metadata", asy
   });
 });
 
+test("derived provider additions keep runtime metadata when overlapping by id", async () => {
+  mockState.runtimeModels.set("codex", [
+    {
+      provider: "codex",
+      id: "discovered-model",
+      label: "Discovered Model",
+      metadata: { providerId: "upstream-x", modelId: "model-y" },
+    },
+  ]);
+
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      "my-codex": {
+        extends: "codex",
+        label: "My Codex",
+        additionalModels: [{ id: "discovered-model", label: "Relabeled Model" }],
+      },
+    },
+  });
+
+  const { models } = await registry["my-codex"].fetchCatalog({
+    scope: "workspace",
+    cwd: "/tmp/registry-derived-overlap",
+    force: false,
+  });
+
+  expect(models.find((model) => model.id === "discovered-model")?.metadata).toEqual({
+    providerId: "upstream-x",
+    modelId: "model-y",
+    underlyingProvider: "codex",
+  });
+});
+
 test("new provider extending codex archives and unarchives its native sessions", async () => {
   const registry = buildProviderRegistry(logger, {
     providerOverrides: { "my-codex": { extends: "codex", label: "My Codex" } },
