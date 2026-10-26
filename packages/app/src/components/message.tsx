@@ -971,6 +971,10 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     borderBottomLeftRadius: 0,
     borderBottomRightRadius: 0,
   },
+  // Details that do not sit in a card leave the header as a lone highlighted pill.
+  pressableExpandedDetached: {
+    borderRadius: theme.borderRadius.full,
+  },
   detailWrapperBorderless: {
     borderWidth: 0,
   },
@@ -2048,7 +2052,10 @@ export const ExpandableBadge = memo(function ExpandableBadge({
       expandableBadgeStylesheet.pressable,
       isPressed && isInteractive ? expandableBadgeStylesheet.pressablePressed : null,
       isExpanded && expandableBadgeStylesheet.pressableExpanded,
-      isExpanded && !borderlessWhenExpanded && expandableBadgeStylesheet.pressableExpandedAttached,
+      isExpanded &&
+        (borderlessWhenExpanded
+          ? expandableBadgeStylesheet.pressableExpandedDetached
+          : expandableBadgeStylesheet.pressableExpandedAttached),
     ],
     [borderlessWhenExpanded, isExpanded, isInteractive, isPressed],
   );

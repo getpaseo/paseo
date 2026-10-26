@@ -804,3 +804,18 @@ it("makes the web Markdown container selectable in Safari as well as unprefixed 
     WebkitUserSelect: "text",
   });
 });
+
+it.each([false, true])(
+  "scales inline code from theme tokens with its surrounding block (compact: %s)",
+  (compact) => {
+    const theme = {
+      ...darkTheme,
+      fontSize: { ...darkTheme.fontSize, code: 13, content: 17, base: 16 },
+    };
+    const { markdownStyle } = createMarkdownStyles(theme, { compact, blockGap: 16 });
+    const bodySize = compact ? theme.fontSize.base : theme.fontSize.content;
+    expect(markdownStyle.code).not.toHaveProperty("fontSize");
+    expect(markdownStyle.code).toHaveProperty("fontScale", theme.fontSize.code / bodySize);
+    expect(markdownStyle.codeBlock?.fontSize).toBe(theme.fontSize.code);
+  },
+);

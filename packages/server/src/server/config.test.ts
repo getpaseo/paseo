@@ -27,6 +27,17 @@ describe("server config", () => {
     expect(standaloneConfig.desktopManaged).toBe(false);
   });
 
+  test("idle runtime cleanup defaults on and supports a host-wide opt-out", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-idle-cleanup-"));
+    roots.push(paseoHome);
+    expect(loadConfig(paseoHome, { env: {} }).idleRuntimeCleanup).toBe(true);
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({ agents: { idleRuntimeCleanup: false } }),
+    );
+    expect(loadConfig(paseoHome, { env: {} }).idleRuntimeCleanup).toBe(false);
+  });
+
   test("loads the provider catalog refresh timeout", async () => {
     const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-provider-timeout-"));
     roots.push(paseoHome);
@@ -104,9 +115,13 @@ describe("server config", () => {
       name: "OpenAI speech providers",
       providers: { dictation: "openai", voiceStt: "openai", voiceTts: "openai" },
       expected: [
+        "features.dictation.stt.apiKey",
         "features.dictation.stt.confidenceThreshold",
         "features.dictation.stt.model",
+        "features.voiceMode.stt.apiKey",
+        "features.voiceMode.stt.confidenceThreshold",
         "features.voiceMode.stt.model",
+        "features.voiceMode.tts.apiKey",
         "features.voiceMode.tts.model",
         "features.voiceMode.tts.voice",
       ],
@@ -115,8 +130,9 @@ describe("server config", () => {
       name: "mixed local and OpenAI speech providers",
       providers: { dictation: "local", voiceStt: "openai", voiceTts: "local" },
       expected: [
-        "features.dictation.stt.confidenceThreshold",
         "features.dictation.stt.model",
+        "features.voiceMode.stt.apiKey",
+        "features.voiceMode.stt.confidenceThreshold",
         "features.voiceMode.stt.model",
         "features.voiceMode.tts.model",
       ],

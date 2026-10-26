@@ -452,7 +452,7 @@ async function revealPhoneExplorer(page: Parameters<typeof ensureExplorerSidebar
 }
 
 async function cycleWorkspaceTheme(page: Parameters<typeof ensureExplorerSidebar>[0]) {
-  await page.keyboard.press("Control+Alt+t");
+  await pressWorkspaceShortcut(page, "Alt+t");
 }
 
 test("retains the Explorer host through appearance changes and folding", async ({ page }) => {
