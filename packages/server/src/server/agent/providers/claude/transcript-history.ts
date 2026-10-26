@@ -1,3 +1,4 @@
+import { assignTaskNotificationReplayIds } from "./task-notification-tool-call.js";
 import fs from "node:fs";
 import path from "node:path";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
@@ -88,21 +89,24 @@ function indexedRecords(
 ): Iterable<TranscriptEntry> {
   return {
     *[Symbol.iterator]() {
-      for (const location of locations) {
-        const fd = descriptors.get(location.file)!;
-        const buffer = Buffer.allocUnsafe(location.length);
-        let read = 0;
-        while (read < buffer.length) {
-          const count = fs.readSync(fd, buffer, read, buffer.length - read, location.offset + read);
-          if (count === 0)
-            throw new Error(`Claude transcript was truncated during replay: ${location.file}`);
-          read += count;
-        }
-        const entry = parseRecord(buffer.toString("utf8"));
-        if (entry) yield entry;
-      }
+      yield* assignTaskNotificationReplayIds(readEntries());
     },
   };
+  function* readEntries(): Generator<TranscriptEntry> {
+    for (const location of locations) {
+      const fd = descriptors.get(location.file)!;
+      const buffer = Buffer.allocUnsafe(location.length);
+      let read = 0;
+      while (read < buffer.length) {
+        const count = fs.readSync(fd, buffer, read, buffer.length - read, location.offset + read);
+        if (count === 0)
+          throw new Error(`Claude transcript was truncated during replay: ${location.file}`);
+        read += count;
+      }
+      const entry = parseRecord(buffer.toString("utf8"));
+      if (entry) yield entry;
+    }
+  }
 }
 
 function isToolResult(entry: TranscriptEntry): boolean {

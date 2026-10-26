@@ -834,7 +834,7 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
         .filter((item) => item.type === "tool_call" && item.name === "task_notification"),
     ).toEqual([
       expect.objectContaining({
-        callId: "task_notification_workflow-notification",
+        callId: expect.stringMatching(/^task_notification_[a-f0-9]+_1$/),
         status: "completed",
       }),
     ]);

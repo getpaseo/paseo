@@ -23,14 +23,29 @@ const ThemedMarkdown = withUnistyles(EnrichedMarkdownText);
 const MD4C_FLAGS = { latexMath: false, hardSoftBreaks: true, admonitions: true };
 
 // Reading the breakpoint here makes Unistyles restyle the text when the layout crosses it.
-const markdownStyle = (compact: boolean) => (theme: Theme, rt: { breakpoint?: string }) =>
-  createMarkdownStyles(theme, { compact, blockGap: resolveDensity(rt, density.blockGap) });
+const markdownStyle =
+  (compact: boolean, muted = false) =>
+  (theme: Theme, rt: { breakpoint?: string }) =>
+    createMarkdownStyles(theme, {
+      compact,
+      muted,
+      blockGap: resolveDensity(rt, density.blockGap),
+    });
 const regularStyle = markdownStyle(false);
 const compactStyle = markdownStyle(true);
+const compactMutedStyle = markdownStyle(true, true);
+
+function pickMarkdownStyle(compact: boolean, muted: boolean) {
+  if (!compact) return regularStyle;
+  return muted ? compactMutedStyle : compactStyle;
+}
 
 export interface MarkdownRendererProps extends MarkdownImageContext {
   text: string;
   compact?: boolean;
+  /** Muted text colour. Compact surfaces only. */
+  muted?: boolean;
+  selectable?: boolean;
   streaming?: boolean;
   onLinkPress?: (url: string) => unknown;
 }
@@ -56,6 +71,8 @@ export const MarkdownRenderer = memo(function MarkdownRenderer(props: MarkdownRe
 const MarkdownPart = memo(function MarkdownPart({
   text,
   compact = false,
+  muted = false,
+  selectable = true,
   streaming = false,
   onLinkPress,
   ...imageContext
@@ -98,9 +115,9 @@ const MarkdownPart = memo(function MarkdownPart({
             <ThemedMarkdown
               key={`${segment.kind}:${segment.id}`}
               markdown={segment.source}
-              uniProps={compact ? compactStyle : regularStyle}
+              uniProps={pickMarkdownStyle(compact, muted)}
               flavor="github"
-              selectable
+              selectable={selectable}
               md4cFlags={MD4C_FLAGS}
               linkRecognition={linkRecognition}
               enableTaskListItemToggle={false}

@@ -7,6 +7,7 @@ import {
   segmentedIconSize,
   type SegmentedControlSize,
 } from "@/components/ui/control-geometry";
+import { useContainedControlSize } from "@/components/ui/control-size";
 import type { Theme } from "@/styles/theme";
 
 type SegmentedControlIconRenderer = (props: { color: string; size: number }) => ReactNode;
@@ -48,11 +49,13 @@ export function SegmentedControl<T extends string>({
   options,
   value,
   onValueChange,
-  size = "md",
+  size: sizeProp,
   hideLabels = false,
   style,
   testID,
 }: SegmentedControlProps<T>) {
+  const containedSize = useContainedControlSize();
+  const size = sizeProp ?? containedSize ?? "md";
   const sizeStyles = {
     xs: { container: styles.containerXs, segment: styles.segmentXs, label: styles.labelXs },
     sm: { container: styles.containerSm, segment: styles.segmentSm, label: styles.labelSm },

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   resolveSendTooltipLabel,
+  resolveSubmitAccessibilityHint,
   resolveSubmitAccessibilityLabel,
   resolveVoiceAccessibilityLabel,
   resolveVoiceTooltipText,
@@ -12,6 +13,8 @@ const translations: Record<string, string> = {
   "composer.input.sendAndInterrupt": "Send and interrupt",
   "composer.input.sendAndSteer": "Send and steer",
   "composer.input.sendMessage": "Send message",
+  "composer.input.longPressToQueue": "Long press to queue",
+  "composer.input.longPressToSendNow": "Long press to send now",
   "composer.input.queue": "Queue",
   "composer.input.send": "Send",
   "composer.voice.unmuteVoiceMode": "Unmute Voice mode",
@@ -26,6 +29,37 @@ const translations: Record<string, string> = {
 const t = ((key: string) => translations[key] ?? key) as never;
 
 describe("composer input labels", () => {
+  it("names the long-press action in the submit hint only when one exists", () => {
+    expect(
+      resolveSubmitAccessibilityHint({
+        canPressLoadingButton: false,
+        alternateSendAction: "queue",
+        t,
+      }),
+    ).toBe("Long press to queue");
+    expect(
+      resolveSubmitAccessibilityHint({
+        canPressLoadingButton: false,
+        alternateSendAction: "send",
+        t,
+      }),
+    ).toBe("Long press to send now");
+    expect(
+      resolveSubmitAccessibilityHint({
+        canPressLoadingButton: false,
+        alternateSendAction: null,
+        t,
+      }),
+    ).toBeUndefined();
+    expect(
+      resolveSubmitAccessibilityHint({
+        canPressLoadingButton: true,
+        alternateSendAction: "queue",
+        t,
+      }),
+    ).toBeUndefined();
+  });
+
   it("resolves submit accessibility labels from translations", () => {
     expect(
       resolveSubmitAccessibilityLabel({
