@@ -499,11 +499,12 @@ export class TimelineProjection {
       // Choose the window before extending the right edge, so a prompt jump
       // cannot lose its target when the next turn is arbitrarily large.
       if (input.wholeTurns) {
-        while (low < this.rows.length && continuesProjectedTurn(this.rows[low - 1], this.rows[low])) low++;
+        while (low < this.rows.length && continuesProjectedTurn(this.rows[low - 1], this.rows[low]))
+          low++;
       }
-      const selectedEnd = input.wholeTurns
-        ? (low === this.rows.length ? input.bounds.maxSeq : this.rows[low].seqStart - 1)
-        : endSeq;
+      let selectedEnd = endSeq;
+      if (input.wholeTurns)
+        selectedEnd = low === this.rows.length ? input.bounds.maxSeq : this.rows[low].seqStart - 1;
       return {
         entries: this.rows.slice(start, low),
         startSeq: this.rows[start]?.seqStart ?? null,
@@ -698,7 +699,10 @@ function selectProjectedEntriesAfter(input: {
   };
 }
 
-function continuesProjectedTurn(previous: TimelineProjectionEntry, next: TimelineProjectionEntry): boolean {
+function continuesProjectedTurn(
+  previous: TimelineProjectionEntry,
+  next: TimelineProjectionEntry,
+): boolean {
   return continuesTimelineTurn(previous.turnId, next.turnId, isTimelineTurnTrigger(next.item));
 }
 

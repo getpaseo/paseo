@@ -250,31 +250,35 @@ it("includes transitive tool updates in a contiguous projected tail", () => {
   expect(tail).toMatchObject({ startSeq: 1, endSeq: 6, hasOlder: false });
 });
 
-it("serves tail 200 from 100,000 retained rows without stalling the loop", async () => {
-  const store = new InMemoryAgentTimelineStore();
-  store.initialize("large");
-  for (let index = 0; index < 100_000; index++) {
-    store.append("large", { type: "user_message", text: String(index) });
-  }
-  // Generation and its GC are outside the measured request window.
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  const started = performance.now();
-  const probe = new Promise<number>((resolve) =>
-    setImmediate(() => resolve(performance.now() - started)),
-  );
-  let page = store.fetch("large", { limit: 200 });
-  for (let repeat = 1; repeat < 8; repeat++) page = store.fetch("large", { limit: 200 });
-  const duration = performance.now() - started;
-  const loopGap = await probe;
-  console.info({ duration, loopGap });
-  expect(page.rows).toHaveLength(200);
-  expect(page.startSeq).toBe(99_801);
-  expect(page.endSeq).toBe(100_000);
-  // CI runners can pause for scheduling/GC; the local per-request 2 ms gate
-  // is measured separately. Eight requests amplify the old full-history work.
-  expect(duration).toBeLessThan(50);
-  expect(loopGap).toBeLessThan(50);
-});
+it.each([false, true])(
+  "serves tail 200 from 100,000 retained rows without stalling the loop (wholeTurns=%s)",
+  async (wholeTurns) => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("large");
+    for (let index = 0; index < 100_000; index++) {
+      store.append("large", { type: "user_message", text: String(index) });
+    }
+    // Generation and its GC are outside the measured request window.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const started = performance.now();
+    const probe = new Promise<number>((resolve) =>
+      setImmediate(() => resolve(performance.now() - started)),
+    );
+    let page = store.fetch("large", { limit: 200, wholeTurns });
+    for (let repeat = 1; repeat < 8; repeat++)
+      page = store.fetch("large", { limit: 200, wholeTurns });
+    const duration = performance.now() - started;
+    const loopGap = await probe;
+    console.info({ duration, loopGap });
+    expect(page.rows).toHaveLength(200);
+    expect(page.startSeq).toBe(99_801);
+    expect(page.endSeq).toBe(100_000);
+    // CI runners can pause for scheduling/GC; the local per-request 2 ms gate
+    // is measured separately. Eight requests amplify the old full-history work.
+    expect(duration).toBeLessThan(50);
+    expect(loopGap).toBeLessThan(50);
+  },
+);
 
 it("matches the previous reprojecting selector on seeded randomized timelines", () => {
   let seed = 0x76aabbcc;
