@@ -1896,12 +1896,11 @@ function StreamItemWrapper({ gapBelow, turnIndent, children }: StreamItemWrapper
   const gapStyle = useMemo(() => ({ paddingBottom: gapBelow }), [gapBelow]);
   switch (turnIndent) {
     case "none":
-      return <View style={wrapperStyle}>{children}</View>;
     case "openedHost":
       return (
         <View style={wrapperStyle}>
           {children}
-          <IndentRail style={gapStyle} />
+          {turnIndent === "openedHost" ? <IndentRail style={gapStyle} /> : null}
         </View>
       );
     case "nested":
