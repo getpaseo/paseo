@@ -99,11 +99,37 @@ it("preserves named and numeric entities as literal rendered text", () => {
   );
 });
 
+it("separates a table directly after a paragraph for MD4C", () => {
+  const table = "| Command | Result |\n|---|---|\n| typecheck | pass |";
+  expect(prepareMarkdownSource(`**Verification**\n${table}`).render()).toBe(
+    `**Verification**\n\n${table}`,
+  );
+});
+
 it("preserves empty table cells while escaping spoilers in cell text", () => {
   const source = "| A || B |\n| --- | --- | --- |\n| x || z |";
   expect(prepareMarkdownSource(source).render()).toBe(
     "| A | | B |\n| --- | --- | --- |\n| x | | z |",
   );
+});
+
+it.each(["> ", "  ", ">   "])("keeps the table container prefix %j", (prefix) => {
+  const table = `${prefix}| A | B |\n${prefix}|---|---|\n${prefix}| x | y |`;
+  const intro = prefix.includes(">") ? `${prefix}Intro` : "- Intro";
+  expect(prepareMarkdownSource(`${intro}\n${table}`).render()).toBe(
+    `${intro}\n${prefix}\n${table}`,
+  );
+});
+
+it.each([
+  "| A | B |\n|---|---|\n| x | y |",
+  "Intro\n\n| A | B |\n|---|---|\n| x | y |",
+  "> Intro\n>\n> | A | B |\n> |---|---|\n> | x | y |",
+  "```md\nIntro\n| A | B |\n|---|---|\n| x | y |\n```",
+  "`| A | B |`\n`|---|---|`\n`| x | y |`",
+  "- | A | B |\n  |---|---|\n  | x | y |",
+])("leaves separated tables and literal table text unchanged: %s", (source) => {
+  expect(prepareMarkdownSource(source).render()).toBe(source);
 });
 
 it.each([

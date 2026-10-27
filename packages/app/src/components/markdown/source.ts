@@ -126,7 +126,7 @@ export function prepareMarkdownSource(
   const edits: { start: number; end: number; text: string }[] = [];
   if (
     !source.includes("![") &&
-    !source.includes("||") &&
+    !source.includes("|") &&
     !source.includes("&") &&
     !(workspaceRoot && source.includes("]("))
   ) {
@@ -207,6 +207,20 @@ export function prepareMarkdownSource(
     const end = node.position?.end.offset;
     if (start !== undefined && end !== undefined) {
       if (node.type === "paragraph") splitStandaloneImages(node, start, end);
+      if (node.type === "table") {
+        const lineStart = source.lastIndexOf("\n", start - 1) + 1;
+        const prefix = source.slice(lineStart, start);
+        const previousStart = source.lastIndexOf("\n", lineStart - 2) + 1;
+        // Keep quote markers and list continuation indentation on the blank line.
+        // A table on a list-marker line already starts its item's first paragraph.
+        if (
+          lineStart > 0 &&
+          /^[\t >]*$/.test(prefix) &&
+          !/^[\t >\r]*$/.test(source.slice(previousStart, lineStart - 1))
+        ) {
+          edits.push({ start: lineStart, end: lineStart, text: `${prefix}\n` });
+        }
+      }
       if (node.type === "link") {
         const title = workspaceHoverTitle(node, source.slice(start, end), workspaceRoot);
         if (title !== null)
