@@ -17,6 +17,7 @@ export class PluginRegistry {
   private readonly byHost = new Map<string, InstalledPlugin[]>();
   private readonly listeners = new Set<() => void>();
   private snapshot: InstalledPlugin[] = [];
+  private loadedHosts: ReadonlySet<string> = new Set();
   private readonly disposed = new WeakSet<InstalledPlugin>();
   private readonly evaluationErrors = new Map<string, string>();
 
@@ -35,6 +36,9 @@ export class PluginRegistry {
 
   getSnapshot = (): InstalledPlugin[] => this.snapshot;
 
+  /** Hosts whose plugin catalog has been installed and that are still connected. */
+  getLoadedHosts = (): ReadonlySet<string> => this.loadedHosts;
+
   getEvaluationError(serverId: string, pluginId: string): string | undefined {
     return this.evaluationErrors.get(`${serverId}/${pluginId}`);
   }
@@ -48,6 +52,7 @@ export class PluginRegistry {
       audio: Pick<AudioEngine, "play">;
     },
   ): boolean {
+    const firstCatalog = !this.byHost.has(serverId);
     const previous = this.byHost.get(serverId) ?? [];
     const previousTimelineBundles = previous
       .filter((plugin) => plugin.timelineTransformers.length > 0)
@@ -146,7 +151,9 @@ export class PluginRegistry {
       }
     }
     this.byHost.set(serverId, installed);
+    // A first catalog publishes even when empty: the host now counts as loaded.
     if (
+      firstCatalog ||
       installed.length !== catalog.length ||
       installed.length !== previous.length ||
       installed.some((plugin, index) => plugin !== previous[index])
@@ -197,6 +204,13 @@ export class PluginRegistry {
       .sort((left, right) =>
         `${left.serverId}/${left.id}`.localeCompare(`${right.serverId}/${right.id}`),
       );
+    const hostIds = [...this.byHost.keys()];
+    if (
+      hostIds.length !== this.loadedHosts.size ||
+      hostIds.some((hostId) => !this.loadedHosts.has(hostId))
+    ) {
+      this.loadedHosts = new Set(hostIds);
+    }
     for (const listener of this.listeners) listener();
   }
 }
@@ -220,6 +234,14 @@ export function useInstalledPlugins(): InstalledPlugin[] {
     pluginRegistry.subscribe,
     pluginRegistry.getSnapshot,
     pluginRegistry.getSnapshot,
+  );
+}
+
+export function useLoadedPluginHosts(): ReadonlySet<string> {
+  return useSyncExternalStore(
+    pluginRegistry.subscribe,
+    pluginRegistry.getLoadedHosts,
+    pluginRegistry.getLoadedHosts,
   );
 }
 
