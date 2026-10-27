@@ -151,3 +151,20 @@ test("audits each checkout independently of the Git environment inherited by a p
     vi.unstubAllEnvs();
   }
 });
+
+test("keeps an untouched upstream reference without requiring an upstream upgrade", () => {
+  const { root, commit } = fixture();
+  git(root, "switch", "-c", "upstream-reference");
+  writeFileSync(path.join(root, "feature.txt"), "official upstream update");
+  git(root, "commit", "-am", "upstream update");
+  git(root, "update-ref", "refs/remotes/upstream/main", git(root, "rev-parse", "HEAD"));
+  git(root, "switch", "main");
+  expect(auditReleaseSources({ root, commit }).blockers).toEqual([]);
+  git(root, "switch", "upstream-reference");
+  writeFileSync(path.join(root, "feature.txt"), "personal work");
+  git(root, "commit", "-am", "personal work");
+  git(root, "switch", "main");
+  expect(auditReleaseSources({ root, commit }).blockers).toEqual([
+    expect.objectContaining({ kind: "unmerged", ref: "refs/heads/upstream-reference" }),
+  ]);
+});

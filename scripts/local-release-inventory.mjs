@@ -48,6 +48,12 @@ export function auditReleaseSources({ root, commit, repositories = [root] }) {
           blockers.push({ kind: "unmerged", repository, ref: worktree, commit: head });
       }
     }
+    // A branch parked exactly on upstream contains no separate local work to deliver.
+    const upstreamHeads = new Set(
+      git(repository, "for-each-ref", "--format=%(objectname)", "refs/remotes/upstream")
+        .split("\n")
+        .filter(Boolean),
+    );
     const refs = git(
       repository,
       "for-each-ref",
@@ -57,6 +63,7 @@ export function auditReleaseSources({ root, commit, repositories = [root] }) {
     );
     for (const line of refs.split("\n").filter(Boolean)) {
       const [ref, head] = line.split(" ");
+      if (ref.startsWith("refs/heads/") && upstreamHeads.has(head)) continue;
       if (
         spawnSync("git", ["merge-base", "--is-ancestor", head, commit], gitOptions(repository))
           .status !== 0

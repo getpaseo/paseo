@@ -35,6 +35,8 @@ The `main` pre-push hook, build wrapper, automatic builder, and final installer 
 all declared local branches, origin tracking refs, detached worktree heads, and non-ignored working
 files are included in the candidate. Missing repositories or configuration block delivery too.
 Integrate or preserve and explicitly resolve unfinished work; do not reset or delete it to pass.
+A local branch pointing exactly at a tracked `upstream` tip has no separate local commits and does
+not require an upstream upgrade. Its working files and all `origin` refs are still audited.
 The final installer repeats the audit after package tests because work may change during a build.
 
 Read `source-audit.json` for the blocking refs and files. The desktop displays a blocked-publication
