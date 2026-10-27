@@ -1,5 +1,6 @@
 import type { ComponentType, ReactElement, ReactNode, RefObject } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
+import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import type { StreamItem } from "@/types/stream";
 import { continuesResponse } from "./turn-membership";
 import type { StreamHistoryBoundary, StreamRenderSegments } from "./model";
@@ -159,6 +160,77 @@ interface StreamStrategyConfig {
 
 const NATIVE_SETTLING_VERIFICATION_DELAY_FRAMES = 4;
 
+function nonemptyCopyText(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function joinCopyLines(parts: readonly (string | null)[]): string | null {
+  const lines: string[] = [];
+  for (const part of parts) {
+    if (part) {
+      lines.push(part);
+    }
+  }
+  if (lines.length === 0) {
+    return null;
+  }
+  return lines.join("\n");
+}
+
+function collectToolDetailCopyText(detail: ToolCallDetail): string | null {
+  switch (detail.type) {
+    case "plain_text":
+      return joinCopyLines([nonemptyCopyText(detail.label), nonemptyCopyText(detail.text)]);
+    case "plan":
+      return nonemptyCopyText(detail.text);
+    case "shell":
+      return joinCopyLines([nonemptyCopyText(detail.command), nonemptyCopyText(detail.output)]);
+    case "unknown":
+      return joinCopyLines([nonemptyCopyText(detail.input), nonemptyCopyText(detail.output)]);
+    case "read":
+    case "write":
+      return joinCopyLines([nonemptyCopyText(detail.filePath), nonemptyCopyText(detail.content)]);
+    case "edit":
+      return joinCopyLines([
+        nonemptyCopyText(detail.filePath),
+        nonemptyCopyText(detail.unifiedDiff),
+        nonemptyCopyText(detail.newString),
+      ]);
+    case "search":
+      return joinCopyLines([nonemptyCopyText(detail.query), nonemptyCopyText(detail.content)]);
+    case "fetch":
+      return joinCopyLines([nonemptyCopyText(detail.url), nonemptyCopyText(detail.result)]);
+    case "worktree_setup":
+      return joinCopyLines([nonemptyCopyText(detail.worktreePath), nonemptyCopyText(detail.log)]);
+    case "sub_agent":
+      return joinCopyLines([nonemptyCopyText(detail.description), nonemptyCopyText(detail.log)]);
+  }
+}
+
+function collectToolCallCopyText(item: Extract<StreamItem, { kind: "tool_call" }>): string | null {
+  if (item.payload.source === "orchestrator") {
+    return joinCopyLines([
+      nonemptyCopyText(item.payload.data.toolName),
+      nonemptyCopyText(item.payload.data.arguments),
+      nonemptyCopyText(item.payload.data.result),
+    ]);
+  }
+  return joinCopyLines([
+    nonemptyCopyText(item.payload.data.name),
+    collectToolDetailCopyText(item.payload.data.detail),
+  ]);
+}
+
+function collectFallbackCopyText(item: StreamItem): string | null {
+  if (item.kind === "thought") {
+    return nonemptyCopyText(item.text);
+  }
+  if (item.kind === "tool_call") {
+    return collectToolCallCopyText(item);
+  }
+  return null;
+}
+
 export function createStreamStrategy(config: StreamStrategyConfig): StreamStrategy {
   return {
     render: config.render,
@@ -181,7 +253,8 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
       return items[neighborIndex];
     },
     collectAssistantResponseContent: (items, startIndex) => {
-      const messages: string[] = [];
+      const assistantTexts: string[] = [];
+      const fallbackTexts: string[] = [];
       let laterItem: StreamItem | null = null;
       for (
         let index = startIndex;
@@ -193,11 +266,20 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
           break;
         }
         if (currentItem.kind === "assistant_message") {
-          messages.push(currentItem.text);
+          assistantTexts.push(currentItem.text);
+        } else {
+          const fallbackText = collectFallbackCopyText(currentItem);
+          if (fallbackText) {
+            fallbackTexts.push(fallbackText);
+          }
         }
         laterItem = currentItem;
       }
-      return messages.toReversed().join("\n\n");
+      const assistantContent = assistantTexts.toReversed().join("\n\n");
+      if (assistantContent.trim()) {
+        return assistantContent;
+      }
+      return fallbackTexts.toReversed().join("\n\n");
     },
     isNearBottom: (input) => config.isNearBottom(input),
     getBottomOffset: (metrics) => config.getBottomOffset(metrics),

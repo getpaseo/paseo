@@ -10,8 +10,15 @@ export function resolveAssistantTurnForkBoundary(input: {
   supportsTimelineCursor: boolean;
 }): AssistantTurnForkBoundary | undefined {
   const item = input.items[input.startIndex];
-  if (item?.kind !== "assistant_message") {
+  if (!item) {
     return undefined;
+  }
+  if (item.kind !== "assistant_message") {
+    // Responses without an assistant text row anchor the footer on their last
+    // visible item; pin the fork to that row's cursor when one exists.
+    return input.supportsTimelineCursor && item.timelineCursor
+      ? { boundaryCursor: item.timelineCursor }
+      : undefined;
   }
   if (input.supportsTimelineCursor && item.timelineCursor) {
     return {
