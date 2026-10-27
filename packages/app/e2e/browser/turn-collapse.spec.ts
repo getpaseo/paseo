@@ -1,12 +1,27 @@
+import path from "node:path";
 import {
   holdOlderHistoryPages,
   userScrollsTimelineToHistoryStart,
 } from "../support/helpers/timeline-pagination";
 import { getActiveTabTestId } from "../support/helpers/launcher";
-import type { Page } from "@playwright/test";
+import type { Page, Locator } from "@playwright/test";
 import { test, expect } from "../support/fixtures";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+
+test.use({
+  e2eDaemonConfig: {
+    version: 1,
+    agents: {
+      providers: {
+        codex: {
+          enabled: true,
+          command: [process.execPath, path.resolve("e2e/fixtures/catalog-codex.mjs")],
+        },
+      },
+    },
+  },
+});
 
 type ChatDisplay = "full" | "collapseToolCalls" | "collapseTurns";
 
@@ -59,6 +74,21 @@ async function groupedToolsInsideLatestTurn(page: Page): Promise<string[]> {
   });
 }
 
+async function expectCompactMessageToggle(prompt: Locator, label: string) {
+  const button = prompt.getByRole("button", { name: label, exact: true });
+  const text = prompt.getByText(label, { exact: true });
+  await expect
+    .poll(
+      async () => {
+        const control = (await button.boundingBox())!;
+        const glyphs = (await text.boundingBox())!;
+        return control.height - glyphs.height;
+      },
+      { message: "The inline toggle adds no vertical space beyond its text" },
+    )
+    .toBe(0);
+}
+
 async function expandAndCollapseLongPrompt(page: Page) {
   const prompt = page.getByTestId("user-message").last();
   const before = await prompt.boundingBox();
@@ -67,6 +97,7 @@ async function expandAndCollapseLongPrompt(page: Page) {
   await expect
     .poll(async () => (await prompt.getByText("Show more", { exact: true }).boundingBox())!.x)
     .toBe(messageLeft);
+  await expectCompactMessageToggle(prompt, "Show more");
   await prompt.getByRole("button", { name: "Show more", exact: true }).click();
   await expect(prompt.getByRole("button", { name: "Show less", exact: true })).toBeVisible();
   await expect
@@ -75,6 +106,7 @@ async function expandAndCollapseLongPrompt(page: Page) {
   await expect
     .poll(async () => (await prompt.boundingBox())?.height ?? 0)
     .toBeGreaterThan(before!.height);
+  await expectCompactMessageToggle(prompt, "Show less");
   await prompt.getByRole("button", { name: "Show less", exact: true }).click();
   await expect.poll(async () => (await prompt.boundingBox())?.height ?? 0).toBe(before!.height);
   await prompt.scrollIntoViewIfNeeded();
@@ -128,18 +160,21 @@ test.describe("Turn collapse", () => {
 });
 
 test("received messages show their sender and open that agent", async ({ page }) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("@paseo:app-settings", JSON.stringify({ theme: "dark" })),
+  );
   const recipient = await seedMockAgentWorkspace({
     repoPrefix: "sender-attribution-",
     title: "Implementation",
   });
   try {
     const sender = await recipient.client.createAgent({
-      provider: "mock",
+      provider: "codex",
       cwd: recipient.cwd,
       workspaceId: recipient.workspaceId,
       title: "Reviewer",
-      model: "e2e-fast-stream",
-      modeId: "load-test",
+      model: "gpt-6.1-sol",
+      modeId: "full-access",
     });
     await recipient.client.sendAgentMessage(
       recipient.agentId,
@@ -153,6 +188,10 @@ test("received messages show their sender and open that agent", async ({ page })
     await expect(page.getByTestId("user-message").filter({ has: attribution })).toContainText(
       "I reviewed the turn-grouping changes.",
     );
+    const labelColor = await attribution
+      .getByText("Sent by Reviewer", { exact: true })
+      .evaluate((element) => getComputedStyle(element).color);
+    await expect(attribution.locator("svg")).toHaveCSS("fill", labelColor);
     await attribution.scrollIntoViewIfNeeded();
     await page.screenshot({ path: "/tmp/sender-attribution.png" });
     await attribution.click();
@@ -237,7 +276,7 @@ async function useThinkingDisplay(
 }
 
 for (const autoExpandReasoning of [false, true]) {
-  test(`reasoning follows Expand thinking (${autoExpandReasoning}) and opens fully with its turn`, async ({
+  test(`reasoning follows Expand thinking (${autoExpandReasoning}) when opening its turn`, async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1280, height: 1000 });
@@ -262,12 +301,26 @@ for (const autoExpandReasoning of [false, true]) {
       const summary = page.getByTestId("turn-summary").last().getByRole("button");
       await expect(summary).toBeVisible();
       await summary.click();
-      await expect(reasoning).toBeVisible();
+      await expect(reasoning).toHaveCount(autoExpandReasoning ? 1 : 0);
       await expect.poll(() => groupedToolsInsideLatestTurn(page)).toEqual([]);
+      await openOneToolOutput(page);
     } finally {
       await agent.cleanup();
     }
   });
+}
+
+async function openOneToolOutput(page: Page) {
+  const output = page.getByText(/\[burst\] tick 1 userIsAtBottom=true/).filter({ visible: true });
+  await expect(output).toHaveCount(0);
+  const command = page
+    .getByTestId("tool-call-badge")
+    .filter({ hasText: "node scripts/simulate-stream-burst.mjs" })
+    .first();
+  await command.getByRole("button").first().click();
+  await expect(output.first()).toBeVisible();
+  await command.getByRole("button").first().click();
+  await expect(output).toHaveCount(0);
 }
 
 async function expectThinkingPresentation(page: Page, autoExpandReasoning: boolean) {

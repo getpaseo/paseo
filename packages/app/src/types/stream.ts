@@ -988,6 +988,7 @@ function appendThought(
   text: string,
   timestamp: Date,
   timelineCursor?: TimelinePosition,
+  turnId?: string,
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
   if (!chunk) {
@@ -995,7 +996,7 @@ function appendThought(
   }
 
   const last = state[state.length - 1];
-  if (last && last.kind === "thought") {
+  if (last && last.kind === "thought" && last.turnId === turnId) {
     const updated: ThoughtItem = {
       ...last,
       ...(timelineCursor ? { timelineCursor } : {}),
@@ -1534,7 +1535,7 @@ function reduceTimelineEvent(
         timelineCursor,
       );
     case "reasoning":
-      return appendThought(state, item.text, timestamp, timelineCursor);
+      return appendThought(state, item.text, timestamp, timelineCursor, event.turnId);
     case "tool_call":
       return reduceTimelineToolCall(state, event, item, timestamp, timelineCursor);
     case "todo": {

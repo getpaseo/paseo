@@ -61,11 +61,21 @@ export function MessageSender({
     return session?.agents.get(sender.id) ?? session?.agentDetails.get(sender.id);
   });
   const ProviderIcon = useProviderIcon(agent?.provider ?? "", host);
+  const renderProviderIcon = useCallback(
+    (color: string) => <ProviderIcon size={16} color={color} />,
+    [ProviderIcon],
+  );
   const openSender = useCallback(() => {
     if (host) navigateToAgent({ serverId: host, agentId: sender.id });
   }, [host, sender.id]);
   return (
-    <Button variant="ghost" size="sm" leftIcon={ProviderIcon} disabled={!host} onPress={openSender}>
+    <Button
+      variant="ghost"
+      size="sm"
+      leftIcon={renderProviderIcon}
+      disabled={!host}
+      onPress={openSender}
+    >
       {t("turnSummary.sentBy", { name: agent?.title ?? sender.title ?? sender.id })}
     </Button>
   );
@@ -74,6 +84,6 @@ export function MessageSender({
 const styles = StyleSheet.create((theme) => ({
   preview: { maxHeight: PREVIEW_HEIGHT, overflow: "hidden" },
   body: { flexShrink: 0 },
-  toggle: { alignSelf: "flex-start", paddingHorizontal: 0, borderWidth: 0 },
+  toggle: { alignSelf: "flex-start", paddingHorizontal: 0, minHeight: 0, borderWidth: 0 },
   fade: { position: "absolute", bottom: 0, left: 0, right: 0, height: theme.spacing[12] },
 }));

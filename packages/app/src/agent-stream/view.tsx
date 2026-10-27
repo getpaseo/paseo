@@ -792,9 +792,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [agentId, client, handleInlinePathPress, resolvedServerId, toast, workspaceRoot],
     );
 
-    const isExpandedTurnItem = useStableEvent((id: string) =>
-      presentation.turns.nestedItemIds.has(id),
-    );
     const renderThoughtItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "thought" }>) => {
         return (
@@ -804,11 +801,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             text={item.text}
             status={item.status}
             isLastInSequence={layoutItem.isLastInToolSequence}
-            defaultExpanded={autoExpandReasoning || isExpandedTurnItem(item.id)}
+            defaultExpanded={autoExpandReasoning}
           />
         );
       },
-      [autoExpandReasoning, setInlineDetailsExpanded, isExpandedTurnItem],
+      [autoExpandReasoning, setInlineDetailsExpanded],
     );
 
     const renderSingleToolCallItem = useCallback(
@@ -838,8 +835,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               itemId={item.id}
               onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
               toolName={data.name}
-              defaultExpanded={isExpandedTurnItem(item.id)}
-              forceInline={isExpandedTurnItem(item.id)}
               error={data.error}
               status={data.status}
               detail={data.detail}
@@ -869,13 +864,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           />
         );
       },
-      [
-        context.cwd,
-        resolvedServerId,
-        setInlineDetailsExpanded,
-        handleToolCallOpenFile,
-        isExpandedTurnItem,
-      ],
+      [context.cwd, resolvedServerId, setInlineDetailsExpanded, handleToolCallOpenFile],
     );
 
     // Read through a stable event so live group updates do not change the renderer identity
