@@ -254,6 +254,27 @@ test.describe("Plugin sidebar items", () => {
     await expect(page).toHaveURL(/\/new(\?|$)/);
   });
 
+  test("a plugin screen keeps the sidebar toggle before its title", async ({ page }) => {
+    await page.setViewportSize(WIDE);
+    await gotoWorkspace(page, workspaceId);
+    const row = headerRow(page, SHOWCASE_PLUGIN_ID, "deploys");
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    await row.click();
+    await expect(screenTitle(page)).toHaveText("Deploys");
+
+    const toggle = visibleTestId(page, "menu-button");
+    await toggle.click();
+    await expect(visibleTestId(page, "sidebar-global-new-workspace")).not.toBeVisible();
+
+    const toggleBox = await boxOf(toggle);
+    const titleBox = await boxOf(screenTitle(page));
+    expect(toggleBox.x + toggleBox.width).toBeLessThanOrEqual(titleBox.x);
+    await qaScreenshot(page, "plugin-screen-sidebar-closed");
+
+    await toggle.click();
+    await expect(visibleTestId(page, "sidebar-global-new-workspace")).toBeVisible();
+  });
+
   test("a legacy plugin keeps its row, icon, order and visibility", async ({ page }) => {
     test.setTimeout(180_000);
     await page.addInitScript(
