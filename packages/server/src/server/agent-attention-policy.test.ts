@@ -57,21 +57,51 @@ describe("computeNotificationPlan", () => {
     ).toEqual({ inAppRecipientIndex: null, shouldPush: false });
   });
 
-  it("does not suppress notifications when a focused client is backgrounded", () => {
+  it.each([
+    { kind: "agent", id: "agent-1" } as const,
+    { kind: "terminal", id: "terminal-1" } as const,
+    null,
+  ])("pushes immediately when the only client is backgrounded (target: %j)", (focusTarget) => {
     const backgroundFocused = state({
       appVisible: false,
       focusedAgentId: "agent-1",
-      lastActivityAtMs: presentAtMs,
+      focusedTerminalId: "terminal-1",
+      lastActivityAtMs: nowMs,
     });
 
     expect(
       computeNotificationPlan({
         allStates: [backgroundFocused],
+        focusTarget,
+        pushEligible: true,
+        nowMs,
+      }),
+    ).toEqual({ inAppRecipientIndex: null, shouldPush: true });
+  });
+
+  it("routes to a visible client even when a backgrounded client was active more recently", () => {
+    expect(
+      computeNotificationPlan({
+        allStates: [
+          state({ appVisible: false, lastActivityAtMs: nowMs }),
+          state({ lastActivityAtMs: nowMs - 1_000 }),
+        ],
         focusTarget: { kind: "agent", id: "agent-1" },
         pushEligible: true,
         nowMs,
       }),
-    ).toEqual({ inAppRecipientIndex: 0, shouldPush: false });
+    ).toEqual({ inAppRecipientIndex: 1, shouldPush: false });
+  });
+
+  it("does not push ineligible attention when all clients are backgrounded", () => {
+    expect(
+      computeNotificationPlan({
+        allStates: [state({ appVisible: false, lastActivityAtMs: nowMs })],
+        focusTarget: null,
+        pushEligible: false,
+        nowMs,
+      }),
+    ).toEqual({ inAppRecipientIndex: null, shouldPush: false });
   });
 
   it("treats present clients focused on different agents as eligible", () => {

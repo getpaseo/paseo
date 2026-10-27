@@ -49,6 +49,10 @@ export function computeNotificationPlan({
   let mostRecentPresentAtMs = Number.NEGATIVE_INFINITY;
 
   for (const [clientIndex, state] of allStates.entries()) {
+    if (!state.appVisible) {
+      continue;
+    }
+
     const clampedActivityAtMs =
       state.lastActivityAtMs === null ? null : Math.min(state.lastActivityAtMs, nowMs);
     const isPresent =
@@ -58,7 +62,7 @@ export function computeNotificationPlan({
       continue;
     }
 
-    if (state.appVisible && isFocusedOnTarget(state, focusTarget)) {
+    if (isFocusedOnTarget(state, focusTarget)) {
       return { inAppRecipientIndex: null, shouldPush: false };
     }
 
