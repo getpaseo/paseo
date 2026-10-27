@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { extractHandoffPlan, handoffPlanTitle } from "./handoff-presentation";
+import {
+  extractHandoffPlan,
+  handoffPlanTitle,
+  visibleHandoffProfiles,
+} from "./handoff-presentation";
 
 function envelope(plan: string, { crlf = false }: { crlf?: boolean } = {}) {
   const message = `/paseo-handoff\nPASEO_WORKFLOW_HANDOFF ${JSON.stringify({
@@ -12,6 +16,18 @@ function envelope(plan: string, { crlf = false }: { crlf?: boolean } = {}) {
 }
 
 describe("handoff plan presentation", () => {
+  it("hides Workflow profiles from the handoff list and keeps the remaining order", () => {
+    expect(
+      visibleHandoffProfiles([
+        { id: "first", name: "First" },
+        { id: "workflow", name: "Workflow · planner" },
+        { id: "lowercase", name: "workflow helper" },
+        { id: "last", name: "Last" },
+      ]).map(({ id }) => id),
+    ).toEqual(["first", "lowercase", "last"]);
+    expect(visibleHandoffProfiles([{ id: "only", name: "Workflow planner" }])).toEqual([]);
+  });
+
   it("extracts a newly recorded handoff without changing multiline Markdown", () => {
     const plan = "# Fix the stream\n\n- Keep **bold**\n- Preserve `code`";
     expect(extractHandoffPlan(envelope(plan))).toEqual({ text: plan });

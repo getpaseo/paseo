@@ -11,6 +11,7 @@ import {
 } from "@getpaseo/plugin/client/ui";
 import type { RpcOutput } from "@getpaseo/plugin";
 import { statusRpc, handoffToProfileRpc } from "../shared/rpc";
+import { visibleHandoffProfiles } from "../shared/handoff-presentation";
 
 const handoffStyle: ViewStyle = { padding: 16, gap: 8 };
 const profilesStyle: ViewStyle = {
@@ -84,6 +85,7 @@ function Handoff({
   }, [data.handoff?.agentId, navigation]);
   const textStyle = useMemo(() => ({ color: theme.colors.foreground }), [theme]);
   const executorId = data.handoff?.agentId;
+  const handoffProfiles = data.profiles ? visibleHandoffProfiles(data.profiles) : undefined;
   if (!data.plan && !executorId) return null;
   return (
     <SettingsSection title="Handoff">
@@ -92,8 +94,8 @@ function Handoff({
           <View style={handoffStyle}>
             <View testID="workflow-handoff-profiles" style={profilesStyle}>
               <Text style={textStyle}>Handoff :</Text>
-              {data.profiles?.length ? (
-                data.profiles.map((profile) => (
+              {handoffProfiles?.length ? (
+                handoffProfiles.map((profile) => (
                   <ProfileButton
                     key={profile.id}
                     profile={profile}

@@ -13,7 +13,7 @@ import {
   projectWidgetIdentity,
   projectWidgetWorkspaceTitle,
 } from "./model";
-import { useAgentProfiles } from "@/agent-profiles";
+import { useAgentProfiles, visibleAgentProfiles } from "@/agent-profiles";
 import { pluginRegistry } from "@/plugins/registry";
 import { handoffReason, handoffWidgetPlan } from "./handoff";
 import { useHostProjects } from "@/projects/host-projects";
@@ -86,7 +86,9 @@ export function useAgentWidget(serverId: string, enabled = true): void {
         workspace: workspace ? `${workspace.projectDisplayName} · ${workspace.name}` : agent.cwd,
         workspaceId: agent.workspaceId ?? undefined,
         workspaceTitle: projectWidgetWorkspaceTitle(workspace),
-        handoffProfiles: profiles?.map(({ id, name }) => ({ id, name })),
+        handoffProfiles: profiles
+          ? visibleAgentProfiles(profiles).map(({ id, name }) => ({ id, name }))
+          : undefined,
         handoffDisabledReason: handoffReason(
           serverId,
           agent.workspaceId ?? undefined,

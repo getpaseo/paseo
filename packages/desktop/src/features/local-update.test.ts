@@ -1,5 +1,128 @@
 import { describe, expect, it } from "vitest";
 import { LocalUpdatePolicy } from "./local-update-policy";
+import type { WidgetDisplay } from "@getpaseo/protocol/desktop-agent-widget";
+
+it("submits widget comments with Enter while preserving multiline and composition input", async () => {
+  const { chromium } = await import("playwright");
+  const { readFileSync } = await import("node:fs");
+  const { default: ts } = await import("typescript");
+  const preloadCode = ts.transpileModule(
+    readFileSync(new URL("./agent-widget/preload.ts", import.meta.url), "utf8"),
+    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } },
+  ).outputText;
+  const initialDisplay: WidgetDisplay = {
+    labels: {
+      plan: "Plan",
+      question: "Question",
+      execute: "Exécuter",
+      comment: "Commentaire",
+      sendComment: "Envoyer",
+      handoff: "Transférer",
+      submit: "Valider",
+      next: "Suivant",
+      close: "Fermer",
+      minimize: "Réduire",
+      pending: "Envoi",
+      sent: "Envoyé",
+      offline: "Hors ligne",
+      failed: "Échec",
+    },
+    requests: [
+      {
+        key: "plan",
+        serverId: "server",
+        agentId: "agent",
+        requestId: "request",
+        agentTitle: "Agent",
+        workspace: "Workspace",
+        kind: "plan",
+        title: "Plan",
+        planHtml: "<p>Plan</p>",
+        questions: [],
+        canApprove: true,
+        online: true,
+      },
+    ],
+  };
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.setContent('<div id="widget"></div>');
+    await page.evaluate(
+      ({ code, display }) => {
+        const actions: unknown[] = [];
+        const listeners = new Map<string, (...args: unknown[]) => void>();
+        const ipcRenderer = {
+          on: (name: string, listener: (...args: unknown[]) => void) =>
+            listeners.set(name, listener),
+          invoke: async (name: string, action: unknown) => {
+            if (name.endsWith(":ready")) return display;
+            if (name.endsWith(":act")) {
+              actions.push(action);
+              return new Promise(() => {});
+            }
+            return null;
+          },
+        };
+        new Function("require", "exports", "process", code)(
+          () => ({ ipcRenderer }),
+          {},
+          { argv: [] },
+        );
+        window.dispatchEvent(new Event("DOMContentLoaded"));
+        Object.assign(window, {
+          widgetActions: actions,
+          updateWidget: (value: WidgetDisplay) =>
+            listeners.get("paseo:agent-widget:update")!({}, value),
+        });
+      },
+      { code: preloadCode, display: initialDisplay },
+    );
+    const actions = () =>
+      page.evaluate(() => (window as unknown as { widgetActions: unknown[] }).widgetActions);
+    const comment = page.locator("#comment");
+    await comment.fill("   ");
+    await comment.press("Enter");
+    expect(await comment.inputValue()).toBe("   ");
+    expect(await actions()).toEqual([]);
+    await comment.fill("Réponse");
+    await comment.press("Shift+Enter");
+    expect(await comment.inputValue()).toBe("Réponse\n");
+    expect(await actions()).toEqual([]);
+    expect(
+      await comment.evaluate((field) =>
+        field.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Enter",
+            bubbles: true,
+            cancelable: true,
+            isComposing: true,
+          }),
+        ),
+      ),
+    ).toBe(true);
+    expect(await actions()).toEqual([]);
+    await page.evaluate((display) => {
+      (window as unknown as { updateWidget: (value: WidgetDisplay) => void }).updateWidget({
+        ...display,
+        requests: display.requests.map((item) => ({ ...item, online: false })),
+      });
+    }, initialDisplay);
+    expect(await comment.isDisabled()).toBe(true);
+    await comment.dispatchEvent("keydown", { key: "Enter" });
+    expect(await actions()).toEqual([]);
+    await page.evaluate((display) => {
+      (window as unknown as { updateWidget: (value: WidgetDisplay) => void }).updateWidget(display);
+    }, initialDisplay);
+    await comment.press("Enter");
+    expect(await actions()).toEqual([{ type: "comment", key: "plan", message: "Réponse" }]);
+    expect(await comment.isDisabled()).toBe(true);
+    await comment.dispatchEvent("keydown", { key: "Enter" });
+    expect(await actions()).toHaveLength(1);
+  } finally {
+    await browser.close();
+  }
+}, 15_000);
 
 describe("local update activation", () => {
   it("waits for idle, counts down, cancels on interaction and supports postponing", () => {

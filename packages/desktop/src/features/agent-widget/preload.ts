@@ -365,11 +365,15 @@ window.addEventListener("DOMContentLoaded", () => {
       event.shiftKey ||
       event.isComposing ||
       !(event.target instanceof HTMLTextAreaElement) ||
-      event.target.id !== "answer"
+      (event.target.id !== "answer" && event.target.id !== "comment")
     )
       return;
     event.preventDefault();
-    document.querySelector<HTMLButtonElement>("#answer-button")?.click();
+    document
+      .querySelector<HTMLButtonElement>(
+        event.target.id === "comment" ? "#send-comment" : "#answer-button",
+      )
+      ?.click();
   });
   document.addEventListener("submit", (event) => {
     event.preventDefault();

@@ -14,6 +14,7 @@
  * here.
  */
 export type { AgentProfile } from "@getpaseo/protocol/messages";
+export { isWorkflowAgentProfile, visibleAgentProfiles } from "./profile-visibility";
 export type { MaterializedAgentProfile } from "./internal/materialize-profile";
 export { materializeAgentProfile } from "./internal/materialize-profile";
 export type { AgentProfileSeed } from "./internal/profile-form-model";

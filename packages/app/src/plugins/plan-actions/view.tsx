@@ -3,7 +3,7 @@ import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
-import { useAgentProfiles } from "@/agent-profiles";
+import { useAgentProfiles, visibleAgentProfiles } from "@/agent-profiles";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -125,6 +125,10 @@ export function PlanActions({
   const compact = useIsCompactFormFactor();
   const host = useHostRuntimeSnapshot(serverId);
   const { profiles } = useAgentProfiles(serverId);
+  const handoffProfiles = useMemo(
+    () => (profiles ? visibleAgentProfiles(profiles) : null),
+    [profiles],
+  );
   const [pendingProfileId, setPendingProfileId] = useState<string | null>(null);
   const supportsStructuredPlans = useHostFeature(serverId, "structuredPlanApproval");
   const installed = useInstalledPlugins();
@@ -331,8 +335,8 @@ export function PlanActions({
       {profileActions.map((action) => (
         <View key={action.id} testID="plan-handoff-profiles" style={styles.profiles}>
           <Text style={styles.profileLabel}>{action.title} :</Text>
-          {profiles?.length ? (
-            profiles.map((profile) => (
+          {handoffProfiles?.length ? (
+            handoffProfiles.map((profile) => (
               <ProfileButton
                 key={profile.id}
                 actionId={action.id}
@@ -345,7 +349,9 @@ export function PlanActions({
             ))
           ) : (
             <Text style={styles.profileLabel}>
-              {profiles ? t("workspace.git.workflow.noProfiles") : t("common.states.loading")}
+              {handoffProfiles
+                ? t("workspace.git.workflow.noProfiles")
+                : t("common.states.loading")}
             </Text>
           )}
         </View>

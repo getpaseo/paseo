@@ -27,8 +27,10 @@ the role profiles' provider, model, mode and effort in Agent profiles.
 The workflow uses the existing plan actions and an agent panel for review status. Any live,
 unresolved structured plan — from the Workflow Router, the Workflow Planner, or an ordinary
 conversation — can be handed off by choosing a host agent profile. The dedicated Handoff row
-shows every host profile in its normal order, with no preselection, on the plan card, desktop widget
-and Workflow panel. The server revalidates the exact current plan and the selected profile before
+shows host profiles whose names do not start with `Workflow`, in their normal order and with no
+preselection, on the plan card, desktop widget and Workflow panel. Workflow profiles stay in the
+host catalog for internal workflow roles and remain editable in Agent profiles. The server
+revalidates the exact current plan and the selected profile before
 closing the plan permission. The executor starts as a root agent in the same workspace with that
 profile's provider, model, effort and other settings, with Plan disabled. For a separate Plan mode,
 Handoff selects the provider's default execution mode, or its first non-plan mode without unrestricted

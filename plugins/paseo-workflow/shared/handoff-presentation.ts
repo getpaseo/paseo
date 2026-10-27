@@ -2,6 +2,10 @@ export interface HandoffPlan {
   text: string;
 }
 
+export function visibleHandoffProfiles<T extends { name: string }>(profiles: readonly T[]): T[] {
+  return profiles.filter((profile) => !profile.name.startsWith("Workflow"));
+}
+
 /** Extract the plan from both stored and live workflow handoff prompts. */
 export function extractHandoffPlan(message: string): HandoffPlan | undefined {
   const lines = message.replace(/\r\n?/g, "\n").split("\n");

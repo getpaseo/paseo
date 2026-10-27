@@ -30,6 +30,16 @@ vi.mock("./use-agent-profiles", () => ({
         name: "Second",
         provider: "codex",
       },
+      {
+        id: "workflow-planner",
+        name: "Workflow · planner",
+        provider: "codex",
+      },
+      {
+        id: "lowercase-workflow",
+        name: "workflow helper",
+        provider: "codex",
+      },
     ],
   }),
 }));
@@ -109,16 +119,43 @@ test("Tab applies the next compatible profile and wraps after the last one", () 
     expect(result.current?.applyNextProfile()).toBe(true);
     expect(result.current?.applyNextProfile()).toBe(true);
     expect(result.current?.applyNextProfile()).toBe(true);
+    expect(result.current?.applyNextProfile()).toBe(true);
   });
   expect(applyProfile.mock.calls.map(([profile]) => profile.launchProfileId)).toEqual([
     "ordinary-profile",
     "second-profile",
+    "lowercase-workflow",
     "ordinary-profile",
   ]);
 
   act(() => result.current?.applyProfile("second-profile"));
   act(() => expect(result.current?.applyNextProfile()).toBe(true));
-  expect(applyProfile.mock.lastCall?.[0].launchProfileId).toBe("ordinary-profile");
+  expect(applyProfile.mock.lastCall?.[0].launchProfileId).toBe("lowercase-workflow");
+});
+
+test("picker hides Workflow profiles from rows, direct selection, and the Tab cycle", () => {
+  const applyProfile = vi.fn();
+  const { result } = renderHook(() =>
+    useAgentProfilePicker({
+      serverId: "host",
+      availableProviders: ["codex"],
+      target: { kind: "draft", controls: { applyProfile } },
+    }),
+  );
+
+  expect(result.current?.rows.map(({ id }) => id)).toEqual([
+    "ordinary-profile",
+    "second-profile",
+    "lowercase-workflow",
+  ]);
+  act(() => result.current?.applyProfile("workflow-planner"));
+  expect(applyProfile).not.toHaveBeenCalled();
+  act(() => result.current?.applyNextProfile());
+  act(() => result.current?.applyNextProfile());
+  expect(applyProfile.mock.calls.map(([profile]) => profile.launchProfileId)).toEqual([
+    "ordinary-profile",
+    "second-profile",
+  ]);
 });
 
 test("Tab leaves focus navigation available when no profile applies", () => {

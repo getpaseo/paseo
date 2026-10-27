@@ -5,6 +5,7 @@ import { useFormPreferences } from "@/hooks/use-form-preferences";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useSessionStore } from "@/stores/session-store";
 import { useToast } from "@/contexts/toast-context";
+import { isWorkflowAgentProfile } from "../profile-visibility";
 import { toErrorMessage } from "@/utils/error-messages";
 import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
 import {
@@ -83,7 +84,9 @@ export function useAgentProfilePicker(
       return [];
     }
     const available = new Set(availableProviders);
-    return profiles.filter((profile) => available.has(profile.provider));
+    return profiles.filter(
+      (profile) => !isWorkflowAgentProfile(profile) && available.has(profile.provider),
+    );
   }, [availableProviders, isSupported, profiles]);
 
   const formatFeatureCount = useCallback(
