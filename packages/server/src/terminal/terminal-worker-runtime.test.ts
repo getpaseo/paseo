@@ -155,7 +155,7 @@ describe("terminal worker runtime copy", () => {
     expect(readdirSync(terminalWorkerDirectory(home))).toEqual([]);
   });
 
-  it("removes only copies no worker record names", () => {
+  it("removes only copies no worker record names", async () => {
     const home = makeDir("tw-runtime-home-");
     const used = prepareTerminalWorkerRuntime({
       paseoHome: home,
@@ -171,14 +171,14 @@ describe("terminal worker runtime copy", () => {
     const socketDirectory = path.join(terminalWorkerDirectory(home), "sock");
     mkdirSync(socketDirectory);
 
-    const result = pruneTerminalWorkerRuntimes(home);
+    const result = await pruneTerminalWorkerRuntimes(home);
 
     expect(result.removed).toEqual([path.join(terminalWorkerDirectory(home), unused.runtime!)]);
     expect(existsSync(path.dirname(used.scriptPath))).toBe(true);
     expect(existsSync(socketDirectory)).toBe(true);
   });
 
-  it("removes nothing while a record cannot be read", () => {
+  it("removes nothing while a record cannot be read", async () => {
     const home = makeDir("tw-runtime-home-");
     const copy = prepareTerminalWorkerRuntime({
       paseoHome: home,
@@ -187,7 +187,7 @@ describe("terminal worker runtime copy", () => {
     });
     writeFileSync(path.join(terminalWorkerDirectory(home), "4242.json"), "{ not json");
 
-    expect(pruneTerminalWorkerRuntimes(home).removed).toEqual([]);
+    expect((await pruneTerminalWorkerRuntimes(home)).removed).toEqual([]);
     expect(existsSync(copy.scriptPath)).toBe(true);
   });
 });

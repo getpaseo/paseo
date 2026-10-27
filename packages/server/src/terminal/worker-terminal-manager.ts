@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { access } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "pino";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
@@ -969,7 +969,7 @@ export async function startWorkerTerminalManager(
   const log = (message: string, fields?: Record<string, unknown>) => logger.info(fields, message);
   const live: LiveWorkerRecord[] = [];
   const toReap: string[] = [];
-  for (const file of listTerminalWorkerRecords(options.paseoHome)) {
+  for (const file of await listTerminalWorkerRecords(options.paseoHome)) {
     if ("error" in file) {
       logger.warn({ recordPath: file.path, err: file.error }, "Unreadable terminal worker record");
       continue;
@@ -1039,8 +1039,8 @@ export async function startWorkerTerminalManager(
     const result = await reapTerminalWorkers({ paseoHome: options.paseoHome, inspector, log });
     logger.info(result, "Terminals closed");
   };
-  const prune = () => {
-    const result = pruneTerminalWorkerRuntimes(options.paseoHome);
+  const prune = async () => {
+    const result = await pruneTerminalWorkerRuntimes(options.paseoHome);
     if (result.removed.length > 0)
       log("Removed terminal worker copies", { removed: result.removed });
     for (const failure of result.failed) {
@@ -1050,7 +1050,7 @@ export async function startWorkerTerminalManager(
 
   const pruneAfterExit = async (workerPid: number) => {
     if (await waitForWorkerRecordRemoval(options.paseoHome, workerPid)) {
-      prune();
+      await prune();
       return;
     }
     logger.warn({ pid: workerPid }, "Drained terminal worker has not exited yet");
@@ -1063,7 +1063,7 @@ export async function startWorkerTerminalManager(
       protocolVersion: newer.record.protocolVersion,
     });
     logger.error({ pid: newer.record.pid }, incompatible.message);
-    prune();
+    await prune();
     return createTerminalWorkerPool({
       current: null,
       draining: [],
@@ -1152,7 +1152,7 @@ export async function startWorkerTerminalManager(
     return createMember(launched.record, connection);
   };
 
-  prune();
+  await prune();
   if (!current) {
     try {
       current = await startCurrent();
@@ -1183,7 +1183,7 @@ async function countRunningTerminalWorkers(
   inspector: TerminalWorkerProcessInspector,
 ): Promise<number> {
   let running = 0;
-  for (const file of listTerminalWorkerRecords(paseoHome)) {
+  for (const file of await listTerminalWorkerRecords(paseoHome)) {
     if ("error" in file) {
       running += 1;
       continue;
@@ -1200,7 +1200,15 @@ async function countRunningTerminalWorkers(
 async function waitForWorkerRecordRemoval(paseoHome: string, workerPid: number): Promise<boolean> {
   const recordPath = terminalWorkerRecordPath(paseoHome, workerPid);
   const deadline = Date.now() + DRAINED_WORKER_EXIT_TIMEOUT_MS;
-  while (existsSync(recordPath)) {
+  while (
+    await access(recordPath).then(
+      () => true,
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return false;
+        throw error;
+      },
+    )
+  ) {
     if (Date.now() >= deadline) return false;
     await delay(100);
   }

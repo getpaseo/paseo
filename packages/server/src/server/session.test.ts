@@ -2027,7 +2027,7 @@ describe("daemon status + pairing RPC", () => {
       reason: "still alive" as const,
       detail: "survived SIGKILL",
     };
-    writeTerminalCleanupRecord(paseoHome, {
+    await writeTerminalCleanupRecord(paseoHome, {
       recordId: "closing-record",
       pid: 4241,
       bootId: null,

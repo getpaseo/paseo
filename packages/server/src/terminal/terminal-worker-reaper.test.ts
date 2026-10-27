@@ -324,11 +324,13 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
     expect(isAlive(killable.pid!)).toBe(false);
     expect(isAlive(uninspectable.pid!)).toBe(true);
     // The closing state goes to the cleanup record; the worker's own record is left as it was.
-    const kept = readTerminalWorkerRecord(terminalCleanupRecordPath(home, "record-under-test"));
+    const kept = await readTerminalWorkerRecord(
+      terminalCleanupRecordPath(home, "record-under-test"),
+    );
     expect(kept.pid).toBe(workerPid);
     expect(kept.closing?.unresolved.length).toBeGreaterThan(0);
     expect(kept.terminals.map((entry) => entry.pid)).toEqual([uninspectable.pid]);
-    expect(readTerminalWorkerRecord(recordPath).closing).toBeUndefined();
+    expect((await readTerminalWorkerRecord(recordPath)).closing).toBeUndefined();
   });
 
   it("ends a session member its gone terminal program left behind, where sessions are reported", async () => {
@@ -393,7 +395,7 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
     ).rejects.toBeInstanceOf(TerminalCleanupNotConfirmedError);
 
     expect(isAlive(member.pid!)).toBe(true);
-    expect(readUnconfirmedTerminalCleanup(home)).toEqual([
+    expect(await readUnconfirmedTerminalCleanup(home)).toEqual([
       expect.objectContaining({ pid: goneProgramPid, reason: "inspection failed" }),
     ]);
   });
@@ -415,7 +417,7 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
         reapTerminalWorkers({ paseoHome: home, inspector: scrubbedMember }),
       ).rejects.toBeInstanceOf(TerminalCleanupNotConfirmedError);
       expect(isAlive(member.pid!)).toBe(true);
-      expect(readUnconfirmedTerminalCleanup(home)).toEqual([
+      expect(await readUnconfirmedTerminalCleanup(home)).toEqual([
         expect.objectContaining({
           pid: goneProgramPid,
           reason: "inspection failed",
@@ -460,7 +462,7 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
     writeFileSync(unreadablePath, "{ not json");
 
     for (const attempt of [
-      async () => readUnconfirmedTerminalCleanup(home),
+      async () => await readUnconfirmedTerminalCleanup(home),
       () => retryUnconfirmedTerminalCleanup(home),
       () => reapTerminalWorkers({ paseoHome: home, inspector }),
     ]) {
@@ -498,7 +500,9 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
 
     expect(isAlive(program.pid!)).toBe(true);
     expect(isAlive(childPid)).toBe(true);
-    const kept = readTerminalWorkerRecord(terminalCleanupRecordPath(home, "record-under-test"));
+    const kept = await readTerminalWorkerRecord(
+      terminalCleanupRecordPath(home, "record-under-test"),
+    );
     expect(kept.closing?.unresolved.length).toBeGreaterThan(0);
     expect(kept.terminals.map((entry) => entry.pid)).toEqual([program.pid]);
 
@@ -530,6 +534,27 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
     await waitUntilGone(stubborn.pid!);
     expect(isAlive(stubborn.pid!)).toBe(false);
   });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "keeps the daemon event loop responsive while status retries an unreadable record",
+    async () => {
+      const home = makeHome();
+      const recordPath = writeRecord(home, { pid: process.pid });
+      chmodSync(recordPath, 0);
+      let serviced = false;
+      setImmediate(() => {
+        serviced = true;
+      });
+      try {
+        await expect(
+          Promise.resolve().then(() => readUnconfirmedTerminalCleanup(home)),
+        ).rejects.toBeInstanceOf(TerminalCleanupNotConfirmedError);
+        expect(serviced).toBe(true);
+      } finally {
+        chmodSync(recordPath, 0o600);
+      }
+    },
+  );
 
   // chmod cannot make a file unreadable to root.
   describe.skipIf(process.getuid?.() === 0)("a record that cannot be opened for a moment", () => {

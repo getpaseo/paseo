@@ -1440,9 +1440,6 @@ describe("terminal MCP tools", () => {
           output += message.data;
         }
       });
-      // Every key travels through the PTY and back; on loaded Windows runners one round
-      // trip can take seconds, so each wait gets the same budget as the first.
-      const roundTrip = { timeout: 5000 };
       try {
         await vi.waitFor(async () => {
           const capture = await terminalManager.captureTerminal(terminal.id);

@@ -109,7 +109,7 @@ export class TerminalCleanupNotConfirmedError extends Error {
  * still survive, or when a record cannot be read, so a kill restart can report them.
  */
 export async function retryUnconfirmedTerminalCleanup(paseoHome: string): Promise<void> {
-  const files = listTerminalWorkerRecords(paseoHome);
+  const files = await listTerminalWorkerRecords(paseoHome);
   const recordPaths = files.flatMap((file) =>
     ("record" in file && file.record.closing) || "error" in file ? [file.path] : [],
   );
@@ -124,8 +124,10 @@ export async function retryUnconfirmedTerminalCleanup(paseoHome: string): Promis
  * worker records included: a kill cleanup that met it could not check what it names, and a
  * failed cleanup leaves nothing else behind, so the cleanup cannot be reported finished.
  */
-export function readUnconfirmedTerminalCleanup(paseoHome: string): UnresolvedTerminalProcess[] {
-  const files = listTerminalWorkerRecords(paseoHome);
+export async function readUnconfirmedTerminalCleanup(
+  paseoHome: string,
+): Promise<UnresolvedTerminalProcess[]> {
+  const files = await listTerminalWorkerRecords(paseoHome);
   const unresolved = files.flatMap((file) =>
     "record" in file && file.record.closing
       ? file.record.closing.unresolved.map((entry) => ({ ...entry, recordPath: file.path }))
@@ -186,7 +188,7 @@ export async function reapTerminalWorkers(
   const unresolved: UnresolvedTerminalProcess[] = [];
   const unreadable: UnreadableTerminalWorkerRecord[] = [];
 
-  for (const file of listTerminalWorkerRecords(options.paseoHome)) {
+  for (const file of await listTerminalWorkerRecords(options.paseoHome)) {
     if (wanted && !wanted.has(file.path)) continue;
     result.records += 1;
     if ("error" in file) {
@@ -216,7 +218,7 @@ export async function reapTerminalWorkers(
   }
 
   // Copies of worker files no remaining record names belong to no worker now.
-  const pruned = pruneTerminalWorkerRuntimes(options.paseoHome);
+  const pruned = await pruneTerminalWorkerRuntimes(options.paseoHome);
   for (const failure of pruned.failed) {
     log("Cannot remove a terminal worker copy; the next cleanup retries", failure);
   }
@@ -245,7 +247,7 @@ async function reapRecord(
   const { record } = file;
   const recordPath = file.path;
   if (!writtenDuringThisBoot({ startedAt: record.createdAt, bootId: record.bootId })) {
-    retireTerminalWorkerRecord(file);
+    await retireTerminalWorkerRecord(file);
     log("Retired terminal worker record from an earlier boot", { recordPath });
     return { signaled: [], unresolved: [] };
   }
@@ -260,7 +262,7 @@ async function reapRecord(
   };
 
   if (discovery.tableError !== null) {
-    return keepUnresolved(input, tracked, [], `not signaled: ${discovery.tableError}`);
+    return await keepUnresolved(input, tracked, [], `not signaled: ${discovery.tableError}`);
   }
 
   if (tracked.worker.status === "owned" && input.gracefulMs > 0) {
@@ -277,29 +279,29 @@ async function reapRecord(
     await waitUntilSettled(tracked, Date.now() + input.confirmMs);
   }
 
-  return keepUnresolved(input, tracked, signaled, null);
+  return await keepUnresolved(input, tracked, signaled, null);
 }
 
 // Retires the record when every process it names is settled; otherwise writes the cleanup
 // record, marked closing, with only the unresolved entries. A live worker keeps rewriting its
 // own record, so the closing state never goes there. `notSignaled` explains open processes that
 // were deliberately left alone.
-function keepUnresolved(
+async function keepUnresolved(
   input: Pick<ReapRecordInput, "paseoHome" | "file" | "log">,
   tracked: TrackedProcesses,
   signaled: number[],
   notSignaled: string | null,
-): { signaled: number[]; unresolved: UnresolvedTerminalProcess[] } {
+): Promise<{ signaled: number[]; unresolved: UnresolvedTerminalProcess[] }> {
   const { record } = tracked;
   const { file, log } = input;
   const recordPath = terminalCleanupRecordPath(input.paseoHome, record.recordId);
   const { unresolved, remaining } = collectUnresolved(tracked, recordPath, notSignaled);
   if (unresolved.length === 0) {
-    retireTerminalWorkerRecord(file);
+    await retireTerminalWorkerRecord(file);
     log("Terminal worker record cleaned up", { recordPath: file.path, signaled });
     return { signaled, unresolved };
   }
-  writeTerminalCleanupRecord(input.paseoHome, {
+  await writeTerminalCleanupRecord(input.paseoHome, {
     ...record,
     terminals: remaining,
     closing: {

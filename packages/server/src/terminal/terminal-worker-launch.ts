@@ -83,7 +83,7 @@ export async function launchTerminalWorker(input: {
     );
   }
   const recordPath = terminalWorkerRecordPath(input.paseoHome, pid);
-  const record = readTerminalWorkerRecord(recordPath);
+  const record = await readTerminalWorkerRecord(recordPath);
   if (record.recordId !== recordId) {
     throw new TerminalWorkerLaunchError(
       `Terminal worker record ${recordPath} belongs to another launch`,

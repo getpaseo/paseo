@@ -587,11 +587,11 @@ function isProcessAlive(pid: number): boolean {
 }
 
 // The terminals the worker itself recorded, read from its own record file.
-function recordedTerminalPids(paseoHome: string): Map<string, number> {
+async function recordedTerminalPids(paseoHome: string): Promise<Map<string, number>> {
   const pids = new Map<string, number>();
   const directory = terminalWorkerDirectory(paseoHome);
   for (const name of readdirSync(directory).filter((entry) => /^\d+\.json$/.test(entry))) {
-    for (const entry of readTerminalWorkerRecord(join(directory, name)).terminals) {
+    for (const entry of (await readTerminalWorkerRecord(join(directory, name))).terminals) {
       pids.set(entry.id, entry.pid);
     }
   }
@@ -614,7 +614,7 @@ it("never adopts a live worker's terminals after a kill cleanup it could not fin
     cwd,
     ...nodeTerminalCommand("setInterval(() => {}, 1000);"),
   });
-  const pids = recordedTerminalPids(paseoHome);
+  const pids = await recordedTerminalPids(paseoHome);
   const endingPid = pids.get(ending.id)!;
   const remainingPid = pids.get(remaining.id)!;
 
@@ -627,19 +627,22 @@ it("never adopts a live worker's terminals after a kill cleanup it could not fin
     }),
   ).rejects.toBeInstanceOf(TerminalCleanupNotConfirmedError);
   await first.detach();
-  expect(readUnconfirmedTerminalCleanup(paseoHome).length).toBeGreaterThan(0);
+  expect((await readUnconfirmedTerminalCleanup(paseoHome)).length).toBeGreaterThan(0);
 
   // One terminal ends on its own: the live worker rewrites its record from memory.
   process.kill(endingPid, "SIGKILL");
-  await waitForCondition(() => !recordedTerminalPids(paseoHome).has(ending.id), 10000);
-  expect(readUnconfirmedTerminalCleanup(paseoHome).length).toBeGreaterThan(0);
+  await waitForCondition(
+    async () => !(await recordedTerminalPids(paseoHome)).has(ending.id),
+    10000,
+  );
+  expect((await readUnconfirmedTerminalCleanup(paseoHome)).length).toBeGreaterThan(0);
 
   manager = await startRealWorkerManager({ paseoHome });
 
   expect(manager.getTerminal(remaining.id)).toBeUndefined();
   expect(await manager.getTerminals(cwd)).toEqual([]);
   await waitForCondition(() => !isProcessAlive(remainingPid), 10000);
-  expect(readUnconfirmedTerminalCleanup(paseoHome)).toEqual([]);
+  expect(await readUnconfirmedTerminalCleanup(paseoHome)).toEqual([]);
 });
 
 // The worker's own `ps`, delayed: a program that exits while the worker reads its birth time
@@ -1315,8 +1318,8 @@ it("rejects createTerminal and registers nothing when the worker cannot start th
 });
 
 // The live worker records in a home, by worker pid.
-function workerRecords(paseoHome: string): TerminalWorkerRecord[] {
-  return listTerminalWorkerRecords(paseoHome).flatMap((file) =>
+async function workerRecords(paseoHome: string): Promise<TerminalWorkerRecord[]> {
+  return (await listTerminalWorkerRecords(paseoHome)).flatMap((file) =>
     "record" in file && !file.record.closing ? [file.record] : [],
   );
 }
@@ -1351,11 +1354,11 @@ async function leaveWorkerWithTerminal(
     cwd,
     ...nodeTerminalCommand("setInterval(() => {}, 1000);"),
   });
-  const [record] = workerRecords(paseoHome);
+  const [record] = await workerRecords(paseoHome);
   await previous.detach();
   return {
     terminalId: session.id,
-    programPid: recordedTerminalPids(paseoHome).get(session.id)!,
+    programPid: (await recordedTerminalPids(paseoHome)).get(session.id)!,
     workerPid: record!.pid,
     cwd,
   };
@@ -1368,7 +1371,7 @@ it("drains a worker one protocol older: it keeps its terminal, new ones open in 
   manager = await startRealWorkerManager({ paseoHome });
 
   expect(manager.getTerminal(old.terminalId)).toBeDefined();
-  const workers = workerRecords(paseoHome);
+  const workers = await workerRecords(paseoHome);
   expect(workers).toHaveLength(2);
   const current = workers.find((record) => record.pid !== old.workerPid)!;
   expect(current.protocolVersion).toBe(1);
@@ -1378,8 +1381,8 @@ it("drains a worker one protocol older: it keeps its terminal, new ones open in 
     ...nodeTerminalCommand("setInterval(() => {}, 1000);"),
   });
   trackTerminal(added);
-  const currentTerminals = readTerminalWorkerRecord(
-    join(terminalWorkerDirectory(paseoHome), `${current.pid}.json`),
+  const currentTerminals = (
+    await readTerminalWorkerRecord(join(terminalWorkerDirectory(paseoHome), `${current.pid}.json`))
   ).terminals.map((entry) => entry.id);
   expect(currentTerminals).toEqual([added.id]);
   expect((await manager.getTerminals(old.cwd)).map((session) => session.id).sort()).toEqual(
@@ -1389,7 +1392,7 @@ it("drains a worker one protocol older: it keeps its terminal, new ones open in 
   await manager.killTerminalAndWait(old.terminalId);
 
   await waitForCondition(() => !isProcessAlive(old.workerPid), 10000);
-  expect(workerRecords(paseoHome).map((record) => record.pid)).toEqual([current.pid]);
+  expect((await workerRecords(paseoHome)).map((record) => record.pid)).toEqual([current.pid]);
   expect(manager.getTerminal(added.id)).toBeDefined();
 });
 
@@ -1404,7 +1407,7 @@ it("shuts down a worker two protocol versions old, closing its terminals", async
     10000,
   );
   expect(manager.getTerminal(old.terminalId)).toBeUndefined();
-  const workers = workerRecords(paseoHome);
+  const workers = await workerRecords(paseoHome);
   expect(workers).toHaveLength(1);
   expect(workers[0]!.protocolVersion).toBe(1);
 });
@@ -1425,13 +1428,13 @@ it("leaves a worker from a newer Paseo running, reports it incompatible, and clo
     manager.createTerminal({ workspaceId: "ws-protocol", cwd: newer.cwd }),
   ).rejects.toBeInstanceOf(TerminalWorkerIncompatibleError);
   expect(isProcessAlive(newer.programPid)).toBe(true);
-  expect(workerRecords(paseoHome).map((record) => record.pid)).toEqual([newer.workerPid]);
+  expect((await workerRecords(paseoHome)).map((record) => record.pid)).toEqual([newer.workerPid]);
 
   await manager.closeTerminals();
 
   expect(isProcessAlive(newer.workerPid)).toBe(false);
   expect(isProcessAlive(newer.programPid)).toBe(false);
-  expect(workerRecords(paseoHome)).toEqual([]);
+  expect(await workerRecords(paseoHome)).toEqual([]);
 });
 
 // A worker launched on its own, as two daemons that each started one would leave it: running an
@@ -1469,8 +1472,8 @@ async function launchDetachedWorkerWithTerminal(
 }
 
 // Worker pids alive in a home, from every record, closing ones included.
-function liveWorkerPids(paseoHome: string): number[] {
-  return listTerminalWorkerRecords(paseoHome)
+async function liveWorkerPids(paseoHome: string): Promise<number[]> {
+  return (await listTerminalWorkerRecords(paseoHome))
     .flatMap((file) => ("record" in file ? [file.record.pid] : []))
     .filter(isProcessAlive)
     .sort();
@@ -1492,7 +1495,7 @@ it.skipIf(isPlatform("win32"))(
         inspector: { ...inspector, listProcesses: () => Promise.reject(new Error("ps timed out")) },
       }),
     ).rejects.toBeInstanceOf(TerminalCleanupNotConfirmedError);
-    expect(readUnconfirmedTerminalCleanup(paseoHome).map((entry) => entry.role)).toContain(
+    expect((await readUnconfirmedTerminalCleanup(paseoHome)).map((entry) => entry.role)).toContain(
       "worker",
     );
 
@@ -1516,11 +1519,11 @@ it.skipIf(isPlatform("win32"))(
       process.env.PATH = originalPath;
     }
 
-    expect(liveWorkerPids(paseoHome)).toEqual([first.workerPid, second.workerPid].sort());
+    expect(await liveWorkerPids(paseoHome)).toEqual([first.workerPid, second.workerPid].sort());
     await expect(
       manager.createTerminal({ workspaceId: "ws-detached", cwd: first.cwd }),
     ).rejects.toThrow("2 terminal workers are already running");
-    expect(liveWorkerPids(paseoHome)).toEqual([first.workerPid, second.workerPid].sort());
+    expect(await liveWorkerPids(paseoHome)).toEqual([first.workerPid, second.workerPid].sort());
   },
 );
 
@@ -1531,7 +1534,7 @@ it("opens new terminals in a new worker once one of two draining workers exits",
 
   manager = await startRealWorkerManager({ paseoHome });
 
-  expect(liveWorkerPids(paseoHome)).toEqual([first.workerPid, second.workerPid].sort());
+  expect(await liveWorkerPids(paseoHome)).toEqual([first.workerPid, second.workerPid].sort());
   await expect(
     manager.createTerminal({ workspaceId: "ws-detached", cwd: first.cwd }),
   ).rejects.toBeInstanceOf(NoTerminalWorkerAvailableError);
@@ -1550,14 +1553,18 @@ it("opens new terminals in a new worker once one of two draining workers exits",
     ),
   );
   created.forEach(trackTerminal);
-  const workers = workerRecords(paseoHome);
-  expect(workers.map((record) => record.pid).sort()).toEqual(liveWorkerPids(paseoHome));
+  const workers = await workerRecords(paseoHome);
+  expect(workers.map((record) => record.pid).sort()).toEqual(await liveWorkerPids(paseoHome));
   expect(workers).toHaveLength(2);
   const started = workers.find((record) => record.pid !== second.workerPid)!;
   expect(started.protocolVersion).toBe(1);
   expect(
-    readTerminalWorkerRecord(join(terminalWorkerDirectory(paseoHome), `${started.pid}.json`))
-      .terminals.map((entry) => entry.id)
+    (
+      await readTerminalWorkerRecord(
+        join(terminalWorkerDirectory(paseoHome), `${started.pid}.json`),
+      )
+    ).terminals
+      .map((entry) => entry.id)
       .sort(),
   ).toEqual(created.map((session) => session.id).sort());
   expect(manager.getTerminal(second.terminalId)).toBeDefined();

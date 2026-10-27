@@ -11,6 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
+import { access, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensurePrivateDirectory } from "../server/private-files.js";
@@ -202,10 +203,12 @@ export interface PruneTerminalWorkerRuntimesResult {
  * Deletes every copy no worker record names. With an unreadable record it deletes nothing: that
  * record could name a copy a live worker runs from.
  */
-export function pruneTerminalWorkerRuntimes(paseoHome: string): PruneTerminalWorkerRuntimesResult {
+export async function pruneTerminalWorkerRuntimes(
+  paseoHome: string,
+): Promise<PruneTerminalWorkerRuntimesResult> {
   const result: PruneTerminalWorkerRuntimesResult = { removed: [], failed: [] };
   const root = terminalWorkerDirectory(paseoHome);
-  const files = listTerminalWorkerRecords(paseoHome);
+  const files = await listTerminalWorkerRecords(paseoHome);
   const inUse = new Set<string>();
   for (const file of files) {
     if ("error" in file) return result;
@@ -213,7 +216,7 @@ export function pruneTerminalWorkerRuntimes(paseoHome: string): PruneTerminalWor
   }
   let names: string[];
   try {
-    names = readdirSync(root);
+    names = await readdir(root);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return result;
     throw error;
@@ -221,9 +224,19 @@ export function pruneTerminalWorkerRuntimes(paseoHome: string): PruneTerminalWor
   for (const name of names) {
     if (inUse.has(name)) continue;
     const directory = path.join(root, name);
-    if (!name.startsWith(TEMP_PREFIX) && !isCompleteRuntime(directory)) continue;
+    if (
+      !name.startsWith(TEMP_PREFIX) &&
+      !(await access(path.join(directory, RUNTIME_MARKER)).then(
+        () => true,
+        (error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT" || error.code === "ENOTDIR") return false;
+          throw error;
+        },
+      ))
+    )
+      continue;
     try {
-      rmSync(directory, { recursive: true, force: true });
+      await rm(directory, { recursive: true, force: true });
       result.removed.push(directory);
     } catch (error) {
       result.failed.push({

@@ -1,7 +1,8 @@
-import { readdirSync, readFileSync, rmSync } from "node:fs";
+import { readdir, readFile, rm } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import path from "node:path";
 import { z } from "zod";
-import { writePrivateFileAtomicSync } from "../server/private-files.js";
+import { writePrivateFileAtomicSync, writePrivateFileAtomic } from "../server/private-files.js";
 
 // Owner-only metadata a detached terminal worker leaves in $PASEO_HOME so the next daemon can
 // find, authenticate and adopt it, and so cleanup can identify every process it is allowed to
@@ -93,40 +94,39 @@ export function writeTerminalWorkerRecord(paseoHome: string, record: TerminalWor
 }
 
 /** Writes the state of a cleanup that could not confirm every process gone. */
-export function writeTerminalCleanupRecord(
+export async function writeTerminalCleanupRecord(
   paseoHome: string,
   record: TerminalWorkerRecord & { closing: NonNullable<TerminalWorkerRecord["closing"]> },
-): string {
+): Promise<string> {
   if (!RECORD_ID_PATTERN.test(record.recordId)) {
     throw new Error(`Terminal worker record id is not a file name: ${record.recordId}`);
   }
   const recordPath = terminalCleanupRecordPath(paseoHome, record.recordId);
-  writePrivateFileAtomicSync(recordPath, `${JSON.stringify(record, null, 2)}\n`);
+  await writePrivateFileAtomic(recordPath, `${JSON.stringify(record, null, 2)}\n`);
   return recordPath;
 }
 
-export function readTerminalWorkerRecord(recordPath: string): TerminalWorkerRecord {
-  return TerminalWorkerRecordSchema.parse(JSON.parse(readRecordFile(recordPath)));
+export async function readTerminalWorkerRecord(recordPath: string): Promise<TerminalWorkerRecord> {
+  return TerminalWorkerRecordSchema.parse(JSON.parse(await readRecordFile(recordPath)));
 }
 
 // A worker rewrites its record by renaming a new file over it. On Windows an open() that races
 // that rename fails with EPERM (or EBUSY) for a moment, so such an error is retried for a short
-// window before the record counts as unreadable. The wait is synchronous because every reader
-// is; it costs nothing unless a read fails, and a persistent error still fails after the window.
+// window before the record counts as unreadable. Reads and retries yield so daemon status and
+// cleanup never block unrelated requests while another process holds the record open.
 const TRANSIENT_READ_ERRORS = new Set(["EPERM", "EBUSY", "EACCES"]);
 const TRANSIENT_READ_WINDOW_MS = 250;
 const TRANSIENT_READ_PAUSE_MS = 10;
-const readPause = new Int32Array(new SharedArrayBuffer(4));
 
-function readRecordFile(recordPath: string): string {
+async function readRecordFile(recordPath: string): Promise<string> {
   const deadline = Date.now() + TRANSIENT_READ_WINDOW_MS;
   for (;;) {
     try {
-      return readFileSync(recordPath, "utf8");
+      return await readFile(recordPath, "utf8");
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (!code || !TRANSIENT_READ_ERRORS.has(code) || Date.now() >= deadline) throw error;
-      Atomics.wait(readPause, 0, 0, TRANSIENT_READ_PAUSE_MS);
+      await delay(TRANSIENT_READ_PAUSE_MS);
     }
   }
 }
@@ -146,11 +146,13 @@ function recordKindOf(fileName: string): TerminalWorkerRecordKind | null {
  * record id: its closing state wins, and terminals the worker recorded since join it, so the
  * retry covers everything the worker still runs.
  */
-export function listTerminalWorkerRecords(paseoHome: string): TerminalWorkerRecordFile[] {
+export async function listTerminalWorkerRecords(
+  paseoHome: string,
+): Promise<TerminalWorkerRecordFile[]> {
   const directory = terminalWorkerDirectory(paseoHome);
   let names: string[];
   try {
-    names = readdirSync(directory);
+    names = await readdir(directory);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
@@ -163,7 +165,7 @@ export function listTerminalWorkerRecords(paseoHome: string): TerminalWorkerReco
     if (!kind) continue;
     const recordPath = path.join(directory, name);
     try {
-      const record = readTerminalWorkerRecord(recordPath);
+      const record = await readTerminalWorkerRecord(recordPath);
       (kind === "worker" ? workers : cleanups).push({ path: recordPath, record });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
@@ -203,25 +205,25 @@ export function listTerminalWorkerRecords(paseoHome: string): TerminalWorkerReco
  * Deletes a record, the worker's own record file and the socket it names, unless a later worker
  * that reused the pid wrote that file since. The pipe namespace on Windows needs no unlink.
  */
-export function retireTerminalWorkerRecord(file: {
+export async function retireTerminalWorkerRecord(file: {
   path: string;
   record: TerminalWorkerRecord;
   workerRecordPath: string | null;
-}): void {
-  if (file.path !== file.workerRecordPath) rmSync(file.path, { force: true });
+}): Promise<void> {
+  if (file.path !== file.workerRecordPath) await rm(file.path, { force: true });
   if (file.workerRecordPath) {
-    if (workerRecordNamesAnother(file.workerRecordPath, file.record.recordId)) return;
-    rmSync(file.workerRecordPath, { force: true });
+    if (await workerRecordNamesAnother(file.workerRecordPath, file.record.recordId)) return;
+    await rm(file.workerRecordPath, { force: true });
   }
   if (process.platform !== "win32") {
-    rmSync(file.record.socketPath, { force: true });
+    await rm(file.record.socketPath, { force: true });
   }
 }
 
 // True when the file now belongs to another worker, or cannot be read to tell.
-function workerRecordNamesAnother(recordPath: string, recordId: string): boolean {
+async function workerRecordNamesAnother(recordPath: string, recordId: string): Promise<boolean> {
   try {
-    return readTerminalWorkerRecord(recordPath).recordId !== recordId;
+    return (await readTerminalWorkerRecord(recordPath)).recordId !== recordId;
   } catch (error) {
     return (error as NodeJS.ErrnoException).code !== "ENOENT";
   }

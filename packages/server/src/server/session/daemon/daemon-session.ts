@@ -181,7 +181,7 @@ export class DaemonSession {
   ): Promise<void> {
     // Read outside the degraded-status fallback below: a status that cannot say whether
     // terminal cleanup finished must fail the request, not report that nothing is left.
-    const terminalCleanupUnconfirmed = readUnconfirmedTerminalCleanup(this.paseoHome).map(
+    const terminalCleanupUnconfirmed = (await readUnconfirmedTerminalCleanup(this.paseoHome)).map(
       ({ pid, role, reason, detail }) => ({ pid, role, reason, detail }),
     );
     const terminalsUnavailable = this.getTerminalsUnavailable();

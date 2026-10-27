@@ -287,12 +287,14 @@ async function waitUntilGone(pid: number, what: string) {
   await waitFor(() => !isAlive(pid), `${what} (pid ${pid}) is still alive`, 15_000);
 }
 
-function liveRecords(home: string): TerminalWorkerRecord[] {
-  return listTerminalWorkerRecords(home).flatMap((file) => ("record" in file ? [file.record] : []));
+async function liveRecords(home: string): Promise<TerminalWorkerRecord[]> {
+  return (await listTerminalWorkerRecords(home)).flatMap((file) =>
+    "record" in file ? [file.record] : [],
+  );
 }
 
-function currentWorkerRecord(home: string): TerminalWorkerRecord {
-  const records = liveRecords(home);
+async function currentWorkerRecord(home: string): Promise<TerminalWorkerRecord> {
+  const records = await liveRecords(home);
   if (records.length !== 1) throw new Error(`expected one worker record, found ${records.length}`);
   return records[0]!;
 }
@@ -301,7 +303,7 @@ async function expectAllClosed(home: string, pids: number[]) {
   for (const pid of pids) {
     await waitUntilGone(pid, "a process that should be closed");
   }
-  expect(liveRecords(home)).toEqual([]);
+  expect(await liveRecords(home)).toEqual([]);
 }
 
 function spawnUnrelated(): ChildProcess {
@@ -336,7 +338,7 @@ afterEach(async () => {
       () => undefined,
     );
     if (pid && isAlive(pid)) process.kill(pid, "SIGKILL");
-    for (const record of liveRecords(harness.home)) {
+    for (const record of await liveRecords(harness.home)) {
       if (isAlive(record.pid)) {
         try {
           process.kill(record.pid, "SIGCONT");
@@ -367,7 +369,7 @@ describe("terminals across daemon restarts", { timeout: 240_000 }, () => {
     let client = await connect(harness);
     const workspaceId = await createWorkspace(client, harness);
     const terminal = await createMarkedTerminal(client, harness, workspaceId, "MARKER-SETTINGS");
-    const workerPid = currentWorkerRecord(harness.home).pid;
+    const workerPid = (await currentWorkerRecord(harness.home)).pid;
 
     // Exactly what the app sends from Settings: no killTerminals.
     let daemonPid = await daemonWorkerPid(client);
@@ -375,7 +377,7 @@ describe("terminals across daemon restarts", { timeout: 240_000 }, () => {
     await client.close();
     client = await waitForReplacement(harness, daemonPid);
     await expectKept(client, terminal, "MARKER-SETTINGS", "settings-restart");
-    expect(currentWorkerRecord(harness.home).pid).toBe(workerPid);
+    expect((await currentWorkerRecord(harness.home)).pid).toBe(workerPid);
 
     daemonPid = await daemonWorkerPid(client);
     await client.restartServer("settings_update", undefined, { killTerminals: true });
@@ -384,7 +386,9 @@ describe("terminals across daemon restarts", { timeout: 240_000 }, () => {
     await waitUntilGone(terminal.programPid, "terminal program");
     await waitUntilGone(workerPid, "old terminal worker");
     expect((await client.listTerminals(undefined, undefined, {})).terminals).toEqual([]);
-    expect(liveRecords(harness.home).every((record) => record.pid !== workerPid)).toBe(true);
+    expect((await liveRecords(harness.home)).every((record) => record.pid !== workerPid)).toBe(
+      true,
+    );
     await client.close();
   });
 
@@ -503,7 +507,7 @@ describe("terminals when the daemon stops", { timeout: 240_000 }, () => {
         "hup",
         "child",
       );
-      const workerPid = currentWorkerRecord(harness.home).pid;
+      const workerPid = (await currentWorkerRecord(harness.home)).pid;
       await client.close();
       await stopDaemon(harness);
       await expectAllClosed(harness.home, [terminal.shellPid, terminal.sleepPid, workerPid]);
@@ -524,7 +528,7 @@ describe("terminals when the daemon stops", { timeout: 240_000 }, () => {
           "orphan",
           "exec",
         );
-        const workerPid = currentWorkerRecord(harness.home).pid;
+        const workerPid = (await currentWorkerRecord(harness.home)).pid;
         process.kill(workerPid, "SIGKILL");
         await waitUntilGone(workerPid, "terminal worker");
         await delay(500);
@@ -543,7 +547,7 @@ describe("terminals when the daemon stops", { timeout: 240_000 }, () => {
       const client = await connect(harness);
       const workspaceId = await createWorkspace(client, harness);
       const terminal = await createMarkedTerminal(client, harness, workspaceId, "MARKER-STOPPED");
-      const workerPid = currentWorkerRecord(harness.home).pid;
+      const workerPid = (await currentWorkerRecord(harness.home)).pid;
       await client.close();
       process.kill(workerPid, "SIGSTOP");
       await stopDaemonInstance(harness.home, { force: true });
@@ -556,7 +560,7 @@ describe("terminals when the daemon stops", { timeout: 240_000 }, () => {
     const client = await connect(harness);
     const workspaceId = await createWorkspace(client, harness);
     const terminal = await createMarkedTerminal(client, harness, workspaceId, "MARKER-AUTH");
-    const record = currentWorkerRecord(harness.home);
+    const record = await currentWorkerRecord(harness.home);
     await expect(
       connectTerminalWorker({ socketPath: record.socketPath, secret: "not-the-secret" }),
     ).rejects.toThrow();
@@ -570,7 +574,7 @@ describe("terminals when the daemon stops", { timeout: 240_000 }, () => {
     await client.close();
     const reused = spawnUnrelated();
     const earlierBoot = spawnUnrelated();
-    const base = currentWorkerRecord(harness.home);
+    const base = await currentWorkerRecord(harness.home);
     // Same pid, another birth time: what a reused pid looks like, whatever its command line.
     writeTerminalWorkerRecord(harness.home, {
       ...base,
@@ -598,7 +602,7 @@ describe("terminals when the daemon stops", { timeout: 240_000 }, () => {
     await stopDaemon(harness);
     expect(isAlive(reused.pid!)).toBe(true);
     expect(isAlive(earlierBoot.pid!)).toBe(true);
-    expect(liveRecords(harness.home)).toEqual([]);
+    expect(await liveRecords(harness.home)).toEqual([]);
 
     // A second round through --force, with the stale record put back.
     writeTerminalWorkerRecord(harness.home, {
@@ -610,7 +614,7 @@ describe("terminals when the daemon stops", { timeout: 240_000 }, () => {
     });
     await stopDaemonInstance(harness.home, { force: true });
     expect(isAlive(reused.pid!)).toBe(true);
-    expect(liveRecords(harness.home)).toEqual([]);
+    expect(await liveRecords(harness.home)).toEqual([]);
   });
 });
 
