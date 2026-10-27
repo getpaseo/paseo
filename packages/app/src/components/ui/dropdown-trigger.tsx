@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/control-geometry";
 import type { Theme } from "@/styles/theme";
 import { DropdownMenuTrigger, type DropdownMenuTriggerProps } from "@/components/ui/dropdown-menu";
+import { useContainedControlSize } from "@/components/ui/control-size";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
 
@@ -32,10 +33,12 @@ interface DropdownTriggerProps extends Omit<DropdownMenuTriggerProps, "children"
 export function DropdownTrigger({
   children,
   leading,
-  size = "sm",
+  size: sizeProp,
   disabled,
   ...props
 }: DropdownTriggerProps): ReactElement {
+  const containedSize = useContainedControlSize();
+  const size = sizeProp ?? containedSize ?? "sm";
   let sizeStyle: ViewStyle;
   if (size === "xs") {
     sizeStyle = styles.xs;

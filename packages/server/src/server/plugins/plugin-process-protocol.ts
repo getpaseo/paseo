@@ -1,3 +1,4 @@
+import type { PluginHookAgent } from "@getpaseo/plugin/server";
 import { UsageScopeSchema, type UsageScope } from "@getpaseo/plugin/server/usage";
 import type {
   ProviderConnectRequest,
@@ -31,6 +32,9 @@ export interface PluginUsageSourceMetadata {
 }
 
 export type PluginProcessRequest =
+  | { type: "tool.call"; requestId: string; agent: PluginHookAgent; name: string; input: unknown }
+  | { type: "tool.cancel"; requestId: string }
+  | { type: "tools.detach"; agentId: string }
   | {
       type: "provider.status";
       requestId: string;
@@ -141,6 +145,26 @@ const frameFields = {
 export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.discriminatedUnion(
   "type",
   [
+    z
+      .object({
+        type: z.literal("tool.call"),
+        requestId: z.string(),
+        agent: z
+          .object({
+            id: z.string(),
+            workspaceId: z.string().nullable(),
+            parentAgentId: z.string().nullable(),
+            provider: z.string(),
+            cwd: z.string(),
+            title: z.string().nullable(),
+          })
+          .strict(),
+        name: z.string(),
+        input: z.unknown(),
+      })
+      .strict(),
+    z.object({ type: z.literal("tool.cancel"), requestId: z.string() }).strict(),
+    z.object({ type: z.literal("tools.detach"), agentId: z.string() }).strict(),
     z
       .object({
         type: z.literal("provider.status"),

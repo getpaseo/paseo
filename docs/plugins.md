@@ -432,6 +432,9 @@ Server entries register lifecycle observers with `server.on()` and request trans
 `server.before()`. The [public reference](../public-docs/plugins/reference.md#lifecycle-hooks)
 owns callback shapes, ordering, and failure behavior. `plugin-examples/lifecycle-logger` registers all
 eleven hooks; `plugin-examples/lifecycle-actions` demonstrates common automation callbacks.
+Session-open hooks also [attach tools to individual agents](../public-docs/plugins/reference.md#attach-tools-to-agents),
+as shown in `plugin-examples/agent-tools`. The agent manager stamps their metadata per session;
+executable definitions stay in the plugin process.
 
 Emit from the operation owner, not a client subscription. Provider history replay must not trigger
 live hooks. Observers must not be awaited inside agent mutations: a callback can send a prompt or
@@ -497,6 +500,11 @@ It contains the provider defaults and per-agent overrides merged by the daemon.
 Validate and apply it inside the provider; core does not know your option shape.
 See [provider options](custom-providers.md#provider-options) for configuration and
 merge semantics.
+
+Providers add an optional veto to daemon baseline cleanup through the per-session
+[runtime safety query](../public-docs/plugins/providers.md#permit-idle-runtime-cleanup).
+The daemon calls the same `AgentSession.canStopRuntime()` interface for built-ins and plugins;
+the plugin bridge transports that query through the existing provider request/event protocol.
 
 Agent refresh closes the current provider session and opens it again with current configuration and
 persistence. Re-read credentials and provider-owned configuration on `session.open`; consume the

@@ -72,7 +72,7 @@ paseo daemon restart
 
 当你删除 `daemon.relay.enabled` 时，新的主目录会保持中继关闭。如果 daemon 启动时其配置就已经省略了这个字段，它会为了兼容而保持旧版的中继开启行为。编辑较旧的配置时，请显式设置 `daemon.relay.enabled`。
 
-监听地址、身份验证、中继端点和 TLS、worktree 分配、服务代理地址、内置的 Web UI、日志、语音合成与识别、语音、凭据以及本地模型设置都需要重启。重新加载会先应用同一文件中的其他有效编辑，再报告这些路径。
+空闲运行时清理、监听地址、身份验证、中继端点和 TLS、worktree 分配、服务代理地址、内置的 Web UI、日志、语音合成与识别、语音、凭据以及本地模型设置都需要重启。重新加载会先应用同一文件中的其他有效编辑，再报告这些路径。
 
 部署环境变量和旧版进程管理器参数仍然具有最终决定权。当某个启动覆盖项阻止了文件中已更改的设置生效时，重新加载会在 `overrideControlledPaths` 下报告它。这包括启动设置，例如监听地址、密码、中继端点和 TLS、服务代理和 Web UI 设置、日志、语音合成与识别以及语音配置。主机名和 CORS 来源等列表设置仍然在各个来源之间追加，因此 `config.json` 中的值继续生效。要让文件中的值具有决定权，请停止该部署并在不带覆盖项的情况下重新启动。
 
@@ -81,6 +81,16 @@ paseo daemon restart
 Agent Provider，包括 Paseo 自带的一等 Provider 和你在 `agents.providers` 下添加的自定义条目，都在单独的页面中介绍。
 
 心智模型见 [Provider](/docs/providers)，Paseo 可以启动的全部 Agent 见[支持的 Provider](/docs/supported-providers)。要让 Claude 指向兼容 Anthropic 的端点（Z.AI、Alibaba/Qwen）、使用多个配置、自定义二进制文件、ACP Agent，以及了解 `additionalModels` 的合并行为，见[自定义 Provider](/docs/custom-providers)。完整的字段参考在 GitHub 上的 [docs/custom-providers.md](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md)。
+
+## 空闲运行时 {#idle-runtimes}
+
+当 daemon 的基础条件允许清理，且 Provider 已实现的安全检查也允许时，Paseo 会在可恢复的 Agent 空闲一小时后释放其进程。你的下一条提示词会恢复同一个会话。要为整个主机禁用此功能，请在 **设置 → 你的主机 → Agents** 中关闭 **释放空闲 Agent**，或设置：
+
+```json
+{ "agents": { "idleRuntimeCleanup": false } }
+```
+
+此设置默认为 `true`。在设置中更改后立即生效；配置文件中的更改在重新加载配置后生效。重新启用会保留现有的空闲计时。没有单个 Agent 的设置。不提供运行时安全检查的 Provider 使用相同的 daemon 基础条件和一小时空闲期。活动中的工作、后代 Agent 和待发送的完成通知都会阻止清理。ACP 适配器还会在 ACP 终端仍运行时保留运行时，即使终端没有输出；已退出的终端不会阻止清理。此检查不检查 Provider 内部启动的进程。
 
 ## worktree {#worktrees}
 

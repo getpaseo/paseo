@@ -516,6 +516,36 @@ export class OpenCodeV2Session implements AgentSession {
       await delay(100, undefined, { signal }).catch(() => undefined);
     }
   }
+  async canStopRuntime(): Promise<boolean> {
+    if (this.closed || this.exited || this.reconnecting || this.turns.id || this.dirty)
+      return false;
+    const request = { signal: AbortSignal.timeout(10_000) };
+    // Active executions are server-wide. Releasing the last lease must not stop an
+    // autonomous execution merely because it belongs to another session or location.
+    if (Object.keys(await this.client.session.active(request)).length > 0) return false;
+    const family = new Map([[this.info.id, this.info]]);
+    const directories = new Set<string>();
+    for (const info of family.values()) {
+      if ((await this.client.session.inbox.list({ sessionID: info.id }, request)).length)
+        return false;
+      directories.add(info.location.directory);
+      let cursor: string | undefined;
+      do {
+        const page = await this.client.session.list(
+          { ...(cursor ? { cursor } : { parentID: info.id }), limit: 100 },
+          request,
+        );
+        for (const child of page.data) family.set(child.id, child);
+        cursor = page.cursor.next ?? undefined;
+      } while (cursor);
+    }
+    for (const directory of directories) {
+      const shells = await this.client.shell.list({ location: { directory } }, request);
+      if (shells.data.some((shell) => shell.status === "running")) return false;
+    }
+    return !this.turns.id && !this.dirty;
+  }
+
   async close() {
     if (this.closed) return;
     this.closed = true;

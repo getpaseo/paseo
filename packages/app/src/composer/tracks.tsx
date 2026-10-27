@@ -233,6 +233,11 @@ export function ComposerTrackRow({
     [closeOnSelect, onPress, selectItem],
   );
 
+  const itemDataSet = useMemo(
+    () => ({ menuItem: "true", menuDisabled: disabled ? "true" : "false" }),
+    [disabled],
+  );
+
   const renderRow = useCallback(
     (active: boolean) => (
       <View style={active ? styles.rowActive : styles.row}>
@@ -253,7 +258,8 @@ export function ComposerTrackRow({
   return (
     <View onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave}>
       <Pressable
-        accessibilityRole="button"
+        accessibilityRole="menuitem"
+        dataSet={itemDataSet}
         accessibilityLabel={accessibilityLabel}
         testID={testID}
         disabled={disabled}
@@ -276,7 +282,11 @@ export function ComposerTrackRow({
  * knockout for marks that sit on top of an icon, and nothing sits under this one, so it comes off
  * too — leaving every mark's visible edge on the same rail whatever state it is in.
  */
-function ComposerTrackMark({ bucket }: { bucket: SidebarStateBucket | null }): ReactElement | null {
+export function ComposerTrackMark({
+  bucket,
+}: {
+  bucket: SidebarStateBucket | null;
+}): ReactElement | null {
   if (!bucket) {
     return null;
   }
