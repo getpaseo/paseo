@@ -29,12 +29,19 @@ export async function resolveInlinePathOpen(input: PathOpenInput): Promise<PathO
   ) {
     return { kind: "file" };
   }
+  let listing: unknown;
   try {
-    await input.client.listDirectory(input.workspaceRoot, input.file);
+    listing = await input.client.listDirectory(input.workspaceRoot, input.file);
   } catch {
     return { kind: "file" };
   }
-  return { kind: "directory", directoryPath: input.file };
+  // The daemon reports the workspace-relative path, which also covers `~/` paths it expanded.
+  return { kind: "directory", directoryPath: getListedDirectoryPath(listing) ?? input.file };
+}
+
+function getListedDirectoryPath(listing: unknown): string | null {
+  if (typeof listing !== "object" || listing === null || !("path" in listing)) return null;
+  return typeof listing.path === "string" && listing.path ? listing.path : null;
 }
 
 export function createInlinePathOpener(input: {
