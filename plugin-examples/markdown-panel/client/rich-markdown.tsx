@@ -1,10 +1,12 @@
+import { z } from "zod";
 import {
   PluginFileConflictError,
   PluginFileDeletedError,
   type PluginFilePanelProps,
   useFileText,
+  useTabState,
 } from "@getpaseo/plugin/client";
-import { Loading } from "@getpaseo/plugin/client/ui";
+import { Loading, Markdown } from "@getpaseo/plugin/client/ui";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { type MarkdownEditorHandle, mountEditor } from "./web";
@@ -17,7 +19,7 @@ type EditorState = "loading" | "ready" | "conflict" | "deleted";
  * Reads the file once, writes 500 ms after the last edit, and follows the disk while nothing is
  * unsaved. With unsaved edits, a change on disk is a conflict: Reload or Overwrite.
  */
-function MarkdownEditor({ file, tab, theme }: PluginFilePanelProps) {
+function MarkdownEditor({ file, tab: { setModified }, theme }: PluginFilePanelProps) {
   const parent = useRef<View>(null);
   const editor = useRef<MarkdownEditorHandle | null>(null);
   const text = useRef("");
@@ -34,11 +36,11 @@ function MarkdownEditor({ file, tab, theme }: PluginFilePanelProps) {
       return;
     }
     unsaved.current = null;
-    tab.setModified(false);
+    setModified(false);
     editor.current?.setText(text.current);
     setError(null);
     setState("ready");
-  }, [file, tab]);
+  }, [file, setModified]);
 
   const save = useCallback(
     async (force: boolean) => {
@@ -54,19 +56,19 @@ function MarkdownEditor({ file, tab, theme }: PluginFilePanelProps) {
       }
       if (unsaved.current === next) {
         unsaved.current = null;
-        tab.setModified(false);
+        setModified(false);
       }
       setError(null);
       setState("ready");
     },
-    [file, tab],
+    [file, setModified],
   );
 
   useLayoutEffect(() => {
     editor.current = mountEditor(parent.current, text.current, theme, (next) => {
       text.current = next;
       unsaved.current = next;
-      tab.setModified(true);
+      setModified(true);
       clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => void save(false), SAVE_DELAY_MS);
     });
@@ -74,7 +76,7 @@ function MarkdownEditor({ file, tab, theme }: PluginFilePanelProps) {
       editor.current?.destroy();
       editor.current = null;
     };
-  }, [save, tab, theme]);
+  }, [save, setModified, theme]);
 
   useEffect(() => {
     void load();
@@ -166,9 +168,63 @@ function MarkdownText({ file, theme }: PluginFilePanelProps) {
   );
 }
 
+const viewSchema = z.object({ view: z.enum(["preview", "source"]) });
+const defaultView = { view: "source" } as const;
+
+function MarkdownPreview({ file, theme }: PluginFilePanelProps) {
+  const text = useFileText(file);
+  const errorStyle = useMemo(() => ({ color: theme.colors.statusDanger }), [theme]);
+  if (text.status === "loading") return <Loading />;
+  if (text.status === "error") return <Text style={errorStyle}>{text.error.message}</Text>;
+  return (
+    <ScrollView>
+      <Markdown>{text.text}</Markdown>
+    </ScrollView>
+  );
+}
+
+const toolbarStyle = { flexDirection: "row", gap: 16, padding: 12 } as const;
+const selected = { selected: true };
+const unselected = { selected: false };
+
 export function RichMarkdownPanel(props: PluginFilePanelProps) {
-  if (props.layout.platform === "web") return <MarkdownEditor {...props} />;
-  return <MarkdownText {...props} />;
+  const [state, setState] = useTabState(props.tab, viewSchema, defaultView);
+  const styles = useMemo(
+    () => ({
+      panel: { flex: 1, minHeight: 0, backgroundColor: props.theme.colors.surface0 },
+      label: { color: props.theme.colors.foreground },
+    }),
+    [props.theme],
+  );
+  const showPreview = useCallback(() => setState({ view: "preview" }), [setState]);
+  const showSource = useCallback(() => setState({ view: "source" }), [setState]);
+  let content;
+  if (state.view === "preview") content = <MarkdownPreview {...props} />;
+  else if (props.layout.platform === "web") content = <MarkdownEditor {...props} />;
+  else content = <MarkdownText {...props} />;
+  return (
+    <View style={styles.panel}>
+      <View style={toolbarStyle}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Rich Markdown Preview"
+          accessibilityState={state.view === "preview" ? selected : unselected}
+          onPress={showPreview}
+        >
+          <Text style={styles.label}>Preview</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Rich Markdown Source"
+          accessibilityState={state.view === "source" ? selected : unselected}
+          onPress={showSource}
+        >
+          <Text style={styles.label}>Source</Text>
+        </Pressable>
+      </View>
+      {content}
+    </View>
+  );
 }
 
 function messageOf(cause: unknown): string {

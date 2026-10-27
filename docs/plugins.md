@@ -430,8 +430,15 @@ The [public reference](../public-docs/plugins/reference.md#icons) owns the autho
 
 Server entries register lifecycle observers with `server.on()` and request transforms with
 `server.before()`. The [public reference](../public-docs/plugins/reference.md#lifecycle-hooks)
-owns callback shapes, ordering, and failure behavior. `plugin-examples/lifecycle-logger` registers all
+owns callback shapes, ordering, and failure behavior. `agent.create` edits the agent's saved
+configuration; `agent.session_open` contributes launch-only `env`, `tools`, and `mcpServers`,
+re-derived on each open and following the plugin's lifecycle. See
+[Inject MCP servers](../public-docs/plugins/reference.md#inject-mcp-servers) for choosing the hook.
+`plugin-examples/lifecycle-logger` registers all
 eleven hooks; `plugin-examples/lifecycle-actions` demonstrates common automation callbacks.
+Session-open hooks also [attach tools to individual agents](../public-docs/plugins/reference.md#attach-tools-to-agents),
+as shown in `plugin-examples/agent-tools`. The agent manager stamps their metadata per session;
+executable definitions stay in the plugin process.
 
 Emit from the operation owner, not a client subscription. Provider history replay must not trigger
 live hooks. Observers must not be awaited inside agent mutations: a callback can send a prompt or
@@ -497,6 +504,11 @@ It contains the provider defaults and per-agent overrides merged by the daemon.
 Validate and apply it inside the provider; core does not know your option shape.
 See [provider options](custom-providers.md#provider-options) for configuration and
 merge semantics.
+
+Providers add an optional veto to daemon baseline cleanup through the per-session
+[runtime safety query](../public-docs/plugins/providers.md#permit-idle-runtime-cleanup).
+The daemon calls the same `AgentSession.canStopRuntime()` interface for built-ins and plugins;
+the plugin bridge transports that query through the existing provider request/event protocol.
 
 Agent refresh closes the current provider session and opens it again with current configuration and
 persistence. Re-read credentials and provider-owned configuration on `session.open`; consume the
@@ -570,7 +582,7 @@ and resolves conflicts. The host has no bar and no notion of a panel's views: th
 panels own their Preview and Source views, toolbar and editor buffer, and the tab only shows the
 dot a panel sets through `tab.setModified`. Source is the floor for text files no other built-in
 claims, never a candidate beside one. Built-in panels (Markdown, HTML, Image, and Source, Paseo's
-editor) take the same handle as plugin panels, so a fix to reading, watching, or writing lands in one place:
+editor) take exactly `PluginFilePanelProps`, including params and persisted tab state, so a fix to reading, watching, or writing lands in one place:
 `packages/app/src/file-panels/file/`. Do not add a host-side read or loading gate for one panel;
 make that panel faster instead. Source highlights a large file on native in idle-time slices,
 the lines around the opening line first.

@@ -1,3 +1,11 @@
+import { isDeepStrictEqual } from "node:util";
+import {
+  serializeAgentTool,
+  agentToolMetadataSchema,
+  type SessionOpenWireRequest,
+  type PluginAgentTools,
+} from "../agent-tools.js";
+import type { AgentToolDefinition } from "@getpaseo/plugin/server";
 import type { AgentStreamEvent } from "../../agent/agent-sdk-types.js";
 import { z } from "zod";
 import { CreateAgentRequestMessageSchema } from "@getpaseo/protocol/messages";
@@ -14,6 +22,15 @@ import type {
 } from "@getpaseo/plugin/server";
 import { WorkspaceCreateRequestSchema } from "@getpaseo/protocol/messages";
 import type { PersistedWorkspaceRecord } from "../../workspace-registry.js";
+
+export type PluginWireBeforeRequests = Omit<PluginBeforeRequests, "agent.session_open"> & {
+  "agent.session_open": SessionOpenWireRequest;
+};
+
+/** Daemon-only results; ownership never crosses the plugin process boundary. */
+export type PluginBeforeResults = PluginWireBeforeRequests & {
+  "agent.session_open": SessionOpenWireRequest & { mcpServerOwners?: Record<string, string> };
+};
 
 export const lifecycleEventNames = [
   "agent.created",
@@ -38,28 +55,45 @@ const beforeSchemas = {
       cwd: z.string(),
       reason: z.enum(["create", "resume", "refresh", "import"]),
       purpose: z.enum(["interactive", "history"]),
+      title: z.string().nullable(),
+      labels: z.record(z.string(), z.string()),
+      tools: z.array(agentToolMetadataSchema),
       env: z.record(z.string(), z.string()),
+      mcpServers: CreateAgentRequestMessageSchema.shape.config.shape.mcpServers.unwrap(),
     })
     .strict(),
   "workspace.create": WorkspaceCreateRequestSchema.omit({ type: true, requestId: true }).strict(),
 };
+
+const sessionOpenLocalResultSchema = beforeSchemas["agent.session_open"].extend({
+  tools: z.array(
+    z.custom<AgentToolDefinition>(
+      (tool) =>
+        typeof tool === "object" &&
+        tool !== null &&
+        "input" in tool &&
+        "execute" in tool &&
+        typeof tool.execute === "function",
+    ),
+  ),
+});
 
 export interface PluginLifecycle {
   emit<Name extends keyof PluginLifecycleEvents>(
     name: Name,
     event: PluginLifecycleEvents[Name],
   ): void;
-  before<Name extends keyof PluginBeforeRequests>(
+  before<Name extends keyof PluginWireBeforeRequests>(
     name: Name,
-    request: PluginBeforeRequests[Name],
-  ): Promise<PluginBeforeRequests[Name]>;
+    request: PluginWireBeforeRequests[Name],
+  ): Promise<PluginBeforeResults[Name]>;
 }
 
-export function validateBeforeRequest<Name extends keyof PluginBeforeRequests>(
+export function validateBeforeRequest<Name extends keyof PluginWireBeforeRequests>(
   name: Name,
   value: unknown,
-): PluginBeforeRequests[Name] {
-  return beforeSchemas[name].parse(value) as PluginBeforeRequests[Name];
+): PluginWireBeforeRequests[Name] {
+  return beforeSchemas[name].parse(value) as PluginWireBeforeRequests[Name];
 }
 
 export function describeHookWorkspace(workspace: PersistedWorkspaceRecord): PluginHookWorkspace {
@@ -129,11 +163,11 @@ export function publishAgentStream(
   }
 }
 
-export function validateBeforeResult<Name extends keyof PluginBeforeRequests>(
+export function validateBeforeResult<Name extends keyof PluginWireBeforeRequests>(
   name: Name,
-  input: PluginBeforeRequests[Name],
+  input: PluginWireBeforeRequests[Name],
   output: unknown,
-): PluginBeforeRequests[Name] {
+): PluginWireBeforeRequests[Name] {
   const result = validateBeforeRequest(name, output);
   if (name === "agent.session_open") {
     const previous = beforeSchemas["agent.session_open"].parse(input);
@@ -144,9 +178,11 @@ export function validateBeforeResult<Name extends keyof PluginBeforeRequests>(
       previous.provider !== next.provider ||
       previous.cwd !== next.cwd ||
       previous.reason !== next.reason ||
-      previous.purpose !== next.purpose
+      previous.purpose !== next.purpose ||
+      previous.title !== next.title ||
+      !isDeepStrictEqual(previous.labels, next.labels)
     ) {
-      throw new Error("agent.session_open hooks can only change env");
+      throw new Error("agent.session_open hooks can only change env, tools, and mcpServers");
     }
   }
   if (name === "agent.create") {
@@ -168,7 +204,10 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
 
   private readonly changed: () => void;
 
-  constructor(changed: () => void) {
+  private readonly agentTools: PluginAgentTools | undefined;
+
+  constructor(changed: () => void, agentTools?: PluginAgentTools) {
+    this.agentTools = agentTools;
     this.changed = changed;
   }
 
@@ -209,6 +248,9 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
           throw new Error(`Unknown before hook: ${name}`);
         }
         const hookName = name as keyof import("@getpaseo/plugin/server").PluginBeforeRequests;
+        if (hookName === "agent.session_open") {
+          return await this.openSession(input, { paseo, signal: controller.signal });
+        }
         let request = validateBeforeRequest(hookName, input);
         for (const handler of this.transforms.get(name) ?? []) {
           controller.signal.throwIfAborted();
@@ -216,9 +258,7 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
             { request: structuredClone(request) },
             { paseo, signal: controller.signal },
           );
-          if (result !== undefined) {
-            request = validateBeforeResult(hookName, request, result);
-          }
+          if (result !== undefined) request = validateBeforeResult(hookName, request, result);
         }
         return request;
       }
@@ -234,6 +274,33 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
     } finally {
       this.active.delete(id);
     }
+  }
+
+  private async openSession(
+    input: unknown,
+    context: PluginHookContext,
+  ): Promise<SessionOpenWireRequest> {
+    let request = validateBeforeRequest("agent.session_open", input);
+    this.agentTools?.detach(request.agentId);
+    let tools: AgentToolDefinition[] = [];
+    for (const handler of this.transforms.get("agent.session_open") ?? []) {
+      context.signal.throwIfAborted();
+      const result = await handler(
+        { request: { ...structuredClone(request), tools: [...tools] } },
+        context,
+      );
+      if (result === undefined) continue;
+      const local = sessionOpenLocalResultSchema.parse(result);
+      const metadata = local.tools.map(serializeAgentTool);
+      request = validateBeforeResult("agent.session_open", request, { ...local, tools: metadata });
+      tools = local.tools;
+    }
+    context.signal.throwIfAborted();
+    if (request.purpose === "history") {
+      request.tools = [];
+      request.mcpServers = {};
+    } else this.agentTools?.attach(request.agentId, tools);
+    return request;
   }
 
   cancel(id: string): void {

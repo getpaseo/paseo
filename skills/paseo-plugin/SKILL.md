@@ -27,28 +27,29 @@ public docs; this skill indexes the references and examples.
 
 Pick the contribution that matches the request. Each row names the registration, when it fits, and where the full contract lives. Most plugins combine several: a slash command that calls an RPC, which appends a timeline row, which a renderer draws.
 
-| Contribution              | Registration                                                | Use it when                                                                                                   | Reference                                                                                          |
-| ------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Screen and sidebar item   | `addScreen` + `addSidebarHeaderItem`/`addSidebarFooterItem` | A full screen of plugin UI, or sidebar header or footer rows that open a screen or popover                    | reference.md → Screens and sidebar items                                                           |
-| Workspace panel           | `addWorkspacePanel`                                         | UI that lives as a tab beside agents, terminals, files, and diffs; `locations: ["explorer"]` for the Explorer | reference.md → Workspace panels                                                                    |
-| File panel                | `addFilePanel`                                              | View or edit a matching file inside the file tab through its file handle                                      | reference.md → File panels; `plugin-examples/pdf-panel`, `plugin-examples/markdown-panel`          |
-| Command Center item       | `addCommandCenterItem`                                      | A global, workspace, or agent action reachable from ⌘K                                                        | reference.md → Command Center items                                                                |
-| Client slash command      | `addSlashCommand`                                           | A `/command args` in the composer that runs plugin code instead of prompting the agent                        | reference.md → Slash commands                                                                      |
-| Composer pill             | `addComposerPill`                                           | A per-agent button in the composer track bar next to Tasks and Subagents                                      | reference.md → Composer pills                                                                      |
-| Timeline transformer      | `addTimelineTransformer` + `addTimelineRenderer`            | Replace, explode, or hide a built-in timeline item, including while it streams                                | reference.md → Timeline items; `plugin-examples/timeline-items`, `plugin-examples/inline-thinking` |
-| Timeline row              | `paseo.agents.ref(id).timeline.append(...)`                 | Push a plugin-owned row into an agent timeline from a server handler and update it later                      | reference.md → Append a timeline row from the daemon                                               |
-| Attachment source         | `client.addAttachmentSource` + `server.handle`              | Let the user attach a searchable external resource, such as an issue, to a prompt                             | reference.md → Add a composer attachment source; `plugin-examples/linear`                          |
-| Theme                     | `addTheme`                                                  | A light or dark palette under Settings → Appearance                                                           | reference.md → Contribute a theme; `plugin-examples/catppuccin`                                    |
-| Plugin RPC                | `defineRpc` + `server.handle` + `useRpc`                    | Daemon-side work that is not a normal Paseo operation: vendor APIs, credentials, local files                  | reference.md → Add plugin-specific backend behavior                                                |
-| Lifecycle events          | `server.on`                                                 | Observe agent/workspace lifecycle, inspect ended turns, and answer permission requests                        | [Lifecycle hooks](https://paseo.sh/docs/plugins/reference.md#lifecycle-hooks)                      |
-| Creation and launch hooks | `server.before`                                             | Change agent config, provider options, MCP servers, environment, or workspace isolation before the operation  | [Before hooks](https://paseo.sh/docs/plugins/reference.md#before-hooks)                            |
-| Paseo SDK                 | `usePaseo()` / handler `{ paseo }`                          | Normal Paseo operations: workspaces, agents, providers, config                                                | reference.md → Use the Paseo SDK                                                                   |
+| Contribution              | Registration                                                | Use it when                                                                                                                                                      | Reference                                                                                          |
+| ------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Screen and sidebar item   | `addScreen` + `addSidebarHeaderItem`/`addSidebarFooterItem` | A full screen of plugin UI, or sidebar header or footer rows that open a screen or popover                                                                       | reference.md → Screens and sidebar items                                                           |
+| Workspace panel           | `addWorkspacePanel`                                         | UI that lives as a tab beside agents, terminals, files, and diffs; `locations: ["explorer"]` for the Explorer                                                    | reference.md → Workspace panels                                                                    |
+| File panel                | `addFilePanel`                                              | View or edit a matching file inside the file tab through its file handle                                                                                         | reference.md → File panels; `plugin-examples/pdf-panel`, `plugin-examples/markdown-panel`          |
+| Command Center item       | `addCommandCenterItem`                                      | A global, workspace, or agent action reachable from ⌘K                                                                                                           | reference.md → Command Center items                                                                |
+| Client slash command      | `addSlashCommand`                                           | A `/command args` in the composer that runs plugin code instead of prompting the agent                                                                           | reference.md → Slash commands                                                                      |
+| Composer pill             | `addComposerPill`                                           | A per-agent button in the composer track bar next to Tasks and Subagents                                                                                         | reference.md → Composer pills                                                                      |
+| Timeline transformer      | `addTimelineTransformer` + `addTimelineRenderer`            | Replace, explode, or hide a built-in timeline item, including while it streams                                                                                   | reference.md → Timeline items; `plugin-examples/timeline-items`, `plugin-examples/inline-thinking` |
+| Timeline row              | `paseo.agents.ref(id).timeline.append(...)`                 | Push a plugin-owned row into an agent timeline from a server handler and update it later                                                                         | reference.md → Append a timeline row from the daemon                                               |
+| Attachment source         | `client.addAttachmentSource` + `server.handle`              | Let the user attach a searchable external resource, such as an issue, to a prompt                                                                                | reference.md → Add a composer attachment source; `plugin-examples/linear`                          |
+| Theme                     | `addTheme`                                                  | A light or dark palette under Settings → Appearance                                                                                                              | reference.md → Contribute a theme; `plugin-examples/catppuccin`                                    |
+| Plugin RPC                | `defineRpc` + `server.handle` + `useRpc`                    | Daemon-side work that is not a normal Paseo operation: vendor APIs, credentials, local files                                                                     | reference.md → Add plugin-specific backend behavior                                                |
+| Lifecycle events          | `server.on`                                                 | Observe agent/workspace lifecycle, inspect ended turns, and answer permission requests                                                                           | [Lifecycle hooks](https://paseo.sh/docs/plugins/reference.md#lifecycle-hooks)                      |
+| Creation and launch hooks | `server.before`                                             | `agent.create` edits saved config; `agent.session_open` contributes launch-only `env`, `tools`, `mcpServers` on every open; `workspace.create` chooses isolation | [Before hooks](https://paseo.sh/docs/plugins/reference.md#before-hooks)                            |
+| Paseo SDK                 | `usePaseo()` / handler `{ paseo }`                          | Normal Paseo operations: workspaces, agents, providers, config                                                                                                   | reference.md → Use the Paseo SDK                                                                   |
 
-| Lifecycle task                                                      | Example                                                                                                |
-| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Log all eleven hooks                                                | [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       |
-| Follow-ups, permissions, environment, provider switching, worktrees | [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     |
-| Inject MCP servers and change Codex sandbox/approval options        | [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) |
+| Lifecycle task                                                         | Example                                                                                                |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Log all eleven hooks                                                   | [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       |
+| Follow-ups, permissions, environment, provider switching, worktrees    | [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     |
+| Inject launch-only MCP servers and save Codex sandbox/approval options | [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) |
+| Attach a tool to selected agents                                       | [agent-tools](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools)                 |
 
 ## Create the project
 
@@ -376,6 +377,35 @@ function Greeting() {
 Inputs and outputs are validated on both sides. Backend handlers receive the same `PaseoApi` as `{ paseo }`; their IPC-backed daemon session lives exactly as long as the subprocess. Backend code can use Node APIs and installed dependencies. Keep credentials, filesystem access, shell commands, and vendor API calls in the handler rather than the client surface.
 
 Use TanStack Query for async request state, caching, and mutations.
+
+### Contribute tools and MCP servers at session open
+
+Use `before("agent.session_open")` for per-agent tools and plugin-owned MCP servers. Add this
+callback inside `contribute(server)`:
+
+```ts
+server.before("agent.session_open", ({ request }) => {
+  if (request.provider !== "codex") return;
+  return {
+    ...request,
+    mcpServers: {
+      ...request.mcpServers,
+      company: { type: "http", url: "https://tools.example.com/mcp" },
+    },
+  };
+});
+```
+
+`tools` and `mcpServers` start empty for each plugin and accumulate across its own callbacks.
+They are launch-only. Use `agent.create` to edit configuration that should be saved with the agent.
+See [Attach tools to agents](https://paseo.sh/docs/plugins/reference.md#attach-tools-to-agents)
+for `defineAgentTool` and targeting, and
+[Inject MCP servers](https://paseo.sh/docs/plugins/reference.md#inject-mcp-servers) for server configuration and collisions.
+
+Starting, stopping, or reloading a plugin with a session-open hook marks open agent sessions stale.
+Each reopens before its next idle prompt without interrupting a running turn.
+`await paseo.agents.ref(id).reload()` applies changes immediately and interrupts a running turn;
+`refresh()` only reads the current snapshot.
 
 ### Debug daemon-side behavior
 

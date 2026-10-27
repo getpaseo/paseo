@@ -125,6 +125,29 @@ test("opening an already-tabbed subagent reveals its left tab without a duplicat
   }
 });
 
+test("a subagent's parent pill returns to its parent", async ({ page }) => {
+  const workspace = await seedWorkspace({ repoPrefix: "subagent-parent-pill-" });
+  try {
+    const pair = await seedParentWithSubagent(workspace, {
+      parentTitle: "Refactor auth flow",
+      childTitle: "Write session tests",
+    });
+    await page.setViewportSize({ width: 1400, height: 900 });
+    await openAgentRoute(page, { workspaceId: pair.workspaceId, agentId: pair.child.id });
+
+    const pill = page.getByTestId("composer-parent-agent-pill");
+    await expect(pill).toHaveAccessibleName("Back to Refactor auth flow");
+    await pill.click();
+
+    await expect(page.getByTestId(`workspace-tab-agent_${pair.parent.id}`)).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
 test("a preferred chat file link still opens beside its right-pane agent", async ({ page }) => {
   const target = "linked.ts:3";
   const workspace = await seedMockAgentWorkspace({

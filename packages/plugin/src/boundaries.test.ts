@@ -70,9 +70,34 @@ function boundaryViolations(entry: string, runtime: "shared" | "server" | "clien
   return violations;
 }
 
+function typeErrors(code: string): string[] {
+  const configPath = path.resolve(sourceDirectory, "../tsconfig.examples.json");
+  const { config } = ts.readConfigFile(configPath, ts.sys.readFile);
+  const { options } = ts.parseJsonConfigFileContent(config, ts.sys, path.dirname(configPath));
+  const file = path.resolve(
+    sourceDirectory,
+    "../../../plugin-examples/skill-example/client/example.tsx",
+  );
+  const host = ts.createCompilerHost(options);
+  const getSourceFile = host.getSourceFile;
+  host.getSourceFile = (name, language, ...rest) =>
+    path.resolve(name) === file
+      ? ts.createSourceFile(name, code, language)
+      : getSourceFile.call(host, name, language, ...rest);
+  host.fileExists = (name) => path.resolve(name) === file || ts.sys.fileExists(name);
+  const program = ts.createProgram([file], options, host);
+  return ts
+    .getPreEmitDiagnostics(program)
+    .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"));
+}
 describe("plugin SDK import boundaries", () => {
   it("publishes process capabilities without their Windows implementation helpers", () => {
-    expect(Object.keys(server).sort()).toEqual(["execCommand", "spawnProcess", "terminateProcess"]);
+    expect(Object.keys(server).sort()).toEqual([
+      "defineAgentTool",
+      "execCommand",
+      "spawnProcess",
+      "terminateProcess",
+    ]);
   });
 
   it("classifies every published entry", () => {
@@ -81,12 +106,29 @@ describe("plugin SDK import boundaries", () => {
     );
   });
 
-  it.each(compatibilityEntries)("%s only re-exports the UI entry", (entry) => {
-    const source = readFileSync(
-      path.resolve(sourceDirectory, "..", manifest.exports[entry].source),
-      "utf8",
-    );
-    expect(source.replace(/\/\/[^\n]*|\/\*[^]*?\*\//g, "").trim()).toBe('export * from "./ui.js";');
+  it.each(compatibilityEntries)("%s respects the client boundary", (entry) => {
+    expect(
+      boundaryViolations(
+        path.resolve(sourceDirectory, "..", manifest.exports[entry].source),
+        "client",
+      ),
+    ).toEqual([]);
+  });
+
+  it("typechecks a 0.12 reveal-hook consumer without exposing the hook on current UI", () => {
+    expect(
+      typeErrors(`
+      import { useRevealedText, Icon } from "@getpaseo/plugin/client/react-native";
+      import { StreamedText } from "@getpaseo/plugin/client/ui";
+      // @ts-expect-error the legacy hook is not part of the current UI API
+      import { useRevealedText as currentHook } from "@getpaseo/plugin/client/ui";
+      import { Text } from "react-native";
+      function LegacyRow({ text, phase }: { text: string; phase: "streaming" | "complete" }) {
+        const revealed: string = useRevealedText(text, phase);
+        return <Text>{revealed}</Text>;
+      }
+    `),
+    ).toEqual([]);
   });
 
   it.each(Object.entries(entries))(
@@ -140,5 +182,90 @@ describe("plugin example import boundaries", () => {
       }
     }
     expect(violations).toEqual([]);
+  });
+});
+
+describe("plugin panel SDK boundary", () => {
+  it("accepts uniform params and persisted tab state alongside 0.12 panels", () => {
+    expect(
+      typeErrors(`
+      import { type PluginClientContext, type PluginFilePanelProps, type PluginWorkspacePanelProps, type PluginAgentPanelProps, type PluginTab, useTabState } from "@getpaseo/plugin/client";
+      import { z } from "zod";
+      function FilePanel({ params, revision, tab, file }: PluginFilePanelProps) {
+        const [state, setState] = useTabState(tab, z.object({ view: z.enum(["preview", "source"]) }), { view: "preview" });
+        setState({ view: "source" });
+        tab.setState({ nested: [true, null, 3] });
+        // @ts-expect-error only JSON state crosses the host boundary
+        tab.setState(() => {});
+        // @ts-expect-error params belong to the opener
+        params.path = "other";
+        return null;
+      }
+      function OldWorkspace({ context, workspaceId }: PluginWorkspacePanelProps) { return null; }
+      function OldAgent({ context, workspaceId, agentId }: PluginAgentPanelProps) { return null; }
+      function Agent({ params }: PluginAgentPanelProps) { params.agentId.toUpperCase(); return null; }
+      function contribute(client: PluginClientContext) {
+        client.addWorkspacePanel({ id: "old-workspace", title: "Old", icon: "File", context: "workspace", Component: OldWorkspace });
+        client.addWorkspacePanel({ id: "old-agent", title: "Old", icon: "File", context: "agent", Component: OldAgent });
+        client.addWorkspacePanel({ id: "workspace", title: "Workspace", icon: "File", Component: OldWorkspace });
+        client.addAgentPanel({ id: "agent", title: "Agent", icon: "File", Component: Agent });
+      }
+    `),
+    ).toEqual([]);
+  });
+});
+
+describe("plugin agent tools SDK boundary", () => {
+  it("lets a session hook attach typed tools without exposing their transport", () => {
+    expect(
+      typeErrors(`
+      import { z } from "zod";
+      import { defineAgentTool, type PluginServerContext, type AgentToolResult, type AgentToolContext, type AgentToolDefinition } from "@getpaseo/plugin/server";
+      const tool: AgentToolDefinition = defineAgentTool({
+        name: "create_issue",
+        description: "Create an issue",
+        input: z.object({ title: z.string(), count: z.string().transform(Number) }),
+        async execute(input, { agent, paseo, signal }) {
+          const count: number = input.count;
+          // @ts-expect-error input is inferred from the schema
+          input.missing;
+          return { text: agent.id + input.title, structuredContent: { count } };
+        },
+      });
+      export default function contribute(server: PluginServerContext) {
+        server.before("agent.session_open", ({ request }) => {
+          const title: string | null = request.title;
+          // @ts-expect-error labels are read-only
+          request.labels.x = "changed";
+          if (request.labels.x !== "y") return;
+          // @ts-expect-error MCP servers use the same typed transport config as saved servers
+          request.mcpServers.invalid = { type: "http", url: 42 };
+          return { ...request, tools: [...request.tools, tool], mcpServers: {
+            ...request.mcpServers, company: { type: "http", url: "https://tools.example.com/mcp" },
+          } };
+        });
+        return () => {};
+      }
+    `),
+    ).toEqual([]);
+  });
+});
+
+describe("agent session reload SDK boundary", () => {
+  it("exposes reload separately from snapshot refresh", () => {
+    expect(
+      typeErrors(`
+      import { type PluginServerContext } from "@getpaseo/plugin/server";
+      import { type PaseoAgentRefetchResult } from "@getpaseo/client";
+      async function reload(server: PluginServerContext, paseo: import("@getpaseo/client").PaseoApi) {
+        const agent = paseo.agents.ref("chosen-agent");
+        const read: PaseoAgentRefetchResult | null = await agent.refresh("read-snapshot");
+        const reopened: PaseoAgentRefetchResult | null = await agent.reload({ requestId: "reload-session" });
+        await agent.reload();
+        // @ts-expect-error reload options can grow without a positional signature change
+        await agent.reload("reload-session");
+      }
+    `),
+    ).toEqual([]);
   });
 });

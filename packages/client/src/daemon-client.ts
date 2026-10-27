@@ -19,6 +19,7 @@ import { CreationClient } from "./creation/index.js";
 import type { CreationSnapshot } from "@getpaseo/protocol/messages";
 import type { z } from "zod";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
+import type { LocalSpeechModel } from "@getpaseo/protocol/speech/rpc-schemas";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import type { AgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
 import { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
@@ -685,6 +686,8 @@ export interface FetchAgentOptions {
 }
 type LegacyFetchAgentOptions = Omit<FetchAgentOptions, "agentId">;
 export interface FetchAgentTimelineOptions {
+  /** Prefer whole-turn pages when supported; older hosts retain item-based paging. */
+  wholeTurns?: boolean;
   direction?: FetchAgentTimelineDirection;
   cursor?: FetchAgentTimelineCursor;
   limit?: number;
@@ -3580,9 +3583,15 @@ export class DaemonClient {
     agentId: string,
     options: FetchAgentTimelineOptions = {},
   ): Promise<FetchAgentTimelinePayload> {
+    // COMPAT(wholeTurnTimeline): added after v0.13.2 (#8010); remove after 2027-04-27 once the daemon floor supports whole-turn pages.
+    // Reading history predates this capability and must keep working on older hosts.
+    const supportsWholeTurns = this.lastServerInfoMessage?.features?.wholeTurnTimeline === true;
     const resolvedRequestId = this.createRequestId(options.requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "fetch_agent_timeline_request",
+      ...(supportsWholeTurns && options.wholeTurns !== undefined
+        ? { wholeTurns: options.wholeTurns }
+        : {}),
       agentId,
       requestId: resolvedRequestId,
       ...(options.direction ? { direction: options.direction } : {}),
@@ -5580,6 +5589,34 @@ export class DaemonClient {
       },
       responseType: "set_daemon_config_response",
     });
+  }
+
+  async listLocalSpeechModels(requestId?: string): Promise<LocalSpeechModel[]> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "speech.local_models.list.request" },
+      responseType: "speech.local_models.list.response",
+    });
+    if (payload.error) throw new Error(payload.error);
+    return payload.models;
+  }
+
+  async downloadLocalSpeechModel(modelId: string, requestId?: string): Promise<void> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "speech.local_models.download.request", modelId },
+      responseType: "speech.local_models.download.response",
+    });
+    if (payload.error) throw new Error(payload.error);
+  }
+
+  async deleteLocalSpeechModel(modelId: string, requestId?: string): Promise<void> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "speech.local_models.delete.request", modelId },
+      responseType: "speech.local_models.delete.response",
+    });
+    if (payload.error) throw new Error(payload.error);
   }
 
   sendBrowserAutomationExecuteResponse(response: BrowserAutomationExecuteResponse): void {

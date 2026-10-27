@@ -1640,6 +1640,77 @@ test("preserves legacy fetchAgent id overload", async () => {
   await expect(responsePromise).rejects.toThrow("legacy fetch sentinel");
 });
 
+test.each([undefined, false, true])(
+  "loads history with whole-turn support advertised as %s",
+  async (wholeTurnTimeline) => {
+    const transport = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "history-compatibility",
+      reconnect: { enabled: false },
+      transportFactory: () => transport.transport,
+    });
+    clients.push(client);
+    const connected = client.connect();
+    transport.triggerOpen({
+      features: wholeTurnTimeline === undefined ? {} : { wholeTurnTimeline },
+    });
+    await connected;
+
+    const requests = [
+      { direction: "tail" as const },
+      { direction: "before" as const, cursor: { epoch: "epoch-1", seq: 50 } },
+      { direction: "after" as const, cursor: { epoch: "epoch-1", seq: 50 } },
+      { direction: "before" as const, cursor: { epoch: "epoch-1", seq: 80 }, mergeWindow: true },
+    ];
+    for (const [index, request] of requests.entries()) {
+      const requestId = `history-${index}`;
+      const result = client.fetchAgentTimeline("agent-1", {
+        ...request,
+        requestId,
+        wholeTurns: true,
+        limit: 40,
+        projection: "projected",
+      });
+      // Attach immediately so the old rejection is captured by the regression.
+      const completed = expect(result).resolves.toMatchObject({ requestId, entries: [] });
+      expect(parseSentFrame(transport.sent.at(-1))).toEqual({
+        type: "fetch_agent_timeline_request",
+        agentId: "agent-1",
+        requestId,
+        ...request,
+        limit: 40,
+        projection: "projected",
+        ...(wholeTurnTimeline === true ? { wholeTurns: true } : {}),
+      });
+      transport.triggerMessage(
+        wrapSessionMessage({
+          type: "fetch_agent_timeline_response",
+          payload: {
+            requestId,
+            agentId: "agent-1",
+            agent: null,
+            direction: request.direction,
+            projection: "projected",
+            epoch: "epoch-1",
+            reset: false,
+            staleCursor: false,
+            gap: false,
+            window: { minSeq: 0, maxSeq: 0, nextSeq: 1 },
+            startCursor: null,
+            endCursor: null,
+            hasOlder: false,
+            hasNewer: false,
+            entries: [],
+            error: null,
+          },
+        }),
+      );
+      await completed;
+    }
+  },
+);
+
 test("honors explicit fetchAgentTimeline timeout below the session RPC default", async () => {
   useHeartbeatClock();
   const logger = createMockLogger();

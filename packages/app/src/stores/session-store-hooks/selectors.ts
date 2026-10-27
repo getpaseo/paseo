@@ -254,6 +254,7 @@ export function selectProjectOrder(state: SidebarOrderSnapshot): string[] {
 export function composeWorkspaceStructure(input: {
   projects: WorkspaceStructureProject[];
   projectOrder: readonly string[];
+  workspaceOrderByProject?: Readonly<Record<string, string[]>>;
 }): WorkspaceStructure {
   if (input.projects.length === 0) {
     return EMPTY_WORKSPACE_STRUCTURE;
@@ -265,7 +266,21 @@ export function composeWorkspaceStructure(input: {
     getKey: (project) => project.viewKey,
   });
 
-  return { projects: orderedProjects };
+  return {
+    // Keep the shared automatic projection immutable when applying a sidebar preference.
+    // eslint-disable-next-line oxc/no-map-spread
+    projects: orderedProjects.map((project) => {
+      const storedOrder = input.workspaceOrderByProject?.[project.viewKey];
+      if (!storedOrder) return project;
+      const orderedProject = { ...project };
+      orderedProject.workspaceKeys = applyStoredOrdering({
+        items: project.workspaceKeys,
+        storedOrder,
+        getKey: (key) => key,
+      });
+      return orderedProject;
+    }),
+  };
 }
 
 export function selectWorkspaceKeys(state: SessionsSnapshot, serverId: string | null): string[] {

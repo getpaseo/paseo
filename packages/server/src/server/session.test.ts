@@ -438,6 +438,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     github: asGitHubService(github),
     workspaceGitService: asWorkspaceGitService(workspaceGitService),
     daemonConfigStore: asDaemonConfigStore({
+      readServicePorts: async () => undefined,
       get: vi.fn(() => ({
         mcp: { injectIntoAgents: false },
         providers: {},

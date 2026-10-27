@@ -1,3 +1,9 @@
+import { createIdleRuntimeCleanup } from "./agent/idle-runtime-cleanup/index.js";
+import {
+  createFinishSubscriptions,
+  createFinishObservation,
+  createJsonFinishSubscriptionStore,
+} from "./agent/finish-subscriptions/index.js";
 import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { PluginRegistries } from "@getpaseo/protocol/plugin-registry";
 import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
@@ -132,6 +138,7 @@ import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/confi
 import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.js";
 import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
+import { createSpeechSettingsOwner } from "./speech/speech-settings.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
@@ -154,7 +161,11 @@ import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { ScheduleService } from "./schedule/service.js";
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
 import { createOrchestrationSkills } from "./orchestration-skills/index.js";
-import { resolveConfigFromPersisted, type CliConfigOverrides } from "./config.js";
+import {
+  resolveReloadableConfig,
+  type ResolvedDaemonSettings,
+  type CliConfigOverrides,
+} from "./config.js";
 import { resolvePaseoToolPolicy } from "./agent/paseo-tool-policy.js";
 import { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { DaemonConfigBrowserToolsPolicy } from "./browser-tools/policy.js";
@@ -189,7 +200,7 @@ import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
-import { loadPersistedConfig, type PersistedConfig } from "./persisted-config.js";
+import { type PersistedConfig } from "./persisted-config.js";
 import { createServiceProxySubsystem, type ServiceProxySubsystem } from "./service-proxy.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { ScriptHealthMonitor } from "./script-health-monitor.js";
@@ -373,6 +384,8 @@ export interface PaseoSpeechSttLanguages {
 
 export interface PaseoSpeechConfig {
   providers: RequestedSpeechProviders;
+  // Where local models live, whether or not a feature currently uses the local provider.
+  localModelsDir: string;
   sttLanguages?: PaseoSpeechSttLanguages;
   local?: PaseoLocalSpeechConfig;
 }
@@ -450,6 +463,7 @@ export interface PaseoDaemonConfig {
   dictationFinalTimeoutMs?: number;
   downloadTokenTtlMs?: number;
   agentProviderSettings?: AgentProviderRuntimeSettingsMap;
+  idleRuntimeCleanup?: boolean;
   providerCatalogRefreshTimeoutMs?: number;
   metadataGeneration?: {
     providers?: Array<{
@@ -544,14 +558,18 @@ function resolveExpressTrustProxySetting(config: PaseoDaemonConfig): true | stri
   return config.trustedProxies ?? ["loopback"];
 }
 
-function createInitialRelayConfig(config: PaseoDaemonConfig): MutableDaemonConfig["relay"] {
+function createInitialRelayConfig(config: ResolvedDaemonSettings): MutableDaemonConfig["relay"] {
   return {
     enabled: config.relayEnabled ?? true,
     requireProtectedSecurity: config.relayRequireProtectedSecurity ?? false,
   };
 }
 
-function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDaemonConfig {
+function resolveReloadEnv(config: PaseoDaemonConfig): NodeJS.ProcessEnv {
+  return config.configReload?.env ?? process.env;
+}
+
+function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): MutableDaemonConfig {
   const providers = config.providerOverrides ?? {};
 
   const initialConfig: MutableDaemonConfig = {
@@ -575,6 +593,7 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     },
     autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
+    idleRuntimeCleanup: config.idleRuntimeCleanup !== false,
     appendSystemPrompt: config.appendSystemPrompt ?? "",
     pluginsEnabled: config.pluginsEnabled ?? false,
     plugins: config.plugins ?? {},
@@ -610,19 +629,30 @@ export async function createPaseoDaemon(
   const elapsed = () => `${(performance.now() - bootstrapStart).toFixed(0)}ms`;
   const daemonVersion = config.daemonVersion ?? resolveDaemonVersion(import.meta.url);
   const initialMutableConfig = createInitialMutableDaemonConfig(config);
+  const speechService = createSpeechService({
+    logger,
+    openaiConfig: config.openai,
+    speechConfig: config.speech,
+  });
+  logger.info({ elapsed: elapsed() }, "Speech service created");
   const daemonConfigStore = new DaemonConfigStore(config.paseoHome, initialMutableConfig, logger, {
     relayEnabledMutable: config.relayEnabledMutable ?? true,
     startupPersisted: config.configReload?.startupPersisted,
+    speech: createSpeechSettingsOwner({
+      paseoHome: config.paseoHome,
+      env: resolveReloadEnv(config),
+      speechService,
+    }),
     reloadSource: {
       resolve: (persisted) => {
-        const reloaded = resolveConfigFromPersisted(config.paseoHome, persisted, {
-          env: config.configReload?.env ?? process.env,
+        const reloaded = resolveReloadableConfig(persisted, {
+          env: resolveReloadEnv(config),
           cli: config.configReload?.cli,
           relayEnabledFallback: config.configReload?.relayEnabledFallback,
         });
         return {
           mutable: createInitialMutableDaemonConfig(reloaded),
-          overrideControlledPaths: reloaded.configReload?.overrideControlledPaths ?? [],
+          overrideControlledPaths: reloaded.overrideControlledPaths,
         };
       },
     },
@@ -975,6 +1005,7 @@ export async function createPaseoDaemon(
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
   const agentManager = new AgentManager({
     pluginLifecycle: pluginRuntime,
+    pluginAgentTools: pluginRuntime,
     clients: initialAgentManagerState.clients,
     providerDefinitions: initialAgentManagerState.providerDefinitions,
     registry: agentStorage,
@@ -994,6 +1025,10 @@ export async function createPaseoDaemon(
   };
   const unsubscribePluginProviders =
     pluginRuntime.subscribeProviderRegistrations(syncPluginProviders);
+
+  const unsubscribePluginSessionChanges = pluginRuntime.subscribeSessionOpenChanges(() => {
+    agentManager.invalidatePluginSessions();
+  });
 
   const detachAgentStoragePersistence = attachAgentStoragePersistence(
     logger,
@@ -1399,6 +1434,7 @@ export async function createPaseoDaemon(
     archiveWorkspace: archiveScheduleWorkspaceExternal,
   });
   await scheduleService.start();
+
   agentManager.setAgentArchivedCallback(async (agentId) => {
     try {
       await scheduleService.completeForAgent(agentId);
@@ -1418,9 +1454,52 @@ export async function createPaseoDaemon(
   );
   logger.info({ elapsed: elapsed() }, "Preparing voice and MCP runtime");
 
+  const finishSubscriptions = createFinishSubscriptions({
+    store: createJsonFinishSubscriptionStore(config.paseoHome),
+    serverId,
+    logger,
+    messages: () => {
+      if (!wsServer) throw new Error("Daemon is not accepting agent messages");
+      return wsServer.agentMessages;
+    },
+    callerIsActive: async (agentId) => {
+      const record = await agentStorage.get(agentId);
+      return record ? !record.archivedAt : Boolean(agentManager.getAgent(agentId));
+    },
+    ...createFinishObservation({
+      agentManager,
+      agentStorage,
+      serverId,
+      logger,
+      messages: () => {
+        if (!wsServer) throw new Error("Daemon is not accepting agent messages");
+        return wsServer.agentMessages;
+      },
+      hosts: () => {
+        if (!wsServer) throw new Error("Daemon is not accepting host operations");
+        return wsServer.toolHosts();
+      },
+    }),
+  });
+
+  const idleRuntimeCleanup = createIdleRuntimeCleanup({
+    enabled: daemonConfigStore.get().idleRuntimeCleanup !== false,
+    runtimes: () => agentManager.getRuntimeCleanupCandidates(),
+    isProtected: (agentId) =>
+      finishSubscriptions.hasPendingForCaller(agentId) ||
+      (wsServer?.agentMessages.hasPending(agentId) ?? false),
+    logger,
+  });
+
+  const unsubscribeIdleRuntimeCleanup = connectIdleRuntimeCleanupConfig(
+    daemonConfigStore,
+    idleRuntimeCleanup,
+  );
+
   const createAgentToolHostDependencies = (
     runtime: PaseoToolRuntimeContext,
   ): PaseoToolHostDependencies => ({
+    finishSubscriptions: () => finishSubscriptions,
     agentMessages: () => {
       if (!wsServer) throw new Error("Daemon is not accepting agent messages");
       return wsServer.agentMessages;
@@ -1472,7 +1551,7 @@ export async function createPaseoDaemon(
       spawnWorkspaceScript,
       assertAutomationAllowed: (workspaceId) =>
         assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, workspaceId),
-      globalServicePorts: loadPersistedConfig(config.paseoHome).worktrees?.servicePorts,
+      getGlobalServicePorts: () => daemonConfigStore.readServicePorts(),
     }),
     markWorkspaceArchiving: markWorkspaceArchivingExternal,
     clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
@@ -1630,13 +1709,6 @@ export async function createPaseoDaemon(
     app.delete(agentMcpRoute, handleAgentMcpRequest);
     logger.info({ route: agentMcpRoute, enabled: mcpEnabled }, "Agent MCP route mounted");
   }
-
-  const speechService = createSpeechService({
-    logger,
-    openaiConfig: config.openai,
-    speechConfig: config.speech,
-  });
-  logger.info({ elapsed: elapsed() }, "Speech service created");
 
   logger.info({ elapsed: elapsed() }, "Bootstrap complete, ready to start listening");
 
@@ -1796,6 +1868,7 @@ export async function createPaseoDaemon(
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();
             providerSnapshotManager.settlePluginProviders();
+            await finishSubscriptions.start();
             wsServer.beginAcceptingConnections();
             const relaySecurityLogger = logger.child({ module: "relay-security" });
             relayRuntime = createRelayRuntime({
@@ -1856,6 +1929,7 @@ export async function createPaseoDaemon(
       localCredential = null;
       await deleteLocalCredential(config.paseoHome);
       unsubscribePluginProviders();
+      unsubscribePluginSessionChanges();
       await pluginRuntime.stopAllPlugins().catch(() => undefined);
       await serviceProxy.stopStandalone().catch(() => undefined);
       await agentProviderRuntime.shutdown().catch(() => undefined);
@@ -1877,11 +1951,15 @@ export async function createPaseoDaemon(
     // that is still open. Plugins themselves are stopped once every session
     // they serve has been closed, further down.
     unsubscribePluginProviders();
+    unsubscribePluginSessionChanges();
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();
+    unsubscribeIdleRuntimeCleanup();
+    await idleRuntimeCleanup.close();
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
+    await finishSubscriptions.close();
     await wsServer?.agentMessages.close();
     agentManager.prepareForShutdown();
     await closeAllAgents(logger, agentManager);
@@ -1983,4 +2061,12 @@ async function closeAllAgents(logger: Logger, agentManager: AgentManager): Promi
       }
     }),
   );
+}
+
+export function connectIdleRuntimeCleanupConfig(
+  store: DaemonConfigStore,
+  cleanup: Pick<ReturnType<typeof createIdleRuntimeCleanup>, "setEnabled">,
+): () => void {
+  cleanup.setEnabled(store.get().idleRuntimeCleanup !== false);
+  return store.onFieldChange("idleRuntimeCleanup", (value) => cleanup.setEnabled(value !== false));
 }

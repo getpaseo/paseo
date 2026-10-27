@@ -384,28 +384,84 @@ describe("WorkspaceGitServiceImpl", () => {
     await service.dispose();
   });
 
-  test("onSnapshotUpdated emits only for observed workspace snapshots and can unsubscribe", async () => {
+  test("onSnapshotUpdated delivers without workspace subscribers and can unsubscribe", async () => {
     const service = createService();
-    const snapshotListener = vi.fn();
-    const snapshotSubscription = service.onSnapshotUpdated(snapshotListener);
+    const snapshots: WorkspaceGitRuntimeSnapshot[] = [];
+    const subscription = service.onSnapshotUpdated((snapshot) => snapshots.push(snapshot));
+    try {
+      const initial = await service.getSnapshot(REPO_CWD);
+      expect(snapshots).toEqual([initial]);
+      expect(service.getMetrics().workspaceListenerCount).toBe(0);
 
-    await service.getSnapshot(REPO_CWD, { force: true, reason: "unobserved" });
+      await service.getSnapshot(REPO_CWD);
+      expect(snapshots).toEqual([initial]);
 
-    expect(snapshotListener).not.toHaveBeenCalled();
+      const refreshed = await service.getSnapshot(REPO_CWD, {
+        force: true,
+        reason: "unobserved-refresh",
+      });
+      expect(snapshots).toEqual([initial, refreshed]);
 
-    const workspaceSubscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
-    await service.getSnapshot(REPO_CWD, { force: true, reason: "observed" });
+      subscription.unsubscribe();
+      await service.getSnapshot(REPO_CWD, { force: true, reason: "after-unsubscribe" });
+      expect(snapshots).toEqual([initial, refreshed]);
+    } finally {
+      await service.dispose();
+    }
+  });
 
-    expect(snapshotListener).toHaveBeenCalledTimes(1);
-    expect(snapshotListener).toHaveBeenCalledWith(createSnapshot(REPO_CWD));
+  test("a retired target's late refresh cannot overwrite the runtime store's newer snapshot", async () => {
+    const retiredRead = createDeferred<PullRequestStatusResult>();
+    const retiredReadStarted = createDeferred<void>();
+    const merged = createPullRequestStatusResult();
+    if (!merged.status) throw new Error("Expected pull request status");
+    merged.status = { ...merged.status, state: "merged", isMerged: true };
+    let reads = 0;
+    const service = new WorkspaceGitServiceImpl({
+      logger: createLogger() as unknown as pino.Logger,
+      paseoHome: "/tmp/paseo-test",
+      deps: {
+        ...buildDefaultTestServiceDeps(),
+        getPullRequestStatus: async () => {
+          reads += 1;
+          if (reads === 1) {
+            retiredReadStarted.resolve();
+            return retiredRead.promise;
+          }
+          return merged;
+        },
+      },
+    });
+    const store = createWorkspaceRuntimeStore();
+    const published: WorkspaceGitRuntimeSnapshot[] = [];
+    service.onSnapshotUpdated((snapshot) => {
+      store.set(snapshot);
+      published.push(snapshot);
+    });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+    const oldRefresh = service.getSnapshot(REPO_CWD, { force: true, reason: "retiring-target" });
+    try {
+      await retiredReadStarted.promise;
+      subscription.unsubscribe();
+      expect(service.getMetrics().workspaceTargetCount).toBe(0);
 
-    snapshotSubscription.unsubscribe();
-    await service.getSnapshot(REPO_CWD, { force: true, reason: "after-unsubscribe" });
+      const latest = await service.getSnapshot(REPO_CWD, {
+        force: true,
+        reason: "replacement-target",
+      });
+      expect(latest.forge.pullRequest).toMatchObject({ state: "merged", isMerged: true });
+      expect(store.get(REPO_CWD)).toBe(latest);
 
-    expect(snapshotListener).toHaveBeenCalledTimes(1);
-
-    workspaceSubscription.unsubscribe();
-    service.dispose();
+      retiredRead.resolve(createPullRequestStatusResult());
+      const retired = await oldRefresh;
+      expect(retired.forge.pullRequest).toMatchObject({ state: "open", isMerged: false });
+      expect(store.get(REPO_CWD)).toBe(latest);
+      expect(published).toEqual([latest]);
+    } finally {
+      retiredRead.resolve(createPullRequestStatusResult());
+      await oldRefresh;
+      await service.dispose();
+    }
   });
 
   test("getSnapshot populates github pull request state in the runtime snapshot", async () => {

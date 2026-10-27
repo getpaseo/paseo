@@ -180,6 +180,7 @@ async function addFinishedAgent(workspace: MockAgentWorkspace) {
 async function openCompactWorkspace(page: Page, workspace: MockAgentWorkspace) {
   await page.setViewportSize({ width: 390, height: 844 });
   await openAgentRoute(page, workspace);
+  await expect(page.getByText("Finish this turn.", { exact: true })).toBeVisible();
   await openMobileAgentSidebar(page);
 }
 

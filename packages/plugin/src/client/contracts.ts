@@ -1,9 +1,9 @@
 import type { PluginText } from "../text.js";
 import type { ComponentType } from "react";
 import type { PaseoApi } from "@getpaseo/client";
-import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
+import type { AgentTimelineItem, JsonValue } from "@getpaseo/protocol/agent-types";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
-import type { PluginFile, PluginFileLocation, PluginFileTab } from "./file.js";
+import type { PluginFile } from "./file.js";
 import type { PluginRpcContract } from "../rpc.js";
 import type {
   PluginButtonRegistration,
@@ -111,23 +111,44 @@ interface PluginWorkspacePanelBase<Text extends PluginText = string> {
   locations?: readonly PluginPanelLocation[];
 }
 
-export interface PluginWorkspacePanelProps extends PluginNavigableHostProps {
-  context: "workspace";
-  workspaceId: string;
+export interface PluginTab {
+  /** Shows the tab's unsaved dot and asks before closing. */
+  setModified(modified: boolean): void;
+  /** Opaque persisted JSON. Undefined until written; the panel validates it. */
+  readonly state: unknown;
+  setState(state: JsonValue): void;
 }
 
-export interface PluginAgentPanelProps extends PluginNavigableHostProps {
-  context: "agent";
+export interface PluginPanelProps<Params> extends PluginNavigableHostProps {
   workspaceId: string;
+  readonly params: Readonly<Params>;
+  revision: number;
+  tab: PluginTab;
+}
+export interface PluginWorkspacePanelParams {}
+export interface PluginAgentPanelParams {
+  readonly agentId: string;
+}
+export interface PluginFilePanelParams {
+  readonly path: string;
+  readonly lineStart?: number;
+  readonly lineEnd?: number;
+}
+export interface PluginWorkspacePanelProps extends PluginPanelProps<PluginWorkspacePanelParams> {
+  // COMPAT(pluginPanelFlatProps): added in v0.13.0, remove after 2027-04-23
+  /** @deprecated Use the panel registration to select the context. */
+  context: "workspace";
+}
+export interface PluginAgentPanelProps extends PluginPanelProps<PluginAgentPanelParams> {
+  // COMPAT(pluginPanelFlatProps): added in v0.13.0, remove after 2027-04-23
+  /** @deprecated Use the panel registration to select the context. */
+  context: "agent";
+  // COMPAT(pluginPanelFlatProps): added in v0.13.0, remove after 2027-04-23
+  /** @deprecated Read `params.agentId`. */
   agentId: string;
 }
-
-export interface PluginFilePanelProps extends PluginNavigableHostProps {
-  workspaceId: string;
-  /** The file itself. The panel decides how to read it, show it, and save it. */
+export interface PluginFilePanelProps extends PluginPanelProps<PluginFilePanelParams> {
   file: PluginFile;
-  tab: PluginFileTab;
-  location: PluginFileLocation;
 }
 
 export interface PluginFilePanelContribution<Text extends PluginText = string> {
@@ -160,6 +181,7 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   addScreen(contribution: PluginScreenContribution<PluginText>): PluginCleanup;
   addSidebarHeaderItem(contribution: PluginSidebarItemContribution<PluginText>): PluginCleanup;
   addSidebarFooterItem(contribution: PluginSidebarItemContribution<PluginText>): PluginCleanup;
+  addAgentPanel(contribution: PluginAgentPanelContribution<PluginText>): PluginCleanup;
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution<PluginText>): PluginCleanup;
   addCommandCenterItem(
     contribution: PluginCommandCenterItemContribution<PluginText>,
@@ -187,13 +209,23 @@ export type PluginClientContribution = (client: PluginClientContext) => PluginCl
 
 export type PluginWorkspacePanelContribution<Text extends PluginText = string> =
   | (PluginWorkspacePanelBase<Text> & {
-      context: "workspace";
+      // COMPAT(pluginPanelFlatProps): added in v0.13.0, remove after 2027-04-23
+      /** @deprecated Omit context. */
+      context?: "workspace";
       Component: ComponentType<PluginWorkspacePanelProps>;
     })
   | (PluginWorkspacePanelBase<Text> & {
+      // COMPAT(pluginAgentPanelAlias): added in v0.13.0, remove after 2027-04-23
+      /** @deprecated Register with `addAgentPanel`. */
       context: "agent";
       Component: ComponentType<PluginAgentPanelProps>;
     });
+
+export interface PluginAgentPanelContribution<
+  Text extends PluginText = string,
+> extends PluginWorkspacePanelBase<Text> {
+  Component: ComponentType<PluginAgentPanelProps>;
+}
 
 export interface PluginSettingsScreenContribution<Text extends PluginText = string> {
   id: string;

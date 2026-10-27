@@ -20,6 +20,20 @@ const resolvePackageEntry = (packageName: string) => {
 export default defineConfig({
   plugins: [
     {
+      name: "markdown-wasm-commonjs-export",
+      transform(source, id) {
+        // The ESM package contains a CommonJS WASM factory. Metro handles the
+        // interop; Vite needs an ESM export instead of the CommonJS trailer.
+        if (!id.endsWith("/lib/module/web/wasm/md4c.js")) return;
+        const trailer = source.lastIndexOf("\nif (typeof exports === 'object'");
+        if (trailer < 0) throw new Error("Markdown WASM CommonJS trailer was not found");
+        return {
+          code: `${source.slice(0, trailer)}\nexport default createMd4cModule;`,
+          map: null,
+        };
+      },
+    },
+    {
       name: "compile-usage-components",
       enforce: "pre",
       transform(source, id) {
@@ -82,7 +96,10 @@ export default defineConfig({
           include: ["src/**/*.browser.{test,spec}.{ts,tsx}"],
           browser: {
             enabled: true,
-            provider: playwright(),
+            provider: playwright({
+              // Exercise real WebGL glyph rendering on GPU-less CI runners.
+              launchOptions: { args: ["--enable-unsafe-swiftshader"] },
+            }),
             headless: true,
             connectTimeout: 180_000,
             instances: [{ browser: "chromium" }],
@@ -121,19 +138,45 @@ export default defineConfig({
   // so it scans the native files and dies on imports react-native-web has no answer for.
   // Unbundled, the same imports go through the resolver below and land on the web files.
   optimizeDeps: {
+    // Expo's public navigation barrel also loads screens. Match Metro's web-first resolution
+    // while optimizing its CJS dependencies, including DebugContainer.web.js.
+    esbuildOptions: {
+      resolveExtensions: [
+        ".web.js",
+        ".web.jsx",
+        ".web.ts",
+        ".web.tsx",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".json",
+      ],
+    },
     // Bundle the CJS dependencies of the excluded gesture-handler package for the browser.
     include: [
       "react/jsx-runtime",
       "react/compiler-runtime",
+      "expo-router/react-navigation",
+      "@testing-library/react",
+      "@tanstack/react-query",
+      "react-i18next",
+      "i18next",
+      "@marijn/find-cluster-break",
+      "tiny-invariant",
+      "react/jsx-dev-runtime",
       "react-native-gesture-handler > hoist-non-react-statics",
       "react-native-gesture-handler > invariant",
     ],
     exclude: [
+      "react-native-enriched-markdown",
       "react-native-reanimated",
       "react-native-gesture-handler",
       "react-native-keyboard-controller",
     ],
   },
+  // babel-preset-expo compiles JSX with the automatic runtime, so app modules don't import React.
+  esbuild: { jsx: "automatic" },
   // The globals a React Native bundler defines, which esbuild is no longer there to supply for
   // the package excluded above.
   define: {
@@ -231,6 +274,10 @@ export default defineConfig({
       {
         find: /^react-native-reanimated\/scripts\/validate-worklets-version$/,
         replacement: path.resolve(__dirname, "test-stubs/reanimated-validate-worklets-version.ts"),
+      },
+      {
+        find: /^expo-clipboard$/,
+        replacement: path.resolve(__dirname, "test-stubs/expo-clipboard.ts"),
       },
       {
         find: /^expo-linking$/,

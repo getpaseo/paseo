@@ -57,7 +57,7 @@ describe("daemon agent skill selection", () => {
   it("does not expose selection through the generic config patch path", async () => {
     const { config, root, store } = await createStore();
 
-    config.patch({
+    await config.patch({
       skills: { selection: { mode: "custom", skills: ["paseo"] } },
     } as MutableDaemonConfigPatch);
 
