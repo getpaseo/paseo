@@ -310,7 +310,7 @@ describe("ClaudeAgentSession persisted history load", () => {
     }
   });
 
-  test("keeps history and live turns available after query retirement fails during rebind", async () => {
+  test("reports a failed rewind without poisoning readiness when query retirement throws", async () => {
     mkdirSync(path.dirname(transcriptPath()), { recursive: true });
     writeFileSync(
       transcriptPath(),
@@ -357,7 +357,9 @@ describe("ClaudeAgentSession persisted history load", () => {
     try {
       await Array.fromAsync(session.streamHistory());
       await collectSessionTurnEvents(session, "before rewind");
-      await expect(session.revertConversation!({ messageId: "u2" })).resolves.toBeUndefined();
+      await expect(session.revertConversation!({ messageId: "u2" })).rejects.toThrow(
+        "retirement failed",
+      );
       expect(records).toContainEqual(
         expect.objectContaining({
           level: pino.levels.values.warn,
@@ -366,7 +368,7 @@ describe("ClaudeAgentSession persisted history load", () => {
           err: expect.objectContaining({ message: "retirement failed" }),
         }),
       );
-      expect(await Array.fromAsync(session.streamHistory())).toEqual([]);
+      expect(session.id).toBe(SESSION_ID);
       const live = await collectSessionTurnEvents(session, "after failed rebind");
       expect(
         live

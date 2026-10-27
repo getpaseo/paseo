@@ -3251,7 +3251,7 @@ class ClaudeAgentSession implements AgentSession {
 
   private rebindConversationSession(sessionId: string): Promise<void> {
     const previousReady = this.ensureHistoryReady();
-    this.historyReady = (async () => {
+    const rebind = (async () => {
       await previousReady;
       await this.retireQuery();
       if (this.closed) return;
@@ -3285,10 +3285,11 @@ class ClaudeAgentSession implements AgentSession {
           },
         ]);
       }
-    })().catch((error) => {
+    })();
+    this.historyReady = rebind.catch((error) => {
       this.logger.warn({ err: error, sessionId }, "Failed to rebind Claude session");
     });
-    return this.historyReady;
+    return rebind;
   }
 
   private startFreshConversationSession(): void {
