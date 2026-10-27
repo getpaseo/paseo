@@ -369,9 +369,9 @@ function piModelSupportsImageInput(model: PiModel | null | undefined): boolean {
   return model?.input?.includes("image") === true;
 }
 
-function renderTextOnlyImageHint(image: { data: string; mimeType: string }): string {
+async function renderTextOnlyImageHint(image: { data: string; mimeType: string }): Promise<string> {
   try {
-    const materialized = materializeProviderImage({
+    const materialized = await materializeProviderImage({
       data: image.data,
       mimeType: image.mimeType,
     });
@@ -381,10 +381,10 @@ function renderTextOnlyImageHint(image: { data: string; mimeType: string }): str
   }
 }
 
-function convertPromptInput(
+async function convertPromptInput(
   prompt: AgentPromptInput,
   options: { model: PiModel | null | undefined },
-): PiPromptPayload {
+): Promise<PiPromptPayload> {
   if (typeof prompt === "string") {
     return { text: prompt };
   }
@@ -407,7 +407,7 @@ function convertPromptInput(
           mimeType: block.mimeType,
         });
       } else {
-        textParts.push(renderTextOnlyImageHint(block));
+        textParts.push(await renderTextOnlyImageHint(block));
       }
       continue;
     }
@@ -1291,7 +1291,6 @@ export class PiRpcAgentSession implements AgentSession {
       throw new Error("A Pi turn is already active");
     }
 
-    const payload = convertPromptInput(prompt, { model: this.state.model });
     const turnId = randomUUID();
     this.activeTurnId = turnId;
     this.usagePoller.startTurn();
@@ -1303,6 +1302,9 @@ export class PiRpcAgentSession implements AgentSession {
     this.activePromptRequestId = null;
     this.pendingSteerSubmissions.length = 0;
     this.clearNoTurnBuffers();
+    const payload = await convertPromptInput(prompt, { model: this.state.model });
+    if (this.closed) throw new Error("Pi session is closed");
+    if (this.activeTurnId !== turnId) return { turnId };
     this.activeNoTurnPromptText = payload.text;
     const shouldProbeForNoTurnPrompt = this.parseSlashCommandInput(payload.text) !== null;
 
@@ -1374,7 +1376,9 @@ export class PiRpcAgentSession implements AgentSession {
     if (this.closed || this.activeTurnId !== options.expectedTurnId) {
       return { status: "unavailable" };
     }
-    const payload = convertPromptInput(prompt, { model: this.state.model });
+    const payload = await convertPromptInput(prompt, { model: this.state.model });
+    if (this.closed || this.activeTurnId !== options.expectedTurnId)
+      return { status: "unavailable" };
     // Pi rejects steer RPCs that are extension commands, so slash inputs keep the
     // interrupt-and-replace fallback where they can run directly.
     if (this.parseSlashCommandInput(payload.text)) {
