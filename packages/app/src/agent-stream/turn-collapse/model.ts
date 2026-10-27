@@ -29,7 +29,6 @@ export interface TurnCollapse {
 
 export interface CollapseTurnsInput {
   tail: StreamItem[];
-  autoExpandReasoning?: boolean;
   /** The latest turn is still producing output, so it stays unfolded. */
   isLatestTurnOpen: boolean;
   expandedHostIds: ReadonlySet<string>;
@@ -58,12 +57,8 @@ function hasWork(summary: TurnSummary): boolean {
   return Object.keys(paseoActions).length > 0 || Object.values(counts).some((count) => count > 0);
 }
 
-function staysVisibleWhenCollapsed(item: StreamItem, autoExpandReasoning = false): boolean {
-  return (
-    isTurnTrigger(item) ||
-    item.kind === "compaction" ||
-    (autoExpandReasoning && item.kind === "thought")
-  );
+function staysVisibleWhenCollapsed(item: StreamItem): boolean {
+  return isTurnTrigger(item) || item.kind === "compaction";
 }
 
 function findLastAssistantIndex(tail: StreamItem[], start: number, end: number): number {
@@ -77,7 +72,7 @@ function findLastAssistantIndex(tail: StreamItem[], start: number, end: number):
  * Folds each answered turn into its user message: everything the agent did before its last
  * message collapses into one summary line, and that message stays in the chat. A turn folds
  * only once it is complete, its user message is loaded, and it sent messages or called tools
- * before its reply. Reasoning stays visible when Expand thinking is enabled.
+ * before its reply. Reasoning is revealed only when the turn opens.
  */
 export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
   const { tail } = input;
@@ -121,9 +116,7 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
       if (expanded) nestedItemIds.add(item.id);
     }
     output.push(
-      ...(expanded
-        ? revealed
-        : folded.filter((item) => staysVisibleWhenCollapsed(item, input.autoExpandReasoning))),
+      ...(expanded ? revealed : folded.filter((item) => staysVisibleWhenCollapsed(item))),
     );
     output.push(...tail.slice(replyIndex, runEnd));
   };

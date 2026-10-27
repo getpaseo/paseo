@@ -707,7 +707,7 @@ it.each([false, true])(
     };
     const present = createStreamPresentation();
     const closed = present(input);
-    expect(closed.tail.some((item) => item.id === "thought")).toBe(autoExpandReasoning);
+    expect(closed.tail.some((item) => item.id === "thought")).toBe(false);
     const opened = present({ ...input, expandedTurnHostIds: new Set(["prompt"]) });
     expect(opened.tail).toEqual(tail);
     expect(opened.turns.nestedItemIds.has("thought")).toBe(true);

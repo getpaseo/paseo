@@ -1,3 +1,4 @@
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import path from "node:path";
 import {
   holdOlderHistoryPages,
@@ -300,10 +301,13 @@ for (const autoExpandReasoning of [false, true]) {
       await expectComposerVisible(page);
       const summary = page.getByTestId("turn-summary").last().getByRole("button");
       await expect(summary).toBeVisible();
+      await expect(reasoning).toHaveCount(0);
       await summary.click();
       await expect(reasoning).toHaveCount(autoExpandReasoning ? 1 : 0);
       await expect.poll(() => groupedToolsInsideLatestTurn(page)).toEqual([]);
       await openOneToolOutput(page);
+      await summary.click();
+      await expect(reasoning).toHaveCount(0);
     } finally {
       await agent.cleanup();
     }
@@ -349,3 +353,61 @@ async function switchToCollapsedTurns(page: Page) {
   });
   await page.reload();
 }
+
+test("a scheduled heartbeat opens a separate turn without reopening the previous response", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await useChatDisplay(page, "collapseTurns");
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "heartbeat-turn-",
+    title: "Heartbeat turns",
+    model: "ten-second-stream",
+    initialPrompt: "Inspect the scroll container",
+  });
+  const schedules = agent.client as unknown as Pick<
+    DaemonClient,
+    "scheduleCreate" | "scheduleRunOnce" | "scheduleDelete"
+  >;
+  let scheduleId: string | undefined;
+  try {
+    await agent.client.waitForFinish(agent.agentId, 30_000);
+    await openAgentRoute(page, agent);
+    await expectComposerVisible(page);
+    const summaries = page.getByTestId("turn-summary");
+    await expect(summaries).toHaveCount(1);
+    const previousSummary = await summaries.first().innerText();
+    const previousReplyId = await page
+      .getByTestId("assistant-message")
+      .last()
+      .evaluate((element) => element.closest("[data-message-id]")!.getAttribute("data-message-id"));
+    const created = await schedules.scheduleCreate({
+      name: "Check the completed work",
+      prompt: "Inspect the scroll container again",
+      cadence: { type: "cron", expression: "0 0 1 1 *" },
+      target: { type: "self", agentId: agent.agentId },
+      runOnCreate: false,
+    });
+    expect(created.error).toBeNull();
+    scheduleId = created.schedule!.id;
+    const fired = await schedules.scheduleRunOnce({ id: scheduleId });
+    expect(fired.error).toBeNull();
+    await expect(
+      page.getByTestId("tool-call-badge").filter({ hasText: /^Heartbeat/ }),
+    ).toBeVisible();
+    await expect(summaries.first()).toHaveText(previousSummary);
+    const previousReply = page
+      .locator(`[data-message-id="${previousReplyId}"]`)
+      .getByTestId("assistant-message");
+    await expect(previousReply).toBeVisible();
+    await expect(previousReply).toContainText("(end of synthetic stream)");
+    await agent.client.waitForFinish(agent.agentId, 30_000);
+    await expect(summaries).toHaveCount(2);
+    await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
+    await expect(page.getByRole("button", { name: /^Worked for/ })).toHaveCount(2);
+    await page.screenshot({ path: "/tmp/heartbeat-turn-footer.png" });
+  } finally {
+    if (scheduleId) await schedules.scheduleDelete({ id: scheduleId });
+    await agent.cleanup();
+  }
+});

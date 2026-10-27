@@ -111,7 +111,6 @@ export function createStreamPresentation() {
     ) {
       collapsed = collapseTurns({
         tail: projection.tail,
-        autoExpandReasoning: input.autoExpandReasoning,
         isLatestTurnOpen,
         expandedHostIds: input.expandedTurnHostIds,
         getGroupedCalls: (itemId) => projection.groupsByHostId.get(itemId)?.run.calls,
