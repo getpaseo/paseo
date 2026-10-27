@@ -1,3 +1,4 @@
+import { collectTimelineSnapshot } from "../test-utils/v2-timeline.js";
 import type { SessionMessageAssistant } from "@opencode/client";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -45,7 +46,7 @@ test("a completed edit carries the replaced and replacement text", async () => {
     },
   ]);
 
-  expect(await new V2Timeline().messages([edit])).toMatchObject([
+  expect(await collectTimelineSnapshot(new V2Timeline(), [edit])).toMatchObject([
     {
       item: {
         type: "tool_call",
@@ -80,7 +81,7 @@ test("a tool's image output is shown as an image, not as base64 in the tool outp
   ]);
   const timeline = new V2Timeline();
 
-  const events = await timeline.messages([screenshot]);
+  const events = await collectTimelineSnapshot(timeline, [screenshot]);
 
   expect(JSON.stringify(events)).not.toContain(png);
   expect(events.map((event) => event.type === "timeline" && event.item)).toMatchObject([
@@ -95,7 +96,7 @@ test("a tool's image output is shown as an image, not as base64 in the tool outp
       text: expect.stringMatching(/^\n\n!\[Image\]\(file:\/\/.*paseo-attachments.*\.png\)\n\n$/),
     },
   ]);
-  expect(await timeline.messages([screenshot])).toEqual([]);
+  expect(await collectTimelineSnapshot(timeline, [screenshot])).toEqual([]);
 });
 
 test("a surrogate pair split across deltas streams back intact", () => {

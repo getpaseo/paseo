@@ -1,3 +1,4 @@
+import { collectTimelineSnapshot } from "./v2-timeline.js";
 import { TimelineProjection } from "../../../timeline-projection.js";
 import { V2Timeline } from "../v2/timeline.js";
 
@@ -22,7 +23,7 @@ for (let index = 0; index < chunks; index++) {
     mode === "delta"
       ? timeline.delta({ ...part, delta })
       : (
-          await timeline.messages([
+          await collectTimelineSnapshot(timeline, [
             {
               id: "answer",
               type: "assistant",

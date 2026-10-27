@@ -57,24 +57,30 @@ export class V2Timeline {
 
   private pendingMessages: Promise<unknown> = Promise.resolve();
 
-  messages(messages: SessionMessageInfo[]): Promise<AgentStreamEvent[]> {
-    const result = this.pendingMessages.then(() => this.projectMessages(messages));
+  // Publish each cursor advance in the same synchronous step. Buffering snapshot
+  // events until image IO finishes lets live deltas overtake already committed text.
+  messages(
+    messages: SessionMessageInfo[],
+    publish: (event: AgentStreamEvent) => void,
+  ): Promise<void> {
+    const result = this.pendingMessages.then(() => this.publishMessages(messages, publish));
     this.pendingMessages = result.catch(() => {});
     return result;
   }
 
-  private async projectMessages(messages: SessionMessageInfo[]): Promise<AgentStreamEvent[]> {
-    const events: AgentStreamEvent[] = [];
+  private async publishMessages(
+    messages: SessionMessageInfo[],
+    publish: (event: AgentStreamEvent) => void,
+  ): Promise<void> {
     const state: TimelineState = { structured: false, accepted: false };
     for (const message of messages) {
       const timestamp = new Date(message.time.created).toISOString();
       const push = (item: AgentTimelineItem) =>
-        events.push({ type: "timeline", provider: "opencode", item, timestamp });
+        publish({ type: "timeline", provider: "opencode", item, timestamp });
       if (message.type === "user") this.userMessage(message, state, push);
       else if (message.type === "assistant") await this.assistantMessage(message, state, push);
       else if (message.type === "compaction") this.compactionMessage(message, push);
     }
-    return events;
   }
 
   private userMessage(
