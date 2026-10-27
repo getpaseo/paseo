@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { relative as relativePath } from "node:path";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
@@ -528,5 +531,113 @@ test("Windows units and integration run independently with complete routed cover
     assert.equal(selected(hubStep, outputs), hub);
     assert.equal(selected(unitCondition, outputs, true), false);
     assert.equal(selected(integrationCondition, outputs, true), false);
+  }
+});
+
+test("macOS release retries only transient stapling failures without rebuilding the signed app", async (t) => {
+  const workflow = readFileSync(new URL(".github/workflows/desktop-release.yml", repoRoot), "utf8");
+  const wrapper = workflow
+    .match(/<<'STAPLER'\n([\s\S]*?)\n          STAPLER/)[1]
+    .replace(/^          /gm, "");
+  const networkError =
+    'Error Domain=NSURLErrorDomain Code=-1005 "The network connection was lost."';
+  const cases = [
+    {
+      name: "success",
+      outcomes: [0],
+      output: "stapled",
+      command: "stapler",
+      expected: 0,
+      attempts: 1,
+    },
+    {
+      name: "transient then success",
+      outcomes: [68, 0],
+      output: networkError,
+      command: "stapler",
+      expected: 0,
+      attempts: 2,
+    },
+    {
+      name: "exhausted network retries",
+      outcomes: [68, 68, 68, 68, 0],
+      output: networkError,
+      command: "stapler",
+      expected: 68,
+      attempts: 4,
+    },
+    {
+      name: "non-network staple error",
+      outcomes: [68, 0],
+      output: "ticket not found",
+      command: "stapler",
+      expected: 68,
+      attempts: 1,
+    },
+    {
+      name: "different exit code",
+      outcomes: [1, 0],
+      output: networkError,
+      command: "stapler",
+      expected: 1,
+      attempts: 1,
+    },
+    {
+      name: "notary submission is not retried",
+      outcomes: [68, 0],
+      output: networkError,
+      command: "notarytool",
+      expected: 68,
+      attempts: 1,
+    },
+  ];
+  for (const scenario of cases) {
+    await t.test(scenario.name, () => {
+      const directory = mkdtempSync(join(tmpdir(), "stapler-retry-"));
+      try {
+        const statePath = join(directory, "state.json");
+        const realXcrun = join(directory, "real-xcrun");
+        const wrapperPath = join(directory, "xcrun");
+        writeFileSync(wrapperPath, wrapper, { mode: 0o755 });
+        writeFileSync(join(directory, "sleep"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+        writeFileSync(
+          statePath,
+          JSON.stringify({ outcomes: scenario.outcomes, output: scenario.output, calls: [] }),
+        );
+        writeFileSync(
+          realXcrun,
+          `#!/usr/bin/env node
+const fs = require("node:fs");
+const state = JSON.parse(fs.readFileSync(process.env.STAPLER_STATE, "utf8"));
+state.calls.push(process.argv.slice(2));
+const code = state.outcomes.shift();
+fs.writeFileSync(process.env.STAPLER_STATE, JSON.stringify(state));
+console.log(state.output);
+process.exit(code);
+`,
+          { mode: 0o755 },
+        );
+        const args = [scenario.command, "staple", "-v", "Paseo signed.app"];
+        const result = spawnSync("bash", [wrapperPath, ...args], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PASEO_REAL_XCRUN: realXcrun,
+            STAPLER_STATE: statePath,
+            PATH: `${directory}:${process.env.PATH}`,
+          },
+          timeout: 5000,
+        });
+        assert.equal(result.status, scenario.expected, result.stdout + result.stderr);
+        const state = JSON.parse(readFileSync(statePath, "utf8"));
+        assert.deepEqual(
+          state.calls,
+          Array.from({ length: scenario.attempts }, () => args),
+        );
+        assert.match(result.stdout, /stapled|network connection was lost|ticket not found/);
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    });
   }
 });

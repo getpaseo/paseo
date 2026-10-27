@@ -39,9 +39,10 @@ index 0a1c6c2..5935112 100644
  
    struct OnLinkLongPress {
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt
+index c12937c..8105833 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt
-@@ -95,7 +95,7 @@
+@@ -95,7 +95,7 @@ class EnrichedMarkdown(
    private var accessibilityLabels = AccessibilityLabels()
    private var textBreakStrategy: String = BreakStrategyUtils.DEFAULT_STRATEGY
  
@@ -50,7 +51,7 @@ diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/c
    private var onLinkLongPressCallback: ((String) -> Unit)? = null
    private var onTaskListItemPressCallback: ((Int, Boolean, String) -> Unit)? = null
    private var onLatexErrorCallback: LatexErrorReporter? = null
-@@ -296,7 +296,7 @@
+@@ -296,7 +296,7 @@ class EnrichedMarkdown(
      }
    }
  
@@ -59,7 +60,7 @@ diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/c
      onLinkPressCallback = callback
    }
  
-@@ -405,7 +405,7 @@
+@@ -405,7 +405,7 @@ class EnrichedMarkdown(
      val codeLinkRegex = inlineCodeLinkRegex
      val renderId = ++currentRenderId
  
@@ -68,7 +69,7 @@ diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/c
        try {
          val filtered =
            if (isStreaming) {
-@@ -418,13 +418,13 @@
+@@ -418,13 +418,13 @@ class EnrichedMarkdown(
  
          if (renderableMarkdown.isEmpty()) {
            postToMain(renderId) { applyRenderedSegments(emptyList(), false) }
@@ -84,7 +85,19 @@ diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/c
            }
  
          val segments = splitASTIntoSegments(ast)
-@@ -646,8 +646,12 @@
+@@ -478,6 +478,11 @@ class EnrichedMarkdown(
+       if (forceHeight || topologyChanged || heightBefore != heightAfter) {
+         MeasurementStore.invalidate(id)
+         requestLayout()
++        stateWrapper?.let {
++          val state = Arguments.createMap()
++          state.putInt("forceHeightRecalculationCounter", ++forceHeightRecalculationCounter)
++          it.updateState(state)
++        }
+       }
+     }
+   }
+@@ -646,8 +651,12 @@ class EnrichedMarkdown(
      renderId: Long,
      action: () -> Unit,
    ) {
@@ -3671,3 +3684,89 @@ diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/c
      val preservedStyle = (paint.typeface?.style ?: 0) and (Typeface.BOLD or Typeface.ITALIC)
      paint.typeface =
        if (styleCache.codeFontFamily.isNotEmpty()) {
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/MarkdownContainerShadowNode.cpp b/node_modules/react-native-enriched-markdown/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/MarkdownContainerShadowNode.cpp
+index a430d1a..b30a017 100644
+--- a/node_modules/react-native-enriched-markdown/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/MarkdownContainerShadowNode.cpp
++++ b/node_modules/react-native-enriched-markdown/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/MarkdownContainerShadowNode.cpp
+@@ -22,6 +22,14 @@ void MarkdownContainerShadowNode::dirtyLayoutIfNeeded() {
+   }
+ }
+ 
++// Only new props change the rendered markdown. When a parent is cloned, React Native's adoptYogaChild
++// re-clones its children without new props, and dirtying those clones re-measures every settled message
++// whenever the list above grows.
++bool MarkdownContainerShadowNode::shouldNewRevisionDirtyMeasurement(const ShadowNode & /*sourceShadowNode*/,
++                                                                    const ShadowNodeFragment &fragment) const {
++  return fragment.props != nullptr;
++}
++
+ Size MarkdownContainerShadowNode::measureContent(const LayoutContext &layoutContext,
+                                                  const LayoutConstraints &layoutConstraints) const {
+   return measurementsManager_->measure(getSurfaceId(), getTag(), getConcreteProps(), layoutConstraints);
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/MarkdownContainerShadowNode.h b/node_modules/react-native-enriched-markdown/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/MarkdownContainerShadowNode.h
+index dea8bb2..6c4bd20 100644
+--- a/node_modules/react-native-enriched-markdown/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/MarkdownContainerShadowNode.h
++++ b/node_modules/react-native-enriched-markdown/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/MarkdownContainerShadowNode.h
+@@ -19,6 +19,8 @@ public:
+ 
+   MarkdownContainerShadowNode(ShadowNode const &sourceShadowNode, ShadowNodeFragment const &fragment)
+       : ConcreteViewShadowNode(sourceShadowNode, fragment) {
++    forceHeightRecalculationCounter_ =
++        static_cast<const MarkdownContainerShadowNode &>(sourceShadowNode).forceHeightRecalculationCounter_;
+     dirtyLayoutIfNeeded();
+   }
+ 
+@@ -35,6 +37,10 @@ public:
+ 
+   Size measureContent(const LayoutContext &layoutContext, const LayoutConstraints &layoutConstraints) const override;
+ 
++protected:
++  bool shouldNewRevisionDirtyMeasurement(const ShadowNode &sourceShadowNode,
++                                         const ShadowNodeFragment &fragment) const override;
++
+ private:
+   int forceHeightRecalculationCounter_{0};
+   std::shared_ptr<MarkdownContainerMeasurementManager> measurementsManager_;
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/MarkdownTextShadowNode.cpp b/node_modules/react-native-enriched-markdown/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/MarkdownTextShadowNode.cpp
+index 3ca259b..ab51055 100644
+--- a/node_modules/react-native-enriched-markdown/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/MarkdownTextShadowNode.cpp
++++ b/node_modules/react-native-enriched-markdown/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/MarkdownTextShadowNode.cpp
+@@ -22,6 +22,14 @@ void MarkdownTextShadowNode::dirtyLayoutIfNeeded() {
+   }
+ }
+ 
++// Only new props change the rendered markdown. When a parent is cloned, React Native's adoptYogaChild
++// re-clones its children without new props, and dirtying those clones re-measures every settled message
++// whenever the list above grows.
++bool MarkdownTextShadowNode::shouldNewRevisionDirtyMeasurement(const ShadowNode & /*sourceShadowNode*/,
++                                                               const ShadowNodeFragment &fragment) const {
++  return fragment.props != nullptr;
++}
++
+ Size MarkdownTextShadowNode::measureContent(const LayoutContext &layoutContext,
+                                             const LayoutConstraints &layoutConstraints) const {
+   return measurementsManager_->measure(getSurfaceId(), getTag(), getConcreteProps(), layoutConstraints);
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/MarkdownTextShadowNode.h b/node_modules/react-native-enriched-markdown/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/MarkdownTextShadowNode.h
+index eaa3279..05a02eb 100644
+--- a/node_modules/react-native-enriched-markdown/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/MarkdownTextShadowNode.h
++++ b/node_modules/react-native-enriched-markdown/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/MarkdownTextShadowNode.h
+@@ -22,6 +22,8 @@ public:
+ 
+   MarkdownTextShadowNode(ShadowNode const &sourceShadowNode, ShadowNodeFragment const &fragment)
+       : ConcreteViewShadowNode(sourceShadowNode, fragment) {
++    forceHeightRecalculationCounter_ =
++        static_cast<const MarkdownTextShadowNode &>(sourceShadowNode).forceHeightRecalculationCounter_;
+     dirtyLayoutIfNeeded();
+   }
+ 
+@@ -39,6 +41,10 @@ public:
+ 
+   Size measureContent(const LayoutContext &layoutContext, const LayoutConstraints &layoutConstraints) const override;
+ 
++protected:
++  bool shouldNewRevisionDirtyMeasurement(const ShadowNode &sourceShadowNode,
++                                         const ShadowNodeFragment &fragment) const override;
++
+ private:
+   int forceHeightRecalculationCounter_{0};
+   std::shared_ptr<MarkdownTextMeasurementManager> measurementsManager_;
