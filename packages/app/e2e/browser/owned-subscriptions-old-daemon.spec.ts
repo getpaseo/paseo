@@ -162,7 +162,9 @@ test("keeps the reader on the turn that folds when an older item page completes 
       await agent.client.waitForFinish(agent.agentId, 30_000);
     }
     await published.seedBrowser(page, { chatDisplay: "collapseTurns" });
-    const history = await holdOlderHistoryPages(page, agent, published.daemon.port);
+    const history = await holdOlderHistoryPages(page, agent, {
+      daemonPort: published.daemon.port,
+    });
     await openAgentTimeline(page, agent, serverId);
     await expectTimelinePromptVisible(page, prompts.at(-1)!);
 

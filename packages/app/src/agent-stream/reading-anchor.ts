@@ -6,7 +6,10 @@ interface RowGeometry {
 
 // A row must clear the reading line before the next row takes ownership.
 const READING_POSITION_OFFSET_PX = 8;
-const NO_REPLACEMENTS: ReadonlyMap<string, string> = new Map();
+export interface ReadingRowReplacements {
+  get(id: string): string | undefined;
+}
+const NO_REPLACEMENTS: ReadingRowReplacements = new Map();
 
 // Content coordinates survive user scrolling. Layout commits replace the geometry;
 // scroll events reuse it, without another DOM measurement pass.

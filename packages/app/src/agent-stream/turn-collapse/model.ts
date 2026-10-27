@@ -63,22 +63,6 @@ function staysVisibleWhenCollapsed(item: StreamItem): boolean {
   return isTurnTrigger(item) || item.kind === "compaction";
 }
 
-function recordHiddenRows(
-  items: readonly StreamItem[],
-  hostId: string,
-  getGroupedCalls: CollapseTurnsInput["getGroupedCalls"],
-  hosts: Map<string, string>,
-): void {
-  for (const item of items) {
-    if (staysVisibleWhenCollapsed(item)) continue;
-    hosts.set(item.id, hostId);
-    // A prepend can change which call hosts a group before the turn folds.
-    if (item.kind === "tool_call" || item.kind === "thought") {
-      for (const call of getGroupedCalls(item.id) ?? []) hosts.set(call.id, hostId);
-    }
-  }
-}
-
 function findLastAssistantIndex(tail: StreamItem[], start: number, end: number): number {
   for (let index = end - 1; index >= start; index -= 1) {
     if (tail[index]?.kind === "assistant_message") return index;
@@ -121,7 +105,6 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
       return;
     }
     const expanded = input.expandedHostIds.has(host.id);
-    if (!expanded) recordHiddenRows(folded, host.id, input.getGroupedCalls, hostIdByHiddenRowId);
     turnsByHostId.set(host.id, { hostId: host.id, expanded, summary });
     const revealed = expanded
       ? folded.flatMap<StreamItem>((item) =>
@@ -134,6 +117,7 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
       if (staysVisibleWhenCollapsed(item)) continue;
       hostIdByFoldedMessageId.set(getStreamItemMessageId(item), host.id);
       if (expanded) nestedItemIds.add(item.id);
+      else hostIdByHiddenRowId.set(item.id, host.id);
     }
     output.push(
       ...(expanded ? revealed : folded.filter((item) => staysVisibleWhenCollapsed(item))),

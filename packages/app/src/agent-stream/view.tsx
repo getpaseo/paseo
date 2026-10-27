@@ -1203,7 +1203,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           <AssistantSelectionCopySurface style={stylesheet.container}>
             <MessageOuterSpacingProvider disableOuterSpacing>
               {streamRenderStrategy.render({
-                readingRowReplacements: presentation.turns.hostIdByHiddenRowId,
+                readingRowReplacements: presentation.readingRowReplacements,
                 agentId,
                 segments: renderModel.segments,
                 historyRowRevision,

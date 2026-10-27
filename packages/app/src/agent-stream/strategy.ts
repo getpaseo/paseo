@@ -1,6 +1,7 @@
 import type { ComponentType, ReactElement, ReactNode, RefObject } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import type { StreamItem } from "@/types/stream";
+import type { ReadingRowReplacements } from "./reading-anchor";
 import { continuesResponse } from "./turn-membership";
 import type { StreamHistoryBoundary, StreamRenderSegments } from "./model";
 import type {
@@ -79,7 +80,7 @@ export interface StreamRenderInput {
   historyRowRevision?: StreamHistoryRowRevision;
   liveHeadRowRevision?: unknown;
   /** Presentation rows replaced by another row after history is folded. */
-  readingRowReplacements?: ReadonlyMap<string, string>;
+  readingRowReplacements?: ReadingRowReplacements;
   boundary: StreamHistoryBoundary;
   renderers: StreamSegmentRenderers;
   listEmptyComponent: ReactNode;
