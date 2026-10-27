@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, describe, expect, it } from "vitest";
 import { getCommitFileDiff, listCheckoutCommits } from "./checkout-git.js";
+import { SessionDelivery } from "../server/session/owned-subscriptions/index.js";
 import { startGitCommandMetrics, stopGitCommandMetrics } from "./run-git-command.js";
 
 const tempDirs: string[] = [];
@@ -301,4 +302,45 @@ describe("getCommitFileDiff", () => {
     expect(file?.additions).toBe(1);
     expect(file?.deletions).toBe(0);
   });
+});
+
+it("identical commit-file requests from two requesters both retain syntax tokens", async () => {
+  const repoDir = initRepo();
+  const original = "const value = Math.max(42, 7);\n".repeat(3_000);
+  commitFile(repoDir, "file.ts", original, "initial");
+  commitFile(repoDir, "file.ts", original.replace("42", "43"), "edit");
+  const input = { cwd: repoDir, sha: headSha(repoDir), path: "file.ts" };
+  const results = await Promise.all([getCommitFileDiff(input), getCommitFileDiff(input)]);
+  for (const file of results) {
+    expect(
+      file?.hunks[0].lines
+        .find((line) => line.type === "add")
+        ?.tokens?.some((token) => token.style !== null),
+    ).toBe(true);
+  }
+});
+
+it("a disconnected requester cancels commit highlighting before its sources arrive", async () => {
+  const repoDir = initRepo();
+  commitFile(repoDir, "file.ts", "const value = 42;\n", "initial");
+  commitFile(repoDir, "file.ts", "const value = 43;\n", "edit");
+  const delivery = new SessionDelivery(() => {});
+  const source = {};
+  delivery.attach(source, true);
+  const request = {
+    type: "checkout.commits.file_diff.request" as const,
+    cwd: repoDir,
+    sha: headSha(repoDir),
+    path: "file.ts",
+    requestId: "disconnect",
+  };
+  const results: Awaited<ReturnType<typeof getCommitFileDiff>>[] = [];
+  const pending = delivery.request(source, request, async () => {
+    results.push(await getCommitFileDiff({ ...request, signal: delivery.requestSignal }));
+  });
+  await delivery.detach(source);
+  await pending;
+  expect(
+    results[0]?.hunks.flatMap((hunk) => hunk.lines).every((line) => line.tokens === undefined),
+  ).toBe(true);
 });

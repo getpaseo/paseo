@@ -42,18 +42,13 @@ import {
   type ForgeResolver,
 } from "../services/forge-resolver.js";
 import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
-import {
-  createRealpathAwarePathMatcher,
-  getRealpathAwareRelativePath,
-  isPathInsideRoot,
-  isRealpathInsideRoot,
-  looksLikeDefiniteWindowsPath,
-} from "../utils/path.js";
+import { isPathInsideRoot, looksLikeDefiniteWindowsPath } from "../utils/path.js";
 import {
   createRunGitCommand,
   runGitCommand,
   type RunGitCommand,
 } from "../utils/run-git-command.js";
+import { GitObservationPaths } from "./git-observation-paths.js";
 import { branchNameFromRef } from "../utils/worktree-metadata.js";
 import { listPaseoWorktrees, type PaseoWorktreeInfo } from "../utils/worktree.js";
 import { READ_ONLY_GIT_ENV } from "./checkout-git-utils.js";
@@ -417,6 +412,7 @@ class WorkspaceGitWatcherSubscriptionTimeoutError extends Error {
 }
 
 interface WorkspaceGitTarget {
+  gitDirPaths: GitObservationPaths | null;
   cwd: string;
   listeners: Set<WorkspaceGitListener>;
   workingTreeWatchTarget: WorkingTreeWatchTarget | null;
@@ -443,6 +439,7 @@ interface WorkspaceGitTarget {
 }
 
 interface RepoGitTarget {
+  paths: GitObservationPaths;
   repoGitRoot: string;
   cwd: string;
   workspaceKeys: Set<string>;
@@ -470,6 +467,8 @@ interface RepoMetadataWorkspaceRefresh {
 }
 
 interface WorkingTreeWatchTarget {
+  paths: GitObservationPaths;
+  acceptsEvent: (candidate: string) => boolean;
   cwd: string;
   watchPath: string;
   repoRoot: string | null;
@@ -815,11 +814,16 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       cwd: normalizedCwd,
       compare: normalizedOptions,
       ...readOptions,
-      load: () =>
-        this.deps.getCheckoutDiff(normalizedCwd, normalizedOptions, {
-          paseoHome: this.paseoHome,
-          worktreesRoot: this.worktreesRoot,
-        }),
+      load: (signal) =>
+        this.deps.getCheckoutDiff(
+          normalizedCwd,
+          normalizedOptions,
+          {
+            paseoHome: this.paseoHome,
+            worktreesRoot: this.worktreesRoot,
+          },
+          signal,
+        ),
     });
   }
 
@@ -1165,6 +1169,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   private async resolveWorkingTreeWatchTarget(cwd: string): Promise<WorkingTreeWatchTarget> {
     const repoRoot = await this.resolveCheckoutWatchRoot(cwd);
+    const cwdPaths = repoRoot ? await GitObservationPaths.create(cwd) : null;
+    this.assertNotDisposed();
     const targetCwd = repoRoot ?? cwd;
     const existingTarget = this.workingTreeWatchTargets.get(targetCwd);
     if (existingTarget) {
@@ -1179,7 +1185,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return target;
     }
 
-    const watchPath = repoRoot && createRealpathAwarePathMatcher(repoRoot)(cwd) ? cwd : targetCwd;
+    const watchPath = repoRoot && cwdPaths?.matches(repoRoot) ? cwd : targetCwd;
     const setup = this.createWorkingTreeWatchTarget(targetCwd, watchPath, repoRoot).finally(() => {
       if (this.workingTreeWatchSetups.get(targetCwd) === setup) {
         this.workingTreeWatchSetups.delete(targetCwd);
@@ -1198,6 +1204,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   private createWorkspaceTarget(cwd: string): WorkspaceGitTarget {
     const target: WorkspaceGitTarget = {
+      gitDirPaths: null,
       cwd,
       listeners: new Set(),
       workingTreeWatchTarget: null,
@@ -1299,6 +1306,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
     await this.promoteWorkingTreeWatchTarget(workingTreeTarget, facts.worktreeRoot);
     const gitDir = facts.absoluteGitDir;
+    const gitDirPaths = target.gitDirPaths?.matches(gitDir)
+      ? target.gitDirPaths
+      : await GitObservationPaths.create(gitDir);
+    if (!this.isActiveObservedWorkspaceTarget(target)) return;
+    target.gitDirPaths = gitDirPaths;
     const repoGitRoot = facts.gitCommonDir ?? (await this.resolveWorkspaceGitRefsRoot(gitDir));
     if (!this.isActiveObservedWorkspaceTarget(target)) {
       return;
@@ -1331,7 +1343,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const promise = this.deps
       .getCheckoutSnapshotFacts(target.cwd, context)
       .then((facts) => {
-        target.latestFacts = facts;
+        if (!target.closed) target.latestFacts = facts;
         return facts;
       })
       .finally(() => {
@@ -1359,7 +1371,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const ignoredDirectories = repoRoot
       ? (await this.loadIgnoredDirs(watchPath)).ignored
       : new Set<string>();
+    const paths = await GitObservationPaths.create(watchPath);
+    this.assertNotDisposed();
     const target: WorkingTreeWatchTarget = {
+      paths,
+      acceptsEvent: paths.createEventFilter([join(watchPath, ".git"), ...ignoredDirectories]),
       cwd,
       watchPath,
       repoRoot,
@@ -1523,14 +1539,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           if (watcherErrored) {
             return;
           }
+          events = this.relevantWorkingTreeEvents(target, events);
+          if (events.length === 0) return;
           const discovered = this.noteWorkingTreeDirectories(target, events);
           if (events.some((event) => basename(event.path) === ".gitignore")) {
             void this.refreshWorkingTreeIgnoredDirectories(target);
           } else if (discovered) {
             this.scheduleWorkingTreeIgnoreRefresh(target);
-          }
-          if (!this.hasRelevantWorkingTreeEvent(target, events)) {
-            return;
           }
           this.notifyWorkingTreeChanged(target, "working-tree-watch");
         },
@@ -1763,20 +1778,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
     this.removeDeletedKnownDirectories(target, events);
     const gitDir = join(target.watchPath, ".git");
-    // `matchesWatchPath` is realpath-aware because it compares an event-reported
-    // directory against `target.watchPath` itself — a config-time root that can
-    // legitimately differ from the watcher's reported form (e.g. a symlinked
-    // temp dir). It is now gated behind the plain Set lookup below, so it only
-    // runs for a directory this target has never seen before, not on every
-    // event.
-    const matchesWatchPath = createRealpathAwarePathMatcher(target.watchPath);
+    // Event paths have already been mapped into this subscription's established namespace.
+    const matchesWatchPath = target.paths.matches;
     // One new directory is enough: the scheduled Git query inventories every
     // ignored directory that exists by then. Stop before a large event batch
     // multiplies containment checks across all its new directories.
     for (const event of events) {
       const directory = dirname(event.path);
       // Cheap Set lookup first — the steady-state case where the directory is
-      // already known must never reach the realpath-aware matcher below.
+      // already known do not need another root comparison.
       if (target.knownDirectories.has(directory) || matchesWatchPath(directory)) {
         continue;
       }
@@ -1955,28 +1965,22 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     target.pendingKnownDirectories.clear();
   }
 
-  private hasRelevantWorkingTreeEvent(
+  private relevantWorkingTreeEvents(
     target: WorkingTreeWatchTarget,
     events: FileChange[],
-  ): boolean {
-    const gitDir = join(target.watchPath, ".git");
-    const matchesWatchPath = createRealpathAwarePathMatcher(target.watchPath);
-    return events.some((event) => {
-      // Directory metadata changes at the watch root do not change Git state.
-      // FSEvents may emit these when every changed descendant was ignored.
-      if (matchesWatchPath(event.path)) {
-        return false;
+  ): FileChange[] {
+    const relevant: FileChange[] = [];
+    // Watch backends may report the same path more than once in a batch.
+    const acceptedPaths = new Map<string, boolean>();
+    for (const event of events) {
+      let accepted = acceptedPaths.get(event.path);
+      if (accepted === undefined) {
+        accepted = target.acceptsEvent(event.path);
+        acceptedPaths.set(event.path, accepted);
       }
-      if (isRealpathInsideRoot(gitDir, event.path)) {
-        return false;
-      }
-      for (const ignoredDirectory of target.ignoredDirectories) {
-        if (isRealpathInsideRoot(ignoredDirectory, event.path)) {
-          return false;
-        }
-      }
-      return true;
-    });
+      if (accepted) relevant.push({ ...event, path: target.paths.toWatchPath(event.path) });
+    }
+    return relevant;
   }
 
   private refreshWorkingTreeIgnoredDirectories(target: WorkingTreeWatchTarget): Promise<void> {
@@ -2031,6 +2035,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
     if (!this.haveSamePaths(target.ignoredDirectories, ignoredDirectories)) {
       target.ignoredDirectories = ignoredDirectories;
+      target.acceptsEvent = target.paths.createEventFilter(this.workingTreeIgnoreList(target));
       this.pruneKnownDirectories(target);
     }
     if (target.fallbackPolling) {
@@ -2152,7 +2157,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return;
     }
 
+    const paths = await GitObservationPaths.create(repoGitRoot);
+    if (!this.isActiveObservedWorkspaceTarget(workspaceTarget)) return;
+    const establishedTarget = this.repoTargets.get(repoGitRoot);
+    if (establishedTarget) {
+      establishedTarget.workspaceKeys.add(workspaceTarget.cwd);
+      return;
+    }
     const repoTarget: RepoGitTarget = {
+      paths,
       repoGitRoot,
       cwd: workspaceTarget.cwd,
       workspaceKeys: new Set([workspaceTarget.cwd]),
@@ -2205,10 +2218,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     target: RepoGitTarget,
     options?: { replaceFallback?: boolean },
   ): Promise<boolean> {
+    const paths = target.paths;
     const ignore = getPrunedGitMetadataPaths("common").map((path) =>
       join(target.repoGitRoot, path),
     );
-    const matchesRepoGitRoot = createRealpathAwarePathMatcher(target.repoGitRoot);
+    const matchesRepoGitRoot = paths.matches;
     const canary = this.deps.createWatcherLivenessCanary(target.repoGitRoot);
     let openedSubscription: FileObserverSubscription | null = null;
     let watcherErrored = false;
@@ -2223,7 +2237,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       const subscription = await this.subscribeWithDeadline(
         target.repoGitRoot,
         (error, events) => {
-          const liveEvents = canary.filterEvents(events);
+          const liveEvents = canary.filterEvents(
+            events.map((event) => ({ ...event, path: paths.toWatchPath(event.path) })),
+          );
           if (error) {
             if (watcherErrored) {
               return;
@@ -2249,7 +2265,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           const relevantEvents = liveEvents.filter(
             (event) =>
               !matchesRepoGitRoot(event.path) &&
-              ignore.every((ignoredPath) => !isRealpathInsideRoot(ignoredPath, event.path)),
+              ignore.every((ignoredPath) => !isPathInsideRoot(ignoredPath, event.path)),
           );
           if (relevantEvents.length > 0) {
             const immediateEvents = target.fetchInFlight
@@ -2362,7 +2378,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     events: FileChange[],
   ): Map<string, RepoMetadataWorkspaceRefresh> | null {
     const refreshes = new Map<string, RepoMetadataWorkspaceRefresh>();
-    const matchesRepoGitRoot = createRealpathAwarePathMatcher(target.repoGitRoot);
+    const matchesRepoGitRoot = target.paths.matches;
 
     for (const event of events) {
       if (!this.routeRepoMetadataEvent(target, event, matchesRepoGitRoot, refreshes)) return null;
@@ -2377,10 +2393,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   ): void {
     const workspaceKeys = new Set<string>();
     for (const event of events) {
-      const commonRelativePath = getRealpathAwareRelativePath(
-        target.repoGitRoot,
-        event.path,
-      )?.replaceAll("\\", "/");
+      const commonRelativePath = target.paths.relative(event.path)?.replaceAll("\\", "/");
       if (commonRelativePath === "config" || commonRelativePath === "info/exclude") {
         for (const workspaceKey of target.workspaceKeys) workspaceKeys.add(workspaceKey);
         continue;
@@ -2390,8 +2403,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         if (
           facts?.isGit &&
           facts.absoluteGitDir &&
-          getRealpathAwareRelativePath(facts.absoluteGitDir, event.path)?.replaceAll("\\", "/") ===
-            "config.worktree"
+          this.workspaceTargets
+            .get(workspaceKey)
+            ?.gitDirPaths?.relative(event.path)
+            ?.replaceAll("\\", "/") === "config.worktree"
         ) {
           workspaceKeys.add(workspaceKey);
         }
@@ -2407,7 +2422,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   private isFetchRemoteMetadataEvent(target: RepoGitTarget, event: FileChange): boolean {
-    const relativePath = getRealpathAwareRelativePath(target.repoGitRoot, event.path);
+    const relativePath = target.paths.relative(event.path);
     const effect = classifyGitMetadataPath("common", relativePath ?? "");
     return (
       (effect.kind === "ref" && effect.namespace === "remote") ||
@@ -2419,12 +2434,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private routeRepoMetadataEvent(
     target: RepoGitTarget,
     event: FileChange,
-    matchesRepoGitRoot: ReturnType<typeof createRealpathAwarePathMatcher>,
+    matchesRepoGitRoot: (candidate: string) => boolean,
     refreshes: Map<string, RepoMetadataWorkspaceRefresh>,
   ): boolean {
     if (this.routePrivateGitDirEvent(target, event, matchesRepoGitRoot, refreshes)) return true;
 
-    const commonRelativePath = getRealpathAwareRelativePath(target.repoGitRoot, event.path);
+    const commonRelativePath = target.paths.relative(event.path);
     const effect = classifyGitMetadataPath("common", commonRelativePath ?? "");
     switch (effect.kind) {
       case "ignore":
@@ -2476,7 +2491,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private routePrivateGitDirEvent(
     target: RepoGitTarget,
     event: FileChange,
-    matchesRepoGitRoot: ReturnType<typeof createRealpathAwarePathMatcher>,
+    matchesRepoGitRoot: (candidate: string) => boolean,
     refreshes: Map<string, RepoMetadataWorkspaceRefresh>,
   ): boolean {
     let matched = false;
@@ -2485,8 +2500,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       if (!facts?.isGit || !facts.absoluteGitDir || matchesRepoGitRoot(facts.absoluteGitDir)) {
         continue;
       }
-      const relativePath = getRealpathAwareRelativePath(facts.absoluteGitDir, event.path);
-      if (relativePath === null) continue;
+      const relativePath = this.workspaceTargets
+        .get(workspaceKey)
+        ?.gitDirPaths?.relative(event.path);
+      if (relativePath == null) continue;
       matched = true;
       const effect = classifyGitMetadataPath("worktree", relativePath);
       if (effect.kind === "owner") {
@@ -2500,7 +2517,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   private routeMainCheckoutMetadata(
     target: RepoGitTarget,
-    matchesRepoGitRoot: ReturnType<typeof createRealpathAwarePathMatcher>,
+    matchesRepoGitRoot: (candidate: string) => boolean,
     refreshBase: boolean,
     refreshes: Map<string, RepoMetadataWorkspaceRefresh>,
   ): void {
