@@ -8,7 +8,7 @@ import {
   AttachmentThumbnail,
 } from "@/components/attachment-pill";
 import { MarkdownRenderer } from "@/components/markdown/renderer";
-import { useRetainedPanelActive } from "@/components/retained-panel";
+import { useSmallWidgetClock } from "@/hooks/use-small-widget-clock";
 import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
 import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
 import { TaskListRow } from "@/components/task-list-row";
@@ -69,14 +69,7 @@ import {
   type LayoutChangeEvent,
   type TextStyle,
 } from "react-native";
-import Animated, {
-  Easing,
-  cancelAnimation,
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withTiming,
-} from "react-native-reanimated";
+import Animated, { useAnimatedStyle, useReducedMotion } from "react-native-reanimated";
 import Svg, { Defs, Rect, Stop, LinearGradient as SvgLinearGradient } from "react-native-svg";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { capAssistantMessageForRender, getUtf8ByteLength } from "./assistant-message-render-limit";
@@ -1029,32 +1022,18 @@ const NativeExpandableBadgeShimmer = memo(function NativeExpandableBadgeShimmer(
   durationSeconds,
   gradientId,
 }: NativeExpandableBadgeShimmerProps) {
-  const isPanelActive = useRetainedPanelActive();
-  const shimmerTranslateX = useSharedValue(0);
-
-  useEffect(() => {
-    if (!isPanelActive) {
-      cancelAnimation(shimmerTranslateX);
-      return;
-    }
-    const startPosition = -peakWidth;
-    const endPosition = rowWidth + peakWidth;
-    shimmerTranslateX.value = startPosition;
-    shimmerTranslateX.value = withRepeat(
-      withTiming(endPosition, {
-        duration: durationSeconds * 1000,
-        easing: Easing.linear,
-      }),
-      -1,
-      false,
-    );
-    return () => {
-      cancelAnimation(shimmerTranslateX);
-    };
-  }, [durationSeconds, isPanelActive, peakWidth, rowWidth, shimmerTranslateX]);
+  const reduceMotion = useReducedMotion();
+  const time = useSmallWidgetClock(!reduceMotion);
+  const durationMs = durationSeconds * 1000;
 
   const nativeShimmerPeakStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: shimmerTranslateX.value }],
+    transform: [
+      {
+        translateX: reduceMotion
+          ? rowWidth + peakWidth
+          : -peakWidth + ((time.value % durationMs) / durationMs) * (rowWidth + 2 * peakWidth),
+      },
+    ],
   }));
 
   const nativeShimmerTrackStyle = useMemo(
