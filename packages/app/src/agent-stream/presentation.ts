@@ -113,14 +113,16 @@ export function createStreamPresentation() {
     }
     // Live text updates reach the head only, so the folded history is reused until the
     // retained rows, the latest turn's liveness, or the reader's expanded turns change.
-    const isLatestTurnOpen =
-      (input.isTurnActive || projection.head.length > 0) &&
-      !isTurnBoundary(projection.tail.at(-1) ?? null, projection.head[0] ?? null) &&
-      !(
-        input.activeTurnId &&
-        projection.tail.at(-1)?.turnId &&
-        input.activeTurnId !== projection.tail.at(-1)?.turnId
-      );
+    const last = projection.tail.at(-1) ?? null;
+    const first = projection.head[0] ?? null;
+    const activeTurnIsAnother = Boolean(
+      input.activeTurnId && last?.turnId && input.activeTurnId !== last.turnId,
+    );
+    // Without head rows, the latest retained turn is live only while the active run is that
+    // turn. A run that has not opened yet carries no id and belongs to the next turn.
+    const isLatestTurnOpen = first
+      ? !isTurnBoundary(last, first) && !activeTurnIsAnother
+      : input.isTurnActive && (last?.turnId === undefined || input.activeTurnId === last.turnId);
     if (
       !collapsed ||
       collapsedSource !== projection.tail ||
