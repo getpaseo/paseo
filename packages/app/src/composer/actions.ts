@@ -170,13 +170,14 @@ export function removeComposerAttachmentAtIndex<T extends ComposerAttachment>(in
 export interface CancelComposerAgentInput {
   client: ComposerCancelClient | null;
   agentId: string;
+  isAgentPublished: boolean;
   isAgentRunning: boolean;
   isCancellingAgent: boolean;
   isConnected: boolean;
 }
 
 export function cancelComposerAgent(input: CancelComposerAgentInput): Promise<void> | null {
-  if (!input.isAgentRunning || input.isCancellingAgent) return null;
+  if (!input.isAgentPublished || !input.isAgentRunning || input.isCancellingAgent) return null;
   if (!input.isConnected || !input.client) return null;
   try {
     return Promise.resolve(input.client.cancelAgent(input.agentId));
@@ -188,6 +189,9 @@ export function cancelComposerAgent(input: CancelComposerAgentInput): Promise<vo
 export interface DispatchComposerAgentMessageInput {
   client: ComposerSendClient;
   agentId: string;
+  /** See isAgentReadyForPrompts. Prompts for an agent that is not ready wait in its queue. */
+  isAgentReady: boolean;
+  queue: QueueWriter;
   text: string;
   attachments: ComposerAttachment[];
   attachmentSubmitFormat?: ComposerAttachmentSubmitFormat;
@@ -201,7 +205,12 @@ export interface DispatchComposerAgentMessageInput {
 
 export async function dispatchComposerAgentMessage(
   input: DispatchComposerAgentMessageInput,
-): Promise<void> {
+): Promise<"sent" | "queued"> {
+  if (!input.isAgentReady) {
+    // A creating agent takes prompts after its initial one; this waits behind it in the queue.
+    queueComposerMessage(input);
+    return "queued";
+  }
   const wirePayload = splitComposerAttachmentsForSubmit(input.attachments, {
     format: input.attachmentSubmitFormat,
   });
@@ -226,6 +235,7 @@ export async function dispatchComposerAgentMessage(
       attachments: wirePayload.attachments,
     });
     input.submission.accept(input.agentId, clientMessageId);
+    return "sent";
   } catch (error) {
     input.submission.reject(input.agentId, clientMessageId);
     throw error;
@@ -293,6 +303,8 @@ export function editQueuedComposerMessage(
 
 export interface SendQueuedComposerMessageNowInput {
   agentId: string;
+  /** See DispatchComposerAgentMessageInput. A queued prompt stays in place until then. */
+  isAgentReady: boolean;
   messageId: string;
   queue: QueueWriter;
   submitMessage: (input: { text: string; attachments: ComposerAttachment[] }) => Promise<void>;
@@ -301,6 +313,7 @@ export interface SendQueuedComposerMessageNowInput {
 
 export type SendQueuedComposerMessageNowResult =
   | { status: "missing" }
+  | { status: "waiting" }
   | { status: "submitted" }
   | { status: "failed"; errorMessage: string };
 
@@ -309,6 +322,7 @@ export async function sendQueuedComposerMessageNow(
 ): Promise<SendQueuedComposerMessageNowResult> {
   const item = input.queue.read(input.agentId).find((q) => q.id === input.messageId);
   if (!item) return { status: "missing" };
+  if (!input.isAgentReady) return { status: "waiting" };
   input.queue.write((prev) => {
     const next = new Map(prev);
     next.set(

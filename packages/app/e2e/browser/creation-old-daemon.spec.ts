@@ -92,7 +92,7 @@ for (const version of ["0.2.5", "0.7.2", "0.8.0"]) {
       });
     }
 
-    test("current app creates a workspace, navigates before agent startup, and creates another agent on an old daemon", async ({
+    test("current app requires a host update for chat workspaces and preserves existing-workspace agent creation", async ({
       page,
       project,
       client,
@@ -104,49 +104,34 @@ for (const version of ["0.2.5", "0.7.2", "0.8.0"]) {
       const prompt = "Create this workspace: emit 1 coalesced agent stream updates";
       await fillComposerDraft(page, prompt);
       await pressSubmitBeforeTheNextRender(page, "Create");
-      await gate.waitForRequest();
-      await expect(page).toHaveURL(/\/workspace\//);
       await expect(
-        page.getByTestId("user-message").filter({ visible: true }).filter({ hasText: prompt }),
+        page
+          .getByText("Update this host to create a workspace with an agent.", { exact: true })
+          .first(),
       ).toBeVisible();
+      await expect(page).toHaveURL(/\/new\?/);
       expect((await client.fetchAgents()).entries).toHaveLength(0);
-      const workspaces = (await client.fetchWorkspaces()).entries.filter(
-        (workspace) =>
-          workspace.projectId === project.projectId && workspace.id !== project.workspaceId,
-      );
-      expect(workspaces).toHaveLength(1);
-      gate.release();
-      await gate.waitForCreated();
-      await expect.poll(async () => (await client.fetchAgents()).entries.length).toBe(1);
-      const first = (await client.fetchAgents()).entries[0]!.agent;
-      await client.waitForFinish(first.id, 20_000);
-      await expectPromptOnce(client, first.id, prompt);
-      await expect(
-        page.getByTestId(`workspace-tab-agent_${first.id}`).filter({ visible: true }),
-      ).toHaveText(prompt);
-
+      expect(
+        (await client.fetchWorkspaces()).entries.filter(
+          (workspace) => workspace.projectId === project.projectId,
+        ),
+      ).toHaveLength(1);
+      await page.goto(buildHostWorkspaceRoute(daemon.serverId, project.workspaceId));
       await createAgentTabFromMenu(page);
       const secondPrompt = "Create another agent: emit 1 coalesced agent stream updates";
       await fillComposerDraft(page, secondPrompt);
       await pressSubmitBeforeTheNextRender(page, "Send message");
+      await gate.waitForRequest();
+      gate.release();
       await gate.waitForCreated();
-      await expect.poll(async () => (await client.fetchAgents()).entries.length).toBe(2);
-      const second = (await client.fetchAgents()).entries.find(
-        ({ agent }) => agent.id !== first.id,
-      )!.agent;
-      expect(second.workspaceId).toBe(first.workspaceId);
-      await client.waitForFinish(second.id, 20_000);
-      await expectPromptOnce(client, second.id, secondPrompt);
+      await expect.poll(async () => (await client.fetchAgents()).entries.length).toBe(1);
+      const agent = (await client.fetchAgents()).entries[0]!.agent;
+      expect(agent.workspaceId).toBe(project.workspaceId);
+      await client.waitForFinish(agent.id, 20_000);
+      await expectPromptOnce(client, agent.id, secondPrompt);
       await expect(
-        page.getByTestId(`workspace-tab-agent_${second.id}`).filter({ visible: true }),
+        page.getByTestId(`workspace-tab-agent_${agent.id}`).filter({ visible: true }),
       ).toHaveText(secondPrompt);
-      await expect(
-        page
-          .getByTestId("user-message")
-          .filter({ visible: true })
-          .filter({ hasText: secondPrompt }),
-      ).toBeVisible();
-      await page.screenshot({ path: test.info().outputPath("old-daemon-creation.png") });
     });
 
     async function expectPromptOnce(client: DaemonClient, agentId: string, text: string) {

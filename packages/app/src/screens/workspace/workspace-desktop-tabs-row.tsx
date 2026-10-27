@@ -1,3 +1,4 @@
+import { useCreationTabMenuEntries } from "@/workspace-creation/ui";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
   Fragment,
@@ -756,7 +757,8 @@ function TabChip({
   onCloseTab: (tabId: string) => Promise<void> | void;
   dragHandleProps: DraggableListDragHandleProps | undefined;
 }) {
-  const { closeButtonTestId, contextMenuTestId, menuEntries } = resolvedTab;
+  const { closeButtonTestId, contextMenuTestId, menuEntries: rawMenuEntries } = resolvedTab;
+  const menuEntries = useCreationTabMenuEntries(serverId, tab.target, rawMenuEntries);
   const { t } = useTranslation();
   const openWith = useFilePanelOpenWithMenu(
     { serverId, workspaceId, tabId: tab.tabId },

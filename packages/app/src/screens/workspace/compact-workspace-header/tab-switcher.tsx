@@ -1,3 +1,4 @@
+import { useCreationTabMenuEntries } from "@/workspace-creation/ui";
 import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { Keyboard, Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
@@ -202,7 +203,7 @@ function MobileWorkspaceTabOption({
     [t],
   );
   const menuTestIDBase = `workspace-tab-menu-${tab.tabId}`;
-  const menuEntries = buildWorkspaceTabMenuEntries({
+  const rawMenuEntries = buildWorkspaceTabMenuEntries({
     surface: "mobile",
     tab,
     index: tabIndex,
@@ -220,6 +221,8 @@ function MobileWorkspaceTabOption({
     onCloseOtherTabs,
     labels: tabMenuLabels,
   });
+
+  const menuEntries = useCreationTabMenuEntries(normalizedServerId, tab.target, rawMenuEntries);
 
   const fallbackLabels = useMemo(
     () => ({

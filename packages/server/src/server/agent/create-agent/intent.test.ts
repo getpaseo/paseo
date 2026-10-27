@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { resolveCreateAgentIntent } from "./intent.js";
@@ -22,6 +23,38 @@ describe("resolveCreateAgentIntent", () => {
       },
     });
   });
+
+  it("places a combined creation inside its selected workspace and keeps parentage", async () => {
+    const intent = await resolveCreateAgentIntent({
+      explicitWorkspaceId: "workspace-new",
+      workspaceRelativeCwd: "packages/app",
+      caller: { id: "parent", cwd: "/source", workspaceId: "workspace-source" },
+      resolveWorkspace: async (workspaceId) => ({ workspaceId, cwd: "/new" }),
+      createWorkspace: async () => {
+        throw new Error("Unexpected workspace creation");
+      },
+    });
+    expect(intent.cwd).toBe(resolve("/new", "packages/app"));
+    expect(intent.workspaceId).toBe("workspace-new");
+    expect(intent.parentAgentId).toBe("parent");
+  });
+
+  it.each(["../outside", "/outside"])(
+    "rejects an invalid relative placement: %s",
+    async (workspaceRelativeCwd) => {
+      await expect(
+        resolveCreateAgentIntent({
+          explicitWorkspaceId: "workspace-new",
+          workspaceRelativeCwd,
+          caller: null,
+          resolveWorkspace: async (workspaceId) => ({ workspaceId, cwd: "/new" }),
+          createWorkspace: async () => {
+            throw new Error("Unexpected workspace creation");
+          },
+        }),
+      ).rejects.toThrow("inside the selected workspace");
+    },
+  );
 
   it("defaults an agent caller to its workspace without creating one", async () => {
     let createCount = 0;

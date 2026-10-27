@@ -1,3 +1,4 @@
+import { isAgentCreationPending } from "@/workspace-creation";
 import { useCallback, useState } from "react";
 import { type QueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -46,6 +47,7 @@ export function useWorkspaceTabRename(
       }
       if (tab.target.kind === "agent") {
         const { agentId } = tab.target;
+        if (isAgentCreationPending(normalizedServerId, agentId)) return;
         const agent =
           useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
         const currentTitle = agent?.title ?? "";

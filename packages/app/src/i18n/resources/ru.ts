@@ -1357,6 +1357,15 @@ export const ru: TranslationResources = {
     },
   },
   newWorkspace: {
+    creation: {
+      creatingWorkspace: "Создание рабочей области…",
+      creatingLabel: "Создание рабочей области",
+      updateHost: "Обновите этот хост, чтобы создать рабочую область с агентом.",
+      chooseProjectHost: "Выберите проект и хост",
+      projectUnavailable: "Проект недоступен на выбранном хосте",
+      workspacePending: "Рабочая область ещё создаётся.",
+      agentPending: "Агент ещё создаётся.",
+    },
     title: "Новое рабочее пространство",
     create: "Создать",
     isolation: {

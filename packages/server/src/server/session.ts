@@ -4253,14 +4253,12 @@ export class Session {
                     ...agentInput,
                     type: "create_agent_request",
                     requestId,
-                    config: {
-                      ...agentInput.config,
-                      cwd: resolve(workspace.workspaceDirectory, relativeCwd),
-                    },
+                    config: agentInput.config,
                     workspaceId: workspace.id,
                   },
                   id,
                   onReady,
+                  relativeCwd,
                 );
               }
             : undefined,
@@ -4381,6 +4379,7 @@ export class Session {
     msg: CreateAgentRequestMessage,
     agentId?: string,
     onAgentReady?: (agent: AgentSnapshotPayload) => Promise<void>,
+    workspaceRelativeCwd?: string,
   ): Promise<CreatedAgent> {
     const {
       config,
@@ -4433,6 +4432,7 @@ export class Session {
         request: msg,
         createdWorktree,
         workspacePromptTitle,
+        workspaceRelativeCwd,
       });
       const resolvedCwd = resolve(resolvedIntent.config.cwd);
       if (!(await this.filesystem.isDirectory(resolvedCwd))) {
@@ -4506,6 +4506,7 @@ export class Session {
     request: CreateAgentRequestMessage;
     createdWorktree: CreatePaseoWorktreeWorkflowResult | null;
     workspacePromptTitle: string | null;
+    workspaceRelativeCwd?: string;
   }): Promise<ResolvedSessionCreateAgentIntent> {
     const { request, createdWorktree } = input;
     const callerAgent = request.callerAgentId
@@ -4519,6 +4520,7 @@ export class Session {
 
     const intent = await resolveCreateAgentIntent({
       explicitWorkspaceId: createdWorktree?.workspace.workspaceId ?? request.workspaceId,
+      workspaceRelativeCwd: input.workspaceRelativeCwd,
       caller: callerAgent
         ? { id: callerAgent.id, cwd: callerAgent.cwd, workspaceId: callerAgent.workspaceId }
         : null,

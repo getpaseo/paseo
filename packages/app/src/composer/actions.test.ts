@@ -296,6 +296,7 @@ describe("cancelComposerAgent", () => {
   function baseInput(): {
     client: ComposerCancelClient & { canceledIds: string[] };
     agentId: string;
+    isAgentPublished: boolean;
     isAgentRunning: boolean;
     isCancellingAgent: boolean;
     isConnected: boolean;
@@ -309,6 +310,7 @@ describe("cancelComposerAgent", () => {
         },
       },
       agentId: "agent",
+      isAgentPublished: true,
       isAgentRunning: true,
       isCancellingAgent: false,
       isConnected: true,
@@ -336,6 +338,13 @@ describe("cancelComposerAgent", () => {
   it("does nothing when the agent is not running", () => {
     const input = baseInput();
     const result = cancelComposerAgent({ ...input, isAgentRunning: false });
+    expect(result).toBeNull();
+    expect(input.client.canceledIds).toEqual([]);
+  });
+
+  it("does nothing while the host has not published the agent", () => {
+    const input = baseInput();
+    const result = cancelComposerAgent({ ...input, isAgentPublished: false });
     expect(result).toBeNull();
     expect(input.client.canceledIds).toEqual([]);
   });
@@ -419,6 +428,29 @@ describe("pickAndPersistImages", () => {
 });
 
 describe("dispatchComposerAgentMessage", () => {
+  it("queues a prompt behind earlier ones without sending while the agent is not ready", async () => {
+    const client = createFakeSendClient();
+    const stream = createFakeStream();
+    const queued: QueuedComposerMessage = { id: "later", text: "later", attachments: [] };
+    const queue = createFakeQueue(new Map([["agent", [queued]]]));
+
+    const outcome = await dispatchComposerAgentMessage({
+      client,
+      agentId: "agent",
+      text: "next follow-up",
+      attachments: [],
+      encodeImages: passthroughEncodeImages,
+      submission: stream,
+      isAgentReady: false,
+      queue,
+    });
+
+    expect(outcome).toBe("queued");
+    expect(client.calls).toEqual([]);
+    expect(stream.tail.get("agent") ?? []).toEqual([]);
+    expect(queue.read("agent").map((item) => item.text)).toEqual(["later", "next follow-up"]);
+  });
+
   it("forwards the configured active-turn intent without provider capability checks", async () => {
     const client = createFakeSendClient();
     const stream = createFakeStream();
@@ -430,6 +462,8 @@ describe("dispatchComposerAgentMessage", () => {
       attachments: [],
       encodeImages: async () => [],
       submission: stream,
+      isAgentReady: true,
+      queue: createFakeQueue(),
       activeTurnBehavior: "steer",
     });
 
@@ -446,6 +480,8 @@ describe("dispatchComposerAgentMessage", () => {
       attachments: [],
       encodeImages: async () => [],
       submission: stream,
+      isAgentReady: true,
+      queue: createFakeQueue(),
       activeTurnBehavior: "steer",
       activeTurnId: "turn-1",
     });
@@ -458,6 +494,8 @@ describe("dispatchComposerAgentMessage", () => {
       attachments: [],
       encodeImages: async () => [],
       submission: legacy,
+      isAgentReady: true,
+      queue: createFakeQueue(),
       activeTurnBehavior: "steer",
     });
     expect(legacy.tail.get("legacy")?.[0]?.turnId).toBeUndefined();
@@ -476,6 +514,8 @@ describe("dispatchComposerAgentMessage", () => {
         attachments: [],
         encodeImages: passthroughEncodeImages,
         submission: stream,
+        isAgentReady: true,
+        queue: createFakeQueue(),
       }),
     ).rejects.toBe(rejection);
 
@@ -496,6 +536,8 @@ describe("dispatchComposerAgentMessage", () => {
         attachments: [],
         encodeImages: passthroughEncodeImages,
         submission: stream,
+        isAgentReady: true,
+        queue: createFakeQueue(),
       }),
     ).rejects.toBe(transportError);
 
@@ -519,6 +561,8 @@ describe("dispatchComposerAgentMessage", () => {
         attachments: [],
         encodeImages: passthroughEncodeImages,
         submission,
+        isAgentReady: true,
+        queue: createFakeQueue(),
       }),
     ).rejects.toBe(transportError);
   });
@@ -540,6 +584,8 @@ describe("dispatchComposerAgentMessage", () => {
         attachments: [],
         encodeImages: passthroughEncodeImages,
         submission,
+        isAgentReady: true,
+        queue: createFakeQueue(),
         activeTurnBehavior: "steer",
       }),
     ).rejects.toBe(transportError);
@@ -560,6 +606,8 @@ describe("dispatchComposerAgentMessage", () => {
       ],
       encodeImages: passthroughEncodeImages,
       submission: stream,
+      isAgentReady: true,
+      queue: createFakeQueue(),
     });
 
     expect(client.calls).toHaveLength(1);
@@ -606,6 +654,8 @@ describe("dispatchComposerAgentMessage", () => {
       attachmentSubmitFormat: "legacy-github",
       encodeImages: passthroughEncodeImages,
       submission: stream,
+      isAgentReady: true,
+      queue: createFakeQueue(),
     });
 
     expect(client.calls[0].options.attachments).toEqual([
@@ -639,6 +689,8 @@ describe("dispatchComposerAgentMessage", () => {
       attachments: [],
       encodeImages: passthroughEncodeImages,
       submission: stream,
+      isAgentReady: true,
+      queue: createFakeQueue(),
     });
 
     expect(stream.head.get("agent")).toHaveLength(2);
@@ -656,6 +708,8 @@ describe("dispatchComposerAgentMessage", () => {
       attachments: [],
       encodeImages: passthroughEncodeImages,
       submission: stream,
+      isAgentReady: true,
+      queue: createFakeQueue(),
     });
 
     expect(client.calls[0]?.options).toMatchObject({
@@ -676,6 +730,8 @@ describe("dispatchComposerAgentMessage", () => {
       attachments: [review],
       encodeImages: passthroughEncodeImages,
       submission: stream,
+      isAgentReady: true,
+      queue: createFakeQueue(),
     });
 
     expect(client.calls[0]?.options.attachments).toEqual([review.attachment]);
@@ -694,6 +750,8 @@ describe("dispatchComposerAgentMessage", () => {
       attachments: [browserElement],
       encodeImages: passthroughEncodeImages,
       submission: stream,
+      isAgentReady: true,
+      queue: createFakeQueue(),
     });
 
     expect(client.calls[0]?.options.attachments).toEqual([
@@ -796,6 +854,7 @@ describe("sendQueuedComposerMessageNow", () => {
     const submitted: Array<{ text: string; attachments: ComposerAttachment[] }> = [];
     const result = await sendQueuedComposerMessageNow({
       agentId: "agent",
+      isAgentReady: true,
       messageId: "msg-1",
       queue,
       submitMessage: async (input) => {
@@ -814,6 +873,7 @@ describe("sendQueuedComposerMessageNow", () => {
     const submitted: Array<{ text: string; attachments: ComposerAttachment[] }> = [];
     const result = await sendQueuedComposerMessageNow({
       agentId: "agent",
+      isAgentReady: true,
       messageId: "msg-1",
       queue,
       submitMessage: async (input) => {
@@ -823,6 +883,27 @@ describe("sendQueuedComposerMessageNow", () => {
     expect(result).toEqual({ status: "submitted" });
     expect(queue.state.get("agent")).toEqual([]);
     expect(submitted).toEqual([{ text: "send me", attachments: [review] }]);
+  });
+
+  it("leaves the queue untouched while the agent is not ready", async () => {
+    const queued: QueuedComposerMessage[] = [
+      { id: "msg-1", text: "first", attachments: [] },
+      { id: "msg-2", text: "second", attachments: [] },
+    ];
+    const queue = createFakeQueue(new Map([["agent", queued]]));
+    const submitted: Array<{ text: string; attachments: ComposerAttachment[] }> = [];
+    const result = await sendQueuedComposerMessageNow({
+      agentId: "agent",
+      isAgentReady: false,
+      messageId: "msg-2",
+      queue,
+      submitMessage: async (input) => {
+        submitted.push(input);
+      },
+    });
+    expect(result).toEqual({ status: "waiting" });
+    expect(submitted).toEqual([]);
+    expect(queue.state.get("agent")).toBe(queued);
   });
 
   it("restores the queued entry to the front and surfaces the error message on failure", async () => {
@@ -839,6 +920,7 @@ describe("sendQueuedComposerMessageNow", () => {
     );
     const result = await sendQueuedComposerMessageNow({
       agentId: "agent",
+      isAgentReady: true,
       messageId: "msg-1",
       queue,
       submitMessage: async () => {

@@ -73,7 +73,11 @@ import {
 import { mountBrowserAutomationDaemonClientHandler } from "@/desktop/browser/automation/handler";
 import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
 import { dispatchComposerAgentMessage, sendQueuedComposerMessageNow } from "@/composer/actions";
-import { createMessageSubmissionWriter } from "@/composer/submission/writer";
+import { isAgentReadyForPrompts } from "@/workspace-creation";
+import {
+  createAgentMessageQueueWriter,
+  createMessageSubmissionWriter,
+} from "@/composer/submission/writer";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
 import { encodeImages } from "@/utils/encode-images";
 import { DirectorySync, type RefreshAgentDirectoryResult } from "@/runtime/directory-sync";
@@ -2568,20 +2572,20 @@ export class HostRuntimeStore {
     }
     this.queuedAgentDrainInFlight.add(drainKey);
     const next = queue[0];
+    const queueWriter = createAgentMessageQueueWriter(serverId);
     void sendQueuedComposerMessageNow({
       agentId,
+      isAgentReady: isAgentReadyForPrompts(serverId, agentId),
       messageId: next.id,
-      queue: {
-        read: (queuedAgentId) =>
-          useSessionStore.getState().sessions[serverId]?.queuedMessages.get(queuedAgentId) ?? [],
-        write: (update) => useSessionStore.getState().setQueuedMessages(serverId, update),
-      },
+      queue: queueWriter,
       submitMessage: async ({ text, attachments }) => {
-        const supportsForgeAttachments =
-          useSessionStore.getState().sessions[serverId]?.serverInfo?.features?.forgeSearch === true;
+        const currentSession = useSessionStore.getState().sessions[serverId];
+        const supportsForgeAttachments = currentSession?.serverInfo?.features?.forgeSearch === true;
         await dispatchComposerAgentMessage({
           client,
           agentId,
+          isAgentReady: isAgentReadyForPrompts(serverId, agentId),
+          queue: queueWriter,
           text,
           attachments,
           attachmentSubmitFormat: resolveComposerAttachmentSubmitFormat({

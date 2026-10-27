@@ -1,10 +1,7 @@
-import type {
-  CreateAgentRequestOptions,
-  CreateWorkspaceRequestOptions,
-} from "@getpaseo/client/internal/daemon-client";
-import type { AgentSnapshotPayload, CreationSnapshot } from "@getpaseo/protocol/messages";
-import { encodeImages } from "@/utils/encode-images";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import type { CreateWorkspaceRequestOptions } from "@getpaseo/client/internal/daemon-client";
+import type { AgentSnapshotPayload, CreationSnapshot } from "@getpaseo/protocol/messages";
+import { submitWorkspaceChat, takeWorkspaceCreationFailure } from "@/workspace-creation";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -17,10 +14,6 @@ import { Composer } from "@/composer";
 import { ComposerDock } from "@/composer/dock";
 import { useComposerEditingSession, useComposerFullscreen } from "@/composer/editing-session";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
-import {
-  resolveComposerAttachmentSubmitFormat,
-  splitComposerAttachmentsForSubmit,
-} from "@/composer/attachments/submit";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -52,7 +45,6 @@ import { normalizeWorkspaceDescriptor, type WorkspaceDescriptor } from "@/stores
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { buildNewWorkspaceDraftKey, generateDraftId } from "@/stores/draft-keys";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
-import { isActiveCreateFlowForDraft, useCreateFlowStore } from "@/stores/create-flow-store";
 import {
   useWorkspaceDraftSubmissionStore,
   type PendingWorkspaceDraftSetup,
@@ -73,19 +65,12 @@ import {
   type HostProjectListItem,
 } from "@/projects/host-projects";
 import { useProjectIcons } from "@/projects/icons";
-import type { ComposerAttachment } from "@/attachments/types";
 import { useDraftWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import type { MessagePayload } from "@/composer/types";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { AgentAttachment, ForgeSearchItem } from "@getpaseo/protocol/messages";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { AgentProvider } from "@getpaseo/protocol/agent-types";
-import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tabs/model";
+import type { WorkspaceDraftTabSetup } from "@/workspace-tabs/model";
 import { isEmptyWorkspaceSubmission, runCreateEmptyWorkspace } from "./new-workspace-empty";
-import {
-  getWorkspaceNamingAttachments,
-  remapDraftCwdToWorkspace,
-} from "./new-workspace-fork-context";
 import {
   buildPickerOptionData,
   defaultBasePickerItem,
@@ -116,39 +101,7 @@ import {
   type ListTerminalsPayload,
   upsertCreatedTerminalPayload,
 } from "./workspace/terminals/state";
-import { captureWorkspaceDraftCleanup } from "./new-workspace/background-handoff";
 import { useNewWorkspaceScreenPresence } from "./new-workspace/screen-presence";
-
-function useIsNewWorkspaceDraftHandoffActive(input: {
-  draftId: string | undefined;
-  selectedServerId: string;
-}): boolean {
-  const normalizedDraftId = input.draftId?.trim() ?? "";
-  return useCreateFlowStore((state) =>
-    isActiveCreateFlowForDraft({
-      draftId: normalizedDraftId,
-      serverId: input.selectedServerId,
-      pending: normalizedDraftId ? state.pendingByDraftId[normalizedDraftId] : null,
-    }),
-  );
-}
-
-function resolveVisibleDraftContextScopeKeys(input: {
-  isDraftHandoffActive: boolean;
-  draftContextScopeKey: string;
-}): readonly string[] {
-  if (input.isDraftHandoffActive || !input.draftContextScopeKey) {
-    return [];
-  }
-  return [input.draftContextScopeKey];
-}
-
-function isNewWorkspacePending(input: {
-  pendingAction: "chat" | "empty" | "terminal" | null;
-  isDraftHandoffActive: boolean;
-}): boolean {
-  return input.pendingAction !== null || input.isDraftHandoffActive;
-}
 
 function buildFirstAgentContext(input: {
   prompt: string;
@@ -238,43 +191,6 @@ function normalizeBranchDetails(
  */
 type SubmitOutcome = "navigated" | "background";
 
-interface SubmitDraftInput {
-  clearConsumedDraft: () => void;
-  agentCreation?: {
-    result: Promise<AgentSnapshotPayload>;
-    retry: (input: CreateAgentRequestOptions) => Promise<AgentSnapshotPayload>;
-  };
-  serverId: string;
-  draftKey: string;
-  clearDraft: (lifecycle: "sent" | "abandoned") => void;
-  draftId?: string;
-  draftContextScopeKey: string | null;
-  initialSetup?: WorkspaceDraftTabSetup;
-  workspaceId: string;
-  workspaceDirectory: string;
-  text: string;
-  attachments: ComposerAttachment[];
-  provider: AgentProvider;
-  composerState: NewWorkspaceComposerState;
-  supportsForgeSearch: boolean;
-  resolveClient: () => DaemonClient;
-  isStillOnCreateScreen: () => boolean;
-}
-
-type NewWorkspaceComposerState = NonNullable<
-  ReturnType<typeof useAgentInputDraft>["composerState"]
->;
-
-interface WorkspaceDraftSubmissionConfig {
-  cwd: string;
-  provider: AgentProvider;
-  modeId: string | null;
-  model: string | null;
-  thinkingOptionId: string | null;
-  featureValues: Record<string, unknown> | undefined;
-  target: WorkspaceTabTarget;
-}
-
 interface WorkspaceCreationResult {
   workspace: ReturnType<typeof normalizeWorkspaceDescriptor>;
   agent?: AgentSnapshotPayload;
@@ -337,67 +253,6 @@ async function createMultiplicityWorkspace(input: {
   return { workspace: normalizedWorkspace, agent: payload.agent };
 }
 
-interface CreateChatAgentInput {
-  payload: MessagePayload;
-  composerState: ReturnType<typeof useAgentInputDraft>["composerState"];
-  forkDraftSetup?: PendingWorkspaceDraftSetup | null;
-  ensureWorkspace: (input: {
-    cwd: string;
-    prompt: string;
-    attachments: AgentAttachment[];
-    withInitialAgent: boolean;
-    agent?: CreateWorkspaceRequestOptions["agent"];
-    onEvent?: (snapshot: CreationSnapshot) => void;
-  }) => Promise<WorkspaceCreationResult>;
-  serverId: string;
-  draftKey: string;
-  clearDraft: (lifecycle: "sent" | "abandoned") => void;
-  draftId?: string;
-  draftContextScopeKey: string | null;
-  supportsForgeSearch: boolean;
-  resolveClient: () => DaemonClient;
-  isStillOnCreateScreen: () => boolean;
-  labels: {
-    composerStateRequired: string;
-    selectModel: string;
-  };
-}
-
-function buildWorkspaceDraftSetupFromComposer(input: {
-  cwd: string;
-  provider: AgentProvider;
-  composerState: NewWorkspaceComposerState;
-}): WorkspaceDraftTabSetup {
-  return {
-    provider: input.provider,
-    cwd: input.cwd,
-    modeId: input.composerState.effectiveModeId || null,
-    model: input.composerState.effectiveModelId || null,
-    thinkingOptionId: input.composerState.effectiveThinkingOptionId || null,
-    featureValues: input.composerState.featureValues ?? {},
-  };
-}
-
-function buildWorkspaceDraftSetupForCreatedWorkspace(input: {
-  forkDraftSetup: PendingWorkspaceDraftSetup | null | undefined;
-  workspaceDirectory: string;
-  provider: AgentProvider;
-  composerState: NewWorkspaceComposerState;
-}): WorkspaceDraftTabSetup | undefined {
-  if (!input.forkDraftSetup) {
-    return undefined;
-  }
-  return buildWorkspaceDraftSetupFromComposer({
-    cwd: remapDraftCwdToWorkspace({
-      cwd: input.forkDraftSetup.setup.cwd,
-      sourceDirectory: input.forkDraftSetup.sourceDirectory,
-      workspaceDirectory: input.workspaceDirectory,
-    }),
-    provider: input.provider,
-    composerState: input.composerState,
-  });
-}
-
 function buildComposerInitialValues(input: {
   initialSetup?: WorkspaceDraftTabSetup | null;
 }): CreateAgentInitialValues | undefined {
@@ -410,117 +265,6 @@ function buildComposerInitialValues(input: {
     };
   }
   return undefined;
-}
-
-const pendingWorkspaceSubmissions = new Map<string, Promise<SubmitOutcome>>();
-function runCreateChatAgent(input: CreateChatAgentInput): Promise<SubmitOutcome> {
-  const key = JSON.stringify([input.serverId, input.draftId]);
-  const pending = pendingWorkspaceSubmissions.get(key);
-  if (pending) return pending;
-  const submission = Promise.resolve().then(() => createWorkspaceChatAgent(input));
-  pendingWorkspaceSubmissions.set(key, submission);
-  void submission.finally(() => pendingWorkspaceSubmissions.delete(key)).catch(() => undefined);
-  return submission;
-}
-
-async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<SubmitOutcome> {
-  const { payload, composerState, ensureWorkspace, serverId, clearDraft } = input;
-  const clearConsumedDraft = captureWorkspaceDraftCleanup(input);
-  const { text, attachments, cwd } = payload;
-  if (!composerState) {
-    throw new Error(input.labels.composerStateRequired);
-  }
-  const provider = composerState.selectedProvider;
-  if (!provider) {
-    throw new Error(input.labels.selectModel);
-  }
-  const attachmentSubmitFormat = resolveComposerAttachmentSubmitFormat({
-    supportsForgeAttachments: input.supportsForgeSearch,
-  });
-  const { attachments: reviewAttachments } = splitComposerAttachmentsForSubmit(attachments, {
-    format: attachmentSubmitFormat,
-  });
-  const workspaceNamingAttachments = getWorkspaceNamingAttachments(reviewAttachments);
-  const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
-    format: attachmentSubmitFormat,
-  });
-  const images = await encodeImages(wirePayload.images);
-  let navigated = false;
-  let outcome: SubmitOutcome = "background";
-  const initialAgent: NonNullable<CreateWorkspaceRequestOptions["agent"]> = {
-    config: {
-      provider,
-      cwd,
-      modeId: composerState.effectiveModeId || undefined,
-      model: composerState.effectiveModelId || undefined,
-      thinkingOptionId: composerState.effectiveThinkingOptionId || undefined,
-      featureValues: composerState.featureValues,
-    },
-    initialPrompt: text,
-    clientMessageId: `${input.draftId}:initial-message`,
-    images: images?.length ? images : undefined,
-    attachments: wirePayload.attachments?.length ? wirePayload.attachments : undefined,
-  };
-  const execute = async (requestedAgent = initialAgent): Promise<AgentSnapshotPayload> => {
-    const { agent } = await ensureWorkspace({
-      cwd,
-      prompt: text,
-      attachments: workspaceNamingAttachments,
-      withInitialAgent: true,
-      agent: requestedAgent,
-      onEvent: (snapshot) => {
-        if (!snapshot.workspace || navigated) return;
-        navigated = true;
-        if (!input.isStillOnCreateScreen()) return;
-        const workspace = normalizeWorkspaceDescriptor(snapshot.workspace);
-        getHostRuntimeStore().acceptWorkspaceSnapshots(serverId, [
-          { ...workspace, status: "running" },
-        ]);
-        const initialSetup = buildWorkspaceDraftSetupForCreatedWorkspace({
-          forkDraftSetup: input.forkDraftSetup,
-          workspaceDirectory: workspace.workspaceDirectory,
-          provider,
-          composerState,
-        });
-        outcome = submitWorkspaceDraft({
-          clearConsumedDraft,
-          draftKey: input.draftKey,
-          draftContextScopeKey: input.draftContextScopeKey,
-          resolveClient: input.resolveClient,
-          isStillOnCreateScreen: input.isStillOnCreateScreen,
-          serverId,
-          clearDraft,
-          draftId: input.draftId,
-          initialSetup,
-          workspaceId: workspace.id,
-          workspaceDirectory: workspace.workspaceDirectory,
-          text,
-          attachments,
-          provider,
-          composerState,
-          supportsForgeSearch: input.supportsForgeSearch,
-          agentCreation,
-        });
-      },
-    });
-    if (!agent) throw new Error("Workspace creation returned no agent");
-    return agent;
-  };
-  const agentCreation = {
-    result: Promise.resolve().then(() => execute()),
-    retry: (request: CreateAgentRequestOptions) =>
-      execute({
-        ...initialAgent,
-        config: { ...request.config!, cwd },
-        initialPrompt: request.initialPrompt ?? "",
-        clientMessageId: initialAgent.clientMessageId,
-        images: request.images,
-        attachments: request.attachments,
-      }),
-  };
-  await agentCreation.result;
-  if (outcome === "background") clearConsumedDraft();
-  return outcome;
 }
 
 function buildComposerConfig(input: {
@@ -550,102 +294,6 @@ function usePendingWorkspaceDraftSetup(
     }
     return state.setupByDraftId[normalizedDraftId] ?? null;
   });
-}
-
-function resolveWorkspaceDraftSubmissionConfig(input: {
-  draftId: string;
-  workspaceDirectory: string;
-  provider: AgentProvider;
-  composerState: NewWorkspaceComposerState;
-  initialSetup?: WorkspaceDraftTabSetup;
-}): WorkspaceDraftSubmissionConfig {
-  const { draftId, workspaceDirectory, provider, composerState, initialSetup } = input;
-  if (initialSetup) {
-    return {
-      cwd: initialSetup.cwd,
-      provider: initialSetup.provider,
-      modeId: initialSetup.modeId,
-      model: initialSetup.model,
-      thinkingOptionId: initialSetup.thinkingOptionId,
-      featureValues: initialSetup.featureValues,
-      target: { kind: "draft", draftId, setup: initialSetup },
-    };
-  }
-  return {
-    cwd: workspaceDirectory,
-    provider,
-    modeId: composerState.effectiveModeId || null,
-    model: composerState.effectiveModelId || null,
-    thinkingOptionId: composerState.effectiveThinkingOptionId || null,
-    featureValues: composerState.featureValues,
-    target: { kind: "draft", draftId },
-  };
-}
-
-function submitWorkspaceDraft(input: SubmitDraftInput): SubmitOutcome {
-  const {
-    serverId,
-    clearDraft,
-    draftId: draftIdInput,
-    workspaceId,
-    workspaceDirectory,
-    text,
-    attachments,
-    provider,
-    composerState,
-    initialSetup,
-  } = input;
-  const draftId = draftIdInput?.trim() || generateDraftId();
-  const clientMessageId = `${draftId}:initial-message`;
-  const timestamp = Date.now();
-  const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
-    format: resolveComposerAttachmentSubmitFormat({
-      supportsForgeAttachments: input.supportsForgeSearch,
-    }),
-  });
-  const submission = resolveWorkspaceDraftSubmissionConfig({
-    draftId,
-    workspaceDirectory,
-    provider,
-    composerState,
-    initialSetup,
-  });
-  const started = useCreateFlowStore.getState().trySetPending({
-    serverId,
-    draftId,
-    workspaceId,
-    agentId: null,
-    clientMessageId,
-    text: text.trim(),
-    timestamp,
-    ...(wirePayload.images.length > 0 ? { images: wirePayload.images } : {}),
-    ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),
-  });
-  if (!started) return "navigated";
-  useWorkspaceDraftSubmissionStore.getState().setPending({
-    serverId,
-    workspaceId,
-    draftId,
-    text: text.trim(),
-    attachments,
-    cwd: submission.cwd,
-    provider: submission.provider,
-    clientMessageId,
-    timestamp,
-    ...(submission.modeId ? { modeId: submission.modeId } : {}),
-    ...(submission.model ? { model: submission.model } : {}),
-    ...(submission.thinkingOptionId ? { thinkingOptionId: submission.thinkingOptionId } : {}),
-    ...(submission.featureValues ? { featureValues: submission.featureValues } : {}),
-    allowEmptyText: true,
-    agentCreation: input.agentCreation,
-  });
-  clearDraft("sent");
-  navigateToWorkspace({
-    serverId,
-    workspaceId,
-    target: submission.target,
-  });
-  return "navigated";
 }
 
 function useNewWorkspaceHostSelector(input: {
@@ -893,7 +541,7 @@ export function NewWorkspaceScreen({
   const [creationResult, setCreationResult] = useState<
     WorkspaceCreationResult | { workspace: null }
   >({ workspace: null });
-  const [pendingAction, setPendingAction] = useState<"chat" | "empty" | "terminal" | null>(null);
+  const [pendingAction, setPendingAction] = useState<"empty" | "terminal" | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const openAddProjectPicker = useOpenAddProject();
@@ -904,7 +552,6 @@ export function NewWorkspaceScreen({
   const projectPickerAnchorRef = useRef<View>(null);
   const isolationPickerAnchorRef = useRef<View>(null);
   const hostPickerAnchorRef = useRef<View | null>(null);
-  const isDraftHandoffActive = useIsNewWorkspaceDraftHandoffActive({ draftId, selectedServerId });
   const isStillOnCreateScreen = useNewWorkspaceScreenPresence();
 
   // Launch target: what the composer submits to (chat agent, or a terminal
@@ -987,8 +634,8 @@ export function NewWorkspaceScreen({
   const forkDraftSetup = usePendingWorkspaceDraftSetup(draftId);
   const draftContextScopeKey = useDraftWorkspaceAttachmentScopeKey(draftId);
   const visibleDraftContextScopeKeys = useMemo(
-    () => resolveVisibleDraftContextScopeKeys({ isDraftHandoffActive, draftContextScopeKey }),
-    [draftContextScopeKey, isDraftHandoffActive],
+    () => (draftContextScopeKey ? [draftContextScopeKey] : []),
+    [draftContextScopeKey],
   );
   const chatDraft = useAgentInputDraft({
     draftKey,
@@ -1005,6 +652,14 @@ export function NewWorkspaceScreen({
     initialPickerSelectionState,
   );
   const selectedItem = pickerSelection.selectedItem;
+
+  useEffect(() => {
+    const failure = takeWorkspaceCreationFailure(draftKey);
+    if (!failure) return;
+    dispatchPickerSelection({ type: "draft-restored", item: failure.selectedItem });
+    setErrorMessage(failure.error);
+    toast.error(failure.error);
+  }, [draftKey, toast]);
 
   const handleForgeChangeRequestDetected = useCallback(() => {
     dispatchPickerSelection({ type: "pr-detected" });
@@ -1034,10 +689,11 @@ export function NewWorkspaceScreen({
     cwd: selectedSourceDirectory ?? "",
   });
 
+  const flushChatDraft = chatDraft.flush;
   const worktreeSupport = selectedProject
     ? getWorktreeSupportForHostProject({ project: selectedProject, serverId: selectedServerId })
     : "unsupported";
-  const isPending = isNewWorkspacePending({ pendingAction, isDraftHandoffActive });
+  const isPending = pendingAction !== null;
   const { effectiveIsolation, setIsolation, canCreateWorktree, showRefPicker } =
     useWorkspaceIsolation({
       supportsMultiplicity: supportsWorkspaceMultiplicity,
@@ -1290,9 +946,9 @@ export function NewWorkspaceScreen({
     async (payload: MessagePayload) => {
       try {
         setErrorMessage(null);
-        await composerState?.persistFormPreferences();
-        await updateFormPreferences({ launchTarget });
         if (isEmptyWorkspaceSubmission(payload)) {
+          await composerState?.persistFormPreferences();
+          await updateFormPreferences({ launchTarget });
           setPendingAction("empty");
           let outcome: SubmitOutcome = "background";
           await runCreateEmptyWorkspace({
@@ -1316,28 +972,38 @@ export function NewWorkspaceScreen({
           return;
         }
 
-        setPendingAction("chat");
-        const outcome = await runCreateChatAgent({
+        // Capture the submitted version after publishing any last-keystroke edit.
+        flushChatDraft();
+        const attempt = submitWorkspaceChat({
+          serverId: selectedServerId,
+          key: creationIdentity.draftId,
+          returnDraftId: draftId,
+          project: selectedProject,
+          sourceDirectory: selectedSourceDirectory,
+          worktreeSlug: creationIdentity.worktreeSlug,
+          createsWorktree: !supportsWorkspaceMultiplicity || effectiveIsolation === "worktree",
+          selectedItem,
           payload,
           composerState,
-          forkDraftSetup,
-          ensureWorkspace,
-          serverId: selectedServerId,
-          clearDraft: chatDraft.clear,
-          draftKey,
-          draftId: creationIdentity.draftId,
-          draftContextScopeKey,
           supportsForgeSearch,
-          resolveClient: withConnectedClient,
-          isStillOnCreateScreen,
-          labels: {
-            composerStateRequired: t("newWorkspace.errors.composerStateRequired"),
-            selectModel: t("newWorkspace.errors.selectModel"),
+          forkSetup: forkDraftSetup,
+          client: withConnectedClient(),
+          queryClient,
+          draftId: creationIdentity.draftId,
+          draftKey,
+          clearDraft: chatDraft.clear,
+          draftContextScopeKey,
+          persistPreferences: async () => {
+            await composerState?.persistFormPreferences();
+            await updateFormPreferences({ launchTarget });
           },
         });
-        if (outcome === "background") {
-          setPendingAction(null);
-        }
+        leaveFullscreen();
+        navigateToWorkspace({
+          serverId: selectedServerId,
+          workspaceId: attempt.workspaceId,
+          target: { kind: "agent", agentId: attempt.agentId },
+        });
       } catch (error) {
         const message = toErrorMessage(error);
         setPendingAction(null);
@@ -1346,19 +1012,26 @@ export function NewWorkspaceScreen({
       }
     },
     [
+      draftId,
       composerState,
       draftContextScopeKey,
       creationIdentity,
       chatDraft.clear,
+      flushChatDraft,
       draftKey,
       ensureWorkspace,
       forkDraftSetup,
+      selectedProject,
+      selectedSourceDirectory,
+      selectedItem,
+      supportsWorkspaceMultiplicity,
+      effectiveIsolation,
+      queryClient,
       isStillOnCreateScreen,
       launchTarget,
       leaveFullscreen,
       selectedServerId,
       supportsForgeSearch,
-      t,
       toast,
       updateFormPreferences,
       withConnectedClient,

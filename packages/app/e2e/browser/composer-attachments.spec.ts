@@ -13,9 +13,7 @@ import {
   closeImageLightbox,
   pressInterruptShortcut,
   expectComposerDraft,
-  expectComposerDisabled,
   expectComposerEditable,
-  expectAttachButtonDisabled,
   fillComposerDraft,
   dropFileOnComposer,
   sendDraftToQueue,
@@ -268,7 +266,9 @@ test.describe("Composer attachments", () => {
     }
   });
 
-  test("composer is locked while new workspace agent is being created", async ({ page }) => {
+  test("composer and attachments stay available while new workspace agent is being created", async ({
+    page,
+  }) => {
     test.setTimeout(120_000);
     const serverId = getServerId();
 
@@ -298,8 +298,9 @@ test.describe("Composer attachments", () => {
       await agentCreatedDelay.waitForCreateRequest();
       await agentCreatedDelay.waitForDelayedCreatedStatus();
 
-      await expectComposerDisabled(page);
-      await expectAttachButtonDisabled(page);
+      await expectComposerEditable(page);
+      await attachImageFromMenu(page, TEST_IMAGE);
+      await expectAttachmentPill(page, "composer-image-attachment-pill");
 
       agentCreatedDelay.release();
 

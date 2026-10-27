@@ -192,11 +192,16 @@ test.describe("New Workspace dictation submit", () => {
       await harness.waitForCreateRequest();
 
       const composer = page.getByRole("textbox", { name: "Message agent..." });
-      await expect(composer).toHaveValue(TRANSCRIPT);
-      await expect(composer).not.toBeEditable();
+      await expect(page).toHaveURL(/\/workspace\//);
+      await expect(page.getByTestId("user-message").filter({ visible: true })).toContainText(
+        TRANSCRIPT,
+      );
+      await expect(composer).toHaveValue("");
+      await expect(composer).toBeEditable();
 
       harness.failWorkspaceCreation();
 
+      await expect(page).toHaveURL(/\/new\?/);
       await expect(composer).toBeEditable();
       await expect(composer).toHaveValue(TRANSCRIPT);
       await expect(page.getByText(CREATE_FAILURE).first()).toBeVisible();

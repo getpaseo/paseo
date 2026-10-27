@@ -10,7 +10,11 @@ import { deriveWorkspaceTabModel } from "@/screens/workspace/workspace-tab-model
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useAppSettings } from "@/hooks/use-settings";
 import { dispatchComposerAgentMessage } from "@/composer/actions";
-import { createMessageSubmissionWriter } from "@/composer/submission/writer";
+import { isAgentReadyForPrompts } from "@/workspace-creation";
+import {
+  createAgentMessageQueueWriter,
+  createMessageSubmissionWriter,
+} from "@/composer/submission/writer";
 import { useSessionStore, selectAgentTurnPresentation } from "@/stores/session-store";
 import { FLOATING_ACTION_BUTTON_CLEARANCE } from "@/components/ui/floating-action-button";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -77,6 +81,8 @@ export function useReviewFeedback(input: {
           await dispatchComposerAgentMessage({
             client: targetClient,
             agentId: recipient.agentId,
+            isAgentReady: isAgentReadyForPrompts(serverId, recipient.agentId),
+            queue: createAgentMessageQueueWriter(serverId),
             text: i18n.t("review.feedback.prompt"),
             attachments: [attachment],
             encodeImages: async () => [],

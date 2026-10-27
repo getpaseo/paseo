@@ -1339,6 +1339,15 @@ export const ar: TranslationResources = {
     },
   },
   newWorkspace: {
+    creation: {
+      creatingWorkspace: "جارٍ إنشاء مساحة العمل…",
+      creatingLabel: "جارٍ إنشاء مساحة العمل",
+      updateHost: "حدّث هذا المضيف لإنشاء مساحة عمل تتضمن وكيلاً.",
+      chooseProjectHost: "اختر مشروعًا ومضيفًا",
+      projectUnavailable: "المشروع غير متاح على المضيف المحدد",
+      workspacePending: "لا يزال إنشاء مساحة العمل جاريًا.",
+      agentPending: "لا يزال إنشاء الوكيل جاريًا.",
+    },
     title: "مساحة عمل جديدة",
     create: "يخلق",
     isolation: {

@@ -1,3 +1,6 @@
+import { useTranslation } from "react-i18next";
+import { useWorkspaceCreations } from "@/workspace-creation";
+import { creatingSidebarEntry } from "@/workspace-creation/presentation";
 import { useMemo, useRef } from "react";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
@@ -19,6 +22,7 @@ export function useSidebarWorkspaceEntries(
   placements: readonly SidebarWorkspacePlacement[],
   enabled = true,
 ): ReadonlyMap<string, SidebarWorkspaceEntry> {
+  const { t } = useTranslation();
   const serverIds = useMemo(
     () => Array.from(new Set(placements.map((placement) => placement.serverId))),
     [placements],
@@ -32,6 +36,7 @@ export function useSidebarWorkspaceEntries(
   const pendingCreateAttempts = useCreateFlowStore((state) =>
     enabled ? state.pendingByDraftId : EMPTY_PENDING_CREATE_ATTEMPTS,
   );
+  const creations = useWorkspaceCreations();
   const previousEntriesRef = useRef<ReadonlyMap<string, SidebarWorkspaceEntry>>(EMPTY_ENTRIES);
 
   // Collection ownership is intentional: retained sidebars have one cheap
@@ -45,13 +50,26 @@ export function useSidebarWorkspaceEntries(
       previousEntriesRef.current = EMPTY_ENTRIES;
       return EMPTY_ENTRIES;
     }
-    const entries = buildSidebarWorkspaceEntries({
-      placements,
-      sessions,
-      pendingCreateAttempts,
-      previousEntries: previousEntriesRef.current,
-    });
+    const entries = new Map(
+      buildSidebarWorkspaceEntries({
+        placements,
+        sessions,
+        pendingCreateAttempts,
+        workspaceCreations: creations,
+        previousEntries: previousEntriesRef.current,
+      }),
+    );
+    for (const placement of placements) {
+      if (entries.has(placement.workspaceKey)) continue;
+      const creating = creations.some(
+        (creation) =>
+          creation.serverId === placement.serverId &&
+          creation.workspaceId === placement.workspaceId &&
+          !creation.workspaceObserved,
+      );
+      if (creating) entries.set(placement.workspaceKey, creatingSidebarEntry(placement, t));
+    }
     previousEntriesRef.current = entries;
     return entries;
-  }, [enabled, pendingCreateAttempts, placements, sessions]);
+  }, [enabled, pendingCreateAttempts, placements, sessions, creations, t]);
 }

@@ -1346,6 +1346,15 @@ export const ko: TranslationResources = {
     },
   },
   newWorkspace: {
+    creation: {
+      creatingWorkspace: "워크스페이스 생성 중…",
+      creatingLabel: "워크스페이스 생성 중",
+      updateHost: "에이전트가 있는 워크스페이스를 만들려면 이 호스트를 업데이트하세요.",
+      chooseProjectHost: "프로젝트와 호스트를 선택하세요",
+      projectUnavailable: "선택한 호스트에서 프로젝트를 사용할 수 없습니다",
+      workspacePending: "워크스페이스가 아직 생성 중입니다.",
+      agentPending: "에이전트가 아직 생성 중입니다.",
+    },
     title: "새 워크스페이스",
     create: "생성",
     isolation: {

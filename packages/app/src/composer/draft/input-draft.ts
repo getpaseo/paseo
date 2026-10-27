@@ -63,6 +63,7 @@ export interface AgentInputDraft {
   attachments: UserComposerAttachment[];
   setAttachments: (updater: AttachmentUpdater) => void;
   clear: (lifecycle: "sent" | "abandoned") => void;
+  flush: () => void;
   isHydrated: boolean;
   attachmentFocusRequestId: number;
   composerState: DraftComposerState | null;
@@ -171,6 +172,8 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     },
     [draftKey, textPublication],
   );
+
+  const flushDraft = useCallback(() => textPublication.flush(), [textPublication]);
 
   const replaceText = useCallback(
     (nextText: string) => {
@@ -351,6 +354,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
   return {
     textSource,
     editText,
+    flush: flushDraft,
     replaceText,
     textReplacement,
     attachments,

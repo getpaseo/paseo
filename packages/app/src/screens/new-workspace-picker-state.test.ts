@@ -163,6 +163,25 @@ describe("clearPickerPrAttachmentForTargetChange", () => {
 });
 
 describe("reducePickerSelection", () => {
+  it("restores the submitted branch without replacing a newer choice", () => {
+    const submitted = {
+      kind: "branch" as const,
+      name: "recovery-base",
+      refName: "refs/heads/recovery-base",
+      accessibilityLabel: "recovery-base, local branch",
+    };
+    const restoration = { type: "draft-restored" as const, item: submitted };
+    expect(reducePickerSelection(initialPickerSelectionState, restoration).selectedItem).toEqual(
+      submitted,
+    );
+
+    const newer = reducePickerSelection(initialPickerSelectionState, {
+      type: "picker-selected",
+      item: { ...submitted, name: "newer-base", refName: "refs/heads/newer-base" },
+    });
+    expect(reducePickerSelection(newer, restoration)).toBe(newer);
+  });
+
   it("selects a PR that was newly detected and added", () => {
     const item = { kind: "github-pr" as const, item: makePrItem(101, "A") };
     const detected = reducePickerSelection(initialPickerSelectionState, { type: "pr-detected" });

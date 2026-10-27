@@ -1,3 +1,4 @@
+import { useAgentCreation } from "@/workspace-creation";
 import { useShallow } from "zustand/shallow";
 import { useProviderIcon } from "@/components/provider-icons";
 import type { PanelDescriptor } from "@/panels/panel-registry";
@@ -33,6 +34,7 @@ export function useAgentDescriptor(
   target: { kind: "agent"; agentId: string },
   context: { serverId: string },
 ): PanelDescriptor {
+  const creation = useAgentCreation(context.serverId, target.agentId);
   const descriptorState = useSessionStore(
     useShallow((state) => {
       const session = state.sessions[context.serverId];
@@ -49,8 +51,10 @@ export function useAgentDescriptor(
       };
     }),
   );
-  const icon = useProviderIcon(descriptorState.provider, context.serverId);
-  return buildAgentDescriptor({ ...descriptorState, icon });
+  const provider = creation ? creation.provider : descriptorState.provider;
+  const title = creation ? creation.text : descriptorState.title;
+  const icon = useProviderIcon(provider, context.serverId);
+  return buildAgentDescriptor({ ...descriptorState, provider, title, icon });
 }
 
 export function buildAgentDescriptor(input: {

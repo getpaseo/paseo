@@ -1328,6 +1328,15 @@ export const zhCN: TranslationResources = {
     },
   },
   newWorkspace: {
+    creation: {
+      creatingWorkspace: "正在创建工作区…",
+      creatingLabel: "正在创建工作区",
+      updateHost: "请更新此主机，以创建包含代理的工作区。",
+      chooseProjectHost: "请选择项目和主机",
+      projectUnavailable: "所选主机上没有此项目",
+      workspacePending: "工作区仍在创建中。",
+      agentPending: "代理仍在创建中。",
+    },
     title: "新建 workspace",
     create: "创建",
     isolation: {

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -928,3 +928,55 @@ test("agent creation rejects legacy worktree intent without provisioning or exec
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
+
+test.each(["local", "worktree"] as const)(
+  "combined %s creation preserves nested agent placement and rejects invalid source directories",
+  async (isolation) => {
+    const daemon = await createTestPaseoDaemon();
+    const { repoDir, tempRoot } = createGitRepoWithBranch();
+    mkdirSync(path.join(repoDir, "nested"));
+    writeFileSync(path.join(repoDir, "nested", "context.txt"), "nested directory");
+    execFileSync("git", ["add", "."], { cwd: repoDir });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "nested directory"], {
+      cwd: repoDir,
+    });
+    const client = new SocketDaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      clientId: "nested-placement-test",
+      webSocketFactory: (url) => new WebSocket(url) as unknown as WebSocketLike,
+    });
+    try {
+      await client.connect();
+      for (const subdirectory of ["nested", "", "missing", "../outside"]) {
+        const result = await client.createWorkspace({
+          source:
+            isolation === "local"
+              ? { kind: "directory", path: repoDir }
+              : { kind: "worktree", cwd: repoDir },
+          agent: { config: { provider: "codex", cwd: path.resolve(repoDir, subdirectory) } },
+        });
+        expect(result.workspace).toBeTruthy();
+        if (subdirectory === "missing" || subdirectory === "../outside") {
+          expect(result.error).toContain(
+            subdirectory === "missing"
+              ? "Working directory does not exist"
+              : "inside the workspace source",
+          );
+          expect(result.agent).toBeUndefined();
+        } else {
+          expect(result.error).toBeNull();
+          expect(result.agent?.workspaceId).toBe(result.workspace!.id);
+          const actual = await client.fetchAgent({ agentId: result.agent!.id });
+          expect(actual.agent.cwd).toBe(
+            path.join(result.workspace!.workspaceDirectory!, subdirectory),
+          );
+        }
+      }
+    } finally {
+      await client.close();
+      await daemon.close();
+      await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  },
+  180000,
+);

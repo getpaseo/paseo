@@ -34,21 +34,3 @@ export function captureWorkspaceDraftCleanup(input: WorkspaceDraftCleanupInput):
     input.clearDraft("sent");
   };
 }
-
-/**
- * The workspace draft tab normally issues create_agent once it mounts on the destination screen.
- * When the user leaves the New workspace screen before creation resolves, that tab never mounts,
- * so this path issues the request itself. The agent tab opens on its own when the workspace is
- * next visited — `reconcileTabs` auto-opens agents.
- *
- * The caller must not write a pending entry to the draft-submission or create-flow stores on this
- * path: those drive the draft tab's auto-submit, and the daemon does not dedupe create_agent by
- * clientMessageId, so a leftover entry would create a second agent when the workspace is opened.
- */
-export async function createWorkspaceAgentInBackground(input: {
-  clearConsumedDraft: () => void;
-  createAgent: () => Promise<unknown>;
-}): Promise<void> {
-  await input.createAgent();
-  input.clearConsumedDraft();
-}

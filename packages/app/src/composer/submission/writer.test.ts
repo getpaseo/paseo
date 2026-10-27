@@ -2,7 +2,9 @@ import { afterEach, expect, test } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useSessionStore } from "@/stores/session-store";
 import type { UserMessageItem } from "@/types/stream";
-import { createMessageSubmissionWriter } from "./writer";
+import { useDraftStore } from "@/stores/draft-store";
+import { buildDraftStoreKey } from "@/stores/draft-keys";
+import { createMessageSubmissionWriter, transferComposerFollowUps } from "./writer";
 
 const CANONICAL_ONLY_SERVER_ID = "canonical-only";
 
@@ -46,4 +48,60 @@ test("tracks submissions when canonical prompts are supported", () => {
   );
 
   expect(submissionIds(CANONICAL_ONLY_SERVER_ID)).toEqual(["canonical-only-message"]);
+});
+
+const TRANSFER_SERVER_ID = "transfer";
+
+function queued(id: string) {
+  return { id, text: `follow-up ${id}`, attachments: [] };
+}
+function queueIds(agentId: string): string[] {
+  return (
+    useSessionStore.getState().sessions[TRANSFER_SERVER_ID]?.queuedMessages.get(agentId) ?? []
+  ).map((item) => item.id);
+}
+function draftText(agentId: string): string | undefined {
+  return useDraftStore
+    .getState()
+    .getDraftInput(buildDraftStoreKey({ serverId: TRANSFER_SERVER_ID, agentId }))?.text;
+}
+function typeDraft(agentId: string, text: string): void {
+  useDraftStore.getState().saveDraftInput({
+    draftKey: buildDraftStoreKey({ serverId: TRANSFER_SERVER_ID, agentId }),
+    draft: { text, attachments: [] },
+  });
+}
+
+test("follow-ups move with their IDs and order behind the destination's, and only once", () => {
+  initializeSession(TRANSFER_SERVER_ID, {});
+  useSessionStore.getState().setQueuedMessages(
+    TRANSFER_SERVER_ID,
+    new Map([
+      ["optimistic", [queued("a"), queued("b")]],
+      ["recovery", [queued("earlier")]],
+    ]),
+  );
+  typeDraft("optimistic", "typed but unsent");
+
+  transferComposerFollowUps(TRANSFER_SERVER_ID, "optimistic", "recovery");
+  transferComposerFollowUps(TRANSFER_SERVER_ID, "optimistic", "recovery");
+  transferComposerFollowUps(TRANSFER_SERVER_ID, "recovery", "recovery");
+
+  expect(queueIds("recovery")).toEqual(["earlier", "a", "b"]);
+  expect(queueIds("optimistic")).toEqual([]);
+  expect(draftText("recovery")).toBe("typed but unsent");
+  expect(draftText("optimistic")).toBeUndefined();
+  useSessionStore.getState().clearSession(TRANSFER_SERVER_ID);
+});
+
+test("unsent text never replaces a destination draft and stays at its source", () => {
+  initializeSession(TRANSFER_SERVER_ID, {});
+  typeDraft("source", "typed on the source");
+  typeDraft("destination", "already typed here");
+
+  transferComposerFollowUps(TRANSFER_SERVER_ID, "source", "destination");
+
+  expect(draftText("destination")).toBe("already typed here");
+  expect(draftText("source")).toBe("typed on the source");
+  useSessionStore.getState().clearSession(TRANSFER_SERVER_ID);
 });

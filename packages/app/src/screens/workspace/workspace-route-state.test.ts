@@ -173,3 +173,20 @@ describe("resolveWorkspaceRouteState", () => {
     ).toEqual({ kind: "ready" });
   });
 });
+
+it.each(["online", "offline"] as const)(
+  "keeps a reserved workspace usable while %s and directory snapshots omit it",
+  (connectionStatus) => {
+    expect(
+      resolveWorkspaceRouteState({
+        hostName: "Laptop",
+        connectionStatus,
+        lastError: null,
+        workspace: null,
+        hasHydratedWorkspaces: true,
+        recovery: { kind: "idle" },
+        pendingCreation: true,
+      }),
+    ).toEqual({ kind: "ready" });
+  },
+);

@@ -1,5 +1,7 @@
-import type { MessageSubmissionWriter } from "@/composer/actions";
+import type { MessageSubmissionWriter, QueueWriter } from "@/composer/actions";
 import { useSessionStore } from "@/stores/session-store";
+import { useDraftStore, type DraftInput } from "@/stores/draft-store";
+import { buildDraftStoreKey } from "@/stores/draft-keys";
 import {
   appendSubmittedUserMessage,
   removeSubmittedUserMessage,
@@ -63,10 +65,56 @@ export function createMessageSubmissionWriter(serverId: string): MessageSubmissi
   };
 }
 
+export function createAgentMessageQueueWriter(serverId: string): QueueWriter {
+  return {
+    read: (agentId) =>
+      useSessionStore.getState().sessions[serverId]?.queuedMessages.get(agentId) ?? [],
+    write: (update) => useSessionStore.getState().setQueuedMessages(serverId, update),
+  };
+}
+
 export function handoffCreatedAgentMessageSubmission(
   serverId: string,
   agentId: string,
   message: UserMessageItem,
 ): boolean {
   return useSessionStore.getState().handoffCreatedAgentUserMessage(serverId, agentId, message);
+}
+
+function isEmptyDraft(draft: DraftInput | undefined): boolean {
+  return !draft || (!draft.text.trim() && draft.attachments.length === 0);
+}
+
+/**
+ * Moves the queued follow-ups and the unsent agent draft of one composer identity to the identity
+ * that now owns them, such as a recovery draft or the agent it creates. Queued messages keep their
+ * IDs and order, after any already queued there; an idle destination agent drains them. The unsent
+ * draft moves only into an empty slot, and otherwise stays where it is. Repeating is harmless.
+ */
+export function transferComposerFollowUps(serverId: string, from: string, to: string): void {
+  if (from === to) return;
+  const session = useSessionStore.getState().sessions[serverId];
+  if (session?.queuedMessages.get(from)?.length) {
+    useSessionStore.getState().setQueuedMessages(serverId, (queues) => {
+      const moving = queues.get(from);
+      if (!moving?.length) return queues;
+      const next = new Map(queues);
+      next.set(to, [...(queues.get(to) ?? []), ...moving]);
+      next.delete(from);
+      return next;
+    });
+    const agent = session.agents.get(to) ?? session.agentDetails.get(to);
+    if (agent?.turn.phase === "idle") {
+      void import("@/runtime/host-runtime").then(({ getHostRuntimeStore }) =>
+        getHostRuntimeStore().drainQueuedAgentMessage(serverId, to),
+      );
+    }
+  }
+  const drafts = useDraftStore.getState();
+  const source = buildDraftStoreKey({ serverId, agentId: from });
+  const destination = buildDraftStoreKey({ serverId, agentId: to });
+  const draft = drafts.getDraftInput(source);
+  if (!draft || isEmptyDraft(draft) || !isEmptyDraft(drafts.getDraftInput(destination))) return;
+  drafts.saveDraftInput({ draftKey: destination, draft });
+  drafts.clearDraftInput({ draftKey: source });
 }

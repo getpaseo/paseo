@@ -1,3 +1,6 @@
+import { useTranslation } from "react-i18next";
+import { useWorkspaceCreations } from "@/workspace-creation";
+import { addCreatingSidebarWorkspaces } from "@/workspace-creation/presentation";
 import { useHostFeatureMap } from "@/runtime/host-features";
 import { useCallback, useEffect, useMemo } from "react";
 import { useStoreWithEqualityFn } from "zustand/traditional";
@@ -59,6 +62,7 @@ export function useSidebarProjectStatusBucket(input: {
   enabled: boolean;
 }): SidebarStateBucket | null {
   const { workspaces, enabled } = input;
+  const workspaceCreations = useWorkspaceCreations();
   const pendingCreateAttempts = useStoreWithEqualityFn(
     useCreateFlowStore,
     (state) => state.pendingByDraftId,
@@ -72,9 +76,10 @@ export function useSidebarProjectStatusBucket(input: {
         workspaces,
         sessions: state.sessions,
         pendingCreateAttempts,
+        workspaceCreations,
       });
     },
-    [enabled, pendingCreateAttempts, workspaces],
+    [enabled, pendingCreateAttempts, workspaces, workspaceCreations],
   );
 
   return useStoreWithEqualityFn(useSessionStore, selector, Object.is);
@@ -150,10 +155,12 @@ export function useSidebarWorkspacesList(options?: {
       : undefined;
   const { projects: hostProjects } = useWorkspaceStructure(directoryServerIds, sort);
 
+  const { t } = useTranslation();
+  const creations = useWorkspaceCreations();
   const selectPlacements = useMemo(createSidebarWorkspacePlacementSelector, []);
   const sidebarModel = useMemo(
-    () => selectPlacements(hostProjects),
-    [hostProjects, selectPlacements],
+    () => addCreatingSidebarWorkspaces(selectPlacements(hostProjects), creations, t),
+    [hostProjects, selectPlacements, creations, t],
   );
 
   const projects = sidebarModel.projects.length > 0 ? sidebarModel.projects : EMPTY_PROJECTS;

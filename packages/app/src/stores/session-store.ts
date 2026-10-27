@@ -352,6 +352,14 @@ export function selectAgentSentMessages(
   return messages;
 }
 
+/** Whether the host has published this agent to the client. A creating agent is shown before. */
+export function selectIsAgentPublished(
+  session: SessionState | undefined,
+  agentId: string,
+): boolean {
+  return Boolean(session?.agents.has(agentId) || session?.agentDetails.has(agentId));
+}
+
 export function selectAgentTurnPresentation(
   session: SessionState | undefined,
   agentId: string,

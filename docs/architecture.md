@@ -340,11 +340,50 @@ Example: adding a new enum value
 
 ### Creation ownership
 
-Creation is owned by the daemon across socket lifetimes. A workspace request can include
-its initial agent and prompt. Workspace readiness is published before provider startup;
-the app keeps its existing disk-ready navigation and observes the remaining creation.
-Callbacks do not advance the workflow. Resource reservations in acknowledgement are
-identities, not ready workspace records.
+Creation execution is owned by the daemon across socket lifetimes. A workspace request
+can include its initial agent and prompt. The app's `workspace-creation/` module owns
+chat submission presentation outside React: it reserves final IDs and a message identity,
+then opens the agent target before asynchronous preparation or a daemon response.
+The New workspace chat entry requires `creationLifecycle`; empty workspaces, terminal
+launches, and existing-workspace agent drafts retain their own entry points.
+
+Pending presentation never enters the directory replica as a fabricated resource.
+Routes, tabs, and the sidebar retain it until the corresponding authoritative resource
+has been observed. Files, terminals, scripts, and agent timeline initialization wait for
+real resources. The creating agent opens in the normal agent panel and composer, showing
+its submitted configuration. Until the host publishes the agent, its destination cwd is
+unknown and its controls are read-only. The host publishes the agent before it starts the
+initial prompt, so prompts wait in the agent's queue until creation completes
+(`isAgentReadyForPrompts`). `composer/actions.ts` applies that to every prompt path: send
+and review feedback queue behind earlier prompts, and send now and queue drain leave the
+queue untouched. The queue drains on adoption or when the initial turn ends. The first
+message uses composer submission reconciliation; creation never sends it again when the
+panel mounts. Completion does not navigate, and draft cleanup checks the captured version
+so it cannot erase newer input.
+
+A failed creation goes to the existing owner of whatever the host did not create, using
+the receipt's resources and `failedStage`. Creation has no failure UI of its own:
+
+- No workspace: the app returns to New workspace with the submitted draft and checkout
+  selection, and shows the error the way that screen shows its own submit errors.
+- Workspace but no agent: the agent tab becomes an existing-workspace agent draft holding
+  the prompt, in the abandoned create-flow state. Its error and Send retry are that draft's
+  own; the retry creates the agent in the kept workspace.
+- An agent that exists or may exist, including a failed first prompt: creation completes
+  and the agent tab keeps the agent's own timeline and turn error. Turning it into a draft
+  would create a second agent on Send.
+
+Queued follow-ups and unsent composer text belong to a composer identity, so they move
+with the creation: from the form to the creating agent, back to the form or the agent draft
+on failure, and to the created agent after retry (`transferComposerFollowUps`). The initial
+prompt stays the form's or draft's input. The agent draft also carries the submitted
+setup and context attachments. The host ignores `config.cwd` when a create request names a
+workspace, so a draft's retry starts at the workspace root, not a nested fork cwd.
+
+Adopted successful attempts release their payloads; a bounded cache of compact receipts
+absorbs duplicate commands from retained forms. The SDK owns reconnect observation; the
+app has no resend loop. Pending views survive navigation and pane remount, not app
+process death. Resource reservations are identities, not ready workspace records.
 
 The creation journal (`server/creation/`) owns identity and execution for both legacy and
 modern creation RPCs. Requesting progress never selects a different journal. Existing

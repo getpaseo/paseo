@@ -1,3 +1,4 @@
+import type { CreationAttempt } from "@/workspace-creation/model";
 import { deriveEffectiveWorkspaceStatus } from "@/workspace-status";
 import equal from "fast-deep-equal";
 import type { PrHint } from "@/git/pr-hint";
@@ -146,6 +147,7 @@ export function createSidebarWorkspaceEntry(input: {
   workspace: WorkspaceDescriptor;
   projectViewKey?: string;
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
+  workspaceCreations?: readonly CreationAttempt[];
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
 }): SidebarWorkspaceEntry {
   const projectViewKey = input.projectViewKey ?? input.workspace.projectId;
@@ -203,6 +205,7 @@ export function deriveProjectStatusBucket(input: {
   workspaces: readonly SidebarWorkspacePlacement[];
   sessions: Record<string, ProjectStatusSession | undefined>;
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
+  workspaceCreations?: readonly CreationAttempt[];
 }): SidebarStateBucket {
   const workspaceIdsByServer = new Map<string, string[]>();
   for (const placement of input.workspaces) {
@@ -230,6 +233,7 @@ export function deriveProjectStatusBucket(input: {
           serverId,
           workspace,
           pendingCreateAttempts: input.pendingCreateAttempts,
+          workspaceCreations: input.workspaceCreations,
           workspaceAgentActivity: session.workspaceAgentActivity,
         }).status,
       );
@@ -348,6 +352,7 @@ export function buildSidebarWorkspaceEntries(input: {
   placements: readonly SidebarWorkspacePlacement[];
   sessions: SidebarWorkspaceSession[];
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
+  workspaceCreations?: readonly CreationAttempt[];
   previousEntries?: ReadonlyMap<string, SidebarWorkspaceEntry>;
 }): ReadonlyMap<string, SidebarWorkspaceEntry> {
   if (input.placements.length === 0 || input.sessions.length === 0) {
@@ -374,6 +379,7 @@ export function buildSidebarWorkspaceEntries(input: {
       workspace,
       projectViewKey: placement.projectViewKey,
       pendingCreateAttempts: input.pendingCreateAttempts,
+      workspaceCreations: input.workspaceCreations,
       workspaceAgentActivity: session.workspaceAgentActivity,
     });
     const previousEntry = input.previousEntries?.get(placement.workspaceKey);

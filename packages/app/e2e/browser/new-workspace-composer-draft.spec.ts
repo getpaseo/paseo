@@ -1,7 +1,8 @@
+import { observeCreationRequests } from "../support/helpers/creation";
 import {
   composerLocator,
   enterComposerFullscreen,
-  exitComposerFullscreen,
+  fillComposerDraft,
   resizeComposerViewport,
 } from "../support/helpers/composer";
 import { expect, test } from "../support/fixtures";
@@ -95,6 +96,7 @@ test.describe("New workspace composer draft", () => {
 
   test("does not restore a submitted draft after deferred publication", async ({ page }) => {
     const project = await seedWorkspace({ repoPrefix: "new-workspace-submitted-draft-" });
+    const requests = await observeCreationRequests(page);
 
     try {
       await gotoAppShell(page);
@@ -134,6 +136,9 @@ test.describe("New workspace composer draft", () => {
       }, DRAFT);
 
       await page.waitForURL((url) => url.pathname.includes("/workspace/"), { timeout: 30_000 });
+      // Navigation now precedes creation; wait for success before checking consumed input.
+      await expect.poll(requests.workspaceRequests).toBe(1);
+      await requests.settled();
       await openGlobalNewWorkspaceComposer(page);
       await expectNewWorkspaceDraft(page, "");
     } finally {
@@ -142,10 +147,11 @@ test.describe("New workspace composer draft", () => {
   });
 });
 
-test("fullscreen creation returns inline and keeps submission locked when reopened", async ({
+test("fullscreen creation opens the inline agent composer and keeps follow-up editing available", async ({
   page,
 }) => {
   const project = await seedWorkspace({ repoPrefix: "fullscreen-submit-pending-" });
+  const followUpDraft = `${DRAFT}\nKeep this follow-up draft.`;
   const delay = await delayBrowserWorkspaceCreatedResponse(page);
   try {
     await gotoAppShell(page);
@@ -157,25 +163,23 @@ test("fullscreen creation returns inline and keeps submission locked when reopen
     await page.getByRole("button", { name: "Create", exact: true }).click();
     await delay.waitForCreateRequest();
 
-    await test.step("submission returns inline with the original draft and spinner", async () => {
+    await test.step("submission opens the normal agent panel inline", async () => {
+      await expect(page).toHaveURL(/\/workspace\//);
       await expect(page.getByTestId("composer-fullscreen")).toHaveCount(0);
-      await expect(composerLocator(page)).toHaveValue(DRAFT);
-      await expect(composerLocator(page)).not.toBeEditable();
-      await expect(page.getByRole("button", { name: "Create", exact: true })).toBeDisabled();
-      await expect(page.getByRole("progressbar")).toBeVisible();
+      await expect(page.getByTestId("user-message").filter({ visible: true })).toContainText(DRAFT);
+      await expect(composerLocator(page)).toHaveValue("");
+      await expect(composerLocator(page)).toBeEditable();
     });
-    await test.step("fullscreen can reopen while pending without unlocking or duplicating submission", async () => {
+    await test.step("fullscreen can reopen to edit a follow-up while creation is pending", async () => {
+      await fillComposerDraft(page, followUpDraft);
       await enterComposerFullscreen(page);
       await expect(page.getByTestId("composer-fullscreen")).toBeVisible();
-      await expect(composerLocator(page)).toHaveValue(DRAFT);
-      await expect(composerLocator(page)).not.toBeEditable();
-      await expect(page.getByRole("button", { name: "Create", exact: true })).toBeDisabled();
-      await expect(page.getByRole("progressbar")).toBeVisible();
-      await exitComposerFullscreen(page);
+      await expect(composerLocator(page)).toHaveValue(followUpDraft);
+      await expect(composerLocator(page)).toBeEditable();
     });
     delay.release();
     await page.waitForURL((url) => url.pathname.includes("/workspace/"));
-    await expect(composerLocator(page)).toHaveValue("");
+    await expect(composerLocator(page)).toHaveValue(followUpDraft);
     await expect(composerLocator(page)).toBeEditable();
     expect(delay.agentRequests).toHaveLength(1);
   } finally {

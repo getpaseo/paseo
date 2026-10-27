@@ -58,6 +58,7 @@ import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import {
   selectAgentSentMessages,
   selectAgentTurnPresentation,
+  selectIsAgentPublished,
   useSessionStore,
 } from "@/stores/session-store";
 import { useFilePicker } from "@/hooks/use-file-picker";
@@ -88,9 +89,9 @@ import {
   toggleForgeAttachmentFromPicker,
   uploadFileAttachments,
   type AttachmentPersister,
-  type QueueWriter,
   type QueuedComposerMessage,
 } from "@/composer/actions";
+import { isAgentReadyForPrompts } from "@/workspace-creation";
 import { useVoiceOptional } from "@/contexts/voice-context";
 import { useToast } from "@/contexts/toast-context";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -123,7 +124,10 @@ import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispat
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { submitAgentInput } from "@/composer/submit";
 import { ComposerRecall } from "@/composer/recall";
-import { createMessageSubmissionWriter } from "@/composer/submission/writer";
+import {
+  createAgentMessageQueueWriter,
+  createMessageSubmissionWriter,
+} from "@/composer/submission/writer";
 import { ComposerKeyboardScopeProvider, useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { useAppSettings } from "@/hooks/use-settings";
 import { RenderProfile } from "@/utils/render-profiler";
@@ -258,8 +262,8 @@ function resolveCheckoutRemoteUrl(
   return checkoutStatus?.remoteUrl ?? null;
 }
 
-function buildCancelButtonStyle(isConnected: boolean, isCancellingAgent: boolean): object[] {
-  const disabled = !isConnected || isCancellingAgent ? styles.buttonDisabled : undefined;
+function buildCancelButtonStyle(canCancel: boolean, isCancellingAgent: boolean): object[] {
+  const disabled = !canCancel || isCancellingAgent ? styles.buttonDisabled : undefined;
   return [styles.cancelButton, disabled].filter((value): value is object => Boolean(value));
 }
 
@@ -1083,7 +1087,7 @@ interface ComposerCancelButtonProps {
   buttonIconSize: number;
   cancelButtonStyle: (object | undefined)[];
   handleCancelAgent: () => void;
-  isConnected: boolean;
+  canCancel: boolean;
   isCancellingAgent: boolean;
   agentInterruptKeys: ReturnType<typeof useShortcutKeys>;
   t: TFunction;
@@ -1093,7 +1097,7 @@ function ComposerCancelButton({
   buttonIconSize,
   cancelButtonStyle,
   handleCancelAgent,
-  isConnected,
+  canCancel,
   isCancellingAgent,
   agentInterruptKeys,
   t,
@@ -1111,7 +1115,7 @@ function ComposerCancelButton({
     <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
       <TooltipTrigger
         onPress={handleCancelAgent}
-        disabled={!isConnected || isCancellingAgent}
+        disabled={!canCancel || isCancellingAgent}
         accessibilityLabel={accessibilityLabel}
         accessibilityRole="button"
         style={cancelButtonStyle}
@@ -1305,8 +1309,6 @@ function ComposerContentImpl({
     state.sessions[serverId]?.queuedMessages?.get(agentId),
   );
   const queuedMessages = queuedMessagesRaw ?? EMPTY_ARRAY;
-
-  const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
 
   const isCompactFormFactor = useIsCompactFormFactor();
   const isCompactLayout = resolveCompactLayout(isCompactLayoutOverride, isCompactFormFactor);
@@ -1570,9 +1572,12 @@ function ComposerContentImpl({
       if (!client) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
+      const session = useSessionStore.getState().sessions[serverId];
       await dispatchComposerAgentMessage({
         client,
         agentId: targetAgentId,
+        isAgentReady: isAgentReadyForPrompts(serverId, targetAgentId),
+        queue: createAgentMessageQueueWriter(serverId),
         text,
         attachments: sendAttachments,
         attachmentSubmitFormat: resolveComposerAttachmentSubmitFormat({
@@ -1583,10 +1588,7 @@ function ComposerContentImpl({
         activeTurnBehavior,
         activeTurnId:
           activeTurnBehavior === "steer"
-            ? (selectAgentTurnPresentation(
-                useSessionStore.getState().sessions[serverId],
-                targetAgentId,
-              ).turnId ?? undefined)
+            ? (selectAgentTurnPresentation(session, targetAgentId).turnId ?? undefined)
             : undefined,
       });
       onAttentionPromptSend?.();
@@ -1620,13 +1622,7 @@ function ComposerContentImpl({
   );
   const hasAgent = agentState.status !== null;
 
-  const queueWriter = useMemo<QueueWriter>(
-    () => ({
-      read: (id) => useSessionStore.getState().sessions[serverId]?.queuedMessages?.get(id) ?? [],
-      write: (updater) => setQueuedMessages(serverId, updater),
-    }),
-    [serverId, setQueuedMessages],
-  );
+  const queueWriter = useMemo(() => createAgentMessageQueueWriter(serverId), [serverId]);
 
   const queueMessage = useCallback(
     (queuedMessage: string, queuedAttachments: ComposerAttachment[]) => {
@@ -1896,6 +1892,10 @@ function ComposerContentImpl({
     const cancellation = cancelComposerAgent({
       client,
       agentId: targetAgentId,
+      isAgentPublished: selectIsAgentPublished(
+        useSessionStore.getState().sessions[serverId],
+        targetAgentId,
+      ),
       isAgentRunning,
       isCancellingAgent,
       isConnected,
@@ -1952,6 +1952,7 @@ function ComposerContentImpl({
       // Reuse the regular send path; server-side send atomically interrupts any active run.
       const result = await sendQueuedComposerMessageNow({
         agentId,
+        isAgentReady: isAgentReadyForPrompts(serverId, agentId),
         messageId: id,
         queue: queueWriter,
         submitMessage: ({ text, attachments: queuedAttachments }) =>
@@ -1962,7 +1963,7 @@ function ComposerContentImpl({
         setSendError(result.errorMessage);
       }
     },
-    [agentId, queueWriter, submitMessage, t],
+    [agentId, queueWriter, serverId, submitMessage, t],
   );
 
   const handleQueue = useCallback(
@@ -2010,9 +2011,14 @@ function ComposerContentImpl({
     [agentId, recall, replaceUserInput, serverId],
   );
 
+  const isAgentPublished = useSessionStore((state) =>
+    selectIsAgentPublished(state.sessions[serverId], agentId),
+  );
+  // A creating agent cannot be stopped until the host publishes it.
+  const canCancelAgent = isConnected && isAgentPublished;
   const cancelButtonStyle = useMemo(
-    () => buildCancelButtonStyle(isConnected, isCancellingAgent),
-    [isConnected, isCancellingAgent],
+    () => buildCancelButtonStyle(canCancelAgent, isCancellingAgent),
+    [canCancelAgent, isCancellingAgent],
   );
 
   const isVoiceSwitching = voice?.isVoiceSwitching ?? false;
@@ -2029,7 +2035,7 @@ function ComposerContentImpl({
         buttonIconSize={buttonIconSize}
         cancelButtonStyle={cancelButtonStyle}
         handleCancelAgent={handleCancelAgent}
-        isConnected={isConnected}
+        canCancel={canCancelAgent}
         isCancellingAgent={isCancellingAgent}
         agentInterruptKeys={agentInterruptKeys}
         t={t}
@@ -2039,9 +2045,9 @@ function ComposerContentImpl({
       agentInterruptKeys,
       buttonIconSize,
       cancelButtonStyle,
+      canCancelAgent,
       handleCancelAgent,
       isCancellingAgent,
-      isConnected,
       t,
     ],
   );

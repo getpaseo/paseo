@@ -1,3 +1,9 @@
+import { i18n } from "@/i18n/i18next";
+import {
+  includeCreatingAgent,
+  workspaceCreationPresentation,
+} from "@/workspace-creation/presentation";
+import { isAgentCreationPending, useWorkspaceCreation } from "@/workspace-creation";
 import { useHostFeature } from "@/runtime/host-features";
 import {
   AssistantFileLinkResolverProvider,
@@ -644,13 +650,16 @@ function buildWorkspaceHeaderCheckoutState(input: {
 function deriveWorkspaceHeaderFields(input: {
   workspace: WorkspaceDescriptor | null;
   checkoutState: WorkspaceHeaderCheckoutState;
+  pendingProjectName?: string;
 }): WorkspaceHeaderFields {
   const renderState = resolveWorkspaceHeaderRenderState(input);
   if (renderState.kind !== "ready") {
     return {
-      isWorkspaceHeaderLoading: true,
-      workspaceHeaderTitle: "",
-      workspaceHeaderSubtitle: "",
+      isWorkspaceHeaderLoading: !input.pendingProjectName,
+      workspaceHeaderTitle: input.pendingProjectName
+        ? i18n.t("newWorkspace.creation.creatingWorkspace")
+        : "",
+      workspaceHeaderSubtitle: input.pendingProjectName ?? "",
       isWorkspaceHeaderSubtitleDistinct: false,
       isGitCheckout: false,
       currentBranchName: null,
@@ -713,6 +722,7 @@ function useResolvedWorkspaceRouteState(input: {
   workspace: WorkspaceDescriptor | null;
   hasHydratedWorkspaces: boolean;
   recovery: WorkspaceRecoveryModel;
+  pendingCreation: boolean;
 }): WorkspaceRouteState {
   const hosts = useHosts();
   const host = useMemo(
@@ -730,6 +740,7 @@ function useResolvedWorkspaceRouteState(input: {
         workspace: input.workspace,
         hasHydratedWorkspaces: input.hasHydratedWorkspaces,
         recovery: input.recovery,
+        pendingCreation: input.pendingCreation,
       }),
     [
       hostName,
@@ -738,6 +749,7 @@ function useResolvedWorkspaceRouteState(input: {
       input.workspace,
       input.hasHydratedWorkspaces,
       input.recovery,
+      input.pendingCreation,
     ],
   );
 }
@@ -746,7 +758,9 @@ function shouldInspectWorkspaceRecovery(
   hasHydratedWorkspaces: boolean,
   workspace: WorkspaceDescriptor | null,
   pendingOpenTarget: WorkspaceTabTarget | null,
+  canInspectCreation: boolean,
 ): boolean {
+  if (!canInspectCreation) return false;
   return pendingOpenTarget?.kind === "agent" && hasHydratedWorkspaces && workspace === null;
 }
 
@@ -1035,12 +1049,23 @@ function WorkspaceScreenContent({
     [workspaceId],
   );
   const workspaceDescriptor = useWorkspace(normalizedServerId, normalizedWorkspaceId);
+  const creation = useWorkspaceCreation(normalizedServerId, normalizedWorkspaceId);
+  const creationPresentation = useMemo(
+    () => workspaceCreationPresentation(workspaceDescriptor, creation),
+    [workspaceDescriptor, creation],
+  );
   useEffect(() => {
-    if (!normalizedServerId || !normalizedWorkspaceId || workspaceDescriptor) return;
+    if (
+      !normalizedServerId ||
+      !normalizedWorkspaceId ||
+      workspaceDescriptor ||
+      (creation && !creation.workspaceObserved)
+    )
+      return;
     void getHostRuntimeStore()
       .prepareWorkspaceRoute(normalizedServerId, normalizedWorkspaceId)
       .catch(() => undefined);
-  }, [normalizedServerId, normalizedWorkspaceId, workspaceDescriptor]);
+  }, [normalizedServerId, normalizedWorkspaceId, workspaceDescriptor, creation]);
   // The focused workspace keeps its script status live even when no sidebar or viewed agent
   // timeline demands the directory. Retained, hidden workspaces release it.
   useEffect(() => {
@@ -1142,7 +1167,7 @@ function WorkspaceScreenContent({
     onOpened: revealWorkspaceTab,
     workspaceKey: persistenceKey,
     hasHydratedWorkspaces,
-    workspaceExists: workspaceDescriptor !== null,
+    workspaceExists: creationPresentation.exists,
   });
   const workspaceRecovery = useWorkspaceRecovery({
     serverId: normalizedServerId,
@@ -1151,6 +1176,7 @@ function WorkspaceScreenContent({
       hasHydratedWorkspaces,
       workspaceDescriptor,
       pendingOpenTarget,
+      creationPresentation.canInspectRecovery,
     ),
   });
 
@@ -1162,10 +1188,15 @@ function WorkspaceScreenContent({
       }),
     [normalizedServerId, normalizedWorkspaceId],
   );
-  const workspaceAgentVisibility = useStoreWithEqualityFn(
+  const directoryAgentVisibility = useStoreWithEqualityFn(
     useSessionStore,
     selectWorkspaceAgentVisibility,
     workspaceAgentVisibilityEqual,
+  );
+
+  const workspaceAgentVisibility = useMemo(
+    () => includeCreatingAgent(directoryAgentVisibility, creation),
+    [directoryAgentVisibility, creation],
   );
 
   const {
@@ -1233,6 +1264,7 @@ function WorkspaceScreenContent({
     workspace: workspaceDescriptor,
     hasHydratedWorkspaces,
     recovery: workspaceRecovery.state,
+    pendingCreation: creationPresentation.workspacePending,
   });
   const workspaceHeaderCheckoutState = buildWorkspaceHeaderCheckoutState({
     isCheckoutStatusLoading,
@@ -1249,6 +1281,7 @@ function WorkspaceScreenContent({
   } = deriveWorkspaceHeaderFields({
     workspace: workspaceDescriptor,
     checkoutState: workspaceHeaderCheckoutState,
+    pendingProjectName: creationPresentation.projectName,
   });
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
 
@@ -1412,7 +1445,7 @@ function WorkspaceScreenContent({
     () => isMobile || isFocusModeEnabled || !supportsDesktopPaneSplits(),
     [isFocusModeEnabled, isMobile],
   );
-  const visibleAgentIds = useVisibleAgentIds({
+  const tabAgentIds = useVisibleAgentIds({
     layout: workspaceLayout,
     tabs: uiTabs,
     sheetTab,
@@ -1421,6 +1454,13 @@ function WorkspaceScreenContent({
     explorerPaneId: explorerSidebarPaneId,
     explorerVisible: isExplorerSidebarShowing,
   });
+  const visibleAgentIds = useMemo(
+    () =>
+      tabAgentIds.filter(
+        (agentId) => !creation || creation.agentId !== agentId || creation.agentObserved,
+      ),
+    [tabAgentIds, creation],
+  );
   useEffect(() => {
     for (const agentId of visibleAgentIds) {
       void getHostRuntimeStore()
@@ -1834,6 +1874,10 @@ function WorkspaceScreenContent({
 
   const launchWorkspaceTab = useCallback(
     (selection: NewTabSelection, destination: WorkspaceTabLaunchDestination) => {
+      if (!workspaceDirectory) {
+        toast.error(t("newWorkspace.creation.workspacePending"));
+        return;
+      }
       if (!persistenceKey) {
         return;
       }
@@ -1865,7 +1909,15 @@ function WorkspaceScreenContent({
       const { browserId } = createWorkspaceBrowser();
       openTarget({ kind: "browser", browserId });
     },
-    [createTerminal, createWorkspaceTab, persistenceKey, replaceWorkspaceTabTarget],
+    [
+      createTerminal,
+      createWorkspaceTab,
+      persistenceKey,
+      replaceWorkspaceTabTarget,
+      workspaceDirectory,
+      t,
+      toast,
+    ],
   );
 
   const handleOpenUrlInBrowserTab = useCallback(
@@ -1951,6 +2003,10 @@ function WorkspaceScreenContent({
   const handleCloseAgentTab = useCallback(
     async (input: { tabId: string; agentId: string }) => {
       const { tabId, agentId } = input;
+      if (isAgentCreationPending(normalizedServerId, agentId)) {
+        closeWorkspaceTabWithCleanup({ tabId, target: { kind: "agent", agentId } });
+        return;
+      }
       await closeTab(tabId, async () => {
         if (!normalizedServerId) {
           return;
@@ -2164,6 +2220,10 @@ function WorkspaceScreenContent({
 
   const handleReloadAgent = useCallback(
     async (agentId: string) => {
+      if (isAgentCreationPending(normalizedServerId, agentId)) {
+        toast.show(t("newWorkspace.creation.agentPending"));
+        return;
+      }
       if (!client || !isConnected) {
         toast.error(t("workspace.terminal.hostDisconnected"));
         return;
@@ -2249,6 +2309,7 @@ function WorkspaceScreenContent({
       }
 
       const groups = classifyBulkClosableTabs(tabsToClose, (agentId) => {
+        if (isAgentCreationPending(normalizedServerId, agentId)) return "layout-only";
         const agent = useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId);
         return resolveCloseAgentTabPolicy(agent).kind === "layout-only" ? "layout-only" : "archive";
       });
@@ -2280,6 +2341,7 @@ function WorkspaceScreenContent({
         groups,
         closeTab,
         closeLayoutOnlyAgent: async (agentId) => {
+          if (isAgentCreationPending(normalizedServerId, agentId)) return;
           if (!client) {
             throw new Error(t("common.errors.daemonClientUnavailable"));
           }

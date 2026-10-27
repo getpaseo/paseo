@@ -1,3 +1,5 @@
+import { useAgentCreation } from "@/workspace-creation";
+import { pendingCreationAgent } from "@/workspace-creation/presentation";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -472,6 +474,7 @@ function AgentPanelContent({
     );
   });
 
+  const creation = useAgentCreation(serverId, agentId);
   const connectionServerId = resolvedServerId ?? null;
   const daemon = connectionServerId
     ? (daemons.find((entry) => entry.serverId === connectionServerId) ?? null)
@@ -485,7 +488,7 @@ function AgentPanelContent({
       : runtimeConnectionStatus;
   const lastConnectionError = runtimeLastError;
 
-  if (!resolvedServerId || (!runtimeClient && !hasCachedAgent)) {
+  if (!resolvedServerId || (!runtimeClient && !hasCachedAgent && !creation)) {
     return (
       <AgentSessionUnavailableState
         serverLabel={serverLabel}
@@ -548,6 +551,8 @@ function AgentPanelBody({
   const agentState = useSessionStore(
     useShallow((state) => selectChatAgentState(state, serverId, agentId)),
   );
+  // A creating agent is known locally before the host can return it.
+  const isCreating = useAgentCreation(serverId, agentId ?? "") !== null;
   const [lookupState, setLookupState] = useState<AgentLookupState>({ tag: "idle" });
   const lookupAttemptTokenRef = useRef(0);
   const retryAgentLookup = useCallback(() => setLookupState({ tag: "idle" }), []);
@@ -558,7 +563,7 @@ function AgentPanelBody({
   }, [agentId, serverId]);
 
   useEffect(() => {
-    if (!agentId) {
+    if (!agentId || isCreating) {
       return;
     }
     if (agentState.id) {
@@ -606,7 +611,16 @@ function AgentPanelBody({
         }
         setLookupState({ tag: "error", message });
       });
-  }, [agentId, agentState.id, client, hasSession, isConnected, lookupState.tag, serverId]);
+  }, [
+    agentId,
+    agentState.id,
+    client,
+    hasSession,
+    isConnected,
+    isCreating,
+    lookupState.tag,
+    serverId,
+  ]);
 
   if (lookupState.tag === "not_found") {
     return (
@@ -642,7 +656,7 @@ function AgentPanelBody({
         }
       : null;
 
-  if (!agent) {
+  if (!agent && !isCreating) {
     return (
       <View style={styles.container} testID="agent-loading">
         <View style={styles.errorContainer}>
@@ -755,6 +769,7 @@ function ChatAgentContent({
   const hasActiveCreateHandoff = useCreateFlowStore((state) =>
     findActiveCreateHandoff({ pendingByDraftId: state.pendingByDraftId, serverId, agentId }),
   );
+  const creation = useAgentCreation(serverId, agentId ?? "");
   const hasSession = useSessionStore((state) => Boolean(state.sessions[serverId]));
   const [missingAgentState, setMissingAgentState] = useState<AgentScreenMissingState>({
     kind: "idle",
@@ -812,6 +827,9 @@ function ChatAgentContent({
     [agentState, projectPlacement],
   );
   const continuity = useMemo<AgentScreenContinuity>(() => {
+    if (creation) {
+      return { kind: "optimistic-create", agent: pendingCreationAgent(creation) };
+    }
     if (!hasActiveCreateHandoff || !agentId) {
       return { kind: "none" };
     }
@@ -825,7 +843,7 @@ function ChatAgentContent({
         projectPlacement: agent?.projectPlacement ?? null,
       },
     };
-  }, [agent, agentId, hasActiveCreateHandoff, serverId]);
+  }, [agent, agentId, creation, hasActiveCreateHandoff, serverId]);
 
   const viewState = useAgentScreenStateMachine({
     routeKey: `${serverId}:${agentId ?? ""}`,
@@ -898,7 +916,7 @@ function ChatAgentContent({
   }, [agentId, serverId]);
 
   useEffect(() => {
-    if (!agentId) {
+    if (!agentId || creation) {
       return;
     }
     if (agentState.archivedAt) {
@@ -979,6 +997,7 @@ function ChatAgentContent({
     agentState.archivedAt,
     hasAppliedAuthoritativeHistory,
     agentId,
+    creation,
     client,
     hasSession,
     isConnected,
@@ -998,8 +1017,8 @@ function ChatAgentContent({
   if (nonReadyView) return nonReadyView;
   invariant(agentId, "agent id is defined when agent content is ready");
   invariant(effectiveAgent, "effectiveAgent is defined when the non-ready view is absent");
-  const agentCwd = agentState.cwd;
-  invariant(agentCwd, "agent cwd is defined when agent content is ready");
+  // Empty while a creating agent waits for the host to choose its directory.
+  const agentCwd = effectiveAgent.cwd;
   const showHistorySyncOverlay =
     viewState.tag === "ready" &&
     viewState.sync.status === "catching_up" &&
@@ -1132,6 +1151,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   const {
     textSource,
     editText,
+    flush,
     replaceText,
     textReplacement,
     attachments,
@@ -1145,6 +1165,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     (): AgentInputDraft => ({
       textSource,
       editText,
+      flush,
       replaceText,
       textReplacement,
       attachments,
@@ -1157,6 +1178,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     [
       textSource,
       editText,
+      flush,
       replaceText,
       textReplacement,
       attachments,

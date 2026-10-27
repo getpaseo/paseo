@@ -1365,6 +1365,15 @@ export const ptBR: TranslationResources = {
     },
   },
   newWorkspace: {
+    creation: {
+      creatingWorkspace: "Criando espaço de trabalho…",
+      creatingLabel: "Criando espaço de trabalho",
+      updateHost: "Atualize este host para criar um espaço de trabalho com um agente.",
+      chooseProjectHost: "Escolha um projeto e um host",
+      projectUnavailable: "O projeto não está disponível no host selecionado",
+      workspacePending: "O espaço de trabalho ainda está sendo criado.",
+      agentPending: "O agente ainda está sendo criado.",
+    },
     title: "Novo workspace",
     create: "Criar",
     isolation: {

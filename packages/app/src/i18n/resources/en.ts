@@ -1347,6 +1347,15 @@ export const en = {
     },
   },
   newWorkspace: {
+    creation: {
+      creatingWorkspace: "Creating workspace…",
+      creatingLabel: "Creating workspace",
+      updateHost: "Update this host to create a workspace with an agent.",
+      chooseProjectHost: "Choose a project and host",
+      projectUnavailable: "Project is not available on the selected host",
+      workspacePending: "Workspace is still being created.",
+      agentPending: "Agent is still being created.",
+    },
     title: "New workspace",
     create: "Create",
     isolation: {

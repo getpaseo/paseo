@@ -34,7 +34,9 @@ export function resolveWorkspaceRouteState(input: {
   workspace: WorkspaceDescriptor | null;
   hasHydratedWorkspaces: boolean;
   recovery: WorkspaceRecoveryModel;
+  pendingCreation?: boolean;
 }): WorkspaceRouteState {
+  if (input.pendingCreation) return { kind: "ready" };
   if (input.workspace) {
     if (input.connectionStatus === "online") {
       if (input.recovery.kind === "recoverable" && input.recovery.phase === "restoring") {

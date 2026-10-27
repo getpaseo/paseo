@@ -21,9 +21,12 @@ import { useSessionStore, type Agent } from "@/stores/session-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { isAgentArchiving, setAgentArchiving } from "@/hooks/use-archive-agent";
 import { queryClient } from "@/data/query-client";
+import { workspaceCreations } from "@/workspace-creation/runtime";
+import { hasActiveMessageSubmission } from "@/composer/submission/model";
 import {
   HostRuntimeController,
   HostRuntimeStore,
+  getHostRuntimeStore,
   readInitialDaemonConnectionHint,
   type HostRuntimeControllerDeps,
   type HostRuntimeStorage,
@@ -73,6 +76,8 @@ class FakeDaemonClient {
     Awaited<ReturnType<DaemonClient["fetchAgents"]>> | ReturnType<DaemonClient["fetchAgents"]>
   > = [];
   public sentAgentMessages: Array<Parameters<DaemonClient["sendAgentMessage"]>> = [];
+  public createWorkspaceRequests: Array<Parameters<DaemonClient["createWorkspace"]>[0]> = [];
+  public createWorkspaceResponse: ReturnType<DaemonClient["createWorkspace"]> | null = null;
   public sendAgentMessageFailures: Error[] = [];
   public sendAgentMessageResponses: Promise<void>[] = [];
   private agentUpdateListeners = new Set<
@@ -117,6 +122,14 @@ class FakeDaemonClient {
     for (const listener of this.agentUpdateListeners) {
       listener({ type: "agent_update", payload });
     }
+  }
+
+  createWorkspace(
+    request: Parameters<DaemonClient["createWorkspace"]>[0],
+  ): ReturnType<DaemonClient["createWorkspace"]> {
+    this.createWorkspaceRequests.push(request);
+    if (!this.createWorkspaceResponse) throw new Error("Unexpected workspace creation");
+    return this.createWorkspaceResponse;
   }
 
   async connect(): Promise<void> {
@@ -424,6 +437,23 @@ function makeFetchAgentsEntry(input: {
 
 function replicaAgent(snapshot: FetchAgentsEntry["agent"], serverId: string): Agent {
   return { ...normalizeAgentSnapshot(snapshot, serverId), projectPlacement: null };
+}
+
+/** Drains only send to an agent the host has published to this client. */
+function publishAgent(serverId: string, agentId: string): void {
+  const entry = makeFetchAgentsEntry({
+    id: agentId,
+    cwd: "/repo",
+    updatedAt: "2026-07-12T10:00:00.000Z",
+  });
+  useSessionStore
+    .getState()
+    .setAgents(serverId, new Map([[agentId, replicaAgent(entry.agent, serverId)]]));
+}
+
+function queuedTexts(serverId: string, agentId: string): string[] {
+  const queued = useSessionStore.getState().sessions[serverId]?.queuedMessages.get(agentId) ?? [];
+  return queued.map((item) => item.text);
 }
 
 function agentPermission(id: string): AgentPermissionRequest {
@@ -3168,6 +3198,7 @@ describe("HostRuntimeStore", () => {
     });
     const sessionStore = useSessionStore.getState();
     sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    publishAgent(host.serverId, "agent");
     sessionStore.updateSessionServerInfo(host.serverId, {
       serverId: host.serverId,
       hostname: null,
@@ -3233,6 +3264,7 @@ describe("HostRuntimeStore", () => {
     });
     const sessionStore = useSessionStore.getState();
     sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    publishAgent(host.serverId, "agent");
     sessionStore.setQueuedMessages(
       host.serverId,
       new Map([
@@ -3279,6 +3311,7 @@ describe("HostRuntimeStore", () => {
     });
     const sessionStore = useSessionStore.getState();
     sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    publishAgent(host.serverId, "agent");
     sessionStore.setQueuedMessages(
       host.serverId,
       new Map([["agent", [{ id: "first", text: "send once", attachments: [] }]]]),
@@ -3298,6 +3331,212 @@ describe("HostRuntimeStore", () => {
     useSessionStore.getState().clearSession(host.serverId);
   });
 
+  it("keeps queued messages in order without sending while the agent is unpublished", async () => {
+    const host = makeHost({ serverId: "srv_unpublished_queue_drain" });
+    const fakeClient = new FakeDaemonClient();
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: null,
+        }),
+        getClientId: async () => "cid_unpublished_queue_drain",
+      },
+    });
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    sessionStore.setQueuedMessages(
+      host.serverId,
+      new Map([
+        [
+          "agent",
+          [
+            { id: "first", text: "first follow-up", attachments: [] },
+            { id: "second", text: "second follow-up", attachments: [] },
+          ],
+        ],
+      ]),
+    );
+
+    store.drainQueuedAgentMessage(host.serverId, "agent");
+
+    await vi.waitFor(() => {
+      expect(queuedTexts(host.serverId, "agent")).toEqual(["first follow-up", "second follow-up"]);
+    });
+    expect(fakeClient.sentAgentMessages).toEqual([]);
+    useSessionStore.getState().clearSession(host.serverId);
+  });
+
+  it("keeps queued messages in place for a published agent whose creation has not completed", async () => {
+    // The host publishes a created agent before it starts the initial prompt.
+    const host = makeHost({ serverId: "srv_creating_queue_drain" });
+    const fakeClient = new FakeDaemonClient();
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: null,
+        }),
+        getClientId: async () => "cid_creating_queue_drain",
+      },
+    });
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    const creation = workspaceCreations.submit({
+      serverId: host.serverId,
+      key: "creating-queue-drain",
+      provider: "codex",
+      config: {},
+      projectId: "project",
+      projectName: "Project",
+      text: "initial prompt",
+      prepare: () => new Promise(() => undefined),
+    });
+    publishAgent(host.serverId, creation.agentId);
+    const queued = [
+      { id: "first", text: "first follow-up", attachments: [] },
+      { id: "second", text: "second follow-up", attachments: [] },
+    ];
+    sessionStore.setQueuedMessages(host.serverId, new Map([[creation.agentId, queued]]));
+
+    store.drainQueuedAgentMessage(host.serverId, creation.agentId);
+    await Promise.resolve();
+
+    expect(
+      useSessionStore.getState().sessions[host.serverId]?.queuedMessages.get(creation.agentId),
+    ).toBe(queued);
+    expect(fakeClient.sentAgentMessages).toEqual([]);
+    useSessionStore.getState().clearSession(host.serverId);
+  });
+
+  it("drains a follow-up once when creation completes after the initial turn already ended", async () => {
+    const host = makeHost({
+      serverId: "srv_late_creation_adoption",
+      connections: [{ id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767" }],
+    });
+    const fakeClient = new FakeDaemonClient();
+    fakeClient.setConnectionState({ status: "connected" });
+    fakeClient.fetchAgentsResponses.push(makeFetchAgentsPayload({ entries: [] }));
+    const completion = new Deferred<Awaited<ReturnType<DaemonClient["createWorkspace"]>>>();
+    fakeClient.createWorkspaceResponse = completion.promise;
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: null,
+        }),
+        getClientId: async () => "cid_late_creation_adoption",
+      },
+    });
+    // Creation and its adoption drain run against the app's runtime.
+    const previousRuntime = Reflect.get(globalThis, "__paseoHostRuntimeStore");
+    Reflect.set(globalThis, "__paseoHostRuntimeStore", store);
+    expect(getHostRuntimeStore()).toBe(store);
+    useSessionStore
+      .getState()
+      .initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    store.syncHosts([host]);
+    await waitForHostOnline(store, host.serverId);
+    await store.refreshAgentDirectory({
+      serverId: host.serverId,
+      subscribe: {},
+      page: { limit: 200 },
+    });
+    // Connecting replaced the server info; the host tracks submitted prompts.
+    useSessionStore.getState().updateSessionServerInfo(host.serverId, {
+      serverId: host.serverId,
+      hostname: null,
+      version: "0.2.6",
+      features: { canonicalSubmittedPrompts: true },
+    });
+
+    const creation = workspaceCreations.submit({
+      serverId: host.serverId,
+      key: "late-creation-adoption",
+      provider: "codex",
+      config: {},
+      projectId: "project",
+      projectName: "Project",
+      text: "initial prompt",
+      prepare: async () => ({
+        source: { kind: "directory", path: "/repo" },
+        agent: { config: { provider: "codex", cwd: "/repo" }, initialPrompt: "initial prompt" },
+      }),
+    });
+    await vi.waitFor(() => expect(fakeClient.createWorkspaceRequests).toHaveLength(1));
+    useSessionStore
+      .getState()
+      .setQueuedMessages(
+        host.serverId,
+        new Map([[creation.agentId, [{ id: "follow-up", text: "follow-up", attachments: [] }]]]),
+      );
+
+    // The host publishes the agent, which runs its initial turn to completion before the
+    // creation response arrives. That turn end finds the agent not ready yet.
+    const published = makeFetchAgentsEntry({
+      id: creation.agentId,
+      cwd: "/repo",
+      updatedAt: "2026-07-12T10:00:00.000Z",
+    });
+    store.acceptWorkspaceSnapshots(host.serverId, [
+      {
+        createdAt: null,
+        lastUserMessageAt: null,
+        id: creation.workspaceId,
+        projectId: "project",
+        projectDisplayName: "Project",
+        projectRootPath: "/repo",
+        workspaceDirectory: "/repo",
+        projectKind: "git",
+        workspaceKind: "checkout",
+        name: "repo",
+        status: "done",
+        archivingAt: null,
+        statusEnteredAt: null,
+        diffStat: null,
+        scripts: [],
+      },
+    ]);
+    fakeClient.agentUpdate({
+      kind: "upsert",
+      agent: { ...published.agent, status: "running" },
+      project: published.project,
+    });
+    fakeClient.agentUpdate({ kind: "upsert", agent: published.agent, project: published.project });
+    await Promise.resolve();
+    expect(fakeClient.sentAgentMessages).toEqual([]);
+    expect(queuedTexts(host.serverId, creation.agentId)).toEqual(["follow-up"]);
+    // The initial prompt's local submission has no provider acknowledgement yet.
+    expect(
+      hasActiveMessageSubmission(
+        useSessionStore
+          .getState()
+          .sessions[host.serverId]?.messageSubmissions.get(creation.agentId),
+      ),
+    ).toBe(true);
+
+    completion.resolve({ workspace: null, error: null } as Awaited<
+      ReturnType<DaemonClient["createWorkspace"]>
+    >);
+
+    await vi.waitFor(() => expect(fakeClient.sentAgentMessages).toHaveLength(1));
+    await workspaceCreations.settled(creation);
+    expect(fakeClient.sentAgentMessages.map(([agentId, text]) => [agentId, text])).toEqual([
+      [creation.agentId, "follow-up"],
+    ]);
+    expect(queuedTexts(host.serverId, creation.agentId)).toEqual([]);
+
+    store.syncHosts([]);
+    useSessionStore.getState().clearSession(host.serverId);
+    Reflect.set(globalThis, "__paseoHostRuntimeStore", previousRuntime);
+  });
+
   it("drains a queued message as a steer so a turn the agent just started is not interrupted", async () => {
     const host = makeHost({ serverId: "srv_steer_queue_drain" });
     const fakeClient = new FakeDaemonClient();
@@ -3314,6 +3553,7 @@ describe("HostRuntimeStore", () => {
     });
     const sessionStore = useSessionStore.getState();
     sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    publishAgent(host.serverId, "agent");
     sessionStore.setQueuedMessages(
       host.serverId,
       new Map([["agent", [{ id: "queued", text: "next task", attachments: [] }]]]),
@@ -3342,6 +3582,7 @@ describe("HostRuntimeStore", () => {
     });
     const sessionStore = useSessionStore.getState();
     sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    publishAgent(host.serverId, "agent");
     sessionStore.updateSessionServerInfo(host.serverId, {
       serverId: host.serverId,
       hostname: null,

@@ -49,6 +49,7 @@ import {
 } from "@/workspace-tabs/model";
 import { openWorkspaceChanges } from "@/workspace-tabs/open-supporting-view";
 import { useSettings } from "@/hooks/use-settings";
+import { transferComposerFollowUps } from "@/composer/submission/writer";
 
 const EMPTY_PENDING_PERMISSIONS = new Map();
 const DRAFT_CAPABILITIES: AgentCapabilityFlags = {
@@ -184,8 +185,7 @@ async function submitDraftCreateRequest(input: {
     ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
     ...(attachmentsArray && attachmentsArray.length > 0 ? { attachments: attachmentsArray } : {}),
   };
-  const creation = useWorkspaceDraftSubmissionStore.getState().creationByDraftId[input.draftId];
-  const result = creation ? await creation.retry(options) : await client.createAgent(options);
+  const result = await client.createAgent(options);
 
   return {
     agentId: result.id,
@@ -466,10 +466,6 @@ export function WorkspaceDraftAgentTab({
         selectModelMessage: t("workspaceSetup.errors.selectModel"),
       }),
     createRequest: async ({ attempt, text, images, attachments, cwd }) => {
-      if (pendingAutoSubmit?.agentCreation) {
-        const result = await pendingAutoSubmit.agentCreation.result;
-        return { agentId: result.id, result };
-      }
       return submitDraftCreateRequest({
         draftId,
         attempt,
@@ -491,6 +487,7 @@ export function WorkspaceDraftAgentTab({
       clearWorkspaceAttachments({ scopeKey: draftAttachmentScopeKey });
       useWorkspaceDraftSubmissionStore.getState().clearDraftSetup({ draftId });
       onCreated(result);
+      transferComposerFollowUps(serverId, tabId, result.id);
     },
   });
   const turnPresentation = useMemo(

@@ -1353,6 +1353,15 @@ export const ja: TranslationResources = {
     },
   },
   newWorkspace: {
+    creation: {
+      creatingWorkspace: "ワークスペースを作成中…",
+      creatingLabel: "ワークスペースを作成中",
+      updateHost: "エージェント付きのワークスペースを作成するには、このホストを更新してください。",
+      chooseProjectHost: "プロジェクトとホストを選択してください",
+      projectUnavailable: "選択したホストでプロジェクトを利用できません",
+      workspacePending: "ワークスペースはまだ作成中です。",
+      agentPending: "エージェントはまだ作成中です。",
+    },
     title: "新しいワークスペース",
     create: "作成",
     isolation: {

@@ -1,3 +1,5 @@
+import { useWorkspaceCreation } from "@/workspace-creation";
+import { CreatingWorkspaceRow } from "@/workspace-creation/ui";
 import { memo, useCallback, useMemo, useState, type Ref } from "react";
 import { useTranslation } from "react-i18next";
 import { View, Text, type GestureResponderEvent } from "react-native";
@@ -58,7 +60,16 @@ interface SidebarWorkspaceRowProps {
   dragHandleProps?: DraggableListDragHandleProps;
 }
 
-export function SidebarWorkspaceRow({
+export function SidebarWorkspaceRow(props: SidebarWorkspaceRowProps) {
+  const creation = useWorkspaceCreation(props.workspace.serverId, props.workspace.workspaceId);
+  if (creation && !creation.workspaceObserved)
+    return (
+      <CreatingWorkspaceRow attempt={creation} onPress={props.onPress} selected={props.selected} />
+    );
+  return <ReadySidebarWorkspaceRow {...props} />;
+}
+
+function ReadySidebarWorkspaceRow({
   workspace,
   selected,
   shortcutNumber,

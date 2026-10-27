@@ -504,7 +504,7 @@ test.describe("New workspace flow", () => {
     }
   });
 
-  test("redirects to the optimistic draft tab before agent creation resolves", async ({ page }) => {
+  test("opens the final agent tab before agent creation resolves", async ({ page }) => {
     const serverId = getServerId();
 
     const tempRepo = await createTempGitRepo("new-workspace-optimistic-");
@@ -568,10 +568,10 @@ test.describe("New workspace flow", () => {
       await expect(activeWorkspaceDeckEntry).toBeVisible({ timeout: 30_000 });
 
       const draftTabs = activeWorkspaceDeckEntry.locator('[data-testid^="workspace-tab-draft_"]');
-      await expect(draftTabs).toHaveCount(1, { timeout: 30_000 });
+      await expect(draftTabs).toHaveCount(0);
       await expect(
         activeWorkspaceDeckEntry.locator('[data-testid^="workspace-tab-agent_"]'),
-      ).toHaveCount(0);
+      ).toHaveCount(1, { timeout: 30_000 });
 
       agentCreatedDelay.release();
       await expect(

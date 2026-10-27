@@ -1,3 +1,5 @@
+import { useWorkspaceCreations } from "@/workspace-creation";
+import type { CreationAttempt } from "@/workspace-creation/model";
 import { useShallow } from "zustand/shallow";
 import { useCreateFlowStore, type PendingCreateAttempt } from "@/stores/create-flow-store";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
@@ -13,11 +15,20 @@ export function deriveEffectiveWorkspaceStatus(input: {
   serverId: string;
   workspace: WorkspaceDescriptor;
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
+  workspaceCreations?: readonly CreationAttempt[];
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
 }): EffectiveWorkspaceStatus {
   if (input.workspace.status !== "done") {
     return { status: input.workspace.status, enteredAt: input.workspace.statusEnteredAt };
   }
+
+  const creation = input.workspaceCreations?.find(
+    (attempt) =>
+      attempt.serverId === input.serverId &&
+      attempt.workspaceId === input.workspace.id &&
+      attempt.phase !== "complete",
+  );
+  if (creation) return { status: "running", enteredAt: creation.message?.timestamp ?? null };
 
   const pendingStartedAt = getPendingInitialAgentCreateStartedAt({
     serverId: input.serverId,
@@ -55,6 +66,7 @@ function getPendingInitialAgentCreateStartedAt(input: {
 }
 
 export function useWorkspaceStatus(serverId: string, workspaceId: string) {
+  const workspaceCreations = useWorkspaceCreations();
   const pendingCreateAttempts = useCreateFlowStore((state) => state.pendingByDraftId);
   return useSessionStore(
     useShallow((state) => {
@@ -67,6 +79,7 @@ export function useWorkspaceStatus(serverId: string, workspaceId: string) {
         serverId,
         workspace,
         pendingCreateAttempts,
+        workspaceCreations,
         workspaceAgentActivity: session.workspaceAgentActivity,
       }).status;
     }),

@@ -35,6 +35,7 @@ import {
 } from "@/provider-selection/provider-selection";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
 import { useSessionStore } from "@/stores/session-store";
+import { useAgentCreation } from "@/workspace-creation";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { resolveProviderDefinition } from "@/utils/provider-definitions";
 import { mergeProviderPreferences, useFormPreferences } from "@/hooks/use-form-preferences";
@@ -417,6 +418,56 @@ function selectAgentControlsSlice(
     runtimeThinkingOptionId: currentAgent.runtimeInfo?.thinkingOptionId ?? null,
     thinkingOptionId: currentAgent.thinkingOptionId,
     lastUsage: currentAgent.lastUsage,
+  };
+}
+
+/** A creating agent shows its submitted configuration, read-only, until the host publishes it. */
+function useAgentControlsSource(serverId: string, agentId: string) {
+  const publishedAgent = useSessionStore(
+    useShallow((state) => selectAgentControlsSlice(state, serverId, agentId)),
+  );
+  const creation = useAgentCreation(serverId, agentId);
+  const hasClient = useSessionStore((state) => Boolean(state.sessions[serverId]?.client));
+  const agent = useMemo<AgentControlsSlice>(() => {
+    if (publishedAgent || !creation) return publishedAgent;
+    return {
+      provider: creation.provider,
+      // The destination is not known yet; never stand in the source directory for it.
+      cwd: null,
+      runtimeModelId: null,
+      model: creation.config.model,
+      features: undefined,
+      runtimeThinkingOptionId: null,
+      thinkingOptionId: creation.config.thinkingOptionId,
+      lastUsage: undefined,
+    };
+  }, [creation, publishedAgent]);
+  return {
+    agent,
+    isPublished: publishedAgent !== null,
+    canEdit: hasClient && publishedAgent !== null,
+    submittedModeId: creation?.config.modeId ?? null,
+  };
+}
+
+function ignoreModeSelection(): void {}
+
+function resolveModeControl(input: {
+  live: AgentModeControlValue | null;
+  isPublished: boolean;
+  submittedModeId: string | null;
+  entry: ReturnType<typeof resolveSnapshotSelectedEntry>;
+  providerDefinitions: AgentProviderDefinition[];
+}): AgentModeControlValue | null {
+  if (input.isPublished) return input.live;
+  if (input.entry?.status !== "ready" || !input.entry.modes?.length) return null;
+  return {
+    provider: input.entry.provider,
+    providerDefinitions: input.providerDefinitions,
+    modeOptions: input.entry.modes,
+    selectedModeId: input.submittedModeId,
+    onSelectMode: ignoreModeSelection,
+    disabled: true,
   };
 }
 
@@ -1556,14 +1607,13 @@ export const AgentControls = memo(function AgentControls({
   isCompactLayout,
 }: AgentControlsProps) {
   const { updatePreferences } = useFormPreferences();
-  const agent = useSessionStore(
-    useShallow((state) => selectAgentControlsSlice(state, serverId, agentId)),
+  const { agent, isPublished, canEdit, submittedModeId } = useAgentControlsSource(
+    serverId,
+    agentId,
   );
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const toast = useToast();
-  const modeControl = useLiveAgentModeControl(serverId, agentId);
-  const commandCenterModes = toCommandCenterModes(modeControl);
-  const modeProviderDefinitions = getModeProviderDefinitions(modeControl);
+  const liveModeControl = useLiveAgentModeControl(serverId, agentId);
 
   const {
     entries: snapshotEntries,
@@ -1585,6 +1635,26 @@ export const AgentControls = memo(function AgentControls({
     () => buildAgentProviderDefinitions(agent?.provider, snapshotEntries),
     [agent?.provider, snapshotEntries],
   );
+
+  const modeControl = useMemo(
+    () =>
+      resolveModeControl({
+        live: liveModeControl,
+        isPublished,
+        submittedModeId,
+        entry: snapshotSelectedEntry,
+        providerDefinitions: agentProviderDefinitions,
+      }),
+    [
+      agentProviderDefinitions,
+      isPublished,
+      liveModeControl,
+      snapshotSelectedEntry,
+      submittedModeId,
+    ],
+  );
+  const commandCenterModes = toCommandCenterModes(modeControl);
+  const modeProviderDefinitions = getModeProviderDefinitions(modeControl);
 
   const agentProviderModels = useMemo(
     () => buildAgentProviderModels(agent?.provider, models),
@@ -1769,7 +1839,7 @@ export const AgentControls = memo(function AgentControls({
   const commandCenterRegistration = (
     <AgentControlCommandCenterRegistration
       sourceId={`agent:${serverId}:${agentId}`}
-      enabled={Boolean(client)}
+      enabled={canEdit}
       controls={commandCenterControls}
     />
   );
@@ -1814,7 +1884,7 @@ export const AgentControls = memo(function AgentControls({
         onRetryModelProvider={handleRetryModelProvider}
         isRetryingModelProvider={snapshotIsRefreshing}
         onDropdownClose={onDropdownClose}
-        disabled={!client}
+        disabled={!canEdit}
         modeControl={modeControl}
         modelSelectorServerId={serverId}
         isCompactLayout={isCompactLayout}
