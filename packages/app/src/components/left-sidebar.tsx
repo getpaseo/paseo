@@ -11,12 +11,13 @@ import { useTranslation } from "react-i18next";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   Pressable,
+  type AccessibilityActionEvent,
   StyleSheet as RNStyleSheet,
   Text,
   useWindowDimensions,
   View,
 } from "react-native";
-import { Gesture } from "react-native-gesture-handler";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -538,6 +539,49 @@ function MobileSidebar({
 }: MobileSidebarProps) {
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const { gesture: closeGesture, gestureRef: closeGestureRef } = useCloseAgentListGesture();
+  const { height: windowHeight } = useWindowDimensions();
+  const { items: navItems } = useSidebarNavItems("header");
+  const visibleNavCount = navItems.filter((item) => item.visible).length;
+  const maxNavRows = Math.max(
+    1,
+    Math.min(visibleNavCount, Math.floor((windowHeight - insetsTop - insetsBottom - 220) / 38)),
+  );
+  const [requestedNavRows, setRequestedNavRows] = useState(100);
+  const navRows = Math.min(requestedNavRows, maxNavRows);
+  const startNavRows = useSharedValue(navRows);
+  const currentNavRows = useSharedValue(navRows);
+  useEffect(() => {
+    currentNavRows.value = navRows;
+  }, [navRows, currentNavRows]);
+  const resizeNav = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetY([-4, 4])
+        .failOffsetX([-15, 15])
+        .onStart(() => {
+          startNavRows.value = currentNavRows.value;
+        })
+        .onUpdate((event) => {
+          const rows = Math.max(
+            1,
+            Math.min(maxNavRows, startNavRows.value + Math.round(event.translationY / 38)),
+          );
+          runOnJS(setRequestedNavRows)(rows);
+        }),
+    [maxNavRows, startNavRows, currentNavRows],
+  );
+
+  const handleNavAccessibilityAction = useCallback(
+    (event: AccessibilityActionEvent) => {
+      setRequestedNavRows(
+        Math.max(
+          1,
+          Math.min(maxNavRows, navRows + (event.nativeEvent.actionName === "increment" ? 1 : -1)),
+        ),
+      );
+    },
+    [maxNavRows, navRows],
+  );
 
   const handleWorkspacePress = useCallback(() => {
     closeSidebar();
@@ -577,7 +621,20 @@ function MobileSidebar({
           style={styles.sidebarHeaderGroup}
           onBeforeNavigate={closeSidebar}
           firstRowTrailing={closeButton}
+          maxRows={navRows}
         />
+        <GestureDetector gesture={resizeNav}>
+          <View
+            style={styles.mobileNavDivider}
+            testID="sidebar-nav-resize-handle"
+            accessibilityLabel="Resize menu"
+            accessibilityRole="adjustable"
+            accessibilityActions={[{ name: "increment" }, { name: "decrement" }]}
+            onAccessibilityAction={handleNavAccessibilityAction}
+          >
+            <View style={styles.mobileNavGrip} />
+          </View>
+        </GestureDetector>
 
         {isInitialLoad && !hasActiveHostFilter ? (
           <SidebarAgentListSkeleton />
@@ -853,6 +910,8 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minHeight: 0,
   },
+  mobileNavDivider: { height: 20, marginTop: -10, alignItems: "center", justifyContent: "center" },
+  mobileNavGrip: { width: 36, height: 4, borderRadius: 2, backgroundColor: theme.colors.border },
   mobileCloseButton: {
     marginRight: theme.spacing[2],
   },
