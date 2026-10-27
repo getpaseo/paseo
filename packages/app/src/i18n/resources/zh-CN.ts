@@ -2319,9 +2319,12 @@ export const zhCN: TranslationResources = {
           queue: "排队",
         },
       },
-      commandEnterToSend: {
-        label: "使用 {{modifier}}+Enter 发送",
-        description: "Enter 和 Shift+Enter 插入换行。{{modifier}}+Enter 发送消息。",
+      sendShortcut: {
+        label: "发送快捷键",
+        options: {
+          enter: "Enter",
+          "mod-enter": "{{modifier}}+Enter",
+        },
       },
       serviceUrls: {
         options: {

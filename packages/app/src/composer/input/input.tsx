@@ -1,3 +1,4 @@
+import type { SendShortcut } from "@/hooks/use-settings";
 import {
   useComposerEditingSession,
   useComposerFullscreen,
@@ -99,8 +100,8 @@ import {
 const DEFAULT_SEND_KEYS: ShortcutKey[][] = [["Enter"]];
 const MOD_ENTER_SEND_KEYS: ShortcutKey[][] = [["mod", "Enter"]];
 
-function resolveSendKeys(commandEnterToSend: boolean): ShortcutKey[][] {
-  return commandEnterToSend ? MOD_ENTER_SEND_KEYS : DEFAULT_SEND_KEYS;
+function resolveSendKeys(sendShortcut: SendShortcut): ShortcutKey[][] {
+  return sendShortcut === "mod-enter" ? MOD_ENTER_SEND_KEYS : DEFAULT_SEND_KEYS;
 }
 const COMPOSER_INPUT_DATASET = { composerInput: "" } as const;
 
@@ -173,7 +174,7 @@ export interface MessageInputProps {
    *  running. "interrupt" and "steer" send immediately, "queue" queues. Required so the default
    *  lives only in DEFAULT_CLIENT_SETTINGS. */
   defaultSendBehavior: "interrupt" | "steer" | "queue";
-  commandEnterToSend?: boolean;
+  sendShortcut: SendShortcut;
   /** Callback for queue button when agent is running */
   onQueue?: (payload: MessagePayload) => void;
   /** Optional handler used when submit button is in loading state. */
@@ -409,7 +410,7 @@ interface DesktopKeyPressContext {
   onKeyPressCallback: ((event: ComposerKeyPressEvent) => boolean) | undefined;
   input: ComposerKeyPressEvent["input"];
   submitOnEnter: boolean;
-  commandEnterToSend: boolean;
+  sendShortcut: SendShortcut;
   isAgentRunning: boolean;
   onQueue: ((payload: MessagePayload) => void) | undefined;
   isSubmitDisabled: boolean;
@@ -441,7 +442,7 @@ function handleDesktopKeyPressImpl(
 
   const action = resolveMessageInputEnterAction({
     submitOnEnter: ctx.submitOnEnter,
-    commandEnterToSend: ctx.commandEnterToSend,
+    sendShortcut: ctx.sendShortcut,
     shiftKey: shiftKey ?? false,
     metaKey: metaKey ?? false,
     ctrlKey: ctrlKey ?? false,
@@ -1131,7 +1132,7 @@ interface ResolvedMessageInputProps {
   voiceAgentId: string | undefined;
   isAgentRunning: boolean;
   defaultSendBehavior: "interrupt" | "steer" | "queue";
-  commandEnterToSend: boolean;
+  sendShortcut: SendShortcut;
   onQueue: ((payload: MessagePayload) => void) | undefined;
   onSubmitLoadingPress: (() => void) | undefined;
   onKeyPressCallback: ((event: ComposerKeyPressEvent) => boolean) | undefined;
@@ -1179,7 +1180,7 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     voiceAgentId: props.voiceAgentId,
     isAgentRunning: props.isAgentRunning ?? false,
     defaultSendBehavior: props.defaultSendBehavior,
-    commandEnterToSend: props.commandEnterToSend ?? false,
+    sendShortcut: props.sendShortcut,
     onQueue: props.onQueue,
     onSubmitLoadingPress: props.onSubmitLoadingPress,
     onKeyPressCallback: props.onKeyPress,
@@ -1257,7 +1258,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       voiceAgentId,
       isAgentRunning,
       defaultSendBehavior,
-      commandEnterToSend,
+      sendShortcut,
       onQueue,
       onSubmitLoadingPress,
       onKeyPressCallback,
@@ -1777,7 +1778,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             selectionRef.current,
           ),
           submitOnEnter: shouldSubmitOnEnter,
-          commandEnterToSend,
+          sendShortcut,
           isAgentRunning,
           onQueue,
           isSubmitDisabled,
@@ -1791,7 +1792,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         shouldHandleWebKeyPress,
         onKeyPressCallback,
         shouldSubmitOnEnter,
-        commandEnterToSend,
+        sendShortcut,
         isAgentRunning,
         onQueue,
         isSubmitDisabled,
@@ -2008,7 +2009,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           submitLabel={submitLabel}
           submitButtonTestID={submitButtonTestID}
           buttonIconSize={buttonIconSize}
-          sendKeys={resolveSendKeys(commandEnterToSend)}
+          sendKeys={resolveSendKeys(sendShortcut)}
           sendTooltipLabel={sendTooltipLabel}
         />
       ),
@@ -2029,7 +2030,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         submitLabel,
         submitButtonTestID,
         buttonIconSize,
-        commandEnterToSend,
+        sendShortcut,
         sendTooltipLabel,
       ],
     );

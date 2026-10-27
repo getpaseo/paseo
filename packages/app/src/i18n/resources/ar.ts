@@ -2381,9 +2381,12 @@ export const ar: TranslationResources = {
           queue: "طابور",
         },
       },
-      commandEnterToSend: {
-        label: "الإرسال باستخدام {{modifier}}+Enter",
-        description: "يُدرج Enter وShift+Enter سطرًا جديدًا. يرسل {{modifier}}+Enter الرسالة.",
+      sendShortcut: {
+        label: "اختصار الإرسال",
+        options: {
+          enter: "Enter",
+          "mod-enter": "{{modifier}}+Enter",
+        },
       },
       serviceUrls: {
         options: {

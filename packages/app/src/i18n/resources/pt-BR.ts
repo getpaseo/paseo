@@ -2381,10 +2381,12 @@ export const ptBR: TranslationResources = {
           queue: "Fila",
         },
       },
-      commandEnterToSend: {
-        label: "Enviar com {{modifier}}+Enter",
-        description:
-          "Enter e Shift+Enter inserem uma nova linha. {{modifier}}+Enter envia a mensagem.",
+      sendShortcut: {
+        label: "Atalho de envio",
+        options: {
+          enter: "Enter",
+          "mod-enter": "{{modifier}}+Enter",
+        },
       },
       serviceUrls: {
         options: {

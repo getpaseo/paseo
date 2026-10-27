@@ -2470,10 +2470,12 @@ export const en = {
           queue: "Queue",
         },
       },
-      commandEnterToSend: {
-        label: "Send with {{modifier}}+Enter",
-        description:
-          "Enter and Shift+Enter insert a new line. {{modifier}}+Enter sends the message.",
+      sendShortcut: {
+        label: "Send shortcut",
+        options: {
+          enter: "Enter",
+          "mod-enter": "{{modifier}}+Enter",
+        },
       },
       serviceUrls: {
         options: {

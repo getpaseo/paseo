@@ -1,12 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  SettingsCard,
-  SettingsSection,
-  SettingsSelect,
-  SettingsSwitch,
-} from "@/components/settings";
-import { useAppSettings, type SendBehavior } from "@/hooks/use-settings";
+import { SettingsCard, SettingsSection, SettingsSelect } from "@/components/settings";
+import { useAppSettings, type SendShortcut, type SendBehavior } from "@/hooks/use-settings";
 import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 
@@ -29,17 +24,33 @@ export function SendingSection() {
     (sendBehavior: SendBehavior) => void updateSettings({ sendBehavior }),
     [updateSettings],
   );
-  const changeCommandEnterToSend = useCallback(
-    (commandEnterToSend: boolean) => void updateSettings({ commandEnterToSend }),
+  const shortcutOptions = useMemo(
+    () =>
+      (["enter", "mod-enter"] as const).map((value) => ({
+        value,
+        label: t(`settings.general.sendShortcut.options.${value}`, { modifier }),
+      })),
+    [t, modifier],
+  );
+  const changeSendShortcut = useCallback(
+    (sendShortcut: SendShortcut) => void updateSettings({ sendShortcut }),
     [updateSettings],
   );
   return (
     <SettingsSection title={t("settings.general.sending")}>
       <SettingsCard>
+        {shortcutsAvailable ? (
+          <SettingsSelect
+            label={t("settings.general.sendShortcut.label")}
+            value={settings.sendShortcut}
+            options={shortcutOptions}
+            onValueChange={changeSendShortcut}
+          />
+        ) : null}
         <SettingsSelect
           label={t("settings.general.defaultSend.label")}
           hint={t(
-            settings.commandEnterToSend
+            shortcutsAvailable && settings.sendShortcut === "mod-enter"
               ? `settings.general.defaultSend.commandEnterDescriptions.${settings.sendBehavior}`
               : `settings.general.defaultSend.descriptions.${settings.sendBehavior}`,
             { modifier },
@@ -48,14 +59,6 @@ export function SendingSection() {
           options={options}
           onValueChange={change}
         />
-        {shortcutsAvailable ? (
-          <SettingsSwitch
-            label={t("settings.general.commandEnterToSend.label", { modifier })}
-            hint={t("settings.general.commandEnterToSend.description", { modifier })}
-            value={settings.commandEnterToSend}
-            onValueChange={changeCommandEnterToSend}
-          />
-        ) : null}
       </SettingsCard>
     </SettingsSection>
   );

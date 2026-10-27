@@ -2397,10 +2397,12 @@ export const fr: TranslationResources = {
           queue: "File d’attente",
         },
       },
-      commandEnterToSend: {
-        label: "Envoyer avec {{modifier}}+Entrée",
-        description:
-          "Entrée et Maj+Entrée insèrent une nouvelle ligne. {{modifier}}+Entrée envoie le message.",
+      sendShortcut: {
+        label: "Raccourci d’envoi",
+        options: {
+          enter: "Enter",
+          "mod-enter": "{{modifier}}+Enter",
+        },
       },
       serviceUrls: {
         options: {

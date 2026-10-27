@@ -328,7 +328,7 @@ describe("resolveMessageInputEnterAction", () => {
   ): MessageInputEnterContext {
     return {
       submitOnEnter: true,
-      commandEnterToSend: false,
+      sendShortcut: "enter",
       shiftKey: false,
       metaKey: false,
       ctrlKey: false,
@@ -351,24 +351,24 @@ describe("resolveMessageInputEnterAction", () => {
     ).toBeNull();
   });
 
-  it("still returns null when command enter to send is on and submit on enter is disabled", () => {
+  it("still returns null when modifier Enter sends and submit on enter is disabled", () => {
     expect(
       resolveMessageInputEnterAction(
-        enterContext({ commandEnterToSend: true, submitOnEnter: false, metaKey: true }),
+        enterContext({ sendShortcut: "mod-enter", submitOnEnter: false, metaKey: true }),
       ),
     ).toBeNull();
     expect(
       resolveMessageInputEnterAction(
-        enterContext({ commandEnterToSend: true, submitOnEnter: false }),
+        enterContext({ sendShortcut: "mod-enter", submitOnEnter: false }),
       ),
     ).toBeNull();
   });
 
-  it("sends on plain Enter when command enter to send is off", () => {
+  it("sends on plain Enter when Enter sends", () => {
     expect(resolveMessageInputEnterAction(enterContext())).toBe("default-send");
   });
 
-  it("returns null for Shift+Enter when command enter to send is off", () => {
+  it("returns null for Shift+Enter when Enter sends", () => {
     expect(resolveMessageInputEnterAction(enterContext({ shiftKey: true }))).toBeNull();
   });
 
@@ -412,44 +412,44 @@ describe("resolveMessageInputEnterAction", () => {
     ).toBe("default-send");
   });
 
-  it("returns null for plain and Shift+Enter when command enter to send is on", () => {
-    expect(resolveMessageInputEnterAction(enterContext({ commandEnterToSend: true }))).toBeNull();
+  it("returns null for plain and Shift+Enter when modifier Enter sends", () => {
+    expect(resolveMessageInputEnterAction(enterContext({ sendShortcut: "mod-enter" }))).toBeNull();
     expect(
-      resolveMessageInputEnterAction(enterContext({ commandEnterToSend: true, shiftKey: true })),
+      resolveMessageInputEnterAction(enterContext({ sendShortcut: "mod-enter", shiftKey: true })),
     ).toBeNull();
   });
 
-  it("returns null for Shift+Cmd+Enter and Shift+Ctrl+Enter when command enter to send is on", () => {
+  it("returns null for Shift+Cmd+Enter and Shift+Ctrl+Enter when modifier Enter sends", () => {
     expect(
       resolveMessageInputEnterAction(
-        enterContext({ commandEnterToSend: true, shiftKey: true, metaKey: true }),
+        enterContext({ sendShortcut: "mod-enter", shiftKey: true, metaKey: true }),
       ),
     ).toBeNull();
     expect(
       resolveMessageInputEnterAction(
-        enterContext({ commandEnterToSend: true, shiftKey: true, ctrlKey: true }),
+        enterContext({ sendShortcut: "mod-enter", shiftKey: true, ctrlKey: true }),
       ),
     ).toBeNull();
   });
 
-  it("sends on Cmd+Enter and Ctrl+Enter while idle when command enter to send is on", () => {
+  it("sends on Cmd+Enter and Ctrl+Enter while idle when modifier Enter sends", () => {
     expect(
-      resolveMessageInputEnterAction(enterContext({ commandEnterToSend: true, metaKey: true })),
+      resolveMessageInputEnterAction(enterContext({ sendShortcut: "mod-enter", metaKey: true })),
     ).toBe("default-send");
     expect(
-      resolveMessageInputEnterAction(enterContext({ commandEnterToSend: true, ctrlKey: true })),
+      resolveMessageInputEnterAction(enterContext({ sendShortcut: "mod-enter", ctrlKey: true })),
     ).toBe("default-send");
   });
 
-  it("never queues on modifier Enter while running when command enter to send is on", () => {
+  it("uses the default action on modifier Enter while running when modifier Enter sends", () => {
     expect(
       resolveMessageInputEnterAction(
-        enterContext({ commandEnterToSend: true, metaKey: true, isAgentRunning: true }),
+        enterContext({ sendShortcut: "mod-enter", metaKey: true, isAgentRunning: true }),
       ),
     ).toBe("default-send");
     expect(
       resolveMessageInputEnterAction(
-        enterContext({ commandEnterToSend: true, ctrlKey: true, isAgentRunning: true }),
+        enterContext({ sendShortcut: "mod-enter", ctrlKey: true, isAgentRunning: true }),
       ),
     ).toBe("default-send");
   });
@@ -467,7 +467,7 @@ describe("resolveMessageInputEnterAction", () => {
 
     function resolveCommandEnterToSendModifierEnter() {
       return resolveMessageInputEnterAction(
-        enterContext({ commandEnterToSend: true, metaKey: true, isAgentRunning: true }),
+        enterContext({ sendShortcut: "mod-enter", metaKey: true, isAgentRunning: true }),
       );
     }
 
@@ -492,7 +492,7 @@ describe("resolveMessageInputEnterAction", () => {
 
       expect(
         resolveMessageInputEnterAction(
-          enterContext({ commandEnterToSend: true, metaKey: true, isAgentRunning: false }),
+          enterContext({ sendShortcut: "mod-enter", metaKey: true, isAgentRunning: false }),
         ),
       ).toBe("default-send");
 

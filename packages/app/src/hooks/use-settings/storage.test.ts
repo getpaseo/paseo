@@ -227,37 +227,37 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.chatOutlineEnabled).toBe(false);
   });
 
-  it("disables command enter to send by default", async () => {
+  it("uses Enter to send by default", async () => {
     const deps = makeDeps();
 
     const result = await loadAppSettingsFromStorage(deps);
 
-    expect(result.commandEnterToSend).toBe(false);
-    expect(DEFAULT_CLIENT_SETTINGS.commandEnterToSend).toBe(false);
+    expect(result.sendShortcut).toBe("enter");
+    expect(DEFAULT_CLIENT_SETTINGS.sendShortcut).toBe("enter");
   });
 
-  it("loads an enabled command enter to send preference", async () => {
+  it("loads the modifier Enter send preference", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
-        [APP_SETTINGS_KEY]: JSON.stringify({ commandEnterToSend: true }),
+        [APP_SETTINGS_KEY]: JSON.stringify({ sendShortcut: "mod-enter" }),
       }),
     });
 
     const result = await loadAppSettingsFromStorage(deps);
 
-    expect(result.commandEnterToSend).toBe(true);
+    expect(result.sendShortcut).toBe("mod-enter");
   });
 
-  it("falls back to the disabled default when the stored command enter to send value is invalid", async () => {
+  it("falls back to Enter when the stored send shortcut is invalid", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
-        [APP_SETTINGS_KEY]: JSON.stringify({ commandEnterToSend: "yes" }),
+        [APP_SETTINGS_KEY]: JSON.stringify({ sendShortcut: "yes" }),
       }),
     });
 
     const result = await loadAppSettingsFromStorage(deps);
 
-    expect(result.commandEnterToSend).toBe(false);
+    expect(result.sendShortcut).toBe("enter");
   });
 
   it("defaults sidebar navigation items to an empty preference list", async () => {

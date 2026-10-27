@@ -1,3 +1,4 @@
+import type { SendShortcut } from "@/hooks/use-settings";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 import type { MessagePayload, TextReplacement } from "@/composer/types";
@@ -155,7 +156,7 @@ export type MessageInputEnterAction = "alternate-send" | "default-send";
 
 export interface MessageInputEnterContext {
   submitOnEnter: boolean;
-  commandEnterToSend: boolean;
+  sendShortcut: SendShortcut;
   shiftKey: boolean;
   metaKey: boolean;
   ctrlKey: boolean;
@@ -169,7 +170,7 @@ export function resolveMessageInputEnterAction(
   if (!ctx.submitOnEnter) return null;
   if (ctx.shiftKey) return null;
   const hasModifier = ctx.metaKey || ctx.ctrlKey;
-  if (ctx.commandEnterToSend) return hasModifier ? "default-send" : null;
+  if (ctx.sendShortcut === "mod-enter") return hasModifier ? "default-send" : null;
   if (hasModifier && ctx.isAgentRunning && ctx.onQueue) return "alternate-send";
   return "default-send";
 }

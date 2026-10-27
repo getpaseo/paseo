@@ -2384,10 +2384,12 @@ export const ru: TranslationResources = {
           queue: "Поставить в очередь",
         },
       },
-      commandEnterToSend: {
-        label: "Отправка по {{modifier}}+Enter",
-        description:
-          "Enter и Shift+Enter вставляют новую строку. {{modifier}}+Enter отправляет сообщение.",
+      sendShortcut: {
+        label: "Сочетание клавиш для отправки",
+        options: {
+          enter: "Enter",
+          "mod-enter": "{{modifier}}+Enter",
+        },
       },
       serviceUrls: {
         options: {
