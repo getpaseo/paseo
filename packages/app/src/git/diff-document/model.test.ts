@@ -10,7 +10,7 @@ import {
   resolveRelayoutScrollTop,
   shouldApplyRelayoutScroll,
 } from "./model";
-import type { BuildDiffDocumentModelInput, TextMeasurer } from "./types";
+import type { BuildDiffDocumentModelInput, DiffCell, TextMeasurer } from "./types";
 
 const measurer: TextMeasurer = { measure: (text) => Array.from(text).length * 10 };
 
@@ -639,17 +639,46 @@ describe("diff document model", () => {
     expect(firstLineCells(last, "b.ts")).toBe(firstLineCells(first, "b.ts"));
   });
 
-  it("keeps wrapped geometry fully measured", () => {
+  it("replaces estimated wrapped heights through reuse and preserves the scroll anchor", () => {
+    const changed = fileWithChangedLine("x".repeat(100));
+    const files = [changed, file("later.ts")];
+    // Deliberately inaccurate M width makes the estimate differ from exact layout.
+    const measureText = {
+      measure: (text: string) => (text === "M" ? 5 : Array.from(text).length * 10),
+    };
+    const options = input({ files, measureText });
+    const first = buildDiffDocumentModel({
+      ...options,
+      materializationWindow: { top: 30, height: 1 },
+    });
+    const eager = buildDiffDocumentModel(options);
+    const exact = buildDiffDocumentModel({ ...options, reuseFrom: [first] });
+    expect(first.height).not.toBe(eager.height);
+    expect(exact.rows).toEqual(eager.rows);
+    expect(exact.height).toBe(eager.height);
+    expect(firstLineCells(exact, changed.path)).toBe(firstLineCells(first, changed.path));
+    const scrollTop = first.files[1]!.bodyTop + 3;
+    const nextScrollTop = resolveRelayoutScrollTop(first, exact, scrollTop);
+    expect(nextScrollTop).toBe(exact.files[1]!.bodyTop + 3);
+    expect(captureScrollAnchor(exact, nextScrollTop)).toEqual(
+      captureScrollAnchor(first, scrollTop),
+    );
+  });
+
+  it("materializes wrapped text only inside the window", () => {
     const model = buildDiffDocumentModel(
       input({
         files: [file("a.ts"), file("b.ts")],
         wrapLines: true,
-        materializationWindow: { top: 0, height: FILE_HEADER_HEIGHT },
+        materializationWindow: { top: FILE_HEADER_HEIGHT, height: 1 },
       }),
     );
 
     expect(measuredFragments(model, "a.ts")).toBeGreaterThan(0);
-    expect(measuredFragments(model, "b.ts")).toBeGreaterThan(0);
+    expect(measuredFragments(model, "b.ts")).toBe(0);
+    expect(
+      model.rows.filter((row) => row.kind === "line" && row.cells.some(hasFragments)),
+    ).toHaveLength(1);
   });
 });
 
@@ -797,4 +826,8 @@ function reviewActionsWithEditor(
     onEditComment() {},
     onDeleteComment() {},
   };
+}
+
+function hasFragments(cell: DiffCell | null): boolean {
+  return cell !== null && cell.fragments.length > 0;
 }

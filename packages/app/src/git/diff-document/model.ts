@@ -154,27 +154,37 @@ function appendReusableFileRows(candidate: {
 }): FileRowsResult {
   const reusedRows = candidate.model.rows.slice(candidate.file.rowStart, candidate.file.rowEnd);
   const retainsRowGeometry =
-    !candidate.input.wrapLines &&
     candidate.model.reviewGeometryKey === candidate.reviewGeometryKey &&
     candidate.file.top === candidate.fileTop &&
     candidate.file.fileIndex === candidate.fileIndex &&
     candidate.file.rowStart === candidate.rows.length;
   let top = candidate.bodyTop;
   for (const reusedRow of reusedRows) {
-    let nextRow = retainsRowGeometry ? reusedRow : repositionReusedRow(reusedRow, candidate, top);
+    let nextRow =
+      retainsRowGeometry && reusedRow.top === top
+        ? reusedRow
+        : repositionReusedRow(reusedRow, candidate, top);
     if (
       nextRow.kind === "line" &&
       intersectsMaterializationWindow(candidate.input, top, top + nextRow.height) &&
       nextRow.cells.some((cell) => cell && cell.fragments.length === 0)
     ) {
+      const cells = materializeCells(
+        nextRow.cells,
+        candidate.file.file,
+        candidate.file.gutterWidth,
+        candidate.input,
+      );
       nextRow = {
         ...nextRow,
-        cells: materializeCells(
-          nextRow.cells,
-          candidate.file.file,
-          candidate.file.gutterWidth,
-          candidate.input,
-        ),
+        cells,
+        height:
+          Math.max(
+            candidate.input.typography.lineHeight,
+            ...cells.map(
+              (cell) => (cell?.fragments.length ?? 1) * candidate.input.typography.lineHeight,
+            ),
+          ) + nextRow.reviewHeight,
       };
     }
     candidate.rows.push(nextRow);
@@ -240,6 +250,7 @@ function appendNewFileRows(candidate: {
   const lines = geometryLines(
     lineSources(candidate.file, candidate.input.layout, false),
     candidate.input,
+    candidate.gutterWidth,
   );
   const fileBottom =
     candidate.bodyTop +
@@ -251,9 +262,11 @@ function appendNewFileRows(candidate: {
   let top = candidate.bodyTop;
   let maximumHorizontalOverflow = 0;
   for (const line of lines) {
-    const shouldMaterialize =
-      candidate.input.wrapLines ||
-      intersectsMaterializationWindow(candidate.input, top, top + line.height);
+    const shouldMaterialize = intersectsMaterializationWindow(
+      candidate.input,
+      top,
+      top + line.height,
+    );
     const cells = shouldMaterialize
       ? materializeCells(line.cells, candidate.file, candidate.gutterWidth, candidate.input)
       : line.cells;
@@ -275,7 +288,7 @@ function appendNewFileRows(candidate: {
       candidate.input.typography.lineHeight,
       ...cells.map((cell) => (cell?.fragments.length ?? 1) * candidate.input.typography.lineHeight),
     );
-    const height = textHeight + line.reviewHeight;
+    const height = shouldMaterialize ? textHeight + line.reviewHeight : line.height;
     candidate.rows.push({
       kind: "line",
       index: candidate.rows.length,
@@ -427,7 +440,9 @@ function geometryCell(source: CellSource): DiffCell {
 function geometryLines(
   sources: Array<[CellSource] | [CellSource | null, CellSource | null]>,
   input: BuildDiffDocumentModelInput,
+  gutterWidth: number,
 ): GeometryLine[] {
+  const characterWidth = input.wrapLines ? input.measureText.measure("M") : 0;
   return sources.map((sourceCells) => {
     const cells = sourceCells.map((source) =>
       source ? geometryCell(source) : null,
@@ -436,7 +451,26 @@ function geometryLines(
     return {
       cells,
       reviewHeight,
-      height: input.typography.lineHeight + reviewHeight,
+      // Unseen wrapped rows use a monospace estimate; materialization replaces
+      // it with the exact fragment count without changing source identity.
+      height:
+        input.typography.lineHeight *
+          Math.max(
+            1,
+            ...cells.map((cell) => {
+              if (!cell || !input.wrapLines) return 1;
+              const columns = Math.max(
+                1,
+                Math.floor(
+                  (input.viewportWidth / cells.length - gutterWidth - CODE_HORIZONTAL_PADDING) /
+                    characterWidth,
+                ),
+              );
+              const length = cell.content.length + (cell.content.match(/\t/g)?.length ?? 0) * 3;
+              return Math.ceil(length / columns);
+            }),
+          ) +
+        reviewHeight,
     };
   });
 }

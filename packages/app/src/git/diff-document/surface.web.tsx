@@ -31,7 +31,12 @@ import { HorizontalScroll } from "./horizontal-scroll.web";
 import { buildDiffDocumentModel, FILE_HEADER_HEIGHT, resolveRelayoutScrollTop } from "./model";
 import { paintWebFileHeader, paintWebViewport } from "./paint.web";
 import { hasPointerDragStarted } from "./pointer-gesture";
-import { createMeasuredAdvances } from "./text-measurement";
+import {
+  createMeasuredAdvances,
+  createAdditiveAdvances,
+  createChunkedWidthMeasurer,
+  requiresShaping,
+} from "./text-measurement";
 import { retainDiffViewport } from "./viewport";
 import type {
   DiffHit,
@@ -1166,5 +1171,13 @@ function createWebTextMeasurer(typography: DiffTypography): TextMeasurer {
   };
   // Canvas exposes no glyph coverage, so `requiresShaping` alone decides which
   // runs a shaper has to see -- there is no `glyphIds` to fall back on.
-  return { measure, measureAdvances: createMeasuredAdvances((text) => measure(text)) };
+  const additive = createAdditiveAdvances(measure);
+  return {
+    measure,
+    measureAdvances: createMeasuredAdvances(measure),
+    measureWidth: createChunkedWidthMeasurer((graphemes) => {
+      const text = graphemes.join("");
+      return requiresShaping(text) ? measure(text) : (additive(graphemes).at(-1) ?? 0);
+    }),
+  };
 }
