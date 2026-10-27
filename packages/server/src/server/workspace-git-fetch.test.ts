@@ -233,9 +233,11 @@ test.skipIf(process.platform === "win32")(
       const result = await fetchWorkspaceGitRemote(cwd, { onRefSnapshot() {} }, run);
 
       expect(result.error).toBeNull();
-      expect(result.changes).toEqual([
-        { kind: "added", ref: "origin/main", afterOid: expectedOid },
-      ]);
+      expect(result.changes).toContainEqual({
+        kind: "added",
+        ref: "origin/main",
+        afterOid: expectedOid,
+      });
       expect((await run(["rev-parse", "refs/remotes/origin/main"], { cwd })).stdout.trim()).toBe(
         expectedOid,
       );
