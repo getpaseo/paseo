@@ -5064,6 +5064,10 @@ export class AgentManager {
         messageId,
       );
       if (enriched) this.enqueueDurableTimelineUpdate(agent.id, enriched);
+      // A confirmed echo can add native identity and original attachment data to the handle.
+      // Persist it now even if this turn has not completed yet.
+      this.refreshSessionPersistence(agent);
+      this.enqueueBackgroundPersist(agent);
     }
     return existing;
   }

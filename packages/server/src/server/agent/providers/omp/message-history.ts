@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { mapCustomMessageToToolCall } from "../custom-message.js";
 import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
 import type { OmpAgentMessage, OmpImageContent, OmpTextContent } from "./rpc-types.js";
@@ -17,6 +18,13 @@ import {
   type OmpToolResult,
   type OmpTrackedToolCall,
 } from "./tool-call-detail.js";
+
+export const OmpSubmittedUserMessageSchema = z.object({
+  clientMessageId: z.string().min(1).optional(),
+  images: z.array(z.object({ data: z.string(), mimeType: z.string() })).optional(),
+});
+
+export type OmpSubmittedUserMessage = z.infer<typeof OmpSubmittedUserMessageSchema>;
 
 export interface OmpCapturedUserMessageEntry {
   id: string;
@@ -79,6 +87,10 @@ export class OmpHistoryMapper {
     private readonly userEntries: readonly OmpCapturedUserMessageEntry[] = [],
     private readonly hooks: OmpHistoryMapperHooks = {},
     private readonly bridgedTools: ReadonlyMap<string, OmpBridgedToolIdentity> = new Map(),
+    private readonly submittedUserMessages: ReadonlyMap<
+      string,
+      OmpSubmittedUserMessage
+    > = new Map(),
   ) {}
 
   mapMessages(messages: readonly OmpAgentMessage[]): AgentStreamEvent[] {
@@ -113,12 +125,12 @@ export class OmpHistoryMapper {
 
   private mapUserMessage(message: Extract<OmpAgentMessage, { role: "user" }>): AgentStreamEvent[] {
     const text = getUserMessageText(message.content);
-    const images = getUserMessageImages(message.content);
-    this.userIndex += 1;
+    const userEntry = this.userEntries[this.userIndex++];
+    const submitted = userEntry ? this.submittedUserMessages.get(userEntry.id) : undefined;
+    const images = submitted?.images ?? getUserMessageImages(message.content);
     if (!text && images.length === 0) {
       return [];
     }
-    const userEntry = this.userEntries[this.userIndex - 1];
     return [
       {
         type: "timeline",
@@ -128,6 +140,7 @@ export class OmpHistoryMapper {
           text,
           ...(images.length > 0 ? { images } : {}),
           ...(userEntry ? { messageId: userEntry.id } : {}),
+          ...(submitted?.clientMessageId ? { clientMessageId: submitted.clientMessageId } : {}),
         },
       },
     ];
