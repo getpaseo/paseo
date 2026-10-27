@@ -1,4 +1,4 @@
-import type { PluginWireBeforeRequests } from "./lifecycle/index.js";
+import type { PluginWireBeforeRequests, PluginBeforeResults } from "./lifecycle/index.js";
 import type { SessionOpenWireRequest, AttachedAgentTool } from "./agent-tools.js";
 import type { UsageScope } from "@getpaseo/plugin/server/usage";
 import {
@@ -571,12 +571,14 @@ export class PluginRuntime {
   async before<Name extends keyof PluginWireBeforeRequests>(
     name: Name,
     input: PluginWireBeforeRequests[Name],
-  ): Promise<PluginWireBeforeRequests[Name]> {
+  ): Promise<PluginBeforeResults[Name]> {
     let request = validateBeforeRequest(name, input);
     const plugins = [...this.plugins.values()].sort((left, right) => {
       return left.id.localeCompare(right.id);
     });
     const attached: AttachedAgentTool[] = [];
+    const mcpServers: SessionOpenWireRequest["mcpServers"] = {};
+    const mcpServerOwners: Record<string, string> = {};
     for (const loaded of plugins) {
       if (!loaded.hooks.before.includes(name)) {
         continue;
@@ -587,11 +589,14 @@ export class PluginRuntime {
           requestId: randomUUID(),
           kind: "before",
           name,
-          input: name === "agent.session_open" ? { ...request, tools: [] } : request,
+          input:
+            name === "agent.session_open" ? { ...request, tools: [], mcpServers: {} } : request,
         });
         request = validateBeforeResult(name, request, output);
         if (name === "agent.session_open") {
-          this.collectAgentTools(attached, loaded, (request as SessionOpenWireRequest).tools);
+          const opened = request as SessionOpenWireRequest;
+          this.collectMcpServers(mcpServers, mcpServerOwners, loaded, opened.mcpServers);
+          this.collectAgentTools(attached, loaded, opened.tools);
         }
       } catch (error) {
         if (name === "agent.session_open")
@@ -601,7 +606,14 @@ export class PluginRuntime {
         });
       }
     }
-    if (name === "agent.session_open") (request as SessionOpenWireRequest).tools = attached;
+    if (name === "agent.session_open") {
+      return {
+        ...request,
+        tools: attached,
+        mcpServers,
+        mcpServerOwners,
+      } as PluginBeforeResults[Name];
+    }
     return request;
   }
 
@@ -621,6 +633,23 @@ export class PluginRuntime {
     if (output !== undefined && typeof output !== "string")
       throw new Error("Invalid catalogue key from plugin");
     return output;
+  }
+
+  private collectMcpServers(
+    servers: SessionOpenWireRequest["mcpServers"],
+    owners: Record<string, string>,
+    loaded: LoadedPlugin,
+    contributions: SessionOpenWireRequest["mcpServers"],
+  ): void {
+    for (const [name, server] of Object.entries(contributions)) {
+      if (Object.hasOwn(servers, name)) {
+        throw new Error(
+          `MCP server ${name} from plugin ${loaded.id} collides with plugin ${owners[name]}`,
+        );
+      }
+      servers[name] = server;
+      owners[name] = loaded.id;
+    }
   }
 
   private collectAgentTools(

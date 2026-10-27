@@ -41,6 +41,7 @@ export interface PluginSessionOpenRequest {
   readonly labels: Readonly<Record<string, string>>;
   tools: AgentToolDefinition[];
   env: Record<string, string>;
+  mcpServers: NonNullable<AgentSessionConfig["mcpServers"]>;
 }
 
 export type PluginTurnOutcome =
