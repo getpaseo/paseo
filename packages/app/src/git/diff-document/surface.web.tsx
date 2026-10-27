@@ -28,7 +28,12 @@ import {
 } from "./hit-testing";
 import { retainHorizontalOffsetMapForPaths } from "./horizontal-offsets";
 import { HorizontalScroll } from "./horizontal-scroll.web";
-import { buildDiffDocumentModel, FILE_HEADER_HEIGHT, resolveRelayoutScrollTop } from "./model";
+import {
+  buildDiffDocumentModel,
+  captureScrollAnchor,
+  FILE_HEADER_HEIGHT,
+  resolveRelayoutScrollTop,
+} from "./model";
 import { paintWebFileHeader, paintWebViewport } from "./paint.web";
 import { hasPointerDragStarted } from "./pointer-gesture";
 import {
@@ -188,6 +193,9 @@ export function DiffSurface(props: DiffSurfaceProps) {
         tooLarge: t("workspace.git.diff.tooLarge"),
       },
       materializationWindow: diffMaterializationWindow(fileWindowTop, viewport.height),
+      materializationAnchor: previousModelRef.current
+        ? captureScrollAnchor(previousModelRef.current, scrollTopRef.current)
+        : null,
     });
     return next;
   }, [

@@ -665,6 +665,79 @@ describe("diff document model", () => {
     );
   });
 
+  it("preserves the wrapped source offset when resize leaves the anchor outside the window", () => {
+    const source = file();
+    source.hunks[0]!.lines = Array.from({ length: 200 }, () => ({
+      type: "add" as const,
+      content: "x".repeat(200),
+    }));
+    const options = input({ files: [source], viewportWidth: 500 });
+    const before = buildDiffDocumentModel(options);
+    const scrollTop = before.rows[100]!.top + 36;
+    const anchor = captureScrollAnchor(before, scrollTop)!;
+    expect(anchor).toMatchObject({ kind: "text", cellOffset: 90 });
+    const resizedOptions = { ...options, viewportWidth: 180 };
+    const estimated = buildDiffDocumentModel({
+      ...resizedOptions,
+      materializationWindow: {
+        top: Math.floor(scrollTop / 800) * 800 - 800,
+        height: 2000,
+      },
+    });
+    const estimatedRow = estimated.rows[100]!;
+    expect(estimatedRow.kind === "line" && estimatedRow.cells[0]?.fragments).toEqual([]);
+    const restored = resolveRelayoutScrollTop(before, estimated, scrollTop);
+    const recaptured = captureScrollAnchor(estimated, restored)!;
+    expect(recaptured).toMatchObject({ kind: "text", cellOffset: 78 });
+
+    const materialized = buildDiffDocumentModel({
+      ...resizedOptions,
+      materializationWindow: { top: restored - 800, height: 2000 },
+      reuseFrom: [estimated],
+    });
+    const eager = buildDiffDocumentModel(resizedOptions);
+    const expected = resolveRelayoutScrollTop(before, eager, scrollTop);
+    expect(expected).toBe(28_938);
+    expect(Math.abs(restored - expected)).toBeLessThan(before.lineHeight);
+    expect(resolveRelayoutScrollTop(estimated, materialized, restored)).toBe(expected);
+  });
+
+  it("materializes the relayout anchor even when off-screen height estimates are inaccurate", () => {
+    const source = file();
+    source.hunks[0]!.lines = Array.from({ length: 200 }, () => ({
+      type: "add" as const,
+      content: "x".repeat(200),
+    }));
+    const options = input({ files: [source], viewportWidth: 500 });
+    const before = buildDiffDocumentModel(options);
+    const scrollTop = before.rows[100]!.top + 38;
+    const anchor = captureScrollAnchor(before, scrollTop)!;
+    const resizedOptions = {
+      ...options,
+      viewportWidth: 180,
+      measureText: { measure: (text: string) => (text === "M" ? 5 : text.length * 10) },
+    };
+    const resized = buildDiffDocumentModel({
+      ...resizedOptions,
+      materializationWindow: { top: scrollTop - 800, height: 2000 },
+      materializationAnchor: anchor,
+    });
+    const row = resized.rows[100]!;
+    expect(row.kind === "line" && row.cells[0]!.fragments.length).toBeGreaterThan(0);
+    const restored = resolveRelayoutScrollTop(before, resized, scrollTop);
+    const materialized = buildDiffDocumentModel({
+      ...resizedOptions,
+      materializationWindow: { top: restored - 800, height: 2000 },
+      materializationAnchor: captureScrollAnchor(resized, restored),
+      reuseFrom: [resized],
+    });
+    const nextScrollTop = resolveRelayoutScrollTop(resized, materialized, restored);
+    const nextAnchor = captureScrollAnchor(materialized, nextScrollTop);
+    // Offset 90 belongs to the fragment beginning at 78 after narrowing.
+    expect(nextAnchor).toMatchObject({ kind: "text", cellOffset: 78, viewportDelta: -2 });
+    expect(nextScrollTop).toBe(resolveScrollAnchor(materialized, anchor));
+  });
+
   it("materializes wrapped text only inside the window", () => {
     const model = buildDiffDocumentModel(
       input({
