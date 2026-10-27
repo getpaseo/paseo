@@ -702,6 +702,28 @@ it("does not reopen the previous turn while a new run waits for its first row", 
   expect(result.tail.map((item) => item.id)).toEqual(["prompt", "reply"]);
 });
 
+// A sent prompt counts as activity before the daemon opens its turn, so the only known turn is
+// the completed one; it must stay folded until the new turn's rows arrive.
+it("keeps the previous turn folded while a sent prompt waits for its turn to open", () => {
+  const timestamp = new Date();
+  const tail: StreamItem[] = [
+    { kind: "user_message", id: "prompt", text: "Work", timestamp },
+    toolCall("one", "Bash"),
+    { kind: "assistant_message", id: "reply", text: "Done", timestamp },
+  ];
+  for (const item of tail) item.turnId = "completed";
+  const result = createStreamPresentation()({
+    ...presentationOptions,
+    transform: undefined,
+    tail,
+    head: [],
+    display: "collapseTurns",
+    isTurnActive: true,
+    activeTurnId: null,
+  });
+  expect(result.tail.map((item) => item.id)).toEqual(["prompt", "reply"]);
+});
+
 it("groups reasoning with tools unless Expand thinking is enabled, including setting changes", () => {
   const present = createStreamPresentation();
   const timestamp = new Date();

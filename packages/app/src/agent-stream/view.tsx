@@ -898,12 +898,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               ? group.run.calls.map((call, index) => (
                   <React.Fragment key={call.id}>
                     {call.kind === "thought" ? (
+                      // Reasoning is grouped only while Expand thinking is off, so an opened
+                      // group shows each thought as a closed row like any other call.
                       <ThoughtSlot
                         itemId={call.id}
                         text={call.text}
                         status={call.status}
                         isLastInSequence={index === group.run.calls.length - 1}
-                        defaultExpanded
+                        defaultExpanded={false}
                         onInlineDetailsExpandedChangeByItemId={setInlineDetailsExpanded}
                       />
                     ) : (
