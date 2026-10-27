@@ -1,3 +1,5 @@
+import { createHook, executionAsyncResource } from "node:async_hooks";
+import { performance, PerformanceObserver } from "node:perf_hooks";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -658,22 +660,78 @@ describe("WorkspaceReconciliationService", () => {
       workspaceRegistry,
       logger: createTestLogger(),
     });
-    let last = performance.now();
+    // Timer gaps include runner descheduling and idle IO waits. Time actual
+    // callbacks instead, retaining the raw gaps and thread CPU as diagnostics.
+    // Node 22.20 provides this API; our older Node declarations omit it.
+    const threadCpuUsage: (previous?: NodeJS.CpuUsage) => NodeJS.CpuUsage = Reflect.get(
+      process,
+      "threadCpuUsage",
+    );
+    const startedAt = performance.now();
+    let last = startedAt;
     let longestGap = 0;
-    const probe = setInterval(() => {
+    let longestCallback = 0;
+    let longestCallbackCpu = 0;
+    let longestGc = 0;
+    const callbacks = new Map<number, { wall: number; cpu: NodeJS.CpuUsage }>();
+    const observeGc = (entries: readonly import("node:perf_hooks").PerformanceEntry[]) => {
+      for (const entry of entries) {
+        if (entry.startTime >= startedAt) longestGc = Math.max(longestGc, entry.duration);
+      }
+    };
+    const gc = new PerformanceObserver((list) => observeGc(list.getEntries()));
+    gc.observe({ entryTypes: ["gc"] });
+    let probe: ReturnType<typeof setInterval>;
+    const activity = createHook({
+      before(id) {
+        if (executionAsyncResource() === probe) return;
+        callbacks.set(id, { wall: performance.now(), cpu: threadCpuUsage() });
+      },
+      after(id) {
+        const start = callbacks.get(id);
+        if (!start) return;
+        callbacks.delete(id);
+        const duration = performance.now() - start.wall;
+        if (duration > longestCallback) {
+          longestCallback = duration;
+          const { user, system } = threadCpuUsage(start.cpu);
+          longestCallbackCpu = (user + system) / 1_000;
+        }
+      },
+    }).enable();
+    const sample = () => {
       const now = performance.now();
       longestGap = Math.max(longestGap, now - last);
       last = now;
-    }, 1);
+    };
+    probe = setInterval(sample, 1);
     let result;
     try {
-      result = await service.runOnce();
-      await new Promise<void>((resolve) => setTimeout(resolve, 1));
+      // Include the initial synchronous span: its callback predates the hook.
+      const actionStartedAt = performance.now();
+      const pending = service.runOnce();
+      longestCallback = Math.max(longestCallback, performance.now() - actionStartedAt);
+      result = await pending;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      sample();
+      observeGc(gc.takeRecords());
     } finally {
       clearInterval(probe);
+      activity.disable();
+      gc.disconnect();
       service.dispose();
     }
-    expect(longestGap).toBeLessThan(20);
+    const blockingMs = Math.max(longestCallback, longestGc);
+    process.stderr.write(
+      `workspace reconciliation main-thread blocking: ${JSON.stringify({
+        blockingMs,
+        longestCallback,
+        longestCallbackCpu,
+        longestGc,
+        longestGap,
+      })}\n`,
+    );
+    expect(blockingMs).toBeLessThan(20);
     expect(result.changesApplied).toHaveLength(20000);
     expect([...workspaces.values()].every((workspace) => workspace.archivedAt !== null)).toBe(true);
   }, 30000);
