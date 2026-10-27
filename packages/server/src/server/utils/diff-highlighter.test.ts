@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { setImmediate } from "node:timers/promises";
-import { performance } from "node:perf_hooks";
+import { measureMainThreadWork } from "../../test-utils/main-thread-work.js";
 import { SessionDelivery } from "../session/owned-subscriptions/index.js";
 import { highlightCode, highlightCodeWithBudget } from "@getpaseo/highlight";
 import {
@@ -840,26 +840,19 @@ describe("diff highlighting budget", () => {
 @@ -1 +1 @@
 -const value = Math.max(42, 7);
 +const value = Math.max(43, 7);`)[0];
-      let lastTick = performance.now();
-      let longestGap = 0;
-      const timer = setInterval(() => {
-        const now = performance.now();
-        longestGap = Math.max(longestGap, now - lastTick);
-        lastTick = now;
-      }, 1);
       try {
-        await setImmediate();
-        const highlighted = await highlightDiffWithFileContent(
-          file,
-          cwd,
-          source === "supplied" ? { oldFileContent } : {},
+        const { result: highlighted, blockingMs } = await measureMainThreadWork(
+          `diff highlight 5MiB ${source} main-thread work`,
+          () =>
+            highlightDiffWithFileContent(
+              file,
+              cwd,
+              source === "supplied" ? { oldFileContent } : {},
+            ),
         );
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        console.info({ sourceBytes: Buffer.byteLength(oldFileContent), longestGap });
-        expect(longestGap).toBeLessThan(50);
+        expect(blockingMs).toBeLessThan(50);
         expect(highlighted).toEqual(highlightDiffFromHunks(file));
       } finally {
-        clearInterval(timer);
         rmSync(cwd, { recursive: true, force: true });
       }
     },
@@ -952,23 +945,17 @@ it("highlights a one-line hunk from an over-budget JSON source without blocking 
 @@ -2 +2 @@
 -  "value": 42,
 +  "value": 43,`);
-  let last = performance.now(),
-    longestGap = 0;
-  const timer = setInterval(() => {
-    const now = performance.now();
-    longestGap = Math.max(longestGap, now - last);
-    last = now;
-  }, 1);
   try {
-    const result = await highlightDiffWithFileContent(file, cwd, { oldFileContent });
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(longestGap).toBeLessThan(50);
+    const { result, blockingMs } = await measureMainThreadWork(
+      "diff highlight large JSON main-thread work",
+      () => highlightDiffWithFileContent(file, cwd, { oldFileContent }),
+    );
+    expect(blockingMs).toBeLessThan(50);
     expect(result.hunks[0].lines.find((line) => line.type === "add")?.tokens).toContainEqual({
       text: "43",
       style: "number",
     });
   } finally {
-    clearInterval(timer);
     rmSync(cwd, { recursive: true, force: true });
   }
 });

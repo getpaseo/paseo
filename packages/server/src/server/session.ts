@@ -7810,7 +7810,12 @@ export class Session {
         limit: msg.limit,
         mergeWindow: msg.mergeWindow === true,
         fetchPage: (limit) =>
-          this.agentManager.fetchTimeline(msg.agentId, { direction, cursor, limit }),
+          this.agentManager.fetchTimeline(msg.agentId, {
+            direction,
+            cursor,
+            limit,
+            wholeTurns: msg.wholeTurns,
+          }),
         supportsItem: (item) => this.supportsTimelineItem(item, source),
         supportsReasoningMerge: source
           ? this.supportsForSource(CLIENT_CAPS.reasoningMergeEnum, source)

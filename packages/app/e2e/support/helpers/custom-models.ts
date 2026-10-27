@@ -19,6 +19,9 @@ export async function addCustomModel(page: Page, id: string): Promise<void> {
     .getByRole("button", { name: "Add", exact: true })
     .click();
   await expect(page.getByRole("button", { name: `Remove ${id}`, exact: true })).toHaveCount(1);
+  // Config updates before provider refresh finishes and dismisses the add sheet.
+  // Resizing or interacting with the model list must wait for that save to finish.
+  await expect(page.getByTestId("add-custom-model-sheet")).toBeHidden();
 }
 
 export async function removeCustomModel(page: Page, id: string): Promise<void> {

@@ -1658,6 +1658,11 @@ test("honors explicit fetchAgentTimeline timeout below the session RPC default",
   mock.triggerOpen();
   await connectPromise;
 
+  await expect(client.fetchAgentTimeline("agent-1", { wholeTurns: true })).rejects.toThrow(
+    "Update the host to load complete conversation turns.",
+  );
+  expect(mock.sent).toHaveLength(0);
+
   const responsePromise = client.fetchAgentTimeline("agent-1", {
     requestId: "req-timeline-1",
     direction: "tail",

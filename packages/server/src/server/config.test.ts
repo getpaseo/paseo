@@ -1,3 +1,4 @@
+import { measureMainThreadWork } from "../test-utils/main-thread-work.js";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -25,22 +26,18 @@ describe("server config", () => {
     const env = { PASEO_PASSWORD: "synthetic-audit-password" };
     const persisted = loadPersistedConfig(paseoHome);
     const startup = resolveConfigFromPersisted(paseoHome, persisted, { env });
-    const started = performance.now();
-    const timer = new Promise<number>((resolve) =>
-      setTimeout(() => resolve(performance.now() - started), 0),
+    const { result: reloaded, blockingMs } = await measureMainThreadWork(
+      "config resolve main-thread work",
+      () =>
+        resolveReloadableConfig(
+          { ...persisted, daemon: { ...persisted.daemon, browserTools: { enabled: true } } },
+          { env },
+        ),
     );
-    const reloaded = resolveReloadableConfig(
-      {
-        ...persisted,
-        daemon: { ...persisted.daemon, browserTools: { enabled: true } },
-      },
-      { env },
-    );
-    const gap = await timer;
     expect(reloaded).not.toHaveProperty("auth");
     expect(reloaded.browserToolsEnabled).toBe(true);
     expect(startup.auth?.password).toBeTypeOf("string");
-    expect(gap).toBeLessThan(50);
+    expect(blockingMs).toBeLessThan(50);
   });
 
   test("records when the daemon is managed by Paseo Desktop", async () => {

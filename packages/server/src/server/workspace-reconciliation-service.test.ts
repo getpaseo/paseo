@@ -1,5 +1,4 @@
-import { createHook, executionAsyncResource } from "node:async_hooks";
-import { performance, PerformanceObserver } from "node:perf_hooks";
+import { measureMainThreadWork } from "../test-utils/main-thread-work.js";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -660,97 +659,20 @@ describe("WorkspaceReconciliationService", () => {
       workspaceRegistry,
       logger: createTestLogger(),
     });
-    // Windows can deschedule Node inside a callback too. Budget charged thread
-    // CPU within callback spans, capped by wall time because Windows CPU counters
-    // advance in coarse increments. Also require real asynchronous inspections:
-    // synchronous filesystem waits can block the loop without consuming CPU.
-    // Node 22.20 provides this API; our older Node declarations omit it.
-    const threadCpuUsage: (previous?: NodeJS.CpuUsage) => NodeJS.CpuUsage = Reflect.get(
-      process,
-      "threadCpuUsage",
-    );
-    const startedAt = performance.now();
-    let last = startedAt;
-    let longestGap = 0;
-    let longestCallback = 0;
-    let longestCallbackCpu = 0;
-    let longestBlocking = 0;
-    let asyncInspections = 0;
-    let longestGc = 0;
-    const callbacks = new Map<number, { wall: number; cpu: NodeJS.CpuUsage }>();
-    const observeGc = (entries: readonly import("node:perf_hooks").PerformanceEntry[]) => {
-      for (const entry of entries) {
-        if (entry.startTime >= startedAt) longestGc = Math.max(longestGc, entry.duration);
-      }
-    };
-    const gc = new PerformanceObserver((list) => observeGc(list.getEntries()));
-    gc.observe({ entryTypes: ["gc"] });
-    let probe: ReturnType<typeof setInterval>;
-    const activity = createHook({
-      init(_id, type) {
-        if (type === "FSREQPROMISE") asyncInspections++;
-      },
-      before(id) {
-        if (executionAsyncResource() === probe) return;
-        callbacks.set(id, { wall: performance.now(), cpu: threadCpuUsage() });
-      },
-      after(id) {
-        const start = callbacks.get(id);
-        if (!start) return;
-        callbacks.delete(id);
-        const duration = performance.now() - start.wall;
-        const { user, system } = threadCpuUsage(start.cpu);
-        const cpuMs = (user + system) / 1_000;
-        longestBlocking = Math.max(longestBlocking, Math.min(duration, cpuMs));
-        if (duration > longestCallback) {
-          longestCallback = duration;
-          longestCallbackCpu = cpuMs;
-        }
-      },
-    }).enable();
-    const sample = () => {
-      const now = performance.now();
-      longestGap = Math.max(longestGap, now - last);
-      last = now;
-    };
-    probe = setInterval(sample, 1);
-    let result;
     try {
-      // Include the initial synchronous span: its callback predates the hook.
-      const actionStartedAt = performance.now();
-      const actionCpu = threadCpuUsage();
-      const pending = service.runOnce();
-      const actionWallMs = performance.now() - actionStartedAt;
-      const { user, system } = threadCpuUsage(actionCpu);
-      longestCallback = Math.max(longestCallback, actionWallMs);
-      longestBlocking = Math.max(longestBlocking, Math.min(actionWallMs, (user + system) / 1_000));
-      result = await pending;
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      sample();
-      observeGc(gc.takeRecords());
+      const { result, blockingMs, filesystemRequests } = await measureMainThreadWork(
+        "workspace reconciliation main-thread work",
+        () => service.runOnce(),
+      );
+      expect(blockingMs).toBeLessThan(20);
+      expect(filesystemRequests).toBe(20001);
+      expect(result.changesApplied).toHaveLength(20000);
+      expect([...workspaces.values()].every((workspace) => workspace.archivedAt !== null)).toBe(
+        true,
+      );
     } finally {
-      clearInterval(probe);
-      activity.disable();
-      gc.disconnect();
       service.dispose();
     }
-    // GC CPU during callbacks is included above. GC elapsed durations, like
-    // callback elapsed durations, include runner preemption: log them separately.
-    const blockingMs = longestBlocking;
-    process.stderr.write(
-      `workspace reconciliation main-thread blocking: ${JSON.stringify({
-        blockingMs,
-        asyncInspections,
-        longestCallback,
-        longestCallbackCpu,
-        longestGc,
-        longestGap,
-      })}\n`,
-    );
-    expect(blockingMs).toBeLessThan(20);
-    expect(asyncInspections).toBe(20001);
-    expect(result.changesApplied).toHaveLength(20000);
-    expect([...workspaces.values()].every((workspace) => workspace.archivedAt !== null)).toBe(true);
   }, 30000);
 
   test("preserves workspace archival that lands during boot reconciliation", async () => {

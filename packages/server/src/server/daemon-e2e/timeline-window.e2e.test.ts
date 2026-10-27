@@ -198,6 +198,40 @@ describe("daemon E2E - timeline window", () => {
     }
   });
 
+  test.each(["tail", "before"] as const)(
+    "keeps image prompts with their complete response for whole-turn %s pages",
+    async (direction) => {
+      const cwd = tmpCwd();
+      try {
+        const agent = await ctx.client.createAgent({ provider: "codex", cwd });
+        const image = { data: "AA==", mimeType: "image/png" };
+        const items = [
+          { type: "user_message" as const, text: "older prompt" },
+          { type: "assistant_message" as const, text: "older response" },
+          { type: "user_message" as const, text: "image prompt", images: [image] },
+          { type: "assistant_message" as const, text: "image response" },
+        ];
+        for (const item of items)
+          await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, item);
+        const epoch = ctx.daemon.daemon.agentManager.fetchTimeline(agent.id, { limit: 1 }).epoch;
+        const page = await ctx.client.fetchAgentTimeline(agent.id, {
+          direction,
+          limit: 1,
+          wholeTurns: true,
+          ...(direction === "before" ? { cursor: { epoch, seq: 4 } } : {}),
+        });
+        expect(page.entries.map((entry) => entry.item)).toEqual(items.slice(2));
+        expect(page.startCursor).toEqual({ epoch, seq: 3 });
+        expect(page.endCursor).toEqual({ epoch, seq: 4 });
+        expect(page.hasOlder).toBe(true);
+        expect(page.hasNewer).toBe(false);
+        expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThan(16 * 1024 * 1024);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+
   test("rejects an oversized timeline item without disconnecting", async () => {
     const cwd = tmpCwd();
     const statuses: string[] = [];

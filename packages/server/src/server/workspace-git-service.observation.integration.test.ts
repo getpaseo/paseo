@@ -534,6 +534,7 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
   const repositoryRoot = fileURLToPath(new URL("../../../../", import.meta.url));
   const source = `
     import assert from 'node:assert/strict';
+    import { measureMainThreadWork } from './packages/server/src/test-utils/main-thread-work.ts';
     import { write } from 'node:fs';
     import { mkdtemp, mkdir, writeFile, symlink, rm } from 'node:fs/promises';
     import { tmpdir } from 'node:os';
@@ -575,29 +576,23 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
       await symlink(worktree, alias, process.platform === 'win32' ? 'junction' : 'dir');
       const subscription = await service.requestWorkingTreeWatch(alias, () => { notifications++; });
       const events = Array.from({ length: process.env.GIT_IO_TRACE ? 2 : 10000 }, (_, i) => ({ type: 'update', path: join(i % 2 ? alias : worktree, 'ignored', 'noise') }));
-      // A shared CI runner can deschedule the child during a wall-clock sample.
-      // Keep the 20ms gate, but take three independent batches and require one
-      // responsive callback/timer pair. All batches must remain filesystem-free.
-      const samples = [];
-      for (let trial = 0; trial < (process.env.GIT_IO_TRACE ? 1 : 3); trial++) {
-        await tick();
-        let fsCalls = 0;
-        const hook = createHook({ init(_id, type) { if (type.startsWith('FSREQ')) fsCalls++; } });
+      let fsCalls = 0;
+      const hook = createHook({ init(_id, type) { if (type.startsWith('FSREQ')) fsCalls++; } });
+      await tick();
+      const { blockingMs } = await measureMainThreadWork('Git filter main-thread work', async () => {
         await marker('FILTER_START');
         hook.enable();
-        const started = performance.now();
-        const pulse = new Promise((resolve) => setTimeout(() => resolve(performance.now() - started), 0));
-        callback(null, events);
-        const filterMs = performance.now() - started;
-        hook.disable();
-        const loopGapMs = await pulse;
-        await marker('FILTER_END');
-        assert.equal(fsCalls, 0, "filesystem calls");
-        assert.equal(notifications, 0, "ignored event notification");
-        samples.push({ filterMs, loopGapMs, fsCalls });
-      }
-      console.log(JSON.stringify({ ...samples[0], samples }));
-      assert.ok(process.env.GIT_IO_TRACE || samples.some(({ filterMs, loopGapMs }) => filterMs < 20 && loopGapMs < 20), 'no responsive filter sample: ' + JSON.stringify(samples));
+        try {
+          callback(null, events);
+        } finally {
+          hook.disable();
+          await marker('FILTER_END');
+        }
+      });
+      assert.equal(fsCalls, 0, "filesystem calls");
+      assert.equal(notifications, 0, "ignored event notification");
+      assert.ok(blockingMs < 20, 'blocking filter work: ' + blockingMs);
+      console.log(JSON.stringify({ blockingMs, fsCalls }));
       // Alias identity remains useful after deletion: no per-event realpath can recover this file.
       callback(null, [{ type: 'delete', path: join(worktree, 'tracked.txt') }]);
       assert.equal(notifications, 1);
