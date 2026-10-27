@@ -4625,7 +4625,9 @@ export class AgentManager {
         return undefined;
       case "model_changed":
         agent.runtimeInfo = event.runtimeInfo;
-        if (!agent.persistence && event.runtimeInfo.sessionId) {
+        if (event.runtimeInfo.sessionId === null) {
+          agent.persistence = null;
+        } else if (!agent.persistence && event.runtimeInfo.sessionId) {
           agent.persistence = attachPersistenceCwd(
             { provider: agent.provider, sessionId: event.runtimeInfo.sessionId },
             agent.cwd,
