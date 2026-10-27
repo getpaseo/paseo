@@ -3,12 +3,13 @@ import React, { isValidElement, type ReactElement, type ReactNode } from "react"
 import { SvgXml } from "react-native-svg";
 import { describe, expect, it } from "vitest";
 import type { PluginIconProps } from "@getpaseo/plugin";
+import { GitHubIcon } from "@/components/icons/github-icon";
 import { Icon, parsePluginIcon, parseSerializablePluginIcon, PluginIconView } from "./icons";
 
 const SVG = '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h16v16H4z" /></svg>';
 const SVG_ICON = { svg: SVG };
 
-const GLYPHS = new Set<unknown>([Settings, SvgXml]);
+const GLYPHS = new Set<unknown>([Settings, SvgXml, GitHubIcon]);
 
 /** Expands function components down to what reaches the screen: a Lucide glyph, SvgXml, or DOM. */
 function draw(node: ReactNode): ReactElement | null {
@@ -26,6 +27,13 @@ describe("PluginIconView", () => {
   it("draws a Lucide name as that Lucide icon", () => {
     expect(draw(<PluginIconView icon="Settings" size={18} color="#123456" />)).toMatchObject({
       type: Settings,
+      props: { size: 18, color: "#123456" },
+    });
+  });
+
+  it("draws a brand name Lucide 1.x removed as the host brand icon", () => {
+    expect(draw(<PluginIconView icon="Github" size={18} color="#123456" />)).toMatchObject({
+      type: GitHubIcon,
       props: { size: 18, color: "#123456" },
     });
   });
@@ -48,6 +56,7 @@ describe("PluginIconView", () => {
 describe("parsePluginIcon", () => {
   it("normalizes each icon form", () => {
     expect(parsePluginIcon("Workspace panel files", " Settings ")).toBe("Settings");
+    expect(parsePluginIcon("Workspace panel files", "Github")).toBe("Github");
     expect(parsePluginIcon("Workspace panel files", { svg: `\n${SVG}\n` })).toEqual({ svg: SVG });
     expect(parsePluginIcon("Workspace panel files", BadgeIcon)).toBe(BadgeIcon);
   });

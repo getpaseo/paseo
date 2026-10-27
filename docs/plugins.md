@@ -426,6 +426,9 @@ The [public reference](../public-docs/plugins/reference.md#icons) owns the autho
   icons. Change the rules there, never at a call site.
 - The app validates each icon once, at registration, through `parsePluginIcon` in
   `packages/app/src/plugins/icons.ts`. Rendering trusts the stored icon.
+- Lucide 1.0 removed its brand icons, but plugins written against 0.x still name them (`Github`).
+  `REMOVED_LUCIDE_BRAND_ICONS` in that module maps each such name to the host's own brand icon.
+  Add a name there when a plugin fails with `unknown Lucide icon` for a removed brand.
 - That module is the only code that branches on the icon form. Surfaces draw with
   `PluginIconView`, or take a stable component from `pluginIconComponent` when their slot expects
   one. Lucide and SVG icons receive only size and color, so the host props a button passes to its
