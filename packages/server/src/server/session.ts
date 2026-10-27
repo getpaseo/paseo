@@ -1,10 +1,7 @@
 import { AgentBrowserError, agentBrowserDashboardsForHome } from "./agent-browser.js";
 import type { DesktopToolsBroker } from "./desktop-tools/broker.js";
 import { selectResponseContext } from "./response-context.js";
-import {
-  interactiveResponsesEnabled,
-  interactiveResponsesForHome,
-} from "./interactive-responses.js";
+import { interactiveResponsesForHome } from "./interactive-responses.js";
 import { workspaceTodosForHome } from "./workspace-todos.js";
 import { searchTimeline } from "./agent/chat-search/index.js";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
@@ -8478,7 +8475,6 @@ export class Session {
         ? "conversation.ui.get.response"
         : "conversation.ui.state.update.response";
     try {
-      if (!interactiveResponsesEnabled()) throw new Error("Interactive responses are disabled");
       const resolved = await this.resolveAgentIdentifier(msg.agentId);
       if (!resolved.ok) throw new Error(resolved.error);
       const store = interactiveResponsesForHome(this.paseoHome);
@@ -8515,8 +8511,6 @@ export class Session {
     try {
       const agentId = resolved.agentId;
 
-      if ((msg.interactiveReference || msg.deepenReference) && !interactiveResponsesEnabled())
-        throw new Error("Interactive responses are disabled");
       const attachments = [...(msg.attachments ?? [])];
       if (msg.interactiveReference) {
         if (!msg.messageId) throw new Error("Interactive submissions require a message identity");

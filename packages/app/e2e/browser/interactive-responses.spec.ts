@@ -8,7 +8,6 @@ import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 
 const test = base.extend({
   e2eInjectPaseoTools: [true, { scope: "worker" }],
-  e2eDaemonEnvironment: [{ PASEO_EXPERIMENTAL_INTERACTIVE_RESPONSES: "1" }, { scope: "worker" }],
 });
 const input = {
   title: "Choose your plan",

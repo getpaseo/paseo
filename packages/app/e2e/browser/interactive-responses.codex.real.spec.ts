@@ -14,7 +14,6 @@ import {
 
 const test = base.extend({
   e2eInjectPaseoTools: [true, { scope: "worker" }],
-  e2eDaemonEnvironment: [{ PASEO_EXPERIMENTAL_INTERACTIVE_RESPONSES: "1" }, { scope: "worker" }],
 });
 test.setTimeout(180000);
 

@@ -1,10 +1,7 @@
 import { registerDesktopTools } from "../../desktop-tools/tools.js";
 import type { DesktopToolsBroker } from "../../desktop-tools/broker.js";
 import { interactiveInstructions } from "@getpaseo/protocol/interactive-response";
-import {
-  interactiveResponsesEnabled,
-  interactiveResponsesForHome,
-} from "../../interactive-responses.js";
+import { interactiveResponsesForHome } from "../../interactive-responses.js";
 import { workspaceTodosForHome } from "../../workspace-todos.js";
 import { WorkspaceTodoMutationSchema } from "@getpaseo/protocol/workspace-todos";
 import { stat } from "node:fs/promises";
@@ -2178,7 +2175,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     },
   );
 
-  if (interactiveResponsesEnabled() && callerAgentId && options.paseoHome) {
+  if (callerAgentId && options.paseoHome) {
     registerTool(
       "render_interactive_response",
       {

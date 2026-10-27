@@ -1,7 +1,97 @@
 import { parseDocument, DomUtils } from "htmlparser2";
 
+export const artifactAllowedTags = [
+  "div",
+  "span",
+  "p",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "ul",
+  "ol",
+  "li",
+  "table",
+  "thead",
+  "tbody",
+  "tr",
+  "td",
+  "th",
+  "strong",
+  "em",
+  "b",
+  "i",
+  "br",
+  "hr",
+  "pre",
+  "code",
+  "style",
+  "section",
+  "article",
+  "header",
+  "footer",
+  "main",
+  "label",
+  "button",
+  "input",
+  "textarea",
+  "select",
+  "option",
+  "svg",
+  "path",
+  "circle",
+  "rect",
+  "line",
+  "polyline",
+  "text",
+  "g",
+  "img",
+];
+
+export const artifactAllowedAttributes = [
+  "class",
+  "id",
+  "style",
+  "title",
+  "aria-label",
+  "role",
+  "type",
+  "value",
+  "placeholder",
+  "disabled",
+  "min",
+  "max",
+  "step",
+  "checked",
+  "selected",
+  "viewbox",
+  "d",
+  "fill",
+  "stroke",
+  "stroke-width",
+  "x",
+  "y",
+  "x1",
+  "x2",
+  "y1",
+  "y2",
+  "cx",
+  "cy",
+  "r",
+  "width",
+  "height",
+  "points",
+  "alt",
+];
+const allowed = new Set(artifactAllowedTags);
+const attributes = new Set(artifactAllowedAttributes);
+
+export function isArtifactImageSource(value: string): boolean {
+  return /^data:image\/(png|jpeg|gif|webp);base64,[a-zA-Z0-9+/=]+$/.test(value);
+}
+
 // Scripted srcdoc frames can navigate themselves despite connect-src 'none'.
-// Scripts go to the interpreter; the browser only receives filtered markup.
+// This prefilter extracts interpreter scripts; runtime/render.ts owns DOM sanitization.
 export function artifactProgram(html: string): {
   markup: string;
   scripts: string[];
@@ -11,53 +101,6 @@ export function artifactProgram(html: string): {
   const document = parseDocument(html);
   let scripted = false;
   const scripts: string[] = [];
-  const allowed = new Set([
-    "div",
-    "span",
-    "p",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "ul",
-    "ol",
-    "li",
-    "table",
-    "thead",
-    "tbody",
-    "tr",
-    "td",
-    "th",
-    "strong",
-    "em",
-    "b",
-    "i",
-    "br",
-    "hr",
-    "pre",
-    "code",
-    "style",
-    "section",
-    "article",
-    "header",
-    "footer",
-    "main",
-    "label",
-    "button",
-    "input",
-    "textarea",
-    "select",
-    "option",
-    "svg",
-    "path",
-    "circle",
-    "rect",
-    "line",
-    "polyline",
-    "text",
-    "g",
-    "img",
-  ]);
   function clean(nodes: typeof document.children): void {
     for (const node of nodes.slice()) {
       if (node.type === "script") {
@@ -78,19 +121,10 @@ export function artifactProgram(html: string): {
           continue;
         }
         for (const name of Object.keys(node.attribs)) {
-          if (
-            node.name === "img" &&
-            name === "src" &&
-            /^data:image\/(png|jpeg|gif|webp);base64,[a-zA-Z0-9+/=]+$/.test(node.attribs[name]!)
-          )
+          if (node.name === "img" && name === "src" && isArtifactImageSource(node.attribs[name]!))
             continue;
           if (name.toLowerCase().startsWith("on")) scripted = true;
-          if (
-            !/^(class|id|style|title|aria-label|role|type|value|placeholder|disabled|min|max|step|checked|selected|viewBox|viewbox|d|fill|stroke|stroke-width|x|y|x1|x2|y1|y2|cx|cy|r|width|height|points|alt)$/.test(
-              name,
-            )
-          )
-            delete node.attribs[name];
+          if (!attributes.has(name.toLowerCase())) delete node.attribs[name];
         }
         clean(node.children);
       } else if ("children" in node) clean(node.children);

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { InteractiveFields } from "./fields";
 import { artifactMessage } from "./artifact";
 import { artifactDocument } from "./runtime/document";
+import { useArtifactActive } from "./visibility";
 
 export interface ArtifactCommand {
   session: string;
@@ -13,6 +14,7 @@ export interface ArtifactCommand {
     | { type: "theme"; colorScheme: "light" | "dark" };
 }
 interface PendingFlush {
+  promise: Promise<void>;
   id: number;
   resolve: () => void;
   reject: (error: Error) => void;
@@ -25,6 +27,12 @@ interface ArtifactOptions {
   colorScheme: "light" | "dark";
 }
 export function useArtifact({ html, name, post, colorScheme }: ArtifactOptions) {
+  const active = useArtifactActive();
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const [mounted, setMounted] = useState(active);
+  const mountedRef = useRef(active);
+  const suspending = useRef(false);
   const fields = useContext(InteractiveFields);
   const { registerRuntime } = fields;
   const { t } = useTranslation();
@@ -73,7 +81,13 @@ export function useArtifact({ html, name, post, colorScheme }: ArtifactOptions) 
   const receive = useCallback(
     (raw: unknown) => {
       const parsed = z.object({ session: z.literal(session), message: z.unknown() }).safeParse(raw);
-      if (!parsed.success || !alive.current || failed.current || currentSession.current !== session)
+      if (
+        !parsed.success ||
+        !alive.current ||
+        !mountedRef.current ||
+        failed.current ||
+        currentSession.current !== session
+      )
         return;
       try {
         const message = artifactMessage(parsed.data.message);
@@ -109,25 +123,28 @@ export function useArtifact({ html, name, post, colorScheme }: ArtifactOptions) 
   useEffect(() => {
     latest.current.post({ session, command: { type: "theme", colorScheme } });
   }, [session, colorScheme]);
+  const flush = useCallback(() => {
+    if (failed.current) return Promise.reject(new Error(t("interactive.renderError")));
+    if (pending.current) return pending.current.promise;
+    let resolve!: () => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<void>((done, rejectFlush) => {
+      resolve = done;
+      reject = rejectFlush;
+    });
+    const id = ++nextId.current;
+    const timer = setTimeout(fail, 10000);
+    pending.current = { id, resolve, reject, timer, promise };
+    latest.current.post({ session, command: { type: "disabled", disabled: true } });
+    if (ready.current) latest.current.post({ session, command: { type: "flush", id } });
+    return promise;
+  }, [session, fail, t]);
   useEffect(
-    () =>
-      registerRuntime(
-        () =>
-          new Promise<void>((resolve, reject) => {
-            if (failed.current || pending.current) {
-              reject(new Error(t("interactive.renderError")));
-              return;
-            }
-            const id = ++nextId.current;
-            const timer = setTimeout(fail, 10000);
-            pending.current = { id, resolve, reject, timer };
-            latest.current.post({ session, command: { type: "disabled", disabled: true } });
-            if (ready.current) latest.current.post({ session, command: { type: "flush", id } });
-          }),
-      ),
-    [registerRuntime, session, fail, t],
+    () => (mounted ? registerRuntime(flush) : undefined),
+    [registerRuntime, flush, mounted],
   );
   useEffect(() => {
+    if (!mounted) return;
     const timer = setTimeout(() => {
       if (!ready.current) fail();
     }, 10000);
@@ -139,12 +156,36 @@ export function useArtifact({ html, name, post, colorScheme }: ArtifactOptions) 
         pending.current = null;
       }
     };
-  }, [fail, revision, t]);
+  }, [fail, revision, t, mounted]);
   const reload = useCallback(() => {
     ready.current = false;
     failed.current = false;
     setStatus("loading");
     setRevision((value) => value + 1);
   }, []);
-  return { source: source.current, status, revision, receive, fail, reload };
+  useEffect(() => {
+    if (active) {
+      if (!mountedRef.current) {
+        mountedRef.current = true;
+        reload();
+        setMounted(true);
+      }
+      return;
+    }
+    if (!mountedRef.current || suspending.current) return;
+    suspending.current = true;
+    // Retain the shell until it acknowledges queued input; then release its worker.
+    void flush()
+      .catch(() => undefined)
+      .finally(() => {
+        suspending.current = false;
+        if (!alive.current) return;
+        if (activeRef.current) reload();
+        else {
+          mountedRef.current = false;
+          setMounted(false);
+        }
+      });
+  }, [active, flush, reload]);
+  return { source: source.current, status, revision, receive, fail, reload, mounted };
 }

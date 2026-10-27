@@ -71,4 +71,14 @@ it("keeps independent custom visual states without breaking unnamed historical d
       'root = Layout([HtmlArtifact("<p>A</p>","same"), Input("same","Note")])',
     ),
   ).toThrow();
+  expect(() =>
+    validateInteractiveSource(
+      'root = Layout([HtmlArtifact("<p>A</p>"), HtmlArtifact("<p>B</p>","artifact")])',
+    ),
+  ).toThrow("Duplicate field name");
+  expect(() =>
+    validateInteractiveSource(
+      'root = Layout([HtmlArtifact("<p>A</p>"), Input("artifact","Note")])',
+    ),
+  ).toThrow("Duplicate field name");
 });

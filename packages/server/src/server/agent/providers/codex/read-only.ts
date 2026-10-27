@@ -76,6 +76,12 @@ async function removeReadOnlyStateEntry(
   }
 }
 
+function configureReadOnlyTLS(env: NodeJS.ProcessEnv): void {
+  // The confined process cannot use macOS trust services. Supply the public system
+  // CA bundle so Codex can verify HTTPS without widening the sandbox policy.
+  if (!env.CODEX_CA_CERTIFICATE && !env.SSL_CERT_FILE) env.SSL_CERT_FILE = "/etc/ssl/cert.pem";
+}
+
 export async function prepareReadOnlyCodexRuntime(input: {
   agentId?: string;
   cwd: string;
@@ -132,6 +138,7 @@ export async function prepareReadOnlyCodexRuntime(input: {
     throw error;
   });
   const env: NodeJS.ProcessEnv = { ...input.env, CODEX_HOME: stateDir, TMPDIR: tempDir };
+  configureReadOnlyTLS(env);
   for (const key of Object.keys(env)) {
     if (key.startsWith("PASEO_") || key.startsWith("DYLD_")) delete env[key];
   }

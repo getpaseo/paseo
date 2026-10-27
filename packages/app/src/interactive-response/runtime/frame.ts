@@ -1,4 +1,4 @@
-import morphdom from "morphdom";
+import { renderArtifact } from "./render";
 /* oxlint-disable unicorn/require-post-message-target-origin -- Worker messages have no target origin; parent messages specify one. */
 import { z } from "zod";
 import { artifactMessage, artifactProgram } from "../artifact";
@@ -42,23 +42,7 @@ function fail() {
   send({ type: "error" });
 }
 function render(markup: string) {
-  const active = document.activeElement;
-  const focused = active instanceof HTMLElement && root.contains(active) ? active.id : "";
-  const textInput = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
-  const start = textInput ? active.selectionStart : null;
-  const end = textInput ? active.selectionEnd : null;
-  const program = artifactProgram(markup);
-  morphdom(root, `<div>${program.markup}</div>`, { childrenOnly: true });
-  const replacement = focused ? document.getElementById(focused) : null;
-  if (replacement instanceof HTMLElement && root.contains(replacement)) {
-    replacement.focus({ preventScroll: true });
-    if (
-      start !== null &&
-      end !== null &&
-      (replacement instanceof HTMLInputElement || replacement instanceof HTMLTextAreaElement)
-    )
-      replacement.setSelectionRange(start, end);
-  }
+  renderArtifact(root, markup);
   root.inert = disabled;
 }
 const renderSchema = z.object({ type: z.literal("render"), markup: z.string().max(100000) });

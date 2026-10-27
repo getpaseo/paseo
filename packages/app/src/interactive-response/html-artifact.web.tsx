@@ -1,4 +1,3 @@
-import { useArtifactActive } from "./visibility";
 import type { HtmlArtifactProps } from "./artifact";
 import { useCallback, useRef } from "react";
 import { Text, View } from "react-native";
@@ -8,11 +7,7 @@ import { useArtifact, type ArtifactCommand } from "./use-artifact";
 import { styles } from "./styles";
 import { useEffect } from "react";
 const FRAME_STYLE = { width: "100%", height: 360, border: 0 } as const;
-export function HtmlArtifact(props: HtmlArtifactProps) {
-  const active = useArtifactActive();
-  return active ? <ArtifactFrame {...props} /> : null;
-}
-function ArtifactFrame({ html, name, colorScheme = "light" }: HtmlArtifactProps) {
+export function HtmlArtifact({ html, name, colorScheme = "light" }: HtmlArtifactProps) {
   const { t } = useTranslation();
   const frame = useRef<HTMLIFrameElement>(null);
   const post = useCallback(
@@ -28,6 +23,7 @@ function ArtifactFrame({ html, name, colorScheme = "light" }: HtmlArtifactProps)
     window.addEventListener("message", message);
     return () => window.removeEventListener("message", message);
   }, [receive]);
+  if (!runtime.mounted) return null;
   return (
     <View style={styles.content}>
       {runtime.status === "loading" ? (

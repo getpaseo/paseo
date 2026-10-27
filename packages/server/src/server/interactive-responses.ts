@@ -13,11 +13,6 @@ import { AgentTimelineItemPayloadSchema } from "@getpaseo/protocol/messages";
 import type { AgentTimelineItem } from "./agent/agent-sdk-types.js";
 import { writeJsonFileAtomic } from "./atomic-file.js";
 
-// Keep the feature experimental until cross-platform QA and final review are signed off.
-export function interactiveResponsesEnabled(): boolean {
-  return process.env.PASEO_EXPERIMENTAL_INTERACTIVE_RESPONSES === "1";
-}
-
 export class InteractiveResponseStore {
   private queue: Promise<unknown> = Promise.resolve();
   constructor(private readonly directory: string) {}

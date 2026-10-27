@@ -1,4 +1,3 @@
-import { useArtifactActive } from "./visibility";
 import type { HtmlArtifactProps } from "./artifact";
 import { useCallback, useMemo, useRef } from "react";
 import { Text, View } from "react-native";
@@ -12,11 +11,7 @@ const ORIGINS = ["about:blank"];
 function allowNavigation(request: { url: string }) {
   return request.url === "about:blank";
 }
-export function HtmlArtifact(props: HtmlArtifactProps) {
-  const active = useArtifactActive();
-  return active ? <ArtifactFrame {...props} /> : null;
-}
-function ArtifactFrame({ html, name, colorScheme = "light" }: HtmlArtifactProps) {
+export function HtmlArtifact({ html, name, colorScheme = "light" }: HtmlArtifactProps) {
   const { t } = useTranslation();
   const frame = useRef<WebView>(null);
   const post = useCallback((command: ArtifactCommand) => {
@@ -37,6 +32,7 @@ function ArtifactFrame({ html, name, colorScheme = "light" }: HtmlArtifactProps)
     },
     [receive, fail],
   );
+  if (!runtime.mounted) return null;
   return (
     <View style={styles.content}>
       {runtime.status === "loading" ? (

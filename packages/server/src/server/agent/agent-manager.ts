@@ -1,8 +1,5 @@
 import { agentBrowserEnv } from "../agent-browser-env.js";
-import {
-  interactiveResponsesEnabled,
-  interactiveResponsesForHome,
-} from "../interactive-responses.js";
+import { interactiveResponsesForHome } from "../interactive-responses.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
 import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
@@ -4738,7 +4735,7 @@ export class AgentManager {
       if (row.item.type === "user_message" && row.item.clientMessageId && row.providerMessageId)
         submitted.set(row.providerMessageId, row.item);
     }
-    if (this.paseoHome && interactiveResponsesEnabled()) {
+    if (this.paseoHome) {
       const persisted = await interactiveResponsesForHome(this.paseoHome).submittedMessages(
         agent.id,
       );
@@ -5429,12 +5426,7 @@ export class AgentManager {
       );
       if (enriched) this.enqueueDurableTimelineUpdate(agent.id, enriched);
     }
-    if (
-      this.paseoHome &&
-      interactiveResponsesEnabled() &&
-      messageId &&
-      item.text !== existing.item.text
-    )
+    if (this.paseoHome && messageId && item.text !== existing.item.text)
       await interactiveResponsesForHome(this.paseoHome).rememberSubmittedMessage(
         agent.id,
         messageId,
@@ -5893,7 +5885,7 @@ export class AgentManager {
   private applyDaemonAppendSystemPrompt(config: AgentSessionConfig): AgentSessionConfig {
     const daemonAppendSystemPrompt = [
       this.appendSystemPrompt.trim(),
-      interactiveResponsesEnabled() && this.paseoToolsEnabled && config.writePolicy !== "read_only"
+      this.paseoToolsEnabled && config.writePolicy !== "read_only"
         ? "Use plain text for simple answers. When an interactive comparison, form, chart or explanation helps, use render_interactive_response if it is available, following its shared component catalog. Tool restrictions continue to apply. Each proposal is a distinct document; user choices are sent only through an explicit Paseo action."
         : "",
       this.paseoToolsEnabled && config.writePolicy !== "read_only"

@@ -369,27 +369,31 @@ test.skipIf(process.platform !== "darwin")(
   },
 );
 
-test("unfinished interactive response tools require an explicit experimental opt-in", async () => {
+test("interactive response tools are available without an experimental opt-in", async () => {
   const logger = createTestLogger();
   const manager = new AgentManager({ clients: createTestAgentClients(), logger });
-  const root = await mkdtemp(join(tmpdir(), "paseo-interactive-gate-"));
+  const root = await mkdtemp(join(tmpdir(), "paseo-interactive-catalog-"));
   const catalog = () =>
     createPaseoToolCatalog({
       agentManager: manager,
       agentStorage: new AgentStorage(join(root, "agents"), logger),
       providerSnapshotManager: createProviderSnapshotManagerStub(),
       logger,
-      callerAgentId: "experimental-caller",
+      callerAgentId: "interactive-caller",
       paseoHome: root,
     });
   try {
     vi.stubEnv("PASEO_EXPERIMENTAL_INTERACTIVE_RESPONSES", undefined);
-    expect(catalog().tools.has("render_interactive_response")).toBe(false);
-    await expect(catalog().executeTool("render_interactive_response", {})).rejects.toThrow(
-      "Paseo tool not found",
-    );
-    vi.stubEnv("PASEO_EXPERIMENTAL_INTERACTIVE_RESPONSES", "1");
     expect(catalog().tools.has("render_interactive_response")).toBe(true);
+    const result = await catalog().executeTool("render_interactive_response", {
+      title: "Local visual",
+      summary: "Choose",
+      source: 'root = Text("Ready")',
+    });
+    expect(result.structuredContent).toMatchObject({
+      documentId: expect.any(String),
+      title: "Local visual",
+    });
   } finally {
     vi.unstubAllEnvs();
     manager.prepareForShutdown();

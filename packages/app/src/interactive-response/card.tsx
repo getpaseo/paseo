@@ -10,7 +10,7 @@ import {
 } from "react";
 import { Text, View } from "react-native";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
-import { InteractiveRenderer } from "./renderer";
+import { InteractiveRenderer, getArtifactNames } from "./renderer";
 import { useTranslation } from "react-i18next";
 import { useFetchQuery } from "@/data/query";
 import {
@@ -100,6 +100,7 @@ function DocumentView({
   const context = useInteractiveConversation()!;
   const { t } = useTranslation();
   const [state, setState] = useState(document.state);
+  const artifactNames = useMemo(() => getArtifactNames(document.source), [document.source]);
   const latestState = useRef(document.state);
   const blocked = useRef(false);
   const [error, setError] = useState("");
@@ -169,7 +170,7 @@ function DocumentView({
       request.current ??= {
         id: crypto.randomUUID(),
         text:
-          artifactProposal(latestState.current) ||
+          artifactProposal(latestState.current, artifactNames) ||
           `${document.title} — ${document.summary}\n${Object.entries(latestState.current)
             .map(([key, value]) => `${key}: ${String(value)}`)
             .join("\n")}`,
@@ -182,13 +183,35 @@ function DocumentView({
       sending.current = false;
       setPending(false);
     }
-  }, [context, document, t, writer]);
+  }, [context, document, t, writer, artifactNames]);
   const header = useMemo(
     () => ({ title: document.title, subtitle: document.summary }),
     [document.title, document.summary],
   );
-  const open = useCallback(() => setExpanded(true), []);
-  const close = useCallback(() => setExpanded(false), []);
+  const resize = useCallback(async (next: boolean) => {
+    if (sending.current) return;
+    sending.current = true;
+    setPending(true);
+    try {
+      // A failed visual must not discard another visual's final state on close.
+      const results = await Promise.allSettled(Array.from(runtimes.current, (flush) => flush()));
+      const failure = results.find((result) => result.status === "rejected");
+      if (failure) throw failure.reason;
+      setExpanded(next);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+      if (!next) setExpanded(false);
+    } finally {
+      sending.current = false;
+      setPending(false);
+    }
+  }, []);
+  const open = useCallback(() => {
+    void resize(true);
+  }, [resize]);
+  const close = useCallback(() => {
+    void resize(false);
+  }, [resize]);
   const retry = useCallback(() => {
     if (blocked.current) reload();
     else void send();
@@ -210,7 +233,7 @@ function DocumentView({
     ),
     [t],
   );
-  const proposal = artifactProposal(state);
+  const proposal = artifactProposal(state, artifactNames);
   const label = status === "idle" ? "interactive.send" : (`interactive.${status}` as const);
   const content = (
     <RenderBoundary fallback={fallback}>

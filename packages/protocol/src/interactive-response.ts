@@ -81,9 +81,11 @@ export function validateInteractiveSource(source: string): ElementNode {
       interactiveComponentSchemas[node.typeName as keyof typeof interactiveComponentSchemas];
     if (!schema) throw new Error("Unknown OpenUI component");
     const props = schema.parse(node.props);
-    if ("name" in props && typeof props.name === "string") {
-      if (fields.has(props.name)) throw new Error("Duplicate field name");
-      fields.add(props.name);
+    let name = node.typeName === "HtmlArtifact" ? "artifact" : undefined;
+    if ("name" in props && typeof props.name === "string") name = props.name;
+    if (name !== undefined) {
+      if (fields.has(name)) throw new Error("Duplicate field name");
+      fields.add(name);
     }
     if (node.typeName === "Slider" && Number(node.props.max) < Number(node.props.min))
       throw new Error("Invalid slider range");

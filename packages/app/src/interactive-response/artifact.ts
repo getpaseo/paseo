@@ -6,8 +6,8 @@ export type ArtifactState = z.infer<typeof envelope>;
 export function artifactState(value: unknown): ArtifactState {
   if (value === undefined) return { state: null, proposal: "" };
   const parsed: unknown = JSON.parse(z.string().max(65536).parse(value));
-  if (typeof parsed === "object" && parsed !== null && "proposal" in parsed)
-    return envelope.parse(parsed);
+  const restored = envelope.safeParse(parsed);
+  if (restored.success) return restored.data;
   // COMPAT(interactiveArtifactState): added in v0.11.1, remove after 2027-04-24 once pre-runtime documents are retired.
   return { state: z.json().parse(parsed), proposal: "" };
 }
@@ -29,9 +29,10 @@ export interface HtmlArtifactProps {
   colorScheme?: "light" | "dark";
 }
 
-export function artifactProposal(state: Record<string, unknown>): string {
-  return Object.values(state)
-    .flatMap((value) => {
+export function artifactProposal(state: Record<string, unknown>, names: readonly string[]): string {
+  return names
+    .flatMap((name) => {
+      const value = state[name];
       if (typeof value !== "string") return [];
       try {
         const parsed = artifactState(value);
