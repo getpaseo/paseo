@@ -88,7 +88,7 @@
     // Exceptions name individual APIs in individual modules; new APIs still fail in these files.
     // TODO entries are runtime debt, not startup exemptions. Do not add directory-wide exceptions.
     {
-      "files": ["packages/server/src/**/*.{ts,tsx,js,mjs,cjs}"],
+      "files": ["packages/server/src/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"],
       "rules": {
         "paseo/no-sync-io": [
           "error",
@@ -230,7 +230,7 @@
     },
     {
       "files": [
-        "packages/server/src/**/*.{test,spec,fixture}.{ts,tsx}",
+        "packages/server/src/**/*.{test,spec,fixture}.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
         "packages/server/src/**/test-utils/**",
         "packages/server/src/server/daemon-e2e/**",
         "packages/server/src/server/agent/providers/pi/extensions/*-test.ts"

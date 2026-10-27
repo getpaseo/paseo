@@ -139,3 +139,14 @@ test("repository config guards request paths while allowing startup APIs and tes
     assert.equal(result.failed, false, result.output);
   }
 });
+
+test("sync IO exceptions must be removed when a module stops using the API", () => {
+  const result = lint(
+    'import { readFile } from "node:fs/promises"; export const read = readFile;',
+    "paseo/no-sync-io",
+    { allow: { "server/startup.ts": ["readFileSync"] } },
+    "packages/server/src/server/startup.ts",
+  );
+  assert.equal(result.failed, true, result.output);
+  assert.match(result.output, /Remove the unused sync IO exception for readFileSync/);
+});

@@ -102,14 +102,24 @@ const noSyncIo = {
     const filename = context.filename.replaceAll("\\", "/");
     const relativeFile = filename.split("/packages/server/src/")[1];
     const allowed = new Set(context.options[0]?.allow?.[relativeFile] ?? []);
+    const unused = new Set(allowed);
     function check(node, name) {
-      if (typeof name !== "string" || !name.endsWith("Sync") || allowed.has(name)) return;
+      if (typeof name !== "string" || !name.endsWith("Sync")) return;
+      if (allowed.has(name)) {
+        unused.delete(name);
+        return;
+      }
       context.report({
         node,
         message: `Synchronous Node IO (${name}) blocks the daemon event loop. Use an asynchronous capability at the owning module boundary.`,
       });
     }
     return {
+      "Program:exit"(node) {
+        for (const name of unused) {
+          context.report({ node, message: `Remove the unused sync IO exception for ${name}.` });
+        }
+      },
       ImportDeclaration(node) {
         if (node.importKind === "type" || !SYNC_IO_MODULES.has(node.source.value)) return;
         for (const specifier of node.specifiers) {
