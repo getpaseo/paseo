@@ -48,6 +48,17 @@ function collapse(tail: StreamItem[], options: Partial<CollapseTurnsInput> = {})
 const ids = (items: StreamItem[]) => items.map((item) => item.id);
 
 describe("collapseTurns", () => {
+  it("maps a partial turn's former group host to the completed turn host", () => {
+    const result = collapse([user("u1"), shell("earlier-call"), reply("final")], {
+      getGroupedCalls: () => [shell("earlier-call"), shell("previous-group-host")],
+    });
+    expect(result.hostIdByHiddenRowId.get("previous-group-host")).toBe("u1");
+    expect(result.hostIdByHiddenRowId.get("earlier-call")).toBe("u1");
+    const expanded = collapse([user("u1"), shell("c1"), reply("final")], {
+      expandedHostIds: new Set(["u1"]),
+    });
+    expect(expanded.hostIdByHiddenRowId.size).toBe(0);
+  });
   it("keeps lifecycle events and compaction recognizable beside a semantic action summary", () => {
     const create = shell("create");
     if (create.payload.source !== "agent") throw new Error("Expected agent tool");

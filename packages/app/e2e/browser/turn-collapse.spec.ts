@@ -193,6 +193,7 @@ test("received messages show their sender and open that agent", async ({ page })
       .getByText("Sent by Reviewer", { exact: true })
       .evaluate((element) => getComputedStyle(element).color);
     await expect(attribution.locator("svg")).toHaveCSS("fill", labelColor);
+    await expectSenderAlignedWithBubble(attribution);
     await attribution.scrollIntoViewIfNeeded();
     await page.screenshot({ path: "/tmp/sender-attribution.png" });
     await attribution.click();
@@ -201,6 +202,22 @@ test("received messages show their sender and open that agent", async ({ page })
     await recipient.cleanup();
   }
 });
+
+async function expectSenderAlignedWithBubble(attribution: Locator) {
+  const edges = await attribution.evaluate((button) => {
+    const bubble = button.nextElementSibling;
+    const label = button.querySelector('[dir="auto"]');
+    if (!bubble || !label) throw new Error("Sender label or message bubble missing");
+    return {
+      labelRight: label.getBoundingClientRect().right,
+      bubbleRight: bubble.getBoundingClientRect().right,
+    };
+  });
+  expect(
+    Math.abs(edges.labelRight - edges.bubbleRight),
+    "sender and bubble share the right edge",
+  ).toBeLessThanOrEqual(1);
+}
 
 async function seedWholeTurnHistory() {
   const agent = await seedMockAgentWorkspace({
@@ -301,6 +318,7 @@ for (const autoExpandReasoning of [false, true]) {
       await expectComposerVisible(page);
       const summary = page.getByTestId("turn-summary").last().getByRole("button");
       await expect(summary).toBeVisible();
+      await expect(summary).not.toContainText(/thought/i);
       await expect(reasoning).toHaveCount(0);
       await summary.click();
       await expect(reasoning).toHaveCount(autoExpandReasoning ? 1 : 0);
@@ -339,9 +357,10 @@ async function expectThinkingPresentation(page: Page, autoExpandReasoning: boole
     await expect(reasoning).toHaveCount(0);
     const group = page
       .getByTestId("tool-call-group")
-      .filter({ hasText: /thought/, visible: true })
+      .filter({ hasText: /read 1 file/i, visible: true })
       .last();
     await expect(group).toContainText(/read 1 file/i);
+    await expect(group.getByRole("button").first()).not.toContainText(/thought/i);
     await group.getByRole("button").first().click();
     await expect(reasoning).toBeVisible();
   }

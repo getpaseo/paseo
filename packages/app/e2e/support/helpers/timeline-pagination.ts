@@ -423,6 +423,53 @@ export async function expectTimelineViewportAnchoredAfterPrepend(
   expect(Math.abs(contentGrowth - scrollAdjustment)).toBeLessThanOrEqual(2);
 }
 
+/**
+ * Item-based pages from older hosts split turns, so the oldest loaded turn starts
+ * mid-turn: its prompt is above loaded history. Returns that prompt.
+ */
+export async function expectOldestLoadedTurnPartial(
+  page: Page,
+  prompts: readonly string[],
+): Promise<string> {
+  const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+  const oldestLoadedPrompt = await timeline
+    .getByTestId("user-message")
+    .first()
+    .evaluate((element) => element.textContent ?? "");
+  const loadedIndex = prompts.findIndex((prompt) => oldestLoadedPrompt.includes(prompt));
+  expect(loadedIndex, "oldest loaded prompt is a seeded turn").toBeGreaterThan(0);
+  const oldestRow = timeline.locator("[data-history-row-id]").first();
+  await expect(oldestRow.getByTestId("user-message"), "rows above the oldest prompt").toHaveCount(
+    0,
+  );
+  const partialPrompt = prompts[loadedIndex - 1]!;
+  await expectTimelinePromptNotMounted(page, partialPrompt);
+  return partialPrompt;
+}
+
+/** The reader stays with the turn they were reading once it folds behind its summary. */
+export async function expectFoldedTurnAtReadingPosition(page: Page, prompt: string): Promise<void> {
+  const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+  const promptRow = timeline.locator("[data-history-row-id]").filter({ hasText: prompt });
+  await expect(promptRow).toBeVisible({ timeout: 15_000 });
+  // The host row carries the folded turn's summary line.
+  await expect(promptRow.getByTestId("turn-summary")).toBeVisible();
+  await expect
+    .poll(
+      async () => {
+        const [timelineBox, promptBox] = await Promise.all([
+          timeline.boundingBox(),
+          promptRow.boundingBox(),
+        ]);
+        if (!timelineBox || !promptBox) return false;
+        const offset = promptBox.y - timelineBox.y;
+        return offset >= 0 && offset <= timelineBox.height / 2;
+      },
+      { message: "folded turn sits in the upper half of the viewport" },
+    )
+    .toBe(true);
+}
+
 export async function expectTimelineAtHistoryStart(page: Page): Promise<void> {
   await expect
     .poll(async () => (await readTimelineViewport(page)).scrollTop)

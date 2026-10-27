@@ -73,6 +73,7 @@ export function MessageSender({
       variant="ghost"
       size="sm"
       leftIcon={renderProviderIcon}
+      style={styles.sender}
       disabled={!host}
       onPress={openSender}
     >
@@ -84,6 +85,7 @@ export function MessageSender({
 const styles = StyleSheet.create((theme) => ({
   preview: { maxHeight: PREVIEW_HEIGHT, overflow: "hidden" },
   body: { flexShrink: 0 },
+  sender: { paddingRight: 0, borderRightWidth: 0 },
   toggle: { alignSelf: "flex-start", paddingHorizontal: 0, minHeight: 0, borderWidth: 0 },
   fade: { position: "absolute", bottom: 0, left: 0, right: 0, height: theme.spacing[12] },
 }));
