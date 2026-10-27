@@ -3,7 +3,7 @@ import type { Logger } from "pino";
 
 import { spawnProcess } from "../../../utils/spawn.js";
 import { terminateWithTreeKill } from "../../../utils/tree-kill.js";
-import { JsonlFrameDecoder } from "./jsonl-frame-decoder.js";
+import { JsonlFrameDecoder, ProviderStreamLimitError } from "./jsonl-frame-decoder.js";
 export { supportsJsonlRpcProtocolV2 } from "./jsonl-frame-decoder.js";
 
 /** Default wall-clock timeout for control-plane / short RPC calls. */
@@ -81,6 +81,7 @@ export class JsonlRpcProcess {
   private stderrBuffer = "";
   private nextRequestId = 1;
   private disposed = false;
+  private streamFailure: ProviderStreamLimitError | null = null;
   private exited = false;
   private closing: Promise<void> | null = null;
   private readonly frameDecoder: JsonlFrameDecoder;
@@ -90,6 +91,14 @@ export class JsonlRpcProcess {
     this.frameDecoder = new JsonlFrameDecoder({
       frame: (message) => this.dispatchFrame(message),
       problem: (problem, detail) => {
+        if (problem === "line-too-large" && detail instanceof ProviderStreamLimitError) {
+          // Stop the producer: silently skipping a response or turn event loses state.
+          this.streamFailure = detail;
+          void this.close(detail).catch((err) => {
+            this.options.logger.warn({ err }, `Failed to close ${this.diagnosticName}`);
+          });
+          return;
+        }
         this.options.logger.warn(
           { problem, detail },
           `Ignoring invalid ${this.diagnosticName} frame`,
@@ -98,7 +107,7 @@ export class JsonlRpcProcess {
     });
     this.child = (options.spawn ?? spawnJsonlRpcProcess)(options.launch);
     this.child.stdout.on("data", (chunk) => {
-      this.handleStdoutChunk(chunk.toString());
+      this.handleStdoutChunk(chunk);
     });
     this.child.stderr.on("data", (chunk) => {
       this.stderrBuffer += chunk.toString();
@@ -114,9 +123,11 @@ export class JsonlRpcProcess {
     });
     this.child.on("exit", (code, signal) => {
       this.exited = true;
-      const error = new Error(
-        `${this.diagnosticName} process exited with code ${code ?? "null"} and signal ${signal ?? "null"}\n${this.stderrBuffer}`.trim(),
-      );
+      const error =
+        this.streamFailure ??
+        new Error(
+          `${this.diagnosticName} process exited with code ${code ?? "null"} and signal ${signal ?? "null"}\n${this.stderrBuffer}`.trim(),
+        );
       const exit = { code, signal, error };
       for (const subscriber of this.exitSubscribers) {
         subscriber(exit);
@@ -254,7 +265,7 @@ export class JsonlRpcProcess {
     }
   }
 
-  private handleStdoutChunk(chunk: string): void {
+  private handleStdoutChunk(chunk: Buffer | string): void {
     this.frameDecoder.write(chunk);
   }
 

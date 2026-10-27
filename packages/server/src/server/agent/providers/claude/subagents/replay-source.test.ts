@@ -1,3 +1,9 @@
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import {
+  materializeProviderImage,
+  renderProviderImageOutputAsAssistantMarkdown,
+} from "../../provider-image-output.js";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, it } from "vitest";
 
@@ -45,7 +51,7 @@ function applyToStore(observations: SubagentObservation[]): ProviderSubagentDesc
 }
 
 describe("parseClaudeSubagentMeta", () => {
-  it("reads the real sidecar shape", () => {
+  it("reads the real sidecar shape", async () => {
     expect(
       parseClaudeSubagentMeta(
         '{"agentType":"general-purpose","description":"Reply banana","toolUseId":"toolu_013i","spawnDepth":1}',
@@ -68,7 +74,7 @@ describe("parseClaudeSubagentMeta", () => {
     expect(parseClaudeSubagentMeta(contents)).toBeNull();
   });
 
-  it("keeps the good fields when one field has the wrong type", () => {
+  it("keeps the good fields when one field has the wrong type", async () => {
     expect(parseClaudeSubagentMeta('{"agentType":"Explore","toolUseId":42}')).toEqual({
       agentType: "Explore",
       description: undefined,
@@ -79,12 +85,14 @@ describe("parseClaudeSubagentMeta", () => {
 });
 
 describe("observeReplaySubagents", () => {
-  it("links a subagent to its Task call through meta.toolUseId", () => {
-    const observations = observeReplaySubagents({
-      subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries: [] }],
-      parent: parentWithTaskCall(),
-      convertEntry: () => [],
-    }).observations;
+  it("links a subagent to its Task call through meta.toolUseId", async () => {
+    const observations = (
+      await observeReplaySubagents({
+        subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries: [] }],
+        parent: parentWithTaskCall(),
+        convertEntry: () => [],
+      })
+    ).observations;
 
     expect(observations[0]).toMatchObject({
       kind: "declared",
@@ -95,31 +103,33 @@ describe("observeReplaySubagents", () => {
     });
   });
 
-  it("replays descendants beneath the sidechain that declared their Task", () => {
+  it("replays descendants beneath the sidechain that declared their Task", async () => {
     const nestedToolUseId = "toolu_012rzYnFZA";
-    const observations = observeReplaySubagents({
-      subagents: [
-        {
-          agentId: AGENT_ID,
-          meta: { toolUseId: TOOL_USE_ID, spawnDepth: 1 },
-          entries: [],
-          parentFacts: {
-            toolCalls: new Map([
-              [nestedToolUseId, { title: "Explore", description: "Nested audit" }],
-            ]),
-            linksByAgentId: new Map(),
-            outcomesByToolCallId: new Map([[nestedToolUseId, { failed: false }]]),
+    const observations = (
+      await observeReplaySubagents({
+        subagents: [
+          {
+            agentId: AGENT_ID,
+            meta: { toolUseId: TOOL_USE_ID, spawnDepth: 1 },
+            entries: [],
+            parentFacts: {
+              toolCalls: new Map([
+                [nestedToolUseId, { title: "Explore", description: "Nested audit" }],
+              ]),
+              linksByAgentId: new Map(),
+              outcomesByToolCallId: new Map([[nestedToolUseId, { failed: false }]]),
+            },
           },
-        },
-        {
-          agentId: "a6acb4b898",
-          meta: { toolUseId: nestedToolUseId, agentType: "Explore", spawnDepth: 2 },
-          entries: [],
-        },
-      ],
-      parent: parentWithTaskCall(),
-      convertEntry: () => [],
-    }).observations;
+          {
+            agentId: "a6acb4b898",
+            meta: { toolUseId: nestedToolUseId, agentType: "Explore", spawnDepth: 2 },
+            entries: [],
+          },
+        ],
+        parent: parentWithTaskCall(),
+        convertEntry: () => [],
+      })
+    ).observations;
 
     expect(observations).toContainEqual(
       expect.objectContaining({
@@ -130,89 +140,143 @@ describe("observeReplaySubagents", () => {
     );
   });
 
-  it("keeps a subagent recorded before spawnDepth existed", () => {
-    const observations = observeReplaySubagents({
-      subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries: [] }],
-      parent: parentWithTaskCall(),
-      convertEntry: () => [],
-    }).observations;
+  it("keeps a subagent recorded before spawnDepth existed", async () => {
+    const observations = (
+      await observeReplaySubagents({
+        subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries: [] }],
+        parent: parentWithTaskCall(),
+        convertEntry: () => [],
+      })
+    ).observations;
 
     expect(observations[0]).toMatchObject({ kind: "declared", id: TOOL_USE_ID });
   });
 
-  it("drops a meta-linked subagent when the parent never declared its Task", () => {
-    const observations = observeReplaySubagents({
-      subagents: [
-        {
-          agentId: AGENT_ID,
-          meta: { toolUseId: TOOL_USE_ID, agentType: "Explore", description: "Find the code" },
-          entries: [],
-        },
-      ],
-      parent: emptyParent(),
-      convertEntry: () => [],
-    }).observations;
+  it("drops a meta-linked subagent when the parent never declared its Task", async () => {
+    const observations = (
+      await observeReplaySubagents({
+        subagents: [
+          {
+            agentId: AGENT_ID,
+            meta: { toolUseId: TOOL_USE_ID, agentType: "Explore", description: "Find the code" },
+            entries: [],
+          },
+        ],
+        parent: emptyParent(),
+        convertEntry: () => [],
+      })
+    ).observations;
 
     expect(observations).toEqual([]);
   });
 
-  it("falls back to the scraped link when there is no meta file", () => {
+  it("falls back to the scraped link when there is no meta file", async () => {
     const parent: ClaudeReplayParentFacts = {
       toolCalls: new Map([[TOOL_USE_ID, { title: "Explore" }]]),
       linksByAgentId: new Map([[AGENT_ID, { toolCallId: TOOL_USE_ID, failed: false }]]),
       outcomesByToolCallId: new Map(),
     };
 
-    const [declared, ...rest] = observeReplaySubagents({
-      subagents: [{ agentId: AGENT_ID, meta: null, entries: [] }],
-      parent,
-      convertEntry: () => [],
-    }).observations;
+    const [declared, ...rest] = (
+      await observeReplaySubagents({
+        subagents: [{ agentId: AGENT_ID, meta: null, entries: [] }],
+        parent,
+        convertEntry: () => [],
+      })
+    ).observations;
 
     expect(declared).toMatchObject({ id: TOOL_USE_ID, toolCallId: TOOL_USE_ID, title: "Explore" });
     expect(rest.at(-1)).toMatchObject({ kind: "status", status: "completed" });
   });
 
-  it("drops an unlinkable subagent", () => {
-    const observations = observeReplaySubagents({
-      subagents: [{ agentId: AGENT_ID, meta: null, entries: [] }],
-      parent: emptyParent(),
-      convertEntry: () => [],
-    }).observations;
+  it("drops an unlinkable subagent", async () => {
+    const observations = (
+      await observeReplaySubagents({
+        subagents: [{ agentId: AGENT_ID, meta: null, entries: [] }],
+        parent: emptyParent(),
+        convertEntry: () => [],
+      })
+    ).observations;
     expect(observations).toEqual([]);
   });
 
-  it("drops a terminal subagent the parent has no Task call for", () => {
+  it("drops a terminal subagent the parent has no Task call for", async () => {
     // A legacy grandchild: its toolUseId names a Task call made inside a sibling's transcript, so
     // no tool_result for it can ever reach the parent. Left running, it never stops.
     const descriptor = applyToStore(
-      observeReplaySubagents({
-        subagents: [
-          {
-            agentId: AGENT_ID,
-            meta: { toolUseId: TOOL_USE_ID },
-            entries: [
-              {
-                type: "assistant",
-                timestamp: "2026-07-31T03:41:00.000Z",
-                message: { stop_reason: "end_turn" },
-              },
-            ],
-          },
-        ],
-        parent: emptyParent(),
-        convertEntry: () => [],
-      }).observations,
+      (
+        await observeReplaySubagents({
+          subagents: [
+            {
+              agentId: AGENT_ID,
+              meta: { toolUseId: TOOL_USE_ID },
+              entries: [
+                {
+                  type: "assistant",
+                  timestamp: "2026-07-31T03:41:00.000Z",
+                  message: { stop_reason: "end_turn" },
+                },
+              ],
+            },
+          ],
+          parent: emptyParent(),
+          convertEntry: () => [],
+        })
+      ).observations,
     );
 
     expect(descriptor).toBeNull();
   });
 
-  it("drops a terminal skill-spawned subagent that has no link at all", () => {
+  it("drops a terminal skill-spawned subagent that has no link at all", async () => {
     // A /code-review run: no Task tool_use exists to name it, so its sidecar carries only
     // agentType and its id appears nowhere in the parent transcript.
     const descriptor = applyToStore(
-      observeReplaySubagents({
+      (
+        await observeReplaySubagents({
+          subagents: [
+            {
+              agentId: AGENT_ID,
+              meta: { agentType: "general-purpose" },
+              entries: [
+                {
+                  type: "assistant",
+                  timestamp: "2026-07-31T03:41:00.000Z",
+                  message: { stop_reason: "end_turn" },
+                },
+              ],
+            },
+          ],
+          parent: emptyParent(),
+          convertEntry: () => [],
+        })
+      ).observations,
+    );
+
+    expect(descriptor).toBeNull();
+  });
+
+  it("reports a scraped link's failure as failed", async () => {
+    const descriptor = applyToStore(
+      (
+        await observeReplaySubagents({
+          subagents: [{ agentId: AGENT_ID, meta: null, entries: [] }],
+          parent: {
+            toolCalls: new Map([[TOOL_USE_ID, { title: "Explore" }]]),
+            linksByAgentId: new Map([[AGENT_ID, { toolCallId: TOOL_USE_ID, failed: true }]]),
+            outcomesByToolCallId: new Map(),
+          },
+          convertEntry: () => [],
+        })
+      ).observations,
+    );
+
+    expect(descriptor).toMatchObject({ id: TOOL_USE_ID, status: "failed" });
+  });
+
+  it("drops a non-terminal linkless subagent", async () => {
+    const observations = (
+      await observeReplaySubagents({
         subagents: [
           {
             agentId: AGENT_ID,
@@ -221,111 +285,81 @@ describe("observeReplaySubagents", () => {
               {
                 type: "assistant",
                 timestamp: "2026-07-31T03:41:00.000Z",
-                message: { stop_reason: "end_turn" },
+                message: { stop_reason: null },
               },
             ],
           },
         ],
         parent: emptyParent(),
         convertEntry: () => [],
-      }).observations,
-    );
-
-    expect(descriptor).toBeNull();
-  });
-
-  it("reports a scraped link's failure as failed", () => {
-    const descriptor = applyToStore(
-      observeReplaySubagents({
-        subagents: [{ agentId: AGENT_ID, meta: null, entries: [] }],
-        parent: {
-          toolCalls: new Map([[TOOL_USE_ID, { title: "Explore" }]]),
-          linksByAgentId: new Map([[AGENT_ID, { toolCallId: TOOL_USE_ID, failed: true }]]),
-          outcomesByToolCallId: new Map(),
-        },
-        convertEntry: () => [],
-      }).observations,
-    );
-
-    expect(descriptor).toMatchObject({ id: TOOL_USE_ID, status: "failed" });
-  });
-
-  it("drops a non-terminal linkless subagent", () => {
-    const observations = observeReplaySubagents({
-      subagents: [
-        {
-          agentId: AGENT_ID,
-          meta: { agentType: "general-purpose" },
-          entries: [
-            {
-              type: "assistant",
-              timestamp: "2026-07-31T03:41:00.000Z",
-              message: { stop_reason: null },
-            },
-          ],
-        },
-      ],
-      parent: emptyParent(),
-      convertEntry: () => [],
-    }).observations;
+      })
+    ).observations;
 
     expect(observations).toEqual([]);
   });
 
-  it("finishes a terminal Task child when the parent has not recorded its outcome", () => {
+  it("finishes a terminal Task child when the parent has not recorded its outcome", async () => {
     const descriptor = applyToStore(
-      observeReplaySubagents({
-        subagents: [
-          {
-            agentId: AGENT_ID,
-            meta: { toolUseId: TOOL_USE_ID },
-            entries: [
-              {
-                type: "assistant",
-                timestamp: "2026-07-31T03:41:00.000Z",
-                message: { stop_reason: "end_turn" },
-              },
-            ],
-          },
-        ],
-        parent: { ...parentWithTaskCall(), outcomesByToolCallId: new Map() },
-        convertEntry: () => [],
-      }).observations,
+      (
+        await observeReplaySubagents({
+          subagents: [
+            {
+              agentId: AGENT_ID,
+              meta: { toolUseId: TOOL_USE_ID },
+              entries: [
+                {
+                  type: "assistant",
+                  timestamp: "2026-07-31T03:41:00.000Z",
+                  message: { stop_reason: "end_turn" },
+                },
+              ],
+            },
+          ],
+          parent: { ...parentWithTaskCall(), outcomesByToolCallId: new Map() },
+          convertEntry: () => [],
+        })
+      ).observations,
     );
 
     expect(descriptor).toMatchObject({ status: "completed" });
   });
 
-  it("leaves a subagent with no recorded outcome running", () => {
-    const observations = observeReplaySubagents({
-      subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries: [] }],
-      parent: { ...parentWithTaskCall(), outcomesByToolCallId: new Map() },
-      convertEntry: () => [],
-    }).observations;
+  it("leaves a subagent with no recorded outcome running", async () => {
+    const observations = (
+      await observeReplaySubagents({
+        subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries: [] }],
+        parent: { ...parentWithTaskCall(), outcomesByToolCallId: new Map() },
+        convertEntry: () => [],
+      })
+    ).observations;
     expect(observations.some((o) => o.kind === "status")).toBe(false);
   });
 
-  it("reports a failed outcome as failed", () => {
-    const observations = observeReplaySubagents({
-      subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries: [] }],
-      parent: parentWithTaskCall(true),
-      convertEntry: () => [],
-    }).observations;
+  it("reports a failed outcome as failed", async () => {
+    const observations = (
+      await observeReplaySubagents({
+        subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries: [] }],
+        parent: parentWithTaskCall(true),
+        convertEntry: () => [],
+      })
+    ).observations;
     expect(observations.at(-1)).toMatchObject({ kind: "status", status: "failed" });
   });
 
-  it("carries entry timestamps onto timeline observations", () => {
-    const observations = observeReplaySubagents({
-      subagents: [
-        {
-          agentId: AGENT_ID,
-          meta: { toolUseId: TOOL_USE_ID },
-          entries: [{ type: "assistant", timestamp: "2026-07-26T06:27:47.034Z" }],
-        },
-      ],
-      parent: parentWithTaskCall(),
-      convertEntry: () => [{ type: "reasoning", text: "thinking" }],
-    }).observations;
+  it("carries entry timestamps onto timeline observations", async () => {
+    const observations = (
+      await observeReplaySubagents({
+        subagents: [
+          {
+            agentId: AGENT_ID,
+            meta: { toolUseId: TOOL_USE_ID },
+            entries: [{ type: "assistant", timestamp: "2026-07-26T06:27:47.034Z" }],
+          },
+        ],
+        parent: parentWithTaskCall(),
+        convertEntry: () => [{ type: "reasoning", text: "thinking" }],
+      })
+    ).observations;
 
     expect(observations.find((observation) => observation.kind === "timeline")).toMatchObject({
       kind: "timeline",
@@ -336,18 +370,20 @@ describe("observeReplaySubagents", () => {
 });
 
 describe("replay runtime", () => {
-  it("reads the model and effort off the subagent's own transcript", () => {
-    const observations = observeReplaySubagents({
-      subagents: [
-        {
-          agentId: AGENT_ID,
-          meta: { toolUseId: TOOL_USE_ID },
-          entries: [{ type: "assistant", effort: "high", message: { model: "claude-opus-5" } }],
-        },
-      ],
-      parent: parentWithTaskCall(),
-      convertEntry: () => [],
-    }).observations;
+  it("reads the model and effort off the subagent's own transcript", async () => {
+    const observations = (
+      await observeReplaySubagents({
+        subagents: [
+          {
+            agentId: AGENT_ID,
+            meta: { toolUseId: TOOL_USE_ID },
+            entries: [{ type: "assistant", effort: "high", message: { model: "claude-opus-5" } }],
+          },
+        ],
+        parent: parentWithTaskCall(),
+        convertEntry: () => [],
+      })
+    ).observations;
 
     expect(observations.find((o) => o.kind === "subtitle")).toEqual({
       kind: "subtitle",
@@ -356,49 +392,55 @@ describe("replay runtime", () => {
     });
   });
 
-  it("takes the last observed values when the model changes mid-transcript", () => {
-    const observations = observeReplaySubagents({
-      subagents: [
-        {
-          agentId: AGENT_ID,
-          meta: { toolUseId: TOOL_USE_ID },
-          entries: [
-            { type: "assistant", effort: "high", message: { model: "claude-opus-5" } },
-            { type: "assistant", effort: "low", message: { model: "claude-sonnet-5" } },
-          ],
-        },
-      ],
-      parent: parentWithTaskCall(),
-      convertEntry: () => [],
-    }).observations;
+  it("takes the last observed values when the model changes mid-transcript", async () => {
+    const observations = (
+      await observeReplaySubagents({
+        subagents: [
+          {
+            agentId: AGENT_ID,
+            meta: { toolUseId: TOOL_USE_ID },
+            entries: [
+              { type: "assistant", effort: "high", message: { model: "claude-opus-5" } },
+              { type: "assistant", effort: "low", message: { model: "claude-sonnet-5" } },
+            ],
+          },
+        ],
+        parent: parentWithTaskCall(),
+        convertEntry: () => [],
+      })
+    ).observations;
 
     expect(observations.find((o) => o.kind === "subtitle")).toMatchObject({
       subtitle: "general-purpose · Sonnet 5 · Low",
     });
   });
 
-  it("reports nothing when the transcript never names a model or effort", () => {
-    const observations = observeReplaySubagents({
-      subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries: [] }],
-      parent: parentWithTaskCall(),
-      convertEntry: () => [],
-    }).observations;
+  it("reports nothing when the transcript never names a model or effort", async () => {
+    const observations = (
+      await observeReplaySubagents({
+        subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries: [] }],
+        parent: parentWithTaskCall(),
+        convertEntry: () => [],
+      })
+    ).observations;
     expect(observations.some((o) => o.kind === "subtitle")).toBe(false);
   });
 
-  it("passes through a model the manifest does not know", () => {
+  it("passes through a model the manifest does not know", async () => {
     // Claude Code is an Anthropic-compatible client; subagents legitimately report other models.
-    const observations = observeReplaySubagents({
-      subagents: [
-        {
-          agentId: AGENT_ID,
-          meta: { toolUseId: TOOL_USE_ID },
-          entries: [{ type: "assistant", message: { model: "glm-5.1" } }],
-        },
-      ],
-      parent: parentWithTaskCall(),
-      convertEntry: () => [],
-    }).observations;
+    const observations = (
+      await observeReplaySubagents({
+        subagents: [
+          {
+            agentId: AGENT_ID,
+            meta: { toolUseId: TOOL_USE_ID },
+            entries: [{ type: "assistant", message: { model: "glm-5.1" } }],
+          },
+        ],
+        parent: parentWithTaskCall(),
+        convertEntry: () => [],
+      })
+    ).observations;
     expect(observations.find((o) => o.kind === "subtitle")).toMatchObject({
       subtitle: "general-purpose · glm-5.1",
     });
@@ -406,20 +448,24 @@ describe("replay runtime", () => {
 });
 
 describe("replay usage", () => {
-  function subtitleOf(entries: ClaudeReplayEntry[]): SubagentObservation | undefined {
-    return observeReplaySubagents({
-      subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries }],
-      parent: parentWithTaskCall(),
-      convertEntry: () => [],
-    }).observations.find((observation) => observation.kind === "subtitle");
+  async function subtitleOf(
+    entries: ClaudeReplayEntry[],
+  ): Promise<SubagentObservation | undefined> {
+    return (
+      await observeReplaySubagents({
+        subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries }],
+        parent: parentWithTaskCall(),
+        convertEntry: () => [],
+      })
+    ).observations.find((observation) => observation.kind === "subtitle");
   }
 
-  it("derives the counters Claude Code itself reports, from a real transcript's shape", () => {
+  it("derives the counters Claude Code itself reports, from a real transcript's shape", async () => {
     // Shape and numbers taken from an on-disk subagent transcript. Claude Code finalizes a
     // subagent from the LAST assistant entry's usage, so the earlier, smaller turn must not win
     // and must not be added in.
     expect(
-      subtitleOf([
+      await subtitleOf([
         {
           type: "assistant",
           timestamp: "2026-07-23T23:18:43.023Z",
@@ -462,9 +508,9 @@ describe("replay usage", () => {
     });
   });
 
-  it("formats tokens for a child that only answered", () => {
+  it("formats tokens for a child that only answered", async () => {
     expect(
-      subtitleOf([
+      await subtitleOf([
         {
           type: "assistant",
           timestamp: "2026-07-27T16:42:14.698Z",
@@ -479,12 +525,12 @@ describe("replay usage", () => {
     ).toMatchObject({ subtitle: "general-purpose · 16.4k tokens" });
   });
 
-  it("emits nothing for a transcript with no entries", () => {
-    expect(subtitleOf([])).toBeUndefined();
+  it("emits nothing for a transcript with no entries", async () => {
+    expect(await subtitleOf([])).toBeUndefined();
   });
 
-  it("keeps duration out of the compact subtitle", () => {
-    const observation = subtitleOf([
+  it("keeps duration out of the compact subtitle", async () => {
+    const observation = await subtitleOf([
       {
         type: "assistant",
         timestamp: "2026-07-27T16:42:14.698Z",
@@ -494,8 +540,8 @@ describe("replay usage", () => {
     expect(observation).toMatchObject({ subtitle: "general-purpose · 10 tokens" });
   });
 
-  it("omits totalTokens when no entry carries a usage block", () => {
-    const observation = subtitleOf([
+  it("omits totalTokens when no entry carries a usage block", async () => {
+    const observation = await subtitleOf([
       { type: "assistant", timestamp: "2026-07-27T16:42:14.698Z", message: { content: [] } },
       {
         type: "assistant",
@@ -506,9 +552,9 @@ describe("replay usage", () => {
     expect(observation).toBeUndefined();
   });
 
-  it("keeps the last usage-bearing entry when the final assistant entry has none", () => {
+  it("keeps the last usage-bearing entry when the final assistant entry has none", async () => {
     expect(
-      subtitleOf([
+      await subtitleOf([
         {
           type: "assistant",
           timestamp: "2026-07-27T16:42:14.698Z",
@@ -519,34 +565,36 @@ describe("replay usage", () => {
     ).toMatchObject({ subtitle: "general-purpose · 1k tokens" });
   });
 
-  it("only reports counters the transcript actually shows", () => {
+  it("only reports counters the transcript actually shows", async () => {
     // A user-only transcript says nothing about cost: no assistant turn, so no tool count either.
-    const observation = subtitleOf([
+    const observation = await subtitleOf([
       { type: "user", timestamp: "2026-07-27T16:42:14.698Z", message: { content: "prompt" } },
       { type: "user", timestamp: "2026-07-27T16:42:20.000Z", message: { content: "more" } },
     ]);
     expect(observation).toBeUndefined();
   });
 
-  it("lands the complete provider-owned subtitle on the descriptor", () => {
+  it("lands the complete provider-owned subtitle on the descriptor", async () => {
     const store = new ProviderSubagentStore();
-    const observations = observeReplaySubagents({
-      subagents: [
-        {
-          agentId: AGENT_ID,
-          meta: { toolUseId: TOOL_USE_ID },
-          entries: [
-            {
-              type: "assistant",
-              timestamp: "2026-07-27T16:42:14.698Z",
-              message: { content: [], usage: { input_tokens: 7 } },
-            },
-          ],
-        },
-      ],
-      parent: parentWithTaskCall(),
-      convertEntry: () => [],
-    }).observations;
+    const observations = (
+      await observeReplaySubagents({
+        subagents: [
+          {
+            agentId: AGENT_ID,
+            meta: { toolUseId: TOOL_USE_ID },
+            entries: [
+              {
+                type: "assistant",
+                timestamp: "2026-07-27T16:42:14.698Z",
+                message: { content: [], usage: { input_tokens: 7 } },
+              },
+            ],
+          },
+        ],
+        parent: parentWithTaskCall(),
+        convertEntry: () => [],
+      })
+    ).observations;
     for (const event of foldSubagentObservations(observations)) {
       store.apply("parent", "claude", event);
     }
@@ -559,7 +607,7 @@ describe("live and replay agree", () => {
   // The property the design exists to guarantee: one session, two sources, one descriptor.
   // This is inexpressible against the inference implementation, where the paths share no
   // vocabulary and each derives identity and status its own way.
-  it("produces identical descriptor state from the wire and from disk", () => {
+  it("produces identical descriptor state from the wire and from disk", async () => {
     const live = new ClaudeTaskProtocolSource();
     const liveObservations = [
       ...live.observe({
@@ -579,21 +627,23 @@ describe("live and replay agree", () => {
       } as unknown as SDKMessage),
     ];
 
-    const replayObservations = observeReplaySubagents({
-      subagents: [
-        {
-          agentId: AGENT_ID,
-          meta: {
-            toolUseId: TOOL_USE_ID,
-            agentType: "general-purpose",
-            description: "Summarize hover and unistyles docs",
+    const replayObservations = (
+      await observeReplaySubagents({
+        subagents: [
+          {
+            agentId: AGENT_ID,
+            meta: {
+              toolUseId: TOOL_USE_ID,
+              agentType: "general-purpose",
+              description: "Summarize hover and unistyles docs",
+            },
+            entries: [],
           },
-          entries: [],
-        },
-      ],
-      parent: parentWithTaskCall(),
-      convertEntry: () => [],
-    }).observations;
+        ],
+        parent: parentWithTaskCall(),
+        convertEntry: () => [],
+      })
+    ).observations;
 
     const fromWire = applyToStore(liveObservations);
     const fromDisk = applyToStore(replayObservations);
@@ -615,4 +665,35 @@ describe("live and replay agree", () => {
       toolCallId: TOOL_USE_ID,
     });
   });
+});
+
+it("awaits image materialization before publishing replay observations", async () => {
+  const bytes = Buffer.from("async replay image fixture");
+  const convertEntry = async () => {
+    const item = await renderProviderImageOutputAsAssistantMarkdown(
+      { data: bytes.toString("base64"), mimeType: "image/png" },
+      { materialize: materializeProviderImage },
+    );
+    return item ? [item] : [];
+  };
+  const { observations } = await observeReplaySubagents({
+    parent: parentWithTaskCall(),
+    subagents: [
+      {
+        agentId: AGENT_ID,
+        meta: { toolUseId: TOOL_USE_ID },
+        entries: [{ type: "assistant", message: { content: [] } }],
+      },
+    ],
+    convertEntry,
+  });
+  const image = observations.find(
+    (observation) =>
+      observation.kind === "timeline" && observation.item.type === "assistant_message",
+  );
+  if (!image || image.kind !== "timeline" || image.item.type !== "assistant_message")
+    throw new Error("Expected replay image");
+  const source = image.item.text.match(/!\[Image\]\(([^)]+)\)/)?.[1];
+  expect(source).toBeTruthy();
+  expect(await readFile(fileURLToPath(source!))).toEqual(bytes);
 });

@@ -1,5 +1,5 @@
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import type {
   AgentPromptContentBlock,
@@ -175,9 +175,18 @@ function projectAgentMessage(item: AgentTimelineItem): AgentTimelineItem | null 
   if (item.type !== "user_message") return item;
   const message = parseAgentMessage(item.text);
   if (!message) {
-    // COMPAT(legacySystemEnvelope): added in v0.11.1; remove after 2027-04-08 once
-    // legacy notification history is retired. Schedules still use this envelope.
-    return isSystemInjectedEnvelope(item.text) ? null : item;
+    // Schedule bodies include their run ID, keeping identity stable across acceptance
+    // and provider replay even when the provider assigns its own message ID.
+    if (!isSystemInjectedEnvelope(item.text)) return item;
+    const text = item.text.slice("<paseo-system>\n".length, -"\n</paseo-system>".length);
+    return {
+      type: "tool_call",
+      callId: `paseo-system:${createHash("sha256").update(item.text).digest("hex")}`,
+      name: "heartbeat",
+      status: "completed",
+      error: null,
+      detail: { type: "plain_text", text, icon: "sparkles" },
+    };
   }
   const { source } = message;
   if (!source) {

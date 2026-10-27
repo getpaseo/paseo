@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -8,7 +9,7 @@ import { streamOmpCoreHistory, type OmpCapturedUserMessageEntry } from "./messag
 import type { OmpAgentMessage } from "./rpc-types.js";
 import { FakeOmp } from "./test-utils/fake-omp.js";
 import { OMP_HISTORY_MAPPER_HOOKS } from "./history-hooks.js";
-import { readOmpHistoryTodoState, streamOmpHistory } from "./history.js";
+import { readActiveOmpEntryChain, readOmpHistoryTodoState, streamOmpHistory } from "./history.js";
 
 async function collectHistory(
   messages: OmpAgentMessage[],
@@ -1244,4 +1245,54 @@ describe("OMP history mapper", () => {
       ]),
     );
   });
+});
+
+test("indexes out-of-order branches, duplicate IDs and cycles before selecting history", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "omp-history-branches-"));
+  const sessionFile = join(directory, "session.jsonl");
+  const root = { id: "root", parentId: null };
+  const earlyLeaf = {
+    id: "early",
+    parentId: "root",
+    message: { role: "user", content: "你好🌍".repeat(15000) },
+  };
+  const branch = { id: "branch", parentId: "root" };
+  const active = { id: "active", parentId: "branch" };
+  const duplicate = {
+    id: "branch",
+    parentId: "root",
+    message: { role: "user", content: "replacement" },
+  };
+  try {
+    await writeFile(
+      sessionFile,
+      [earlyLeaf, active, root, branch, duplicate]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n") + '\n{"id":',
+    );
+    // The final record is a branch ancestor, not the active leaf. Latest duplicate wins
+    // when following parents; the invalid tail contributes neither a leaf nor a parent.
+    await expect(readActiveOmpEntryChain(sessionFile)).resolves.toEqual([root, duplicate, active]);
+    await expect(readActiveOmpEntryChain(sessionFile, "early")).resolves.toEqual([root, earlyLeaf]);
+    await expect(readActiveOmpEntryChain(sessionFile, "missing")).resolves.toEqual([
+      root,
+      duplicate,
+      active,
+    ]);
+    const cycle = [
+      { id: "a", parentId: "b" },
+      { id: "b", parentId: "a" },
+    ];
+    await writeFile(sessionFile, cycle.map((entry) => JSON.stringify(entry)).join("\n"));
+    await expect(readActiveOmpEntryChain(sessionFile)).resolves.toEqual(cycle);
+    await writeFile(sessionFile, "null\n{}\ninvalid\n");
+    await expect(readActiveOmpEntryChain(sessionFile)).resolves.toEqual([]);
+    await expect(readActiveOmpEntryChain(directory)).rejects.toMatchObject({ code: "EISDIR" });
+    await expect(readActiveOmpEntryChain(join(directory, "missing"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(readOmpHistoryTodoState(join(directory, "missing"))).resolves.toBeNull();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

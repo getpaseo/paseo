@@ -1,5 +1,5 @@
-import { existsSync, readdirSync, realpathSync } from "node:fs";
-import { realpath } from "node:fs/promises";
+import { realpathSync } from "node:fs";
+import { realpath, access, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -35,21 +35,21 @@ export function claudeProjectDirSync(cwd: string, options?: ClaudeProjectDirOpti
 // one `cwd` encodes to when the project moved, the daemon migrated, or Claude Code sees the
 // cwd under another name (a Windows binary under WSL). Returns the expected path when no
 // transcript exists anywhere.
-export function claudeTranscriptPathSync(input: {
+export async function claudeTranscriptPath(input: {
   cwd: string;
   sessionId: string;
   configDir?: string;
-}): string {
+}): Promise<string> {
   const options = { configDir: input.configDir };
   const fileName = `${input.sessionId}.jsonl`;
-  const expected = join(claudeProjectDirSync(input.cwd, options), fileName);
-  if (existsSync(expected)) {
+  const expected = join(await claudeProjectDir(input.cwd, options), fileName);
+  if (await exists(expected)) {
     return expected;
   }
   const projectsRoot = join(resolveConfigDir(options), "projects");
   let projectDirs: string[];
   try {
-    projectDirs = readdirSync(projectsRoot);
+    projectDirs = await readdir(projectsRoot);
   } catch (error) {
     if (isMissingDirectoryError(error)) {
       return expected;
@@ -58,11 +58,21 @@ export function claudeTranscriptPathSync(input: {
   }
   for (const projectDir of projectDirs) {
     const candidate = join(projectsRoot, projectDir, fileName);
-    if (existsSync(candidate)) {
+    if (await exists(candidate)) {
       return candidate;
     }
   }
   return expected;
+}
+
+async function exists(file: string): Promise<boolean> {
+  try {
+    await access(file);
+    return true;
+  } catch (error) {
+    if (isMissingDirectoryError(error)) return false;
+    throw error;
+  }
 }
 
 function isMissingDirectoryError(error: unknown): boolean {

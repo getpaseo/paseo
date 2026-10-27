@@ -3,8 +3,10 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { ZodError } from "zod";
 import {
   compilePlugin,
+  compileDirectoryPlugin,
   resolveExistingAsarUnpackedEsbuildBinary,
   unpackedEsbuildBinaryFromPackageDir,
 } from "./compiler.js";
@@ -973,5 +975,54 @@ export default function contribute() { void value; void secret; return () => und
     });
     expect(clientBundle).toContain("Client contribution");
     expect(serverBundle).toBeNull();
+  });
+});
+
+it("preserves esbuild diagnostics across the compiler boundary", async () => {
+  const { server } = await createSplitPlugin();
+  await writeFile(server, "export default function contribute( {");
+  const error = await compilePlugin({ client: null, server }).catch((cause: unknown) => cause);
+  expect(error).toBeInstanceOf(Error);
+  expect(error).toMatchObject({
+    name: "Error",
+    message: expect.stringContaining("Expected identifier but found end of file"),
+    errors: [
+      expect.objectContaining({
+        text: "Expected identifier but found end of file",
+        location: expect.objectContaining({
+          line: 1,
+          lineText: "export default function contribute( {",
+        }),
+      }),
+    ],
+    warnings: [],
+  });
+  // A failed task does not poison the next build.
+  await writeFile(server, 'export default () => "recovered";');
+  const bundles = await compilePlugin({ client: null, server });
+  expect(bundles.serverBundle).toContain("recovered");
+});
+
+it("preserves manifest validation errors across the compiler boundary", async () => {
+  const { directory } = await createSplitPlugin();
+  await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id: 42 }));
+  const error = await compileDirectoryPlugin(directory, "0.13.2").catch((cause: unknown) => cause);
+  expect(error).toBeInstanceOf(ZodError);
+  expect(error).toMatchObject({
+    name: "ZodError",
+    issues: [expect.objectContaining({ path: ["id"], code: "invalid_type" })],
+  });
+  await writeFile(path.join(directory, "paseo-plugin.json"), "{");
+  await expect(compileDirectoryPlugin(directory, "0.13.2")).rejects.toBeInstanceOf(SyntaxError);
+});
+
+it("preserves filesystem error metadata for a missing entry", async () => {
+  const { server } = await createSplitPlugin();
+  await rm(server);
+  await expect(compilePlugin({ client: null, server })).rejects.toMatchObject({
+    code: "ENOENT",
+    errno: expect.any(Number),
+    syscall: "realpath",
+    path: server,
   });
 });

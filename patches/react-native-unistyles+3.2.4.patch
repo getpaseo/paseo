@@ -329,3 +329,160 @@ index 195954b..c4ac28c 100644
      namespace "com.unistyles"
  
      defaultConfig {
+diff --git a/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.tsx b/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.tsx
+--- a/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.tsx
++++ b/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.tsx
+@@ -28,13 +28,14 @@
+ 
+     return forwardRef<GenericComponentRef<TComponent>, PropsWithUnistyles>((props, ref) => {
+         const narrowedProps = props as PropsWithUnistyles & UnistyleStyles
++        const { uniProps, ...componentProps } = narrowedProps
+         const styleClassNames = getClassName(narrowedProps.style, true)
+         const contentContainerStyleClassNames = getClassName(narrowedProps.contentContainerStyle)
+         const { proxifiedRuntime, proxifiedTheme } = useProxifiedUnistyles()
+ 
+         const { key: mappingsKey, ...mappingsProps } = mappings ? mappings(proxifiedTheme, proxifiedRuntime) : {}
+-        const { key: uniPropsKey, ...unistyleProps } = narrowedProps.uniProps
+-            ? narrowedProps.uniProps(proxifiedTheme, proxifiedRuntime)
++        const { key: uniPropsKey, ...unistyleProps } = uniProps
++            ? uniProps(proxifiedTheme, proxifiedRuntime)
+             : {}
+ 
+         const emptyStyles = narrowedProps.style
+@@ -46,7 +47,7 @@
+             : undefined
+ 
+         const combinedProps = {
+-            ...deepMergeObjects(mappingsProps, unistyleProps, props),
++            ...deepMergeObjects(mappingsProps, unistyleProps, componentProps),
+             ...(narrowedProps.style
+                 ? {
+                       // Override default component styles with undefined values to reset them
+diff --git a/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.native.tsx b/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.native.tsx
+--- a/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.native.tsx
++++ b/node_modules/react-native-unistyles/src/core/withUnistyles/withUnistyles.native.tsx
+@@ -63,6 +63,7 @@
+ 
+     return forwardRef<GenericComponentRef<TComponent>, PropsWithUnistyles>((props, ref) => {
+         const narrowedProps = props as PropsWithUnistyles & UnistyleStyles
++        const { uniProps, ...componentProps } = narrowedProps
+         const NativeComponent = Component as ComponentType
+ 
+         // @ts-ignore we don't know the type of the component
+@@ -89,15 +90,15 @@
+         }, [narrowedProps.style, narrowedProps.contentContainerStyle])
+ 
+         const { key: mappingsKey, ...mappingsProps } = mappings ? mappings(proxifiedTheme, proxifiedRuntime) : {}
+-        const { key: uniPropsKey, ...unistyleProps } = narrowedProps.uniProps
+-            ? narrowedProps.uniProps(proxifiedTheme, proxifiedRuntime)
++        const { key: uniPropsKey, ...unistyleProps } = uniProps
++            ? uniProps(proxifiedTheme, proxifiedRuntime)
+             : {}
+ 
+         const styleSecrets = getSecrets(narrowedProps.style)
+         const contentContainerStyleSecrets = getSecrets(narrowedProps.contentContainerStyle)
+ 
+         const finalProps = {
+-            ...deepMergeObjects(mappingsProps, unistyleProps, props),
++            ...deepMergeObjects(mappingsProps, unistyleProps, componentProps),
+             ...(narrowedProps.style
+                 ? {
+                       style: styleSecrets.styles,
+diff --git a/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.js b/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.js
+--- a/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.js
++++ b/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.js
+@@ -13,6 +13,7 @@
+ export const withUnistyles = (Component, mappings) => {
+   return /*#__PURE__*/forwardRef((props, ref) => {
+     const narrowedProps = props;
++    const { uniProps, ...componentProps } = narrowedProps;
+     const styleClassNames = getClassName(narrowedProps.style, true);
+     const contentContainerStyleClassNames = getClassName(narrowedProps.contentContainerStyle);
+     const {
+@@ -26,10 +27,10 @@
+     const {
+       key: uniPropsKey,
+       ...unistyleProps
+-    } = narrowedProps.uniProps ? narrowedProps.uniProps(proxifiedTheme, proxifiedRuntime) : {};
++    } = uniProps ? uniProps(proxifiedTheme, proxifiedRuntime) : {};
+     const emptyStyles = narrowedProps.style ? Object.fromEntries(Object.entries(Object.getOwnPropertyDescriptors(narrowedProps.style)).filter(([key]) => !key.startsWith('unistyles') && !key.startsWith('_')).map(([key]) => [key, undefined])) : undefined;
+     const combinedProps = {
+-      ...deepMergeObjects(mappingsProps, unistyleProps, props),
++      ...deepMergeObjects(mappingsProps, unistyleProps, componentProps),
+       ...(narrowedProps.style ? {
+         // Override default component styles with undefined values to reset them
+         style: emptyStyles
+diff --git a/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.native.js b/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.native.js
+--- a/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.native.js
++++ b/node_modules/react-native-unistyles/lib/module/core/withUnistyles/withUnistyles.native.js
+@@ -27,6 +27,7 @@
+   };
+   return /*#__PURE__*/forwardRef((props, ref) => {
+     const narrowedProps = props;
++    const { uniProps, ...componentProps } = narrowedProps;
+     const NativeComponent = Component;
+ 
+     // @ts-ignore we don't know the type of the component
+@@ -57,11 +58,11 @@
+     const {
+       key: uniPropsKey,
+       ...unistyleProps
+-    } = narrowedProps.uniProps ? narrowedProps.uniProps(proxifiedTheme, proxifiedRuntime) : {};
++    } = uniProps ? uniProps(proxifiedTheme, proxifiedRuntime) : {};
+     const styleSecrets = getSecrets(narrowedProps.style);
+     const contentContainerStyleSecrets = getSecrets(narrowedProps.contentContainerStyle);
+     const finalProps = {
+-      ...deepMergeObjects(mappingsProps, unistyleProps, props),
++      ...deepMergeObjects(mappingsProps, unistyleProps, componentProps),
+       ...(narrowedProps.style ? {
+         style: styleSecrets.styles
+       } : {}),
+diff --git a/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.js b/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.js
+--- a/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.js
++++ b/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.js
+@@ -18,6 +18,7 @@
+ const withUnistyles = (Component, mappings) => {
+   return /*#__PURE__*/(0, _react.forwardRef)((props, ref) => {
+     const narrowedProps = props;
++    const { uniProps, ...componentProps } = narrowedProps;
+     const styleClassNames = (0, _getClassname.getClassName)(narrowedProps.style, true);
+     const contentContainerStyleClassNames = (0, _getClassname.getClassName)(narrowedProps.contentContainerStyle);
+     const {
+@@ -31,10 +32,10 @@
+     const {
+       key: uniPropsKey,
+       ...unistyleProps
+-    } = narrowedProps.uniProps ? narrowedProps.uniProps(proxifiedTheme, proxifiedRuntime) : {};
++    } = uniProps ? uniProps(proxifiedTheme, proxifiedRuntime) : {};
+     const emptyStyles = narrowedProps.style ? Object.fromEntries(Object.entries(Object.getOwnPropertyDescriptors(narrowedProps.style)).filter(([key]) => !key.startsWith('unistyles') && !key.startsWith('_')).map(([key]) => [key, undefined])) : undefined;
+     const combinedProps = {
+-      ...(0, _utils.deepMergeObjects)(mappingsProps, unistyleProps, props),
++      ...(0, _utils.deepMergeObjects)(mappingsProps, unistyleProps, componentProps),
+       ...(narrowedProps.style ? {
+         // Override default component styles with undefined values to reset them
+         style: emptyStyles
+diff --git a/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.native.js b/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.native.js
+--- a/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.native.js
++++ b/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles/withUnistyles.native.js
+@@ -32,6 +32,7 @@
+   };
+   return /*#__PURE__*/(0, _react.forwardRef)((props, ref) => {
+     const narrowedProps = props;
++    const { uniProps, ...componentProps } = narrowedProps;
+     const NativeComponent = Component;
+ 
+     // @ts-ignore we don't know the type of the component
+@@ -62,11 +63,11 @@
+     const {
+       key: uniPropsKey,
+       ...unistyleProps
+-    } = narrowedProps.uniProps ? narrowedProps.uniProps(proxifiedTheme, proxifiedRuntime) : {};
++    } = uniProps ? uniProps(proxifiedTheme, proxifiedRuntime) : {};
+     const styleSecrets = getSecrets(narrowedProps.style);
+     const contentContainerStyleSecrets = getSecrets(narrowedProps.contentContainerStyle);
+     const finalProps = {
+-      ...(0, _utils.deepMergeObjects)(mappingsProps, unistyleProps, props),
++      ...(0, _utils.deepMergeObjects)(mappingsProps, unistyleProps, componentProps),
+       ...(narrowedProps.style ? {
+         style: styleSecrets.styles
+       } : {}),

@@ -3063,6 +3063,81 @@ describe("PiRpcAgentClient", () => {
     ]);
   });
 
+  test.each([
+    { outcome: "successful", error: null },
+    { outcome: "failed", error: new Error("summarizer failed") },
+  ])("waits for $outcome manual compaction before sending a new prompt", async ({ error }) => {
+    const { pi, session, events } = await createSession();
+    onTestFinished(() => session.close());
+    const fakeSession = pi.latestSession();
+    fakeSession.compactError = error;
+    const compactionFinished = Promise.withResolvers<void>();
+    fakeSession.compactCompletion = compactionFinished.promise;
+    const handler = session.tryHandleOutOfBand("/compact");
+    const compaction = handler!.run({ emit: () => {} });
+
+    const { turnId } = await session.startTurn("continue after compaction");
+    await flushTurnScheduling();
+    expect(fakeSession.compactRequests).toEqual([{}]);
+    expect(fakeSession.prompts).toEqual([]);
+
+    compactionFinished.resolve();
+    await compaction;
+    await flushTurnScheduling();
+    expect(fakeSession.prompts).toEqual([{ message: "continue after compaction", imageCount: 0 }]);
+
+    fakeSession.finishTurn();
+    await events.nextTurnCompletion();
+    expect(events.turnLifecycleEvents()).toContainEqual({ type: "turn_completed", turnId });
+    expect(events.eventTypes()).not.toContain("turn_failed");
+  });
+
+  test.each(["interrupt", "close"] as const)(
+    "does not send a prompt waiting on compaction after %s",
+    async (action) => {
+      const { pi, session } = await createSession();
+      onTestFinished(() => session.close());
+      const fakeSession = pi.latestSession();
+      const compactionFinished = Promise.withResolvers<void>();
+      fakeSession.compactCompletion = compactionFinished.promise;
+      const handler = session.tryHandleOutOfBand("/compact");
+      const compaction = handler!.run({ emit: () => {} });
+
+      await session.startTurn("do not send this prompt");
+      await session[action]();
+      compactionFinished.resolve();
+      await compaction;
+      await flushTurnScheduling();
+
+      expect(fakeSession.prompts).toEqual([]);
+    },
+  );
+
+  test("does not send a prompt when compaction finishes during interruption", async () => {
+    const { pi, session, events } = await createSession();
+    onTestFinished(() => session.close());
+    const fakeSession = pi.latestSession();
+    const compactionFinished = Promise.withResolvers<void>();
+    fakeSession.compactCompletion = compactionFinished.promise;
+    const clearQueueFinished = Promise.withResolvers<void>();
+    fakeSession.clearQueueCompletion = clearQueueFinished.promise;
+    const handler = session.tryHandleOutOfBand("/compact");
+    const compaction = handler!.run({ emit: () => {} });
+    const { turnId } = await session.startTurn("do not send this prompt");
+
+    const interruption = session.interrupt();
+    compactionFinished.resolve();
+    await compaction;
+    await flushTurnScheduling();
+    expect(fakeSession.controlRequests).toEqual(["clear_queue"]);
+    expect(fakeSession.prompts).toEqual([]);
+
+    clearQueueFinished.resolve();
+    await interruption;
+    expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_canceled", turnId }]);
+    expect(fakeSession.prompts).toEqual([]);
+  });
+
   test("closes Pi compact loading marker when RPC rejects after compaction starts", async () => {
     const { pi, session } = await createSession();
     const fakeSession = pi.latestSession();
@@ -3487,4 +3562,84 @@ describe("transformPiModels", () => {
       },
     ]);
   });
+});
+
+test("pi runtime safety protects queued replies and runtime-owned activity", async () => {
+  const runtime = new FakePi();
+  const session = await createClient(runtime).createSession(createConfig());
+  onTestFinished(() => session.close());
+  const native = runtime.latestSession();
+  expect(await session.canStopRuntime!()).toBe(true);
+  native.state.pendingMessageCount = 1;
+  expect(await session.canStopRuntime!()).toBe(false);
+  native.state.pendingMessageCount = 0;
+  native.state.isStreaming = true;
+  expect(await session.canStopRuntime!()).toBe(false);
+  native.state.isStreaming = false;
+  native.state.isCompacting = true;
+  expect(await session.canStopRuntime!()).toBe(false);
+  native.state.isCompacting = false;
+  expect(await session.canStopRuntime!()).toBe(true);
+  native.getStateError = new Error("Unable to prove idle");
+  await expect(session.canStopRuntime!()).rejects.toThrow("Unable to prove idle");
+});
+
+test("reserves the Pi turn while an image prompt is materialized", async () => {
+  const { pi, session } = await createSession();
+  onTestFinished(() => session.close());
+  const first = session.startTurn([
+    { type: "image", data: ONE_BY_ONE_PNG_BASE64, mimeType: "image/png" },
+  ]);
+  await expect(session.startTurn("overlapping prompt")).rejects.toThrow("already active");
+  await first;
+  expect(pi.latestSession().prompts).toHaveLength(1);
+});
+
+test("interrupting Pi during image conversion cancels the admitted turn and permits a follow-up", async () => {
+  const { pi, session } = await createSession();
+  onTestFinished(() => session.close());
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  let admitted = false;
+  const first = session
+    .startTurn([
+      {
+        type: "image",
+        data: Buffer.alloc(16 * 1024 * 1024, 51).toString("base64"),
+        mimeType: "image/png",
+      },
+    ])
+    .then((result) => {
+      admitted = true;
+      return result;
+    });
+  await waitForImmediate();
+  expect(admitted).toBe(false);
+  expect(pi.latestSession().prompts).toHaveLength(0);
+  await session.interrupt();
+  const followup = await session.startTurn("follow-up after image interrupt");
+  const original = await first;
+  expect(events).toContainEqual(
+    expect.objectContaining({ type: "turn_canceled", turnId: original.turnId }),
+  );
+  expect(followup.turnId).not.toBe(original.turnId);
+  expect(pi.latestSession().prompts).toEqual([
+    { message: "follow-up after image interrupt", imageCount: 0 },
+  ]);
+});
+
+test("closing Pi during image conversion rejects its pending start", async () => {
+  const { pi, session } = await createSession();
+  const first = session.startTurn([
+    {
+      type: "image",
+      data: Buffer.alloc(16 * 1024 * 1024, 52).toString("base64"),
+      mimeType: "image/png",
+    },
+  ]);
+  const rejected = expect(first).rejects.toThrow("closed");
+  await waitForImmediate();
+  expect(pi.latestSession().prompts).toHaveLength(0);
+  await session.close();
+  await rejected;
 });

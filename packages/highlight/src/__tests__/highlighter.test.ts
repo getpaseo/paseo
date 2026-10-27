@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { setImmediate } from "node:timers/promises";
+import { highlightCodeWithBudget, HIGHLIGHT_MAX_SOURCE_BYTES } from "../budgeted-highlighter.js";
 import type { HighlightToken } from "../types.js";
 import { highlightCode, highlightCodeInSteps, highlightLine } from "../highlighter.js";
 
@@ -418,5 +420,57 @@ describe("highlightLine", () => {
     const tokens = highlightLine("hello", "test.xyz");
 
     expect(tokens).toEqual([{ text: "hello", style: null }]);
+  });
+});
+
+describe("highlightCodeWithBudget", () => {
+  it("yields to IO while producing byte-identical output below the source budget", async () => {
+    const code = "const value = Math.max(42, 7);\n".repeat(3_000);
+    const expected = JSON.stringify(highlightCode(code, "file.ts"));
+    let ticks = 0;
+    let longestGap = 0;
+    let lastTick = performance.now();
+    const timer = setInterval(() => {
+      const now = performance.now();
+      longestGap = Math.max(longestGap, now - lastTick);
+      lastTick = now;
+      ticks++;
+    }, 1);
+    try {
+      const actual = await highlightCodeWithBudget(code, "file.ts", {
+        yieldToEventLoop: setImmediate,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(ticks).toBeGreaterThan(1);
+      expect(longestGap).toBeLessThan(50);
+      expect(JSON.stringify(actual)).toBe(expected);
+    } finally {
+      clearInterval(timer);
+    }
+  });
+
+  it("budgets UTF-8 bytes before parsing, including multibyte text", async () => {
+    expect(
+      await highlightCodeWithBudget("é".repeat(HIGHLIGHT_MAX_SOURCE_BYTES / 2 + 1), "file.ts", {
+        yieldToEventLoop: setImmediate,
+      }),
+    ).toBeNull();
+    expect(
+      await highlightCodeWithBudget("a".repeat(HIGHLIGHT_MAX_SOURCE_BYTES + 1), "file.ts", {
+        yieldToEventLoop: setImmediate,
+      }),
+    ).toBeNull();
+  });
+
+  it("stops a parser that is cancelled between real event-loop turns", async () => {
+    const controller = new AbortController();
+    const pending = highlightCodeWithBudget(
+      "const value = Math.max(42, 7);\n".repeat(3_000),
+      "file.ts",
+      { yieldToEventLoop: setImmediate, signal: controller.signal },
+    );
+    await setImmediate();
+    controller.abort();
+    expect(await pending).toBeNull();
   });
 });

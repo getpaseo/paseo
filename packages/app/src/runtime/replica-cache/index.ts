@@ -1,3 +1,5 @@
+import { findMountedWindowStart } from "@/agent-stream/history-window";
+import { startsNewTurn } from "@/agent-stream/turn-membership";
 import { z } from "zod";
 import {
   AgentStatusSchema,
@@ -763,7 +765,7 @@ interface CertifiedTimelineWindow {
   hasOlder: boolean;
 }
 
-// Finds the longest suffix of at most MAX_TIMELINE_ITEMS whose coverage the cache can certify.
+// Finds a complete-turn suffix near MAX_TIMELINE_ITEMS whose coverage the cache can certify.
 // An item's cursor is its projected seqEnd, not the seqStart anchor that `before startSeq`
 // paginates on, so a trimmed window may only start at a canonical user message: it is one source
 // row, so its cursor is its anchor. `before startSeq` then returns exactly the entries anchored
@@ -771,7 +773,7 @@ interface CertifiedTimelineWindow {
 // trimmed item must also end before that row, as a tail page certifies: a trimmed tool call that
 // updated later would leave a kept source row with no kept item.
 function selectCertifiedTimelineWindow(
-  items: readonly StreamItem[],
+  items: StreamItem[],
   range: AgentTimelineCursorState,
   hasOlder: boolean,
 ): CertifiedTimelineWindow | null {
@@ -786,7 +788,7 @@ function selectCertifiedTimelineWindow(
   }
   const lastEndIndex = seqs.lastIndexOf(range.endSeq);
   const firstStart = Math.max(
-    items.length - MAX_TIMELINE_ITEMS,
+    findMountedWindowStart({ items, minMountedCount: MAX_TIMELINE_ITEMS }),
     items.findLastIndex((item) => !isTimelineItemStoredAsRefetched(item)) + 1,
   );
   if (lastEndIndex < firstStart) return null;
@@ -801,6 +803,7 @@ function selectCertifiedTimelineWindow(
     const startSeq = seqs[start]!;
     if (
       items[start]?.kind === "user_message" &&
+      startsNewTurn(items[start]!, items[start - 1] ?? null) &&
       trimmedEndSeq < startSeq &&
       minSeqFrom[start] === startSeq
     ) {
@@ -831,12 +834,16 @@ function serializeTimeline(timeline: CachedTimeline): StoredTimeline | null {
     };
   }
   // Display-only: these rows paint without granting synchronization authority.
+  const start = findMountedWindowStart({
+    items: canonicalItems,
+    minMountedCount: MAX_TIMELINE_ITEMS,
+  });
   return {
     agentId: timeline.agentId,
     items: canonicalItems
+      .slice(start)
       .map(serializeTimelineItem)
-      .filter((item) => item !== null)
-      .slice(-MAX_TIMELINE_ITEMS),
+      .filter((item) => item !== null),
     range: null,
     hasOlder: false,
   };

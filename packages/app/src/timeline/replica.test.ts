@@ -879,8 +879,8 @@ describe("SQLite baseline restoration", () => {
         direction: "after",
         cursor: { epoch: "epoch-1", seq: 80 },
       });
-      // The newest 50 start at seq 31; the kept window begins at the prompt anchored at 35.
-      expect(timelineSeqs()).toEqual(seqRange(35, 80));
+      // The newest 50 start at seq 31; retain the complete turn anchored at 25.
+      expect(timelineSeqs()).toEqual(seqRange(25, 80));
 
       second.owner.applyTimelineResponse(
         longTimelinePage({ direction: "after", startSeq: 81, endSeq: 80, hasOlder: true }),
@@ -891,17 +891,17 @@ describe("SQLite baseline restoration", () => {
       );
       expect(synced).toMatchObject({
         status: "synced",
-        range: { epoch: "epoch-1", startSeq: 35, endSeq: 80 },
+        range: { epoch: "epoch-1", startSeq: 25, endSeq: 80 },
         older: "available",
       });
       if (synced.status !== "synced" || !synced.range) throw new Error("timeline not synced");
       expect(
         planTimelineOlderFetch({ epoch: synced.range.epoch, seq: synced.range.startSeq }),
-      ).toMatchObject({ direction: "before", cursor: { epoch: "epoch-1", seq: 35 } });
+      ).toMatchObject({ direction: "before", cursor: { epoch: "epoch-1", seq: 25 } });
 
-      // The daemon answers `before 35` with every entry anchored at or below 34.
+      // The daemon answers `before 25` with every entry anchored at or below 24.
       second.owner.applyTimelineResponse(
-        longTimelinePage({ direction: "before", startSeq: 1, endSeq: 34, hasOlder: false }),
+        longTimelinePage({ direction: "before", startSeq: 1, endSeq: 24, hasOlder: false }),
       );
       expect(timelineSeqs()).toEqual(seqRange(1, 80));
       expect(

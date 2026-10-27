@@ -214,7 +214,7 @@ describe("neighbor and traversal semantics", () => {
     ).toBe("assistant-1\n\nassistant-2");
   });
 
-  it("collects copy content across adjacent turns without a visible prompt", () => {
+  it("keeps copied content within the canonical turn without a visible prompt", () => {
     const chronological: StreamItem[] = [
       { ...assistantMessage("a1", "first turn", 1), turnId: "turn-1" },
       { ...toolCall("tool", 2), turnId: "turn-2" },
@@ -228,7 +228,7 @@ describe("neighbor and traversal semantics", () => {
         items: chronological,
         startIndex: 2,
       }),
-    ).toBe("first turn\n\nsecond turn");
+    ).toBe("second turn");
   });
 
   it("returns undefined neighbor when index would be out of bounds", () => {

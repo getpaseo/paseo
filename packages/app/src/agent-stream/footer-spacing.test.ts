@@ -71,7 +71,7 @@ function layoutFor(input: { platform: "web" | "native"; isTurnActive: boolean })
       isTurnActive: input.isTurnActive,
       history: strategy.orderTail([userMessage("user"), assistant]),
       liveHead: [],
-      timingByAssistantId: timingFor(assistant.id),
+      timingByItemId: timingFor(assistant.id),
     }),
   };
 }

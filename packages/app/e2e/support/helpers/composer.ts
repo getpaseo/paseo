@@ -87,6 +87,14 @@ export async function sendDraftToQueue(page: Page): Promise<void> {
   await composerInput(page).press("Control+Enter");
 }
 
+/** Long-press the Send button: the composer takes the draft while the pointer is still down. */
+export async function holdSendButton(page: Page, label: string): Promise<void> {
+  await page.getByRole("button", { name: label, exact: true }).hover();
+  await page.mouse.down();
+  await expect(composerInput(page)).toHaveValue("", { timeout: 5_000 });
+  await page.mouse.up();
+}
+
 export async function expectQueuedMessageButton(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: "Send queued message now" })).toBeVisible({
     timeout: 10_000,

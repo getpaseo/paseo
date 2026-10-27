@@ -7010,3 +7010,21 @@ describe("OpenCode session permission rules", () => {
     }
   });
 });
+
+test("OpenCode v1 runtime safety retains terminals and busy sessions on its shared server", async () => {
+  const { parent, openCode } = await createParentSession("runtime-safety");
+  try {
+    expect(await parent.canStopRuntime!()).toBe(true);
+    openCode.ptyListResponse = { data: [{ id: "shell", status: "running" }] };
+    expect(await parent.canStopRuntime!()).toBe(false);
+    openCode.ptyListResponse = { data: [] };
+    openCode.sessionStatusResponse = { data: { "other-native-session": { type: "busy" } } };
+    expect(await parent.canStopRuntime!()).toBe(false);
+    openCode.sessionStatusResponse = { data: {} };
+    expect(await parent.canStopRuntime!()).toBe(true);
+    openCode.ptyListResponse = { error: "Inventory unavailable" };
+    await expect(parent.canStopRuntime!()).rejects.toThrow("Unable to inspect OpenCode terminals");
+  } finally {
+    await parent.close();
+  }
+});

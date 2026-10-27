@@ -149,7 +149,11 @@ export interface SeedDaemonClient {
     timeout?: number,
   ): Promise<{ status: string }>;
   cancelAgent(agentId: string): Promise<void>;
-  sendAgentMessage(agentId: string, text: string): Promise<void>;
+  sendAgentMessage(
+    agentId: string,
+    text: string,
+    options?: { sourceAgentId?: string },
+  ): Promise<void>;
   waitForFinish(
     agentId: string,
     timeout?: number,

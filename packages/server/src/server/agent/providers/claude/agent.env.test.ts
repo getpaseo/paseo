@@ -1,10 +1,11 @@
+import { once } from "node:events";
 import type { Query } from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import type { AgentLaunchContext } from "../../agent-sdk-types.js";
 import { ClaudeAgentClient } from "./agent.js";
-import type { ClaudeQueryInput } from "./query.js";
+import { claudeQuery, type ClaudeQueryInput } from "./query.js";
 
 function createQueryMock(events: unknown[]): Query {
   let index = 0;
@@ -29,6 +30,48 @@ function createQueryMock(events: unknown[]): Query {
 }
 
 describe("Claude SDK env", () => {
+  test.each(["node", "bun", process.execPath])(
+    "identifies the spawned %s process as Paseo after clearing parent session env",
+    async (command) => {
+      let output = "";
+      let exited = Promise.resolve<unknown[]>([]);
+      const query = claudeQuery(
+        { prompt: "", options: {} },
+        {
+          runtimeSettings: { env: { CLAUDE_CODE_ENTRYPOINT: "sdk-ts" } },
+          launchEnv: { CLAUDE_CODE_ENTRYPOINT: "sdk-cli" },
+          queryFactory: ({ options }) => {
+            if (!options.spawnClaudeCodeProcess) {
+              throw new Error("Missing Claude process launcher");
+            }
+            const child = options.spawnClaudeCodeProcess({
+              command,
+              args: [
+                "-e",
+                "process.stdout.write(JSON.stringify({ entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT, parentSession: process.env.CLAUDECODE ?? null }))",
+              ],
+              cwd: process.cwd(),
+              env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "sdk-ts", CLAUDECODE: "1" },
+              signal: new AbortController().signal,
+            });
+            child.stdout.on("data", (chunk: Buffer) => {
+              output += chunk.toString();
+            });
+            exited = once(child, "close");
+            return createQueryMock([]);
+          },
+        },
+      );
+
+      try {
+        expect(await exited).toEqual([0, null]);
+        expect(JSON.parse(output)).toEqual({ entrypoint: "Paseo", parentSession: null });
+      } finally {
+        query.close();
+      }
+    },
+  );
+
   test("forwards launch-context env through Claude process env", async () => {
     let capturedEnv: Record<string, string | undefined> | undefined;
     let capturedPerTaskStopAffordance: boolean | undefined;

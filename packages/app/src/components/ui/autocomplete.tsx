@@ -247,14 +247,16 @@ export function Autocomplete({
     <View style={styles.outerWrapper}>
       {selectedOption?.kind === "command" && selectedOption.description ? (
         <View style={styles.detailCard}>
-          <Text style={styles.detailLabel}>
+          <Text style={styles.detailLabel} numberOfLines={1}>
             {removeBoltGlyphs(selectedOption.label) ?? selectedOption.label}
           </Text>
-          <Text style={styles.detailDescription}>
+          <Text style={styles.detailDescription} numberOfLines={2} ellipsizeMode="tail">
             {removeBoltGlyphs(selectedOption.description)}
           </Text>
           {selectedOption.detail ? (
-            <Text style={styles.detailHint}>{removeBoltGlyphs(selectedOption.detail)}</Text>
+            <Text style={styles.detailHint} numberOfLines={1}>
+              {removeBoltGlyphs(selectedOption.detail)}
+            </Text>
           ) : null}
         </View>
       ) : null}
@@ -293,6 +295,9 @@ const styles = StyleSheet.create((theme: Theme) => ({
     gap: theme.spacing[1],
   },
   detailCard: {
+    flexShrink: 1,
+    minHeight: 0,
+    overflow: "hidden",
     backgroundColor: theme.colors.surface1,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.borderAccent,
@@ -318,7 +323,8 @@ const styles = StyleSheet.create((theme: Theme) => ({
   },
   container: {
     flexShrink: 1,
-    minHeight: 0,
+    // Keep a complete selectable row (36), list padding (8), and borders (2).
+    minHeight: 46,
     backgroundColor: theme.colors.surface1,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.borderAccent,

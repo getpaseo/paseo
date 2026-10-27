@@ -94,6 +94,12 @@ and its Claude provider available. Set `PASEO_COMPOSER_KEYBOARD_SERVER_ID`,
 `_AGENT_ID` (an idle mock chat), and `_WORKSPACE_ID` (its workspace); `_DEVICE`,
 `_SESSION`, and `_DRAFT_ID` are optional. Artifacts go to
 `.dev/agent-device-artifacts/composer-keyboard-ios`.
+With a Codex draft selected, set `_SCENARIO=growth` on a 402pt-wide iPhone to
+check live wrapping, shrinking, the 12pt anchor gap, and command insertion. Set
+`_SCENARIO=previews` on an SE-sized iPhone to check long and short descriptions
+under an eight-line draft, selection with the keyboard shown and hidden, and
+file mentions. These scenarios only need `_SERVER_ID` and `_WORKSPACE_ID`;
+`_UDID` selects an exact simulator and `_ARTIFACTS_DIR` overrides the output path.
 
 The Android sidebar scroll-retention flow requires a connected host with enough
 workspaces to overflow the compact sidebar. Pass `TOP_WORKSPACE` and

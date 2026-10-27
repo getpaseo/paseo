@@ -221,9 +221,11 @@ function parseTaskNotificationFromSystemRecord(record: unknown): TaskNotificatio
 /** Normalize notification identity for one transcript traversal. Queue bookkeeping and delivery
  * are separate records of the same occurrence; each source counts repeated identical bodies
  * independently so the second event is not merged with the first. */
-export function* assignTaskNotificationReplayIds<T>(entries: Iterable<T>): Generator<T> {
+export async function* assignTaskNotificationReplayIds<T>(
+  entries: AsyncIterable<T>,
+): AsyncGenerator<T> {
   const occurrences = new Map<string, Map<string, number>>();
-  for (const entry of entries) {
+  for await (const entry of entries) {
     const record = TaskNotificationHistoryRecordSchema.safeParse(entry);
     if (!record.success) {
       yield entry;

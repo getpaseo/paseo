@@ -585,6 +585,117 @@ server.before("agent.session_open", ({ request }) => {
 
 它会在创建、恢复、刷新和导入时运行。如果只想在创建时注入，请改为在 `agent.create` 回调中设置 `env`。
 
+### 为 Agent 附加工具 {#attach-tools-to-agents}
+
+在 `index.server.ts` 中定义工具，并在 `before("agent.session_open")` 中附加它。
+此示例只向带有 `notes/enabled: "true"` 标签的 Agent 提供 `append_workspace_note`：
+
+```ts
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
+import { z } from "zod";
+import { defineAgentTool, type PluginServerContext } from "@getpaseo/plugin/server";
+
+const appendWorkspaceNote = defineAgentTool({
+  name: "append_workspace_note",
+  description: "Append a note to AGENT_NOTES.md in this agent's working directory.",
+  input: z.object({ note: z.string().min(1).describe("Note to append") }),
+  async execute({ note }, { agent, signal }) {
+    const notePath = path.join(agent.cwd, "AGENT_NOTES.md");
+    await writeFile(notePath, `${note}\n`, { encoding: "utf8", flag: "a", signal });
+    return {
+      text: `Saved note to ${notePath}`,
+      structuredContent: { path: notePath },
+    };
+  },
+});
+
+export default function contribute(server: PluginServerContext) {
+  server.before("agent.session_open", ({ request }) => {
+    if (request.labels["notes/enabled"] !== "true") return;
+    return { ...request, tools: [...request.tools, appendWorkspaceNote] };
+  });
+  return () => {};
+}
+```
+
+通过 SDK 创建 Agent 时设置标签：
+
+```ts
+const agent = await paseo.agents.create({
+  config: { provider: "codex/gpt-5.4" },
+  cwd: "/projects/shop",
+  labels: { "notes/enabled": "true" },
+});
+```
+
+使用会话打开请求中的字段选择 Agent：
+
+| 选择依据   | 回调中的条件                                 |
+| ---------- | -------------------------------------------- |
+| 标签       | `request.labels["notes/enabled"] === "true"` |
+| Provider   | `request.provider === "codex"`               |
+| 工作区     | `request.workspaceId === "workspace-456"`    |
+| 单个 Agent | `request.agentId === chosenAgentId`          |
+
+每个插件的 `request.tools` 都从空数组开始。同一插件中的后续回调会看到前面回调返回的工具；
+替换数组即可添加或移除工具。返回 `undefined` 会保留请求。`purpose: "history"` 时会忽略工具。
+
+从 `@getpaseo/plugin/server` 导入 `defineAgentTool`、`AgentToolDefinition`、`AgentToolContext`
+和 `AgentToolResult`。辅助函数会根据 Zod schema 推断验证后的输入类型：
+
+```ts
+declare function defineAgentTool<Input extends z.ZodType>(tool: {
+  name: string;
+  title?: string;
+  description: string;
+  input: Input;
+  execute(
+    input: z.output<Input>,
+    context: AgentToolContext,
+  ): AgentToolResult | Promise<AgentToolResult>;
+}): AgentToolDefinition;
+
+interface AgentToolResult {
+  text?: string;
+  structuredContent?: unknown;
+  isError?: boolean;
+}
+```
+
+| 执行 context | 值                                                                                                  |
+| ------------ | --------------------------------------------------------------------------------------------------- |
+| `agent`      | 发起调用的 Agent，以 `PluginHookAgent` 表示，包括 `id`、`workspaceId`、`provider`、`cwd` 和 `title` |
+| `paseo`      | 已连接到此 daemon 的 SDK                                                                            |
+| `signal`     | 此次工具调用的中止信号；请把它传给文件操作或外部请求                                                |
+
+`execute` 在插件进程中运行。闭包和原始 Zod schema 保留在该进程中；只有工具元数据和调用的
+输入、结果会跨进程传递。Paseo 在调用 `execute` 前验证输入。无效输入会将 schema 问题返回给
+Agent。抛出的错误会转换为 `{ isError: true, text: message }`，插件继续运行。取消调用或关闭
+其传输连接会中止 `signal` 并丢弃结果。工具调用最长运行 10 分钟，与钩子的 30 秒超时分开。
+关闭或重新打开 Agent 会话会移除旧定义。
+
+在 `text` 中返回模型可见的文本。`structuredContent` 必须可序列化为 JSON；省略 `text` 时，
+Paseo 会将该值格式化为供模型读取的文本。设置 `isError: true` 可报告工具错误。
+
+Paseo 通过 Agent 工具传输提供附加的工具，按 Provider 的支持情况使用 MCP 或原生注册。
+同一份定义和回调适用于这两种方式。附加的工具遵循[与 Paseo 工具相同的限制](/docs/mcp#limit-paseo-tools-by-provider)。
+只有该 Agent 能看到这些工具。
+
+名称必须匹配 `/^[a-z][a-z0-9_]*$/`，且不超过 64 个字符。如果名称与同一 Agent 的 Paseo
+工具或另一插件的工具冲突，会话打开会失败，并指出双方。一个插件内的重复名称也会导致
+会话打开失败。回调未选中的 Agent 不受影响。
+
+| 变更                                                   | Agent 何时收到变更                                                                                                                                                                 |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 启动、停止或重新加载声明了 `agent.session_open` 的插件 | 已打开的会话会标记为过期。每个会话在下一次空闲提示词前重新打开；正在运行的轮次会继续，不会被中断。重新打开后的下一条提示词复用该会话。                                             |
+| 修改回调选择的 Agent                                   | 编辑此示例后运行 `paseo plugin reload agent-tools`，然后在 Agent 空闲时发送提示词。                                                                                                |
+| 立即应用                                               | 调用 `await paseo.agents.ref(id).reload({ requestId: "reload-notes" })`。`requestId` 可选。这会重新打开 Provider 会话，以 `reason: "refresh"` 再次运行钩子，并中断正在运行的轮次。 |
+| 读取当前快照                                           | 调用 `await paseo.agents.ref(id).refresh()`。这只读取状态，不会重新打开会话。                                                                                                      |
+
+如果自动重新打开失败，触发它的提示词会返回该错误。参阅
+[完整 agent-tools 示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools)。
+
 ### 选择工作区隔离方式 {#choose-workspace-isolation}
 
 ```ts
@@ -741,11 +852,11 @@ type PluginTurnOutcome =
 
 ### before 钩子 {#before-hooks}
 
-| 名称                 | 请求字段                                                                | 可编辑                              |
-| -------------------- | ----------------------------------------------------------------------- | ----------------------------------- |
-| `agent.create`       | `config`，可选的 `env`                                                  | 除 `cwd` 外的公开 Agent 配置；`env` |
-| `agent.session_open` | `agentId`, `workspaceId`, `provider`, `cwd`, `reason`, `purpose`, `env` | 仅 `env`                            |
-| `workspace.create`   | `source`，可选的 `title`，`firstAgentContext`                           | 整个显式创建请求                    |
+| 名称                 | 请求字段                                                                                                     | 可编辑                              |
+| -------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------- |
+| `agent.create`       | `config`，可选的 `env`                                                                                       | 除 `cwd` 外的公开 Agent 配置；`env` |
+| `agent.session_open` | `agentId`, `workspaceId`, `provider`, `cwd`，只读的 `title` 和 `labels`，`reason`, `purpose`, `env`, `tools` | `env` 和 `tools`                    |
+| `workspace.create`   | `source`，可选的 `title`，`firstAgentContext`                                                                | 整个显式创建请求                    |
 
 **`agent.create.config`** 使用 `AgentSessionConfig`：
 
@@ -766,18 +877,24 @@ type PluginTurnOutcome =
   "workspaceId": "workspace-456",
   "provider": "codex",
   "cwd": "/projects/shop",
+  "title": "Workspace notes",
+  "labels": { "notes/enabled": "true" },
+  "tools": [],
   "reason": "resume",
   "purpose": "interactive",
   "env": { "COMPANY_ENV": "development" }
 }
 ```
 
-| 字段          | 取值                                                                                 |
-| ------------- | ------------------------------------------------------------------------------------ |
-| `workspaceId` | 字符串或 `null`                                                                      |
-| `reason`      | `create`、`resume`、`refresh`、`import`                                              |
-| `purpose`     | `interactive`、`history`                                                             |
-| `env`         | 启动覆盖映射；不包括 daemon 继承的环境变量。替换整个映射即可添加、替换或移除覆盖项。 |
+| 字段          | 取值                                                                                                     |
+| ------------- | -------------------------------------------------------------------------------------------------------- |
+| `workspaceId` | 字符串或 `null`                                                                                          |
+| `title`       | 只读字符串或 `null`；创建时使用创建请求的标题，恢复时使用已保存的标题。                                  |
+| `labels`      | 只读的字符串映射；创建时使用创建请求的标签，恢复时使用已保存的标签。                                     |
+| `tools`       | 可编辑的 `AgentToolDefinition[]`，仅包含此插件的工具。参阅[为 Agent 附加工具](#attach-tools-to-agents)。 |
+| `reason`      | `create`、`resume`、`refresh`、`import`                                                                  |
+| `purpose`     | `interactive`、`history`                                                                                 |
+| `env`         | 启动覆盖映射；不包括 daemon 继承的环境变量。替换整个映射即可添加、替换或移除覆盖项。                     |
 
 ### 顺序与返回值 {#ordering-and-returned-values}
 
@@ -786,7 +903,7 @@ Creation request
   → agent.create hooks (plugin-ID order; registration order within each plugin)
   → resolve defaults and validate provider configuration
   → derive launch configuration with Paseo runtime tools and daemon prompt
-  → agent.session_open hooks (same ordering; env only)
+  → agent.session_open hooks (same ordering; env and plugin-local tools)
   → set PASEO_AGENT_ID and PASEO_AGENT_CWD
   → open provider session and save agent configuration
 ```
@@ -822,6 +939,7 @@ Creation request
 | [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       | 全部十一个钩子；隐去环境变量值的 JSON 日志             |
 | [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     | 后续消息、权限、环境变量、切换 Provider、选择 worktree |
 | [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) | MCP 注入以及 Codex 沙盒/批准选项                       |
+| [agent-tools](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools)                 | 按标签选择 Agent，并在插件进程中执行文件操作的工具     |
 
 用 `paseo plugin logs lifecycle-logger` 或主机的 `daemon.log` 读取 logger 的输出。
 

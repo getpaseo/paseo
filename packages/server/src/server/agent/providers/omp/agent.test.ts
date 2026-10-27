@@ -10,7 +10,7 @@ import type { OmpAgentMessage } from "./rpc-types.js";
 import type { OmpNoTurnScheduler, OmpProviderIdleScheduler } from "./agent.js";
 import type { OmpUsagePollScheduler } from "./usage-poller.js";
 import { resolveOmpProviderOptions } from "./provider-config.js";
-import { OmpRuntimeEventSchema } from "./rpc-types.js";
+import { OmpRuntimeEventSchema, OmpSessionStateSchema } from "./rpc-types.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
 import { OmpAgentClient } from "./agent.js";
 import { FakeOmp } from "./test-utils/fake-omp.js";
@@ -1133,6 +1133,17 @@ describe("OMP agent client and session", () => {
         messageId: "assistant-history",
       },
     ]);
+    await expect(
+      omp.runPrompt("continue after resume", "resumed follow-up complete"),
+    ).resolves.toMatchObject({
+      finalText: "resumed follow-up complete",
+    });
+    expect(omp.timeline()).toContainEqual(
+      expect.objectContaining({
+        type: "assistant_message",
+        text: "resumed follow-up complete",
+      }),
+    );
     expect(omp.usageSession()).toMatchObject({ provider: "omp", sessionKey: expect.any(String) });
     await omp.close();
     expect(omp.usageSession()).toBeNull();
@@ -1332,13 +1343,14 @@ describe("OMP agent client and session", () => {
     expect(omp.runtimeLaunches()).toHaveLength(1);
   });
 
-  test("closes a replacement process if the session closes during relaunch", async () => {
+  test("rejects a pending recovery start and closes its processes when the session closes", async () => {
     const omp = new OmpHarness();
     await omp.start();
     omp.processExit("OMP RPC process exited with code 1 and signal null");
     const turn = omp.startTurnDetached("continue");
+    const rejected = expect(turn).rejects.toThrow("closed");
     await omp.close();
-    await turn;
+    await rejected;
     await waitForImmediate();
     expect(omp.runtimeSessions().every((session) => session.closed)).toBe(true);
   });
@@ -1543,4 +1555,177 @@ describe("OMP agent client and session", () => {
       { type: "user_message", text: "hello OMP", messageId: "user-1" },
     ]);
   });
+});
+
+test("omp runtime safety protects queued replies and runtime-owned activity", async () => {
+  const runtime = new FakeOmp();
+  const session = await new OmpAgentClient({ logger: createTestLogger(), runtime }).createSession({
+    provider: "omp",
+    cwd: process.cwd(),
+  });
+  onTestFinished(() => session.close());
+  const native = runtime.latestSession();
+  native.state.isSettled = true;
+  native.state.hasPendingAsyncWork = false;
+  expect(await session.canStopRuntime!()).toBe(true);
+  native.state.queuedMessageCount = 1;
+  expect(await session.canStopRuntime!()).toBe(false);
+  native.state.queuedMessageCount = 0;
+  native.state.isStreaming = true;
+  expect(await session.canStopRuntime!()).toBe(false);
+  native.state.isStreaming = false;
+  native.state.isCompacting = true;
+  expect(await session.canStopRuntime!()).toBe(false);
+  native.state.isCompacting = false;
+  expect(await session.canStopRuntime!()).toBe(true);
+  native.getStateError = new Error("Unable to prove idle");
+  await expect(session.canStopRuntime!()).rejects.toThrow("Unable to prove idle");
+});
+
+test("OMP runtime safety retains async work after the foreground turn finishes", async () => {
+  const runtime = new FakeOmp();
+  const session = await new OmpAgentClient({ logger: createTestLogger(), runtime }).createSession({
+    provider: "omp",
+    cwd: process.cwd(),
+  });
+  onTestFinished(() => session.close());
+  const native = runtime.latestSession();
+  native.state.hasPendingAsyncWork = true;
+  native.state.isSettled = false;
+  const prompted = native.nextPrompt();
+  const run = session.run("start a background job");
+  await prompted;
+  native.beginTurn();
+  native.acceptPrompt("start a background job", "async-user");
+  native.streamAssistantText("Job started in background");
+  native.finishTurn();
+  await run;
+  expect(native.state.isStreaming).toBe(false);
+  expect(native.state.queuedMessageCount).toBe(0);
+  expect(await session.canStopRuntime!()).toBe(false);
+  // The delivery is drained, but an admitted/scheduled continuation still prevents settlement.
+  native.state.hasPendingAsyncWork = false;
+  expect(await session.canStopRuntime!()).toBe(false);
+  native.state.isSettled = true;
+  expect(await session.canStopRuntime!()).toBe(true);
+});
+
+test.each([
+  { hasPendingAsyncWork: true, isSettled: true, expected: false },
+  { hasPendingAsyncWork: false, isSettled: false, expected: false },
+  { hasPendingAsyncWork: false, isSettled: true, expected: true },
+  { hasPendingAsyncWork: undefined, isSettled: true, expected: false },
+  { hasPendingAsyncWork: false, isSettled: undefined, expected: false },
+  { hasPendingAsyncWork: undefined, isSettled: undefined, expected: false },
+])(
+  "OMP runtime safety requires explicit settlement: %j",
+  async ({ hasPendingAsyncWork, isSettled, expected }) => {
+    const runtime = new FakeOmp();
+    const session = await new OmpAgentClient({ logger: createTestLogger(), runtime }).createSession(
+      {
+        provider: "omp",
+        cwd: process.cwd(),
+      },
+    );
+    onTestFinished(() => session.close());
+    const native = runtime.latestSession();
+    const response = { ...native.state };
+    if (hasPendingAsyncWork !== undefined) response.hasPendingAsyncWork = hasPendingAsyncWork;
+    if (isSettled !== undefined) response.isSettled = isSettled;
+    // Legacy get_state responses stay valid; missing safety fields never imply settlement.
+    native.state = OmpSessionStateSchema.parse(response);
+    expect(native.state.hasPendingAsyncWork).toBe(hasPendingAsyncWork);
+    expect(native.state.isSettled).toBe(isSettled);
+    expect(await session.canStopRuntime!()).toBe(expected);
+  },
+);
+
+test.each([false, true])(
+  "image prompt keeps OMP's vision capability contract (vision: %s)",
+  async (vision) => {
+    const runtime = new FakeOmp();
+    runtime.queueSessionSetup((session) => {
+      session.state = {
+        ...session.state,
+        model: {
+          provider: "test",
+          id: "image-model",
+          input: vision ? ["text", "image"] : ["text"],
+        },
+      };
+    });
+    const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+    const session = await client.createSession({ provider: "omp", cwd: process.cwd() });
+    onTestFinished(() => session.close());
+    const bytes = Buffer.from("OMP attachment fixture");
+    const first = session.startTurn([
+      { type: "text", text: "Describe this image." },
+      { type: "image", data: bytes.toString("base64"), mimeType: "image/png" },
+    ]);
+    await expect(session.startTurn("overlapping prompt")).rejects.toThrow("already active");
+    await first;
+    const [prompt] = runtime.latestSession().prompts;
+    expect(prompt.imageCount).toBe(vision ? 1 : 0);
+    if (vision) expect(prompt.message).toBe("Describe this image.");
+    else {
+      const imagePath = prompt.message.match(/\[Image available at: (.+)\]/)?.[1];
+      expect(imagePath).toBeTruthy();
+      const { readFile, rm } = await import("node:fs/promises");
+      expect(await readFile(imagePath!)).toEqual(bytes);
+      await rm(imagePath!);
+    }
+  },
+);
+
+test("interrupting OMP during image conversion cancels the admitted turn and permits a follow-up", async () => {
+  const runtime = new FakeOmp();
+  const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+  const session = await client.createSession({ provider: "omp", cwd: process.cwd() });
+  onTestFinished(() => session.close());
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  let admitted = false;
+  const first = session
+    .startTurn([
+      {
+        type: "image",
+        data: Buffer.alloc(16 * 1024 * 1024, 53).toString("base64"),
+        mimeType: "image/png",
+      },
+    ])
+    .then((result) => {
+      admitted = true;
+      return result;
+    });
+  await waitForImmediate();
+  expect(admitted).toBe(false);
+  expect(runtime.latestSession().prompts).toHaveLength(0);
+  await session.interrupt();
+  const followup = await session.startTurn("follow-up after image interrupt");
+  const original = await first;
+  expect(events).toContainEqual(
+    expect.objectContaining({ type: "turn_canceled", turnId: original.turnId }),
+  );
+  expect(followup.turnId).not.toBe(original.turnId);
+  expect(runtime.latestSession().prompts).toEqual([
+    { message: "follow-up after image interrupt", imageCount: 0 },
+  ]);
+});
+
+test("closing OMP during image conversion rejects its pending start", async () => {
+  const runtime = new FakeOmp();
+  const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+  const session = await client.createSession({ provider: "omp", cwd: process.cwd() });
+  const first = session.startTurn([
+    {
+      type: "image",
+      data: Buffer.alloc(16 * 1024 * 1024, 54).toString("base64"),
+      mimeType: "image/png",
+    },
+  ]);
+  const rejected = expect(first).rejects.toThrow("closed");
+  await waitForImmediate();
+  expect(runtime.latestSession().prompts).toHaveLength(0);
+  await session.close();
+  await rejected;
 });

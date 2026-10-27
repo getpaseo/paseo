@@ -349,6 +349,21 @@ async function persistAndRestoreLongTimeline(items: StreamItem[]) {
 }
 
 describe("ReplicaCache", () => {
+  it("persists the complete newest turn beyond the cache item target", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const items = Array.from({ length: 60 }, (_, index) => ({
+      ...timelineItem(`item-${index}`),
+      id: `item-${index}`,
+      turnId: "long-run",
+    }));
+    writer.commitTimeline(SERVER_ID, "agent-1", { ...timeline(), items, range: null });
+    await writer.flush();
+    const restored = await createCache(storage).readTimeline(SERVER_ID, "agent-1");
+    expect(restored?.items.map((item) => item.id)).toEqual(items.map((item) => item.id));
+    expect(restored?.range).toBeNull();
+  });
+
   it("preserves workspace sorting timestamps across cache reopen", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);
@@ -756,18 +771,48 @@ describe("ReplicaCache", () => {
   });
 
   describe("long timeline coverage", () => {
+    it("keeps the complete certified turn when its prompts cross the cache target", async () => {
+      const items = longTimelineItems(80, { prompts: true });
+      for (let index = 0; index < items.length; index += 1) {
+        items[index]!.turnId = index < 14 ? "older-run" : "long-run";
+      }
+
+      const restored = await persistAndRestoreLongTimeline(items);
+
+      expect(restored).toEqual({
+        agentId: "agent-1",
+        items: items.slice(14),
+        range: { epoch: "epoch-1", startSeq: 30, endSeq: 160 },
+        hasOlder: true,
+      });
+    });
+
     it("keeps a range re-derived from the kept items when trimming a long timeline", async () => {
       const items = longTimelineItems(80, { prompts: true });
 
       const restored = await persistAndRestoreLongTimeline(items);
 
-      // The newest 50 begin at index 30; the first user message at or after it is index 34.
+      // The newest 50 begin at index 30; retain the complete turn starting at index 24.
       expect(restored).toEqual({
         agentId: "agent-1",
-        items: items.slice(34),
-        range: { epoch: "epoch-1", startSeq: 70, endSeq: 160 },
+        items: items.slice(24),
+        range: { epoch: "epoch-1", startSeq: 50, endSeq: 160 },
         hasOlder: true,
       });
+    });
+
+    it("does not certify a steering prompt inside a turn after an overlapping discarded update", async () => {
+      const items = longTimelineItems(80, { prompts: true });
+      for (const item of items.slice(0, 14)) item.turnId = "older-run";
+      for (const item of items.slice(14, 64)) item.turnId = "long-run";
+      for (const item of items.slice(64)) item.turnId = "latest-run";
+      items[10] = { ...items[10]!, timelineCursor: { epoch: "epoch-1", seq: 95 } };
+
+      const restored = await persistAndRestoreLongTimeline(items);
+
+      expect(restored?.items).toEqual(items.slice(64));
+      expect(restored?.range).toEqual({ epoch: "epoch-1", startSeq: 130, endSeq: 160 });
+      expect(restored?.hasOlder).toBe(true);
     });
 
     it("moves the trim boundary past a trimmed item that updated inside the kept window", async () => {
@@ -782,15 +827,15 @@ describe("ReplicaCache", () => {
       expect(restored?.hasOlder).toBe(true);
     });
 
-    it("keeps a display-only tail when no user message can start the kept window", async () => {
+    it("keeps the complete available turn when no prompt boundary is loaded", async () => {
       const items = longTimelineItems(80, { prompts: false });
 
       const restored = await persistAndRestoreLongTimeline(items);
 
       expect(restored).toEqual({
         agentId: "agent-1",
-        items: items.slice(-50),
-        range: null,
+        items,
+        range: { epoch: "epoch-1", startSeq: 2, endSeq: 160 },
         hasOlder: false,
       });
     });

@@ -162,11 +162,33 @@ describe("composer track panel", () => {
     );
 
     openPanel();
+    expect(document.querySelector("button button")).toBeNull();
+    expect(row("row")?.getAttribute("role")).toBe("menuitem");
     click(row("row-archive") as Element);
 
     expect(onAction).toHaveBeenCalledTimes(1);
     expect(onPress).not.toHaveBeenCalled();
     expect(isPanelOpen()).toBe(true);
+  });
+
+  it.each(["Enter", " "])("selects a track row with %j", (key) => {
+    const select = vi.fn();
+    mount(
+      <ComposerTrackPill testID="pill" segments={SUBAGENT_SEGMENTS} panelTitle="Subagents">
+        <ComposerTrackRow accessibilityLabel="Subagent one" testID="row" onPress={select}>
+          <Text>Subagent one</Text>
+        </ComposerTrackRow>
+      </ComposerTrackPill>,
+    );
+    openPanel();
+    const target = row("row") as HTMLElement;
+    act(() => {
+      target.focus();
+      target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+      target.dispatchEvent(new KeyboardEvent("keyup", { key, bubbles: true }));
+    });
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(isPanelOpen()).toBe(false);
   });
 });
 

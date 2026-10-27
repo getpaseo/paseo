@@ -347,7 +347,7 @@ async function createBaseRecoveryFixture(baseBranch: string | null) {
 
 test("preserves ordinary checkout behavior when no separate base was recorded", async () => {
   const fixture = await createBaseRecoveryFixture(null);
-  writePaseoWorktreeMetadata(fixture.workspace.cwd, { baseRefName: "feature" });
+  await writePaseoWorktreeMetadata(fixture.workspace.cwd, { baseRefName: "feature" });
   await fixture.archiveAndRemove();
   await fixture.service.restore(fixture.workspace.workspaceId);
   expect((await fixture.registry.get(fixture.workspace.workspaceId))?.baseBranch).toBeNull();
@@ -430,7 +430,7 @@ test("restores the branch HEAD with a base name when the exact base is missing",
   });
   expect(existsSync(fixture.workspace.cwd)).toBe(true);
   expect((await fixture.registry.get(fixture.workspace.workspaceId))?.archivedAt).toBeNull();
-  const metadata = readPaseoWorktreeMetadata(fixture.workspace.cwd);
+  const metadata = await readPaseoWorktreeMetadata(fixture.workspace.cwd);
   expect(metadata).toMatchObject({ baseRefName: "main" });
   expect(metadata?.baseRef).toBeUndefined();
   expect(
@@ -450,7 +450,7 @@ test("restore fetches a deleted local branch from origin and retains its base", 
   await fixture.archiveAndRemove();
   execFileSync("git", ["branch", "-D", "feature"], { cwd: fixture.repoDir });
   await fixture.service.restore(fixture.workspace.workspaceId);
-  expect(readPaseoWorktreeMetadata(fixture.workspace.cwd)?.baseRef).toBe("refs/heads/main");
+  expect((await readPaseoWorktreeMetadata(fixture.workspace.cwd))?.baseRef).toBe("refs/heads/main");
   expect(
     await getCheckoutStatus(fixture.workspace.cwd, { paseoHome: fixture.paseoHome }),
   ).toMatchObject({
