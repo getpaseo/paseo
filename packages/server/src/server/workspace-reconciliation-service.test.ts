@@ -660,8 +660,10 @@ describe("WorkspaceReconciliationService", () => {
       workspaceRegistry,
       logger: createTestLogger(),
     });
-    // Timer gaps include runner descheduling and idle IO waits. Time actual
-    // callbacks instead, retaining the raw gaps and thread CPU as diagnostics.
+    // Windows can deschedule Node inside a callback too. Budget charged thread
+    // CPU within callback spans, capped by wall time because Windows CPU counters
+    // advance in coarse increments. Also require real asynchronous inspections:
+    // synchronous filesystem waits can block the loop without consuming CPU.
     // Node 22.20 provides this API; our older Node declarations omit it.
     const threadCpuUsage: (previous?: NodeJS.CpuUsage) => NodeJS.CpuUsage = Reflect.get(
       process,
@@ -672,6 +674,8 @@ describe("WorkspaceReconciliationService", () => {
     let longestGap = 0;
     let longestCallback = 0;
     let longestCallbackCpu = 0;
+    let longestBlocking = 0;
+    let asyncInspections = 0;
     let longestGc = 0;
     const callbacks = new Map<number, { wall: number; cpu: NodeJS.CpuUsage }>();
     const observeGc = (entries: readonly import("node:perf_hooks").PerformanceEntry[]) => {
@@ -683,6 +687,9 @@ describe("WorkspaceReconciliationService", () => {
     gc.observe({ entryTypes: ["gc"] });
     let probe: ReturnType<typeof setInterval>;
     const activity = createHook({
+      init(_id, type) {
+        if (type === "FSREQPROMISE") asyncInspections++;
+      },
       before(id) {
         if (executionAsyncResource() === probe) return;
         callbacks.set(id, { wall: performance.now(), cpu: threadCpuUsage() });
@@ -692,10 +699,12 @@ describe("WorkspaceReconciliationService", () => {
         if (!start) return;
         callbacks.delete(id);
         const duration = performance.now() - start.wall;
+        const { user, system } = threadCpuUsage(start.cpu);
+        const cpuMs = (user + system) / 1_000;
+        longestBlocking = Math.max(longestBlocking, Math.min(duration, cpuMs));
         if (duration > longestCallback) {
           longestCallback = duration;
-          const { user, system } = threadCpuUsage(start.cpu);
-          longestCallbackCpu = (user + system) / 1_000;
+          longestCallbackCpu = cpuMs;
         }
       },
     }).enable();
@@ -709,8 +718,12 @@ describe("WorkspaceReconciliationService", () => {
     try {
       // Include the initial synchronous span: its callback predates the hook.
       const actionStartedAt = performance.now();
+      const actionCpu = threadCpuUsage();
       const pending = service.runOnce();
-      longestCallback = Math.max(longestCallback, performance.now() - actionStartedAt);
+      const actionWallMs = performance.now() - actionStartedAt;
+      const { user, system } = threadCpuUsage(actionCpu);
+      longestCallback = Math.max(longestCallback, actionWallMs);
+      longestBlocking = Math.max(longestBlocking, Math.min(actionWallMs, (user + system) / 1_000));
       result = await pending;
       await new Promise<void>((resolve) => setImmediate(resolve));
       sample();
@@ -721,10 +734,13 @@ describe("WorkspaceReconciliationService", () => {
       gc.disconnect();
       service.dispose();
     }
-    const blockingMs = Math.max(longestCallback, longestGc);
+    // GC CPU during callbacks is included above. GC elapsed durations, like
+    // callback elapsed durations, include runner preemption: log them separately.
+    const blockingMs = longestBlocking;
     process.stderr.write(
       `workspace reconciliation main-thread blocking: ${JSON.stringify({
         blockingMs,
+        asyncInspections,
         longestCallback,
         longestCallbackCpu,
         longestGc,
@@ -732,6 +748,7 @@ describe("WorkspaceReconciliationService", () => {
       })}\n`,
     );
     expect(blockingMs).toBeLessThan(20);
+    expect(asyncInspections).toBe(20001);
     expect(result.changesApplied).toHaveLength(20000);
     expect([...workspaces.values()].every((workspace) => workspace.archivedAt !== null)).toBe(true);
   }, 30000);
