@@ -39,6 +39,8 @@ const URL_GROUP = String.raw`\(${URL_CHARACTER}*\)`;
 const BARE_URL = String.raw`https?://(?:${URL_CHARACTER}|${URL_GROUP})*(?:[^\s<>()"'\x60.,;:!?]|${URL_GROUP})`;
 
 const FILE_PATTERN = createFilePattern(PROSE_PATH);
+// Cheap pre-check for a GFM delimiter row such as `|---|:--:|` or `--- | ---`.
+const TABLE_DELIMITER_ROW = /^[ \t>]*\|?[ \t]*:?-+:?[ \t]*\|/m;
 function linkMetadata(inlineCodePaths: ReadonlySet<string>) {
   // The engine accepts regexes on both platforms. Classify complete code spans
   // first, then pass literal matches rather than maintaining a second path grammar.
@@ -128,7 +130,8 @@ export function prepareMarkdownSource(
     !source.includes("![") &&
     !source.includes("||") &&
     !source.includes("&") &&
-    !(workspaceRoot && source.includes("]("))
+    !(workspaceRoot && source.includes("](")) &&
+    !TABLE_DELIMITER_ROW.test(source)
   ) {
     return { images, ...metadata, render: () => source };
   }
@@ -189,18 +192,27 @@ export function prepareMarkdownSource(
       const aloneBefore = childStart === start || /^[\s>]*$/.test(prefix);
       const aloneAfter = /^\s*\\?$/.test(suffix);
       if (!aloneBefore || !aloneAfter) continue;
-      // Continuation lines inside quotes and lists keep their quote markers on the blank line.
-      const blank = prefix.replace(/[^>]/g, " ").trimEnd();
-      const split = (boundary: number) => {
-        if (splitBoundaries.has(boundary)) return;
-        splitBoundaries.add(boundary);
-        // A trailing backslash was a hard break; at a paragraph end it would render literally.
-        const cut = source[boundary - 1] === "\\" ? boundary - 1 : boundary;
-        edits.push({ start: cut, end: boundary + 1, text: `\n${blank}\n` });
-      };
-      if (lineStart > start) split(lineStart - 1);
-      if (lineEnd < end) split(lineEnd);
+      if (lineStart > start) splitLine(lineStart - 1, prefix);
+      if (lineEnd < end) splitLine(lineEnd, prefix);
     }
+  }
+  // Turns the newline at `boundary` into a blank line that stays inside the containers of `prefix`.
+  function splitLine(boundary: number, prefix: string) {
+    if (splitBoundaries.has(boundary)) return;
+    splitBoundaries.add(boundary);
+    // Continuation lines inside quotes and lists keep their quote markers on the blank line.
+    const blank = prefix.replace(/[^>]/g, " ").trimEnd();
+    // A trailing backslash was a hard break; at a paragraph end it would render literally.
+    const cut = source[boundary - 1] === "\\" ? boundary - 1 : boundary;
+    edits.push({ start: cut, end: boundary + 1, text: `\n${blank}\n` });
+  }
+  // GFM lets a table interrupt a paragraph, but MD4C only starts a table on a block's
+  // first line, so a header row right below prose rendered as pipe-separated text.
+  function separateTable(start: number) {
+    const lineStart = source.lastIndexOf("\n", start - 1) + 1;
+    if (lineStart === 0) return;
+    const previousLine = source.slice(source.lastIndexOf("\n", lineStart - 2) + 1, lineStart - 1);
+    if (/[^\s>]/.test(previousLine)) splitLine(lineStart - 1, source.slice(lineStart, start));
   }
   function visit(node: Nodes) {
     const start = node.position?.start.offset;
@@ -212,6 +224,7 @@ export function prepareMarkdownSource(
         if (title !== null)
           edits.push({ start: end - 1, end: end - 1, text: ` ${JSON.stringify(title)}` });
       }
+      if (node.type === "table") separateTable(start);
       if (node.type === "tableRow") {
         // MD4C's always-enabled spoiler extension otherwise consumes adjacent cell
         // delimiters. Spaces keep empty GFM cells empty without producing spoilers.
