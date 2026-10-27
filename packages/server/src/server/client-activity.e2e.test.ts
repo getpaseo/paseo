@@ -175,7 +175,7 @@ describe("client activity tracking", () => {
       expect(attention.shouldNotify).toBe(true);
     }, 120000);
 
-    test("notification when app is not visible but activity is recent", async () => {
+    test("pushes immediately when the app is hidden despite recent activity", async () => {
       client1 = await createClient();
 
       const agent = await createAgent({
@@ -199,7 +199,8 @@ describe("client activity tracking", () => {
       const attention = await attentionPromise;
 
       expect(attention.reason).toBe("finished");
-      expect(attention.shouldNotify).toBe(true);
+      expect(attention.shouldNotify).toBe(false);
+      expect(pushNotifications.sent).toHaveLength(1);
     }, 120000);
 
     test("push fallback when activity is stale beyond the presence threshold", async () => {
@@ -355,7 +356,7 @@ describe("client activity tracking", () => {
         deviceType: "web",
         focusedAgentId: null,
         lastActivityAt: new Date(Date.now() - 1_000).toISOString(),
-        appVisible: false,
+        appVisible: true,
       });
 
       await new Promise((r) => setTimeout(r, 100));
@@ -500,7 +501,7 @@ describe("client activity tracking", () => {
         deviceType: "mobile",
         focusedAgentId: null,
         lastActivityAt: new Date().toISOString(),
-        appVisible: false,
+        appVisible: true,
       });
 
       await new Promise((r) => setTimeout(r, 100));
@@ -632,7 +633,7 @@ describe("client activity tracking", () => {
       expect(pushNotifications.sent).toHaveLength(1);
     }, 120000);
 
-    test("notification when app not visible but activity is recent", async () => {
+    test("pushes when the browser tab is hidden despite recent activity", async () => {
       client1 = await createClient();
 
       const agent = await createAgent({
@@ -655,10 +656,11 @@ describe("client activity tracking", () => {
 
       const attention = await attentionPromise;
 
-      expect(attention.shouldNotify).toBe(true);
+      expect(attention.shouldNotify).toBe(false);
+      expect(pushNotifications.sent).toHaveLength(1);
     }, 120000);
 
-    test("notifies only the lower-index client when both have identical recent activity", async () => {
+    test("pushes when both clients are backgrounded despite identical recent activity", async () => {
       client1 = await createClient(); // web
       client2 = await createClient(); // mobile
 
@@ -693,9 +695,9 @@ describe("client activity tracking", () => {
 
       const [attention1, attention2] = await Promise.all([attention1Promise, attention2Promise]);
 
-      expect(attention1.shouldNotify).toBe(true);
+      expect(attention1.shouldNotify).toBe(false);
       expect(attention2.shouldNotify).toBe(false);
-      expect(pushNotifications.sent).toEqual([]);
+      expect(pushNotifications.sent).toHaveLength(1);
     }, 120000);
   });
 });
