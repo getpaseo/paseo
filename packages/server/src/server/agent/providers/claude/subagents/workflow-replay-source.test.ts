@@ -35,7 +35,7 @@ function parentEntries(
 }
 
 describe("Claude workflow replay", () => {
-  it("parses the persisted run summary observed from Claude Code 2.1.220", () => {
+  it("parses the persisted run summary observed from Claude Code 2.1.220", async () => {
     expect(
       parseClaudeWorkflowRun(
         JSON.stringify({
@@ -62,8 +62,8 @@ describe("Claude workflow replay", () => {
     });
   });
 
-  it("rebuilds the same generic completed descriptor through the parent Workflow call", () => {
-    const observations = observeReplayWorkflows({
+  it("rebuilds the same generic completed descriptor through the parent Workflow call", async () => {
+    const observations = await observeReplayWorkflows({
       workflows: [
         {
           runId: RUN_ID,
@@ -91,8 +91,8 @@ describe("Claude workflow replay", () => {
     });
   });
 
-  it("rebuilds a workflow when Claude persists its result as structured text blocks", () => {
-    const observations = observeReplayWorkflows({
+  it("rebuilds a workflow when Claude persists its result as structured text blocks", async () => {
+    const observations = await observeReplayWorkflows({
       workflows: [{ runId: RUN_ID, summary: "Structured result workflow", status: "completed" }],
       parentEntries: parentEntries([
         {
@@ -114,7 +114,7 @@ describe("Claude workflow replay", () => {
     });
   });
 
-  it("replays the workflow result without exposing its script or child prompt", () => {
+  it("replays the workflow result without exposing its script or child prompt", async () => {
     const workflow = parseClaudeWorkflowRun(
       JSON.stringify({
         runId: RUN_ID,
@@ -128,7 +128,7 @@ describe("Claude workflow replay", () => {
     expect(workflow).not.toBeNull();
     if (!workflow) throw new Error("expected workflow");
 
-    const observations = observeReplayWorkflows({
+    const observations = await observeReplayWorkflows({
       workflows: [workflow],
       parentEntries: parentEntries(),
     });
@@ -145,9 +145,9 @@ describe("Claude workflow replay", () => {
     expect(JSON.stringify(observations)).not.toContain("SECRET CHILD PROMPT");
   });
 
-  it("does not duplicate a result already present in the child transcript", () => {
+  it("does not duplicate a result already present in the child transcript", async () => {
     const report = "What Paseo is\nA local-first coding-agent environment.";
-    const observations = observeReplayWorkflows({
+    const observations = await observeReplayWorkflows({
       workflows: [
         { runId: RUN_ID, summary: "Inspect Paseo", status: "completed", result: { report } },
       ],
@@ -166,8 +166,8 @@ describe("Claude workflow replay", () => {
     ).toHaveLength(1);
   });
 
-  it("fails a nonterminal persisted run because its former runtime cannot update it", () => {
-    const observations = observeReplayWorkflows({
+  it("fails a nonterminal persisted run because its former runtime cannot update it", async () => {
+    const observations = await observeReplayWorkflows({
       workflows: [{ runId: RUN_ID, summary: "Interrupted workflow", status: "running" }],
       parentEntries: parentEntries(),
     });
@@ -179,9 +179,9 @@ describe("Claude workflow replay", () => {
     });
   });
 
-  it("drops a run that no parent Workflow tool call declared", () => {
+  it("drops a run that no parent Workflow tool call declared", async () => {
     expect(
-      observeReplayWorkflows({
+      await observeReplayWorkflows({
         workflows: [{ runId: RUN_ID, status: "completed" }],
         parentEntries: [],
       }),

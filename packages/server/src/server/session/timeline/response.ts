@@ -12,9 +12,9 @@ interface TimelineResponseInput {
   agentId: string;
   agent: NonNullable<TimelineResponse["payload"]["agent"]>;
   direction: TimelineResponse["payload"]["direction"];
-  limit: number;
+  limit: number | undefined;
   mergeWindow: boolean;
-  fetchPage: (limit: number) => AgentTimelineFetchResult;
+  fetchPage: (limit: number | undefined) => AgentTimelineFetchResult;
   supportsItem: (item: AgentTimelineItem) => boolean;
   supportsReasoningMerge: boolean;
 }
@@ -80,7 +80,8 @@ export function createTimelineResponse(input: TimelineResponseInput): TimelineRe
     }
     if (bytes <= MAX_TIMELINE_RESPONSE_BYTES) return response;
     if (limit === 1 || page.rows.length === 0) throw new TimelinePageTooLargeError();
-    const currentLimit = limit === 0 ? page.rows.length : Math.min(limit, page.rows.length);
+    const currentLimit =
+      limit === undefined || limit === 0 ? page.rows.length : Math.min(limit, page.rows.length);
     limit = Math.max(1, Math.min(fittingEntries, Math.floor(currentLimit / 2)));
   }
 }

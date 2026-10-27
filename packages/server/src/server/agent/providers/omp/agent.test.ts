@@ -1160,6 +1160,17 @@ describe("OMP agent client and session", () => {
         messageId: "assistant-history",
       },
     ]);
+    await expect(
+      omp.runPrompt("continue after resume", "resumed follow-up complete"),
+    ).resolves.toMatchObject({
+      finalText: "resumed follow-up complete",
+    });
+    expect(omp.timeline()).toContainEqual(
+      expect.objectContaining({
+        type: "assistant_message",
+        text: "resumed follow-up complete",
+      }),
+    );
     expect(omp.usageSession()).toMatchObject({ provider: "omp", sessionKey: expect.any(String) });
     await omp.close();
     expect(omp.usageSession()).toBeNull();

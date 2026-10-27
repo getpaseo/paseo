@@ -811,6 +811,46 @@ describe("ACPAgentSession terminal tools", () => {
       truncated: false,
     });
   });
+
+  test("trims large terminal output without rescanning the retained suffix", async () => {
+    const session = createSession();
+    const terminal = await session.createTerminal({
+      sessionId: "session-1",
+      command: process.execPath,
+      args: ["-e", 'process.stdout.write("x".repeat(1024 * 1024))'],
+      cwd: process.cwd(),
+      outputByteLimit: 1024,
+    });
+    await session.waitForTerminalExit({ sessionId: "session-1", terminalId: terminal.terminalId });
+
+    await expect(
+      session.terminalOutput({ sessionId: "session-1", terminalId: terminal.terminalId }),
+    ).resolves.toEqual({
+      output: "x".repeat(1024),
+      truncated: true,
+      exitStatus: { exitCode: 0, signal: null },
+    });
+  }, 1000);
+
+  test("trims terminal output at a UTF-8 character boundary", async () => {
+    const session = createSession();
+    const terminal = await session.createTerminal({
+      sessionId: "session-1",
+      command: process.execPath,
+      args: ["-e", 'process.stdout.write("😀ab")'],
+      cwd: process.cwd(),
+      outputByteLimit: 3,
+    });
+    await session.waitForTerminalExit({ sessionId: "session-1", terminalId: terminal.terminalId });
+
+    await expect(
+      session.terminalOutput({ sessionId: "session-1", terminalId: terminal.terminalId }),
+    ).resolves.toEqual({
+      output: "ab",
+      truncated: true,
+      exitStatus: { exitCode: 0, signal: null },
+    });
+  });
 });
 
 describe("mapACPUsage", () => {

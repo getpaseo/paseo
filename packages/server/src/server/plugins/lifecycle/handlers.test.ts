@@ -93,8 +93,39 @@ test("session-open hooks reject changes to session identity instead of silently 
         reason: "resume",
         purpose: "interactive",
         env: {},
+        title: null,
+        labels: {},
+        tools: [],
       },
       paseo,
     ),
   ).rejects.toThrow("agent.session_open hooks can only change env");
 });
+
+test.each([{ title: "Changed" }, { labels: { changed: "true" } }])(
+  "session-open targeting metadata is read-only: %j",
+  async (patch) => {
+    const hooks = new PluginHookHandlers(() => {});
+    hooks.before("agent.session_open", ({ request }) => ({ ...request, ...patch }));
+    await expect(
+      hooks.invoke(
+        "operation",
+        "before",
+        "agent.session_open",
+        {
+          agentId: "agent",
+          workspaceId: null,
+          provider: "codex",
+          cwd: "/project",
+          title: "Original",
+          labels: {},
+          tools: [],
+          env: {},
+          reason: "create",
+          purpose: "interactive",
+        },
+        paseo,
+      ),
+    ).rejects.toThrow("agent.session_open hooks can only change env and tools");
+  },
+);

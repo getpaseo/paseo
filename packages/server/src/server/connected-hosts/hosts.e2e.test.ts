@@ -1544,7 +1544,7 @@ test(
 );
 
 test(
-  "remote agent reports, local CLI sends and automatic completion share the recipient batch",
+  "remote agent reports, local CLI sends and automatic completion reach the same recipient",
   { timeout: 30000 },
   async () => {
     const parentPrompts: string[] = [];
@@ -1633,7 +1633,10 @@ test(
     });
     expect(report.isError).not.toBe(true);
     expect(report.structuredContent).toMatchObject({ deliveryStatus: "queued", serverId: aId });
-    expect(parentPrompts).toEqual([]);
+    // A CLI process can take longer than the two-second quiet window to start.
+    // Exercise each delivery across windows; delivery.test.ts owns batching with a clock.
+    await expect.poll(() => parentPrompts, { timeout: 10000 }).toHaveLength(1);
+    expect(parentPrompts[0]).toContain("REMOTE_REPORT &lt;ready&gt;");
 
     const cli = await promisify(execFile)(
       process.execPath,
@@ -1656,7 +1659,8 @@ test(
       },
     );
     expect(JSON.parse(cli.stdout)).toMatchObject({ status: "queued" });
-    expect(parentPrompts).toEqual([]);
+    await expect.poll(() => parentPrompts, { timeout: 10000 }).toHaveLength(2);
+    expect(parentPrompts[1]).toContain("LOCAL_CLI_REPORT");
     const receiptStates = async () => {
       const directory = join(a.paseoHome, "agent-requests");
       const receipts = await Promise.all(
@@ -1671,13 +1675,10 @@ test(
         .map((receipt) => receipt.state)
         .sort();
     };
-    expect(await receiptStates()).toEqual(["pending", "pending"]);
     finishChild.resolve();
-    await expect.poll(() => parentPrompts, { timeout: 10000 }).toHaveLength(1);
-    expect(parentPrompts[0]).toContain("REMOTE_REPORT &lt;ready&gt;");
-    expect(parentPrompts[0]).toContain("LOCAL_CLI_REPORT");
-    expect(parentPrompts[0]).toContain('event="finished"');
-    expect(parentPrompts[0]).toContain(`source-agent-id="${child.id}"`);
+    await expect.poll(() => parentPrompts, { timeout: 10000 }).toHaveLength(3);
+    expect(parentPrompts[2]).toContain('event="finished"');
+    expect(parentPrompts[2]).toContain(`source-agent-id="${child.id}"`);
     await expect
       .poll(receiptStates, {
         timeout: 10000,
@@ -1870,6 +1871,7 @@ test(
     });
     const a = await daemon({
       mcpEnabled: true,
+      logger: completionLogger(),
       agentClients: createTestAgentClients({
         onStartTurn: (prompt) => {
           if (String(prompt).includes('kind="agent-notification"'))
@@ -1931,8 +1933,14 @@ test(
     await expect.poll(() => parentPrompts, { timeout: 10000 }).toHaveLength(2);
     expect(parentPrompts[1]).toContain('event="finished"');
     await expect
-      .poll(async () =>
-        JSON.parse(await readFile(join(a.paseoHome, "finish-subscriptions.json"), "utf8")),
+      // Provider start precedes dispatch acknowledgment and the durable removal commit.
+      .poll(
+        async () =>
+          JSON.parse(await readFile(join(a.paseoHome, "finish-subscriptions.json"), "utf8")),
+        {
+          timeout: 10000,
+          message: "Parent accepted completion; waiting for durable intent removal",
+        },
       )
       .toEqual([]);
   },

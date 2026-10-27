@@ -60,6 +60,7 @@ describe("daemon E2E - timeline window", () => {
   test.each([
     {
       direction: "tail" as const,
+      limit: 0,
       cursorSeq: 8,
       expectedStart: 5,
       nextDirection: "before" as const,
@@ -68,6 +69,7 @@ describe("daemon E2E - timeline window", () => {
     },
     {
       direction: "before" as const,
+      limit: 0,
       cursorSeq: 9,
       expectedStart: 5,
       nextDirection: "before" as const,
@@ -76,6 +78,16 @@ describe("daemon E2E - timeline window", () => {
     },
     {
       direction: "after" as const,
+      limit: 0,
+      cursorSeq: 0,
+      expectedStart: 1,
+      nextDirection: "after" as const,
+      nextCursor: 4,
+      nextStart: 5,
+    },
+    {
+      direction: "after" as const,
+      limit: undefined,
       cursorSeq: 0,
       expectedStart: 1,
       nextDirection: "after" as const,
@@ -83,8 +95,16 @@ describe("daemon E2E - timeline window", () => {
       nextStart: 5,
     },
   ])(
-    "bounds image history by bytes for $direction and preserves continuation",
-    async ({ direction, cursorSeq, expectedStart, nextDirection, nextCursor, nextStart }) => {
+    "bounds image history by bytes for $direction with limit $limit and preserves continuation",
+    async ({
+      direction,
+      limit,
+      cursorSeq,
+      expectedStart,
+      nextDirection,
+      nextCursor,
+      nextStart,
+    }) => {
       const cwd = tmpCwd();
       const image = { data: "A".repeat(3 * 1024 * 1024), mimeType: "image/png" };
       try {
@@ -100,7 +120,7 @@ describe("daemon E2E - timeline window", () => {
         const page = await ctx.client.fetchAgentTimeline(agent.id, {
           direction,
           cursor: { epoch, seq: cursorSeq },
-          limit: 0,
+          limit,
         });
         expect(page.entries).toHaveLength(4);
         expect(page.entries.map((entry) => entry.item)).toEqual(
@@ -116,7 +136,7 @@ describe("daemon E2E - timeline window", () => {
         const next = await ctx.client.fetchAgentTimeline(agent.id, {
           direction: nextDirection,
           cursor: { epoch, seq: nextCursor },
-          limit: 0,
+          limit,
         });
         expect(next.entries).toHaveLength(4);
         expect(next.entries.map((entry) => entry.item)).toEqual(
@@ -132,6 +152,51 @@ describe("daemon E2E - timeline window", () => {
       }
     },
   );
+
+  test("uses retained pager defaults for image history when after limit is omitted", async () => {
+    const cwd = tmpCwd();
+    const image = { data: "AA==", mimeType: "image/png" };
+    try {
+      const agent = await ctx.client.createAgent({ provider: "codex", cwd });
+      for (let index = 1; index <= 300; index += 1) {
+        await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+          type: "user_message",
+          text: `image ${index}`,
+          images: [image],
+        });
+      }
+      const epoch = ctx.daemon.daemon.agentManager.fetchTimeline(agent.id, { limit: 1 }).epoch;
+      const first = await ctx.client.fetchAgentTimeline(agent.id, {
+        direction: "after",
+        cursor: { epoch, seq: 0 },
+      });
+      expect(first.entries).toHaveLength(200);
+      expect(first.entries.map((entry) => entry.item)).toEqual(
+        Array.from({ length: 200 }, (_, index) => ({
+          type: "user_message",
+          text: `image ${index + 1}`,
+          images: [image],
+        })),
+      );
+      const cursor = { epoch, seq: 200 };
+      expect(first.startCursor).toEqual({ epoch, seq: 1 });
+      expect(first.endCursor).toEqual(cursor);
+      expect(first.hasNewer).toBe(true);
+      const next = await ctx.client.fetchAgentTimeline(agent.id, { direction: "after", cursor });
+      expect(next.entries.map((entry) => entry.item)).toEqual(
+        Array.from({ length: 100 }, (_, index) => ({
+          type: "user_message",
+          text: `image ${index + 201}`,
+          images: [image],
+        })),
+      );
+      expect(next.startCursor).toEqual({ epoch, seq: 201 });
+      expect(next.endCursor).toEqual({ epoch, seq: 300 });
+      expect(next.hasNewer).toBe(false);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 
   test("rejects an oversized timeline item without disconnecting", async () => {
     const cwd = tmpCwd();
