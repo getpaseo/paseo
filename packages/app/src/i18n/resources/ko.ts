@@ -2034,6 +2034,7 @@ export const ko: TranslationResources = {
     showLess: "접기",
   },
   toolCallGroup: {
+    thought: "생각함",
     editedFiles: {
       one: "{{count}} 파일을 편집했습니다.",
       other: "{{count}} 파일을 편집했습니다.",

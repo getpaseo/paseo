@@ -2002,6 +2002,7 @@ export const zhCN: TranslationResources = {
     showLess: "收起",
   },
   toolCallGroup: {
+    thought: "已思考",
     editedFiles: {
       one: "编辑了 {{count}} 个文件",
       other: "编辑了 {{count}} 个文件",

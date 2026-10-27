@@ -28,6 +28,8 @@ export const PASEO_TOOL_NAMES = Object.keys(PASEO_TOOL_CATALOG) as readonly Pase
 
 /** Returns null for tools outside the Paseo namespace. */
 export function buildPaseoToolDisplay(input: PaseoToolDisplayInput): PaseoToolDisplay | null {
+  // Canonical details own internal lifecycle rows such as worktree setup.
+  if (input.detail.type !== "unknown") return null;
   const leafName = paseoLeafName(input.toolName);
   if (!leafName) return null;
   const entry = getPaseoToolEntry(leafName);
@@ -58,7 +60,9 @@ export function getPaseoToolTargetAgentId(
 function paseoLeafName(toolName: string): string | null {
   if (isPaseoToolName(toolName)) return getPaseoToolLeafName(toolName);
   const normalized = toolName.trim().toLowerCase();
-  return normalized.startsWith("paseo_") ? normalized.slice("paseo_".length) : null;
+  return normalized.startsWith("paseo_") && !normalized.startsWith("paseo__")
+    ? normalized.slice("paseo_".length)
+    : null;
 }
 
 function readToolInput(detail: ToolCallDetail): Readonly<Record<string, unknown>> {

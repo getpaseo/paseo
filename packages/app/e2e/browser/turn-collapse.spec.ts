@@ -216,3 +216,83 @@ test("loads complete long turns and preserves expansion while revealing older hi
     await agent.cleanup();
   }
 });
+
+async function useThinkingDisplay(
+  page: Page,
+  autoExpandReasoning: boolean,
+  chatDisplay: ChatDisplay,
+) {
+  await page.addInitScript(
+    (settings) => {
+      localStorage.setItem(
+        "@paseo:app-settings",
+        JSON.stringify({
+          ...settings,
+          chatDisplay: sessionStorage.getItem("e2e-chat-display") ?? settings.chatDisplay,
+        }),
+      );
+    },
+    { autoExpandReasoning, chatDisplay },
+  );
+}
+
+for (const autoExpandReasoning of [false, true]) {
+  test(`reasoning follows Expand thinking (${autoExpandReasoning}) and opens fully with its turn`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 1000 });
+    await useThinkingDisplay(page, autoExpandReasoning, "collapseToolCalls");
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "thinking-group-",
+      title: "Thinking with tools",
+      model: "ten-second-stream",
+      initialPrompt: "Inspect the scroll container",
+    });
+    try {
+      await agent.client.waitForFinish(agent.agentId, 30_000);
+      await openAgentRoute(page, agent);
+      await expectComposerVisible(page);
+      const reasoning = page
+        .getByText(/Need to find the scroll container, the layout effect/)
+        .filter({ visible: true })
+        .first();
+      await expectThinkingPresentation(page, autoExpandReasoning);
+      await switchToCollapsedTurns(page);
+      await expectComposerVisible(page);
+      const summary = page.getByTestId("turn-summary").last().getByRole("button");
+      await expect(summary).toBeVisible();
+      await summary.click();
+      await expect(reasoning).toBeVisible();
+      await expect.poll(() => groupedToolsInsideLatestTurn(page)).toEqual([]);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+}
+
+async function expectThinkingPresentation(page: Page, autoExpandReasoning: boolean) {
+  const reasoning = page
+    .getByText(/Need to find the scroll container, the layout effect/)
+    .filter({ visible: true })
+    .first();
+  if (autoExpandReasoning) {
+    await expect(reasoning).toBeVisible();
+    await expect(page.getByTestId("tool-call-group").filter({ hasText: /thought/ })).toHaveCount(0);
+  } else {
+    await expect(reasoning).toHaveCount(0);
+    const group = page
+      .getByTestId("tool-call-group")
+      .filter({ hasText: /thought/, visible: true })
+      .last();
+    await expect(group).toContainText(/read 1 file/i);
+    await group.getByRole("button").first().click();
+    await expect(reasoning).toBeVisible();
+  }
+}
+
+async function switchToCollapsedTurns(page: Page) {
+  await page.evaluate(() => {
+    sessionStorage.setItem("e2e-chat-display", "collapseTurns");
+  });
+  await page.reload();
+}

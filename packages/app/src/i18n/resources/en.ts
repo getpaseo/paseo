@@ -2049,6 +2049,7 @@ export const en = {
     showLess: "Show less",
   },
   toolCallGroup: {
+    thought: "Thought",
     editedFiles: {
       one: "edited {{count}} file",
       other: "edited {{count}} files",

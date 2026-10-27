@@ -44,6 +44,7 @@ export function useOverviewSummaryLabel(
         count === 1 ? action.toLocaleLowerCase() : `${action.toLocaleLowerCase()} ×${count}`,
       );
     }
+    if (summary.thoughtCount > 0) parts.push(t("toolCallGroup.thought").toLocaleLowerCase());
     return joinSummaryParts(parts, t("toolCallGroup.and"));
   }, [leadingParts, summary, t]);
 }

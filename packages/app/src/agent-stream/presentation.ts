@@ -17,6 +17,7 @@ interface PresentationInput {
   head: StreamItem[];
   transform: TimelineItemTransform | undefined;
   display: ChatDisplay;
+  autoExpandReasoning?: boolean;
   /** User messages whose collapsed turn the reader opened. */
   expandedTurnHostIds: ReadonlySet<string>;
   isTurnActive: boolean;
@@ -57,6 +58,7 @@ export function createStreamPresentation() {
   let historyTransform: TimelineItemTransform | undefined;
   let historyRows: StreamItem[] = [];
   let preparedTail: StreamItem[] | undefined;
+  let preparedAutoExpandReasoning: boolean | undefined;
   let preparedLevel: ToolCallDetailLevel | undefined;
   let preparedHistory: PreparedToolCallHistory | null = null;
   let collapsedSource: StreamItem[] | undefined;
@@ -109,6 +111,7 @@ export function createStreamPresentation() {
     ) {
       collapsed = collapseTurns({
         tail: projection.tail,
+        autoExpandReasoning: input.autoExpandReasoning,
         isLatestTurnOpen,
         expandedHostIds: input.expandedTurnHostIds,
         getGroupedCalls: (itemId) => projection.groupsByHostId.get(itemId)?.run.calls,
@@ -149,10 +152,15 @@ export function createStreamPresentation() {
       const blocks = presentRows(item);
       head.push(...blocks);
     }
-    if (preparedTail !== historyRows || preparedLevel !== level) {
-      preparedHistory = prepareToolCallHistory(level, historyRows);
+    if (
+      preparedTail !== historyRows ||
+      preparedLevel !== level ||
+      preparedAutoExpandReasoning !== input.autoExpandReasoning
+    ) {
+      preparedHistory = prepareToolCallHistory(level, historyRows, input.autoExpandReasoning);
       preparedTail = historyRows;
       preparedLevel = level;
+      preparedAutoExpandReasoning = input.autoExpandReasoning;
     }
     return collapse(
       projectToolCallDetailLevel({

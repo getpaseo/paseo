@@ -2044,6 +2044,7 @@ export const ja: TranslationResources = {
     showLess: "折りたたむ",
   },
   toolCallGroup: {
+    thought: "思考",
     editedFiles: {
       one: "{{count}}個のファイルを編集",
       other: "{{count}}個のファイルを編集",

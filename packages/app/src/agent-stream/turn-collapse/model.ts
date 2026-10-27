@@ -1,5 +1,10 @@
 import { isTurnBoundary, isTurnTrigger } from "../turn-membership";
-import { getStreamItemMessageId, type StreamItem, type ToolCallItem } from "@/types/stream";
+import {
+  getStreamItemMessageId,
+  type StreamItem,
+  type ThoughtItem,
+  type ToolCallItem,
+} from "@/types/stream";
 import { summarizeToolCalls, type OverviewSummary } from "@/tool-calls/detail-level/overview/model";
 
 export interface TurnSummary {
@@ -24,11 +29,12 @@ export interface TurnCollapse {
 
 export interface CollapseTurnsInput {
   tail: StreamItem[];
+  autoExpandReasoning?: boolean;
   /** The latest turn is still producing output, so it stays unfolded. */
   isLatestTurnOpen: boolean;
   expandedHostIds: ReadonlySet<string>;
   /** The calls a tool-call group row stands for; undefined for a single call. */
-  getGroupedCalls: (itemId: string) => readonly ToolCallItem[] | undefined;
+  getGroupedCalls: (itemId: string) => readonly (ToolCallItem | ThoughtItem)[] | undefined;
 }
 
 const EMPTY_TURNS: ReadonlyMap<string, CollapsedTurn> = new Map();
@@ -39,21 +45,25 @@ function summarizeTurn(
   items: readonly StreamItem[],
   getGroupedCalls: CollapseTurnsInput["getGroupedCalls"],
 ): TurnSummary {
-  const calls: ToolCallItem[] = [];
+  const calls: (ToolCallItem | ThoughtItem)[] = [];
   for (const item of items) {
-    if (item.kind === "tool_call" && !isTurnTrigger(item))
+    if ((item.kind === "tool_call" || item.kind === "thought") && !isTurnTrigger(item))
       calls.push(...(getGroupedCalls(item.id) ?? [item]));
   }
   return { tools: summarizeToolCalls(calls) };
 }
 
 function hasWork(summary: TurnSummary): boolean {
-  const { paseoActions, ...counts } = summary.tools;
+  const { paseoActions, thoughtCount: _thoughtCount, ...counts } = summary.tools;
   return Object.keys(paseoActions).length > 0 || Object.values(counts).some((count) => count > 0);
 }
 
-function staysVisibleWhenCollapsed(item: StreamItem): boolean {
-  return isTurnTrigger(item) || item.kind === "compaction";
+function staysVisibleWhenCollapsed(item: StreamItem, autoExpandReasoning = false): boolean {
+  return (
+    isTurnTrigger(item) ||
+    item.kind === "compaction" ||
+    (autoExpandReasoning && item.kind === "thought")
+  );
 }
 
 function findLastAssistantIndex(tail: StreamItem[], start: number, end: number): number {
@@ -67,7 +77,7 @@ function findLastAssistantIndex(tail: StreamItem[], start: number, end: number):
  * Folds each answered turn into its user message: everything the agent did before its last
  * message collapses into one summary line, and that message stays in the chat. A turn folds
  * only once it is complete, its user message is loaded, and it sent messages or called tools
- * before its reply. Thoughts fold with the turn but are not counted.
+ * before its reply. Reasoning stays visible when Expand thinking is enabled.
  */
 export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
   const { tail } = input;
@@ -100,7 +110,9 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
     turnsByHostId.set(host.id, { hostId: host.id, expanded, summary });
     const revealed = expanded
       ? folded.flatMap<StreamItem>((item) =>
-          item.kind === "tool_call" ? [...(input.getGroupedCalls(item.id) ?? [item])] : [item],
+          item.kind === "tool_call" || item.kind === "thought"
+            ? [...(input.getGroupedCalls(item.id) ?? [item])]
+            : [item],
         )
       : folded;
     for (const item of revealed) {
@@ -108,7 +120,11 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
       hostIdByFoldedMessageId.set(getStreamItemMessageId(item), host.id);
       if (expanded) nestedItemIds.add(item.id);
     }
-    output.push(...(expanded ? revealed : folded.filter(staysVisibleWhenCollapsed)));
+    output.push(
+      ...(expanded
+        ? revealed
+        : folded.filter((item) => staysVisibleWhenCollapsed(item, input.autoExpandReasoning))),
+    );
     output.push(...tail.slice(replyIndex, runEnd));
   };
 

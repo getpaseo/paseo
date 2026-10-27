@@ -2057,6 +2057,7 @@ export const ptBR: TranslationResources = {
     showLess: "Mostrar menos",
   },
   toolCallGroup: {
+    thought: "Pensou",
     editedFiles: {
       one: "editou {{count}} arquivo",
       other: "editou {{count}} arquivos",

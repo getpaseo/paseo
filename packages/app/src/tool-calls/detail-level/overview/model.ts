@@ -1,11 +1,12 @@
 import { getPaseoToolActionLabel } from "@getpaseo/protocol/paseo-tool-presentation/index";
 import { isTurnTrigger } from "@/agent-stream/turn-membership";
-import type { ToolCallItem } from "@/types/stream";
-import { describeToolCall, type ToolCallRun } from "../grouping";
+
+import { describeToolCall, type GroupableItem, type ToolCallRun } from "../grouping";
 
 const DIRECT_SEARCH_TOOL_SUFFIX_PATTERN = /(?:^|[_.:/])(?:web_search|llm_context)$/;
 
 export interface OverviewSummary {
+  thoughtCount: number;
   editedFileCount: number;
   commandCount: number;
   readFileCount: number;
@@ -26,15 +27,20 @@ function isSearchCall(name: string): boolean {
 }
 
 /** Counts tool calls by what they did, for any summary of a stretch of agent work. */
-export function summarizeToolCalls(calls: readonly ToolCallItem[]): OverviewSummary {
+export function summarizeToolCalls(calls: readonly GroupableItem[]): OverviewSummary {
   const editedFiles = new Set<string>();
   const readFiles = new Set<string>();
+  let thoughtCount = 0;
   let commandCount = 0;
   let searchCount = 0;
   let otherToolCount = 0;
   const paseoActions: Record<string, number> = {};
 
   for (const call of calls) {
+    if (call.kind === "thought") {
+      thoughtCount += 1;
+      continue;
+    }
     if (isTurnTrigger(call)) continue;
     const descriptor = describeToolCall(call);
     const normalizedName = descriptor.name.trim().toLowerCase();
@@ -55,6 +61,7 @@ export function summarizeToolCalls(calls: readonly ToolCallItem[]): OverviewSumm
   }
 
   return {
+    thoughtCount,
     editedFileCount: editedFiles.size,
     commandCount,
     readFileCount: readFiles.size,
@@ -66,6 +73,7 @@ export function summarizeToolCalls(calls: readonly ToolCallItem[]): OverviewSumm
 
 export function buildOverviewGroup(run: ToolCallRun): OverviewToolCallGroup {
   const isLoading = run.calls.some((call) => {
+    if (call.kind === "thought") return call.status !== "ready";
     const status = describeToolCall(call).status;
     return status === "running" || status === "executing";
   });

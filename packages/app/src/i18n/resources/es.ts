@@ -2072,6 +2072,7 @@ export const es: TranslationResources = {
     showLess: "Mostrar menos",
   },
   toolCallGroup: {
+    thought: "Razonó",
     editedFiles: {
       one: "editó {{count}} archivo",
       other: "editó {{count}} archivos",

@@ -2024,6 +2024,7 @@ export const ar: TranslationResources = {
     showLess: "عرض أقل",
   },
   toolCallGroup: {
+    thought: "فكّر",
     editedFiles: {
       one: "حرّر {{count}} ملفًا",
       other: "حرّر {{count}} ملفات",

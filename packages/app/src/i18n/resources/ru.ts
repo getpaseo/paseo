@@ -2057,6 +2057,7 @@ export const ru: TranslationResources = {
     showLess: "Свернуть",
   },
   toolCallGroup: {
+    thought: "Обдумал",
     editedFiles: {
       one: "изменён {{count}} файл",
       other: "изменены файлы ({{count}})",

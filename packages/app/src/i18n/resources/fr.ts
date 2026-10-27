@@ -2071,6 +2071,7 @@ export const fr: TranslationResources = {
     showLess: "Afficher moins",
   },
   toolCallGroup: {
+    thought: "Réfléchi",
     editedFiles: {
       one: "{{count}} fichier modifié",
       other: "{{count}} fichiers modifiés",
