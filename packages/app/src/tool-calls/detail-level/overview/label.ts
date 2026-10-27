@@ -33,12 +33,16 @@ export function useOverviewSummaryLabel(
       [summary.readFileCount, "toolCallGroup.readFiles"],
       [summary.searchCount, "toolCallGroup.searches"],
       [summary.otherToolCount, "toolCallGroup.otherTools"],
-      [summary.paseoCallCount, "toolCallGroup.paseoCalls"],
     ] as const;
     for (const [count, key] of entries) {
       if (count > 0) {
         parts.push(t(`${key}.${count === 1 ? "one" : "other"}`, { count }));
       }
+    }
+    for (const [action, count] of Object.entries(summary.paseoActions)) {
+      parts.push(
+        count === 1 ? action.toLocaleLowerCase() : `${action.toLocaleLowerCase()} ×${count}`,
+      );
     }
     return joinSummaryParts(parts, t("toolCallGroup.and"));
   }, [leadingParts, summary, t]);

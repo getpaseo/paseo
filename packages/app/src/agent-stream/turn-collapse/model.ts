@@ -48,7 +48,12 @@ function summarizeTurn(
 }
 
 function hasWork(summary: TurnSummary): boolean {
-  return Object.values(summary.tools).some((count) => count > 0);
+  const { paseoActions, ...counts } = summary.tools;
+  return Object.keys(paseoActions).length > 0 || Object.values(counts).some((count) => count > 0);
+}
+
+function staysVisibleWhenCollapsed(item: StreamItem): boolean {
+  return isTurnTrigger(item) || item.kind === "compaction";
 }
 
 function findLastAssistantIndex(tail: StreamItem[], start: number, end: number): number {
@@ -99,11 +104,11 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
         )
       : folded;
     for (const item of revealed) {
-      if (isTurnTrigger(item)) continue;
+      if (staysVisibleWhenCollapsed(item)) continue;
       hostIdByFoldedMessageId.set(getStreamItemMessageId(item), host.id);
       if (expanded) nestedItemIds.add(item.id);
     }
-    output.push(...(expanded ? revealed : folded.filter(isTurnTrigger)));
+    output.push(...(expanded ? revealed : folded.filter(staysVisibleWhenCollapsed)));
     output.push(...tail.slice(replyIndex, runEnd));
   };
 

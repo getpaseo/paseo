@@ -260,7 +260,7 @@ describe("tool call detail-level projection", () => {
         readFileCount: 2,
         searchCount: 0,
         otherToolCount: 0,
-        paseoCallCount: 0,
+        paseoActions: {},
       },
     });
   });
@@ -328,7 +328,7 @@ describe("tool call detail-level projection", () => {
     const result = project({ level: "overview", head: calls });
 
     expect(result.groupsByHostId.get("1")).toMatchObject({
-      summary: { otherToolCount: 2, paseoCallCount: 2 },
+      summary: { otherToolCount: 2, paseoActions: { "Listed agents": 1, "List worktrees": 1 } },
     });
   });
 
@@ -346,7 +346,11 @@ describe("tool call detail-level projection", () => {
     const result = project({ level: "overview", head: calls });
 
     expect(result.groupsByHostId.get("1")).toMatchObject({
-      summary: { searchCount: 3, otherToolCount: 0, paseoCallCount: 3 },
+      summary: {
+        searchCount: 3,
+        otherToolCount: 0,
+        paseoActions: { "Listed providers": 1, "List worktrees": 2 },
+      },
     });
   });
 

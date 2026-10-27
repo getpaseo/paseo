@@ -48,6 +48,41 @@ function collapse(tail: StreamItem[], options: Partial<CollapseTurnsInput> = {})
 const ids = (items: StreamItem[]) => items.map((item) => item.id);
 
 describe("collapseTurns", () => {
+  it("keeps lifecycle events and compaction recognizable beside a semantic action summary", () => {
+    const create = shell("create");
+    if (create.payload.source !== "agent") throw new Error("Expected agent tool");
+    create.payload.data.name = "mcp__paseo__create_agent";
+    create.payload.data.detail = { type: "unknown", input: { title: "Side fix" }, output: null };
+    const finished = shell("finished");
+    if (finished.payload.source !== "agent") throw new Error("Expected agent tool");
+    finished.payload.data.name = "agent_notification";
+    finished.payload.data.agentMessage = {
+      event: "finished",
+      sender: { id: "worker", title: "PR helper" },
+      text: "Finished",
+    };
+    const items: StreamItem[] = [
+      user("u1"),
+      create,
+      finished,
+      {
+        kind: "compaction",
+        id: "compaction",
+        timestamp: at,
+        status: "completed",
+      } satisfies StreamItem,
+      shell("bash"),
+      reply("done"),
+    ].map((item) => Object.assign(item, { turnId: "same-run" }));
+    const result = collapse(items);
+    expect(ids(result.tail)).toEqual(["u1", "finished", "compaction", "done"]);
+    expect(result.turnsByHostId.get("u1")?.summary.tools).toMatchObject({
+      commandCount: 1,
+      otherToolCount: 0,
+      paseoActions: { "Created agent": 1 },
+    });
+  });
+
   it("folds a finished turn's work into its user message and keeps the reply", () => {
     const result = collapse([
       user("u1"),

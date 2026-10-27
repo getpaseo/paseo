@@ -39,6 +39,13 @@ export function buildPaseoToolDisplay(input: PaseoToolDisplayInput): PaseoToolDi
   return { displayName: entry.label, ...(summary ? { summary } : {}) };
 }
 
+/** A semantic action label for summaries, sharing the tool presentation catalog. */
+export function getPaseoToolActionLabel(toolName: string): string | null {
+  const leafName = paseoLeafName(toolName);
+  if (!leafName) return null;
+  return getPaseoToolEntry(leafName)?.completedLabel ?? humanizeLeafName(leafName);
+}
+
 /** The agent a Paseo call acts on, so callers can resolve its title. */
 export function getPaseoToolTargetAgentId(
   toolName: string,
@@ -49,7 +56,9 @@ export function getPaseoToolTargetAgentId(
 }
 
 function paseoLeafName(toolName: string): string | null {
-  return isPaseoToolName(toolName) ? getPaseoToolLeafName(toolName) : null;
+  if (isPaseoToolName(toolName)) return getPaseoToolLeafName(toolName);
+  const normalized = toolName.trim().toLowerCase();
+  return normalized.startsWith("paseo_") ? normalized.slice("paseo_".length) : null;
 }
 
 function readToolInput(detail: ToolCallDetail): Readonly<Record<string, unknown>> {

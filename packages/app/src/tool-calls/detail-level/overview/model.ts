@@ -1,8 +1,8 @@
-import { isPaseoToolName } from "@getpaseo/protocol/tool-name-normalization";
+import { getPaseoToolActionLabel } from "@getpaseo/protocol/paseo-tool-presentation/index";
+import { isTurnTrigger } from "@/agent-stream/turn-membership";
 import type { ToolCallItem } from "@/types/stream";
 import { describeToolCall, type ToolCallRun } from "../grouping";
 
-const DIRECT_PASEO_TOOL_PREFIX = "paseo_";
 const DIRECT_SEARCH_TOOL_SUFFIX_PATTERN = /(?:^|[_.:/])(?:web_search|llm_context)$/;
 
 export interface OverviewSummary {
@@ -11,7 +11,7 @@ export interface OverviewSummary {
   readFileCount: number;
   searchCount: number;
   otherToolCount: number;
-  paseoCallCount: number;
+  paseoActions: Record<string, number>;
 }
 
 export interface OverviewToolCallGroup {
@@ -19,10 +19,6 @@ export interface OverviewToolCallGroup {
   run: ToolCallRun;
   summary: OverviewSummary;
   isLoading: boolean;
-}
-
-function isPaseoCall(name: string, normalizedName: string): boolean {
-  return isPaseoToolName(name) || normalizedName.startsWith(DIRECT_PASEO_TOOL_PREFIX);
 }
 
 function isSearchCall(name: string): boolean {
@@ -36,13 +32,15 @@ export function summarizeToolCalls(calls: readonly ToolCallItem[]): OverviewSumm
   let commandCount = 0;
   let searchCount = 0;
   let otherToolCount = 0;
-  let paseoCallCount = 0;
+  const paseoActions: Record<string, number> = {};
 
   for (const call of calls) {
+    if (isTurnTrigger(call)) continue;
     const descriptor = describeToolCall(call);
     const normalizedName = descriptor.name.trim().toLowerCase();
-    if (isPaseoCall(descriptor.name, normalizedName)) {
-      paseoCallCount += 1;
+    const action = getPaseoToolActionLabel(descriptor.name);
+    if (action) {
+      paseoActions[action] = (paseoActions[action] ?? 0) + 1;
     } else if (descriptor.detail.type === "edit" || descriptor.detail.type === "write") {
       editedFiles.add(descriptor.detail.filePath);
     } else if (descriptor.detail.type === "shell") {
@@ -62,7 +60,7 @@ export function summarizeToolCalls(calls: readonly ToolCallItem[]): OverviewSumm
     readFileCount: readFiles.size,
     searchCount,
     otherToolCount,
-    paseoCallCount,
+    paseoActions,
   };
 }
 
