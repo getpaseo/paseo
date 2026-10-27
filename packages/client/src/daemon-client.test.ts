@@ -1122,6 +1122,7 @@ test("advertises client capabilities in hello", async () => {
       timeline_notifications: true,
       plugin_timeline_items: true,
       workspace_setup_blocked: true,
+      workspace_conflict_model: true,
       hello_rejection: true,
       browser_host: {
         supportedCommands: ["list_tabs"],
@@ -7474,4 +7475,49 @@ test("usage request timeout detaches its update listener", async () => {
   } finally {
     vi.useRealTimers();
   }
+});
+
+test("a release rejected by an old connection does not close its replacement", async () => {
+  const first = createMockTransport();
+  const second = createMockTransport();
+  let attempts = 0;
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "stale-release",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => (++attempts === 1 ? first.transport : second.transport),
+  });
+  clients.push(client);
+  const connected = client.connect();
+  first.triggerOpen();
+  await connected;
+  const observation = client.observeTerminals({ cwd: "/tmp/visual" });
+  await vi.waitFor(() => expect(first.sent).toHaveLength(1));
+  const request = parseSentFrame(first.sent[0]);
+  first.triggerMessage(
+    wrapSessionMessage({
+      type: "terminals_changed",
+      payload: {
+        requestId: request.requestId,
+        subscriptionId: "old-terminals",
+        cwd: "/tmp/visual",
+        terminals: [],
+      },
+    }),
+  );
+  await observation.ready;
+  const release = observation.release();
+  const rejected = expect(release).rejects.toThrow();
+  await vi.waitFor(() =>
+    expect(parseSentFrame(first.sent.at(-1)).type).toBe("subscription.release.request"),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  first.triggerClose();
+  const reconnect = client.connect();
+  second.triggerOpen();
+  await reconnect;
+  await rejected;
+  expect(client.getConnectionState().status).toBe("connected");
+  await expect(client.close()).resolves.toBeUndefined();
 });

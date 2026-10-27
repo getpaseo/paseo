@@ -51,3 +51,34 @@ it("reads content-block arrays emitted by provider tool adapters", async () => {
     extractInteractiveDocumentId({ content: JSON.stringify({ documentId: "native-id" }) }),
   ).toBe("native-id");
 });
+
+it("keeps independent custom visual states without breaking unnamed historical documents", () => {
+  const source =
+    'root = Layout([HtmlArtifact("<p>A</p>", "first"), HtmlArtifact("<p>B</p>", "second")])';
+  const state = {
+    first: JSON.stringify({ state: { count: 2 }, proposal: "A" }),
+    second: JSON.stringify({ state: { count: 3 }, proposal: "B" }),
+  };
+  expect(validateInteractiveState(source, state)).toEqual(state);
+  expect(
+    validateInteractiveState('root = Layout([HtmlArtifact("<p>Old</p>")])', {
+      artifact: '{"count":1}',
+    }),
+  ).toEqual({ artifact: '{"count":1}' });
+  expect(() => validateInteractiveState(source, { third: "{}" })).toThrow();
+  expect(() =>
+    validateInteractiveSource(
+      'root = Layout([HtmlArtifact("<p>A</p>","same"), Input("same","Note")])',
+    ),
+  ).toThrow();
+  expect(() =>
+    validateInteractiveSource(
+      'root = Layout([HtmlArtifact("<p>A</p>"), HtmlArtifact("<p>B</p>","artifact")])',
+    ),
+  ).toThrow("Duplicate field name");
+  expect(() =>
+    validateInteractiveSource(
+      'root = Layout([HtmlArtifact("<p>A</p>"), Input("artifact","Note")])',
+    ),
+  ).toThrow("Duplicate field name");
+});

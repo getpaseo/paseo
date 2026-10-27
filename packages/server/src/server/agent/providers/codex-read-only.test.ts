@@ -27,6 +27,38 @@ import {
 } from "./codex/read-only.js";
 
 test.skipIf(process.platform !== "darwin")(
+  "confined Codex receives public TLS roots while preserving custom certificate settings",
+  async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "paseo-readonly-tls-")));
+    const cwd = join(root, "workspace");
+    await mkdir(cwd);
+    try {
+      for (const overrides of [
+        {},
+        { SSL_CERT_FILE: "/custom.pem" },
+        { CODEX_CA_CERTIFICATE: "/custom.pem" },
+      ]) {
+        const runtime = await prepareReadOnlyCodexRuntime({
+          agentId: "tls",
+          cwd,
+          stateRoot: join(root, "state"),
+          env: { CODEX_HOME: cwd, ...overrides },
+        });
+        expect(runtime.env.SSL_CERT_FILE).toBe(
+          "CODEX_CA_CERTIFICATE" in overrides
+            ? undefined
+            : (overrides.SSL_CERT_FILE ?? "/etc/ssl/cert.pem"),
+        );
+        expect(runtime.env.CODEX_CA_CERTIFICATE).toBe(overrides.CODEX_CA_CERTIFICATE);
+      }
+      await access("/etc/ssl/cert.pem");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.platform !== "darwin")(
   "a live descendant cannot mutate a quarantined directory through its old cwd",
   async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "paseo-quarantine-boundary-")));

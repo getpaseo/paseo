@@ -1,6 +1,6 @@
 import { test as base, expect, type Page } from "@playwright/test";
 import { startOutdatedDaemon, type OutdatedDaemon } from "./helpers/daemon-update";
-import { startE2EWorker } from "./helpers/e2e-worker";
+import { startE2EWorker, type E2EWorker } from "./helpers/e2e-worker";
 import { getE2EDaemonPort } from "./helpers/daemon-port";
 import { buildCreateAgentPreferences, buildSeededHost } from "./helpers/daemon-registry";
 import {
@@ -39,7 +39,7 @@ const daemonTest = metroTest.extend<
     e2eDaemonEnvironment: Record<string, string>;
     e2eForkProviders: string[];
     e2eInjectPaseoTools: boolean;
-    e2eWorker: void;
+    e2eWorker: E2EWorker;
     e2eWorkerClient: SeedDaemonClient;
   }
 >({
@@ -60,7 +60,7 @@ const daemonTest = metroTest.extend<
         injectPaseoTools: e2eInjectPaseoTools,
       });
       try {
-        await provide();
+        await provide(worker);
       } finally {
         await worker.close();
       }

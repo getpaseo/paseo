@@ -49,3 +49,44 @@ it("persists documents, detects concurrent writes and freezes submitted choices 
     restarted.snapshot("agent", { documentId: document.id, revision: 99 }, "future-message"),
   ).rejects.toThrow(/revision/i);
 });
+
+it("restores custom visual state and preserves the confirmed revision after process recreation", async () => {
+  directory = await mkdtemp(path.join(os.tmpdir(), "paseo-ui-script-"));
+  const store = new InteractiveResponseStore(directory);
+  const document = await store.create("agent", {
+    title: "Calculator",
+    summary: "Choose",
+    source: 'root = Layout([HtmlArtifact("<p>Calculator</p>")])',
+  });
+  const selected = { artifact: JSON.stringify({ state: { count: 3 }, proposal: "Choose 3" }) };
+  await store.update("agent", document.id, 0, selected);
+  const restarted = new InteractiveResponseStore(directory);
+  expect((await restarted.get("agent", document.id)).state).toEqual(selected);
+  await restarted.update("agent", document.id, 1, {
+    artifact: JSON.stringify({ state: { count: 4 }, proposal: "Choose 4" }),
+  });
+  expect(
+    (
+      await restarted.snapshot(
+        "agent",
+        { documentId: document.id, revision: 1 },
+        "queued-script-choice",
+      )
+    ).state,
+  ).toEqual(selected);
+});
+
+it("restores submitted display text by provider identity without crossing agents", async () => {
+  directory = await mkdtemp(path.join(os.tmpdir(), "paseo-ui-messages-"));
+  const store = new InteractiveResponseStore(directory);
+  const message = {
+    type: "user_message" as const,
+    text: "Valider 9",
+    clientMessageId: "client",
+    messageId: "client",
+  };
+  await store.rememberSubmittedMessage("agent", "provider", message);
+  const restarted = new InteractiveResponseStore(directory);
+  expect(await restarted.submittedMessages("agent")).toEqual({ provider: message });
+  expect(await restarted.submittedMessages("other")).toEqual({});
+});
