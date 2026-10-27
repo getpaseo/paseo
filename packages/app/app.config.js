@@ -9,6 +9,15 @@ const withPasteInput = require("./plugins/with-paste-input");
 const withAndroidScroll = require("./modules/paseo-scroll/app.plugin");
 const { getNativeReleaseVersion } = require("./native-release-version");
 const appVariant = process.env.APP_VARIANT ?? "production";
+const developmentOverrides =
+  appVariant === "development"
+    ? {
+        iosBundleIdentifier: process.env.PASEO_DEV_IOS_BUNDLE_IDENTIFIER,
+        projectId: process.env.PASEO_DEV_EAS_PROJECT_ID,
+        owner: process.env.PASEO_DEV_EXPO_OWNER,
+        slug: process.env.PASEO_DEV_EXPO_SLUG,
+      }
+    : {};
 const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
 const isWatchdogBuild = process.env.PASEO_WATCHDOG_BUILD === "1";
 const isProfileBuild = process.env.PASEO_PROFILE_BUILD === "1";
@@ -70,6 +79,7 @@ function resolveSecretFile(params) {
 const variants = {
   production: {
     name: "Paseo",
+    icon: "./assets/images/icon.png",
     packageId: "sh.paseo",
     googleServicesFile: resolveSecretFile({
       envKey: "GOOGLE_SERVICES_FILE_PROD",
@@ -81,7 +91,8 @@ const variants = {
     }),
   },
   development: {
-    name: "Paseo Debug",
+    name: "Paseo Dev",
+    icon: "./assets/images/icon-dev.png",
     packageId: "sh.paseo.debug",
     googleServicesFile: resolveSecretFile({
       envKey: "GOOGLE_SERVICES_FILE_DEBUG",
@@ -100,10 +111,10 @@ const nativeReleaseVersion = getNativeReleaseVersion(pkg.version);
 export default {
   expo: {
     name: variant.name,
-    slug: "voice-mobile",
+    slug: developmentOverrides.slug ?? "voice-mobile",
     version: nativeReleaseVersion.appVersion,
     orientation: "portrait",
-    icon: "./assets/images/icon.png",
+    icon: variant.icon,
     scheme: "paseo",
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
@@ -113,7 +124,7 @@ export default {
         NSMicrophoneUsageDescription: "This app needs access to the microphone for voice commands.",
         ITSAppUsesNonExemptEncryption: false,
       },
-      bundleIdentifier: variant.packageId,
+      bundleIdentifier: developmentOverrides.iosBundleIdentifier ?? variant.packageId,
       ...(variant.googleServiceInfoPlist
         ? { googleServicesFile: variant.googleServiceInfoPlist }
         : {}),
@@ -197,9 +208,9 @@ export default {
       diagnosticBuildTime: process.env.PASEO_DIAGNOSTIC_BUILD_TIME,
       router: {},
       eas: {
-        projectId: "0e7f65ce-0367-46c8-a238-2b65963d235a",
+        projectId: developmentOverrides.projectId ?? "0e7f65ce-0367-46c8-a238-2b65963d235a",
       },
     },
-    owner: "getpaseo",
+    owner: developmentOverrides.owner ?? "getpaseo",
   },
 };
