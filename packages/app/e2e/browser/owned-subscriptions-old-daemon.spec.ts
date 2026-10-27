@@ -10,9 +10,12 @@ import { buildCreateAgentPreferences, buildSeededHost } from "../support/helpers
 import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 import type { MockAgentWorkspace } from "../support/helpers/mock-agent";
 import { seedWorkspace } from "../support/helpers/seed-client";
-import { openAgentTimeline } from "../support/helpers/timeline-pagination";
+import {
+  openAgentTimeline,
+  expectTimelinePromptVisible,
+} from "../support/helpers/timeline-pagination";
 
-test("requires a host update for whole-turn history while retaining old-daemon connections and terminals", async ({
+test("loads history across browser reconnection while retaining old-daemon connections and terminals", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -70,17 +73,14 @@ test("requires a host update for whole-turn history while retaining old-daemon c
     );
 
     await openAgentTimeline(page, agent, serverId);
-    const updateMessage = page.getByText("Update the host to load complete conversation turns.", {
-      exact: true,
-    });
-    await expect(updateMessage).toBeVisible();
+    await expectTimelinePromptVisible(page, "emit 1 coalesced agent stream updates");
     expect(observationSockets.size).toBe(1);
 
-    await test.step("retain one directory observation after reconnecting the old daemon", async () => {
-      await daemon.restart();
-      await expect.poll(() => observationSockets.size, { timeout: 30_000 }).toBe(2);
-      await expect(updateMessage).toBeVisible();
-      await agent.client.connect();
+    await test.step("reconnect the browser and reload the old daemon history", async () => {
+      observationSockets.clear();
+      await page.reload();
+      await expectTimelinePromptVisible(page, "emit 1 coalesced agent stream updates");
+      await expect.poll(() => observationSockets.size).toBe(1);
     });
 
     await test.step("open a terminal and receive its output", async () => {

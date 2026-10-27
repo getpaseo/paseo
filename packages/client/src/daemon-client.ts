@@ -686,6 +686,7 @@ export interface FetchAgentOptions {
 }
 type LegacyFetchAgentOptions = Omit<FetchAgentOptions, "agentId">;
 export interface FetchAgentTimelineOptions {
+  /** Prefer whole-turn pages when supported; older hosts retain item-based paging. */
   wholeTurns?: boolean;
   direction?: FetchAgentTimelineDirection;
   cursor?: FetchAgentTimelineCursor;
@@ -3549,13 +3550,15 @@ export class DaemonClient {
     agentId: string,
     options: FetchAgentTimelineOptions = {},
   ): Promise<FetchAgentTimelinePayload> {
-    if (options.wholeTurns && this.lastServerInfoMessage?.features?.wholeTurnTimeline !== true) {
-      throw new Error("Update the host to load complete conversation turns.");
-    }
+    // COMPAT(wholeTurnTimeline): added in v0.13.2; remove after 2027-04-27 once the daemon floor supports whole-turn pages.
+    // Reading history predates this capability and must keep working on older hosts.
+    const supportsWholeTurns = this.lastServerInfoMessage?.features?.wholeTurnTimeline === true;
     const resolvedRequestId = this.createRequestId(options.requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "fetch_agent_timeline_request",
-      ...(options.wholeTurns !== undefined ? { wholeTurns: options.wholeTurns } : {}),
+      ...(supportsWholeTurns && options.wholeTurns !== undefined
+        ? { wholeTurns: options.wholeTurns }
+        : {}),
       agentId,
       requestId: resolvedRequestId,
       ...(options.direction ? { direction: options.direction } : {}),
