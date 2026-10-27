@@ -345,6 +345,66 @@ describe("ScheduleService", () => {
     expect(inspected.nextRunAt).toBe("2026-01-01T00:02:00.000Z");
   });
 
+  test("overlapping ticks run each due occurrence once without skipping the next day", async () => {
+    let releaseFirstRun = () => {};
+    let notifyFirstRun = () => {};
+    const firstRunStarted = new Promise<void>((resolve) => {
+      notifyFirstRun = resolve;
+    });
+    const firstRunBlocked = new Promise<void>((resolve) => {
+      releaseFirstRun = resolve;
+    });
+    const executions: string[] = [];
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async (schedule) => {
+        executions.push(schedule.prompt);
+        if (schedule.prompt === "slow task") {
+          notifyFirstRun();
+          await firstRunBlocked;
+        }
+        return { agentId: null, output: "ran" };
+      },
+    });
+    now = new Date("2026-10-24T08:00:00.000Z");
+    await service.create({
+      prompt: "slow task",
+      cadence: { type: "cron", expression: "0 9 * * *", timezone: "Europe/Paris" },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+    now = new Date("2026-10-24T08:00:00.001Z");
+    const audit = await service.create({
+      prompt: "audit",
+      cadence: { type: "cron", expression: "0 9 * * *", timezone: "Europe/Paris" },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+
+    now = new Date("2026-10-25T08:00:00.000Z");
+    const firstTick = service.tick();
+    await firstRunStarted;
+    now = new Date("2026-10-25T08:00:02.000Z");
+    try {
+      await service.tick();
+    } finally {
+      releaseFirstRun();
+      await firstTick;
+    }
+
+    const inspected = await service.inspect(audit.id);
+    expect(executions).toEqual(["slow task", "audit"]);
+    expect(inspected.runs).toHaveLength(1);
+    expect(inspected.runs[0]).toMatchObject({
+      scheduledFor: "2026-10-25T08:00:00.000Z",
+      status: "succeeded",
+    });
+    expect(inspected.nextRunAt).toBe("2026-10-26T08:00:00.000Z");
+  });
+
   test("pause and resume update persisted schedule state", async () => {
     const service = createScheduleService({
       paseoHome: tempDir,

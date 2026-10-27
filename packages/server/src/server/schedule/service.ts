@@ -709,7 +709,14 @@ export class ScheduleService {
         output: null,
         error: null,
       };
-      const scheduleWithRun = await this.appendRunningRun(schedule.id, runningRun);
+      const scheduleWithRun = await this.appendRunningRun({
+        scheduleId: schedule.id,
+        runningRun,
+        manual,
+      });
+      if (!scheduleWithRun) {
+        return;
+      }
 
       try {
         const result = await this.runner(scheduleWithRun, runId);
@@ -740,16 +747,31 @@ export class ScheduleService {
     }
   }
 
-  private async appendRunningRun(
-    scheduleId: string,
-    runningRun: ScheduleRun,
-  ): Promise<StoredSchedule> {
-    const updated = await this.store.update(scheduleId, (schedule) => ({
-      ...schedule,
-      updatedAt: runningRun.startedAt,
-      runs: [...schedule.runs, runningRun],
-    }));
-    return requireSchedule(updated, scheduleId);
+  private async appendRunningRun(params: {
+    scheduleId: string;
+    runningRun: ScheduleRun;
+    manual: boolean;
+  }): Promise<StoredSchedule | null> {
+    let claimed = false;
+    const updated = await this.store.update(params.scheduleId, (schedule) => {
+      // Another tick may have handled this occurrence while this tick awaited an earlier task.
+      if (
+        !params.manual &&
+        (schedule.status !== "active" ||
+          schedule.nextRunAt !== params.runningRun.scheduledFor ||
+          shouldCompleteSchedule(schedule, this.now()))
+      ) {
+        return schedule;
+      }
+      claimed = true;
+      return {
+        ...schedule,
+        updatedAt: params.runningRun.startedAt,
+        runs: [...schedule.runs, params.runningRun],
+      };
+    });
+    const schedule = requireSchedule(updated, params.scheduleId);
+    return claimed ? schedule : null;
   }
 
   private async finishRun(params: {
