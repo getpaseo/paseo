@@ -21,6 +21,7 @@ import {
   mergeTerminalModifiers,
   normalizeDomTerminalKey,
   normalizeTerminalTransportKey,
+  resolveMacOptionLayerCharacter,
   resolveMacTerminalEditingShortcut,
   shouldInterceptDomTerminalKey,
 } from "@/utils/terminal-keys";
@@ -388,7 +389,7 @@ export class TerminalEmulatorRuntime {
         return true;
       }
 
-      if (this.maybeSendMacEditingShortcut(terminal, event)) {
+      if (this.maybeSendMacTranslatedKey(terminal, event)) {
         return false;
       }
 
@@ -479,20 +480,20 @@ export class TerminalEmulatorRuntime {
     return this.inputModeTracker.getState();
   }
 
-  private maybeSendMacEditingShortcut(
+  private maybeSendMacTranslatedKey(
     terminal: Pick<Terminal, "input" | "scrollToBottom">,
     event: KeyboardEvent,
   ): boolean {
     if (!this.options.isMac || hasPendingTerminalModifiers(this.pendingModifiers)) {
       return false;
     }
-    const editingShortcutData = resolveMacTerminalEditingShortcut(event);
-    if (editingShortcutData === null) {
+    const data = resolveMacTerminalEditingShortcut(event) ?? resolveMacOptionLayerCharacter(event);
+    if (data === null) {
       return false;
     }
     // Routed through terminal.input() so the data takes the same path as typed
     // keys: onData -> callbacks.onInput, selection clearing included.
-    terminal.input(editingShortcutData, true);
+    terminal.input(data, true);
     terminal.scrollToBottom();
     event.preventDefault();
     event.stopPropagation();
