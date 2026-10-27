@@ -8,11 +8,11 @@ import type { AgentSessionConfig } from "../agent/agent-sdk-types.js";
 import { createTestAgentClient } from "../test-utils/fake-agent-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 
-test("the configuration example adds MCP servers and overrides Codex options while preserving other configuration", async () => {
+test("the configuration example saves Codex options and injects launch-only MCP servers while preserving other configuration", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-config-example-"));
   const launches: AgentSessionConfig[] = [];
   const daemon = await createTestPaseoDaemon({
-    daemonVersion: "0.8.0",
+    daemonVersion: "0.13.2",
     agentClients: {
       codex: createTestAgentClient("codex", {
         supportsMcpServers: true,
@@ -23,7 +23,10 @@ test("the configuration example adds MCP servers and overrides Codex options whi
     },
     mcpEnabled: false,
   });
-  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.13.2",
+  });
   try {
     await client.connect();
     await client.fetchAgents({ subscribe: {} });
@@ -53,8 +56,10 @@ test("the configuration example adds MCP servers and overrides Codex options whi
       },
       mcpServers: {
         existing: { type: "http", url: "https://existing.example.com/mcp" },
-        company: { type: "http", url: "https://tools.example.com/mcp" },
       },
+    });
+    expect(daemon.daemon.agentManager.getAgent(agent.id)!.config.mcpServers).toEqual({
+      existing: { type: "http", url: "https://existing.example.com/mcp" },
     });
     expect(launches[0].mcpServers).toEqual({
       existing: { type: "http", url: "https://existing.example.com/mcp" },

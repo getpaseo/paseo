@@ -529,9 +529,12 @@ export default function contribute(server: PluginServerContext) {
 
 只要插件处于启用状态，钩子就会在 daemon 上运行，即使没有应用连接。
 
-### 修改配置并注入 MCP 服务器 {#change-configuration-and-inject-an-mcp-server}
+`agent.create` 修改 Agent 的已保存配置。对 `config` 的修改会被持久化，在插件停用或移除后仍然保留。
+`agent.session_open` 提供仅用于启动的 `env`、`tools` 和 `mcpServers`；每次创建、恢复、刷新和导入时都会重新计算，随插件的生命周期变化，不会写入 Agent 记录。
 
-在 `contribute(server)` 中添加这个回调。把占位 URL 替换为你的 MCP 端点。
+### 修改已保存的配置 {#change-saved-configuration}
+
+在 `contribute(server)` 中添加这个回调，为新的 Codex Agent 设置已保存的选项：
 
 ```ts
 server.before("agent.create", ({ request }) => {
@@ -548,13 +551,6 @@ server.before("agent.create", ({ request }) => {
         sandbox_mode: "workspace-write",
         approval_policy: "on-request",
       },
-      mcpServers: {
-        ...request.config.mcpServers,
-        company: {
-          type: "http",
-          url: "https://tools.example.com/mcp",
-        },
-      },
     },
   };
 });
@@ -564,10 +560,37 @@ server.before("agent.create", ({ request }) => {
 | ------------------------------------------- | ------------------- |
 | `providerOptions.sandbox_mode: "read-only"` | `"workspace-write"` |
 | `providerOptions.web_search: "disabled"`    | 由展开运算保留      |
-| 已有的 `mcpServers.search`                  | 由展开运算保留      |
-| 已有的 `mcpServers.company`                 | 被替换为上面的条目  |
 
-所选的 Provider 会校验 `providerOptions`，并且必须支持配置的 MCP 服务器。显式的 Codex 沙盒和批准选项会覆盖它的模式预设。
+所选的 Provider 会校验 `providerOptions`。显式的 Codex 沙盒和批准选项会覆盖它的模式预设。
+
+### 注入 MCP 服务器 {#inject-mcp-servers}
+
+需要将服务器保存为 Agent 配置的一部分时，使用 `agent.create.config.mcpServers`。
+插件拥有的服务器使用下面的回调，在 `contribute(server)` 中添加，并把占位 URL 替换为你的 MCP 端点：
+
+```ts
+server.before("agent.session_open", ({ request }) => {
+  if (request.provider !== "codex") return;
+
+  return {
+    ...request,
+    mcpServers: {
+      ...request.mcpServers,
+      company: { type: "http", url: "https://tools.example.com/mcp" },
+    },
+  };
+});
+```
+
+`request.mcpServers` 使用与 `AgentSessionConfig.mcpServers` 相同的服务器配置。
+每个插件的映射从空开始，只在该插件自己的回调之间累积，不包含 Agent 已保存的服务器或其他插件的服务器。
+替换映射即可添加、替换或移除本插件的条目；返回 `undefined` 会保持不变。
+Paseo 按插件 ID 顺序合并各插件的最终映射。
+
+名称与已保存的服务器、Paseo 内部的 `paseo` 服务器或其他插件的服务器冲突时，会话打开失败，错误会指出服务器名称及双方来源。
+不支持 MCP 的 Provider 会报 `does not support MCP servers` 错误，并指出插件名称。
+`purpose: "history"` 的会话打开会忽略这些服务器。安装、停用和重新加载插件后，现有 Agent
+通过[会话重新打开行为](#attach-tools-to-agents)获取变化。
 
 ### 在每次打开会话时注入环境变量 {#inject-environment-variables-on-every-session-opening}
 
@@ -583,7 +606,7 @@ server.before("agent.session_open", ({ request }) => {
 });
 ```
 
-它会在创建、恢复、刷新和导入时运行。如果只想在创建时注入，请改为在 `agent.create` 回调中设置 `env`。
+会话打开时的环境变量覆盖项会在每次打开时重新计算。`agent.create.env` 只作用于首次启动，不会写入 Agent 的已保存配置。
 
 ### 为 Agent 附加工具 {#attach-tools-to-agents}
 
@@ -852,11 +875,11 @@ type PluginTurnOutcome =
 
 ### before 钩子 {#before-hooks}
 
-| 名称                 | 请求字段                                                                                                     | 可编辑                              |
-| -------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------- |
-| `agent.create`       | `config`，可选的 `env`                                                                                       | 除 `cwd` 外的公开 Agent 配置；`env` |
-| `agent.session_open` | `agentId`, `workspaceId`, `provider`, `cwd`，只读的 `title` 和 `labels`，`reason`, `purpose`, `env`, `tools` | `env` 和 `tools`                    |
-| `workspace.create`   | `source`，可选的 `title`，`firstAgentContext`                                                                | 整个显式创建请求                    |
+| 名称                 | 请求字段                                                                                                                   | 可编辑                                    |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| `agent.create`       | `config`，可选的 `env`                                                                                                     | 除 `cwd` 外的公开 Agent 配置；`env`       |
+| `agent.session_open` | `agentId`, `workspaceId`, `provider`, `cwd`，只读的 `title` 和 `labels`，`reason`, `purpose`, `env`, `tools`, `mcpServers` | 仅用于启动的 `env`、`tools`、`mcpServers` |
+| `workspace.create`   | `source`，可选的 `title`，`firstAgentContext`                                                                              | 整个显式创建请求                          |
 
 **`agent.create.config`** 使用 `AgentSessionConfig`：
 
@@ -880,6 +903,7 @@ type PluginTurnOutcome =
   "title": "Workspace notes",
   "labels": { "notes/enabled": "true" },
   "tools": [],
+  "mcpServers": {},
   "reason": "resume",
   "purpose": "interactive",
   "env": { "COMPANY_ENV": "development" }
@@ -892,6 +916,7 @@ type PluginTurnOutcome =
 | `title`       | 只读字符串或 `null`；创建时使用创建请求的标题，恢复时使用已保存的标题。                                  |
 | `labels`      | 只读的字符串映射；创建时使用创建请求的标签，恢复时使用已保存的标签。                                     |
 | `tools`       | 可编辑的 `AgentToolDefinition[]`，仅包含此插件的工具。参阅[为 Agent 附加工具](#attach-tools-to-agents)。 |
+| `mcpServers`  | 可编辑的服务器映射，仅用于启动且仅包含本插件的条目。参阅[注入 MCP 服务器](#inject-mcp-servers)。         |
 | `reason`      | `create`、`resume`、`refresh`、`import`                                                                  |
 | `purpose`     | `interactive`、`history`                                                                                 |
 | `env`         | 启动覆盖映射；不包括 daemon 继承的环境变量。替换整个映射即可添加、替换或移除覆盖项。                     |
@@ -903,7 +928,7 @@ Creation request
   → agent.create hooks (plugin-ID order; registration order within each plugin)
   → resolve defaults and validate provider configuration
   → derive launch configuration with Paseo runtime tools and daemon prompt
-  → agent.session_open hooks (same ordering; env and plugin-local tools)
+  → agent.session_open hooks (same ordering; env and plugin-local tools and MCP servers)
   → set PASEO_AGENT_ID and PASEO_AGENT_CWD
   → open provider session and save agent configuration
 ```
@@ -915,7 +940,8 @@ Creation request
 | `undefined`                                             | 未改变的请求                      |
 | 抛出错误或返回无效数据                                  | 操作失败；后面的回调不会运行      |
 
-没有自动的深度合并。后面的回调可以覆盖前面的值。Agent 配置会被保存；环境变量覆盖项不会随之持久化。
+没有自动的深度合并。`env` 在插件之间累积；`tools` 和 `mcpServers` 只在同一插件的回调之间累积。
+返回替换的映射或数组会替换该范围内之前的值。
 
 ### context 与清理 {#context-and-cleanup}
 
@@ -1187,7 +1213,7 @@ export function IssueActions({ theme }: PluginSurfaceProps) {
 ```tsx
 import { Markdown } from "@getpaseo/plugin/client/ui";
 
-<Markdown>{"## 审查\n\n检查**通过**。"}</Markdown>;
+<Markdown>{"## Review\n\nThe checks **passed**."}</Markdown>;
 ```
 
 `children` 是唯一的属性，必须为字符串。更新它会立即渲染新内容；空字符串不渲染任何内容。

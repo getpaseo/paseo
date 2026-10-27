@@ -430,7 +430,11 @@ The [public reference](../public-docs/plugins/reference.md#icons) owns the autho
 
 Server entries register lifecycle observers with `server.on()` and request transforms with
 `server.before()`. The [public reference](../public-docs/plugins/reference.md#lifecycle-hooks)
-owns callback shapes, ordering, and failure behavior. `plugin-examples/lifecycle-logger` registers all
+owns callback shapes, ordering, and failure behavior. `agent.create` edits the agent's saved
+configuration; `agent.session_open` contributes launch-only `env`, `tools`, and `mcpServers`,
+re-derived on each open and following the plugin's lifecycle. See
+[Inject MCP servers](../public-docs/plugins/reference.md#inject-mcp-servers) for choosing the hook.
+`plugin-examples/lifecycle-logger` registers all
 eleven hooks; `plugin-examples/lifecycle-actions` demonstrates common automation callbacks.
 Session-open hooks also [attach tools to individual agents](../public-docs/plugins/reference.md#attach-tools-to-agents),
 as shown in `plugin-examples/agent-tools`. The agent manager stamps their metadata per session;
