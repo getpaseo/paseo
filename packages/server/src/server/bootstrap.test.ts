@@ -141,11 +141,11 @@ function liveCleanupHost() {
 test("bootstrap's host toggle prevents collection live, persists, and leaves other hosts enabled", async () => {
   const host = liveCleanupHost();
   const other = liveCleanupHost();
-  host.store.patch({ idleRuntimeCleanup: false });
+  await host.store.patch({ idleRuntimeCleanup: false });
   expect(loadPersistedConfig(host.home).agents?.idleRuntimeCleanup).toBe(false);
   expect((await host.sweep()).collected).toEqual([]);
   expect((await other.sweep()).collected).toHaveLength(1);
-  host.store.patch({ idleRuntimeCleanup: true });
+  await host.store.patch({ idleRuntimeCleanup: true });
   host.protect(true);
   expect((await host.sweep()).collected).toEqual([]);
   host.protect(false);
@@ -160,7 +160,7 @@ test("bootstrap's config-file reload binding disables and enables eligible colle
       path.join(host.home, "config.json"),
       JSON.stringify({ version: 1, agents: { idleRuntimeCleanup: enabled } }),
     );
-    expect(host.store.reload()).toEqual({
+    expect(await host.store.reload()).toEqual({
       appliedPaths: ["agents.idleRuntimeCleanup"],
       restartRequiredPaths: [],
       overrideControlledPaths: [],
@@ -173,12 +173,12 @@ test.each([false, true])(
   "failed config apply restores prior idle cleanup behavior (previous: %s)",
   async (previous) => {
     const host = liveCleanupHost();
-    host.store.patch({ idleRuntimeCleanup: previous });
+    await host.store.patch({ idleRuntimeCleanup: previous });
     const persistedBefore = loadPersistedConfig(host.home);
     const refuse = host.store.onApply(() => {
       throw new Error("Another live owner refused");
     });
-    expect(() => host.store.patch({ idleRuntimeCleanup: !previous })).toThrow(
+    await expect(host.store.patch({ idleRuntimeCleanup: !previous })).rejects.toThrow(
       "Another live owner refused",
     );
     expect(host.store.get().idleRuntimeCleanup).toBe(previous);
@@ -191,6 +191,6 @@ test.each([false, true])(
 test("disposing bootstrap's binding stops configuration delivery", async () => {
   const host = liveCleanupHost();
   host.unsubscribe();
-  host.store.patch({ idleRuntimeCleanup: false });
+  await host.store.patch({ idleRuntimeCleanup: false });
   expect((await host.sweep()).collected).toHaveLength(1);
 });

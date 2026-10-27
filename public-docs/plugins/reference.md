@@ -711,6 +711,120 @@ server.before("agent.session_open", ({ request }) => {
 This runs on create, resume, refresh, and import. To inject only on creation, set `env` in an
 `agent.create` callback instead.
 
+### Attach tools to agents
+
+Define a tool in `index.server.ts` and attach it in `before("agent.session_open")`.
+This example gives `append_workspace_note` only to agents with the label `notes/enabled: "true"`:
+
+```ts
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
+import { z } from "zod";
+import { defineAgentTool, type PluginServerContext } from "@getpaseo/plugin/server";
+
+const appendWorkspaceNote = defineAgentTool({
+  name: "append_workspace_note",
+  description: "Append a note to AGENT_NOTES.md in this agent's working directory.",
+  input: z.object({ note: z.string().min(1).describe("Note to append") }),
+  async execute({ note }, { agent, signal }) {
+    const notePath = path.join(agent.cwd, "AGENT_NOTES.md");
+    await writeFile(notePath, `${note}\n`, { encoding: "utf8", flag: "a", signal });
+    return {
+      text: `Saved note to ${notePath}`,
+      structuredContent: { path: notePath },
+    };
+  },
+});
+
+export default function contribute(server: PluginServerContext) {
+  server.before("agent.session_open", ({ request }) => {
+    if (request.labels["notes/enabled"] !== "true") return;
+    return { ...request, tools: [...request.tools, appendWorkspaceNote] };
+  });
+  return () => {};
+}
+```
+
+Set the label when creating an agent with the SDK:
+
+```ts
+const agent = await paseo.agents.create({
+  config: { provider: "codex/gpt-5.4" },
+  cwd: "/projects/shop",
+  labels: { "notes/enabled": "true" },
+});
+```
+
+Select agents using any of the session-open request fields:
+
+| Select by        | Condition in the callback                    |
+| ---------------- | -------------------------------------------- |
+| Label            | `request.labels["notes/enabled"] === "true"` |
+| Provider         | `request.provider === "codex"`               |
+| Workspace        | `request.workspaceId === "workspace-456"`    |
+| Individual agent | `request.agentId === chosenAgentId`          |
+
+`request.tools` starts empty for each plugin. Each callback sees the tools returned by earlier
+callbacks in that plugin; replace the array to add or remove tools. Returning `undefined` preserves
+the request. Tools are ignored for `purpose: "history"`.
+
+Import `defineAgentTool`, `AgentToolDefinition`, `AgentToolContext`, and `AgentToolResult` from
+`@getpaseo/plugin/server`. The helper infers the validated input from your Zod schema:
+
+```ts
+declare function defineAgentTool<Input extends z.ZodType>(tool: {
+  name: string;
+  title?: string;
+  description: string;
+  input: Input;
+  execute(
+    input: z.output<Input>,
+    context: AgentToolContext,
+  ): AgentToolResult | Promise<AgentToolResult>;
+}): AgentToolDefinition;
+
+interface AgentToolResult {
+  text?: string;
+  structuredContent?: unknown;
+  isError?: boolean;
+}
+```
+
+| Execution context | Value                                                                                               |
+| ----------------- | --------------------------------------------------------------------------------------------------- |
+| `agent`           | Calling agent as a `PluginHookAgent`, including `id`, `workspaceId`, `provider`, `cwd`, and `title` |
+| `paseo`           | SDK connected to this daemon                                                                        |
+| `signal`          | Abort signal for this tool call; pass it to file operations or external requests                    |
+
+`execute` runs in the plugin process. Closures and the original Zod schema stay there; only tool
+metadata and call inputs/results cross the process boundary. Paseo validates input before calling
+`execute`. Invalid input returns schema issues to the agent. A thrown error becomes
+`{ isError: true, text: message }` and the plugin keeps running. Canceling the call or closing its
+transport aborts `signal` and discards the result. Tool calls have a 10 minute ceiling, separate
+from the 30 second hook timeout. Closing or reopening an agent session drops its old definitions.
+
+Return model-visible text in `text`. `structuredContent` must be JSON-serializable; when `text` is
+omitted, Paseo formats that value as text for the model. Set `isError: true` to report a tool error.
+
+Paseo delivers attached tools through its agent tool transport, using MCP or native registration
+as the provider supports. The same definition and callback work with either. Attached tools obey
+the [same gates as Paseo tools](/docs/mcp#limit-paseo-tools-by-provider). Only that agent sees them.
+
+Names must match `/^[a-z][a-z0-9_]*$/` and be at most 64 characters. A name colliding with a Paseo
+tool or another plugin's tool on the same agent fails the session open and names both owners.
+A duplicate name within one plugin also fails the session open. Agents the callback does not
+target are unaffected.
+
+| Change                                                         | When the agent receives it                                                                                                                                                                                 |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Start, stop, or reload a plugin declaring `agent.session_open` | Open sessions become stale. Each reopens before its next idle prompt; a running turn continues without interruption. The next prompt after that reopen reuses the session.                                 |
+| Change which agents the callback targets                       | Run `paseo plugin reload agent-tools` after editing this example, then send the agent a prompt when it is idle.                                                                                            |
+| Apply immediately                                              | Call `await paseo.agents.ref(id).reload({ requestId: "reload-notes" })`. `requestId` is optional. This reopens the provider session, reruns hooks with `reason: "refresh"`, and interrupts a running turn. |
+| Read the current snapshot                                      | Call `await paseo.agents.ref(id).refresh()`. This reads state without reopening the session.                                                                                                               |
+
+If an automatic reopen fails, the triggering prompt fails with that error. See the
+[complete agent-tools example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools).
+
 ### Choose workspace isolation
 
 ```ts
@@ -878,11 +992,11 @@ type PluginTurnOutcome =
 
 ### Before hooks
 
-| Name                 | Request fields                                                          | Editable                                |
-| -------------------- | ----------------------------------------------------------------------- | --------------------------------------- |
-| `agent.create`       | `config`, optional `env`                                                | Public agent config except `cwd`; `env` |
-| `agent.session_open` | `agentId`, `workspaceId`, `provider`, `cwd`, `reason`, `purpose`, `env` | Only `env`                              |
-| `workspace.create`   | `source`, optional `title`, `firstAgentContext`                         | Entire explicit creation request        |
+| Name                 | Request fields                                                                                                   | Editable                                |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `agent.create`       | `config`, optional `env`                                                                                         | Public agent config except `cwd`; `env` |
+| `agent.session_open` | `agentId`, `workspaceId`, `provider`, `cwd`, read-only `title` and `labels`, `reason`, `purpose`, `env`, `tools` | `env` and `tools`                       |
+| `workspace.create`   | `source`, optional `title`, `firstAgentContext`                                                                  | Entire explicit creation request        |
 
 **`agent.create.config`** uses `AgentSessionConfig`:
 
@@ -903,6 +1017,9 @@ type PluginTurnOutcome =
   "workspaceId": "workspace-456",
   "provider": "codex",
   "cwd": "/projects/shop",
+  "title": "Workspace notes",
+  "labels": { "notes/enabled": "true" },
+  "tools": [],
   "reason": "resume",
   "purpose": "interactive",
   "env": { "COMPANY_ENV": "development" }
@@ -912,6 +1029,9 @@ type PluginTurnOutcome =
 | Field         | Values                                                                                                                  |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `workspaceId` | String or `null`                                                                                                        |
+| `title`       | Read-only string or `null`; creation title on create, stored title on resume.                                           |
+| `labels`      | Read-only string map; creation labels on create, stored labels on resume.                                               |
+| `tools`       | Editable `AgentToolDefinition[]`, local to this plugin. See [Attach tools to agents](#attach-tools-to-agents).          |
 | `reason`      | `create`, `resume`, `refresh`, `import`                                                                                 |
 | `purpose`     | `interactive`, `history`                                                                                                |
 | `env`         | Launch override map; excludes the daemon's inherited environment. Replace the map to add, replace, or remove overrides. |
@@ -923,7 +1043,7 @@ Creation request
   → agent.create hooks (plugin-ID order; registration order within each plugin)
   → resolve defaults and validate provider configuration
   → derive launch configuration with Paseo runtime tools and daemon prompt
-  → agent.session_open hooks (same ordering; env only)
+  → agent.session_open hooks (same ordering; env and plugin-local tools)
   → set PASEO_AGENT_ID and PASEO_AGENT_CWD
   → open provider session and save agent configuration
 ```
@@ -960,6 +1080,7 @@ saved; environment overrides are not persisted with it.
 | [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       | All eleven hooks; JSON logs with environment values redacted                 |
 | [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     | Follow-ups, permissions, environment, provider switching, worktree selection |
 | [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) | MCP injection and Codex sandbox/approval options                             |
+| [agent-tools](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools)                 | Label-targeted tools and file operations in the plugin process               |
 
 Read logger output with `paseo plugin logs lifecycle-logger` or the host's `daemon.log`.
 

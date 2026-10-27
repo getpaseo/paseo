@@ -432,6 +432,9 @@ Server entries register lifecycle observers with `server.on()` and request trans
 `server.before()`. The [public reference](../public-docs/plugins/reference.md#lifecycle-hooks)
 owns callback shapes, ordering, and failure behavior. `plugin-examples/lifecycle-logger` registers all
 eleven hooks; `plugin-examples/lifecycle-actions` demonstrates common automation callbacks.
+Session-open hooks also [attach tools to individual agents](../public-docs/plugins/reference.md#attach-tools-to-agents),
+as shown in `plugin-examples/agent-tools`. The agent manager stamps their metadata per session;
+executable definitions stay in the plugin process.
 
 Emit from the operation owner, not a client subscription. Provider history replay must not trigger
 live hooks. Observers must not be awaited inside agent mutations: a callback can send a prompt or

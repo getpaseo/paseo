@@ -310,7 +310,7 @@ describe("PluginAgentClientRegistry", () => {
     });
     const own = { nested: { replace: "agent" } };
     const agent = await manager.createAgent(
-      { provider: "plugin-direct", cwd: "/tmp", providerOptions: own },
+      { provider: "plugin-direct", cwd: tmpdir(), providerOptions: own },
       undefined,
       { workspaceId: undefined },
     );

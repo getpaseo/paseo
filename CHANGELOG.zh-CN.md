@@ -1,5 +1,14 @@
 # 更新日志
 
+## 0.13.2 - 2026-10-26
+
+### 修复
+
+- 修复 Android 对已卸载视图反复抛出动画异常的问题 ([#7907](https://github.com/getpaseo/paseo/pull/7907))
+- 修复 Android 应用进入后台后动画运行循环仍持续执行的问题 ([#7914](https://github.com/getpaseo/paseo/pull/7914))
+- 修复 Android 在流式更新时反复测量已完成聊天消息的问题 ([#7914](https://github.com/getpaseo/paseo/pull/7914))
+- 修复底部面板关闭后仍保留窗口尺寸监听器的问题 ([#7914](https://github.com/getpaseo/paseo/pull/7914))
+
 ## 0.13.1 - 2026-10-26
 
 ### 修复

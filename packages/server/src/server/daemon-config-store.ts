@@ -1,6 +1,7 @@
 import {
   loadPersistedConfig,
-  savePersistedConfig,
+  savePersistedConfigAsync,
+  loadPersistedConfigAsync,
   type PersistedConfig,
 } from "./persisted-config.js";
 import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
@@ -335,6 +336,7 @@ export function applyMutableProviderConfigToOverrides(
 }
 
 export class DaemonConfigStore {
+  private mutations: Promise<unknown> = Promise.resolve();
   private current: MutableDaemonConfig;
   private readonly paseoHome: string;
   private readonly logger: LoggerLike | undefined;
@@ -376,16 +378,29 @@ export class DaemonConfigStore {
     return this.current;
   }
 
-  public patch(partial: MutableDaemonConfigPatch): MutableDaemonConfig {
-    const parsedPatch = pickSupportedPatchFields(MutableDaemonConfigPatchSchema.parse(partial));
-    return this.applySupportedPatch(parsedPatch);
+  public patch(
+    partial:
+      | MutableDaemonConfigPatch
+      | ((current: MutableDaemonConfig) => MutableDaemonConfigPatch),
+  ): Promise<MutableDaemonConfig> {
+    return this.enqueue(() =>
+      this.applySupportedPatch(
+        pickSupportedPatchFields(
+          MutableDaemonConfigPatchSchema.parse(
+            typeof partial === "function" ? partial(this.current) : partial,
+          ),
+        ),
+      ),
+    );
   }
 
-  public setAgentSkillSelection(selection: AgentSkillSelection): MutableDaemonConfig {
-    return this.applySupportedPatch({ skills: { selection } });
+  public setAgentSkillSelection(selection: AgentSkillSelection): Promise<MutableDaemonConfig> {
+    return this.enqueue(() => this.applySupportedPatch({ skills: { selection } }));
   }
 
-  private applySupportedPatch(parsedPatch: SupportedMutableConfigPatch): MutableDaemonConfig {
+  private async applySupportedPatch(
+    parsedPatch: SupportedMutableConfigPatch,
+  ): Promise<MutableDaemonConfig> {
     if (parsedPatch.relay?.enabled !== undefined && !this.relayEnabledMutable) {
       throw new Error(
         "Relay is controlled by a daemon launch override. Remove PASEO_RELAY_ENABLED or the relay CLI flag before changing it here.",
@@ -414,7 +429,7 @@ export class DaemonConfigStore {
       return this.current;
     }
 
-    const { previous: persistedBeforePatch, knownNext } = this.persistConfig(
+    const { previous: persistedBeforePatch, knownNext } = await this.persistConfig(
       patch,
       removedProviders,
     );
@@ -423,7 +438,7 @@ export class DaemonConfigStore {
       try {
         this.applyReplacement(next, { removedProviders });
       } catch (error) {
-        savePersistedConfig(this.paseoHome, persistedBeforePatch, this.logger);
+        await savePersistedConfigAsync(this.paseoHome, persistedBeforePatch, this.logger);
         throw error;
       }
     }
@@ -454,12 +469,16 @@ export class DaemonConfigStore {
     );
   }
 
-  public reload(): DaemonConfigReloadResult {
+  public reload(): Promise<DaemonConfigReloadResult> {
+    return this.enqueue(() => this.reloadPersisted());
+  }
+
+  private async reloadPersisted(): Promise<DaemonConfigReloadResult> {
     if (!this.reloadSource) {
       throw new Error("Daemon config reload is unavailable for this daemon instance");
     }
 
-    const persisted = loadPersistedConfig(this.paseoHome, this.logger);
+    const persisted = await loadPersistedConfigAsync(this.paseoHome, this.logger);
     const resolved = this.reloadSource.resolve(persisted);
     // Plugin source changes require the plugin lifecycle operation or a daemon
     // restart. The global switch is independently reloadable.
@@ -621,11 +640,24 @@ export class DaemonConfigStore {
     };
   }
 
-  private persistConfig(
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.mutations.then(operation);
+    this.mutations = result.catch(() => {});
+    return result;
+  }
+
+  public readServicePorts(): Promise<NonNullable<PersistedConfig["worktrees"]>["servicePorts"]> {
+    return this.enqueue(
+      async () =>
+        (await loadPersistedConfigAsync(this.paseoHome, this.logger)).worktrees?.servicePorts,
+    );
+  }
+
+  private async persistConfig(
     patch: Omit<SupportedMutableConfigPatch, "removeProviders">,
     removeProviders: readonly string[],
-  ): { previous: PersistedConfig; knownNext: PersistedConfig } {
-    const persisted = loadPersistedConfig(this.paseoHome, this.logger);
+  ): Promise<{ previous: PersistedConfig; knownNext: PersistedConfig }> {
+    const persisted = await loadPersistedConfigAsync(this.paseoHome, this.logger);
     const merge = (source: PersistedConfig) =>
       mergeMutablePatchIntoPersistedConfig({
         persisted: source,
@@ -635,7 +667,7 @@ export class DaemonConfigStore {
       });
     const nextPersisted = merge(persisted);
     const knownNext = merge(this.lastKnownPersisted);
-    savePersistedConfig(this.paseoHome, nextPersisted, this.logger);
+    await savePersistedConfigAsync(this.paseoHome, nextPersisted, this.logger);
     return { previous: persisted, knownNext };
   }
 }

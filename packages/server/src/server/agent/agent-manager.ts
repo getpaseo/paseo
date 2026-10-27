@@ -1,3 +1,5 @@
+import type { AttachedAgentTool, PluginAgentToolsRuntime } from "../plugins/agent-tools.js";
+import type { AgentToolResult } from "@getpaseo/plugin/server";
 import type { RuntimeCleanupCandidate } from "./idle-runtime-cleanup/index.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
 import { projectTimelineRows } from "./timeline-projection.js";
@@ -333,6 +335,7 @@ export interface AgentManagerOptions {
   terminalManager?: TerminalManager | null;
   mcpBaseUrl?: string;
   mcpAuthToken?: string;
+  pluginAgentTools?: PluginAgentToolsRuntime;
   paseoToolsEnabled?: boolean;
   paseoToolCatalogFactory?: PaseoToolCatalogFactory;
   resolvePaseoToolPolicy?: (provider: AgentProvider) => ProviderPaseoToolsPolicy | undefined;
@@ -766,6 +769,10 @@ export class AgentManager {
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
+  private sessionOpenGeneration = 0;
+  private readonly sessionOpenGenerations = new Map<string, number>();
+  private readonly attachedPluginTools = new Map<string, AttachedAgentTool[]>();
+  private readonly pluginAgentTools: PluginAgentToolsRuntime | undefined;
   private paseoToolsEnabled = true;
   private paseoToolCatalogFactory: PaseoToolCatalogFactory | null = null;
   private readonly paseoToolPolicies = new Map<string, ProviderPaseoToolsPolicy | undefined>();
@@ -783,6 +790,7 @@ export class AgentManager {
 
   constructor(options: AgentManagerOptions) {
     this.pluginLifecycle = options.pluginLifecycle;
+    this.pluginAgentTools = options.pluginAgentTools;
     this.timelineStore = options.timelineStore ?? new InMemoryAgentTimelineStore();
     this.idFactory = options.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
@@ -885,6 +893,62 @@ export class AgentManager {
 
   setPaseoToolCatalogFactory(factory: PaseoToolCatalogFactory | null): void {
     this.paseoToolCatalogFactory = factory;
+  }
+
+  invalidatePluginSessions(): void {
+    this.sessionOpenGeneration++;
+  }
+
+  async reloadStalePluginSession(agentId: string): Promise<void> {
+    if (!this.needsPluginSessionReload(agentId)) return;
+    await this.trackAgentRegistrationOperation(
+      this.runLifecycleMutation(agentId, async () => {
+        if (!this.needsPluginSessionReload(agentId)) return;
+        await this.reloadAgentSessionInternal(agentId);
+      }),
+    );
+  }
+
+  private needsPluginSessionReload(agentId: string): boolean {
+    const agent = this.getAgent(agentId);
+    return (
+      agent !== null &&
+      agent.lifecycle !== "closed" &&
+      this.sessionOpenGenerations.get(agentId) !== this.sessionOpenGeneration &&
+      !this.hasInFlightRun(agentId)
+    );
+  }
+
+  getPluginTools(agentId: string): readonly AttachedAgentTool[] {
+    return (this.attachedPluginTools.get(agentId) ?? []).filter((tool) =>
+      this.pluginAgentTools?.isToolPluginAvailable(tool.pluginId, tool.pluginInstanceId),
+    );
+  }
+
+  async executePluginTool(
+    tool: AttachedAgentTool,
+    agentId: string,
+    input: unknown,
+    signal?: AbortSignal,
+  ): Promise<AgentToolResult> {
+    const agent = this.getAgent(agentId);
+    if (!agent || agent.lifecycle === "closed") throw new Error(`Agent is not live: ${agentId}`);
+    if (!this.pluginAgentTools) throw new Error("Plugin tools are unavailable");
+    const record = await this.registry?.get(agentId);
+    return this.pluginAgentTools.callTool(
+      tool.pluginId,
+      tool.pluginInstanceId,
+      describeHookAgent({ ...agent, title: record?.title ?? agent.config.title }),
+      tool.name,
+      input,
+      signal,
+    );
+  }
+
+  private detachPluginTools(agentId: string): void {
+    this.attachedPluginTools.delete(agentId);
+    this.sessionOpenGenerations.delete(agentId);
+    this.pluginAgentTools?.detachTools(agentId);
   }
 
   getPaseoToolPolicy(agentId: string): ProviderPaseoToolsPolicy | undefined {
@@ -1312,7 +1376,13 @@ export class AgentManager {
       storedConfig.cwd,
       paseoToolPolicy,
       options?.env,
-      { reason: "create", purpose: "interactive", workspaceId: options.workspaceId ?? null },
+      {
+        reason: "create",
+        purpose: "interactive",
+        workspaceId: options.workspaceId ?? null,
+        title: options.initialTitle ?? storedConfig.title ?? null,
+        labels: options.labels ?? {},
+      },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const createOptions = this.buildCreateSessionOptions(options);
@@ -1434,6 +1504,8 @@ export class AgentManager {
         reason: "resume",
         purpose,
         workspaceId: options?.workspaceId ?? null,
+        title: record?.title ?? mergedConfig.title ?? null,
+        labels: record?.labels ?? options?.labels ?? {},
       },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
@@ -1491,7 +1563,12 @@ export class AgentManager {
       storedConfig.cwd,
       paseoToolPolicy,
       undefined,
-      { reason: "import", purpose: "interactive", workspaceId: input.workspaceId },
+      {
+        reason: "import",
+        purpose: "interactive",
+        workspaceId: input.workspaceId,
+        labels: input.labels ?? {},
+      },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const imported = await client.importSession(
@@ -1586,7 +1663,13 @@ export class AgentManager {
       storedConfig.cwd,
       paseoToolPolicy,
       undefined,
-      { reason: "refresh", purpose: "interactive", workspaceId: existing.workspaceId },
+      {
+        reason: "refresh",
+        purpose: "interactive",
+        workspaceId: existing.workspaceId,
+        title: await this.resolveInitialPersistedTitle(agentId, existing.config, null),
+        labels: existing.labels,
+      },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     if (
@@ -1650,6 +1733,7 @@ export class AgentManager {
       throw error;
     } finally {
       if (!handedToRegistration) {
+        this.detachPluginTools(agentId);
         if (hadPreviousPaseoToolPolicy) {
           this.paseoToolPolicies.set(agentId, previousPaseoToolPolicy);
         } else {
@@ -1857,6 +1941,7 @@ export class AgentManager {
     } catch (error) {
       persistError = error;
     }
+    this.detachPluginTools(agentId);
     this.emitClosedAgent(closedAgent, { persist: false });
     this.logger.trace(
       {
@@ -3940,6 +4025,7 @@ export class AgentManager {
   private discardRetainedAgentState(agentId: string): void {
     this.timelineStore.delete(agentId);
     this.paseoToolPolicies.delete(agentId);
+    this.detachPluginTools(agentId);
     for (const event of this.providerSubagents.deleteParent(agentId)) {
       this.dispatch({ type: "provider_subagent", event });
     }
@@ -5426,10 +5512,15 @@ export class AgentManager {
       reason: PluginSessionOpenRequest["reason"];
       purpose: PluginSessionOpenRequest["purpose"];
       workspaceId?: string | null;
+      title?: string | null;
+      labels?: Record<string, string>;
     },
   ): Promise<AgentLaunchContext> {
+    // A plugin changing during this open must still make the resulting session stale.
+    const generation = this.sessionOpenGeneration;
+    this.detachPluginTools(agentId);
     if (this.pluginLifecycle) {
-      const request: PluginSessionOpenRequest = {
+      const request = {
         agentId,
         provider: client.provider,
         cwd,
@@ -5437,9 +5528,14 @@ export class AgentManager {
         reason: opening?.reason ?? "resume",
         purpose: opening?.purpose ?? "interactive",
         env: { ...env },
+        title: opening?.title ?? null,
+        labels: opening?.labels ?? {},
+        tools: [],
       };
       const transformed = await this.pluginLifecycle.before("agent.session_open", request);
       env = transformed.env;
+      if (request.purpose === "interactive")
+        this.attachedPluginTools.set(agentId, transformed.tools as AttachedAgentTool[]);
     }
     const context: AgentLaunchContext = {
       agentId,
@@ -5449,17 +5545,26 @@ export class AgentManager {
         PASEO_AGENT_CWD: cwd,
       },
     };
-    if (
+    const useNativeTools =
       this.paseoToolsEnabled &&
       isPaseoToolPolicyEnabled(paseoToolPolicy) &&
-      client.capabilities.supportsNativePaseoTools &&
-      this.paseoToolCatalogFactory
+      client.capabilities.supportsNativePaseoTools;
+    if (
+      this.paseoToolCatalogFactory &&
+      (useNativeTools || this.getPluginTools(agentId).length > 0)
     ) {
-      context.paseoTools = await this.paseoToolCatalogFactory({
-        callerAgentId: agentId,
-        paseoToolPolicy,
-      });
+      try {
+        const catalog = await this.paseoToolCatalogFactory({
+          callerAgentId: agentId,
+          paseoToolPolicy,
+        });
+        if (useNativeTools) context.paseoTools = catalog;
+      } catch (error) {
+        this.detachPluginTools(agentId);
+        throw error;
+      }
     }
+    this.sessionOpenGenerations.set(agentId, generation);
     return context;
   }
 

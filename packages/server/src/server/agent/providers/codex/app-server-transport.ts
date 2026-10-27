@@ -1,9 +1,14 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { StringDecoder } from "node:string_decoder";
 import type { Logger } from "pino";
 import { z } from "zod";
 
 import { terminateWithTreeKill } from "../../../../utils/tree-kill.js";
+
+import { ProviderLineReader, ProviderStreamLimitError } from "../jsonl-frame-decoder.js";
+
+// A measured long-thread resume was 19.75 MB; preserve the existing 32 MiB fixture
+// with 4x margin for longer threads. This is provider stdout, not the client protocol.
+export const CODEX_PROVIDER_LINE_BYTES = 128 * 1024 * 1024;
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 const APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
@@ -167,39 +172,6 @@ function readProviderTurnId(params: unknown): string | undefined {
   return isRecord(turn) && typeof turn.id === "string" ? turn.id : undefined;
 }
 
-/**
- * Splits stdout into lines on "\n" only. `node:readline` additionally treats U+2028 and U+2029
- * as line terminators, but Codex emits those characters raw inside JSON strings, so readline
- * would cut a single JSON-RPC message into pieces that fail to parse.
- */
-function createNewlineLineReader(
-  input: NodeJS.ReadableStream,
-  onLine: (line: string) => void,
-): { close(): void } {
-  const decoder = new StringDecoder("utf8");
-  // Text after the last "\n", kept as parts and joined once its line ends, so a large line
-  // arriving in many chunks is scanned and copied once instead of once per chunk.
-  let unterminated: string[] = [];
-  const onData = (chunk: Buffer | string): void => {
-    const text = typeof chunk === "string" ? chunk : decoder.write(chunk);
-    let lineStart = 0;
-    let index = text.indexOf("\n");
-    while (index !== -1) {
-      unterminated.push(text.slice(lineStart, index));
-      const line = unterminated.join("");
-      unterminated = [];
-      onLine(line.endsWith("\r") ? line.slice(0, -1) : line);
-      lineStart = index + 1;
-      index = text.indexOf("\n", lineStart);
-    }
-    if (lineStart < text.length) {
-      unterminated.push(text.slice(lineStart));
-    }
-  };
-  input.on("data", onData);
-  return { close: () => void input.off("data", onData) };
-}
-
 export class CodexAppServerClient {
   private readonly stdoutLineReader: { close(): void };
   private activeProviderRequests = 0;
@@ -216,11 +188,24 @@ export class CodexAppServerClient {
     private readonly logger: Logger,
     private readonly getTraceContext: () => CodexAppServerTraceContext = () => ({}),
   ) {
-    this.stdoutLineReader = createNewlineLineReader(child.stdout, (line) => {
-      void this.handleLine(line).catch((error) => {
-        this.logger.warn({ error, line }, "Failed to handle Codex app-server stdout line");
-      });
-    });
+    // Split only on LF: U+2028/U+2029 are valid raw characters inside Codex JSON.
+    const reader = new ProviderLineReader(
+      CODEX_PROVIDER_LINE_BYTES,
+      (line) => {
+        void this.handleLine(line).catch((error) => {
+          this.logger.warn({ error, line }, "Failed to handle Codex app-server stdout line");
+        });
+      },
+      (error) => this.handleStreamLimit(error),
+    );
+    const onData = (chunk: Buffer | string) => reader.write(chunk);
+    child.stdout.on("data", onData);
+    this.stdoutLineReader = {
+      close: () => {
+        reader.close();
+        child.stdout.off("data", onData);
+      },
+    };
 
     child.stderr.on("data", (chunk) => {
       this.stderrBuffer += chunk.toString();
@@ -316,6 +301,15 @@ export class CodexAppServerClient {
     if (result === "kill-timeout") {
       throw new Error("Codex app-server did not report exit after SIGKILL");
     }
+  }
+
+  private handleStreamLimit(failure: ProviderStreamLimitError): void {
+    // A rejected response/notification cannot be replayed safely. Fail the session,
+    // including live turns with no pending RPC, rather than dropping a stream unit.
+    this.handleUnexpectedTermination(failure);
+    void this.dispose().catch((err) => {
+      this.logger.warn({ err }, "Failed to terminate oversized Codex stdout producer");
+    });
   }
 
   private handleUnexpectedTermination(error: Error): void {

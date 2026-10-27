@@ -4,7 +4,12 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { loadConfig, resolveBundledWebUiDistDir, resolveConfigFromPersisted } from "./config.js";
+import {
+  loadConfig,
+  resolveBundledWebUiDistDir,
+  resolveConfigFromPersisted,
+  resolveReloadableConfig,
+} from "./config.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 
 const roots: string[] = [];
@@ -12,6 +17,30 @@ const roots: string[] = [];
 describe("server config", () => {
   afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  });
+
+  test("resolves reloadable settings without resolving the startup password", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-auth-reload-"));
+    roots.push(paseoHome);
+    const env = { PASEO_PASSWORD: "synthetic-audit-password" };
+    const persisted = loadPersistedConfig(paseoHome);
+    const startup = resolveConfigFromPersisted(paseoHome, persisted, { env });
+    const started = performance.now();
+    const timer = new Promise<number>((resolve) =>
+      setTimeout(() => resolve(performance.now() - started), 0),
+    );
+    const reloaded = resolveReloadableConfig(
+      {
+        ...persisted,
+        daemon: { ...persisted.daemon, browserTools: { enabled: true } },
+      },
+      { env },
+    );
+    const gap = await timer;
+    expect(reloaded).not.toHaveProperty("auth");
+    expect(reloaded.browserToolsEnabled).toBe(true);
+    expect(startup.auth?.password).toBeTypeOf("string");
+    expect(gap).toBeLessThan(50);
   });
 
   test("records when the daemon is managed by Paseo Desktop", async () => {
