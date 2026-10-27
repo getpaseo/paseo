@@ -2043,12 +2043,13 @@ export const en = {
     output: "Output",
   },
   turnSummary: {
-    messages: {
-      one: "wrote {{count}} message",
-      other: "wrote {{count}} messages",
-    },
+    details: "View turn details",
+    sentBy: "Sent by {{name}}",
+    showMore: "Show more",
+    showLess: "Show less",
   },
   toolCallGroup: {
+    thought: "Thought",
     editedFiles: {
       one: "edited {{count}} file",
       other: "edited {{count}} files",

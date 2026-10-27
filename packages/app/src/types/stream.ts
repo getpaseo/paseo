@@ -91,6 +91,8 @@ export type StreamItem =
 export type UserMessageImageAttachment = AttachmentMetadata;
 
 export interface UserMessageItem {
+  /** Attribution added by presentation for received agent messages. */
+  sender?: AgentMessage["sender"];
   kind: "user_message";
   id: string;
   clientMessageId?: string;

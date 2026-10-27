@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { submitMessage, expectComposerEditable } from "../support/helpers/composer";
 import {
   focusTerminalSurface,
   typeInTerminal,
@@ -11,14 +10,9 @@ import { buildCreateAgentPreferences, buildSeededHost } from "../support/helpers
 import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 import type { MockAgentWorkspace } from "../support/helpers/mock-agent";
 import { seedWorkspace } from "../support/helpers/seed-client";
-import {
-  expectTimelinePromptVisible,
-  holdOlderHistoryPages,
-  openAgentTimeline,
-  scrollThroughOlderHistoryPages,
-} from "../support/helpers/timeline-pagination";
+import { openAgentTimeline } from "../support/helpers/timeline-pagination";
 
-test("does not repeat an assistant block when the current app paginates a published 0.2.5 daemon", async ({
+test("requires a host update for whole-turn history while retaining old-daemon connections and terminals", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -58,22 +52,8 @@ test("does not repeat an assistant block when the current app paginates a publis
   };
 
   try {
-    for (let index = 0; index < 40; index += 1) {
-      await agent.client.sendAgentMessage(
-        agent.agentId,
-        `timeline-pagination-older-turn-${index}: emit 1 coalesced agent stream updates`,
-      );
-      await agent.client.waitForFinish(agent.agentId, 15_000);
-    }
-    await agent.client.sendAgentMessage(agent.agentId, "build a realistic long mock timeline");
-    await agent.client.waitForFinish(agent.agentId, 20_000);
-    for (let index = 0; index < 20; index += 1) {
-      await agent.client.sendAgentMessage(
-        agent.agentId,
-        `timeline-pagination-turn-${index}: emit 1 coalesced agent stream updates`,
-      );
-      await agent.client.waitForFinish(agent.agentId, 15_000);
-    }
+    await agent.client.sendAgentMessage(agent.agentId, "emit 1 coalesced agent stream updates");
+    await agent.client.waitForFinish(agent.agentId, 15_000);
 
     const host = buildSeededHost({
       serverId,
@@ -89,34 +69,18 @@ test("does not repeat an assistant block when the current app paginates a publis
       { seededHost: host, preferences: buildCreateAgentPreferences() },
     );
 
-    const history = await holdOlderHistoryPages(page, agent, daemon.port);
     await openAgentTimeline(page, agent, serverId);
-    await expectTimelinePromptVisible(
-      page,
-      "timeline-pagination-turn-19: emit 1 coalesced agent stream updates",
-    );
-    await scrollThroughOlderHistoryPages(page, 3, history);
-
-    history.expectRepeatedEntries();
-    await history.expectOwnedTextRendered("Now I have a clearer picture.");
+    const updateMessage = page.getByText("Update the host to load complete conversation turns.", {
+      exact: true,
+    });
+    await expect(updateMessage).toBeVisible();
     expect(observationSockets.size).toBe(1);
 
-    await test.step("send a live turn after reconnecting the old daemon", async () => {
+    await test.step("retain one directory observation after reconnecting the old daemon", async () => {
       await daemon.restart();
       await expect.poll(() => observationSockets.size, { timeout: 30_000 }).toBe(2);
-      await expectComposerEditable(page);
-      await submitMessage(
-        page,
-        "compatibility-after-reconnect: emit 1 coalesced agent stream updates",
-      );
-      await expectTimelinePromptVisible(
-        page,
-        "compatibility-after-reconnect: emit 1 coalesced agent stream updates",
-      );
-      // The browser and the seed client reconnect independently after the restart.
+      await expect(updateMessage).toBeVisible();
       await agent.client.connect();
-      await agent.client.waitForFinish(agent.agentId, 20_000);
-      await page.screenshot({ path: test.info().outputPath("old-daemon-live-reconnect.png") });
     });
 
     await test.step("open a terminal and receive its output", async () => {
@@ -130,7 +94,6 @@ test("does not repeat an assistant block when the current app paginates a publis
       await expect
         .poll(() => getTerminalBufferText(page), { timeout: 15_000 })
         .toContain("compatibility-terminal-output");
-      await page.screenshot({ path: test.info().outputPath("old-daemon-terminal.png") });
       await agent.client.killTerminal(terminalId);
     });
   } finally {

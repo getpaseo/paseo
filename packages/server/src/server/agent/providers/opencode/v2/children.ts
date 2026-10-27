@@ -92,13 +92,13 @@ export class SessionChildren {
       this.childStates.set(info.id, signature);
       this.options.emit({ type: "provider_subagent", provider: "opencode", event: presentation });
     }
-    for (const event of timeline.messages(await messages(this.options.client(), info.id))) {
+    await timeline.messages(await messages(this.options.client(), info.id), (event) => {
       if (event.type === "timeline")
         this.options.emit({
           type: "provider_subagent",
           provider: "opencode",
           event: { type: "timeline", id: info.id, item: event.item, timestamp: event.timestamp },
         });
-    }
+    });
   }
 }
