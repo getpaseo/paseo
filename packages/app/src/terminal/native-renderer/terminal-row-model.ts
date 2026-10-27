@@ -27,8 +27,13 @@ interface TerminalRunBase {
   foregroundColor: string;
 }
 
+// "symbols" runs render with the bundled Nerd Font symbols face. iOS and Android don't
+// fall back from the terminal font to an app-bundled font, so PUA icons need their own run.
+export type TerminalTextRunFont = "text" | "symbols";
+
 export interface TerminalTextRun extends TerminalRunBase {
   renderKind: "text";
+  font: TerminalTextRunFont;
 }
 
 export interface TerminalCustomGlyphRun extends TerminalRunBase {
@@ -85,6 +90,23 @@ function shouldSkipSpacerCell(cells: TerminalRenderableCell[], col: number, char
   return cells[col + 1]?.char === " ";
 }
 
+function isNerdFontSymbol(codePoint: number): boolean {
+  return (codePoint >= 0xe000 && codePoint <= 0xf8ff) || codePoint >= 0xf0000;
+}
+
+function resolveTextRunFont(char: string): TerminalTextRunFont {
+  const codePoint = char.codePointAt(0);
+  return codePoint !== undefined && isNerdFontSymbol(codePoint) ? "symbols" : "text";
+}
+
+// Non-ASCII glyphs often come from a fallback font with a different advance than the
+// terminal font. Giving each one its own run keeps a wider glyph from pushing the rest
+// of the run past its cell box, where it would be clipped. A text run is either all
+// ASCII or a single isolated glyph, so its first char decides.
+function isAsciiText(text: string): boolean {
+  return text.charCodeAt(0) < 0x80;
+}
+
 function terminalCellCount(cells: TerminalRenderableCell[], col: number, char: string): number {
   const authoritativeWidth = cells[col]?.width;
   if (authoritativeWidth !== undefined) {
@@ -107,11 +129,17 @@ function appendRun(input: {
   col: number;
 }): void {
   const renderKind = input.customGlyph ? "custom-glyph" : "text";
+  const font = resolveTextRunFont(input.text);
   const previousRun = input.runs[input.runs.length - 1];
+  const canMergeText =
+    previousRun?.renderKind === "text" &&
+    previousRun.font === font &&
+    (font === "symbols" || (isAsciiText(input.text) && isAsciiText(previousRun.text)));
   if (
     previousRun &&
     previousRun.styleKey === input.styleKey &&
-    previousRun.renderKind === renderKind
+    previousRun.renderKind === renderKind &&
+    (renderKind === "custom-glyph" || canMergeText)
   ) {
     const offset = previousRun.cellCount;
     previousRun.text += input.text;
@@ -142,7 +170,7 @@ function appendRun(input: {
     });
     return;
   }
-  input.runs.push({ ...baseRun, renderKind: "text" });
+  input.runs.push({ ...baseRun, renderKind: "text", font });
 }
 
 function cellIntersectsSelection(input: {

@@ -18,13 +18,17 @@ import {
   NATIVE_TERMINAL_SELECTION_COLORS,
 } from "./colors";
 import type { TerminalGlyphRect } from "./terminal-custom-glyph";
-import { resolveNativeTerminalFontFamily } from "./font.native";
+import {
+  NATIVE_TERMINAL_SYMBOLS_FONT_FAMILY,
+  resolveNativeTerminalFontFamily,
+} from "./font.native";
 import type { TerminalViewportState } from "./headless-terminal-state";
 import {
   resolveMeasuredTerminalCellMetrics,
   resolveTerminalCustomGlyphCellTransform,
   resolveTerminalGridMetricsMeasurement,
   resolveTerminalCursorOffset,
+  resolveTerminalLetterSpacing,
   type TerminalGridCellMetrics,
 } from "./terminal-grid-metrics";
 import {
@@ -44,6 +48,9 @@ const INITIAL_CELL_HEIGHT_RATIO = 1.35;
 interface CellMetrics {
   cellWidth: number;
   cellHeight: number;
+  // Cell width is snapped to the pixel grid; this spreads the difference from the font's
+  // real advance across glyphs so a long run stays aligned with its cell box.
+  letterSpacing: number;
 }
 
 interface TerminalGridViewport {
@@ -57,6 +64,7 @@ interface TerminalGridRowProps {
   cellHeight: number;
   fontFamily?: string;
   fontSize: number;
+  letterSpacing: number;
   styleEpoch: string;
 }
 
@@ -65,6 +73,7 @@ interface TerminalGridRunProps {
   cellWidth: number;
   cellHeight: number;
   textStyle: StyleProp<TextStyle>;
+  symbolsTextStyle: StyleProp<TextStyle>;
 }
 
 export interface TerminalGridViewProps {
@@ -81,6 +90,7 @@ function estimateCellMetrics(fontSize: number): CellMetrics {
   return {
     cellWidth: snapPixel(fontSize * INITIAL_CELL_WIDTH_RATIO),
     cellHeight: snapPixel(fontSize * INITIAL_CELL_HEIGHT_RATIO),
+    letterSpacing: 0,
   };
 }
 
@@ -99,7 +109,13 @@ function resolveVisibleCols(input: {
   return Math.min(input.gridCols, Math.max(1, Math.floor(input.viewportWidth / input.cellWidth)));
 }
 
-function TerminalGridRun({ run, cellWidth, cellHeight, textStyle }: TerminalGridRunProps) {
+function TerminalGridRun({
+  run,
+  cellWidth,
+  cellHeight,
+  textStyle,
+  symbolsTextStyle,
+}: TerminalGridRunProps) {
   const runStyle = useMemo<StyleProp<ViewStyle>>(
     () => [
       styles.run,
@@ -111,9 +127,10 @@ function TerminalGridRun({ run, cellWidth, cellHeight, textStyle }: TerminalGrid
     ],
     [cellHeight, cellWidth, run.cellCount, run.style.backgroundColor],
   );
+  const runFont = run.renderKind === "text" ? run.font : "text";
   const runTextStyle = useMemo<StyleProp<TextStyle>>(
-    () => [textStyle, run.style],
-    [run.style, textStyle],
+    () => [runFont === "symbols" ? symbolsTextStyle : textStyle, run.style],
+    [run.style, runFont, symbolsTextStyle, textStyle],
   );
 
   return (
@@ -121,7 +138,7 @@ function TerminalGridRun({ run, cellWidth, cellHeight, textStyle }: TerminalGrid
       {run.renderKind === "custom-glyph" ? (
         <TerminalGridCustomGlyphRun run={run} cellWidth={cellWidth} cellHeight={cellHeight} />
       ) : (
-        <Text numberOfLines={1} style={runTextStyle}>
+        <Text ellipsizeMode="clip" numberOfLines={1} style={runTextStyle}>
           {run.text}
         </Text>
       )}
@@ -225,7 +242,8 @@ const MemoTerminalGridRun = memo(TerminalGridRun, (previous, next) => {
     previous.run === next.run &&
     previous.cellWidth === next.cellWidth &&
     previous.cellHeight === next.cellHeight &&
-    previous.textStyle === next.textStyle
+    previous.textStyle === next.textStyle &&
+    previous.symbolsTextStyle === next.symbolsTextStyle
   );
 });
 
@@ -235,6 +253,7 @@ function TerminalGridRow({
   cellHeight,
   fontFamily,
   fontSize,
+  letterSpacing,
 }: TerminalGridRowProps) {
   const rowStyle = useMemo<StyleProp<ViewStyle>>(
     () => [styles.row, { height: cellHeight }],
@@ -248,9 +267,22 @@ function TerminalGridRow({
         lineHeight: cellHeight,
         fontFamily,
         fontSize,
+        letterSpacing,
       },
     ],
-    [cellHeight, fontFamily, fontSize],
+    [cellHeight, fontFamily, fontSize, letterSpacing],
+  );
+  const symbolsTextStyle = useMemo<StyleProp<TextStyle>>(
+    () => [
+      styles.rowText,
+      {
+        height: cellHeight,
+        lineHeight: cellHeight,
+        fontFamily: NATIVE_TERMINAL_SYMBOLS_FONT_FAMILY,
+        fontSize,
+      },
+    ],
+    [cellHeight, fontSize],
   );
   const accessibilityLabel = useMemo(
     () =>
@@ -275,6 +307,7 @@ function TerminalGridRow({
           cellWidth={cellWidth}
           cellHeight={cellHeight}
           textStyle={textStyle}
+          symbolsTextStyle={symbolsTextStyle}
         />
       ))}
     </View>
@@ -288,6 +321,7 @@ const MemoTerminalGridRow = memo(TerminalGridRow, (previous, next) => {
     previous.cellHeight === next.cellHeight &&
     previous.fontFamily === next.fontFamily &&
     previous.fontSize === next.fontSize &&
+    previous.letterSpacing === next.letterSpacing &&
     previous.styleEpoch === next.styleEpoch
   );
 });
@@ -389,7 +423,14 @@ export function TerminalGridView({
         return;
       }
       measuredMetricsRef.current = changedMetrics;
-      setMetrics(changedMetrics);
+      setMetrics({
+        ...changedMetrics,
+        letterSpacing: resolveTerminalLetterSpacing({
+          cellWidth: changedMetrics.cellWidth,
+          measuredTextWidth: event.nativeEvent.layout.width,
+          measureTextLength: MEASURE_TEXT.length,
+        }),
+      });
       onCellMetricsChange?.(changedMetrics);
     },
     [onCellMetricsChange],
@@ -419,6 +460,7 @@ export function TerminalGridView({
             cellHeight={metrics.cellHeight}
             fontFamily={resolvedFontFamily}
             fontSize={fontSize}
+            letterSpacing={metrics.letterSpacing}
             styleEpoch={resolver.themeKey}
           />
         ))}

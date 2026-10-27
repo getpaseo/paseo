@@ -14,6 +14,14 @@ const IOS_MONO_ALIASES = new Map<string, string>([
   ["ui-monospace", "Menlo"],
 ]);
 
+// Bundled by the expo-font config plugin in app.config.js. iOS registers it under the
+// font's family name; Android looks it up by the asset file name.
+export const NATIVE_TERMINAL_SYMBOLS_FONT_FAMILY =
+  Platform.select({
+    ios: "Symbols Nerd Font Mono",
+    android: "SymbolsNerdFontMono-Regular",
+  }) ?? "Symbols Nerd Font Mono";
+
 const NATIVE_MONO_FALLBACK =
   Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" }) ?? "monospace";
 
