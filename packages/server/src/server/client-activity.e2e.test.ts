@@ -93,6 +93,20 @@ describe("client activity tracking", () => {
     });
   }
 
+  function waitForRunning(client: DaemonClient, agentId: string): Promise<AgentSnapshotPayload> {
+    return client.waitForAgentUpsert(agentId, (snapshot) => snapshot.status === "running");
+  }
+
+  async function waitForPushCount(count: number, timeout = 60000): Promise<void> {
+    const deadline = Date.now() + timeout;
+    while (pushNotifications.sent.length < count) {
+      if (Date.now() > deadline) {
+        throw new Error(`Timeout waiting for ${count} push notification(s) (${timeout}ms)`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+
   function waitForAssistantTimeline(
     client: DaemonClient,
     agentId: string,
@@ -249,6 +263,27 @@ describe("client activity tracking", () => {
       expect(attention.reason).toBe("finished");
       expect(attention.shouldNotify).toBe(false);
       expect(pushNotifications.sent).toHaveLength(1);
+    }, 120000);
+
+    test("no push when the user cancels a running turn", async () => {
+      client1 = await createClient();
+
+      const agent = await createAgent({
+        client: client1,
+        title: "Cancel Push Test",
+      });
+
+      await client1.sendMessage(agent.id, "Wait until interrupted");
+      await waitForRunning(client1, agent.id);
+      await client1.cancelAgent(agent.id);
+      expect((await client1.waitForFinish(agent.id, 10000)).status).toBe("idle");
+      expect((await client1.fetchAgent(agent.id))?.agent.requiresAttention).toBe(false);
+
+      // A turn that runs to its end afterwards still pushes, and its push is the only one.
+      await client1.sendMessage(agent.id, "Say 'hello' and nothing else");
+      await waitForPushCount(1);
+      expect(pushNotifications.sent).toHaveLength(1);
+      expect((await client1.fetchAgent(agent.id))?.agent.attentionReason).toBe("finished");
     }, 120000);
   });
 

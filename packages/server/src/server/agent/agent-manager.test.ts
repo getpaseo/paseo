@@ -2846,6 +2846,81 @@ test("cancelAgentRun succeeds when the provider queues completion before rejecti
   }
 });
 
+test("a canceled foreground turn asks for no attention, and the next completed turn does", async () => {
+  const fixture = await createControlledInterruptFixture({
+    name: "cancel-attention",
+    agentId: "00000000-0000-4000-8000-000000000307",
+    turnId: "canceled-foreground-turn",
+    interrupt: async (session) => {
+      session.pushEvent({
+        type: "turn_canceled",
+        provider: session.provider,
+        reason: "interrupted",
+        turnId: "canceled-foreground-turn",
+      });
+    },
+  });
+
+  try {
+    await fixture.startForegroundRun();
+
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
+      status: "settled",
+    });
+    expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
+      lifecycle: "idle",
+      attention: { requiresAttention: false },
+    });
+
+    const running = waitForAgentLifecycle(fixture.manager, fixture.agentId, "running");
+    fixture.session.pushEvent({ type: "turn_started", provider: "codex", turnId: "next-turn" });
+    await running;
+    const settled = waitForAgentLifecycle(fixture.manager, fixture.agentId, "idle");
+    fixture.session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "next-turn" });
+    await settled;
+
+    expect(fixture.manager.getAgent(fixture.agentId)?.attention).toMatchObject({
+      requiresAttention: true,
+      attentionReason: "finished",
+    });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a canceled autonomous turn asks for no attention", async () => {
+  const fixture = await createControlledInterruptFixture({
+    name: "autonomous-cancel-attention",
+    agentId: "00000000-0000-4000-8000-000000000308",
+    turnId: "unused-foreground-turn",
+    interrupt: async () => {},
+  });
+
+  try {
+    const running = waitForAgentLifecycle(fixture.manager, fixture.agentId, "running");
+    fixture.session.pushEvent({
+      type: "turn_started",
+      provider: "codex",
+      turnId: "canceled-autonomous-turn",
+    });
+    await running;
+    const settled = waitForAgentLifecycle(fixture.manager, fixture.agentId, "idle");
+    fixture.session.pushEvent({
+      type: "turn_canceled",
+      provider: "codex",
+      reason: "interrupted",
+      turnId: "canceled-autonomous-turn",
+    });
+    await settled;
+
+    expect(fixture.manager.getAgent(fixture.agentId)?.attention).toEqual({
+      requiresAttention: false,
+    });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("listProviderAvailability uses registered client keys, including custom providers", async () => {
   const customClient: AgentClient = {
     provider: "zai",
