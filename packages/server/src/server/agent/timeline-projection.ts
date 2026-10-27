@@ -1,3 +1,4 @@
+import { continuesTimelineTurn, isTimelineTurnTrigger } from "@getpaseo/protocol/timeline-turn";
 import type { AgentTimelineItem, ToolCallDetail } from "./agent-sdk-types.js";
 import { timelineItemIdentity } from "@getpaseo/protocol/timeline-identity";
 
@@ -296,6 +297,7 @@ function mergeAssistantChunks(entries: readonly WorkingEntry[]): WorkingEntry[] 
 export type ProjectedTimelineRow = AgentTimelineRow & TimelineProjectionEntry;
 
 interface ProjectedTimelinePageOptions {
+  wholeTurns?: boolean;
   bounds: { minSeq: number; maxSeq: number };
   direction: TimelineLimitDirection;
   cursorSeq?: number;
@@ -423,7 +425,8 @@ export class TimelineProjection {
   private selectTail(input: ProjectedTimelinePageOptions): ProjectedTimelinePageSelection {
     const limit = Math.max(0, Math.floor(input.limit ?? 0));
     const requestedStart = limit === 0 ? 0 : Math.max(0, this.rows.length - limit);
-    const start = this.spans[this.spanIndex(requestedStart)].start;
+    const coveredStart = this.spans[this.spanIndex(requestedStart)].start;
+    const start = input.wholeTurns ? this.wholeTurnWindowStart(coveredStart) : coveredStart;
     return {
       entries: this.rows.slice(start),
       startSeq: this.rows[start].seqStart,
@@ -431,6 +434,17 @@ export class TimelineProjection {
       hasOlder: start > 0,
       hasNewer: false,
     };
+  }
+
+  private wholeTurnWindowStart(requestedStart: number): number {
+    let start = requestedStart;
+    for (;;) {
+      while (start > 0 && continuesProjectedTurn(this.rows[start - 1], this.rows[start])) start--;
+      // Source coverage can pull in an earlier tool and therefore its entire run.
+      const coveredStart = this.spans[this.spanIndex(start)].start;
+      if (coveredStart === start) return start;
+      start = coveredStart;
+    }
   }
 
   private selectAfter(input: ProjectedTimelinePageOptions): ProjectedTimelinePageSelection {
@@ -480,13 +494,23 @@ export class TimelineProjection {
         else high = middle;
       }
       const limit = Math.max(0, Math.floor(input.limit ?? 0));
-      const start = limit === 0 ? 0 : Math.max(0, low - limit);
+      const requestedStart = limit === 0 ? 0 : Math.max(0, low - limit);
+      const start = input.wholeTurns ? this.wholeTurnWindowStart(requestedStart) : requestedStart;
+      // Choose the window before extending the right edge, so a prompt jump
+      // cannot lose its target when the next turn is arbitrarily large.
+      if (input.wholeTurns) {
+        while (low < this.rows.length && continuesProjectedTurn(this.rows[low - 1], this.rows[low]))
+          low++;
+      }
+      let selectedEnd = endSeq;
+      if (input.wholeTurns)
+        selectedEnd = low === this.rows.length ? input.bounds.maxSeq : this.rows[low].seqStart - 1;
       return {
         entries: this.rows.slice(start, low),
         startSeq: this.rows[start]?.seqStart ?? null,
-        endSeq,
+        endSeq: selectedEnd,
         hasOlder: start > 0,
-        hasNewer: endSeq < input.bounds.maxSeq,
+        hasNewer: selectedEnd < input.bounds.maxSeq,
       };
     }
     return { entries: [], startSeq: null, endSeq: null, hasOlder: false, hasNewer: true };
@@ -673,6 +697,13 @@ function selectProjectedEntriesAfter(input: {
     entries: selectedEntries,
     endSeq: endSeq >= input.startSeq ? endSeq : null,
   };
+}
+
+function continuesProjectedTurn(
+  previous: TimelineProjectionEntry,
+  next: TimelineProjectionEntry,
+): boolean {
+  return continuesTimelineTurn(previous.turnId, next.turnId, isTimelineTurnTrigger(next.item));
 }
 
 /**

@@ -588,3 +588,129 @@ describe("timeline presentation", () => {
     expect(projectTimelineItems([source], () => [])).toEqual([]);
   });
 });
+
+it("opening a turn reveals individual calls rather than another tool group", () => {
+  const present = createStreamPresentation();
+  const timestamp = new Date();
+  const tail: StreamItem[] = [
+    { kind: "user_message", id: "prompt", text: "Work", timestamp },
+    toolCall("one", "Bash"),
+    toolCall("two", "Bash"),
+    { kind: "assistant_message", id: "reply", text: "Done", timestamp },
+  ];
+  const result = present({
+    ...presentationOptions,
+    transform: undefined,
+    tail,
+    head: [],
+    display: "collapseTurns",
+    isTurnActive: false,
+    expandedTurnHostIds: new Set(["prompt"]),
+  });
+  expect(result.tail.map((item) => item.id)).toEqual(tail.map((item) => item.id));
+  expect(result.groupsByHostId.size).toBe(0);
+});
+
+it("presents received agent messages as attributed bubbles with the original turn identity", () => {
+  const call = toolCall("received", "agent_message");
+  if (call.payload.source !== "agent") throw new Error("Expected agent tool");
+  call.turnId = "turn";
+  call.payload.data.agentMessage = {
+    event: "message",
+    sender: { id: "sender", title: "Reviewer" },
+    text: "Ready",
+  };
+  const result = createStreamPresentation()({
+    ...presentationOptions,
+    transform: undefined,
+    tail: [call],
+    head: [],
+  });
+  expect(result.tail[0]).toMatchObject({
+    kind: "user_message",
+    id: call.id,
+    turnId: "turn",
+    text: "Ready",
+    sender: { id: "sender", title: "Reviewer" },
+  });
+});
+
+it("does not reopen the previous turn while a new run waits for its first row", () => {
+  const timestamp = new Date();
+  const tail: StreamItem[] = [
+    { kind: "user_message", id: "prompt", text: "Work", timestamp },
+    toolCall("one", "Bash"),
+    { kind: "assistant_message", id: "reply", text: "Done", timestamp },
+  ];
+  for (const item of tail) item.turnId = "completed";
+  const result = createStreamPresentation()({
+    ...presentationOptions,
+    transform: undefined,
+    tail,
+    head: [],
+    display: "collapseTurns",
+    isTurnActive: true,
+    activeTurnId: "new",
+  });
+  expect(result.tail.map((item) => item.id)).toEqual(["prompt", "reply"]);
+});
+
+it("groups reasoning with tools unless Expand thinking is enabled, including setting changes", () => {
+  const present = createStreamPresentation();
+  const timestamp = new Date();
+  const thought: StreamItem = {
+    kind: "thought",
+    id: "thought",
+    text: "Consider this",
+    status: "ready",
+    timestamp,
+  };
+  const tail: StreamItem[] = [toolCall("one", "Bash"), thought, toolCall("two", "Bash")];
+  for (const item of tail) item.turnId = "run";
+  const input = {
+    ...presentationOptions,
+    transform: undefined,
+    tail,
+    head: [],
+    display: "collapseToolCalls" as const,
+    isTurnActive: false,
+  };
+  const grouped = present({ ...input, autoExpandReasoning: false });
+  expect(grouped.tail).toHaveLength(1);
+  expect(grouped.groupsByHostId.get("tool-one")?.run.calls).toEqual(tail);
+  const separate = present({ ...input, autoExpandReasoning: true });
+  expect(separate.tail.map((item) => item.id)).toEqual(["tool-one", "thought", "tool-two"]);
+  expect(separate.groupsByHostId.has("thought")).toBe(false);
+  const next = { ...thought, id: "next", turnId: "next-run" };
+  const bounded = present({ ...input, tail: [...tail, next], autoExpandReasoning: false });
+  expect(bounded.tail.map((item) => item.id)).toEqual(["tool-one", "next"]);
+});
+
+it.each([false, true])(
+  "reveals raw reasoning when opening a turn (Expand thinking %s)",
+  (autoExpandReasoning) => {
+    const timestamp = new Date();
+    const tail: StreamItem[] = [
+      { kind: "user_message", id: "prompt", text: "Work", timestamp },
+      { kind: "thought", id: "thought", text: "Consider this", status: "ready", timestamp },
+      toolCall("one", "Bash"),
+      { kind: "assistant_message", id: "reply", text: "Done", timestamp },
+    ];
+    const input = {
+      ...presentationOptions,
+      transform: undefined,
+      tail,
+      head: [],
+      display: "collapseTurns" as const,
+      isTurnActive: false,
+      autoExpandReasoning,
+    };
+    const present = createStreamPresentation();
+    const closed = present(input);
+    expect(closed.tail.some((item) => item.id === "thought")).toBe(autoExpandReasoning);
+    const opened = present({ ...input, expandedTurnHostIds: new Set(["prompt"]) });
+    expect(opened.tail).toEqual(tail);
+    expect(opened.turns.nestedItemIds.has("thought")).toBe(true);
+    expect(opened.groupsByHostId.size).toBe(0);
+  },
+);
