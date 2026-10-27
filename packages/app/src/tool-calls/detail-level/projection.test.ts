@@ -480,3 +480,24 @@ describe("tool call detail-level projection", () => {
     expect(result.groupsByHostId.size).toBe(1);
   });
 });
+
+it("keeps a heartbeat trigger visible outside grouped work", () => {
+  const trigger = toolCall(
+    "1",
+    { type: "plain_text", text: "Check progress" },
+    { name: "heartbeat" },
+  );
+  const work = toolCall("2", { type: "shell", command: "pwd" });
+  const result = project({ level: "overview", tail: [trigger, work] });
+  expect(result.tail.map((item) => item.id)).toEqual(["1", "2"]);
+  expect(result.groupsByHostId.has("1")).toBe(false);
+});
+
+it("does not merge tools from different canonical turns", () => {
+  const first = toolCall("1", { type: "shell", command: "pwd" });
+  first.turnId = "first";
+  const second = toolCall("2", { type: "shell", command: "ls" });
+  second.turnId = "second";
+  const result = project({ level: "overview", tail: [first, second] });
+  expect(result.tail.map((item) => item.id)).toEqual(["1", "2"]);
+});

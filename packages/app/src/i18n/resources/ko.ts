@@ -2028,10 +2028,10 @@ export const ko: TranslationResources = {
     output: "출력",
   },
   turnSummary: {
-    messages: {
-      one: "{{count}} 메시지를 작성했습니다.",
-      other: "{{count}} 메시지를 작성했습니다.",
-    },
+    details: "턴 세부 정보 보기",
+    sentBy: "{{name}}이(가) 보냄",
+    showMore: "더 보기",
+    showLess: "접기",
   },
   toolCallGroup: {
     editedFiles: {

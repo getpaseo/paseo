@@ -1,13 +1,13 @@
+import { isTurnBoundary, isTurnTrigger } from "../turn-membership";
 import { getStreamItemMessageId, type StreamItem, type ToolCallItem } from "@/types/stream";
 import { summarizeToolCalls, type OverviewSummary } from "@/tool-calls/detail-level/overview/model";
 
 export interface TurnSummary {
-  messageCount: number;
   tools: OverviewSummary;
 }
 
 export interface CollapsedTurn {
-  /** The user message the turn answers. Its row carries the turn's summary line. */
+  /** The input or first loaded row that carries the turn's summary line. */
   hostId: string;
   expanded: boolean;
   summary: TurnSummary;
@@ -40,16 +40,15 @@ function summarizeTurn(
   getGroupedCalls: CollapseTurnsInput["getGroupedCalls"],
 ): TurnSummary {
   const calls: ToolCallItem[] = [];
-  let messageCount = 0;
   for (const item of items) {
-    if (item.kind === "assistant_message") messageCount += 1;
-    else if (item.kind === "tool_call") calls.push(...(getGroupedCalls(item.id) ?? [item]));
+    if (item.kind === "tool_call" && !isTurnTrigger(item))
+      calls.push(...(getGroupedCalls(item.id) ?? [item]));
   }
-  return { messageCount, tools: summarizeToolCalls(calls) };
+  return { tools: summarizeToolCalls(calls) };
 }
 
 function hasWork(summary: TurnSummary): boolean {
-  return summary.messageCount > 0 || Object.values(summary.tools).some((count) => count > 0);
+  return Object.values(summary.tools).some((count) => count > 0);
 }
 
 function findLastAssistantIndex(tail: StreamItem[], start: number, end: number): number {
@@ -77,28 +76,43 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
     const host = tail[runStart - 1];
     const isClosed = runEnd < tail.length || !input.isLatestTurnOpen;
     const replyIndex = findLastAssistantIndex(tail, runStart, runEnd);
-    if (host?.kind !== "user_message" || !isClosed || replyIndex <= runStart) {
+    if (
+      !host ||
+      (host.kind !== "user_message" && host.kind !== "tool_call") ||
+      !isClosed ||
+      replyIndex <= runStart
+    ) {
       output.push(...tail.slice(runStart, runEnd));
       return;
     }
     const folded = tail.slice(runStart, replyIndex);
     const summary = summarizeTurn(folded, input.getGroupedCalls);
-    if (!hasWork(summary)) {
+    if (!hasWork(summary) && !folded.some((item) => item.kind === "assistant_message")) {
       output.push(...tail.slice(runStart, runEnd));
       return;
     }
     const expanded = input.expandedHostIds.has(host.id);
     turnsByHostId.set(host.id, { hostId: host.id, expanded, summary });
-    for (const item of folded) {
+    const revealed = expanded
+      ? folded.flatMap<StreamItem>((item) =>
+          item.kind === "tool_call" ? [...(input.getGroupedCalls(item.id) ?? [item])] : [item],
+        )
+      : folded;
+    for (const item of revealed) {
+      if (isTurnTrigger(item)) continue;
       hostIdByFoldedMessageId.set(getStreamItemMessageId(item), host.id);
       if (expanded) nestedItemIds.add(item.id);
     }
-    if (expanded) output.push(...folded);
+    output.push(...(expanded ? revealed : folded.filter(isTurnTrigger)));
     output.push(...tail.slice(replyIndex, runEnd));
   };
 
   for (let index = 0; index < tail.length; index += 1) {
-    if (tail[index]?.kind !== "user_message") continue;
+    if (
+      !(index === 0 && isTurnTrigger(tail[index]!)) &&
+      !isTurnBoundary(tail[index - 1] ?? null, tail[index] ?? null)
+    )
+      continue;
     flushRun(index);
     output.push(tail[index]!);
     runStart = index + 1;
@@ -114,7 +128,10 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
     };
   }
   return {
-    tail: output.length === tail.length ? tail : output,
+    tail:
+      output.length === tail.length && output.every((item, index) => item === tail[index])
+        ? tail
+        : output,
     turnsByHostId,
     nestedItemIds,
     hostIdByFoldedMessageId,

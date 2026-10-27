@@ -9,16 +9,15 @@ export function continuesTurn(previous: StreamItem | null, next: StreamItem | nu
   if (previous.turnId !== undefined && next.turnId !== undefined) {
     return previous.turnId === next.turnId;
   }
-  return next.kind !== "user_message";
+  return !isTurnTrigger(next);
 }
 
 /**
- * A visible response can span multiple canonical turns when their prompts are
- * system-injected and therefore absent from the Paseo timeline.
+ * Every canonical turn owns its response, including system-triggered runs.
  */
 export function continuesResponse(previous: StreamItem | null, next: StreamItem | null): boolean {
   if (!previous || !next) return false;
-  return continuesTurn(previous, next) || next.kind !== "user_message";
+  return continuesTurn(previous, next);
 }
 
 export function isTurnBoundary(previous: StreamItem | null, next: StreamItem | null): boolean {
@@ -36,4 +35,14 @@ export function startsNewTurn(item: StreamItem, previous: StreamItem | null): bo
 
 export function belongsToTurn(item: StreamItem, turnId: string | null): boolean {
   return turnId !== null && item.turnId === turnId;
+}
+
+/** Inputs that start a turn when older history has no canonical turn IDs. */
+export function isTurnTrigger(item: StreamItem): boolean {
+  if (item.kind === "user_message") return true;
+  return (
+    item.kind === "tool_call" &&
+    item.payload.source === "agent" &&
+    (item.payload.data.agentMessage !== undefined || item.payload.data.name === "heartbeat")
+  );
 }

@@ -53,7 +53,7 @@ function layoutFor(items: StreamItem[], isTurnActive: boolean) {
       isTurnActive,
       history: model.segments.historyMounted,
       liveHead: model.segments.liveHead,
-      timingByAssistantId: model.turnTiming.byAssistantId,
+      timingByItemId: model.turnTiming.byItemId,
     }),
   };
 }
@@ -76,7 +76,7 @@ describe("canonical turn membership", () => {
     );
   });
 
-  it("renders adjacent turns without visible prompts as one response", () => {
+  it("renders a separate footer for each canonical turn without visible prompts", () => {
     const items = [
       user("prompt", 1, "turn-1"),
       assistant("first reply", 2, "turn-1"),
@@ -88,7 +88,11 @@ describe("canonical turn membership", () => {
 
     const completed = layoutFor(items, false);
 
-    expect(completedFooterIds(completed.layout)).toEqual(["heartbeat-2-reply"]);
+    expect(completedFooterIds(completed.layout)).toEqual([
+      "first reply",
+      "heartbeat-1-reply",
+      "heartbeat-2-reply",
+    ]);
     expect(completed.layout.auxiliaryTurnFooter?.timing).toEqual({
       completedAt: at(6),
       durationMs: null,
@@ -123,7 +127,7 @@ describe("canonical turn membership", () => {
     const completedItems = [...build(turnId), assistant("done", 9, turnId)];
     const completed = layoutFor(completedItems, false);
     expect(completedFooterIds(completed.layout)).toEqual(["done"]);
-    expect(completed.model.turnTiming.byAssistantId.get("done")).toMatchObject({
+    expect(completed.model.turnTiming.byItemId.get("done")).toMatchObject({
       completedAt: at(9),
       durationMs: 8000,
     });

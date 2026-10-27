@@ -1,3 +1,4 @@
+import { getActiveTabTestId } from "../support/helpers/launcher";
 import type { Page } from "@playwright/test";
 import { test, expect } from "../support/fixtures";
 import { expectComposerVisible } from "../support/helpers/composer";
@@ -19,7 +20,10 @@ async function seedAnsweredAgent(title: string) {
     initialPrompt: "Why does the chat stop following new output?",
   });
   await agent.client.waitForFinish(agent.agentId, 30_000);
-  await agent.client.sendAgentMessage(agent.agentId, "Make the fix and run the burst script.");
+  await agent.client.sendAgentMessage(
+    agent.agentId,
+    "Make the fix and run the burst script.\n" + "Keep the previous response visible.\n".repeat(40),
+  );
   await agent.client.waitForFinish(agent.agentId, 30_000);
   return agent;
 }
@@ -36,17 +40,67 @@ async function rowsBetweenLatestSummaryAndReply(page: Page): Promise<number> {
   });
 }
 
+async function groupedToolsInsideLatestTurn(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const rows = [...document.querySelectorAll("[data-message-id]")];
+    const start = rows.findLastIndex((row) => row.querySelector("[data-testid=turn-summary]"));
+    const end = rows.findLastIndex((row) => row.querySelector("[data-testid=assistant-message]"));
+    return rows
+      .slice(start + 1, end)
+      .flatMap((row) =>
+        [...row.querySelectorAll("[data-testid=tool-call-group]")].map(
+          (group) => group.textContent ?? "",
+        ),
+      );
+  });
+}
+
+async function expandAndCollapseLongPrompt(page: Page) {
+  const prompt = page.getByTestId("user-message").last();
+  const before = await prompt.boundingBox();
+  const text = prompt.locator('[data-message-text="true"]');
+  const messageLeft = (await text.boundingBox())!.x;
+  await expect
+    .poll(async () => (await prompt.getByText("Show more", { exact: true }).boundingBox())!.x)
+    .toBe(messageLeft);
+  await prompt.getByRole("button", { name: "Show more", exact: true }).click();
+  await expect(prompt.getByRole("button", { name: "Show less", exact: true })).toBeVisible();
+  await expect
+    .poll(async () => (await prompt.getByText("Show less", { exact: true }).boundingBox())!.x)
+    .toBe(messageLeft);
+  await expect
+    .poll(async () => (await prompt.boundingBox())?.height ?? 0)
+    .toBeGreaterThan(before!.height);
+  await prompt.getByRole("button", { name: "Show less", exact: true }).click();
+  await expect.poll(async () => (await prompt.boundingBox())?.height ?? 0).toBe(before!.height);
+  await prompt.scrollIntoViewIfNeeded();
+  const bounds = (await prompt.boundingBox())!;
+  const body = (await text.boundingBox())!;
+  await page.screenshot({
+    path: "/tmp/message-toggle-aligned.png",
+    clip: {
+      x: body.x - 16,
+      y: bounds.y,
+      width: bounds.x + bounds.width - body.x + 16,
+      height: bounds.height,
+    },
+  });
+}
+
 test.describe("Turn collapse", () => {
   test("folds each answered turn behind a summary line that opens it", async ({ page }) => {
     test.setTimeout(120_000);
+    await page.setViewportSize({ width: 1280, height: 1000 });
     await useChatDisplay(page, "collapseTurns");
     const agent = await seedAnsweredAgent("Turn collapse");
     try {
       await openAgentRoute(page, agent);
       await expectComposerVisible(page);
 
+      await expandAndCollapseLongPrompt(page);
+
       const summary = page.getByTestId("turn-summary").last().getByRole("button");
-      await expect(summary).toHaveText(/^Wrote \d+ messages?, edited 1 file/);
+      await expect(summary).toHaveText(/^Edited 1 file/);
       // Text chunks that stream back to back merge into one message, so the reply holds
       // at least the stream's last chunk.
       await expect(page.getByTestId("assistant-message").last()).toHaveText(
@@ -57,6 +111,9 @@ test.describe("Turn collapse", () => {
       await summary.click();
       await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBeGreaterThan(0);
       await expect(summary).toBeInViewport();
+      await summary.evaluate((element) => element.scrollIntoView({ block: "start" }));
+      await page.screenshot({ path: "/tmp/turn-rail-aligned.png" });
+      await expect.poll(() => groupedToolsInsideLatestTurn(page)).toEqual([]);
 
       await summary.click();
       await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
@@ -64,4 +121,39 @@ test.describe("Turn collapse", () => {
       await agent.cleanup();
     }
   });
+});
+
+test("received messages show their sender and open that agent", async ({ page }) => {
+  const recipient = await seedMockAgentWorkspace({
+    repoPrefix: "sender-attribution-",
+    title: "Implementation",
+  });
+  try {
+    const sender = await recipient.client.createAgent({
+      provider: "mock",
+      cwd: recipient.cwd,
+      workspaceId: recipient.workspaceId,
+      title: "Reviewer",
+      model: "e2e-fast-stream",
+      modeId: "load-test",
+    });
+    await recipient.client.sendAgentMessage(
+      recipient.agentId,
+      "I reviewed the turn-grouping changes. Heartbeats now keep their own timing footer, and the previous response stays visible.",
+      { sourceAgentId: sender.id },
+    );
+    await openAgentRoute(page, recipient);
+    await expectComposerVisible(page);
+    const attribution = page.getByRole("button", { name: "Sent by Reviewer", exact: true });
+    await expect(attribution).toBeVisible();
+    await expect(page.getByTestId("user-message").filter({ has: attribution })).toContainText(
+      "I reviewed the turn-grouping changes.",
+    );
+    await attribution.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: "/tmp/sender-attribution.png" });
+    await attribution.click();
+    await expect.poll(() => getActiveTabTestId(page)).toContain(sender.id);
+  } finally {
+    await recipient.cleanup();
+  }
 });

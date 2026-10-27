@@ -63,7 +63,6 @@ describe("collapseTurns", () => {
       hostId: "u1",
       expanded: false,
       summary: {
-        messageCount: 1,
         tools: expect.objectContaining({ commandCount: 2 }),
       },
     });
@@ -119,6 +118,34 @@ describe("collapseTurns", () => {
 
     expect(result.tail).toBe(tail);
     expect(result.turnsByHostId.size).toBe(0);
+  });
+
+  it("keeps a completed response folded when a promptless canonical turn starts", () => {
+    const first = [user("u1"), shell("c1"), reply("r1")].map((item) =>
+      Object.assign(item, { turnId: "first" }),
+    );
+    const next = { ...shell("heartbeat"), turnId: "second" };
+    const result = collapse([...first, next], { isLatestTurnOpen: true });
+    expect(ids(result.tail)).toEqual(["u1", "r1", "heartbeat"]);
+    expect(result.turnsByHostId.has("u1")).toBe(true);
+  });
+
+  it("keeps mid-turn messages visible when work is folded", () => {
+    const tail = [user("prompt"), shell("work"), user("steer"), shell("more"), reply("done")];
+    for (const item of tail) item.turnId = "same-turn";
+    const result = collapse(tail);
+    expect(ids(result.tail)).toEqual(["prompt", "steer", "done"]);
+    expect(result.hostIdByFoldedMessageId.has("steer")).toBe(false);
+  });
+
+  it("reveals every raw call inside an expanded turn", () => {
+    const calls = [shell("one"), shell("two")];
+    const result = collapse([user("prompt"), calls[0]!, reply("done")], {
+      expandedHostIds: new Set(["prompt"]),
+      getGroupedCalls: (id) => (id === "one" ? calls : undefined),
+    });
+    expect(ids(result.tail)).toEqual(["prompt", "one", "two", "done"]);
+    expect([...result.nestedItemIds]).toEqual(["one", "two"]);
   });
 
   it("counts every call a tool-call group row stands for", () => {

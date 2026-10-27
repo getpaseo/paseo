@@ -1,3 +1,4 @@
+import { isTurnTrigger, isTurnBoundary } from "@/agent-stream/turn-membership";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import type { StreamItem, ToolCallItem } from "@/types/stream";
 
@@ -63,7 +64,7 @@ export function describeToolCall(item: ToolCallItem): ToolCallDescriptor {
 }
 
 export function isGroupableToolCall(item: StreamItem): item is ToolCallItem {
-  if (item.kind !== "tool_call") {
+  if (item.kind !== "tool_call" || isTurnTrigger(item)) {
     return false;
   }
   const descriptor = describeToolCall(item);
@@ -116,7 +117,7 @@ export function prepareGroupedHistory<TGroup>(input: {
   let pending: ToolCallItem[] = [];
 
   for (const item of input.tail) {
-    if (isGroupableToolCall(item)) {
+    if (isGroupableToolCall(item) && !isTurnBoundary(pending.at(-1) ?? null, item)) {
       pending.push(item);
       continue;
     }
@@ -128,7 +129,8 @@ export function prepareGroupedHistory<TGroup>(input: {
       buildGroup: input.buildGroup,
     });
     pending = [];
-    output.push(item);
+    if (isGroupableToolCall(item)) pending.push(item);
+    else output.push(item);
   }
 
   appendRun({
@@ -175,6 +177,7 @@ export function groupLiveToolCalls<TGroup>(input: {
   };
 
   for (const item of input.head) {
+    if (isTurnBoundary(pending.at(-1) ?? null, item)) flush(true);
     if (isGroupableToolCall(item)) {
       if (pending.length === 0) {
         hostPlacement = "head";

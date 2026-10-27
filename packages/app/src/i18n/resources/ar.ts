@@ -2018,10 +2018,10 @@ export const ar: TranslationResources = {
     output: "الإخراج",
   },
   turnSummary: {
-    messages: {
-      one: "كتب {{count}} رسالة",
-      other: "كتب {{count}} رسائل",
-    },
+    details: "عرض تفاصيل الجولة",
+    sentBy: "أرسلها {{name}}",
+    showMore: "عرض المزيد",
+    showLess: "عرض أقل",
   },
   toolCallGroup: {
     editedFiles: {
