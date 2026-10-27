@@ -542,6 +542,39 @@ patch every build the consumers use: Metro resolves the `react-native` field of 
 (`src/*.ts` for `react-native-svg`), while Node and Vitest resolve `main`/`module`
 (`lib/commonjs`, `lib/module`). Patching only `lib/` leaves the app bundle unfixed.
 
+## Dependency overrides and workspace tooling
+
+Root `package.json` `overrides` pin one Expo SDK across the tree (`expo`, `expo-router`,
+`react-native`, …). npm does not apply those overrides to packages it places under a
+workspace's own `node_modules`. When `expo-module-scripts` was declared in
+`packages/expo-two-way-audio`, npm nested it there and its `jest-expo` peer `expo@*` resolved to
+a second, newer Expo SDK and React Native: 200+ duplicate packages nothing imported (#7730).
+Declare tooling that peer-depends on `expo` or `react-native` in the root `devDependencies`,
+where the overrides apply; workspace scripts still find the binary through the root
+`node_modules/.bin`.
+
+## Dependency signature audit
+
+The `quality` CI job runs `npm audit signatures`. It verifies every lockfile package's registry
+signature and, for packages published with provenance, fetches
+`/-/npm/v1/attestations/<name>@<version>` from the registry. Cloudflare caches that document
+for a year. An edge that cached it in the seconds before the registry attached the publish
+attestation keeps serving a document with only the provenance bundle, and npm fails with:
+
+```
+npm error code EMISSINGSIGNATUREKEY
+npm error <name>@<version> has attestations but no corresponding public key(s) can be found
+```
+
+The same package's registry signature verified a moment earlier with the same keys, so the
+key list is intact. The failure names one package, repeats only for that package, and depends
+on the Azure region the runner landed in, because each region maps to one Cloudflare colo. A
+rerun passes only by landing elsewhere.
+
+To confirm, fetch the URL from several runners and compare `content-length`, the `cf-ray` colo
+suffix, and the number of `attestations` entries (#7730 has the probe). To fix, remove or
+replace that version in the lockfile and report the URL to npm so they purge it.
+
 ## ACP provider catalog versions
 
 The in-app ACP provider catalog pins package-runner entries (`npx`, `npm exec`,

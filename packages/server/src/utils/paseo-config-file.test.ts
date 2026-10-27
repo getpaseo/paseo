@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { writeFile, truncate, rm } from "node:fs/promises";
-import { setImmediate as nextTurn } from "node:timers/promises";
+import { measureMainThreadWork } from "../test-utils/main-thread-work.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -67,7 +67,7 @@ describe("paseo config file substrate", () => {
     );
   });
 
-  it("keeps the longest loop stall below 20ms while admitting large configs", async () => {
+  it("keeps main-thread work below 20ms while admitting large configs", async () => {
     const config = {
       scripts: Object.fromEntries(
         Array.from({ length: 7_000 }, (_, i) => [`script${i}`, { command: "echo hi" }]),
@@ -75,48 +75,27 @@ describe("paseo config file substrate", () => {
       worktree: { setup: "npm ci" },
     };
     await writeFile(join(tempDir, "paseo.json"), JSON.stringify(config));
-    let previous = performance.now();
-    let longestGap = 0;
-    const probe = setInterval(() => {
-      const now = performance.now();
-      longestGap = Math.max(longestGap, now - previous);
-      previous = now;
-    }, 1);
-    let result: Awaited<ReturnType<typeof readPaseoConfigForEdit>>;
-    try {
-      result = await readPaseoConfigForEdit(tempDir);
-      await nextTurn();
-      longestGap = Math.max(longestGap, performance.now() - previous);
-    } finally {
-      clearInterval(probe);
-    }
+    const { result, blockingMs, filesystemRequests, yields } = await measureMainThreadWork(
+      "project config 7000 scripts main-thread work",
+      () => readPaseoConfigForEdit(tempDir),
+    );
     expect(result).toEqual({ ok: true, config, revision: await statPaseoConfigPath(tempDir) });
-    process.stdout.write(`project config 7,000 scripts max loop gap: ${longestGap.toFixed(2)}ms\n`);
-    expect(longestGap).toBeLessThan(20);
+    expect(blockingMs).toBeLessThan(20);
+    expect(filesystemRequests).toBeGreaterThan(0);
+    expect(yields).toBeGreaterThan(0);
   });
 
-  it("rejects a 32MiB config with a loop stall below 20ms", async () => {
+  it("rejects a 32MiB config with main-thread work below 20ms", async () => {
     await writeFile(
       join(tempDir, "paseo.json"),
       JSON.stringify({ extra: "x".repeat(32 * 1024 * 1024) }),
     );
-    let previous = performance.now();
-    let longestGap = 0;
-    const probe = setInterval(() => {
-      const now = performance.now();
-      longestGap = Math.max(longestGap, now - previous);
-      previous = now;
-    }, 1);
-    let result: Awaited<ReturnType<typeof readPaseoConfigForEdit>>;
-    try {
-      result = await readPaseoConfigForEdit(tempDir);
-      await nextTurn();
-      longestGap = Math.max(longestGap, performance.now() - previous);
-    } finally {
-      clearInterval(probe);
-    }
-    process.stdout.write(`project config 32MiB max loop gap: ${longestGap.toFixed(2)}ms\n`);
-    expect(longestGap).toBeLessThan(20);
+    const { result, blockingMs, filesystemRequests } = await measureMainThreadWork(
+      "project config 32MiB main-thread work",
+      () => readPaseoConfigForEdit(tempDir),
+    );
+    expect(blockingMs).toBeLessThan(20);
+    expect(filesystemRequests).toBeGreaterThan(0);
     expect(result).toEqual({ ok: false, error: { code: "invalid_project_config" } });
   });
 

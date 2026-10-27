@@ -1,3 +1,4 @@
+import { measureMainThreadWork } from "../test-utils/main-thread-work.js";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -658,24 +659,20 @@ describe("WorkspaceReconciliationService", () => {
       workspaceRegistry,
       logger: createTestLogger(),
     });
-    let last = performance.now();
-    let longestGap = 0;
-    const probe = setInterval(() => {
-      const now = performance.now();
-      longestGap = Math.max(longestGap, now - last);
-      last = now;
-    }, 1);
-    let result;
     try {
-      result = await service.runOnce();
-      await new Promise<void>((resolve) => setTimeout(resolve, 1));
+      const { result, blockingMs, filesystemRequests } = await measureMainThreadWork(
+        "workspace reconciliation main-thread work",
+        () => service.runOnce(),
+      );
+      expect(blockingMs).toBeLessThan(20);
+      expect(filesystemRequests).toBe(20001);
+      expect(result.changesApplied).toHaveLength(20000);
+      expect([...workspaces.values()].every((workspace) => workspace.archivedAt !== null)).toBe(
+        true,
+      );
     } finally {
-      clearInterval(probe);
       service.dispose();
     }
-    expect(longestGap).toBeLessThan(20);
-    expect(result.changesApplied).toHaveLength(20000);
-    expect([...workspaces.values()].every((workspace) => workspace.archivedAt !== null)).toBe(true);
   }, 30000);
 
   test("preserves workspace archival that lands during boot reconciliation", async () => {

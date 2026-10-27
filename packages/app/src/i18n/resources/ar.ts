@@ -2026,12 +2026,13 @@ export const ar: TranslationResources = {
     output: "الإخراج",
   },
   turnSummary: {
-    messages: {
-      one: "كتب {{count}} رسالة",
-      other: "كتب {{count}} رسائل",
-    },
+    details: "عرض تفاصيل الجولة",
+    sentBy: "أرسلها {{name}}",
+    showMore: "عرض المزيد",
+    showLess: "عرض أقل",
   },
   toolCallGroup: {
+    thought: "فكّر",
     editedFiles: {
       one: "حرّر {{count}} ملفًا",
       other: "حرّر {{count}} ملفات",

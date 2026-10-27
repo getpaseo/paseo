@@ -230,6 +230,7 @@ interface LargeAgentStreamPayloadRequest {
 }
 
 interface AgentStreamStressRequest {
+  tools: boolean;
   count: number;
   coalesced: boolean;
 }
@@ -461,7 +462,7 @@ function parseLargeAgentStreamPayloadPrompt(
 
 function parseAgentStreamStressPrompt(prompt: AgentPromptInput): AgentStreamStressRequest | null {
   const text = promptToText(prompt);
-  const match = /emit\s+(\d+)\s+(coalesced\s+)?agent stream updates/i.exec(text);
+  const match = /emit\s+(\d+)\s+(coalesced\s+|tool\s+)?agent stream updates/i.exec(text);
   if (!match) {
     return null;
   }
@@ -471,7 +472,8 @@ function parseAgentStreamStressPrompt(prompt: AgentPromptInput): AgentStreamStre
   }
   return {
     count: Math.min(count, 5_000),
-    coalesced: Boolean(match[2]),
+    coalesced: match[2]?.trim() === "coalesced",
+    tools: match[2]?.trim() === "tool",
   };
 }
 
@@ -1452,21 +1454,37 @@ export class MockLoadTestAgentSession implements AgentSession {
     this.emitTurnStarted(turn);
 
     for (let index = 0; index < stress.count; index += 1) {
-      this.emitTimeline(
-        turn.turnId,
-        stress.coalesced
-          ? {
-              type: "assistant_message",
-              text: `stress-update-${index}`,
-              messageId: turn.assistantMessageId,
-            }
-          : {
-              type: "todo",
-              items: [{ text: `stress-update-${index}`, completed: index % 2 === 0 }],
-            },
-      );
+      let item: AgentTimelineItem;
+      if (stress.tools) {
+        item = {
+          type: "tool_call",
+          callId: `${turn.turnId}:stress:${index}`,
+          name: "Bash",
+          status: "completed",
+          error: null,
+          detail: { type: "shell", command: `echo stress-${index}`, output: `stress-${index}` },
+        };
+      } else if (stress.coalesced) {
+        item = {
+          type: "assistant_message",
+          text: `stress-update-${index}`,
+          messageId: turn.assistantMessageId,
+        };
+      } else {
+        item = {
+          type: "todo",
+          items: [{ text: `stress-update-${index}`, completed: index % 2 === 0 }],
+        };
+      }
+      this.emitTimeline(turn.turnId, item);
     }
 
+    if (stress.tools)
+      this.emitTimeline(turn.turnId, {
+        type: "assistant_message",
+        text: `Completed ${stress.count} commands`,
+        messageId: turn.assistantMessageId,
+      });
     this.activeTurn = null;
     const usage = {
       inputTokens: 1,
