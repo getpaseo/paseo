@@ -456,6 +456,12 @@ function resolveInitialAttention(input: AttentionState | undefined): AttentionSt
   };
 }
 
+interface TurnEnd {
+  agentId: string;
+  canceled: boolean;
+  stale: boolean;
+}
+
 interface StreamEventFlags {
   shouldDispatchEvent: boolean;
   shouldNotifyWaiters: boolean;
@@ -864,6 +870,9 @@ export class AgentManager {
   private readonly registry?: AgentStorage;
   private readonly durableTimelineStore?: AgentTimelineStore;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
+  // Agents whose latest live turn ended canceled: the user stopped it, so its settle to idle is
+  // no "finished" attention, no unread mark and no push.
+  private readonly canceledTurnEnds = new Set<string>();
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
@@ -3960,6 +3969,7 @@ export class AgentManager {
       );
       this.runs.settleForegroundRun(agentId, run.token);
       if (!agent.pendingReplacement) {
+        this.rememberTurnEnd({ agentId, canceled: true, stale: false });
         agent.lifecycle = "idle";
         this.touchUpdatedAt(agent);
         this.emitState(agent);
@@ -4664,6 +4674,7 @@ export class AgentManager {
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
+    this.canceledTurnEnds.delete(agent.id);
     if (agent.unsubscribeSession) {
       agent.unsubscribeSession();
       agent.unsubscribeSession = null;
@@ -5180,6 +5191,11 @@ export class AgentManager {
         eventTurnId,
         options?.fromHistory === true,
       );
+      this.rememberTurnEnd({
+        agentId: agent.id,
+        canceled: event.type === "turn_canceled",
+        stale: terminalDisposition === "stale",
+      });
     }
 
     const flags: StreamEventFlags = { shouldDispatchEvent: true, shouldNotifyWaiters: true };
@@ -5848,6 +5864,11 @@ export class AgentManager {
 
     // Track the new status
     this.previousStatuses.set(agent.id, currentStatus);
+    if (previousStatus !== "running" && currentStatus === "running") {
+      this.canceledTurnEnds.delete(agent.id);
+    }
+    const settledFromRun = previousStatus === "running" && currentStatus === "idle";
+    const settledFromCancel = settledFromRun && this.canceledTurnEnds.delete(agent.id);
 
     if (!raisesAttention(agent)) {
       return;
@@ -5862,7 +5883,8 @@ export class AgentManager {
       return;
     }
 
-    if (previousStatus === "running" && currentStatus === "idle") {
+    // A canceled turn did not finish.
+    if (settledFromRun && !settledFromCancel) {
       agent.attention = {
         requiresAttention: true,
         attentionReason: "finished",
@@ -5888,6 +5910,18 @@ export class AgentManager {
       attentionTimestamp: new Date(),
     };
     this.broadcastAgentAttention(agent, "error");
+  }
+
+  // A replayed or stale terminal is not the live turn's end: it neither sets nor clears the mark.
+  private rememberTurnEnd({ agentId, canceled, stale }: TurnEnd): void {
+    if (stale) {
+      return;
+    }
+    if (canceled) {
+      this.canceledTurnEnds.add(agentId);
+    } else {
+      this.canceledTurnEnds.delete(agentId);
+    }
   }
 
   private enqueueBackgroundPersist(agent: ManagedAgent): void {
