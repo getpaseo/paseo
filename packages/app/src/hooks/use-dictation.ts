@@ -433,7 +433,8 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       attemptGuardRef.current.assertCurrent(attemptId);
       handleStreamingTranscriptionSuccess(transcriptText, generateMessageId());
     } catch (err) {
-      if (err instanceof Error && err.name === "AttemptCancelledError") {
+      // A failure that lands after a cancel belongs to an abandoned attempt.
+      if (!attemptGuardRef.current.isCurrent(attemptId)) {
         return;
       }
       handleDictationFailure(err);
@@ -450,9 +451,12 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   ]);
 
   const retryFailedDictation = useCallback(async () => {
-    if (!senderRef.current?.hasSegments()) {
+    if (isProcessingRef.current || !senderRef.current?.hasSegments()) {
       return;
     }
+    // Same attempt rule as confirm: a cancel, unmount or newer attempt while the
+    // final transcript is pending makes both its result and its failure stale.
+    const attemptId = attemptGuardRef.current.next();
     setError(null);
     setStatus("uploading");
     setIsProcessing(true);
@@ -465,9 +469,10 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       senderRef.current.resetStreamForReplay();
       const finalSeq = senderRef.current.getFinalSeq();
       const text = await ensureFinalTranscript(finalSeq);
+      attemptGuardRef.current.assertCurrent(attemptId);
       handleStreamingTranscriptionSuccess(text, generateMessageId());
     } catch (err) {
-      if (err instanceof Error && err.name === "AttemptCancelledError") {
+      if (!attemptGuardRef.current.isCurrent(attemptId)) {
         return;
       }
       handleDictationFailure(err);

@@ -276,6 +276,52 @@ test.describe("Terminal dictation", () => {
     expect(await received(bracketed.id, "bracketed")).toBe("first second ");
   });
 
+  test("the dictation pill keeps the tab row usable in a narrow split", async ({ page }) => {
+    const ws = await setup(page, { transcript: "narrow split words" });
+    const left = await createReceiver("bracketed", "dictation-narrow-left");
+    const right = await createReceiver("bracketed", "dictation-narrow-right");
+
+    await harness.openTerminal(page, { terminalId: left.id });
+    await runWorkspaceActionFromCommandCenter(page, "Split pane right");
+    await visibleTestId(page, `workspace-tab-terminal_${right.id}`).click();
+    await runWorkspaceActionFromCommandCenter(page, "Move tab right");
+    // Narrow enough that the pill's extra width decides whether the tab still fits.
+    await page.setViewportSize({ width: 1000, height: 900 });
+    const pane = splitChild(page, right);
+
+    const tab = visibleTestId(pane, `workspace-tab-terminal_${right.id}`);
+    const newTabButton = visibleTestId(pane, "workspace-new-tab-button");
+    const inlineNewTabButton = pane
+      .getByTestId("workspace-tabs-scroll")
+      .getByTestId("workspace-new-tab-button");
+    // Either the tab fits beside the inline new-tab button, or the row has switched to
+    // its overflow fallback: tabs scroll and the new-tab button moves to the toolbar.
+    // The button is never clipped by the tab scroller.
+    const expectTabsFit = async () => {
+      await expect(inlineNewTabButton).toHaveCount(1);
+      await expect(newTabButton).toBeInViewport({ ratio: 1 });
+      await expect(tab).toBeInViewport({ ratio: 1 });
+    };
+
+    await expectTabsFit();
+    await startFromToolbar(page, ws, pane);
+    await expect(visibleTestId(pane, "terminal-dictation-pill")).toBeVisible();
+    await expect(newTabButton).toBeInViewport({ ratio: 1 });
+    await expect(tab).toBeInViewport({ ratio: 1 });
+
+    // The failed pill carries the error text, which leaves too little room for the tab.
+    ws.failNextFinish("Synthetic transcription failure");
+    await visibleTestId(pane, "terminal-dictation-confirm").click();
+    await expect(visibleTestId(pane, "terminal-dictation-retry")).toBeVisible();
+    await expect(inlineNewTabButton).toHaveCount(0);
+    await expect(newTabButton).toBeInViewport({ ratio: 1 });
+
+    await visibleTestId(pane, "terminal-dictation-retry").click();
+    await expectReceived(right.id, "bracketed", "narrow split words ");
+    await expect(visibleTestId(pane, "terminal-toolbar-dictation")).toBeVisible();
+    await expectTabsFit();
+  });
+
   test.describe("on macOS", () => {
     test.use({ userAgent: MAC_USER_AGENT });
 
@@ -429,9 +475,76 @@ test.describe("Terminal dictation", () => {
     await expectNothingReceived(page, [first, "bracketed"], [second, "bracketed"]);
   });
 
+  // Fails the first confirm, then retries with the final reply held, so the retry is
+  // still processing when the test acts on it.
+  async function startHeldRetry(page: Page, ws: DictationWsHarness) {
+    ws.failNextFinish("Synthetic transcription failure");
+    await startFromToolbar(page, ws);
+    await visibleTestId(page, "terminal-dictation-confirm").click();
+    await expect(visibleTestId(page, "terminal-dictation-retry")).toBeVisible();
+    ws.holdFinal();
+    await visibleTestId(page, "terminal-dictation-retry").click();
+    await expect(visibleTestId(page, "terminal-dictation-retry")).toHaveCount(0);
+    await expect.poll(() => ws.hasHeldFinal()).toBe(true);
+  }
+
+  test("cancelling a retry drops its late transcript", async ({ page }) => {
+    const ws = await setup(page, { transcript: "cancelled retry words" });
+    const terminal = await createReceiver("bracketed", "dictation-retry-cancel");
+
+    await harness.openTerminal(page, { terminalId: terminal.id });
+    await startHeldRetry(page, ws);
+    await visibleTestId(page, "terminal-dictation-cancel").click();
+    await expect(visibleTestId(page, "terminal-toolbar-dictation")).toBeVisible();
+    ws.releaseFinal();
+
+    await expectNothingReceived(page, [terminal, "bracketed"]);
+    await expect(visibleTestId(page, "terminal-toolbar-dictation")).toBeVisible();
+  });
+
+  test("hiding a retrying terminal and returning before its reply drops the transcript", async ({
+    page,
+  }) => {
+    const ws = await setup(page, { transcript: "hidden retry words" });
+    const first = await createReceiver("bracketed", "dictation-retry-hide-a");
+    const second = await createReceiver("bracketed", "dictation-retry-hide-b");
+
+    await harness.openTerminal(page, { terminalId: first.id });
+    await startHeldRetry(page, ws);
+    await selectTerminalTab(page, second);
+    await expect(visibleTestId(page, "terminal-toolbar-dictation")).toBeVisible();
+    // Back on the retained pane, which is presented and still the recording owner.
+    await selectTerminalTab(page, first);
+    await expect(visibleTestId(page, "terminal-toolbar-dictation")).toBeVisible();
+    ws.releaseFinal();
+
+    await expectNothingReceived(page, [first, "bracketed"], [second, "bracketed"]);
+  });
+
+  test.describe("on compact web on macOS", () => {
+    test.use({ userAgent: MAC_USER_AGENT });
+
+    // Compact web turns shortcuts off except terminal dictation's Cmd+D.
+    test("Cmd+D starts and then confirms dictation in the focused terminal", async ({ page }) => {
+      const ws = await setup(page, { transcript: "compact shortcut words" });
+      const terminal = await createReceiver("bracketed", "dictation-compact-shortcut");
+
+      await openCompact(page, terminal);
+      await terminalSurface(page).click();
+      const chunk = ws.nextChunk();
+      await terminalInput(page).press("Meta+d");
+      await expect(visibleTestId(page, "terminal-dictation-overlay")).toBeVisible();
+      await chunk;
+      await expect(terminalInput(page)).toBeFocused();
+      await terminalInput(page).press("Meta+d");
+
+      await expectReceived(terminal.id, "bracketed", "compact shortcut words ");
+      await expect(page.getByTestId("terminal-dictation-overlay")).toHaveCount(0);
+      await expect(visibleTestId(page, "terminal-dictation")).toBeVisible();
+    });
+  });
+
   test.describe("on compact web", () => {
-    // Keyboard shortcuts are off on compact form factors (keyboardShortcutsAvailable), so
-    // the key-bar mic is how compact web dictates.
     test("the key-bar mic shows the overlay and confirm delivers", async ({ page }) => {
       const ws = await setup(page, { transcript: "compact words" });
       const terminal = await createReceiver("bracketed", "dictation-compact-confirm");

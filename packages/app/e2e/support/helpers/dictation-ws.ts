@@ -152,6 +152,8 @@ export interface DictationWsHarness {
   setTranscript(text: string): void;
   /** Keeps the next final reply until `releaseFinal`. */
   holdFinal(): void;
+  /** True once the held finish has arrived and its final reply is waiting. */
+  hasHeldFinal(): boolean;
   releaseFinal(): void;
   /** Answers the next finish with a stream error instead of a final. */
   failNextFinish(error: string): void;
@@ -263,6 +265,7 @@ export async function installDictationWsHarness(
     holdFinal: () => {
       holdNextFinal = true;
     },
+    hasHeldFinal: () => heldFinal !== null,
     releaseFinal: () => {
       const reply = heldFinal;
       heldFinal = null;

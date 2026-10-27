@@ -111,6 +111,11 @@ interface ShortcutBinding {
   preventDefault?: boolean;
   stopPropagation?: boolean;
   help?: ShortcutHelp;
+  /**
+   * Also dispatched on compact web, where every other shortcut is off. Only for a key a
+   * hardware keyboard user at a narrow width has no other way to reach.
+   */
+  compact?: true;
 }
 
 export interface ParsedShortcutBinding extends ShortcutBinding {
@@ -1144,6 +1149,8 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     action: "terminal.dictation-toggle",
     combo: "Cmd+D",
     when: { mac: true, commandCenter: false, focusScope: "terminal" },
+    // A narrow browser window has no tab bar mic, only the key bar's.
+    compact: true,
     help: {
       id: "terminal-dictation-toggle",
       section: "agent-input",

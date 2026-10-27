@@ -105,9 +105,12 @@ const PANE_SPLIT_ACTIONS_RESERVED_WIDTH =
   PANE_SPLIT_ACTIONS_HORIZONTAL_PADDING * 2 +
   PANE_SPLIT_ACTIONS_OUTER_MARGIN;
 const PANE_MAXIMIZE_ACTION_RESERVED_WIDTH = smallIconButtonChromeFrameSize(false) + 1;
-// The terminal slot holds two icon buttons (upload, mic). While the terminal dictates the
-// mic grows into a pill; the row re-measures then instead of reserving that width always.
-const TERMINAL_SLOT_RESERVED_WIDTH = 2 * (smallIconButtonChromeFrameSize(false) + 1);
+// The toolbar's gap between controls (ToolbarControls).
+const TOOLBAR_CONTROL_GAP = 1;
+// The terminal slot's width before its first layout: two icon buttons (upload, mic). The slot
+// is measured afterwards, because the mic grows into a pill while the terminal dictates and the
+// row itself keeps its width when that happens.
+const TERMINAL_SLOT_IDLE_WIDTH = 2 * smallIconButtonChromeFrameSize(false) + TOOLBAR_CONTROL_GAP;
 // Chip geometry. `layoutMetrics` measures tabs from these same numbers, so a chip that changes
 // shape without changing them mis-measures and drops the row into the overflow-scroll fallback at
 // the wrong width. Keep them together.
@@ -1093,17 +1096,24 @@ function ResolvedWorkspaceDesktopTabsRow({
     updateMeasuredWidth(setExitFocusModeWidth, event);
   }, []);
 
+  const [terminalSlotWidth, setTerminalSlotWidth] = useState(TERMINAL_SLOT_IDLE_WIDTH);
+  const handleTerminalSlotLayout = useCallback((event: LayoutChangeEvent) => {
+    updateMeasuredWidth(setTerminalSlotWidth, event);
+  }, []);
+
   const activeTerminalId = resolveSlotTerminalId(tabs);
   const terminalSlot = useMemo(
     () =>
       activeTerminalId ? (
-        <TerminalToolbarSlot
+        <View
           key={`${normalizedServerId}:${activeTerminalId}`}
-          serverId={normalizedServerId}
-          terminalId={activeTerminalId}
-        />
+          style={styles.terminalSlot}
+          onLayout={handleTerminalSlotLayout}
+        >
+          <TerminalToolbarSlot serverId={normalizedServerId} terminalId={activeTerminalId} />
+        </View>
       ) : null,
-    [activeTerminalId, normalizedServerId],
+    [activeTerminalId, handleTerminalSlotLayout, normalizedServerId],
   );
 
   const layoutMetrics = useMemo(
@@ -1115,7 +1125,7 @@ function ResolvedWorkspaceDesktopTabsRow({
           (focusModeEnabled ? exitFocusModeWidth : 0) +
           (showPaneSplitActions ? PANE_SPLIT_ACTIONS_RESERVED_WIDTH : 0) +
           (showPaneMaximizeAction ? PANE_MAXIMIZE_ACTION_RESERVED_WIDTH : 0) +
-          (activeTerminalId ? TERMINAL_SLOT_RESERVED_WIDTH : 0),
+          (activeTerminalId ? terminalSlotWidth + TOOLBAR_CONTROL_GAP : 0),
       ),
       rowPaddingHorizontal: TAB_ROW_PADDING_HORIZONTAL,
       tabGap: TAB_CHIP_GAP,
@@ -1132,6 +1142,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       focusModeEnabled,
       showPaneMaximizeAction,
       showPaneSplitActions,
+      terminalSlotWidth,
     ],
   );
 
@@ -1687,6 +1698,11 @@ const styles = StyleSheet.create((theme) => ({
   paneSplitActions: {
     paddingHorizontal: PANE_SPLIT_ACTIONS_HORIZONTAL_PADDING,
     marginRight: PANE_SPLIT_ACTIONS_OUTER_MARGIN,
+  },
+  terminalSlot: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: TOOLBAR_CONTROL_GAP,
   },
   tab: {
     height: buttonControlHeight.xs,

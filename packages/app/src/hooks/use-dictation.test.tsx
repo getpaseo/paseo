@@ -33,16 +33,41 @@ vi.mock("@/hooks/use-dictation-audio-source", () => ({
 const { useDictation } = await import("./use-dictation");
 
 function createFakeClient() {
+  let rawMessageHandler: ((message: unknown) => void) | null = null;
   return {
     isConnected: true,
     startDictationStream: vi.fn(async () => {}),
-    sendDictationStreamChunk: vi.fn(),
+    // The daemon acknowledges each chunk, which lets finish() stop waiting for delivery.
+    sendDictationStreamChunk: vi.fn((dictationId: string, seq: number) => {
+      rawMessageHandler?.({ type: "dictation_stream_ack", payload: { dictationId, ackSeq: seq } });
+    }),
     finishDictationStream: vi.fn(async (dictationId: string) => ({ dictationId, text: "" })),
     cancelDictationStream: vi.fn(),
-    subscribeRawMessages: vi.fn(() => () => {}),
+    subscribeRawMessages: vi.fn((handler: (message: unknown) => void) => {
+      rawMessageHandler = handler;
+      return () => {
+        rawMessageHandler = null;
+      };
+    }),
     subscribeConnectionStatus: vi.fn(() => () => {}),
     on: vi.fn(() => () => {}),
   };
+}
+
+/** A finish reply the test settles, standing in for a transcription still in progress. */
+function holdFinish(client: ReturnType<typeof createFakeClient>) {
+  const held: {
+    resolve: (text: string) => void;
+    reject: (error: Error) => void;
+  } = { resolve: () => {}, reject: () => {} };
+  client.finishDictationStream.mockImplementationOnce(
+    (dictationId: string) =>
+      new Promise((resolve, reject) => {
+        held.resolve = (text) => resolve({ dictationId, text });
+        held.reject = reject;
+      }),
+  );
+  return held;
 }
 
 function renderDictation(client: ReturnType<typeof createFakeClient>) {
@@ -199,5 +224,149 @@ describe("useDictation pending startup", () => {
     expect(result.current.status).toBe("idle");
     expect(client.startDictationStream).toHaveBeenCalledTimes(1);
     expect(client.sendDictationStreamChunk).not.toHaveBeenCalled();
+  });
+});
+
+describe("useDictation retry", () => {
+  // Records one segment, then lets confirm fail so the attempt waits on retry.
+  async function failFirstConfirm(
+    client: ReturnType<typeof createFakeClient>,
+    result: { current: ReturnType<typeof useDictation> },
+  ) {
+    act(() => {
+      void result.current.startDictation();
+    });
+    await act(async () => {
+      audioSource.settleStart?.resolve();
+    });
+    await flush();
+    act(() => {
+      audioSource.onPcmSegment?.("AAAA");
+    });
+    client.finishDictationStream.mockRejectedValueOnce(new Error("Synthetic failure"));
+    await act(async () => {
+      await result.current.confirmDictation();
+    });
+    expect(result.current.status).toBe("failed");
+  }
+
+  it("delivers the transcript of a retry that is not cancelled", async () => {
+    const client = createFakeClient();
+    const { result, onTranscript } = renderDictation(client);
+    await failFirstConfirm(client, result);
+
+    client.finishDictationStream.mockImplementationOnce(async (dictationId: string) => ({
+      dictationId,
+      text: "retried words",
+    }));
+    await act(async () => {
+      await result.current.retryFailedDictation();
+    });
+
+    expect(onTranscript).toHaveBeenCalledTimes(1);
+    expect(onTranscript.mock.calls[0]?.[0]).toBe("retried words");
+    expect(result.current.status).toBe("idle");
+  });
+
+  it("drops the transcript of a retry cancelled before its reply", async () => {
+    const client = createFakeClient();
+    const { result, onTranscript } = renderDictation(client);
+    await failFirstConfirm(client, result);
+
+    const held = holdFinish(client);
+    act(() => {
+      void result.current.retryFailedDictation();
+    });
+    await flush();
+    expect(result.current.status).toBe("uploading");
+    await act(async () => {
+      await result.current.cancelDictation();
+    });
+    expect(result.current.status).toBe("idle");
+
+    await act(async () => {
+      held.resolve("cancelled retry words");
+    });
+    await flush();
+
+    expect(onTranscript).not.toHaveBeenCalled();
+    expect(result.current.status).toBe("idle");
+  });
+
+  it("drops the failure of a retry cancelled before its reply", async () => {
+    const client = createFakeClient();
+    const { result, onError } = renderDictation(client);
+    await failFirstConfirm(client, result);
+    onError.mockClear();
+
+    const held = holdFinish(client);
+    act(() => {
+      void result.current.retryFailedDictation();
+    });
+    await flush();
+    await act(async () => {
+      await result.current.cancelDictation();
+    });
+
+    await act(async () => {
+      held.reject(new Error("Late failure"));
+    });
+    await flush();
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(result.current.status).toBe("idle");
+    expect(result.current.error).toBeNull();
+  });
+
+  it("keeps a newer recording when a cancelled retry's reply arrives", async () => {
+    const client = createFakeClient();
+    const { result, onTranscript } = renderDictation(client);
+    await failFirstConfirm(client, result);
+
+    const held = holdFinish(client);
+    act(() => {
+      void result.current.retryFailedDictation();
+    });
+    await flush();
+    await act(async () => {
+      await result.current.cancelDictation();
+    });
+    act(() => {
+      void result.current.startDictation();
+    });
+    await act(async () => {
+      audioSource.settleStart?.resolve();
+    });
+    await flush();
+    expect(result.current.status).toBe("recording");
+
+    await act(async () => {
+      held.reject(new Error("Late failure"));
+    });
+    await flush();
+
+    expect(onTranscript).not.toHaveBeenCalled();
+    expect(result.current.status).toBe("recording");
+    expect(result.current.isRecording).toBe(true);
+  });
+
+  it("drops the transcript of a retry when the owner unmounts before its reply", async () => {
+    const client = createFakeClient();
+    const { result, unmount, onTranscript } = renderDictation(client);
+    await failFirstConfirm(client, result);
+
+    const held = holdFinish(client);
+    act(() => {
+      void result.current.retryFailedDictation();
+    });
+    await flush();
+    unmount();
+
+    await act(async () => {
+      held.resolve("unmounted retry words");
+    });
+    await flush();
+
+    expect(onTranscript).not.toHaveBeenCalled();
   });
 });
