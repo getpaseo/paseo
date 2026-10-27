@@ -4,6 +4,7 @@ import path from "node:path";
 import { expect, type Page } from "@playwright/test";
 import type { WebSocketRoute } from "@playwright/test";
 import { gotoAppShell, openSettings } from "./app";
+import { answerConfirmDialog } from "./confirm-dialog";
 import { daemonWsRoutePattern } from "./daemon-port";
 import { getServerId } from "./server-id";
 import { buildProjectsSettingsRoute } from "@/utils/host-routes";
@@ -238,8 +239,8 @@ export async function removeProjectScript(page: Page, scriptName: string): Promi
   // from the row's testID to avoid scoped locator unreliability.
   const id = (await row.getAttribute("data-testid"))!.replace("script-row-", "");
   await page.getByTestId(`script-row-menu-${id}`).click();
-  page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("menuitem", { name: "Remove" }).click();
+  await answerConfirmDialog(page, "accept");
 }
 
 // --- File manipulation ---

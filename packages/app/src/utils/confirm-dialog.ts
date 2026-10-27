@@ -1,6 +1,7 @@
 import { Alert } from "react-native";
 import { getDesktopHost, type DesktopDialogAskOptions } from "@/desktop/host";
 import { isNative } from "@/constants/platform";
+import { useConfirmDialogStore } from "@/utils/confirm-dialog-store";
 
 export interface ConfirmDialogInput {
   title: string;
@@ -15,7 +16,7 @@ interface ConfirmButtonConfig {
   cancelLabel: string;
 }
 
-function resolveButtonLabels(input: ConfirmDialogInput): ConfirmButtonConfig {
+export function resolveButtonLabels(input: ConfirmDialogInput): ConfirmButtonConfig {
   return {
     confirmLabel: input.confirmLabel ?? "Confirm",
     cancelLabel: input.cancelLabel ?? "Cancel",
@@ -92,15 +93,9 @@ async function showDesktopConfirmDialog(input: ConfirmDialogInput): Promise<bool
   return null;
 }
 
-function showWebConfirmDialog(input: ConfirmDialogInput): boolean {
-  const browserConfirm = (globalThis as { confirm?: (message?: string) => boolean }).confirm;
-  if (typeof browserConfirm !== "function") {
-    throw new Error("[ConfirmDialog] No web confirmation backend is available.");
-  }
-
+function showWebConfirmDialog(input: ConfirmDialogInput): Promise<boolean> {
   blurActiveWebElement();
-  const promptMessage = `${input.title}\n\n${input.message}`;
-  return browserConfirm(promptMessage);
+  return useConfirmDialogStore.getState().request(input);
 }
 
 export async function confirmDialog(input: ConfirmDialogInput): Promise<boolean> {

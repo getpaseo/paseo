@@ -32,6 +32,7 @@ import {
   expectIdleAgentRelease,
   setIdleAgentRelease,
 } from "../support/helpers/settings";
+import { answerConfirmDialog } from "../support/helpers/confirm-dialog";
 
 test.describe("Settings host page", () => {
   test("visits host settings and opens the label editor", async ({ page }) => {
@@ -87,9 +88,9 @@ test.describe("Settings host page", () => {
     await openSettingsHost(page, outdatedDaemon.serverId);
     await openHostSection(page, outdatedDaemon.serverId, "host");
 
-    page.once("dialog", (dialog) => dialog.accept());
     const updateButton = page.getByTestId("host-page-update-button");
     await updateButton.click();
+    await answerConfirmDialog(page, "accept");
 
     await expect(
       updateButton.filter({ hasText: /Preparing update|Downloading packages|Installing/ }),
