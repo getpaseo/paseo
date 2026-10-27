@@ -3562,6 +3562,36 @@ describe("transformPiModels", () => {
       },
     ]);
   });
+
+  test("keeps a colon that belongs to the model name", () => {
+    expect(
+      transformPiModels([
+        {
+          provider: "pi",
+          id: "cline/liquid/lfm-2.5-2.6b:free",
+          label: "cline/LFM2.5-2.6B (free) (Cline) [CI: 7.7]",
+        },
+        {
+          provider: "pi",
+          id: "openrouter/meta/llama-3.3-70b",
+          label: "openrouter/Meta: Llama 3.3 70B",
+        },
+      ]),
+    ).toEqual([
+      {
+        provider: "pi",
+        id: "cline/liquid/lfm-2.5-2.6b:free",
+        label: "LFM2.5-2.6B (free) (Cline) [CI: 7.7]",
+        description: "cline/LFM2.5-2.6B (free) (Cline) [CI: 7.7]",
+      },
+      {
+        provider: "pi",
+        id: "openrouter/meta/llama-3.3-70b",
+        label: "Llama 3.3 70B",
+        description: "openrouter/Meta: Llama 3.3 70B",
+      },
+    ]);
+  });
 });
 
 test("pi runtime safety protects queued replies and runtime-owned activity", async () => {

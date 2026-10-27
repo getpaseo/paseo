@@ -249,14 +249,18 @@ interface OmpSlashCommandInvocation {
 
 type AutoCompactMode = boolean | "toggle" | "unknown";
 
+// Upstream labels read "Vendor: Model" ("OpenAI: GPT-5.5"); a colon inside the model
+// name itself ("[CI: 7.7]") is part of the name.
+const OMP_MODEL_VENDOR_PREFIX = /^[\p{L} .&'-]+: /u;
+
 function normalizeOmpModelLabel(label: string): string {
   const normalizedLabel = label.trim().replace(/[_\s]+/g, " ");
-  const vendorSeparatorIndex = normalizedLabel.indexOf(": ");
-  if (vendorSeparatorIndex === -1) {
+  const vendorPrefix = OMP_MODEL_VENDOR_PREFIX.exec(normalizedLabel);
+  if (!vendorPrefix) {
     return normalizedLabel;
   }
 
-  return normalizedLabel.slice(vendorSeparatorIndex + 2).trim();
+  return normalizedLabel.slice(vendorPrefix[0].length);
 }
 
 export function transformOmpModels(models: AgentModelDefinition[]): AgentModelDefinition[] {
