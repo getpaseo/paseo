@@ -11,6 +11,7 @@ import {
   MAX_SIDEBAR_WIDTH,
   MIN_TREE_RAIL_WIDTH,
   MIN_SIDEBAR_WIDTH,
+  MIN_MOBILE_SIDEBAR_WIDTH,
   migratePanelState,
   PanelPersistedStateSchema,
   selectIsAgentListOpen,
@@ -42,6 +43,7 @@ export {
   MAX_SIDEBAR_WIDTH,
   MIN_TREE_RAIL_WIDTH,
   MIN_SIDEBAR_WIDTH,
+  MIN_MOBILE_SIDEBAR_WIDTH,
   clampTreeRailWidth,
   selectIsAgentListOpen,
   selectIsCompactFileExplorerOpen,
@@ -66,6 +68,8 @@ export interface PanelState {
   collapsedFilePathsByWorkspace: Record<string, string[]>;
   sidebarWidth: number;
   sidebarNavRows: number;
+  /** Compact-layout sidebar width; `null` fills the window. */
+  mobileSidebarWidth: number | null;
   explorerSortOption: SortOption;
   explorerShowHiddenFiles: boolean;
   treeRailWidth: number;
@@ -94,6 +98,7 @@ export interface PanelState {
   setCollapsedFilePathsForWorkspace: (workspaceKey: string, paths: string[]) => void;
   setSidebarWidth: (width: number) => void;
   setSidebarNavRows: (rows: number) => void;
+  setMobileSidebarWidth: (width: number | null) => void;
   setExplorerSortOption: (option: SortOption) => void;
   toggleExplorerShowHiddenFiles: () => void;
   setTreeRailWidth: (width: number) => void;
@@ -135,6 +140,7 @@ export const usePanelStore = create<PanelState>()(
       collapsedFilePathsByWorkspace: {},
       sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
       sidebarNavRows: 100,
+      mobileSidebarWidth: null,
       explorerSortOption: "name",
       explorerShowHiddenFiles: true,
       treeRailWidth: DEFAULT_TREE_RAIL_WIDTH,
@@ -248,6 +254,7 @@ export const usePanelStore = create<PanelState>()(
         })),
       setSidebarWidth: (width) => set({ sidebarWidth: clampSidebarWidth(width) }),
       setSidebarNavRows: (sidebarNavRows) => set({ sidebarNavRows }),
+      setMobileSidebarWidth: (width) => set({ mobileSidebarWidth: width }),
       setExplorerSortOption: (option) => set({ explorerSortOption: option }),
       toggleExplorerShowHiddenFiles: () =>
         set((state) => ({ explorerShowHiddenFiles: !state.explorerShowHiddenFiles })),
@@ -266,6 +273,7 @@ export const usePanelStore = create<PanelState>()(
         collapsedFilePathsByWorkspace: state.collapsedFilePathsByWorkspace,
         sidebarWidth: state.sidebarWidth,
         sidebarNavRows: state.sidebarNavRows,
+        mobileSidebarWidth: state.mobileSidebarWidth ?? undefined,
         explorerSortOption: state.explorerSortOption,
         explorerShowHiddenFiles: state.explorerShowHiddenFiles,
         treeRailWidth: state.treeRailWidth,

@@ -32,6 +32,10 @@ import {
 } from "@/components/desktop-sidebar-layout";
 import { useTopBand, useWindowLayout, resolveDesktopDivisionLayout } from "@/window-layout";
 import {
+  resolveMobileSidebarPersistedWidth,
+  resolveMobileSidebarWidth,
+} from "@/components/mobile-sidebar-layout";
+import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
   SIDEBAR_RESIZE_FAIL_OFFSET,
 } from "@/components/sidebar-resize-handle-layout";
@@ -592,13 +596,81 @@ function MobileSidebar({
     [labels.closeSidebar, closeSidebar, insets.right],
   );
 
+  const mobileSidebarWidth = usePanelStore((state) => state.mobileSidebarWidth);
+  const setMobileSidebarWidth = usePanelStore((state) => state.setMobileSidebarWidth);
+  const { width: windowWidth } = useWindowDimensions();
+  const visibleSidebarWidth = resolveMobileSidebarWidth({
+    requestedWidth: mobileSidebarWidth,
+    windowWidth,
+  });
+
+  const startWidthRef = useRef(visibleSidebarWidth);
+  const resizeWidth = useSharedValue(visibleSidebarWidth);
+  const [resizePressed, setResizePressed] = useState(false);
+  const showResizeGrip = useCallback(() => setResizePressed(true), []);
+  const hideResizeGrip = useCallback(() => setResizePressed(false), []);
+  const commitWidth = useCallback(
+    (width: number) => {
+      setMobileSidebarWidth(resolveMobileSidebarPersistedWidth({ width, windowWidth }));
+    },
+    [setMobileSidebarWidth, windowWidth],
+  );
+
+  useEffect(() => {
+    resizeWidth.value = visibleSidebarWidth;
+  }, [resizeWidth, visibleSidebarWidth]);
+
+  const resizeGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        // The close swipe is also a leftward pan; once the grip is touched, resizing owns it.
+        .blocksExternalGesture(closeGestureRef)
+        .onBegin(() => {
+          scheduleOnRN(showResizeGrip);
+        })
+        .activeOffsetX([-SIDEBAR_RESIZE_ACTIVATION_OFFSET, SIDEBAR_RESIZE_ACTIVATION_OFFSET])
+        .failOffsetY([-SIDEBAR_RESIZE_FAIL_OFFSET, SIDEBAR_RESIZE_FAIL_OFFSET])
+        .onStart((event) => {
+          startWidthRef.current = visibleSidebarWidth - event.translationX;
+          resizeWidth.value = visibleSidebarWidth;
+        })
+        .onUpdate((event) => {
+          resizeWidth.value = resolveMobileSidebarWidth({
+            requestedWidth: startWidthRef.current + event.translationX,
+            windowWidth,
+          });
+        })
+        .onEnd(() => {
+          scheduleOnRN(commitWidth, resizeWidth.value);
+        })
+        .onFinalize(() => {
+          scheduleOnRN(hideResizeGrip);
+        }),
+    [
+      closeGestureRef,
+      commitWidth,
+      hideResizeGrip,
+      resizeWidth,
+      showResizeGrip,
+      visibleSidebarWidth,
+      windowWidth,
+    ],
+  );
+
+  const resizeAnimatedStyle = useAnimatedStyle(() => ({
+    width: resizeWidth.value,
+  }));
+
   const mobileSidebarInsetStyle = useMemo(
-    () => ({
-      paddingTop: insetsTop,
-      paddingBottom: insetsBottom,
-      backgroundColor: theme.colors.surfaceSidebar,
-    }),
-    [insetsTop, insetsBottom, theme.colors.surfaceSidebar],
+    () => [
+      {
+        paddingTop: insetsTop,
+        paddingBottom: insetsBottom,
+        backgroundColor: theme.colors.surfaceSidebar,
+      },
+      resizeAnimatedStyle,
+    ],
+    [insetsTop, insetsBottom, theme.colors.surfaceSidebar, resizeAnimatedStyle],
   );
 
   return (
@@ -652,6 +724,13 @@ function MobileSidebar({
           handleAddHost={handleAddHost}
           handleOpenHostSettings={handleOpenHostSettings}
           onBeforeNavigate={closeSidebar}
+        />
+
+        <SidebarResizeHandle
+          edge="right"
+          gesture={resizeGesture}
+          pressed={resizePressed}
+          testID="mobile-sidebar-resize-handle"
         />
       </View>
     </MobilePanelOverlay>
