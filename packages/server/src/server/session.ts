@@ -1320,6 +1320,7 @@ export class Session {
             requestId: uuidv4(),
             hostKind: host.data.hostKind,
             supportedCommands: host.data.supportedCommands,
+            uploadBySelector: host.data.uploadBySelector,
           };
           void this.delivery
             .request(source, request, () => this.registerBrowserHost(request, false))
@@ -2336,6 +2337,7 @@ export class Session {
         id: owner.id,
         hostKind: request.hostKind,
         supportedCommands: request.supportedCommands,
+        uploadBySelector: request.uploadBySelector,
         sendBrowserAutomationRequest: (message) => owner.emit(message),
       });
       if (respond)

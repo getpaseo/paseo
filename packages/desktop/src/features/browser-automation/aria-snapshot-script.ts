@@ -297,6 +297,25 @@ export const ARIA_SNAPSHOT_SCRIPT = String.raw`(() => {
     if (truncated) break;
   }
 
+  // Upload controls often live below hidden parents and never enter the visual tree.
+  const referencedElements = new Set(runtime.refs.values());
+  for (const element of document.querySelectorAll('input[type="file"]')) {
+    if (referencedElements.has(element) || inheritedDisabled(element)) continue;
+    if (refCount >= MAX_REFS) { truncated = true; break; }
+    const role = roleFor(element) || 'textbox';
+    const name = nameFor(element, role);
+    const ref = '@e' + (++refCount);
+    const node = elementNode(element, role, name);
+    node.ref = ref;
+    node.fingerprint = fingerprintFor(element, role, name);
+    node.attributes.push('type=file', 'hidden=true');
+    if (element.id) node.attributes.push('id=' + JSON.stringify(element.id));
+    if (element.accept) node.attributes.push('accept=' + JSON.stringify(element.accept));
+    if (element.multiple) node.attributes.push('multiple=true');
+    runtime.refs.set(ref, element);
+    root.children.push(node);
+  }
+
   return JSON.stringify({
     marker: MARKER,
     root,

@@ -3233,6 +3233,7 @@ export const BrowserHostRegisterRequestSchema = z.object({
   requestId: z.string(),
   hostKind: z.string().min(1),
   supportedCommands: z.array(z.enum(BROWSER_AUTOMATION_COMMAND_NAMES)).min(1),
+  uploadBySelector: z.boolean().optional(),
 });
 export const BrowserHostRegisterResponseSchema = z.object({
   type: z.literal("browser.host.register.response"),

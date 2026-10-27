@@ -421,14 +421,15 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
     {
       title: "Upload files in browser",
       description:
-        "Set workspace files on a file input in a Paseo browser tab. Use browserId from browser_new_tab or browser_list_tabs; refs come from the latest browser_snapshot of the same tab and expire when the page changes.",
+        "Set real workspace files on a file input without opening a file picker. Provide exactly one of ref from the latest browser_snapshot, or a CSS selector for a single file input (including hidden inputs). Use browserId from browser_new_tab or browser_list_tabs. A successful call sets the input; separately verify the page finishes processing the attachment.",
       inputSchema: {
-        ref: BrowserRefInputSchema,
+        ref: BrowserRefInputSchema.optional(),
+        selector: z.string().min(1).max(4096).optional(),
         filePaths: z.array(z.string().min(1)).min(1),
         browserId: BrowserAutomationBrowserIdSchema,
       },
     },
-    async ({ ref, filePaths, browserId }) => {
+    async ({ ref, selector, filePaths, browserId }) => {
       const context = resolveBrowserToolContext(options);
       const payload = await options.broker.execute({
         agentId: context.agentId,
@@ -439,7 +440,8 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
           command: "upload",
           args: {
             browserId,
-            ref,
+            ...(ref ? { ref } : {}),
+            ...(selector ? { selector } : {}),
             filePaths,
           },
         },
@@ -930,6 +932,16 @@ function summarizeBrowserMediaSuccess(
   }
   if (result.command === "upload") {
     const count = result.filePaths.length;
+    if (result.selector)
+      return (
+        "Uploaded " +
+        count +
+        " file" +
+        (count === 1 ? "" : "s") +
+        " to file input matching " +
+        result.selector +
+        "."
+      );
     return `Uploaded ${count} file${count === 1 ? "" : "s"} to browser element ${result.ref}.`;
   }
   return null;

@@ -9,7 +9,7 @@ function connection(
     ownedCapability?: boolean;
     workspaceMultiplicity?: boolean;
     broadcasts?: boolean;
-    browserHost?: { hostKind: string; supportedCommands: string[] };
+    browserHost?: { hostKind: string; supportedCommands: string[]; uploadBySelector?: boolean };
     acknowledgeTimelineReads?: boolean;
   } = {},
 ) {
@@ -918,6 +918,41 @@ test("old browser hosting requires the registration sent in hello", async () => 
       supportedCommands: ["list_tabs"],
     });
     await expect(observation.ready).rejects.toThrow("browser_host");
+    expect(h.sent).toHaveLength(1);
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("legacy browser registration cannot claim an unadvertised selector capability", async () => {
+  const registration = { hostKind: "desktop app", supportedCommands: ["upload"] as ["upload"] };
+  const h = connection({ ownedSubscriptions: false, browserHost: registration });
+  try {
+    const connected = h.client.connect();
+    h.open();
+    await connected;
+    const observation = h.client.registerBrowserHost({ ...registration, uploadBySelector: true });
+    await expect(observation.ready).rejects.toThrow("browser_host");
+    expect(h.sent).toHaveLength(1);
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("legacy browser registration retains its advertised selector capability", async () => {
+  const registration = {
+    hostKind: "desktop app",
+    supportedCommands: ["upload"] as ["upload"],
+    uploadBySelector: true,
+  };
+  const h = connection({ ownedSubscriptions: false, browserHost: registration });
+  try {
+    const connected = h.client.connect();
+    h.open();
+    await connected;
+    const observation = h.client.registerBrowserHost(registration);
+    await observation.ready;
+    await observation.release();
     expect(h.sent).toHaveLength(1);
   } finally {
     await h.client.close();

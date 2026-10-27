@@ -47,7 +47,7 @@ Arguments marked `?` are optional.
 | `browser_hover`    | `browserId, ref`                                    | Hover an element — triggers real CSS `:hover`.                                       |
 | `browser_select`   | `browserId, ref, value`                             | Choose an option in a `<select>`.                                                    |
 | `browser_drag`     | `browserId, sourceRef, targetRef`                   | Drag one element onto another.                                                       |
-| `browser_upload`   | `browserId, ref, filePaths`                         | Set files on a file input. Paths must be inside the agent's workspace.               |
+| `browser_upload`   | `browserId, filePaths, ref? or selector?`           | Set files on a file input. Paths must be inside the agent's workspace.               |
 | `browser_scroll`   | `browserId, deltaX, deltaY, ref?`                   | Scroll the page, or center the wheel input over an element with `ref`.               |
 
 ## Navigation
@@ -64,6 +64,10 @@ Arguments marked `?` are optional.
 | Tool               | Arguments                   | Purpose                                                                                                                                  |
 | ------------------ | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `browser_evaluate` | `browserId, function, ref?` | Run a JavaScript function in the page. With `ref`, the resolved element is passed as the first argument. Results return as bounded JSON. |
+
+### Uploading hidden inputs
+
+Pass either a snapshot `ref` or a `selector` matching exactly one `input[type="file"]`, together with `browserId` and workspace `filePaths`. Hidden file inputs are included in snapshots with `type=file hidden=true`; their refs work for uploads without opening a native picker. Selector uploads use the browser DOM protocol and do not require page evaluation. Update both the browser host and daemon for selector uploads; an older host returns an update-required error. A successful tool response sets the input; wait for the page to finish processing the attachment before submitting or deleting the staged file.
 
 ## Errors
 

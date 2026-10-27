@@ -13,6 +13,7 @@ export interface BrowserHostClient {
   id: string;
   hostKind: string;
   supportedCommands: readonly BrowserAutomationCommandName[];
+  uploadBySelector?: boolean;
   sendBrowserAutomationRequest(request: BrowserAutomationExecuteRequest): void | Promise<void>;
 }
 
@@ -149,6 +150,17 @@ export class BrowserToolsBroker {
     });
     if (unsupported) {
       return unsupported;
+    }
+    if (
+      request.data.command.command === "upload" &&
+      request.data.command.args.selector &&
+      host.value.client.uploadBySelector !== true
+    ) {
+      return browserToolsFailure({
+        requestId,
+        code: "browser_unsupported",
+        message: "Update the browser host to upload files by CSS selector.",
+      });
     }
 
     return this.sendRequest({

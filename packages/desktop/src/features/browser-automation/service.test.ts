@@ -83,6 +83,9 @@ class FakeTab implements TabContents {
   public fullPageScreenshotData = "fullPagePng";
   public documentNodeId = 1;
   public queriedNodeId = 2;
+  public uploadNodeIds = [2];
+  public uploadNodeName = "INPUT";
+  public uploadNodeAttributes = ["type", "file"];
   public canNavigateBack = true;
   public canNavigateForward = false;
   public keypressTargetEditable = false;
@@ -222,8 +225,16 @@ class FakeTab implements TabContents {
     if (command === "Runtime.evaluate") {
       return { result: { objectId: "object-1" } };
     }
+    if (command === "DOM.getDocument") return { root: { nodeId: this.documentNodeId } };
+    if (command === "DOM.querySelectorAll") return { nodeIds: this.uploadNodeIds };
     if (command === "DOM.describeNode") {
-      return { node: { backendNodeId: this.queriedNodeId, nodeName: "INPUT" } };
+      return {
+        node: {
+          backendNodeId: this.queriedNodeId,
+          nodeName: this.uploadNodeName,
+          attributes: this.uploadNodeAttributes,
+        },
+      };
     }
     return {};
   }
@@ -1843,6 +1854,140 @@ describe("executeAutomationCommand", () => {
       "debug:Page.getLayoutMetrics",
       "debug:Page.captureScreenshot",
     ]);
+  });
+
+  test("upload locates a hidden file input by selector without a snapshot or page evaluation", async () => {
+    const browser = new BrowserAutomationHarness();
+    const workspaceRoot = resolvePath("/workspace/project");
+    const result = await browser.execute(
+      {
+        command: "upload",
+        args: {
+          browserId: BROWSER_A,
+          selector: 'input[type="file"]',
+          filePaths: ["uploads/a.txt"],
+        },
+      },
+      { cwd: workspaceRoot },
+    );
+    expect(result).toEqual({
+      requestId: "req-upload",
+      ok: true,
+      result: {
+        command: "upload",
+        browserId: BROWSER_A,
+        selector: 'input[type="file"]',
+        filePaths: [resolvePath(workspaceRoot, "uploads/a.txt")],
+      },
+    });
+    expect(browser.tab.scripts).toEqual([]);
+    expect(browser.tab.debugCommands).toEqual([
+      { command: "DOM.getDocument", params: {} },
+      { command: "DOM.querySelectorAll", params: { nodeId: 1, selector: 'input[type="file"]' } },
+      { command: "DOM.describeNode", params: { nodeId: 2 } },
+      {
+        command: "DOM.setFileInputFiles",
+        params: { backendNodeId: 2, files: [resolvePath(workspaceRoot, "uploads/a.txt")] },
+      },
+    ]);
+  });
+
+  test("selector uploads reject missing and ambiguous matches", async () => {
+    for (const nodeIds of [[], [2, 3]]) {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.uploadNodeIds = nodeIds;
+      const result = await browser.execute(
+        {
+          command: "upload",
+          args: { browserId: BROWSER_A, selector: 'input[type="file"]', filePaths: ["a.txt"] },
+        },
+        { cwd: resolvePath("/workspace/project") },
+      );
+      expect(result).toEqual({
+        requestId: "req-upload",
+        ok: false,
+        error: {
+          code: "browser_unsupported",
+          message:
+            "browser_upload selector must match exactly one file input; matched " +
+            nodeIds.length +
+            ".",
+          retryable: false,
+        },
+      });
+      expect(browser.tab.debugCommands.map((x) => x.command)).toEqual([
+        "DOM.getDocument",
+        "DOM.querySelectorAll",
+      ]);
+    }
+  });
+
+  test("upload refuses a selector matching a non-file input", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.uploadNodeAttributes = ["type", "text"];
+    const result = await browser.execute(
+      {
+        command: "upload",
+        args: { browserId: BROWSER_A, selector: "input", filePaths: ["a.txt"] },
+      },
+      { cwd: resolvePath("/workspace/project") },
+    );
+    expect(result).toEqual({
+      requestId: "req-upload",
+      ok: false,
+      error: {
+        code: "browser_unsupported",
+        message: "browser_upload target must be an input[type=file]",
+        retryable: false,
+      },
+    });
+    expect(browser.tab.debugCommands.map((x) => x.command)).toEqual([
+      "DOM.getDocument",
+      "DOM.querySelectorAll",
+      "DOM.describeNode",
+    ]);
+  });
+
+  test("selector uploads retain workspace path restrictions", async () => {
+    const browser = new BrowserAutomationHarness();
+    const result = await browser.execute(
+      {
+        command: "upload",
+        args: {
+          browserId: BROWSER_A,
+          selector: 'input[type="file"]',
+          filePaths: ["../secret.txt"],
+        },
+      },
+      { cwd: resolvePath("/workspace/project") },
+    );
+    expect(result).toEqual({
+      requestId: "req-upload",
+      ok: false,
+      error: {
+        code: "browser_unsupported",
+        message: "browser_upload only accepts files inside the agent workspace.",
+        retryable: false,
+      },
+    });
+    expect(browser.tab.debugCommands.map((x) => x.command)).toEqual([
+      "DOM.getDocument",
+      "DOM.querySelectorAll",
+      "DOM.describeNode",
+    ]);
+  });
+
+  test("upload reads attribute names separately from their values", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.uploadNodeAttributes = ["id", "type", "type", "file"];
+    const result = await browser.execute(
+      {
+        command: "upload",
+        args: { browserId: BROWSER_A, selector: "#type", filePaths: ["proof.txt"] },
+      },
+      { cwd: resolvePath("/workspace/project") },
+    );
+    expect(result.ok).toBe(true);
   });
 
   test("upload resolves workspace files before setting them on the file input", async () => {

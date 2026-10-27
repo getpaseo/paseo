@@ -166,8 +166,11 @@ export const BrowserAutomationScreenshotCommandSchema = z.object({
 export const BrowserAutomationUploadCommandSchema = z.object({
   command: z.literal("upload"),
   args: BrowserAutomationTabTargetSchema.extend({
-    ref: BrowserAutomationRefSchema,
+    ref: BrowserAutomationRefSchema.optional(),
+    selector: z.string().min(1).max(4096).optional(),
     filePaths: z.array(z.string().min(1)).min(1),
+  }).refine((args) => Number(Boolean(args.ref)) + Number(Boolean(args.selector)) === 1, {
+    message: "browser_upload requires exactly one of ref or selector",
   }),
 });
 
@@ -371,7 +374,8 @@ export const BrowserAutomationScreenshotResultSchema = z.object({
 export const BrowserAutomationUploadResultSchema = z.object({
   command: z.literal("upload"),
   browserId: BrowserAutomationBrowserIdSchema,
-  ref: BrowserAutomationRefSchema,
+  ref: BrowserAutomationRefSchema.optional(),
+  selector: z.string().min(1).max(4096).optional(),
   filePaths: z.array(z.string().min(1)).min(1),
 });
 

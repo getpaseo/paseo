@@ -345,6 +345,26 @@ const routedToolCases = [
     content: [{ type: "text", text: "Uploaded 1 file to browser element @e1." }],
   },
   {
+    name: "upload by selector",
+    toolName: "browser_upload",
+    input: { browserId: BROWSER_ID, selector: 'input[type="file"]', filePaths: ["/tmp/file.txt"] },
+    command: {
+      command: "upload",
+      args: { browserId: BROWSER_ID, selector: 'input[type="file"]', filePaths: ["/tmp/file.txt"] },
+    },
+    payload: {
+      requestId: "req-upload",
+      ok: true,
+      result: {
+        command: "upload",
+        browserId: BROWSER_ID,
+        selector: 'input[type="file"]',
+        filePaths: ["/tmp/file.txt"],
+      },
+    },
+    content: [{ type: "text", text: 'Uploaded 1 file to file input matching input[type="file"].' }],
+  },
+  {
     name: "select",
     toolName: "browser_select",
     input: { browserId: BROWSER_ID, ref: "@e3", value: "us" },

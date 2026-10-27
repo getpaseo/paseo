@@ -275,6 +275,7 @@ function matchesBrowserRegistration(advertised: unknown, request: ObservationReq
   const host = BrowserAutomationHostCapabilitySchema.safeParse(advertised);
   if (!host.success) return false;
   if (host.data.hostKind !== request.hostKind) return false;
+  if (request.uploadBySelector === true && host.data.uploadBySelector !== true) return false;
   for (const command of request.supportedCommands as string[]) {
     if (!host.data.supportedCommands.some((supported) => supported === command)) return false;
   }

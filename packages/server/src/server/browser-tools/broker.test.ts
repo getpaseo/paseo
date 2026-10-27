@@ -15,16 +15,19 @@ class FakeBrowserHostClient implements BrowserHostClient {
   public readonly receivedRequests: BrowserAutomationExecuteRequest[] = [];
   public readonly hostKind: string;
   public readonly supportedCommands: readonly BrowserAutomationCommandName[];
+  public readonly uploadBySelector?: boolean;
 
   public constructor(
     public readonly id: string,
     options: {
       hostKind?: string;
       supportedCommands?: readonly BrowserAutomationCommandName[];
+      uploadBySelector?: boolean;
     } = {},
   ) {
     this.hostKind = options.hostKind ?? "desktop app";
     this.supportedCommands = options.supportedCommands ?? [...BROWSER_AUTOMATION_COMMAND_NAMES];
+    this.uploadBySelector = options.uploadBySelector;
   }
 
   public sendBrowserAutomationRequest(request: BrowserAutomationExecuteRequest): void {
@@ -632,6 +635,57 @@ describe("BrowserToolsBroker", () => {
     });
     expect(firstHost.receivedRequests).toHaveLength(1);
     expect(secondHost.receivedRequests).toHaveLength(1);
+  });
+
+  test("selector uploads require an explicit browser host capability", async () => {
+    const broker = createBroker();
+    const client = new FakeBrowserHostClient("host-1");
+    broker.registerClient(client);
+    await expect(
+      broker.execute({
+        command: {
+          command: "upload",
+          args: { browserId: BROWSER_ID, selector: "#attachment", filePaths: ["proof.txt"] },
+        },
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "browser_unsupported",
+        message: "Update the browser host to upload files by CSS selector.",
+      },
+    });
+    expect(client.receivedRequests).toEqual([]);
+  });
+
+  test("selector-capable browser hosts receive upload requests", async () => {
+    const broker = createBroker();
+    const client = new FakeBrowserHostClient("host-1", { uploadBySelector: true });
+    broker.registerClient(client);
+    const args = {
+      browserId: BROWSER_ID,
+      selector: "#attachment",
+      filePaths: ["proof.txt"],
+    };
+    const result = { command: "upload" as const, ...args };
+    const pending = broker.execute({
+      command: { command: "upload", args },
+    });
+    expect(client.receivedRequests[0].command).toEqual({ command: "upload", args });
+    client.resolveLatestWith(broker, { requestId: "req-1", ok: true, result });
+    await expect(pending).resolves.toMatchObject({ ok: true, result });
+  });
+
+  test("ref uploads remain supported by browser hosts without selector capability", async () => {
+    const broker = createBroker();
+    const client = new FakeBrowserHostClient("host-1");
+    broker.registerClient(client);
+    const args = { browserId: BROWSER_ID, ref: "@e1", filePaths: ["proof.txt"] };
+    const pending = broker.execute({ command: { command: "upload", args } });
+    expect(client.receivedRequests[0].command).toEqual({ command: "upload", args });
+    const result = { command: "upload" as const, ...args };
+    client.resolveLatestWith(broker, { requestId: "req-1", ok: true, result });
+    await expect(pending).resolves.toMatchObject({ ok: true, result });
   });
 
   test("unsupported commands are rejected before sending to the routed host", async () => {

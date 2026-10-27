@@ -31,6 +31,7 @@ export const BrowserAutomationHostCapabilitySchema = z
       return supportedCommands;
     }),
     hostKind: z.string().min(1).default("browser host"),
+    uploadBySelector: z.boolean().optional(),
   })
   .passthrough();
 

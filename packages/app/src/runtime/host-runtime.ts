@@ -568,6 +568,7 @@ function createDefaultDeps(
     ? {
         [CLIENT_CAPS.browserHost]: {
           supportedCommands: [...BROWSER_AUTOMATION_COMMAND_NAMES],
+          uploadBySelector: true,
           hostKind: "desktop app",
         },
       }

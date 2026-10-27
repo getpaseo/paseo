@@ -1,4 +1,5 @@
 import { isAbsolute, relative, resolve as resolvePath } from "node:path";
+import { z } from "zod";
 
 import type {
   BrowserAutomationCommand,
@@ -427,7 +428,7 @@ const commandHandlers: Record<BrowserAutomationCommand["command"], CommandHandle
       request.cwd,
       workspaceId,
       uploadCommand.args.browserId,
-      { ref: uploadCommand.args.ref, filePaths: uploadCommand.args.filePaths },
+      uploadCommand.args,
       registry,
       snapshotEngine,
     );
@@ -1284,20 +1285,20 @@ interface CdpCaptureScreenshotResult {
   data?: string;
 }
 
-interface CdpRuntimeEvaluateResult {
-  result?: {
-    objectId?: string;
-    subtype?: string;
-  };
-}
-
-interface CdpDescribeNodeResult {
-  node?: {
-    backendNodeId?: number;
-    nodeId?: number;
-    nodeName?: string;
-  };
-}
+const CdpUploadRuntimeSchema = z.object({
+  result: z.object({ objectId: z.string().optional(), subtype: z.string().optional() }).optional(),
+});
+const CdpUploadDocumentSchema = z.object({
+  root: z.object({ nodeId: z.number().int().positive() }),
+});
+const CdpUploadQuerySchema = z.object({ nodeIds: z.array(z.number().int().positive()) });
+const CdpUploadNodeSchema = z.object({
+  node: z.object({
+    backendNodeId: z.number().int().positive(),
+    nodeName: z.string(),
+    attributes: z.array(z.string()),
+  }),
+});
 
 async function getCdpLayoutMetrics(contents: TabContents): Promise<{
   viewportWidth: number;
@@ -1385,7 +1386,7 @@ async function executeUpload(
   cwd: string | undefined,
   workspaceId: string | undefined,
   browserId: string,
-  input: { ref: string; filePaths: string[] },
+  input: Extract<BrowserAutomationCommand, { command: "upload" }>["args"],
   registry: BrowserRegistry,
   snapshotEngine: BrowserSnapshotEngine,
 ): Promise<AutomationCommandPayload> {
@@ -1397,29 +1398,67 @@ async function executeUpload(
     if (!target.contents.sendDebugCommand) {
       return fail(requestId, "browser_unsupported", "browser_upload requires CDP");
     }
-    const expression = snapshotEngine.runtimeElementExpression({
-      browserId: target.browserId,
-      ref: input.ref,
-    });
-    if (typeof expression !== "string") {
-      return staleRefFailure(requestId, input.ref);
+    let nodeTarget: Record<string, unknown>;
+    if (input.selector && !input.ref) {
+      const document = await target.contents.sendDebugCommand("DOM.getDocument", {});
+      const parsedDocument = CdpUploadDocumentSchema.parse(document);
+      const queried = await target.contents.sendDebugCommand("DOM.querySelectorAll", {
+        nodeId: parsedDocument.root.nodeId,
+        selector: input.selector,
+      });
+      const { nodeIds } = CdpUploadQuerySchema.parse(queried);
+      if (nodeIds.length !== 1) {
+        return fail(
+          requestId,
+          "browser_unsupported",
+          "browser_upload selector must match exactly one file input; matched " +
+            nodeIds.length +
+            ".",
+        );
+      }
+      nodeTarget = { nodeId: nodeIds[0] };
+    } else if (input.ref && !input.selector) {
+      const expression = snapshotEngine.runtimeElementExpression({
+        browserId: target.browserId,
+        ref: input.ref,
+      });
+      if (typeof expression !== "string") return staleRefFailure(requestId, input.ref);
+      const evaluated = CdpUploadRuntimeSchema.parse(
+        await target.contents.sendDebugCommand("Runtime.evaluate", {
+          expression,
+          objectGroup: "paseo-browser-automation",
+          returnByValue: false,
+        }),
+      );
+      const objectId = evaluated.result?.objectId;
+      if (!objectId || evaluated.result?.subtype === "null")
+        return staleRefFailure(requestId, input.ref);
+      nodeTarget = { objectId };
+    } else {
+      return fail(
+        requestId,
+        "browser_unsupported",
+        "browser_upload requires exactly one of ref or selector",
+      );
     }
-    const evaluated = (await target.contents.sendDebugCommand("Runtime.evaluate", {
-      expression,
-      objectGroup: "paseo-browser-automation",
-      returnByValue: false,
-    })) as CdpRuntimeEvaluateResult;
-    const objectId = evaluated.result?.objectId;
-    if (!objectId || evaluated.result?.subtype === "null") {
-      return staleRefFailure(requestId, input.ref);
-    }
-    const described = (await target.contents.sendDebugCommand("DOM.describeNode", {
-      objectId,
-    })) as CdpDescribeNodeResult;
-    const backendNodeId = described.node?.backendNodeId;
-    if (typeof backendNodeId !== "number" || backendNodeId <= 0) {
-      return staleRefFailure(requestId, input.ref);
-    }
+    const described = CdpUploadNodeSchema.parse(
+      await target.contents.sendDebugCommand("DOM.describeNode", nodeTarget),
+    );
+    const attributes = described.node.attributes;
+    const typeIndex = attributes.findIndex(
+      (attribute, index) => index % 2 === 0 && attribute === "type",
+    );
+    const isFileInput =
+      described.node.nodeName.toUpperCase() === "INPUT" &&
+      typeIndex >= 0 &&
+      attributes[typeIndex + 1]?.toLowerCase() === "file";
+    if (!isFileInput)
+      return fail(
+        requestId,
+        "browser_unsupported",
+        "browser_upload target must be an input[type=file]",
+      );
+    const backendNodeId = described.node.backendNodeId;
     const workspaceRoot = resolveUploadWorkspaceRoot(cwd);
     if (!workspaceRoot) {
       return fail(requestId, "browser_unsupported", "browser_upload requires request cwd");
@@ -1443,7 +1482,8 @@ async function executeUpload(
       result: {
         command: "upload",
         browserId: target.browserId,
-        ref: input.ref,
+        ...(input.ref ? { ref: input.ref } : {}),
+        ...(input.selector ? { selector: input.selector } : {}),
         filePaths,
       },
     };

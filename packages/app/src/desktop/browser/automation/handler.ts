@@ -76,6 +76,7 @@ export function mountBrowserAutomationDaemonClientHandler(
   const observation = client.registerBrowserHost({
     hostKind: "desktop app",
     supportedCommands: [...BROWSER_AUTOMATION_COMMAND_NAMES],
+    uploadBySelector: true,
   });
   const unmount = mountBrowserAutomationHandler({
     client: {

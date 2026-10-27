@@ -124,6 +124,17 @@ const commandParseCases = [
     },
   },
   {
+    name: "upload hidden file input by selector",
+    command: {
+      command: "upload",
+      args: { browserId: BROWSER_ID, selector: 'input[type="file"]', filePaths: ["/tmp/file.txt"] },
+    },
+    expected: {
+      command: "upload",
+      args: { browserId: BROWSER_ID, selector: 'input[type="file"]', filePaths: ["/tmp/file.txt"] },
+    },
+  },
+  {
     name: "select",
     command: {
       command: "select",
@@ -353,6 +364,21 @@ const resultParseCases = [
     expected: { command: "select", browserId: BROWSER_ID, ref: "@e3", value: "us" },
   },
   {
+    name: "upload selector result",
+    result: {
+      command: "upload",
+      browserId: BROWSER_ID,
+      selector: "#attachment",
+      filePaths: ["/tmp/file.txt"],
+    },
+    expected: {
+      command: "upload",
+      browserId: BROWSER_ID,
+      selector: "#attachment",
+      filePaths: ["/tmp/file.txt"],
+    },
+  },
+  {
     name: "hover",
     result: { command: "hover", browserId: BROWSER_ID, ref: "@e4" },
     expected: { command: "hover", browserId: BROWSER_ID, ref: "@e4" },
@@ -470,6 +496,20 @@ describe("browser automation execute RPC schemas", () => {
       workspaceId: "workspace-1",
       command: { command: "list_tabs", args: {} },
     });
+  });
+
+  test("upload rejects missing or ambiguous target locators", () => {
+    for (const locator of [{}, { ref: "@e1", selector: 'input[type="file"]' }]) {
+      const parsed = BrowserAutomationExecuteRequestSchema.safeParse({
+        type: "browser.automation.execute.request",
+        requestId: "req-upload",
+        command: {
+          command: "upload",
+          args: { browserId: BROWSER_ID, filePaths: ["/tmp/file.txt"], ...locator },
+        },
+      });
+      expect(parsed.success).toBe(false);
+    }
   });
 
   test("new tab reads workspace from the request envelope", () => {
