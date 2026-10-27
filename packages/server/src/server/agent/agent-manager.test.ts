@@ -880,6 +880,66 @@ test("retries provider history hydration after a stream failure", async () => {
   }
 });
 
+test("notification batches share the run they start or join", async () => {
+  const session = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-notification-turns-"));
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const batch = (prefix: string) =>
+    ["one", "two"]
+      .map((id) =>
+        formatAgentMessage({
+          id: `${prefix}-${id}`,
+          source: { kind: "agent-notification", agentId: "worker", event: "finished" },
+          text: "Worker finished",
+        }),
+      )
+      .join("\n\n");
+  const consume = async (prompt: string, clientMessageId: string) => {
+    for await (const _event of manager.streamAgent(agent.id, prompt, { clientMessageId })) {
+    }
+  };
+  try {
+    const first = consume("human", "human");
+    await manager.waitForAgentRunStart(agent.id);
+    await expect(
+      manager.steerAgentRun(agent.id, batch("joined"), { clientMessageId: "joined-one" }),
+    ).resolves.toEqual({ status: "accepted" });
+    session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "active-turn-1" });
+    await first;
+    const second = consume(batch("idle"), "idle-one");
+    await manager.waitForAgentRunStart(agent.id);
+    session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "active-turn-2" });
+    await second;
+    expect(
+      manager.fetchTimeline(agent.id, { limit: 0 }).rows.map((row) => ({
+        turnId: row.turnId,
+        id: row.item.type === "tool_call" ? row.item.callId : row.item.type,
+      })),
+    ).toEqual([
+      { turnId: "active-turn-1", id: "user_message" },
+      { turnId: "active-turn-1", id: "paseo-agent-message:joined-one" },
+      { turnId: "active-turn-1", id: "paseo-agent-message:joined-two" },
+      { turnId: "active-turn-2", id: "paseo-agent-message:idle-one" },
+      { turnId: "active-turn-2", id: "paseo-agent-message:idle-two" },
+    ]);
+  } finally {
+    await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("unavailable steer interrupts once and starts one replacement turn", async () => {
   const session = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
   session.steerResult = "unavailable";
