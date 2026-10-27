@@ -4,6 +4,39 @@ import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 
 describe("InMemoryAgentTimelineStore", () => {
+  it("resets stale forward cursors to complete available turns", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("agent", { epoch: "current" });
+    for (let index = 0; index < 60; index++)
+      store.append(
+        "agent",
+        {
+          type: "tool_call",
+          callId: `call-${index}`,
+          name: "shell",
+          status: "completed",
+          error: null,
+          detail: { type: "unknown", input: null, output: null },
+        },
+        { turnId: "run" },
+      );
+    const page = store.fetch("agent", {
+      direction: "after",
+      cursor: { epoch: "old", seq: 10 },
+      limit: 40,
+      wholeTurns: true,
+    });
+    expect(page.rows).toHaveLength(60);
+    expect(page).toMatchObject({
+      reset: true,
+      staleCursor: true,
+      startSeq: 1,
+      endSeq: 60,
+      hasOlder: false,
+      hasNewer: false,
+    });
+  });
+
   it("clamps an overshooting before cursor into the bounded tail window", () => {
     const store = new InMemoryAgentTimelineStore();
     store.initialize("agent-1", {

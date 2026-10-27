@@ -1,3 +1,7 @@
+import {
+  holdOlderHistoryPages,
+  userScrollsTimelineToHistoryStart,
+} from "../support/helpers/timeline-pagination";
 import { getActiveTabTestId } from "../support/helpers/launcher";
 import type { Page } from "@playwright/test";
 import { test, expect } from "../support/fixtures";
@@ -155,5 +159,60 @@ test("received messages show their sender and open that agent", async ({ page })
     await expect.poll(() => getActiveTabTestId(page)).toContain(sender.id);
   } finally {
     await recipient.cleanup();
+  }
+});
+
+async function seedWholeTurnHistory() {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "whole-turn-history-",
+    title: "Whole turns",
+    model: "e2e-fast-stream",
+  });
+  for (const prompt of [
+    ...Array.from(
+      { length: 25 },
+      (_, index) => `Short ${index}: emit 1 coalesced agent stream updates`,
+    ),
+    "Older long turn: emit 60 tool agent stream updates",
+    "Latest long turn: emit 120 tool agent stream updates",
+  ]) {
+    await agent.client.sendAgentMessage(agent.agentId, prompt);
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+  }
+  return agent;
+}
+
+test("loads complete long turns and preserves expansion while revealing older history", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await useChatDisplay(page, "collapseTurns");
+  const agent = await seedWholeTurnHistory();
+  try {
+    const history = await holdOlderHistoryPages(page, agent);
+    await openAgentRoute(page, agent);
+    await expectComposerVisible(page);
+    const latest = page
+      .getByTestId("turn-summary")
+      .getByRole("button", { name: "Ran 120 commands", exact: true });
+    await expect(latest).toBeVisible();
+    await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
+    await latest.click();
+    await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(120);
+    await userScrollsTimelineToHistoryStart(page);
+    await history.expectRequestedPages(1);
+    history.releasePage(1);
+    await expect(
+      page
+        .getByTestId("turn-summary")
+        .getByRole("button", { name: "Ran 60 commands", exact: true }),
+    ).toBeVisible();
+    await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(120);
+    history.expectNoRepeatedEntries();
+    await latest.scrollIntoViewIfNeeded();
+    await latest.click();
+    await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
+  } finally {
+    await agent.cleanup();
   }
 });

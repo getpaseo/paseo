@@ -1,15 +1,13 @@
+import { continuesTimelineTurn, isTimelineTurnTrigger } from "@getpaseo/protocol/timeline-turn";
 import type { StreamItem } from "@/types/stream";
 
 /**
  * Canonical turn IDs take precedence. Timelines without them retain the legacy
- * user-message boundary rule so old daemons and persisted rows need no rewrite.
+ * trigger boundary rule; missing IDs cannot reconstruct historical batching.
  */
 export function continuesTurn(previous: StreamItem | null, next: StreamItem | null): boolean {
   if (!previous || !next) return false;
-  if (previous.turnId !== undefined && next.turnId !== undefined) {
-    return previous.turnId === next.turnId;
-  }
-  return !isTurnTrigger(next);
+  return continuesTimelineTurn(previous.turnId, next.turnId, isTurnTrigger(next));
 }
 
 /**
@@ -39,10 +37,9 @@ export function belongsToTurn(item: StreamItem, turnId: string | null): boolean 
 
 /** Inputs that start a turn when older history has no canonical turn IDs. */
 export function isTurnTrigger(item: StreamItem): boolean {
-  if (item.kind === "user_message") return true;
-  return (
-    item.kind === "tool_call" &&
-    item.payload.source === "agent" &&
-    (item.payload.data.agentMessage !== undefined || item.payload.data.name === "heartbeat")
+  return isTimelineTurnTrigger(
+    item.kind === "tool_call" && item.payload.source === "agent"
+      ? { type: item.kind, ...item.payload.data }
+      : { type: item.kind },
   );
 }

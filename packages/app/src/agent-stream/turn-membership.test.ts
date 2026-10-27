@@ -67,6 +67,24 @@ function completedFooterIds(layout: ReturnType<typeof layoutFor>["layout"]): str
 }
 
 describe("canonical turn membership", () => {
+  it("uses trigger fallback for missing IDs without pretending to recover batching", () => {
+    const previous = assistant("reply", 1, "first");
+    const trigger = runningTool("heartbeat", 2, "first");
+    if (trigger.kind !== "tool_call" || trigger.payload.source !== "agent")
+      throw new Error("Expected agent tool");
+    trigger.payload.data.name = "heartbeat";
+    expect(continuesTurn(previous, trigger)).toBe(true);
+    delete trigger.turnId;
+    expect(continuesTurn(previous, trigger)).toBe(false);
+    trigger.payload.data.name = "agent_message";
+    trigger.payload.data.agentMessage = {
+      event: "finished",
+      sender: { id: "worker" },
+      text: "Done",
+    };
+    expect(continuesTurn(previous, trigger)).toBe(false);
+  });
+
   it("stops tagged traversal at every mismatching turn ID", () => {
     expect(continuesTurn(assistant("first", 1, "turn-1"), runningTool("next", 2, "turn-2"))).toBe(
       false,
