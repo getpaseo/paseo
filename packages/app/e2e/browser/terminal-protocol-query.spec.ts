@@ -306,7 +306,11 @@ test.describe("Terminal protocol queries", () => {
     try {
       const upload = visibleTestId(page, "terminal-toolbar-upload");
       await expect(upload).toHaveCount(1);
+      // The terminal slot sits right before "...": upload, then the mic.
       expect(await controlBefore(visibleTestId(page, "workspace-split-pane-menu"))).toBe(
+        "terminal-toolbar-dictation",
+      );
+      expect(await controlBefore(visibleTestId(page, "terminal-toolbar-dictation"))).toBe(
         "terminal-toolbar-upload",
       );
 

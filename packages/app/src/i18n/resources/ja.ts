@@ -628,6 +628,13 @@ export const ja: TranslationResources = {
       uploadingFile: "ファイルをアップロード中…",
       actions: {
         uploadFile: "ファイルをアップロード",
+        startDictation: "音声入力を開始",
+        stopDictation: "停止して文字起こしを貼り付け",
+      },
+      dictation: {
+        updateHost: "ターミナルで音声入力を使うにはホストを更新してください。",
+        unavailable: "このホストでは音声入力を利用できません。",
+        discard: "録音を破棄",
       },
     },
     sheet: {
@@ -2592,6 +2599,7 @@ export const ja: TranslationResources = {
         cycleAgentMode: "エージェントモードを順に切り替え",
         toggleVoiceMode: "音声モードを切り替え",
         startStopDictation: "音声入力を開始/停止",
+        startStopTerminalDictation: "ターミナルで音声入力を開始/停止",
         interruptAgent: "エージェントを中断",
         sendMessage: "メッセージを送信",
         queueMessage: "メッセージをキューに追加",

@@ -622,6 +622,13 @@ export const ar: TranslationResources = {
       uploadingFile: "جارٍ رفع الملف…",
       actions: {
         uploadFile: "رفع ملف",
+        startDictation: "بدء الإملاء",
+        stopDictation: "إيقاف ولصق النص المفرغ",
+      },
+      dictation: {
+        updateHost: "حدّث المضيف لاستخدام الإملاء في الطرفيات.",
+        unavailable: "الإملاء غير متاح على هذا المضيف.",
+        discard: "تجاهل التسجيل",
       },
     },
     sheet: {
@@ -2607,6 +2614,7 @@ export const ar: TranslationResources = {
         cycleAgentMode: "تبديل وضع الوكيل",
         toggleVoiceMode: "تبديل الوضع الصوتي",
         startStopDictation: "بدء إملاء /stop",
+        startStopTerminalDictation: "بدء/إيقاف الإملاء في الطرفية",
         interruptAgent: "عامل المقاطعة",
         sendMessage: "أرسل رسالة",
         queueMessage: "رسالة قائمة الانتظار",

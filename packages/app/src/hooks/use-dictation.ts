@@ -70,11 +70,18 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
 
   const durationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const attemptGuardRef = useRef(new AttemptGuard());
+  // Advanced only by cancel and unmount, never by confirm: a confirm while the stream
+  // is still starting must not make the start tear itself down.
+  const startGuardRef = useRef(new AttemptGuard());
   const actionGateRef = useRef<{ starting: boolean; confirming: boolean; cancelling: boolean }>({
     starting: false,
     confirming: false,
     cancelling: false,
   });
+
+  // Audio is accepted from start until a cancel: stopping the source flushes its last
+  // partial segment, which after a cancel would open a new stream for audio nobody wants.
+  const acceptAudioRef = useRef(false);
 
   const senderRef = useRef<DictationStreamSender | null>(null);
   if (!senderRef.current) {
@@ -228,6 +235,9 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
 
   const audio = useDictationAudioSource({
     onPcmSegment: (audioData) => {
+      if (!acceptAudioRef.current) {
+        return;
+      }
       senderRef.current?.enqueueSegment(audioData);
     },
     onError: (err) => {
@@ -264,15 +274,36 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     }
 
     actionGateRef.current.starting = true;
+    // A cancel or unmount while the microphone is still being acquired advances the
+    // start guard; the checks below then release whatever the start acquired late.
+    const startId = startGuardRef.current.next();
+    const abandonStaleStart = async () => {
+      acceptAudioRef.current = false;
+      try {
+        senderRef.current?.cancel();
+      } catch {
+        // no-op
+      }
+      await audio.stop().catch(() => undefined);
+      stopDurationTracking();
+      isRecordingRef.current = false;
+      setIsRecording(false);
+      setStatus("idle");
+    };
     setError(null);
     setPartialTranscript("");
     setDuration(0);
     setIsProcessing(false);
     setStatus("recording");
     clearStreamingState();
+    acceptAudioRef.current = true;
 
     try {
       await audio.start();
+      if (!startGuardRef.current.isCurrent(startId)) {
+        await abandonStaleStart();
+        return;
+      }
       isRecordingRef.current = true;
       setIsRecording(true);
       if (enableDuration) {
@@ -280,8 +311,16 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       }
       if (client?.isConnected) {
         await startNewStream("start");
+        if (!startGuardRef.current.isCurrent(startId)) {
+          await abandonStaleStart();
+          return;
+        }
       }
     } catch (err) {
+      if (!startGuardRef.current.isCurrent(startId)) {
+        await abandonStaleStart();
+        return;
+      }
       await audio.stop().catch(() => undefined);
       stopDurationTracking();
       isRecordingRef.current = false;
@@ -303,15 +342,35 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     stopDurationTracking,
   ]);
 
+  // The start is still waiting on the microphone. Show idle at once and stop the
+  // source now, so a stream acquired after this point is released by the source
+  // itself; the start continuation then sees the stale attempt and tears down the rest.
+  const cancelPendingStart = useCallback(async () => {
+    acceptAudioRef.current = false;
+    stopDurationTracking();
+    setDuration(0);
+    setError(null);
+    setStatus("idle");
+    clearStreamingState();
+    await audio.stop().catch((err: unknown) => {
+      reportError(err, "Failed to stop pending dictation audio");
+    });
+  }, [audio, clearStreamingState, reportError, stopDurationTracking]);
+
   const cancelDictation = useCallback(async () => {
     attemptGuardRef.current.cancel();
+    startGuardRef.current.cancel();
     if (actionGateRef.current.cancelling) {
       return;
     }
     if (!isRecordingRef.current && !isProcessingRef.current) {
+      if (actionGateRef.current.starting) {
+        await cancelPendingStart();
+      }
       return;
     }
     actionGateRef.current.cancelling = true;
+    acceptAudioRef.current = false;
     stopDurationTracking();
     setDuration(0);
     setError(null);
@@ -334,7 +393,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       clearStreamingState();
       actionGateRef.current.cancelling = false;
     }
-  }, [audio, clearStreamingState, reportError, stopDurationTracking]);
+  }, [audio, cancelPendingStart, clearStreamingState, reportError, stopDurationTracking]);
 
   const confirmDictation = useCallback(async () => {
     if (actionGateRef.current.confirming) {
@@ -444,9 +503,11 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
 
   useEffect(() => {
     const attemptGuard = attemptGuardRef.current;
+    const startGuard = startGuardRef.current;
     const audioStop = audioStopRef;
     return () => {
       attemptGuard.cancel();
+      startGuard.cancel();
       stopDurationTracking();
       void audioStop.current().catch(() => undefined);
       senderRef.current?.dispose();

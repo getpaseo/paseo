@@ -105,8 +105,9 @@ const PANE_SPLIT_ACTIONS_RESERVED_WIDTH =
   PANE_SPLIT_ACTIONS_HORIZONTAL_PADDING * 2 +
   PANE_SPLIT_ACTIONS_OUTER_MARGIN;
 const PANE_MAXIMIZE_ACTION_RESERVED_WIDTH = smallIconButtonChromeFrameSize(false) + 1;
-// The terminal slot holds one icon button (upload).
-const TERMINAL_SLOT_RESERVED_WIDTH = smallIconButtonChromeFrameSize(false) + 1;
+// The terminal slot holds two icon buttons (upload, mic). While the terminal dictates the
+// mic grows into a pill; the row re-measures then instead of reserving that width always.
+const TERMINAL_SLOT_RESERVED_WIDTH = 2 * (smallIconButtonChromeFrameSize(false) + 1);
 // Chip geometry. `layoutMetrics` measures tabs from these same numbers, so a chip that changes
 // shape without changing them mis-measures and drops the row into the overflow-scroll fallback at
 // the wrong width. Keep them together.

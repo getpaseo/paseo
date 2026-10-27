@@ -4,15 +4,45 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  claimTerminalRecording,
+  clearTerminalDictationState,
   getTerminalInputSink,
+  getTerminalRecordingOwnerId,
+  publishTerminalDictationState,
   registerTerminalInputSink,
+  releaseTerminalRecording,
   useRegisterTerminalInputSink,
+  useTerminalDictationState,
   useTerminalInputSink,
+  type TerminalDictationState,
   type TerminalInputSink,
 } from "./index";
 
 function fakeSink(): TerminalInputSink {
-  return { pasteText: () => {}, deliverFiles: () => {}, focus: () => {} };
+  return {
+    pasteText: () => {},
+    deliverFiles: () => {},
+    focus: () => {},
+    dictation: {
+      ownerId: "owner",
+      toggle: () => {},
+      cancel: () => {},
+      confirm: () => {},
+      retry: () => {},
+      discard: () => {},
+    },
+  };
+}
+
+function dictationState(volume: number): TerminalDictationState {
+  return {
+    status: "recording",
+    isRecording: true,
+    isProcessing: false,
+    error: null,
+    duration: 0,
+    volume,
+  };
 }
 
 const cleanups: Array<() => void> = [];
@@ -93,5 +123,49 @@ describe("terminal input sinks", () => {
     expect(getTerminalInputSink("server-a", "term-1")).toBe(sink);
     unmount();
     expect(getTerminalInputSink("server-a", "term-1")).toBeNull();
+  });
+});
+
+describe("terminal dictation state", () => {
+  afterEach(() => {
+    act(() => {
+      clearTerminalDictationState("owner-a");
+      clearTerminalDictationState("owner-b");
+      releaseTerminalRecording("owner-a");
+      releaseTerminalRecording("owner-b");
+    });
+  });
+
+  it("re-renders an owner's controls only for that owner's state", () => {
+    let renders = 0;
+    const { result } = renderHook(() => {
+      renders += 1;
+      return useTerminalDictationState("owner-a");
+    });
+    expect(result.current).toBeNull();
+    const rendersBefore = renders;
+
+    act(() => publishTerminalDictationState("owner-b", dictationState(0.5)));
+    expect(renders).toBe(rendersBefore);
+
+    const published = dictationState(0.2);
+    act(() => publishTerminalDictationState("owner-a", published));
+    expect(result.current).toBe(published);
+
+    act(() => clearTerminalDictationState("owner-a"));
+    expect(result.current).toBeNull();
+  });
+
+  it("keeps one recording owner and releases it only for that owner", () => {
+    act(() => claimTerminalRecording("owner-a"));
+    expect(getTerminalRecordingOwnerId()).toBe("owner-a");
+
+    act(() => claimTerminalRecording("owner-b"));
+    expect(getTerminalRecordingOwnerId()).toBe("owner-b");
+
+    act(() => releaseTerminalRecording("owner-a"));
+    expect(getTerminalRecordingOwnerId()).toBe("owner-b");
+    act(() => releaseTerminalRecording("owner-b"));
+    expect(getTerminalRecordingOwnerId()).toBeNull();
   });
 });

@@ -622,6 +622,13 @@ export const zhCN: TranslationResources = {
       uploadingFile: "正在上传文件…",
       actions: {
         uploadFile: "上传文件",
+        startDictation: "开始听写",
+        stopDictation: "停止并粘贴转写内容",
+      },
+      dictation: {
+        updateHost: "请更新主机以在终端中使用听写。",
+        unavailable: "此主机不支持听写。",
+        discard: "丢弃录音",
       },
     },
     sheet: {
@@ -2543,6 +2550,7 @@ export const zhCN: TranslationResources = {
         cycleAgentMode: "循环切换代理模式",
         toggleVoiceMode: "切换语音模式",
         startStopDictation: "开始/停止听写",
+        startStopTerminalDictation: "在终端中开始/停止听写",
         interruptAgent: "中断 Agent",
         sendMessage: "发送消息",
         queueMessage: "消息排队",

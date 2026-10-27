@@ -628,6 +628,13 @@ export const es: TranslationResources = {
       uploadingFile: "Subiendo archivo…",
       actions: {
         uploadFile: "Subir archivo",
+        startDictation: "Iniciar dictado",
+        stopDictation: "Detener y pegar la transcripción",
+      },
+      dictation: {
+        updateHost: "Actualiza el host para usar el dictado en terminales.",
+        unavailable: "El dictado no está disponible en este host.",
+        discard: "Descartar grabación",
       },
     },
     sheet: {
@@ -2625,6 +2632,7 @@ export const es: TranslationResources = {
         cycleAgentMode: "Alternar modo del agente",
         toggleVoiceMode: "Alternar modo de voz",
         startStopDictation: "Iniciar dictado/stop",
+        startStopTerminalDictation: "Iniciar/detener dictado en la terminal",
         interruptAgent: "agente de interrupción",
         sendMessage: "enviar mensaje",
         queueMessage: "mensaje de cola",

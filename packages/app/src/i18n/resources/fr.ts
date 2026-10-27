@@ -628,6 +628,13 @@ export const fr: TranslationResources = {
       uploadingFile: "Envoi du fichier…",
       actions: {
         uploadFile: "Envoyer un fichier",
+        startDictation: "Démarrer la dictée",
+        stopDictation: "Arrêter et coller la transcription",
+      },
+      dictation: {
+        updateHost: "Mettez à jour l'hôte pour utiliser la dictée dans les terminaux.",
+        unavailable: "La dictée n'est pas disponible sur cet hôte.",
+        discard: "Supprimer l'enregistrement",
       },
     },
     sheet: {
@@ -2626,6 +2633,7 @@ export const fr: TranslationResources = {
         cycleAgentMode: "Parcourir les modes de l’agent",
         toggleVoiceMode: "Activer/désactiver le mode vocal",
         startStopDictation: "Démarrer/arrêter la dictée",
+        startStopTerminalDictation: "Démarrer/arrêter la dictée dans le terminal",
         interruptAgent: "Interrompre l’agent",
         sendMessage: "Envoyer le message",
         queueMessage: "Mettre le message en file d’attente",

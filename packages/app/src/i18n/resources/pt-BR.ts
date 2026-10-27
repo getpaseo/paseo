@@ -627,6 +627,13 @@ export const ptBR: TranslationResources = {
       uploadingFile: "Enviando arquivo…",
       actions: {
         uploadFile: "Enviar arquivo",
+        startDictation: "Iniciar ditado",
+        stopDictation: "Parar e colar a transcrição",
+      },
+      dictation: {
+        updateHost: "Atualize o host para usar o ditado nos terminais.",
+        unavailable: "O ditado não está disponível neste host.",
+        discard: "Descartar gravação",
       },
     },
     sheet: {
@@ -2606,6 +2613,7 @@ export const ptBR: TranslationResources = {
         cycleAgentMode: "Alternar modo do agente",
         toggleVoiceMode: "Alternar modo de voz",
         startStopDictation: "Iniciar/parar ditado",
+        startStopTerminalDictation: "Iniciar/parar ditado no terminal",
         interruptAgent: "Interromper agente",
         sendMessage: "Enviar mensagem",
         queueMessage: "Enfileirar mensagem",

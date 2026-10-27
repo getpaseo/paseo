@@ -324,6 +324,12 @@ describe("keyboard-shortcuts", () => {
       payload: { kind: "dictation-toggle" },
     },
     {
+      name: "routes Cmd+D to terminal dictation, not the message input, when terminal is focused on macOS",
+      event: { key: "d", code: "KeyD", metaKey: true },
+      context: { isMac: true, focusScope: "terminal" },
+      action: "terminal.dictation-toggle",
+    },
+    {
       name: "routes Shift+Tab to cycle agent mode from the message input",
       event: { key: "Tab", code: "Tab", shiftKey: true },
       context: { focusScope: "message-input" },
@@ -481,9 +487,14 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: false, focusScope: "terminal" },
     },
     {
-      name: "does not route message-input actions when terminal is focused",
+      name: "leaves Ctrl+D to the PTY as EOF when terminal is focused on non-mac",
+      event: { key: "d", code: "KeyD", ctrlKey: true },
+      context: { isMac: false, focusScope: "terminal" },
+    },
+    {
+      name: "does not bind Cmd+D to terminal dictation on non-mac",
       event: { key: "d", code: "KeyD", metaKey: true },
-      context: { isMac: true, focusScope: "terminal" },
+      context: { isMac: false, focusScope: "terminal" },
     },
     {
       name: "does not cycle agent mode outside the message input",

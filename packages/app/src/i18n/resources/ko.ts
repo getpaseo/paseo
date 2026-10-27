@@ -623,6 +623,13 @@ export const ko: TranslationResources = {
       uploadingFile: "파일 업로드 중…",
       actions: {
         uploadFile: "파일 업로드",
+        startDictation: "받아쓰기 시작",
+        stopDictation: "중지하고 받아쓴 내용 붙여넣기",
+      },
+      dictation: {
+        updateHost: "터미널에서 받아쓰기를 사용하려면 호스트를 업데이트하세요.",
+        unavailable: "이 호스트에서는 받아쓰기를 사용할 수 없습니다.",
+        discard: "녹음 삭제",
       },
     },
     sheet: {
@@ -2581,6 +2588,7 @@ export const ko: TranslationResources = {
         cycleAgentMode: "에이전트 모드 전환",
         toggleVoiceMode: "음성 모드 토글",
         startStopDictation: "받아쓰기 시작/중지",
+        startStopTerminalDictation: "터미널에서 받아쓰기 시작/중지",
         interruptAgent: "에이전트 중단",
         sendMessage: "메시지 보내기",
         queueMessage: "메시지 대기열에 추가",

@@ -82,12 +82,13 @@ describe("terminal virtual keyboard policy", () => {
       "terminal-key-esc",
       "terminal-key-tab",
       "terminal-key-ctrl",
-      "terminal-key-up",
       "terminal-key-shift",
+      "terminal-key-up",
       "terminal-key-alt",
       "terminal-keyboard-toggle",
       "terminal-paste",
       "terminal-upload",
+      "terminal-dictation",
       "terminal-key-left",
       "terminal-key-down",
       "terminal-key-right",
@@ -104,14 +105,14 @@ describe("terminal virtual keyboard policy", () => {
       down: positions.get("terminal-key-down"),
       right: positions.get("terminal-key-right"),
     }).toEqual({
-      up: { row: 0, col: 3 },
-      left: { row: 1, col: 2 },
-      down: { row: 1, col: 3 },
-      right: { row: 1, col: 4 },
+      up: { row: 0, col: 4 },
+      left: { row: 1, col: 3 },
+      down: { row: 1, col: 4 },
+      right: { row: 1, col: 5 },
     });
   });
 
-  it("keeps Paste and Upload next to each other in every arrangement", () => {
+  it("keeps Paste, Upload and Dictation next to each other in every arrangement", () => {
     for (const rows of [
       TERMINAL_VIRTUAL_KEYBOARD_ROWS,
       TERMINAL_VIRTUAL_KEYBOARD_WIDE_ROWS,
@@ -120,6 +121,7 @@ describe("terminal virtual keyboard policy", () => {
       const rowIds = rows.map((row) => row.map(getTerminalVirtualKeyboardControlId));
       const ids = rowIds.find((row) => row.includes("terminal-paste")) ?? [];
       expect(ids.indexOf("terminal-upload")).toBe(ids.indexOf("terminal-paste") + 1);
+      expect(ids.indexOf("terminal-dictation")).toBe(ids.indexOf("terminal-paste") + 2);
     }
   });
 
