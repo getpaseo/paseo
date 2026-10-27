@@ -665,6 +665,30 @@ describe("terminal emulator runtime in a real browser", () => {
     expect(mounted.terminalKeys).toEqual([]);
   });
 
+  it("types ASCII characters a mac layout puts on the Option layer", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360, isMac: true });
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+
+    // Swiss German: Option+G -> "@", Option+5 -> "[", Option+Shift+7 -> "\".
+    dispatchTerminalKey({ host: mounted.host, key: "@", keyCode: 71, altKey: true });
+    dispatchTerminalKey({ host: mounted.host, key: "[", keyCode: 53, altKey: true });
+    dispatchTerminalKey({
+      host: mounted.host,
+      key: "\\",
+      keyCode: 55,
+      altKey: true,
+      shiftKey: true,
+    });
+    // US: Option+B -> "∫" stays Meta+B.
+    dispatchTerminalKey({ host: mounted.host, key: "∫", keyCode: 66, altKey: true });
+    await nextFrame();
+
+    expect(mounted.inputs).toEqual(["@", "[", "\\", "\x1bb"]);
+    expect(mounted.terminalKeys).toEqual([]);
+  });
+
   it.each([true, false])("keeps pending modifier chips authoritative (isMac=%s)", async (isMac) => {
     const mounted = createTerminalHost({ width: 720, height: 360, isMac });
     await waitFor({ predicate: () => mounted.sizes.length > 0 });

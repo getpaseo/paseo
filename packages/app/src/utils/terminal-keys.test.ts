@@ -7,6 +7,7 @@ import {
   mergeTerminalModifiers,
   normalizeDomTerminalKey,
   normalizeTerminalTransportKey,
+  resolveMacOptionLayerCharacter,
   resolveMacTerminalEditingShortcut,
   resolvePendingModifierDataInput,
   shouldInterceptDomTerminalKey,
@@ -392,5 +393,36 @@ describe("resolveMacTerminalEditingShortcut", () => {
     // Option+Backspace already works natively in xterm (ESC DEL).
     expect(shortcut("Backspace", { alt: true })).toBeNull();
     expect(shortcut("k", { meta: true })).toBeNull();
+  });
+});
+
+describe("resolveMacOptionLayerCharacter", () => {
+  function optionLayer(
+    key: string,
+    modifiers: Partial<Record<"ctrl" | "shift" | "alt" | "meta", boolean>>,
+  ) {
+    return resolveMacOptionLayerCharacter({
+      key,
+      ctrlKey: modifiers.ctrl ?? false,
+      shiftKey: modifiers.shift ?? false,
+      altKey: modifiers.alt ?? false,
+      metaKey: modifiers.meta ?? false,
+    });
+  }
+
+  it("types ASCII characters composed on the Option layer", () => {
+    expect(optionLayer("@", { alt: true })).toBe("@");
+    expect(optionLayer("{", { alt: true })).toBe("{");
+    expect(optionLayer("\\", { alt: true, shift: true })).toBe("\\");
+  });
+
+  it("leaves Meta chords and other combinations to xterm", () => {
+    expect(optionLayer("∫", { alt: true })).toBeNull();
+    expect(optionLayer("Dead", { alt: true })).toBeNull();
+    expect(optionLayer("ArrowLeft", { alt: true })).toBeNull();
+    expect(optionLayer(" ", { alt: true })).toBeNull();
+    expect(optionLayer("@", {})).toBeNull();
+    expect(optionLayer("@", { alt: true, meta: true })).toBeNull();
+    expect(optionLayer("@", { alt: true, ctrl: true })).toBeNull();
   });
 });
