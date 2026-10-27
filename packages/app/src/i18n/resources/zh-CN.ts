@@ -620,6 +620,9 @@ export const zhCN: TranslationResources = {
       fileUploaded: "文件已上传",
       pasteFileFailed: "无法粘贴文件：{{reason}}",
       uploadingFile: "正在上传文件…",
+      actions: {
+        uploadFile: "上传文件",
+      },
     },
     sheet: {
       openAsTab: "作为标签页打开",

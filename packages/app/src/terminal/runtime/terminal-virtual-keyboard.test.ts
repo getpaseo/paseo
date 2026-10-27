@@ -84,9 +84,10 @@ describe("terminal virtual keyboard policy", () => {
       "terminal-key-ctrl",
       "terminal-key-up",
       "terminal-key-shift",
-      "terminal-keyboard-toggle",
       "terminal-key-alt",
+      "terminal-keyboard-toggle",
       "terminal-paste",
+      "terminal-upload",
       "terminal-key-left",
       "terminal-key-down",
       "terminal-key-right",
@@ -108,6 +109,18 @@ describe("terminal virtual keyboard policy", () => {
       down: { row: 1, col: 3 },
       right: { row: 1, col: 4 },
     });
+  });
+
+  it("keeps Paste and Upload next to each other in every arrangement", () => {
+    for (const rows of [
+      TERMINAL_VIRTUAL_KEYBOARD_ROWS,
+      TERMINAL_VIRTUAL_KEYBOARD_WIDE_ROWS,
+      TERMINAL_VIRTUAL_KEYBOARD_THREE_COLUMN_ROWS,
+    ]) {
+      const rowIds = rows.map((row) => row.map(getTerminalVirtualKeyboardControlId));
+      const ids = rowIds.find((row) => row.includes("terminal-paste")) ?? [];
+      expect(ids.indexOf("terminal-upload")).toBe(ids.indexOf("terminal-paste") + 1);
+    }
   });
 
   it("keeps Paste in the keyboard and Copy out of the permanent row", () => {

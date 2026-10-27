@@ -620,6 +620,9 @@ export const ar: TranslationResources = {
       fileUploaded: "تم رفع الملف",
       pasteFileFailed: "تعذر لصق الملف: {{reason}}",
       uploadingFile: "جارٍ رفع الملف…",
+      actions: {
+        uploadFile: "رفع ملف",
+      },
     },
     sheet: {
       openAsTab: "فتح كعلامة تبويب",

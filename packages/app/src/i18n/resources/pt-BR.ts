@@ -625,6 +625,9 @@ export const ptBR: TranslationResources = {
       fileUploaded: "Arquivo enviado",
       pasteFileFailed: "Falha ao colar o arquivo: {{reason}}",
       uploadingFile: "Enviando arquivo…",
+      actions: {
+        uploadFile: "Enviar arquivo",
+      },
     },
     sheet: {
       openAsTab: "Abrir como aba",

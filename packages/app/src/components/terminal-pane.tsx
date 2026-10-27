@@ -57,8 +57,15 @@ import { useFileDrop } from "@/components/file-drop/use-file-drop";
 import type { DroppedItem } from "@/components/file-drop/types";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { getDesktopHost } from "@/desktop/host";
-import { routeTerminalDrop } from "@/terminal/drop/terminal-file-drop";
-import { prepareDroppedPathsForTerminal } from "@/terminal/drop/terminal-path";
+import {
+  routeTerminalDrop,
+  routeTerminalPickedFile,
+  type TerminalDropDelivery,
+} from "@/terminal/drop/terminal-file-drop";
+import { preparePathsForTerminalInput } from "@/terminal/drop/terminal-path";
+import { useRegisterTerminalInputSink, type TerminalInputSink } from "@/terminal/input-sink";
+import type { SelectedFile } from "@/attachments/selected-file";
+import { TerminalUploadButton } from "@/terminal/toolbar/terminal-upload-button";
 import { toErrorMessage } from "@/utils/error-messages";
 import { getWorkspaceTerminalSession } from "@/terminal/runtime/workspace-terminal-session";
 import {
@@ -913,11 +920,11 @@ export function TerminalPane({
     });
   });
 
-  const handleDroppedFiles = useStableEvent((items: DroppedItem[]) => {
-    const bridge = getDesktopHost();
+  // Shared by drops and picks: own paths are pasted together at once, uploads go
+  // through the paste queue in gesture order.
+  const deliverToTerminal = useStableEvent((deliveries: TerminalDropDelivery[]) => {
     const paths: string[] = [];
-    for (const item of items) {
-      const delivery = routeTerminalDrop(item, { hostIsLocal: isLocalHost, bridge });
+    for (const delivery of deliveries) {
       if (delivery.kind === "path") {
         paths.push(delivery.path);
       } else {
@@ -925,10 +932,33 @@ export function TerminalPane({
       }
     }
     if (paths.length > 0) {
-      pasteTerminalText(prepareDroppedPathsForTerminal(paths));
+      pasteTerminalText(preparePathsForTerminalInput(paths));
     }
     requestTerminalFocus();
   });
+
+  const handleDroppedFiles = useStableEvent((items: DroppedItem[]) => {
+    const bridge = getDesktopHost();
+    deliverToTerminal(
+      items.map((item) => routeTerminalDrop(item, { hostIsLocal: isLocalHost, bridge })),
+    );
+  });
+
+  const deliverPickedFiles = useStableEvent((files: SelectedFile[]) => {
+    deliverToTerminal(
+      files.map((file) => routeTerminalPickedFile(file, { hostIsLocal: isLocalHost })),
+    );
+  });
+
+  const inputSink = useMemo<TerminalInputSink>(
+    () => ({
+      pasteText: pasteTerminalText,
+      deliverFiles: deliverPickedFiles,
+      focus: requestTerminalFocus,
+    }),
+    [pasteTerminalText, deliverPickedFiles, requestTerminalFocus],
+  );
+  useRegisterTerminalInputSink(serverId, terminalId, inputSink);
 
   const sendTerminalResize = useStableEvent((input: TerminalResizeRequest) => {
     const nextSize = { rows: input.rows, cols: input.cols };
@@ -1171,6 +1201,8 @@ export function TerminalPane({
             onPaste={handleTerminalPaste}
           />
         ) : null;
+      case "upload":
+        return <TerminalUploadButton key={controlId} sink={inputSink} placement="keybar" />;
       case "keyboardToggle":
         return (
           <KeyboardToggleButton

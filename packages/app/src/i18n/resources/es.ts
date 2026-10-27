@@ -626,6 +626,9 @@ export const es: TranslationResources = {
       fileUploaded: "Archivo subido",
       pasteFileFailed: "No se pudo pegar el archivo: {{reason}}",
       uploadingFile: "Subiendo archivo…",
+      actions: {
+        uploadFile: "Subir archivo",
+      },
     },
     sheet: {
       openAsTab: "Abrir como pestaña",

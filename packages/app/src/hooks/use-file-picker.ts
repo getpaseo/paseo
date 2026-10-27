@@ -32,7 +32,12 @@ async function pickFilesWithDesktopDialog(): Promise<SelectedFile[] | null> {
   for (const filePath of paths) {
     const fileName = filePath.split("/").pop() ?? filePath.split("\\").pop() ?? filePath;
     const mimeType = getMimeTypeFromPath(filePath);
-    result.push({ fileName, mimeType, readBytes: () => readDesktopFileBytes(filePath) });
+    result.push({
+      fileName,
+      mimeType,
+      desktopPath: filePath,
+      readBytes: () => readDesktopFileBytes(filePath),
+    });
   }
 
   return result;

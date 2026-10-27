@@ -626,6 +626,9 @@ export const fr: TranslationResources = {
       fileUploaded: "Fichier envoyé",
       pasteFileFailed: "Impossible de coller le fichier : {{reason}}",
       uploadingFile: "Envoi du fichier…",
+      actions: {
+        uploadFile: "Envoyer un fichier",
+      },
     },
     sheet: {
       openAsTab: "Ouvrir dans un onglet",

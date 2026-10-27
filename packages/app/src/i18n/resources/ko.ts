@@ -621,6 +621,9 @@ export const ko: TranslationResources = {
       fileUploaded: "파일을 업로드했습니다",
       pasteFileFailed: "파일을 붙여넣지 못했습니다: {{reason}}",
       uploadingFile: "파일 업로드 중…",
+      actions: {
+        uploadFile: "파일 업로드",
+      },
     },
     sheet: {
       openAsTab: "탭으로 열기",

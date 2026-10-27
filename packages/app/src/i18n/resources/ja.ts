@@ -626,6 +626,9 @@ export const ja: TranslationResources = {
       fileUploaded: "ファイルをアップロードしました",
       pasteFileFailed: "ファイルを貼り付けられませんでした: {{reason}}",
       uploadingFile: "ファイルをアップロード中…",
+      actions: {
+        uploadFile: "ファイルをアップロード",
+      },
     },
     sheet: {
       openAsTab: "タブで開く",

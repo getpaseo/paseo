@@ -617,6 +617,9 @@ export const en = {
       fileUploaded: "File uploaded",
       pasteFileFailed: "Failed to paste file: {{reason}}",
       uploadingFile: "Uploading file…",
+      actions: {
+        uploadFile: "Upload file",
+      },
     },
     sheet: {
       openAsTab: "Open as tab",

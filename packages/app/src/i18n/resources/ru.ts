@@ -627,6 +627,9 @@ export const ru: TranslationResources = {
       fileUploaded: "Файл загружен",
       pasteFileFailed: "Не удалось вставить файл: {{reason}}",
       uploadingFile: "Загрузка файла…",
+      actions: {
+        uploadFile: "Загрузить файл",
+      },
     },
     sheet: {
       openAsTab: "Открыть во вкладке",

@@ -74,7 +74,8 @@ describe("terminal file paste queue", () => {
 
     firstUpload.resolve("/host/uploads/a.png");
     await settle();
-    expect(host.pasted).toEqual(["'/host/uploads/a.png'", "'/host/uploads/b.png'"]);
+    expect(host.pasted).toEqual(["'/host/uploads/a.png' ", "'/host/uploads/b.png' "]);
+    expect(host.pasted.join("")).toBe("'/host/uploads/a.png' '/host/uploads/b.png' ");
     expect(events).toEqual({ uploading: [true, false, true, false], uploaded: 2, failures: [] });
   });
 
@@ -85,7 +86,7 @@ describe("terminal file paste queue", () => {
     queue.add(Promise.resolve(file("shot.png")), host);
     await settle();
 
-    expect(host.pasted).toEqual(['"C:\\Users\\Jo Doe\\.paseo\\uploads\\upload_1\\shot.png"']);
+    expect(host.pasted).toEqual(['"C:\\Users\\Jo Doe\\.paseo\\uploads\\upload_1\\shot.png" ']);
   });
 
   it("uploads under a file name that needs no shell quoting", async () => {
@@ -120,7 +121,7 @@ describe("terminal file paste queue", () => {
 
     expect(events.failures).toEqual(["disk full"]);
     expect(events.uploaded).toBe(1);
-    expect(host.pasted).toEqual(["'/host/uploads/b.png'"]);
+    expect(host.pasted).toEqual(["'/host/uploads/b.png' "]);
   });
 
   it("reports unreadable and oversized files without uploading them", async () => {
@@ -166,7 +167,7 @@ describe("terminal file paste queue", () => {
     queue.add(Promise.resolve(file("next.png")), host);
     await settle();
 
-    expect(host.pasted).toEqual(["'/host/uploads/next.png'"]);
+    expect(host.pasted).toEqual(["'/host/uploads/next.png' "]);
     expect(events.uploading).toEqual([true, false, true, false]);
     expect(queue.cancel()).toBe(false);
   });

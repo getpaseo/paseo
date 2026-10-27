@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { prepareDroppedPathsForTerminal, prepareTerminalPath } from "./terminal-path";
+import { prepareTerminalPath, preparePathsForTerminalInput } from "./terminal-path";
 
 describe("terminal path quoting", () => {
   it("prepares POSIX paths with conservative escaping", () => {
@@ -18,9 +18,12 @@ describe("terminal path quoting", () => {
     );
   });
 
-  it("joins multiple dropped paths for one terminal input", () => {
-    expect(prepareDroppedPathsForTerminal(["/tmp/a.png", "/tmp/b c.png"])).toBe(
-      "'/tmp/a.png' '/tmp/b c.png'",
+  it("ends every path with one space so consecutive pastes stay separate words", () => {
+    expect(preparePathsForTerminalInput(["/tmp/a.png", "/tmp/b c.png"])).toBe(
+      "'/tmp/a.png' '/tmp/b c.png' ",
+    );
+    expect(preparePathsForTerminalInput(["C:\\Users\\me\\photo one.png"])).toBe(
+      '"C:\\Users\\me\\photo one.png" ',
     );
   });
 });
