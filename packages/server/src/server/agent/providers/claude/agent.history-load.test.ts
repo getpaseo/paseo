@@ -1,3 +1,4 @@
+import { measureMainThreadWork } from "../../../../test-utils/main-thread-work.js";
 import fs, { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
@@ -117,13 +118,6 @@ describe("ClaudeAgentSession persisted history load", () => {
       await file.close();
     }
     const daemon = await createTestPaseoDaemon();
-    let lastTick = performance.now();
-    let longestGap = 0;
-    const probe = setInterval(() => {
-      const now = performance.now();
-      longestGap = Math.max(longestGap, now - lastTick);
-      lastTick = now;
-    }, 2);
     let loading = true;
     let answeredDuringLoad = false;
     const health = fetch(`http://127.0.0.1:${daemon.port}/api/health`).then(async (response) => {
@@ -134,33 +128,39 @@ describe("ClaudeAgentSession persisted history load", () => {
     });
     let session: AgentSession | undefined;
     try {
-      session = await resume(replyFactory("live after large resume"));
-      let index = 0;
-      for await (const event of session.streamHistory()) {
-        expect(event).toEqual({
-          type: "timeline",
-          provider: "claude",
-          timestamp: undefined,
-          item: { type: "assistant_message", text: `${index}:${text}` },
-        });
-        index++;
-      }
-      loading = false;
-      await health;
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      const {
+        result: { resumed: loadedSession, historyCount },
+        blockingMs,
+      } = await measureMainThreadWork("Claude history main-thread work", async () => {
+        const resumed = await resume(replyFactory("live after large resume"));
+        session = resumed;
+        let index = 0;
+        for await (const event of resumed.streamHistory()) {
+          expect(event).toEqual({
+            type: "timeline",
+            provider: "claude",
+            timestamp: undefined,
+            item: { type: "assistant_message", text: `${index}:${text}` },
+          });
+          index++;
+        }
+        loading = false;
+        await health;
+        return { resumed, historyCount: index };
+      });
       console.info(
         JSON.stringify({
           bytes,
           count,
-          longestGap,
+          blockingMs,
           answeredDuringLoad,
           elapsedMs: performance.now() - startedAt,
         }),
       );
-      expect(index).toBe(count);
-      expect(longestGap).toBeLessThan(50);
+      expect(historyCount).toBe(count);
+      expect(blockingMs).toBeLessThan(50);
       expect(answeredDuringLoad).toBe(true);
-      const live = await collectSessionTurnEvents(session, "follow up");
+      const live = await collectSessionTurnEvents(loadedSession, "follow up");
       expect(
         live
           .filter((event) => event.type === "timeline" && event.item.type === "assistant_message")
@@ -169,7 +169,6 @@ describe("ClaudeAgentSession persisted history load", () => {
         { type: "assistant_message", messageId: "live-reply", text: "live after large resume" },
       ]);
     } finally {
-      clearInterval(probe);
       await session?.close();
       await daemon.close();
     }
