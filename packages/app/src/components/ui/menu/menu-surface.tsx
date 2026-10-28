@@ -353,17 +353,6 @@ function MenuSheetSurface({
   const { height: windowHeight } = useWindowDimensions();
   const menu = useMenuContext("MenuSurface");
   const { value: surfaceValue } = useSubAnchors();
-  const safeAreaInsets = useSafeAreaInsets();
-
-  const sheetScrollContentStyle = useMemo(
-    () => ({
-      paddingBottom: getMenuSheetBottomPadding({
-        safeAreaBottom: safeAreaInsets.bottom,
-        breathingRoom: SPACING[1],
-      }),
-    }),
-    [safeAreaInsets.bottom],
-  );
   const sheetDataSet = useMemo(
     () => (keyboardFocusScope ? { keyboardScope: keyboardFocusScope } : undefined),
     [keyboardFocusScope],
@@ -412,13 +401,7 @@ function MenuSheetSurface({
       keyboardBehavior="interactive"
       keyboardBlurBehavior="restore"
     >
-      <BottomSheetScrollView
-        dataSet={sheetDataSet}
-        contentContainerStyle={sheetScrollContentStyle}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-        testID={testID ? `${testID}-content` : undefined}
-      >
+      <MenuSheetScrollView dataSet={sheetDataSet} testID={testID}>
         {openPage ? (
           <>
             <MenuSheetHeader title={openPage.title} onBack={menu.goBack} />
@@ -432,8 +415,44 @@ function MenuSheetSurface({
             <MenuPage depth={0}>{children}</MenuPage>
           </>
         )}
-      </BottomSheetScrollView>
+      </MenuSheetScrollView>
     </ThemedBottomSheetModal>
+  );
+}
+
+/**
+ * Rendered on the far side of the sheet's portal so it clears the screen's bottom inset, not the
+ * one left where the menu was opened: inside a sheet tab, none is.
+ */
+function MenuSheetScrollView({
+  dataSet,
+  testID,
+  children,
+}: {
+  dataSet: { keyboardScope: KeyboardFocusScope } | undefined;
+  testID?: string;
+  children: ReactNode;
+}) {
+  const safeAreaInsets = useSafeAreaInsets();
+  const contentStyle = useMemo(
+    () => ({
+      paddingBottom: getMenuSheetBottomPadding({
+        safeAreaBottom: safeAreaInsets.bottom,
+        breathingRoom: SPACING[1],
+      }),
+    }),
+    [safeAreaInsets.bottom],
+  );
+  return (
+    <BottomSheetScrollView
+      dataSet={dataSet}
+      contentContainerStyle={contentStyle}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+      testID={testID ? `${testID}-content` : undefined}
+    >
+      {children}
+    </BottomSheetScrollView>
   );
 }
 

@@ -9,15 +9,14 @@ import {
   useRef,
   useState,
 } from "react";
-import { View } from "react-native";
 import { useTranslation } from "react-i18next";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import { Maximize2 } from "lucide-react-native";
 import {
   SheetBackground,
+  SheetBottomInset,
   SheetHandle,
   SheetHeaderIconButton,
   SheetHeaderView,
@@ -287,21 +286,20 @@ function SheetTabBody({
     [tab],
   );
   const content = useMemo(() => buildContent(tabDescriptor), [buildContent, tabDescriptor]);
-  // The sheet reaches the bottom of the screen, so it owns the system navigation inset.
-  const { bottom: bottomInset } = useSafeAreaInsets();
-  const contentStyle = useMemo(
-    () => [styles.content, { paddingBottom: bottomInset }],
-    [bottomInset],
-  );
 
   return (
-    <View style={contentStyle} role="dialog" aria-label={label} testID="sheet-tab-body">
+    <SheetBottomInset
+      style={styles.content}
+      role="dialog"
+      aria-label={label}
+      testID="sheet-tab-body"
+    >
       <WorkspacePaneContent
         content={content}
         isWorkspaceFocused={isWorkspaceFocused}
         isPaneFocused={isPaneFocused}
       />
-    </View>
+    </SheetBottomInset>
   );
 }
 
