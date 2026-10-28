@@ -120,3 +120,41 @@ test("requested shutdown before first readiness exits successfully", async () =>
   expect(result.code).toBe(0);
   expect(result.events).toEqual([null]);
 });
+
+test.skipIf(process.platform === "win32")(
+  "the restart signal replaces a ready worker",
+  async () => {
+    const result = await runWorker(`
+    import { existsSync, writeFileSync } from "node:fs";
+    const marker = process.argv[1] + ".started";
+    const replacement = existsSync(marker);
+    writeFileSync(marker, "started");
+    process.on("message", message => {
+      if (message.type === "paseo:graceful-shutdown") process.exit(0);
+    });
+    process.send({ type: "paseo:ready", listen: "test-endpoint", serverId: "srv_test" }, () => {
+      if (replacement) process.exit(0);
+      else process.kill(process.ppid, "SIGUSR2");
+    });
+  `);
+    expect(result.code, result.output).toBe(0);
+    expect(result.events, result.output).toEqual(["test-endpoint", null, "test-endpoint", null]);
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "the restart signal before readiness leaves the starting worker alone",
+  async () => {
+    const result = await runWorker(`
+    process.on("message", message => {
+      if (message.type === "paseo:graceful-shutdown") process.exit(0);
+    });
+    process.kill(process.ppid, "SIGUSR2");
+    setTimeout(() => {
+      process.send({ type: "paseo:ready", listen: "test-endpoint", serverId: "srv_test" }, () => process.exit(0));
+    }, 200);
+  `);
+    expect(result.code, result.output).toBe(0);
+    expect(result.events, result.output).toEqual(["test-endpoint", null]);
+  },
+);

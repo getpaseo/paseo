@@ -8,6 +8,8 @@ import { signalProcessTree } from "../src/utils/tree-kill.js";
 
 const WORKER_HEARTBEAT_INTERVAL_MS = 1_000;
 const WORKER_TERMINATION_GRACE_MS = 10_000;
+// A signal reaches the supervisor even when the worker no longer answers its socket.
+export const WORKER_RESTART_SIGNAL = "SIGUSR2";
 
 interface SupervisorLogFileOptions {
   path: string;
@@ -53,7 +55,11 @@ interface SupervisorOptions {
     args: string[];
     env?: NodeJS.ProcessEnv;
   } | null;
-  onWorkerReady?: (message: { listen: string; serverId: string }) => Promise<void> | void;
+  onWorkerReady?: (message: {
+    listen: string;
+    serverId: string;
+    workerPid: number | null;
+  }) => Promise<void> | void;
   onWorkerExit?: () => Promise<void> | void;
   restartOnCrash?: boolean;
   onSupervisorExit?: () => Promise<void> | void;
@@ -183,6 +189,7 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
   const resolveWorkerSpawnSpec = options.resolveWorkerSpawnSpec;
 
   let child: ChildProcess | null = null;
+  let readyChild: ChildProcess | null = null;
   let restarting = false;
   let shuttingDown = false;
   let exiting = false;
@@ -338,12 +345,14 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
 
       if (lifecycleMessage.type === "paseo:ready") {
         reachedReady = true;
+        readyChild = currentChild;
         writeLifecycleLog("Worker ready", { listen: lifecycleMessage.listen });
         publication = publication
           .then(() =>
             options.onWorkerReady?.({
               listen: lifecycleMessage.listen,
               serverId: lifecycleMessage.serverId,
+              workerPid: currentChild.pid ?? null,
             }),
           )
           .catch((error) => {
@@ -491,6 +500,17 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
 
   process.on("SIGINT", () => forwardSignal("SIGINT"));
   process.on("SIGTERM", () => forwardSignal("SIGTERM"));
+  if (process.platform !== "win32") {
+    process.on(WORKER_RESTART_SIGNAL, () => {
+      const reason = `supervisor_received_${WORKER_RESTART_SIGNAL}`;
+      // A worker that exits before readiness stops the supervisor, so only restart a ready one.
+      if (!child || child !== readyChild) {
+        writeLifecycleLog("Ignoring restart signal: no ready worker", { reason });
+        return;
+      }
+      requestRestart(reason);
+    });
+  }
   process.stdout.on("error", ignoreClosedOutput);
   process.stderr.on("error", ignoreClosedOutput);
 

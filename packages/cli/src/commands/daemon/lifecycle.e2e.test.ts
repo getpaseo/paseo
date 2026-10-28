@@ -437,6 +437,29 @@ test("empty explicit selectors never select the ambient daemon or create local s
 }, 60_000);
 
 test.skipIf(process.platform === "win32")(
+  "restart replaces a worker that accepts connections but no longer answers",
+  async () => {
+    const f = await fixture();
+    const home = f.homes[0]!;
+    try {
+      await f.configure(home, `127.0.0.1:${await port()}`);
+      const launch = await f.ok(["start", "--home", home, "--timeout", "30"]);
+      const before = await f.liveStatus(home);
+      // A stopped worker keeps its listening socket, so connections succeed and nothing answers.
+      process.kill(before.workerPid, "SIGSTOP");
+      const restarted = await f.ok(["restart", "--home", home, "--timeout", "30"]);
+      expect(restarted.supervisorPid).toBe(launch.pid);
+      expect(restarted.previousWorkerPid).toBe(before.workerPid);
+      expect(restarted.workerPid).not.toBe(before.workerPid);
+      expect(() => process.kill(before.workerPid, 0)).toThrow();
+    } finally {
+      await f.close();
+    }
+  },
+  90_000,
+);
+
+test.skipIf(process.platform === "win32")(
   "restart confirms the replacement worker when a provider probe is slow",
   async () => {
     const f = await fixture();

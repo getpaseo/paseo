@@ -3,12 +3,14 @@ import {
   readDaemonInstance,
   isSameDaemonInstance,
   DaemonInstanceError,
+  signalWorkerRestart,
+  type DaemonInstance,
 } from "@getpaseo/server/daemon-control";
 import { setTimeout as delay } from "node:timers/promises";
 import { connectToDaemon } from "../../utils/client.js";
 import { withOutput, type CommandOptions } from "../../output/index.js";
 import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
-import { describeDaemonTarget } from "../../utils/daemon-target.js";
+import { describeDaemonTarget, type DaemonTarget } from "../../utils/daemon-target.js";
 import { parseTimeoutMs, rejectRemovedLaunchFlags } from "./local-daemon.js";
 
 export function daemonRestartCommand(): Command {
@@ -42,26 +44,12 @@ export async function runRestartCommand(options: CommandOptions, _command: Comma
       "DAEMON_NOT_RUNNING",
       `Daemon is not running for ${target.home}.`,
     );
-  const client = await connectToDaemon({
+  const { workerPid, serverId, acknowledged } = await requestWorkerRestart({
     target,
-    instance: instance ?? undefined,
-    timeout: remaining(),
+    instance,
+    remaining,
+    checkSupervisor,
   });
-  let workerPid: number;
-  const serverId = client.getLastServerInfoMessage()?.serverId;
-  let acknowledged = false;
-  try {
-    workerPid = (await client.getDaemonStatus({ timeout: remaining() })).pid;
-    await checkSupervisor();
-    try {
-      await client.restartServer("cli_restart", undefined, { timeout: remaining() });
-      acknowledged = true;
-    } catch (error) {
-      if (!isReconnectFailure(error)) throw error;
-    }
-  } finally {
-    await client.close();
-  }
   let lastError: unknown = "No replacement worker observed";
   while (Date.now() < deadline) {
     try {
@@ -110,6 +98,44 @@ export async function runRestartCommand(options: CommandOptions, _command: Comma
     code: "RESTART_NOT_CONFIRMED",
     message: `Replacement was not confirmed for ${describeDaemonTarget(target)}. Restart acknowledged: ${acknowledged}. Last observation: ${String(lastError)}`,
   };
+}
+
+interface WorkerRestartRequest {
+  workerPid: number;
+  serverId: string | null | undefined;
+  acknowledged: boolean;
+}
+
+async function requestWorkerRestart(input: {
+  target: DaemonTarget;
+  instance: DaemonInstance | null;
+  remaining: () => number;
+  checkSupervisor: () => Promise<void>;
+}): Promise<WorkerRestartRequest> {
+  const { target, instance, remaining } = input;
+  if (target.kind === "instance" && instance) {
+    const workerPid = await signalWorkerRestart(target.home, instance);
+    if (workerPid !== null) return { workerPid, serverId: instance.serverId, acknowledged: true };
+  }
+  const client = await connectToDaemon({
+    target,
+    instance: instance ?? undefined,
+    timeout: remaining(),
+  });
+  const serverId = client.getLastServerInfoMessage()?.serverId;
+  try {
+    const workerPid = (await client.getDaemonStatus({ timeout: remaining() })).pid;
+    await input.checkSupervisor();
+    try {
+      await client.restartServer("cli_restart", undefined, { timeout: remaining() });
+      return { workerPid, serverId, acknowledged: true };
+    } catch (error) {
+      if (!isReconnectFailure(error)) throw error;
+      return { workerPid, serverId, acknowledged: false };
+    }
+  } finally {
+    await client.close();
+  }
 }
 
 function isReconnectFailure(error: unknown): boolean {
