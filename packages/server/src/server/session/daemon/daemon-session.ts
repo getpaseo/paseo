@@ -53,7 +53,7 @@ export interface DaemonSessionOptions {
   getObservationMetrics?: () => Record<string, number>;
   logger: pino.Logger;
   hubRelationships?: HubRelationshipManagement;
-  reloadConfig: () => DaemonConfigReloadResult;
+  reloadConfig: () => Promise<DaemonConfigReloadResult>;
 }
 
 /**
@@ -79,7 +79,7 @@ export class DaemonSession {
   private readonly logger: pino.Logger;
   private readonly selfUpdate: DaemonSelfUpdateSessionController;
   private readonly hubRelationships: HubRelationshipManagement | null;
-  private readonly reloadConfig: () => DaemonConfigReloadResult;
+  private readonly reloadConfig: () => Promise<DaemonConfigReloadResult>;
 
   constructor(options: DaemonSessionOptions) {
     this.host = options.host;
@@ -252,13 +252,13 @@ export class DaemonSession {
     }
   }
 
-  handleConfigReloadRequest(
+  async handleConfigReloadRequest(
     msg: Extract<SessionInboundMessage, { type: "daemon.config.reload.request" }>,
-  ): void {
+  ): Promise<void> {
     try {
       this.host.emit({
         type: "daemon.config.reload.response",
-        payload: { requestId: msg.requestId, ...this.reloadConfig() },
+        payload: { requestId: msg.requestId, ...(await this.reloadConfig()) },
       });
     } catch (error) {
       this.logger.error({ err: error }, "Failed to reload daemon config");

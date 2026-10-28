@@ -854,7 +854,7 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
         second.worktree.worktreePath,
         "remote.paseo-pr-14.url",
       );
-      const metadata = readPaseoWorktreeMetadata(second.worktree.worktreePath);
+      const metadata = await readPaseoWorktreeMetadata(second.worktree.worktreePath);
       const facts = await getCheckoutSnapshotFacts(second.worktree.worktreePath, { paseoHome });
 
       expect(second.worktree.branchName).toBe("feature/gitlab-mr-1");
@@ -1113,7 +1113,7 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
         createCoreDeps({ github }),
       );
       writeFileSync(
-        getPaseoWorktreeMetadataPath(second.worktree.worktreePath),
+        await getPaseoWorktreeMetadataPath(second.worktree.worktreePath),
         `${JSON.stringify({ version: 1, baseRefName: "main" }, null, 2)}\n`,
         "utf8",
       );

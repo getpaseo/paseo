@@ -1,6 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
+import { mkdir, open, realpath, rename, stat, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { constants } from "node:fs";
+import pLimit from "p-limit";
 import { isAbsolute, join, resolve } from "path";
 import { z } from "zod";
+
+const MAX_WORKTREE_METADATA_BYTES = 64 * 1024;
 
 const ChangeRequestLookupTargetSchema = z.object({
   headRef: z.string().min(1),
@@ -90,75 +95,78 @@ function normalizeLegacyGitHubOwnerForBranch(owner: string): string | null {
   return /^[a-z0-9-]+$/.test(normalized) ? normalized : null;
 }
 
-export function rebindPaseoWorktreeChangeRequestHint(
+export async function rebindPaseoWorktreeChangeRequestHint(
   worktreeRoot: string,
   previousBranch: string,
   currentBranch: string,
-): boolean {
-  const metadata = readPaseoWorktreeMetadata(worktreeRoot);
-  const target = getPaseoWorktreeChangeRequestHintForBranch(metadata, previousBranch);
-  if (!metadata || !target) {
-    return false;
-  }
+): Promise<boolean> {
+  return mutateMetadata(worktreeRoot, async (root) => {
+    const metadata = await readMetadataFile(root);
+    const target = getPaseoWorktreeChangeRequestHintForBranch(metadata, previousBranch);
+    if (!metadata || !target) {
+      return false;
+    }
 
-  writePaseoWorktreeMetadataFile(worktreeRoot, {
-    ...metadata,
-    changeRequestLookupTarget: {
-      ...target,
-      ...(target.headRef === previousBranch &&
-      !target.headRepositoryOwner &&
-      target.changeRequestNumber === undefined
-        ? { headRef: currentBranch }
-        : {}),
-      localBranchName: currentBranch,
-    },
+    await writePaseoWorktreeMetadataFile(root, {
+      ...metadata,
+      changeRequestLookupTarget: {
+        ...target,
+        ...(target.headRef === previousBranch &&
+        !target.headRepositoryOwner &&
+        target.changeRequestNumber === undefined
+          ? { headRef: currentBranch }
+          : {}),
+        localBranchName: currentBranch,
+      },
+    });
+    return true;
   });
-  return true;
 }
 
-export function pinPaseoWorktreeBranchIdentityIfMissing(
+export async function pinPaseoWorktreeBranchIdentityIfMissing(
   worktreeRoot: string,
   branch: string,
-): boolean {
-  const metadata = readPaseoWorktreeMetadata(worktreeRoot);
-  if (!metadata || metadata.changeRequestLookupTarget) {
-    return false;
-  }
-  const target = createPaseoWorktreeChangeRequestHint({
-    headRef: branch,
-    localBranchName: branch,
+): Promise<boolean> {
+  return mutateMetadata(worktreeRoot, async (root) => {
+    const metadata = await readMetadataFile(root);
+    if (!metadata || metadata.changeRequestLookupTarget) {
+      return false;
+    }
+    const target = createPaseoWorktreeChangeRequestHint({
+      headRef: branch,
+      localBranchName: branch,
+    });
+    await writePaseoWorktreeMetadataFile(root, {
+      ...metadata,
+      changeRequestLookupTarget: target,
+    });
+    return true;
   });
-  writePaseoWorktreeMetadataFile(worktreeRoot, {
-    ...metadata,
-    changeRequestLookupTarget: target,
-  });
-  return true;
 }
 
-function getGitDirForWorktreeRoot(worktreeRoot: string): string {
+async function getGitDirForWorktreeRoot(worktreeRoot: string): Promise<string> {
   const gitPath = join(worktreeRoot, ".git");
-  if (!existsSync(gitPath)) {
-    throw new Error(`Not a git repository: ${worktreeRoot}`);
-  }
-
-  // In a worktree checkout, `.git` is a file containing `gitdir: <path>`.
-  // In a normal checkout, `.git` is a directory.
+  let info;
   try {
-    const gitFileContent = readFileSync(gitPath, "utf8");
-    const match = gitFileContent.match(/gitdir:\s*(.+)/);
-    if (match?.[1]) {
-      const raw = match[1].trim();
-      return isAbsolute(raw) ? raw : resolve(worktreeRoot, raw);
-    }
-  } catch {
-    // If `.git` is a directory, readFileSync will throw; fall through.
+    info = await stat(gitPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      throw new Error(`Not a git repository: ${worktreeRoot}`, { cause: error });
+    throw error;
+  }
+  if (info.isDirectory()) return gitPath;
+  const gitFileContent = await readBoundedFile(gitPath);
+  const match = gitFileContent.match(/gitdir:\s*(.+)/);
+  if (match?.[1]) {
+    const raw = match[1].trim();
+    return isAbsolute(raw) ? raw : resolve(worktreeRoot, raw);
   }
 
   return gitPath;
 }
 
-export function getPaseoWorktreeMetadataPath(worktreeRoot: string): string {
-  const gitDir = getGitDirForWorktreeRoot(worktreeRoot);
+export async function getPaseoWorktreeMetadataPath(worktreeRoot: string): Promise<string> {
+  const gitDir = await getGitDirForWorktreeRoot(worktreeRoot);
   return join(gitDir, "paseo", "worktree.json");
 }
 
@@ -213,120 +221,166 @@ function assertValidBaseRef(value: string): void {
   }
 }
 
-export function writePaseoWorktreeMetadata(
+export async function writePaseoWorktreeMetadata(
   worktreeRoot: string,
   options: {
     baseRefName: string;
     baseRef?: string;
     changeRequestLookupTarget?: PaseoWorktreeChangeRequestHint;
   },
-): void {
-  const baseRefName = normalizeBaseRefName(options.baseRefName);
-  assertValidBaseRef(baseRefName);
-  const baseRef = options.baseRef?.trim();
-  if (baseRef) {
-    assertValidBaseRef(baseRef);
-  }
+): Promise<void> {
+  return mutateMetadata(worktreeRoot, async (root) => {
+    const baseRefName = normalizeBaseRefName(options.baseRefName);
+    assertValidBaseRef(baseRefName);
+    const baseRef = options.baseRef?.trim();
+    if (baseRef) {
+      assertValidBaseRef(baseRef);
+    }
 
-  const metadata: PaseoWorktreeMetadata = {
-    version: 1,
-    baseRefName,
-    ...(baseRef ? { baseRef } : {}),
-    ...(options.changeRequestLookupTarget
-      ? { changeRequestLookupTarget: options.changeRequestLookupTarget }
-      : {}),
-  };
-  writePaseoWorktreeMetadataFile(worktreeRoot, metadata);
-}
-
-export function writePaseoWorktreeRuntimeMetadata(
-  worktreeRoot: string,
-  options: { worktreePort: number },
-): void {
-  if (!Number.isInteger(options.worktreePort) || options.worktreePort <= 0) {
-    throw new Error(`Invalid worktree runtime port: ${options.worktreePort}`);
-  }
-
-  const current = readPaseoWorktreeMetadata(worktreeRoot);
-  if (!current) {
-    throw new Error("Cannot persist worktree runtime metadata: missing base metadata");
-  }
-
-  const next: PaseoWorktreeMetadata = {
-    ...current,
-    version: 2,
-    runtime: {
-      worktreePort: options.worktreePort,
-    },
-  };
-  writePaseoWorktreeMetadataFile(worktreeRoot, next);
-}
-
-export function writePaseoWorktreeFirstAgentBranchAutoNameMetadata(
-  worktreeRoot: string,
-  options: { placeholderBranchName: string },
-): void {
-  const placeholderBranchName = options.placeholderBranchName.trim();
-  if (!placeholderBranchName) {
-    throw new Error("Placeholder branch name is required");
-  }
-
-  const current = readPaseoWorktreeMetadata(worktreeRoot);
-  if (!current) {
-    throw new Error("Cannot persist first-agent branch auto-name metadata: missing base metadata");
-  }
-
-  writePaseoWorktreeMetadataFile(worktreeRoot, {
-    ...current,
-    version: 2,
-    firstAgentBranchAutoName: {
-      status: "pending",
-      placeholderBranchName,
-    },
+    const metadata: PaseoWorktreeMetadata = {
+      version: 1,
+      baseRefName,
+      ...(baseRef ? { baseRef } : {}),
+      ...(options.changeRequestLookupTarget
+        ? { changeRequestLookupTarget: options.changeRequestLookupTarget }
+        : {}),
+    };
+    await writePaseoWorktreeMetadataFile(root, metadata);
   });
 }
 
-export function markPaseoWorktreeFirstAgentBranchAutoNameAttempted(
+export async function writePaseoWorktreeRuntimeMetadata(
+  worktreeRoot: string,
+  options: { worktreePort: number },
+): Promise<void> {
+  return mutateMetadata(worktreeRoot, async (root) => {
+    if (!Number.isInteger(options.worktreePort) || options.worktreePort <= 0) {
+      throw new Error(`Invalid worktree runtime port: ${options.worktreePort}`);
+    }
+
+    const current = await readMetadataFile(root);
+    if (!current) {
+      throw new Error("Cannot persist worktree runtime metadata: missing base metadata");
+    }
+
+    const next: PaseoWorktreeMetadata = {
+      ...current,
+      version: 2,
+      runtime: {
+        worktreePort: options.worktreePort,
+      },
+    };
+    await writePaseoWorktreeMetadataFile(root, next);
+  });
+}
+
+export async function writePaseoWorktreeFirstAgentBranchAutoNameMetadata(
+  worktreeRoot: string,
+  options: { placeholderBranchName: string },
+): Promise<void> {
+  return mutateMetadata(worktreeRoot, async (root) => {
+    const placeholderBranchName = options.placeholderBranchName.trim();
+    if (!placeholderBranchName) {
+      throw new Error("Placeholder branch name is required");
+    }
+
+    const current = await readMetadataFile(root);
+    if (!current) {
+      throw new Error(
+        "Cannot persist first-agent branch auto-name metadata: missing base metadata",
+      );
+    }
+
+    await writePaseoWorktreeMetadataFile(root, {
+      ...current,
+      version: 2,
+      firstAgentBranchAutoName: {
+        status: "pending",
+        placeholderBranchName,
+      },
+    });
+  });
+}
+
+export async function markPaseoWorktreeFirstAgentBranchAutoNameAttempted(
   worktreeRoot: string,
   options: { attemptedAt?: string } = {},
-): PaseoWorktreeMetadata | null {
-  const current = readPaseoWorktreeMetadata(worktreeRoot);
-  if (!current || current.version !== 2 || current.firstAgentBranchAutoName?.status !== "pending") {
-    return current;
-  }
+): Promise<PaseoWorktreeMetadata | null> {
+  return mutateMetadata(worktreeRoot, async (root) => {
+    const current = await readMetadataFile(root);
+    if (
+      !current ||
+      current.version !== 2 ||
+      current.firstAgentBranchAutoName?.status !== "pending"
+    ) {
+      return current;
+    }
 
-  const next: PaseoWorktreeMetadata = {
-    ...current,
-    firstAgentBranchAutoName: {
-      status: "attempted",
-      placeholderBranchName: current.firstAgentBranchAutoName.placeholderBranchName,
-      attemptedAt: options.attemptedAt ?? new Date().toISOString(),
-    },
-  };
-  writePaseoWorktreeMetadataFile(worktreeRoot, next);
-  return next;
+    const next: PaseoWorktreeMetadata = {
+      ...current,
+      firstAgentBranchAutoName: {
+        status: "attempted",
+        placeholderBranchName: current.firstAgentBranchAutoName.placeholderBranchName,
+        attemptedAt: options.attemptedAt ?? new Date().toISOString(),
+      },
+    };
+    await writePaseoWorktreeMetadataFile(root, next);
+    return next;
+  });
 }
 
-export function readPaseoWorktreeMetadata(worktreeRoot: string): PaseoWorktreeMetadata | null {
-  const metadataPath = getPaseoWorktreeMetadataPath(worktreeRoot);
-  if (!existsSync(metadataPath)) {
-    return null;
-  }
-  const parsed = JSON.parse(readFileSync(metadataPath, "utf8"));
-  return PaseoWorktreeMetadataSchema.parse(parsed);
+export async function readPaseoWorktreeMetadata(
+  worktreeRoot: string,
+): Promise<PaseoWorktreeMetadata | null> {
+  const key = await resolveMetadataIdentity(worktreeRoot);
+  await metadataMutations.get(key)?.catch(() => {});
+  return metadataIo(() => readMetadataFile(key));
 }
 
-export function requirePaseoWorktreeBaseRefName(worktreeRoot: string): string {
-  const metadataPath = getPaseoWorktreeMetadataPath(worktreeRoot);
-  const metadata = readPaseoWorktreeMetadata(worktreeRoot);
+async function readMetadataFile(worktreeRoot: string): Promise<PaseoWorktreeMetadata | null> {
+  const metadataPath = await getPaseoWorktreeMetadataPath(worktreeRoot);
+  try {
+    return PaseoWorktreeMetadataSchema.parse(JSON.parse(await readBoundedFile(metadataPath)));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+// O_NONBLOCK lets us reject FIFOs by kind without hanging in open(). A fixed read also
+// caps a regular file that grows between stat and read; readFile's whole-file loop does not.
+async function readBoundedFile(path: string): Promise<string> {
+  const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    const info = await file.stat();
+    const limit = MAX_WORKTREE_METADATA_BYTES;
+    if (!info.isFile() || info.size > limit)
+      throw new Error(`Invalid Paseo worktree metadata file: ${path}`);
+    const buffer = Buffer.alloc(limit + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await file.read(buffer, length, buffer.length - length);
+      if (bytesRead === 0) break;
+      length += bytesRead;
+    }
+    if (length > limit) throw new Error(`Invalid Paseo worktree metadata file: ${path}`);
+    return buffer.toString("utf8", 0, length);
+  } finally {
+    await file.close();
+  }
+}
+
+export async function requirePaseoWorktreeBaseRefName(worktreeRoot: string): Promise<string> {
+  const metadataPath = await getPaseoWorktreeMetadataPath(worktreeRoot);
+  const metadata = await readPaseoWorktreeMetadata(worktreeRoot);
   if (!metadata) {
     throw new Error(`Missing Paseo worktree base metadata: ${metadataPath}`);
   }
   return metadata.baseRefName;
 }
 
-export function readPaseoWorktreeRuntimePort(worktreeRoot: string): number | null {
-  const metadata = readPaseoWorktreeMetadata(worktreeRoot);
+export async function readPaseoWorktreeRuntimePort(worktreeRoot: string): Promise<number | null> {
+  const metadata = await readPaseoWorktreeMetadata(worktreeRoot);
   if (!metadata) {
     return null;
   }
@@ -336,13 +390,61 @@ export function readPaseoWorktreeRuntimePort(worktreeRoot: string): number | nul
   return null;
 }
 
-function writePaseoWorktreeMetadataFile(
+async function writePaseoWorktreeMetadataFile(
   worktreeRoot: string,
   metadata: PaseoWorktreeMetadata,
-): void {
-  const metadataPath = getPaseoWorktreeMetadataPath(worktreeRoot);
-  mkdirSync(join(getGitDirForWorktreeRoot(worktreeRoot), "paseo"), { recursive: true });
-  const tempPath = `${metadataPath}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync(tempPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
-  renameSync(tempPath, metadataPath);
+): Promise<void> {
+  const metadataPath = await getPaseoWorktreeMetadataPath(worktreeRoot);
+  const contents = `${JSON.stringify(metadata, null, 2)}\n`;
+  if (Buffer.byteLength(contents) > MAX_WORKTREE_METADATA_BYTES) {
+    throw new Error(`Invalid Paseo worktree metadata file: ${metadataPath}`);
+  }
+  // Never recreate an archived Git directory while a queued mutation is pending.
+  try {
+    await mkdir(join(await getGitDirForWorktreeRoot(worktreeRoot), "paseo"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  const tempPath = `${metadataPath}.${randomUUID()}.tmp`;
+  await writeFile(tempPath, contents, "utf8");
+  await rename(tempPath, metadataPath);
+}
+
+const metadataIo = pLimit(2);
+const metadataMutations = new Map<string, Promise<unknown>>();
+
+// Only share in-flight identity resolution: a replaced symlink must not retain an old owner.
+const metadataIdentities = new Map<string, Promise<string>>();
+
+function resolveMetadataIdentity(worktreeRoot: string): Promise<string> {
+  const path = resolve(worktreeRoot);
+  const existing = metadataIdentities.get(path);
+  if (existing) return existing;
+  const identity = metadataIo(async () => {
+    try {
+      return await realpath(path);
+    } catch {
+      return path;
+    }
+  }).finally(() => {
+    if (metadataIdentities.get(path) === identity) metadataIdentities.delete(path);
+  });
+  metadataIdentities.set(path, identity);
+  return identity;
+}
+
+async function mutateMetadata<T>(
+  worktreeRoot: string,
+  mutation: (root: string) => Promise<T>,
+): Promise<T> {
+  const key = await resolveMetadataIdentity(worktreeRoot);
+  const previous = metadataMutations.get(key) ?? Promise.resolve();
+  const pending = previous.catch(() => {}).then(() => metadataIo(() => mutation(key)));
+  metadataMutations.set(key, pending);
+  void pending
+    .finally(() => {
+      if (metadataMutations.get(key) === pending) metadataMutations.delete(key);
+    })
+    .catch(() => {});
+  return pending;
 }

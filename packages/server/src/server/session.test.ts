@@ -425,6 +425,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     github: asGitHubService(github),
     workspaceGitService: asWorkspaceGitService(workspaceGitService),
     daemonConfigStore: asDaemonConfigStore({
+      readServicePorts: async () => undefined,
       get: vi.fn(() => ({
         mcp: { injectIntoAgents: false },
         providers: {},
@@ -585,6 +586,78 @@ test("routes plugin requests and releases its owned catalog subscription on clea
   await session.cleanup();
   expect(listeners.size).toBe(0);
   expect(releasePluginSubscription).toHaveBeenCalledOnce();
+});
+
+test("leaves out the client bundles a catalog request already holds", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const pluginRuntime: NonNullable<SessionOptions["pluginRuntime"]> = {
+    before: async (_name, request) => request,
+    emit: () => {},
+    listPlugins: async () => [],
+    getLogs: () => [],
+    installDirectory: async () => {
+      throw new Error("Unexpected install");
+    },
+    inspectDirectory: async () => ({ id: "unused" }),
+    reloadPlugin: async () => {
+      throw new Error("Unexpected reload");
+    },
+    enablePlugin: async () => {
+      throw new Error("Unexpected enable");
+    },
+    disablePlugin: async () => {
+      throw new Error("Unexpected disable");
+    },
+    removePlugin: async () => undefined,
+    subscribe: () => () => {},
+    catalog: () => [
+      { id: "cached", clientBundle: "cached bundle", clientBundleHash: "hash-cached" },
+      { id: "changed", clientBundle: "new bundle", clientBundleHash: "hash-new" },
+      { id: "added", clientBundle: "added bundle", clientBundleHash: "hash-added" },
+    ],
+    invokePluginRpc: async () => null,
+    listUsageReports: async () => [],
+    listLegacyUsage: async () => ({ fetchedAt: "2026-01-01T00:00:00.000Z", providers: [] }),
+  };
+  const session = createSessionForTest({ messages, pluginRuntime });
+
+  await session.handleMessage({
+    type: "plugin.catalog.get.request",
+    requestId: "reconnect",
+    cachedClientBundles: [
+      { id: "cached", clientBundleHash: "hash-cached" },
+      { id: "changed", clientBundleHash: "hash-old" },
+      { id: "removed", clientBundleHash: "hash-removed" },
+    ],
+  });
+  // Clients from before cachedClientBundles always receive every bundle.
+  await session.handleMessage({ type: "plugin.catalog.get.request", requestId: "legacy" });
+
+  expect(messages).toEqual([
+    {
+      type: "plugin.catalog.get.response",
+      payload: {
+        requestId: "reconnect",
+        plugins: [
+          { id: "cached", clientBundleHash: "hash-cached" },
+          { id: "changed", clientBundle: "new bundle", clientBundleHash: "hash-new" },
+          { id: "added", clientBundle: "added bundle", clientBundleHash: "hash-added" },
+        ],
+      },
+    },
+    {
+      type: "plugin.catalog.get.response",
+      payload: {
+        requestId: "legacy",
+        plugins: [
+          { id: "cached", clientBundle: "cached bundle", clientBundleHash: "hash-cached" },
+          { id: "changed", clientBundle: "new bundle", clientBundleHash: "hash-new" },
+          { id: "added", clientBundle: "added bundle", clientBundleHash: "hash-added" },
+        ],
+      },
+    },
+  ]);
+  await session.cleanup();
 });
 
 describe("workspace label subscriptions", () => {
