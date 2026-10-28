@@ -415,8 +415,19 @@ test.describe("Settings — compact master-detail", () => {
     const workspace = await withWorkspace({ prefix: "host-picker-settings-back-" });
     const workspaceRoute = buildHostWorkspaceRoute(getServerId(), workspace.workspaceId);
 
-    await openWorkspace(page, workspace);
+    const worktreeSetupCallout = page.locator('[data-testid^="worktree-setup-callout-"]');
+
+    await test.step("the wide sidebar shows the worktree setup prompt for this workspace", async () => {
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await openWorkspace(page, workspace);
+      await expect(worktreeSetupCallout.first()).toBeVisible({ timeout: 30_000 });
+      await page.setViewportSize({ width: 390, height: 844 });
+    });
+
     await page.getByRole("button", { name: "Open menu", exact: true }).click();
+    // The compact sidebar shows only native callouts, so the prompt stays out.
+    await expect(page.getByTestId("sidebar-hosts-trigger")).toBeVisible();
+    await expect(worktreeSetupCallout).toHaveCount(0);
     await page.getByTestId("sidebar-hosts-trigger").click();
     await page.getByRole("button", { name: /Open .* settings/ }).click();
 

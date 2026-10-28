@@ -12,12 +12,7 @@ import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 import type { FileChange, FileObserver, SubscribeToFileChanges } from "./file-observer/index.js";
 
 function createLogger(): pino.Logger {
-  const logger = {
-    child: () => logger,
-    debug: vi.fn(),
-    warn: vi.fn(),
-  };
-  return logger as unknown as pino.Logger;
+  return pino({ level: "warn" });
 }
 
 function createFacts(cwd: string): CheckoutSnapshotFacts {
@@ -232,7 +227,14 @@ test("recursive observation updates tracked state and prunes ignored storms", as
 
   await vi.waitFor(
     () => {
-      expect(activeWatcherCount).toBe(2);
+      expect(
+        activeWatcherCount,
+        JSON.stringify({
+          observer: observer.getDiagnostics(),
+          service: service.getMetrics(),
+          deliveredEvents,
+        }),
+      ).toBe(2);
       expect(workspaceRuntimeStore.get(repoDir)).not.toBeNull();
       expect(service.getMetrics()).toMatchObject({
         workspaceObservationSetupInFlightCount: 0,

@@ -2106,6 +2106,19 @@ export const es: TranslationResources = {
   sidebarCallout: {
     dismiss: "Despedir",
   },
+  daemonOutdated: {
+    title: "Daemon desactualizado",
+    versions: "{{host}} ejecuta el daemon {{daemonVersion}}. Esta app es {{appVersion}}.",
+    terminalsStayOpen: "Actualizar reinicia el daemon. Las terminales siguen abiertas.",
+    terminalsClose: "Actualizar reinicia el daemon y cierra las terminales abiertas.",
+    desktopUpdateTerminals:
+      "Actualizar Paseo Desktop mantiene las terminales abiertas en macOS y Linux, y las cierra en Windows.",
+    desktopManaged: "Paseo Desktop administra este daemon. Actualiza Paseo en esa computadora.",
+    selfUpdateUnsupported:
+      "Este daemon no puede actualizarse solo. Actualiza Paseo en esa computadora.",
+    update: "Actualizar",
+    updateFailedTitle: "No se pudo actualizar el daemon",
+  },
   contextWindow: {
     noData: "No hay datos de contexto",
     accessibilityNoData: "Ventana de contexto: No hay datos de contexto",
@@ -2897,6 +2910,11 @@ export const es: TranslationResources = {
           requestFailedTitle: "Error",
           requestFailedMessage:
             "No se pudo enviar la solicitud de reinicio.Paseose vuelve a conectar automáticamente; inténtelo nuevamente una vez que el host se muestre en línea.",
+          closeTerminals: "Reiniciar y cerrar terminales",
+          closeTerminalsHint:
+            "Reinicia y además cierra todas las terminales abiertas en este host.",
+          closeTerminalsConfirmMessage:
+            "Esto reiniciará el daemon y cerrará todas sus terminales, terminando los programas que se ejecutan en ellas. La app se reconectará automáticamente.",
           dialogFailedMessage:
             "No se puede abrir el cuadro de diálogo de confirmación de reinicio.",
         },

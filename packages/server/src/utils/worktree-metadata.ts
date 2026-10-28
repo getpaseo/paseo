@@ -2,7 +2,7 @@ import { mkdir, open, realpath, rename, stat, writeFile } from "node:fs/promises
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import pLimit from "p-limit";
-import { isAbsolute, join, resolve } from "path";
+import { dirname, isAbsolute, join, resolve } from "path";
 import { z } from "zod";
 
 const MAX_WORKTREE_METADATA_BYTES = 64 * 1024;
@@ -327,6 +327,39 @@ export async function markPaseoWorktreeFirstAgentBranchAutoNameAttempted(
     await writePaseoWorktreeMetadataFile(root, next);
     return next;
   });
+}
+
+export async function hasPaseoWorktreeMetadata(worktreeRoot: string): Promise<boolean> {
+  try {
+    return (await readPaseoWorktreeMetadata(worktreeRoot)) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Filesystem-only search for a Paseo worktree root at or above cwd: the
+ * first directory containing a .git entry wins, and it only counts when
+ * its git admin dir holds the paseo/worktree.json marker. Lets callers
+ * cheaply rule out plain directories before running git ownership checks.
+ */
+export async function findPaseoWorktreeRootForCwd(cwd: string): Promise<string | null> {
+  let current = resolve(cwd);
+  for (;;) {
+    if (
+      await stat(join(current, ".git")).then(
+        () => true,
+        () => false,
+      )
+    ) {
+      return (await hasPaseoWorktreeMetadata(current)) ? current : null;
+    }
+    const parent = dirname(current);
+    if (parent === current) {
+      return null;
+    }
+    current = parent;
+  }
 }
 
 export async function readPaseoWorktreeMetadata(

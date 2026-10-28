@@ -2091,6 +2091,18 @@ export const ru: TranslationResources = {
   sidebarCallout: {
     dismiss: "Закрыть",
   },
+  daemonOutdated: {
+    title: "Демон устарел",
+    versions: "На {{host}} работает демон {{daemonVersion}}. Версия приложения: {{appVersion}}.",
+    terminalsStayOpen: "Обновление перезапустит демон. Терминалы останутся открытыми.",
+    terminalsClose: "Обновление перезапустит демон и закроет открытые терминалы.",
+    desktopUpdateTerminals:
+      "Обновление Paseo Desktop оставляет терминалы открытыми в macOS и Linux и закрывает их в Windows.",
+    desktopManaged: "Этим демоном управляет Paseo Desktop. Обновите Paseo на том компьютере.",
+    selfUpdateUnsupported: "Этот демон не может обновиться сам. Обновите Paseo на том компьютере.",
+    update: "Обновить",
+    updateFailedTitle: "Не удалось обновить демон",
+  },
   contextWindow: {
     noData: "Нет данных о контексте",
     accessibilityNoData: "Контекстное окно: нет данных о контексте",
@@ -2890,6 +2902,10 @@ export const ru: TranslationResources = {
           requestFailedTitle: "Ошибка",
           requestFailedMessage:
             "Не удалось отправить запрос на перезапуск. Paseo переподключается автоматически. Повторите попытку, когда хост появится в сети.",
+          closeTerminals: "Перезапустить и закрыть терминалы",
+          closeTerminalsHint: "Перезапускает демон и закрывает все терминалы на этом хосте.",
+          closeTerminalsConfirmMessage:
+            "Демон будет перезапущен, а все его терминалы закрыты вместе с запущенными в них программами. Приложение переподключится автоматически.",
           dialogFailedMessage: "Не удалось открыть диалог подтверждения перезапуска.",
         },
         update: {

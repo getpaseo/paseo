@@ -455,9 +455,15 @@ test.each([
     let original: Awaited<ReturnType<typeof client.createSession>> | undefined;
     let resumed: Awaited<ReturnType<typeof client.resumeSession>> | undefined;
     try {
+      // Windows invokes the platform binary directly. Installing its wrapper also runs an
+      // unused postinstall binary probe, which has no timeout and can hold the fixture open.
+      const installPackage =
+        process.platform === "win32"
+          ? `${windowsPackage}-${process.arch}@${cliPackage.slice(cliPackage.lastIndexOf("@") + 1)}`
+          : cliPackage;
       await execCommand(
         "npm",
-        ["install", "--prefix", root, "--no-audit", "--no-fund", cliPackage],
+        ["install", "--prefix", root, "--no-audit", "--no-fund", installPackage],
         {
           cwd: root,
           timeout: 180_000,

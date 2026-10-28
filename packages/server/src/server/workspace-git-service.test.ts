@@ -796,17 +796,21 @@ describe("WorkspaceGitServiceImpl", () => {
     const service = createService({ getCheckoutStatus, subscribe, runGitCommand });
 
     cwds.forEach((cwd) => service.registerWorkspace({ cwd }, vi.fn()));
-    await vi.waitFor(() => {
-      // Admission precedes async path resolution; disposal must race pending subscriptions.
-      expect(subscribe).toHaveBeenCalledTimes(WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY);
-      expect(service.getMetrics()).toMatchObject({
-        workspaceRefreshAdmissionActiveCount: WORKSPACE_GIT_REFRESH_CONCURRENCY,
-        workspaceRefreshAdmissionPendingCount: 1,
-        workspaceObservationSetupAdmissionActiveCount: WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
-        workspaceObservationSetupAdmissionPendingCount:
-          cwds.length - WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
-      });
-    });
+    await vi.waitFor(
+      () => {
+        expect(service.getMetrics()).toMatchObject({
+          workspaceRefreshAdmissionActiveCount: WORKSPACE_GIT_REFRESH_CONCURRENCY,
+          workspaceRefreshAdmissionPendingCount: 1,
+          workspaceObservationSetupAdmissionActiveCount:
+            WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
+          workspaceObservationSetupAdmissionPendingCount:
+            cwds.length - WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
+        });
+        // Admission precedes asynchronous path setup; dispose only once watchers are pending.
+        expect(subscribe).toHaveBeenCalledTimes(WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY);
+      },
+      { timeout: 10_000 },
+    );
     const queuedRefreshSettlement = service.getSnapshot(cwds.at(-1)!).then(
       () => ({ status: "fulfilled" as const, error: null }),
       (error: unknown) => ({ status: "rejected" as const, error }),

@@ -2105,6 +2105,19 @@ export const fr: TranslationResources = {
   sidebarCallout: {
     dismiss: "Ignorer",
   },
+  daemonOutdated: {
+    title: "Daemon obsolète",
+    versions: "{{host}} exécute le daemon {{daemonVersion}}. Cette app est en {{appVersion}}.",
+    terminalsStayOpen: "La mise à jour redémarre le daemon. Les terminaux restent ouverts.",
+    terminalsClose: "La mise à jour redémarre le daemon et ferme les terminaux ouverts.",
+    desktopUpdateTerminals:
+      "La mise à jour de Paseo Desktop garde les terminaux ouverts sur macOS et Linux, et les ferme sur Windows.",
+    desktopManaged: "Paseo Desktop gère ce daemon. Mettez à jour Paseo sur cet ordinateur.",
+    selfUpdateUnsupported:
+      "Ce daemon ne peut pas se mettre à jour lui-même. Mettez à jour Paseo sur cet ordinateur.",
+    update: "Mettre à jour",
+    updateFailedTitle: "Échec de la mise à jour du daemon",
+  },
   contextWindow: {
     noData: "Aucune donnée de contexte",
     accessibilityNoData: "Fenêtre de contexte : aucune donnée de contexte",
@@ -2902,6 +2915,10 @@ export const fr: TranslationResources = {
           requestFailedTitle: "Erreur",
           requestFailedMessage:
             "Impossible d’envoyer la demande de redémarrage. Paseo se reconnecte automatiquement : réessayez quand l’hôte apparaît en ligne.",
+          closeTerminals: "Redémarrer et fermer les terminaux",
+          closeTerminalsHint: "Redémarre et ferme aussi tous les terminaux ouverts sur cet hôte.",
+          closeTerminalsConfirmMessage:
+            "Le daemon va redémarrer et fermer tous ses terminaux, ce qui arrêtera les programmes qui y tournent. L'app se reconnectera automatiquement.",
           dialogFailedMessage:
             "Impossible d’ouvrir la boîte de dialogue de confirmation du redémarrage.",
         },

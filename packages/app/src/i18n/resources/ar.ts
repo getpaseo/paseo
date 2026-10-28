@@ -2058,6 +2058,18 @@ export const ar: TranslationResources = {
   sidebarCallout: {
     dismiss: "رفض",
   },
+  daemonOutdated: {
+    title: "الخدمة قديمة",
+    versions: "يشغّل {{host}} الخدمة {{daemonVersion}}. إصدار هذا التطبيق {{appVersion}}.",
+    terminalsStayOpen: "يعيد التحديث تشغيل الخدمة. تبقى الطرفيات مفتوحة.",
+    terminalsClose: "يعيد التحديث تشغيل الخدمة ويغلق الطرفيات المفتوحة.",
+    desktopUpdateTerminals:
+      "يُبقي تحديث Paseo Desktop الطرفيات مفتوحة على macOS وLinux، ويغلقها على Windows.",
+    desktopManaged: "يدير Paseo Desktop هذه الخدمة. حدّث Paseo على ذلك الحاسوب.",
+    selfUpdateUnsupported: "لا يمكن لهذه الخدمة تحديث نفسها. حدّث Paseo على ذلك الحاسوب.",
+    update: "تحديث",
+    updateFailedTitle: "فشل تحديث الخدمة",
+  },
   contextWindow: {
     noData: "لا توجد بيانات للسياق",
     accessibilityNoData: "نافذة السياق: لا توجد بيانات للسياق",
@@ -2873,6 +2885,10 @@ export const ar: TranslationResources = {
           requestFailedTitle: "خطأ",
           requestFailedMessage:
             "فشل في إرسال طلب إعادة التشغيل.  يقوم Paseo بإعادة الاتصال تلقائيًا - حاول مرة أخرى بمجرد ظهور المضيف على أنه متصل بالإنترنت.",
+          closeTerminals: "إعادة التشغيل وإغلاق الطرفيات",
+          closeTerminalsHint: "يعيد التشغيل ويغلق أيضًا كل الطرفيات المفتوحة على هذا المضيف.",
+          closeTerminalsConfirmMessage:
+            "سيُعاد تشغيل الخدمة وتُغلق كل طرفياتها، مما ينهي البرامج التي تعمل فيها. سيعيد التطبيق الاتصال تلقائيًا.",
           dialogFailedMessage: "غير قادر على فتح مربع حوار تأكيد إعادة التشغيل.",
         },
         update: {

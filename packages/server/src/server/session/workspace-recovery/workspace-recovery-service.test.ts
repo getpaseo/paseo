@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   realpathSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -475,4 +476,44 @@ test("restore rejects a branch checked out elsewhere without inventing another b
       encoding: "utf8",
     }).trim(),
   ).toBe("* feature");
+});
+
+test("restores a user-created worktree at its recorded path outside Paseo's root", async () => {
+  const { tempDir, repoDir } = createGitRepository();
+  const worktreeRoot = join(realpathSync(tempDir), "external-worktree");
+  execFileSync("git", ["worktree", "add", "-b", "external-feature", worktreeRoot], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  const workspace = createWorkspace({
+    cwd: worktreeRoot,
+    worktreeRoot,
+    mainRepoRoot: repoDir,
+    branch: "external-feature",
+    baseBranch: "main",
+    isPaseoOwnedWorktree: false,
+  });
+  execFileSync("git", ["worktree", "remove", worktreeRoot], { cwd: repoDir, stdio: "pipe" });
+  const unarchived: string[] = [];
+  const service = createWorkspaceRecoveryService({
+    paseoHome: join(tempDir, "paseo-home"),
+    getWorkspace: async () => workspace,
+    getProject: async () => createProject({ rootPath: repoDir }),
+    isDirectory: async (target) => existsSync(target) && statSync(target).isDirectory(),
+    unarchiveWorkspace: async (record) => {
+      unarchived.push(record.workspaceId);
+    },
+  });
+  await expect(service.restore(workspace.workspaceId)).resolves.toEqual({
+    workspaceId: workspace.workspaceId,
+    action: "restore",
+  });
+  expect(readFileSync(join(worktreeRoot, "README.md"), "utf8").trim()).toBe("initial");
+  expect(
+    execFileSync("git", ["branch", "--show-current"], {
+      cwd: worktreeRoot,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("external-feature");
+  expect(unarchived).toEqual([workspace.workspaceId]);
 });

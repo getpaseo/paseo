@@ -2083,6 +2083,18 @@ export const en = {
   sidebarCallout: {
     dismiss: "Dismiss",
   },
+  daemonOutdated: {
+    title: "Daemon out of date",
+    versions: "{{host}} runs daemon {{daemonVersion}}. This app is {{appVersion}}.",
+    terminalsStayOpen: "Updating restarts the daemon. Terminals stay open.",
+    terminalsClose: "Updating restarts the daemon and closes open terminals.",
+    desktopUpdateTerminals:
+      "Updating Paseo Desktop keeps terminals open on macOS and Linux, and closes them on Windows.",
+    desktopManaged: "Paseo Desktop manages this daemon. Update Paseo on that computer.",
+    selfUpdateUnsupported: "This daemon can't update itself. Update Paseo on that computer.",
+    update: "Update",
+    updateFailedTitle: "Daemon update failed",
+  },
   contextWindow: {
     noData: "No context data",
     accessibilityNoData: "Context window: No context data",
@@ -2966,6 +2978,10 @@ export const en = {
           requestFailedTitle: "Error",
           requestFailedMessage:
             "Failed to send the restart request. Paseo reconnects automatically-try again once the host shows as online.",
+          closeTerminals: "Restart and close terminals",
+          closeTerminalsHint: "Restart and also close every terminal running on this host.",
+          closeTerminalsConfirmMessage:
+            "This will restart the daemon and close every terminal on it, ending the programs running in them. The app will reconnect automatically.",
           dialogFailedMessage: "Unable to open the restart confirmation dialog.",
         },
         update: {
