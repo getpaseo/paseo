@@ -1171,10 +1171,14 @@ describe("WorkspaceGitServiceImpl", () => {
     const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
     await vi.waitFor(() => {
       expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
+      expect(service.getMetrics().fetchInFlightCount).toBe(1);
     });
 
     releaseFetch.resolve();
-    await flushPromises();
+    // The refresh debounce starts when the fetch result is applied, not when it is released.
+    await vi.waitFor(() => {
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => {
       expect(getCheckoutRefDerivedState).toHaveBeenCalledTimes(1);
