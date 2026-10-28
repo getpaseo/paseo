@@ -4,6 +4,7 @@ export {
   SettingsRow,
   SettingsSwitch,
   SettingsSelect,
+  Select,
   SettingsInput,
   SettingsAction,
 } from "@/components/settings";
@@ -28,3 +29,4 @@ export { useToast } from "./toast";
 export { StreamedText } from "./streamed-text";
 
 export { Markdown } from "./markdown";
+export { TerminalView } from "./terminal";

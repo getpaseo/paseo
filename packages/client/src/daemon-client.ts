@@ -6378,6 +6378,7 @@ export class DaemonClient {
       command?: string;
       args?: string[];
       workspaceId?: string;
+      presentation?: "standalone" | "embedded";
       size?: { rows: number; cols: number };
     },
   ): Promise<CreateTerminalPayload> {
@@ -6390,6 +6391,7 @@ export class DaemonClient {
       command: options?.command,
       args: options?.args,
       ...(options?.workspaceId !== undefined ? { workspaceId: options.workspaceId } : {}),
+      ...(options?.presentation !== undefined ? { presentation: options.presentation } : {}),
       ...(options?.size !== undefined ? { size: options.size } : {}),
       requestId: resolvedRequestId,
     });

@@ -6,6 +6,7 @@ const TerminalSchema = z.object({
   workspaceId: z.string(),
   cwd: z.string(),
   name: z.string(),
+  presentation: z.enum(["standalone", "embedded"]).optional(),
 });
 
 export type PaseoTerminal = z.infer<typeof TerminalSchema>;
@@ -15,6 +16,8 @@ export interface PaseoTerminalCreateOptions {
   /** Process working directory; defaults to the workspace directory. */
   cwd?: string;
   name?: string;
+  /** Embedded terminals stay available through the API without automatically opening a tab. */
+  presentation?: "standalone" | "embedded";
   command?: string;
   args?: string[];
   size?: { rows: number; cols: number };
@@ -133,6 +136,13 @@ export function createTerminalActions(
   return {
     create: async ({ workspaceId, cwd, name, requestId, ...options }) => {
       const driver = client();
+      // COMPAT(embeddedTerminals): added in v0.13.0, remove gate after 2027-04-28.
+      if (
+        options.presentation === "embedded" &&
+        driver.getLastServerInfoMessage()?.features?.embeddedTerminals !== true
+      ) {
+        throw new Error("Update the host to create embedded terminals.");
+      }
       if (!workspaceId) throw new Error("workspaceId is required");
       const directory = cwd ?? (await resolveWorkspaceDirectory(workspaceId));
       const result = await driver.createTerminal(directory, name, requestId, {

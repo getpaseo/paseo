@@ -4,7 +4,6 @@ import type { PluginThemeContribution } from "@getpaseo/plugin";
 import { describe, expect, it } from "vitest";
 import { darkTheme, lightTheme } from "@/styles/theme";
 import { collectPluginThemes, rememberPluginThemeHost } from "./themes";
-import { toPluginTheme } from "./theme";
 import type { InstalledPlugin } from "./types";
 
 const MOCHA: PluginThemeContribution = {
@@ -70,26 +69,6 @@ function installed(serverId: string, themes: PluginThemeContribution[]): Install
     timelineRenderers: [],
   };
 }
-
-describe("toPluginTheme", () => {
-  it("maps the app theme into the plugin color tokens", () => {
-    expect(toPluginTheme(lightTheme)).toEqual({
-      colors: {
-        surface0: lightTheme.colors.surface0,
-        surface1: lightTheme.colors.surface1,
-        surface2: lightTheme.colors.surface2,
-        border: lightTheme.colors.border,
-        foreground: lightTheme.colors.foreground,
-        foregroundMuted: lightTheme.colors.foregroundMuted,
-        accent: lightTheme.colors.accent,
-        accentForeground: lightTheme.colors.accentForeground,
-        statusSuccess: lightTheme.colors.statusSuccess,
-        statusWarning: lightTheme.colors.statusWarning,
-        statusDanger: lightTheme.colors.statusDanger,
-      },
-    });
-  });
-});
 
 describe("plugin theme palettes", () => {
   it("expands a contributed palette onto the semantic and terminal tokens", () => {

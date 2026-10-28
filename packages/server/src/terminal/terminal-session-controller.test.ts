@@ -189,12 +189,14 @@ function listSession(input: {
   name: string;
   cwd: string;
   workspaceId?: string;
+  presentation?: "standalone" | "embedded";
 }): TerminalSession {
   return {
     id: input.id,
     name: input.name,
     cwd: input.cwd,
     workspaceId: input.workspaceId ?? "ws-test",
+    ...(input.presentation !== undefined ? { presentation: input.presentation } : {}),
     send: vi.fn(),
     subscribe: () => vi.fn(),
     onExit: () => vi.fn(),
@@ -294,7 +296,7 @@ describe("terminal-session-controller legacy terminal creation", () => {
     ]);
   });
 
-  test("forwards the client-provided viewport size to the terminal manager", async () => {
+  test("forwards client viewport size and presentation to the terminal manager and response", async () => {
     const outboundMessages: SessionOutboundMessage[] = [];
     const createTerminal = vi.fn(
       async (options: Parameters<TerminalManager["createTerminal"]>[0]) =>
@@ -303,6 +305,7 @@ describe("terminal-session-controller legacy terminal creation", () => {
           name: options.name ?? "Terminal 1",
           cwd: options.cwd,
           workspaceId: options.workspaceId,
+          presentation: options.presentation,
         }),
     );
     const terminalManager: TerminalManager = {
@@ -338,13 +341,28 @@ describe("terminal-session-controller legacy terminal creation", () => {
       type: "create_terminal_request",
       cwd: "/work/repo",
       workspaceId: "ws-1",
+      presentation: "embedded",
       size: { rows: 55, cols: 136 },
       requestId: "req-size",
     });
 
     expect(createTerminal).toHaveBeenCalledWith(
-      expect.objectContaining({ cwd: "/work/repo", workspaceId: "ws-1", rows: 55, cols: 136 }),
+      expect.objectContaining({
+        cwd: "/work/repo",
+        workspaceId: "ws-1",
+        presentation: "embedded",
+        rows: 55,
+        cols: 136,
+      }),
     );
+    expect(outboundMessages).toEqual([
+      expect.objectContaining({
+        type: "create_terminal_response",
+        payload: expect.objectContaining({
+          terminal: expect.objectContaining({ presentation: "embedded" }),
+        }),
+      }),
+    ]);
   });
 });
 

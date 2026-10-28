@@ -13,6 +13,7 @@ import {
   lineNumbers,
 } from "@codemirror/view";
 import { createCodeMirrorHighlightStyle, type HighlightStyle } from "@getpaseo/highlight";
+import { CODE_LINE_HEIGHT_RATIO } from "@/styles/code-typography";
 
 export interface EditorVisualTheme {
   colorScheme: "light" | "dark";
@@ -59,7 +60,7 @@ export function editorTheme(theme: EditorVisualTheme) {
         ".cm-scroller": {
           overflow: "auto",
           fontFamily: theme.monoFont,
-          lineHeight: "1.45",
+          lineHeight: String(CODE_LINE_HEIGHT_RATIO),
         },
         ".cm-panels": { backgroundColor: theme.background, color: theme.foreground },
         ".cm-panels-top": { borderBottom: "none" },

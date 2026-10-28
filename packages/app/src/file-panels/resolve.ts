@@ -12,7 +12,7 @@ export interface FilePanelSelector {
 }
 
 /** A selector, or `"all"`: every file of the panel's `fileKind`. */
-export type FilePanelFiles = FilePanelSelector | "all";
+export type FilePanelFiles = FilePanelSelector | { kind: "text" } | "all";
 
 export interface FilePanelCandidate {
   id: string;
@@ -21,13 +21,16 @@ export interface FilePanelCandidate {
   files: FilePanelFiles;
   /** The only kind of file a built-in panel reads. Plugin panels are offered for any kind. */
   fileKind?: FilePanelFileKind;
+  supportsLineNavigation?: boolean;
 }
 
 export interface FilePanelResolution<Candidate> {
   panel: Candidate | null;
   candidates: readonly Candidate[];
   selectorKey: string;
-  /** The remembered candidate for `selectorKey`, when this host has it. */
+  /** The filename or extension scope, before a catch-all panel broadens the choice. */
+  specificSelectorKey: string;
+  /** The remembered candidate for this file, when this host has it. */
   associatedPanelId: string | null;
 }
 
@@ -43,7 +46,7 @@ function filePanelBasename(path: string): string {
 
 /** Which files an association applies to: one extension, or one exact filename. */
 export interface FilePanelSelectorKey {
-  kind: "ext" | "name";
+  kind: "ext" | "name" | "kind";
   value: string;
 }
 
@@ -53,17 +56,19 @@ function filePanelSelectorKey(key: FilePanelSelectorKey): string {
 
 export function parseFilePanelSelectorKey(selectorKey: string): FilePanelSelectorKey {
   const separator = selectorKey.indexOf(":");
-  const kind = selectorKey.slice(0, separator) === "name" ? "name" : "ext";
+  const prefix = selectorKey.slice(0, separator);
+  const kind = prefix === "name" || prefix === "kind" ? prefix : "ext";
   return { kind, value: selectorKey.slice(separator + 1) };
 }
 
 function matchesFiles(file: FilePanelFile, files: FilePanelFiles): boolean {
   if (files === "all") return true;
+  if ("kind" in files) return file.kind === files.kind;
   return matchesName(filePanelBasename(file.path), filePanelExtension(file.path), files);
 }
 
 function claimsFilename(files: FilePanelFiles, filename: string): boolean {
-  return files !== "all" && Boolean(files.filenames?.includes(filename));
+  return files !== "all" && !("kind" in files) && Boolean(files.filenames?.includes(filename));
 }
 
 function matchesName(name: string, extension: string, selector: FilePanelSelector): boolean {
@@ -74,6 +79,7 @@ function matchesName(name: string, extension: string, selector: FilePanelSelecto
 /** The selector keys a panel claims by name: one per extension and one per filename. */
 export function filePanelClaimedSelectorKeys(files: FilePanelFiles): string[] {
   if (files === "all") return [];
+  if ("kind" in files) return [filePanelSelectorKey({ kind: "kind", value: files.kind })];
   const selector = files;
   return [
     ...selector.extensions.map((extension) =>
@@ -90,10 +96,12 @@ export function filePanelClaimedSelectorKeys(files: FilePanelFiles): string[] {
  * file kind depends on the file, so it is not part of the answer.
  */
 export function claimsFilePanelSelectorKey(
-  selector: FilePanelSelector,
+  selector: Exclude<FilePanelFiles, "all">,
   selectorKey: string,
 ): boolean {
   const { kind, value } = parseFilePanelSelectorKey(selectorKey);
+  if ("kind" in selector) return kind !== "kind" || selector.kind === value;
+  if (kind === "kind") return false;
   return kind === "name"
     ? matchesName(value, filePanelExtension(value), selector)
     : matchesName("", value, selector);
@@ -110,6 +118,27 @@ function isBuiltinFloor(candidate: FilePanelCandidate): boolean {
 /** Paseo asks which panel opens a file only when a plugin panel is one of several candidates. */
 export function asksForFilePanel(candidates: readonly FilePanelCandidate[]): boolean {
   return candidates.length > 1 && candidates.some((candidate) => !candidate.builtin);
+}
+
+export function filePanelChoiceSelectorKey(
+  panel: FilePanelCandidate | null,
+  candidates: readonly FilePanelCandidate[],
+  specificSelectorKey: string,
+): string {
+  const hasSpecificPlugin = candidates.some(
+    (candidate) => !candidate.builtin && candidate.files !== "all" && !("kind" in candidate.files),
+  );
+  const hasKindPanel = candidates.some(
+    (candidate) => candidate.files !== "all" && "kind" in candidate.files,
+  );
+  if (hasSpecificPlugin || !hasKindPanel || !panel) return specificSelectorKey;
+  if (panel.files !== "all" && "kind" in panel.files) {
+    return filePanelSelectorKey({ kind: "kind", value: panel.files.kind });
+  }
+  if (panel.files === "all" && panel.fileKind) {
+    return filePanelSelectorKey({ kind: "kind", value: panel.fileKind });
+  }
+  return specificSelectorKey;
 }
 
 export function resolveFilePanel<Candidate extends FilePanelCandidate>(input: {
@@ -136,8 +165,31 @@ export function resolveFilePanel<Candidate extends FilePanelCandidate>(input: {
   const selectorKey = matchedFilename
     ? filePanelSelectorKey({ kind: "name", value: filename })
     : filePanelSelectorKey({ kind: "ext", value: filePanelExtension(file.path) });
-  const associated = candidates.find((candidate) => candidate.id === associations[selectorKey]);
+  const extensionKey = filePanelSelectorKey({ kind: "ext", value: filePanelExtension(file.path) });
+  const namedAssociation = candidates.find(
+    (candidate) => candidate.id === associations[selectorKey],
+  );
+  const extensionAssociation = candidates.find(
+    (candidate) => candidate.id === associations[extensionKey],
+  );
+  const exactAssociation = namedAssociation ?? extensionAssociation;
+  const kindKey = filePanelSelectorKey({ kind: "kind", value: file.kind });
+  const kindAssociation = candidates.find((candidate) => candidate.id === associations[kindKey]);
+  const associated = exactAssociation ?? kindAssociation;
+  const specificSelectorKey =
+    extensionAssociation && !namedAssociation ? extensionKey : selectorKey;
   const chosen = candidates.find((candidate) => candidate.id === input.choice);
   const panel = chosen ?? associated ?? candidates[0] ?? null;
-  return { panel, candidates, selectorKey, associatedPanelId: associated?.id ?? null };
+  let resolvedSelectorKey = filePanelChoiceSelectorKey(panel, candidates, specificSelectorKey);
+  if (exactAssociation) resolvedSelectorKey = specificSelectorKey;
+  if (kindAssociation && panel?.id === kindAssociation.id && !exactAssociation) {
+    resolvedSelectorKey = kindKey;
+  }
+  return {
+    panel,
+    candidates,
+    selectorKey: resolvedSelectorKey,
+    specificSelectorKey,
+    associatedPanelId: associated?.id ?? null,
+  };
 }

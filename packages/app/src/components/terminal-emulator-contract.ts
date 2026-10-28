@@ -39,6 +39,9 @@ export interface TerminalEmulatorProps {
   scrollbackLines: number;
   fontFamily?: string;
   fontSize?: number;
+  /** Cell line-height multiplier; omitted preserves the renderer's terminal default. */
+  lineHeight?: number;
+  selectionColors?: { background: string; foreground: string };
   keyboardInset?: number;
   isKeyboardVisible?: boolean;
   swipeGesturesEnabled?: boolean;

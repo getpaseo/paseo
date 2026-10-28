@@ -16,5 +16,6 @@ export function toPluginTheme(theme: Theme): PluginTheme {
       statusWarning: theme.colors.statusWarning,
       statusDanger: theme.colors.statusDanger,
     },
+    syntax: theme.colors.syntax,
   };
 }

@@ -48,14 +48,26 @@ function offeredCandidates<Candidate extends FilePanelCandidate>(
   candidates: readonly Candidate[],
   selectorKey: string,
 ): Candidate[] {
-  const claiming = candidates.filter(
+  const claiming = candidates.filter((candidate) =>
+    candidate.files === "all"
+      ? candidate.fileKind === "text"
+      : "kind" in candidate.files && candidate.files.kind === "text",
+  );
+  if (selectorKey === "kind:text") return claiming;
+  const explicit = candidates.filter(
     (candidate) =>
-      candidate.files !== "all" && claimsFilePanelSelectorKey(candidate.files, selectorKey),
+      candidate.files !== "all" &&
+      !("kind" in candidate.files) &&
+      claimsFilePanelSelectorKey(candidate.files, selectorKey),
+  );
+  const hasNonTextBuiltin = explicit.some(
+    (candidate) => candidate.builtin && candidate.fileKind !== "text",
   );
   return candidates.filter((candidate) =>
     candidate.files === "all"
-      ? !claiming.some((claimant) => claimant.builtin)
-      : claiming.includes(candidate),
+      ? !explicit.some((claimant) => claimant.builtin)
+      : explicit.includes(candidate) ||
+        (!hasNonTextBuiltin && "kind" in candidate.files && candidate.files.kind === "text"),
   );
 }
 
@@ -69,10 +81,11 @@ function coalesceById<Candidate extends { id: string }>(
   return [...byId.values()];
 }
 
-/** Extensions before filenames, each alphabetically. */
+/** The text default first, then extensions and filenames, each alphabetically. */
 function compareSelectorKeys(left: string, right: string): number {
   const a = parseFilePanelSelectorKey(left);
   const b = parseFilePanelSelectorKey(right);
-  if (a.kind !== b.kind) return a.kind === "ext" ? -1 : 1;
+  const order = { kind: 0, ext: 1, name: 2 };
+  if (a.kind !== b.kind) return order[a.kind] - order[b.kind];
   return a.value.localeCompare(b.value);
 }

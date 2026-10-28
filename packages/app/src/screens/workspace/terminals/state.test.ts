@@ -69,6 +69,34 @@ describe("workspace terminal state", () => {
     ).toEqual(["terminal-2"]);
   });
 
+  it("keeps embedded terminals known without discovering duplicate standalone tabs", () => {
+    const payload = upsertCreatedTerminalPayload({
+      current: {
+        cwd: "/repo",
+        requestId: "list",
+        terminals: [
+          listedTerminal("legacy"),
+          { ...listedTerminal("standalone"), presentation: "standalone" },
+        ],
+      },
+      terminal: { ...createdTerminal("embedded"), presentation: "embedded" },
+      workspaceDirectory: "/repo",
+    });
+
+    expect(payload.terminals.find((terminal) => terminal.id === "embedded")).toMatchObject({
+      presentation: "embedded",
+    });
+    expect(
+      collectKnownTerminalIds({
+        liveTerminalIds: payload.terminals.map((terminal) => terminal.id),
+        pendingScriptTerminalIds: new Map(),
+      }),
+    ).toEqual(["legacy", "standalone", "embedded"]);
+    expect(
+      collectStandaloneTerminalIds({ terminals: payload.terminals, scriptTerminalIds: new Set() }),
+    ).toEqual(["legacy", "standalone"]);
+  });
+
   it("updates terminal cache entries for created and closed terminals", () => {
     const current: ListTerminalsPayload = {
       cwd: "/repo",

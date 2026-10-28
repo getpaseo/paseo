@@ -1,7 +1,8 @@
 import type { PluginText } from "../text.js";
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
 import type { PaseoApi } from "@getpaseo/client";
 import type { AgentTimelineItem, JsonValue } from "@getpaseo/protocol/agent-types";
+import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 import type { PluginFile } from "./file.js";
 import type { PluginRpcContract } from "../rpc.js";
@@ -155,9 +156,37 @@ export interface PluginFilePanelContribution<Text extends PluginText = string> {
   id: string;
   title: Text;
   icon: PluginIcon;
-  /** Extensions without the dot, case-insensitive, and exact filenames. */
-  files: { extensions: readonly string[]; filenames?: readonly string[] };
+  /** Match explicit names/extensions, or every text file reported by the host. */
+  files: { extensions: readonly string[]; filenames?: readonly string[] } | { kind: "text" };
+  /** Receive file-link line targets instead of switching back to a built-in panel. */
+  supportsLineNavigation?: boolean;
   Component: ComponentType<PluginFilePanelProps>;
+}
+
+export type PluginDiffPanelParams =
+  | {
+      readonly kind: "working";
+      readonly comparison: "uncommitted" | "base" | "all";
+      readonly baseRef?: string;
+      readonly files: readonly ParsedDiffFile[];
+      readonly focusPath?: string;
+      readonly focusRequestId?: number;
+    }
+  | {
+      readonly kind: "commit";
+      readonly sha: string;
+      readonly files: readonly ParsedDiffFile[];
+    };
+
+export interface PluginDiffPanelProps extends PluginPanelProps<PluginDiffPanelParams> {
+  /** The built-in viewer. Return it when this plugin's diff tool is disabled. */
+  children: ReactNode;
+}
+
+export interface PluginDiffPanelContribution<Text extends PluginText = string> {
+  id: string;
+  title: Text;
+  Component: ComponentType<PluginDiffPanelProps>;
 }
 
 export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
@@ -196,6 +225,7 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   addAttachmentSource(contribution: PluginAttachmentSourceContribution<PluginText>): PluginCleanup;
   addTheme(contribution: PluginThemeContribution<PluginText>): PluginCleanup;
   addFilePanel(contribution: PluginFilePanelContribution<PluginText>): PluginCleanup;
+  addDiffPanel(contribution: PluginDiffPanelContribution<PluginText>): PluginCleanup;
   addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(
     contribution: PluginTimelineTransformerContribution<ItemType>,
   ): PluginCleanup;

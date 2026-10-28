@@ -35,6 +35,7 @@ import type { ChangesState } from "@/panels/changes/state";
 import { defaultChangesState } from "@/panels/changes/state";
 import { ReviewCommentSheet, ReviewFeedbackAction } from "@/review";
 import { DiffDocument, type WorkingDiffMode } from "@/git/diff-document";
+import { PluginDiffPanelHost } from "@/plugins/diff-panels/host";
 import { ChangedFilesTree } from "@/git/changed-files-tree";
 import { JUMP_TO_FILE_CLEARANCE, JumpToFile } from "@/git/jump-to-file";
 import {
@@ -1797,6 +1798,17 @@ export function ChangesSurface({
     selectUncommitted: handleSelectUncommitted,
     selectBase: handleSelectBase,
   });
+  const pluginDiffParams = useMemo(
+    () => ({
+      kind: "working" as const,
+      comparison: diffMode,
+      baseRef,
+      files,
+      focusPath: documentFocusRequest?.path,
+      focusRequestId: documentFocusRequest?.revision,
+    }),
+    [diffMode, baseRef, files, documentFocusRequest],
+  );
 
   const diffContent: ReactElement = (
     <View style={styles.diffContainer}>
@@ -1813,16 +1825,18 @@ export function ChangesSurface({
         checkingRepositoryLabel={t("workspace.git.diff.checkingRepository")}
         notRepositoryLabel={t("workspace.git.diff.notRepository")}
       >
-        <DiffDocument
-          files={files}
-          contentInsetBottom={floatingActionsClearance(
-            [jumpToFileInset, reviewFeedback.clearance],
-            bottomInset,
-          )}
-          collapseState={collapseState}
-          displayPreferences={sharedDisplayPreferences}
-          mode={workingMode}
-        />
+        <PluginDiffPanelHost params={pluginDiffParams}>
+          <DiffDocument
+            files={files}
+            contentInsetBottom={floatingActionsClearance(
+              [jumpToFileInset, reviewFeedback.clearance],
+              bottomInset,
+            )}
+            collapseState={collapseState}
+            displayPreferences={sharedDisplayPreferences}
+            mode={workingMode}
+          />
+        </PluginDiffPanelHost>
       </DiffBodyContent>
       <ReviewFeedbackAction
         bottomOffset={jumpToFileInset}

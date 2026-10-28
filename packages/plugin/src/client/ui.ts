@@ -111,6 +111,12 @@ export interface SettingsSelectProps<Value extends string = string> extends Sett
   onValueChange(value: Value): void;
   disabled?: boolean;
 }
+/** A host dropdown without a settings row, for compact panel toolbars. */
+export type SelectProps<Value extends string = string> = Pick<
+  SettingsSelectProps<Value>,
+  "label" | "value" | "options" | "onValueChange" | "disabled"
+>;
+export declare function Select<Value extends string>(props: SelectProps<Value>): ReactNode;
 export interface SettingsInputHandle {
   focus(): void;
   blur(): void;
@@ -178,6 +184,20 @@ export declare const Loading: ComponentType;
 
 /** Render a local document URL in an isolated frame. */
 export declare const DocumentFrame: ComponentType<{ url: string; testID?: string }>;
+
+export interface TerminalViewProps {
+  /** A terminal created on this panel's host through the terminal SDK. */
+  terminalId: string;
+  /** The terminal's working directory on that host. */
+  cwd: string;
+  /** "editor" follows host code typography and editor colors live. Defaults to "terminal". */
+  appearance?: "terminal" | "editor";
+}
+/**
+ * The host's terminal renderer, including native input, focus, resizing, and remote transport.
+ * Render inside a contributed file, workspace, or agent panel. Does not create or kill the process.
+ */
+export declare const TerminalView: ComponentType<TerminalViewProps>;
 
 export interface MarkdownProps {
   children: string;

@@ -275,6 +275,7 @@ function runWorker(argv: string[]): void {
       name: session.name,
       cwd: session.cwd,
       workspaceId: session.workspaceId,
+      ...(session.presentation !== undefined ? { presentation: session.presentation } : {}),
       ...(session.getTitle() ? { title: session.getTitle() } : {}),
       activity: session.getActivity(),
     };

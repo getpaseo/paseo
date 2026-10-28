@@ -17,6 +17,7 @@ import { type PluginCleanup } from "@getpaseo/plugin";
 import {
   type PluginClientContext,
   type PluginAgentPanelContribution,
+  type PluginFilePanelContribution,
   type PluginWorkspacePanelContribution as WorkspacePanelInput,
   type PluginScreenProps,
   type PluginScreenTitle,
@@ -30,6 +31,7 @@ import type {
   EvaluatedPlugin,
   PluginSidebarSection,
   PluginAttachmentSourceContribution,
+  PluginDiffPanelContribution,
   PluginThemeContribution,
   PluginCommandCenterItemContribution,
   PluginClientSlashCommandContribution,
@@ -54,6 +56,27 @@ const TIMELINE_ITEM_TYPES = new Set([
   "error",
   "compaction",
 ]);
+
+function validFilePanelSelector(files: PluginFilePanelContribution["files"]): boolean {
+  if (!files || typeof files !== "object") return false;
+  if ("kind" in files) return files.kind === "text" && Object.keys(files).length === 1;
+  const validEntries = (entries: unknown, extension: boolean): entries is string[] =>
+    Array.isArray(entries) &&
+    entries.every(
+      (entry) =>
+        typeof entry === "string" &&
+        entry.trim() === entry &&
+        entry.length > 0 &&
+        !/[\\/*?]/.test(entry) &&
+        (!extension || !entry.includes(".")),
+    );
+  return (
+    !Object.keys(files).some((key) => key !== "extensions" && key !== "filenames") &&
+    validEntries(files.extensions, true) &&
+    (files.filenames === undefined || validEntries(files.filenames, false)) &&
+    (files.extensions.length > 0 || Boolean(files.filenames?.length))
+  );
+}
 
 function normalizePanelLocations(
   panelId: string,
@@ -125,12 +148,14 @@ export function runPluginClientBundle(
   runtime: PluginClientRuntime,
   onChange: () => void = () => undefined,
 ): EvaluatedPlugin {
+  const diffPanels: PluginDiffPanelContribution[] = [];
   const collector: Omit<EvaluatedPlugin, "id" | "cleanup"> = {
     surfaces: [],
     settingsScreens: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
     filePanels: [],
+    diffPanels,
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
@@ -146,6 +171,7 @@ export function runPluginClientBundle(
     footer: new Set(),
   };
   const filePanelIds = new Set<string>();
+  const diffPanelIds = new Set<string>();
   const workspacePanelIds = new Set<string>();
   const commandCenterItemIds = new Set<string>();
   const clientSlashCommandNames = new Set<string>();
@@ -308,24 +334,13 @@ export function runPluginClientBundle(
       if (!title) throw new Error(`File panel ${panelId} has no title`);
       const icon = parsePluginIcon(`File panel ${panelId}`, contribution.icon);
       const files = contribution.files;
-      const validEntries = (entries: unknown, extension: boolean): entries is string[] =>
-        Array.isArray(entries) &&
-        entries.every(
-          (entry) =>
-            typeof entry === "string" &&
-            entry.trim() === entry &&
-            entry.length > 0 &&
-            !/[\\/*?]/.test(entry) &&
-            (!extension || !entry.includes(".")),
-        );
-      if (
-        !files ||
-        Object.keys(files).some((key) => key !== "extensions" && key !== "filenames") ||
-        !validEntries(files.extensions, true) ||
-        (files.filenames !== undefined && !validEntries(files.filenames, false)) ||
-        (files.extensions.length === 0 && !files.filenames?.length)
-      ) {
+      if (!validFilePanelSelector(files))
         throw new Error(`File panel ${panelId} has invalid selector`);
+      if (
+        contribution.supportsLineNavigation !== undefined &&
+        typeof contribution.supportsLineNavigation !== "boolean"
+      ) {
+        throw new Error(`File panel ${panelId} has invalid line-navigation capability`);
       }
       if (typeof contribution.Component !== "function")
         throw new Error(`File panel ${panelId} is not a component`);
@@ -337,12 +352,28 @@ export function runPluginClientBundle(
           id: panelId,
           title,
           icon,
-          files: {
-            extensions: [...files.extensions],
-            ...(files.filenames ? { filenames: [...files.filenames] } : {}),
-          },
+          files:
+            "kind" in files
+              ? { kind: files.kind }
+              : {
+                  extensions: [...files.extensions],
+                  ...(files.filenames ? { filenames: [...files.filenames] } : {}),
+                },
         },
         () => filePanelIds.delete(panelId),
+      );
+    },
+    addDiffPanel(contribution) {
+      const panelId = requireId(contribution.id, "diff panel id");
+      if (diffPanelIds.has(panelId)) throw new Error(`Duplicate diff panel: ${panelId}`);
+      const title = normalizePluginText(contribution.title);
+      if (!title) throw new Error(`Diff panel ${panelId} has no title`);
+      if (!isComponentType(contribution.Component)) {
+        throw new Error(`Diff panel ${panelId} is not a component`);
+      }
+      diffPanelIds.add(panelId);
+      return register(diffPanels, { id: panelId, title, Component: contribution.Component }, () =>
+        diffPanelIds.delete(panelId),
       );
     },
     addAgentPanel(contribution: PluginAgentPanelContribution<PluginText>) {
@@ -585,6 +616,7 @@ export function runPluginClientBundle(
     sidebarItems: collector.sidebarItems,
     legacySidebarItems: collector.legacySidebarItems,
     filePanels: collector.filePanels,
+    diffPanels,
     workspacePanels: collector.workspacePanels as EvaluatedPlugin["workspacePanels"],
     commandCenterItems: collector.commandCenterItems,
     clientSlashCommands: collector.clientSlashCommands,

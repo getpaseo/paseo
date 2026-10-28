@@ -42,6 +42,10 @@ Never more than two workers run. A new worker launches only when none is current
 
 **The frozen envelope never changes across versions:** the frame format (4-byte length + `v8.serialize`), `hello`/`helloAck`, the `listTerminals` info fields and `shutdown`. That is what lets any daemon close any worker: a kill stop sends `shutdown` to a newer worker it cannot otherwise drive. When you bump the version, keep a previous-version adapter so the draining worker can still be driven, and drop the adapter for the version before that.
 
+Protocol version 2 adds optional `presentation` metadata to terminal creation and live information.
+An absent value retains standalone behavior. Version 1 workers drain existing terminals without
+accepting new ones. New embedded terminals use a version 2 worker.
+
 Tests stand up other versions with `PASEO_TERMINAL_WORKER_PROTOCOL_OVERRIDE`, read by the worker. It is test-only.
 
 ## Running from its own copy

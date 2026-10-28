@@ -17,6 +17,32 @@ export interface PluginTheme {
     readonly statusWarning: string;
     readonly statusDanger: string;
   };
+  /** Syntax colors for the active theme; optional for older hosts and fixture themes. */
+  readonly syntax?: Readonly<
+    Record<
+      | "keyword"
+      | "comment"
+      | "string"
+      | "number"
+      | "literal"
+      | "function"
+      | "definition"
+      | "class"
+      | "type"
+      | "tag"
+      | "attribute"
+      | "property"
+      | "variable"
+      | "operator"
+      | "punctuation"
+      | "regexp"
+      | "escape"
+      | "meta"
+      | "heading"
+      | "link",
+      string
+    >
+  >;
 }
 
 export interface PluginWorkspaceSnapshot {

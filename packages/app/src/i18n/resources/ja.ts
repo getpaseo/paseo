@@ -1960,11 +1960,14 @@ export const ja: TranslationResources = {
       filePanels: {
         pickerTitleExtension: ".{{extension}} ファイルを開くアプリ",
         pickerTitleFilename: "{{filename}} を開くアプリ",
+        pickerTitleText: "テキストファイルを開くアプリ",
+        allTextFiles: "すべてのテキストファイル",
         dontAskAgain: "今後は確認しない",
         use: "使用",
         openWith: "このアプリで開く…",
         alwaysUseExtension: ".{{extension}} に常に使用",
         alwaysUseFilename: "{{filename}} に常に使用",
+        alwaysUseText: "テキストファイルに常に使用",
         option: "{{title}} — {{owner}}",
         builtin: {
           owner: "Paseo",

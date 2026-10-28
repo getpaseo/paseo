@@ -107,6 +107,7 @@ export interface TerminalSession {
   name: string;
   cwd: string;
   workspaceId: string;
+  presentation?: "standalone" | "embedded";
   send(msg: ClientMessage): void;
   subscribe(listener: (msg: ServerMessage) => void, options?: TerminalSubscribeOptions): () => void;
   onExit(listener: (info: TerminalExitInfo) => void): () => void;
@@ -153,6 +154,7 @@ export interface CreateTerminalOptions {
   id?: string;
   cwd: string;
   workspaceId: string;
+  presentation?: "standalone" | "embedded";
   shell?: string;
   env?: Record<string, string>;
   activityEnv?: Record<string, string>;
@@ -1597,6 +1599,7 @@ export async function createTerminal(
     name,
     cwd,
     workspaceId,
+    ...(options.presentation !== undefined ? { presentation: options.presentation } : {}),
     send,
     subscribe,
     onExit,

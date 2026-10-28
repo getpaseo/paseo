@@ -1966,11 +1966,14 @@ export const en = {
       filePanels: {
         pickerTitleExtension: "Open .{{extension}} files with",
         pickerTitleFilename: "Open {{filename}} with",
+        pickerTitleText: "Open text files with",
+        allTextFiles: "All text files",
         dontAskAgain: "Don't ask me again",
         use: "Use",
         openWith: "Open with…",
         alwaysUseExtension: "Always use for .{{extension}}",
         alwaysUseFilename: "Always use for {{filename}}",
+        alwaysUseText: "Always use for text files",
         option: "{{title}} — {{owner}}",
         builtin: {
           owner: "Paseo",

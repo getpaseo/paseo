@@ -6,6 +6,7 @@ Added:
 
 - Copy gitignored files selected by `.worktreeinclude` into new worktrees before setup and agents, using the built-in `worktree-include` plugin ([#8100](https://github.com/getpaseo/paseo/pull/8100))
 - Let plugins choose worktree paths and creation options through `worktree.create.before`, with listing, archive, deletion, and recovery at custom locations; includes a sibling-directory placement example ([#8117](https://github.com/getpaseo/paseo/pull/8117))
+- Let plugins use the existing terminal renderer in custom file and diff panels.
 
 Improved:
 

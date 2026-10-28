@@ -72,6 +72,9 @@ export interface TerminalGridViewProps {
   xtermTheme?: ITheme;
   fontFamily?: string;
   fontSize?: number;
+  /** Cell line-height multiplier; omitted uses the native font's measured height. */
+  lineHeight?: number;
+  selectionColors?: { background: string; foreground: string };
   style?: StyleProp<ViewStyle>;
   selection?: TerminalSelectionRange | null;
   onCellMetricsChange?: (metrics: TerminalGridCellMetrics) => void;
@@ -297,6 +300,8 @@ export function TerminalGridView({
   xtermTheme = DEFAULT_TERMINAL_THEME,
   fontFamily,
   fontSize = DEFAULT_FONT_SIZE,
+  lineHeight,
+  selectionColors = NATIVE_TERMINAL_SELECTION_COLORS,
   style,
   selection = null,
   onCellMetricsChange,
@@ -330,12 +335,12 @@ export function TerminalGridView({
           ? {
               range: selection,
               firstRow: state.firstRow,
-              backgroundColor: NATIVE_TERMINAL_SELECTION_COLORS.background,
-              foregroundColor: NATIVE_TERMINAL_SELECTION_COLORS.foreground,
+              backgroundColor: selectionColors.background,
+              foregroundColor: selectionColors.foreground,
             }
           : undefined,
       }),
-    [projectedGrid, resolver, selection, state.firstRow],
+    [projectedGrid, resolver, selection, selectionColors, state.firstRow],
   );
 
   const containerStyle = useMemo<StyleProp<ViewStyle>>(
@@ -353,8 +358,15 @@ export function TerminalGridView({
     [metrics.cellHeight, metrics.cellWidth, state.grid.length, visibleCols],
   );
   const measureStyle = useMemo<StyleProp<TextStyle>>(
-    () => [styles.measureText, { fontFamily: resolvedFontFamily, fontSize }],
-    [resolvedFontFamily, fontSize],
+    () => [
+      styles.measureText,
+      {
+        fontFamily: resolvedFontFamily,
+        fontSize,
+        lineHeight: lineHeight === undefined ? undefined : fontSize * lineHeight,
+      },
+    ],
+    [resolvedFontFamily, fontSize, lineHeight],
   );
   const cursorStyle = useMemo<StyleProp<ViewStyle>>(() => {
     const cursorOffset = resolveTerminalCursorOffset({

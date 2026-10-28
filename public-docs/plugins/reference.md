@@ -704,6 +704,10 @@ export default function contribute(client: PluginClientContext) {
 
 Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the screen body.
 
+`theme.syntax` contains the active syntax colors as optional readonly fields, e.g. `keyword`.
+Older apps may omit it. Plugins can send these colors to their editor through typed RPCs without
+importing app internals.
+
 `addScreen({ id, title, Component })` registers a screen. `title` is the screen header's title: a
 [display text](#runtime-translations), or a function that takes the screen's params and returns
 display text. The function runs again when params or language change. Invalid or empty literal
@@ -1575,6 +1579,47 @@ Agent snapshot fields:
 
 Paseo owns tab focus, splitting, closing, persistence, query state, the API/RPC providers, and the render error boundary. A restored tab whose plugin, panel, context, workspace, or agent is unavailable stays open with an unavailable message instead of crashing the workspace.
 
+## TerminalView
+
+Import `TerminalView` from `@getpaseo/plugin/client/ui` to display an existing terminal. Pass
+`terminalId` and `cwd`, inside a container with a bounded height. The process belongs to the
+terminal SDK. Mounting or unmounting this component does not create or stop it.
+
+Create the process with `paseo.terminals.create({ workspaceId, presentation: "embedded" })`
+to prevent an extra standalone terminal tab. Embedded creation requires the daemon's
+`features.embeddedTerminals` capability. Unsupported hosts report an update error before creation.
+
+`appearance="editor"` follows the host code font and size. It also follows editor line spacing
+and colors. The default, `appearance="terminal"`, retains ordinary terminal settings. Changes
+update and refit the running renderer without clearing output or moving focus. Applications
+that set their own RGB highlights must handle their own color changes.
+
+Web and desktop use the requested CSS font stack. Native clients use supported installed
+monospace fonts. Cell dimensions are rounded to physical pixels. The native cursor remains a
+translucent block.
+
+`Select` from the same module is the host dropdown without a settings row. It accepts `label`,
+`value`, `options`, `onValueChange`, and optional `disabled`. Options have a `label` and `value`.
+Use `SettingsSelect` for a complete settings row.
+
+## Diff panels
+
+Register a diff body with `client.addDiffPanel({ id, title, Component })`. The host retains its
+file list and comparison controls. The first available registration supplies the body. The
+returned cleanup function removes it.
+
+The component receives `PluginDiffPanelProps` and the built-in body as `children`. Returning
+`children` keeps the built-in diff, e.g. when the plugin's optional diff tool is disabled.
+The `params` value is one of:
+
+- `{ kind: "working", comparison, baseRef?, files, focusPath?, focusRequestId? }`.
+  `comparison` is `"uncommitted"`, `"base"`, or `"all"`.
+- `{ kind: "commit", sha, files }`.
+
+`files` contains parsed diff metadata. `focusPath` and `focusRequestId` identify a working-file
+selection. `revision` increments when content refreshes. Each contribution has separate persisted
+`tab.state` and an unsaved indicator.
+
 ## File panels
 
 Register a component that renders a file as the body of its file tab. Your component receives a
@@ -1600,17 +1645,21 @@ export default function contribute(client: PluginClientContext) {
 `addFilePanel` takes a `PluginFilePanelContribution` and returns an idempotent cleanup function.
 Paseo also removes the registration when the client entry is unloaded.
 
-| Field       | Required | Meaning                                                                  |
-| ----------- | -------- | ------------------------------------------------------------------------ |
-| `id`        | Yes      | Plugin-local ID matching `^[a-z][a-z0-9-]*$`.                            |
-| `title`     | Yes      | Non-empty label in the picker, the Open with menu, and Settings > Files. |
-| `icon`      | Yes      | Lucide name, `{ svg }`, or component. See [Icons](#icons).               |
-| `files`     | Yes      | `{ extensions: readonly string[]; filenames?: readonly string[] }`.      |
-| `Component` | Yes      | Component receiving `PluginFilePanelProps`.                              |
+| Field                    | Required | Meaning                                                                                   |
+| ------------------------ | -------- | ----------------------------------------------------------------------------------------- |
+| `id`                     | Yes      | Plugin-local ID matching `^[a-z][a-z0-9-]*$`.                                             |
+| `title`                  | Yes      | Non-empty label in the picker, Open with menu, and Settings > Files.                      |
+| `icon`                   | Yes      | Lucide name, `{ svg }`, or component. See [Icons](#icons).                                |
+| `files`                  | Yes      | `{ extensions: readonly string[]; filenames?: readonly string[] }` or `{ kind: "text" }`. |
+| `Component`              | Yes      | Component receiving `PluginFilePanelProps`.                                               |
+| `supportsLineNavigation` | No       | Handles `params.lineStart` and navigation revisions when `true`.                          |
 
 Extensions have no leading dot and match without case sensitivity. Filenames match the exact
 basename, including case. Selectors contain no paths, globs, or wildcards. Use `extensions: []`
 for a filename-only selector. At least one extension or filename is required.
+
+`{ kind: "text" }` selects text files, including files without extensions. It does not claim
+images or binary files.
 
 ### File panel props
 
@@ -1724,12 +1773,16 @@ opens without asking.
 matches an exact filename, the choice applies to that basename instead. An unavailable association
 is ignored on that host and retained for hosts where its panel is installed.
 
+A `{ kind: "text" }` panel can be remembered for All text files in Settings > Files. Filename
+and extension preferences take precedence. Remembering a viewer for one file type does not
+replace the text default.
+
 Users choose a panel three ways: the picker on first open, **Open with…** in the tab menu, and
 **Settings > Files**. Open with switches the current tab and wins over the remembered association
 for this tab until it is retargeted; its **Always use** remembers the shown panel. Opening a file
-at a line, from a link or a search result, switches the tab to its built-in panel, which shows the
-line in its Source view. Files with no candidate show **Binary preview unavailable**; binary files
-have no Source panel.
+at a line keeps a selected plugin that declares `supportsLineNavigation: true`. Otherwise the
+tab switches to the built-in Source view. A remembered editor that loads after the file still
+receives the line target. Files with no candidate show **Binary preview unavailable**.
 
 ### DocumentFrame
 

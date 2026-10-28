@@ -13,6 +13,7 @@ export const changesStateSchema = z
     collapsedFilePaths: z.array(z.string()),
     collapsedFolderPaths: z.array(z.string()),
     commitsCollapsed: z.boolean(),
+    pluginDiffPanels: z.record(z.string(), z.json()).optional(),
   })
   .transform(
     ({

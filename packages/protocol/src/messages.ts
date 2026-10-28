@@ -3030,6 +3030,7 @@ export const CreateTerminalRequestSchema = z.object({
   workspaceId: z.string().optional(),
   name: z.string().optional(),
   agentId: z.string().optional(),
+  presentation: z.enum(["standalone", "embedded"]).optional(),
   command: z.string().optional(),
   args: z.array(z.string()).optional(),
   // Initial PTY size. Added in v0.1.107; the app no longer sends it (the estimate cache that fed
@@ -3684,6 +3685,7 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceSetupRun: z.boolean().optional(),
         // COMPAT(workspaceTerminals): added in v0.8.0, remove gate after 2027-09-05.
         workspaceTerminals: z.boolean().optional(),
+        embeddedTerminals: z.boolean().optional(),
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
         // feature gate and checkoutGithubSetAutoMerge fallback after 2027-01-17
         // once the supported daemon floor is >= v0.2.0.
@@ -6515,6 +6517,7 @@ const TerminalInfoSchema = z.object({
   name: z.string(),
   cwd: z.string(),
   workspaceId: z.string().optional(),
+  presentation: z.enum(["standalone", "embedded"]).optional(),
   title: z.string().optional(),
   activity: TerminalActivitySchema.nullable().optional(),
 });

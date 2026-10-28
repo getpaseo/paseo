@@ -1973,11 +1973,14 @@ export const ru: TranslationResources = {
       filePanels: {
         pickerTitleExtension: "Открывать файлы .{{extension}} с помощью",
         pickerTitleFilename: "Открывать {{filename}} с помощью",
+        pickerTitleText: "Открывать текстовые файлы с помощью",
+        allTextFiles: "Все текстовые файлы",
         dontAskAgain: "Больше не спрашивать",
         use: "Использовать",
         openWith: "Открыть с помощью…",
         alwaysUseExtension: "Всегда использовать для .{{extension}}",
         alwaysUseFilename: "Всегда использовать для {{filename}}",
+        alwaysUseText: "Всегда использовать для текстовых файлов",
         option: "{{title}} — {{owner}}",
         builtin: {
           owner: "Paseo",

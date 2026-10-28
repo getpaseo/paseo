@@ -570,6 +570,37 @@ export default function contribute(client) {
     expect(clientBundle).toContain("__async");
   });
 
+  it("loads server dependencies without evaluating unused export getters", async () => {
+    const entries = await createSplitPlugin();
+    const dependency = path.join(entries.directory, "node_modules/lazy-exports");
+    await mkdir(dependency, { recursive: true });
+    await writeFile(
+      path.join(dependency, "package.json"),
+      JSON.stringify({
+        name: "lazy-exports",
+        main: "index.cjs",
+      }),
+    );
+    await writeFile(
+      path.join(dependency, "index.cjs"),
+      `
+exports.label = "usable export";
+Object.defineProperty(exports, "removed", {
+  enumerable: true,
+  get() { throw new Error("This deprecated export must not be read"); },
+});`,
+    );
+    await writeFile(
+      entries.server,
+      `
+import { label } from "lazy-exports";
+export default function contribute() { return label; }`,
+    );
+    const { serverBundle } = await compilePlugin({ client: null, server: entries.server });
+    const exports = new Function(`return ${serverBundle}`)()(() => undefined);
+    expect(exports.default()).toBe("usable export");
+  });
+
   it("reduces client bytes while preserving registration and leaving server output readable", async () => {
     const entries = await createSplitPlugin();
     const source = `import { z } from "zod";

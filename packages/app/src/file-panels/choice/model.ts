@@ -1,4 +1,9 @@
-import { asksForFilePanel, type FilePanelCandidate, type FilePanelResolution } from "../resolve";
+import {
+  asksForFilePanel,
+  filePanelChoiceSelectorKey,
+  type FilePanelCandidate,
+  type FilePanelResolution,
+} from "../resolve";
 
 /** What the file tab currently resolves; `resolution` is null until the file has been read. */
 export interface FilePanelChoiceSource<Candidate extends FilePanelCandidate> {
@@ -12,6 +17,7 @@ export interface FilePanelChoiceSource<Candidate extends FilePanelCandidate> {
 
 export interface FilePanelPickerState<Candidate> {
   selectorKey: string;
+  specificSelectorKey: string;
   candidates: readonly Candidate[];
   selectedPanelId: string;
   remember: boolean;
@@ -59,8 +65,8 @@ const EMPTY: FilePanelChoiceSnapshot<never> = {
  *
  * A tab open is one target in one tab: the picker is offered at most once per open, the first
  * time the tab is on screen with a plugin panel among several candidates and nothing remembered.
- * Built-in panels alone never ask. A line target opens the file's built-in panel, which shows
- * lines, the way "Open with…" does.
+ * Built-in panels alone never ask. A line target keeps a panel that supports line navigation;
+ * otherwise it opens the file's built-in panel, the way "Open with…" does.
  * Retargeting the tab starts a new open. Choices made here apply to this tab; only "Don't ask me
  * again" and "Always use" write the association every later open reads.
  */
@@ -71,6 +77,8 @@ export class FilePanelChoiceModel<Candidate extends FilePanelCandidate> {
   private openedLineNavigation: number | null = null;
   /** A line target arrived before the file resolved; it opens the built-in once it does. */
   private lineTargetPending = false;
+  /** Keep a built-in visible while a remembered editor's host catalog is still loading. */
+  private lineFallbackChosen = false;
 
   constructor(private readonly deps: FilePanelChoiceDeps) {}
 
@@ -81,23 +89,47 @@ export class FilePanelChoiceModel<Candidate extends FilePanelCandidate> {
 
   getSnapshot = (): FilePanelChoiceSnapshot<Candidate> => this.snapshot;
 
+  private applyLineNavigation(
+    current: FilePanelChoiceSnapshot<Candidate>,
+    resolution: FilePanelResolution<Candidate>,
+  ): FilePanelChoiceSnapshot<Candidate> {
+    if (this.lineTargetPending) {
+      const mayRestoreRemembered = this.lineFallbackChosen || current.chosenPanelId === null;
+      this.lineTargetPending = false;
+      const selected = resolution.panel;
+      const linePanel = selected?.supportsLineNavigation
+        ? selected
+        : resolution.candidates.find((candidate) => candidate.builtin);
+      if (linePanel) current = { ...current, chosenPanelId: linePanel.id, picker: null };
+      this.lineFallbackChosen =
+        mayRestoreRemembered && Boolean(linePanel && !linePanel.supportsLineNavigation);
+    }
+    if (this.lineFallbackChosen) {
+      const remembered = resolution.candidates.find(
+        (candidate) => candidate.id === resolution.associatedPanelId,
+      );
+      if (remembered?.supportsLineNavigation) {
+        current = { ...current, chosenPanelId: remembered.id, picker: null };
+        this.lineFallbackChosen = false;
+      }
+    }
+    return current;
+  }
+
   observe(source: FilePanelChoiceSource<Candidate>): void {
     let current = this.snapshot;
     if (source.targetKey !== current.targetKey) {
       this.asked = false;
       this.openedLineNavigation = null;
       this.lineTargetPending = false;
+      this.lineFallbackChosen = false;
       current = { ...EMPTY, targetKey: source.targetKey };
     }
     if (source.lineNavigation !== null && source.lineNavigation !== this.openedLineNavigation) {
       this.openedLineNavigation = source.lineNavigation;
       this.lineTargetPending = true;
     }
-    if (this.lineTargetPending && source.resolution) {
-      this.lineTargetPending = false;
-      const builtin = source.resolution.candidates.find((candidate) => candidate.builtin);
-      if (builtin) current = { ...current, chosenPanelId: builtin.id, picker: null };
-    }
+    if (source.resolution) current = this.applyLineNavigation(current, source.resolution);
     const openWith = stableOpenWith(current.openWith, openWithState(source.resolution));
     let picker = openWith ? current.picker : null;
     // Decided once per open, the first time there is something to ask about on screen. An
@@ -105,9 +137,10 @@ export class FilePanelChoiceModel<Candidate extends FilePanelCandidate> {
     if (!this.asked && source.presentable && openWith && asksForFilePanel(openWith.candidates)) {
       this.asked = true;
       const remembered = Boolean(source.resolution?.associatedPanelId);
-      if (!remembered && current.chosenPanelId === null) {
+      if (!remembered && current.chosenPanelId === null && source.resolution) {
         picker = {
           selectorKey: openWith.selectorKey,
+          specificSelectorKey: source.resolution.specificSelectorKey,
           candidates: openWith.candidates,
           selectedPanelId: openWith.activePanelId,
           remember: false,
@@ -120,7 +153,17 @@ export class FilePanelChoiceModel<Candidate extends FilePanelCandidate> {
   selectInPicker(panelId: string): void {
     const picker = this.snapshot.picker;
     if (!picker) return;
-    this.publish({ ...this.snapshot, picker: { ...picker, selectedPanelId: panelId } });
+    const panel = picker.candidates.find((candidate) => candidate.id === panelId);
+    if (!panel) return;
+    const selectorKey = filePanelChoiceSelectorKey(
+      panel,
+      picker.candidates,
+      picker.specificSelectorKey,
+    );
+    this.publish({
+      ...this.snapshot,
+      picker: { ...picker, selectorKey, selectedPanelId: panelId },
+    });
   }
 
   setRemember(remember: boolean): void {
@@ -132,6 +175,7 @@ export class FilePanelChoiceModel<Candidate extends FilePanelCandidate> {
   confirmPicker(): void {
     const picker = this.snapshot.picker;
     if (!picker) return;
+    this.lineFallbackChosen = false;
     if (picker.remember) this.deps.remember(picker.selectorKey, picker.selectedPanelId);
     this.publish({ ...this.snapshot, chosenPanelId: picker.selectedPanelId, picker: null });
   }
@@ -143,6 +187,7 @@ export class FilePanelChoiceModel<Candidate extends FilePanelCandidate> {
   }
 
   openWith(panelId: string): void {
+    this.lineFallbackChosen = false;
     this.publish({ ...this.snapshot, chosenPanelId: panelId, picker: null });
   }
 

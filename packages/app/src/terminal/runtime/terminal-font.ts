@@ -30,3 +30,10 @@ export function resolveTerminalFontSize(fontSize: number | undefined): number {
     ? fontSize
     : DEFAULT_TERMINAL_FONT_SIZE;
 }
+
+/** xterm requires a line-height multiplier of at least one. */
+export function resolveTerminalLineHeight(lineHeight: number | undefined): number {
+  return typeof lineHeight === "number" && Number.isFinite(lineHeight) && lineHeight >= 1
+    ? lineHeight
+    : 1;
+}
