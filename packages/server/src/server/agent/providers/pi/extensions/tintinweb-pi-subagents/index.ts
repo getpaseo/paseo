@@ -32,6 +32,9 @@ const NotificationEntry = z
 const Notification = NotificationEntry.extend({
   others: z.array(NotificationEntry).optional(),
 });
+// get_subagent_result returns only text, opening with this header, and cancels the completion
+// notification. For a collected child it is the only record of the outcome.
+const RESULT_HEADER = /^Agent: (\S+)\nType: .*?\| Status: (\w+)/;
 const status = (value: string): "running" | "completed" | "failed" | "canceled" => {
   // A soft turn-limit wrap-up has finished; it is not an in-flight steering request.
   if (value === "completed" || value === "steered") return "completed";
@@ -116,21 +119,25 @@ export const tintinwebPiSubagents: PiExtension = {
     const mapFollowup = (call: PiExtensionToolCall) => {
       const args = FollowupArgs.safeParse(call.args);
       if (!args.success) return undefined;
-      const id = callsByAgent.get(args.data.agent_id);
-      if (!id) return undefined;
       const details = Details.safeParse(
         typeof call.result === "object" ? call.result?.details : null,
       );
+      const text = extractTextFromToolResult(call.result)?.trim() ?? "";
+      const header = call.toolName === "get_subagent_result" ? RESULT_HEADER.exec(text) : null;
+      // `agent_id` may be a handle such as the agent's name; the header names the real id.
+      const id = callsByAgent.get(header?.[1] ?? args.data.agent_id);
+      if (!id) return undefined;
       const detail = {
         type: "sub_agent" as const,
         description: details.success ? details.data.description : undefined,
         // COMPAT(subagent-log): remove after 2027-04-30.
         log: "",
       };
-      if (call.status === "running" || !details.success) return { detail };
+      const reported = details.success ? details.data.status : header?.[2];
+      if (call.status === "running" || !reported) return { detail };
       return {
         detail,
-        subagents: [{ type: "upsert" as const, id, status: status(details.data.status) }],
+        subagents: [{ type: "upsert" as const, id, status: status(reported) }],
       };
     };
     return {
