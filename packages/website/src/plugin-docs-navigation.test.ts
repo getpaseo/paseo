@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDocsNavTree, getDoc, getDocs, getLegacyDocsRedirect } from "./docs";
+import { buildDocsNavTree, getDoc, getDocs, getLegacyDocsRedirect, parseHeadings } from "./docs";
 
 describe("plugin documentation", () => {
   it("groups current guides by task without version navigation", () => {
@@ -14,9 +14,18 @@ describe("plugin documentation", () => {
         { type: "page", label: "Publishing", href: "/docs/plugins/publishing" },
         { type: "page", label: "Provider plugins", href: "/docs/plugins/providers" },
         { type: "page", label: "Migration", href: "/docs/plugins/migration" },
+        { type: "page", label: "Hooks", href: "/docs/plugins/hooks" },
         { type: "page", label: "Reference", href: "/docs/plugins/reference" },
       ],
     });
+  });
+
+  it.each(["en", "zh-CN"] as const)("resolves worktree placement hook links in %s", (locale) => {
+    const hooks = getDoc("plugins/hooks", locale)!;
+    expect(parseHeadings(hooks.content).map((heading) => heading.id)).toContain(
+      "worktreecreatebefore",
+    );
+    expect(hooks.content).toContain("plugin-examples/worktree-placement");
   });
 
   it.each(["v0.7", "v0.8"])("redirects %s links to existing current pages", (version) => {
@@ -32,7 +41,7 @@ describe("plugin documentation", () => {
   });
 
   it("serves canonical pages without redirect loops", () => {
-    for (const page of ["", "/publishing", "/reference", "/providers", "/migration"]) {
+    for (const page of ["", "/publishing", "/reference", "/providers", "/migration", "/hooks"]) {
       expect(getLegacyDocsRedirect(`/docs/plugins${page}`)).toBeUndefined();
       expect(getLegacyDocsRedirect(`/docs/plugins${page}.md`)).toBeUndefined();
     }

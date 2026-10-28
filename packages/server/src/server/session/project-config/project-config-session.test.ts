@@ -249,7 +249,7 @@ describe("ProjectConfigSession", () => {
       requestId: "write-uncommitted-setup",
       repoRoot,
       config: { worktree: { setup: "npm install" } },
-      expectedRevision: statPaseoConfigPath(repoRoot),
+      expectedRevision: await statPaseoConfigPath(repoRoot),
     });
 
     expect(emitted).toEqual([

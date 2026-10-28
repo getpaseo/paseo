@@ -141,14 +141,15 @@ steps:
 
 Use one of these semantic event names for new GitHub workflows:
 
-| `on`                                  | Matches                                                                   |
-| ------------------------------------- | ------------------------------------------------------------------------- |
-| `github.issue_created`                | An `issues` delivery whose action is `opened`.                            |
-| `github.pull_request_created`         | A `pull_request` delivery whose action is `opened`.                       |
-| `github.issue_comment_created`        | An `issue_comment` delivery whose action is `created`, on an issue.       |
-| `github.pull_request_comment_created` | An `issue_comment` delivery whose action is `created`, on a pull request. |
-| `github.issue_label_added`            | An `issues` delivery whose action is `labeled`.                           |
-| `github.pull_request_label_added`     | A `pull_request` delivery whose action is `labeled`.                      |
+| `on`                                   | Matches                                                                   |
+| -------------------------------------- | ------------------------------------------------------------------------- |
+| `github.issue_created`                 | An `issues` delivery whose action is `opened`.                            |
+| `github.pull_request_created`          | A `pull_request` delivery whose action is `opened`.                       |
+| `github.pull_request_ready_for_review` | A draft pull request is marked ready for review.                          |
+| `github.issue_comment_created`         | An `issue_comment` delivery whose action is `created`, on an issue.       |
+| `github.pull_request_comment_created`  | An `issue_comment` delivery whose action is `created`, on a pull request. |
+| `github.issue_label_added`             | An `issues` delivery whose action is `labeled`.                           |
+| `github.pull_request_label_added`      | A `pull_request` delivery whose action is `labeled`.                      |
 
 Existing configurations may continue to use `github.issues`, `github.issue_comment`, `github.pull_request_review`, `github.pull_request_review_comment`, and `github.push`. These legacy events retain their existing behavior.
 

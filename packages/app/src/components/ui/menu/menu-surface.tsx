@@ -19,6 +19,11 @@ import {
   useIsolatedBottomSheetVisibility,
   type ContextBridge,
 } from "@/components/ui/isolated-bottom-sheet-modal";
+import {
+  FULL_SHEET_SNAP_POINTS,
+  SheetBackground,
+  SheetHandle,
+} from "@/components/adaptive-modal-sheet";
 import { SPACING, type Theme } from "@/styles/theme";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useMenuContext, MenuContextProvider } from "./menu-context";
@@ -31,24 +36,6 @@ import type { KeyboardFocusScope } from "@/keyboard/actions";
 
 const ThemedChevronLeft = withUnistyles(ChevronLeft);
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-
-// `backgroundStyle` and `handleIndicatorStyle` are style-shaped props the Babel plugin does not
-// track, so the sheet is wrapped rather than reading the theme through a hook.
-// See docs/unistyles.md.
-const ThemedBottomSheetModal = withUnistyles(IsolatedBottomSheetModal, (theme) => ({
-  backgroundStyle: {
-    borderTopLeftRadius: theme.borderRadius.xl,
-    borderTopRightRadius: theme.borderRadius.xl,
-    borderWidth: 1,
-    backgroundColor: theme.colors.surface0,
-    borderColor: theme.colors.border,
-  },
-  handleIndicatorStyle: {
-    width: 36,
-    height: 4,
-    backgroundColor: theme.colors.surface2,
-  },
-}));
 
 /** How long the pointer must rest on a submenu row before its flyout opens. */
 const HOVER_OPEN_DELAY_MS = 90;
@@ -65,7 +52,7 @@ const HOVER_CLOSE_GRACE_MS = 260;
  */
 const SUBMENU_OVERLAP = 5;
 
-export interface MenuPageDefinition {
+export interface MenuListPageDefinition {
   id: string;
   title: string;
   content: ReactNode;
@@ -78,6 +65,24 @@ export interface MenuPageDefinition {
    * surface stops closing on hover, since its parent leads back to the same dismissal.
    */
   hoverIntent?: boolean;
+  fill?: false;
+}
+
+/**
+ * A sheet page that takes the sheet's full height and draws everything itself, header included:
+ * no back header, no scroller, no content panning. Only the sheet presentation opens one; a
+ * popover never has a trigger for it.
+ */
+export interface MenuFillPageDefinition {
+  id: string;
+  fill: true;
+  content: ReactNode;
+}
+
+export type MenuPageDefinition = MenuListPageDefinition | MenuFillPageDefinition;
+
+function pageHoverIntent(page: MenuPageDefinition | undefined): boolean {
+  return !page || page.fill === true || page.hoverIntent !== false;
 }
 
 interface MenuSurfaceContextValue {
@@ -126,8 +131,15 @@ export interface MenuSurfaceProps {
  * popover (plus one flyout per open submenu) or a bottom sheet showing one page at a time.
  */
 export function MenuSurface(props: MenuSurfaceProps): ReactElement | null {
-  const { presentation, open, setOpen } = useMenuContext("MenuSurface");
+  const { presentation, open, setOpen, path, prunePages } = useMenuContext("MenuSurface");
   const active = useRetainedPanelActive();
+  // An open page whose definition went away (its row was removed) falls back to its parent, so
+  // neither a render nor a later Back walks a path to a page that no longer exists.
+  const { pages } = props;
+  useEffect(() => {
+    if (path.length === 0) return;
+    prunePages((id) => pages?.some((page) => page.id === id) ?? false);
+  }, [pages, path, prunePages]);
   // A menu belongs to the panel that opened it. When that panel leaves the screen the menu closes
   // for good, rather than waiting hidden to reappear with the panel: a row that opened a sheet
   // and promoted it to a tab, say, would otherwise bring the list back on the next tab switch.
@@ -234,11 +246,11 @@ function MenuPopoverSurface({
   // `hoverIntent: false` takes a page off the pointer entirely — it is not opened by resting on
   // its trigger, and while it is open nothing on this surface closes on a pointer leaving it.
   const hoverValue = useMemo<MenuSurfaceContextValue>(() => {
-    const locked = openPages.some(({ page }) => page.hoverIntent === false);
+    const locked = openPages.some(({ page }) => !pageHoverIntent(page));
     return {
       ...surfaceValue,
       hoverOpen: (sub) => {
-        if (pages.find((page) => page.id === sub.id)?.hoverIntent === false) return;
+        if (!pageHoverIntent(pages.find((page) => page.id === sub.id))) return;
         surfaceValue.hoverOpen(sub);
       },
       hoverClose: (depth) => {
@@ -353,17 +365,6 @@ function MenuSheetSurface({
   const { height: windowHeight } = useWindowDimensions();
   const menu = useMenuContext("MenuSurface");
   const { value: surfaceValue } = useSubAnchors();
-  const safeAreaInsets = useSafeAreaInsets();
-
-  const sheetScrollContentStyle = useMemo(
-    () => ({
-      paddingBottom: getMenuSheetBottomPadding({
-        safeAreaBottom: safeAreaInsets.bottom,
-        breathingRoom: SPACING[1],
-      }),
-    }),
-    [safeAreaInsets.bottom],
-  );
   const sheetDataSet = useMemo(
     () => (keyboardFocusScope ? { keyboardScope: keyboardFocusScope } : undefined),
     [keyboardFocusScope],
@@ -374,11 +375,15 @@ function MenuSheetSurface({
     visible: menu.open,
     isEnabled: true,
     onClose: handleClose,
+    // Android Back steps back through the pages before it closes the sheet.
+    onBack: menu.goBack,
   });
 
   const openPageId = currentPageId(menu.path);
   const openPage = openPageId ? pages.find((page) => page.id === openPageId) : null;
   const depth = menu.path.length;
+  const fillPage = openPage?.fill === true ? openPage : null;
+  const listPage = openPage?.fill === true ? null : openPage;
 
   // The sheet's content is teleported out of this subtree, so both menu contexts have to be
   // rebuilt on the other side. Providing them around the modal instead would put them on the
@@ -393,12 +398,18 @@ function MenuSheetSurface({
   );
 
   return (
-    <ThemedBottomSheetModal
+    <IsolatedBottomSheetModal
       ref={sheetRef}
       contextBridge={contextBridge}
+      backgroundComponent={SheetBackground}
+      handleComponent={SheetHandle}
       // Content-sized rather than fixed snap points: a pushed page is rarely the same height
       // as the page it replaced, and a fixed sheet would either clip it or leave dead space.
-      enableDynamicSizing
+      // A fill page is the exception: it takes the height every full sheet has, and its own
+      // content scrolls, so dragging it would fight that scroll.
+      enableDynamicSizing={!fillPage}
+      snapPoints={fillPage ? FULL_SHEET_SNAP_POINTS : undefined}
+      enableContentPanningGesture={!fillPage}
       maxDynamicContentSize={windowHeight * 0.8}
       onChange={handleSheetChange}
       onDismiss={handleSheetDismiss}
@@ -412,28 +423,64 @@ function MenuSheetSurface({
       keyboardBehavior="interactive"
       keyboardBlurBehavior="restore"
     >
-      <BottomSheetScrollView
-        dataSet={sheetDataSet}
-        contentContainerStyle={sheetScrollContentStyle}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-        testID={testID ? `${testID}-content` : undefined}
-      >
-        {openPage ? (
-          <>
-            <MenuSheetHeader title={openPage.title} onBack={menu.goBack} />
-            <MenuPage depth={depth}>{openPage.content}</MenuPage>
-          </>
-        ) : (
-          <>
-            {sheetTitle ? (
-              <MenuSheetHeader title={sheetTitle} onBack={null} trailing={sheetTrailing} />
-            ) : null}
-            <MenuPage depth={0}>{children}</MenuPage>
-          </>
-        )}
-      </BottomSheetScrollView>
-    </ThemedBottomSheetModal>
+      {fillPage ? (
+        <View style={styles.fillPage} testID={testID ? `${testID}-${fillPage.id}` : undefined}>
+          {fillPage.content}
+        </View>
+      ) : (
+        <MenuSheetScrollView dataSet={sheetDataSet} testID={testID}>
+          {listPage ? (
+            <>
+              <MenuSheetHeader title={listPage.title} onBack={menu.goBack} />
+              <MenuPage depth={depth}>{listPage.content}</MenuPage>
+            </>
+          ) : (
+            <>
+              {sheetTitle ? (
+                <MenuSheetHeader title={sheetTitle} onBack={null} trailing={sheetTrailing} />
+              ) : null}
+              <MenuPage depth={0}>{children}</MenuPage>
+            </>
+          )}
+        </MenuSheetScrollView>
+      )}
+    </IsolatedBottomSheetModal>
+  );
+}
+
+/**
+ * Rendered on the far side of the sheet's portal so it clears the screen's bottom inset, not the
+ * one left where the menu was opened: inside a sheet tab, none is.
+ */
+function MenuSheetScrollView({
+  dataSet,
+  testID,
+  children,
+}: {
+  dataSet: { keyboardScope: KeyboardFocusScope } | undefined;
+  testID?: string;
+  children: ReactNode;
+}) {
+  const safeAreaInsets = useSafeAreaInsets();
+  const contentStyle = useMemo(
+    () => ({
+      paddingBottom: getMenuSheetBottomPadding({
+        safeAreaBottom: safeAreaInsets.bottom,
+        breathingRoom: SPACING[1],
+      }),
+    }),
+    [safeAreaInsets.bottom],
+  );
+  return (
+    <BottomSheetScrollView
+      dataSet={dataSet}
+      contentContainerStyle={contentStyle}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+      testID={testID ? `${testID}-content` : undefined}
+    >
+      {children}
+    </BottomSheetScrollView>
   );
 }
 
@@ -470,6 +517,10 @@ function MenuSheetHeader({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  fillPage: {
+    flex: 1,
+    minHeight: 0,
+  },
   sheetHeader: {
     flexDirection: "row",
     alignItems: "center",

@@ -39,11 +39,11 @@ interface BuildWorkspaceScriptPayloadsOptions {
   resolveHealth?: (hostname: string) => ScriptHealthState | null;
 }
 
-export function readPaseoConfigForProjection(
+export async function readPaseoConfigForProjection(
   workspaceDirectory: string,
   logger: Logger,
-): PaseoConfig | null {
-  const result = readPaseoConfig(workspaceDirectory);
+): Promise<PaseoConfig | null> {
+  const result = await readPaseoConfig(workspaceDirectory);
   if (result.ok) {
     return result.config;
   }
@@ -309,9 +309,9 @@ export function createScriptStatusEmitter({
   /** Refreshes launch endpoint state, which is carried by workspace descriptors. */
   emitWorkspaceSnapshot?: (workspaceId: string) => Promise<void>;
   logger: Logger;
-}): (workspaceId: string, scripts: ScriptHealthEntry[]) => void {
-  return (workspaceId, scripts) => {
-    void (async () => {
+}): (workspaceId: string, scripts: ScriptHealthEntry[]) => Promise<void> {
+  return async (workspaceId, scripts) => {
+    try {
       const workspaceConfig = await resolveWorkspaceConfig(workspaceId);
       if (!workspaceConfig) {
         return;
@@ -320,7 +320,7 @@ export function createScriptStatusEmitter({
       const { workspaceDirectory } = workspaceConfig;
       const projectConfigDirectory =
         workspaceConfig.projectConfigDirectory ?? workspaceConfig.workspaceDirectory;
-      const projectConfig = readPaseoConfigForProjection(projectConfigDirectory, logger);
+      const projectConfig = await readPaseoConfigForProjection(projectConfigDirectory, logger);
       const suppressedScriptNames = new Set(getWorkspaceLaunchConfigs(projectConfig).keys());
 
       const resolvedDaemonPort = resolveDaemonPort(daemonPort);
@@ -331,7 +331,7 @@ export function createScriptStatusEmitter({
       const projected = buildWorkspaceScriptPayloads({
         workspaceId,
         workspaceDirectory,
-        paseoConfig: readPaseoConfigForProjection(workspaceDirectory, logger),
+        paseoConfig: await readPaseoConfigForProjection(workspaceDirectory, logger),
         suppressedScriptNames,
         serviceProxy,
         runtimeStore,
@@ -357,6 +357,8 @@ export function createScriptStatusEmitter({
           "Failed to emit workspace update after script health changed",
         );
       }
-    })();
+    } catch (error) {
+      logger.warn({ err: error, workspaceId }, "Failed to project workspace script status");
+    }
   };
 }

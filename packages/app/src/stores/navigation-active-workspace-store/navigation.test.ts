@@ -22,7 +22,14 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
   const remembered: ActiveWorkspaceSelection[] = [];
   const openedTabs: RecordedTab[] = [];
   const deferredTabs: unknown[] = [];
+  const revealed: Array<string | null> = [];
   const deps: NavigateToWorkspaceDeps = {
+    revealTab: (_key, tabId) => {
+      revealed.push(tabId);
+    },
+    revealWorkspace: () => {
+      revealed.push(null);
+    },
     deferOpenTab: (input) => {
       deferredTabs.push(input);
       return null;
@@ -38,7 +45,7 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
     navigateToRoute: (route) => navigations.push(route),
     ...overrides,
   };
-  return { deps, navigations, remembered, openedTabs, deferredTabs };
+  return { deps, navigations, remembered, openedTabs, deferredTabs, revealed };
 }
 
 function createLastSelectionDeps(
@@ -65,6 +72,24 @@ function createLastSelectionDeps(
 }
 
 describe("workspace navigation", () => {
+  it("reveals even a current workspace without agents", () => {
+    const { deps, revealed } = createFakeDeps();
+    navigateToWorkspace({ serverId: "server", workspaceId: "workspace" }, deps);
+    expect(revealed).toEqual([null]);
+  });
+
+  it("reveals an explicit target after opening instead of forcing center", () => {
+    const workspace = { id: "workspace" } as WorkspaceDescriptor;
+    const { deps, revealed } = createFakeDeps({
+      getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
+    });
+    navigateToWorkspace(
+      { serverId: "server", workspaceId: "workspace", target: { kind: "agent", agentId: "root" } },
+      deps,
+    );
+    expect(revealed).toEqual(["root"]);
+  });
+
   it("reports when no last workspace is known", () => {
     const { deps } = createLastSelectionDeps(null);
 

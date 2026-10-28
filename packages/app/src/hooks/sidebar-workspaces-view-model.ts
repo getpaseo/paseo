@@ -1,3 +1,4 @@
+import { deriveEffectiveWorkspaceStatus } from "@/workspace-status";
 import equal from "fast-deep-equal";
 import type { PrHint } from "@/git/pr-hint";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
@@ -124,11 +125,6 @@ export function areSidebarWorkspaceSessionsEqual(
   return true;
 }
 
-interface EffectiveWorkspaceStatus {
-  status: WorkspaceDescriptor["status"];
-  enteredAt: Date | null;
-}
-
 function projectNameForWorkspace(workspace: WorkspaceDescriptor): string {
   return (
     workspace.projectCustomName ??
@@ -188,51 +184,6 @@ export function createSidebarWorkspaceEntry(input: {
 }
 
 const EMPTY_WORKSPACE_LABELS: string[] = [];
-
-function deriveEffectiveWorkspaceStatus(input: {
-  serverId: string;
-  workspace: WorkspaceDescriptor;
-  pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
-  workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
-}): EffectiveWorkspaceStatus {
-  if (input.workspace.status !== "done") {
-    return { status: input.workspace.status, enteredAt: input.workspace.statusEnteredAt };
-  }
-
-  const pendingStartedAt = getPendingInitialAgentCreateStartedAt({
-    serverId: input.serverId,
-    workspaceId: input.workspace.id,
-    pendingCreateAttempts: input.pendingCreateAttempts,
-  });
-  if (pendingStartedAt) {
-    return { status: "running", enteredAt: pendingStartedAt };
-  }
-
-  const rootAgentActivity = input.workspaceAgentActivity?.get(input.workspace.id);
-  if (rootAgentActivity && rootAgentActivity.status !== "done") {
-    return rootAgentActivity;
-  }
-
-  return { status: input.workspace.status, enteredAt: input.workspace.statusEnteredAt };
-}
-
-function getPendingInitialAgentCreateStartedAt(input: {
-  serverId: string;
-  workspaceId: string;
-  pendingCreateAttempts: Record<string, PendingCreateAttempt> | undefined;
-}): Date | null {
-  let latestStartedAt: Date | null = null;
-  for (const pending of Object.values(input.pendingCreateAttempts ?? {})) {
-    if (pending.serverId !== input.serverId) continue;
-    if (pending.workspaceId !== input.workspaceId) continue;
-    if (pending.lifecycle === "abandoned") continue;
-    const startedAt = new Date(pending.timestamp);
-    if (!latestStartedAt || startedAt > latestStartedAt) {
-      latestStartedAt = startedAt;
-    }
-  }
-  return latestStartedAt;
-}
 
 export interface ProjectStatusSession {
   workspaces: Map<string, WorkspaceDescriptor>;
@@ -584,21 +535,57 @@ export function appendMissingOrderKeys(input: {
   return [...input.currentOrder, ...missingKeys];
 }
 
+export function prependMissingOrderKeys(input: {
+  currentOrder: string[];
+  visibleKeys: string[];
+}): string[] {
+  if (input.visibleKeys.length === 0) {
+    return input.currentOrder;
+  }
+
+  const existingKeys = new Set(input.currentOrder);
+  const missingKeys = input.visibleKeys.filter((key) => !existingKeys.has(key));
+  if (missingKeys.length === 0) {
+    return input.currentOrder;
+  }
+
+  return [...missingKeys, ...input.currentOrder];
+}
+
 export interface SidebarOrderUpdates {
   projectOrder: string[] | null;
+  workspaceOrders: Array<{ projectViewKey: string; order: string[] }>;
 }
 
 export function computeSidebarOrderUpdates(input: {
   projects: SidebarProjectEntry[];
   persistedProjectOrder: string[];
+  getWorkspaceOrder?: (projectViewKey: string) => string[];
 }): SidebarOrderUpdates {
+  if (input.projects.length === 0) {
+    return { projectOrder: null, workspaceOrders: [] };
+  }
+
   const nextProjectOrder = appendMissingOrderKeys({
     currentOrder: input.persistedProjectOrder,
     visibleKeys: input.projects.map((project) => project.viewKey),
   });
-  return {
-    projectOrder: nextProjectOrder === input.persistedProjectOrder ? null : nextProjectOrder,
-  };
+  const projectOrder = nextProjectOrder === input.persistedProjectOrder ? null : nextProjectOrder;
+
+  const workspaceOrders: Array<{ projectViewKey: string; order: string[] }> = [];
+  for (const project of input.projects) {
+    if (!input.getWorkspaceOrder) break;
+    const persistedWorkspaceOrder = input.getWorkspaceOrder(project.viewKey);
+    const nextWorkspaceOrder = prependMissingOrderKeys({
+      currentOrder: persistedWorkspaceOrder,
+      visibleKeys: project.workspaces.map((workspace) => workspace.workspaceKey),
+    });
+    if (nextWorkspaceOrder !== persistedWorkspaceOrder) {
+      workspaceOrders.push({ projectViewKey: project.viewKey, order: nextWorkspaceOrder });
+    }
+  }
+
+  return { projectOrder, workspaceOrders };
 }
 
 export interface SidebarLoadingState {

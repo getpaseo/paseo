@@ -15,6 +15,11 @@ import { basename, delimiter, dirname, extname, join, resolve as resolvePath } f
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
+import {
+  resolveExternalProcessPath,
+  resolvePaseoCliBinDir,
+  resolvePaseoCliExecutablePath,
+} from "./paseo-cli-path.js";
 import { writePrivateFileAtomicSync } from "../server/private-files.js";
 import {
   findExecutable,
@@ -27,7 +32,6 @@ import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol
 
 const { Terminal } = xterm;
 const require = createRequire(import.meta.url);
-const PASEO_CLI_BIN_ENTRY = "@getpaseo/cli/bin/paseo";
 let nodePtySpawnHelperChecked = false;
 const TERMINAL_TITLE_DEBOUNCE_MS = 150;
 const TERMINAL_EXIT_OUTPUT_LINE_LIMIT = 12;
@@ -123,6 +127,11 @@ export interface TerminalSession {
   killAndWait(options?: { gracefulTimeoutMs?: number; forceTimeoutMs?: number }): Promise<void>;
 }
 
+/** A session that owns its PTY in this process, so it knows the program's pid. */
+export interface LocalTerminalSession extends TerminalSession {
+  readonly pid: number;
+}
+
 function parseCommandFinishedOsc(data: string): TerminalCommandFinishedInfo | null {
   // OSC 633 is terminal control traffic, but a foreground command can still
   // print arbitrary control bytes. Keep this boundary to the exact VS Code
@@ -153,6 +162,11 @@ export interface CreateTerminalOptions {
   title?: string;
   command?: string;
   args?: string[];
+  // Environment the terminal starts from instead of this process's own. A detached terminal
+  // worker outlives the daemon that launched it, so each create carries the controlling
+  // daemon's environment and its resolved Paseo CLI path.
+  baseEnv?: Record<string, string>;
+  paseoCliPath?: string | null;
 }
 
 function toTerminalActivity(snapshot: {
@@ -181,6 +195,7 @@ function isTerminalActivityInterruptInput(data: string): boolean {
 interface BuildTerminalEnvironmentInput {
   shell: string;
   env: Record<string, string>;
+  baseEnv?: Record<string, string>;
   zshShellIntegrationDir?: string;
   paseoCliBinDir?: string | null;
   paseoHookCliPath?: string | null;
@@ -410,82 +425,10 @@ export async function resolveTerminalSpawnCommand(
   return { command: resolved, args };
 }
 
+export { resolvePaseoCliBinDir, resolvePaseoCliExecutablePath };
+
 export function resolveZshShellIntegrationDir(): string {
   return fileURLToPath(new URL("./shell-integration/zsh", import.meta.url));
-}
-
-function resolveExternalProcessPath(filePath: string): string {
-  return filePath.replace(/\.asar(?=[/\\]|$)/, ".asar.unpacked");
-}
-
-export function resolvePaseoCliBinDir(): string | null {
-  const cliExecutable = resolvePaseoCliExecutablePath();
-  return cliExecutable ? dirname(cliExecutable) : null;
-}
-
-export function resolvePaseoCliExecutablePath(): string | null {
-  const configuredCli = process.env.PASEO_CLI?.trim();
-  if (configuredCli) {
-    return resolvePath(configuredCli);
-  }
-
-  const cliEntrypoint = resolvePaseoCliBinEntrypoint();
-  if (!cliEntrypoint) {
-    return null;
-  }
-
-  const externalCliEntrypoint = resolveExternalProcessPath(cliEntrypoint);
-  const npmBinDir = findNpmBinDir(dirname(externalCliEntrypoint));
-  if (npmBinDir) {
-    const shim = resolvePaseoCliShim(npmBinDir);
-    if (shim) {
-      return shim;
-    }
-  }
-
-  return externalCliEntrypoint;
-}
-
-function resolvePaseoCliBinEntrypoint(): string | null {
-  try {
-    return require.resolve(PASEO_CLI_BIN_ENTRY);
-  } catch {
-    return null;
-  }
-}
-
-function findNpmBinDir(startPath: string): string | null {
-  let current = startPath;
-  while (true) {
-    const candidate = join(current, "node_modules", ".bin");
-    if (hasPaseoCliShim(candidate)) {
-      return candidate;
-    }
-
-    const parent = dirname(current);
-    if (parent === current) {
-      return null;
-    }
-    current = parent;
-  }
-}
-
-function hasPaseoCliShim(binDir: string): boolean {
-  return resolvePaseoCliShim(binDir) !== null;
-}
-
-function resolvePaseoCliShim(binDir: string): string | null {
-  for (const name of paseoCliShimNames()) {
-    const candidate = join(binDir, name);
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-  return null;
-}
-
-function paseoCliShimNames(): string[] {
-  return process.platform === "win32" ? ["paseo.cmd", "paseo.exe", "paseo"] : ["paseo"];
 }
 
 function resolveZshShellIntegrationRuntimeDir(): string {
@@ -517,10 +460,14 @@ function prepareZshShellIntegrationRuntimeDir(sourceDir = resolveZshShellIntegra
 export function buildTerminalEnvironment(
   input: BuildTerminalEnvironmentInput,
 ): Record<string, string> {
-  const baseEnv: Record<string, string> = createExternalProcessEnv(process.env, input.env, {
-    TERM: "xterm-256color",
-    TERM_PROGRAM: "kitty",
-  });
+  const baseEnv: Record<string, string> = createExternalProcessEnv(
+    input.baseEnv ?? process.env,
+    input.env,
+    {
+      TERM: "xterm-256color",
+      TERM_PROGRAM: "kitty",
+    },
+  );
   const envWithAgentHooks = prependPaseoCliToPath(
     baseEnv,
     input.paseoCliBinDir === undefined ? resolvePaseoCliBinDir() : input.paseoCliBinDir,
@@ -554,6 +501,23 @@ function injectPaseoHookCli(
     ...env,
     PASEO_HOOK_CLI: resolvePath(resolveExternalProcessPath(cliPath)),
   };
+}
+
+// The environment and CLI path a terminal starts from: the caller's when it sends them (the
+// daemon controlling a detached worker does), this process's otherwise.
+function resolveTerminalEnvironmentSource(
+  input: Pick<CreateTerminalOptions, "baseEnv" | "paseoCliPath">,
+): Pick<BuildTerminalEnvironmentInput, "baseEnv" | "paseoCliBinDir" | "paseoHookCliPath"> {
+  const source: Pick<
+    BuildTerminalEnvironmentInput,
+    "baseEnv" | "paseoCliBinDir" | "paseoHookCliPath"
+  > = {};
+  if (input.baseEnv) source.baseEnv = input.baseEnv;
+  if (input.paseoCliPath !== undefined) {
+    source.paseoCliBinDir = input.paseoCliPath ? dirname(input.paseoCliPath) : null;
+    source.paseoHookCliPath = input.paseoCliPath;
+  }
+  return source;
 }
 
 function prependPaseoCliToPath(
@@ -967,7 +931,9 @@ export async function assertTerminalCommandCanStart(
   }
 }
 
-export async function createTerminal(options: CreateTerminalOptions): Promise<TerminalSession> {
+export async function createTerminal(
+  options: CreateTerminalOptions,
+): Promise<LocalTerminalSession> {
   const {
     cwd,
     workspaceId,
@@ -980,8 +946,10 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     title: presetTitle,
     command,
     args = [],
+    baseEnv,
+    paseoCliPath,
   } = options;
-  const resolvedShell = shell ?? resolveDefaultTerminalShell();
+  const resolvedShell = shell ?? resolveDefaultTerminalShell({ env: baseEnv });
 
   const id = options.id ?? randomUUID();
   const listeners = new Set<(msg: ServerMessage) => void>();
@@ -1033,6 +1001,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
       ...activityEnv,
       PASEO_WORKSPACE_ID: workspaceId,
     },
+    ...resolveTerminalEnvironmentSource({ baseEnv, paseoCliPath }),
   });
 
   await assertTerminalCommandCanStart({ command, cwd, env: terminalEnv });
@@ -1624,6 +1593,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
 
   return {
     id,
+    pid: ptyProcess.pid,
     name,
     cwd,
     workspaceId,

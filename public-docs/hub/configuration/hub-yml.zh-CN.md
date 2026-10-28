@@ -139,14 +139,15 @@ steps:
 
 新的 GitHub workflow 请使用以下语义化事件名之一：
 
-| `on`                                  | 匹配                                                              |
-| ------------------------------------- | ----------------------------------------------------------------- |
-| `github.issue_created`                | action 为 `opened` 的 `issues` 投递。                             |
-| `github.pull_request_created`         | action 为 `opened` 的 `pull_request` 投递。                       |
-| `github.issue_comment_created`        | 在 issue 上、action 为 `created` 的 `issue_comment` 投递。        |
-| `github.pull_request_comment_created` | 在 Pull Request 上、action 为 `created` 的 `issue_comment` 投递。 |
-| `github.issue_label_added`            | action 为 `labeled` 的 `issues` 投递。                            |
-| `github.pull_request_label_added`     | action 为 `labeled` 的 `pull_request` 投递。                      |
+| `on`                                   | 匹配                                                              |
+| -------------------------------------- | ----------------------------------------------------------------- |
+| `github.issue_created`                 | action 为 `opened` 的 `issues` 投递。                             |
+| `github.pull_request_created`          | action 为 `opened` 的 `pull_request` 投递。                       |
+| `github.pull_request_ready_for_review` | 草稿 PR 被标记为可审查。                                          |
+| `github.issue_comment_created`         | 在 issue 上、action 为 `created` 的 `issue_comment` 投递。        |
+| `github.pull_request_comment_created`  | 在 Pull Request 上、action 为 `created` 的 `issue_comment` 投递。 |
+| `github.issue_label_added`             | action 为 `labeled` 的 `issues` 投递。                            |
+| `github.pull_request_label_added`      | action 为 `labeled` 的 `pull_request` 投递。                      |
 
 已有的配置可以继续使用 `github.issues`、`github.issue_comment`、`github.pull_request_review`、`github.pull_request_review_comment` 和 `github.push`。这些旧版事件保持原有的行为。
 
