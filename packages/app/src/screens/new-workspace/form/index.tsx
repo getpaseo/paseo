@@ -325,6 +325,7 @@ export function useNewWorkspaceForm(props: NewWorkspaceFormProps): ReactElement 
         onOpenChange={base.onOpenChange}
         onSearchQueryChange={base.setSearchQuery}
         desktopPlacement="bottom-start"
+        desktopMinWidth={360}
         anchorRef={base.anchorRef}
         emptyText={base.emptyText}
         renderOption={renderRefOption}
