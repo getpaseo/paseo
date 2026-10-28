@@ -463,7 +463,7 @@ ${options.hooks ?? ""}
 
 test("a clean daemon shutdown leaves a completed plugin-provider agent without an error", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "plugin-provider-shutdown-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  onTestFinished(() => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const pluginDirectory = await createProviderPlugin(root);
   const workspace = path.join(root, "workspace");
   await mkdir(workspace, { recursive: true });
@@ -507,7 +507,7 @@ test("a clean daemon shutdown leaves a completed plugin-provider agent without a
 
 test("reloading a plugin leaves a completed plugin-provider agent without an error", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "plugin-provider-reload-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  onTestFinished(() => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const pluginDirectory = await createProviderPlugin(root);
   const workspace = path.join(root, "workspace");
   await mkdir(workspace, { recursive: true });
@@ -556,7 +556,7 @@ test("reloading a plugin leaves a completed plugin-provider agent without an err
 
 test("a provider that never acknowledges session.close does not hold the daemon open", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "plugin-provider-stuck-close-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  onTestFinished(() => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const pluginDirectory = await createProviderPlugin(root, { acknowledgeClose: false });
   const workspace = path.join(root, "workspace");
   await mkdir(workspace, { recursive: true });
@@ -951,7 +951,7 @@ test.each([false, true])(
     } finally {
       await client.close();
       await daemon.close();
-      await rm(root, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   },
   60_000,
@@ -1032,7 +1032,7 @@ test("worktree before hook rejects unsafe destinations with plugin attribution b
   } finally {
     await client.close();
     await daemon.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 60_000);
 
@@ -1117,7 +1117,7 @@ test("the placement example creates a sibling worktree, opens its first agent th
   } finally {
     await client.close();
     await daemon.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 60_000);
 
@@ -1304,6 +1304,6 @@ test("worktree includes reach the first agent without copying tracked or unignor
   } finally {
     await client.close();
     await daemon.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 60_000);
