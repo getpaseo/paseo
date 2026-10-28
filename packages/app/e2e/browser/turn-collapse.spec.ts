@@ -475,7 +475,20 @@ async function expectThinkingPresentation(page: Page, autoExpandReasoning: boole
     await expect(group).toContainText(/read 1 file/i);
     await expect(group.getByRole("button").first()).not.toContainText(/thought/i);
     await group.getByRole("button").first().click();
-    await expect(reasoning).toBeVisible();
+    // Expand thinking is off: the group opens its rows, but the thought row stays closed
+    // until the reader opens it.
+    const thought = group
+      .getByTestId("tool-call-badge")
+      .filter({ hasText: /^Thinking/ })
+      .first();
+    await expect(thought).toBeVisible();
+    await expect(reasoning).toHaveCount(0);
+    // A press right after the group opens occasionally does not register; retry until the
+    // thought row opens.
+    await expect(async () => {
+      await thought.getByRole("button").first().click();
+      await expect(reasoning).toBeVisible({ timeout: 2_000 });
+    }).toPass();
   }
 }
 

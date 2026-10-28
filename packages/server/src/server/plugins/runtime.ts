@@ -15,7 +15,7 @@ import { validateBeforeRequest, validateBeforeResult } from "./lifecycle/index.j
 import { fork } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type pino from "pino";
 import {
   PROVIDER_CAPABILITIES,
@@ -74,6 +74,8 @@ interface LoadedPlugin {
   instanceId: string;
   requirements: PluginRequirements | undefined;
   clientBundle: string;
+  /** Lets a client that already holds this bundle skip downloading it again. */
+  clientBundleHash: string;
   methods: ReadonlySet<string>;
   hooks: { events: string[]; before: string[] };
   providers: readonly PluginProviderMetadata[];
@@ -246,6 +248,10 @@ function terminatePluginChild(child: PluginChild): void {
   if (!child.killed) child.kill();
 }
 
+function hashClientBundle(clientBundle: string): string {
+  return createHash("sha256").update(clientBundle).digest("hex");
+}
+
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -369,9 +375,19 @@ export class PluginRuntime {
     return true;
   }
 
-  catalog(): Array<{ id: string; clientBundle: string; requirements?: PluginRequirements }> {
+  catalog(): Array<{
+    id: string;
+    clientBundle: string;
+    clientBundleHash: string;
+    requirements?: PluginRequirements;
+  }> {
     return [...this.plugins.values()]
-      .map(({ id, clientBundle, requirements }) => ({ id, clientBundle, requirements }))
+      .map(({ id, clientBundle, clientBundleHash, requirements }) => ({
+        id,
+        clientBundle,
+        clientBundleHash,
+        requirements,
+      }))
       .sort((left, right) => left.id.localeCompare(right.id));
   }
 
@@ -739,10 +755,12 @@ export class PluginRuntime {
     if (!canPublish()) throw new Error(`Plugin start cancelled: ${pluginId}`);
     const serverBundle = bundles.serverBundle;
     if (!serverBundle) {
+      const clientBundle = bundles.clientBundle ?? "";
       return {
         id: pluginId,
         instanceId: randomUUID(),
-        clientBundle: bundles.clientBundle ?? "",
+        clientBundle,
+        clientBundleHash: hashClientBundle(clientBundle),
         requirements: manifest.requirements,
         methods: new Set(),
         hooks: { events: [], before: [] },
@@ -872,6 +890,7 @@ export class PluginRuntime {
       id: pluginId,
       instanceId: randomUUID(),
       clientBundle,
+      clientBundleHash: hashClientBundle(clientBundle),
       requirements,
       methods: new Set(ready.methods),
       hooks: ready.hooks ?? { events: [], before: [] },

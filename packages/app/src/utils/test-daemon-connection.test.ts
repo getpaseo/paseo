@@ -129,6 +129,23 @@ describe("test-daemon-connection connectToDaemon", () => {
     expect(probe.createdConfigs()[0]?.transportFactory).toBeUndefined();
   });
 
+  it("keeps the bundle cache factory on a probe client that the host runtime can adopt", async () => {
+    const { connectToDaemon } = await import("./test-daemon-connection");
+    const createPluginClientBundleStore = () => ({
+      async load() {
+        return [];
+      },
+      async replace() {},
+    });
+    const { client } = await connectToDaemon(
+      { id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767" },
+      { createPluginClientBundleStore },
+      probe.deps,
+    );
+    expect(client.config.createPluginClientBundleStore).toBe(createPluginClientBundleStore);
+    await client.close();
+  });
+
   it("encodes the local socket target into the client config", async () => {
     const { connectToDaemon } = await import("./test-daemon-connection");
     const result = await connectToDaemon(
