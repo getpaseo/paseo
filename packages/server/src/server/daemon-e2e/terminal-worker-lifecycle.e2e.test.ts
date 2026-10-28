@@ -516,7 +516,7 @@ describe("terminals when the daemon stops", { timeout: 240_000 }, () => {
 
   for (const force of [false, true]) {
     test.skipIf(!POSIX)(
-      `POSIX: ${force ? "stop --force" : "stop"} ends an exec'd HUP-resistant program its dead worker left`,
+      `POSIX: worker death reaps an exec'd HUP-resistant program and ${force ? "stop --force" : "stop"} closes its replacement`,
       async () => {
         const harness = await startSupervisor();
         const client = await connect(harness);
@@ -529,13 +529,20 @@ describe("terminals when the daemon stops", { timeout: 240_000 }, () => {
           "exec",
         );
         const workerPid = (await currentWorkerRecord(harness.home)).pid;
+        const daemonPid = await daemonWorkerPid(client);
         process.kill(workerPid, "SIGKILL");
         await waitUntilGone(workerPid, "terminal worker");
-        await delay(500);
-        expect(isAlive(terminal.sleepPid)).toBe(true);
+        await waitUntilGone(terminal.sleepPid, "orphaned terminal program");
+        await waitFor(
+          async () => (await client.listTerminals(undefined, undefined, {})).terminals.length === 0,
+          "dead terminal was not removed",
+        );
+        expect(await daemonWorkerPid(client)).toBe(daemonPid);
+        const replacement = await createMarkedTerminal(client, harness, workspaceId, "RECOVERED");
+        await expectKept(client, replacement, "RECOVERED", "worker-death");
         await client.close();
         await stopDaemonInstance(harness.home, { force });
-        await expectAllClosed(harness.home, [terminal.sleepPid]);
+        await expectAllClosed(harness.home, [terminal.sleepPid, replacement.programPid]);
       },
     );
   }
