@@ -68,6 +68,7 @@ export const ru: TranslationResources = {
       daemonClientUnavailable: "Daemon клиента недоступен",
       daemonClientDisconnected: "Daemon клиента отключен",
       noFileFound: "Файл для {{token}} не найден",
+      folderOutsideWorkspace: "{{path}} находится вне этого рабочего пространства",
       unexpectedDictationError: "При обработке диктовки произошла непредвиденная ошибка.",
     },
     connectionStatus: {
@@ -1945,7 +1946,6 @@ export const ru: TranslationResources = {
     parent: {
       backToParent: "Назад к родителю",
       backTo: "Назад к {{label}}",
-      parent: "Родитель",
       parentAgent: "Родительский агент",
       openParent: "Открыть родителя",
     },

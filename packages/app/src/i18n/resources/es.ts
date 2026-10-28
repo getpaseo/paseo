@@ -68,6 +68,7 @@ export const es: TranslationResources = {
       daemonClientUnavailable: "ClienteDaemonno disponible",
       daemonClientDisconnected: "El clienteDaemonestá desconectado",
       noFileFound: "No se encontró ningún archivo para{{token}}",
+      folderOutsideWorkspace: "{{path}} está fuera de este espacio de trabajo",
       unexpectedDictationError: "Se produjo un error inesperado al manejar el dictado.",
     },
     connectionStatus: {
@@ -1961,7 +1962,6 @@ export const es: TranslationResources = {
     parent: {
       backToParent: "Volver al padre",
       backTo: "Volver a {{label}}",
-      parent: "Padre",
       parentAgent: "Agente padre",
       openParent: "Abrir padre",
     },

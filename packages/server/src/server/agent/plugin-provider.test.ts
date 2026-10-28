@@ -486,6 +486,137 @@ describe("PluginAgentClientRegistry", () => {
     }
   });
 
+  test.each(["completed", "canceled", "failed"] as const)(
+    "reports a reused plugin child as running until its next turn is %s",
+    async (outcome) => {
+      const logger = createTestLogger();
+      const harness = createProviderHarness();
+      const plugins = new PluginAgentClientRegistry(logger);
+      plugins.replace([harness.registration]);
+      const registry = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
+      const manager = new AgentManager({
+        logger,
+        clients: { "plugin-direct": registry["plugin-direct"].createClient(logger) },
+        providerDefinitions: { "plugin-direct": registry["plugin-direct"] },
+      });
+      try {
+        const agent = await manager.createAgent(
+          { provider: "plugin-direct", cwd: tmpdir() },
+          undefined,
+          { workspaceId: undefined },
+        );
+        const open = harness.inputs.find((input) => input.type === "session.open")!;
+        harness.emit({
+          type: "session.opened",
+          sessionId: "reusable-child",
+          parentSessionId: open.sessionId,
+          capabilities: [],
+          restoration: "parent",
+          title: "Plugin child",
+          cwd: tmpdir(),
+        });
+        harness.emit({
+          type: "session.turn",
+          sessionId: "reusable-child",
+          turnId: "first-turn",
+          state: "started",
+        });
+        harness.emit({
+          type: "session.turn",
+          sessionId: "reusable-child",
+          turnId: "first-turn",
+          state: "completed",
+        });
+        await nextTurn();
+        const [child] = manager.listProviderSubagents(agent.id);
+        expect(child).toMatchObject({
+          id: "reusable-child",
+          title: "Plugin child",
+          status: "completed",
+        });
+
+        harness.emit({
+          type: "session.turn",
+          sessionId: "reusable-child",
+          turnId: "second-turn",
+          state: "started",
+        });
+        await nextTurn();
+        expect(manager.listProviderSubagents(agent.id)).toMatchObject([
+          { id: child.id, title: child.title, status: "running" },
+        ]);
+
+        harness.emit({
+          type: "session.turn",
+          sessionId: "reusable-child",
+          turnId: "second-turn",
+          state: outcome,
+        });
+        await nextTurn();
+        expect(manager.listProviderSubagents(agent.id)).toMatchObject([
+          { id: child.id, title: child.title, status: outcome },
+        ]);
+      } finally {
+        await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+        await plugins.shutdown();
+      }
+    },
+  );
+
+  test.each(["started", "completed", "canceled", "failed"] as const)(
+    "replays a reused plugin child's latest turn state: %s",
+    async (state) => {
+      const harness = createProviderHarness({
+        openChildren(rootSessionId, emit) {
+          emit({
+            type: "session.opened",
+            sessionId: "reusable-child",
+            parentSessionId: rootSessionId,
+            capabilities: [],
+            restoration: "parent",
+            cwd: "/workspace",
+          });
+          for (const [turnId, turnState] of [
+            ["first-turn", "started"],
+            ["first-turn", "completed"],
+            ["second-turn", "started"],
+          ] as const) {
+            emit({ type: "session.turn", sessionId: "reusable-child", turnId, state: turnState });
+          }
+          if (state !== "started") {
+            emit({
+              type: "session.turn",
+              sessionId: "reusable-child",
+              turnId: "second-turn",
+              state,
+            });
+          }
+        },
+      });
+      const registry = new PluginAgentClientRegistry(createTestLogger());
+      registry.replace([harness.registration]);
+      try {
+        const session = await registry.clients()[harness.registration.id]!.createSession({
+          provider: harness.registration.id,
+          cwd: "/workspace",
+        });
+        const statuses = [];
+        for await (const event of session.streamHistory()) {
+          if (
+            event.type === "provider_subagent" &&
+            event.event.type === "upsert" &&
+            event.event.id === "reusable-child"
+          ) {
+            statuses.push(event.event.status);
+          }
+        }
+        expect(statuses.at(-1)).toBe(state === "started" ? "running" : state);
+      } finally {
+        await registry.shutdown();
+      }
+    },
+  );
+
   test("gates persistence operations on negotiated provider capabilities", async () => {
     const harness = createProviderHarness({ capabilities: ["session.persistence"] });
     const registry = new PluginAgentClientRegistry(createTestLogger());
@@ -1319,5 +1450,30 @@ test("plugin without a runtime safety capability uses baseline collection withou
     await registry.shutdown();
     await storage.flush();
     await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("plugin provider import launches with runtime MCP servers and returns only saved configuration", async () => {
+  const harness = createProviderHarness();
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  const client = registry.clients()[harness.registration.id]!;
+  const storedConfig = { provider: harness.registration.id, cwd: "/project" };
+  const company = { type: "http", url: "https://tools.example.com/mcp" } as const;
+  try {
+    const imported = await client.importSession!(
+      { providerHandleId: 'plugin:{"version":1,"data":{"token":"root"}}', cwd: "/project" },
+      { config: { ...storedConfig, mcpServers: { company } }, storedConfig },
+    );
+    expect(harness.inputs).toContainEqual(
+      expect.objectContaining({
+        type: "session.open",
+        config: expect.objectContaining({ mcpServers: { company } }),
+      }),
+    );
+    expect(imported.config).toEqual(storedConfig);
+    await imported.session.close();
+  } finally {
+    await registry.shutdown();
   }
 });

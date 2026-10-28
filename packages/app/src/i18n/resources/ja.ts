@@ -68,6 +68,7 @@ export const ja: TranslationResources = {
       daemonClientUnavailable: "デーモンクライアントが利用できません",
       daemonClientDisconnected: "デーモンクライアントが切断されています",
       noFileFound: "{{token}}のファイルが見つかりません",
+      folderOutsideWorkspace: "{{path}} はこのワークスペースの外にあります",
       unexpectedDictationError: "音声入力処理中に予期しないエラーが発生しました。",
     },
     connectionStatus: {
@@ -1932,7 +1933,6 @@ export const ja: TranslationResources = {
     parent: {
       backToParent: "親に戻る",
       backTo: "{{label}} に戻る",
-      parent: "親",
       parentAgent: "親エージェント",
       openParent: "親を開く",
     },

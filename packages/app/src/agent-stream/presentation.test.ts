@@ -15,6 +15,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import { buildAgentStreamRenderModel } from "./model";
 import { createStreamPresentation } from "./presentation";
+import { createReadingAnchor } from "./reading-anchor";
 
 const runtime = {
   paseo: {},
@@ -609,7 +610,53 @@ it("opening a turn reveals individual calls rather than another tool group", () 
   });
   expect(result.tail.map((item) => item.id)).toEqual(tail.map((item) => item.id));
   expect(result.groupsByHostId.size).toBe(0);
+  expect(result.readingRowReplacements.get("tool-two")).toBeUndefined();
 });
+
+it.each(["collapseToolCalls", "collapseTurns"] as const)(
+  "preserves the reader when a prepend extends a group in %s",
+  (display) => {
+    const present = createStreamPresentation();
+    const anchor = createReadingAnchor();
+    const calls = [toolCall("one", "Bash"), toolCall("two", "Bash")];
+    const input = {
+      ...presentationOptions,
+      transform: undefined,
+      display,
+      head: [],
+      isTurnActive: false,
+    };
+    const partial = present({ ...input, tail: calls.slice(1) });
+    anchor.reconcile(0, [{ id: partial.tail[0]!.id, top: 48, height: 200 }]);
+    const completed = present({ ...input, tail: calls });
+    const groupId = completed.tail[0]!.id;
+    expect(anchor.getRowId(completed.readingRowReplacements)).toBe(groupId);
+    expect(
+      anchor.reconcile(
+        0,
+        [{ id: groupId, top: 448, height: 200 }],
+        false,
+        completed.readingRowReplacements,
+      ),
+    ).toBe(400);
+    expect(anchor.getRowId()).toBe(groupId);
+    const timestamp = new Date();
+    const folded = present({
+      ...input,
+      display: "collapseTurns",
+      tail: [
+        { kind: "user_message", id: "prompt", text: "Work", timestamp },
+        ...calls,
+        { kind: "assistant_message", id: "reply", text: "Done", timestamp },
+      ],
+    });
+    // Both the original partial group and its replacement resolve directly to the turn.
+    expect(folded.readingRowReplacements.get(calls[1]!.id)).toBe("prompt");
+    expect(anchor.getRowId(folded.readingRowReplacements)).toBe("prompt");
+    const opened = present({ ...input, tail: calls, display: "full" });
+    expect(opened.readingRowReplacements.get(calls[1]!.id)).toBeUndefined();
+  },
+);
 
 it("presents received agent messages as attributed bubbles with the original turn identity", () => {
   const call = toolCall("received", "agent_message");
@@ -651,6 +698,28 @@ it("does not reopen the previous turn while a new run waits for its first row", 
     display: "collapseTurns",
     isTurnActive: true,
     activeTurnId: "new",
+  });
+  expect(result.tail.map((item) => item.id)).toEqual(["prompt", "reply"]);
+});
+
+// A sent prompt counts as activity before the daemon opens its turn, so the only known turn is
+// the completed one; it must stay folded until the new turn's rows arrive.
+it("keeps the previous turn folded while a sent prompt waits for its turn to open", () => {
+  const timestamp = new Date();
+  const tail: StreamItem[] = [
+    { kind: "user_message", id: "prompt", text: "Work", timestamp },
+    toolCall("one", "Bash"),
+    { kind: "assistant_message", id: "reply", text: "Done", timestamp },
+  ];
+  for (const item of tail) item.turnId = "completed";
+  const result = createStreamPresentation()({
+    ...presentationOptions,
+    transform: undefined,
+    tail,
+    head: [],
+    display: "collapseTurns",
+    isTurnActive: true,
+    activeTurnId: null,
   });
   expect(result.tail.map((item) => item.id)).toEqual(["prompt", "reply"]);
 });
@@ -707,7 +776,7 @@ it.each([false, true])(
     };
     const present = createStreamPresentation();
     const closed = present(input);
-    expect(closed.tail.some((item) => item.id === "thought")).toBe(autoExpandReasoning);
+    expect(closed.tail.some((item) => item.id === "thought")).toBe(false);
     const opened = present({ ...input, expandedTurnHostIds: new Set(["prompt"]) });
     expect(opened.tail).toEqual(tail);
     expect(opened.turns.nestedItemIds.has("thought")).toBe(true);

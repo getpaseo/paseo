@@ -410,6 +410,19 @@ bridges the menu's two contexts; the rest pass `null`.
 
 Wrapping providers _around_ the modal does nothing. They land on the wrong side.
 
+## Gotcha 8 — Read safe-area insets where the overlay draws
+
+A compact sheet tab's body (`SheetBottomInset` in `adaptive-modal-sheet.tsx`) pads the bottom
+inset and gives its content a bottom inset of 0, so the composer dock sits the same in a sheet as
+in a tab. An overlay opened from that content and calling `useSafeAreaInsets()` at its call site
+gets that 0 and draws over the navigation bar.
+
+- A Gorhom sheet reads the inset inside its children, which render in the app's sheet host. See
+  `CompactSheetBody`, `MenuSheetScrollView` and `ComboboxSheetFrame`.
+- An RN `Modal` passes the call site's context straight through, so put a `SafeAreaProvider`
+  inside it and read the inset below that. The modal is its own window, and the provider measures
+  it. See `attachment-lightbox.tsx`.
+
 ## Recipe for a new anchored panel
 
 Before you write a new one, ask:

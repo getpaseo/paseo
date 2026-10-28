@@ -27,6 +27,11 @@ export type PluginWireBeforeRequests = Omit<PluginBeforeRequests, "agent.session
   "agent.session_open": SessionOpenWireRequest;
 };
 
+/** Daemon-only results; ownership never crosses the plugin process boundary. */
+export type PluginBeforeResults = PluginWireBeforeRequests & {
+  "agent.session_open": SessionOpenWireRequest & { mcpServerOwners?: Record<string, string> };
+};
+
 export const lifecycleEventNames = [
   "agent.created",
   "agent.closed",
@@ -54,6 +59,7 @@ const beforeSchemas = {
       labels: z.record(z.string(), z.string()),
       tools: z.array(agentToolMetadataSchema),
       env: z.record(z.string(), z.string()),
+      mcpServers: CreateAgentRequestMessageSchema.shape.config.shape.mcpServers.unwrap(),
     })
     .strict(),
   "workspace.create": WorkspaceCreateRequestSchema.omit({ type: true, requestId: true }).strict(),
@@ -80,7 +86,7 @@ export interface PluginLifecycle {
   before<Name extends keyof PluginWireBeforeRequests>(
     name: Name,
     request: PluginWireBeforeRequests[Name],
-  ): Promise<PluginWireBeforeRequests[Name]>;
+  ): Promise<PluginBeforeResults[Name]>;
 }
 
 export function validateBeforeRequest<Name extends keyof PluginWireBeforeRequests>(
@@ -176,7 +182,7 @@ export function validateBeforeResult<Name extends keyof PluginWireBeforeRequests
       previous.title !== next.title ||
       !isDeepStrictEqual(previous.labels, next.labels)
     ) {
-      throw new Error("agent.session_open hooks can only change env and tools");
+      throw new Error("agent.session_open hooks can only change env, tools, and mcpServers");
     }
   }
   if (name === "agent.create") {
@@ -290,8 +296,10 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
       tools = local.tools;
     }
     context.signal.throwIfAborted();
-    if (request.purpose === "history") request.tools = [];
-    else this.agentTools?.attach(request.agentId, tools);
+    if (request.purpose === "history") {
+      request.tools = [];
+      request.mcpServers = {};
+    } else this.agentTools?.attach(request.agentId, tools);
     return request;
   }
 

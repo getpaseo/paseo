@@ -86,6 +86,10 @@ class FakeEditorTargets implements EditorTargetRuntime {
     return this.paths.has(targetPath);
   }
 
+  expandHomePath(targetPath: string): string {
+    return targetPath.startsWith("~/") ? `/home/me/${targetPath.slice(2)}` : targetPath;
+  }
+
   isAbsolutePath(targetPath: string): boolean {
     return targetPath.startsWith("/") || /^[A-Z]:\//u.test(targetPath);
   }
@@ -511,6 +515,19 @@ describe("editor target registry", () => {
 
     expect(runtime.openedPaths).toEqual(["C:/repo"]);
     expect(runtime.revealedPaths).toEqual(["C:/repo/src/app.ts"]);
+  });
+
+  it("opens a home-relative folder in the file manager", async () => {
+    const runtime = new FakeEditorTargets();
+    runtime.addPath("/home/me/Downloads/contracts");
+
+    await openEditorTarget(
+      { editorId: "file-manager", workspacePath: "~/Downloads/contracts" },
+      runtime,
+      [fileManagerTarget],
+    );
+
+    expect(runtime.openedPaths).toEqual(["/home/me/Downloads/contracts"]);
   });
 
   it("keeps the platform file-manager ids used by stored preferences", async () => {

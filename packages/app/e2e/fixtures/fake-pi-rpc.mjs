@@ -6,6 +6,7 @@ for await (const line of lines) {
   const command = JSON.parse(line);
   let data = {};
   if (command.type === "get_available_models") {
+    if (process.argv.includes("--stall-model-discovery")) continue;
     data = {
       models: [
         {

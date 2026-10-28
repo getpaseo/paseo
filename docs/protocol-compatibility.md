@@ -2,7 +2,7 @@
 
 The app and the daemon are separate products that ship separately. A user updates the app from an app store or a desktop auto-update; they update the daemon when they feel like it. Every combination happens in the wild: new app against an old daemon, old app against a new daemon, and both sides months apart.
 
-In development both sides are always the same version, which is why this is the constraint contributors miss most often.
+Development can have the same version drift: an app reload picks up new code while a long-running daemon keeps its loaded version. Check the connected daemon version when diagnosing behavior that crosses this boundary.
 
 Two contracts follow from it.
 
@@ -38,7 +38,7 @@ The app checks for the capability and either runs the feature or tells the user 
 - **No defensive branches spread through the feature.** Detection happens in one place, and everything downstream reads a clean shape.
 - Capability flags live in `features` on the `server_info` message (`packages/protocol/src/messages.ts`, the `server_info` schema).
 
-Existing functionality keeps working across versions because of the protocol contract. Gating a new feature never substitutes for that.
+Existing functionality keeps working across versions. Never gate an established request on a new enhancement: negotiate the optional enhancement at the client boundary and preserve the existing request for older hosts. Whole-turn pagination can require a capability; reading conversation history cannot.
 
 ## Client capability ownership
 

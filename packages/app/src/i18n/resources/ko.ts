@@ -67,6 +67,7 @@ export const ko: TranslationResources = {
       daemonClientUnavailable: "데몬 클라이언트를 사용할 수 없습니다",
       daemonClientDisconnected: "데몬 클라이언트 연결이 끊어졌습니다",
       noFileFound: "{{token}}에 해당하는 파일을 찾을 수 없습니다",
+      folderOutsideWorkspace: "{{path}}은(는) 이 워크스페이스 밖에 있습니다",
       unexpectedDictationError: "받아쓰기를 처리하는 중 예기치 않은 오류가 발생했습니다.",
     },
     connectionStatus: {
@@ -1923,7 +1924,6 @@ export const ko: TranslationResources = {
     parent: {
       backToParent: "상위 에이전트로 돌아가기",
       backTo: "{{label}}(으)로 돌아가기",
-      parent: "상위",
       parentAgent: "상위 에이전트",
       openParent: "상위 에이전트 열기",
     },

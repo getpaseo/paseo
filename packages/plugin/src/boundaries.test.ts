@@ -238,7 +238,11 @@ describe("plugin agent tools SDK boundary", () => {
           // @ts-expect-error labels are read-only
           request.labels.x = "changed";
           if (request.labels.x !== "y") return;
-          return { ...request, tools: [...request.tools, tool] };
+          // @ts-expect-error MCP servers use the same typed transport config as saved servers
+          request.mcpServers.invalid = { type: "http", url: 42 };
+          return { ...request, tools: [...request.tools, tool], mcpServers: {
+            ...request.mcpServers, company: { type: "http", url: "https://tools.example.com/mcp" },
+          } };
         });
         return () => {};
       }

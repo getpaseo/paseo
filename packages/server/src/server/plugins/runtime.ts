@@ -1,4 +1,4 @@
-import type { PluginWireBeforeRequests } from "./lifecycle/index.js";
+import type { PluginWireBeforeRequests, PluginBeforeResults } from "./lifecycle/index.js";
 import type { SessionOpenWireRequest, AttachedAgentTool } from "./agent-tools.js";
 import type { UsageScope } from "@getpaseo/plugin/server/usage";
 import {
@@ -15,7 +15,7 @@ import { validateBeforeRequest, validateBeforeResult } from "./lifecycle/index.j
 import { fork } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type pino from "pino";
 import {
   PROVIDER_CAPABILITIES,
@@ -74,6 +74,8 @@ interface LoadedPlugin {
   instanceId: string;
   requirements: PluginRequirements | undefined;
   clientBundle: string;
+  /** Lets a client that already holds this bundle skip downloading it again. */
+  clientBundleHash: string;
   methods: ReadonlySet<string>;
   hooks: { events: string[]; before: string[] };
   providers: readonly PluginProviderMetadata[];
@@ -246,6 +248,10 @@ function terminatePluginChild(child: PluginChild): void {
   if (!child.killed) child.kill();
 }
 
+function hashClientBundle(clientBundle: string): string {
+  return createHash("sha256").update(clientBundle).digest("hex");
+}
+
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -369,9 +375,19 @@ export class PluginRuntime {
     return true;
   }
 
-  catalog(): Array<{ id: string; clientBundle: string; requirements?: PluginRequirements }> {
+  catalog(): Array<{
+    id: string;
+    clientBundle: string;
+    clientBundleHash: string;
+    requirements?: PluginRequirements;
+  }> {
     return [...this.plugins.values()]
-      .map(({ id, clientBundle, requirements }) => ({ id, clientBundle, requirements }))
+      .map(({ id, clientBundle, clientBundleHash, requirements }) => ({
+        id,
+        clientBundle,
+        clientBundleHash,
+        requirements,
+      }))
       .sort((left, right) => left.id.localeCompare(right.id));
   }
 
@@ -535,12 +551,14 @@ export class PluginRuntime {
   async before<Name extends keyof PluginWireBeforeRequests>(
     name: Name,
     input: PluginWireBeforeRequests[Name],
-  ): Promise<PluginWireBeforeRequests[Name]> {
+  ): Promise<PluginBeforeResults[Name]> {
     let request = validateBeforeRequest(name, input);
     const plugins = [...this.plugins.values()].sort((left, right) => {
       return left.id.localeCompare(right.id);
     });
     const attached: AttachedAgentTool[] = [];
+    const mcpServers: SessionOpenWireRequest["mcpServers"] = {};
+    const mcpServerOwners: Record<string, string> = {};
     for (const loaded of plugins) {
       if (!loaded.hooks.before.includes(name)) {
         continue;
@@ -551,11 +569,14 @@ export class PluginRuntime {
           requestId: randomUUID(),
           kind: "before",
           name,
-          input: name === "agent.session_open" ? { ...request, tools: [] } : request,
+          input:
+            name === "agent.session_open" ? { ...request, tools: [], mcpServers: {} } : request,
         });
         request = validateBeforeResult(name, request, output);
         if (name === "agent.session_open") {
-          this.collectAgentTools(attached, loaded, (request as SessionOpenWireRequest).tools);
+          const opened = request as SessionOpenWireRequest;
+          this.collectMcpServers(mcpServers, mcpServerOwners, loaded, opened.mcpServers);
+          this.collectAgentTools(attached, loaded, opened.tools);
         }
       } catch (error) {
         if (name === "agent.session_open")
@@ -565,7 +586,14 @@ export class PluginRuntime {
         });
       }
     }
-    if (name === "agent.session_open") (request as SessionOpenWireRequest).tools = attached;
+    if (name === "agent.session_open") {
+      return {
+        ...request,
+        tools: attached,
+        mcpServers,
+        mcpServerOwners,
+      } as PluginBeforeResults[Name];
+    }
     return request;
   }
 
@@ -585,6 +613,23 @@ export class PluginRuntime {
     if (output !== undefined && typeof output !== "string")
       throw new Error("Invalid catalogue key from plugin");
     return output;
+  }
+
+  private collectMcpServers(
+    servers: SessionOpenWireRequest["mcpServers"],
+    owners: Record<string, string>,
+    loaded: LoadedPlugin,
+    contributions: SessionOpenWireRequest["mcpServers"],
+  ): void {
+    for (const [name, server] of Object.entries(contributions)) {
+      if (Object.hasOwn(servers, name)) {
+        throw new Error(
+          `MCP server ${name} from plugin ${loaded.id} collides with plugin ${owners[name]}`,
+        );
+      }
+      servers[name] = server;
+      owners[name] = loaded.id;
+    }
   }
 
   private collectAgentTools(
@@ -710,10 +755,12 @@ export class PluginRuntime {
     if (!canPublish()) throw new Error(`Plugin start cancelled: ${pluginId}`);
     const serverBundle = bundles.serverBundle;
     if (!serverBundle) {
+      const clientBundle = bundles.clientBundle ?? "";
       return {
         id: pluginId,
         instanceId: randomUUID(),
-        clientBundle: bundles.clientBundle ?? "",
+        clientBundle,
+        clientBundleHash: hashClientBundle(clientBundle),
         requirements: manifest.requirements,
         methods: new Set(),
         hooks: { events: [], before: [] },
@@ -843,6 +890,7 @@ export class PluginRuntime {
       id: pluginId,
       instanceId: randomUUID(),
       clientBundle,
+      clientBundleHash: hashClientBundle(clientBundle),
       requirements,
       methods: new Set(ready.methods),
       hooks: ready.hooks ?? { events: [], before: [] },

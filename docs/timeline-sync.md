@@ -50,10 +50,11 @@ all currently available rows of an active run. There is no per-turn cap: a large
 exceed the target. Local history mounting uses the same boundaries so revealing older rows
 does not change the collapse state of a turn already displayed.
 
-`wholeTurns` is optional for existing SDK callers. The app requires
-`features.wholeTurnTimeline` once at the client fetch boundary; unsupported hosts receive an
-update-host error. Forward catch-up stays incremental, but its reset snapshot honors the
-whole-turn request. Source coverage still includes interleaved tool updates.
+`wholeTurns` is a preference negotiated once at the client fetch boundary. Hosts advertising
+`features.wholeTurnTimeline` receive it; other hosts receive the existing item-based request.
+Reading history remains available on older hosts, whose pages can still split turns. Forward
+catch-up stays incremental, but its reset snapshot honors a supported whole-turn request.
+Source coverage still includes interleaved tool updates.
 
 Canonical IDs define runs. With missing IDs, human prompts, heartbeats and typed received
 agent messages each start a fallback turn. This deterministic fallback is shared by paging
