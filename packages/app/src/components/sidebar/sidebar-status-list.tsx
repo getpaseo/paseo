@@ -38,7 +38,18 @@ import {
   CircleCheck,
   CircleDot,
   CircleX,
+  Plus,
+  Tag,
 } from "lucide-react-native";
+import { router, type Href } from "expo-router";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { buildNewWorkspaceRoute } from "@/utils/host-routes";
+import type { Theme } from "@/styles/theme";
+import {
+  WORKSPACE_LABEL_COLORS,
+  type WorkspaceLabelColor,
+} from "@getpaseo/protocol/workspace-labels";
+import { WORKSPACE_LABEL_ICON_MAPPINGS } from "@/workspace-labels/swatch";
 import { useToast } from "@/contexts/toast-context";
 import { WorkspaceRenameModal } from "@/components/workspace-rename-modal";
 import { useWorkspaceClipboardActions } from "@/hooks/use-workspace-clipboard-actions";
@@ -106,6 +117,17 @@ const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedCircleDot = withUnistyles(CircleDot);
 const ThemedCircleX = withUnistyles(CircleX);
+const ThemedTag = withUnistyles(Tag);
+const ThemedPlus = withUnistyles(Plus);
+const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
+const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+// Built once per color: `withUnistyles` re-subscribes whenever `uniProps` changes identity.
+const labelGroupIconProps = Object.fromEntries(
+  WORKSPACE_LABEL_COLORS.map((color) => [
+    color,
+    densityIconProps("sm", WORKSPACE_LABEL_ICON_MAPPINGS[color]),
+  ]),
+) as Record<WorkspaceLabelColor, ReturnType<typeof densityIconProps<{ color: string }>>>;
 const EMPTY_SHORTCUT_INDEX = new Map<string, number>();
 
 function statusWorkspaceKeyExtractor(workspace: SidebarWorkspaceEntry): string {
@@ -354,7 +376,7 @@ function StatusGroupRows({
 
   return (
     <View style={collapsed ? undefined : styles.statusGroupBlockExpanded}>
-      <StatusGroupHeader group={group} collapsed={collapsed} />
+      <StatusGroupHeader group={group} collapsed={collapsed} onWorkspacePress={onWorkspacePress} />
       {!collapsed ? (
         <View
           style={styles.statusWorkspaceListContainer}
@@ -415,12 +437,18 @@ function buildStatusRowProjectPresentation({
 function StatusGroupHeader({
   group,
   collapsed,
+  onWorkspacePress,
 }: {
   group: SidebarWorkspaceGroup;
   collapsed: boolean;
+  onWorkspacePress?: () => void;
 }) {
   const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
   const [isHovered, setIsHovered] = useState(false);
+  // Only a real label can be handed to a new workspace; Unlabelled is the absence of one.
+  const newWorkspaceLabel =
+    group.leading.kind === "label" && group.leading.name ? group.leading.name : null;
   const toggleWorkspaceGroupCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.toggleWorkspaceGroupCollapsed,
   );
@@ -463,7 +491,80 @@ function StatusGroupHeader({
             </Text>
           </View>
         </View>
+        {newWorkspaceLabel ? (
+          <LabelGroupNewWorkspaceButton
+            label={newWorkspaceLabel}
+            visible={isHovered || platformIsNative || isCompact}
+            onWorkspacePress={onWorkspacePress}
+            testID={`sidebar-label-group-new-workspace-${group.key}`}
+          />
+        ) : null}
       </Pressable>
+    </View>
+  );
+}
+
+/**
+ * Starts a New workspace that carries this section's label, so it lands back in the section it
+ * was started from instead of under Unlabelled. Host and project are left to the New workspace
+ * screen's usual defaults: a label section spans both.
+ */
+function LabelGroupNewWorkspaceButton({
+  label,
+  visible,
+  onWorkspacePress,
+  testID,
+}: {
+  label: string;
+  visible: boolean;
+  onWorkspacePress?: () => void;
+  testID: string;
+}) {
+  const { t } = useTranslation();
+  const pressableStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.statusGroupActionButton,
+      !visible && styles.statusGroupActionButtonHidden,
+      (Boolean(hovered) || pressed) && styles.statusGroupActionButtonHovered,
+    ],
+    [visible],
+  );
+  const handlePress = useCallback(
+    (event: GestureResponderEvent) => {
+      event.stopPropagation();
+      onWorkspacePress?.();
+      router.navigate(buildNewWorkspaceRoute({ labels: [label] }) as Href);
+    },
+    [label, onWorkspacePress],
+  );
+
+  return (
+    <View pointerEvents={visible ? "auto" : "none"}>
+      <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+        <TooltipTrigger asChild disabled={!visible}>
+          <Pressable
+            style={pressableStyle}
+            onPress={handlePress}
+            accessibilityRole={platformIsWeb ? undefined : "button"}
+            accessibilityLabel={t("sidebar.workspace.actions.createWorkspaceFor", {
+              projectName: label,
+            })}
+            testID={testID}
+          >
+            {({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => (
+              <ThemedPlus
+                size={15}
+                uniProps={hovered || pressed ? foregroundColorMapping : foregroundMutedColorMapping}
+              />
+            )}
+          </Pressable>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" align="center" offset={8}>
+          <Text style={styles.statusGroupActionTooltipText}>
+            {t("sidebar.workspace.actions.newWorkspace")}
+          </Text>
+        </TooltipContent>
+      </Tooltip>
     </View>
   );
 }
@@ -478,7 +579,13 @@ function StatusGroupLeadingVisual({
   showChevron: boolean;
 }) {
   if (!showChevron) {
-    return <StatusGroupIcon bucket={leading.bucket} />;
+    return leading.kind === "status" ? (
+      <StatusGroupIcon bucket={leading.bucket} />
+    ) : (
+      <ThemedTag
+        uniProps={leading.color ? labelGroupIconProps[leading.color] : mutedGroupIconProps}
+      />
+    );
   }
   if (collapsed) {
     return <ThemedChevronRight uniProps={mutedGroupIconProps} />;
@@ -1083,6 +1190,26 @@ const styles = StyleSheet.create((theme) => ({
   },
   statusGroupRowPressed: {
     backgroundColor: theme.colors.surface2,
+  },
+  // The same 24px target the project header's New workspace button uses, so the two group
+  // headers put their action on one rail.
+  statusGroupActionButton: {
+    width: 24,
+    height: 24,
+    borderRadius: theme.borderRadius.md,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  statusGroupActionButtonHovered: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  statusGroupActionButtonHidden: {
+    opacity: 0,
+  },
+  statusGroupActionTooltipText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
   },
   statusGroupRowLeft: {
     flexDirection: "row",
