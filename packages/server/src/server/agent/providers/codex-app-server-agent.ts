@@ -504,6 +504,7 @@ interface PersistedSubAgentRoute {
 interface CodexThreadHistoryProjection {
   timeline: PersistedTimelineEntry[];
   subAgentRoutes: PersistedSubAgentRoute[];
+  lastTurnStatus: ToolCallTimelineItem["status"] | null;
 }
 
 function mergeCodexConfiguredDefaults(
@@ -2067,6 +2068,7 @@ const CodexThreadReadResponseSchema = z
             z
               .object({
                 items: z.array(z.unknown()).default([]),
+                status: z.string().optional(),
               })
               .passthrough(),
           )
@@ -2145,7 +2147,23 @@ async function loadCodexThreadHistoryTimeline(params: {
         : [];
     },
   );
-  return { timeline, subAgentRoutes };
+  const lastTurnStatus = codexChildTurnStatus(response.thread.turns.at(-1)?.status);
+  return { timeline, subAgentRoutes, lastTurnStatus };
+}
+
+function codexChildTurnStatus(status: string | undefined): ToolCallTimelineItem["status"] | null {
+  switch (status) {
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "interrupted":
+      return "canceled";
+    case "inProgress":
+      return "running";
+    default:
+      return null;
+  }
 }
 
 function readCodexThread(client: CodexAppServerClientLike, threadId: string): Promise<unknown> {
@@ -3467,6 +3485,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private historyPending = false;
   private persistedHistory: PersistedTimelineEntry[] = [];
   private loadingPersistedHistory = false;
+  private liveSubAgentTurnsDuringHistory = new Map<string, ToolCallTimelineItem["status"]>();
   private persistedProviderSubagentEvents: AgentStreamEvent[] = [];
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
   private mcpElicitationPermissionIds = new Map<number, string>();
@@ -3985,36 +4004,35 @@ export class CodexAppServerAgentSession implements AgentSession {
   private async loadPersistedHistory(client: CodexAppServerClientLike | null): Promise<void> {
     if (!client || !this.currentThreadId) return;
     const threadId = this.currentThreadId;
-
-    const history = await loadCodexThreadHistoryTimeline({
-      threadId,
-      cwd: this.config.cwd ?? null,
-      requestThread: (threadIdToRead) => {
-        return readCodexThread(client, threadIdToRead);
-      },
-    });
-    const { timeline, subAgentRoutes } = history;
     this.subAgentCallsByCallId.clear();
     this.subAgentCallIdByChildThreadId.clear();
     this.pendingSubAgentNotificationsByThreadId.clear();
+    this.liveSubAgentTurnsDuringHistory.clear();
     this.persistedProviderSubagentEvents = [];
     this.loadingPersistedHistory = true;
     try {
+      const history = await loadCodexThreadHistoryTimeline({
+        threadId,
+        cwd: this.config.cwd ?? null,
+        requestThread: (threadIdToRead) => readCodexThread(client, threadIdToRead),
+      });
+      const { timeline, subAgentRoutes } = history;
       await this.loadPersistedSubAgentHistories(client, subAgentRoutes);
+      this.resetCodexUserMessageTurns();
+      for (const entry of timeline) {
+        if (entry.item.type === "tool_call" && entry.item.name === "request_user_input_async") {
+          entry.item = this.asyncQuestions.timeline(entry.item.callId) ?? entry.item;
+        }
+        if (entry.item.type === "user_message") {
+          this.rememberCodexUserMessageTurn(entry.item.messageId, entry.providerTurnId);
+        }
+      }
+      this.persistedHistory = timeline;
+      this.historyPending = timeline.length > 0;
     } finally {
       this.loadingPersistedHistory = false;
+      this.liveSubAgentTurnsDuringHistory.clear();
     }
-    this.resetCodexUserMessageTurns();
-    for (const entry of timeline) {
-      if (entry.item.type === "tool_call" && entry.item.name === "request_user_input_async") {
-        entry.item = this.asyncQuestions.timeline(entry.item.callId) ?? entry.item;
-      }
-      if (entry.item.type === "user_message") {
-        this.rememberCodexUserMessageTurn(entry.item.messageId, entry.providerTurnId);
-      }
-    }
-    this.persistedHistory = timeline;
-    this.historyPending = timeline.length > 0;
   }
 
   private async loadPersistedSubAgentHistories(
@@ -4027,41 +4045,88 @@ export class CodexAppServerAgentSession implements AgentSession {
       parentSubagentId: null as string | null,
     }));
     const visitedThreadIds = new Set(this.currentThreadId ? [this.currentThreadId] : []);
+    const registeredRoutes: PersistedSubAgentRoute[] = [];
     while (queue.length > 0 && visitedThreadIds.size < 100) {
-      const next = queue.shift();
-      if (!next || visitedThreadIds.has(next.route.childThreadId)) {
-        continue;
-      }
-      visitedThreadIds.add(next.route.childThreadId);
-      this.registerSubAgentToolCall({
-        timelineItem: next.route.toolCall,
-        rawItem: { agentThreadId: next.route.childThreadId },
-        parentCallId: next.parentCallId,
-        parentSubagentId: next.parentSubagentId,
+      const level = queue.splice(0).filter((next) => {
+        if (visitedThreadIds.has(next.route.childThreadId) || visitedThreadIds.size >= 100) {
+          return false;
+        }
+        visitedThreadIds.add(next.route.childThreadId);
+        return true;
       });
-      try {
-        const childHistory = await loadCodexThreadHistoryTimeline({
-          threadId: next.route.childThreadId,
-          cwd: this.config.cwd ?? null,
-          requestThread: (childThreadId) => readCodexThread(client, childThreadId),
+      // Register siblings before reading any child: one spawn may own several child threads.
+      for (const next of level) {
+        registeredRoutes.push(next.route);
+        this.registerSubAgentToolCall({
+          timelineItem: next.route.toolCall,
+          rawItem: { agentThreadId: next.route.childThreadId },
+          parentCallId: next.parentCallId,
+          parentSubagentId: next.parentSubagentId,
         });
-        for (const entry of childHistory.timeline) {
-          this.emitProviderSubagentTimeline(next.route.childThreadId, entry.item, entry.timestamp);
-        }
-        for (const route of childHistory.subAgentRoutes) {
-          queue.push({
-            route,
-            parentCallId: next.route.toolCall.callId,
-            parentSubagentId: next.route.childThreadId,
+      }
+      this.replayPendingSubAgentNotifications(level.map((next) => next.route.childThreadId));
+      for (const next of level) {
+        try {
+          const childHistory = await loadCodexThreadHistoryTimeline({
+            threadId: next.route.childThreadId,
+            cwd: this.config.cwd ?? null,
+            requestThread: (childThreadId) => readCodexThread(client, childThreadId),
           });
+          for (const entry of childHistory.timeline) {
+            this.emitProviderSubagentTimeline(
+              next.route.childThreadId,
+              entry.item,
+              entry.timestamp,
+            );
+          }
+          if (
+            childHistory.lastTurnStatus &&
+            !this.liveSubAgentTurnsDuringHistory.has(next.route.childThreadId)
+          ) {
+            this.restorePersistedSubAgentStatus(next.route, childHistory.lastTurnStatus);
+          }
+          for (const route of childHistory.subAgentRoutes) {
+            queue.push({
+              route,
+              parentCallId: next.route.toolCall.callId,
+              parentSubagentId: next.route.childThreadId,
+            });
+          }
+        } catch (error) {
+          this.logger.trace(
+            { err: error, childThreadId: next.route.childThreadId },
+            "Failed to load persisted Codex child history",
+          );
         }
-      } catch (error) {
-        this.logger.trace(
-          { err: error, childThreadId: next.route.childThreadId },
-          "Failed to load persisted Codex child history",
-        );
       }
     }
+    for (const route of registeredRoutes) {
+      const liveStatus = this.liveSubAgentTurnsDuringHistory.get(route.childThreadId);
+      if (liveStatus) this.restorePersistedSubAgentStatus(route, liveStatus);
+    }
+  }
+
+  private restorePersistedSubAgentStatus(
+    route: PersistedSubAgentRoute,
+    status: ToolCallTimelineItem["status"],
+  ): void {
+    const state = this.subAgentCallsByCallId.get(route.toolCall.callId);
+    if (!state) return;
+
+    // A historical spawn can retain its initial state after the child finishes later turns.
+    this.emitProviderSubagentUpsert(route.childThreadId, state, status);
+    if (state.childThreadIds.size !== 1) return;
+
+    const settledToolCall: ToolCallTimelineItem =
+      status === "failed"
+        ? {
+            ...state.toolCall,
+            status,
+            error: state.toolCall.error ?? { message: "Sub-agent failed" },
+          }
+        : { ...state.toolCall, status, error: null };
+    state.toolCall = settledToolCall;
+    Object.assign(route.toolCall, settledToolCall);
   }
 
   private async ensureThreadLoaded(): Promise<void> {
@@ -5497,6 +5562,9 @@ export class CodexAppServerAgentSession implements AgentSession {
   ): Promise<void> {
     switch (parsed.kind) {
       case "thread_started":
+        if (this.loadingPersistedHistory) {
+          this.liveSubAgentTurnsDuringHistory.set(parsed.threadId, "running");
+        }
         this.emitSubAgentActivityUpdate(callId, "running", { reopen: true });
         return;
       case "turn_started":
@@ -6171,6 +6239,9 @@ export class CodexAppServerAgentSession implements AgentSession {
   ): void {
     const subAgentCallId = this.getSubAgentCallIdForThread(parsed.threadId);
     if (subAgentCallId) {
+      if (this.loadingPersistedHistory && parsed.threadId) {
+        this.liveSubAgentTurnsDuringHistory.set(parsed.threadId, "running");
+      }
       this.emitSubAgentActivityUpdate(subAgentCallId, "running", { reopen: true });
       return;
     }
@@ -6197,6 +6268,9 @@ export class CodexAppServerAgentSession implements AgentSession {
         status = "failed";
       } else if (parsed.status === "interrupted") {
         status = "canceled";
+      }
+      if (this.loadingPersistedHistory && parsed.threadId) {
+        this.liveSubAgentTurnsDuringHistory.set(parsed.threadId, status);
       }
       this.emitSubAgentActivityUpdate(subAgentCallId, status);
       return;
