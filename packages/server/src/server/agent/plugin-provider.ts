@@ -1052,7 +1052,7 @@ class PluginAgentClient implements AgentClient {
     if (!persistence) throw new Error(`Plugin provider '${this.provider}' did not persist import`);
     return {
       session,
-      config: { ...context.config, provider: this.provider, cwd: input.cwd },
+      config: { ...context.storedConfig, provider: this.provider, cwd: input.cwd },
       persistence,
       timeline: session.timelineHistory(),
       providerSubagentEvents: session.subagentHistory(),

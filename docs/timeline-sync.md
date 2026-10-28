@@ -13,7 +13,7 @@ and rebuilds the projection when an agent resumes.
 The invariants are:
 
 > A continuously subscribed client applies every committed row in order. Opening or resuming an
-> agent establishes the daemon's current tail in one bounded request, with older history reachable
+> agent establishes the daemon's current tail in one complete-turn request, with older history reachable
 > through backward pagination.
 
 Tool output is bounded before it enters either delivery path. Canonical shell tool output is sliced
@@ -44,7 +44,21 @@ recovery is complete only when `hasNewer: false`.
 
 Initialization timeouts guard lack of catch-up progress, not the full multi-page sync. A successful page that queues the next `after` page refreshes the watchdog.
 
-Opening or resuming an agent fetches one bounded latest tail page. Older history remains
+Opening or resuming an agent fetches the latest available turns with a soft target of 40
+projected items. Backward pages and prompt-jump windows also include whole turns, including
+all currently available rows of an active run. There is no per-turn cap: a large run can
+exceed the target. Local history mounting uses the same boundaries so revealing older rows
+does not change the collapse state of a turn already displayed.
+
+`wholeTurns` is a preference negotiated once at the client fetch boundary. Hosts advertising
+`features.wholeTurnTimeline` receive it; other hosts receive the existing item-based request.
+Reading history remains available on older hosts, whose pages can still split turns. Forward
+catch-up stays incremental, but its reset snapshot honors a supported whole-turn request.
+Source coverage still includes interleaved tool updates.
+
+Canonical IDs define runs. With missing IDs, human prompts, heartbeats and typed received
+agent messages each start a fallback turn. This deterministic fallback is shared by paging
+and presentation; it cannot recover historical batching or steering. Older history remains
 user-driven by scrolling upward.
 
 A failed catch-up or subscription reconcile retries on its own, doubling from 1s to a 30s ceiling.
@@ -149,12 +163,13 @@ range describes those exact items: `startSeq` drives older pagination and `endSe
 catch-up. The owner requests `after endSeq`, and requests `before startSeq` when the user loads older
 history. Code outside the owner does not distinguish cached and network timelines.
 
-The first resume request is bounded. If it reports more newer history, fetch one latest bounded tail
+The first resume request is bounded. If it reports more newer history, fetch one latest complete-turn tail
 instead of replaying every missed page. Live gap recovery still pages forward until current.
 
-If the canonical window exceeds the cache item limit, contains a discontiguous retained range, has a
+If the canonical window exceeds the cache item target, contains a discontiguous retained range, has a
 live head, or includes presentation data the cache cannot encode losslessly, persistence drops the
-range and keeps a display-only tail. Never slice items while retaining the pre-slice range; that
+range and keeps a display-only tail of complete available turns. The item target is soft;
+the byte budget still evicts entire cache rows. Never slice items while retaining the pre-slice range; that
 falsely certifies discarded source rows. A display-only row paints without granting synchronization
 authority, so the owner uses the ordinary bounded `tail` bootstrap.
 
@@ -238,11 +253,11 @@ foreground control ownership remains a separate daemon concern. Cancellation req
 with that record rather than in a React component, so an old request cannot clear a newer one. Submissions
 remain a separate pre-turn registry and retire on canonical acknowledgement.
 
-Canonical turns and visible responses are different boundaries. Agent-originated prompts and lifecycle
-notifications project into tool rows, so they do not create a human-message boundary. Legacy system
-prompts, including schedule injections, remain hidden. One visible response can span several canonical
-turns; layout and copy group that response together while lifecycle, timing, tool sequences, and exact
-fork positions retain the canonical `turnId` boundaries.
+Every canonical run owns a visible turn, including heartbeats and agent notifications.
+Notifications delivered during a run stay inside it; batched notifications share the run
+that starts or accepts them. Received messages retain sender attribution, while lifecycle
+notifications remain visible events. Collapse, timing and locally mounted history share
+these boundaries.
 
 Agent-message XML belongs to the daemon's `agent/agent-messages` boundary. Prompt delivery encodes
 provenance; acceptance, provider echoes, import, and replay share its projection. The delivery ID is

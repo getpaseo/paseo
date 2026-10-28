@@ -268,7 +268,7 @@ async function minifyClientBundle(code: string): Promise<string> {
     target: "es2020",
     supported: { "async-await": false },
     charset: "ascii",
-    legalComments: "none",
+    legalComments: "inline",
   });
   return result.code;
 }

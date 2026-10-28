@@ -1,5 +1,4 @@
-import { performance } from "node:perf_hooks";
-import { setTimeout as delay } from "node:timers/promises";
+import { measureMainThreadWork } from "../../../test-utils/main-thread-work.js";
 import { describe, expect, it } from "vitest";
 import { JsonlFrameDecoder, type JsonlFrameProblem } from "./jsonl-frame-decoder.js";
 
@@ -72,26 +71,15 @@ describe("provider line admission", () => {
   it("keeps the loop responsive while accumulating a fragmented provider response", async () => {
     const { decoder, frames, problems } = decoderHarness();
     const part = "x".repeat(512);
-    let last = performance.now();
-    let longestGap = 0;
-    const probe = setInterval(() => {
-      const now = performance.now();
-      longestGap = Math.max(longestGap, now - last);
-      last = now;
-    }, 1);
-    try {
-      await delay(5);
+    const { blockingMs } = await measureMainThreadWork("fragmented JSONL main-thread work", () => {
       decoder.write('{"type":"notice","text":"');
-      // 1 MiB is enough to expose the former rescan of every accumulated prefix.
+      // 1 MiB exposes the former rescan of every accumulated prefix.
       for (let index = 0; index < 2048; index++) decoder.write(part);
       decoder.write('"}\n');
-      await delay(5);
-      expect(frames).toEqual([{ type: "notice", text: part.repeat(2048) }]);
-      expect(problems).toEqual([]);
-      expect(longestGap).toBeLessThan(50);
-    } finally {
-      clearInterval(probe);
-    }
+    });
+    expect(frames).toEqual([{ type: "notice", text: part.repeat(2048) }]);
+    expect(problems).toEqual([]);
+    expect(blockingMs).toBeLessThan(50);
   });
 
   it("rejects an unterminated over-cap UTF-8 line and stops accepting frames", () => {

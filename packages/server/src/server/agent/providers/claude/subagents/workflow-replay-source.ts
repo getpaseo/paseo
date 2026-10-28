@@ -53,7 +53,7 @@ export async function observeReplayWorkflows(input: {
     string,
     Iterable<ClaudeReplayEntry> | AsyncIterable<ClaudeReplayEntry>
   >;
-  convertEntry?: (entry: ClaudeReplayEntry) => AgentTimelineItem[];
+  convertEntry?: (entry: ClaudeReplayEntry) => AgentTimelineItem[] | Promise<AgentTimelineItem[]>;
 }): Promise<SubagentObservation[]> {
   const toolCallIdByRunId = await readWorkflowLinks(input.parentEntries);
   const observations: SubagentObservation[] = [];
@@ -122,7 +122,7 @@ async function observeWorkflowTimeline(input: {
   id: string;
   result: unknown;
   entries: Iterable<ClaudeReplayEntry> | AsyncIterable<ClaudeReplayEntry>;
-  convertEntry?: (entry: ClaudeReplayEntry) => AgentTimelineItem[];
+  convertEntry?: (entry: ClaudeReplayEntry) => AgentTimelineItem[] | Promise<AgentTimelineItem[]>;
   finishedAt?: string;
 }): Promise<SubagentObservation[]> {
   const observations: SubagentObservation[] = [];
@@ -130,7 +130,7 @@ async function observeWorkflowTimeline(input: {
 
   for await (const entry of input.entries) {
     const timestamp = normalizeProviderReplayTimestamp(entry.timestamp);
-    const items = input.convertEntry?.(entry) ?? [];
+    const items = (await input.convertEntry?.(entry)) ?? [];
     for (const item of items) {
       if (item.type === "assistant_message") replayedAssistantText.add(item.text.trim());
       observations.push({

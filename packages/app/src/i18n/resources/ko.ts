@@ -67,6 +67,7 @@ export const ko: TranslationResources = {
       daemonClientUnavailable: "데몬 클라이언트를 사용할 수 없습니다",
       daemonClientDisconnected: "데몬 클라이언트 연결이 끊어졌습니다",
       noFileFound: "{{token}}에 해당하는 파일을 찾을 수 없습니다",
+      folderOutsideWorkspace: "{{path}}은(는) 이 워크스페이스 밖에 있습니다",
       unexpectedDictationError: "받아쓰기를 처리하는 중 예기치 않은 오류가 발생했습니다.",
     },
     connectionStatus: {
@@ -2028,12 +2029,13 @@ export const ko: TranslationResources = {
     output: "출력",
   },
   turnSummary: {
-    messages: {
-      one: "{{count}} 메시지를 작성했습니다.",
-      other: "{{count}} 메시지를 작성했습니다.",
-    },
+    details: "턴 세부 정보 보기",
+    sentBy: "{{name}}이(가) 보냄",
+    showMore: "더 보기",
+    showLess: "접기",
   },
   toolCallGroup: {
+    thought: "생각함",
     editedFiles: {
       one: "{{count}} 파일을 편집했습니다.",
       other: "{{count}} 파일을 편집했습니다.",

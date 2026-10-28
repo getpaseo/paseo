@@ -96,6 +96,7 @@ test("session-open hooks reject changes to session identity instead of silently 
         title: null,
         labels: {},
         tools: [],
+        mcpServers: {},
       },
       paseo,
     ),
@@ -120,12 +121,13 @@ test.each([{ title: "Changed" }, { labels: { changed: "true" } }])(
           title: "Original",
           labels: {},
           tools: [],
+          mcpServers: {},
           env: {},
           reason: "create",
           purpose: "interactive",
         },
         paseo,
       ),
-    ).rejects.toThrow("agent.session_open hooks can only change env and tools");
+    ).rejects.toThrow("agent.session_open hooks can only change env, tools, and mcpServers");
   },
 );

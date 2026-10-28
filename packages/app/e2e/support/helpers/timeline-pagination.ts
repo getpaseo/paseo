@@ -1,4 +1,4 @@
-import { expect, type TestInfo, type Page } from "@playwright/test";
+import { expect, type Locator, type TestInfo, type Page } from "@playwright/test";
 import { buildAgentRoute, seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
 import { readReplicaCache } from "./replica-cache-storage";
 import {
@@ -9,6 +9,7 @@ import {
   type AgentTimelineResponseGate,
   type BootstrapTimelineGate,
   type OlderTimelinePagesGate,
+  type OlderTimelinePagesOptions,
 } from "./agent-timeline-gate";
 
 export { holdDaemonHydration };
@@ -35,6 +36,19 @@ interface RealisticOlderTimelineAgent extends MockAgentWorkspace {
   newestPrompt: string;
 }
 
+export interface ItemPagedToolGroupAgent extends MockAgentWorkspace {
+  newestPrompt: string;
+  /** Commands in one run, more than an item page holds. */
+  totalCommands: number;
+  /** Commands of that run the initial tail loads, so the size of the group as first shown. */
+  loadedCommands: number;
+}
+
+interface ToolCallGroupPositionSnapshot {
+  top: number;
+}
+
+const ITEM_PAGE_SIZE = 40;
 const PROMPT_PREFIX = "timeline-pagination-turn";
 const LIVE_BEFORE_HYDRATION_PROMPT = "timeline live before authoritative hydration";
 const HISTORY_START_THRESHOLD_PX = 96;
@@ -124,6 +138,93 @@ export async function seedRealisticOlderTimeline(): Promise<RealisticOlderTimeli
     ...agent,
     newestPrompt: promptForTurn(newerTurnCount - 1),
   };
+}
+
+/**
+ * A run of commands longer than an item page, followed by enough short turns that the
+ * initial tail ends inside the run. Read with item pages, the tail loads the newest
+ * commands as one group; the older page carries the rest of that run and the turns before
+ * it, with a further page behind it.
+ */
+export async function seedItemPagedToolGroupTimeline(): Promise<ItemPagedToolGroupAgent> {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "timeline-item-page-tool-group-",
+    title: "Item page tool group regression",
+  });
+  const olderTurns = 10;
+  const newerTurns = 12;
+  const totalCommands = 50;
+  // A short turn is its prompt and one reply; the run's turn ends with one reply.
+  const loadedCommands = ITEM_PAGE_SIZE - newerTurns * 2 - 1;
+  const shortTurnPrompt = (label: string, index: number) =>
+    `item-page-${label}-turn-${index}: emit 1 coalesced agent stream updates`;
+  const sendTurn = async (prompt: string) => {
+    await agent.client.sendAgentMessage(agent.agentId, prompt);
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+  };
+
+  for (let index = 0; index < olderTurns; index += 1) {
+    await sendTurn(shortTurnPrompt("older", index));
+  }
+  await sendTurn(`emit ${totalCommands} tool agent stream updates`);
+  for (let index = 0; index < newerTurns; index += 1) {
+    await sendTurn(shortTurnPrompt("newer", index));
+  }
+
+  return {
+    ...agent,
+    newestPrompt: shortTurnPrompt("newer", newerTurns - 1),
+    totalCommands,
+    loadedCommands,
+  };
+}
+
+export async function useChatDisplay(
+  page: Page,
+  chatDisplay: "full" | "collapseToolCalls" | "collapseTurns",
+): Promise<void> {
+  await page.addInitScript((value) => {
+    localStorage.setItem("@paseo:app-settings", JSON.stringify({ chatDisplay: value }));
+  }, chatDisplay);
+}
+
+function toolCallGroup(page: Page, commandCount: number): Locator {
+  const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+  return timeline
+    .getByTestId("tool-call-group")
+    .getByRole("button", { name: `Ran ${commandCount} commands`, exact: true });
+}
+
+export async function rememberToolCallGroupPosition(
+  page: Page,
+  commandCount: number,
+): Promise<ToolCallGroupPositionSnapshot> {
+  const group = toolCallGroup(page, commandCount);
+  await expect(group).toBeVisible();
+  const box = await group.boundingBox();
+  if (!box) {
+    throw new Error(`Expected a rendered tool-call group of ${commandCount} commands`);
+  }
+  return { top: box.y };
+}
+
+/** The group the reader was on keeps its place on screen, now counting the older page's calls. */
+export async function expectToolCallGroupPositionPreserved(
+  page: Page,
+  commandCount: number,
+  before: ToolCallGroupPositionSnapshot,
+): Promise<void> {
+  const group = toolCallGroup(page, commandCount);
+  await expect(group).toBeVisible();
+  await expect
+    .poll(
+      async () => {
+        const box = await group.boundingBox();
+        return box ? Math.abs(box.y - before.top) : Number.POSITIVE_INFINITY;
+      },
+      { message: `the group of ${commandCount} commands keeps its viewport position` },
+    )
+    .toBeLessThanOrEqual(2);
 }
 
 export async function scrollThroughOlderHistoryPages(
@@ -316,13 +417,14 @@ export async function holdNextOlderTimelinePage(
 export async function holdOlderHistoryPages(
   page: Page,
   agent: MockAgentWorkspace,
-  daemonPort?: number,
+  options?: OlderTimelinePagesOptions,
 ): Promise<OlderHistoryPages> {
   const gate: OlderTimelinePagesGate = await holdAgentOlderTimelinePages(
     page,
     agent.agentId,
-    daemonPort,
+    options,
   );
+  const loader = page.getByTestId("load-older-history-spinner");
   return {
     async expectRequestedPages(count) {
       await gate.waitForRequestCount(count);
@@ -330,7 +432,17 @@ export async function holdOlderHistoryPages(
     },
     async expectSettledWithRequestedPages(count) {
       await waitForTimelineGeometryToSettle(page);
-      expect(gate.getRequestCount()).toBe(count);
+      // The loader stays until the prepend settles and the viewport decides whether to
+      // keep loading. Once it hides, no further page loads without new user intent.
+      await expect
+        .poll(
+          async () => ({
+            requestedPages: gate.getRequestCount(),
+            loading: await loader.isVisible(),
+          }),
+          { message: `older history settles after ${count} requested page(s)` },
+        )
+        .toEqual({ requestedPages: count, loading: false });
     },
     expectNoRepeatedEntries() {
       expect(gate.getRepeatedEntryCount()).toBe(0);
@@ -421,6 +533,53 @@ export async function expectTimelineViewportAnchoredAfterPrepend(
   const contentGrowth = after.scrollHeight - before.scrollHeight;
   const scrollAdjustment = after.scrollTop - before.scrollTop;
   expect(Math.abs(contentGrowth - scrollAdjustment)).toBeLessThanOrEqual(2);
+}
+
+/**
+ * Item-based pages from older hosts split turns, so the oldest loaded turn starts
+ * mid-turn: its prompt is above loaded history. Returns that prompt.
+ */
+export async function expectOldestLoadedTurnPartial(
+  page: Page,
+  prompts: readonly string[],
+): Promise<string> {
+  const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+  const oldestLoadedPrompt = await timeline
+    .getByTestId("user-message")
+    .first()
+    .evaluate((element) => element.textContent ?? "");
+  const loadedIndex = prompts.findIndex((prompt) => oldestLoadedPrompt.includes(prompt));
+  expect(loadedIndex, "oldest loaded prompt is a seeded turn").toBeGreaterThan(0);
+  const oldestRow = timeline.locator("[data-history-row-id]").first();
+  await expect(oldestRow.getByTestId("user-message"), "rows above the oldest prompt").toHaveCount(
+    0,
+  );
+  const partialPrompt = prompts[loadedIndex - 1]!;
+  await expectTimelinePromptNotMounted(page, partialPrompt);
+  return partialPrompt;
+}
+
+/** The reader stays with the turn they were reading once it folds behind its summary. */
+export async function expectFoldedTurnAtReadingPosition(page: Page, prompt: string): Promise<void> {
+  const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+  const promptRow = timeline.locator("[data-history-row-id]").filter({ hasText: prompt });
+  await expect(promptRow).toBeVisible({ timeout: 15_000 });
+  // The host row carries the folded turn's summary line.
+  await expect(promptRow.getByTestId("turn-summary")).toBeVisible();
+  await expect
+    .poll(
+      async () => {
+        const [timelineBox, promptBox] = await Promise.all([
+          timeline.boundingBox(),
+          promptRow.boundingBox(),
+        ]);
+        if (!timelineBox || !promptBox) return false;
+        const offset = promptBox.y - timelineBox.y;
+        return offset >= 0 && offset <= timelineBox.height / 2;
+      },
+      { message: "folded turn sits in the upper half of the viewport" },
+    )
+    .toBe(true);
 }
 
 export async function expectTimelineAtHistoryStart(page: Page): Promise<void> {

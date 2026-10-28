@@ -1,3 +1,4 @@
+import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { useHostFeature } from "@/runtime/host-features";
 import {
   AssistantFileLinkResolverProvider,
@@ -63,6 +64,7 @@ import { WorkspaceScriptsButton } from "@/screens/workspace/scripts";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
 import { useNavigateToImportedAgent } from "@/hooks/use-import-session";
 import { useToast } from "@/contexts/toast-context";
+import { useOpenOutsideWorkspaceFolder } from "@/workspace/open-in-file-manager/outside-folder";
 import { getOrCreateClientId } from "@/utils/client-id";
 import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
 import { toggleDesktopSidebarsWithCheckoutIntent } from "@/utils/desktop-sidebar-toggle";
@@ -2179,8 +2181,7 @@ function WorkspaceScreenContent({
         const sessionState = useSessionStore.getState().sessions[normalizedServerId];
         const currentCursor = sessionState?.agentTimelineCursor.get(agentId);
         await getHostRuntimeStore().fetchAgentTimeline(normalizedServerId, agentId, {
-          direction: "tail",
-          projection: "projected",
+          ...planTimelineTailFetch(),
           ...(currentCursor
             ? { cursor: { epoch: currentCursor.epoch, seq: currentCursor.endSeq } }
             : {}),
@@ -3682,6 +3683,7 @@ function WorkspaceScreenContent({
       view: "files",
     });
   });
+  const openMarkdownOutsideDirectory = useOpenOutsideWorkspaceFolder(normalizedServerId);
   const markdownPathOpener = useMemo(
     () =>
       createInlinePathOpener({
@@ -3689,8 +3691,15 @@ function WorkspaceScreenContent({
         client,
         openFile: openMarkdownFile,
         openDirectory: openMarkdownDirectory,
+        openOutsideDirectory: openMarkdownOutsideDirectory,
       }),
-    [workspaceDirectory, client, openMarkdownFile, openMarkdownDirectory],
+    [
+      workspaceDirectory,
+      client,
+      openMarkdownFile,
+      openMarkdownDirectory,
+      openMarkdownOutsideDirectory,
+    ],
   );
   useEffect(() => {
     if (!isRouteFocused) markdownPathOpener.cancel();

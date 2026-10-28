@@ -68,6 +68,7 @@ export const ja: TranslationResources = {
       daemonClientUnavailable: "デーモンクライアントが利用できません",
       daemonClientDisconnected: "デーモンクライアントが切断されています",
       noFileFound: "{{token}}のファイルが見つかりません",
+      folderOutsideWorkspace: "{{path}} はこのワークスペースの外にあります",
       unexpectedDictationError: "音声入力処理中に予期しないエラーが発生しました。",
     },
     connectionStatus: {
@@ -2038,12 +2039,13 @@ export const ja: TranslationResources = {
     output: "出力",
   },
   turnSummary: {
-    messages: {
-      one: "{{count}}件のメッセージを送信",
-      other: "{{count}}件のメッセージを送信",
-    },
+    details: "ターンの詳細を表示",
+    sentBy: "{{name}} から送信",
+    showMore: "もっと見る",
+    showLess: "折りたたむ",
   },
   toolCallGroup: {
+    thought: "思考",
     editedFiles: {
       one: "{{count}}個のファイルを編集",
       other: "{{count}}個のファイルを編集",

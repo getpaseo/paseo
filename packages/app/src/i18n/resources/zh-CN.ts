@@ -67,6 +67,7 @@ export const zhCN: TranslationResources = {
       daemonClientUnavailable: "Daemon client 不可用",
       daemonClientDisconnected: "Daemon client 已断开连接",
       noFileFound: "未找到 {{token}} 对应的文件",
+      folderOutsideWorkspace: "{{path}} 不在此工作区内",
       unexpectedDictationError: "处理听写时发生意外错误。",
     },
     connectionStatus: {
@@ -1996,12 +1997,13 @@ export const zhCN: TranslationResources = {
     output: "输出",
   },
   turnSummary: {
-    messages: {
-      one: "写了 {{count}} 条消息",
-      other: "写了 {{count}} 条消息",
-    },
+    details: "查看轮次详情",
+    sentBy: "由 {{name}} 发送",
+    showMore: "展开",
+    showLess: "收起",
   },
   toolCallGroup: {
+    thought: "已思考",
     editedFiles: {
       one: "编辑了 {{count}} 个文件",
       other: "编辑了 {{count}} 个文件",
