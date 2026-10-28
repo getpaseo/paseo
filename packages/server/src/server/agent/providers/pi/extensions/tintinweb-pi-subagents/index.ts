@@ -40,6 +40,18 @@ const status = (value: string): "running" | "completed" | "failed" | "canceled" 
   return "running";
 };
 
+function collectedResult(call: PiExtensionToolCall) {
+  if (call.toolName !== "get_subagent_result" || call.status !== "completed") return undefined;
+  // This tool consumes the completion notification but currently returns no details.
+  // Only its leading envelope is lifecycle evidence; the child output below is not.
+  const text = extractTextFromToolResult(call.result);
+  const match = text?.match(
+    /^Agent: ([^\r\n]+)\r?\nType: [^\r\n]*? \| Status: (queued|running|completed|steered|error|aborted|stopped)(?=[\s(]|$)/,
+  );
+  if (!match) return undefined;
+  return { agentId: match[1], status: match[2] };
+}
+
 export const tintinwebPiSubagents: PiExtension = {
   id: "@tintinweb/pi-subagents",
   createSession: () => {
@@ -102,20 +114,22 @@ export const tintinwebPiSubagents: PiExtension = {
     const mapFollowup = (call: PiExtensionToolCall) => {
       const args = FollowupArgs.safeParse(call.args);
       if (!args.success) return undefined;
-      const id = callsByAgent.get(args.data.agent_id);
-      if (!id) return undefined;
       const details = Details.safeParse(
         typeof call.result === "object" ? call.result?.details : null,
       );
+      const observed = details.success ? details.data : collectedResult(call);
+      const nativeId = observed ? observed.agentId : args.data.agent_id;
+      const id = callsByAgent.get(nativeId);
+      if (!id) return undefined;
       const detail = {
         type: "sub_agent" as const,
         description: details.success ? details.data.description : undefined,
         log: extractTextFromToolResult(call.result)?.trim() ?? "",
       };
-      if (call.status === "running" || !details.success) return { detail };
+      if (call.status === "running" || !observed) return { detail };
       return {
         detail,
-        subagents: [{ type: "upsert" as const, id, status: status(details.data.status) }],
+        subagents: [{ type: "upsert" as const, id, status: status(observed.status) }],
       };
     };
     return {

@@ -215,6 +215,143 @@ describe("@tintinweb/pi-subagents adapter", () => {
     ).toEqual(["running", "running", "completed"]);
     expect(events.filter((event) => event.event.type === "timeline").length).toBeGreaterThan(0);
   });
+  test("completes a background child when its text-only result consumes the notification", () => {
+    const host = createPiExtensionHost();
+    host.mapToolCall({
+      callId: "spawn-1",
+      toolName: "Agent",
+      args: { subagent_type: "general-purpose", prompt: "Monitor a bounded task" },
+      status: "completed",
+      result: { details: { agentId: "native-1", status: "background" } },
+    });
+    const mapping = host.mapToolCall({
+      callId: "collect-1",
+      toolName: "get_subagent_result",
+      args: { agent_id: "native-1", wait: true },
+      status: "completed",
+      result: {
+        details: undefined,
+        content: [
+          {
+            type: "text",
+            text: "Agent: native-1\nType: Agent | Status: completed | Tool uses: 1 | Duration: 358.5s\nDescription: Monitor a bounded task\n\nExit code: 2 — parent attention required.",
+          },
+        ],
+      },
+    });
+    expect(mapping?.subagents).toEqual([{ type: "upsert", id: "spawn-1", status: "completed" }]);
+  });
+  test.each([
+    ["queued", "running"],
+    ["running", "running"],
+    ["completed", "completed"],
+    ["steered (wrapped up at turn limit)", "completed"],
+    ["error", "failed"],
+    ["aborted", "canceled"],
+    ["stopped", "canceled"],
+  ])("maps collected text status %s using the returned native identity", (status, expected) => {
+    const host = createPiExtensionHost();
+    host.mapToolCall({
+      callId: "spawn-1",
+      toolName: "Agent",
+      args: { subagent_type: "Explore", prompt: "Inspect" },
+      status: "completed",
+      result: { details: { agentId: "native-1", status: "background" } },
+    });
+    const mapping = host.mapToolCall({
+      callId: "collect-1",
+      toolName: "get_subagent_result",
+      args: { agent_id: "explore" },
+      status: "completed",
+      result: {
+        content: [
+          {
+            type: "text",
+            text: `Agent: native-1\nType: Explore | Status: ${status} | Tool uses: 1\n\nChild output`,
+          },
+        ],
+      },
+    });
+    expect(mapping?.subagents).toEqual([{ type: "upsert", id: "spawn-1", status: expected }]);
+  });
+  test.each([
+    "Agent not found: native-1. It may have been cleaned up.",
+    "Agent: native-1\nType: Explore | Status: completed-later | Tool uses: 1",
+    "Child output:\nAgent: native-1\nType: Explore | Status: completed | Tool uses: 1",
+    "Agent: unannounced\nType: Explore | Status: completed | Tool uses: 1",
+  ])("does not infer completion from unrecognized result text: %s", (text) => {
+    const host = createPiExtensionHost();
+    host.mapToolCall({
+      callId: "spawn-1",
+      toolName: "Agent",
+      args: { subagent_type: "Explore", prompt: "Inspect" },
+      status: "completed",
+      result: { details: { agentId: "native-1", status: "background" } },
+    });
+    const mapping = host.mapToolCall({
+      callId: "collect-1",
+      toolName: "get_subagent_result",
+      args: { agent_id: "native-1" },
+      status: "completed",
+      result: { content: [{ type: "text", text }] },
+    });
+    expect(mapping?.subagents).toBeUndefined();
+  });
+  test("replays a collected background completion without needing a notification", async () => {
+    const source = readSubagentFixture(new URL("./fixtures/background.json", import.meta.url));
+    const first = source.messages[0];
+    if (first.role !== "assistant") throw new Error("Expected spawn assistant message");
+    const args = { agent_id: "98cdb309-045e-45d", wait: true };
+    const result = {
+      content: [
+        {
+          type: "text" as const,
+          text: "Agent: 98cdb309-045e-45d\nType: Agent | Status: completed | Tool uses: 1\n\nBounded task finished.",
+        },
+      ],
+    };
+    const events = await verifySubagentFixture({
+      provenance: source.provenance,
+      events: [
+        ...source.events.slice(0, 2),
+        {
+          type: "tool_execution_start",
+          toolCallId: "collect-1",
+          toolName: "get_subagent_result",
+          args,
+        },
+        {
+          type: "tool_execution_end",
+          toolCallId: "collect-1",
+          toolName: "get_subagent_result",
+          result,
+          isError: false,
+        },
+      ],
+      messages: [
+        ...source.messages.slice(0, 2),
+        {
+          ...first,
+          content: [
+            { type: "toolCall", id: "collect-1", name: "get_subagent_result", arguments: args },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "collect-1",
+          toolName: "get_subagent_result",
+          ...result,
+          isError: false,
+          timestamp: first.timestamp + 1,
+        },
+      ],
+    });
+    expect(
+      events
+        .filter(({ event }) => event.type === "upsert")
+        .map(({ event }) => (event.type === "upsert" ? event.status : null)),
+    ).toEqual(["running", "running", "completed"]);
+  });
   test("declines foreign Agent results", () => {
     expect(
       createPiExtensionHost().mapToolCall({
