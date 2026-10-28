@@ -15,12 +15,22 @@ export default function contribute(server: PluginServerContext) {
           sandbox_mode: "workspace-write",
           approval_policy: "on-request",
         },
-        mcpServers: {
-          ...request.config.mcpServers,
-          company: {
-            type: "http",
-            url: "https://tools.example.com/mcp",
-          },
+      },
+    };
+  });
+
+  server.before("agent.session_open", ({ request }) => {
+    if (request.provider !== "codex") {
+      return;
+    }
+
+    return {
+      ...request,
+      mcpServers: {
+        ...request.mcpServers,
+        company: {
+          type: "http",
+          url: "https://tools.example.com/mcp",
         },
       },
     };

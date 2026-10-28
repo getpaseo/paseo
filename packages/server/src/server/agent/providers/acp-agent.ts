@@ -4093,10 +4093,16 @@ function appendTerminalOutput(entry: TerminalEntry, chunk: string): void {
   if (!limit) {
     return;
   }
-  while (Buffer.byteLength(entry.output, "utf8") > limit && entry.output.length > 0) {
-    entry.output = entry.output.slice(1);
-    entry.truncated = true;
+  const output = Buffer.from(entry.output, "utf8");
+  if (output.length <= limit) {
+    return;
   }
+  let start = output.length - limit;
+  while (start < output.length && (output[start] & 0xc0) === 0x80) {
+    start += 1;
+  }
+  entry.output = output.subarray(start).toString("utf8");
+  entry.truncated = true;
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {

@@ -1,3 +1,13 @@
+import {
+  withRetainedPlugin,
+  editRetainedDraft,
+  expectRetainedDraft,
+  expectStoredPluginTitle,
+  hideRetainedPreferences,
+  showRetainedPreferences,
+  expectChangedPlugin,
+  expectRemovedPlugin,
+} from "../support/helpers/plugin-reconnect";
 import { verifyPluginTranslations } from "../support/helpers/plugin-translations";
 import { pluginRequirements } from "../support/helpers/plugin-fixture";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -187,4 +197,52 @@ test("plugin content and host labels follow app language without losing an open 
 }, info) => {
   test.setTimeout(180_000);
   await verifyPluginTranslations(page, info);
+});
+
+test("retains plugin state offline and reconciles settings, changed code and removal", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  await withRetainedPlugin(page, async (probe) => {
+    await probe.open();
+    await editRetainedDraft(page, "Connected draft", 0);
+
+    await test.step("local plugin UI remains mounted and usable while disconnected", async () => {
+      await probe.disconnect();
+      await expectRetainedDraft(page, "Connected draft", 1);
+      await editRetainedDraft(page, "Offline draft", 1);
+      await probe.changeStoredTitle("Saved by another client");
+      await expectStoredPluginTitle(page, "Agent monitor");
+      await probe.reconnect();
+      await expectStoredPluginTitle(page, "Saved by another client");
+      await expectRetainedDraft(page, "Offline draft", 2);
+    });
+
+    await test.step("inactive settings refresh without replacing the installation", async () => {
+      await hideRetainedPreferences(page);
+      await probe.disconnect();
+      await probe.changeStoredTitle("Saved while preferences hidden");
+      await probe.reconnect();
+      await showRetainedPreferences(page);
+      await expectStoredPluginTitle(page, "Saved while preferences hidden");
+      await expectRetainedDraft(page, "Offline draft", 2);
+    });
+
+    await test.step("changed code replaces the retained installation after reconnect", async () => {
+      await probe.disconnect();
+      await probe.changeCode();
+      await expectRetainedDraft(page, "Offline draft", 2);
+      await probe.reconnect();
+      await expectChangedPlugin(page);
+      await editRetainedDraft(page, "New code draft", 0);
+    });
+
+    await test.step("removal is reconciled after reconnect", async () => {
+      await probe.disconnect();
+      await probe.remove();
+      await expectRetainedDraft(page, "New code draft", 1);
+      await probe.reconnect();
+      await expectRemovedPlugin(page);
+    });
+  });
 });
