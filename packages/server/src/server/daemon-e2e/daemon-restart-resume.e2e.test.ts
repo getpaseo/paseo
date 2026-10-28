@@ -289,9 +289,7 @@ test.each([false, true])(
       await client.connect();
       const storage = new AgentStorage(path.join(second.paseoHome, "agents"), createTestLogger());
       // Resume runs in the background; it is done once the saved intent is consumed.
-      await expect
-        .poll(async () => (await storage.get(working.id))?.resumeOnStartup)
-        .toBe(false);
+      await expect.poll(async () => (await storage.get(working.id))?.resumeOnStartup).toBe(false);
       const resumePrompts = async () =>
         (await readFile(path.join(root, "all-prompts.jsonl"), "utf8"))
           .trim()
