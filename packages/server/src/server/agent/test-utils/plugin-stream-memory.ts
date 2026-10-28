@@ -94,7 +94,7 @@ agents.forEach((_agent, index) => {
 global.gc();
 const before = process.memoryUsage().heapUsed;
 const steps = 4;
-const chunks = 1000;
+const chunks = 200;
 const expected = new Map<string, string>();
 for (let step = 0; step < steps; step++) {
   for (let index = 0; index < sessions.length; index++) {

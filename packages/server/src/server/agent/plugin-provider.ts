@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { TimelineProjection } from "./timeline-projection.js";
+import { PluginSessionHistory } from "./plugin-session-history.js";
 import { resolve as resolvePath } from "node:path";
 import type { Logger } from "pino";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
@@ -114,9 +114,15 @@ function providerError(error: ProviderError): Error {
 
 function isProviderRequestReply(
   event: ProviderEvent,
-): event is Extract<ProviderEvent, { type: "request.completed" | "catalog" | "sessions" }> {
+): event is Extract<
+  ProviderEvent,
+  { type: "request.completed" | "catalog" | "sessions" | "session.can_stop_runtime" }
+> {
   return (
-    event.type === "request.completed" || event.type === "catalog" || event.type === "sessions"
+    event.type === "request.completed" ||
+    event.type === "catalog" ||
+    event.type === "sessions" ||
+    event.type === "session.can_stop_runtime"
   );
 }
 
@@ -565,10 +571,21 @@ class ProviderRuntime {
   }
 
   private finishRequest(
-    event: Extract<ProviderEvent, { type: "request.completed" | "catalog" | "sessions" }>,
+    event: Extract<
+      ProviderEvent,
+      { type: "request.completed" | "catalog" | "sessions" | "session.can_stop_runtime" }
+    >,
   ): void {
     const request = this.requests.get(event.requestId);
     if (!request) return;
+    if (
+      event.type === "session.can_stop_runtime" &&
+      this.providerSessions.get(event.sessionId)?.id !== request.sessionId
+    ) {
+      this.requests.delete(event.requestId);
+      request.reject(new Error("Runtime safety response belongs to another session"));
+      return;
+    }
     this.requests.delete(event.requestId);
     request.resolve(event);
   }
@@ -639,6 +656,27 @@ class ProviderRuntimeSession {
     } finally {
       this.prompts.delete(prompt.clientMessageId);
     }
+  }
+
+  async canStopRuntime(): Promise<boolean> {
+    if (
+      this.terminal ||
+      this.prompts.size ||
+      this.activeTurnIds.size ||
+      !this.capabilities.includes("session.can_stop_runtime")
+    )
+      return false;
+    const event = await this.runtime.complete(
+      {
+        type: "session.can_stop_runtime",
+        requestId: randomUUID(),
+        sessionId: this.providerSessionId,
+      },
+      AbortSignal.timeout(10_000),
+    );
+    if (event.type !== "session.can_stop_runtime")
+      throw new Error("Invalid runtime safety response");
+    return event.canStop;
   }
 
   async configure(changes: ProviderConfigChanges): Promise<void> {
@@ -1021,7 +1059,7 @@ class PluginAgentClient implements AgentClient {
     if (!persistence) throw new Error(`Plugin provider '${this.provider}' did not persist import`);
     return {
       session,
-      config: { ...context.config, provider: this.provider, cwd: input.cwd },
+      config: { ...context.storedConfig, provider: this.provider, cwd: input.cwd },
       persistence,
       timeline: session.timelineHistory(),
       providerSubagentEvents: session.subagentHistory(),
@@ -1094,77 +1132,6 @@ class PluginAgentClient implements AgentClient {
         attached = true;
       }
     }
-  }
-}
-
-// Replay canonical items, rather than retaining every streamed delta or tool state.
-// Sequence numbers here only preserve adapter replay order, not wire cursors.
-class PluginSessionHistory {
-  private readonly timelines = new Map<
-    string,
-    {
-      projection: TimelineProjection;
-      seq: number;
-      positions: Map<number, number>;
-    }
-  >();
-  private readonly events: Array<{ seq: number; event: AgentStreamEvent }> = [];
-  private seq = 0;
-
-  push(event: AgentStreamEvent): void {
-    const seq = ++this.seq;
-    const child =
-      event.type === "provider_subagent" && event.event.type === "timeline" ? event.event : null;
-    if (event.type !== "timeline" && !child) {
-      this.events.push({ seq, event });
-      return;
-    }
-    const key = child?.id ?? "";
-    let timelineState = this.timelines.get(key);
-    if (!timelineState) {
-      timelineState = { projection: new TimelineProjection(), seq: 0, positions: new Map() };
-      this.timelines.set(key, timelineState);
-    }
-    const timeline = event.type === "timeline" ? event : child!;
-    const projected = timelineState.projection.append({
-      seq: ++timelineState.seq,
-      item: timeline.item,
-      timestamp: timeline.timestamp ?? "",
-      ...(event.type === "timeline" && event.turnId ? { turnId: event.turnId } : {}),
-    });
-    // Updates keep the row's original position relative to other timelines and events.
-    if (!timelineState.positions.has(projected.seqStart)) {
-      timelineState.positions.set(projected.seqStart, seq);
-    }
-  }
-
-  read(provider: string): AgentStreamEvent[] {
-    const events = [...this.events];
-    for (const [id, timeline] of this.timelines) {
-      for (const row of timeline.projection.getRows()) {
-        const timestamp = row.timestamp ? { timestamp: row.timestamp } : {};
-        const event: AgentStreamEvent = id
-          ? {
-              type: "provider_subagent",
-              provider,
-              event: { type: "timeline", id, item: row.item, ...timestamp },
-            }
-          : {
-              type: "timeline",
-              provider,
-              item: row.item,
-              ...timestamp,
-              ...(row.turnId ? { turnId: row.turnId } : {}),
-            };
-        events.push({ seq: timeline.positions.get(row.seqStart)!, event });
-      }
-    }
-    return events.sort((a, b) => a.seq - b.seq).map(({ event }) => event);
-  }
-
-  clear(): void {
-    this.timelines.clear();
-    this.events.length = 0;
   }
 }
 
@@ -1290,6 +1257,11 @@ class PluginAgentSession implements AgentSession {
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
     for (const event of this.history.read(this.provider)) yield event;
+  }
+
+  get canStopRuntime(): (() => Promise<boolean>) | undefined {
+    if (!this.bridge.negotiatedCapabilities.includes("session.can_stop_runtime")) return undefined;
+    return () => this.bridge.canStopRuntime();
   }
 
   async getRuntimeInfo() {
@@ -1639,11 +1611,15 @@ class PluginAgentSession implements AgentSession {
       }
       return;
     }
-    if (event.type === "session.turn" && event.state !== "started") {
+    if (event.type === "session.turn") {
       this.publish({
         type: "provider_subagent",
         provider: this.provider,
-        event: { type: "upsert", id: childId, status: event.state },
+        event: {
+          type: "upsert",
+          id: childId,
+          status: event.state === "started" ? "running" : event.state,
+        },
       });
       return;
     }

@@ -1,6 +1,6 @@
 {
   "name": "paseo",
-  "version": "0.13.0-beta.1",
+  "version": "0.14.0-beta.1",
   "private": true,
   "description": "Paseo: voice-controlled development environment for local AI coding agents",
   "keywords": [
@@ -131,6 +131,7 @@
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "electron": "44.2.0",
+    "expo-module-scripts": "^5.0.8",
     "get-port-cli": "^3.0.0",
     "js-yaml": "^4.1.1",
     "knip": "^5.82.1",
@@ -154,7 +155,7 @@
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
     "react-native-gesture-handler": "~2.32.0",
-    "react-native-reanimated": "4.5.1",
-    "react-native-worklets": "0.10.1"
+    "react-native-reanimated": "4.5.5",
+    "react-native-worklets": "0.10.4"
   }
 }

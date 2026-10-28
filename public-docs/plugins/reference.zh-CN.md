@@ -504,326 +504,11 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-清理函数可以是异步的。请释放插件创建的计时器、监听器、套接字和其他资源。在重新加载、停用、移除、断开连接或 daemon 关闭时，Paseo 还会移除注册、卸载界面、reject 待处理的 RPC、关闭插件的 daemon 会话并停止它的子进程。
+清理函数可以是异步的。请释放插件创建的计时器、监听器、套接字和其他资源。重新加载、停用和移除会销毁受影响的插件安装。停止服务端插件还会关闭它的 daemon 会话并停止其子进程。客户端安装遵循[主机与生命周期](#hosts-and-lifecycle)中的规则，包括在暂时断开连接时保留安装。
 
 ## 生命周期钩子 {#lifecycle-hooks}
 
-在 `index.server.ts` 中：
-
-```ts
-import type { PluginServerContext } from "@getpaseo/plugin/server";
-
-export default function contribute(server: PluginServerContext) {
-  server.on("agent.turn_ended", (event) => {
-    console.log(event.agent.id, event.outcome);
-  });
-
-  return () => {};
-}
-```
-
-| 注册                            | 回调接收                           | 返回                                                |
-| ------------------------------- | ---------------------------------- | --------------------------------------------------- |
-| `server.on(name, callback)`     | `(event, { paseo, signal })`       | `void` 或 `Promise<void>`                           |
-| `server.before(name, callback)` | `({ request }, { paseo, signal })` | 修改后的请求，或返回 `undefined` 保持不变；支持异步 |
-
-只要插件处于启用状态，钩子就会在 daemon 上运行，即使没有应用连接。
-
-### 修改配置并注入 MCP 服务器 {#change-configuration-and-inject-an-mcp-server}
-
-在 `contribute(server)` 中添加这个回调。把占位 URL 替换为你的 MCP 端点。
-
-```ts
-server.before("agent.create", ({ request }) => {
-  if (request.config.provider !== "codex") {
-    return request;
-  }
-
-  return {
-    ...request,
-    config: {
-      ...request.config,
-      providerOptions: {
-        ...request.config.providerOptions,
-        sandbox_mode: "workspace-write",
-        approval_policy: "on-request",
-      },
-      mcpServers: {
-        ...request.config.mcpServers,
-        company: {
-          type: "http",
-          url: "https://tools.example.com/mcp",
-        },
-      },
-    },
-  };
-});
-```
-
-| 输入                                        | 结果                |
-| ------------------------------------------- | ------------------- |
-| `providerOptions.sandbox_mode: "read-only"` | `"workspace-write"` |
-| `providerOptions.web_search: "disabled"`    | 由展开运算保留      |
-| 已有的 `mcpServers.search`                  | 由展开运算保留      |
-| 已有的 `mcpServers.company`                 | 被替换为上面的条目  |
-
-所选的 Provider 会校验 `providerOptions`，并且必须支持配置的 MCP 服务器。显式的 Codex 沙盒和批准选项会覆盖它的模式预设。
-
-### 在每次打开会话时注入环境变量 {#inject-environment-variables-on-every-session-opening}
-
-```ts
-server.before("agent.session_open", ({ request }) => {
-  return {
-    ...request,
-    env: {
-      ...request.env,
-      COMPANY_ENV: "development",
-    },
-  };
-});
-```
-
-它会在创建、恢复、刷新和导入时运行。如果只想在创建时注入，请改为在 `agent.create` 回调中设置 `env`。
-
-### 选择工作区隔离方式 {#choose-workspace-isolation}
-
-```ts
-server.before("workspace.create", ({ request }) => {
-  if (request.source.kind !== "directory") {
-    return request;
-  }
-
-  return {
-    ...request,
-    source: {
-      kind: "worktree",
-      cwd: request.source.path,
-      action: "branch-off",
-    },
-  };
-});
-```
-
-**结果**：显式的目录创建请求会变成 worktree 请求。已有的工作区以及目录查找/导入操作不受影响。
-
-### 在轮次结束时发送后续消息 {#send-a-follow-up-when-a-turn-ends}
-
-把 [server/inspect.ts](https://github.com/getpaseo/paseo/blob/main/plugin-examples/lifecycle-actions/server/inspect.ts) 复制到你的插件中。该辅助文件从 `@getpaseo/protocol/agent-types` 导入类型；请把与插件 SDK 版本相同的 `@getpaseo/protocol` 加入开发依赖，并在加载插件之前安装它们。`latestOutputText` 会拼接最近一条用户消息之后的文本片段。
-
-```ts
-import type { PluginServerContext } from "@getpaseo/plugin/server";
-import { latestOutputText } from "./server/inspect";
-
-export default function contribute(server: PluginServerContext) {
-  server.on("agent.turn_ended", async (event, context) => {
-    if (event.outcome.kind === "canceled") {
-      return;
-    }
-
-    const agent = context.paseo.agents.ref(event.agent.id);
-    const page = await agent.timeline.refetch({ direction: "tail", limit: 20 });
-    const text = latestOutputText(page.entries.map(({ item }) => item));
-    if (/out of credits/i.test(text)) {
-      await agent.send("Try again.");
-    }
-  });
-
-  return () => {};
-}
-```
-
-```text
-Turn ends: "out of credits"
-  → plugin sends "Try again."
-  → a new turn starts
-```
-
-该处理函数只获取最近 20 条时间线条目，不检查这一页之前的输出。插件需要更多历史时，请用 `cursor` 和 `direction` 继续翻页。
-
-这会用现有的 SDK 发送一条新消息。持续匹配会不断发送后续消息；需要时请在插件中添加次数限制或延迟。附件和工具的效果不会被重放。
-
-### 回应权限请求 {#answer-a-permission-request}
-
-使用同一个[辅助文件](https://github.com/getpaseo/paseo/blob/main/plugin-examples/lifecycle-actions/server/inspect.ts)中的 `shellCommand`：
-
-```ts
-import type { PluginServerContext } from "@getpaseo/plugin/server";
-import { shellCommand } from "./server/inspect";
-
-export default function contribute(server: PluginServerContext) {
-  server.on("agent.permission_requested", async (event, context) => {
-    const command = shellCommand(event.request);
-    if (command === null) {
-      return;
-    }
-
-    const agent = context.paseo.agents.ref(event.agent.id);
-    if (/\brm\s+-rf\b/.test(command)) {
-      await agent.respondToPermission({
-        requestId: event.request.id,
-        response: { behavior: "deny", message: "Recursive deletion is blocked." },
-      });
-      return;
-    }
-
-    if (command.trim() === "git status") {
-      await agent.respondToPermission({
-        requestId: event.request.id,
-        response: { behavior: "allow" },
-      });
-    }
-  });
-
-  return () => {};
-}
-```
-
-| 请求             | 结果                 |
-| ---------------- | -------------------- |
-| `rm -rf build`   | 拒绝                 |
-| `git status`     | 批准                 |
-| 其他命令或请求   | 保持待处理，留给用户 |
-| 已经处理过的请求 | SDK 响应失败         |
-
-这个正则表达式只是一个示例策略，而不是 shell 解析器。权限请求也可能是问题、计划和模式变更；请求权限不会结束当前轮次。
-
-### 事件 {#events}
-
-| 名称                         | 事件字段                                              | 触发时机                      |
-| ---------------------------- | ----------------------------------------------------- | ----------------------------- |
-| `agent.created`              | `agent`                                               | 普通创建完成；不包括导入/恢复 |
-| `agent.closed`               | `agent`                                               | 一个运行中的 Agent 运行时关闭 |
-| `agent.turn_started`         | `agent`, `turnId`                                     | 实时轮次开始                  |
-| `agent.turn_ended`           | `agent`, `turnId`, `outcome`, 已弃用的 `timeline: []` | 实时轮次完成、失败或被取消    |
-| `agent.permission_requested` | `agent`, `request`                                    | 权限请求或问题进入待处理状态  |
-| `agent.permission_resolved`  | `agent`, `requestId`, `resolution`                    | 待处理的请求得到回应或被清除  |
-| `agent.archived`             | `agent`, `archivedAt`                                 | 归档状态已保存                |
-| `workspace.created`          | `workspace`                                           | 记录已创建；目录可用          |
-| `workspace.archived`         | `workspace`                                           | 归档状态已保存                |
-
-Agent 事件不包括 daemon 私有的一次性辅助 Agent。公开的后台工作区及其普通 Agent 与其他工作区运行相同的生命周期钩子。归档事件可能早于运行时/worktree 清理；当清理很重要时，请单独观察生命周期何时完成。
-
-`agent.turn_ended.timeline` 已弃用，并且始终为空。需要历史时，请用 `context.paseo.agents.ref(event.agent.id).timeline.refetch({ direction: "tail", limit: 20 })` 按需获取。钩子负载的大小不会随对话历史增长。
-
-**共享的负载结构**（`@getpaseo/plugin/server`）：
-
-```ts
-interface PluginHookAgent {
-  id: string;
-  workspaceId: string | null;
-  parentAgentId: string | null;
-  provider: string;
-  cwd: string;
-  title: string | null;
-}
-
-interface PluginHookWorkspace {
-  id: string;
-  projectId: string;
-  cwd: string;
-  name: string | null;
-  archivedAt: string | null;
-}
-
-type PluginTurnOutcome =
-  | { kind: "completed" }
-  | { kind: "failed"; error: { message: string; code?: string } }
-  | { kind: "canceled"; reason: string };
-```
-
-| 字段         | 结构 / 含义                                                                              |
-| ------------ | ---------------------------------------------------------------------------------------- |
-| `turnId`     | Provider 报告的 `string` 或 `null`；会话重新打开后可能重复                               |
-| `timeline`   | `readonly AgentTimelineItem[]`；包含之前对话的完整快照；文本可能跨越多个条目             |
-| `request`    | SDK 的 `AgentPermissionRequest`；`kind` 为 `tool`、`plan`、`question`、`mode` 或 `other` |
-| `resolution` | SDK 的 `AgentPermissionResponse`                                                         |
-| `archivedAt` | 时间戳字符串                                                                             |
-
-### before 钩子 {#before-hooks}
-
-| 名称                 | 请求字段                                                                | 可编辑                              |
-| -------------------- | ----------------------------------------------------------------------- | ----------------------------------- |
-| `agent.create`       | `config`，可选的 `env`                                                  | 除 `cwd` 外的公开 Agent 配置；`env` |
-| `agent.session_open` | `agentId`, `workspaceId`, `provider`, `cwd`, `reason`, `purpose`, `env` | 仅 `env`                            |
-| `workspace.create`   | `source`，可选的 `title`，`firstAgentContext`                           | 整个显式创建请求                    |
-
-**`agent.create.config`** 使用 `AgentSessionConfig`：
-
-| 字段                                          | 约束                                                     |
-| --------------------------------------------- | -------------------------------------------------------- |
-| `provider`, `model`                           | 独立的字段；修改 Provider 可能需要同时修改模型/模式/选项 |
-| `modeId`, `thinkingOptionId`, `featureValues` | 特定于 Provider 的选择                                   |
-| `title`, `systemPrompt`                       | Agent 配置                                               |
-| `providerOptions`                             | 不透明的、特定于 Provider 的选项                         |
-| `mcpServers`, `toolPolicy`                    | MCP 配置和精确的工具预批准                               |
-| `cwd`                                         | 不能修改                                                 |
-
-**`agent.session_open` 请求示例：**
-
-```json
-{
-  "agentId": "agent-123",
-  "workspaceId": "workspace-456",
-  "provider": "codex",
-  "cwd": "/projects/shop",
-  "reason": "resume",
-  "purpose": "interactive",
-  "env": { "COMPANY_ENV": "development" }
-}
-```
-
-| 字段          | 取值                                                                                 |
-| ------------- | ------------------------------------------------------------------------------------ |
-| `workspaceId` | 字符串或 `null`                                                                      |
-| `reason`      | `create`、`resume`、`refresh`、`import`                                              |
-| `purpose`     | `interactive`、`history`                                                             |
-| `env`         | 启动覆盖映射；不包括 daemon 继承的环境变量。替换整个映射即可添加、替换或移除覆盖项。 |
-
-### 顺序与返回值 {#ordering-and-returned-values}
-
-```text
-Creation request
-  → agent.create hooks (plugin-ID order; registration order within each plugin)
-  → resolve defaults and validate provider configuration
-  → derive launch configuration with Paseo runtime tools and daemon prompt
-  → agent.session_open hooks (same ordering; env only)
-  → set PASEO_AGENT_ID and PASEO_AGENT_CWD
-  → open provider session and save agent configuration
-```
-
-| 回调返回                                                | 下一个回调收到                    |
-| ------------------------------------------------------- | --------------------------------- |
-| `{ ...request, env: { ...request.env, REGION: "eu" } }` | 之前的请求，添加或替换了 `REGION` |
-| `{ ...request, env: { REGION: "eu" } }`                 | 之前的请求，整个覆盖映射被替换    |
-| `undefined`                                             | 未改变的请求                      |
-| 抛出错误或返回无效数据                                  | 操作失败；后面的回调不会运行      |
-
-没有自动的深度合并。后面的回调可以覆盖前面的值。Agent 配置会被保存；环境变量覆盖项不会随之持久化。
-
-### context 与清理 {#context-and-cleanup}
-
-| 契约                       | 行为                                                                                |
-| -------------------------- | ----------------------------------------------------------------------------------- |
-| `context.paseo`            | 已连接到此 daemon 的现有 SDK                                                        |
-| `context.signal`           | 在调用超时或插件停止时中止；请把它传给外部请求                                      |
-| 输入数据                   | 分离的快照；通过返回的请求或 SDK 命令改变状态                                       |
-| 注册结果                   | 幂等的移除函数，例如 `const remove = server.on(...); remove();`                     |
-| 重新加载、停用、移除、关闭 | 移除剩余的注册                                                                      |
-| 未知的钩子名称             | 注册失败                                                                            |
-| 钩子超时                   | 30 秒；会中止 signal。before 钩子会让待处理的操作失败；事件处理函数会记录一条错误。 |
-| 事件处理函数出错           | 记录在插件名下；原操作继续进行                                                      |
-| 事件投递                   | 实时、尽力而为；没有重放、持久化或自动重试                                          |
-| 事件并发                   | 不同的事件可能重叠；不保证回调完成的顺序                                            |
-
-### 完整示例 {#complete-examples}
-
-| 插件                                                                                                   | 包含                                                   |
-| ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
-| [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       | 全部十一个钩子；隐去环境变量值的 JSON 日志             |
-| [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     | 后续消息、权限、环境变量、切换 Provider、选择 worktree |
-| [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) | MCP 注入以及 Codex 沙盒/批准选项                       |
-
-用 `paseo plugin logs lifecycle-logger` 或主机的 `daemon.log` 读取 logger 的输出。
+使用 `server.addHook(name, handler)` 注册异步处理函数。请参阅[钩子](/docs/plugins/hooks)，了解命名、载荷、顺序、错误处理和完整示例。
 
 ## 界面和侧边栏项 {#screens-and-sidebar-items}
 
@@ -1069,7 +754,7 @@ export function IssueActions({ theme }: PluginSurfaceProps) {
 ```tsx
 import { Markdown } from "@getpaseo/plugin/client/ui";
 
-<Markdown>{"## 审查\n\n检查**通过**。"}</Markdown>;
+<Markdown>{"## Review\n\nThe checks **passed**."}</Markdown>;
 ```
 
 `children` 是唯一的属性，必须为字符串。更新它会立即渲染新内容；空字符串不渲染任何内容。
@@ -1525,7 +1210,8 @@ if (current.status === "ready") {
 
 ## 工作区面板 {#workspace-panels}
 
-为工作区或 Agent 上下文注册一个面板：
+使用 `addWorkspacePanel` 注册工作区面板，使用 `addAgentPanel` 注册 Agent 面板。
+两者与[文件面板](#file-panels)使用相同的面板契约。
 
 `client/review.tsx`：
 
@@ -1534,9 +1220,9 @@ import { type PluginAgentPanelProps, useAgent, useWorkspace } from "@getpaseo/pl
 import { useMemo } from "react";
 import { Text, View } from "react-native";
 
-export function ReviewPanel({ theme, layout, workspaceId, agentId }: PluginAgentPanelProps) {
+export function ReviewPanel({ theme, layout, workspaceId, params }: PluginAgentPanelProps) {
   const workspaceName = useWorkspace(workspaceId, (workspace) => workspace.name);
-  const agent = useAgent(agentId, ({ id, title }) => ({ id, title }));
+  const agent = useAgent(params.agentId, ({ id, title }) => ({ id, title }));
   const styles = useMemo(
     () => ({
       screen: {
@@ -1565,11 +1251,10 @@ import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { ReviewPanel } from "./client/review";
 
 export default function contribute(client: PluginClientContext) {
-  client.addWorkspacePanel({
+  client.addAgentPanel({
     id: "review",
     title: "Review",
     icon: "Scan",
-    context: "agent",
     locations: ["workspace", "explorer"],
     Component: ReviewPanel,
   });
@@ -1577,20 +1262,42 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-`addWorkspacePanel` 的字段：
+`addWorkspacePanel` 和 `addAgentPanel` 的字段：
 
 | 字段        | 是否必填 | 含义                                                |
 | ----------- | -------- | --------------------------------------------------- |
 | `id`        | 是       | 插件内部的面板 ID。                                 |
 | `title`     | 是       | 工作区标签页的标题。                                |
 | `icon`      | 是       | Lucide 名称、`{ svg }` 或组件。参见[图标](#icons)。 |
-| `context`   | 是       | `workspace` 或 `agent`。                            |
 | `locations` | 否       | `workspace` 和/或 `explorer`。默认为 `workspace`。  |
 | `Component` | 是       | 与所选上下文的属性相匹配的 React Native 组件。      |
 
-工作区面板接收 `PluginWorkspacePanelProps`：`context: "workspace"`、`theme`、`host`、`layout` 和 `workspaceId`。Agent 面板接收 `PluginAgentPanelProps`：`context: "agent"`、相同的通用字段和 `workspaceId`，外加 `agentId`。
+每个面板都接收 `PluginPanelProps<Params>`，包含 `theme`、`host`、`layout`、`navigation`、
+`workspaceId`、只读的 `params`、`revision` 和 `tab`。工作区面板使用空的
+`PluginWorkspacePanelParams`；Agent 面板的 `PluginAgentPanelParams` 包含 `agentId`。
+每次向同一标签页重新发送 params 时，`revision` 都会递增，即使请求与上次相同。
 
-用 `useWorkspace(workspaceId, selector)` 和 `useAgent(agentId, selector)` 读取缓存的状态。selector 是必填的。Paseo 对它的结果做浅比较，因此选择 `{ name, status }` 时，无关字段的变化不会触发重新渲染。在一次调用中选择组件渲染的所有字段；不要选择整个快照。
+`tab.setModified(boolean)` 标记未保存的更改，并在关闭前询问。`tab.state` 是由面板定义的持久化
+JSON，初始为 `undefined`；`tab.setState(value)` 替换整个值。每个标签页拥有独立状态。
+Paseo 只保存状态，不解释其内容。用 `useTabState(tab, schema, defaultState)` 验证它：
+
+```tsx
+const schema = z.object({ view: z.enum(["preview", "source"]) });
+const [state, setState] = useTabState(tab, schema, { view: "preview" });
+// Missing or invalid persisted state returns the default.
+// In an event handler, call setState({ view: "source" }).
+```
+
+从 `@getpaseo/plugin/client` 导入 `useTabState`，从 `zod` 导入 `z`。setter 替换整个 JSON 值。
+标签页恢复和应用重新加载后，状态仍然保留。
+
+统一属性、`addAgentPanel` 和 `useTabState` 需要 Paseo 0.13.0 或更高版本。
+
+**已弃用，将在 2027-04-23 之后移除**：0.12 面板的 `context` 和顶层 `agentId` 属性、
+`addWorkspacePanel({ context: "workspace" })` 以及 `addWorkspacePanel({ context: "agent" })`
+仍然有效。省略工作区的 `context`，用 `addAgentPanel` 注册 Agent 面板，并读取 `params.agentId`。
+
+用 `useWorkspace(workspaceId, selector)` 和 `useAgent(params.agentId, selector)` 读取缓存的状态。selector 是必填的。Paseo 对它的结果做浅比较，因此选择 `{ name, status }` 时，无关字段的变化不会触发重新渲染。在一次调用中选择组件渲染的所有字段；不要选择整个快照。
 
 当记录不可用时，两个 hook 都返回 `null`。否则它们会针对规范化的客户端状态同步运行。快照 DTO 及其嵌套值都是深度只读的，并在运行时被冻结。不要调用插件 RPC 来获取当前的工作区或 Agent。可选的或特定于厂商的补充数据，请在组件渲染之后再获取。
 
@@ -1670,12 +1377,13 @@ export default function contribute(client: PluginClientContext) {
 
 `PluginFilePanelProps` 包含[主题和布局](#theme-and-layout)中介绍的通用属性 `theme`、`host`、`layout` 和可选的 `navigation`，另外还有：
 
-| 属性          | 类型                 | 含义                                                               |
-| ------------- | -------------------- | ------------------------------------------------------------------ |
-| `workspaceId` | `string`             | 包含该文件标签页的工作区。                                         |
-| `file`        | `PluginFile`         | 文件的句柄。标签页显示该文件期间保持不变。                         |
-| `tab`         | `PluginFileTab`      | `setModified(modified)` 会显示标签页的未保存圆点，并在关闭前确认。 |
-| `location`    | `PluginFileLocation` | `lineStart?`、`lineEnd?` 和 `revision`，后者在每次导航时递增。     |
+| 属性          | 类型                    | 含义                                                                                       |
+| ------------- | ----------------------- | ------------------------------------------------------------------------------------------ |
+| `workspaceId` | `string`                | 包含该文件标签页的工作区。                                                                 |
+| `params`      | `PluginFilePanelParams` | 打开请求提供的只读 `path`、`lineStart?` 和 `lineEnd?`。                                    |
+| `revision`    | `number`                | 每次向该标签页重新发送 params 时递增，即使是同一行。                                       |
+| `file`        | `PluginFile`            | 从 `params.path` 解析的文件能力；标签页显示该文件期间保持不变。                            |
+| `tab`         | `PluginTab`             | `setModified`、持久化的自定义 `state` 和 `setState`。参见[工作区面板](#workspace-panels)。 |
 
 Paseo 在知道文件存在及其大小后就会挂载你的面板，不会先读取文件。`file` 对象保持不变，它的 stat 字段保存 Paseo 已知的最新版本。请在渲染时读取这些字段；它们变化时不会重新渲染你的面板。面板要通过 `watch` 监听器，或 `useFileText`、`useFileBytes`、`useFileUrl` 引起的重新渲染，得知它们已变化：
 
@@ -2010,7 +1718,7 @@ const behavior: PluginButtonBehavior = {
 隐藏或禁用按钮会关闭它的浮层。更新它的 behavior 也会关闭浮层。隐藏会保留注册，因此再次显示时会恢复它
 原来的位置。它不会取消已经在进行中的操作。
 
-`remove()` 是幂等的。移除之后的更新不起作用。当插件安装或主机连接被拆除时，Paseo 会移除尚存的按钮。
+`remove()` 是幂等的。移除之后的更新不起作用。当插件安装被销毁时，Paseo 会移除尚存的按钮（参见[主机与生命周期](#hosts-and-lifecycle)）。
 请从客户端入口返回清理函数，用来释放你的订阅、定时器和其他资源。
 
 ## 使用 Paseo SDK {#use-the-paseo-sdk}
@@ -2329,8 +2037,11 @@ Composer 菜单、搜索选择器、选中后的胶囊、草稿状态和提交�
 
 附件来源仍然限定在各个 Composer 所在的主机上。
 
-工作区面板和 Command Center 条目仍然限定在当前活动的主机和确切的缓存上下文中。重新加载会替换它们的
-注册。停用、移除、主机断开和求值失败会移除 Command Center 条目，并清除该安装的查询状态。已经恢复的面板
+连接中断时，客户端插件的注册、已挂载界面、本地状态和查询缓存会保留。通过原有的 `DaemonClient` 对象重新连接时，未变化的安装会保留，其设置会刷新。请使用 SDK 观察快照刷新其他 daemon 状态；未变化的安装不会再次运行初始化函数。调用 daemon 仍然依赖连接。
+
+切换连接（例如从直连切换到中继）目前会替换 `DaemonClient` 对象并重新安装客户端插件。重新加载、插件包或版本要求变化、停用、移除插件和移除主机也会销毁受影响的安装，并清除其查询状态。如果替换安装求值失败，它的贡献将不可用。
+
+工作区面板和 Command Center 条目仍然限定在当前活动的主机和确切的缓存上下文中。已经恢复的面板
 标签页会保持“不可用”状态，直到与之匹配的贡献重新出现或用户关闭它。面板的渲染失败会被限制在插件的错误
 边界内。
 

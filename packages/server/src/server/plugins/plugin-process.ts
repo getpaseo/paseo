@@ -1,3 +1,4 @@
+import { PluginAgentTools } from "./agent-tools.js";
 import { PluginHookHandlers } from "./lifecycle/index.js";
 import { evaluateBundle } from "./bundle-evaluator.js";
 import {
@@ -59,9 +60,10 @@ export function createPluginWorker(options: {
     handler: RpcHandler;
   }
 
+  const agentTools = new PluginAgentTools();
   const hooks = new PluginHookHandlers(() => {
     send({ type: "hooks.changed", hooks: hooks.catalog() });
-  });
+  }, agentTools);
   const handlers = new Map<string, RegisteredRpc>();
   const providers = new Map<string, ProviderRegistration>();
   const usageSources = new Map<string, UsageSourceRegistration>();
@@ -286,6 +288,7 @@ export function createPluginWorker(options: {
       registerProvider,
       registerUsageSource,
       registerSettings,
+      addHook: hooks.addHook,
       on: hooks.on,
       before: hooks.before,
     });
@@ -322,6 +325,7 @@ export function createPluginWorker(options: {
       ?.dispose()
       .catch((error) => console.error("Plugin API cleanup failed", error));
     hooks.close();
+    agentTools.close();
     for (const pending of pendingProviderConnections.values()) pending.tombstoned = true;
     const currentCleanup = cleanup;
     cleanup = null;
@@ -381,6 +385,42 @@ export function createPluginWorker(options: {
     }
   }
 
+  function handleToolMessage(
+    message: PluginProcessRequest,
+  ): message is Extract<
+    PluginProcessRequest,
+    { type: "tool.call" | "tool.cancel" | "tools.detach" }
+  > {
+    if (message.type === "tools.detach") {
+      agentTools.detach(message.agentId);
+      return true;
+    }
+    if (message.type === "tool.cancel") {
+      agentTools.cancel(message.requestId);
+      return true;
+    }
+    if (message.type === "tool.call") {
+      if (!paseo) {
+        send({ type: "error", requestId: message.requestId, error: "Plugin API unavailable" });
+        return true;
+      }
+      void agentTools
+        .call(message.requestId, message.agent, message.name, message.input, paseo)
+        .then((output) =>
+          send({
+            type: "result",
+            requestId: message.requestId,
+            output: jsonTransportValue(output),
+          }),
+        )
+        .catch((error) =>
+          send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+        );
+      return true;
+    }
+    return false;
+  }
+
   function handleMessage(rawMessage: unknown): void {
     const parsed = PluginProcessRequestSchema.safeParse(rawMessage);
     if (!parsed.success) {
@@ -422,6 +462,7 @@ export function createPluginWorker(options: {
       rejectWhileStopping(message);
       return;
     }
+    if (handleToolMessage(message)) return;
     if (message.type === "provider.status") {
       void (async () => {
         const provider = providers.get(message.providerId);
@@ -523,7 +564,7 @@ export function createPluginWorker(options: {
         });
         return;
       }
-      void hooks.invoke(message.requestId, message.kind, message.name, message.input, paseo).then(
+      void hooks.invoke(message.requestId, message.name, message.input, paseo).then(
         (output) => {
           return send({ type: "result", requestId: message.requestId, output });
         },

@@ -67,6 +67,7 @@ export const zhCN: TranslationResources = {
       daemonClientUnavailable: "Daemon client 不可用",
       daemonClientDisconnected: "Daemon client 已断开连接",
       noFileFound: "未找到 {{token}} 对应的文件",
+      folderOutsideWorkspace: "{{path}} 不在此工作区内",
       unexpectedDictationError: "处理听写时发生意外错误。",
     },
     connectionStatus: {
@@ -133,6 +134,8 @@ export const zhCN: TranslationResources = {
       sendAndInterrupt: "发送并中断",
       sendAndSteer: "发送并引导",
       sendMessage: "发送消息",
+      longPressToQueue: "长按加入队列",
+      longPressToSendNow: "长按立即发送",
       queue: "排队",
       send: "发送",
     },
@@ -1161,6 +1164,7 @@ export const zhCN: TranslationResources = {
       sort: {
         label: "排序",
         created: "创建时间",
+        manual: "手动",
         lastPrompt: "最近提示词",
         updateHost: "请更新主机以排序工作区",
       },
@@ -1885,6 +1889,12 @@ export const zhCN: TranslationResources = {
     backdrop: "菜单背景",
   },
   subagents: {
+    parent: {
+      backToParent: "返回父代理",
+      backTo: "返回 {{label}}",
+      parentAgent: "父代理",
+      openParent: "打开父代理",
+    },
     title: "Subagent",
     pillLabelOne: "1 个 subagent",
     pillLabelMany: "{{count}} 个 subagent",
@@ -1985,7 +1995,14 @@ export const zhCN: TranslationResources = {
     input: "输入",
     output: "输出",
   },
+  turnSummary: {
+    details: "查看轮次详情",
+    sentBy: "由 {{name}} 发送",
+    showMore: "展开",
+    showLess: "收起",
+  },
   toolCallGroup: {
+    thought: "已思考",
     editedFiles: {
       one: "编辑了 {{count}} 个文件",
       other: "编辑了 {{count}} 个文件",
@@ -2018,6 +2035,18 @@ export const zhCN: TranslationResources = {
   },
   sidebarCallout: {
     dismiss: "关闭",
+  },
+  daemonOutdated: {
+    title: "守护进程版本过旧",
+    versions: "{{host}} 运行的守护进程为 {{daemonVersion}}，此应用为 {{appVersion}}。",
+    terminalsStayOpen: "更新会重启守护进程，终端将保持打开。",
+    terminalsClose: "更新会重启守护进程，并关闭已打开的终端。",
+    desktopUpdateTerminals:
+      "更新 Paseo Desktop 时，macOS 和 Linux 上的终端保持打开，Windows 上的终端会被关闭。",
+    desktopManaged: "此守护进程由 Paseo Desktop 管理。请在那台电脑上更新 Paseo。",
+    selfUpdateUnsupported: "此守护进程无法自行更新。请在那台电脑上更新 Paseo。",
+    update: "更新",
+    updateFailedTitle: "守护进程更新失败",
   },
   contextWindow: {
     noData: "暂无上下文数据",
@@ -2186,6 +2215,7 @@ export const zhCN: TranslationResources = {
       connections: "连接",
       agents: "Agents",
       metadata: "元数据",
+      voice: "语音",
       workspaces: "Workspaces",
       providers: "Providers",
       usage: "使用情况",
@@ -2206,6 +2236,69 @@ export const zhCN: TranslationResources = {
       modelHint: "只使用此模型。如果失败，Paseo 不会尝试其他模型",
       docs: "文档",
       saveError: "无法更新元数据生成设置",
+    },
+    voice: {
+      offline: "连接到此主机以配置语音。",
+      updateHost: "请更新主机以配置语音。",
+      saveError: "无法更新语音设置",
+      provider: "提供方",
+      providers: {
+        local: "本地",
+        openai: "OpenAI",
+      },
+      voice: "音色",
+      save: "保存",
+      retry: "重试",
+      cancel: "取消",
+      model: "模型",
+      language: "语言",
+      languagePlaceholder: "自动检测",
+      setBy: "由 {{name}} 设置",
+      unknownProvider: "更新应用以配置 {{provider}}",
+      sites: {
+        dictationStt: "语音转文字",
+        voiceModeStt: "聆听",
+        voiceModeTts: "朗读",
+      },
+      dictation: {
+        title: "听写",
+        enabled: "听写",
+        enabledHint: "对着消息框说话，无需打字",
+      },
+      voiceMode: {
+        title: "语音模式",
+        info: "语音模式会转写你说的话，并朗读智能体的回复。",
+        enabled: "语音模式",
+        enabledHint: "免手动与智能体对话",
+      },
+      openai: {
+        apiKey: "API 密钥",
+        apiKeyHint: "保存在主机上，不会再次显示。",
+        keyPlaceholder: "sk-...",
+        savedKeyPlaceholder: "已保存",
+        missingKey: "缺少 API 密钥",
+        baseUrl: "基础 URL",
+        baseUrlHint: "用于兼容 OpenAI 的服务器。留空则使用 OpenAI。",
+      },
+      models: {
+        loading: "正在加载模型...",
+        loadError: "无法加载本地模型",
+        none: "没有可用的模型",
+        downloaded: "已下载",
+        inUse: "使用中",
+        recommended: "推荐",
+        download: "下载",
+        downloadAction: "下载 {{label}}",
+        downloading: "正在下载...",
+        downloadingPercent: "正在下载 {{percent}}%",
+        extracting: "正在解压...",
+        delete: "删除",
+        deleteAction: "删除 {{label}}",
+        deleteTitle: "删除 {{label}}？",
+        deleteMessage: "这将释放 {{size}}。之后可以重新下载。",
+        languages: "{{label}} 支持的语言",
+        moreLanguages: "{{languages}} 等另外 {{count}} 种",
+      },
     },
     general: {
       title: "通用",
@@ -2228,10 +2321,22 @@ export const zhCN: TranslationResources = {
           steer: "Agent 运行时，Enter 会引导当前回合。Command/Ctrl+Enter 会排队。",
           queue: "Agent 运行时，Enter 会排队。Command/Ctrl+Enter 会提交。",
         },
+        commandEnterDescriptions: {
+          interrupt: "Agent 运行时，{{modifier}}+Enter 会中断。Enter 会插入换行。",
+          steer: "Agent 运行时，{{modifier}}+Enter 会引导当前回合。Enter 会插入换行。",
+          queue: "Agent 运行时，{{modifier}}+Enter 会排队。Enter 会插入换行。",
+        },
         options: {
           interrupt: "中断",
           steer: "引导",
           queue: "排队",
+        },
+      },
+      sendShortcut: {
+        label: "发送快捷键",
+        options: {
+          enter: "Enter",
+          "mod-enter": "{{modifier}}+Enter",
         },
       },
       serviceUrls: {
@@ -2250,12 +2355,13 @@ export const zhCN: TranslationResources = {
         label: "始终展开推理过程",
         description: "默认情况下完全展开 AI 的思考和推理过程",
       },
-      toolCallDetail: {
-        label: "工具调用显示",
-        description: "工具调用在时间线中的显示方式",
+      chatDisplay: {
+        label: "聊天显示",
+        description: "聊天中显示多少智能体的工作",
         options: {
-          overview: "摘要",
-          detailed: "完整详情",
+          full: "完整",
+          collapseToolCalls: "折叠工具调用",
+          collapseTurns: "折叠轮次",
         },
       },
       language: {
@@ -2619,6 +2725,11 @@ export const zhCN: TranslationResources = {
       },
       agents: {
         unavailable: "连接到这个 Host 以管理 Agent",
+        idleRuntimeCleanup: {
+          title: "释放空闲 Agent",
+          hint: "空闲一小时后释放内存。",
+          info: "停止 Agent 进程，但保留对话。发送消息即可继续。\n\n进行中的工作、待处理的通知和 Provider 安全检查会阻止清理。",
+        },
       },
       workspaces: {
         unavailable: "连接到这个 Host 以管理 Workspace",
@@ -2705,6 +2816,10 @@ export const zhCN: TranslationResources = {
           offlineMessage: "这个 Host 已离线。Paseo 会自动重连，请等它恢复在线后再重启。",
           requestFailedTitle: "错误",
           requestFailedMessage: "发送重启请求失败。Paseo 会自动重连，请在 Host 显示在线后重试。",
+          closeTerminals: "重启并关闭终端",
+          closeTerminalsHint: "重启的同时关闭此主机上的所有终端。",
+          closeTerminalsConfirmMessage:
+            "这将重启守护进程并关闭其所有终端，终端中运行的程序会被结束。应用会自动重新连接。",
           dialogFailedMessage: "无法打开重启确认对话框。",
         },
         update: {

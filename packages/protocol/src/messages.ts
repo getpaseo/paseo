@@ -83,6 +83,16 @@ import {
   ScheduleUpdateResponseSchema,
 } from "./schedule/rpc-schemas.js";
 import {
+  SpeechLocalModelsDeleteRequestSchema,
+  SpeechLocalModelsDeleteResponseSchema,
+  SpeechLocalModelsDownloadRequestSchema,
+  SpeechLocalModelsDownloadResponseSchema,
+  SpeechLocalModelsListRequestSchema,
+  SpeechLocalModelsListResponseSchema,
+  SpeechSettingsPatchSchema,
+  SpeechSettingsSchema,
+} from "./speech/rpc-schemas.js";
+import {
   LoopRunRequestSchema,
   LoopListRequestSchema,
   LoopInspectRequestSchema,
@@ -224,12 +234,18 @@ export const MutableDaemonConfigSchema = z
     metadataGeneration: MutableMetadataGenerationConfigSchema.default({ providers: [] }),
     autoArchiveAfterMerge: z.boolean().default(false),
     enableTerminalAgentHooks: z.boolean().default(false),
+    // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, keep optional while old daemons are supported.
+    // Persisted host-wide value, applied live by the daemon.
+    idleRuntimeCleanup: z.boolean().optional(),
     appendSystemPrompt: z.string().default(""),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
     agentProfiles: z.array(AgentProfileSchema).optional(),
     skills: z.object({ selection: AgentSkillSelectionSchema.optional() }).strict().optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
+    // COMPAT(speechSettings): added in v0.12.0, optional because older daemons omit it.
+    features: SpeechSettingsSchema.optional(),
+    envOverrides: z.record(z.string(), z.string()).optional(),
   })
   .passthrough();
 
@@ -245,11 +261,13 @@ export const MutableDaemonConfigPatchSchema = z
     metadataGeneration: MutableMetadataGenerationConfigSchema.partial().optional(),
     autoArchiveAfterMerge: z.boolean().optional(),
     enableTerminalAgentHooks: z.boolean().optional(),
+    idleRuntimeCleanup: z.boolean().optional(),
     appendSystemPrompt: z.string().optional(),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
     agentProfiles: z.array(AgentProfileSchema).optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
+    features: SpeechSettingsPatchSchema.optional(),
   })
   .partial()
   .passthrough();
@@ -1452,6 +1470,10 @@ export const DiagnosticsRequestSchema = z.object({
 export const PluginCatalogGetRequestSchema = z.object({
   type: z.literal("plugin.catalog.get.request"),
   requestId: z.string(),
+  /** Client bundles the client already holds; the daemon leaves out each one whose hash matches. */
+  cachedClientBundles: z
+    .array(z.object({ id: PluginIdSchema, clientBundleHash: z.string() }))
+    .optional(),
 });
 
 export const PluginListRequestSchema = z.object({
@@ -1874,11 +1896,17 @@ export const RestartServerRequestMessageSchema = z.object({
   type: z.literal("restart_server_request"),
   reason: z.string().optional(),
   requestId: z.string(),
+  // Restart keeps terminals unless this is true. Daemons that predate
+  // `features.terminalsSurviveRestart` ignore it and close terminals anyway.
+  killTerminals: z.boolean().optional(),
 });
 
 export const ShutdownServerRequestMessageSchema = z.object({
   type: z.literal("shutdown_server_request"),
   requestId: z.string(),
+  // Shutdown closes terminals unless this is true. Gate on
+  // `features.terminalsSurviveRestart`: older daemons drop the field.
+  keepTerminals: z.boolean().optional(),
 });
 
 export const DaemonUpdateRequestMessageSchema = z.object({
@@ -1892,6 +1920,8 @@ export const AgentTimelineCursorSchema = z.object({
 });
 
 export const FetchAgentTimelineRequestMessageSchema = z.object({
+  // Keep available turns whole for tail/before pages; after catch-up stays incremental.
+  wholeTurns: z.boolean().optional(),
   type: z.literal("fetch_agent_timeline_request"),
   agentId: z.string(),
   requestId: z.string(),
@@ -3436,6 +3466,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ChatWaitRequestSchema,
   ScheduleCreateRequestSchema,
   ScheduleListRequestSchema,
+  SpeechLocalModelsListRequestSchema,
+  SpeechLocalModelsDownloadRequestSchema,
+  SpeechLocalModelsDeleteRequestSchema,
   ScheduleInspectRequestSchema,
   ScheduleLogsRequestSchema,
   SchedulePauseRequestSchema,
@@ -3670,6 +3703,8 @@ export const ServerInfoStatusPayloadSchema = z
         daemonStatusRpc: z.boolean().optional(),
         // COMPAT(daemonConfigReload): added in v0.4.0, remove gate after 2027-02-14.
         daemonConfigReload: z.boolean().optional(),
+        // COMPAT(speechSettings): added in v0.12.0, remove gate after 2027-04-18.
+        speechSettings: z.boolean().optional(),
         // COMPAT(relayConfig): added in v0.2.6, remove gate after 2027-01-31.
         relayConfig: z.boolean().optional(),
         // COMPAT(pushTokenRevocation): added in v0.3.2, remove gate after 2027-02-10.
@@ -3694,6 +3729,8 @@ export const ServerInfoStatusPayloadSchema = z
         pluginTimelineItems: z.boolean().optional(),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: z.boolean().optional(),
+        // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, remove gate after 2027-04-26.
+        idleRuntimeCleanupSetting: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
         "terminal-restore-modes": z.boolean().optional(),
         // COMPAT(terminalInputModeReplay): added in v0.2.6, remove gate after 2027-02-02.
@@ -3732,6 +3769,8 @@ export const ServerInfoStatusPayloadSchema = z
         daemonDiagnostics: z.boolean().optional(),
         // COMPAT(daemonSelfUpdate): added in v0.1.93, remove gate after 2026-12-13.
         daemonSelfUpdate: z.boolean().optional(),
+        // COMPAT(terminalsSurviveRestart): added in v0.12.0, remove gate after 2027-04-21.
+        terminalsSurviveRestart: z.boolean().optional(),
         // COMPAT(agentForkContext): added in v0.1.102, remove gate after 2026-12-28.
         agentForkContext: z.boolean().optional(),
         // COMPAT(agentForkContextCursor): added in v0.1.108, remove gate after 2027-01-14.
@@ -3740,6 +3779,7 @@ export const ServerInfoStatusPayloadSchema = z
         providerSubagents: z.boolean().optional(),
         // COMPAT(projectedSubagentTimeline): added after v0.8.0, remove gates after 2027-03-14; retain wire field.
         projectedSubagentTimeline: z.boolean().optional(),
+        wholeTurnTimeline: z.boolean().optional(),
         // COMPAT(providerSubagentNesting): added in v0.7, remove gate after 2027-03-04.
         providerSubagentNesting: z.boolean().optional(),
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
@@ -5093,6 +5133,22 @@ export const DaemonGetStatusResponseSchema = z.object({
           error: z.string().nullable().optional(),
         }),
       ),
+      // Processes a terminal cleanup on this host (a kill restart or stop) could not confirm
+      // gone; empty when every cleanup finished. Daemons without terminalsSurviveRestart have
+      // no such cleanup and omit it.
+      terminalCleanupUnconfirmed: z
+        .array(
+          z.object({
+            pid: z.number(),
+            role: z.string(),
+            reason: z.string(),
+            detail: z.string(),
+          }),
+        )
+        .optional(),
+      // Set when this host's terminals are held by a terminal worker from a newer Paseo, which
+      // this daemon leaves running but cannot drive: why, and what the user can do.
+      terminalsUnavailable: z.string().optional(),
     })
     .passthrough(),
 });
@@ -6729,7 +6785,10 @@ export const PluginCatalogGetResponseSchema = z.object({
     plugins: z.array(
       z.object({
         id: PluginIdSchema,
-        clientBundle: z.string(),
+        /** Left out only when the request listed this plugin with the same `clientBundleHash`. */
+        clientBundle: z.string().optional(),
+        /** SHA-256 of `clientBundle`, hex encoded. */
+        clientBundleHash: z.string().optional(),
         requirements: PluginRequirementsSchema.optional(),
       }),
     ),
@@ -7146,6 +7205,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ChatWaitResponseSchema,
   ScheduleCreateResponseSchema,
   ScheduleListResponseSchema,
+  SpeechLocalModelsListResponseSchema,
+  SpeechLocalModelsDownloadResponseSchema,
+  SpeechLocalModelsDeleteResponseSchema,
   ScheduleInspectResponseSchema,
   ScheduleLogsResponseSchema,
   SchedulePauseResponseSchema,

@@ -52,10 +52,12 @@ is another, with its own icons and hover-revealed actions — but both hand the 
 and take `closeOnSelect` to say whether choosing them ends the surface. A row that owns its press
 outright leaves the surface open behind whatever it opened, and skips the iOS wait.
 
-A row whose result opens a sheet passes `closeOnSelect={false}`: the sheet stacks over the menu
-sheet and uncovers it on close, so the menu is where the user lands next. A row that opens a tab
+A row whose result opens a sheet opens it as a page of the menu's own sheet, never as a second
+sheet over it: the row names a [fill page](#a-page-that-fills-the-sheet) with `opensPage`, the page
+replaces the list in place, Back returns to the list, and Close ends both. A row that opens a tab
 closes, because the tab replaces the pane the menu belongs to. The subagents track asks the layout
-store which one a row is (`useSubagentOpensInSheet`), since the answer changes with the layout.
+store which sheet tab a row would show (`useSubagentSheetTab`), since the answer changes with the
+layout; a row with none opens its tab.
 
 ## Pages
 
@@ -100,6 +102,23 @@ that page, and both are set on the page definition rather than discovered later:
 The sheet keeps `keyboardBehavior="interactive"`. `extend` grows a sheet to its largest snap
 point, and with `enableDynamicSizing` that point is the content's own height — a short page does
 not grow, and the keyboard comes up over the field you are typing into.
+
+## A page that fills the sheet
+
+A page can carry its own content instead of rows: `{ id, fill: true, content }`. Only the sheet
+renders one. It takes the full-sheet snap point (`FULL_SHEET_SNAP_POINTS`) instead of sizing to
+content, and the sheet stops panning on content drags, because the page scrolls on its own and a
+drag would fight that scroll. The page's header drags the sheet instead, through `SheetDragArea`.
+
+The content renders on the far side of the sheet's portal, so it brings its own context bridge,
+built where the page is defined. Sheet tabs are the one user: `useSheetPanePage` turns a `SheetTab`
+into a fill page around the same `SheetPane` the workspace's own sheets render. See
+[explorer-sidebar.md](explorer-sidebar.md#sheets).
+
+Back pops one page. The header's Back and Android Back both call `goBack`, which answers `false` at
+the root so the sheet closes instead. A page whose definition disappears while it is open, such as
+a subagent archived from elsewhere, is pruned from the path, and the sheet falls back to the page
+that opened it.
 
 ## Hover intent
 
@@ -189,7 +208,7 @@ its own.
   entering animation never ends at the off-screen measuring position; on a slow machine that
   write moved the open menu back off-screen.
 - **Sheets size to content.** `enableDynamicSizing`, not fixed snap points. A pushed page is
-  rarely the height of the page before it.
+  rarely the height of the page before it. A fill page is the one exception.
 - **The sheet's content is teleported out of the menu's subtree**, so `MenuSheetSurface` rebuilds
   both menu contexts through the sheet's `contextBridge`. Providing them around the modal puts
   them on the wrong side of the portal and every item inside throws. Gotcha 7 in

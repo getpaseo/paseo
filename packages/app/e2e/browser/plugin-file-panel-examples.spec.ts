@@ -105,6 +105,17 @@ async function selectFileView(page: Page, view: "Preview" | "Source") {
   await expect(option).toHaveAttribute("aria-selected", "true");
 }
 
+async function rememberMarkdownViewAcrossReload(page: Page, view: "Preview" | "Source") {
+  const button = page.getByRole("button", { name: `Rich Markdown ${view}`, exact: true });
+  await button.click();
+  await page.reload();
+  if (view === "Source") {
+    await expectMarkdownEditor(page, "Edited by Rich Markdown");
+  } else {
+    await expect(page.getByRole("heading", { name: "Edited by Rich Markdown" })).toBeVisible();
+  }
+}
+
 /** The browser's PDF viewer in the mounted frame; a remounted pane leaves old frames detached. */
 async function pdfViewer(page: Page): Promise<Frame> {
   const viewerUrl = /^chrome-extension:\/\/[^/]+\/index\.html$/;
@@ -219,6 +230,9 @@ test("directory examples mount the PDF frame and write Markdown through the file
     await captureWideAndCompact(page, testInfo, "markdown-example-rich-markdown", async () => {
       await expectMarkdownEditor(page, "Edited by Rich Markdown");
     });
+
+    await rememberMarkdownViewAcrossReload(page, "Preview");
+    await rememberMarkdownViewAcrossReload(page, "Source");
 
     // "Open with…" switches to Paseo's Markdown panel; its Source view is the editor, with the
     // cursor and vim mode in the panel's toolbar.

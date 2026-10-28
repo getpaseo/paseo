@@ -68,6 +68,7 @@ export const ru: TranslationResources = {
       daemonClientUnavailable: "Daemon клиента недоступен",
       daemonClientDisconnected: "Daemon клиента отключен",
       noFileFound: "Файл для {{token}} не найден",
+      folderOutsideWorkspace: "{{path}} находится вне этого рабочего пространства",
       unexpectedDictationError: "При обработке диктовки произошла непредвиденная ошибка.",
     },
     connectionStatus: {
@@ -134,6 +135,8 @@ export const ru: TranslationResources = {
       sendAndInterrupt: "Отправить и прервать",
       sendAndSteer: "Отправить и направить",
       sendMessage: "Отправить сообщение",
+      longPressToQueue: "Удерживайте, чтобы поставить в очередь",
+      longPressToSendNow: "Удерживайте, чтобы отправить сейчас",
       queue: "Очередь",
       send: "Отправить",
     },
@@ -1186,6 +1189,7 @@ export const ru: TranslationResources = {
       sort: {
         label: "Сортировка",
         created: "Дата создания",
+        manual: "Вручную",
         lastPrompt: "Последний запрос",
         updateHost: "Обновите хосты для сортировки рабочих пространств",
       },
@@ -1939,6 +1943,12 @@ export const ru: TranslationResources = {
     backdrop: "Фон меню",
   },
   subagents: {
+    parent: {
+      backToParent: "Назад к родителю",
+      backTo: "Назад к {{label}}",
+      parentAgent: "Родительский агент",
+      openParent: "Открыть родителя",
+    },
     title: "Субагенты",
     pillLabelOne: "1 субагент",
     pillLabelMany: "Субагентов: {{count}}",
@@ -2040,7 +2050,14 @@ export const ru: TranslationResources = {
     input: "Входные данные",
     output: "Выходные данные",
   },
+  turnSummary: {
+    details: "Показать подробности хода",
+    sentBy: "Отправлено агентом {{name}}",
+    showMore: "Показать больше",
+    showLess: "Свернуть",
+  },
   toolCallGroup: {
+    thought: "Обдумал",
     editedFiles: {
       one: "изменён {{count}} файл",
       other: "изменены файлы ({{count}})",
@@ -2073,6 +2090,18 @@ export const ru: TranslationResources = {
   },
   sidebarCallout: {
     dismiss: "Закрыть",
+  },
+  daemonOutdated: {
+    title: "Демон устарел",
+    versions: "На {{host}} работает демон {{daemonVersion}}. Версия приложения: {{appVersion}}.",
+    terminalsStayOpen: "Обновление перезапустит демон. Терминалы останутся открытыми.",
+    terminalsClose: "Обновление перезапустит демон и закроет открытые терминалы.",
+    desktopUpdateTerminals:
+      "Обновление Paseo Desktop оставляет терминалы открытыми в macOS и Linux и закрывает их в Windows.",
+    desktopManaged: "Этим демоном управляет Paseo Desktop. Обновите Paseo на том компьютере.",
+    selfUpdateUnsupported: "Этот демон не может обновиться сам. Обновите Paseo на том компьютере.",
+    update: "Обновить",
+    updateFailedTitle: "Не удалось обновить демон",
   },
   contextWindow: {
     noData: "Нет данных о контексте",
@@ -2241,6 +2270,7 @@ export const ru: TranslationResources = {
       connections: "Подключения",
       agents: "Агенты",
       metadata: "Метаданные",
+      voice: "Голос",
       workspaces: "Рабочие пространства",
       providers: "Провайдеры",
       usage: "Использование",
@@ -2263,6 +2293,70 @@ export const ru: TranslationResources = {
         "Используется только эта модель. Если она не сработает, Paseo не будет пробовать другую модель",
       docs: "Документация",
       saveError: "Не удалось обновить настройки генерации метаданных",
+    },
+    voice: {
+      offline: "Подключитесь к этому хосту, чтобы настроить голос.",
+      updateHost: "Обновите хост, чтобы настроить голос.",
+      saveError: "Не удалось обновить голосовые настройки",
+      provider: "Провайдер",
+      providers: {
+        local: "Локально",
+        openai: "OpenAI",
+      },
+      voice: "Голос",
+      save: "Сохранить",
+      retry: "Повторить",
+      cancel: "Отмена",
+      model: "Модель",
+      language: "Язык",
+      languagePlaceholder: "Автоопределение",
+      setBy: "Задано через {{name}}",
+      unknownProvider: "Обновите приложение, чтобы настроить {{provider}}",
+      sites: {
+        dictationStt: "Распознавание речи",
+        voiceModeStt: "Прослушивание",
+        voiceModeTts: "Озвучивание",
+      },
+      dictation: {
+        title: "Диктовка",
+        enabled: "Диктовка",
+        enabledHint: "Говорите в поле сообщения вместо набора текста",
+      },
+      voiceMode: {
+        title: "Голосовой режим",
+        info: "Голосовой режим расшифровывает вашу речь и зачитывает ответы агента вслух.",
+        enabled: "Голосовой режим",
+        enabledHint: "Общайтесь с агентами без рук",
+      },
+      openai: {
+        apiKey: "API-ключ",
+        apiKeyHint: "Хранится на хосте и больше не показывается.",
+        keyPlaceholder: "sk-...",
+        savedKeyPlaceholder: "Сохранён",
+        missingKey: "Нет API-ключа",
+        baseUrl: "Базовый URL",
+        baseUrlHint:
+          "Для серверов, совместимых с OpenAI. Оставьте пустым, чтобы использовать OpenAI.",
+      },
+      models: {
+        loading: "Загрузка моделей...",
+        loadError: "Не удалось загрузить локальные модели",
+        none: "Нет доступных моделей",
+        downloaded: "Скачана",
+        inUse: "Используется",
+        recommended: "Рекомендуется",
+        download: "Скачать",
+        downloadAction: "Скачать {{label}}",
+        downloading: "Скачивание...",
+        downloadingPercent: "Скачивание {{percent}}%",
+        extracting: "Распаковка...",
+        delete: "Удалить",
+        deleteAction: "Удалить {{label}}",
+        deleteTitle: "Удалить {{label}}?",
+        deleteMessage: "Освободится {{size}}. Позже её можно скачать снова.",
+        languages: "Языки {{label}}",
+        moreLanguages: "{{languages}} и ещё {{count}}",
+      },
     },
     general: {
       title: "Основные",
@@ -2289,10 +2383,25 @@ export const ru: TranslationResources = {
           queue:
             "Когда агент работает, Enter ставит сообщение в очередь, а Command/Ctrl+Enter отправляет его.",
         },
+        commandEnterDescriptions: {
+          interrupt:
+            "Когда агент работает, {{modifier}}+Enter прерывает его работу, а Enter вставляет новую строку.",
+          steer:
+            "Когда агент работает, {{modifier}}+Enter дополняет текущий ответ новым указанием, а Enter вставляет новую строку.",
+          queue:
+            "Когда агент работает, {{modifier}}+Enter ставит сообщение в очередь, а Enter вставляет новую строку.",
+        },
         options: {
           interrupt: "Прерывать",
           steer: "Направить",
           queue: "Поставить в очередь",
+        },
+      },
+      sendShortcut: {
+        label: "Сочетание клавиш для отправки",
+        options: {
+          enter: "Enter",
+          "mod-enter": "{{modifier}}+Enter",
         },
       },
       serviceUrls: {
@@ -2312,12 +2421,13 @@ export const ru: TranslationResources = {
         description:
           "По умолчанию полностью разворачивать блоки размышлений и хода рассуждений агента",
       },
-      toolCallDetail: {
-        label: "Отображение вызовов инструментов",
-        description: "Как вызовы инструментов отображаются на временной шкале",
+      chatDisplay: {
+        label: "Отображение чата",
+        description: "Какую часть работы агента показывает чат",
         options: {
-          overview: "Сводка",
-          detailed: "Все подробности",
+          full: "Полностью",
+          collapseToolCalls: "Сворачивать вызовы инструментов",
+          collapseTurns: "Сворачивать ходы",
         },
       },
       language: {
@@ -2694,6 +2804,11 @@ export const ru: TranslationResources = {
       },
       agents: {
         unavailable: "Подключитесь к этому хосту, чтобы управлять агентами",
+        idleRuntimeCleanup: {
+          title: "Освобождать неактивных агентов",
+          hint: "Освобождает память после часа бездействия.",
+          info: "Останавливает процесс агента, сохраняя разговор. Отправьте сообщение, чтобы продолжить.\n\nАктивная работа, ожидающие уведомления и проверки безопасности провайдера предотвращают очистку.",
+        },
       },
       workspaces: {
         unavailable: "Подключитесь к этому хосту, чтобы управлять рабочими пространствами",
@@ -2787,6 +2902,10 @@ export const ru: TranslationResources = {
           requestFailedTitle: "Ошибка",
           requestFailedMessage:
             "Не удалось отправить запрос на перезапуск. Paseo переподключается автоматически. Повторите попытку, когда хост появится в сети.",
+          closeTerminals: "Перезапустить и закрыть терминалы",
+          closeTerminalsHint: "Перезапускает демон и закрывает все терминалы на этом хосте.",
+          closeTerminalsConfirmMessage:
+            "Демон будет перезапущен, а все его терминалы закрыты вместе с запущенными в них программами. Приложение переподключится автоматически.",
           dialogFailedMessage: "Не удалось открыть диалог подтверждения перезапуска.",
         },
         update: {

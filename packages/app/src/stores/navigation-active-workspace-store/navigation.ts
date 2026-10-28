@@ -38,6 +38,8 @@ export interface NavigateToWorkspaceDeps extends PrepareWorkspaceTabDeps {
   deferOpenTab: (input: OpenWorkspaceTabInput) => null;
   rememberLastWorkspace: (selection: ActiveWorkspaceSelection) => void;
   navigateToRoute: (route: string) => void;
+  revealTab: (workspaceKey: string, tabId: string | null) => void;
+  revealWorkspace: () => void;
 }
 
 export interface NavigateToLastWorkspaceDeps extends NavigateToWorkspaceDeps {
@@ -93,8 +95,13 @@ export function navigateToWorkspace(
     workspaceId: input.workspaceId,
   });
   const shouldDeferOpen = !resolvedWorkspaceId || !deps.isWorkspaceLayoutHydrated();
+  const openTab: NavigateToWorkspaceDeps["openTab"] = (request) => {
+    if (shouldDeferOpen) return deps.deferOpenTab(request);
+    const tabId = deps.openTab(request);
+    deps.revealTab(request.workspaceKey, tabId);
+    return tabId;
+  };
   if (input.target) {
-    const openTab = shouldDeferOpen ? deps.deferOpenTab : deps.openTab;
     prepareWorkspaceTab({ ...input, target: input.target }, { openTab });
   } else {
     const workspaceAgents = resolvedWorkspaceId
@@ -104,11 +111,13 @@ export function navigateToWorkspace(
       : [];
     const attentionAgentId = pickAttentionAgent(workspaceAgents);
     if (attentionAgentId && resolvedWorkspaceId) {
-      deps.openTab({
+      openTab({
         workspaceKey: `${input.serverId}:${resolvedWorkspaceId}`,
         target: { kind: "agent", agentId: attentionAgentId },
         intent: "reveal",
       });
+    } else {
+      deps.revealWorkspace();
     }
   }
 

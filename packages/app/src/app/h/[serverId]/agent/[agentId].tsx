@@ -5,6 +5,7 @@ import { useFetchQuery } from "@/data/query";
 import { resolveAgentRoute, type AgentRouteLookup } from "@/navigation/agent-route-resolution";
 import { AgentRouteResolutionView } from "@/navigation/agent-route-resolution-view";
 import { useHasHydratedWorkspaces } from "@/stores/session-store-hooks";
+import { useDirectoryDemand } from "@/hooks/use-directory-demand";
 import { useWorkspaceLayoutStoreHydrated } from "@/stores/workspace-layout-store";
 import { useSessionStore } from "@/stores/session-store";
 import { getHostRuntimeStore, useHostRuntimeSnapshot, useHosts } from "@/runtime/host-runtime";
@@ -87,11 +88,7 @@ function HostAgentReadyRouteContent() {
   ]);
   const hasHydratedWorkspaces = useHasHydratedWorkspaces(serverId);
   const hasHydratedLayout = useWorkspaceLayoutStoreHydrated();
-  useEffect(() => {
-    if (!serverId) return;
-    // A compact app can open this route before its sidebar has demanded the directory.
-    return getHostRuntimeStore().acquireDirectoryDemand(serverId);
-  }, [serverId]);
+  useDirectoryDemand(serverId);
   const resolution = resolveAgentRoute({
     hasHydratedWorkspaces,
     hasHydratedLayout,

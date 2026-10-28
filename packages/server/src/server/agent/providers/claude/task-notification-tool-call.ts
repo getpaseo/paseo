@@ -12,6 +12,7 @@ const OptionalNonEmptyTrimmedStringSchema = z.preprocess(
 );
 
 const TaskNotificationEnvelopeSchema = z.object({
+  notificationId: z.string().optional(),
   messageId: z.string().nullable(),
   taskId: z.string().nullable(),
   toolUseId: z.string().nullable(),
@@ -35,7 +36,9 @@ const TaskNotificationUserContentSchema = z.union([
 
 const TaskNotificationHistoryRecordSchema = z
   .object({
+    notificationId: z.string().optional(),
     type: z.string().optional(),
+    operation: z.string().optional(),
     subtype: z.string().optional(),
     uuid: z.string().optional(),
     message_id: z.string().optional(),
@@ -52,6 +55,7 @@ const TaskNotificationHistoryRecordSchema = z
 const MapTaskNotificationUserContentToToolCallInputSchema = z.object({
   content: z.unknown(),
   messageId: z.string().optional().nullable(),
+  notificationId: z.string().optional(),
 });
 
 export type TaskNotificationEnvelope = z.infer<typeof TaskNotificationEnvelopeSchema>;
@@ -155,6 +159,7 @@ function parseTaskNotificationFromUserContent(
   }
 
   return TaskNotificationEnvelopeSchema.parse({
+    notificationId: parsedInput.data.notificationId,
     messageId: toNonEmptyString(parsedInput.data.messageId),
     taskId: readTaskNotificationTagValue({ text: rawText, tagName: "task-id" }),
     toolUseId:
@@ -186,6 +191,7 @@ function parseTaskNotificationFromSystemRecord(record: unknown): TaskNotificatio
   const rawText = toNonEmptyString(systemRecord.content);
 
   return TaskNotificationEnvelopeSchema.parse({
+    notificationId: systemRecord.notificationId,
     messageId: toNonEmptyString(systemRecord.uuid) ?? toNonEmptyString(systemRecord.message_id),
     taskId:
       toNonEmptyString(systemRecord.task_id) ??
@@ -212,25 +218,78 @@ function parseTaskNotificationFromSystemRecord(record: unknown): TaskNotificatio
   });
 }
 
+/** Normalize notification identity for one transcript traversal. Queue bookkeeping and delivery
+ * are separate records of the same occurrence; each source counts repeated identical bodies
+ * independently so the second event is not merged with the first. */
+export async function* assignTaskNotificationReplayIds<T>(
+  entries: AsyncIterable<T>,
+): AsyncGenerator<T> {
+  const occurrences = new Map<string, Map<string, number>>();
+  for await (const entry of entries) {
+    const record = TaskNotificationHistoryRecordSchema.safeParse(entry);
+    if (!record.success) {
+      yield entry;
+      continue;
+    }
+    const data = record.data;
+    const envelope =
+      data.type === "user"
+        ? parseTaskNotificationFromUserContent({ content: data.message?.content })
+        : parseTaskNotificationFromSystemRecord(data);
+    if (!envelope?.taskId || !data.type) {
+      yield entry;
+      continue;
+    }
+    const signature = taskNotificationReplaySignature(envelope);
+    const source = data.type === "queue-operation" ? `queue-${data.operation}` : data.type;
+    const counts = occurrences.get(signature) ?? new Map<string, number>();
+    const occurrence = (counts.get(source) ?? 0) + 1;
+    counts.set(source, occurrence);
+    occurrences.set(signature, counts);
+    yield { ...entry, notificationId: `task_notification_${signature}_${occurrence}` };
+  }
+}
+
+function taskNotificationReplaySignature(envelope: TaskNotificationEnvelope): string {
+  // Known fields are canonical across XML user/queue records and structured system records.
+  // Keep the remaining body too: Monitor events share a summary but carry different <event>s.
+  const remainder = (envelope.rawText ?? "")
+    .replace(/<\/?task-notification>/gi, "")
+    .replace(
+      /<(task-id|tool-use-id|tool_use_id|status|summary|output-file|output_file)>[\s\S]*?<\/\1>/gi,
+      "",
+    )
+    .trim();
+  return createHash("sha1")
+    .update(
+      JSON.stringify([
+        envelope.taskId,
+        envelope.toolUseId,
+        envelope.status,
+        envelope.summary,
+        envelope.outputFile,
+        remainder,
+      ]),
+    )
+    .digest("hex");
+}
+
 function normalizeTaskNotificationCallIdSegment(segment: string): string | null {
   const normalized = segment.trim().replace(/[^a-zA-Z0-9._:-]+/g, "_");
   return normalized.length > 0 ? normalized : null;
 }
 
 function buildTaskNotificationCallId(envelope: TaskNotificationEnvelope): string {
+  if (envelope.notificationId) return envelope.notificationId;
   const messageSegment = envelope.messageId
     ? normalizeTaskNotificationCallIdSegment(envelope.messageId)
     : null;
-  if (messageSegment) {
-    return `task_notification_${messageSegment}`;
-  }
+  if (messageSegment) return `task_notification_${messageSegment}`;
 
   const taskSegment = envelope.taskId
     ? normalizeTaskNotificationCallIdSegment(envelope.taskId)
     : null;
-  if (taskSegment) {
-    return `task_notification_${taskSegment}`;
-  }
+  if (taskSegment) return `task_notification_${taskSegment}`;
 
   const seed =
     [envelope.status, envelope.summary, envelope.outputFile, envelope.rawText]

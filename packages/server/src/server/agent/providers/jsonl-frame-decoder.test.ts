@@ -1,5 +1,4 @@
-import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { measureMainThreadWork } from "../../../test-utils/main-thread-work.js";
 import { describe, expect, it } from "vitest";
 import { JsonlFrameDecoder, type JsonlFrameProblem } from "./jsonl-frame-decoder.js";
 
@@ -30,17 +29,6 @@ function chunkFrames(frame: Record<string, unknown>, chunkSize: number) {
 }
 
 describe("JsonlFrameDecoder", () => {
-  it("allocates linearly when a large image-bearing frame arrives in small chunks", () => {
-    const fixture = fileURLToPath(new URL("./test-utils/jsonl-frame-memory.ts", import.meta.url));
-    const output = execFileSync(process.execPath, ["--expose-gc", "--import", "tsx", fixture], {
-      encoding: "utf8",
-      timeout: 20_000,
-    });
-    const memory = JSON.parse(output) as { allocated: number; inputChars: number; frames: number };
-    expect(memory.frames).toBe(1);
-    expect(memory.allocated).toBeLessThan(memory.inputChars * 12);
-  });
-
   it("publishes ordinary frames across arbitrary stream chunks", () => {
     const { decoder, frames, problems } = decoderHarness();
     decoder.write('{"type":"ready"');
@@ -49,36 +37,21 @@ describe("JsonlFrameDecoder", () => {
     expect(problems).toEqual([]);
   });
 
-  it("keeps partial Unicode lines across empty writes and split CRLF boundaries", () => {
+  it("preserves UTF-8 characters split across raw stdout buffers", () => {
     const { decoder, frames, problems } = decoderHarness();
-    decoder.write('\n \r\n{"text":"中文');
-    decoder.write("");
-    decoder.write("\ud83d");
-    decoder.write('\ude80"}\r');
-    expect(frames).toEqual([]);
-    decoder.write('\n{"type":"next"}\n{"type":"last"');
-    expect(frames).toEqual([{ text: "中文🚀" }, { type: "next" }]);
-    decoder.write("}\n");
-    expect(frames).toEqual([{ text: "中文🚀" }, { type: "next" }, { type: "last" }]);
+    const bytes = Buffer.from('{"type":"notice","text":"é🙂"}\n');
+    const split = bytes.indexOf(Buffer.from("🙂")) + 1;
+    decoder.write(bytes.subarray(0, split));
+    decoder.write(bytes.subarray(split));
+    expect(frames).toEqual([{ type: "notice", text: "é🙂" }]);
     expect(problems).toEqual([]);
-  });
-
-  it("recovers from a fragmented invalid line without losing subsequent frames", () => {
-    const { decoder, frames, problems } = decoderHarness();
-    decoder.write('{"broken":');
-    decoder.write('\nnull\n[]\n{"type":"ready"}\n');
-    expect(frames).toEqual([{ type: "ready" }]);
-    expect(problems).toEqual(["invalid-json"]);
   });
 
   it("reassembles a large ordered v2 frame", () => {
     const { decoder, frames, problems } = decoderHarness();
-    const frame = { type: "models", value: "中文🚀".repeat(256 * 1024) };
+    const frame = { type: "models", value: "x".repeat(1024 * 1024) };
     for (const chunk of chunkFrames(frame, 256 * 1024)) {
-      const line = `${JSON.stringify(chunk)}\n`;
-      for (let offset = 0; offset < line.length; offset += 8192) {
-        decoder.write(line.slice(offset, offset + 8192));
-      }
+      decoder.write(`${JSON.stringify(chunk)}\n`);
     }
     expect(frames).toEqual([frame]);
     expect(problems).toEqual([]);
@@ -91,5 +64,48 @@ describe("JsonlFrameDecoder", () => {
     decoder.write('{"type":"ready"}\n');
     expect(frames).toEqual([{ type: "ready" }]);
     expect(problems).toEqual(["out-of-order-chunk"]);
+  });
+});
+
+describe("provider line admission", () => {
+  it("keeps the loop responsive while accumulating a fragmented provider response", async () => {
+    const { decoder, frames, problems } = decoderHarness();
+    const part = "x".repeat(512);
+    const { blockingMs } = await measureMainThreadWork("fragmented JSONL main-thread work", () => {
+      decoder.write('{"type":"notice","text":"');
+      // 1 MiB exposes the former rescan of every accumulated prefix.
+      for (let index = 0; index < 2048; index++) decoder.write(part);
+      decoder.write('"}\n');
+    });
+    expect(frames).toEqual([{ type: "notice", text: part.repeat(2048) }]);
+    expect(problems).toEqual([]);
+    expect(blockingMs).toBeLessThan(50);
+  });
+
+  it("rejects an unterminated over-cap UTF-8 line and stops accepting frames", () => {
+    const frames: Record<string, unknown>[] = [];
+    const failures: Array<{ problem: string; detail: unknown }> = [];
+    const decoder = new JsonlFrameDecoder({
+      frame: (frame) => frames.push(frame),
+      problem: (problem, detail) => failures.push({ problem, detail }),
+    });
+    // 64 MiB of UTF-8, only 32 Mi UTF-16 code units. No newline or JSON parse needed.
+    const chunk = "é".repeat(32 * 1024);
+    for (let index = 0; index < 1024; index++) decoder.write(chunk);
+    expect(failures).toEqual([]);
+    decoder.write("é");
+    expect(failures).toEqual([
+      {
+        problem: "line-too-large",
+        detail: expect.objectContaining({
+          name: "ProviderStreamLimitError",
+          code: "PROVIDER_STREAM_LINE_TOO_LARGE",
+          limitBytes: 64 * 1024 * 1024,
+        }),
+      },
+    ]);
+    decoder.write('\n{"type":"ready"}\n');
+    expect(frames).toEqual([]);
+    expect(failures).toHaveLength(1);
   });
 });

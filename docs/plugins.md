@@ -99,6 +99,10 @@ Built-in plugins ship from `plugins/<id>/`, with `paseo-plugin.json`, `index.ser
 `packages/server/src/server/plugins/builtin/index.ts`; the workspace, build copy, and CI
 checks cover that registry. Unlisted directories do not load.
 
+The `worktree-include` built-in copies gitignored files selected by
+[`.worktreeinclude`](../public-docs/worktrees.md#copy-local-files-with-worktreeinclude)
+before setup and agents, through `worktree.create.after`.
+
 Desktop packaging ships the entire built-in plugin directory as an external resource,
 including declarations. The external esbuild compiler cannot read Electron's `app.asar`
 filesystem, and packaging dependencies excludes `.d.ts` files needed for import validation.
@@ -333,11 +337,10 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-The contribution function must return cleanup. Server cleanup may be async; Paseo waits for it when
-the plugin is reloaded, disabled, removed, disconnected, or shut down. Cleanup is for resources
-created by plugin code. Paseo removes registered contributions, unmounts surfaces, clears query
-state, rejects pending RPCs, closes the plugin's daemon session, and stops the subprocess. Cleanup
-errors are logged and do not interrupt host teardown.
+The contribution function must return cleanup for resources created by plugin code. Server cleanup
+may be async; Paseo waits for it when stopping the server plugin. Cleanup errors are logged and do
+not interrupt host teardown. Client installation retention and disposal follow the public
+[hosts and lifecycle contract](../public-docs/plugins/reference.md#hosts-and-lifecycle).
 
 Paseo owns the route, screen header, icon validation, close action, theme DTO, layout facts,
 and render error boundary. The contributed component owns the complete body below the header.
@@ -381,6 +384,15 @@ normal clients, never resumes another session, and is cleaned immediately on exi
 grace. During daemon startup, plugin sessions may connect while application WebSockets remain
 paused; the daemon accepts clients only after configured plugins have settled and the initial
 catalog is complete.
+
+The app retains client bundles per host in its file cache (IndexedDB on web), keyed by plugin ID
+and the daemon's SHA-256. A cold client verifies stored contents before advertising their hashes;
+missing or corrupt files request full bundles. Only the latest catalog's bundles remain. Hashing
+uses Expo's native async digest on mobile, avoiding a JavaScript hash loop on Hermes; reading and
+passing the bundle string still costs memory and time once per client lifetime.
+Persistence runs after catalog reconstruction without delaying installation. One write runs at a
+time; while storage is busy, only the newest pending catalog is kept. A failed write leaves the
+in-memory bundles usable, and a later catalog retries persistence.
 
 When the same plugin contribution exists on multiple hosts, Paseo shows it once in the sidebar and
 adds a host picker to the screen header. The selected host supplies the bundle, RPC transport, and
@@ -428,14 +440,22 @@ The [public reference](../public-docs/plugins/reference.md#icons) owns the autho
 
 ## Lifecycle hooks
 
-Server entries register lifecycle observers with `server.on()` and request transforms with
-`server.before()`. The [public reference](../public-docs/plugins/reference.md#lifecycle-hooks)
-owns callback shapes, ordering, and failure behavior. `plugin-examples/lifecycle-logger` registers all
-eleven hooks; `plugin-examples/lifecycle-actions` demonstrates common automation callbacks.
+Server entries register async handlers with `server.addHook(name, handler)`, returning a cleanup
+function. Names follow `subject.operation.position`, ending in `before` or `after`. Waiting is a per-hook
+registry property, independent of position. The [hooks reference](../public-docs/plugins/hooks.md)
+owns payloads, ordering, failure behavior, and examples. `agent.create.before` edits saved
+configuration; `agent.open.before` contributes launch-only `env`, `tools`, and `mcpServers` on
+every open. Executable tool definitions stay in the plugin process; only metadata crosses the boundary.
+
+Worktree placement is resolved before Git source planning, so a hook can change the branch and base
+without undoing fetched refs. Restores use the recorded destination and bypass creation hooks.
+Workspace records decide ownership, including explicit non-ownership after recovery. Without a record,
+ownership checks prefer the marker-verified worktree root over the legacy
+path shape: a plugin can place a worktree several directories below the default worktrees root.
 
 Emit from the operation owner, not a client subscription. Provider history replay must not trigger
-live hooks. Observers must not be awaited inside agent mutations: a callback can send a prompt or
-answer a permission through its own daemon session. Awaiting it there deadlocks that command.
+live hooks. Notifications must not be awaited inside agent mutations: a handler can send a prompt
+or answer a permission through its own daemon session. Awaiting it there deadlocks that command.
 
 ## Contribute a provider
 
@@ -497,6 +517,11 @@ It contains the provider defaults and per-agent overrides merged by the daemon.
 Validate and apply it inside the provider; core does not know your option shape.
 See [provider options](custom-providers.md#provider-options) for configuration and
 merge semantics.
+
+Providers add an optional veto to daemon baseline cleanup through the per-session
+[runtime safety query](../public-docs/plugins/providers.md#permit-idle-runtime-cleanup).
+The daemon calls the same `AgentSession.canStopRuntime()` interface for built-ins and plugins;
+the plugin bridge transports that query through the existing provider request/event protocol.
 
 Agent refresh closes the current provider session and opens it again with current configuration and
 persistence. Re-read credentials and provider-owned configuration on `session.open`; consume the
@@ -570,7 +595,7 @@ and resolves conflicts. The host has no bar and no notion of a panel's views: th
 panels own their Preview and Source views, toolbar and editor buffer, and the tab only shows the
 dot a panel sets through `tab.setModified`. Source is the floor for text files no other built-in
 claims, never a candidate beside one. Built-in panels (Markdown, HTML, Image, and Source, Paseo's
-editor) take the same handle as plugin panels, so a fix to reading, watching, or writing lands in one place:
+editor) take exactly `PluginFilePanelProps`, including params and persisted tab state, so a fix to reading, watching, or writing lands in one place:
 `packages/app/src/file-panels/file/`. Do not add a host-side read or loading gate for one panel;
 make that panel faster instead. Source highlights a large file on native in idle-time slices,
 the lines around the opening line first.
@@ -601,7 +626,10 @@ Request observation with `client.paseo.agents.list({ subscribe: {} })` and consu
 demand. Provider and project `subscribe()` calls establish their own demand. On capable daemons, each
 list-and-subscribe call has its own server ID, even for the same query. Older daemons retain
 [shared delivery behavior](protocol-compatibility.md#owned-observations). Handle snapshots
-also run after reconnect; replace your view before applying its subsequent updates. The installation
+also run after reconnect; replace your view before applying its subsequent updates. An installation
+stays loaded during a dropped connection while the app retains its `DaemonClient` object. An
+unchanged installation does not rerun setup on reconnect, so refresh state from those snapshots
+rather than from setup. Switching connections replaces the client object and reinstalls plugins. The installation
 owns every observation created through its API and releases them on unload, including setup failure.
 Mounted surfaces and command invocations have shorter API lifetimes.
 

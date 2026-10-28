@@ -13,8 +13,15 @@ export type {
   PluginSettingsState,
 } from "./contracts.js";
 export type {
+  PluginHooks,
+  PluginHookEvents,
+  PluginHookRequests,
+  PluginHookPayload,
+  PluginHookResult,
   PluginHookContext,
   PluginHookWorkspace,
+  PluginHookWorktree,
+  PluginWorktreeCreateRequest,
   PluginHookAgent,
   PluginSessionOpenRequest,
   PluginTurnOutcome,
@@ -24,3 +31,6 @@ export type {
 } from "./lifecycle.js";
 
 export { spawnProcess, execCommand, terminateProcess } from "./process.js";
+
+export { defineAgentTool } from "./agent-tools.js";
+export type { AgentToolDefinition, AgentToolResult, AgentToolContext } from "./agent-tools.js";
