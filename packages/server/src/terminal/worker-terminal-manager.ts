@@ -114,6 +114,8 @@ export interface TerminalCreateEnvironment {
 
 interface WorkerTerminalManagerOptions {
   worker: TerminalWorkerConnection;
+  /** Reconnects a surviving worker; null means it is confirmed gone or the owner stopped. */
+  reconnect?: () => Promise<TerminalWorkerConnection | null>;
   requestTimeoutMs?: number;
   getTerminalActivityUrl?: () => string | null;
   resolveCreateEnvironment?: () => TerminalCreateEnvironment;
@@ -164,7 +166,9 @@ function cloneTerminalInfo(info: RequiredWorkerTerminalInfo): RequiredWorkerTerm
 export function createWorkerTerminalManager(
   managerOptions: WorkerTerminalManagerOptions,
 ): DaemonTerminalManager {
-  const worker = managerOptions.worker;
+  let worker = managerOptions.worker;
+  let detached = false;
+  let reconnecting: Promise<void> | null = null;
   const requestTimeoutMs = managerOptions.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
   const resolveCreateEnvironment =
     managerOptions.resolveCreateEnvironment ?? resolveDaemonTerminalCreateEnvironment;
@@ -605,30 +609,71 @@ export function createWorkerTerminalManager(
     }
   }
 
-  worker.on("message", (message: TerminalWorkerToParentMessage) => {
-    if (isResponse(message)) {
-      const pending = pendingRequests.get(message.requestId);
-      if (!pending) {
+  function attachWorker(): void {
+    worker.on("message", (message: TerminalWorkerToParentMessage) => {
+      if (isResponse(message)) {
+        const pending = pendingRequests.get(message.requestId);
+        if (!pending) {
+          return;
+        }
+        clearTimeout(pending.timeout);
+        pendingRequests.delete(message.requestId);
+        if (message.ok) {
+          pending.resolve(message.result);
+        } else {
+          pending.reject(new Error(message.error));
+        }
         return;
       }
-      clearTimeout(pending.timeout);
-      pendingRequests.delete(message.requestId);
-      if (message.ok) {
-        pending.resolve(message.result);
-      } else {
-        pending.reject(new Error(message.error));
-      }
-      return;
-    }
-    handleWorkerEvent(message);
-  });
+      handleWorkerEvent(message);
+    });
 
-  worker.on("close", () => {
-    workerDisconnected = true;
-    rejectPendingRequests(new Error("Terminal worker connection closed"));
-  });
+    worker.on("close", () => {
+      workerDisconnected = true;
+      rejectPendingRequests(new Error("Terminal worker connection closed"));
+      const reconnect = managerOptions.reconnect;
+      if (!detached && reconnect) {
+        reconnecting = (async () => {
+          const connection = await reconnect();
+          if (!connection) {
+            for (const terminalId of Array.from(recordsById.keys())) {
+              handleTerminalExitEvent({
+                type: "terminalExit",
+                terminalId,
+                info: { exitCode: null, signal: null, lastOutputLines: [] },
+              });
+            }
+            return;
+          }
+          if (detached) {
+            connection.disconnect();
+            return;
+          }
+          worker = connection;
+          workerDisconnected = false;
+          attachWorker();
+          await adoptTerminals();
+          // Output emitted without a controller is retained in the worker's screen. Existing
+          // streams must fetch that screen before applying further live output.
+          for (const record of recordsById.values()) {
+            handleTerminalMessageEvent({
+              type: "terminalMessage",
+              terminalId: record.info.id,
+              message: { type: "snapshotReady" },
+              replayPreamble: record.replayPreamble,
+            });
+          }
+        })().finally(() => {
+          reconnecting = null;
+        });
+        void reconnecting.catch(() => {});
+      }
+    });
+  }
+  attachWorker();
 
   function sendRequest(input: TerminalWorkerRequestInput): Promise<unknown> {
+    if (reconnecting && workerDisconnected) return reconnecting.then(() => sendRequest(input));
     if (workerDisconnected || !worker.connected) {
       return Promise.reject(new Error("Terminal worker is not running"));
     }
@@ -684,7 +729,9 @@ export function createWorkerTerminalManager(
   }
 
   function closeTerminals(): Promise<void> {
+    detached = true;
     closePromise ??= (async () => {
+      await reconnecting;
       if (managerOptions.closeTerminals) {
         await disconnectWorker();
         clearRecords();
@@ -697,6 +744,37 @@ export function createWorkerTerminalManager(
       clearRecords();
     })();
     return closePromise;
+  }
+
+  async function adoptTerminals(): Promise<number> {
+    const listed = (await sendRequest({ type: "listTerminals" })) as TerminalWorkerListResult;
+    const cwds = new Set<string>();
+    const liveIds = new Set(listed.map((item) => item.terminal.id));
+    for (const terminalId of Array.from(recordsById.keys())) {
+      if (!liveIds.has(terminalId))
+        handleTerminalExitEvent({
+          type: "terminalExit",
+          terminalId,
+          info: { exitCode: null, signal: null, lastOutputLines: [] },
+        });
+    }
+    for (const item of listed) {
+      const info = asRequiredWorkerTerminalInfo(item.terminal);
+      registerRecord({ info, state: item.state });
+      const record = recordsById.get(info.id);
+      if (record) {
+        record.replayPreamble = item.replayPreamble;
+      }
+      // The agent hooks inside each shell keep the token they were started with.
+      if (item.activityToken) {
+        terminalActivityTokenById.set(info.id, item.activityToken);
+      }
+      cwds.add(info.cwd);
+    }
+    for (const cwd of cwds) {
+      emitTerminalsChanged({ cwd, terminals: listTerminalItemsForCwd(cwd) });
+    }
+    return listed.length;
   }
 
   return {
@@ -877,6 +955,8 @@ export function createWorkerTerminalManager(
     closeTerminals,
 
     async detach(options?: { afterPendingRequests?: boolean }): Promise<void> {
+      detached = true;
+      await reconnecting;
       if (options?.afterPendingRequests) {
         await Promise.allSettled(Array.from(inFlight));
       }
@@ -884,27 +964,7 @@ export function createWorkerTerminalManager(
       clearRecords();
     },
 
-    async adoptTerminals(): Promise<number> {
-      const listed = (await sendRequest({ type: "listTerminals" })) as TerminalWorkerListResult;
-      const cwds = new Set<string>();
-      for (const item of listed) {
-        const info = asRequiredWorkerTerminalInfo(item.terminal);
-        registerRecord({ info, state: item.state });
-        const record = recordsById.get(info.id);
-        if (record) {
-          record.replayPreamble = item.replayPreamble;
-        }
-        // The agent hooks inside each shell keep the token they were started with.
-        if (item.activityToken) {
-          terminalActivityTokenById.set(info.id, item.activityToken);
-        }
-        cwds.add(info.cwd);
-      }
-      for (const cwd of cwds) {
-        emitTerminalsChanged({ cwd, terminals: listTerminalItemsForCwd(cwd) });
-      }
-      return listed.length;
-    },
+    adoptTerminals,
 
     subscribeTerminalsChanged(listener: TerminalsChangedListener): () => void {
       terminalsChangedListeners.add(listener);
@@ -1076,8 +1136,53 @@ export async function startWorkerTerminalManager(
     record: TerminalWorkerRecord,
     connection: TerminalWorkerConnection,
   ): Promise<TerminalWorkerPoolMember> => {
+    let alive = true;
+    let resolveExit!: () => void;
+    const exited = new Promise<void>((resolve) => {
+      resolveExit = resolve;
+    });
+    let recovery: Promise<TerminalWorkerConnection | null> | null = null;
+    const recoveryState = { stopped: false };
+    const reconnect = () => {
+      recovery ??= (async () => {
+        while (!recoveryState.stopped) {
+          const ownership = classifyTerminalWorkerProcess(
+            record,
+            await inspector.inspect(record.pid),
+          );
+          if (ownership.status === "gone" || ownership.status === "unrelated") {
+            await reapTerminalWorkers({
+              paseoHome: options.paseoHome,
+              recordPaths: [terminalWorkerRecordPath(options.paseoHome, record.pid)],
+              inspector,
+              log,
+              gracefulMs: 0,
+            }).catch((error) =>
+              logger.warn({ err: error }, "Dead terminal worker cleanup was not confirmed"),
+            );
+            alive = false;
+            resolveExit();
+            return null;
+          }
+          try {
+            return await connectTerminalWorker({
+              socketPath: record.socketPath,
+              secret: record.secret,
+              timeoutMs: 500,
+            });
+          } catch {
+            await delay(100);
+          }
+        }
+        return null;
+      })().finally(() => {
+        recovery = null;
+      });
+      return recovery;
+    };
     const manager = createWorkerTerminalManager({
       worker: connection,
+      reconnect,
       ...(options.requestTimeoutMs === undefined
         ? {}
         : { requestTimeoutMs: options.requestTimeoutMs }),
@@ -1090,7 +1195,18 @@ export async function startWorkerTerminalManager(
     if (count > 0) {
       logger.info({ pid: record.pid, terminals: count }, "Adopted terminals from a running worker");
     }
-    return { manager, workerPid: record.pid };
+    return {
+      manager,
+      workerPid: record.pid,
+      exited,
+      ready: async () => {
+        await recovery;
+        return alive && !recoveryState.stopped;
+      },
+      stopRecovery: () => {
+        recoveryState.stopped = true;
+      },
+    };
   };
 
   let current: TerminalWorkerPoolMember | null = null;

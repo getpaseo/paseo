@@ -42,6 +42,11 @@ export class NoTerminalWorkerAvailableError extends Error {
 export interface TerminalWorkerPoolMember {
   manager: DaemonTerminalManager;
   workerPid: number;
+  /** Resolves only after confirmed worker death and its scoped cleanup. */
+  exited: Promise<void>;
+  /** Waits for any reconnect; false once the member is retired or stopping. */
+  ready(): Promise<boolean>;
+  stopRecovery(): void;
 }
 
 export interface TerminalWorkerPoolOptions {
@@ -72,8 +77,8 @@ export function createTerminalWorkerPool(
   let detached = false;
   // One start at a time, so concurrent creates never launch two workers.
   let starting: Promise<TerminalWorkerPoolMember> | null = null;
-  // Registered while no worker takes new terminals; handed to the one that starts.
-  const pendingCwdEnv = new Map<string, Record<string, string>>();
+  // Registrations belong to the service and are replayed whenever a current worker starts.
+  const cwdEnv = new Map<string, Record<string, string>>();
 
   function members(): TerminalWorkerPoolMember[] {
     return [...(current ? [current] : []), ...draining];
@@ -110,6 +115,10 @@ export function createTerminalWorkerPool(
   }
 
   function forwardEvents(member: TerminalWorkerPoolMember): void {
+    void member.exited.then(() => {
+      if (current === member) current = null;
+      return draining.delete(member);
+    });
     member.manager.subscribeTerminalsChanged((event) => {
       for (const listener of Array.from(terminalsChangedListeners)) listener(event);
       releaseIfDrained(member);
@@ -125,8 +134,11 @@ export function createTerminalWorkerPool(
   for (const member of members()) forwardEvents(member);
   for (const member of Array.from(draining)) releaseIfDrained(member);
 
-  function currentManager(): Promise<DaemonTerminalManager> {
-    if (current) return Promise.resolve(current.manager);
+  async function currentManager(): Promise<DaemonTerminalManager> {
+    if (closePromise || detached)
+      throw new NoTerminalWorkerAvailableError("No terminal worker can take new terminals");
+    const candidate = current;
+    if (candidate && (await candidate.ready())) return candidate.manager;
     const startCurrent = options.startCurrent;
     if (!startCurrent || closePromise || detached) {
       return Promise.reject(
@@ -137,12 +149,12 @@ export function createTerminalWorkerPool(
       .then(async (member) => {
         if (closePromise || detached) {
           // The service closed or let go while the worker started: it takes no terminals.
+          member.stopRecovery();
           await member.manager.detach();
           throw new NoTerminalWorkerAvailableError("No terminal worker can take new terminals");
         }
         forwardEvents(member);
-        for (const [cwd, env] of pendingCwdEnv) member.manager.registerCwdEnv({ cwd, env });
-        pendingCwdEnv.clear();
+        for (const [cwd, env] of cwdEnv) member.manager.registerCwdEnv({ cwd, env });
         current = member;
         return member;
       })
@@ -154,6 +166,7 @@ export function createTerminalWorkerPool(
 
   function closeTerminals(): Promise<void> {
     closePromise ??= (async () => {
+      for (const member of members()) member.stopRecovery();
       await starting?.catch(() => {});
       await Promise.all(members().map((member) => member.manager.detach()));
       draining.clear();
@@ -184,8 +197,8 @@ export function createTerminalWorkerPool(
     },
 
     registerCwdEnv(registration) {
+      cwdEnv.set(registration.cwd, registration.env);
       if (current) current.manager.registerCwdEnv(registration);
-      else pendingCwdEnv.set(registration.cwd, registration.env);
     },
 
     validateTerminalActivityToken(terminalId, token) {
@@ -246,6 +259,7 @@ export function createTerminalWorkerPool(
 
     async detach() {
       detached = true;
+      for (const member of members()) member.stopRecovery();
       await starting?.catch(() => {});
       await Promise.all(members().map((member) => member.manager.detach()));
     },

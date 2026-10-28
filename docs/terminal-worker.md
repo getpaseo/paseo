@@ -11,6 +11,7 @@ supervisor (paseo.pid) ──► daemon worker ──► launcher ──► term
 
 - The daemon starts the worker through a launcher (`terminal-worker-process.ts --launch`). The launcher spawns the worker `detached`, waits for `ready` on fd 3, prints the pid and exits, so the worker is re-parented and leaves the daemon's process tree. The supervisor's forced kill uses `tree-kill`, which walks parent pids: a worker that stayed a child, even detached, would die with a hung daemon.
 - The worker talks to one daemon at a time over a local socket (named pipe on Windows). Losing the daemon means "no controller", not exit: PTYs keep running, events are dropped, and the headless terminal keeps the screen for the next daemon's `listTerminals`.
+- A socket disconnect triggers reconnection to the same worker and a screen replay. Only confirmed process death retires its sessions; the next terminal creation shares one replacement launch. Dead-worker cleanup stays scoped to that worker, so a healthy draining peer keeps running. Shutdown and detach suppress recovery.
 - The worker exits on its own when it has no controller and no terminals, on `shutdown`, on SIGTERM (killing its terminals), and when its record disappears (a deleted `$PASEO_HOME`: nobody can ever reach it again).
 - Its stderr goes to `$PASEO_HOME/terminal-worker.log`. No pipe to the daemon survives the daemon.
 
