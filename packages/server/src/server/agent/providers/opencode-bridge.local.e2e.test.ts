@@ -461,9 +461,19 @@ test.each([
         process.platform === "win32"
           ? `${windowsPackage}-${process.arch}@${cliPackage.slice(cliPackage.lastIndexOf("@") + 1)}`
           : cliPackage;
+      // npm abandons a stalled registry download only after its 5 minute default, past this
+      // test's budget, and the killed install keeps the fixture locked. Retry stalls sooner.
       await execCommand(
         "npm",
-        ["install", "--prefix", root, "--no-audit", "--no-fund", installPackage],
+        [
+          "install",
+          "--prefix",
+          root,
+          "--no-audit",
+          "--no-fund",
+          "--fetch-timeout=30000",
+          installPackage,
+        ],
         {
           cwd: root,
           timeout: 180_000,
