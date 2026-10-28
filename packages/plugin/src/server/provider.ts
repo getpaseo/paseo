@@ -317,6 +317,8 @@ export type ProviderSetting =
       id: string;
       label: string;
       description?: string;
+      icon?: string;
+      tooltip?: string;
       value: boolean;
     }
   | {
@@ -324,6 +326,8 @@ export type ProviderSetting =
       id: string;
       label: string;
       description?: string;
+      icon?: string;
+      tooltip?: string;
       value: string | null;
       options: ReadonlyArray<{ label: string; value: string }>;
     };
@@ -1010,6 +1014,8 @@ const settingSchema = z.discriminatedUnion("type", [
       id: idSchema,
       label: z.string(),
       description: z.string().optional(),
+      icon: z.string().optional(),
+      tooltip: z.string().optional(),
       value: z.boolean(),
     })
     .strip(),
@@ -1019,6 +1025,8 @@ const settingSchema = z.discriminatedUnion("type", [
       id: idSchema,
       label: z.string(),
       description: z.string().optional(),
+      icon: z.string().optional(),
+      tooltip: z.string().optional(),
       value: z.string().nullable(),
       options: z.array(z.object({ label: z.string(), value: z.string() }).strip()),
     })
