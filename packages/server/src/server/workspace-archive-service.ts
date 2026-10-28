@@ -243,14 +243,16 @@ async function resolveArchiveTarget(
       }),
     )
   ).filter((workspace): workspace is ActiveWorkspaceRef => workspace !== null);
-  const persistedMainRepoRoot = targetWorkspaces.find(
-    (workspace) => workspace.mainRepoRoot,
-  )?.mainRepoRoot;
+  const recordedId = await dependencies.findWorkspaceIdForCwd(backing.path);
+  const recorded = recordedId ? await dependencies.getWorkspace?.(recordedId) : null;
+  const record =
+    targetWorkspaces.find((workspace) => workspace.kind === "worktree") ??
+    (recorded && matchesBackingDirectory(recorded.worktreeRoot ?? recorded.cwd)
+      ? recorded
+      : null) ??
+    targetWorkspaces[0];
   return {
-    backing: {
-      ...backing,
-      mainRepoRoot: persistedMainRepoRoot ?? backing.mainRepoRoot,
-    },
+    backing: record ? await resolveWorkspaceBackingDirectory(record, dependencies) : backing,
     teardownTargets:
       targetWorkspaces.length > 0
         ? targetWorkspaces.map((workspace) => ({
@@ -288,6 +290,16 @@ async function resolveWorkspaceBackingDirectory(
   workspace: ActiveWorkspaceRef,
   dependencies: Pick<ArchiveDependencies, "paseoHome" | "paseoWorktreesBaseRoot">,
 ): Promise<BackingDirectory> {
+  if (workspace.isPaseoOwnedWorktree === false) {
+    return {
+      path: resolve(workspace.worktreeRoot ?? workspace.cwd),
+      isPaseoOwnedWorktree: false,
+      expectsPaseoOwnership: false,
+      registryProven: false,
+      mainRepoRoot: workspace.mainRepoRoot ?? null,
+      paseoWorktreesRoot: null,
+    };
+  }
   if (workspace.isPaseoOwnedWorktree && workspace.worktreeRoot && workspace.mainRepoRoot) {
     return {
       path: resolve(workspace.worktreeRoot),

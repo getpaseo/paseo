@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { createPaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { PluginHookHandlers } from "./index.js";
+import { validateBeforeResult, PluginHookHandlers } from "./index.js";
 
 const paseo = createPaseoApi(
   new DaemonClient({ url: "ws://127.0.0.1:1/ws", clientId: "lifecycle-unit" }),
@@ -238,4 +238,18 @@ test("a waiting after hook propagates failures and stops later handlers", async 
     ),
   ).rejects.toThrow("cannot initialize worktree");
   expect(received).toEqual(["/worktree"]);
+});
+
+test("checkout-branch hooks reject a branch-off baseRef", async () => {
+  const request = {
+    kind: "checkout-branch" as const,
+    repoRoot: "/repo",
+    sourceCheckout: "/repo",
+    branch: "feature",
+    slug: "feature",
+    path: "/work/feature",
+  };
+  await expect(
+    validateBeforeResult("worktree.create.before", request, { ...request, baseRef: "main" }),
+  ).rejects.toThrow(/baseRef/);
 });

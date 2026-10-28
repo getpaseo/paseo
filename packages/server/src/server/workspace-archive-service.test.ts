@@ -192,6 +192,54 @@ function assertArchiveResult(
 }
 
 describe("archiveByScope", () => {
+  test.each(["workspace", "worktree"] as const)(
+    "%s archive preserves a restored external worktree despite its marker",
+    async (kind) => {
+      const { tempDir, repoDir } = createGitRepo();
+      const paseoHome = path.join(tempDir, ".paseo");
+      const recordedPath = path.join(tempDir, "external");
+      execFileSync("git", ["worktree", "add", "-b", "external", recordedPath], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      execFileSync("git", ["worktree", "remove", recordedPath], { cwd: repoDir, stdio: "pipe" });
+      const restored = await createWorktree({
+        cwd: repoDir,
+        paseoHome,
+        worktreeSlug: "external",
+        worktreePath: recordedPath,
+        source: { kind: "restore", branchName: "external", baseRef: "main" },
+      });
+      expect(existsSync(await getPaseoWorktreeMetadataPath(restored.worktreePath))).toBe(true);
+      const workspaceId = "external-workspace";
+      const result = await archiveByScope(
+        createArchiveDeps({
+          paseoHome,
+          activeWorkspaces: [
+            {
+              workspaceId,
+              cwd: restored.worktreePath,
+              kind: "worktree",
+              worktreeRoot: restored.worktreePath,
+              mainRepoRoot: repoDir,
+              isPaseoOwnedWorktree: false,
+            },
+          ],
+        }),
+        {
+          scope:
+            kind === "workspace"
+              ? { kind, workspaceId }
+              : { kind, targetPath: restored.worktreePath },
+          requestId: "archive-external",
+        },
+      );
+      expect(result.removedDirectory).toBe(false);
+      expect(existsSync(restored.worktreePath)).toBe(true);
+      expect(result.archivedWorkspaceIds).toEqual([workspaceId]);
+    },
+  );
+
   test("workspace scope archives the record and removes the directory on last reference", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");

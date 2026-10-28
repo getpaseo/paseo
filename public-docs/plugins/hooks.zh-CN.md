@@ -161,19 +161,21 @@ server.addHook("worktree.create.before", async ({ request }) => ({
 
 源检出目录为 `/home/me/src/paseo`、分支为 `feature/x` 时，目标为 `/home/me/src/paseo.feature-x`。完整插件见 [worktree-placement 示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/worktree-placement)。
 
-| 请求字段                                  | 含义                                                                                                                             |
-| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `kind`                                    | `branch-off`、`checkout-branch`、`checkout-change-request` 或 `checkout-github-pr`                                               |
-| `branch`                                  | 请求的本地分支名称                                                                                                               |
-| `baseRef`                                 | branch-off 的起始引用；变更请求的比较基准；检出现有分支时为 `null`。为分支检出返回引用时，会从该引用按 branch-off 规则创建分支。 |
-| `slug`                                    | 规范化的 worktree 名称                                                                                                           |
-| `path`                                    | 绝对目标路径，初始值为已处理现有路径后缀的默认位置                                                                               |
-| `repoRoot`                                | 只读，主仓库根目录                                                                                                               |
-| `sourceCheckout`                          | 只读，源检出根目录，也支持从另一个 worktree 发起创建                                                                             |
-| `forge`、`changeRequestNumber`、`headRef` | 变更请求检出标识；旧版 GitHub 检出用 `githubPrNumber` 代替 `forge` 和 `changeRequestNumber`                                      |
-| `headRepositoryOwner`、`headRepository`   | 可选的源仓库信息；`headRepository` 仅用于变更请求检出                                                                            |
-| `checkoutRefs`                            | 可选的获取源：`{ remoteName?: string, remoteRef: string }[]`                                                                     |
-| `pushRemoteUrl`、`trackOriginHead`        | 可选的推送目标和跟踪策略                                                                                                         |
+| 请求字段                                  | 含义                                                                                                                   |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `kind`                                    | `branch-off`、`checkout-branch`、`checkout-change-request` 或 `checkout-github-pr`                                     |
+| `branch`                                  | 请求的本地分支名称                                                                                                     |
+| `baseRef`                                 | branch-off 的起始引用；变更请求的比较基准；`checkout-branch` 不含此字段。要从引用创建分支，返回 `kind: "branch-off"`。 |
+| `slug`                                    | 规范化的 worktree 名称                                                                                                 |
+| `path`                                    | 绝对目标路径，初始值为已处理现有路径后缀的默认位置                                                                     |
+| `repoRoot`                                | 只读，主仓库根目录                                                                                                     |
+| `sourceCheckout`                          | 只读，源检出根目录，也支持从另一个 worktree 发起创建                                                                   |
+| `forge`、`changeRequestNumber`、`headRef` | 变更请求检出标识；旧版 GitHub 检出用 `githubPrNumber` 代替 `forge` 和 `changeRequestNumber`                            |
+| `headRepositoryOwner`、`headRepository`   | 可选的源仓库信息；`headRepository` 仅用于变更请求检出                                                                  |
+| `checkoutRefs`                            | 可选的获取源：`{ remoteName?: string, remoteRef: string }[]`                                                           |
+| `pushRemoteUrl`、`trackOriginHead`        | 可选的推送目标和跟踪策略                                                                                               |
+
+返回 `path` 后，`slug` 仅用于 branch-off 分支命名；CLI 使用路径的最后一级目录名查找 worktree。
 
 除 `repoRoot` 和 `sourceCheckout` 外，所有字段都可以修改。返回所选 `kind` 的全部必填字段。Paseo 在钩子之后解析 Git 源计划，因此钩子可以在获取引用之前修改分支和基准，而 Git 之后仍可能选择唯一的最终分支名称。
 

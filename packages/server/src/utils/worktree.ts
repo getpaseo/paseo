@@ -186,7 +186,7 @@ export interface WorktreeCheckoutRef {
 
 export type WorktreeSource =
   | { kind: "branch-off"; baseBranch: string; branchName: string }
-  | { kind: "checkout-branch"; branchName: string; baseRef?: string }
+  | { kind: "checkout-branch"; branchName: string }
   | { kind: "restore"; branchName: string; baseRef: string | null }
   | { kind: "restore-from-base"; baseRef: string; branchName: string }
   | {
@@ -1344,6 +1344,20 @@ async function readLocalBranchTip(cwd: string, branchName: string): Promise<stri
   }
 }
 
+/** Resolve the default placement once, before presenting it to creation hooks. */
+export async function resolveDefaultWorktreePath(
+  options: Pick<CreateWorktreeOptions, "cwd" | "paseoHome" | "worktreesRoot" | "worktreeSlug">,
+): Promise<string> {
+  const original = join(
+    await getPaseoWorktreesRoot(options.cwd, options.paseoHome, options.worktreesRoot),
+    options.worktreeSlug,
+  );
+  let candidate = original;
+  let suffix = 1;
+  while (await pathExists(candidate)) candidate = `${original}-${suffix++}`;
+  return candidate;
+}
+
 /**
  * Create a git worktree with proper naming conventions
  */
@@ -1370,25 +1384,15 @@ export const createWorktree = async ({
   try {
     let worktreePath =
       explicitWorktreePath ??
-      join(await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot), worktreeSlug);
+      (await resolveDefaultWorktreePath({ cwd, paseoHome, worktreesRoot, worktreeSlug }));
     await mkdir(dirname(worktreePath), { recursive: true });
 
-    // Also handle worktree path collision
-    let finalWorktreePath = worktreePath;
-    let pathSuffix = 1;
-    if (!explicitWorktreePath) {
-      while (await pathExists(finalWorktreePath)) {
-        finalWorktreePath = `${worktreePath}-${pathSuffix}`;
-        pathSuffix++;
-      }
-    }
-
     // Primitive owner for `git worktree add`; callers route through createWorktreeCore.
-    await runGitCommand(["worktree", "add", finalWorktreePath, ...sourcePlan.addArguments], {
+    await runGitCommand(["worktree", "add", worktreePath, ...sourcePlan.addArguments], {
       cwd,
       timeout: 120_000,
     });
-    worktreePath = await normalizePathForOwnership(finalWorktreePath);
+    worktreePath = await normalizePathForOwnership(worktreePath);
 
     if (sourcePlan.pushRemote) {
       await configureWorktreePushRemote({
@@ -1543,13 +1547,6 @@ async function resolveWorktreeSourcePlan({
     case "restore-from-base":
       return resolveRestoredWorktreeFromBasePlan(cwd, source);
     case "checkout-branch": {
-      if (source.baseRef) {
-        return resolveBranchOffWorktreeSourcePlan(
-          cwd,
-          { kind: "branch-off", branchName: source.branchName, baseBranch: source.baseRef },
-          desiredSlug,
-        );
-      }
       await validateGitBranchName(cwd, source.branchName);
       await ensureLocalBranch(cwd, source.branchName);
       const baseRef = await resolveCheckoutBranchBaseRef(cwd, source.branchName);

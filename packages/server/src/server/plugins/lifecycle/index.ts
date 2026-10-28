@@ -1,5 +1,4 @@
 import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
-import { validateWorktreePath } from "../../../utils/worktree-path.js";
 import {
   createLifecycleRegistration,
   pluginHookRegistry,
@@ -63,7 +62,6 @@ const worktreeRequestSchema = z.discriminatedUnion("kind", [
     .object({
       ...worktreeRequestFields,
       kind: z.literal("checkout-branch"),
-      baseRef: z.string().min(1).nullable(),
     })
     .strict(),
   z
@@ -249,7 +247,6 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
     if (previous.repoRoot !== next.repoRoot || previous.sourceCheckout !== next.sourceCheckout) {
       throw new Error("worktree.create.before hooks cannot change repoRoot or sourceCheckout");
     }
-    await validateWorktreePath({ candidate: next.path, repoPath: next.repoRoot });
   }
   return result;
 }

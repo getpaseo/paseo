@@ -449,7 +449,8 @@ every open. Executable tool definitions stay in the plugin process; only metadat
 
 Worktree placement is resolved before Git source planning, so a hook can change the branch and base
 without undoing fetched refs. Restores use the recorded destination and bypass creation hooks.
-Ownership checks must prefer the marker-verified or registry-recorded worktree root over the legacy
+Workspace records decide ownership, including explicit non-ownership after recovery. Without a record,
+ownership checks prefer the marker-verified worktree root over the legacy
 path shape: a plugin can place a worktree several directories below the default worktrees root.
 
 Emit from the operation owner, not a client subscription. Provider history replay must not trigger

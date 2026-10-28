@@ -1,14 +1,11 @@
-import { join } from "node:path";
-import { stat } from "node:fs/promises";
 import type { PluginWorktreeCreateRequest } from "@getpaseo/plugin/server";
 import type { PluginLifecycle } from "./plugins/lifecycle/index.js";
-import { validateWorktreePath } from "../utils/worktree-path.js";
 import { createNameId } from "mnemonic-id";
 
 import type { ForgeService } from "../services/forge-service.js";
 import {
   createWorktree,
-  getPaseoWorktreesRoot,
+  resolveDefaultWorktreePath,
   slugify,
   validateBranchSlug,
   type CreatedWorktree,
@@ -121,20 +118,12 @@ async function createWorktreeCoreWithPriority(
     }
   }
 
-  let defaultPath = join(
-    await getPaseoWorktreesRoot(repoRoot, input.paseoHome, input.worktreesRoot),
-    normalizedSlug,
-  );
-  const originalPath = defaultPath;
-  let suffix = 1;
-  while (
-    await stat(defaultPath).then(
-      () => true,
-      () => false,
-    )
-  ) {
-    defaultPath = `${originalPath}-${suffix++}`;
-  }
+  const defaultPath = await resolveDefaultWorktreePath({
+    cwd: repoRoot,
+    paseoHome: input.paseoHome,
+    worktreesRoot: input.worktreesRoot,
+    worktreeSlug: normalizedSlug,
+  });
   const { stdout: sourceRoot } = await runGitCommand(["rev-parse", "--show-toplevel"], {
     cwd: input.cwd,
   });
@@ -148,10 +137,6 @@ async function createWorktreeCoreWithPriority(
   const transformed = deps.lifecycle
     ? await deps.lifecycle.before("worktree.create.before", request)
     : request;
-  const worktreePath = await validateWorktreePath({
-    candidate: transformed.path,
-    repoPath: repoRoot,
-  });
   normalizedSlug = validateWorktreeSlug(transformed.slug);
   intent = creationIntentFromRequest(transformed, intent);
 
@@ -159,7 +144,7 @@ async function createWorktreeCoreWithPriority(
     worktree: await createWorktree({
       cwd: repoRoot,
       worktreeSlug: normalizedSlug,
-      worktreePath,
+      worktreePath: transformed.path,
       source: intent,
       paseoHome: input.paseoHome,
       worktreesRoot: input.worktreesRoot,
@@ -182,7 +167,7 @@ function describeCreationRequest(
       baseRef: intent.baseBranch,
     };
   if (intent.kind === "checkout-branch")
-    return { ...placement, kind: intent.kind, branch: intent.branchName, baseRef: null };
+    return { ...placement, kind: intent.kind, branch: intent.branchName };
   const { localBranchName, baseRefName, ...facts } = intent;
   return {
     ...placement,
@@ -203,7 +188,6 @@ function creationIntentFromRequest(
     return {
       kind: request.kind,
       branchName: request.branch,
-      ...(request.baseRef ? { baseRef: request.baseRef } : {}),
     };
   }
   const {

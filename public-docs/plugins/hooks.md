@@ -164,19 +164,21 @@ server.addHook("worktree.create.before", async ({ request }) => ({
 
 For source `/home/me/src/paseo` and branch `feature/x`, this creates `/home/me/src/paseo.feature-x`. See the complete [worktree-placement example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/worktree-placement).
 
-| Request field                             | Meaning                                                                                                                                                                                    |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `kind`                                    | `branch-off`, `checkout-branch`, `checkout-change-request`, or `checkout-github-pr`                                                                                                        |
-| `branch`                                  | Requested local branch name                                                                                                                                                                |
-| `baseRef`                                 | Starting ref for branch-off; comparison base for change requests; `null` for an existing branch checkout. Returning a ref for a branch checkout applies branch-off creation from that ref. |
-| `slug`                                    | Normalized worktree name                                                                                                                                                                   |
-| `path`                                    | Absolute destination; initially the default location with any existing-path suffix resolved                                                                                                |
-| `repoRoot`                                | Read-only main repository root                                                                                                                                                             |
-| `sourceCheckout`                          | Read-only source checkout root, including when creation starts from another worktree                                                                                                       |
-| `forge`, `changeRequestNumber`, `headRef` | Change-request checkout identity; GitHub legacy checkouts use `githubPrNumber` instead of `forge` and `changeRequestNumber`                                                                |
-| `headRepositoryOwner`, `headRepository`   | Optional source repository facts; `headRepository` is present only on change-request checkouts                                                                                             |
-| `checkoutRefs`                            | Optional fetch sources: `{ remoteName?: string, remoteRef: string }[]`                                                                                                                     |
-| `pushRemoteUrl`, `trackOriginHead`        | Optional push destination and tracking policy                                                                                                                                              |
+| Request field                             | Meaning                                                                                                                                           |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `kind`                                    | `branch-off`, `checkout-branch`, `checkout-change-request`, or `checkout-github-pr`                                                               |
+| `branch`                                  | Requested local branch name                                                                                                                       |
+| `baseRef`                                 | Starting ref for branch-off; comparison base for change requests; absent for `checkout-branch`. To branch off a ref, return `kind: "branch-off"`. |
+| `slug`                                    | Normalized worktree name                                                                                                                          |
+| `path`                                    | Absolute destination; initially the default location with any existing-path suffix resolved                                                       |
+| `repoRoot`                                | Read-only main repository root                                                                                                                    |
+| `sourceCheckout`                          | Read-only source checkout root, including when creation starts from another worktree                                                              |
+| `forge`, `changeRequestNumber`, `headRef` | Change-request checkout identity; GitHub legacy checkouts use `githubPrNumber` instead of `forge` and `changeRequestNumber`                       |
+| `headRepositoryOwner`, `headRepository`   | Optional source repository facts; `headRepository` is present only on change-request checkouts                                                    |
+| `checkoutRefs`                            | Optional fetch sources: `{ remoteName?: string, remoteRef: string }[]`                                                                            |
+| `pushRemoteUrl`, `trackOriginHead`        | Optional push destination and tracking policy                                                                                                     |
+
+Once `path` is returned, `slug` only feeds branch-off naming; the CLI looks up worktrees by the basename of their path.
 
 Every field except `repoRoot` and `sourceCheckout` is transformable. Return all required facts for the chosen `kind`. Paseo resolves the Git source plan after this hook, so handlers can change the branch and base before fetching refs, while Git can still choose a unique final branch name afterward.
 

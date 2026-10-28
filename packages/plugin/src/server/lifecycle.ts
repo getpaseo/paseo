@@ -36,7 +36,7 @@ export type PluginWorktreeCreateRequest = {
   path: string;
 } & (
   | { kind: "branch-off"; baseRef: string }
-  | { kind: "checkout-branch"; baseRef: string | null }
+  | { kind: "checkout-branch" }
   | {
       kind: "checkout-change-request";
       baseRef: string;

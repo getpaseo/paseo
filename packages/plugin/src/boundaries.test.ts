@@ -256,7 +256,12 @@ describe("lifecycle hook SDK types", () => {
       import type { PluginServerContext, PluginHooks, PluginHookPayload, PluginHookResult } from "@getpaseo/plugin/server";
       export default function contribute(server: PluginServerContext) {
         server.addHook("worktree.create.before", async ({ request }) => {
-          const base: string | null = request.baseRef;
+          if (request.kind === "checkout-branch") {
+            // @ts-expect-error Branch checkout has no branch-off base.
+            request.baseRef;
+          } else {
+            const base: string = request.baseRef;
+          }
           const branch: string = request.branch;
           // @ts-expect-error Repository identity is read-only.
           request.repoRoot = "/other";
