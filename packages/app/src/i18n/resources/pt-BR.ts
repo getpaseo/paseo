@@ -1947,7 +1947,6 @@ export const ptBR: TranslationResources = {
     parent: {
       backToParent: "Voltar ao pai",
       backTo: "Voltar para {{label}}",
-      parent: "Pai",
       parentAgent: "Agente pai",
       openParent: "Abrir pai",
     },

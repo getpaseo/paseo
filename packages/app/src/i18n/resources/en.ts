@@ -1939,7 +1939,6 @@ export const en = {
     parent: {
       backToParent: "Back to parent",
       backTo: "Back to {{label}}",
-      parent: "Parent",
       parentAgent: "Parent agent",
       openParent: "Open parent",
     },
