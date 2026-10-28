@@ -12,7 +12,7 @@ test("the configuration example saves Codex options and injects launch-only MCP 
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-config-example-"));
   const launches: AgentSessionConfig[] = [];
   const daemon = await createTestPaseoDaemon({
-    daemonVersion: "0.13.2",
+    daemonVersion: "0.14.0-beta.1",
     agentClients: {
       codex: createTestAgentClient("codex", {
         supportsMcpServers: true,
@@ -25,7 +25,7 @@ test("the configuration example saves Codex options and injects launch-only MCP 
   });
   const client = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,
-    appVersion: "0.13.2",
+    appVersion: "0.14.0-beta.1",
   });
   try {
     await client.connect();

@@ -21,6 +21,8 @@
 
 ### 改进
 
+- 新增采用 `subject.operation.position` 命名的 `server.addHook` 和在 setup 及 Agent 之前等待的 `worktree.create.after` 钩子，弃用原有的插件钩子注册方法并保留原有行为 ([#8081](https://github.com/getpaseo/paseo/pull/8081))
+
 - 符合条件的 Agent 运行时空闲一小时后释放，下次发送提示词时恢复已保存的会话 ([#7782](https://github.com/getpaseo/paseo/pull/7782))
 - 在子 Agent 窗格中新增返回父 Agent 的链接 ([#7784](https://github.com/getpaseo/paseo/pull/7784))
 - 问题卡片新增可点击链接和可选中的描述文本 ([#7419](https://github.com/getpaseo/paseo/pull/7419) by [@NoSync](https://github.com/NoSync))

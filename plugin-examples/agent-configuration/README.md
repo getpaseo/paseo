@@ -1,15 +1,15 @@
 # Agent configuration
 
-Sets saved Codex options through `server.before("agent.create", ...)`:
+Sets saved Codex options through `server.addHook("agent.create.before", async ...)`:
 
 - Sets `config.providerOptions.sandbox_mode` to `workspace-write`.
 - Sets `config.providerOptions.approval_policy` to `on-request`.
 - Preserves other configuration and provider options.
 
 Adds the `company` MCP server to Codex launches through
-`server.before("agent.session_open", ...)`. The server is never saved in the agent's configuration;
+`server.addHook("agent.open.before", async ...)`. The server is never saved in the agent's configuration;
 existing saved MCP servers are preserved. Existing agents receive the server through the
-[session reopen behavior](../../public-docs/plugins/reference.md#attach-tools-to-agents).
+[session reopen behavior](../../public-docs/plugins/hooks.md#attach-tools-to-agents).
 
 Replace `https://tools.example.com/mcp` in `index.server.ts` with your MCP server URL before using
 this example. A `company` name collision with a saved server or another
@@ -26,7 +26,7 @@ entries added by this plugin's earlier callbacks. The create callback receives c
 earlier plugins have transformed it; its explicit Codex options replace the named fields in the
 saved configuration of new agents and remain after this plugin is disabled.
 
-See [Inject MCP servers](../../public-docs/plugins/reference.md#inject-mcp-servers) for choosing
+See [Inject MCP servers](../../public-docs/plugins/hooks.md#inject-mcp-servers) for choosing
 between saved configuration and plugin-owned servers. [Lifecycle actions](../lifecycle-actions)
 demonstrates provider switching and environment injection. Its provider-switch callback clears
 provider options when changing Codex to Claude, so use these examples separately when trying the

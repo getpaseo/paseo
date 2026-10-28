@@ -963,7 +963,7 @@ export async function createPaseoDaemon(
       if (!hasActiveWorkspace) workspaceRuntimeStore.remove(cwd);
     }
     if (mutation.kind === "archive" && mutation.workspace) {
-      pluginRuntime.emit("workspace.archived", {
+      pluginRuntime.emit("workspace.archive.after", {
         workspace: describeHookWorkspace(mutation.workspace),
       });
     }
@@ -1212,6 +1212,7 @@ export async function createPaseoDaemon(
         worktreesRoot: config.worktreesRoot,
         createPaseoWorktree: async (workflowInput, workflowOptions) => {
           return createRegisteredPaseoWorktree(workflowInput, {
+            lifecycle: pluginRuntime,
             github,
             ...(workflowOptions?.resolveDefaultBranch
               ? {

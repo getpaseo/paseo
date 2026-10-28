@@ -52,6 +52,11 @@
       "types": "./dist/client/index.d.ts",
       "source": "./src/client/index.ts",
       "default": "./dist/client/index.js"
+    },
+    "./internal/lifecycle": {
+      "types": "./dist/server/lifecycle.d.ts",
+      "source": "./src/server/lifecycle.ts",
+      "default": "./dist/server/lifecycle.js"
     }
   },
   "publishConfig": {

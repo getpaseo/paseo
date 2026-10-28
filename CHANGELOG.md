@@ -10,6 +10,7 @@ Voice settings now let you configure speech providers and download local models 
 
 ### Added
 
+- Copy gitignored files selected by `.worktreeinclude` into new worktrees before setup and agents, using the built-in `worktree-include` plugin ([#8100](https://github.com/getpaseo/paseo/pull/8100))
 - Let plugins give tools to specific agents ([#7938](https://github.com/getpaseo/paseo/pull/7938))
 - Added collapse and expand controls for completed conversation turns ([#7785](https://github.com/getpaseo/paseo/pull/7785), [#7990](https://github.com/getpaseo/paseo/pull/7990), [#8026](https://github.com/getpaseo/paseo/pull/8026) by [@akaready](https://github.com/akaready), [@Dey11](https://github.com/Dey11), [@Sebeb](https://github.com/Sebeb), [@Waishnav](https://github.com/Waishnav))
 - Let plugins add MCP servers whenever an agent session opens ([#7983](https://github.com/getpaseo/paseo/pull/7983))
@@ -20,6 +21,8 @@ Voice settings now let you configure speech providers and download local models 
 - Added project-specific editor choices, including Xcode on macOS ([#7898](https://github.com/getpaseo/paseo/pull/7898) by [@kinoroy](https://github.com/kinoroy))
 
 ### Improved
+
+- Added `server.addHook` with `subject.operation.position` names and the awaited `worktree.create.after` hook before setup and agents; deprecated the previous plugin hook registration methods without changing their behavior ([#8081](https://github.com/getpaseo/paseo/pull/8081))
 
 - Release eligible agent runtimes after one idle hour, resuming the saved session on the next prompt ([#7782](https://github.com/getpaseo/paseo/pull/7782))
 - Added a link back to the parent in subagent panes ([#7784](https://github.com/getpaseo/paseo/pull/7784))

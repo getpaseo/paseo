@@ -14,6 +14,7 @@ describe("plugin documentation", () => {
         { type: "page", label: "Publishing", href: "/docs/plugins/publishing" },
         { type: "page", label: "Provider plugins", href: "/docs/plugins/providers" },
         { type: "page", label: "Migration", href: "/docs/plugins/migration" },
+        { type: "page", label: "Hooks", href: "/docs/plugins/hooks" },
         { type: "page", label: "Reference", href: "/docs/plugins/reference" },
       ],
     });
@@ -32,7 +33,7 @@ describe("plugin documentation", () => {
   });
 
   it("serves canonical pages without redirect loops", () => {
-    for (const page of ["", "/publishing", "/reference", "/providers", "/migration"]) {
+    for (const page of ["", "/publishing", "/reference", "/providers", "/migration", "/hooks"]) {
       expect(getLegacyDocsRedirect(`/docs/plugins${page}`)).toBeUndefined();
       expect(getLegacyDocsRedirect(`/docs/plugins${page}.md`)).toBeUndefined();
     }
