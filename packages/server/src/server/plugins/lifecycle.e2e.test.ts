@@ -847,7 +847,7 @@ test.each([false, true])(
           worktreeRoot: cwd,
         }),
       );
-      expect(cwd).toBe(path.join(root, "elsewhere", "accept-hook"));
+      expect(cwd).toBe(path.join(await realpath(root), "elsewhere", "accept-hook"));
       expect(await readFile(path.join(cwd, "from-plugin-base.txt"), "utf8")).toBe("base");
       expect(
         execFileSync("git", ["branch", "--show-current"], { cwd, encoding: "utf8" }).trim(),
@@ -1079,7 +1079,7 @@ test("the placement example creates a sibling worktree, opens its first agent th
       },
     });
     expect(created.error).toBeNull();
-    const cwd = path.join(root, "repository.feature-x");
+    const cwd = path.join(await realpath(root), "repository.feature-x");
     expect(created.workspace!.workspaceDirectory).toBe(cwd);
     expect((await stat(cwd)).isDirectory()).toBe(true);
     expect((await client.fetchWorkspaces()).entries.map((workspace) => workspace.id)).toContain(
