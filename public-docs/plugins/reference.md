@@ -628,7 +628,7 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-Cleanup can be async. Release timers, watchers, sockets, and other resources created by the plugin. Paseo also removes registrations, unmounts surfaces, rejects pending RPCs, closes the plugin's daemon session, and stops its subprocess on reload, disable, removal, disconnect, or daemon shutdown.
+Cleanup can be async. Release timers, watchers, sockets, and other resources created by the plugin. Reload, disable, and removal dispose the affected installation. Stopping a server plugin also closes its daemon session and stops its subprocess. Client installations follow [Hosts and lifecycle](#hosts-and-lifecycle), including retention during a temporary disconnect.
 
 ## Lifecycle hooks
 
@@ -2346,7 +2346,7 @@ Hiding preserves the registration, so showing it again restores its position. It
 an action already in progress.
 
 `remove()` is idempotent. Updates after removal do nothing. Paseo removes outstanding buttons when
-the plugin installation or host connection is torn down. Return cleanup from the client entry for
+the plugin installation is disposed (see [Hosts and lifecycle](#hosts-and-lifecycle)). Return cleanup from the client entry for
 your subscriptions, timers, and other resources.
 
 ## Use the Paseo SDK
@@ -2674,9 +2674,11 @@ Plugins are installed per daemon. When the same contribution exists on several c
 
 Attachment sources remain scoped to each composer's host.
 
-Workspace panels and Command Center items stay scoped to the active host and exact cached context.
-Reload replaces their registrations. Disable, removal, host disconnect, and evaluation failure
-remove Command Center items and clear the installation's query state. An already-restored panel tab
+A dropped connection keeps client plugin registrations, mounted surfaces, local state, and query caches. Reconnecting through the existing `DaemonClient` object keeps unchanged installations and refreshes their settings. Consume SDK observation snapshots to refresh other daemon state; setup does not run again for an unchanged installation. Daemon calls still depend on connectivity.
+
+Switching connections (for example, from direct to relay) currently replaces the `DaemonClient` object and reinstalls client plugins. Reload, changed bundles or requirements, disable, plugin removal, and host removal also dispose affected installations and clear their query state. A replacement that fails evaluation leaves its contributions unavailable.
+
+Workspace panels and Command Center items stay scoped to the active host and exact cached context. An already-restored panel tab
 remains as unavailable until its matching contribution returns or the user closes it. Panel render
 failures stay inside the plugin error boundary.
 

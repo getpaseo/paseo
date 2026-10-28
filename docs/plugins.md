@@ -333,11 +333,10 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-The contribution function must return cleanup. Server cleanup may be async; Paseo waits for it when
-the plugin is reloaded, disabled, removed, disconnected, or shut down. Cleanup is for resources
-created by plugin code. Paseo removes registered contributions, unmounts surfaces, clears query
-state, rejects pending RPCs, closes the plugin's daemon session, and stops the subprocess. Cleanup
-errors are logged and do not interrupt host teardown.
+The contribution function must return cleanup for resources created by plugin code. Server cleanup
+may be async; Paseo waits for it when stopping the server plugin. Cleanup errors are logged and do
+not interrupt host teardown. Client installation retention and disposal follow the public
+[hosts and lifecycle contract](../public-docs/plugins/reference.md#hosts-and-lifecycle).
 
 Paseo owns the route, screen header, icon validation, close action, theme DTO, layout facts,
 and render error boundary. The contributed component owns the complete body below the header.
@@ -607,8 +606,9 @@ demand. Provider and project `subscribe()` calls establish their own demand. On 
 list-and-subscribe call has its own server ID, even for the same query. Older daemons retain
 [shared delivery behavior](protocol-compatibility.md#owned-observations). Handle snapshots
 also run after reconnect; replace your view before applying its subsequent updates. An installation
-stays loaded while its host is disconnected, and reconnecting runs setup again only when the client
-bundle changed, so refresh state from those snapshots rather than from setup. The installation
+stays loaded during a dropped connection while the app retains its `DaemonClient` object. An
+unchanged installation does not rerun setup on reconnect, so refresh state from those snapshots
+rather than from setup. Switching connections replaces the client object and reinstalls plugins. The installation
 owns every observation created through its API and releases them on unload, including setup failure.
 Mounted surfaces and command invocations have shorter API lifetimes.
 
