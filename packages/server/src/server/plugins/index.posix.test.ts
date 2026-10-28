@@ -1323,8 +1323,8 @@ export default function contribute(plugin: unknown) {
 describe("npm plugin installation", () => {
   let registry: Awaited<ReturnType<typeof startNpmRegistry>>;
 
-  // Packing the registry starts eleven real npm processes. Give fixture construction its
-  // own setup budget so Windows process startup does not consume the installation journey.
+  // Give real npm fixture construction its own setup budget so it does not consume
+  // the installation journey on Windows.
   beforeAll(async () => {
     const packages = npmPluginPackages();
     const fixture = packages[1];
