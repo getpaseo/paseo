@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { open, readFile, stat, unlink, utimes } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
@@ -66,13 +67,25 @@ function precedesThisBoot(startedAt: string): boolean {
 
 let cachedBootId: string | null | undefined;
 
-// Linux names each boot. The wall-clock boot instant is not enough there: a VM paused while
-// its host sleeps keeps its uptime, so after it resumes the instant lands after locks its
-// running supervisor wrote.
+// Linux and FreeBSD name each boot. The wall-clock boot instant is not enough there: a Linux
+// VM paused while its host sleeps keeps its uptime, and FreeBSD's uptime stops while the
+// machine itself is suspended, so after a resume the instant lands after locks its running
+// supervisor wrote.
+function readBootId(): string | null {
+  if (process.platform === "freebsd") {
+    // kern.boot_id is 16 opaque bytes, which sysctl(8) prints only as a raw value.
+    const raw = execFileSync("/sbin/sysctl", ["-b", "kern.boot_id"], {
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return raw.toString("hex") || null;
+  }
+  return readFileSync("/proc/sys/kernel/random/boot_id", "utf-8").trim() || null;
+}
+
 function currentBootId(): string | null {
   if (cachedBootId === undefined) {
     try {
-      cachedBootId = readFileSync("/proc/sys/kernel/random/boot_id", "utf-8").trim() || null;
+      cachedBootId = readBootId();
     } catch {
       cachedBootId = null;
     }
