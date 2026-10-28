@@ -66,6 +66,7 @@ export const it: TranslationResources = {
       daemonClientUnavailable: "Client del daemon non disponibile",
       daemonClientDisconnected: "Il client del daemon è disconnesso",
       noFileFound: "Nessun file trovato per {{token}}",
+      folderOutsideWorkspace: "{{path}} si trova fuori da questo ambiente di lavoro",
       unexpectedDictationError: "Si è verificato un errore imprevisto durante la dettatura.",
     },
     connectionStatus: {
@@ -2084,12 +2085,13 @@ export const it: TranslationResources = {
     output: "Output",
   },
   turnSummary: {
-    messages: {
-      one: "scritto {{count}} messaggio",
-      other: "scritti {{count}} messaggi",
-    },
+    details: "Visualizza dettagli del turno",
+    sentBy: "Inviato da {{name}}",
+    showMore: "Mostra altro",
+    showLess: "Mostra meno",
   },
   toolCallGroup: {
+    thought: "Ragionamento",
     editedFiles: {
       one: "modificato {{count}} file",
       other: "modificati {{count}} file",
@@ -2507,10 +2509,25 @@ export const it: TranslationResources = {
           queue:
             "Quando l'agente è in esecuzione, Enter mette il messaggio in coda. Command/Ctrl+Enter lo invia.",
         },
+        commandEnterDescriptions: {
+          interrupt:
+            "Quando l'agente è in esecuzione, {{modifier}}+Invio lo interrompe. Invio inserisce una nuova riga.",
+          steer:
+            "Quando l'agente è in esecuzione, {{modifier}}+Invio aggiunge indicazioni al turno attivo. Invio inserisce una nuova riga.",
+          queue:
+            "Quando l'agente è in esecuzione, {{modifier}}+Invio mette il messaggio in coda. Invio inserisce una nuova riga.",
+        },
         options: {
           interrupt: "Interrompi",
           steer: "Aggiungi indicazioni",
           queue: "Metti in coda",
+        },
+      },
+      sendShortcut: {
+        label: "Scorciatoia di invio",
+        options: {
+          enter: "Invio",
+          "mod-enter": "{{modifier}}+Invio",
         },
       },
       serviceUrls: {
