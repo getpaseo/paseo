@@ -1933,7 +1933,6 @@ export const ja: TranslationResources = {
     parent: {
       backToParent: "親に戻る",
       backTo: "{{label}} に戻る",
-      parent: "親",
       parentAgent: "親エージェント",
       openParent: "親を開く",
     },

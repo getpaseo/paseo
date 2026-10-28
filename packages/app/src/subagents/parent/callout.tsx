@@ -42,12 +42,9 @@ export function ParentAgentCallout({
         <StatusIcon statusBucket={parent.statusBucket} size={ICON_SIZE} backdrop="surface1">
           <ThemedParentIcon icon={parent.icon} size={ICON_SIZE} uniProps={foregroundColorMapping} />
         </StatusIcon>
-        <View style={styles.body}>
-          <Text style={styles.eyebrow}>{t("subagents.parent.parent")}</Text>
-          <Text style={styles.title} numberOfLines={1}>
-            {parent.label ?? t("subagents.parent.parentAgent")}
-          </Text>
-        </View>
+        <Text style={styles.title} numberOfLines={1}>
+          {parent.label ?? t("subagents.parent.parentAgent")}
+        </Text>
         <Button
           size="sm"
           variant="secondary"
@@ -84,16 +81,10 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[3],
     paddingRight: { xs: theme.spacing[3], md: theme.spacing[4] },
   },
-  body: {
+  // Shrinks before the button does, so Open parent never wraps or leaves the row.
+  title: {
     flex: 1,
     minWidth: 0,
-    gap: theme.spacing[0.5],
-  },
-  eyebrow: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foregroundMuted,
-  },
-  title: {
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
     color: theme.colors.foreground,
