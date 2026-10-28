@@ -145,7 +145,7 @@ export interface ClaudeReplayParentFacts {
    * Task `tool_use` id -> outcome, whichever way the child was linked. A background launch has
    * none: its immediate result only says the child started.
    */
-  outcomesByToolCallId: ReadonlyMap<string, { failed: boolean }>;
+  outcomesByToolCallId: ReadonlyMap<string, { status: ProviderSubagentStatus }>;
 }
 
 interface ParentLink {
@@ -187,9 +187,7 @@ function resolveParentLink(
       : parent.linksByAgentId.get(subagent.agentId)?.toolCallId;
   if (!toolCallId || !parent.toolCalls.has(toolCallId)) return null;
 
-  const outcome = parent.outcomesByToolCallId.get(toolCallId);
-  let status: ProviderSubagentStatus | null = null;
-  if (outcome) status = outcome.failed ? "failed" : "completed";
+  const status = parent.outcomesByToolCallId.get(toolCallId)?.status ?? null;
   return { id: toolCallId, toolCallId, status };
 }
 
@@ -269,14 +267,7 @@ async function observeSubagent(
     lastTimestamp = timestamp;
     Object.assign(runtime, readRuntime(entry));
     usage = readUsage(entry) ?? usage;
-    if (entry.type === "assistant") {
-      childTerminalStatus = entry.message?.stop_reason === "end_turn" ? "completed" : null;
-    }
-    if (entry.type === "user" && readUserTexts(entry).length > 0) {
-      childTerminalStatus = readUserTexts(entry).some(isClaudeInterruptPlaceholderText)
-        ? "canceled"
-        : null;
-    }
+    childTerminalStatus = readChildTerminalStatus(entry, childTerminalStatus);
     recordReplayToolOwners(toolOwners, entry, link.id);
     for (const item of await convertEntry(entry)) {
       timeline.push({ kind: "timeline", id: link.id, item, ...(timestamp ? { timestamp } : {}) });
@@ -304,6 +295,20 @@ async function observeSubagent(
     });
   }
   return observations;
+}
+
+/** Advance the child's fallback outcome without retaining transcript entries. */
+function readChildTerminalStatus(
+  entry: ClaudeReplayEntry,
+  previous: ProviderSubagentStatus | null,
+): ProviderSubagentStatus | null {
+  if (entry.type === "assistant") {
+    return entry.message?.stop_reason === "end_turn" ? "completed" : null;
+  }
+  if (entry.type !== "user") return previous;
+  const texts = readUserTexts(entry);
+  if (texts.length === 0) return previous;
+  return texts.some(isClaudeInterruptPlaceholderText) ? "canceled" : null;
 }
 
 /** Tool results carry no user text and do not change the child's terminal status. */

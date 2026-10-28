@@ -33,6 +33,7 @@ import {
   mapTaskNotificationSystemRecordToToolCall,
   mapTaskNotificationUserContentToToolCall,
   readTaskNotificationToolUseIdFromHistoryRecord,
+  readTaskNotificationFromHistoryRecord,
 } from "./task-notification-tool-call.js";
 import { isClaudeInterruptPlaceholderText } from "./interrupt-placeholder.js";
 import {
@@ -57,6 +58,8 @@ import {
   type ClaudeHookObservationInput,
 } from "./subagents/live-source.js";
 import { observeReplaySubagents, type ClaudeReplayParentFacts } from "./subagents/replay-source.js";
+import { mapTaskStatus } from "./subagents/task-status.js";
+import type { ProviderSubagentStatus } from "../../provider-subagents/store.js";
 import { foldSubagentObservations, type SubagentObservation } from "./subagents/observation.js";
 import { observeReplayWorkflows } from "./subagents/workflow-replay-source.js";
 import { limitAgentTimelineItemContent } from "../../agent-timeline-content.js";
@@ -6258,28 +6261,29 @@ async function readClaudeReplayParentFacts(
 ): Promise<ClaudeReplayParentFacts> {
   const toolCalls = new Map<string, { title?: string; description?: string }>();
   const linksByAgentId = new Map<string, { toolCallId: string }>();
-  const outcomes = new Map<string, { failed: boolean }>();
+  const outcomes: Map<string, { status: ProviderSubagentStatus }> = new Map();
   for await (const entry of entries) {
+    const notification = readTaskNotificationFromHistoryRecord(entry);
+    const status = mapTaskStatus(notification?.status ?? undefined);
+    if (notification?.toolUseId && status) {
+      outcomes.set(notification.toolUseId, { status });
+    }
     const content = toObjectRecord(entry.message)?.content;
     if (!Array.isArray(content)) continue;
     for (const value of content) {
       const block = toObjectRecord(value);
+      const declaration = readClaudeReplayTaskDeclaration(entry.type, block);
+      if (declaration) toolCalls.set(declaration.id, declaration.identity);
       if (
-        block?.type === "tool_use" &&
-        (block.name === "Task" || block.name === "Agent") &&
-        typeof block.id === "string"
-      ) {
-        const input = toObjectRecord(block.input);
-        const title = readNonEmptyString(input?.name) ?? readNonEmptyString(input?.subagent_type);
-        const description = readNonEmptyString(input?.description);
-        toolCalls.set(block.id, {
-          ...(title ? { title } : {}),
-          ...(description ? { description } : {}),
-        });
-      }
-      if (block?.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
+        entry.type !== "user" ||
+        block?.type !== "tool_result" ||
+        typeof block.tool_use_id !== "string"
+      )
+        continue;
       if (toObjectRecord(entry.toolUseResult)?.status !== "async_launched")
-        outcomes.set(block.tool_use_id, { failed: block.is_error === true });
+        outcomes.set(block.tool_use_id, {
+          status: block.is_error === true ? "failed" : "completed",
+        });
       const agentId = readLegacyClaudeSubagentId(block.content);
       if (agentId)
         linksByAgentId.set(agentId, {
@@ -6291,6 +6295,29 @@ async function readClaudeReplayParentFacts(
     toolCalls,
     linksByAgentId,
     outcomesByToolCallId: new Map([...outcomes].filter(([id]) => toolCalls.has(id))),
+  };
+}
+
+function readClaudeReplayTaskDeclaration(
+  entryType: unknown,
+  block: Record<string, unknown> | undefined,
+): {
+  id: string;
+  identity: { title?: string; description?: string };
+} | null {
+  if (
+    entryType !== "assistant" ||
+    block?.type !== "tool_use" ||
+    (block.name !== "Task" && block.name !== "Agent") ||
+    typeof block.id !== "string"
+  )
+    return null;
+  const input = toObjectRecord(block.input);
+  const title = readNonEmptyString(input?.name) ?? readNonEmptyString(input?.subagent_type);
+  const description = readNonEmptyString(input?.description);
+  return {
+    id: block.id,
+    identity: { ...(title ? { title } : {}), ...(description ? { description } : {}) },
   };
 }
 
