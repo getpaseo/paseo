@@ -61,6 +61,27 @@ describe("provider snapshot codec", () => {
     );
   });
 
+  it("round-trips derivedFromProviderId on a custom provider entry", () => {
+    const original: ProviderSnapshotEntry[] = [
+      {
+        provider: "my-claude",
+        status: "ready",
+        enabled: true,
+        derivedFromProviderId: "claude",
+        canUseDefaultResumeCommand: true,
+      },
+    ];
+    const compact = compactProviderSnapshot(original);
+    const expanded = expandProviderSnapshot(compact);
+
+    expect(CompactProviderSnapshotSchema.parse(compact)).toEqual(compact);
+    expect(expanded).toEqual(original);
+    expect(compact.entries[0]?.derivedFromProviderId).toBe("claude");
+    expect(expanded[0]?.derivedFromProviderId).toBe("claude");
+    expect(compact.entries[0]?.canUseDefaultResumeCommand).toBe(true);
+    expect(expanded[0]?.canUseDefaultResumeCommand).toBe(true);
+  });
+
   it("shrinks catalogs dominated by one repeated thinking set", () => {
     const model = providerEntry().models?.[0];
     if (!model) throw new Error("fixture model missing");

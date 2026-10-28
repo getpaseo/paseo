@@ -119,6 +119,17 @@ export interface ProviderSnapshotEntry {
   status: ProviderStatus;
   enabled: boolean;
   source?: "builtin" | "custom";
+  /**
+   * For custom providers that extend a built-in provider, the id of the provider
+   * they extend. null or undefined for built-in providers and generic ACP providers.
+   */
+  derivedFromProviderId?: AgentProvider | null;
+  /**
+   * Whether the current provider configuration permits its stock resume template.
+   * Session launch provenance must also permit inheritance. Customized commands,
+   * environments, or provider options report false.
+   */
+  canUseDefaultResumeCommand?: boolean;
   error?: string;
   models?: AgentModelDefinition[];
   modes?: AgentMode[];

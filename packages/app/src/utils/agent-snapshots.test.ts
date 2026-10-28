@@ -36,6 +36,17 @@ function createSnapshot(
 }
 
 describe("normalizeAgentSnapshot", () => {
+  it("round-trips inherited resume launch provenance", () => {
+    const snapshot = {
+      ...createSnapshot({ provider: "my-codex" }),
+      defaultResumeProvider: "codex",
+    };
+    expect(projectAgentSnapshot(normalizeAgentSnapshot(snapshot, "server-1"))).toMatchObject({
+      provider: "my-codex",
+      defaultResumeProvider: "codex",
+    });
+  });
+
   it("round-trips identified active turns through the canonical snapshot boundary", () => {
     const snapshot = createSnapshot({
       status: "running",
