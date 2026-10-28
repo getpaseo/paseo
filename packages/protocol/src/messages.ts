@@ -93,6 +93,18 @@ import {
   SpeechSettingsSchema,
 } from "./speech/rpc-schemas.js";
 import {
+  ProviderCliLoginCancelRequestSchema,
+  ProviderCliLoginCancelResponseSchema,
+  ProviderCliLoginInputRequestSchema,
+  ProviderCliLoginInputResponseSchema,
+  ProviderCliLoginStartRequestSchema,
+  ProviderCliLoginStartResponseSchema,
+  ProviderCliStatusListRequestSchema,
+  ProviderCliStatusListResponseSchema,
+  ProviderCliUpdateStartRequestSchema,
+  ProviderCliUpdateStartResponseSchema,
+} from "./provider-cli/rpc-schemas.js";
+import {
   LoopRunRequestSchema,
   LoopListRequestSchema,
   LoopInspectRequestSchema,
@@ -237,6 +249,9 @@ export const MutableDaemonConfigSchema = z
     // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, keep optional while old daemons are supported.
     // Persisted host-wide value, applied live by the daemon.
     idleRuntimeCleanup: z.boolean().optional(),
+    // COMPAT(providerCli): added after v0.13.2, keep optional while old daemons are supported.
+    // Persisted host-wide value; the daemon keeps installed provider CLIs updated when true.
+    autoUpdateProviders: z.boolean().optional(),
     appendSystemPrompt: z.string().default(""),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
     agentProfiles: z.array(AgentProfileSchema).optional(),
@@ -262,6 +277,7 @@ export const MutableDaemonConfigPatchSchema = z
     autoArchiveAfterMerge: z.boolean().optional(),
     enableTerminalAgentHooks: z.boolean().optional(),
     idleRuntimeCleanup: z.boolean().optional(),
+    autoUpdateProviders: z.boolean().optional(),
     appendSystemPrompt: z.string().optional(),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
     agentProfiles: z.array(AgentProfileSchema).optional(),
@@ -3463,6 +3479,11 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SpeechLocalModelsListRequestSchema,
   SpeechLocalModelsDownloadRequestSchema,
   SpeechLocalModelsDeleteRequestSchema,
+  ProviderCliStatusListRequestSchema,
+  ProviderCliUpdateStartRequestSchema,
+  ProviderCliLoginStartRequestSchema,
+  ProviderCliLoginInputRequestSchema,
+  ProviderCliLoginCancelRequestSchema,
   ScheduleInspectRequestSchema,
   ScheduleLogsRequestSchema,
   SchedulePauseRequestSchema,
@@ -3725,6 +3746,8 @@ export const ServerInfoStatusPayloadSchema = z
         skillManagement: z.boolean().optional(),
         // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, remove gate after 2027-04-26.
         idleRuntimeCleanupSetting: z.boolean().optional(),
+        // COMPAT(providerCli): added after v0.13.2, remove gate after 2027-04-27.
+        providerCli: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
         "terminal-restore-modes": z.boolean().optional(),
         // COMPAT(terminalInputModeReplay): added in v0.2.6, remove gate after 2027-02-02.
@@ -7184,6 +7207,11 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SpeechLocalModelsListResponseSchema,
   SpeechLocalModelsDownloadResponseSchema,
   SpeechLocalModelsDeleteResponseSchema,
+  ProviderCliStatusListResponseSchema,
+  ProviderCliUpdateStartResponseSchema,
+  ProviderCliLoginStartResponseSchema,
+  ProviderCliLoginInputResponseSchema,
+  ProviderCliLoginCancelResponseSchema,
   ScheduleInspectResponseSchema,
   ScheduleLogsResponseSchema,
   SchedulePauseResponseSchema,

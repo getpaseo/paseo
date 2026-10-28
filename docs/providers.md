@@ -198,6 +198,16 @@ renders their names and resolves pins without provider-specific duration guesses
 
 ---
 
+## Provider CLI updates and sign-in
+
+The daemon updates and signs in to built-in provider CLIs through `provider.cli.*` RPCs. To manage a new provider, add an entry to `packages/server/src/server/agent/provider-cli/provider-cli-definitions.ts`. Only list a CLI the agent runtime launches from the user's install. Updating a binary the runtime never runs reports an update that changes nothing.
+
+- **Updates.** Update npm installs with `npm install -g <package>@latest`, using the npm next to the binary when there is one, so npm's records stay correct. Update other installs with the CLI's own updater. A provider whose `command` is replaced in config is shown as managed externally and Paseo leaves it alone.
+- **Automatic updates.** `agents.autoUpdateProviders` is off by default. Updates are skipped while an agent on that provider is running, and the next pass retries them.
+- **Sign-in.** Run the CLI's login command in a PTY so it behaves as it does in a terminal. Set the PTY 1000 columns wide so the CLI never wraps the sign-in URL across lines. Prefer device-code flows such as `codex login --device-auth`. Loopback OAuth callbacks fail when the browser runs on a phone.
+
+---
+
 ## ACP Provider Checklist
 
 ### 1. Create the provider class

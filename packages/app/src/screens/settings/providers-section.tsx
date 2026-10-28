@@ -17,7 +17,11 @@ import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useHostFeature } from "@/runtime/host-features";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
-import { buildProviderDefinitions } from "@/utils/provider-definitions";
+import { buildProviderDefinitions, resolveProviderLabel } from "@/utils/provider-definitions";
+import { useProviderCli } from "@/hooks/use-provider-cli";
+import { ProviderUpdatesSection } from "@/screens/settings/provider-updates-section";
+import { StatusBadge } from "@/components/ui/status-badge";
+import type { ProviderCliStatus } from "@getpaseo/protocol/provider-cli/rpc-schemas";
 import {
   buildAcpProviderConfigPatch,
   getAcpProviderCatalog,
@@ -82,6 +86,7 @@ interface ProviderRowProps {
   serverId: string;
   def: ProviderDefinition;
   entry: ProviderEntry;
+  cliStatus: ProviderCliStatus | null;
   enabled: boolean;
   isToggling: boolean;
   isRemoving: boolean;
@@ -173,6 +178,7 @@ function ProviderRow({
   serverId,
   def,
   entry,
+  cliStatus,
   enabled,
   isToggling,
   isRemoving,
@@ -238,6 +244,21 @@ function ProviderRow({
                 </Text>
                 {!isCompact ? <Text style={styles.separator}>·</Text> : null}
                 <StatusIndicator status={providerStatus} compact={isCompact} />
+                {cliStatus?.version && !isCompact ? (
+                  <>
+                    <Text style={styles.separator}>·</Text>
+                    <Text style={styles.statusLabel} numberOfLines={1}>
+                      {cliStatus.version}
+                    </Text>
+                  </>
+                ) : null}
+                {cliStatus?.updateAvailable ? (
+                  <StatusBadge
+                    label={t("settings.providers.cli.updateAvailable")}
+                    variant="warning"
+                    size="xs"
+                  />
+                ) : null}
               </View>
               {providerError && !isCompact ? (
                 <Text style={styles.errorText} numberOfLines={3}>
@@ -333,6 +354,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
   const supportsProviderRemoval = useHostFeature(serverId, "providerRemoval");
   const { entries, isLoading, refresh } = useProvidersSnapshot(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
+  const providerCli = useProviderCli(serverId);
   const openProviderSettings = useProviderSettingsStore((state) => state.open);
   const [pendingProviderId, setPendingProviderId] = useState<string | null>(null);
   const [removingProviderId, setRemovingProviderId] = useState<string | null>(null);
@@ -341,6 +363,10 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
 
   const providerDefinitions = useMemo(() => buildProviderDefinitions(entries), [entries]);
   const hasServer = serverId.length > 0;
+  const labelForProvider = useCallback(
+    (providerId: string) => resolveProviderLabel(providerId, entries ?? undefined),
+    [entries],
+  );
 
   /** Config owns derived providers and opt-in bundled catalog providers. */
   const isConfigOwnedProvider = useCallback(
@@ -455,6 +481,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
                   serverId={serverId}
                   def={def}
                   entry={entry}
+                  cliStatus={providerCli.getStatus(def.id)}
                   enabled={entry.enabled ?? true}
                   isToggling={pendingProviderId === def.id}
                   isRemoving={removingProviderId === def.id}
@@ -473,6 +500,10 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
           </View>
         ) : null}
       </SettingsSection>
+
+      {hasServer && isConnected ? (
+        <ProviderUpdatesSection serverId={serverId} cli={providerCli} labelFor={labelForProvider} />
+      ) : null}
 
       {hasServer && isConnected ? (
         <SettingsSection

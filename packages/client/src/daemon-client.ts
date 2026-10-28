@@ -20,6 +20,7 @@ import type { CreationSnapshot } from "@getpaseo/protocol/messages";
 import type { z } from "zod";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
 import type { LocalSpeechModel } from "@getpaseo/protocol/speech/rpc-schemas";
+import type { ProviderCliStatus } from "@getpaseo/protocol/provider-cli/rpc-schemas";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import type { AgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
 import { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
@@ -5608,6 +5609,64 @@ export class DaemonClient {
       requestId,
       message: { type: "speech.local_models.delete.request", modelId },
       responseType: "speech.local_models.delete.response",
+    });
+    if (payload.error) throw new Error(payload.error);
+  }
+
+  async listProviderCliStatus(
+    options: { refresh?: boolean; requestId?: string } = {},
+  ): Promise<ProviderCliStatus[]> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "provider.cli.status.list.request",
+        ...(options.refresh ? { refresh: true } : {}),
+      },
+      responseType: "provider.cli.status.list.response",
+      timeout: 60_000,
+    });
+    if (payload.error) throw new Error(payload.error);
+    return payload.providers;
+  }
+
+  async startProviderCliUpdate(provider: string, requestId?: string): Promise<void> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "provider.cli.update.start.request", provider },
+      responseType: "provider.cli.update.start.response",
+      timeout: 60_000,
+    });
+    if (payload.error) throw new Error(payload.error);
+  }
+
+  async startProviderCliLogin(provider: string, requestId?: string): Promise<void> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "provider.cli.login.start.request", provider },
+      responseType: "provider.cli.login.start.response",
+      timeout: 60_000,
+    });
+    if (payload.error) throw new Error(payload.error);
+  }
+
+  async sendProviderCliLoginInput(
+    provider: string,
+    text: string,
+    requestId?: string,
+  ): Promise<void> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "provider.cli.login.input.request", provider, text },
+      responseType: "provider.cli.login.input.response",
+    });
+    if (payload.error) throw new Error(payload.error);
+  }
+
+  async cancelProviderCliLogin(provider: string, requestId?: string): Promise<void> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "provider.cli.login.cancel.request", provider },
+      responseType: "provider.cli.login.cancel.response",
     });
     if (payload.error) throw new Error(payload.error);
   }

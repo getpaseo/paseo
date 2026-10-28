@@ -19,6 +19,8 @@ import { useToast } from "@/contexts/toast-context";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { useProviderCli } from "@/hooks/use-provider-cli";
+import { ProviderCliCard } from "@/components/provider-cli-card";
 import { useTimeAgo } from "@/hooks/use-time-ago";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { settingsStyles } from "@/styles/settings";
@@ -590,6 +592,8 @@ export function ProviderDiagnosticSheet({
   const isCompact = useIsCompactFormFactor();
   const { entries: snapshotEntries, refresh, isRefreshing } = useProvidersSnapshot(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
+  const providerCli = useProviderCli(serverId);
+  const providerCliStatus = providerCli.getStatus(provider);
   const [query, setQuery] = useState("");
   const [addSheetOpen, setAddSheetOpen] = useState(false);
   const [diagSheetOpen, setDiagSheetOpen] = useState(false);
@@ -697,6 +701,13 @@ export function ProviderDiagnosticSheet({
         })}
         snapPoints={MAIN_SNAP_POINTS}
       >
+        {providerCliStatus && !q ? (
+          <ProviderCliCard
+            providerLabel={providerLabel}
+            status={providerCliStatus}
+            cli={providerCli}
+          />
+        ) : null}
         <ProviderModalBody
           discoveredCount={discoveredModels.length}
           additionalCount={additionalModels.length}

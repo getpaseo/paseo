@@ -513,6 +513,9 @@
         "idleRuntimeCleanup": {
           "type": "boolean"
         },
+        "autoUpdateProviders": {
+          "type": "boolean"
+        },
         "catalogRefreshTimeoutMs": {
           "type": "integer",
           "exclusiveMinimum": 0,

@@ -80,6 +80,7 @@ import type { ScriptHealthState } from "./script-health-monitor.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import type { SpeechReadinessSnapshot, SpeechService } from "./speech/speech-runtime.js";
+import type { ProviderCliService } from "./agent/provider-cli/provider-cli-service.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
 import {
   computeNotificationPlan,
@@ -584,6 +585,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly pushNotificationSender: PushNotificationSender;
   private readonly mcpBaseUrl: string | null;
   private speech!: SpeechService | null;
+  private providerCli!: ProviderCliService | null;
   private terminalManager!: TerminalManager | null;
   private serviceProxy!: ServiceProxySubsystem | null;
   private scriptRuntimeStore!: WorkspaceScriptRuntimeStore | null;
@@ -688,6 +690,7 @@ export class VoiceAssistantWebSocketServer {
     pluginRuntime?: SessionOptions["pluginRuntime"],
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
+    providerCli?: ProviderCliService | null,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -760,6 +763,7 @@ export class VoiceAssistantWebSocketServer {
     this.mcpBaseUrl = mcpBaseUrl;
     this.assignOptionalServices({
       speech,
+      providerCli,
       terminalManager,
       dictation,
       onLifecycleIntent,
@@ -817,6 +821,7 @@ export class VoiceAssistantWebSocketServer {
 
   private assignOptionalServices(params: {
     speech: SpeechService | null | undefined;
+    providerCli: ProviderCliService | null | undefined;
     terminalManager: TerminalManager | null | undefined;
     dictation: { finalTimeoutMs?: number } | undefined;
     onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | undefined;
@@ -831,6 +836,7 @@ export class VoiceAssistantWebSocketServer {
     resolveScriptHealth: ((hostname: string) => ScriptHealthState | null) | undefined;
   }): void {
     this.speech = params.speech ?? null;
+    this.providerCli = params.providerCli ?? null;
     this.terminalManager = params.terminalManager ?? null;
     if (this.terminalManager) {
       this.unsubscribeTerminalActivity = this.terminalManager.subscribeTerminalActivity((event) => {
@@ -1621,6 +1627,7 @@ export class VoiceAssistantWebSocketServer {
       sttLanguage: this.speech?.resolveSttLanguage() ?? "en",
       tts: () => this.speech?.resolveTts() ?? null,
       speechModels: this.speech,
+      providerCli: this.providerCli,
       terminalManager: this.terminalManager,
       providerSnapshotManager: this.providerSnapshotManager,
       hubExecutionAgents: options.hubExecutionAgents,
@@ -2013,6 +2020,8 @@ export class VoiceAssistantWebSocketServer {
         skillManagement: true,
         // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, remove gate after 2027-04-26.
         idleRuntimeCleanupSetting: true,
+        // COMPAT(providerCli): added after v0.13.2, remove gate after 2027-04-27.
+        providerCli: this.providerCli !== null,
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
         "terminal-restore-modes": true,
         // COMPAT(terminalInputModeReplay): added in v0.2.6, remove gate after 2027-02-02.

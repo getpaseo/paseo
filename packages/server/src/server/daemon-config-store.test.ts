@@ -942,6 +942,33 @@ describe("DaemonConfigStore", () => {
     expect(loadConfig(paseoHome, { env: {} }).idleRuntimeCleanup).toBe(true);
   });
 
+  test("patch persists automatic provider CLI updates for the next daemon start", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        autoUpdateProviders: false,
+        appendSystemPrompt: "",
+        metadataGeneration: { providers: [] },
+      },
+      undefined,
+    );
+    const seen: unknown[] = [];
+    store.onFieldChange("autoUpdateProviders", (value) => seen.push(value));
+
+    expect((await store.patch({ autoUpdateProviders: true })).autoUpdateProviders).toBe(true);
+
+    expect(seen).toEqual([true]);
+    expect(loadPersistedConfig(paseoHome).agents?.autoUpdateProviders).toBe(true);
+    expect(loadConfig(paseoHome, { env: {} }).autoUpdateProviders).toBe(true);
+  });
+
   test("patch persists custom ACP provider overrides into config.json", async () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

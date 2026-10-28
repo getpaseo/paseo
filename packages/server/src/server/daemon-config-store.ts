@@ -29,6 +29,7 @@ interface SupportedMutableConfigPatch {
   autoArchiveAfterMerge?: boolean;
   enableTerminalAgentHooks?: boolean;
   idleRuntimeCleanup?: boolean;
+  autoUpdateProviders?: boolean;
   appendSystemPrompt?: string;
   terminalProfiles?: MutableDaemonConfig["terminalProfiles"];
   agentProfiles?: MutableDaemonConfig["agentProfiles"];
@@ -193,6 +194,7 @@ const RELOADABLE_PATHS = [
   "daemon.agentProfiles",
   "app.baseUrl",
   "agents.idleRuntimeCleanup",
+  "agents.autoUpdateProviders",
   "agents.providers",
   "agents.catalogRefreshTimeoutMs",
   "agents.metadataGeneration",
@@ -218,6 +220,7 @@ const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
   ["daemon.agentProfiles", "agentProfiles"],
   ["app.baseUrl", "app.baseUrl"],
   ["agents.idleRuntimeCleanup", "idleRuntimeCleanup"],
+  ["agents.autoUpdateProviders", "autoUpdateProviders"],
   ["agents.providers", "providers"],
   ["agents.catalogRefreshTimeoutMs", "catalogRefreshTimeoutMs"],
   ["agents.metadataGeneration", "metadataGeneration"],
@@ -294,6 +297,9 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
       : {}),
     ...(patch.idleRuntimeCleanup !== undefined
       ? { idleRuntimeCleanup: patch.idleRuntimeCleanup }
+      : {}),
+    ...(patch.autoUpdateProviders !== undefined
+      ? { autoUpdateProviders: patch.autoUpdateProviders }
       : {}),
     ...(patch.appendSystemPrompt !== undefined
       ? { appendSystemPrompt: patch.appendSystemPrompt }
@@ -703,6 +709,7 @@ function mergeMutableAgentPatch(
     patch.metadataGeneration === undefined &&
     patch.skills === undefined &&
     patch.idleRuntimeCleanup === undefined &&
+    patch.autoUpdateProviders === undefined &&
     removeProviders.length === 0
   ) {
     return persistedAgents;
@@ -737,6 +744,10 @@ function mergeMutableAgentPatch(
 
   if (patch.idleRuntimeCleanup !== undefined) {
     next["idleRuntimeCleanup"] = patch.idleRuntimeCleanup;
+  }
+
+  if (patch.autoUpdateProviders !== undefined) {
+    next["autoUpdateProviders"] = patch.autoUpdateProviders;
   }
 
   return Object.keys(next).length > 0 ? (next as PersistedConfig["agents"]) : undefined;

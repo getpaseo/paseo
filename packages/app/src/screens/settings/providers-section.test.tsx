@@ -6,10 +6,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
+import type { ProviderCliStatus } from "@getpaseo/protocol/provider-cli/rpc-schemas";
 import { ToastApiProvider } from "@/contexts/toast-api-context";
 
-const { theme, snapshotState, configState, patchConfigMock, openProviderSettingsMock } = vi.hoisted(
-  () => ({
+const { theme, snapshotState, cliState, configState, patchConfigMock, openProviderSettingsMock } =
+  vi.hoisted(() => ({
     theme: {
       spacing: { 1: 4, "1.5": 6, 2: 8, 3: 12, 4: 16, 6: 24 },
       iconSize: { sm: 14, md: 20 },
@@ -36,13 +37,15 @@ const { theme, snapshotState, configState, patchConfigMock, openProviderSettings
       isLoading: false,
       isRefreshing: false,
     },
+    cliState: {
+      statuses: [] as ProviderCliStatus[],
+    },
     configState: {
       config: null as MutableDaemonConfig | null,
     },
     patchConfigMock: vi.fn(async () => undefined),
     openProviderSettingsMock: vi.fn(),
-  }),
-);
+  }));
 
 vi.mock("react-native", () => ({
   Platform: { OS: "web" },
@@ -128,6 +131,7 @@ vi.mock("react-i18next", () => ({
             "This deletes the provider entry from config.json. It cannot be undone.",
           "settings.providers.remove.confirm": "Remove",
           "settings.providers.remove.errorTitle": "Unable to remove provider",
+          "settings.providers.cli.updateAvailable": "Update available",
         })[key] ?? key
       )
         .replaceAll("{{name}}", String(values?.name ?? ""))
@@ -276,6 +280,24 @@ vi.mock("@/runtime/host-features", () => ({
   useHostFeature: () => false,
 }));
 
+vi.mock("@/hooks/use-provider-cli", () => ({
+  useProviderCli: () => ({
+    isSupported: true,
+    statuses: cliState.statuses,
+    getStatus: (provider: string) =>
+      cliState.statuses.find((status) => status.provider === provider) ?? null,
+  }),
+}));
+
+vi.mock("@/screens/settings/provider-updates-section", () => ({
+  ProviderUpdatesSection: () => null,
+}));
+
+vi.mock("@/components/ui/status-badge", () => ({
+  StatusBadge: ({ label }: { label: string }) =>
+    React.createElement("span", { "data-testid": "status-badge" }, label),
+}));
+
 vi.mock("@/utils/confirm-dialog", () => ({
   confirmDialog: vi.fn(async () => true),
 }));
@@ -354,6 +376,7 @@ describe("ProvidersSection", () => {
     snapshotState.isLoading = false;
     snapshotState.isRefreshing = false;
     configState.config = null;
+    cliState.statuses = [];
     patchConfigMock.mockReset();
     patchConfigMock.mockResolvedValue(undefined);
     openProviderSettingsMock.mockReset();
@@ -473,5 +496,31 @@ describe("ProvidersSection", () => {
     expect(patchConfigMock).toHaveBeenCalledWith({
       providers: { claude: { enabled: false } },
     });
+  });
+
+  it("shows the installed CLI version and flags an available update", () => {
+    snapshotState.entries = [claudeEntry, disabledCodexEntry];
+    configState.config = makeConfig({ codex: { enabled: false } });
+    cliState.statuses = [
+      {
+        provider: "claude",
+        installed: true,
+        version: "2.1.300",
+        latestVersion: "2.1.311",
+        updateAvailable: true,
+        managedExternally: false,
+        update: { supported: true, status: "idle", error: null, finishedAt: null },
+        auth: { supported: true, status: "signed_in", account: null },
+        login: null,
+      },
+    ];
+
+    render();
+
+    const claudeNodes = descendants(findRow("Claude provider details"));
+    expect(indexOfText(claudeNodes, "2.1.300")).toBeGreaterThanOrEqual(0);
+    expect(indexOfText(claudeNodes, "Update available")).toBeGreaterThanOrEqual(0);
+    const codexNodes = descendants(findRow("Codex provider details"));
+    expect(indexOfText(codexNodes, "Update available")).toBe(-1);
   });
 });

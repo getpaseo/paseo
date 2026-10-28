@@ -185,6 +185,10 @@ import {
   SpeechModelsSession,
   type SpeechModelsSessionOptions,
 } from "./session/speech/speech-models-session.js";
+import {
+  ProviderCliSession,
+  type ProviderCliSessionOptions,
+} from "./session/provider-cli/provider-cli-session.js";
 import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
 import { AgentConfigSession } from "./session/agent-config/agent-config-session.js";
 import { ProjectConfigSession } from "./session/project-config/project-config-session.js";
@@ -532,6 +536,7 @@ export interface SessionOptions {
   sttLanguage?: string;
   tts: Resolvable<TextToSpeechProvider | null>;
   speechModels?: SpeechModelsSessionOptions["runtime"];
+  providerCli?: ProviderCliSessionOptions["runtime"];
   terminalManager: TerminalManager | null;
   providerSnapshotManager: ProviderSnapshotManager;
   hubExecutionAgents?: HubExecutionAgents;
@@ -816,6 +821,7 @@ export class Session {
   private readonly providerCatalogSession: ProviderCatalogSession;
   private readonly usageSession: UsageSession;
   private readonly speechModelsSession: SpeechModelsSession;
+  private readonly providerCliSession: ProviderCliSession;
   private readonly workspaceFilesSession: WorkspaceFilesSession;
   private readonly agentConfigSession: AgentConfigSession;
   private readonly projectConfigSession: ProjectConfigSession;
@@ -867,6 +873,7 @@ export class Session {
       sttLanguage,
       tts,
       speechModels,
+      providerCli,
       terminalManager,
       providerSnapshotManager,
       serviceProxy,
@@ -1046,6 +1053,10 @@ export class Session {
     this.speechModelsSession = new SpeechModelsSession({
       emit: (msg) => this.emit(msg),
       runtime: speechModels,
+    });
+    this.providerCliSession = new ProviderCliSession({
+      emit: (msg) => this.emit(msg),
+      runtime: providerCli,
     });
     this.agentConfigSession = new AgentConfigSession({
       host: {
@@ -2451,7 +2462,8 @@ export class Session {
     return (
       this.dispatchTerminalMessage(msg) ??
       this.dispatchScheduleMessage(msg) ??
-      this.speechModelsSession.dispatch(msg)
+      this.speechModelsSession.dispatch(msg) ??
+      this.providerCliSession.dispatch(msg)
     );
   }
 

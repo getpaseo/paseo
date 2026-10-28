@@ -590,6 +590,7 @@ export type ResolvedDaemonSettings = Pick<
   | "relayRequireProtectedSecurity"
   | "appBaseUrl"
   | "idleRuntimeCleanup"
+  | "autoUpdateProviders"
   | "providerCatalogRefreshTimeoutMs"
   | "metadataGeneration"
   | "providerOverrides"
@@ -652,6 +653,10 @@ export function resolveConfigFromPersisted(
   };
 }
 
+function readAutoUpdateProviders(persisted: PersistedConfig): boolean {
+  return persisted.agents?.autoUpdateProviders === true;
+}
+
 export function resolveReloadableConfig(
   persisted: PersistedConfig,
   options?: ResolveConfigFromPersistedOptions,
@@ -677,6 +682,7 @@ export function resolveReloadableConfig(
     relayEnabled: relay.enabled,
     relayRequireProtectedSecurity: relay.requireProtectedSecurity,
     idleRuntimeCleanup: persisted.agents?.idleRuntimeCleanup ?? true,
+    autoUpdateProviders: readAutoUpdateProviders(persisted),
     providerCatalogRefreshTimeoutMs: persisted.agents?.catalogRefreshTimeoutMs,
     metadataGeneration: persisted.agents?.metadataGeneration,
     providerOverrides: extractProviderOverrides(
