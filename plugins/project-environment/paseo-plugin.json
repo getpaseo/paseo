@@ -1,0 +1,8 @@
+{
+  "id": "project-environment",
+  "name": "Project environment",
+  "description": "Save project variables and use them in agent commands without reopening sessions.",
+  "requirements": {
+    "paseo": ">=0.13.2 <0.14.0"
+  }
+}
