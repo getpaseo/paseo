@@ -5,6 +5,7 @@ import {
   type AppUpdateInstallRequest,
   type AppUpdateRuntime,
   type AppUpdateRuntimeConfiguration,
+  type PendingUpdateStore,
   type RuntimeUpdateInfo,
 } from "./app-update-service";
 
@@ -151,15 +152,108 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
   }
 }
 
-function createService(input?: { now?: () => number; bucket?: () => Promise<number> }) {
+interface FakePendingUpdateStore extends PendingUpdateStore {
+  current(): string | null;
+  /** Every write() call, in the order it was issued. */
+  writes(): string[];
+  /** Number of writes that have finished. */
+  completedWrites(): number;
+  /** Number of writes whose store call is still outstanding. */
+  inFlightWrites(): number;
+  /** Holds every subsequent write until released. One gate for all calls. */
+  gateWrites(): { release(): void; fail(error: Error): void };
+}
+
+function createFakePendingUpdateStore(initialVersion: string | null): FakePendingUpdateStore {
+  let version = initialVersion;
+  const issued: string[] = [];
+  let completed = 0;
+  let inFlight = 0;
+  let gate: {
+    promise: Promise<void>;
+    release(): void;
+    fail(error: Error): void;
+  } | null = null;
+  return {
+    read: async () => version,
+    write: async (next: string) => {
+      issued.push(next);
+      inFlight += 1;
+      try {
+        if (gate) await gate.promise;
+        version = next;
+      } finally {
+        inFlight -= 1;
+      }
+      completed += 1;
+    },
+    clear: async () => {
+      version = null;
+    },
+    current: () => version,
+    writes: () => [...issued],
+    completedWrites: () => completed,
+    inFlightWrites: () => inFlight,
+    gateWrites() {
+      let release!: () => void;
+      let fail!: (error: Error) => void;
+      const promise = new Promise<void>((resolve, reject) => {
+        release = () => {
+          gate = null;
+          resolve();
+        };
+        fail = (error) => {
+          gate = null;
+          reject(error);
+        };
+      });
+      promise.catch(() => undefined);
+      gate = { promise, release, fail };
+      return { release, fail };
+    },
+  };
+}
+
+/** Drains pending microtasks so chained promise work has run. */
+function settleMicrotasks(): Promise<void> {
+  return new Promise<void>((resolve) => setImmediate(resolve));
+}
+
+function createDeferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+/** Resolves when `signal` aborts, so tests pick the exact abort point. */
+function waitForAbort(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+}
+
+function createService(input?: {
+  now?: () => number;
+  bucket?: () => Promise<number>;
+  pendingVersion?: string | null;
+}) {
   const runtime = new FakeAppUpdateRuntime();
+  const pendingUpdateStore = createFakePendingUpdateStore(input?.pendingVersion ?? null);
+  const installErrors: string[] = [];
   const service = createAppUpdateService({
     runtime,
     isPackaged: () => true,
     now: input?.now ?? (() => Date.parse("2026-04-28T12:00:00.000Z")),
     bucket: input?.bucket ?? (async () => 0.99),
+    pendingUpdateStore,
+    reportInstallError: (message) => {
+      installErrors.push(message);
+    },
   });
-  return { runtime, service };
+  return { runtime, service, pendingUpdateStore, installErrors };
 }
 
 const rolledOutUpdate = {
@@ -369,8 +463,11 @@ describe("app update service", () => {
     });
   });
 
-  it("installs the newest admitted release when quitting with an older download", async () => {
-    const { runtime, service } = createService({ bucket: async () => 0 });
+  it("installs the recorded pending update silently and forces a relaunch", async () => {
+    const { runtime, service, pendingUpdateStore } = createService({
+      bucket: async () => 0,
+      pendingVersion: "1.2.4",
+    });
     runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
 
     await service.checkForAppUpdate({
@@ -380,100 +477,182 @@ describe("app update service", () => {
     });
     runtime.finishUpdateDownload(rolledOutUpdate);
 
-    const newerUpdate = { ...rolledOutUpdate, version: "1.2.5" };
-    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: newerUpdate });
-    const installed = await service.installUpdateOnQuit({
-      currentVersion: "1.2.3",
-      releaseChannel: "stable",
-      signal: new AbortController().signal,
-    });
+    const events: string[] = [];
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const result = await service.installPendingUpdateOnStartup(
+      {
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        signal: new AbortController().signal,
+      },
+      async () => {
+        events.push("stop-daemon");
+      },
+    );
 
-    expect(installed).toBe(true);
-    expect(runtime.installedVersions).toEqual(["1.2.5"]);
+    expect(result).toEqual({ installed: true, version: "1.2.4" });
+    expect(events).toEqual(["stop-daemon"]);
+    expect(runtime.installedVersions).toEqual(["1.2.4"]);
     expect(runtime.installModes).toEqual([
-      { targetVersion: "1.2.5", isSilent: true, isForceRunAfter: false },
+      { targetVersion: "1.2.4", isSilent: true, isForceRunAfter: true },
     ]);
+    expect(pendingUpdateStore.current()).toBeNull();
   });
 
-  it("does not install an older download while its replacement is still rolling out", async () => {
-    const now = Date.parse("2026-04-28T12:00:00.000Z");
-    const { runtime, service } = createService({ now: () => now, bucket: async () => 0.4 });
-    const olderUpdate = {
-      ...rolledOutUpdate,
-      releaseDate: "2026-04-27T00:00:00.000Z",
-    };
-    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: olderUpdate });
-
+  it("abandons the startup install when the deadline aborts during daemon stop", async () => {
+    const { runtime, service, pendingUpdateStore } = createService({
+      bucket: async () => 0,
+      pendingVersion: "1.2.4",
+    });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
     await service.checkForAppUpdate({
       currentVersion: "1.2.3",
       releaseChannel: "stable",
       intent: "automatic",
     });
-    runtime.finishUpdateDownload(olderUpdate);
+    runtime.finishUpdateDownload(rolledOutUpdate);
 
-    const newerUpdate = {
-      ...rolledOutUpdate,
-      version: "1.2.5",
-      releaseDate: "2026-04-28T12:00:00.000Z",
-    };
-    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: newerUpdate });
-    const installed = await service.installUpdateOnQuit({
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const deadline = new AbortController();
+    const stopEntered = createDeferred<void>();
+    const pending = service.installPendingUpdateOnStartup(
+      {
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        signal: deadline.signal,
+      },
+      async (signal: AbortSignal) => {
+        stopEntered.resolve();
+        await waitForAbort(signal);
+      },
+    );
+
+    await stopEntered.promise;
+    deadline.abort();
+    const result = await pending;
+
+    expect(result).toEqual({ installed: false, reason: "timeout" });
+    expect(runtime.installedVersions).toEqual([]);
+    expect(pendingUpdateStore.current()).toBe("1.2.4");
+  });
+
+  it("installs once the daemon stops before the deadline", async () => {
+    const { runtime, service, pendingUpdateStore } = createService({
+      bucket: async () => 0,
+      pendingVersion: "1.2.4",
+    });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    runtime.finishUpdateDownload(rolledOutUpdate);
+
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const result = await service.installPendingUpdateOnStartup(
+      {
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        signal: new AbortController().signal,
+      },
+      async () => {},
+    );
+
+    expect(result).toEqual({ installed: true, version: "1.2.4" });
+    expect(runtime.installedVersions).toEqual(["1.2.4"]);
+    expect(pendingUpdateStore.current()).toBeNull();
+  });
+
+  it("never asks electron-updater anything when no pending update is recorded", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+
+    const result = await service.installPendingUpdateOnStartup({
       currentVersion: "1.2.3",
       releaseChannel: "stable",
       signal: new AbortController().signal,
     });
 
-    expect(installed).toBe(false);
+    expect(result).toEqual({ installed: false, reason: "no-update" });
+    expect(runtime.checkCount).toBe(0);
     expect(runtime.installedVersions).toEqual([]);
   });
 
-  it("does not install after quit-time revalidation expires", async () => {
-    const { runtime, service } = createService({ bucket: async () => 0 });
+  it("does not install a pending update that is not ready before the deadline", async () => {
+    const { runtime, service, pendingUpdateStore } = createService({
+      bucket: async () => 0,
+      pendingVersion: "1.2.4",
+    });
     runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
 
-    await service.checkForAppUpdate({
-      currentVersion: "1.2.3",
-      releaseChannel: "stable",
-      intent: "automatic",
-    });
-    runtime.finishUpdateDownload(rolledOutUpdate);
-
     const deadline = new AbortController();
-    deadline.abort();
-    runtime.nextCheck({
-      isUpdateAvailable: true,
-      updateInfo: { ...rolledOutUpdate, version: "1.2.5" },
-    });
-    const installed = await service.installUpdateOnQuit({
+    const pending = service.installPendingUpdateOnStartup({
       currentVersion: "1.2.3",
       releaseChannel: "stable",
       signal: deadline.signal,
     });
+    await settleMicrotasks();
+    deadline.abort();
 
-    expect(installed).toBe(false);
+    expect(await pending).toEqual({ installed: false, reason: "timeout" });
     expect(runtime.installedVersions).toEqual([]);
+    expect(pendingUpdateStore.current()).toBe("1.2.4");
   });
 
-  it("does not install an unvalidated download when the quit-time check fails", async () => {
-    const { runtime, service } = createService({ bucket: async () => 0 });
-    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
-
-    await service.checkForAppUpdate({
-      currentVersion: "1.2.3",
-      releaseChannel: "stable",
-      intent: "automatic",
+  it("ignores a pending record that a newer release has superseded", async () => {
+    const { runtime, service, pendingUpdateStore } = createService({
+      bucket: async () => 0,
+      pendingVersion: "1.2.4",
     });
-    runtime.finishUpdateDownload(rolledOutUpdate);
+    runtime.nextCheck({
+      isUpdateAvailable: true,
+      updateInfo: { ...rolledOutUpdate, version: "1.2.5" },
+    });
 
-    runtime.failNextCheck(new Error("offline"));
-    const installed = await service.installUpdateOnQuit({
+    const result = await service.installPendingUpdateOnStartup({
       currentVersion: "1.2.3",
       releaseChannel: "stable",
       signal: new AbortController().signal,
     });
 
-    expect(installed).toBe(false);
+    expect(result).toEqual({ installed: false, reason: "no-update" });
     expect(runtime.installedVersions).toEqual([]);
+    expect(pendingUpdateStore.current()).toBe("1.2.4");
+  });
+
+  it("clears a stale pending record when the manifest no longer offers it", async () => {
+    const { runtime, service, pendingUpdateStore } = createService({
+      bucket: async () => 0,
+      pendingVersion: "1.2.4",
+    });
+    runtime.nextCheck(null);
+
+    const result = await service.installPendingUpdateOnStartup({
+      currentVersion: "1.2.4",
+      releaseChannel: "stable",
+      signal: new AbortController().signal,
+    });
+
+    expect(result).toEqual({ installed: false, reason: "no-update" });
+    expect(pendingUpdateStore.current()).toBeNull();
+  });
+
+  it("keeps the pending record when the startup check fails", async () => {
+    const { runtime, service, pendingUpdateStore } = createService({
+      bucket: async () => 0,
+      pendingVersion: "1.2.4",
+    });
+    runtime.failNextCheck(new Error("offline"));
+
+    const result = await service.installPendingUpdateOnStartup({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      signal: new AbortController().signal,
+    });
+
+    expect(result).toEqual({ installed: false, reason: "not-ready" });
+    expect(runtime.installedVersions).toEqual([]);
+    expect(pendingUpdateStore.current()).toBe("1.2.4");
   });
 
   it("rechecks for the newest release before a manual install", async () => {
@@ -545,7 +724,7 @@ describe("app update service", () => {
       currentVersion: "1.2.3",
       releaseChannel: "stable",
     });
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await settleMicrotasks();
     expect(runtime.downloadCallCount).toBe(1);
 
     staleDownload.reject(new Error("old download failed"));
@@ -840,5 +1019,111 @@ describe("app update service", () => {
       date: "2026-04-28T00:00:00.000Z",
       errorMessage: null,
     });
+  });
+});
+
+describe("pending update persistence", () => {
+  it("keeps a pending write observable until it settles", async () => {
+    const { runtime, service, pendingUpdateStore } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    const gate = pendingUpdateStore.gateWrites();
+    runtime.finishUpdateDownload(rolledOutUpdate);
+    await settleMicrotasks();
+
+    // The download event has fired, but the marker write is parked on the gate.
+    expect(pendingUpdateStore.current()).toBeNull();
+    expect(pendingUpdateStore.inFlightWrites()).toBe(1);
+    let flushed = false;
+    const flush = service.flushPendingUpdate().then(() => {
+      flushed = true;
+      return undefined;
+    });
+    await settleMicrotasks();
+    expect(flushed).toBe(false);
+
+    gate.release();
+    await flush;
+
+    expect(flushed).toBe(true);
+    expect(pendingUpdateStore.current()).toBe("1.2.4");
+  });
+
+  it("chains consecutive downloads so the flush covers every write and the newest wins", async () => {
+    const { runtime, service, pendingUpdateStore } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    const gate = pendingUpdateStore.gateWrites();
+    const newerUpdate = { ...rolledOutUpdate, version: "1.2.5" };
+    runtime.finishUpdateDownload(rolledOutUpdate);
+    runtime.finishUpdateDownload(newerUpdate);
+    await settleMicrotasks();
+
+    // The newest download is chained behind the in-flight one, so only the first
+    // marker has reached the store and the writes never overlap.
+    expect(pendingUpdateStore.writes()).toEqual(["1.2.4"]);
+    expect(pendingUpdateStore.inFlightWrites()).toBe(1);
+
+    const flush = service.flushPendingUpdate();
+    gate.release();
+    await flush;
+
+    expect(pendingUpdateStore.writes()).toEqual(["1.2.4", "1.2.5"]);
+    expect(pendingUpdateStore.completedWrites()).toBe(2);
+    expect(pendingUpdateStore.current()).toBe("1.2.5");
+  });
+
+  it("resolves flush after a failed write without throwing", async () => {
+    const { runtime, service, pendingUpdateStore, installErrors } = createService({
+      bucket: async () => 0,
+    });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    const gate = pendingUpdateStore.gateWrites();
+    runtime.finishUpdateDownload(rolledOutUpdate);
+    await settleMicrotasks();
+    expect(pendingUpdateStore.inFlightWrites()).toBe(1);
+    gate.fail(new Error("disk full"));
+
+    await expect(service.flushPendingUpdate()).resolves.toBeUndefined();
+    expect(pendingUpdateStore.current()).toBeNull();
+    expect(installErrors.some((message) => message.includes("disk full"))).toBe(true);
+  });
+
+  it("does not consider the download settled until the marker write completes", async () => {
+    const { runtime, service, pendingUpdateStore } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    const gate = pendingUpdateStore.gateWrites();
+    const download = runtime.beginUpdateDownload(rolledOutUpdate);
+    download.resolve();
+    // electron-updater resolves downloadUpdate() as soon as the download event
+    // dispatches, so the caller must flush the marker before exiting.
+    await settleMicrotasks();
+    expect(pendingUpdateStore.current()).toBeNull();
+
+    gate.release();
+    await service.flushPendingUpdate();
+    expect(pendingUpdateStore.current()).toBe("1.2.4");
   });
 });

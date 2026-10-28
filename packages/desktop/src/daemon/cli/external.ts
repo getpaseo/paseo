@@ -15,16 +15,34 @@ function createExternalCliInvocation(args: string[]): NodeEntrypointInvocation {
 
 function spawnExternalCli(
   invocation: NodeEntrypointInvocation,
+  signal?: AbortSignal,
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
     const child = spawnProcess(invocation.command, invocation.args, {
       envMode: "internal",
       env: invocation.env,
       stdio: ["ignore", "pipe", "pipe"],
+      signal,
     });
 
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    const settle = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      action();
+    };
+    const onAbort = () => {
+      // `spawn` already kills the child on abort; reject deterministically so a
+      // racing close event cannot resolve a cancelled command as a success.
+      settle(() => reject(new DOMException("Aborted", "AbortError")));
+    };
 
     child.stdout!.on("data", (data: Buffer) => {
       stdout += data.toString();
@@ -33,10 +51,11 @@ function spawnExternalCli(
       stderr += data.toString();
     });
 
-    child.on("error", reject);
+    child.on("error", (error) => settle(() => reject(error)));
     child.on("close", (exitCode) => {
-      resolve({ stdout, stderr, exitCode });
+      settle(() => resolve({ stdout, stderr, exitCode }));
     });
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 
@@ -71,9 +90,12 @@ export async function runExternalCliTextCommand(args: string[]): Promise<string>
   return result.stdout.trimEnd();
 }
 
-export async function runExternalCliJsonCommand(args: string[]): Promise<unknown> {
+export async function runExternalCliJsonCommand(
+  args: string[],
+  signal?: AbortSignal,
+): Promise<unknown> {
   const invocation = createExternalCliInvocation(args);
-  const result = await spawnExternalCli(invocation);
+  const result = await spawnExternalCli(invocation, signal);
 
   if (result.exitCode !== 0) {
     const stderr = result.stderr.trim();
