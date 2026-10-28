@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, type ReactNode } from "react";
-import { View, type LayoutChangeEvent } from "react-native";
+import { View, type LayoutChangeEvent, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
@@ -8,23 +8,29 @@ import { EdgeFade } from "@/components/ui/edge-fade";
 import { useProviderIcon } from "@/components/provider-icons";
 import { useSessionStore } from "@/stores/session-store";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
+import { isNative } from "@/constants/platform";
 
 const PREVIEW_HEIGHT = 240;
+// Native View still clips with "scroll", but Yoga measures its children without
+// the height cap. "hidden" caps the measured body too, hiding the expand control.
+const previewStyle: ViewStyle = {
+  maxHeight: PREVIEW_HEIGHT,
+  overflow: isNative ? "scroll" : "hidden",
+};
 
 export function MessagePreview({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
-  const [height, setHeight] = useState(0);
-  const overflowing = height > PREVIEW_HEIGHT;
+  const [overflowing, setOverflowing] = useState(false);
   const measure = useCallback(
-    (event: LayoutChangeEvent) => setHeight(event.nativeEvent.layout.height),
+    (event: LayoutChangeEvent) => setOverflowing(event.nativeEvent.layout.height > PREVIEW_HEIGHT),
     [],
   );
   const toggle = useCallback(() => setExpanded((value) => !value), []);
   const accessibilityState = useMemo(() => ({ expanded }), [expanded]);
   return (
     <>
-      <View style={!expanded && styles.preview}>
+      <View style={!expanded && previewStyle}>
         <View style={styles.body} onLayout={measure}>
           {children}
         </View>
@@ -83,7 +89,6 @@ export function MessageSender({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  preview: { maxHeight: PREVIEW_HEIGHT, overflow: "hidden" },
   body: { flexShrink: 0 },
   sender: { paddingRight: 0, borderRightWidth: 0 },
   toggle: { alignSelf: "flex-start", paddingHorizontal: 0, minHeight: 0, borderWidth: 0 },
