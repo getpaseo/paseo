@@ -419,3 +419,81 @@ test("Manual restores pre-beta order and keeps drag order across sorting and rel
     await seed.cleanup();
   }
 });
+
+function workspaceRows(page: Page, ids: string[]) {
+  return page.locator(
+    ids.map((id) => `[data-testid="sidebar-workspace-row-${getServerId()}:${id}"]`).join(", "),
+  );
+}
+
+async function openWorkspaceRow(page: Page, workspaceId: string) {
+  await page.getByTestId(`sidebar-workspace-row-${getServerId()}:${workspaceId}`).click();
+  await expect(page).toHaveURL(new RegExp(`/workspace/${workspaceId}`));
+}
+
+test("collapsed groups lead with the open workspace instead of hiding it behind Show more", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const { seed, ids } = await seedCompactProject();
+  try {
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    await selectWorkspaceSort(page, "Created");
+    const { rows, group } = compactProjectRows(page, seed);
+    await expectWorkspaceOrder(rows, ids.slice(0, 7));
+    await revealWorkspaces(group, "Show more");
+    await openWorkspaceRow(page, ids[9]!);
+    await expectWorkspaceOrder(rows, ids);
+    await revealWorkspaces(group, "Show less");
+    await expectWorkspaceOrder(rows, [ids[9]!, ...ids.slice(0, 7)]);
+    await expect(
+      page.getByTestId(`sidebar-workspace-row-${getServerId()}:${ids[9]!}`),
+    ).toHaveAttribute("aria-selected", "true");
+    await reconnectSidebar(page);
+    await expectWorkspaceOrder(rows, [ids[9]!, ...ids.slice(0, 7)]);
+    await expect(
+      page.getByTestId(`sidebar-workspace-row-${getServerId()}:${ids[9]!}`),
+    ).toHaveAttribute("aria-selected", "true");
+    await openWorkspaceRow(page, ids[2]!);
+    await expectWorkspaceOrder(rows, ids.slice(0, 7));
+    await expect(
+      page.getByTestId(`sidebar-workspace-row-${getServerId()}:${ids[2]!}`),
+    ).toHaveAttribute("aria-selected", "true");
+  } finally {
+    await seed.cleanup();
+  }
+});
+
+test("a Manual drag in a collapsed group keeps the open workspace's saved place", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const { seed, ids } = await seedCompactProject();
+  try {
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    const projectKey = projectEquivalenceViewKey(seed.projectKey);
+    await restorePreBetaOrder(
+      page,
+      projectKey,
+      ids.map((id) => `${getServerId()}:${id}`),
+    );
+    await selectWorkspaceSort(page, "Manual");
+    const rows = workspaceRows(page, ids);
+    const toggle = page.getByTestId(`sidebar-project-show-more-${projectKey}`);
+    await expectWorkspaceOrder(rows, ids.slice(0, 7));
+    await toggle.click();
+    await openWorkspaceRow(page, ids[9]!);
+    await toggle.click();
+    await expectWorkspaceOrder(rows, [ids[9]!, ...ids.slice(0, 7)]);
+    await quickDragFirstRowAfterSecond(workspaceRows(page, [ids[0]!, ids[1]!]), pressWorkspaceRow);
+    await expectWorkspaceOrder(rows, [ids[9]!, ids[1]!, ids[0]!, ...ids.slice(2, 7)]);
+    await reconnectSidebar(page);
+    await expectWorkspaceOrder(rows, [ids[9]!, ids[1]!, ids[0]!, ...ids.slice(2, 7)]);
+    await toggle.click();
+    await expectWorkspaceOrder(rows, [ids[1]!, ids[0]!, ...ids.slice(2)]);
+  } finally {
+    await seed.cleanup();
+  }
+});
