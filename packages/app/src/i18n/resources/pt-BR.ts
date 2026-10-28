@@ -2800,6 +2800,8 @@ export const ptBR: TranslationResources = {
           info: "Reabre os agentes que estavam trabalhando quando o host parou e envia a mensagem de retomada. Aplica-se após reinicializações normais e falhas.",
           hint: "Continuar automaticamente o trabalho interrompido.",
           prompt: "Mensagem de retomada",
+          edit: "Editar",
+          editAccessibilityLabel: "Editar mensagem",
         },
         idleRuntimeCleanup: {
           title: "Liberar agentes ociosos",

@@ -30,8 +30,10 @@ import {
   addDirectHostFromSettings,
   expectHostOnlineWithoutError,
   expectIdleAgentRelease,
-  setRestartRecovery,
-  expectRestartRecovery,
+  editRestartRecoveryPrompt,
+  expectRestartRecoveryEnabled,
+  expectRestartRecoveryPrompt,
+  setRestartRecoveryEnabled,
   setIdleAgentRelease,
 } from "../support/helpers/settings";
 
@@ -261,9 +263,13 @@ test("restart recovery host controls persist the opt-out and custom prompt", asy
   await openSettings(page);
   await openSettingsHost(page, serverId);
   await openHostSection(page, serverId, "agents");
-  await expectRestartRecovery(page, true, "Resume working.");
-  await setRestartRecovery(page, false, "Continue the interrupted work.");
+  await expectRestartRecoveryEnabled(page, true);
+  await expectRestartRecoveryPrompt(page, "Resume working.");
+  await editRestartRecoveryPrompt(page, "Continue the interrupted work.");
+  await setRestartRecoveryEnabled(page, false);
   await page.reload();
-  await expectRestartRecovery(page, false, "Continue the interrupted work.");
-  await setRestartRecovery(page, true, "Resume working.");
+  await expectRestartRecoveryEnabled(page, false);
+  await setRestartRecoveryEnabled(page, true);
+  await expectRestartRecoveryPrompt(page, "Continue the interrupted work.");
+  await editRestartRecoveryPrompt(page, "Resume working.");
 });

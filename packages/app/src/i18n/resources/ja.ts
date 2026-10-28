@@ -2786,6 +2786,8 @@ export const ja: TranslationResources = {
           info: "ホストの停止時に作業中だったエージェントを開き直し、再開メッセージを送信します。通常の再起動とクラッシュの両方に適用されます。",
           hint: "中断された作業を自動的に続行します。",
           prompt: "再開メッセージ",
+          edit: "編集",
+          editAccessibilityLabel: "メッセージを編集",
         },
         idleRuntimeCleanup: {
           title: "アイドル状態のエージェントを解放",

@@ -2887,6 +2887,8 @@ export const en = {
           info: "Reopen agents that were working when the host stopped and send the resume prompt. Applies after graceful restarts and crashes.",
           hint: "Continue interrupted work automatically.",
           prompt: "Resume prompt",
+          edit: "Edit",
+          editAccessibilityLabel: "Edit prompt",
         },
         idleRuntimeCleanup: {
           title: "Release idle agents",
