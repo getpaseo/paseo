@@ -27,6 +27,7 @@ import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
 import { installUsageReportsFixture } from "../support/helpers/usage-reports";
 import { claudeAndCodexReports } from "../support/helpers/usage-sidebar-item";
+import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 
 const APP_SETTINGS_KEY = "@paseo:app-settings";
 
@@ -133,6 +134,30 @@ function sidebarFooter(page: Page): Locator {
   return visibleTestId(page, "sidebar-add-project").locator("xpath=..");
 }
 
+function isPluginCatalogResponse(message: string | Buffer): boolean {
+  if (typeof message !== "string") return false;
+  const frame = JSON.parse(message);
+  return frame.type === "session" && frame.message?.type === "plugin.catalog.get.response";
+}
+
+async function holdNextPluginCatalogResponse(page: Page) {
+  const response = Promise.withResolvers<() => void>();
+  let holdCatalog = true;
+  await page.routeWebSocket(daemonWsRoutePattern(), (socket) => {
+    const server = socket.connectToServer();
+    socket.onMessage((message) => server.send(message));
+    server.onMessage((message) => {
+      if (holdCatalog && isPluginCatalogResponse(message)) {
+        holdCatalog = false;
+        response.resolve(() => socket.send(message));
+        return;
+      }
+      socket.send(message);
+    });
+  });
+  return { response: response.promise };
+}
+
 test.describe("Plugin sidebar items", () => {
   let workspaceId: string;
   let cleanup: () => Promise<void>;
@@ -149,6 +174,38 @@ test.describe("Plugin sidebar items", () => {
 
   test.afterEach(async () => {
     await cleanup();
+  });
+
+  test("a restored plugin screen waits for its catalog before rendering", async ({ page }) => {
+    await page.setViewportSize(WIDE);
+    await gotoWorkspace(page, workspaceId);
+    const row = headerRow(page, SHOWCASE_PLUGIN_ID, "deploys");
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    await row.click();
+    const body = page.getByText("Deploys screen body", { exact: true });
+    await expect(body).toBeVisible();
+    const screenUrl = page.url();
+    const catalog = await holdNextPluginCatalogResponse(page);
+
+    await page.reload();
+    const releaseCatalog = await catalog.response;
+    try {
+      await expect(
+        page.getByRole("progressbar", { name: "Loading plugin", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("This plugin surface is unavailable.", { exact: true }),
+      ).toHaveCount(0);
+      await expect(body).toHaveCount(0);
+    } finally {
+      releaseCatalog();
+    }
+
+    await expect(body).toBeVisible();
+    await expect(
+      page.getByRole("progressbar", { name: "Loading plugin", exact: true }),
+    ).toHaveCount(0);
+    await expect(page).toHaveURL(screenUrl);
   });
 
   test("a plugin's screen, header row, footer popover and command work together", async ({

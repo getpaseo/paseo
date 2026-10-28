@@ -196,6 +196,83 @@ async function connected() {
   return { ...h, stop };
 }
 
+it("keeps a restored plugin screen loading until its catalog arrives", async () => {
+  const h = harness();
+  expect(h.registry.getCatalogStatus("host")).toBe("loading");
+  const pending = Promise.withResolvers<Catalog>();
+  class PendingClient extends CatalogClient {
+    override getPluginCatalog() {
+      this.fetches++;
+      return pending.promise;
+    }
+  }
+  const client = new PendingClient();
+  h.sync({ client });
+
+  expect(h.registry.getCatalogStatus("host")).toBe("loading");
+  expect(h.registry.getSnapshot()).toEqual([]);
+  pending.resolve(client.catalog);
+
+  await expect.poll(() => h.registry.getCatalogStatus("host")).toBe("ready");
+  expect(h.installed().id).toBe("reports");
+  expect(client.fetches).toBe(1);
+});
+
+it("settles an empty catalog without leaving missing plugin screens loading", async () => {
+  const h = harness();
+  h.client.catalog = [];
+  const snapshot = h.registry.getSnapshot();
+  const statuses: string[] = [];
+  cleanups.push(
+    h.registry.subscribe(() => {
+      statuses.push(h.registry.getCatalogStatus("host"));
+    }),
+  );
+  h.sync();
+
+  await expect.poll(() => h.registry.getCatalogStatus("host")).toBe("ready");
+  expect(h.registry.getSnapshot()).toBe(snapshot);
+  expect(statuses).toEqual(["loading", "ready"]);
+});
+
+it("settles a failed catalog request instead of loading indefinitely", async () => {
+  const h = harness();
+  class FailingClient extends CatalogClient {
+    override async getPluginCatalog(): Promise<Catalog> {
+      throw new Error("Catalog request failed");
+    }
+  }
+  h.sync({ client: new FailingClient() });
+
+  await expect.poll(() => h.registry.getCatalogStatus("host")).toBe("error");
+  expect(h.registry.getSnapshot()).toEqual([]);
+});
+
+it("ignores an old failed request after a new connection loads its catalog", async () => {
+  const h = harness();
+  const pending = Promise.withResolvers<Catalog>();
+  const started = Promise.withResolvers<void>();
+  class PendingClient extends CatalogClient {
+    override getPluginCatalog() {
+      started.resolve();
+      return pending.promise;
+    }
+  }
+  const stop = h.sync({ client: new PendingClient() });
+  await started.promise;
+  stop();
+  h.sync();
+  await expect.poll(() => h.registry.getCatalogStatus("host")).toBe("ready");
+  const plugin = h.installed();
+
+  pending.reject(new Error("Old connection failed"));
+  await pending.promise.catch(() => undefined);
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+  expect(h.registry.getCatalogStatus("host")).toBe("ready");
+  expect(h.installed()).toBe(plugin);
+});
+
 function settingsQuery(plugin: InstalledPlugin) {
   return {
     queryKey: pluginSettingsKey("preferences"),
