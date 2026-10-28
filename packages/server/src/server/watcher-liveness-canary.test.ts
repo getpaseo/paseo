@@ -36,7 +36,7 @@ test("rejects when the watcher never reports the canary", async () => {
 test("verifies a watcher that starts delivering after the initial canary write", async () => {
   const watchRoot = await mkdtemp(join(tmpdir(), "paseo-watcher-canary-"));
   cleanupPaths.push(watchRoot);
-  const canary = createWatcherLivenessCanary(watchRoot, { timeoutMs: 1_000 });
+  const canary = createWatcherLivenessCanary(watchRoot);
   const verification = canary.verify();
   const verified = expect(verification).resolves.toBeUndefined();
 
@@ -56,7 +56,7 @@ test("verifies a watcher that starts delivering after the initial canary write",
 test("aborting verification stops pulses before removing the canary", async () => {
   const watchRoot = await mkdtemp(join(tmpdir(), "paseo-watcher-canary-"));
   cleanupPaths.push(watchRoot);
-  const canary = createWatcherLivenessCanary(watchRoot, { timeoutMs: 2_000 });
+  const canary = createWatcherLivenessCanary(watchRoot);
   const controller = new AbortController();
   const verification = canary.verify(controller.signal);
   const cancelled = expect(verification).rejects.toThrow("stop watching");
