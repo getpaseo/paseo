@@ -80,371 +80,367 @@ test("a fresh checkout read makes a newly initialized repository available to ca
   expect(realpathSync.native(repoRoot)).toBe(realpathSync.native(repo));
 }, 30_000);
 
-test(
-  "recursive observation updates tracked state and prunes ignored storms",
-  { repeats: 9, timeout: 30_000 },
-  async () => {
-    const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-git-observation-")));
-    const repoDir = path.join(tempDir, "repo");
-    const trackedPath = path.join(repoDir, "src", "tracked.txt");
-    const ignoredDir = path.join(repoDir, "build");
-    const remainingIgnoredDir = path.join(repoDir, "cache");
-    const newlyTrackedPath = path.join(ignoredDir, "tracked.txt");
-    mkdirSync(path.join(repoDir, ".git"), { recursive: true });
-    mkdirSync(path.dirname(trackedPath), { recursive: true });
-    mkdirSync(ignoredDir, { recursive: true });
-    mkdirSync(remainingIgnoredDir, { recursive: true });
-    writeFileSync(trackedPath, "base\n");
-    writeFileSync(newlyTrackedPath, "base\n");
+test("recursive observation updates tracked state and prunes ignored storms", async () => {
+  const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-git-observation-")));
+  const repoDir = path.join(tempDir, "repo");
+  const trackedPath = path.join(repoDir, "src", "tracked.txt");
+  const ignoredDir = path.join(repoDir, "build");
+  const remainingIgnoredDir = path.join(repoDir, "cache");
+  const newlyTrackedPath = path.join(ignoredDir, "tracked.txt");
+  mkdirSync(path.join(repoDir, ".git"), { recursive: true });
+  mkdirSync(path.dirname(trackedPath), { recursive: true });
+  mkdirSync(ignoredDir, { recursive: true });
+  mkdirSync(remainingIgnoredDir, { recursive: true });
+  writeFileSync(trackedPath, "base\n");
+  writeFileSync(newlyTrackedPath, "base\n");
 
-    let activeWatcherCount = 0;
-    const observer = createFileObserver();
-    let watcherStartCount = 0;
-    let onWorkingTreeIgnoreUpdated: (() => void) | null = null;
-    const deliveredEvents: Array<{
-      directory: string;
-      events: FileChange[];
-    }> = [];
-    const subscribe: SubscribeToFileChanges = async (directory, callback, options) => {
-      const subscription = await observer.subscribe(
-        directory,
-        (error, events) => {
-          deliveredEvents.push({ directory, events });
-          callback(error, events);
-        },
-        options,
+  let activeWatcherCount = 0;
+  const observer = createFileObserver();
+  let watcherStartCount = 0;
+  let onWorkingTreeIgnoreUpdated: (() => void) | null = null;
+  const deliveredEvents: Array<{
+    directory: string;
+    events: FileChange[];
+  }> = [];
+  const subscribe: SubscribeToFileChanges = async (directory, callback, options) => {
+    const subscription = await observer.subscribe(
+      directory,
+      (error, events) => {
+        deliveredEvents.push({ directory, events });
+        callback(error, events);
+      },
+      options,
+    );
+    activeWatcherCount += 1;
+    watcherStartCount += 1;
+    return {
+      updateIgnore: async (paths) => {
+        await subscription.updateIgnore(paths);
+        if (directory === repoDir) {
+          const onUpdated = onWorkingTreeIgnoreUpdated;
+          onWorkingTreeIgnoreUpdated = null;
+          onUpdated?.();
+        }
+      },
+      unsubscribe: async () => {
+        await subscription.unsubscribe();
+        activeWatcherCount -= 1;
+      },
+    };
+  };
+  const fileObserver = {
+    subscribe,
+    getDiagnostics: () => observer.getDiagnostics(),
+    close: () => observer.close(),
+  };
+  let observedPath = trackedPath;
+  let observedRelativePath = "src/tracked.txt";
+  const readObservedState = () => {
+    const contents = readFileSync(observedPath, "utf8");
+    const isDirty = contents !== "base\n";
+    return {
+      isDirty,
+      additions: isDirty ? contents.trim().split("\n").length : 0,
+    };
+  };
+  const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => createFacts(cwd));
+  const getCheckoutStatus = vi.fn(async (cwd: string) => ({
+    ...createStatus(cwd),
+    isDirty: readObservedState().isDirty,
+  }));
+  const getCheckoutShortstat = vi.fn(async () => ({
+    additions: readObservedState().additions,
+    deletions: 0,
+  }));
+  const getCheckoutWorktreeState = vi.fn(async () => {
+    const additions = readObservedState().additions;
+    return { isDirty: true, diffStat: { additions, deletions: 0 } };
+  });
+  const getCheckoutDiff = vi.fn(async () => {
+    const additions = readObservedState().additions;
+    return {
+      diff: "",
+      structured: [
+        { path: observedRelativePath, additions, deletions: 0, status: "modified" as const },
+      ],
+    };
+  });
+  let buildIgnored = true;
+  const runGitCommand = vi.fn(async (args: string[]) => {
+    if (args[0] === "rev-parse") {
+      return {
+        stdout: `${repoDir}\n`,
+        stderr: "",
+        truncated: false,
+        exitCode: 0,
+        signal: null,
+      };
+    }
+    if (args[0] === "ls-files") {
+      return {
+        stdout: `${buildIgnored ? "build/\n" : ""}cache/\n`,
+        stderr: "",
+        truncated: false,
+        exitCode: 0,
+        signal: null,
+      };
+    }
+    throw new Error(`Unexpected Git command: ${args.join(" ")}`);
+  });
+  const service = new WorkspaceGitServiceImpl({
+    logger: createLogger(),
+    paseoHome: path.join(tempDir, "paseo-home"),
+    fileObserver,
+    deps: {
+      getCheckoutSnapshotFacts,
+      getCheckoutStatus,
+      getCheckoutShortstat,
+      getCheckoutWorktreeState,
+      getCheckoutDiff,
+      runGitCommand,
+    } as never,
+  });
+  const workspaceRuntimeStore = createWorkspaceRuntimeStore();
+  service.onSnapshotUpdated((snapshot) => workspaceRuntimeStore.set(snapshot));
+  const diffManager = new CheckoutDiffManager({
+    workspaceRuntimeStore: workspaceRuntimeStore,
+    logger: createLogger(),
+    paseoHome: path.join(tempDir, "paseo-home"),
+    workspaceGitService: service,
+  });
+  const summaryListener = vi.fn();
+  const diffListener = vi.fn();
+  const summarySubscription = service.registerWorkspace({ cwd: repoDir }, summaryListener);
+  const diffSubscription = await diffManager.subscribe(
+    { cwd: repoDir, compare: { mode: "uncommitted" } },
+    diffListener,
+  );
+
+  cleanup.push(async () => {
+    diffSubscription.unsubscribe();
+    summarySubscription.unsubscribe();
+    diffManager.dispose();
+    await service.dispose();
+    expect(activeWatcherCount).toBe(0);
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  await vi.waitFor(
+    () => {
+      expect(
+        activeWatcherCount,
+        JSON.stringify({
+          observer: observer.getDiagnostics(),
+          service: service.getMetrics(),
+          deliveredEvents,
+        }),
+      ).toBe(2);
+      expect(workspaceRuntimeStore.get(repoDir)).not.toBeNull();
+      expect(service.getMetrics()).toMatchObject({
+        workspaceObservationSetupInFlightCount: 0,
+        workspaceRefreshInFlightCount: 0,
+        workspaceRefreshQueuedCount: 0,
+      });
+    },
+    { timeout: 5_000 },
+  );
+
+  writeFileSync(trackedPath, "base\n");
+  await vi.waitFor(
+    () => {
+      const events = deliveredEvents.flatMap((batch) => batch.events);
+      expect(events.map((event) => event.path)).toContain(trackedPath);
+      expect(getCheckoutWorktreeState).toHaveBeenCalled();
+      expect(service.getMetrics()).toMatchObject({
+        workspaceRefreshInFlightCount: 0,
+        workspaceRefreshQueuedCount: 0,
+      });
+    },
+    { timeout: 5_000 },
+  );
+
+  getCheckoutSnapshotFacts.mockClear();
+  getCheckoutStatus.mockClear();
+  getCheckoutShortstat.mockClear();
+  getCheckoutWorktreeState.mockClear();
+  getCheckoutDiff.mockClear();
+  runGitCommand.mockClear();
+  deliveredEvents.length = 0;
+
+  expect(runGitCommand).not.toHaveBeenCalled();
+  expect(getCheckoutWorktreeState).not.toHaveBeenCalled();
+  expect(getCheckoutDiff, JSON.stringify(deliveredEvents)).not.toHaveBeenCalled();
+  expect(service.getMetrics().workspaceRefreshQueuedCount).toBe(0);
+
+  for (let index = 0; index < 100; index += 1) {
+    writeFileSync(path.join(ignoredDir, `artifact-${index}.txt`), `${index}\n`);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 750));
+
+  expect(runGitCommand).not.toHaveBeenCalled();
+  expect(getCheckoutSnapshotFacts).not.toHaveBeenCalled();
+  expect(getCheckoutStatus).not.toHaveBeenCalled();
+  expect(getCheckoutShortstat).not.toHaveBeenCalled();
+  expect(getCheckoutWorktreeState).not.toHaveBeenCalled();
+  expect(getCheckoutDiff).not.toHaveBeenCalled();
+  expect(service.getMetrics().workspaceRefreshQueuedCount).toBe(0);
+
+  writeFileSync(trackedPath, "first\nsecond\n");
+  await vi.waitFor(
+    () => {
+      expect(summaryListener).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          git: expect.objectContaining({
+            isDirty: true,
+            diffStat: { additions: 2, deletions: 0 },
+          }),
+        }),
       );
-      activeWatcherCount += 1;
-      watcherStartCount += 1;
-      return {
-        updateIgnore: async (paths) => {
-          await subscription.updateIgnore(paths);
-          if (directory === repoDir) {
-            const onUpdated = onWorkingTreeIgnoreUpdated;
-            onWorkingTreeIgnoreUpdated = null;
-            onUpdated?.();
-          }
-        },
-        unsubscribe: async () => {
-          await subscription.unsubscribe();
-          activeWatcherCount -= 1;
-        },
-      };
-    };
-    const fileObserver = {
-      subscribe,
-      getDiagnostics: () => observer.getDiagnostics(),
-      close: () => observer.close(),
-    };
-    let observedPath = trackedPath;
-    let observedRelativePath = "src/tracked.txt";
-    const readObservedState = () => {
-      const contents = readFileSync(observedPath, "utf8");
-      const isDirty = contents !== "base\n";
-      return {
-        isDirty,
-        additions: isDirty ? contents.trim().split("\n").length : 0,
-      };
-    };
-    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => createFacts(cwd));
-    const getCheckoutStatus = vi.fn(async (cwd: string) => ({
-      ...createStatus(cwd),
-      isDirty: readObservedState().isDirty,
-    }));
-    const getCheckoutShortstat = vi.fn(async () => ({
-      additions: readObservedState().additions,
-      deletions: 0,
-    }));
-    const getCheckoutWorktreeState = vi.fn(async () => {
-      const additions = readObservedState().additions;
-      return { isDirty: true, diffStat: { additions, deletions: 0 } };
-    });
-    const getCheckoutDiff = vi.fn(async () => {
-      const additions = readObservedState().additions;
-      return {
-        diff: "",
-        structured: [
-          { path: observedRelativePath, additions, deletions: 0, status: "modified" as const },
+      expect(diffListener).toHaveBeenLastCalledWith({
+        cwd: repoDir,
+        files: [
+          {
+            path: "src/tracked.txt",
+            additions: 2,
+            deletions: 0,
+            status: "modified",
+          },
         ],
-      };
-    });
-    let buildIgnored = true;
-    const runGitCommand = vi.fn(async (args: string[]) => {
-      if (args[0] === "rev-parse") {
-        return {
-          stdout: `${repoDir}\n`,
-          stderr: "",
-          truncated: false,
-          exitCode: 0,
-          signal: null,
-        };
-      }
-      if (args[0] === "ls-files") {
-        return {
-          stdout: `${buildIgnored ? "build/\n" : ""}cache/\n`,
-          stderr: "",
-          truncated: false,
-          exitCode: 0,
-          signal: null,
-        };
-      }
-      throw new Error(`Unexpected Git command: ${args.join(" ")}`);
-    });
-    const service = new WorkspaceGitServiceImpl({
-      logger: createLogger(),
-      paseoHome: path.join(tempDir, "paseo-home"),
-      fileObserver,
-      deps: {
-        getCheckoutSnapshotFacts,
-        getCheckoutStatus,
-        getCheckoutShortstat,
-        getCheckoutWorktreeState,
-        getCheckoutDiff,
-        runGitCommand,
-      } as never,
-    });
-    const workspaceRuntimeStore = createWorkspaceRuntimeStore();
-    service.onSnapshotUpdated((snapshot) => workspaceRuntimeStore.set(snapshot));
-    const diffManager = new CheckoutDiffManager({
-      workspaceRuntimeStore: workspaceRuntimeStore,
-      logger: createLogger(),
-      paseoHome: path.join(tempDir, "paseo-home"),
-      workspaceGitService: service,
-    });
-    const summaryListener = vi.fn();
-    const diffListener = vi.fn();
-    const summarySubscription = service.registerWorkspace({ cwd: repoDir }, summaryListener);
-    const diffSubscription = await diffManager.subscribe(
-      { cwd: repoDir, compare: { mode: "uncommitted" } },
-      diffListener,
-    );
+        error: null,
+      });
+      expect(service.getMetrics().workspaceRefreshQueuedCount).toBe(0);
+    },
+    { timeout: 5_000 },
+  );
 
-    cleanup.push(async () => {
-      diffSubscription.unsubscribe();
-      summarySubscription.unsubscribe();
-      diffManager.dispose();
-      await service.dispose();
-      expect(activeWatcherCount).toBe(0);
-      rmSync(tempDir, { recursive: true, force: true });
-    });
-
-    await vi.waitFor(
-      () => {
-        expect(
-          activeWatcherCount,
-          JSON.stringify({
-            observer: observer.getDiagnostics(),
-            service: service.getMetrics(),
-            deliveredEvents,
+  writeFileSync(trackedPath, "first\nsecond\nthird\n");
+  await vi.waitFor(
+    () => {
+      expect(summaryListener).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          git: expect.objectContaining({
+            diffStat: { additions: 3, deletions: 0 },
           }),
-        ).toBe(2);
-        expect(workspaceRuntimeStore.get(repoDir)).not.toBeNull();
-        expect(service.getMetrics()).toMatchObject({
-          workspaceObservationSetupInFlightCount: 0,
-          workspaceRefreshInFlightCount: 0,
-          workspaceRefreshQueuedCount: 0,
-        });
-      },
-      { timeout: 5_000 },
-    );
+        }),
+      );
+      expect(diffListener).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          files: [expect.objectContaining({ additions: 3 })],
+        }),
+      );
+      expect(service.getMetrics()).toMatchObject({
+        workspaceRefreshInFlightCount: 0,
+        workspaceRefreshQueuedCount: 0,
+      });
+    },
+    { timeout: 5_000 },
+  );
 
-    writeFileSync(trackedPath, "base\n");
-    await vi.waitFor(
-      () => {
-        const events = deliveredEvents.flatMap((batch) => batch.events);
-        expect(events.map((event) => event.path)).toContain(trackedPath);
-        expect(getCheckoutWorktreeState).toHaveBeenCalled();
-        expect(service.getMetrics()).toMatchObject({
-          workspaceRefreshInFlightCount: 0,
-          workspaceRefreshQueuedCount: 0,
-        });
-      },
-      { timeout: 5_000 },
-    );
+  expect(getCheckoutSnapshotFacts).not.toHaveBeenCalled();
+  expect(getCheckoutStatus).not.toHaveBeenCalled();
 
-    getCheckoutSnapshotFacts.mockClear();
-    getCheckoutStatus.mockClear();
-    getCheckoutShortstat.mockClear();
-    getCheckoutWorktreeState.mockClear();
-    getCheckoutDiff.mockClear();
-    runGitCommand.mockClear();
-    deliveredEvents.length = 0;
-
-    expect(runGitCommand).not.toHaveBeenCalled();
-    expect(getCheckoutWorktreeState).not.toHaveBeenCalled();
-    expect(getCheckoutDiff, JSON.stringify(deliveredEvents)).not.toHaveBeenCalled();
-    expect(service.getMetrics().workspaceRefreshQueuedCount).toBe(0);
-
-    for (let index = 0; index < 100; index += 1) {
-      writeFileSync(path.join(ignoredDir, `artifact-${index}.txt`), `${index}\n`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 750));
-
-    expect(runGitCommand).not.toHaveBeenCalled();
-    expect(getCheckoutSnapshotFacts).not.toHaveBeenCalled();
-    expect(getCheckoutStatus).not.toHaveBeenCalled();
-    expect(getCheckoutShortstat).not.toHaveBeenCalled();
-    expect(getCheckoutWorktreeState).not.toHaveBeenCalled();
-    expect(getCheckoutDiff).not.toHaveBeenCalled();
-    expect(service.getMetrics().workspaceRefreshQueuedCount).toBe(0);
-
-    writeFileSync(trackedPath, "first\nsecond\n");
-    await vi.waitFor(
-      () => {
-        expect(summaryListener).toHaveBeenLastCalledWith(
-          expect.objectContaining({
-            git: expect.objectContaining({
-              isDirty: true,
-              diffStat: { additions: 2, deletions: 0 },
-            }),
+  buildIgnored = false;
+  observedPath = newlyTrackedPath;
+  observedRelativePath = "build/tracked.txt";
+  let editedDuringIgnoreUpdate = false;
+  onWorkingTreeIgnoreUpdated = () => {
+    editedDuringIgnoreUpdate = true;
+    writeFileSync(newlyTrackedPath, "first\nsecond\n");
+  };
+  writeFileSync(path.join(repoDir, ".gitignore"), "cache/\n");
+  await vi.waitFor(
+    () => {
+      expect(editedDuringIgnoreUpdate).toBe(true);
+      expect(watcherStartCount).toBe(2);
+      expect(activeWatcherCount).toBe(2);
+      expect(summaryListener).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          git: expect.objectContaining({
+            isDirty: true,
+            diffStat: { additions: 2, deletions: 0 },
           }),
-        );
-        expect(diffListener).toHaveBeenLastCalledWith({
-          cwd: repoDir,
-          files: [
-            {
-              path: "src/tracked.txt",
-              additions: 2,
-              deletions: 0,
-              status: "modified",
-            },
-          ],
-          error: null,
-        });
-        expect(service.getMetrics().workspaceRefreshQueuedCount).toBe(0);
-      },
-      { timeout: 5_000 },
-    );
+        }),
+      );
+      expect(diffListener).toHaveBeenLastCalledWith({
+        cwd: repoDir,
+        files: [
+          {
+            path: "build/tracked.txt",
+            additions: 2,
+            deletions: 0,
+            status: "modified",
+          },
+        ],
+        error: null,
+      });
+      expect(service.getMetrics()).toMatchObject({
+        workspaceRefreshInFlightCount: 0,
+        workspaceRefreshQueuedCount: 0,
+      });
+    },
+    { timeout: 8_000 },
+  );
 
-    writeFileSync(trackedPath, "first\nsecond\nthird\n");
-    await vi.waitFor(
-      () => {
-        expect(summaryListener).toHaveBeenLastCalledWith(
-          expect.objectContaining({
-            git: expect.objectContaining({
-              diffStat: { additions: 3, deletions: 0 },
-            }),
+  getCheckoutSnapshotFacts.mockClear();
+  getCheckoutStatus.mockClear();
+  getCheckoutShortstat.mockClear();
+  getCheckoutWorktreeState.mockClear();
+  getCheckoutDiff.mockClear();
+  runGitCommand.mockClear();
+  summaryListener.mockClear();
+  diffListener.mockClear();
+
+  writeFileSync(newlyTrackedPath, "first\nsecond\nthird\nfourth\n");
+  await vi.waitFor(
+    () => {
+      expect(summaryListener).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          git: expect.objectContaining({
+            isDirty: true,
+            diffStat: { additions: 4, deletions: 0 },
           }),
-        );
-        expect(diffListener).toHaveBeenLastCalledWith(
-          expect.objectContaining({
-            files: [expect.objectContaining({ additions: 3 })],
-          }),
-        );
-        expect(service.getMetrics()).toMatchObject({
-          workspaceRefreshInFlightCount: 0,
-          workspaceRefreshQueuedCount: 0,
-        });
-      },
-      { timeout: 5_000 },
-    );
+        }),
+      );
+      expect(diffListener).toHaveBeenLastCalledWith({
+        cwd: repoDir,
+        files: [
+          {
+            path: "build/tracked.txt",
+            additions: 4,
+            deletions: 0,
+            status: "modified",
+          },
+        ],
+        error: null,
+      });
+      expect(service.getMetrics()).toMatchObject({
+        workspaceRefreshInFlightCount: 0,
+        workspaceRefreshQueuedCount: 0,
+      });
+    },
+    { timeout: 5_000 },
+  );
 
-    expect(getCheckoutSnapshotFacts).not.toHaveBeenCalled();
-    expect(getCheckoutStatus).not.toHaveBeenCalled();
+  getCheckoutSnapshotFacts.mockClear();
+  getCheckoutStatus.mockClear();
+  getCheckoutShortstat.mockClear();
+  getCheckoutWorktreeState.mockClear();
+  getCheckoutDiff.mockClear();
+  runGitCommand.mockClear();
 
-    buildIgnored = false;
-    observedPath = newlyTrackedPath;
-    observedRelativePath = "build/tracked.txt";
-    let editedDuringIgnoreUpdate = false;
-    onWorkingTreeIgnoreUpdated = () => {
-      editedDuringIgnoreUpdate = true;
-      writeFileSync(newlyTrackedPath, "first\nsecond\n");
-    };
-    writeFileSync(path.join(repoDir, ".gitignore"), "cache/\n");
-    await vi.waitFor(
-      () => {
-        expect(editedDuringIgnoreUpdate).toBe(true);
-        expect(watcherStartCount).toBe(2);
-        expect(activeWatcherCount).toBe(2);
-        expect(summaryListener).toHaveBeenLastCalledWith(
-          expect.objectContaining({
-            git: expect.objectContaining({
-              isDirty: true,
-              diffStat: { additions: 2, deletions: 0 },
-            }),
-          }),
-        );
-        expect(diffListener).toHaveBeenLastCalledWith({
-          cwd: repoDir,
-          files: [
-            {
-              path: "build/tracked.txt",
-              additions: 2,
-              deletions: 0,
-              status: "modified",
-            },
-          ],
-          error: null,
-        });
-        expect(service.getMetrics()).toMatchObject({
-          workspaceRefreshInFlightCount: 0,
-          workspaceRefreshQueuedCount: 0,
-        });
-      },
-      { timeout: 8_000 },
-    );
+  for (let index = 0; index < 100; index += 1) {
+    writeFileSync(path.join(remainingIgnoredDir, `artifact-${index}.txt`), `${index}\n`);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 750));
 
-    getCheckoutSnapshotFacts.mockClear();
-    getCheckoutStatus.mockClear();
-    getCheckoutShortstat.mockClear();
-    getCheckoutWorktreeState.mockClear();
-    getCheckoutDiff.mockClear();
-    runGitCommand.mockClear();
-    summaryListener.mockClear();
-    diffListener.mockClear();
-
-    writeFileSync(newlyTrackedPath, "first\nsecond\nthird\nfourth\n");
-    await vi.waitFor(
-      () => {
-        expect(summaryListener).toHaveBeenLastCalledWith(
-          expect.objectContaining({
-            git: expect.objectContaining({
-              isDirty: true,
-              diffStat: { additions: 4, deletions: 0 },
-            }),
-          }),
-        );
-        expect(diffListener).toHaveBeenLastCalledWith({
-          cwd: repoDir,
-          files: [
-            {
-              path: "build/tracked.txt",
-              additions: 4,
-              deletions: 0,
-              status: "modified",
-            },
-          ],
-          error: null,
-        });
-        expect(service.getMetrics()).toMatchObject({
-          workspaceRefreshInFlightCount: 0,
-          workspaceRefreshQueuedCount: 0,
-        });
-      },
-      { timeout: 5_000 },
-    );
-
-    getCheckoutSnapshotFacts.mockClear();
-    getCheckoutStatus.mockClear();
-    getCheckoutShortstat.mockClear();
-    getCheckoutWorktreeState.mockClear();
-    getCheckoutDiff.mockClear();
-    runGitCommand.mockClear();
-
-    for (let index = 0; index < 100; index += 1) {
-      writeFileSync(path.join(remainingIgnoredDir, `artifact-${index}.txt`), `${index}\n`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 750));
-
-    expect(runGitCommand).not.toHaveBeenCalled();
-    expect(getCheckoutSnapshotFacts).not.toHaveBeenCalled();
-    expect(getCheckoutStatus).not.toHaveBeenCalled();
-    expect(getCheckoutShortstat).not.toHaveBeenCalled();
-    expect(getCheckoutWorktreeState).not.toHaveBeenCalled();
-    expect(getCheckoutDiff).not.toHaveBeenCalled();
-    expect(service.getMetrics().workspaceRefreshQueuedCount).toBe(0);
-  },
-);
+  expect(runGitCommand).not.toHaveBeenCalled();
+  expect(getCheckoutSnapshotFacts).not.toHaveBeenCalled();
+  expect(getCheckoutStatus).not.toHaveBeenCalled();
+  expect(getCheckoutShortstat).not.toHaveBeenCalled();
+  expect(getCheckoutWorktreeState).not.toHaveBeenCalled();
+  expect(getCheckoutDiff).not.toHaveBeenCalled();
+  expect(service.getMetrics().workspaceRefreshQueuedCount).toBe(0);
+}, 30_000);
 
 test("a late Git-ignored tree is pruned while tracked changes still notify consumers", async () => {
   const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-real-ignore-")));
