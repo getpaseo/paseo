@@ -54,6 +54,7 @@ Paseo only sees the returned promise, so detached work gets no error reporting a
 | `workspace.create.before` | yes   | `{ request }`                          | Entire create request                          |
 | `workspace.create.after`  | no    | `{ workspace }`                        |                                                |
 | `workspace.archive.after` | no    | `{ workspace }`                        |                                                |
+| `worktree.create.before`  | yes   | `{ request }`                          | Creation options and destination               |
 | `worktree.create.after`   | yes   | `{ worktree }`                         | Files in the worktree; throw to abort creation |
 | `agent.create.before`     | yes   | `{ request: { config, env? } }`        | Saved config except `cwd`; `env`               |
 | `agent.create.after`      | no    | `{ agent }`                            |                                                |
@@ -144,6 +145,44 @@ server.addHook("workspace.archive.after", async ({ workspace }) => {
   console.log(workspace);
 });
 ```
+
+## worktree.create.before {#worktreecreatebefore}
+
+Choose the location and creation options for a new worktree. Paseo awaits this hook before `git worktree add`, on creation from the app, CLI, MCP, and agent creation. Receives `{ request }`; return a complete replacement request or `undefined` to keep it. Throwing, invalid returned data, or a 30-second timeout aborts creation with the plugin and hook named in the error.
+
+```ts
+import { basename, dirname, join } from "node:path";
+
+server.addHook("worktree.create.before", async ({ request }) => ({
+  ...request,
+  path: join(
+    dirname(request.sourceCheckout),
+    `${basename(request.sourceCheckout)}.${request.branch.replaceAll("/", "-")}`,
+  ),
+}));
+```
+
+For source `/home/me/src/paseo` and branch `feature/x`, this creates `/home/me/src/paseo.feature-x`. See the complete [worktree-placement example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/worktree-placement).
+
+| Request field                             | Meaning                                                                                                                                                                                    |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `kind`                                    | `branch-off`, `checkout-branch`, `checkout-change-request`, or `checkout-github-pr`                                                                                                        |
+| `branch`                                  | Requested local branch name                                                                                                                                                                |
+| `baseRef`                                 | Starting ref for branch-off; comparison base for change requests; `null` for an existing branch checkout. Returning a ref for a branch checkout applies branch-off creation from that ref. |
+| `slug`                                    | Normalized worktree name                                                                                                                                                                   |
+| `path`                                    | Absolute destination; initially the default location with any existing-path suffix resolved                                                                                                |
+| `repoRoot`                                | Read-only main repository root                                                                                                                                                             |
+| `sourceCheckout`                          | Read-only source checkout root, including when creation starts from another worktree                                                                                                       |
+| `forge`, `changeRequestNumber`, `headRef` | Change-request checkout identity; GitHub legacy checkouts use `githubPrNumber` instead of `forge` and `changeRequestNumber`                                                                |
+| `headRepositoryOwner`, `headRepository`   | Optional source repository facts; `headRepository` is present only on change-request checkouts                                                                                             |
+| `checkoutRefs`                            | Optional fetch sources: `{ remoteName?: string, remoteRef: string }[]`                                                                                                                     |
+| `pushRemoteUrl`, `trackOriginHead`        | Optional push destination and tracking policy                                                                                                                                              |
+
+Every field except `repoRoot` and `sourceCheckout` is transformable. Return all required facts for the chosen `kind`. Paseo resolves the Git source plan after this hook, so handlers can change the branch and base before fetching refs, while Git can still choose a unique final branch name afterward.
+
+Paseo resolves symlinked parents and validates the returned path. It must be absolute, must not exist, and must not be the filesystem root, your home directory, the repository root, inside a `.git` directory, or an ancestor of the repository. An existing destination fails creation; Paseo never adds a suffix to a plugin-chosen path. The plugin must leave directory creation to Paseo.
+
+Ordering: `worktree.create.before` → `git worktree add` → `worktree.create.after` → workspace registration. Restoring a missing worktree recreates it at its recorded path without running either worktree creation hook.
 
 ## worktree.create.after
 
@@ -589,12 +628,12 @@ replaces that scope's prior value.
 
 ## Complete examples
 
-| Plugin                                                                                                 | Includes                                                                     |
-| ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       | All thirteen hooks; JSON logs with environment values redacted               |
-| [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     | Follow-ups, permissions, environment, provider switching, worktree selection |
-| [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) | MCP injection and Codex sandbox/approval options                             |
-| [agent-tools](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools)                 | Label-targeted tools and file operations in the plugin process               |
+| Plugin                                                                                                 | Includes                                                                         |
+| ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       | Agent, workspace, and worktree hooks; JSON logs with environment values redacted |
+| [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     | Follow-ups, permissions, environment, provider switching, worktree selection     |
+| [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) | MCP injection and Codex sandbox/approval options                                 |
+| [agent-tools](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools)                 | Label-targeted tools and file operations in the plugin process                   |
 
 Read logger output with `paseo plugin logs lifecycle-logger` or the host's `daemon.log`.
 

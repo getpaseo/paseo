@@ -1,3 +1,5 @@
+import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
+import { validateWorktreePath } from "../../../utils/worktree-path.js";
 import {
   createLifecycleRegistration,
   pluginHookRegistry,
@@ -37,7 +39,57 @@ export type PluginBeforeResults = PluginWireBeforeRequests & {
   "agent.open.before": SessionOpenWireRequest & { mcpServerOwners?: Record<string, string> };
 };
 
+const worktreeRequestFields = {
+  repoRoot: z.string(),
+  sourceCheckout: z.string(),
+  branch: z.string().min(1),
+  slug: z.string().refine((value) => validateBranchSlug(value).valid, "Invalid worktree slug"),
+  path: z.string().min(1),
+};
+const changeRequestFields = {
+  headRef: z.string().min(1),
+  headRepositoryOwner: z.string().optional(),
+  checkoutRefs: z
+    .array(z.object({ remoteName: z.string().optional(), remoteRef: z.string() }))
+    .optional(),
+  pushRemoteUrl: z.string().optional(),
+  trackOriginHead: z.boolean().optional(),
+};
+const worktreeRequestSchema = z.discriminatedUnion("kind", [
+  z
+    .object({ ...worktreeRequestFields, kind: z.literal("branch-off"), baseRef: z.string().min(1) })
+    .strict(),
+  z
+    .object({
+      ...worktreeRequestFields,
+      kind: z.literal("checkout-branch"),
+      baseRef: z.string().min(1).nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      ...worktreeRequestFields,
+      ...changeRequestFields,
+      kind: z.literal("checkout-change-request"),
+      baseRef: z.string().min(1),
+      forge: z.string(),
+      changeRequestNumber: z.number().int().positive(),
+      headRepository: z.string().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      ...worktreeRequestFields,
+      ...changeRequestFields,
+      kind: z.literal("checkout-github-pr"),
+      baseRef: z.string().min(1),
+      githubPrNumber: z.number().int().positive(),
+    })
+    .strict(),
+]);
+
 const beforeSchemas = {
+  "worktree.create.before": worktreeRequestSchema,
   "agent.create.before": CreateAgentRequestMessageSchema.pick({
     config: true,
     env: true,
@@ -162,11 +214,11 @@ export function publishAgentStream(
   }
 }
 
-export function validateBeforeResult<Name extends keyof PluginWireBeforeRequests>(
+export async function validateBeforeResult<Name extends keyof PluginWireBeforeRequests>(
   name: Name,
   input: PluginWireBeforeRequests[Name],
   output: unknown,
-): PluginWireBeforeRequests[Name] {
+): Promise<PluginWireBeforeRequests[Name]> {
   const result = validateBeforeRequest(name, output);
   if (name === "agent.open.before") {
     const previous = beforeSchemas["agent.open.before"].parse(input);
@@ -190,6 +242,14 @@ export function validateBeforeResult<Name extends keyof PluginWireBeforeRequests
     if (previous.config.cwd !== next.config.cwd) {
       throw new Error("agent.create.before hooks cannot change the workspace directory");
     }
+  }
+  if (name === "worktree.create.before") {
+    const previous = beforeSchemas["worktree.create.before"].parse(input);
+    const next = beforeSchemas["worktree.create.before"].parse(result);
+    if (previous.repoRoot !== next.repoRoot || previous.sourceCheckout !== next.sourceCheckout) {
+      throw new Error("worktree.create.before hooks cannot change repoRoot or sourceCheckout");
+    }
+    await validateWorktreePath({ candidate: next.path, repoPath: next.repoRoot });
   }
   return result;
 }
@@ -244,7 +304,7 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
             { request: structuredClone(request) },
             { paseo, signal: controller.signal },
           );
-          if (result !== undefined) request = validateBeforeResult(hookName, request, result);
+          if (result !== undefined) request = await validateBeforeResult(hookName, request, result);
         }
         return request;
       }
@@ -283,7 +343,10 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
       if (result === undefined) continue;
       const local = sessionOpenLocalResultSchema.parse(result);
       const metadata = local.tools.map(serializeAgentTool);
-      request = validateBeforeResult("agent.open.before", request, { ...local, tools: metadata });
+      request = await validateBeforeResult("agent.open.before", request, {
+        ...local,
+        tools: metadata,
+      });
       tools = local.tools;
     }
     context.signal.throwIfAborted();

@@ -11,6 +11,7 @@ Voice settings now let you configure speech providers and download local models 
 ### Added
 
 - Copy gitignored files selected by `.worktreeinclude` into new worktrees before setup and agents, using the built-in `worktree-include` plugin ([#8100](https://github.com/getpaseo/paseo/pull/8100))
+- Let plugins choose worktree paths and creation options through `worktree.create.before`, with listing, archive, deletion, and recovery at custom locations; includes a sibling-directory placement example ([#8117](https://github.com/getpaseo/paseo/pull/8117))
 - Let plugins give tools to specific agents ([#7938](https://github.com/getpaseo/paseo/pull/7938))
 - Added collapse and expand controls for completed conversation turns ([#7785](https://github.com/getpaseo/paseo/pull/7785), [#7990](https://github.com/getpaseo/paseo/pull/7990), [#8026](https://github.com/getpaseo/paseo/pull/8026) by [@akaready](https://github.com/akaready), [@Dey11](https://github.com/Dey11), [@Sebeb](https://github.com/Sebeb), [@Waishnav](https://github.com/Waishnav))
 - Let plugins add MCP servers whenever an agent session opens ([#7983](https://github.com/getpaseo/paseo/pull/7983))

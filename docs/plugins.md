@@ -447,6 +447,11 @@ owns payloads, ordering, failure behavior, and examples. `agent.create.before` e
 configuration; `agent.open.before` contributes launch-only `env`, `tools`, and `mcpServers` on
 every open. Executable tool definitions stay in the plugin process; only metadata crosses the boundary.
 
+Worktree placement is resolved before Git source planning, so a hook can change the branch and base
+without undoing fetched refs. Restores use the recorded destination and bypass creation hooks.
+Ownership checks must prefer the marker-verified or registry-recorded worktree root over the legacy
+path shape: a plugin can place a worktree several directories below the default worktrees root.
+
 Emit from the operation owner, not a client subscription. Provider history replay must not trigger
 live hooks. Notifications must not be awaited inside agent mutations: a handler can send a prompt
 or answer a permission through its own daemon session. Awaiting it there deadlocks that command.

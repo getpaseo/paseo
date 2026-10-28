@@ -35,6 +35,8 @@ With a custom root, Paseo keeps the same hashed layout under that directory:
 }
 ```
 
+Plugins can choose a location anywhere on disk with [`worktree.create.before`](/docs/plugins/hooks#worktreecreatebefore). The [worktree-placement example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/worktree-placement) places worktrees next to the source checkout. Paseo validates the path, refuses an existing destination, and manages listing, archive, and deletion there. Recovery uses the recorded path without running creation hooks.
+
 1. Create a workspace with worktree isolation, Paseo creates the worktree and runs your setup hooks
 2. Launch one or more agents in that workspace
 3. Review the diff against the base branch

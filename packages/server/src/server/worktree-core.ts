@@ -1,8 +1,14 @@
+import { join } from "node:path";
+import { stat } from "node:fs/promises";
+import type { PluginWorktreeCreateRequest } from "@getpaseo/plugin/server";
+import type { PluginLifecycle } from "./plugins/lifecycle/index.js";
+import { validateWorktreePath } from "../utils/worktree-path.js";
 import { createNameId } from "mnemonic-id";
 
 import type { ForgeService } from "../services/forge-service.js";
 import {
   createWorktree,
+  getPaseoWorktreesRoot,
   slugify,
   validateBranchSlug,
   type CreatedWorktree,
@@ -15,7 +21,7 @@ import {
 } from "./resolve-worktree-creation-intent.js";
 import type { ChangeRequestCheckoutSource, FirstAgentContext } from "@getpaseo/protocol/messages";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
-import { runWithGitCommandPriority } from "../utils/run-git-command.js";
+import { runGitCommand, runWithGitCommandPriority } from "../utils/run-git-command.js";
 
 export interface CreateWorktreeCoreInput {
   cwd: string;
@@ -31,6 +37,7 @@ export interface CreateWorktreeCoreInput {
 }
 
 export interface CreateWorktreeCoreDeps {
+  lifecycle?: Pick<PluginLifecycle, "before">;
   github: ForgeService;
   workspaceGitService?: Pick<
     WorkspaceGitService,
@@ -90,7 +97,7 @@ async function createWorktreeCoreWithPriority(
   }
 
   const forge = await resolveForge(repoRoot, deps, intentInput);
-  const intent = await resolveWorktreeCreationIntent(intentInput, repoRoot, {
+  let intent = await resolveWorktreeCreationIntent(intentInput, repoRoot, {
     forge: forge.forge,
     forgeService: forge.service,
     resolveDefaultBranch: (root) => resolveDefaultBranch(root, deps),
@@ -114,10 +121,45 @@ async function createWorktreeCoreWithPriority(
     }
   }
 
+  let defaultPath = join(
+    await getPaseoWorktreesRoot(repoRoot, input.paseoHome, input.worktreesRoot),
+    normalizedSlug,
+  );
+  const originalPath = defaultPath;
+  let suffix = 1;
+  while (
+    await stat(defaultPath).then(
+      () => true,
+      () => false,
+    )
+  ) {
+    defaultPath = `${originalPath}-${suffix++}`;
+  }
+  const { stdout: sourceRoot } = await runGitCommand(["rev-parse", "--show-toplevel"], {
+    cwd: input.cwd,
+  });
+  const sourceCheckout = sourceRoot.trim();
+  const request = describeCreationRequest(intent, {
+    repoRoot,
+    sourceCheckout,
+    slug: normalizedSlug,
+    path: defaultPath,
+  });
+  const transformed = deps.lifecycle
+    ? await deps.lifecycle.before("worktree.create.before", request)
+    : request;
+  const worktreePath = await validateWorktreePath({
+    candidate: transformed.path,
+    repoPath: repoRoot,
+  });
+  normalizedSlug = validateWorktreeSlug(transformed.slug);
+  intent = creationIntentFromRequest(transformed, intent);
+
   return {
     worktree: await createWorktree({
       cwd: repoRoot,
       worktreeSlug: normalizedSlug,
+      worktreePath,
       source: intent,
       paseoHome: input.paseoHome,
       worktreesRoot: input.worktreesRoot,
@@ -125,6 +167,62 @@ async function createWorktreeCoreWithPriority(
     intent,
     repoRoot,
     created: true,
+  };
+}
+
+function describeCreationRequest(
+  intent: WorktreeCreationIntent,
+  placement: Pick<PluginWorktreeCreateRequest, "repoRoot" | "sourceCheckout" | "slug" | "path">,
+): PluginWorktreeCreateRequest {
+  if (intent.kind === "branch-off")
+    return {
+      ...placement,
+      kind: intent.kind,
+      branch: intent.branchName,
+      baseRef: intent.baseBranch,
+    };
+  if (intent.kind === "checkout-branch")
+    return { ...placement, kind: intent.kind, branch: intent.branchName, baseRef: null };
+  const { localBranchName, baseRefName, ...facts } = intent;
+  return {
+    ...placement,
+    ...facts,
+    branch: localBranchName ?? intent.headRef,
+    baseRef: baseRefName,
+  };
+}
+
+function creationIntentFromRequest(
+  request: PluginWorktreeCreateRequest,
+  original: WorktreeCreationIntent,
+): WorktreeCreationIntent {
+  if (request.kind === "branch-off") {
+    return { kind: request.kind, branchName: request.branch, baseBranch: request.baseRef };
+  }
+  if (request.kind === "checkout-branch") {
+    return {
+      kind: request.kind,
+      branchName: request.branch,
+      ...(request.baseRef ? { baseRef: request.baseRef } : {}),
+    };
+  }
+  const {
+    repoRoot: _repoRoot,
+    sourceCheckout: _checkout,
+    slug: _slug,
+    path: _path,
+    branch,
+    baseRef,
+    ...facts
+  } = request;
+  const keepLocalBranchName =
+    branch !== request.headRef ||
+    ((original.kind === "checkout-change-request" || original.kind === "checkout-github-pr") &&
+      original.localBranchName !== undefined);
+  return {
+    ...facts,
+    ...(keepLocalBranchName ? { localBranchName: branch } : {}),
+    baseRefName: baseRef,
   };
 }
 

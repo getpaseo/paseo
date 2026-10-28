@@ -27,6 +27,40 @@ export interface PluginHookWorktree {
   sourceCheckout: string;
 }
 
+/** Resolved creation options before Git fetches refs or chooses a unique branch name. */
+export type PluginWorktreeCreateRequest = {
+  readonly repoRoot: string;
+  readonly sourceCheckout: string;
+  branch: string;
+  slug: string;
+  path: string;
+} & (
+  | { kind: "branch-off"; baseRef: string }
+  | { kind: "checkout-branch"; baseRef: string | null }
+  | {
+      kind: "checkout-change-request";
+      baseRef: string;
+      forge: string;
+      changeRequestNumber: number;
+      headRef: string;
+      headRepositoryOwner?: string;
+      headRepository?: string;
+      checkoutRefs?: { remoteName?: string; remoteRef: string }[];
+      pushRemoteUrl?: string;
+      trackOriginHead?: boolean;
+    }
+  | {
+      kind: "checkout-github-pr";
+      baseRef: string;
+      githubPrNumber: number;
+      headRef: string;
+      headRepositoryOwner?: string;
+      checkoutRefs?: { remoteName?: string; remoteRef: string }[];
+      pushRemoteUrl?: string;
+      trackOriginHead?: boolean;
+    }
+);
+
 export interface PluginHookAgent {
   id: string;
   workspaceId: string | null;
@@ -81,6 +115,7 @@ export interface PluginHookEvents {
 }
 
 export interface PluginHookRequests {
+  "worktree.create.before": PluginWorktreeCreateRequest;
   "agent.create.before": { config: AgentSessionConfig; env?: Record<string, string> };
   "agent.open.before": PluginSessionOpenRequest;
   "workspace.create.before": Omit<WorkspaceCreateRequest, "type" | "requestId">;
@@ -140,6 +175,7 @@ export const pluginHookRegistry = {
   "workspace.create.before": { waits: true },
   "workspace.create.after": { waits: false },
   "workspace.archive.after": { waits: false },
+  "worktree.create.before": { waits: true },
   "worktree.create.after": { waits: true },
   "agent.create.before": { waits: true },
   "agent.create.after": { waits: false },

@@ -582,7 +582,7 @@ export class PluginRuntime {
           name,
           input: name === "agent.open.before" ? { ...request, tools: [], mcpServers: {} } : request,
         });
-        request = validateBeforeResult(name, request, output);
+        request = await validateBeforeResult(name, request, output);
         if (name === "agent.open.before") {
           const opened = request as SessionOpenWireRequest;
           this.collectMcpServers(mcpServers, mcpServerOwners, loaded, opened.mcpServers);

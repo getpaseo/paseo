@@ -52,6 +52,7 @@ Paseo 只观察返回的 Promise，因此独立任务没有错误报告，也没
 | `workspace.create.before` | 是   | `{ request }`                          | 整个创建请求                              |
 | `workspace.create.after`  | 否   | `{ workspace }`                        |                                           |
 | `workspace.archive.after` | 否   | `{ workspace }`                        |                                           |
+| `worktree.create.before`  | 是   | `{ request }`                          | 创建选项和目标路径                        |
 | `worktree.create.after`   | 是   | `{ worktree }`                         | worktree 中的文件；抛出错误中止创建       |
 | `agent.create.before`     | 是   | `{ request: { config, env? } }`        | 除 `cwd` 外的已保存配置；`env`            |
 | `agent.create.after`      | 否   | `{ agent }`                            |                                           |
@@ -141,6 +142,44 @@ server.addHook("workspace.archive.after", async ({ workspace }) => {
   console.log(workspace);
 });
 ```
+
+## worktree.create.before {#worktreecreatebefore}
+
+为新 worktree 选择路径和创建选项。通过应用、CLI、MCP 或创建 Agent 新建 worktree 时，Paseo 在 `git worktree add` 之前等待此钩子。钩子收到 `{ request }`，返回完整的替换请求，或返回 `undefined` 保持原值。抛出错误、返回无效数据或超过 30 秒会终止创建，错误包含插件和钩子名称。
+
+```ts
+import { basename, dirname, join } from "node:path";
+
+server.addHook("worktree.create.before", async ({ request }) => ({
+  ...request,
+  path: join(
+    dirname(request.sourceCheckout),
+    `${basename(request.sourceCheckout)}.${request.branch.replaceAll("/", "-")}`,
+  ),
+}));
+```
+
+源检出目录为 `/home/me/src/paseo`、分支为 `feature/x` 时，目标为 `/home/me/src/paseo.feature-x`。完整插件见 [worktree-placement 示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/worktree-placement)。
+
+| 请求字段                                  | 含义                                                                                                                             |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `kind`                                    | `branch-off`、`checkout-branch`、`checkout-change-request` 或 `checkout-github-pr`                                               |
+| `branch`                                  | 请求的本地分支名称                                                                                                               |
+| `baseRef`                                 | branch-off 的起始引用；变更请求的比较基准；检出现有分支时为 `null`。为分支检出返回引用时，会从该引用按 branch-off 规则创建分支。 |
+| `slug`                                    | 规范化的 worktree 名称                                                                                                           |
+| `path`                                    | 绝对目标路径，初始值为已处理现有路径后缀的默认位置                                                                               |
+| `repoRoot`                                | 只读，主仓库根目录                                                                                                               |
+| `sourceCheckout`                          | 只读，源检出根目录，也支持从另一个 worktree 发起创建                                                                             |
+| `forge`、`changeRequestNumber`、`headRef` | 变更请求检出标识；旧版 GitHub 检出用 `githubPrNumber` 代替 `forge` 和 `changeRequestNumber`                                      |
+| `headRepositoryOwner`、`headRepository`   | 可选的源仓库信息；`headRepository` 仅用于变更请求检出                                                                            |
+| `checkoutRefs`                            | 可选的获取源：`{ remoteName?: string, remoteRef: string }[]`                                                                     |
+| `pushRemoteUrl`、`trackOriginHead`        | 可选的推送目标和跟踪策略                                                                                                         |
+
+除 `repoRoot` 和 `sourceCheckout` 外，所有字段都可以修改。返回所选 `kind` 的全部必填字段。Paseo 在钩子之后解析 Git 源计划，因此钩子可以在获取引用之前修改分支和基准，而 Git 之后仍可能选择唯一的最终分支名称。
+
+Paseo 解析父目录中的符号链接并验证返回的路径。路径必须为绝对路径且不存在，不能是文件系统根目录、用户主目录、仓库根目录、`.git` 目录内的路径或仓库的祖先目录。目标已存在时创建失败，Paseo 不会为插件选择的路径添加后缀。插件应让 Paseo 创建目录。
+
+顺序：`worktree.create.before` → `git worktree add` → `worktree.create.after` → 注册工作区。恢复缺失的 worktree 时使用记录的原路径，不运行这两个创建钩子。
 
 ## worktree.create.after {#worktreecreateafter}
 
@@ -571,12 +610,12 @@ Creation request
 
 ## 完整示例 {#complete-examples}
 
-| 插件                                                                                                   | 包含                                                   |
-| ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
-| [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       | 全部十三个钩子；隐去环境变量值的 JSON 日志             |
-| [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     | 后续消息、权限、环境变量、切换 Provider、选择 worktree |
-| [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) | MCP 注入以及 Codex 沙盒/批准选项                       |
-| [agent-tools](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools)                 | 按标签选择 Agent，并在插件进程中执行文件操作的工具     |
+| 插件                                                                                                   | 包含                                                      |
+| ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
+| [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       | Agent、工作区和 worktree 钩子；隐去环境变量值的 JSON 日志 |
+| [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     | 后续消息、权限、环境变量、切换 Provider、选择 worktree    |
+| [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) | MCP 注入以及 Codex 沙盒/批准选项                          |
+| [agent-tools](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools)                 | 按标签选择 Agent，并在插件进程中执行文件操作的工具        |
 
 用 `paseo plugin logs lifecycle-logger` 或主机的 `daemon.log` 读取 logger 的输出。
 
