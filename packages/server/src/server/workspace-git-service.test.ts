@@ -797,6 +797,8 @@ describe("WorkspaceGitServiceImpl", () => {
 
     cwds.forEach((cwd) => service.registerWorkspace({ cwd }, vi.fn()));
     await vi.waitFor(() => {
+      // Admission precedes async path resolution; disposal must race pending subscriptions.
+      expect(subscribe).toHaveBeenCalledTimes(WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY);
       expect(service.getMetrics()).toMatchObject({
         workspaceRefreshAdmissionActiveCount: WORKSPACE_GIT_REFRESH_CONCURRENCY,
         workspaceRefreshAdmissionPendingCount: 1,
