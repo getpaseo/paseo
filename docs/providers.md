@@ -17,10 +17,11 @@ executable resolution and applies `agents.providers.<provider-id>.command` and `
 connecting. Register the provider's icon with the plugin rather than adding it to the app's
 provider icon map. You do not need a core manifest entry or provider factory.
 
-| Provider    | Transport                                  | Setup and limitations                                            |
-| ----------- | ------------------------------------------ | ---------------------------------------------------------------- |
-| Antigravity | Installed `agy` CLI                        | [Antigravity](../public-docs/supported-providers.md#antigravity) |
-| Muse Code   | MSP over one `muse serve` host per session | [Muse Code](../public-docs/muse-code.md)                         |
+| Provider    | Transport                                  | Setup and limitations                                                 |
+| ----------- | ------------------------------------------ | --------------------------------------------------------------------- |
+| Antigravity | Installed `agy` CLI                        | [Antigravity](../public-docs/supported-providers.md#antigravity)      |
+| Roder       | ACP over `roder acp`                       | [Roder setup and limits](../public-docs/supported-providers.md#roder) |
+| Muse Code   | MSP over one `muse serve` host per session | [Muse Code](../public-docs/muse-code.md)                              |
 
 ## Provider-native session options
 

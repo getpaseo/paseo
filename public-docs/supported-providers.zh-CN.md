@@ -10,14 +10,57 @@ nav: 支持的 Provider
 
 ## 原生支持 {#native-support}
 
-安装底层 CLI 并完成认证后即可开箱使用。
+安装底层 CLI 并完成认证后即可使用这些 Provider。部分 Provider 需要按下文配置。
 
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)。Anthropic 的编程 Agent，支持 MCP、流式输出和深度推理。
 - [Codex](/docs/codex)。OpenAI 的工作区 Agent，带有沙箱控制和可选的网络访问。
 - [OpenCode](https://opencode.ai/)。开源编程助手，支持多家 Provider 的模型。
 - [Pi](https://pi.dev)。极简的终端编程 Agent，支持多家 Provider 的 LLM。
+- [Roder](#roder)。通过内置 ACP Provider 插件运行的本地编程 Agent。
 - [Antigravity](#antigravity)。通过内置的 Provider 插件使用你已安装的 `agy` CLI。
 - [Muse Code](/docs/muse-code)。Meta 的终端编程 Agent，以 Provider 插件的形式内置。
+
+### Roder {#roder}
+
+在 daemon 主机上安装 [Roder 0.3.25 或更新版本](https://github.com/RoderAI/roder/releases/tag/roder/v0.3.25)。
+此版本增加了 ACP 会话控制、MCP 注入和已保存会话列表。
+安装或升级 CLI 的步骤见 [Roder 安装指南](https://github.com/RoderAI/roder#install-roder)。
+使用 Codex OAuth 时，在该主机的终端运行 `roder auth login codex`。
+Roder 读取自己的凭据；Paseo 不会代你登录。
+
+在 `~/.paseo/config.json` 中启用内置 Provider：
+
+```json
+{
+  "agents": {
+    "providers": {
+      "roder": {
+        "enabled": true,
+        "command": ["roder", "acp"],
+        "env": { "RODER_PROVIDER": "codex", "RODER_MODEL": "gpt-6-sol" }
+      }
+    }
+  }
+}
+```
+
+运行 `paseo reload`，然后在新建 Agent 时选择 **Roder**。
+如果 `roder` 不在 daemon 的 PATH 中，将 `command` 的第一项改为绝对路径，
+并保留第二项 `acp`。配置和环境变量决定初始模型；
+会话中的模型和模式选择器使用 Roder 提供的选项。
+
+Roder 支持注入 stdio 和 HTTP MCP 服务器，因此可以保持 Paseo 工具启用。
+Default 和 Accept edits 模式会为 MCP 调用请求权限；Plan 模式拒绝这些调用；
+Full access 模式无需权限请求即可执行。不支持 SSE MCP。
+
+适配器支持文本和图片提示、流式响应、工具活动、取消、已保存会话列表，
+以及进程重启后的对话恢复。图片需要使用支持图片输入的模型。
+恢复时需保留 Roder 数据目录和会话工作目录，并重新提供具有相同工具定义的 MCP 服务器。
+
+Paseo 的系统提示会保存为线程开发者指令，与工作区 `AGENTS.md` 一同生效。
+重新打开会话时会保留原提示；如需更改，请新建会话。
+Roder 不会应用其他 Paseo 元数据，包括持久化偏好和 Provider 选项。
+Paseo 仅显示运行中的二进制版本所声明的能力。
 
 ### Antigravity {#antigravity}
 

@@ -12,14 +12,61 @@ For the concept and how Paseo manages providers, see [Providers](/docs/providers
 
 ## Native support
 
-Work out of the box once the underlying CLI is installed and authenticated.
+Use these providers with an installed, authenticated CLI. Some require the setup below.
 
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Anthropic's coding agent with MCP support, streaming, and deep reasoning.
 - [Codex](/docs/codex). OpenAI's workspace agent with sandbox controls and optional network access.
 - [OpenCode](https://opencode.ai/). Open-source coding assistant with multi-provider model support.
 - [Pi](https://pi.dev). Minimal terminal-based coding agent with multi-provider LLM support.
+- [Roder](#roder). Local coding agent through a bundled ACP provider plugin.
 - [Antigravity](#antigravity). Uses your installed `agy` CLI through a built-in provider plugin.
 - [Muse Code](/docs/muse-code). Meta's terminal coding agent, bundled as a provider plugin.
+
+### Roder
+
+Install [Roder 0.3.25 or newer](https://github.com/RoderAI/roder/releases/tag/roder/v0.3.25)
+on your daemon host. This version adds ACP session controls, MCP injection and
+saved-session listing. See [Roder's installation guide](https://github.com/RoderAI/roder#install-roder)
+to install or upgrade the CLI.
+For Codex OAuth, run `roder auth login codex` in a terminal on that host. Roder reads
+its own credentials; Paseo does not sign in for you.
+
+Enable the bundled provider in `~/.paseo/config.json`:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "roder": {
+        "enabled": true,
+        "command": ["roder", "acp"],
+        "env": { "RODER_PROVIDER": "codex", "RODER_MODEL": "gpt-6-sol" }
+      }
+    }
+  }
+}
+```
+
+Run `paseo reload`, then choose **Roder** when starting an agent. If `roder` is
+outside the daemon's PATH, use its absolute path in `command` and keep `acp` as
+the second argument. Configuration and environment overrides set the initial model;
+the session's model and mode selectors use the values advertised by Roder.
+
+Roder accepts injected stdio and HTTP MCP servers, so Paseo tools can stay enabled.
+MCP calls ask for permission in Default and Accept edits modes. Plan mode denies
+them; Full access runs them without a permission request. SSE MCP is unsupported.
+
+The adapter supports text and image prompts, streamed responses, tool activity,
+cancellation, saved-session listing and conversation restoration after process
+restart. Images require a model that supports them. Keep Roder's data directory
+and the session's working directory available for restoration, and resupply MCP
+servers with the same tool definitions.
+
+Paseo's system prompt becomes persistent thread developer instructions, alongside
+workspace `AGENTS.md`. Reopening preserves the original prompt; changing it requires
+a new session. Other Paseo metadata, including persistence preferences and provider
+options, is not applied by Roder. Only capabilities advertised by the running
+binary appear in Paseo.
 
 ### Antigravity
 
