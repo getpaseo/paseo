@@ -17,6 +17,10 @@ export const pidLockInfoSchema = z.object({
   desktopManaged: z.boolean().optional(),
   heartbeat: z.literal(true).optional(),
   bootId: z.string().optional(),
+  workerPid: z.number().int().positive().nullable().optional(),
+  // Set by supervisors that restart their worker on this signal. A string, so an unknown
+  // signal from a newer supervisor does not make older readers reject the whole lock.
+  workerRestartSignal: z.string().optional(),
 });
 
 export interface PidLockInfo extends z.infer<typeof pidLockInfoSchema> {}
@@ -347,7 +351,9 @@ export function startPidLockHeartbeat(
 
 export async function updatePidLock(
   paseoHome: string,
-  patch: { listen: string; serverId: string } | { listen: null; serverId: null },
+  patch:
+    | { listen: string; serverId: string; workerPid?: number; workerRestartSignal?: string }
+    | { listen: null; serverId: null; workerPid?: null },
   options?: { ownerPid?: number },
 ): Promise<void> {
   const pidPath = getPidFilePath(paseoHome);

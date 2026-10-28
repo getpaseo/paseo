@@ -12,7 +12,7 @@ import { resolvePaseoHome } from "../src/server/paseo-home.js";
 import { daemonLogPath } from "../src/server/daemon-instance.js";
 import { PRIVATE_FILE_MODE } from "../src/server/private-files.js";
 import { loadPersistedConfig } from "../src/server/persisted-config.js";
-import { runSupervisor } from "./supervisor.js";
+import { runSupervisor, WORKER_RESTART_SIGNAL } from "./supervisor.js";
 import { resolveSupervisorLogFile } from "./supervisor-log-config.js";
 
 process.title = "Paseo Supervisor";
@@ -169,11 +169,24 @@ async function main(): Promise<void> {
       : undefined,
     restartOnCrash: true,
     logFile: supervisorLogFile,
-    onWorkerReady: async ({ listen, serverId }) => {
-      await updatePidLock(paseoHome, { listen, serverId }, { ownerPid: process.pid });
+    onWorkerReady: async ({ listen, serverId, workerPid }) => {
+      await updatePidLock(
+        paseoHome,
+        {
+          listen,
+          serverId,
+          ...(workerPid ? { workerPid } : {}),
+          ...(process.platform === "win32" ? {} : { workerRestartSignal: WORKER_RESTART_SIGNAL }),
+        },
+        { ownerPid: process.pid },
+      );
     },
     onWorkerExit: () =>
-      updatePidLock(paseoHome, { listen: null, serverId: null }, { ownerPid: process.pid }),
+      updatePidLock(
+        paseoHome,
+        { listen: null, serverId: null, workerPid: null },
+        { ownerPid: process.pid },
+      ),
     onSupervisorExit: releaseLock,
   });
   requestSupervisorShutdown = supervisor.requestShutdown;

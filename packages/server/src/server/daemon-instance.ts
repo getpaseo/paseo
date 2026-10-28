@@ -203,6 +203,25 @@ export async function stopDaemonInstance(
   return { action: "stopped", pid: instance.pid, forced, usedLifecycleRpc };
 }
 
+// Signals the supervisor instead of asking the worker, so a worker that no longer answers
+// its socket can still be replaced. Returns the worker PID being replaced, or null when the
+// supervisor predates the restart signal and the caller has to ask the worker.
+export async function signalWorkerRestart(
+  home: string,
+  instance: PidLockInfo,
+): Promise<number | null> {
+  if (process.platform === "win32") return null;
+  const current = await getPidLockInfo(home);
+  if (!current || !isSamePidLock(instance, current) || !isPidLockOwnerRunning(current))
+    throw new DaemonInstanceError(
+      "DAEMON_REPLACED",
+      `Supervisor exited or was replaced for ${home}.`,
+    );
+  if (current.workerRestartSignal !== "SIGUSR2" || !current.workerPid) return null;
+  process.kill(current.pid, current.workerRestartSignal);
+  return current.workerPid;
+}
+
 export async function startDaemonInstance(input: {
   home: string;
   command: string;
