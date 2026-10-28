@@ -12,6 +12,26 @@ initializing → idle → running → idle (or error → closed)
 
 Each live agent in `AgentManager` carries a `lastStatus` of `initializing`, `idle`, `running`, or `error`. `closed` is the persisted, resumable state for an agent record that has no live provider runtime. State transitions persist to disk and stream to subscribed clients via WebSocket.
 
+## Daemon restart recovery
+
+Hosts resume interrupted agents by default after graceful shutdown or a crash. The daemon
+reopens the saved provider conversation and settings, then sends `Resume working.`. Change
+`agents.resumePrompt` or disable `agents.resumeOnStartup` in host config or Host settings → Agents.
+Disabling recovery consumes pending intent; enabling it later does not revive old work.
+
+Only agents recorded as running qualify. Idle and initializing agents stay inactive. Archived
+agents or workspaces, private helpers and Hub-owned executions retain their own lifecycle.
+Explicit creation environment overrides are saved with the agent and reapplied when reopening.
+
+Recovery dispatches one agent at a time without waiting for its whole turn. One failed reopen
+is logged and does not block other agents. Finish subscriptions start after recovery dispatch so
+parents do not receive a premature closure notification. Graceful shutdown records intent before
+closing runtimes; startup captures persisted running state before stale-status repair.
+
+This is best-effort continuation. A crash between saving intent and dispatching a prompt can lose
+or repeat a continuation. Provider resume owns conversation restoration; there is no recovery retry
+loop or exactly-once turn guarantee.
+
 ## Runtime residency
 
 An unarchived agent may be `closed` without being deleted or archived. Closing releases its provider
@@ -139,8 +159,9 @@ caller, child, and host into one watch.
 
 Bootstrap restores these watches after repairing stale running records to `closed` and before opening
 ingress. Reading a closed child's result does not load its provider. A finish notification reports that
-the child's run has settled; the parent decides whether its task is complete. Recovery never resumes
-child work. Archived or deleted parents suppress delivery; parent-owned creation watches also stop
+the child's run has settled; the parent decides whether its task is complete. Restart recovery dispatches
+pending child work before these watches start. Archived or deleted parents suppress delivery;
+parent-owned creation watches also stop
 reporting after detachment.
 
 Intent remains stored until the parent's notification dispatch is acknowledged. Dispatch failure

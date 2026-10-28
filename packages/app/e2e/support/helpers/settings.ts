@@ -560,3 +560,20 @@ export async function expectHostOnlineWithoutError(page: Page): Promise<void> {
   await expect(page.getByTestId("host-page-identity")).toContainText("Online");
   await expect(page.getByTestId("host-connection-error")).toHaveCount(0);
 }
+
+export async function setRestartRecovery(page: Page, enabled: boolean, prompt: string) {
+  const toggle = page.getByRole("switch", { name: "Resume agents after restart", exact: true });
+  await toggle.click();
+  await expect(toggle).toBeChecked({ checked: enabled });
+  const input = page.getByRole("textbox", { name: "Resume prompt", exact: true });
+  await input.fill(prompt);
+  await input.blur();
+}
+export async function expectRestartRecovery(page: Page, enabled: boolean, prompt: string) {
+  await expect(
+    page.getByRole("switch", { name: "Resume agents after restart", exact: true }),
+  ).toBeChecked({ checked: enabled });
+  await expect(page.getByRole("textbox", { name: "Resume prompt", exact: true })).toHaveValue(
+    prompt,
+  );
+}
