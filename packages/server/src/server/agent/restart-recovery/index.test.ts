@@ -6,12 +6,13 @@ import { AgentStorage, parseStoredAgentRecord } from "../agent-storage.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { createRestartRecovery } from "./index.js";
 
-test("recovery saves intent before normalization, clears before dispatch, and continues after failure", async () => {
+test("recovery saves intent before normalization, clears before dispatch, and resumes each agent independently", async () => {
   const root = await mkdtemp(join(tmpdir(), "restart-recovery-"));
   try {
     const storage = new AgentStorage(root, createTestLogger());
     for (const [id, lastStatus] of [
       ["broken", "running"],
+      ["stuck", "running"],
       ["working", "running"],
       ["idle", "idle"],
       ["initializing", "initializing"],
@@ -35,6 +36,7 @@ test("recovery saves intent before normalization, clears before dispatch, and co
       dispatch: async (id, prompt) => {
         expect((await storage.get(id))?.resumeOnStartup).toBe(false);
         if (id === "broken") throw new Error("unavailable");
+        if (id === "stuck") return new Promise(() => {});
         dispatched.push(id + prompt);
       },
       report: () => {},
@@ -42,8 +44,15 @@ test("recovery saves intent before normalization, clears before dispatch, and co
     await recovery.prepareStartup();
     expect((await storage.get("working"))?.resumeOnStartup).toBe(true);
     expect((await storage.get("working"))?.lastStatus).toBe("closed");
-    await recovery.resumePending();
+    recovery.resumePending();
+    const running = new AbortController().signal;
+    await recovery.waitForResume("broken", running);
+    await recovery.waitForResume("working", running);
+    await recovery.waitForResume("idle", running);
     expect(dispatched).toEqual(["workingContinue verbatim.\n"]);
+    const stopped = new AbortController();
+    stopped.abort();
+    await expect(recovery.waitForResume("stuck", stopped.signal)).rejects.toBeDefined();
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -87,7 +96,7 @@ test("opt-out consumes pending recovery and excludes archived, private, owned an
     enabled = false;
     await recovery.prepareStartup();
     enabled = true;
-    await recovery.resumePending();
+    recovery.resumePending();
     expect(dispatched).toEqual([]);
     expect((await storage.list()).every((record) => !record.resumeOnStartup)).toBe(true);
   } finally {

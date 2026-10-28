@@ -23,10 +23,10 @@ Only agents recorded as running qualify. Idle and initializing agents stay inact
 agents or workspaces, private helpers and Hub-owned executions retain their own lifecycle.
 Explicit creation environment overrides are saved with the agent and reapplied when reopening.
 
-Recovery dispatches one agent at a time without waiting for its whole turn. One failed reopen
-is logged and does not block other agents. Finish subscriptions start after recovery dispatch so
-parents do not receive a premature closure notification. Graceful shutdown records intent before
-closing runtimes; startup captures persisted running state before stale-status repair.
+Startup chooses candidates before anything else reads or repairs persisted running state, then
+opens connections and resumes every candidate in the background. A provider that is slow to reopen
+holds back only its own agent; a failed reopen is logged. Graceful shutdown records intent before
+closing runtimes.
 
 This is best-effort continuation. A crash between saving intent and dispatching a prompt can lose
 or repeat a continuation. Provider resume owns conversation restoration; there is no recovery retry
@@ -159,8 +159,9 @@ caller, child, and host into one watch.
 
 Bootstrap restores these watches after repairing stale running records to `closed` and before opening
 ingress. Reading a closed child's result does not load its provider. A finish notification reports that
-the child's run has settled; the parent decides whether its task is complete. Restart recovery dispatches
-pending child work before these watches start. Archived or deleted parents suppress delivery;
+the child's run has settled; the parent decides whether its task is complete. A child chosen for restart
+recovery is observed only after its resume was sent, so the parent never hears that it was closed
+in between. Archived or deleted parents suppress delivery;
 parent-owned creation watches also stop
 reporting after detachment.
 

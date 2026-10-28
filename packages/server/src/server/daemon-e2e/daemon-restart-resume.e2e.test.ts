@@ -79,10 +79,11 @@ import { DaemonClient } from "../test-utils/daemon-client.js";
 async function restartFixture(
   root: string,
   settings: { resumeOnStartup?: boolean; resumePrompt?: string } = {},
+  fixture: { holdResume?: boolean } = {},
 ) {
   const child = fork(
     fileURLToPath(new URL("../test-utils/finish-subscription-daemon.ts", import.meta.url)),
-    [root, JSON.stringify(settings)],
+    [root, JSON.stringify(settings), JSON.stringify(fixture)],
     {
       execArgv: ["--conditions=source", "--import", "tsx"],
       stdio: ["ignore", "pipe", "pipe", "ipc"],
@@ -286,20 +287,21 @@ test.each([false, true])(
       processes.push(second.child);
       client = new DaemonClient({ url: `ws://127.0.0.1:${second.port}/ws`, appVersion: "0.13.0" });
       await client.connect();
-      const entries = (await readFile(path.join(root, "all-prompts.jsonl"), "utf8"))
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line));
-      expect(entries.filter((entry) => entry.prompt === settings.resumePrompt)).toHaveLength(
-        enabled ? 1 : 0,
-      );
+      const storage = new AgentStorage(path.join(second.paseoHome, "agents"), createTestLogger());
+      // Resume runs in the background; it is done once the saved intent is consumed.
+      await expect
+        .poll(async () => (await storage.get(working.id))?.resumeOnStartup)
+        .toBe(false);
+      const resumePrompts = async () =>
+        (await readFile(path.join(root, "all-prompts.jsonl"), "utf8"))
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line))
+          .filter((entry) => entry.prompt === settings.resumePrompt);
+      await expect.poll(resumePrompts).toHaveLength(enabled ? 1 : 0);
       expect((await client.fetchAgent(idle.id))?.agent.status).toBe("closed");
-      const restored = await new AgentStorage(
-        path.join(second.paseoHome, "agents"),
-        createTestLogger(),
-      ).get(working.id);
+      const restored = await storage.get(working.id);
       expect(restored?.persistence?.sessionId).toBe(original?.persistence?.sessionId);
-      expect(restored?.resumeOnStartup).toBe(false);
     } finally {
       await client?.close();
       for (const child of processes.toReversed()) await stopFixture(child, true);
@@ -308,3 +310,54 @@ test.each([false, true])(
   },
   60000,
 );
+
+test("a provider that is slow to reopen does not hold daemon startup", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "resume-background-process-"));
+  const processes: ChildProcess[] = [];
+  let client: DaemonClient | undefined;
+  try {
+    const first = await restartFixture(root);
+    processes.push(first.child);
+    client = new DaemonClient({ url: `ws://127.0.0.1:${first.port}/ws`, appVersion: "0.13.0" });
+    await client.connect();
+    const working = await client.createAgent({
+      provider: "claude",
+      cwd: first.cwd,
+      modeId: "full-access",
+    });
+    await client.sendMessage(working.id, "HOLD_CHILD");
+    await expect
+      .poll(
+        async () =>
+          (
+            await new AgentStorage(path.join(first.paseoHome, "agents"), createTestLogger()).get(
+              working.id,
+            )
+          )?.lastStatus,
+      )
+      .toBe("running");
+    await client.close();
+    client = undefined;
+    await stopFixture(first.child, false);
+
+    const second = await restartFixture(root, {}, { holdResume: true });
+    processes.push(second.child);
+    client = new DaemonClient({ url: `ws://127.0.0.1:${second.port}/ws`, appVersion: "0.13.0" });
+    await client.connect();
+    expect((await client.fetchAgent(working.id))?.agent.id).toBe(working.id);
+    second.child.send("release-resume");
+    await expect
+      .poll(async () =>
+        (await readFile(path.join(root, "all-prompts.jsonl"), "utf8"))
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line).prompt)
+          .filter((prompt) => prompt === "Resume working."),
+      )
+      .toHaveLength(1);
+  } finally {
+    await client?.close();
+    for (const child of processes.toReversed()) await stopFixture(child, true);
+    await rm(root, { recursive: true, force: true });
+  }
+}, 30000);
