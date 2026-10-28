@@ -157,6 +157,14 @@ test("focused contracts stay inside existing required checks", () => {
   assert.ok(!jobs.has("playwright-desktop"));
 });
 
+test("ordinary CI keeps app tests without prebuilding Android modules", () => {
+  const source = readFileSync(ciWorkflowPath, "utf8");
+  const app = jobBlocks(source).get("app-tests").join("\n");
+  assert.match(app, /npm run build:app-deps/);
+  assert.match(app, /npm run test --workspace=@getpaseo\/app/);
+  assert.doesNotMatch(source, /test:android|expo prebuild|gradlew|actions\/setup-java/);
+});
+
 test("server builds exclude test utilities at every domain depth", () => {
   const tsconfig = JSON.parse(readFileSync(serverTsconfigPath, "utf8"));
   assert.ok(tsconfig.exclude.includes("src/server/**/test-utils/**"));
