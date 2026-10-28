@@ -10,6 +10,7 @@ import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/serve
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentStreamEvent } from "../agent/agent-sdk-types.js";
 import { PluginAgentClientRegistry } from "../agent/plugin-provider.js";
+import { StaleProviderSessionError } from "../agent/stale-provider-session-error.js";
 import { PluginRuntime } from "./runtime.js";
 import { resolveDaemonVersion } from "../daemon-version.js";
 import type { PluginSessionSocket } from "./session-socket.js";
@@ -832,6 +833,119 @@ export default function contribute(server: any) { server.registerProvider(provid
         error: { message: "Plugin process exited: dying-provider" },
       });
     await runtime.stopAll();
+  });
+
+  it("exposes connection closure that rejects when the runtime fails the provider connection", async () => {
+    const directory = await createPlugin(
+      "subsession-violator",
+      `import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/server/provider";
+const provider: ProviderRegistration = {
+  id: "violator",
+  label: "Violator",
+  async connect(request) {
+    const listeners = new Set<(event: ProviderEvent) => void>();
+    const emit = (event: ProviderEvent) => { for (const listener of listeners) listener(event); };
+    return {
+      version: request.versions[0] ?? 1,
+      capabilities: ["prompt.message"],
+      async send(input) {
+        if (input.type === "session.open") {
+          emit({ type: "session.opened", requestId: input.requestId, sessionId: input.sessionId, capabilities: ["prompt.message"], restoration: "core", cwd: input.config.cwd });
+          emit({ type: "session.opened", sessionId: "uninvited-child", parentSessionId: input.sessionId, capabilities: [], restoration: "parent", cwd: input.config.cwd });
+          emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+        }
+      },
+      onEvent(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+      async close() {},
+    };
+  },
+};
+export default function contribute(server: any) { server.registerProvider(provider); return () => undefined; }`,
+    );
+    const runtime = createTestRuntime();
+    await runtime.startPlugin("subsession-violator", directory);
+    const connection = await runtime.connectProvider("subsession-violator", "violator", {
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+
+    await expect(
+      connection.send({
+        type: "session.open",
+        requestId: "open-violator",
+        sessionId: "root-violator",
+        config: { cwd: "/repo", env: {}, mcpServers: {}, settings: {}, persist: true },
+        history: "skip",
+      }),
+    ).rejects.toThrow("Provider parent session did not negotiate session.subsession");
+    await expect(connection.closed).rejects.toThrow(
+      "Provider parent session did not negotiate session.subsession",
+    );
+    await expect(
+      connection.send({ type: "catalog", requestId: "catalog-after-failure" }),
+    ).rejects.toThrow("Provider connection is closed");
+    await runtime.stopAll();
+  });
+
+  it("fails stale-session operations cleanly and reconnects after a contract violation", async () => {
+    const directory = await createPlugin(
+      "stale-ops-provider",
+      `import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/server/provider";
+let violated = false;
+const provider: ProviderRegistration = {
+  id: "staleops",
+  label: "Stale Ops",
+  async connect(request) {
+    const listeners = new Set<(event: ProviderEvent) => void>();
+    const emit = (event: ProviderEvent) => { for (const listener of listeners) listener(event); };
+    return {
+      version: request.versions[0] ?? 1,
+      capabilities: ["prompt.message", "session.configure"],
+      async send(input) {
+        if (input.type === "session.open") {
+          emit({ type: "session.opened", requestId: input.requestId, sessionId: input.sessionId, capabilities: ["prompt.message", "session.configure"], restoration: "core", persistence: { version: 1, data: { token: input.sessionId } }, cwd: input.config.cwd });
+          emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+        }
+        if (input.type === "session.prompt" && !violated) {
+          violated = true;
+          emit({ type: "session.opened", sessionId: "rogue-session", capabilities: ["session.list"], restoration: "core", cwd: "/rogue" });
+        } else if (input.type === "session.prompt") {
+          emit({ type: "session.prompt_result", sessionId: input.sessionId, clientMessageId: input.prompt.clientMessageId, result: { type: "turn", turnId: "turn-1" } });
+          emit({ type: "session.turn", sessionId: input.sessionId, turnId: "turn-1", state: "completed" });
+        }
+      },
+      onEvent(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+      async close() {},
+    };
+  },
+};
+export default function contribute(server: any) { server.registerProvider(provider); return () => undefined; }`,
+    );
+    const runtime = createTestRuntime();
+    await runtime.startPlugin("stale-ops-provider", directory);
+    const metadata = runtime.getProviderRegistrations("stale-ops-provider")[0]!;
+    const adapters = new PluginAgentClientRegistry(pino({ level: "silent" }));
+    adapters.replace([adaptRuntimeProvider(runtime, "stale-ops-provider", metadata)]);
+    try {
+      const client = adapters.clients()["staleops"]!;
+      const session = await client.createSession({ provider: "staleops", cwd: "/repo" });
+      await expect(
+        session.startTurn("trigger violation", { clientMessageId: "violate" }),
+      ).rejects.toBeInstanceOf(StaleProviderSessionError);
+
+      await expect(session.setModel("other-model")).rejects.toBeInstanceOf(
+        StaleProviderSessionError,
+      );
+      await expect(session.interrupt()).rejects.toBeInstanceOf(StaleProviderSessionError);
+
+      const replacement = await client.createSession({ provider: "staleops", cwd: "/repo" });
+      await expect(
+        replacement.startTurn("after recovery", { clientMessageId: "recovered" }),
+      ).resolves.toEqual({ turnId: "turn-1" });
+    } finally {
+      await adapters.shutdown();
+      await runtime.stopAll();
+    }
   });
 
   it("records host-owned plugin lifecycle events", async () => {

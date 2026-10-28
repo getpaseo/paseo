@@ -352,8 +352,13 @@ class ProviderRuntime {
   }
 
   removeSession(sessionId: string, providerSessionId: string): void {
+    const session = this.sessions.get(sessionId);
     this.sessions.delete(sessionId);
-    this.providerSessions.delete(providerSessionId);
+    // A stale session closing late must not drop the mapping of a replacement that
+    // re-registered the same provider session id on a recovered connection.
+    if (!session || this.providerSessions.get(providerSessionId) === session) {
+      this.providerSessions.delete(providerSessionId);
+    }
   }
 
   private getConnection(): Promise<ProviderConnection> {
@@ -401,7 +406,38 @@ class ProviderRuntime {
     }
     this.unsubscribe = unsubscribe;
     this.connection = connection;
+    void connection.closed?.then(
+      () => this.handleConnectionLost(connection, new Error("Provider connection closed")),
+      (error: unknown) =>
+        this.handleConnectionLost(
+          connection,
+          error instanceof Error ? error : new Error(String(error)),
+        ),
+    );
     return connection;
+  }
+
+  /**
+   * A lost connection must not strand the runtime: drop it so the next use establishes a
+   * fresh one. Interrupted sessions fail; idle sessions go stale and reopen from
+   * persistence, so one bad event does not take the provider down until restart.
+   */
+  private handleConnectionLost(connection: ProviderConnection, error: Error): void {
+    if (this.closed || this.connection !== connection) return;
+    this.connection = null;
+    this.unsubscribe?.();
+    this.unsubscribe = null;
+    // Requests whose replies can only arrive on the lost connection settle with the loss.
+    for (const request of this.requests.values()) request.reject(error);
+    this.requests.clear();
+    this.sessionRequests.clear();
+    for (const session of this.sessions.values()) session.connectionClosed(error);
+    // Provider session ids and pending descendants belong to the lost connection: drop
+    // them so children replayed on a recovered connection attach to fresh sessions
+    // instead of early-returning onto stale ones.
+    this.providerSessions.clear();
+    this.pendingOpenDescendants.clear();
+    this.pendingOpenDescendantsByRoot.clear();
   }
 
   private validateConnection(connection: ProviderConnection): void {
@@ -601,6 +637,12 @@ class ProviderRuntimeSession {
   >();
   private readonly activeTurnIds = new Set<string>();
   private terminal = false;
+  /**
+   * Terminal with no reachable provider counterpart: the connection is gone or the provider
+   * already sent session.closed. A runtime failure on a live connection is terminal but the
+   * provider session still exists, so close() must still send session.close to clean it up.
+   */
+  private providerGone = false;
   config: ProviderConfigState = { models: [], modes: [], thinkingOptions: [], settings: [] };
   commands: Array<{ name: string; description: string; argumentHint?: string }> = [];
   persistence: ProviderPersistence | null = null;
@@ -674,6 +716,7 @@ class ProviderRuntimeSession {
   }
 
   async configure(changes: ProviderConfigChanges): Promise<void> {
+    this.requireReachableProviderSession();
     const input: Extract<ProviderInput, { type: "session.configure" }> = {
       type: "session.configure",
       requestId: randomUUID(),
@@ -688,6 +731,7 @@ class ProviderRuntimeSession {
     permissionId: string,
     response: Extract<ProviderInput, { type: "session.permission" }>["response"],
   ): Promise<void> {
+    this.requireReachableProviderSession();
     const input: Extract<ProviderInput, { type: "session.permission" }> = {
       type: "session.permission",
       sessionId: this.providerSessionId,
@@ -699,12 +743,14 @@ class ProviderRuntimeSession {
   }
 
   async revert(token: ProviderInput & { type: "session.revert" }): Promise<void> {
+    this.requireReachableProviderSession();
     const input = { ...token, sessionId: this.providerSessionId };
     requireProviderCapabilities(this.capabilities, input);
     await this.runtime.complete(input);
   }
 
   async interrupt(): Promise<void> {
+    this.requireReachableProviderSession();
     await this.runtime.complete({
       type: "session.interrupt",
       requestId: randomUUID(),
@@ -712,8 +758,22 @@ class ProviderRuntimeSession {
     });
   }
 
+  /**
+   * Session operations other than prompt() cannot be delivered once the provider-side
+   * session is unreachable: complete() would route them through a recovered connection
+   * that has never seen this session id. Fail stale so callers get the same signal the
+   * prompt path uses instead of a raw "Unknown provider session".
+   */
+  private requireReachableProviderSession(): void {
+    if (this.providerGone) throw new StaleProviderSessionError(this.id);
+  }
+
   async close(): Promise<void> {
-    if (this.restoration === "parent") {
+    // Skip the send only when the provider-side session is unreachable: the connection is
+    // gone or the provider already sent session.closed. A session that failed on a live
+    // connection is terminal but still owns provider resources, so it still sends
+    // session.close to clean them up.
+    if (this.restoration === "parent" || this.providerGone) {
       this.runtime.removeSession(this.id, this.providerSessionId);
       return;
     }
@@ -769,6 +829,9 @@ class ProviderRuntimeSession {
       this.prompts.get(event.clientMessageId)?.resolve(event);
       return;
     }
+    // A session.closed after the session already went terminal (e.g. runtime_failed) still
+    // means the provider side is gone: record it before the terminal early-return.
+    if (event.type === "session.closed") this.providerGone = true;
     if (event.type === "session.runtime_failed" || event.type === "session.closed") {
       if (this.terminal) return;
       this.terminal = true;
@@ -794,6 +857,7 @@ class ProviderRuntimeSession {
       });
     }
     this.terminal = true;
+    this.providerGone = true;
     this.rejectPending(error);
   }
 
@@ -838,6 +902,7 @@ function normalizeConnection(connection: ProviderConnection): ProviderConnection
   return {
     version: connection.version,
     capabilities,
+    ...(connection.closed ? { closed: connection.closed } : {}),
     send: (input) => connection.send(ProviderInputSchema.parse(input)),
     onEvent: (listener) =>
       connection.onEvent((event) => listener(ProviderEventSchema.parse(event))),

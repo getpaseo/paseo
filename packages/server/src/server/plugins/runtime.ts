@@ -1110,6 +1110,7 @@ export class PluginRuntime {
         return () => state.listeners.delete(listener);
       },
       close: () => this.closeProviderConnection(loaded, connectionId, state),
+      closed: state.closedPromise,
     };
     state.capabilities = capabilities;
     state.connected = true;
