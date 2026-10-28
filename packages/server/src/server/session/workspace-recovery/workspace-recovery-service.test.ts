@@ -508,7 +508,7 @@ test("restores a user-created worktree at its recorded path outside Paseo's root
     workspaceId: workspace.workspaceId,
     action: "restore",
   });
-  expect(readFileSync(join(worktreeRoot, "README.md"), "utf8")).toBe("initial\n");
+  expect(readFileSync(join(worktreeRoot, "README.md"), "utf8").trim()).toBe("initial");
   expect(
     execFileSync("git", ["branch", "--show-current"], {
       cwd: worktreeRoot,

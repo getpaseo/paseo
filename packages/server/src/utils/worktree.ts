@@ -1148,10 +1148,7 @@ async function assertWorktreeBelongsToRepo(cwd: string, worktreePath: string): P
   } catch {
     return;
   }
-  if (
-    (await normalizePathForOwnership(callerRepoRoot)) !==
-    (await normalizePathForOwnership(targetRepoRoot))
-  ) {
+  if ((await getOwnershipRelativePath(callerRepoRoot, targetRepoRoot)) !== "") {
     throw new Error("Refusing to delete non-Paseo worktree");
   }
 }
