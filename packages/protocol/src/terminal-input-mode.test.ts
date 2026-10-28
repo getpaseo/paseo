@@ -125,4 +125,54 @@ describe("TerminalInputModeTracker", () => {
 
     expect(tracker.supportsModifiedEnter()).toBe(false);
   });
+
+  it("replays mouse tracking after a restore resets the terminal", () => {
+    const tracker = new TerminalInputModeTracker();
+
+    // Claude Code enables all three tracking protocols plus SGR encoding.
+    tracker.feed("\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h");
+
+    // xterm keeps the last protocol DECSET (ANY) and the SGR encoding.
+    expect(tracker.getPreamble()).toBe("\x1b[?1003h\x1b[?1006h");
+
+    // Any tracking DECRST clears the protocol but leaves the encoding.
+    tracker.feed("\x1b[?1000l");
+    expect(tracker.getPreamble()).toBe("\x1b[?1006h");
+
+    tracker.feed("\x1b[?1006l");
+    expect(tracker.getPreamble()).toBe("");
+  });
+
+  it("replays mouse tracking alongside the other replayed input modes", () => {
+    const tracker = new TerminalInputModeTracker();
+
+    tracker.feed("\x1b[?2004h\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h\x1b[>5u");
+
+    expect(tracker.getPreamble()).toBe("\x1b[=5;1u\x1b[?2004h\x1b[?1003h\x1b[?1006h");
+  });
+
+  it("replays focus reporting mode", () => {
+    const tracker = new TerminalInputModeTracker();
+
+    tracker.feed("\x1b[?1004h");
+    expect(tracker.getPreamble()).toBe("\x1b[?1004h");
+
+    tracker.feed("\x1b[?1004l");
+    expect(tracker.getPreamble()).toBe("");
+  });
+
+  it("does not report a public input-mode change for mouse-only sequences", () => {
+    const tracker = new TerminalInputModeTracker();
+
+    const result = tracker.feed("\x1b[?1000h");
+
+    expect(result.changed).toBe(false);
+    expect(tracker.getPreamble()).toBe("\x1b[?1000h");
+    expect(tracker.getState()).toEqual({
+      kittyKeyboardFlags: 0,
+      win32InputMode: false,
+      applicationCursorKeys: false,
+      bracketedPaste: false,
+    });
+  });
 });
