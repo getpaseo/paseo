@@ -20,7 +20,6 @@ import {
 } from "@/components/adaptive-modal-sheet";
 import type { PanelIconProps } from "@/panels/panel-registry";
 import { getPanelRegistration } from "@/panels/panel-registry";
-import { ensurePanelsRegistered } from "@/panels/register-panels";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
@@ -69,7 +68,6 @@ export function SheetPane({ sheet, onClose, onBack, opener = null, isTop }: Shee
   const { t } = useTranslation();
   const host = useSheetPaneHost();
   const { tab } = sheet;
-  ensurePanelsRegistered();
   const registration = getPanelRegistration(tab.target.kind);
   if (!registration) {
     throw new Error(`No panel registration for kind: ${tab.target.kind}`);

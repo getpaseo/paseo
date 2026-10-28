@@ -180,6 +180,7 @@ import {
   type WorkspacePaneContentModel,
 } from "@/screens/workspace/workspace-pane-content";
 import { useMountedTabSet } from "@/screens/workspace/use-mounted-tab-set";
+import { ensurePanelsRegistered } from "@/panels/register-panels";
 import { SheetPaneHostProvider, type SheetPaneHost } from "@/screens/workspace/sheet-pane";
 import { SheetTabs } from "@/screens/workspace/sheet-tabs";
 import type { PaneHost } from "@/panels/panel-manifest";
@@ -422,6 +423,10 @@ export const WorkspaceScreen = memo(function WorkspaceScreen({
   workspaceId,
   isRouteFocused,
 }: WorkspaceScreenProps) {
+  // Every reader of the panel registry renders inside the workspace screen, so it registers the
+  // panels before any of them renders. A reader importing the registration instead would import
+  // every panel, and the panels render readers.
+  ensurePanelsRegistered();
   const navigationFocused = useIsFocused();
   useEffect(() => {
     traceInstant("paseo.workspace.mount", { serverId, workspaceId });
