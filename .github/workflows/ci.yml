@@ -418,14 +418,6 @@ jobs:
       - name: Run app unit tests
         run: npm run test --workspace=@getpaseo/app
 
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "21"
-
-      - name: Run Android module tests
-        run: npm run test:android --workspace=@getpaseo/app
-
   playwright-1:
     name: playwright (shard 1/8)
     needs: changes

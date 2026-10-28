@@ -98,7 +98,7 @@ The older `android`, `android:development`, and `ios` commands remain aliases fo
 `android:production` still builds and installs a release through Expo; use `build:apk` when you
 need an artifact. `android:clear` removes the generated Android project.
 
-Run `npm run test:android --workspace=@getpaseo/app` to prebuild Android and run native module unit tests. The app CI job runs this command with the Android toolchain.
+Run `npm run test:android --workspace=@getpaseo/app` explicitly with a local Android toolchain to prebuild Android and run native module unit tests. Ordinary CI does not prebuild Android or run these tests.
 
 ### Diagnostic logs without ADB
 
