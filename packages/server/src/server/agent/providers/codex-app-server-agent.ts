@@ -504,6 +504,7 @@ interface PersistedSubAgentRoute {
 interface CodexThreadHistoryProjection {
   timeline: PersistedTimelineEntry[];
   subAgentRoutes: PersistedSubAgentRoute[];
+  status: ToolCallTimelineItem["status"] | null;
 }
 
 function mergeCodexConfiguredDefaults(
@@ -2080,6 +2081,26 @@ const CodexThreadReadResponseSchema = z
 type CodexThreadReadResponse = z.infer<typeof CodexThreadReadResponseSchema>;
 type CodexThreadReadRequest = (threadId: string) => Promise<unknown>;
 
+function readCodexHistoryStatus(
+  thread: CodexThreadReadResponse["thread"],
+): ToolCallTimelineItem["status"] | null {
+  if (toObjectRecord(thread.status)?.type === "active") {
+    return "running";
+  }
+  switch (thread.turns.at(-1)?.status) {
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "interrupted":
+      return "canceled";
+    case "inProgress":
+      return "running";
+    default:
+      return null;
+  }
+}
+
 async function requestCodexThreadHistory(
   requestThread: CodexThreadReadRequest,
   threadId: string,
@@ -2145,7 +2166,7 @@ async function loadCodexThreadHistoryTimeline(params: {
         : [];
     },
   );
-  return { timeline, subAgentRoutes };
+  return { timeline, subAgentRoutes, status: readCodexHistoryStatus(response.thread) };
 }
 
 function readCodexThread(client: CodexAppServerClientLike, threadId: string): Promise<unknown> {
@@ -4033,18 +4054,31 @@ export class CodexAppServerAgentSession implements AgentSession {
         continue;
       }
       visitedThreadIds.add(next.route.childThreadId);
+      let childHistory: CodexThreadHistoryProjection | null = null;
+      try {
+        childHistory = await loadCodexThreadHistoryTimeline({
+          threadId: next.route.childThreadId,
+          cwd: this.config.cwd ?? null,
+          requestThread: (childThreadId) => readCodexThread(client, childThreadId),
+        });
+        if (childHistory.status !== null) {
+          next.route.toolCall.status = childHistory.status;
+          next.route.toolCall.error =
+            childHistory.status === "failed" ? { message: "Sub-agent failed" } : null;
+        }
+      } catch (error) {
+        this.logger.trace(
+          { err: error, childThreadId: next.route.childThreadId },
+          "Failed to load persisted Codex child history",
+        );
+      }
       this.registerSubAgentToolCall({
         timelineItem: next.route.toolCall,
         rawItem: { agentThreadId: next.route.childThreadId },
         parentCallId: next.parentCallId,
         parentSubagentId: next.parentSubagentId,
       });
-      try {
-        const childHistory = await loadCodexThreadHistoryTimeline({
-          threadId: next.route.childThreadId,
-          cwd: this.config.cwd ?? null,
-          requestThread: (childThreadId) => readCodexThread(client, childThreadId),
-        });
+      if (childHistory) {
         for (const entry of childHistory.timeline) {
           this.emitProviderSubagentTimeline(next.route.childThreadId, entry.item, entry.timestamp);
         }
@@ -4055,11 +4089,6 @@ export class CodexAppServerAgentSession implements AgentSession {
             parentSubagentId: next.route.childThreadId,
           });
         }
-      } catch (error) {
-        this.logger.trace(
-          { err: error, childThreadId: next.route.childThreadId },
-          "Failed to load persisted Codex child history",
-        );
       }
     }
   }
