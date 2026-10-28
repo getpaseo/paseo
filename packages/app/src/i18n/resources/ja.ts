@@ -2078,20 +2078,6 @@ export const ja: TranslationResources = {
   sidebarCallout: {
     dismiss: "閉じる",
   },
-  daemonOutdated: {
-    title: "デーモンが古くなっています",
-    versions: "{{host}}のデーモンは{{daemonVersion}}です。このアプリは{{appVersion}}です。",
-    terminalsStayOpen: "更新するとデーモンが再起動します。ターミナルは開いたままです。",
-    terminalsClose: "更新するとデーモンが再起動し、開いているターミナルは閉じられます。",
-    desktopUpdateTerminals:
-      "Paseo Desktop を更新すると、macOS と Linux ではターミナルは開いたままですが、Windows では閉じられます。",
-    desktopManaged:
-      "このデーモンはPaseo Desktopによって管理されています。そのコンピューターでPaseoを更新してください。",
-    selfUpdateUnsupported:
-      "このデーモンは自身を更新できません。そのコンピューターでPaseoを更新してください。",
-    update: "更新",
-    updateFailedTitle: "デーモンを更新できませんでした",
-  },
   contextWindow: {
     noData: "コンテキストデータがありません",
     accessibilityNoData: "コンテキストウィンドウ：コンテキストデータがありません",

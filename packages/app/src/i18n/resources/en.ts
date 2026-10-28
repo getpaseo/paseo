@@ -2083,18 +2083,6 @@ export const en = {
   sidebarCallout: {
     dismiss: "Dismiss",
   },
-  daemonOutdated: {
-    title: "Daemon out of date",
-    versions: "{{host}} runs daemon {{daemonVersion}}. This app is {{appVersion}}.",
-    terminalsStayOpen: "Updating restarts the daemon. Terminals stay open.",
-    terminalsClose: "Updating restarts the daemon and closes open terminals.",
-    desktopUpdateTerminals:
-      "Updating Paseo Desktop keeps terminals open on macOS and Linux, and closes them on Windows.",
-    desktopManaged: "Paseo Desktop manages this daemon. Update Paseo on that computer.",
-    selfUpdateUnsupported: "This daemon can't update itself. Update Paseo on that computer.",
-    update: "Update",
-    updateFailedTitle: "Daemon update failed",
-  },
   contextWindow: {
     noData: "No context data",
     accessibilityNoData: "Context window: No context data",

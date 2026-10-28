@@ -2091,18 +2091,6 @@ export const ru: TranslationResources = {
   sidebarCallout: {
     dismiss: "Закрыть",
   },
-  daemonOutdated: {
-    title: "Демон устарел",
-    versions: "На {{host}} работает демон {{daemonVersion}}. Версия приложения: {{appVersion}}.",
-    terminalsStayOpen: "Обновление перезапустит демон. Терминалы останутся открытыми.",
-    terminalsClose: "Обновление перезапустит демон и закроет открытые терминалы.",
-    desktopUpdateTerminals:
-      "Обновление Paseo Desktop оставляет терминалы открытыми в macOS и Linux и закрывает их в Windows.",
-    desktopManaged: "Этим демоном управляет Paseo Desktop. Обновите Paseo на том компьютере.",
-    selfUpdateUnsupported: "Этот демон не может обновиться сам. Обновите Paseo на том компьютере.",
-    update: "Обновить",
-    updateFailedTitle: "Не удалось обновить демон",
-  },
   contextWindow: {
     noData: "Нет данных о контексте",
     accessibilityNoData: "Контекстное окно: нет данных о контексте",

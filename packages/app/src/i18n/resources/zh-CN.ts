@@ -2036,18 +2036,6 @@ export const zhCN: TranslationResources = {
   sidebarCallout: {
     dismiss: "关闭",
   },
-  daemonOutdated: {
-    title: "守护进程版本过旧",
-    versions: "{{host}} 运行的守护进程为 {{daemonVersion}}，此应用为 {{appVersion}}。",
-    terminalsStayOpen: "更新会重启守护进程，终端将保持打开。",
-    terminalsClose: "更新会重启守护进程，并关闭已打开的终端。",
-    desktopUpdateTerminals:
-      "更新 Paseo Desktop 时，macOS 和 Linux 上的终端保持打开，Windows 上的终端会被关闭。",
-    desktopManaged: "此守护进程由 Paseo Desktop 管理。请在那台电脑上更新 Paseo。",
-    selfUpdateUnsupported: "此守护进程无法自行更新。请在那台电脑上更新 Paseo。",
-    update: "更新",
-    updateFailedTitle: "守护进程更新失败",
-  },
   contextWindow: {
     noData: "暂无上下文数据",
     accessibilityNoData: "上下文窗口：暂无上下文数据",

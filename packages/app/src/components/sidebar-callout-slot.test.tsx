@@ -91,7 +91,7 @@ describe("SidebarCalloutSlot", () => {
       root?.render(
         <SidebarCalloutProvider>
           <RegisterCallout />
-          <SidebarCalloutSlot nativeOnly={false} />
+          <SidebarCalloutSlot />
         </SidebarCalloutProvider>,
       );
       await Promise.resolve();
@@ -105,7 +105,7 @@ describe("SidebarCalloutSlot", () => {
     await act(async () => {
       root?.render(
         <SidebarCalloutProvider>
-          <SidebarCalloutSlot nativeOnly={false} />
+          <SidebarCalloutSlot />
         </SidebarCalloutProvider>,
       );
       await Promise.resolve();

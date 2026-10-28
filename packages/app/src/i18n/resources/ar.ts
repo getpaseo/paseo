@@ -2058,18 +2058,6 @@ export const ar: TranslationResources = {
   sidebarCallout: {
     dismiss: "رفض",
   },
-  daemonOutdated: {
-    title: "الخدمة قديمة",
-    versions: "يشغّل {{host}} الخدمة {{daemonVersion}}. إصدار هذا التطبيق {{appVersion}}.",
-    terminalsStayOpen: "يعيد التحديث تشغيل الخدمة. تبقى الطرفيات مفتوحة.",
-    terminalsClose: "يعيد التحديث تشغيل الخدمة ويغلق الطرفيات المفتوحة.",
-    desktopUpdateTerminals:
-      "يُبقي تحديث Paseo Desktop الطرفيات مفتوحة على macOS وLinux، ويغلقها على Windows.",
-    desktopManaged: "يدير Paseo Desktop هذه الخدمة. حدّث Paseo على ذلك الحاسوب.",
-    selfUpdateUnsupported: "لا يمكن لهذه الخدمة تحديث نفسها. حدّث Paseo على ذلك الحاسوب.",
-    update: "تحديث",
-    updateFailedTitle: "فشل تحديث الخدمة",
-  },
   contextWindow: {
     noData: "لا توجد بيانات للسياق",
     accessibilityNoData: "نافذة السياق: لا توجد بيانات للسياق",

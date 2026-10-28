@@ -2068,20 +2068,6 @@ export const ko: TranslationResources = {
   sidebarCallout: {
     dismiss: "닫기",
   },
-  daemonOutdated: {
-    title: "데몬이 오래되었습니다",
-    versions: "{{host}}의 데몬은 {{daemonVersion}}입니다. 이 앱은 {{appVersion}}입니다.",
-    terminalsStayOpen: "업데이트하면 데몬이 다시 시작됩니다. 터미널은 열린 상태로 유지됩니다.",
-    terminalsClose: "업데이트하면 데몬이 다시 시작되고 열려 있는 터미널이 닫힙니다.",
-    desktopUpdateTerminals:
-      "Paseo Desktop을 업데이트하면 macOS와 Linux에서는 터미널이 열린 상태로 유지되고, Windows에서는 닫힙니다.",
-    desktopManaged:
-      "이 데몬은 Paseo Desktop에서 관리됩니다. 해당 컴퓨터에서 Paseo를 업데이트하세요.",
-    selfUpdateUnsupported:
-      "이 데몬은 스스로 업데이트할 수 없습니다. 해당 컴퓨터에서 Paseo를 업데이트하세요.",
-    update: "업데이트",
-    updateFailedTitle: "데몬 업데이트 실패",
-  },
   contextWindow: {
     noData: "컨텍스트 데이터 없음",
     accessibilityNoData: "컨텍스트 창: 컨텍스트 데이터 없음",

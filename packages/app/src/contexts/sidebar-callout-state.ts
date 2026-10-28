@@ -14,8 +14,6 @@ export interface SidebarCalloutOptions {
   priority?: number;
   onDismiss?: () => void;
   testID?: string;
-  /** Also shown in the iOS and Android sidebar and every compact sidebar. Callouts about the desktop app leave it unset. */
-  native?: boolean;
 }
 
 export interface SidebarCalloutEntry extends SidebarCalloutOptions {
@@ -131,19 +129,10 @@ export function clearSidebarCallouts(state: SidebarCalloutState): SidebarCallout
   return { ...state, callouts: [] };
 }
 
-export type SidebarCalloutSelectionState = Pick<
-  SidebarCalloutState,
-  "callouts" | "dismissedKeys" | "dismissalStorageLoaded"
->;
-
 export function selectActiveSidebarCallout(
-  state: SidebarCalloutSelectionState,
-  options: { nativeOnly?: boolean } = {},
+  state: Pick<SidebarCalloutState, "callouts" | "dismissedKeys" | "dismissalStorageLoaded">,
 ): SidebarCalloutEntry | null {
   const visibleCallouts = state.callouts.filter((entry) => {
-    if (options.nativeOnly && entry.native !== true) {
-      return false;
-    }
     const dismissalKey = normalizeDismissalKey(entry.dismissalKey);
     if (!dismissalKey) {
       return true;

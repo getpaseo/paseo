@@ -2106,19 +2106,6 @@ export const es: TranslationResources = {
   sidebarCallout: {
     dismiss: "Despedir",
   },
-  daemonOutdated: {
-    title: "Daemon desactualizado",
-    versions: "{{host}} ejecuta el daemon {{daemonVersion}}. Esta app es {{appVersion}}.",
-    terminalsStayOpen: "Actualizar reinicia el daemon. Las terminales siguen abiertas.",
-    terminalsClose: "Actualizar reinicia el daemon y cierra las terminales abiertas.",
-    desktopUpdateTerminals:
-      "Actualizar Paseo Desktop mantiene las terminales abiertas en macOS y Linux, y las cierra en Windows.",
-    desktopManaged: "Paseo Desktop administra este daemon. Actualiza Paseo en esa computadora.",
-    selfUpdateUnsupported:
-      "Este daemon no puede actualizarse solo. Actualiza Paseo en esa computadora.",
-    update: "Actualizar",
-    updateFailedTitle: "No se pudo actualizar el daemon",
-  },
   contextWindow: {
     noData: "No hay datos de contexto",
     accessibilityNoData: "Ventana de contexto: No hay datos de contexto",
