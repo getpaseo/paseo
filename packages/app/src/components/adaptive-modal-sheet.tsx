@@ -12,7 +12,12 @@ import {
   useGlobalWebOverlayLayer,
   useWebOverlayRegistration,
 } from "../lib/overlay-root";
-import { BottomSheetHandle, type BottomSheetBackgroundProps } from "@gorhom/bottom-sheet";
+import {
+  BottomSheetHandle,
+  useBottomSheetGestureHandlers,
+  type BottomSheetBackgroundProps,
+} from "@gorhom/bottom-sheet";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated from "react-native-reanimated";
 import { ArrowLeft, Search, X, type LucideIcon } from "lucide-react-native";
 import {
@@ -39,6 +44,9 @@ export const SHEET_HORIZONTAL_PADDING_SCALE = 6;
 // trailing rail is the content inset plus this padding. Rows whose trailing
 // glyph should line up with the X must reach the same rail.
 export const SHEET_HEADER_CLOSE_PADDING_SCALE = 2;
+
+/** The one height a sheet takes when it shows a whole pane rather than sizing to its content. */
+export const FULL_SHEET_SNAP_POINTS = ["92%"];
 
 export interface SheetHeaderSearch {
   onChange: (value: string) => void;
@@ -244,32 +252,37 @@ const ThemedBottomSheetHandle = withUnistyles(BottomSheetHandle, (theme) => ({
   indicatorStyle: { backgroundColor: theme.colors.palette.zinc[600] },
 }));
 
-const HANDLE_WITH_CONTENT_STYLE = { paddingHorizontal: 0, paddingBottom: 0 };
-
-/**
- * The compact sheet's drag handle: Gorhom's `handleComponent` for every bottom sheet. Children
- * join the handle, so a header passed here drags the sheet like the indicator does. That is how a
- * sheet whose content scrolls on its own keeps its header draggable without content panning.
- */
+/** The compact sheet's drag handle: Gorhom's `handleComponent` for every bottom sheet. */
 export function SheetHandle({
-  children,
   // Gorhom passes `indicatorStyle={undefined}`, which would override the themed indicator.
   indicatorStyle: _indicatorStyle,
   ...props
 }: ComponentProps<typeof BottomSheetHandle>) {
-  if (!children) return <ThemedBottomSheetHandle {...props} />;
-  // The children carry their own semantics; the handle's slider role would swallow them on web.
+  return <ThemedBottomSheetHandle {...props} />;
+}
+
+/**
+ * Content that drags the sheet the way its handle does. A sheet whose body scrolls on its own
+ * turns content panning off and wraps its header in this, so the header still pulls it down.
+ * Render it inside the sheet's content.
+ */
+export function SheetDragArea({ children }: { children: ReactNode }) {
+  const { handlePanGestureHandler } = useBottomSheetGestureHandlers();
+  const gesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .shouldCancelWhenOutside(false)
+        .runOnJS(false)
+        .onStart(handlePanGestureHandler.handleOnStart)
+        .onChange(handlePanGestureHandler.handleOnChange)
+        .onEnd(handlePanGestureHandler.handleOnEnd)
+        .onFinalize(handlePanGestureHandler.handleOnFinalize),
+    [handlePanGestureHandler],
+  );
   return (
-    <ThemedBottomSheetHandle
-      {...props}
-      style={HANDLE_WITH_CONTENT_STYLE}
-      accessible={false}
-      accessibilityRole={null}
-      accessibilityLabel={null}
-      accessibilityHint={null}
-    >
-      {children}
-    </ThemedBottomSheetHandle>
+    <GestureDetector gesture={gesture}>
+      <View>{children}</View>
+    </GestureDetector>
   );
 }
 

@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useAgentDescriptor } from "@/agent-presentation";
 import type { PanelDescriptor } from "@/panels/panel-registry";
+import { useLeaveSheet } from "@/screens/workspace/sheet-pane";
 import { useSessionStore } from "@/stores/session-store";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
@@ -25,10 +26,14 @@ export function useParentAgentId(serverId: string, agentId: string): string | nu
 /** The parent as its own tab presents it, and the way back to it. */
 export function useParentAgent(serverId: string, parentAgentId: string): ParentAgent {
   const descriptor = useAgentDescriptor({ kind: "agent", agentId: parentAgentId }, { serverId });
-  // The parent may live in another workspace; navigateToAgent opens it wherever it is.
+  const leaveSheet = useLeaveSheet();
+  // Going back to the parent leaves the sheet the child is shown in. When the child was chosen
+  // from the parent's list, closing the sheet already uncovers the parent; otherwise the parent
+  // may live anywhere, even another workspace, and navigateToAgent opens it wherever it is.
   const open = useCallback(() => {
+    if (leaveSheet({ kind: "agent", agentId: parentAgentId })) return;
     navigateToAgent({ serverId, agentId: parentAgentId });
-  }, [parentAgentId, serverId]);
+  }, [leaveSheet, parentAgentId, serverId]);
   return {
     label: descriptor.label || null,
     icon: descriptor.icon,

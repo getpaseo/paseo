@@ -33,6 +33,16 @@ export function closeSubPage(path: MenuPath, depth: number): MenuPath {
   return path.slice(0, depth);
 }
 
+/**
+ * Cuts the path back to the deepest page that still has a definition. A page can lose its
+ * definition while it is open (a subagent's page goes with its row when the subagent is
+ * archived), and the pages it opened go with it.
+ */
+export function pruneMissingPages(path: MenuPath, hasPage: (id: string) => boolean): MenuPath {
+  const missing = path.findIndex((id) => !hasPage(id));
+  return missing === -1 ? path : path.slice(0, missing);
+}
+
 export function goBack(path: MenuPath): MenuPath {
   if (path.length === 0) return path;
   return path.slice(0, -1);
