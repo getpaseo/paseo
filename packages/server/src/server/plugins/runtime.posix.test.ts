@@ -445,17 +445,23 @@ register(${JSON.stringify(guardUrl)});`;
     });
     try {
       const first = await client.createSession({ provider: "muse", cwd: process.cwd() });
-      const firstEvents: AgentStreamEvent[] = [];
-      first.subscribe((event) => firstEvents.push(event));
-      await first.startTurn("dispatch a subagent", { clientMessageId: "muse-history" });
-      await expectTurnCompleted(firstEvents);
       const persistence = first.describePersistence();
       expect(persistence).not.toBeNull();
       await first.close();
 
-      // Resuming replays the recorded native history, which contains the
-      // subagent item: the child must be projected again, not fail the
-      // connection the way a timeline fetch did on 0.11.2.
+      // Seed old history without running a live subagent first, so this test
+      // reaches resume even when live child projection is broken.
+      await writeFile(
+        path.join(historyDirectory, "native-history.ndjson"),
+        JSON.stringify({
+          itemId: "historical-subagent",
+          revision: 1,
+          kind: "toolCall",
+          status: "completed",
+          tool: "subagent_spawn",
+          childSessionId: "fixture-child",
+        }) + "\n",
+      );
       const resumed = await client.resumeSession(persistence!, { cwd: process.cwd() });
       const resumedEvents: AgentStreamEvent[] = [];
       resumed.subscribe((event) => resumedEvents.push(event));
