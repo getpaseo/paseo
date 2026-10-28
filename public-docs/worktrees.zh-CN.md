@@ -78,6 +78,19 @@ paseo workspace create \
 
 当 Paseo 无法从源检出推断代码托管平台时，添加 `--forge <name>`。
 
+## 使用 .worktreeinclude 复制本地文件 {#copy-local-files-with-worktreeinclude}
+
+在源检出的根目录创建 `.worktreeinclude`，将选定的 Git 忽略文件复制到新的 worktree：
+
+```gitignore
+.env
+config/*.local.json
+```
+
+模式使用 gitignore 语法。只有同时匹配 `.worktreeinclude` 且被 Git 忽略的文件才会复制。已跟踪的文件不会被复制，目标中已存在的文件不会被覆盖。没有 `.worktreeinclude` 时，不会复制任何本地文件。包含路径中的符号链接目录和嵌套仓库会导致复制失败，并中止 worktree 创建。
+
+内置的 `worktree-include` 插件从你创建 worktree 时所选的检出复制文件，即使源检出本身也是 worktree。复制会在 setup、终端和第一个 Agent 运行之前完成。复制失败会中止创建并删除新的 worktree。支持时会在 APFS 和 btrfs 上使用写时复制克隆，否则执行普通复制。
+
 ## paseo.json {#paseojson}
 
 在仓库根目录放一个 `paseo.json`。Paseo 从你所选基础分支的已提交版本中读取它，因此其他分支中未提交的改动不会生效。
@@ -99,12 +112,12 @@ paseo workspace create \
 
 插件可以通过 [`worktree.create.after`](/docs/plugins/hooks#worktreecreateafter) 在 setup、终端和第一个 Agent 运行之前写入文件。
 
-`setup` 在 worktree 创建后运行一次。新的 worktree 没有安装依赖，也没有被忽略的文件（例如 `.env`），因此请用 setup 安装和复制你需要的内容。`teardown` 在归档期间、目录被删除之前运行。
+`setup` 在 worktree 创建后运行一次。使用 setup 安装依赖并初始化项目。使用 [`.worktreeinclude`](#copy-local-files-with-worktreeinclude) 复制 `.env` 等被忽略的文件。`teardown` 在归档期间、目录被删除之前运行。
 
 ```json
 {
   "worktree": {
-    "setup": "npm ci\ncp \"$PASEO_SOURCE_CHECKOUT_PATH/.env\" .env\nnpm run db:migrate",
+    "setup": "npm ci\nnpm run db:migrate",
     "teardown": "npm run db:drop || true"
   }
 }

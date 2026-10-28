@@ -7,6 +7,7 @@ import { expect, onTestFinished, test } from "vitest";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { resolveDaemonVersion } from "../daemon-version.js";
+import { BuiltinPluginLoader } from "./builtin/index.js";
 
 test("a plugin transforms workspace creation once across receipt replays and observes its committed lifecycle", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-lifecycle-"));
@@ -879,3 +880,168 @@ test.each([false, true])(
   },
   60_000,
 );
+
+test("worktree includes reach the first agent without copying tracked or unignored files", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-worktree-include-"));
+  const repository = path.join(root, "repository");
+  execFileSync("git", ["init", "-b", "main", repository], { stdio: "pipe" });
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: repository, stdio: "pipe" });
+  await mkdir(path.join(repository, "config"));
+  await writeFile(path.join(repository, ".gitignore"), ".env\nconfig/*.local.json\n");
+  await writeFile(
+    path.join(repository, ".worktreeinclude"),
+    ".env\nconfig/*.local.json\nunignored.txt\n",
+  );
+  await writeFile(path.join(repository, "config/tracked.local.json"), "git version");
+  git("add", ".gitignore", ".worktreeinclude");
+  git("add", "-f", "config/tracked.local.json");
+  git(
+    "-c",
+    "user.name=Test",
+    "-c",
+    "user.email=test@example.com",
+    "-c",
+    "commit.gpgsign=false",
+    "commit",
+    "-m",
+    "initial",
+  );
+  await writeFile(path.join(repository, ".env"), "SECRET=source");
+  await writeFile(path.join(repository, "config/app.local.json"), "local config");
+  await writeFile(path.join(repository, "config/tracked.local.json"), "uncommitted source version");
+  await writeFile(path.join(repository, "unignored.txt"), "unignored source");
+  const observed = path.join(root, "observed.json");
+  const pluginDirectory = await createProviderPlugin(root, {
+    acknowledgeClose: true,
+    hooks: `
+  server.addHook("agent.open.before", async ({ request }) => {
+    const { readFile, writeFile } = await import("node:fs/promises");
+    const contents = await Promise.all([".env", "config/app.local.json", "config/tracked.local.json"].map(file => readFile(request.cwd + "/" + file, "utf8")));
+    await writeFile(${JSON.stringify(observed)}, JSON.stringify(contents));
+  });`,
+  });
+  const daemon = await createTestPaseoDaemon({ builtinPlugins: new BuiltinPluginLoader() });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    expect((await client.installDirectoryPlugin(pluginDirectory)).status).toBe("running");
+    const created = await client.createWorkspace({
+      source: { kind: "worktree", cwd: repository, branchName: "include", worktreeSlug: "include" },
+    });
+    expect(created.error).toBeNull();
+    await client.createAgent({
+      provider: PROVIDER_ID,
+      cwd: created.workspace!.workspaceDirectory,
+      workspaceId: created.workspace!.id,
+    });
+    expect(JSON.parse(await readFile(observed, "utf8"))).toEqual([
+      "SECRET=source",
+      "local config",
+      "git version",
+    ]);
+    await expect(
+      stat(path.join(created.workspace!.workspaceDirectory, "unignored.txt")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    const sourceWorktree = created.workspace!.workspaceDirectory;
+    await writeFile(path.join(sourceWorktree, ".env"), "SECRET=worktree");
+    await writeFile(path.join(sourceWorktree, "config/app.local.json"), "worktree config");
+    const nested = await client.createWorkspace({
+      source: {
+        kind: "worktree",
+        cwd: sourceWorktree,
+        branchName: "nested",
+        worktreeSlug: "nested",
+      },
+    });
+    expect(nested.error).toBeNull();
+    await client.createAgent({
+      provider: PROVIDER_ID,
+      cwd: nested.workspace!.workspaceDirectory,
+      workspaceId: nested.workspace!.id,
+    });
+    expect(JSON.parse(await readFile(observed, "utf8"))).toEqual([
+      "SECRET=worktree",
+      "worktree config",
+      "git version",
+    ]);
+
+    execFileSync("git", ["add", "-f", ".env"], { cwd: sourceWorktree, stdio: "pipe" });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-m",
+        "commit branch env",
+      ],
+      { cwd: sourceWorktree, stdio: "pipe" },
+    );
+    const existing = await client.createWorkspace({
+      source: {
+        kind: "worktree",
+        cwd: repository,
+        baseBranch: "include",
+        branchName: "existing",
+        worktreeSlug: "existing",
+      },
+    });
+    expect(existing.error).toBeNull();
+    await client.createAgent({
+      provider: PROVIDER_ID,
+      cwd: existing.workspace!.workspaceDirectory,
+      workspaceId: existing.workspace!.id,
+    });
+    expect(JSON.parse(await readFile(observed, "utf8"))).toEqual([
+      "SECRET=worktree",
+      "local config",
+      "git version",
+    ]);
+
+    await rm(path.join(repository, ".worktreeinclude"));
+    const noIncludes = await client.createWorkspace({
+      source: {
+        kind: "worktree",
+        cwd: repository,
+        baseBranch: "main",
+        branchName: "no-includes",
+        worktreeSlug: "no-includes",
+      },
+    });
+    expect(noIncludes.error).toBeNull();
+    await expect(
+      stat(path.join(noIncludes.workspace!.workspaceDirectory, ".env")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      stat(path.join(noIncludes.workspace!.workspaceDirectory, "config/app.local.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    await mkdir(path.join(repository, ".worktreeinclude"));
+    const beforeFailure = await client.fetchWorkspaces();
+    const worktreesBeforeFailure = git("worktree", "list", "--porcelain").toString();
+    const failed = await client.createWorkspace({
+      source: {
+        kind: "worktree",
+        cwd: repository,
+        branchName: "copy-failure",
+        worktreeSlug: "copy-failure",
+      },
+    });
+    expect(failed.workspace).toBeNull();
+    expect(failed.error).toContain("Plugin worktree-include worktree.create.after failed:");
+    expect((await client.fetchWorkspaces()).entries.map(({ id }) => id).sort()).toEqual(
+      beforeFailure.entries.map(({ id }) => id).sort(),
+    );
+    expect(git("worktree", "list", "--porcelain").toString()).toBe(worktreesBeforeFailure);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60_000);
