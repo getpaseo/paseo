@@ -107,7 +107,7 @@ export function isRealpathInsideRoot(root: string, candidate: string): boolean {
   return getRealpathAwareRelativePath(root, candidate) !== null;
 }
 
-function getRelativePathInsideRoot(root: string, candidate: string): string | null {
+export function getRelativePathInsideRoot(root: string, candidate: string): string | null {
   const compareAsWindows = shouldCompareAsWindows(root, candidate);
   const platformPath = compareAsWindows ? nodePath.win32 : nodePath.posix;
   const normalizedRoot = normalizePathForComparison(root, compareAsWindows);
@@ -175,7 +175,7 @@ function normalizePathForComparison(value: string, compareAsWindows: boolean): s
   return compareAsWindows ? normalized.toLowerCase() : normalized;
 }
 
-function normalizePathPreservingCase(value: string, compareAsWindows: boolean): string {
+export function normalizePathPreservingCase(value: string, compareAsWindows: boolean): string {
   const platformPath = compareAsWindows ? nodePath.win32 : nodePath.posix;
   const comparableValue = compareAsWindows ? stripWindowsNamespacePrefix(value) : value;
   const platformNormalized = platformPath.normalize(comparableValue);

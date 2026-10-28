@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/app",
-  "version": "0.13.2",
+  "version": "0.14.0-beta.1",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -76,8 +76,8 @@
     "@xterm/addon-search": "^0.17.0-beta.213",
     "@xterm/addon-unicode11": "^0.10.0-beta.213",
     "@xterm/addon-web-links": "^0.13.0-beta.213",
-    "@xterm/addon-webgl": "^0.20.0-beta.212",
-    "@xterm/xterm": "^6.1.0-beta.213",
+    "@xterm/addon-webgl": "0.20.0-beta.291",
+    "@xterm/xterm": "6.1.0-beta.292",
     "buffer": "^6.0.3",
     "expo": "~57.0.30",
     "expo-asset": "~57.0.20",

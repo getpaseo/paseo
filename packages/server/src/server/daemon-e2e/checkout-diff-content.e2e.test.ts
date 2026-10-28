@@ -1,6 +1,7 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
@@ -218,6 +219,79 @@ test("All changes subscriptions refresh on file edits and commits", async () => 
     } finally {
       await subscription.release();
     }
+  } finally {
+    await ctx.cleanup();
+    await rm(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+}, 60_000);
+
+test("large source diffs stay renderable for reads, subscriptions, and commit files", async () => {
+  const ctx = await createDaemonTestContext();
+  const cwd = mkdtempSync(join(tmpdir(), "checkout-diff-budget-"));
+  const runGit = promisify(execFile);
+  try {
+    git(cwd, "init", "-b", "main");
+    git(cwd, "config", "user.name", "Test");
+    git(cwd, "config", "user.email", "test@example.com");
+    git(cwd, "config", "core.autocrlf", "false");
+    const original = "const value = Math.max(42, 7);\n".repeat(Math.ceil((5 * 1024 * 1024) / 30));
+    writeFileSync(join(cwd, "generated.ts"), original);
+    git(cwd, "add", ".");
+    git(cwd, "-c", "commit.gpgsign=false", "commit", "-m", "initial");
+    await writeFile(join(cwd, "generated.ts"), original.replace("42", "43"));
+    const pending = ctx.client.getCheckoutDiff(cwd, { mode: "uncommitted" });
+    const rpcStarted = performance.now();
+    await ctx.client.fetchAgents({});
+    const rpcMs = performance.now() - rpcStarted;
+    const initial = await pending;
+    expect(initial.error).toBeNull();
+    const check = (file: (typeof initial.files)[number] | null | undefined, value: string) => {
+      expect(file).toMatchObject({ path: "generated.ts", additions: 1, deletions: 1 });
+      const lines = file!.hunks.flatMap((hunk) => hunk.lines);
+      expect(lines.filter((line) => line.type === "add").map((line) => line.content)).toEqual([
+        `const value = Math.max(${value}, 7);`,
+      ]);
+      expect(lines.find((line) => line.type === "add")?.tokens).toContainEqual({
+        text: value,
+        style: "number",
+      });
+    };
+    check(initial.files[0], "43");
+    const subscription = ctx.client.observeCheckoutDiff(cwd, { mode: "uncommitted" });
+    try {
+      let latest = await subscription.ready;
+      check(latest.files[0], "43");
+      subscription.subscribe({
+        snapshot: (snapshot) => {
+          latest = snapshot;
+        },
+        update: (message) => {
+          if (message.type === "checkout_diff_update") latest = message.payload;
+        },
+      });
+      await writeFile(join(cwd, "generated.ts"), original.replace("42", "44"));
+      await expect
+        .poll(
+          () =>
+            latest.files[0]?.hunks.flatMap((hunk) => hunk.lines).find((line) => line.type === "add")
+              ?.content,
+          { timeout: 15_000 },
+        )
+        .toBe("const value = Math.max(44, 7);");
+      check(latest.files[0], "44");
+    } finally {
+      await subscription.release();
+    }
+    await runGit("git", ["add", "."], { cwd });
+    await runGit("git", ["-c", "commit.gpgsign=false", "commit", "-m", "edit"], { cwd });
+    const { stdout } = await runGit("git", ["rev-parse", "HEAD"], { cwd });
+    const commit = await ctx.client.getCommitFileDiff(cwd, stdout.trim(), "generated.ts");
+    check(commit.file, "44");
+    console.info({
+      sourceBytes: Buffer.byteLength(original),
+      cheapRpcMs: rpcMs,
+      isolatedDaemonPort: ctx.daemon.port,
+    });
   } finally {
     await ctx.cleanup();
     await rm(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });

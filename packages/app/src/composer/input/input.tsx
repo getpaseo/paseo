@@ -1,3 +1,4 @@
+import type { SendShortcut } from "@/hooks/use-settings";
 import {
   useComposerEditingSession,
   useComposerFullscreen,
@@ -88,6 +89,7 @@ import {
   resolveAlternateSendAction,
   resolveComposerSurfacePresentation,
   resolveComposerSurfaceText,
+  resolveMessageInputEnterAction,
   resolveRetainedSelection,
   runAlternateSendAction,
   runDefaultSendAction,
@@ -96,6 +98,11 @@ import {
 } from "./state";
 
 const DEFAULT_SEND_KEYS: ShortcutKey[][] = [["Enter"]];
+const MOD_ENTER_SEND_KEYS: ShortcutKey[][] = [["mod", "Enter"]];
+
+function resolveSendKeys(sendShortcut: SendShortcut): ShortcutKey[][] {
+  return sendShortcut === "mod-enter" ? MOD_ENTER_SEND_KEYS : DEFAULT_SEND_KEYS;
+}
 const COMPOSER_INPUT_DATASET = { composerInput: "" } as const;
 
 export interface AttachmentMenuItem {
@@ -167,6 +174,7 @@ export interface MessageInputProps {
    *  running. "interrupt" and "steer" send immediately, "queue" queues. Required so the default
    *  lives only in DEFAULT_CLIENT_SETTINGS. */
   defaultSendBehavior: "interrupt" | "steer" | "queue";
+  sendShortcut: SendShortcut;
   /** Callback for queue button when agent is running */
   onQueue?: (payload: MessagePayload) => void;
   /** Optional handler used when submit button is in loading state. */
@@ -402,6 +410,9 @@ interface DesktopKeyPressContext {
   onKeyPressCallback: ((event: ComposerKeyPressEvent) => boolean) | undefined;
   input: ComposerKeyPressEvent["input"];
   submitOnEnter: boolean;
+  sendShortcut: SendShortcut;
+  isAgentRunning: boolean;
+  onQueue: ((payload: MessagePayload) => void) | undefined;
   isSubmitDisabled: boolean;
   isSubmitLoading: boolean;
   disabled: boolean;
@@ -428,12 +439,21 @@ function handleDesktopKeyPressImpl(
   }
 
   if (event.nativeEvent.key !== "Enter") return;
-  if (!ctx.submitOnEnter) return;
-  if (shiftKey) return;
+
+  const action = resolveMessageInputEnterAction({
+    submitOnEnter: ctx.submitOnEnter,
+    sendShortcut: ctx.sendShortcut,
+    shiftKey: shiftKey ?? false,
+    metaKey: metaKey ?? false,
+    ctrlKey: ctrlKey ?? false,
+    isAgentRunning: ctx.isAgentRunning,
+    onQueue: ctx.onQueue,
+  });
+  if (action === null) return;
 
   if (ctx.isSubmitDisabled || ctx.isSubmitLoading || ctx.disabled) return;
   event.preventDefault();
-  if (metaKey || ctrlKey) {
+  if (action === "alternate-send") {
     ctx.handleAlternateSendAction();
     return;
   }
@@ -1112,6 +1132,7 @@ interface ResolvedMessageInputProps {
   voiceAgentId: string | undefined;
   isAgentRunning: boolean;
   defaultSendBehavior: "interrupt" | "steer" | "queue";
+  sendShortcut: SendShortcut;
   onQueue: ((payload: MessagePayload) => void) | undefined;
   onSubmitLoadingPress: (() => void) | undefined;
   onKeyPressCallback: ((event: ComposerKeyPressEvent) => boolean) | undefined;
@@ -1159,6 +1180,7 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     voiceAgentId: props.voiceAgentId,
     isAgentRunning: props.isAgentRunning ?? false,
     defaultSendBehavior: props.defaultSendBehavior,
+    sendShortcut: props.sendShortcut,
     onQueue: props.onQueue,
     onSubmitLoadingPress: props.onSubmitLoadingPress,
     onKeyPressCallback: props.onKeyPress,
@@ -1236,6 +1258,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       voiceAgentId,
       isAgentRunning,
       defaultSendBehavior,
+      sendShortcut,
       onQueue,
       onSubmitLoadingPress,
       onKeyPressCallback,
@@ -1755,6 +1778,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             selectionRef.current,
           ),
           submitOnEnter: shouldSubmitOnEnter,
+          sendShortcut,
+          isAgentRunning,
+          onQueue,
           isSubmitDisabled,
           isSubmitLoading,
           disabled,
@@ -1766,6 +1792,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         shouldHandleWebKeyPress,
         onKeyPressCallback,
         shouldSubmitOnEnter,
+        sendShortcut,
+        isAgentRunning,
+        onQueue,
         isSubmitDisabled,
         isSubmitLoading,
         disabled,
@@ -1980,7 +2009,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           submitLabel={submitLabel}
           submitButtonTestID={submitButtonTestID}
           buttonIconSize={buttonIconSize}
-          sendKeys={DEFAULT_SEND_KEYS}
+          sendKeys={resolveSendKeys(sendShortcut)}
           sendTooltipLabel={sendTooltipLabel}
         />
       ),
@@ -2001,6 +2030,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         submitLabel,
         submitButtonTestID,
         buttonIconSize,
+        sendShortcut,
         sendTooltipLabel,
       ],
     );

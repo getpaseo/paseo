@@ -67,6 +67,7 @@ export const zhCN: TranslationResources = {
       daemonClientUnavailable: "Daemon client 不可用",
       daemonClientDisconnected: "Daemon client 已断开连接",
       noFileFound: "未找到 {{token}} 对应的文件",
+      folderOutsideWorkspace: "{{path}} 不在此工作区内",
       unexpectedDictationError: "处理听写时发生意外错误。",
     },
     connectionStatus: {
@@ -1996,12 +1997,13 @@ export const zhCN: TranslationResources = {
     output: "输出",
   },
   turnSummary: {
-    messages: {
-      one: "写了 {{count}} 条消息",
-      other: "写了 {{count}} 条消息",
-    },
+    details: "查看轮次详情",
+    sentBy: "由 {{name}} 发送",
+    showMore: "展开",
+    showLess: "收起",
   },
   toolCallGroup: {
+    thought: "已思考",
     editedFiles: {
       one: "编辑了 {{count}} 个文件",
       other: "编辑了 {{count}} 个文件",
@@ -2308,10 +2310,22 @@ export const zhCN: TranslationResources = {
           steer: "Agent 运行时，Enter 会引导当前回合。Command/Ctrl+Enter 会排队。",
           queue: "Agent 运行时，Enter 会排队。Command/Ctrl+Enter 会提交。",
         },
+        commandEnterDescriptions: {
+          interrupt: "Agent 运行时，{{modifier}}+Enter 会中断。Enter 会插入换行。",
+          steer: "Agent 运行时，{{modifier}}+Enter 会引导当前回合。Enter 会插入换行。",
+          queue: "Agent 运行时，{{modifier}}+Enter 会排队。Enter 会插入换行。",
+        },
         options: {
           interrupt: "中断",
           steer: "引导",
           queue: "排队",
+        },
+      },
+      sendShortcut: {
+        label: "发送快捷键",
+        options: {
+          enter: "Enter",
+          "mod-enter": "{{modifier}}+Enter",
         },
       },
       serviceUrls: {

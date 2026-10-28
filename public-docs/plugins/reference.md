@@ -653,9 +653,14 @@ export default function contribute(server: PluginServerContext) {
 
 Hooks run on the daemon while the plugin is enabled, even with no app connected.
 
-### Change configuration and inject an MCP server
+`agent.create` edits the agent's saved configuration. Changes to `config` are persisted and remain
+after the plugin is disabled or removed. `agent.session_open` contributes launch-only `env`, `tools`,
+and `mcpServers`, re-derived on every create, resume, refresh, and import, following the plugin's
+lifecycle without being saved in the agent record.
 
-Add this callback inside `contribute(server)`. Replace the placeholder URL with your MCP endpoint.
+### Change saved configuration
+
+Add this callback inside `contribute(server)` to set the saved options for new Codex agents:
 
 ```ts
 server.before("agent.create", ({ request }) => {
@@ -672,27 +677,50 @@ server.before("agent.create", ({ request }) => {
         sandbox_mode: "workspace-write",
         approval_policy: "on-request",
       },
-      mcpServers: {
-        ...request.config.mcpServers,
-        company: {
-          type: "http",
-          url: "https://tools.example.com/mcp",
-        },
-      },
     },
   };
 });
 ```
 
-| Input                                       | Result                        |
-| ------------------------------------------- | ----------------------------- |
-| `providerOptions.sandbox_mode: "read-only"` | `"workspace-write"`           |
-| `providerOptions.web_search: "disabled"`    | Preserved by the spread       |
-| Existing `mcpServers.search`                | Preserved by the spread       |
-| Existing `mcpServers.company`               | Replaced with the entry above |
+| Input                                       | Result                  |
+| ------------------------------------------- | ----------------------- |
+| `providerOptions.sandbox_mode: "read-only"` | `"workspace-write"`     |
+| `providerOptions.web_search: "disabled"`    | Preserved by the spread |
 
-The selected provider validates `providerOptions` and must support the configured MCP servers.
-Explicit Codex sandbox and approval options override its mode presets.
+The selected provider validates `providerOptions`. Explicit Codex sandbox and approval options
+override its mode presets.
+
+### Inject MCP servers
+
+Use `agent.create.config.mcpServers` when the server should become part of the agent's saved
+configuration. For a plugin-owned server, add this callback inside `contribute(server)`, replacing
+the placeholder URL with your MCP endpoint:
+
+```ts
+server.before("agent.session_open", ({ request }) => {
+  if (request.provider !== "codex") return;
+
+  return {
+    ...request,
+    mcpServers: {
+      ...request.mcpServers,
+      company: { type: "http", url: "https://tools.example.com/mcp" },
+    },
+  };
+});
+```
+
+`request.mcpServers` uses the same server configurations as `AgentSessionConfig.mcpServers`.
+The map starts empty for each plugin and accumulates across that plugin's own callbacks. It never
+contains the agent's saved servers or another plugin's servers. Replace the map to add, replace,
+or remove this plugin's entries; returning `undefined` preserves it. Paseo merges the plugins'
+final maps in plugin-ID order.
+
+A name colliding with a saved server, Paseo's internal `paseo` server, or another plugin's server
+fails the session open and names the server and both sources. A provider without MCP support fails
+with `does not support MCP servers`, naming the plugin. Opens with `purpose: "history"` ignore
+these servers. Install, disable, and reload changes reach existing agents through the
+[session reopen behavior](#attach-tools-to-agents).
 
 ### Inject environment variables on every session opening
 
@@ -708,8 +736,122 @@ server.before("agent.session_open", ({ request }) => {
 });
 ```
 
-This runs on create, resume, refresh, and import. To inject only on creation, set `env` in an
-`agent.create` callback instead.
+Session-open overrides are re-derived on every open. `agent.create.env` applies only to the
+initial launch and is not saved in the agent's configuration.
+
+### Attach tools to agents
+
+Define a tool in `index.server.ts` and attach it in `before("agent.session_open")`.
+This example gives `append_workspace_note` only to agents with the label `notes/enabled: "true"`:
+
+```ts
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
+import { z } from "zod";
+import { defineAgentTool, type PluginServerContext } from "@getpaseo/plugin/server";
+
+const appendWorkspaceNote = defineAgentTool({
+  name: "append_workspace_note",
+  description: "Append a note to AGENT_NOTES.md in this agent's working directory.",
+  input: z.object({ note: z.string().min(1).describe("Note to append") }),
+  async execute({ note }, { agent, signal }) {
+    const notePath = path.join(agent.cwd, "AGENT_NOTES.md");
+    await writeFile(notePath, `${note}\n`, { encoding: "utf8", flag: "a", signal });
+    return {
+      text: `Saved note to ${notePath}`,
+      structuredContent: { path: notePath },
+    };
+  },
+});
+
+export default function contribute(server: PluginServerContext) {
+  server.before("agent.session_open", ({ request }) => {
+    if (request.labels["notes/enabled"] !== "true") return;
+    return { ...request, tools: [...request.tools, appendWorkspaceNote] };
+  });
+  return () => {};
+}
+```
+
+Set the label when creating an agent with the SDK:
+
+```ts
+const agent = await paseo.agents.create({
+  config: { provider: "codex/gpt-5.4" },
+  cwd: "/projects/shop",
+  labels: { "notes/enabled": "true" },
+});
+```
+
+Select agents using any of the session-open request fields:
+
+| Select by        | Condition in the callback                    |
+| ---------------- | -------------------------------------------- |
+| Label            | `request.labels["notes/enabled"] === "true"` |
+| Provider         | `request.provider === "codex"`               |
+| Workspace        | `request.workspaceId === "workspace-456"`    |
+| Individual agent | `request.agentId === chosenAgentId`          |
+
+`request.tools` starts empty for each plugin. Each callback sees the tools returned by earlier
+callbacks in that plugin; replace the array to add or remove tools. Returning `undefined` preserves
+the request. Tools are ignored for `purpose: "history"`.
+
+Import `defineAgentTool`, `AgentToolDefinition`, `AgentToolContext`, and `AgentToolResult` from
+`@getpaseo/plugin/server`. The helper infers the validated input from your Zod schema:
+
+```ts
+declare function defineAgentTool<Input extends z.ZodType>(tool: {
+  name: string;
+  title?: string;
+  description: string;
+  input: Input;
+  execute(
+    input: z.output<Input>,
+    context: AgentToolContext,
+  ): AgentToolResult | Promise<AgentToolResult>;
+}): AgentToolDefinition;
+
+interface AgentToolResult {
+  text?: string;
+  structuredContent?: unknown;
+  isError?: boolean;
+}
+```
+
+| Execution context | Value                                                                                               |
+| ----------------- | --------------------------------------------------------------------------------------------------- |
+| `agent`           | Calling agent as a `PluginHookAgent`, including `id`, `workspaceId`, `provider`, `cwd`, and `title` |
+| `paseo`           | SDK connected to this daemon                                                                        |
+| `signal`          | Abort signal for this tool call; pass it to file operations or external requests                    |
+
+`execute` runs in the plugin process. Closures and the original Zod schema stay there; only tool
+metadata and call inputs/results cross the process boundary. Paseo validates input before calling
+`execute`. Invalid input returns schema issues to the agent. A thrown error becomes
+`{ isError: true, text: message }` and the plugin keeps running. Canceling the call or closing its
+transport aborts `signal` and discards the result. Tool calls have a 10 minute ceiling, separate
+from the 30 second hook timeout. Closing or reopening an agent session drops its old definitions.
+
+Return model-visible text in `text`. `structuredContent` must be JSON-serializable; when `text` is
+omitted, Paseo formats that value as text for the model. Set `isError: true` to report a tool error.
+
+Paseo delivers attached tools through its agent tool transport, using MCP or native registration
+as the provider supports. The same definition and callback work with either. Attached tools obey
+the [same gates as Paseo tools](/docs/mcp#limit-paseo-tools-by-provider). Only that agent sees them.
+
+Names must match `/^[a-z][a-z0-9_]*$/` and be at most 64 characters. A name colliding with a Paseo
+tool or another plugin's tool on the same agent fails the session open and names both owners.
+A duplicate name within one plugin also fails the session open. Agents the callback does not
+target are unaffected.
+
+| Change                                                         | When the agent receives it                                                                                                                                                                                 |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Start, stop, or reload a plugin declaring `agent.session_open` | Open sessions become stale. Each reopens before its next idle prompt; a running turn continues without interruption. The next prompt after that reopen reuses the session.                                 |
+| Change which agents the callback targets                       | Run `paseo plugin reload agent-tools` after editing this example, then send the agent a prompt when it is idle.                                                                                            |
+| Apply immediately                                              | Call `await paseo.agents.ref(id).reload({ requestId: "reload-notes" })`. `requestId` is optional. This reopens the provider session, reruns hooks with `reason: "refresh"`, and interrupts a running turn. |
+| Read the current snapshot                                      | Call `await paseo.agents.ref(id).refresh()`. This reads state without reopening the session.                                                                                                               |
+
+If an automatic reopen fails, the triggering prompt fails with that error. See the
+[complete agent-tools example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools).
 
 ### Choose workspace isolation
 
@@ -878,11 +1020,11 @@ type PluginTurnOutcome =
 
 ### Before hooks
 
-| Name                 | Request fields                                                          | Editable                                |
-| -------------------- | ----------------------------------------------------------------------- | --------------------------------------- |
-| `agent.create`       | `config`, optional `env`                                                | Public agent config except `cwd`; `env` |
-| `agent.session_open` | `agentId`, `workspaceId`, `provider`, `cwd`, `reason`, `purpose`, `env` | Only `env`                              |
-| `workspace.create`   | `source`, optional `title`, `firstAgentContext`                         | Entire explicit creation request        |
+| Name                 | Request fields                                                                                                                 | Editable                                 |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------- |
+| `agent.create`       | `config`, optional `env`                                                                                                       | Public agent config except `cwd`; `env`  |
+| `agent.session_open` | `agentId`, `workspaceId`, `provider`, `cwd`, read-only `title` and `labels`, `reason`, `purpose`, `env`, `tools`, `mcpServers` | Launch-only `env`, `tools`, `mcpServers` |
+| `workspace.create`   | `source`, optional `title`, `firstAgentContext`                                                                                | Entire explicit creation request         |
 
 **`agent.create.config`** uses `AgentSessionConfig`:
 
@@ -903,6 +1045,10 @@ type PluginTurnOutcome =
   "workspaceId": "workspace-456",
   "provider": "codex",
   "cwd": "/projects/shop",
+  "title": "Workspace notes",
+  "labels": { "notes/enabled": "true" },
+  "tools": [],
+  "mcpServers": {},
   "reason": "resume",
   "purpose": "interactive",
   "env": { "COMPANY_ENV": "development" }
@@ -912,6 +1058,10 @@ type PluginTurnOutcome =
 | Field         | Values                                                                                                                  |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `workspaceId` | String or `null`                                                                                                        |
+| `title`       | Read-only string or `null`; creation title on create, stored title on resume.                                           |
+| `labels`      | Read-only string map; creation labels on create, stored labels on resume.                                               |
+| `tools`       | Editable `AgentToolDefinition[]`, local to this plugin. See [Attach tools to agents](#attach-tools-to-agents).          |
+| `mcpServers`  | Editable launch-only server map, local to this plugin. See [Inject MCP servers](#inject-mcp-servers).                   |
 | `reason`      | `create`, `resume`, `refresh`, `import`                                                                                 |
 | `purpose`     | `interactive`, `history`                                                                                                |
 | `env`         | Launch override map; excludes the daemon's inherited environment. Replace the map to add, replace, or remove overrides. |
@@ -923,7 +1073,7 @@ Creation request
   → agent.create hooks (plugin-ID order; registration order within each plugin)
   → resolve defaults and validate provider configuration
   → derive launch configuration with Paseo runtime tools and daemon prompt
-  → agent.session_open hooks (same ordering; env only)
+  → agent.session_open hooks (same ordering; env and plugin-local tools and MCP servers)
   → set PASEO_AGENT_ID and PASEO_AGENT_CWD
   → open provider session and save agent configuration
 ```
@@ -935,8 +1085,9 @@ Creation request
 | `undefined`                                             | Unchanged request                                   |
 | Throws or returns invalid data                          | Operation fails; later callbacks do not run         |
 
-No automatic deep merge. Later callbacks can overwrite earlier values. Agent configuration is
-saved; environment overrides are not persisted with it.
+There is no automatic deep merge. `env` accumulates across plugins; `tools` and `mcpServers`
+accumulate only across callbacks within the same plugin. Returning a replacement map or array
+replaces that scope's prior value.
 
 ### Context and cleanup
 
@@ -960,6 +1111,7 @@ saved; environment overrides are not persisted with it.
 | [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       | All eleven hooks; JSON logs with environment values redacted                 |
 | [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     | Follow-ups, permissions, environment, provider switching, worktree selection |
 | [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) | MCP injection and Codex sandbox/approval options                             |
+| [agent-tools](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools)                 | Label-targeted tools and file operations in the plugin process               |
 
 Read logger output with `paseo plugin logs lifecycle-logger` or the host's `daemon.log`.
 

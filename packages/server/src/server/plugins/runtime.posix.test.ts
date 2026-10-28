@@ -1,5 +1,6 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { fork } from "node:child_process";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { PassThrough } from "node:stream";
 import path from "node:path";
@@ -104,6 +105,12 @@ function createReloadChild(
       emit("message", message);
     },
   };
+}
+
+function sha256(text: string | undefined): string {
+  return createHash("sha256")
+    .update(text ?? "")
+    .digest("hex");
 }
 
 function createTestRuntime(
@@ -651,7 +658,8 @@ lines.on("line", (line) => {
         type: "timeline.item",
         item: expect.objectContaining({
           type: "assistant_message",
-          id: "assistant-1",
+          id: JSON.stringify(["agent_message_chunk", "assistant-1"]),
+          messageId: "assistant-1",
           text: "ACP says hi",
         }),
       }),
@@ -1535,6 +1543,7 @@ export default function contribute(server: { registerProvider(provider: Provider
 
     expect(spawnChild).not.toHaveBeenCalled();
     expect(runtime.catalog()[0]?.clientBundle).toContain("addTheme");
+    expect(runtime.catalog()[0]?.clientBundleHash).toBe(sha256(runtime.catalog()[0]?.clientBundle));
     await runtime.stopAll();
   });
 
@@ -1697,6 +1706,7 @@ export function inspectHost(_input: z.input<typeof inspectRpc.input>) {
     const plugin = runtime.catalog()[0];
     expect(plugin?.clientBundle).toContain("Client-only surface");
     expect(plugin?.clientBundle).not.toContain("node:os");
+    expect(plugin?.clientBundleHash).toBe(sha256(plugin?.clientBundle));
     await expect(runtime.invoke("split-runtime", "inspect", {})).resolves.toMatchObject({
       platform: expect.any(String),
     });
@@ -1849,9 +1859,9 @@ export default function contribute(plugin: any) {
     const child = createReloadChild("blocked", events);
     const runtime = createTestRuntime({ spawnChild: () => child });
 
-    await expect(runtime.startPlugin("blocked", directory, () => false)).rejects.toThrow(
-      "Plugin start cancelled: blocked",
-    );
+    await expect(
+      runtime.startPlugin("blocked", directory, () => events.length === 0),
+    ).rejects.toThrow("Plugin start cancelled: blocked");
 
     expect(runtime.catalog()).toEqual([]);
     expect(events).toEqual(["start:blocked", "shutdown:blocked", "exit:blocked"]);
@@ -2051,6 +2061,53 @@ export default function contribute(server) {
     await expect(runtime.startPlugin("missing-discovery", directory)).rejects.toThrow(
       "Invalid usage source: missing-discovery",
     );
+  } finally {
+    await runtime.stopAll();
+  }
+});
+
+const examplesDirectory = fileURLToPath(
+  new URL("../../../../../plugin-examples/", import.meta.url),
+);
+// The Markdown example owns npm preparation in the real app fixture:
+// packages/app/e2e/browser/plugin-file-panel-examples.spec.ts.
+const examples = (await readdir(examplesDirectory, { withFileTypes: true }))
+  .filter((entry) => entry.isDirectory() && entry.name !== "markdown-panel")
+  .map((entry) => entry.name);
+
+it.each(examples)("builds and loads the %s plugin example", async (example) => {
+  const settingsDirectory = await mkdtemp(path.join(tmpdir(), "paseo-example-settings-"));
+  temporaryDirectories.push(settingsDirectory);
+  const runtime = createTestRuntime({ settingsDirectory }, undefined, "0.13.2");
+  try {
+    await runtime.startPlugin(example, path.join(examplesDirectory, example));
+    expect(runtime.catalog()).toMatchObject([{ id: example }]);
+    expect(pluginMessages(runtime, example)).toContain("[paseo] Plugin ready");
+  } finally {
+    await runtime.stopAll();
+  }
+});
+
+it("does not initialize a plugin cancelled during compilation", async () => {
+  const directory = await createPlugin("cancelled-build", "export default () => {};");
+  const marker = path.join(directory, "initialized.txt");
+  await writeFile(
+    path.join(directory, "index.server.ts"),
+    `
+import { writeFileSync } from "node:fs";
+export default function contribute() {
+  writeFileSync(${JSON.stringify(marker)}, "initialized");
+  return () => {};
+}`,
+  );
+  const runtime = createTestRuntime();
+  let allowed = true;
+  try {
+    const loading = runtime.startPlugin("cancelled-build", directory, () => allowed);
+    allowed = false;
+    await expect(loading).rejects.toThrow("Plugin start cancelled: cancelled-build");
+    expect(await readTextIfPresent(marker)).toBeNull();
+    expect(runtime.catalog()).toEqual([]);
   } finally {
     await runtime.stopAll();
   }

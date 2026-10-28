@@ -10,6 +10,38 @@ const bin = path.resolve("node_modules", ".bin");
 const packageName = "react-native-draggable-flatlist";
 const patchFile = `${packageName}+4.0.3.patch`;
 
+test("patched Markdown ships iOS props generated from its native specs", () => {
+  const packageDir = path.resolve("packages/app/node_modules/react-native-enriched-markdown");
+  const output = mkdtempSync(path.join(tmpdir(), "markdown-ios-codegen-"));
+  try {
+    // includesGeneratedCode makes CocoaPods use the shipped headers instead of
+    // regenerating them after patch-package changes the TypeScript specs.
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.resolve("node_modules/react-native/scripts/generate-codegen-artifacts.js"),
+        "-p",
+        packageDir,
+        "-t",
+        "ios",
+        "-o",
+        output,
+        "-s",
+        "library",
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const header = "ReactCodegen/EnrichedMarkdownTextSpec/Props.h";
+    assert.equal(
+      readFileSync(path.join(packageDir, "ios/generated", header), "utf8"),
+      readFileSync(path.join(output, header), "utf8"),
+    );
+  } finally {
+    rmSync(output, { recursive: true, force: true });
+  }
+});
+
 function createCheckout() {
   const root = mkdtempSync(path.join(tmpdir(), "postinstall-patches-"));
   writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "checkout" }));

@@ -1105,12 +1105,23 @@ describe("WorkspaceGitServiceImpl", () => {
       { cwd: join(REPO_CWD, "packages", "server") },
       vi.fn(),
     );
-    await vi.waitFor(() => {
-      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
-    });
+    await vi.waitFor(
+      () => {
+        expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+        expect(service.getMetrics()).toMatchObject({
+          repositoryWorkspaceLinkCount: 2,
+          workspaceObservationSetupInFlightCount: 0,
+          workspaceRefreshInFlightCount: 0,
+          fetchInFlightCount: 1,
+        });
+      },
+      { timeout: 10_000 },
+    );
 
     releaseFetch.resolve();
-    await flushPromises();
+    await vi.waitFor(() => {
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => {
       expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(4);
