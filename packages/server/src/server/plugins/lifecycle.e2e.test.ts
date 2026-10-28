@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -839,12 +839,19 @@ test.each([false, true])(
         "workspace.create.after",
         "agent.create.before",
       ]);
-      expect(records[0].worktree).toEqual({
+      expect({
+        ...records[0].worktree,
+        sourceCheckout: await realpath(records[0].worktree.sourceCheckout),
+      }).toEqual({
         path: cwd,
         branch: "accept-hook",
-        sourceCheckout: repository,
+        sourceCheckout: await realpath(repository),
       });
       const beforeFailure = await client.fetchWorkspaces();
+      const worktreesBeforeFailure = execFileSync("git", ["worktree", "list", "--porcelain"], {
+        cwd: repository,
+        encoding: "utf8",
+      });
       const rejected = await client.createWorkspace({
         source: {
           kind: "worktree",
@@ -871,7 +878,7 @@ test.each([false, true])(
           cwd: repository,
           encoding: "utf8",
         }),
-      ).not.toContain(failedPath);
+      ).toBe(worktreesBeforeFailure);
     } finally {
       await client.close();
       await daemon.close();
@@ -1022,13 +1029,35 @@ test("worktree includes reach the first agent without copying tracked or unignor
       stat(path.join(noIncludes.workspace!.workspaceDirectory, "config/app.local.json")),
     ).rejects.toMatchObject({ code: "ENOENT" });
 
-    await mkdir(path.join(repository, ".worktreeinclude"));
+    await writeFile(path.join(repository, ".worktreeinclude"), ".env\nconfig/*.local.json\n");
+    await rm(path.join(sourceWorktree, "config"), { recursive: true });
+    await writeFile(
+      path.join(sourceWorktree, "config"),
+      "committed file blocks the config directory",
+    );
+    execFileSync("git", ["add", "-A", "config"], { cwd: sourceWorktree, stdio: "pipe" });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-m",
+        "block config directory",
+      ],
+      { cwd: sourceWorktree, stdio: "pipe" },
+    );
     const beforeFailure = await client.fetchWorkspaces();
     const worktreesBeforeFailure = git("worktree", "list", "--porcelain").toString();
     const failed = await client.createWorkspace({
       source: {
         kind: "worktree",
         cwd: repository,
+        baseBranch: "include",
         branchName: "copy-failure",
         worktreeSlug: "copy-failure",
       },
