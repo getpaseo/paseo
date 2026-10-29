@@ -1,5 +1,5 @@
 import type { Agent } from "node:http";
-import { Agent as DirectAgent, Dispatcher, EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
+import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
 import { HttpsProxyAgent } from "https-proxy-agent";
 
 interface ProxyEnvironment {
@@ -15,11 +15,10 @@ function readEnvironment(env: NodeJS.ProcessEnv): {
   ignored: string[];
 } {
   const ignored: string[] = [];
-  function proxy(lower: string, upper: string): string | undefined {
-    const variable = env[lower] !== undefined ? lower : upper;
+  function proxy(variable: string): string | undefined {
     const value = env[variable];
     if (value === undefined) return undefined;
-    if (!value.trim()) return "";
+    if (!value.trim()) return undefined;
     try {
       const url = new URL(value.includes("://") ? value : `http://${value}`);
       if (url.protocol !== "http:" && url.protocol !== "https:")
@@ -29,14 +28,14 @@ function readEnvironment(env: NodeJS.ProcessEnv): {
       return url.href;
     } catch {
       ignored.push(variable);
-      return "";
+      return undefined;
     }
   }
-  const httpProxy = proxy("http_proxy", "HTTP_PROXY") ?? "";
+  const httpProxy = proxy("http_proxy") ?? proxy("HTTP_PROXY") ?? "";
   return {
     environment: {
       httpProxy,
-      httpsProxy: proxy("https_proxy", "HTTPS_PROXY") ?? httpProxy,
+      httpsProxy: proxy("https_proxy") ?? proxy("HTTPS_PROXY") ?? httpProxy,
       noProxy: env.no_proxy ?? env.NO_PROXY ?? "",
     },
     ignored,
@@ -47,38 +46,12 @@ function bypassList(noProxy: string): string {
   return noProxy.trim() === "*" ? "*" : `${noProxy},localhost,127.0.0.1,[::1],::1`;
 }
 
-// undici otherwise falls back to HTTP_PROXY when an explicitly ignored HTTPS proxy is empty.
-class EnvironmentProxyAgent extends Dispatcher {
-  private readonly proxy: EnvHttpProxyAgent;
-  private readonly direct = new DirectAgent();
-  private readonly options: ProxyEnvironment;
-  constructor(options: ProxyEnvironment) {
-    super();
-    this.options = options;
-    this.proxy = new EnvHttpProxyAgent(options);
-  }
-  override dispatch(
-    options: Parameters<EnvHttpProxyAgent["dispatch"]>[0],
-    handler: Parameters<EnvHttpProxyAgent["dispatch"]>[1],
-  ): boolean {
-    if (!this.options.httpsProxy && String(options.origin).startsWith("https:"))
-      return this.direct.dispatch(options, handler);
-    return this.proxy.dispatch(options, handler);
-  }
-  override async close(): Promise<void> {
-    await Promise.all([this.proxy.close(), this.direct.close()]);
-  }
-  override async destroy(): Promise<void> {
-    await Promise.all([this.proxy.destroy(), this.direct.destroy()]);
-  }
-}
-
 /** Install once at startup; return ignored variable names for logging without exposing credentials. */
 export function initializeEnvironmentProxy(env: NodeJS.ProcessEnv = process.env): string[] {
   const resolved = readEnvironment(env);
   environment = resolved.environment;
   setGlobalDispatcher(
-    new EnvironmentProxyAgent({
+    new EnvHttpProxyAgent({
       httpProxy: environment.httpProxy,
       httpsProxy: environment.httpsProxy,
       noProxy: bypassList(environment.noProxy),

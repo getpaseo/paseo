@@ -123,11 +123,15 @@ test.each([
   expect(initializeEnvironmentProxy({ HTTP_PROXY: recorder.url, https_proxy: value })).toEqual([
     "https_proxy",
   ]);
-  expect(webSocketProxyAgent("wss://vendor.invalid")).toBeUndefined();
+  expect(webSocketProxyAgent("wss://vendor.invalid")).toBeDefined();
   await expect(
     fetch("https://vendor.invalid", { signal: AbortSignal.timeout(500) }),
   ).rejects.toThrow();
-  expect(recorder.tunnels).toEqual([]);
+  const socket = new WebSocket("wss://vendor.invalid", {
+    agent: webSocketProxyAgent("wss://vendor.invalid"),
+  });
+  await once(socket, "error");
+  expect(recorder.tunnels).toEqual(["vendor.invalid:443", "vendor.invalid:443"]);
 });
 
 test("daemon starts with an ignored proxy and writes one redacted warning to daemon.log", async () => {
@@ -183,4 +187,22 @@ test("daemon starts with an ignored proxy and writes one redacted warning to dae
 test("accepts a scheme-less corporate proxy hostname", () => {
   expect(initializeEnvironmentProxy({ https_proxy: "proxy.corp:8080" })).toEqual([]);
   expect(webSocketProxyAgent("wss://vendor.invalid")).toBeDefined();
+});
+
+test("an ignored lowercase variable falls back to the uppercase variable", async () => {
+  const recorder = await proxy();
+  expect(
+    initializeEnvironmentProxy({
+      https_proxy: "socks5://proxy.invalid",
+      HTTPS_PROXY: recorder.url,
+    }),
+  ).toEqual(["https_proxy"]);
+  await expect(
+    fetch("https://vendor.invalid", { signal: AbortSignal.timeout(500) }),
+  ).rejects.toThrow();
+  const socket = new WebSocket("wss://vendor.invalid", {
+    agent: webSocketProxyAgent("wss://vendor.invalid"),
+  });
+  await once(socket, "error");
+  expect(recorder.tunnels).toEqual(["vendor.invalid:443", "vendor.invalid:443"]);
 });
