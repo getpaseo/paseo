@@ -184,8 +184,9 @@ test("repeated content is reused without rewriting the attachment", async () => 
 test("64 MiB materialization leaves the event loop responsive and preserves bytes", async () => {
   const bytes = Buffer.alloc(64 * 1024 * 1024, 37);
   const data = bytes.toString("base64");
-  // Main-thread CPU time between ticks is the work that blocked the loop; wall-clock
-  // gaps also count preemption and timer granularity on shared CI runners.
+  // Main-thread CPU time between ticks bounds the decode and hash work done on the loop;
+  // wall-clock gaps on shared CI runners also count preemption and timer granularity.
+  // File writes stay on fs/promises, so they never block the loop.
   const threadCpuMs = () => {
     const { user, system } = process.threadCpuUsage();
     return (user + system) / 1000;
