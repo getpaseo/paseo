@@ -1,18 +1,21 @@
-import { QueryClient } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
-import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
+import { PluginTranslationRuntime } from "@getpaseo/plugin/client/host";
 import { runPluginClientBundle, type PluginClientRuntime } from "@/plugins/evaluate";
+import { transformTimelineItem, type TimelineItemTransform } from "@/plugins/timeline/model";
 import type { InstalledPlugin } from "@/plugins/types";
 import {
   applyStreamEvent,
+  getStreamItemMessageId,
   hydrateStreamState,
   type StreamItem,
   type ToolCallItem,
   type UserMessageItem,
 } from "@/types/stream";
-import { transformTimelineItem, type TimelineItemTransform } from "@/plugins/timeline/model";
-import { createStreamPresentation } from "./presentation";
+import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
+import { QueryClient } from "@tanstack/react-query";
+import { describe, expect, it } from "vitest";
 import { buildAgentStreamRenderModel } from "./model";
+import { createStreamPresentation } from "./presentation";
+import { createReadingAnchor } from "./reading-anchor";
 
 const runtime = {
   paseo: {},
@@ -29,7 +32,7 @@ const runtime = {
 } as unknown as PluginClientRuntime;
 
 function installProbe(
-  itemType: "assistant_message" | "tool_call" | "reasoning",
+  itemType: "user_message" | "assistant_message" | "tool_call" | "reasoning",
   condition = "true",
 ): InstalledPlugin {
   const clientBundle = `(function() {
@@ -61,6 +64,8 @@ function installProbe(
     serverId: "host-1",
     clientBundle,
     lifetime: new AbortController(),
+    locale: "en",
+    i18n: new PluginTranslationRuntime({ getLocale: () => "en", subscribe: () => () => {} }),
     queryClient: new QueryClient(),
     paseo: {} as InstalledPlugin["paseo"],
     invoke: async () => undefined,
@@ -94,7 +99,11 @@ function pluginData(items: StreamItem[]): unknown[] {
   return items.flatMap((item) => (item.kind === "plugin" ? [item.data] : []));
 }
 
-const presentationOptions = { level: "overview" as const, isTurnActive: true };
+const presentationOptions = {
+  display: "collapseToolCalls" as const,
+  expandedTurnHostIds: new Set<string>(),
+  isTurnActive: true,
+};
 
 function streamHarness(transform?: TimelineItemTransform) {
   let state: { tail: StreamItem[]; head: StreamItem[] } = { tail: [], head: [] };
@@ -122,6 +131,25 @@ function assistant(text: string, messageId = "message-1"): AgentStreamEventPaylo
 function rows(result: { tail: StreamItem[]; head: StreamItem[] }): StreamItem[] {
   return [...result.tail, ...result.head];
 }
+
+describe("whole-message Markdown presentation", () => {
+  it("keeps paragraphs, fences and quotes in one progressively updated row", () => {
+    const present = createStreamPresentation();
+    const text = "First paragraph.\n\nSecond paragraph.\n\n```ts\nconst n = 1;\n```\n\n> Quote";
+    for (const length of [10, 30, text.length]) {
+      const source = hydrateStreamState([
+        { event: assistant(text.slice(0, length)), timestamp: new Date(1000) },
+      ]);
+      const result = present({
+        ...presentationOptions,
+        tail: [],
+        head: source,
+        transform: undefined,
+      });
+      expect(rows(result)).toEqual(source);
+    }
+  });
+});
 
 describe("stream presentation through installed plugins", () => {
   it("offers every source tool call to an installed transformer in Overview mode", () => {
@@ -160,6 +188,23 @@ describe("stream presentation through installed plugins", () => {
     },
   );
 
+  it("addresses a prompt a plugin replaced by the prompt's own id", () => {
+    const harness = streamHarness(installedTransform(installProbe("user_message")));
+    const rendered = rows(
+      harness.send({
+        type: "timeline",
+        provider: "claude",
+        item: { type: "user_message", messageId: "prompt-1", text: "Earlier prompt" },
+      }),
+    );
+    const source = rows(harness.source());
+
+    expect(source).toMatchObject([{ kind: "user_message", id: "prompt-1" }]);
+    expect(rendered).toMatchObject([{ kind: "plugin", id: "probe-plugin/prompt-1/0" }]);
+    // The chat outline jumps to the source id; the row it lands on is the plugin's.
+    expect(rendered.map(getStreamItemMessageId)).toEqual(["prompt-1"]);
+  });
+
   it("finishes one message before streaming a different message ID", () => {
     const harness = streamHarness(installedTransform(installProbe("assistant_message")));
     harness.send(assistant("First\n\nBody", "first"));
@@ -181,26 +226,17 @@ describe("stream presentation through installed plugins", () => {
       { text: "Header\n\nBody", phase: "streaming" },
     ]);
     expect(rows(harness.render(transform))).toHaveLength(1);
-    expect(rows(harness.render()).map((item) => item.kind)).toEqual([
-      "assistant_message",
-      "assistant_message",
-    ]);
+    expect(rows(harness.render()).map((item) => item.kind)).toEqual(["assistant_message"]);
   });
 
-  it("keeps completed native blocks stable while the last block grows and finishes", () => {
+  it("retains the complete message when streaming finishes", () => {
     const harness = streamHarness();
-    const first = harness.send(assistant("Intro\n\n![Image](image.png)"));
-    const growing = harness.send(assistant("\n\nAfter\n"));
-    const last = harness.send(assistant("- item"));
+    harness.send(assistant("Intro\n\n![Image](image.png)"));
+    const last = harness.send(assistant("\n\nAfter\n- item"));
     const completed = harness.send({ type: "turn_completed", provider: "claude" });
-    expect(first.tail).toMatchObject([{ text: "Intro", blockIndex: 0 }]);
-    expect(first.head).toMatchObject([{ text: "![Image](image.png)", blockIndex: 1 }]);
-    expect(growing.tail[0]).toBe(first.tail[0]);
-    expect(growing.tail[1]).toBe(first.head[0]);
-    expect(last.tail).toBe(growing.tail);
-    expect(last.head).toMatchObject([{ text: "After\n- item", blockIndex: 2 }]);
-    expect(completed.tail).toEqual(rows(last));
-    expect(completed.tail[2]).toBe(last.head[0]);
+    expect(last.tail).toEqual([]);
+    expect(last.head).toMatchObject([{ text: "Intro\n\n![Image](image.png)\n\nAfter\n- item" }]);
+    expect(completed.tail).toEqual(last.head);
     expect(completed.head).toEqual([]);
   });
 
@@ -208,8 +244,8 @@ describe("stream presentation through installed plugins", () => {
     const harness = streamHarness();
     harness.send(assistant("Intro\n\n```ts\nconst a = 1;"));
     const result = harness.send(assistant("\n\nconst b = 2;"));
-    expect(result.tail).toMatchObject([{ text: "Intro" }]);
-    expect(result.head).toMatchObject([{ text: "```ts\nconst a = 1;\n\nconst b = 2;" }]);
+    expect(result.tail).toEqual([]);
+    expect(result.head).toMatchObject([{ text: "Intro\n\n```ts\nconst a = 1;\n\nconst b = 2;" }]);
   });
 
   // Codex streams a line break and the next line's indent as their own chunks.
@@ -227,14 +263,13 @@ describe("stream presentation through installed plugins", () => {
   // which is what lets find, scroll-to-message and history reveal address it by id.
   // A link reference definition stays with the paragraph that uses it, so the split
   // never leaves an empty row behind and the reference still resolves.
-  it("splits an assistant message into the same blocks through history and through the live head", () => {
+  it("preserves source identity through history and the live head", () => {
     const source = hydrateStreamState([
       {
         event: assistant("[Link][docs]\n\n[docs]: https://example.com\n\nClosing paragraph."),
         timestamp: new Date(1000),
       },
     ]);
-    const messageId = source[0]!.id;
     const present = (placement: "tail" | "head") =>
       rows(
         createStreamPresentation()({
@@ -244,20 +279,7 @@ describe("stream presentation through installed plugins", () => {
           transform: undefined,
         }),
       );
-    expect(present("tail")).toMatchObject([
-      {
-        id: `${messageId}:block:0`,
-        blockGroupId: messageId,
-        blockIndex: 0,
-        text: "[Link][docs]\n\n[docs]: https://example.com",
-      },
-      {
-        id: `${messageId}:block:1`,
-        blockGroupId: messageId,
-        blockIndex: 1,
-        text: "Closing paragraph.",
-      },
-    ]);
+    expect(present("tail")).toEqual(source);
     const blocks = (items: StreamItem[]) =>
       items.map((item) => [item.id, item.kind === "assistant_message" ? item.text : null]);
     expect(blocks(present("head"))).toEqual(blocks(present("tail")));
@@ -265,7 +287,7 @@ describe("stream presentation through installed plugins", () => {
 
   // Rows are addressed by id from outside presentation, so the same text has to land on
   // the same ids whether the reader watched it arrive or opened the chat afterwards.
-  it("gives a streamed message the block ids its hydrated text would have had", () => {
+  it("gives a streamed message the same id as its hydrated text", () => {
     const text = "Intro paragraph.\n\n# Heading\n\n- first\n- second\n\nClosing paragraph.";
     const harness = streamHarness();
     for (let end = 8; end < text.length; end += 8) {
@@ -287,7 +309,7 @@ describe("stream presentation through installed plugins", () => {
     );
   });
 
-  it("repoints a block at the canonical source that replaced the streamed one", () => {
+  it("uses the canonical source that replaced the streamed message", () => {
     const harness = streamHarness();
     harness.send(assistant("Streamed answer"));
     const streamed = rows(harness.render());
@@ -321,15 +343,8 @@ describe("stream presentation through installed plugins", () => {
       head: [],
       transform: undefined,
     });
-    expect(result.tail).toMatchObject([
-      {
-        id: `${messageId}:block:0`,
-        blockGroupId: messageId,
-        blockIndex: 0,
-        text: "Only one paragraph.",
-      },
-    ]);
-    expect(result.tail[0]!.id).not.toBe(messageId);
+    expect(result.tail).toEqual(source);
+    expect(result.tail[0]!.id).toBe(messageId);
   });
 
   it("continues to stream inline reasoning with a stable plugin row", () => {
@@ -546,13 +561,7 @@ describe("timeline presentation", () => {
         text: "<spoken-input>Example</spoken-input><instruction>Explain this XML.</instruction>",
       },
     ];
-    expect(projectTimelineItems(items)).toEqual(
-      items.map((item) =>
-        item.kind === "assistant_message"
-          ? { ...item, id: `${item.id}:block:0`, blockGroupId: item.id, blockIndex: 0 }
-          : item,
-      ),
-    );
+    expect(projectTimelineItems(items)).toEqual(items);
     expect(projectTimelineItems(items)[0]).toBe(items[0]);
   });
 
@@ -580,3 +589,197 @@ describe("timeline presentation", () => {
     expect(projectTimelineItems([source], () => [])).toEqual([]);
   });
 });
+
+it("opening a turn reveals individual calls rather than another tool group", () => {
+  const present = createStreamPresentation();
+  const timestamp = new Date();
+  const tail: StreamItem[] = [
+    { kind: "user_message", id: "prompt", text: "Work", timestamp },
+    toolCall("one", "Bash"),
+    toolCall("two", "Bash"),
+    { kind: "assistant_message", id: "reply", text: "Done", timestamp },
+  ];
+  const result = present({
+    ...presentationOptions,
+    transform: undefined,
+    tail,
+    head: [],
+    display: "collapseTurns",
+    isTurnActive: false,
+    expandedTurnHostIds: new Set(["prompt"]),
+  });
+  expect(result.tail.map((item) => item.id)).toEqual(tail.map((item) => item.id));
+  expect(result.groupsByHostId.size).toBe(0);
+  expect(result.readingRowReplacements.get("tool-two")).toBeUndefined();
+});
+
+it.each(["collapseToolCalls", "collapseTurns"] as const)(
+  "preserves the reader when a prepend extends a group in %s",
+  (display) => {
+    const present = createStreamPresentation();
+    const anchor = createReadingAnchor();
+    const calls = [toolCall("one", "Bash"), toolCall("two", "Bash")];
+    const input = {
+      ...presentationOptions,
+      transform: undefined,
+      display,
+      head: [],
+      isTurnActive: false,
+    };
+    const partial = present({ ...input, tail: calls.slice(1) });
+    anchor.reconcile(0, [{ id: partial.tail[0]!.id, top: 48, height: 200 }]);
+    const completed = present({ ...input, tail: calls });
+    const groupId = completed.tail[0]!.id;
+    expect(anchor.getRowId(completed.readingRowReplacements)).toBe(groupId);
+    expect(
+      anchor.reconcile(
+        0,
+        [{ id: groupId, top: 448, height: 200 }],
+        false,
+        completed.readingRowReplacements,
+      ),
+    ).toBe(400);
+    expect(anchor.getRowId()).toBe(groupId);
+    const timestamp = new Date();
+    const folded = present({
+      ...input,
+      display: "collapseTurns",
+      tail: [
+        { kind: "user_message", id: "prompt", text: "Work", timestamp },
+        ...calls,
+        { kind: "assistant_message", id: "reply", text: "Done", timestamp },
+      ],
+    });
+    // Both the original partial group and its replacement resolve directly to the turn.
+    expect(folded.readingRowReplacements.get(calls[1]!.id)).toBe("prompt");
+    expect(anchor.getRowId(folded.readingRowReplacements)).toBe("prompt");
+    const opened = present({ ...input, tail: calls, display: "full" });
+    expect(opened.readingRowReplacements.get(calls[1]!.id)).toBeUndefined();
+  },
+);
+
+it("presents received agent messages as attributed bubbles with the original turn identity", () => {
+  const call = toolCall("received", "agent_message");
+  if (call.payload.source !== "agent") throw new Error("Expected agent tool");
+  call.turnId = "turn";
+  call.payload.data.agentMessage = {
+    event: "message",
+    sender: { id: "sender", title: "Reviewer" },
+    text: "Ready",
+  };
+  const result = createStreamPresentation()({
+    ...presentationOptions,
+    transform: undefined,
+    tail: [call],
+    head: [],
+  });
+  expect(result.tail[0]).toMatchObject({
+    kind: "user_message",
+    id: call.id,
+    turnId: "turn",
+    text: "Ready",
+    sender: { id: "sender", title: "Reviewer" },
+  });
+});
+
+it("does not reopen the previous turn while a new run waits for its first row", () => {
+  const timestamp = new Date();
+  const tail: StreamItem[] = [
+    { kind: "user_message", id: "prompt", text: "Work", timestamp },
+    toolCall("one", "Bash"),
+    { kind: "assistant_message", id: "reply", text: "Done", timestamp },
+  ];
+  for (const item of tail) item.turnId = "completed";
+  const result = createStreamPresentation()({
+    ...presentationOptions,
+    transform: undefined,
+    tail,
+    head: [],
+    display: "collapseTurns",
+    isTurnActive: true,
+    activeTurnId: "new",
+  });
+  expect(result.tail.map((item) => item.id)).toEqual(["prompt", "reply"]);
+});
+
+// A sent prompt counts as activity before the daemon opens its turn, so the only known turn is
+// the completed one; it must stay folded until the new turn's rows arrive.
+it("keeps the previous turn folded while a sent prompt waits for its turn to open", () => {
+  const timestamp = new Date();
+  const tail: StreamItem[] = [
+    { kind: "user_message", id: "prompt", text: "Work", timestamp },
+    toolCall("one", "Bash"),
+    { kind: "assistant_message", id: "reply", text: "Done", timestamp },
+  ];
+  for (const item of tail) item.turnId = "completed";
+  const result = createStreamPresentation()({
+    ...presentationOptions,
+    transform: undefined,
+    tail,
+    head: [],
+    display: "collapseTurns",
+    isTurnActive: true,
+    activeTurnId: null,
+  });
+  expect(result.tail.map((item) => item.id)).toEqual(["prompt", "reply"]);
+});
+
+it("groups reasoning with tools unless Expand thinking is enabled, including setting changes", () => {
+  const present = createStreamPresentation();
+  const timestamp = new Date();
+  const thought: StreamItem = {
+    kind: "thought",
+    id: "thought",
+    text: "Consider this",
+    status: "ready",
+    timestamp,
+  };
+  const tail: StreamItem[] = [toolCall("one", "Bash"), thought, toolCall("two", "Bash")];
+  for (const item of tail) item.turnId = "run";
+  const input = {
+    ...presentationOptions,
+    transform: undefined,
+    tail,
+    head: [],
+    display: "collapseToolCalls" as const,
+    isTurnActive: false,
+  };
+  const grouped = present({ ...input, autoExpandReasoning: false });
+  expect(grouped.tail).toHaveLength(1);
+  expect(grouped.groupsByHostId.get("tool-one")?.run.calls).toEqual(tail);
+  const separate = present({ ...input, autoExpandReasoning: true });
+  expect(separate.tail.map((item) => item.id)).toEqual(["tool-one", "thought", "tool-two"]);
+  expect(separate.groupsByHostId.has("thought")).toBe(false);
+  const next = { ...thought, id: "next", turnId: "next-run" };
+  const bounded = present({ ...input, tail: [...tail, next], autoExpandReasoning: false });
+  expect(bounded.tail.map((item) => item.id)).toEqual(["tool-one", "next"]);
+});
+
+it.each([false, true])(
+  "reveals raw reasoning when opening a turn (Expand thinking %s)",
+  (autoExpandReasoning) => {
+    const timestamp = new Date();
+    const tail: StreamItem[] = [
+      { kind: "user_message", id: "prompt", text: "Work", timestamp },
+      { kind: "thought", id: "thought", text: "Consider this", status: "ready", timestamp },
+      toolCall("one", "Bash"),
+      { kind: "assistant_message", id: "reply", text: "Done", timestamp },
+    ];
+    const input = {
+      ...presentationOptions,
+      transform: undefined,
+      tail,
+      head: [],
+      display: "collapseTurns" as const,
+      isTurnActive: false,
+      autoExpandReasoning,
+    };
+    const present = createStreamPresentation();
+    const closed = present(input);
+    expect(closed.tail.some((item) => item.id === "thought")).toBe(false);
+    const opened = present({ ...input, expandedTurnHostIds: new Set(["prompt"]) });
+    expect(opened.tail).toEqual(tail);
+    expect(opened.turns.nestedItemIds.has("thought")).toBe(true);
+    expect(opened.groupsByHostId.size).toBe(0);
+  },
+);

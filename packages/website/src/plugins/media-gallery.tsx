@@ -1,5 +1,6 @@
 import { pluginOverviewPolicy, pluginOverviewUrl } from "@getpaseo/protocol/plugin-overview";
 import { pluginMediaKind } from "@getpaseo/protocol/plugin-registry";
+import type { TFunction } from "i18next";
 import { ChevronLeft, ChevronRight, Play, X } from "lucide-react";
 import {
   type CSSProperties,
@@ -11,6 +12,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useTranslation } from "react-i18next";
 
 const TILE_CLASS =
   "relative block aspect-video w-[85%] flex-shrink-0 overflow-hidden rounded-xl border border-white/10 bg-white/[0.03] sm:w-[60%]";
@@ -34,10 +36,11 @@ interface MediaItem {
 
 /** Plugin media in registry order. Each tile opens the viewer; without JavaScript it links to the file. */
 export function MediaGallery({ name, media }: { name: string; media: string[] }) {
+  const { t } = useTranslation();
   const dialog = useRef<HTMLDialogElement>(null);
   const entries = useMemo(
-    () => media.map((url, index) => mediaEntry(name, url, index)),
-    [name, media],
+    () => media.map((url, index) => mediaEntry({ name, url, index, t })),
+    [name, media, t],
   );
   const items = useMemo(() => entries.filter((entry) => typeof entry !== "string"), [entries]);
   const [viewing, setViewing] = useState<number | null>(null);
@@ -104,7 +107,7 @@ export function MediaGallery({ name, media }: { name: string; media: string[] })
           <>
             <button
               type="button"
-              aria-label="Previous"
+              aria-label={t("plugins.previous")}
               onClick={showPrevious}
               className={`${VIEWER_BUTTON_CLASS} left-4 top-1/2 -translate-y-1/2`}
             >
@@ -112,7 +115,7 @@ export function MediaGallery({ name, media }: { name: string; media: string[] })
             </button>
             <button
               type="button"
-              aria-label="Next"
+              aria-label={t("plugins.next")}
               onClick={showNext}
               className={`${VIEWER_BUTTON_CLASS} right-4 top-1/2 -translate-y-1/2`}
             >
@@ -122,7 +125,7 @@ export function MediaGallery({ name, media }: { name: string; media: string[] })
         )}
         <button
           type="button"
-          aria-label="Close"
+          aria-label={t("common.close")}
           onClick={close}
           className={`${VIEWER_BUTTON_CLASS} right-4 top-4`}
         >
@@ -134,15 +137,25 @@ export function MediaGallery({ name, media }: { name: string; media: string[] })
 }
 
 /** A registry media entry as a gallery item, or the raw entry when it is not a safe URL. */
-function mediaEntry(name: string, url: string, index: number): MediaItem | string {
+function mediaEntry({
+  name,
+  url,
+  index,
+  t,
+}: {
+  name: string;
+  url: string;
+  index: number;
+  t: TFunction;
+}): MediaItem | string {
   const source = pluginOverviewUrl(url);
   if (!source) return url;
   const kind = pluginMediaKind(source);
-  return {
-    url: source,
-    kind,
-    label: `${name} ${kind === "video" ? "video" : "screenshot"} ${index + 1}`,
-  };
+  const label = t(kind === "video" ? "plugins.video" : "plugins.screenshot", {
+    name,
+    index: index + 1,
+  });
+  return { url: source, kind, label };
 }
 
 /** Fills the viewer's room at the video's aspect ratio, scaling small sources up. */

@@ -1,9 +1,13 @@
+import { setImmediate } from "node:timers/promises";
+import { ClaudeRuntimeSafety } from "./runtime-safety.js";
 import { validateProviderOptions } from "../../provider-options.js";
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { promises } from "node:fs";
 import path from "node:path";
+import { LRUCache } from "lru-cache";
+import { createImportDescriptorScheduler } from "./import-descriptor-scheduler.js";
 import {
   type AgentDefinition,
   type CanUseTool,
@@ -29,9 +33,11 @@ import {
   mapTaskNotificationSystemRecordToToolCall,
   mapTaskNotificationUserContentToToolCall,
   readTaskNotificationToolUseIdFromHistoryRecord,
+  readTaskNotificationFromHistoryRecord,
 } from "./task-notification-tool-call.js";
+import { isClaudeInterruptPlaceholderText } from "./interrupt-placeholder.js";
 import {
-  findClaudeModel,
+  getClaudeContextWindowMaxTokens,
   getClaudeModelsWithSettings,
   normalizeClaudeRuntimeModelId,
   resolveConfiguredClaudeModel,
@@ -42,7 +48,9 @@ import {
   parseClaudeCodeVersion,
   resolveClaudeDisabledThinkingForModel,
 } from "./model-manifest.js";
+import { expandTilde } from "../../../../utils/path.js";
 import { parsePartialJsonObject } from "./partial-json.js";
+import { withClaudeReplayHistory, type ClaudeReplayHistory } from "./transcript-history.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
 import { readClaudeSubagentHandback } from "./subagent-handback.js";
 import { ClaudeTaskState } from "./task-state.js";
@@ -50,17 +58,12 @@ import {
   ClaudeTaskProtocolSource,
   type ClaudeHookObservationInput,
 } from "./subagents/live-source.js";
-import {
-  observeReplaySubagents,
-  parseClaudeSubagentMeta,
-  type ClaudeReplayParentFacts,
-  type ClaudeSubagentMeta,
-} from "./subagents/replay-source.js";
+import { observeReplaySubagents, type ClaudeReplayParentFacts } from "./subagents/replay-source.js";
+import { mapTaskStatus } from "./subagents/task-status.js";
+import type { ProviderSubagentStatus } from "../../provider-subagents/store.js";
 import { foldSubagentObservations, type SubagentObservation } from "./subagents/observation.js";
-import {
-  observeReplayWorkflows,
-  parseClaudeWorkflowRun,
-} from "./subagents/workflow-replay-source.js";
+import { observeReplayWorkflows } from "./subagents/workflow-replay-source.js";
+import { limitAgentTimelineItemContent } from "../../agent-timeline-content.js";
 import { readClaudeWorkflowResultFile } from "./subagents/workflow-output.js";
 import { buildClaudeFeatures, claudeModelSupportsFastMode } from "./feature-definitions.js";
 import {
@@ -85,7 +88,7 @@ import {
   type ClaudeRewindSdk,
 } from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
-import { claudeConfigDir, claudeProjectDirSync, claudeTranscriptPathSync } from "./project-dir.js";
+import { claudeConfigDir, claudeProjectDirSync, claudeTranscriptPath } from "./project-dir.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
 import {
   isProviderImageMarkdown,
@@ -203,24 +206,26 @@ function stripClaudeAskUserQuestionUiMetadata(input: AgentMetadata): AgentMetada
   };
 }
 
-export function normalizeClaudeAskUserQuestionUpdatedInput(
+/**
+ * The answers this response will actually deliver, keyed by full question text,
+ * or null when there is no question list and answers map to work from.
+ *
+ * Shared by the normalizer and by the check that rejects an undeliverable
+ * answer, so the two can never disagree about what "deliverable" means.
+ */
+function resolveClaudeAskUserQuestionAnswers(
   updatedInput: AgentMetadata | undefined,
   fallbackInput: AgentMetadata | undefined,
-): AgentMetadata {
+): Record<string, string> | null {
   const fallback = isMetadata(fallbackInput) ? fallbackInput : {};
   const base = isMetadata(updatedInput) ? updatedInput : {};
-  // Paseo's shared question UI serializes answers by question header, but Claude's
-  // AskUserQuestion tool expects answer keys to match the full question text. Merge
-  // the original request payload back in so provider callbacks that only return
-  // `{ answers }` still satisfy Claude's full tool input schema.
-  const merged = stripClaudeAskUserQuestionUiMetadata({ ...fallback, ...base });
   const questions =
     (Array.isArray(base.questions) ? base.questions : null) ??
     (Array.isArray(fallback.questions) ? fallback.questions : null);
   const answers = isMetadata(base.answers) ? base.answers : null;
 
   if (!questions || !answers) {
-    return merged;
+    return null;
   }
 
   const normalizedAnswers: Record<string, string> = {};
@@ -244,7 +249,23 @@ export function normalizeClaudeAskUserQuestionUpdatedInput(
     }
   }
 
-  if (Object.keys(normalizedAnswers).length === 0) {
+  return normalizedAnswers;
+}
+
+export function normalizeClaudeAskUserQuestionUpdatedInput(
+  updatedInput: AgentMetadata | undefined,
+  fallbackInput: AgentMetadata | undefined,
+): AgentMetadata {
+  const fallback = isMetadata(fallbackInput) ? fallbackInput : {};
+  const base = isMetadata(updatedInput) ? updatedInput : {};
+  // Paseo's shared question UI serializes answers by question header, but Claude's
+  // AskUserQuestion tool expects answer keys to match the full question text. Merge
+  // the original request payload back in so provider callbacks that only return
+  // `{ answers }` still satisfy Claude's full tool input schema.
+  const merged = stripClaudeAskUserQuestionUiMetadata({ ...fallback, ...base });
+  const normalizedAnswers = resolveClaudeAskUserQuestionAnswers(updatedInput, fallbackInput);
+
+  if (!normalizedAnswers || Object.keys(normalizedAnswers).length === 0) {
     return merged;
   }
 
@@ -252,6 +273,32 @@ export function normalizeClaudeAskUserQuestionUpdatedInput(
     ...merged,
     answers: normalizedAnswers,
   };
+}
+
+class ClaudeQuestionAnswerRequiredError extends Error {
+  readonly code = "question_answer_required" as const;
+
+  constructor(readonly requestId: string) {
+    super(
+      `Permission request '${requestId}' requires updatedInput.answers keyed by a ` +
+        `question's full text or header, with a non-empty string value. ` +
+        `The request is still pending; retry with that shape.`,
+    );
+    this.name = "ClaudeQuestionAnswerRequiredError";
+  }
+}
+
+function assertClaudeQuestionAnswerDeliverable(
+  request: AgentPermissionRequest,
+  response: AgentPermissionResponse,
+): void {
+  if (request.kind !== "question" || response.behavior !== "allow") {
+    return;
+  }
+  const answers = resolveClaudeAskUserQuestionAnswers(response.updatedInput, request.input);
+  if (!answers || Object.keys(answers).length === 0) {
+    throw new ClaudeQuestionAnswerRequiredError(request.id);
+  }
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
@@ -383,7 +430,6 @@ const CLAUDE_ROOT_ONLY_COMMANDS = new Set([
   "usage",
 ]);
 const INTERRUPT_TOOL_USE_PLACEHOLDER = "[Request interrupted by user for tool use]";
-const INTERRUPT_PLACEHOLDER_PATTERN = /^\[Request interrupted by user(?:[^\]]*)\]$/;
 const NO_RESPONSE_REQUESTED_PLACEHOLDER = "No response requested.";
 const STEER_SUPERSEDED_PERMISSION_MESSAGE =
   "The user answered with a message instead of approving. Their message follows.";
@@ -422,6 +468,10 @@ interface ClaudeAgentClientOptions {
   resolveVersion?: (signal?: AbortSignal) => Promise<string>;
   rewindSdk?: ClaudeRewindSdk;
 }
+
+type ClaudeImportDescriptorResult =
+  | { type: "parsed"; descriptor: ImportableProviderSession | null }
+  | { type: "unreadable"; error: Error };
 
 interface ClaudeAgentSessionOptions {
   defaults?: { agents?: Record<string, AgentDefinition> };
@@ -599,6 +649,40 @@ function readClaudeFastModeSetting(settings: ClaudeOptions["settings"]): boolean
   return typeof settings.fastMode === "boolean" ? settings.fastMode : null;
 }
 
+type ClaudeSettingsObject = NonNullable<Exclude<ClaudeOptions["settings"], string>>;
+
+// Mirrors `claude --settings`: the value is inline JSON or a path to a JSON file,
+// resolved against the session cwd like the Claude process would.
+async function readClaudeCliSettings(value: string, cwd: string): Promise<ClaudeSettingsObject> {
+  const trimmed = value.trim();
+  const isInlineJson = trimmed.startsWith("{");
+  const source = isInlineJson ? "--settings JSON" : path.resolve(cwd, expandTilde(trimmed));
+  let raw = trimmed;
+  if (!isInlineJson) {
+    try {
+      raw = await fsPromises.readFile(source, "utf8");
+    } catch (error) {
+      throw new Error(
+        `Failed to read Claude settings file ${source}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(
+      `Claude ${source} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`Claude ${source} must contain a JSON object`);
+  }
+  return parsed as ClaudeSettingsObject;
+}
+
 function mergeClaudeSettings(
   settings: ClaudeOptions["settings"],
   updates: NonNullable<Exclude<ClaudeOptions["settings"], string>>,
@@ -741,11 +825,6 @@ function normalizeClaudeTranscriptText(value: unknown): string | null {
   }
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : null;
-}
-
-function isClaudeInterruptPlaceholderText(value: unknown): boolean {
-  const normalized = normalizeClaudeTranscriptText(value);
-  return normalized !== null && INTERRUPT_PLACEHOLDER_PATTERN.test(normalized);
 }
 
 function isClaudeNoResponsePlaceholderText(value: unknown): boolean {
@@ -1128,7 +1207,7 @@ function buildClaudePlanPermissionActions(
     },
   ];
 
-  if (resumeMode === "bypassPermissions") {
+  if (resumeMode === "bypassPermissions" || resumeMode === "auto") {
     actions.push({
       id: "implement_resume",
       label: `Implement with ${getClaudeModeLabel(resumeMode)}`,
@@ -1527,6 +1606,15 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly resolveBinary: () => Promise<string>;
   private readonly resolveVersion: (signal?: AbortSignal) => Promise<string>;
   private readonly rewindSdk: ClaudeRewindSdk;
+  private readonly scheduleImportDescriptors = createImportDescriptorScheduler(
+    (candidate: ClaudeSessionCandidate, signal) => this.readImportDescriptor(candidate, signal),
+  );
+  private readonly importDescriptorCache = new LRUCache<string, ImportableProviderSession>({
+    max: 500,
+    maxSize: 8 * 1024 * 1024,
+    sizeCalculation: (descriptor, key) =>
+      128 + 2 * (JSON.stringify(descriptor).length + key.length),
+  });
 
   constructor(options: ClaudeAgentClientOptions) {
     this.discoverModels = options.discoverModels ?? discoverClaudeModels;
@@ -1580,7 +1668,7 @@ export class ClaudeAgentClient implements AgentClient {
       cwd: merged.cwd,
     };
     const claudeConfig = this.assertConfig(mergedConfig);
-    return new ClaudeAgentSession(claudeConfig, {
+    const session = new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
       runtimeSettings: this.runtimeSettings,
       handle,
@@ -1591,6 +1679,8 @@ export class ClaudeAgentClient implements AgentClient {
       resolveBinary: this.resolveBinary,
       rewindSdk: this.rewindSdk,
     });
+    await session.ensureHistoryReady();
+    return session;
   }
 
   async getCatalogCacheKey(_options: FetchCatalogOptions): Promise<string> {
@@ -1670,34 +1760,91 @@ export class ClaudeAgentClient implements AgentClient {
   }
 
   async listImportableSessions(
-    options?: ListImportableSessionsOptions,
+    options?: ListImportableSessionsOptions & { signal?: AbortSignal },
   ): Promise<ImportableProviderSession[]> {
+    // Leave time to deliver the provider error before the client RPC expires at 60 seconds.
+    const deadline = AbortSignal.timeout(45_000);
+    const signal = options?.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
+    signal.throwIfAborted();
     const configDir = claudeConfigDir(this.buildProviderEnv());
     const sessionsRoot = options?.cwd
       ? claudeProjectDirSync(options.cwd, { configDir })
       : path.join(configDir, "projects");
-    if (!(await pathExists(sessionsRoot))) {
-      return [];
-    }
+    const rootExists = await pathExists(sessionsRoot);
+    signal.throwIfAborted();
+    if (!rootExists) return [];
     const limit = options?.limit ?? 20;
     const scanLimit = Math.min(options?.scanLimit ?? limit * 3, 500);
     const candidates = await collectRecentClaudeSessions(sessionsRoot, scanLimit, {
       rootIsProjectDir: Boolean(options?.cwd),
+      logger: this.logger,
     });
-    const parsed = await Promise.all(
-      candidates.map((candidate) => parseClaudeSessionDescriptor(candidate.path, candidate.mtime)),
-    );
+    const results = await this.scheduleImportDescriptors(candidates, signal);
+    const failures = results.filter((result) => result.type === "unreadable");
+    if (failures.length > 0 && failures.length === results.length) {
+      const errors = failures.map((result) => result.error);
+      throw new AggregateError(
+        errors,
+        `Cannot list Claude sessions: all ${failures.length} candidate transcripts have unreadable import metadata. ${errors[0]!.message}`,
+      );
+    }
+    const parsed = results.filter((result) => result.type === "parsed");
     return parsed
+      .map((result) => result.descriptor)
       .filter((session): session is ImportableProviderSession => session !== null)
-      .slice(0, limit);
+      .slice(0, limit)
+      .map((session) => structuredClone(session));
+  }
+
+  private async readImportDescriptor(
+    candidate: ClaudeSessionCandidate,
+    signal: AbortSignal,
+  ): Promise<ClaudeImportDescriptorResult> {
+    signal.throwIfAborted();
+    const cached = this.importDescriptorCache.get(candidate.cacheKey);
+    if (cached) return { type: "parsed", descriptor: structuredClone(cached) };
+
+    let descriptor: ImportableProviderSession | null;
+    try {
+      descriptor = await parseClaudeSessionDescriptor(candidate.path, candidate.mtime, signal);
+    } catch (error) {
+      signal.throwIfAborted();
+      if (!(error instanceof Error) || !isExpectedClaudeImportFileError(error)) throw error;
+      this.logger.warn(
+        { err: error, path: candidate.path },
+        "Skipping Claude transcript with unreadable import metadata",
+      );
+      return { type: "unreadable", error };
+    }
+    if (descriptor) {
+      const current = await fsPromises.stat(candidate.path).catch((error: unknown) => {
+        if (!isExpectedClaudeImportFileError(error)) throw error;
+        return null;
+      });
+      signal.throwIfAborted();
+      if (current && claudeSessionCacheKey(candidate.path, current) === candidate.cacheKey) {
+        this.importDescriptorCache.set(candidate.cacheKey, structuredClone(descriptor));
+      }
+    }
+    return { type: "parsed", descriptor: descriptor ? structuredClone(descriptor) : null };
   }
 
   async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
+    // Carry a `/rename` onto the imported agent so the name chosen in the CLI
+    // survives the import. Only an explicit rename counts: agents are named
+    // after their first prompt line since #1563, so adopting the generated
+    // `ai-title` here would put that LLM summary back.
+    const renamedTitle = await readClaudeRenamedSessionTitle({
+      cwd: input.cwd,
+      sessionId: input.providerHandleId,
+      configDir: claudeConfigDir(this.buildProviderEnv(context.launchContext?.env)),
+    });
     return importSessionFromPersistence({
       provider: "claude",
       request: input,
       context,
       resumeSession: this.resumeSession.bind(this),
+      ...(renamedTitle ? { config: { title: renamedTitle } } : {}),
     });
   }
 
@@ -1785,7 +1932,13 @@ export async function resolveClaudeCodeVersion(
     timeout: 5_000,
     signal,
   });
-  const version = parseClaudeCodeVersion(`${stdout}\n${stderr}`);
+  // A wrapper command (the `command` provider setting) prints its own version here
+  // instead of Claude Code's. Only trust output that identifies itself as Claude Code,
+  // so a wrapper's version can't mis-gate models behind a minimumClaudeCodeVersion.
+  const rawVersionOutput = `${stdout}\n${stderr}`;
+  const version = /\d+\.\d+\.\d+\s+\(Claude Code\)/i.test(rawVersionOutput)
+    ? parseClaudeCodeVersion(rawVersionOutput)
+    : null;
   if (!version) {
     throw new Error("Unable to parse Claude Code version from --version output");
   }
@@ -1829,56 +1982,77 @@ async function resolveClaudeAuth(
   }
 }
 
-function extractContextWindowSize(modelUsage: unknown): number | undefined {
+function extractContextWindowSize(
+  modelUsage: unknown,
+  modelId: string | null | undefined,
+): number | undefined {
   const usageRecord = toObjectRecord(modelUsage);
   if (!usageRecord) {
     return undefined;
   }
 
-  let maxContextWindow: number | undefined;
-  for (const value of Object.values(usageRecord)) {
-    const valueRecord = toObjectRecord(value);
-    if (!valueRecord) {
-      continue;
-    }
-    const contextWindow = valueRecord.contextWindow;
-    if (
-      typeof contextWindow !== "number" ||
-      !Number.isFinite(contextWindow) ||
-      contextWindow <= 0
-    ) {
-      continue;
-    }
-    maxContextWindow = Math.max(maxContextWindow ?? 0, contextWindow);
-  }
-
-  return maxContextWindow;
+  // modelUsage accumulates every model used in the session, including earlier turns
+  // and subagents. Only the active model describes this turn's context capacity.
+  const modelUsageEntry = modelId ? usageRecord[modelId] : undefined;
+  const contextWindow = toObjectRecord(modelUsageEntry)?.contextWindow;
+  return typeof contextWindow === "number" && Number.isFinite(contextWindow) && contextWindow > 0
+    ? contextWindow
+    : undefined;
 }
 
-function readStreamRequestInputTokens(event: Record<string, unknown>): number | undefined {
-  const messageUsage = toObjectRecord(toObjectRecord(event.message)?.usage);
-  if (!messageUsage) {
+interface StreamRequestInputUsage {
+  inputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+}
+
+function readUsageCount(usage: Record<string, unknown>, key: string): number | undefined {
+  const value = usage[key];
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
     return undefined;
   }
-  const usage = messageUsage;
-  const inputTokens =
-    typeof usage.input_tokens === "number" && Number.isFinite(usage.input_tokens)
-      ? usage.input_tokens
-      : undefined;
-  const cacheCreationInputTokens =
-    typeof usage.cache_creation_input_tokens === "number" &&
-    Number.isFinite(usage.cache_creation_input_tokens)
-      ? usage.cache_creation_input_tokens
-      : 0;
-  const cacheReadInputTokens =
-    typeof usage.cache_read_input_tokens === "number" &&
-    Number.isFinite(usage.cache_read_input_tokens)
-      ? usage.cache_read_input_tokens
-      : 0;
-  if (typeof inputTokens !== "number" || inputTokens < 0) {
+  return value;
+}
+
+function readStreamRequestInputUsage(
+  event: Record<string, unknown>,
+): StreamRequestInputUsage | undefined {
+  const usage = toObjectRecord(toObjectRecord(event.message)?.usage);
+  if (!usage) {
     return undefined;
   }
-  return inputTokens + cacheCreationInputTokens + cacheReadInputTokens;
+  const inputTokens = readUsageCount(usage, "input_tokens");
+  if (inputTokens === undefined) {
+    return undefined;
+  }
+  return {
+    inputTokens,
+    cacheCreationInputTokens: readUsageCount(usage, "cache_creation_input_tokens") ?? 0,
+    cacheReadInputTokens: readUsageCount(usage, "cache_read_input_tokens") ?? 0,
+  };
+}
+
+/**
+ * The input counters on `message_delta.usage` are cumulative whole-request totals and are
+ * optional. Mirror the Anthropic SDK's MessageStream: a counter present on the delta replaces
+ * the `message_start` value, a missing counter keeps it. Translating gateways report
+ * `input_tokens: 0` on `message_start` and only know the real count by `message_delta`.
+ */
+function mergeStreamDeltaInputUsage(
+  current: StreamRequestInputUsage,
+  event: Record<string, unknown>,
+): StreamRequestInputUsage {
+  const usage = toObjectRecord(event.usage);
+  if (!usage) {
+    return current;
+  }
+  return {
+    inputTokens: readUsageCount(usage, "input_tokens") ?? current.inputTokens,
+    cacheCreationInputTokens:
+      readUsageCount(usage, "cache_creation_input_tokens") ?? current.cacheCreationInputTokens,
+    cacheReadInputTokens:
+      readUsageCount(usage, "cache_read_input_tokens") ?? current.cacheReadInputTokens,
+  };
 }
 
 function readStreamRequestOutputTokens(event: Record<string, unknown>): number | undefined {
@@ -1958,7 +2132,7 @@ function readClaudeParentToolUseId(message: SDKMessage): string | null {
 
 class ClaudeContextUsageState {
   private contextWindowMaxTokens: number | undefined;
-  private streamRequestInputTokens: number | undefined;
+  private streamRequestInputUsage: StreamRequestInputUsage | undefined;
   private streamRequestOutputTokens: number | undefined;
   private compactedContextWindowUsedTokens: number | undefined;
   private completedResultTurns = 0;
@@ -1968,7 +2142,7 @@ class ClaudeContextUsageState {
   }
 
   beginTurn(): void {
-    this.streamRequestInputTokens = undefined;
+    this.streamRequestInputUsage = undefined;
     this.streamRequestOutputTokens = undefined;
     this.compactedContextWindowUsedTokens = undefined;
   }
@@ -1977,8 +2151,8 @@ class ClaudeContextUsageState {
     this.contextWindowMaxTokens = contextWindowMaxTokens;
   }
 
-  recordModelUsage(modelUsage: unknown): number | undefined {
-    const contextWindowMaxTokens = extractContextWindowSize(modelUsage);
+  recordModelUsage(modelUsage: unknown, modelId: string | null | undefined): number | undefined {
+    const contextWindowMaxTokens = extractContextWindowSize(modelUsage, modelId);
     if (contextWindowMaxTokens !== undefined) {
       this.contextWindowMaxTokens = contextWindowMaxTokens;
     }
@@ -1992,11 +2166,11 @@ class ClaudeContextUsageState {
     }
     const eventType = readTrimmedString(streamEvent.type);
     if (eventType === "message_start") {
-      const inputTokens = readStreamRequestInputTokens(streamEvent);
-      if (typeof inputTokens !== "number") {
+      const inputUsage = readStreamRequestInputUsage(streamEvent);
+      if (!inputUsage) {
         return null;
       }
-      this.streamRequestInputTokens = inputTokens;
+      this.streamRequestInputUsage = inputUsage;
       this.streamRequestOutputTokens = 0;
     } else if (eventType === "message_delta") {
       const outputTokens = readStreamRequestOutputTokens(streamEvent);
@@ -2004,6 +2178,12 @@ class ClaudeContextUsageState {
         return null;
       }
       this.streamRequestOutputTokens = outputTokens;
+      if (this.streamRequestInputUsage) {
+        this.streamRequestInputUsage = mergeStreamDeltaInputUsage(
+          this.streamRequestInputUsage,
+          streamEvent,
+        );
+      }
     } else {
       return null;
     }
@@ -2015,7 +2195,10 @@ class ClaudeContextUsageState {
     return this.createUsageUpdatedEvent(usedTokens);
   }
 
-  buildResultUsage(message: SDKResultMessage, modelUsage: unknown): AgentUsage | undefined {
+  buildResultUsage(
+    message: SDKResultMessage,
+    modelId: string | null | undefined,
+  ): AgentUsage | undefined {
     try {
       if (!message.usage) {
         return undefined;
@@ -2027,7 +2210,7 @@ class ClaudeContextUsageState {
         totalCostUsd: message.total_cost_usd,
       };
 
-      const modelContextWindowMaxTokens = this.recordModelUsage(modelUsage ?? message.modelUsage);
+      const modelContextWindowMaxTokens = this.recordModelUsage(message.modelUsage, modelId);
       if (this.contextWindowMaxTokens !== undefined) {
         usage.contextWindowMaxTokens = this.contextWindowMaxTokens;
       } else if (modelContextWindowMaxTokens !== undefined) {
@@ -2050,13 +2233,15 @@ class ClaudeContextUsageState {
   }
 
   private streamUsedTokens(): number | undefined {
-    if (
-      typeof this.streamRequestInputTokens !== "number" ||
-      typeof this.streamRequestOutputTokens !== "number"
-    ) {
+    const inputUsage = this.streamRequestInputUsage;
+    if (!inputUsage || typeof this.streamRequestOutputTokens !== "number") {
       return undefined;
     }
-    const usedTokens = this.streamRequestInputTokens + this.streamRequestOutputTokens;
+    const usedTokens =
+      inputUsage.inputTokens +
+      inputUsage.cacheCreationInputTokens +
+      inputUsage.cacheReadInputTokens +
+      this.streamRequestOutputTokens;
     return usedTokens > 0 ? usedTokens : undefined;
   }
 
@@ -2075,7 +2260,7 @@ class ClaudeContextUsageState {
   }
 
   buildCompactionUsageEvent(postTokens: number | undefined): AgentStreamEvent {
-    this.streamRequestInputTokens = undefined;
+    this.streamRequestInputUsage = undefined;
     this.streamRequestOutputTokens = undefined;
     this.compactedContextWindowUsedTokens = postTokens;
     const usage: AgentUsage = {};
@@ -2107,6 +2292,8 @@ class ClaudeAgentSession implements AgentSession {
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
   private query: Query | null = null;
+  private readonly runtimeSafety = new ClaudeRuntimeSafety();
+  private processingSdkMessages = 0;
   private readonly harnessEnvironment: Record<string, string>;
   private readonly usageSessionKey = randomUUID();
   private childProcess: ChildProcess | null = null;
@@ -2142,18 +2329,35 @@ class ClaudeAgentSession implements AgentSession {
     getToolInput: (toolUseId) => this.toolUseCache.get(toolUseId)?.input ?? null,
     readWorkflowResult: readClaudeWorkflowResultFile,
   });
+  /**
+   * Subagent tool calls Claude has already answered while the child still runs, with the input
+   * they were launched with and the turn that answered them. A background child is answered at
+   * launch and streams its frames afterwards.
+   */
+  private readonly settledSubagentToolCalls = new Map<
+    string,
+    {
+      item: Extract<AgentTimelineItem, { type: "tool_call" }>;
+      input: AgentMetadata | null;
+      turnId: string | null;
+    }
+  >();
   private readonly sidechainTracker = new ClaudeSidechainTracker({
-    getToolInput: (toolUseId) => this.toolUseCache.get(toolUseId)?.input ?? null,
+    getToolInput: (toolUseId) =>
+      this.toolUseCache.get(toolUseId)?.input ??
+      this.settledSubagentToolCalls.get(toolUseId)?.input ??
+      null,
     // Releases that predate the task protocol announce nothing, so the tracker keeps deriving
     // identity and status from frames for them. Detecting the capability beats comparing version
     // strings: it reacts to what this session actually does.
     isDescriptorOwnedElsewhere: () => this.taskProtocolSource.isActive,
-    // The parent's tool call owns its card once its result arrives. A background child streams
-    // its frames after Claude has already answered the call, and re-emitting the card from them
-    // would replace the settled card with an unlabeled, running one.
+    // A background child streams its frames after Claude has already answered the call, so its
+    // card is rebuilt from the settled call: a running one would replace the settled, labeled card.
+    // Late card updates retain the turn that answered the call.
     needsSyntheticParentToolCard: (toolUseId) =>
-      this.toolUseCache.has(toolUseId) &&
+      (this.toolUseCache.has(toolUseId) || this.settledSubagentToolCalls.has(toolUseId)) &&
       this.taskProtocolSource.needsSyntheticParentToolCard(toolUseId),
+    getSettledParentToolCall: (toolUseId) => this.settledSubagentToolCalls.get(toolUseId)?.item,
   });
   private persistedHistory: PersistedTimelineEntry[] = [];
   private persistedProviderSubagentEvents: Extract<
@@ -2161,6 +2365,10 @@ class ClaudeAgentSession implements AgentSession {
     { type: "provider_subagent" }
   >[] = [];
   private historyPending = false;
+  // Readiness never rejects; history/rebind failures are logged at their owning boundary.
+  private historyReady: Promise<void> | null = null;
+  private historySessionId: string | null = null;
+  private replayingHistory = false;
   private turnState: TurnState = "idle";
   private nextTurnOrdinal = 1;
   private cancelCurrentTurn: (() => void) | null = null;
@@ -2203,7 +2411,7 @@ class ClaudeAgentSession implements AgentSession {
     this.resolveBinary = options.resolveBinary;
     this.rewindSdk = options.rewindSdk ?? realClaudeRewindSdk;
     this.contextUsage = new ClaudeContextUsageState(
-      findClaudeModel(this.config.model)?.contextWindowMaxTokens,
+      getClaudeContextWindowMaxTokens(this.config.model),
     );
     const handle = options.handle;
 
@@ -2213,7 +2421,7 @@ class ClaudeAgentSession implements AgentSession {
       }
       this.claudeSessionId = handle.sessionId;
       this.persistence = handle;
-      this.loadPersistedHistory(handle.sessionId);
+      this.historySessionId = handle.sessionId;
     } else {
       this.claudeSessionId = null;
       this.persistence = null;
@@ -2293,6 +2501,7 @@ class ClaudeAgentSession implements AgentSession {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
+    await this.ensureHistoryReady();
     if (this.closed) {
       throw new Error("Claude session is closed");
     }
@@ -2370,7 +2579,11 @@ class ClaudeAgentSession implements AgentSession {
       this.input.push(sdkMessage);
       setTimeout(() => {
         if (this.activeForegroundTurnId === turnId) {
-          this.emitSubmittedUserMessage(sdkMessage, turnId, options?.clientMessageId);
+          void this.emitSubmittedUserMessage(sdkMessage, turnId, options?.clientMessageId).catch(
+            (error: unknown) => {
+              this.logger.warn({ err: error }, "Failed to emit submitted Claude message");
+            },
+          );
         }
       }, 0);
     } catch (error) {
@@ -2463,6 +2676,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+    await this.ensureHistoryReady();
     if (
       !this.historyPending ||
       (this.persistedHistory.length === 0 && this.persistedProviderSubagentEvents.length === 0)
@@ -2474,7 +2688,9 @@ class ClaudeAgentSession implements AgentSession {
     this.persistedHistory = [];
     this.persistedProviderSubagentEvents = [];
     this.historyPending = false;
+    let replayed = 0;
     for (const entry of history) {
+      if (++replayed % 32 === 0) await setImmediate();
       yield {
         type: "timeline",
         item: entry.item,
@@ -2505,13 +2721,13 @@ class ClaudeAgentSession implements AgentSession {
     const normalized = isPermissionMode(modeId) ? modeId : "default";
     assertClaudeModeCanRun(normalized, this.harnessEnvironment);
     const previousMode = this.currentMode;
-    const launchesQuery = !this.query || this.queryRestartNeeded;
+    const previousQuery = this.query;
     const activeQuery = await this.ensureQuery(normalized);
     try {
       await activeQuery.setPermissionMode(normalized);
     } catch (error) {
       // The query was launched in the rejected mode; relaunch in the current mode next time.
-      if (launchesQuery) this.queryRestartNeeded = true;
+      if (activeQuery !== previousQuery) this.queryRestartNeeded = true;
       throw error;
     }
     if (normalized === "plan") {
@@ -2535,7 +2751,7 @@ class ClaudeAgentSession implements AgentSession {
       await this.applyFastModeFeature(false, activeQuery);
     }
     this.contextUsage.setInitialContextWindowMaxTokens(
-      findClaudeModel(this.config.model)?.contextWindowMaxTokens,
+      getClaudeContextWindowMaxTokens(this.config.model),
     );
     this.lastOptionsModel = normalizedModelId ?? this.lastOptionsModel;
     this.lastRuntimeModel = null;
@@ -2692,17 +2908,23 @@ class ClaudeAgentSession implements AgentSession {
     if (!pending) {
       throw new Error(`No pending permission request with id '${requestId}'`);
     }
+
+    // Before the delete below, so a rejected answer leaves the request pending
+    // and answerable rather than consuming it for nothing. AgentManager only
+    // drops its own copy once this resolves, so both maps survive the throw.
+    assertClaudeQuestionAnswerDeliverable(pending.request, response);
+
     this.pendingPermissions.delete(requestId);
     pending.cleanup?.();
 
     if (response.behavior === "allow") {
       if (pending.request.kind === "plan") {
         const selectedActionId = response.selectedActionId;
+        const resumeMode = this.planResumeMode;
         const shouldResumePriorMode =
-          selectedActionId === "implement_resume" && this.planResumeMode === "bypassPermissions";
-        const targetMode: PermissionMode = shouldResumePriorMode
-          ? "bypassPermissions"
-          : "acceptEdits";
+          selectedActionId === "implement_resume" &&
+          (resumeMode === "bypassPermissions" || resumeMode === "auto");
+        const targetMode: PermissionMode = shouldResumePriorMode ? resumeMode : "acceptEdits";
         await this.setMode(targetMode);
         this.pushToolCall(
           mapClaudeCompletedToolCall({
@@ -2759,6 +2981,18 @@ class ClaudeAgentSession implements AgentSession {
     return this.persistence;
   }
 
+  async canStopRuntime(): Promise<boolean> {
+    return (
+      !this.activeForegroundTurnId &&
+      !this.autonomousTurn &&
+      !this.mainTurnInFlight &&
+      this.unstartedMessageUuids.size === 0 &&
+      this.pendingPermissions.size === 0 &&
+      this.processingSdkMessages === 0 &&
+      this.runtimeSafety.canStopRuntime()
+    );
+  }
+
   async close(): Promise<void> {
     this.logger.trace(
       {
@@ -2774,6 +3008,7 @@ class ClaudeAgentSession implements AgentSession {
       "provider.claude.session_close.start",
     );
     this.closed = true;
+    await this.ensureHistoryReady();
     this.rejectAllPendingPermissions(new Error("Claude session closed"));
     this.cancelCurrentTurn?.();
     this.subscribers.clear();
@@ -2784,11 +3019,13 @@ class ClaudeAgentSession implements AgentSession {
     this.cancelCurrentTurn = null;
     this.turnState = "idle";
     this.sidechainTracker.clear();
+    this.settledSubagentToolCalls.clear();
     this.taskProtocolSource.reset();
     this.input?.end();
     this.query?.close?.();
-    await this.awaitWithTimeout(this.query?.interrupt?.(), "close query interrupt");
-    await this.awaitWithTimeout(this.query?.return?.(), "close query return");
+    // close() already terminates the SDK query. Its control plane is no longer
+    // available; waiting for interrupt/return here delays our process-tree cleanup
+    // beyond the daemon's close deadline when the provider stops answering.
     this.query = null;
     this.input = null;
     // Terminate the entire process tree (claude + MCP children) to prevent
@@ -2812,7 +3049,7 @@ class ClaudeAgentSession implements AgentSession {
       // (see `claude --help`), so the SDK's persistSession=false is silently dropped
       // in stream-json mode. Sweep the transcript ourselves so ephemeral runs
       // (metadata generator, branch-name generator) don't show up as resumable.
-      const historyPath = this.resolveHistoryPath(this.claudeSessionId);
+      const historyPath = await this.resolveHistoryPath(this.claudeSessionId);
       if (historyPath) {
         try {
           await promises.rm(historyPath, { force: true });
@@ -2856,23 +3093,25 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   async revertConversation(input: { messageId: string }): Promise<void> {
+    await this.ensureHistoryReady();
     const target = this.resolveConversationRewindTarget(input.messageId);
     if (target.kind === "fresh-session") {
       this.startFreshConversationSession();
       return;
     }
+    const currentSessionId = this.claudeSessionId;
     await revertClaudeConversation({
       sdk: this.rewindSdk,
-      sessionId: this.claudeSessionId,
+      sessionId: currentSessionId,
+      transcriptPath: currentSessionId ? await this.resolveHistoryPath(currentSessionId) : null,
       messageId: target.messageId,
       resolveMessageId: (messageId) => this.resolveClaudeMessageId(messageId),
-      setSessionId: (sessionId) => {
-        this.rebindConversationSession(sessionId);
-      },
+      setSessionId: (sessionId) => this.rebindConversationSession(sessionId),
     });
   }
 
   async revertFiles(input: { messageId: string }): Promise<void> {
+    await this.ensureHistoryReady();
     const messageId = await this.resolveClaudeMessageId(input.messageId);
     await revertClaudeFiles({
       query: await this.ensureQuery(),
@@ -3047,38 +3286,52 @@ class ClaudeAgentSession implements AgentSession {
     return candidates;
   }
 
-  private rebindConversationSession(sessionId: string): void {
-    const oldSessionId = this.claudeSessionId;
-    this.claudeSessionId = sessionId;
-    this.pendingFreshSessionId = null;
-    this.persistence = null;
-    this.cachedRuntimeInfo = null;
-    this.queryRestartNeeded = true;
-    this.persistedHistory = [];
-    this.persistedProviderSubagentEvents = [];
-    this.historyPending = false;
-    this.userMessageIds = [];
-    this.emittedUserMessageIds.clear();
-    this.rewindTurnAnchors.length = 0;
-    this.taskState.reset();
-    this.loadPersistedHistory(sessionId);
-    if (oldSessionId && oldSessionId !== sessionId) {
-      this.dispatchEvents([
-        {
-          type: "timeline",
-          provider: "claude",
-          item: this.createClaudeSessionChangedNotice(oldSessionId, sessionId),
-        },
-        {
-          type: "thread_started",
-          provider: "claude",
-          sessionId,
-        },
-      ]);
-    }
+  private rebindConversationSession(sessionId: string): Promise<void> {
+    const previousReady = this.ensureHistoryReady();
+    const rebind = (async () => {
+      await previousReady;
+      await this.retireQuery();
+      if (this.closed) return;
+      const oldSessionId = this.claudeSessionId;
+      this.claudeSessionId = sessionId;
+      this.pendingFreshSessionId = null;
+      this.persistence = null;
+      this.cachedRuntimeInfo = null;
+      this.queryRestartNeeded = true;
+      this.persistedHistory = [];
+      this.persistedProviderSubagentEvents = [];
+      this.historyPending = false;
+      this.userMessageIds = [];
+      this.emittedUserMessageIds.clear();
+      this.rewindTurnAnchors.length = 0;
+      this.taskState.reset();
+      this.historySessionId = sessionId;
+      await this.loadPersistedHistory(sessionId);
+      if (this.closed) return;
+      if (oldSessionId && oldSessionId !== sessionId) {
+        this.dispatchEvents([
+          {
+            type: "timeline",
+            provider: "claude",
+            item: this.createClaudeSessionChangedNotice(oldSessionId, sessionId),
+          },
+          {
+            type: "thread_started",
+            provider: "claude",
+            sessionId,
+          },
+        ]);
+      }
+    })();
+    this.historyReady = rebind.catch((error) => {
+      this.logger.warn({ err: error, sessionId }, "Failed to rebind Claude session");
+    });
+    return rebind;
   }
 
   private startFreshConversationSession(): void {
+    this.historySessionId = null;
+    this.historyReady = Promise.resolve();
     const sessionId = randomUUID();
     this.claudeSessionId = sessionId;
     this.pendingFreshSessionId = sessionId;
@@ -3199,43 +3452,51 @@ class ClaudeAgentSession implements AgentSession {
     return { kind: "fresh-session" };
   }
 
+  private async retireQuery(): Promise<void> {
+    const oldQuery = this.query;
+    if (!oldQuery) return;
+    const oldInput = this.input;
+    // Null out query/input BEFORE awaiting the old iterator's return so the
+    // old pump sees this.query !== activeQuery and skips failActiveTurns.
+    this.query = null;
+    this.input = null;
+    this.queryPumpPromise = null;
+    this.queryRestartNeeded = false;
+    // Ending the input retires the process on purpose. Detach first so its
+    // exit is not reported as a crash.
+    const retiredChild = this.childProcess;
+    this.childProcess = null;
+    if (retiredChild) this.failRunningRuntimeTasks();
+    oldInput?.end();
+    oldQuery.close?.();
+    try {
+      await oldQuery.return?.();
+    } catch {
+      /* ignore */
+    }
+    // Tree-kill the old process tree now that the SDK has cleaned up.
+    // If we skip this, MCP children of the previous claude process can
+    // survive as orphans when the session spawns a replacement query.
+    if (retiredChild) {
+      await terminateWithTreeKill(retiredChild, {
+        gracefulTimeoutMs: 2_000,
+        forceTimeoutMs: 2_000,
+      }).catch(() => {
+        /* process may already be dead */
+      });
+    }
+  }
+
   private async ensureQuery(launchMode: PermissionMode = this.currentMode): Promise<Query> {
-    if (this.query && !this.queryRestartNeeded) {
+    await this.ensureHistoryReady();
+    // Controls use the running turn's query. Pending launch settings take effect
+    // after that turn finishes, when its active query handle has been cleared.
+    if (this.query && (!this.queryRestartNeeded || this.activeForegroundQuery === this.query)) {
       return this.query;
     }
 
     if (this.queryRestartNeeded && this.query) {
-      const oldQuery = this.query;
-      const oldInput = this.input;
-      // Null out query/input BEFORE awaiting the old iterator's return so the
-      // old pump sees this.query !== activeQuery and skips failActiveTurns.
-      this.query = null;
-      this.input = null;
-      this.queryPumpPromise = null;
-      this.queryRestartNeeded = false;
-      // Ending the input retires the process on purpose. Detach first so its
-      // exit is not reported as a crash.
-      const retiredChild = this.childProcess;
-      this.childProcess = null;
-      if (retiredChild) this.failRunningRuntimeTasks();
-      oldInput?.end();
-      oldQuery.close?.();
-      try {
-        await oldQuery.return?.();
-      } catch {
-        /* ignore */
-      }
-      // Tree-kill the old process tree now that the SDK has cleaned up.
-      // If we skip this, MCP children of the previous claude process can
-      // survive as orphans when the session spawns a replacement query.
-      if (retiredChild) {
-        await terminateWithTreeKill(retiredChild, {
-          gracefulTimeoutMs: 2_000,
-          forceTimeoutMs: 2_000,
-        }).catch(() => {
-          /* process may already be dead */
-        });
-      }
+      await this.retireQuery();
     }
 
     // Preserve claudeSessionId across query recreation so buildOptions() passes
@@ -3246,6 +3507,7 @@ class ClaudeAgentSession implements AgentSession {
     const options = await this.buildOptions(launchMode);
     this.logger.debug({ options: summarizeClaudeOptionsForLog(options) }, "claude query");
     this.input = input;
+    this.runtimeSafety.reset();
     // A fresh Claude process has no turn of its own in flight.
     this.mainTurnInFlight = false;
     this.query = claudeQuery(
@@ -3383,7 +3645,7 @@ class ClaudeAgentSession implements AgentSession {
       this.config.providerOptions,
       this.config.toolPolicy,
     );
-    const settingsOptions = this.buildSettingsOptions(providerOptions, { ultracode });
+    const settingsOptions = await this.buildSettingsOptions(providerOptions, { ultracode });
     const sdkEnv = this.harnessEnvironment;
     assertClaudeModeCanRun(permissionMode, sdkEnv);
 
@@ -3468,10 +3730,10 @@ class ClaudeAgentSession implements AgentSession {
     return base;
   }
 
-  private buildSettingsOptions(
+  private async buildSettingsOptions(
     providerOptions: ClaudeProviderOptions,
     input: { ultracode: boolean },
-  ): Pick<ClaudeOptions, "settings"> | Record<string, never> {
+  ): Promise<Pick<ClaudeOptions, "settings" | "extraArgs"> | Record<string, never>> {
     const fastMode = this.resolveFastModeSetting();
     // Internal agents do daemon work such as naming a branch, so the user's and
     // project's hooks must not run for them.
@@ -3479,12 +3741,21 @@ class ClaudeAgentSession implements AgentSession {
     if (fastMode === null && !input.ultracode && !disableAllHooks) {
       return {};
     }
+    const updates = {
+      ...(fastMode === null ? {} : { fastMode }),
+      ...(input.ultracode ? { ultracode: true } : {}),
+      ...(disableAllHooks ? { disableAllHooks: true } : {}),
+    };
+    // The SDK replaces extraArgs.settings with Options.settings, so a user's
+    // `--settings` would be dropped whenever Paseo sets flag settings. Fold it in.
+    const { settings: extraArgsSettings, ...extraArgs } = providerOptions.extraArgs ?? {};
+    if (typeof extraArgsSettings !== "string") {
+      return { settings: mergeClaudeSettings(providerOptions.settings, updates) };
+    }
+    const cliSettings = await readClaudeCliSettings(extraArgsSettings, this.config.cwd);
     return {
-      settings: mergeClaudeSettings(providerOptions.settings, {
-        ...(fastMode === null ? {} : { fastMode }),
-        ...(input.ultracode ? { ultracode: true } : {}),
-        ...(disableAllHooks ? { disableAllHooks: true } : {}),
-      }),
+      extraArgs,
+      settings: { ...cliSettings, ...providerOptions.settings, ...updates },
     };
   }
 
@@ -3901,13 +4172,19 @@ class ClaudeAgentSession implements AgentSession {
       );
     };
     const handlePumpedMessage = async (message: SDKMessage): Promise<boolean> => {
-      logRawMessage(message);
-      consecutiveInterruptAbortRecoveries = 0;
-      if (await this.handleMissingResumedConversation(message, activeQuery)) {
-        return true;
+      if (!this.ownsQuery(activeQuery)) return true;
+      this.processingSdkMessages++;
+      try {
+        this.runtimeSafety.observe(message);
+        logRawMessage(message);
+        consecutiveInterruptAbortRecoveries = 0;
+        if (await this.handleMissingResumedConversation(message, activeQuery)) return true;
+        if (!this.ownsQuery(activeQuery)) return true;
+        await this.routeSdkMessageFromPump(message);
+        return false;
+      } finally {
+        this.processingSdkMessages--;
       }
-      await this.routeSdkMessageFromPump(message);
-      return false;
     };
     const drainActiveQuery = async (): Promise<boolean> => {
       for await (const message of activeQuery) {
@@ -4023,6 +4300,10 @@ class ClaudeAgentSession implements AgentSession {
     return isClaudeTurnInit(message) && !this.activeForegroundTurnId;
   }
 
+  private ownsQuery(query: Query): boolean {
+    return !this.closed && this.query === query;
+  }
+
   private async routeSdkMessageFromPump(message: SDKMessage): Promise<void> {
     if (this.consumeSessionStateChange(message)) {
       return;
@@ -4097,10 +4378,17 @@ class ClaudeAgentSession implements AgentSession {
     messageIdHint: string | null,
     turnId: string | null,
   ): Promise<AgentStreamEvent[]> {
-    const messageEvents = this.translateMessageToEvents(message, {
+    const query = this.query;
+    const messageEvents = await this.translateMessageToEvents(message, {
       suppressAssistantText: true,
       suppressReasoning: true,
     });
+    if (
+      this.closed ||
+      this.query !== query ||
+      (this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? null) !== turnId
+    )
+      return [];
     const assistantTimelineEvents = readClaudeParentToolUseId(message)
       ? []
       : this.timelineAssembler
@@ -4245,13 +4533,13 @@ class ClaudeAgentSession implements AgentSession {
     return withdrewAll;
   }
 
-  private translateMessageToEvents(
+  private async translateMessageToEvents(
     message: SDKMessage,
     options?: {
       suppressAssistantText?: boolean;
       suppressReasoning?: boolean;
     },
-  ): AgentStreamEvent[] {
+  ): Promise<AgentStreamEvent[]> {
     const parentToolUseId = readClaudeParentToolUseId(message);
     if (parentToolUseId) {
       return this.translateSidechainFrameToEvents(message, parentToolUseId);
@@ -4267,6 +4555,7 @@ class ClaudeAgentSession implements AgentSession {
     for (const event of foldSubagentObservations(subagentObservations)) {
       events.push({ type: "provider_subagent", provider: "claude", event });
     }
+    this.releaseFinishedSubagentToolCalls(subagentObservations);
     for (const observation of subagentObservations) {
       if (observation.kind !== "declared") continue;
       if (!this.taskProtocolSource.needsSyntheticParentToolCard(observation.id)) continue;
@@ -4298,11 +4587,11 @@ class ClaudeAgentSession implements AgentSession {
         this.appendSystemMessageEvents(message, events);
         break;
       case "user":
-        this.appendUserMessageEvents(message, events);
+        await this.appendUserMessageEvents(message, events);
         this.appendSidechainResultEvents(message, events);
         break;
       case "assistant": {
-        const timelineItems = this.mapBlocksToTimeline(message.message.content, {
+        const timelineItems = await this.mapBlocksToTimeline(message.message.content, {
           suppressAssistantText: options?.suppressAssistantText ?? false,
           suppressReasoning: options?.suppressReasoning ?? false,
         });
@@ -4313,7 +4602,7 @@ class ClaudeAgentSession implements AgentSession {
         break;
       }
       case "stream_event":
-        this.appendStreamEventEvents(message, events, options);
+        await this.appendStreamEventEvents(message, events, options);
         break;
       case "result":
         this.appendResultEvents(message, events);
@@ -4367,7 +4656,12 @@ class ClaudeAgentSession implements AgentSession {
       ),
     ).map((event): AgentStreamEvent => ({ type: "provider_subagent", provider: "claude", event }));
     const routedId = canonicalSubagentId ?? parentToolUseId;
-    return [...runtimeEvents, ...this.sidechainTracker.handleMessage(message, routedId)];
+    const settled = this.settledSubagentToolCalls.get(routedId);
+    const sidechainEvents = this.sidechainTracker.handleMessage(message, routedId).map((event) => {
+      if (event.type === "timeline" && settled?.turnId) event.turnId = settled.turnId;
+      return event;
+    });
+    return [...runtimeEvents, ...sidechainEvents];
   }
 
   /**
@@ -4410,13 +4704,14 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private emitSubmittedUserMessage(
+  private async emitSubmittedUserMessage(
     message: Extract<SDKMessage, { type: "user" }>,
     turnId: string,
     clientMessageId?: string,
-  ): void {
+  ): Promise<void> {
     const events: AgentStreamEvent[] = [];
-    this.appendUserMessageEvents(message, events);
+    await this.appendUserMessageEvents(message, events);
+    if (this.activeForegroundTurnId !== turnId) return;
     if (events.length === 0) {
       return;
     }
@@ -4546,10 +4841,10 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private appendUserMessageEvents(
+  private async appendUserMessageEvents(
     message: Extract<SDKMessage, { type: "user" }>,
     events: AgentStreamEvent[],
-  ): void {
+  ): Promise<void> {
     if (isSyntheticUserEntry(message)) {
       return;
     }
@@ -4588,7 +4883,7 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     if (Array.isArray(content)) {
-      this.appendUserContentArrayEvents(content, messageId, events);
+      await this.appendUserContentArrayEvents(content, messageId, events);
     }
   }
 
@@ -4614,12 +4909,12 @@ class ClaudeAgentSession implements AgentSession {
     events.push({ type: "timeline", item, provider: "claude" });
   }
 
-  private appendUserContentArrayEvents(
+  private async appendUserContentArrayEvents(
     content: ReadonlyArray<unknown>,
     messageId: string | undefined,
     events: AgentStreamEvent[],
-  ): void {
-    const timelineItems = this.mapBlocksToTimeline(content, {
+  ): Promise<void> {
+    const timelineItems = await this.mapBlocksToTimeline(content, {
       textMessageType: "user_message",
     });
     for (const item of timelineItems) {
@@ -4635,16 +4930,16 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private appendStreamEventEvents(
+  private async appendStreamEventEvents(
     message: Extract<SDKMessage, { type: "stream_event" }>,
     events: AgentStreamEvent[],
     options: { suppressAssistantText?: boolean; suppressReasoning?: boolean } | undefined,
-  ): void {
+  ): Promise<void> {
     const usageUpdatedEvent = this.contextUsage.buildStreamUsageEvent(message.event);
     if (usageUpdatedEvent) {
       events.push(usageUpdatedEvent);
     }
-    const timelineItems = this.mapPartialEvent(message.event, {
+    const timelineItems = await this.mapPartialEvent(message.event, {
       suppressAssistantText: options?.suppressAssistantText ?? false,
       suppressReasoning: options?.suppressReasoning ?? false,
     });
@@ -4657,7 +4952,7 @@ class ClaudeAgentSession implements AgentSession {
     message: Extract<SDKMessage, { type: "result" }>,
     events: AgentStreamEvent[],
   ): void {
-    const usage = this.convertUsage(message, message.modelUsage);
+    const usage = this.convertUsage(message);
     if (message.subtype === "success") {
       events.push(...this.sidechainTracker.finishAll("completed"));
       // Built-in slash commands (e.g. /voice, /usage, "Unknown command: …")
@@ -4784,6 +5079,12 @@ class ClaudeAgentSession implements AgentSession {
     this.observePermissionMode(message.permissionMode);
     this.persistence = null;
     if (message.model) {
+      const runtimeContextWindowMaxTokens = getClaudeContextWindowMaxTokens(message.model);
+      // Seed usage before the first result, including settings-resolved aliases.
+      // A repeated init for the same model must retain the SDK's reported limit.
+      if (message.model !== this.lastRuntimeModel && runtimeContextWindowMaxTokens !== undefined) {
+        this.contextUsage.setInitialContextWindowMaxTokens(runtimeContextWindowMaxTokens);
+      }
       const normalizedRuntimeModel = normalizeClaudeRuntimeModelId(message.model);
       this.logger.debug(
         { runtimeModel: message.model, normalizedRuntimeModel },
@@ -4833,8 +5134,8 @@ class ClaudeAgentSession implements AgentSession {
     return null;
   }
 
-  private convertUsage(message: SDKResultMessage, modelUsage?: unknown): AgentUsage | undefined {
-    return this.contextUsage.buildResultUsage(message, modelUsage);
+  private convertUsage(message: SDKResultMessage): AgentUsage | undefined {
+    return this.contextUsage.buildResultUsage(message, this.lastRuntimeModel ?? this.config.model);
   }
 
   private handlePermissionRequest: CanUseTool = async (
@@ -5016,7 +5317,8 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private notifySubscribers(event: AgentStreamEvent): void {
-    const turnId = this.activeForegroundTurnId ?? this.autonomousTurn?.id;
+    const turnId =
+      getAgentStreamEventTurnId(event) ?? this.activeForegroundTurnId ?? this.autonomousTurn?.id;
     const tagged = turnId ? { ...event, turnId } : event;
     this.logger.trace(
       {
@@ -5061,40 +5363,49 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private loadPersistedHistory(sessionId: string): void {
+  ensureHistoryReady(): Promise<void> {
+    if (!this.historyReady) {
+      this.historyReady = this.historySessionId
+        ? this.loadPersistedHistory(this.historySessionId)
+        : Promise.resolve();
+    }
+    return this.historyReady;
+  }
+
+  private async loadPersistedHistory(sessionId: string): Promise<void> {
     let historyPath: string | null = null;
+    this.replayingHistory = true;
     try {
       this.taskState.reset();
-      historyPath = this.resolveHistoryPath(sessionId);
-      if (!historyPath || !fs.existsSync(historyPath)) {
+      historyPath = await this.resolveHistoryPath(sessionId);
+      if (!historyPath || !(await transcriptExists(historyPath))) {
         this.logger.info(
           { sessionId, cwd: this.config.cwd, historyPath },
           "No Claude transcript to load history from",
         );
         return;
       }
-      const content = fs.readFileSync(historyPath, "utf8");
-      const replay = this.ingestPersistedSidechains(
-        content,
-        readClaudeSidechainHistory(historyPath),
-      );
-      this.ingestPersistedHistory(content, replay);
+      await withClaudeReplayHistory(historyPath, async (history) => {
+        const replay = await this.ingestPersistedSidechains(history);
+        await this.ingestPersistedHistory(history.parentEntries, replay);
+      });
     } catch (error) {
       this.logger.warn(
         { err: error, sessionId, historyPath },
         "Failed to load Claude history from transcript",
       );
+    } finally {
+      this.replayingHistory = false;
     }
   }
 
-  private ingestPersistedHistory(content: string, replay: ClaudeReplayOwnership): void {
-    if (!content) {
-      return;
-    }
-
+  private async ingestPersistedHistory(
+    entries: Iterable<ClaudeHistoryEntry> | AsyncIterable<ClaudeHistoryEntry>,
+    replay: ClaudeReplayOwnership,
+  ): Promise<void> {
     const timeline: PersistedTimelineEntry[] = [];
-    for (const line of content.split(/\r?\n/)) {
-      this.ingestPersistedHistoryLine(line, timeline, replay);
+    for await (const entry of entries) {
+      await this.ingestPersistedHistoryEntry(entry, timeline, replay);
     }
 
     if (timeline.length > 0) {
@@ -5103,47 +5414,33 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private ingestPersistedSidechains(
-    parentContent: string,
-    sidechains: ClaudeSidechainHistory,
-  ): ClaudeReplayOwnership {
-    const parentEntries = parseClaudeHistoryRecords(parentContent).filter(
-      (entry) => entry.isSidechain !== true,
-    );
-    const sidechainEntries = [parentContent, ...sidechains.contents]
-      .flatMap(parseClaudeHistoryRecords)
-      .filter((entry) => entry.isSidechain === true && typeof entry.agentId === "string");
-    const parentFacts = readClaudeReplayParentFacts(parentEntries);
+  private async ingestPersistedSidechains(
+    history: ClaudeReplayHistory,
+  ): Promise<ClaudeReplayOwnership> {
+    const parentFacts = await readClaudeReplayParentFacts(history.parentEntries);
 
     // Replay produces the same observations the live task protocol produces, then folds them
     // with the same function, so identity and status are derived once for both paths.
-    const subagentReplay = observeReplaySubagents({
-      subagents: [...groupClaudeSidechainEntries(sidechainEntries)].map(([agentId, entries]) => ({
-        agentId,
-        meta: sidechains.metaByAgentId.get(agentId) ?? null,
-        entries,
-        parentFacts: readClaudeReplayParentFacts(entries as ClaudeHistoryEntry[]),
-      })),
+    const subagents = [];
+    for (const subagent of history.subagents) {
+      subagents.push({
+        ...subagent,
+        parentFacts: await readClaudeReplayParentFacts(subagent.entries),
+      });
+    }
+    const subagentReplay = await observeReplaySubagents({
+      subagents,
       parent: parentFacts,
-      convertEntry: (entry) => this.convertHistoryEntry(entry as ClaudeHistoryEntry),
+      convertEntry: (entry) => this.convertHistoryEntry(entry),
     });
     const observations = [
       ...subagentReplay.observations,
-      ...observeReplayWorkflows({
-        workflows: sidechains.workflowContents
-          .map(parseClaudeWorkflowRun)
-          .filter((workflow) => workflow !== null),
-        parentEntries,
-        entriesByRunId: new Map(
-          [...sidechains.workflowSidechainContentsByRunId].map(([runId, contents]) => [
-            runId,
-            contents
-              .flatMap(parseClaudeHistoryRecords)
-              .filter((entry) => entry.type !== "user" || isToolResultUserEntry(entry)),
-          ]),
-        ),
-        convertEntry: (entry) => this.convertHistoryEntry(entry as ClaudeHistoryEntry),
-      }),
+      ...(await observeReplayWorkflows({
+        workflows: history.workflows,
+        parentEntries: history.parentEntries,
+        entriesByRunId: history.workflowEntriesByRunId,
+        convertEntry: (entry) => this.convertHistoryEntry(entry),
+      })),
     ];
     const restoredProviderSubagentIds = new Set(
       observations
@@ -5157,41 +5454,22 @@ class ClaudeAgentSession implements AgentSession {
     };
     if (observations.length === 0) return replay;
 
-    this.persistedProviderSubagentEvents.push(
-      ...foldSubagentObservations(observations).map(
-        (event): Extract<AgentStreamEvent, { type: "provider_subagent" }> => ({
-          type: "provider_subagent",
-          provider: "claude",
-          event,
-        }),
-      ),
-    );
+    for (const event of foldSubagentObservations(observations)) {
+      this.persistedProviderSubagentEvents.push({
+        type: "provider_subagent",
+        provider: "claude",
+        event,
+      });
+    }
     this.historyPending = true;
     return replay;
   }
 
-  private ingestPersistedHistoryLine(
-    line: string,
+  private async ingestPersistedHistoryEntry(
+    entry: ClaudeHistoryEntry,
     timeline: PersistedTimelineEntry[],
     replay: ClaudeReplayOwnership,
-  ): void {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      return;
-    }
-
-    let entry: Record<string, unknown>;
-    try {
-      const parsed: unknown = JSON.parse(trimmed);
-      const record = toObjectRecord(parsed);
-      if (!record) {
-        return;
-      }
-      entry = record;
-    } catch {
-      return;
-    }
-
+  ): Promise<void> {
     if (entry.isSidechain) {
       return;
     }
@@ -5205,7 +5483,7 @@ class ClaudeAgentSession implements AgentSession {
       ? replay.toolOwners.get(notificationToolUseId)
       : undefined;
     if (notificationOwner) {
-      for (const item of this.convertHistoryEntry(entry)) {
+      for (const item of await this.convertHistoryEntry(entry)) {
         this.persistedProviderSubagentEvents.push({
           type: "provider_subagent",
           provider: "claude",
@@ -5222,7 +5500,7 @@ class ClaudeAgentSession implements AgentSession {
     const taskSnapshot = this.taskState.observe(entry);
     const items = [
       ...(taskSnapshot ? [taskSnapshot] : []),
-      ...this.convertHistoryEntry(entry).map((item) =>
+      ...(await this.convertHistoryEntry(entry)).map((item) =>
         labelReplayedSubagentCard(item, replay.subagentToolCalls),
       ),
     ];
@@ -5240,27 +5518,29 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     if (items.length > 0) {
-      timeline.push(
-        ...items.map((item) => ({
+      for (const item of items) {
+        timeline.push({
           item,
           timestamp: historyTimestamp ?? undefined,
-        })),
-      );
+        });
+      }
     }
   }
 
-  private resolveHistoryPath(sessionId: string): string | null {
+  private async resolveHistoryPath(sessionId: string): Promise<string | null> {
     const cwd = this.config.cwd;
     if (!cwd) return null;
-    return claudeTranscriptPathSync({
+    return claudeTranscriptPath({
       cwd,
       sessionId,
       configDir: claudeConfigDir(this.harnessEnvironment),
     });
   }
 
-  private convertHistoryEntry(entry: ClaudeHistoryEntry): AgentTimelineItem[] {
-    return convertClaudeHistoryEntry(entry, (content) => this.mapBlocksToTimeline(content));
+  private async convertHistoryEntry(entry: ClaudeHistoryEntry): Promise<AgentTimelineItem[]> {
+    return (
+      await convertClaudeHistoryEntry(entry, (content) => this.mapBlocksToTimeline(content))
+    ).map(limitAgentTimelineItemContent);
   }
 
   // Maps Claude content blocks into AgentTimelineItems.
@@ -5275,14 +5555,14 @@ class ClaudeAgentSession implements AgentSession {
   //
   // NOTE: convertClaudeHistoryEntry uses extractUserMessageText directly instead of this function
   // for user entries. Both paths must produce equivalent user_message items.
-  private mapBlocksToTimeline(
+  private async mapBlocksToTimeline(
     content: string | ReadonlyArray<unknown>,
     options?: {
       textMessageType?: "assistant_message" | "user_message";
       suppressAssistantText?: boolean;
       suppressReasoning?: boolean;
     },
-  ): AgentTimelineItem[] {
+  ): Promise<AgentTimelineItem[]> {
     const textMessageType = options?.textMessageType ?? "assistant_message";
     const suppressText =
       textMessageType === "assistant_message" && (options?.suppressAssistantText ?? false);
@@ -5309,7 +5589,7 @@ class ClaudeAgentSession implements AgentSession {
       if (!isClaudeContentChunk(block) || this.mapSubagentHandbackBlock(block, items)) {
         continue;
       }
-      this.mapBlockToTimeline(block, {
+      await this.mapBlockToTimeline(block, {
         items,
         userTextParts,
         textMessageType,
@@ -5354,7 +5634,7 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private mapBlockToTimeline(
+  private async mapBlockToTimeline(
     block: ClaudeContentChunk,
     context: {
       items: AgentTimelineItem[];
@@ -5363,7 +5643,7 @@ class ClaudeAgentSession implements AgentSession {
       suppressText: boolean;
       suppressReasoning: boolean;
     },
-  ): void {
+  ): Promise<void> {
     switch (block.type) {
       case "text":
       case "text_delta":
@@ -5387,7 +5667,7 @@ class ClaudeAgentSession implements AgentSession {
       case "code_execution_tool_result":
       case "bash_code_execution_tool_result":
       case "text_editor_code_execution_tool_result":
-        this.handleToolResult(block, context.items);
+        await this.handleToolResult(block, context.items);
         break;
       default:
         break;
@@ -5433,7 +5713,10 @@ class ClaudeAgentSession implements AgentSession {
     );
   }
 
-  private handleToolResult(block: ClaudeContentChunk, items: AgentTimelineItem[]): void {
+  private async handleToolResult(
+    block: ClaudeContentChunk,
+    items: AgentTimelineItem[],
+  ): Promise<void> {
     const entry =
       typeof block.tool_use_id === "string" ? this.toolUseCache.get(block.tool_use_id) : undefined;
     const blockToolName = typeof block.tool_name === "string" ? block.tool_name : undefined;
@@ -5448,31 +5731,25 @@ class ClaudeAgentSession implements AgentSession {
     const { images, text } = splitClaudeToolResultImages(block.content);
     const output = this.buildToolOutput(text, block, entry);
 
-    if (block.is_error) {
-      this.pushToolCall(
-        mapClaudeFailedToolCall({
+    const settledToolCall = block.is_error
+      ? mapClaudeFailedToolCall({
           name: toolName,
           callId,
           input: entry?.input ?? null,
           output: output ?? null,
           error: { ...block, content: text },
-        }),
-        items,
-      );
-    } else {
-      this.pushToolCall(
-        mapClaudeCompletedToolCall({
+        })
+      : mapClaudeCompletedToolCall({
           name: toolName,
           callId,
           input: entry?.input ?? null,
           output: output ?? null,
-        }),
-        items,
-      );
-    }
+        });
+    this.pushToolCall(settledToolCall, items);
+    this.rememberSettledSubagentToolCall(settledToolCall, entry);
 
     for (const image of images) {
-      const imageItem = renderProviderImageOutputAsAssistantMarkdown(image, {
+      const imageItem = await renderProviderImageOutputAsAssistantMarkdown(image, {
         materialize: materializeProviderImage,
       });
       if (imageItem) {
@@ -5482,6 +5759,29 @@ class ClaudeAgentSession implements AgentSession {
 
     if (typeof block.tool_use_id === "string") {
       this.toolUseCache.delete(block.tool_use_id);
+    }
+  }
+
+  private rememberSettledSubagentToolCall(
+    item: Extract<AgentTimelineItem, { type: "tool_call" }> | null,
+    entry: ToolUseCacheEntry | undefined,
+  ): void {
+    const subagentId = item ? this.taskProtocolSource.resolveSubagentId(item.callId) : undefined;
+    if (!item || !subagentId) return;
+    this.settledSubagentToolCalls.set(subagentId, {
+      item,
+      input: entry?.input ?? null,
+      turnId: this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? null,
+    });
+  }
+
+  /** A finished child streams no more frames, so its settled call has nothing left to update. */
+  private releaseFinishedSubagentToolCalls(observations: SubagentObservation[]): void {
+    for (const observation of observations) {
+      if (observation.kind === "status" && observation.status !== "running") {
+        this.settledSubagentToolCalls.delete(observation.id);
+        this.sidechainTracker.delete(observation.id);
+      }
     }
   }
 
@@ -5673,13 +5973,13 @@ class ClaudeAgentSession implements AgentSession {
     return false;
   }
 
-  private mapPartialEvent(
+  private async mapPartialEvent(
     event: SDKPartialAssistantMessage["event"],
     options?: {
       suppressAssistantText?: boolean;
       suppressReasoning?: boolean;
     },
-  ): AgentTimelineItem[] {
+  ): Promise<AgentTimelineItem[]> {
     if (this.updatePartialEventToolState(event)) {
       return [];
     }
@@ -5687,14 +5987,14 @@ class ClaudeAgentSession implements AgentSession {
     switch (event.type) {
       case "content_block_start":
         return isClaudeContentChunk(event.content_block)
-          ? this.mapBlocksToTimeline([event.content_block], {
+          ? await this.mapBlocksToTimeline([event.content_block], {
               suppressAssistantText: options?.suppressAssistantText,
               suppressReasoning: options?.suppressReasoning,
             })
           : [];
       case "content_block_delta":
         return isClaudeContentChunk(event.delta)
-          ? this.mapBlocksToTimeline([event.delta], {
+          ? await this.mapBlocksToTimeline([event.delta], {
               suppressAssistantText: options?.suppressAssistantText,
               suppressReasoning: options?.suppressReasoning,
             })
@@ -5872,6 +6172,11 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private detectFileKind(filePath: string): string {
+    // A historical target may be on an unreachable mount; its current state says nothing
+    // about whether the past operation created or updated it.
+    if (this.replayingHistory) {
+      return "update";
+    }
     try {
       return fs.existsSync(filePath) ? "update" : "add";
     } catch {
@@ -5963,21 +6268,6 @@ function normalizeHistoryBlocks(content: unknown): ClaudeContentChunk[] | null {
   return null;
 }
 
-function parseClaudeHistoryRecords(content: string): ClaudeHistoryEntry[] {
-  const entries: ClaudeHistoryEntry[] = [];
-  for (const line of content.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      const entry = toObjectRecord(JSON.parse(trimmed));
-      if (entry) entries.push(entry);
-    } catch {
-      // Ignore individual corrupt history rows, matching the parent history replay behavior.
-    }
-  }
-  return entries;
-}
-
 /** The parent's card for a subagent, labeled with its type and task. */
 function buildClaudeSubagentCardDetail(
   facts: ClaudeSubagentCardFacts,
@@ -6010,187 +6300,73 @@ function labelReplayedSubagentCard(
  * source consumes. The agentId scrape is kept only as a fallback for sessions recorded before
  * Claude Code wrote the meta sidecar.
  */
-function readClaudeReplayParentFacts(parentEntries: ClaudeHistoryEntry[]): ClaudeReplayParentFacts {
+async function readClaudeReplayParentFacts(
+  entries: Iterable<ClaudeHistoryEntry> | AsyncIterable<ClaudeHistoryEntry>,
+): Promise<ClaudeReplayParentFacts> {
   const toolCalls = new Map<string, { title?: string; description?: string }>();
-  for (const [id, call] of readClaudeHistoricalSubagentToolCalls(parentEntries)) {
-    toolCalls.set(id, {
-      ...((call.name ?? call.subagentType) ? { title: call.name ?? call.subagentType } : {}),
-      ...(call.description ? { description: call.description } : {}),
-    });
-  }
-
-  // Read outcomes straight off the tool_result blocks rather than reusing the agentId scrape,
-  // so a subagent linked through its meta sidecar still gets a status when the scrape missed it.
-  const outcomesByToolCallId = new Map<string, { failed: boolean }>();
-  for (const entry of parentEntries) {
+  const linksByAgentId = new Map<string, { toolCallId: string }>();
+  const outcomes: Map<string, { status: ProviderSubagentStatus }> = new Map();
+  for await (const entry of entries) {
+    const notification = readTaskNotificationFromHistoryRecord(entry);
+    const status = mapTaskStatus(notification?.status ?? undefined);
+    if (notification?.toolUseId && status) {
+      outcomes.set(notification.toolUseId, { status });
+    }
     const content = toObjectRecord(entry.message)?.content;
     if (!Array.isArray(content)) continue;
     for (const value of content) {
       const block = toObjectRecord(value);
-      if (block?.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
-      if (!toolCalls.has(block.tool_use_id)) continue;
-      outcomesByToolCallId.set(block.tool_use_id, { failed: block.is_error === true });
+      const declaration = readClaudeReplayTaskDeclaration(entry.type, block);
+      if (declaration) toolCalls.set(declaration.id, declaration.identity);
+      if (
+        entry.type !== "user" ||
+        block?.type !== "tool_result" ||
+        typeof block.tool_use_id !== "string"
+      )
+        continue;
+      if (toObjectRecord(entry.toolUseResult)?.status !== "async_launched")
+        outcomes.set(block.tool_use_id, {
+          status: block.is_error === true ? "failed" : "completed",
+        });
+      const agentId = readLegacyClaudeSubagentId(block.content);
+      if (agentId)
+        linksByAgentId.set(agentId, {
+          toolCallId: block.tool_use_id,
+        });
     }
   }
-
   return {
     toolCalls,
-    linksByAgentId: readClaudeHistoricalSubagentToolResults(parentEntries),
-    outcomesByToolCallId,
+    linksByAgentId,
+    outcomesByToolCallId: new Map([...outcomes].filter(([id]) => toolCalls.has(id))),
   };
 }
 
-interface ClaudeSidechainHistory {
-  contents: string[];
-  workflowContents: string[];
-  workflowSidechainContentsByRunId: Map<string, string[]>;
-  /** agentId -> sidecar metadata, when Claude Code wrote one next to the transcript. */
-  metaByAgentId: Map<string, ClaudeSubagentMeta>;
-}
-
-const CLAUDE_SUBAGENT_META_FILE = /^agent-(.+)\.meta\.json$/;
-
-function readClaudeSidechainHistory(historyPath: string): ClaudeSidechainHistory {
-  const sessionDirectory = path.join(
-    path.dirname(historyPath),
-    path.basename(historyPath, ".jsonl"),
-  );
-  const sidechainDirectory = path.join(sessionDirectory, "subagents");
-  const history: ClaudeSidechainHistory = {
-    contents: [],
-    workflowContents: [],
-    workflowSidechainContentsByRunId: new Map(),
-    metaByAgentId: new Map(),
+function readClaudeReplayTaskDeclaration(
+  entryType: unknown,
+  block: Record<string, unknown> | undefined,
+): {
+  id: string;
+  identity: { title?: string; description?: string };
+} | null {
+  if (
+    entryType !== "assistant" ||
+    block?.type !== "tool_use" ||
+    (block.name !== "Task" && block.name !== "Agent") ||
+    typeof block.id !== "string"
+  )
+    return null;
+  const input = toObjectRecord(block.input);
+  const title = readNonEmptyString(input?.name) ?? readNonEmptyString(input?.subagent_type);
+  const description = readNonEmptyString(input?.description);
+  return {
+    id: block.id,
+    identity: { ...(title ? { title } : {}), ...(description ? { description } : {}) },
   };
-  const workflowDirectory = path.join(sessionDirectory, "workflows");
-  if (fs.existsSync(workflowDirectory)) {
-    for (const entry of fs.readdirSync(workflowDirectory, { withFileTypes: true })) {
-      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-      try {
-        history.workflowContents.push(
-          fs.readFileSync(path.join(workflowDirectory, entry.name), "utf8"),
-        );
-      } catch {
-        // A partial or unreadable run summary must not fail the rest of history ingestion.
-      }
-    }
-  }
-  if (!fs.existsSync(sidechainDirectory)) return history;
-
-  const directories = [sidechainDirectory];
-  while (directories.length > 0) {
-    const directory = directories.pop();
-    if (!directory) continue;
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      const entryPath = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        directories.push(entryPath);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      if (entry.name.endsWith(".jsonl")) {
-        recordClaudeSidechainContents(history, sidechainDirectory, entryPath);
-        continue;
-      }
-      // The sidecar carries the Task tool_use id, which is the same id the live stream keys on.
-      // Reading it is what lets replay and live agree instead of each deriving its own link.
-      const metaMatch = CLAUDE_SUBAGENT_META_FILE.exec(entry.name);
-      if (!metaMatch?.[1]) continue;
-      try {
-        const meta = parseClaudeSubagentMeta(fs.readFileSync(entryPath, "utf8"));
-        if (meta) history.metaByAgentId.set(metaMatch[1], meta);
-      } catch {
-        // Undocumented internals: a missing or unreadable sidecar must never fail ingestion.
-      }
-    }
-  }
-  return history;
 }
 
-function recordClaudeSidechainContents(
-  history: ClaudeSidechainHistory,
-  sidechainDirectory: string,
-  entryPath: string,
-): void {
-  const contents = fs.readFileSync(entryPath, "utf8");
-  const relativeParts = path.relative(sidechainDirectory, entryPath).split(path.sep);
-  const workflowRunId =
-    relativeParts[0] === "workflows" && relativeParts.length >= 3 ? relativeParts[1] : undefined;
-  if (!workflowRunId) {
-    history.contents.push(contents);
-    return;
-  }
-
-  const workflowContents = history.workflowSidechainContentsByRunId.get(workflowRunId) ?? [];
-  workflowContents.push(contents);
-  history.workflowSidechainContentsByRunId.set(workflowRunId, workflowContents);
-}
-
-interface ClaudeHistoricalSubagentToolCall {
-  name?: string;
-  subagentType?: string;
-  description?: string;
-}
-
-function readClaudeHistoricalSubagentToolCalls(
-  entries: ClaudeHistoryEntry[],
-): Map<string, ClaudeHistoricalSubagentToolCall> {
-  const toolCalls = new Map<string, ClaudeHistoricalSubagentToolCall>();
-  for (const entry of entries) {
-    const content = toObjectRecord(entry.message)?.content;
-    if (!Array.isArray(content)) continue;
-    for (const value of content) {
-      const block = toObjectRecord(value);
-      if (
-        block?.type !== "tool_use" ||
-        (block.name !== "Task" && block.name !== "Agent") ||
-        typeof block.id !== "string"
-      ) {
-        continue;
-      }
-      const input = toObjectRecord(block.input);
-      const name = readNonEmptyString(input?.name);
-      const subagentType = readNonEmptyString(input?.subagent_type);
-      const description = readNonEmptyString(input?.description);
-      toolCalls.set(block.id, {
-        ...(name ? { name } : {}),
-        ...(subagentType ? { subagentType } : {}),
-        ...(description ? { description } : {}),
-      });
-    }
-  }
-  return toolCalls;
-}
-
-function readClaudeHistoricalSubagentToolResults(
-  entries: ClaudeHistoryEntry[],
-): Map<string, { toolCallId: string; failed: boolean }> {
-  const results = new Map<string, { toolCallId: string; failed: boolean }>();
-  for (const entry of entries) {
-    const content = toObjectRecord(entry.message)?.content;
-    if (!Array.isArray(content)) continue;
-    for (const value of content) {
-      const block = toObjectRecord(value);
-      if (block?.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
-      const match = /agentId:\s*([\w-]+)/.exec(JSON.stringify(block.content));
-      if (!match?.[1]) continue;
-      results.set(match[1], { toolCallId: block.tool_use_id, failed: block.is_error === true });
-    }
-  }
-  return results;
-}
-
-function groupClaudeSidechainEntries(
-  entries: ClaudeHistoryEntry[],
-): Map<string, ClaudeHistoryEntry[]> {
-  const entriesByAgentId = new Map<string, ClaudeHistoryEntry[]>();
-  for (const entry of entries) {
-    if (typeof entry.agentId !== "string") continue;
-    const grouped = entriesByAgentId.get(entry.agentId) ?? [];
-    grouped.push(entry);
-    entriesByAgentId.set(entry.agentId, grouped);
-  }
-  return entriesByAgentId;
+function readLegacyClaudeSubagentId(content: unknown): string | undefined {
+  return /agentId:\s*([\w-]+)/.exec(JSON.stringify(content))?.[1];
 }
 
 interface ClaudeHistoryEntry {
@@ -6205,12 +6381,14 @@ interface ClaudeHistoryEntry {
   [key: string]: unknown;
 }
 
-function mapAssistantHistoryBlocksWithMessageId(
+async function mapAssistantHistoryBlocksWithMessageId(
   entry: ClaudeHistoryEntry,
   content: string | ClaudeContentChunk[],
-  mapBlocks: (content: string | ClaudeContentChunk[]) => AgentTimelineItem[],
-): AgentTimelineItem[] {
-  const items = mapBlocks(content);
+  mapBlocks: (
+    content: string | ClaudeContentChunk[],
+  ) => AgentTimelineItem[] | Promise<AgentTimelineItem[]>,
+): Promise<AgentTimelineItem[]> {
+  const items = await mapBlocks(content);
   const assistantMessageId =
     typeof entry.uuid === "string" && entry.uuid.length > 0 ? entry.uuid : null;
   if (!assistantMessageId) {
@@ -6252,6 +6430,11 @@ function convertClaudeHistoryEntryPreamble(
   if (entry.type === "user" && isSyntheticHistoryUserEntry(entry)) {
     return { shortCircuit: [] };
   }
+  // Only user and assistant records are conversation turns. Claude Code 2.1.x also journals each
+  // API request as `api-request-blob` records whose message replays the system context.
+  if (entry.type !== "user" && entry.type !== "assistant") {
+    return { shortCircuit: [] };
+  }
 
   const message = entry?.message;
   if (!message || !("content" in message)) {
@@ -6273,10 +6456,12 @@ function isProviderImageMessage(item: AgentTimelineItem): boolean {
   return item.type === "assistant_message" && isProviderImageMarkdown(item.text);
 }
 
-export function convertClaudeHistoryEntry(
+export async function convertClaudeHistoryEntry(
   entry: ClaudeHistoryEntry,
-  mapBlocks: (content: string | ClaudeContentChunk[]) => AgentTimelineItem[],
-): AgentTimelineItem[] {
+  mapBlocks: (
+    content: string | ClaudeContentChunk[],
+  ) => AgentTimelineItem[] | Promise<AgentTimelineItem[]>,
+): Promise<AgentTimelineItem[]> {
   const preamble = convertClaudeHistoryEntryPreamble(entry);
   if ("shortCircuit" in preamble) {
     return preamble.shortCircuit;
@@ -6294,6 +6479,7 @@ export function convertClaudeHistoryEntry(
     const userTaskNotificationItem = mapTaskNotificationUserContentToToolCall({
       content,
       messageId: userMessageId,
+      notificationId: typeof entry.notificationId === "string" ? entry.notificationId : undefined,
     });
     if (userTaskNotificationItem) {
       return [userTaskNotificationItem];
@@ -6314,7 +6500,7 @@ export function convertClaudeHistoryEntry(
   }
 
   if (hasToolBlock && normalizedBlocks) {
-    const mapped = mapBlocks(normalizedBlocks);
+    const mapped = await mapBlocks(normalizedBlocks);
     if (entry.type === "user") {
       // tool_result handling (handleToolResult) emits image markdown as an assistant_message
       // alongside the tool_call. User-entry text blocks also map to assistant_message in this path
@@ -6328,7 +6514,7 @@ export function convertClaudeHistoryEntry(
   }
 
   if (entry.type === "assistant" && contentValue) {
-    return mapAssistantHistoryBlocksWithMessageId(entry, contentValue, mapBlocks);
+    return await mapAssistantHistoryBlocksWithMessageId(entry, contentValue, mapBlocks);
   }
 
   return timeline;
@@ -6384,29 +6570,69 @@ function createAsyncMessageInput<T>(): AsyncMessageInput<T> {
 interface ClaudeSessionCandidate {
   path: string;
   mtime: Date;
+  cacheKey: string;
+}
+
+function claudeSessionCacheKey(filePath: string, stats: fs.Stats): string {
+  return `${filePath}\0${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeMs}:${stats.ctimeMs}`;
+}
+
+function isMissingClaudeImportFile(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error.code === "ENOENT" || error.code === "ENOTDIR")
+  );
+}
+
+function isExpectedClaudeImportFileError(error: unknown): boolean {
+  if (!(error instanceof Error) || !("code" in error)) return false;
+  return (
+    error.code === "ENOENT" ||
+    error.code === "ENOTDIR" ||
+    error.code === "EACCES" ||
+    error.code === "EPERM"
+  );
 }
 
 async function pathExists(target: string): Promise<boolean> {
   try {
     await fsPromises.access(target);
     return true;
-  } catch {
+  } catch (error) {
+    if (!isMissingClaudeImportFile(error)) throw error;
     return false;
   }
+}
+
+interface ClaudeSessionDiscoveryOptions {
+  rootIsProjectDir: boolean;
+  logger: Logger;
 }
 
 async function collectRecentClaudeSessions(
   root: string,
   limit: number,
-  options?: { rootIsProjectDir?: boolean },
+  options: ClaudeSessionDiscoveryOptions,
 ): Promise<ClaudeSessionCandidate[]> {
+  const permissionErrors: Error[] = [];
+  function recordDiscoveryFailure(error: unknown, targetPath: string): void {
+    if (isMissingClaudeImportFile(error)) return;
+    if (!(error instanceof Error) || !isExpectedClaudeImportFileError(error)) throw error;
+    permissionErrors.push(error);
+    options.logger.warn(
+      { err: error, path: targetPath },
+      "Skipping Claude session discovery path with denied access",
+    );
+  }
   let rootEntries: string[];
   try {
     rootEntries = await fsPromises.readdir(root);
-  } catch {
+  } catch (error) {
+    if (!isMissingClaudeImportFile(error)) throw error;
     return [];
   }
-  const fileEntries = options?.rootIsProjectDir
+  const fileEntries = options.rootIsProjectDir
     ? rootEntries.filter((file) => file.endsWith(".jsonl")).map((file) => path.join(root, file))
     : (
         await Promise.all(
@@ -6419,7 +6645,8 @@ async function collectRecentClaudeSessions(
               return files
                 .filter((file) => file.endsWith(".jsonl"))
                 .map((file) => path.join(projectPath, file));
-            } catch {
+            } catch (error) {
+              recordDiscoveryFailure(error, projectPath);
               return [] as string[];
             }
           }),
@@ -6429,8 +6656,14 @@ async function collectRecentClaudeSessions(
     fileEntries.map(async (fullPath) => {
       try {
         const fileStats = await fsPromises.stat(fullPath);
-        return { path: fullPath, mtime: fileStats.mtime };
-      } catch {
+        if (!fileStats.isFile()) return null;
+        return {
+          path: fullPath,
+          mtime: fileStats.mtime,
+          cacheKey: claudeSessionCacheKey(fullPath, fileStats),
+        };
+      } catch (error) {
+        recordDiscoveryFailure(error, fullPath);
         return null;
       }
     }),
@@ -6438,6 +6671,12 @@ async function collectRecentClaudeSessions(
   const candidates: ClaudeSessionCandidate[] = statResults.filter(
     (entry): entry is ClaudeSessionCandidate => entry !== null,
   );
+  if (candidates.length === 0 && permissionErrors.length > 0) {
+    throw new AggregateError(
+      permissionErrors,
+      `Cannot discover Claude sessions: access was denied to ${permissionErrors.length} paths and no transcripts could be discovered. ${permissionErrors[0]!.message}`,
+    );
+  }
   return candidates.sort((a, b) => b.mtime.getTime() - a.mtime.getTime()).slice(0, limit);
 }
 
@@ -6509,14 +6748,8 @@ function applyClaudeSessionEntryToAccumulator(
 async function parseClaudeSessionDescriptor(
   filePath: string,
   mtime: Date,
+  signal: AbortSignal,
 ): Promise<ImportableProviderSession | null> {
-  let content: string;
-  try {
-    content = await fsPromises.readFile(filePath, "utf8");
-  } catch {
-    return null;
-  }
-
   const acc: ClaudeSessionDescriptorAccumulator = {
     sessionId: null,
     cwd: null,
@@ -6527,15 +6760,37 @@ async function parseClaudeSessionDescriptor(
     lastPromptPreview: null,
   };
 
-  for (const line of content.split(/\r?\n/)) {
-    if (!line || !shouldParseClaudeSessionDescriptorLine(line, acc)) continue;
+  // Keep only the current record, including image records larger than a read chunk.
+  const record: Buffer[] = [];
+  const stream = fs.createReadStream(filePath, { highWaterMark: 64 * 1024, signal });
+  function applyRecord(): void {
+    const line = Buffer.concat(record).toString("utf8");
+    if (!line || !shouldParseClaudeSessionDescriptorLine(line, acc)) return;
     let entry: unknown;
     try {
       entry = JSON.parse(line);
     } catch {
-      continue;
+      return;
     }
     applyClaudeSessionEntryToAccumulator(entry, acc);
+  }
+  try {
+    for await (const chunk of stream) {
+      signal.throwIfAborted();
+      let start = 0;
+      while (start < chunk.length) {
+        const newline = chunk.indexOf(10, start);
+        const end = newline === -1 ? chunk.length : newline;
+        record.push(chunk.subarray(start, end));
+        if (newline === -1) break;
+        applyRecord();
+        record.length = 0;
+        start = newline + 1;
+      }
+    }
+    if (record.length > 0) applyRecord();
+  } finally {
+    stream.destroy();
   }
 
   const { sessionId, cwd } = acc;
@@ -6561,6 +6816,66 @@ async function parseClaudeSessionDescriptor(
 function normalizeClaudeSessionTitle(title: string | null): string | null {
   const normalized = title?.trim();
   return normalized ? normalized : null;
+}
+
+const CLAUDE_CUSTOM_TITLE_TYPE = "custom-title";
+
+/**
+ * The `custom-title` record is re-emitted every time the session is saved, so
+ * the current name is the last usable one in the file. Searching backwards finds it without
+ * walking the transcript, which matters because sessions reach tens of
+ * megabytes.
+ */
+function readLastClaudeCustomTitle(content: string): string | null {
+  const needle = `"${CLAUDE_CUSTOM_TITLE_TYPE}"`;
+  let at = content.lastIndexOf(needle);
+  while (at >= 0) {
+    const lineStart = content.lastIndexOf("\n", at) + 1;
+    const lineEnd = content.indexOf("\n", at);
+    const line = lineEnd === -1 ? content.slice(lineStart) : content.slice(lineStart, lineEnd);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line.trim());
+    } catch {
+      parsed = undefined;
+    }
+    const entry = toObjectRecord(parsed);
+    if (entry && !entry.isSidechain && entry.type === CLAUDE_CUSTOM_TITLE_TYPE) {
+      const title = normalizeClaudeSessionTitle(
+        typeof entry.customTitle === "string" ? entry.customTitle : null,
+      );
+      if (title) {
+        return title;
+      }
+    }
+    // The needle also matches a prompt that quotes it, and a record can carry no
+    // usable name, so keep looking backwards for one that does.
+    at = at <= 0 ? -1 : content.lastIndexOf(needle, at - 1);
+  }
+  return null;
+}
+
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}
+
+async function readClaudeRenamedSessionTitle(input: {
+  cwd: string;
+  sessionId: string;
+  configDir: string;
+}): Promise<string | null> {
+  let content: string;
+  try {
+    content = await fsPromises.readFile(await claudeTranscriptPath(input), "utf8");
+  } catch (error) {
+    // A session with no transcript on disk has no rename to carry over. Every
+    // other read failure is a real fault and stays explicit.
+    if (isErrnoException(error) && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+  return readLastClaudeCustomTitle(content);
 }
 
 function normalizeImportablePromptPreview(text: string): string | null {
@@ -6650,4 +6965,14 @@ function readClaudeCommandLifecycle(message: unknown): ClaudeCommandLifecycle | 
     commandUuid: record.command_uuid,
     state: record.state as ClaudeCommandLifecycle["state"],
   };
+}
+
+async function transcriptExists(file: string): Promise<boolean> {
+  try {
+    await fs.promises.access(file);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
 }

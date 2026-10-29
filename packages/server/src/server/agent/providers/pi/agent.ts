@@ -367,9 +367,9 @@ function piModelSupportsImageInput(model: PiModel | null | undefined): boolean {
   return model?.input?.includes("image") === true;
 }
 
-function renderTextOnlyImageHint(image: { data: string; mimeType: string }): string {
+async function renderTextOnlyImageHint(image: { data: string; mimeType: string }): Promise<string> {
   try {
-    const materialized = materializeProviderImage({
+    const materialized = await materializeProviderImage({
       data: image.data,
       mimeType: image.mimeType,
     });
@@ -379,10 +379,10 @@ function renderTextOnlyImageHint(image: { data: string; mimeType: string }): str
   }
 }
 
-function convertPromptInput(
+async function convertPromptInput(
   prompt: AgentPromptInput,
   options: { model: PiModel | null | undefined },
-): PiPromptPayload {
+): Promise<PiPromptPayload> {
   if (typeof prompt === "string") {
     return { text: prompt };
   }
@@ -405,7 +405,7 @@ function convertPromptInput(
           mimeType: block.mimeType,
         });
       } else {
-        textParts.push(renderTextOnlyImageHint(block));
+        textParts.push(await renderTextOnlyImageHint(block));
       }
       continue;
     }
@@ -1005,6 +1005,8 @@ function isProcessExitEvent(
 
 function isPiAgentSessionEvent(event: PiRuntimeEvent): event is PiAgentSessionEvent {
   switch (event.type) {
+    case "thinking_level_changed":
+      return typeof event.level === "string" && normalizePiThinkingOption(event.level) !== null;
     case "agent_start":
     case "turn_start":
     case "message_start":
@@ -1187,6 +1189,7 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly contextUserEntries: PiCapturedEntry[] = [];
   private readonly treeUserEntriesById = new Map<string, PiCapturedEntry>();
   private readonly pendingExtensionResults = new Map<string, PendingExtensionResult>();
+  private compactionPromise: Promise<void> | null = null;
   private outOfBandCompactionEmit: ((event: AgentStreamEvent) => void) | null = null;
   private outOfBandCompactionStarted = false;
   private outOfBandCompactionCompleted = false;
@@ -1277,7 +1280,6 @@ export class PiRpcAgentSession implements AgentSession {
       throw new Error("A Pi turn is already active");
     }
 
-    const payload = convertPromptInput(prompt, { model: this.state.model });
     const turnId = randomUUID();
     this.activeTurnId = turnId;
     this.usagePoller.startTurn();
@@ -1289,11 +1291,23 @@ export class PiRpcAgentSession implements AgentSession {
     this.activePromptRequestId = null;
     this.pendingSteerSubmissions.length = 0;
     this.clearNoTurnBuffers();
+    const payload = await convertPromptInput(prompt, { model: this.state.model });
+    if (this.closed) throw new Error("Pi session is closed");
+    if (this.activeTurnId !== turnId) return { turnId };
     this.activeNoTurnPromptText = payload.text;
     const shouldProbeForNoTurnPrompt = this.parseSlashCommandInput(payload.text) !== null;
 
     void (async () => {
       try {
+        if (this.compactionPromise) {
+          // Pi RPC rejects prompts until the manual compaction request settles.
+          await this.compactionPromise.catch(() => undefined);
+          const turnCanceled =
+            this.closed || this.activeTurnId !== turnId || this.interruptingTurn?.turnId === turnId;
+          if (turnCanceled) {
+            return;
+          }
+        }
         const ack = await this.runtimeSession.prompt(payload.text, payload.images);
         this.activePromptRequestId = ack.requestId ?? null;
         const correlatedResult = ack.requestId
@@ -1351,7 +1365,9 @@ export class PiRpcAgentSession implements AgentSession {
     if (this.closed || this.activeTurnId !== options.expectedTurnId) {
       return { status: "unavailable" };
     }
-    const payload = convertPromptInput(prompt, { model: this.state.model });
+    const payload = await convertPromptInput(prompt, { model: this.state.model });
+    if (this.closed || this.activeTurnId !== options.expectedTurnId)
+      return { status: "unavailable" };
     // Pi rejects steer RPCs that are extension commands, so slash inputs keep the
     // interrupt-and-replace fallback where they can run directly.
     if (this.parseSlashCommandInput(payload.text)) {
@@ -1579,6 +1595,22 @@ export class PiRpcAgentSession implements AgentSession {
     return await resultPromise;
   }
 
+  async canStopRuntime(): Promise<boolean> {
+    if (
+      this.closed ||
+      this.activeTurnId ||
+      this.pendingExtensionUiRequests.size ||
+      this.pendingExtensionResults.size ||
+      this.pendingExtensionHydrations.size ||
+      this.pendingSteerSubmissions.length ||
+      this.pendingNoTurnOutputs.length ||
+      this.interruptingTurn
+    )
+      return false;
+    const state = await this.runtimeSession.getState();
+    return !state.isStreaming && !state.isCompacting && state.pendingMessageCount === 0;
+  }
+
   async close(): Promise<void> {
     if (this.closed) {
       return;
@@ -1786,7 +1818,8 @@ export class PiRpcAgentSession implements AgentSession {
     this.outOfBandCompactionStarted = false;
     this.outOfBandCompactionCompleted = false;
     try {
-      await this.runtimeSession.compact(customInstructions);
+      this.compactionPromise = this.runtimeSession.compact(customInstructions);
+      await this.compactionPromise;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (
@@ -1812,6 +1845,7 @@ export class PiRpcAgentSession implements AgentSession {
         },
       });
     } finally {
+      this.compactionPromise = null;
       if (this.outOfBandCompactionEmit === emit && !this.outOfBandCompactionStarted) {
         this.outOfBandCompactionEmit = null;
         this.outOfBandCompactionStarted = false;
@@ -2136,6 +2170,15 @@ export class PiRpcAgentSession implements AgentSession {
     }
 
     switch (event.type) {
+      case "thinking_level_changed":
+        this.state = { ...this.state, thinkingLevel: event.level };
+        this.config.thinkingOptionId = event.level;
+        this.emit({
+          type: "thinking_option_changed",
+          provider: this.provider,
+          thinkingOptionId: event.level,
+        });
+        return;
       case "agent_start":
         this.activeTurnStarted = true;
         this.clearNoTurnBuffers();

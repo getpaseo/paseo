@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import type { ForgeService } from "../services/forge-service.js";
+import { buildForkLocalBranchName } from "../utils/change-request-checkout.js";
 import {
   CheckoutSourceForgeMismatchError,
   MissingCheckoutTargetError,
@@ -32,14 +33,8 @@ function createResolverHarness(overrides?: {
           defaultCheckoutRefs: ({ changeRequestNumber }) => [
             { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
           ],
-          buildPrLocalBranchName: ({ headRef, checkoutTarget }) => {
-            const normalized = checkoutTarget.headOwnerLogin?.trim().toLowerCase() ?? "";
-            const owner =
-              checkoutTarget.isCrossRepository && /^[a-z0-9-]+$/.test(normalized)
-                ? normalized
-                : null;
-            return owner ? `${owner}/${headRef}` : headRef;
-          },
+          buildPrLocalBranchName: ({ headRef, checkoutTarget }) =>
+            buildForkLocalBranchName({ headRef, ...checkoutTarget }),
           supportsCrossRepoCheckoutWithoutRefs: true,
         }
       : {};
@@ -182,6 +177,28 @@ describe("resolveWorktreeCreationIntent", () => {
     expect(deps.headRefLookups).toEqual([]);
   });
 
+  test("does not track origin for a same-repo head with no origin branch", async () => {
+    const deps = createResolverHarness();
+    deps.forgeService.getPullRequestCheckoutTarget = async () => ({
+      number: 42,
+      baseRefName: "main",
+      headRefName: "ford/towel",
+      headOwnerLogin: null,
+      headRepositorySshUrl: null,
+      headRepositoryUrl: null,
+      isCrossRepository: false,
+      headRefKind: "pull-ref",
+    });
+
+    const intent = await resolveWorktreeCreationIntent(
+      { action: "checkout", githubPrNumber: 42 },
+      repoRoot,
+      deps,
+    );
+
+    expect(intent).not.toHaveProperty("trackOriginHead");
+  });
+
   test("configures the contributor remote for fork PR targets", async () => {
     const deps = createResolverHarness();
     deps.forgeService.getPullRequestCheckoutTarget = async () => ({
@@ -209,6 +226,29 @@ describe("resolveWorktreeCreationIntent", () => {
       pushRemoteUrl: "git@github.com:therainisme/paseo.git",
     });
     expect(deps.headRefLookups).toEqual([]);
+  });
+
+  test("prefixes the pr number when the fork was deleted", async () => {
+    const deps = createResolverHarness();
+    deps.forgeService.getPullRequestCheckoutTarget = async () => ({
+      number: 42,
+      baseRefName: "main",
+      headRefName: "towel",
+      headOwnerLogin: null,
+      headRepositorySshUrl: null,
+      headRepositoryUrl: null,
+      isCrossRepository: true,
+    });
+
+    const intent = await resolveWorktreeCreationIntent(
+      { action: "checkout", githubPrNumber: 42 },
+      repoRoot,
+      deps,
+    );
+
+    expect(intent).toMatchObject({ headRef: "towel", localBranchName: "pr-42/towel" });
+    expect(intent).not.toHaveProperty("pushRemoteUrl");
+    expect(intent).not.toHaveProperty("trackOriginHead");
   });
 
   test("uses an explicit PR head ref without calling GitHub", async () => {
@@ -291,6 +331,105 @@ describe("resolveWorktreeCreationIntent", () => {
       checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/merge-requests/7/head" }],
     });
     expect(deps.headRefLookups).toEqual([]);
+  });
+
+  test("names the local branch pr-<number> for a gitea pull-ref-only head", async () => {
+    const deps = createResolverHarness({
+      forge: "gitea",
+      forgeService: {
+        defaultCheckoutRefs: ({ changeRequestNumber }) => [
+          { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
+          { remoteName: "upstream", remoteRef: `refs/pull/${changeRequestNumber}/head` },
+        ],
+        buildPrLocalBranchName: ({ headRef, checkoutTarget }) =>
+          buildForkLocalBranchName({ headRef, ...checkoutTarget }),
+        getPullRequestCheckoutTarget: async ({ number }) => ({
+          number,
+          baseRefName: "main",
+          headRefName: `refs/pull/${number}/head`,
+          headOwnerLogin: null,
+          headRepositorySshUrl: null,
+          headRepositoryUrl: null,
+          isCrossRepository: false,
+          headRefKind: "pull-ref",
+        }),
+      },
+    });
+
+    const intent = await resolveWorktreeCreationIntent(
+      { action: "checkout", checkoutSource: { kind: "change_request", number: 3 } },
+      repoRoot,
+      deps,
+    );
+
+    expect(intent).toMatchObject({ localBranchName: "pr-3" });
+    expect(intent).not.toHaveProperty("trackOriginHead");
+  });
+
+  test("names the local branch owner/pr-<number> for a gitea fork pull-ref-only head", async () => {
+    const deps = createResolverHarness({
+      forge: "gitea",
+      forgeService: {
+        defaultCheckoutRefs: ({ changeRequestNumber }) => [
+          { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
+          { remoteName: "upstream", remoteRef: `refs/pull/${changeRequestNumber}/head` },
+        ],
+        buildPrLocalBranchName: ({ headRef, checkoutTarget }) =>
+          buildForkLocalBranchName({ headRef, ...checkoutTarget }),
+        supportsCrossRepoCheckoutWithoutRefs: true,
+        getPullRequestCheckoutTarget: async ({ number }) => ({
+          number,
+          baseRefName: "main",
+          headRefName: `refs/pull/${number}/head`,
+          headOwnerLogin: "contributor",
+          headRepositorySshUrl: "git@gitea.test:contributor/repo.git",
+          headRepositoryUrl: "https://gitea.test/contributor/repo",
+          isCrossRepository: true,
+          headRefKind: "pull-ref",
+        }),
+      },
+    });
+
+    const intent = await resolveWorktreeCreationIntent(
+      { action: "checkout", checkoutSource: { kind: "change_request", number: 3 } },
+      repoRoot,
+      deps,
+    );
+
+    expect(intent).toMatchObject({ localBranchName: "contributor/pr-3" });
+  });
+
+  test("does not double the pr number for a gitea deleted fork's pull-ref-only head", async () => {
+    const deps = createResolverHarness({
+      forge: "gitea",
+      forgeService: {
+        defaultCheckoutRefs: ({ changeRequestNumber }) => [
+          { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
+          { remoteName: "upstream", remoteRef: `refs/pull/${changeRequestNumber}/head` },
+        ],
+        buildPrLocalBranchName: ({ headRef, checkoutTarget }) =>
+          buildForkLocalBranchName({ headRef, ...checkoutTarget }),
+        supportsCrossRepoCheckoutWithoutRefs: true,
+        getPullRequestCheckoutTarget: async ({ number }) => ({
+          number,
+          baseRefName: "main",
+          headRefName: `refs/pull/${number}/head`,
+          headOwnerLogin: null,
+          headRepositorySshUrl: null,
+          headRepositoryUrl: null,
+          isCrossRepository: true,
+          headRefKind: "pull-ref",
+        }),
+      },
+    });
+
+    const intent = await resolveWorktreeCreationIntent(
+      { action: "checkout", checkoutSource: { kind: "change_request", number: 3 } },
+      repoRoot,
+      deps,
+    );
+
+    expect(intent).toMatchObject({ localBranchName: "pr-3" });
   });
 
   test("reports unsupported cross-repository checkout targets without a checkout ref", async () => {

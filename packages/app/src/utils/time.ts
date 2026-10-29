@@ -125,6 +125,11 @@ function getTimeFormatter(): Intl.DateTimeFormat {
   return cachedTimeFormatter;
 }
 
+/** A clock time in the device's 12h/24h preference: "3:00 PM" or "15:00". */
+export function formatTimeOfDay(date: Date): string {
+  return getTimeFormatter().format(date);
+}
+
 /**
  * Format a chat-message timestamp for hover-revealed UI.
  * - Same day: "10:11 PM" or "22:11" depending on user preference
@@ -132,7 +137,7 @@ function getTimeFormatter(): Intl.DateTimeFormat {
  * - Older, including today's weekday last week: "14 May 2026, 10:11 PM"
  */
 export function formatMessageTimestamp(date: Date, now: Date = new Date()): string {
-  const time = getTimeFormatter().format(date);
+  const time = formatTimeOfDay(date);
   const daysAgo = localCalendarDaysBetween(date, now);
 
   if (daysAgo === 0) {

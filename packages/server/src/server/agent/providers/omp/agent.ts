@@ -317,9 +317,9 @@ function ompModelSupportsImageInput(model: OmpModel | null | undefined): boolean
   return model?.input?.includes("image") === true;
 }
 
-function renderTextOnlyImageHint(image: { data: string; mimeType: string }): string {
+async function renderTextOnlyImageHint(image: { data: string; mimeType: string }): Promise<string> {
   try {
-    const materialized = materializeProviderImage({
+    const materialized = await materializeProviderImage({
       data: image.data,
       mimeType: image.mimeType,
     });
@@ -329,10 +329,10 @@ function renderTextOnlyImageHint(image: { data: string; mimeType: string }): str
   }
 }
 
-function convertPromptInput(
+async function convertPromptInput(
   prompt: AgentPromptInput,
   options: { model: OmpModel | null | undefined },
-): OmpPromptPayload {
+): Promise<OmpPromptPayload> {
   if (typeof prompt === "string") {
     return { text: prompt };
   }
@@ -355,7 +355,7 @@ function convertPromptInput(
           mimeType: block.mimeType,
         });
       } else {
-        textParts.push(renderTextOnlyImageHint(block));
+        textParts.push(await renderTextOnlyImageHint(block));
       }
       continue;
     }
@@ -705,6 +705,7 @@ export class OmpAgentSession implements AgentSession {
   private activeAssistantMessageId: string | null = null;
   private activeTurnTerminalAssistantMessage: OmpAgentMessage | null = null;
   private activeTurnStarted = false;
+  private outOfBandTurnStartAnnounced = false;
   private activeTurnHasUserMessage = false;
   private activeNoTurnPromptText: string | null = null;
   private readonly pendingNoTurnOutputs: Array<{ turnId: string; message: string }> = [];
@@ -714,9 +715,7 @@ export class OmpAgentSession implements AgentSession {
   private readonly pendingPromptResults = new Map<string, OmpPromptResult>();
   private pendingNoTurnCompletionAbort: AbortController | null = null;
   private lastKnownThinkingOptionId: string | null;
-  private outOfBandCompactionEmit: ((event: AgentStreamEvent) => void) | null = null;
-  private outOfBandCompactionStarted = false;
-  private outOfBandCompactionCompleted = false;
+  private manualCompactionRunning = false;
   private commandCache: AgentSlashCommand[] | null = null;
   private readonly subagentIndex = new OmpSubagentIndex();
   private readonly subagentCardTracker: OmpSubagentCardTracker;
@@ -851,29 +850,54 @@ export class OmpAgentSession implements AgentSession {
   }
 
   async startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<StartTurnResult> {
+    return this.startPrompt({ prompt, options });
+  }
+
+  private async startPrompt({
+    prompt,
+    options,
+    streamingBehavior,
+    announceTurn = false,
+  }: {
+    prompt: AgentPromptInput;
+    options?: AgentRunOptions;
+    streamingBehavior?: "steer" | "followUp";
+    announceTurn?: boolean;
+  }): Promise<StartTurnResult> {
     if (this.activeTurnId) {
       throw new Error("An OMP turn is already active");
     }
 
-    const payload = convertPromptInput(prompt, { model: this.state.model });
     const turnId = randomUUID();
     this.live = true;
     this.activeTurnId = turnId;
-    this.rememberClientMessage(options?.clientMessageId ?? null, payload.text);
     this.activeAssistantMessageId = null;
     this.activeTurnTerminalAssistantMessage = null;
     this.activeTurnStarted = false;
+    this.outOfBandTurnStartAnnounced = false;
     this.activeTurnHasUserMessage = false;
     this.activePromptRequestId = null;
     this.clearNoTurnBuffers();
+    const payload = await convertPromptInput(prompt, { model: this.state.model });
+    if (this.closed) throw new Error("OMP session is closed");
+    if (this.activeTurnId !== turnId) return { turnId };
+    this.rememberClientMessage(options?.clientMessageId ?? null, payload.text);
     this.activeNoTurnPromptText = payload.text;
     this.usagePoller.startTurn();
+    if (announceTurn) {
+      this.outOfBandTurnStartAnnounced = true;
+      this.emit({ type: "turn_started", provider: this.provider, turnId });
+    }
 
     void (async () => {
       try {
         if (this.runtimeDead) await this.replaceRuntime(this.currentModeId ?? "full");
         if (this.closed) throw new Error("OMP session is closed");
-        const ack = await this.runtimeSession.prompt(payload.text, payload.images);
+        const ack = await this.runtimeSession.prompt({
+          message: payload.text,
+          images: payload.images,
+          streamingBehavior,
+        });
         this.activePromptRequestId = ack.requestId ?? null;
         const correlatedResult = ack.requestId
           ? this.pendingPromptResults.get(ack.requestId)
@@ -924,7 +948,9 @@ export class OmpAgentSession implements AgentSession {
   ): Promise<SteerResult> {
     if (this.closed || this.activeTurnId !== options.expectedTurnId)
       return { status: "unavailable" };
-    const payload = convertPromptInput(prompt, { model: this.state.model });
+    const payload = await convertPromptInput(prompt, { model: this.state.model });
+    if (this.closed || this.activeTurnId !== options.expectedTurnId)
+      return { status: "unavailable" };
     if (this.parseSlashCommandInput(payload.text)) return { status: "unavailable" };
     const submission = this.rememberClientMessage(options.clientMessageId ?? null, payload.text);
     try {
@@ -1150,6 +1176,27 @@ export class OmpAgentSession implements AgentSession {
     this.activeToolCalls.clear();
   }
 
+  async canStopRuntime(): Promise<boolean> {
+    if (
+      this.closed ||
+      this.activeTurnId ||
+      this.activeToolCalls.size ||
+      this.pendingExtensionUiRequests.size ||
+      this.pendingClientMessages.length ||
+      this.pendingNoTurnOutputs.length ||
+      this.pendingNoTurnCompletionAbort
+    )
+      return false;
+    const state = await this.runtimeSession.getState();
+    return (
+      state.isSettled === true &&
+      state.hasPendingAsyncWork === false &&
+      !state.isStreaming &&
+      !state.isCompacting &&
+      state.queuedMessageCount === 0
+    );
+  }
+
   async close(): Promise<void> {
     if (this.closed) {
       return;
@@ -1193,6 +1240,7 @@ export class OmpAgentSession implements AgentSession {
     this.activeAssistantMessageId = null;
     this.activeTurnTerminalAssistantMessage = null;
     this.activeTurnStarted = false;
+    this.outOfBandTurnStartAnnounced = false;
     this.activeTurnHasUserMessage = false;
     this.pendingClientMessages.length = 0;
     this.clearNoTurnBuffers();
@@ -1237,12 +1285,13 @@ export class OmpAgentSession implements AgentSession {
       if (!message) {
         return null;
       }
+      const streamingBehavior = commandName === "steer" ? "steer" : "followUp";
       return {
         run: async () => {
-          if (commandName === "steer") {
-            this.runtimeSession.steer(message);
+          if (!this.activeTurnId && !this.activeTurnStarted) {
+            await this.startPrompt({ prompt: message, streamingBehavior, announceTurn: true });
           } else {
-            this.runtimeSession.followUp(message);
+            await this.runtimeSession.prompt({ message, streamingBehavior });
           }
         },
       };
@@ -1407,30 +1456,24 @@ export class OmpAgentSession implements AgentSession {
     customInstructions: string | undefined,
     emit: (event: AgentStreamEvent) => void,
   ): Promise<void> {
-    if (this.outOfBandCompactionEmit) {
+    if (this.manualCompactionRunning) {
       throw new Error("An OMP compact command is already running");
     }
-    this.outOfBandCompactionEmit = emit;
-    this.outOfBandCompactionStarted = false;
-    this.outOfBandCompactionCompleted = false;
+    // OMP answers a manual compact with its RPC response alone, without
+    // compaction_start or compaction_end, so the request owns both rows.
+    this.manualCompactionRunning = true;
+    const emitCompaction = (status: "loading" | "completed") =>
+      emit({
+        type: "timeline",
+        provider: this.provider,
+        item: { type: "compaction", status, trigger: "manual" },
+      });
+    emitCompaction("loading");
     try {
       await this.runtimeSession.compact(customInstructions);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (
-        this.outOfBandCompactionEmit === emit &&
-        this.outOfBandCompactionStarted &&
-        !this.outOfBandCompactionCompleted
-      ) {
-        this.emitCompactionTimeline({
-          turnId: undefined,
-          item: {
-            type: "compaction",
-            status: "completed",
-            trigger: "manual",
-          },
-        });
-      }
+      emitCompaction("completed");
       emit({
         type: "timeline",
         provider: this.provider,
@@ -1439,13 +1482,12 @@ export class OmpAgentSession implements AgentSession {
           text: `[Error] Failed to compact context: ${message}`,
         },
       });
+      return;
     } finally {
-      if (this.outOfBandCompactionEmit === emit && !this.outOfBandCompactionStarted) {
-        this.outOfBandCompactionEmit = null;
-        this.outOfBandCompactionStarted = false;
-        this.outOfBandCompactionCompleted = false;
-      }
+      this.manualCompactionRunning = false;
     }
+    emitCompaction("completed");
+    await this.usagePoller.refresh();
   }
 
   private async executeAutoCompactCommand(
@@ -1813,11 +1855,11 @@ export class OmpAgentSession implements AgentSession {
       case "turn_start":
         this.activeTurnStarted = true;
         this.clearNoTurnBuffers();
-        this.emit({
-          type: "turn_started",
-          provider: this.provider,
-          turnId,
-        });
+        if (this.outOfBandTurnStartAnnounced) {
+          this.outOfBandTurnStartAnnounced = false;
+        } else {
+          this.emit({ type: "turn_started", provider: this.provider, turnId });
+        }
         return;
       case "message_start":
         this.handleMessageStart(event);
@@ -1853,24 +1895,8 @@ export class OmpAgentSession implements AgentSession {
         return;
       }
       case "compaction_start":
-        this.emitCompactionTimeline({
-          turnId,
-          item: {
-            type: "compaction",
-            status: "loading",
-            trigger: event.reason === "manual" ? "manual" : "auto",
-          },
-        });
-        return;
       case "compaction_end":
-        this.emitCompactionTimeline({
-          turnId,
-          item: {
-            type: "compaction",
-            status: "completed",
-            trigger: event.reason === "manual" ? "manual" : "auto",
-          },
-        });
+        this.handleCompactionEvent(event, turnId);
         return;
       case "agent_end": {
         const messages = event.messages ?? [];
@@ -1924,35 +1950,24 @@ export class OmpAgentSession implements AgentSession {
     }
   }
 
-  private emitCompactionTimeline(input: {
-    turnId: string | undefined;
-    item: Extract<AgentStreamEvent, { type: "timeline" }>["item"];
-  }): void {
-    const emitOutOfBand = this.outOfBandCompactionEmit;
-    if (emitOutOfBand && input.item.type === "compaction") {
-      if (input.item.status === "loading") {
-        this.outOfBandCompactionStarted = true;
-      }
-      if (input.item.status === "completed") {
-        this.outOfBandCompactionCompleted = true;
-      }
-    }
-    const event: AgentStreamEvent = {
-      type: "timeline",
-      provider: this.provider,
-      ...(emitOutOfBand ? {} : { turnId: input.turnId }),
-      item: input.item,
-    };
-    if (emitOutOfBand) {
-      emitOutOfBand(event);
-      if (input.item.type === "compaction" && input.item.status === "completed") {
-        this.outOfBandCompactionEmit = null;
-        this.outOfBandCompactionStarted = false;
-        this.outOfBandCompactionCompleted = false;
-      }
+  private handleCompactionEvent(
+    event: Extract<OmpAgentSessionEvent, { type: "compaction_start" | "compaction_end" }>,
+    turnId: string | undefined,
+  ): void {
+    // A manual compact emits its own rows around the request.
+    if (this.manualCompactionRunning) {
       return;
     }
-    this.emit(event);
+    this.emit({
+      type: "timeline",
+      provider: this.provider,
+      turnId,
+      item: {
+        type: "compaction",
+        status: event.type === "compaction_start" ? "loading" : "completed",
+        trigger: event.reason === "manual" ? "manual" : "auto",
+      },
+    });
   }
 
   private handleMessageUpdate(

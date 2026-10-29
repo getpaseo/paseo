@@ -103,6 +103,7 @@ function buildModelSelection(
 function buildEntryModelSelection(
   entry: ProviderSnapshotEntry,
   label: string,
+  isConnected: boolean,
 ): ProviderModelSelection {
   if ((entry.models?.length ?? 0) > 0) {
     return buildModelSelection(entry.provider, label, entry.models ?? null);
@@ -111,7 +112,9 @@ function buildEntryModelSelection(
     return buildModelSelection(entry.provider, label, entry.models ?? null);
   }
   if (entry.status === "loading") {
-    return { kind: "loading" };
+    return isConnected
+      ? { kind: "loading" }
+      : { kind: "error", message: i18n.t("providerSelection.readiness.hostDisconnected") };
   }
   return {
     kind: "error",
@@ -142,6 +145,7 @@ export function buildProviderSelectorProviders(input: {
 
 export function buildSelectableProviderSelectorProviders(
   entries: ProviderSnapshotEntry[] | undefined,
+  isConnected = true,
 ): ProviderSelectorProvider[] {
   return (entries ?? [])
     .filter((entry) => entry.enabled)
@@ -150,7 +154,7 @@ export function buildSelectableProviderSelectorProviders(
       return {
         id: entry.provider,
         label,
-        modelSelection: buildEntryModelSelection(entry, label),
+        modelSelection: buildEntryModelSelection(entry, label, isConnected),
       };
     });
 }
@@ -272,6 +276,23 @@ export function resolveEffectiveComposerModelId(selection: ProviderSelectionStat
   );
 }
 
+// The mode picker shows the first offered mode when the selected one isn't
+// offered (e.g. a remembered mode the provider no longer advertises), so the
+// submitted mode must match that display. A provider with no modes gets none.
+// While the provider is still loading its modes aren't known yet, so the
+// selected mode is kept.
+export function resolveEffectiveComposerModeId(
+  selection: ProviderSelectionState,
+  isModelLoading: boolean,
+): string {
+  const selectedModeId = selection.modeId.trim();
+  if (isModelLoading) {
+    return selectedModeId;
+  }
+  const modeIds = selection.modeOptions.map((mode) => mode.id);
+  return modeIds.includes(selectedModeId) ? selectedModeId : (modeIds[0] ?? "");
+}
+
 export function resolveEffectiveComposerThinkingOptionId(
   selection: ProviderSelectionState,
   effectiveModelId: string,
@@ -328,10 +349,13 @@ export function resolveSubmissionReadiness(input: {
   };
   autoSubmitConfig: { provider: string; model: string | null } | null;
   workspaceDirectory: string | null;
-  hasClient: boolean;
+  isConnected: boolean;
 }): ProviderSelectionReadiness {
   if (!input.allowsEmptyAutoSubmit && !input.text.trim()) {
     return { ok: false, reason: i18n.t("providerSelection.readiness.initialPromptRequired") };
+  }
+  if (!input.isConnected) {
+    return { ok: false, reason: i18n.t("providerSelection.readiness.hostDisconnected") };
   }
   if (input.providerCount === 0) {
     return { ok: false, reason: i18n.t("providerSelection.readiness.noProviders") };
@@ -348,9 +372,6 @@ export function resolveSubmissionReadiness(input: {
   }
   if (!input.workspaceDirectory) {
     return { ok: false, reason: i18n.t("providerSelection.readiness.workspaceDirectoryNotFound") };
-  }
-  if (!input.hasClient) {
-    return { ok: false, reason: i18n.t("providerSelection.readiness.hostDisconnected") };
   }
   return { ok: true };
 }

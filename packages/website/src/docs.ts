@@ -1,4 +1,7 @@
 import Slugger from "github-slugger";
+import { DEFAULT_LOCALE, type Locale, splitLocalePath, withLocalePrefix } from "~/i18n";
+import { splitAnchorId } from "~/docs-anchor-ids";
+import { groupTranslations, inLocale, parseFrontmatter } from "~/markdown-content";
 
 interface DocFrontmatter {
   title: string;
@@ -16,8 +19,12 @@ export interface DocHeading {
 
 export interface Doc {
   slug: string;
+  /** The language-neutral page path; localize it for the reader's language. */
   href: string;
+  /** The file this doc's content comes from, such as `public-docs/cli.zh-CN.md`. */
   sourcePath: string;
+  /** The language `content` is written in; English when the requested language has no translation. */
+  locale: Locale;
   frontmatter: DocFrontmatter;
   content: string;
   headings: DocHeading[];
@@ -47,25 +54,6 @@ export type DocsNavNode =
       order: number;
     };
 
-function parseFrontmatter(raw: string): { data: Record<string, string>; content: string } {
-  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!match) return { data: {}, content: raw };
-
-  const data: Record<string, string> = {};
-  for (const line of match[1].split("\n")) {
-    const colonIdx = line.indexOf(":");
-    if (colonIdx === -1) continue;
-    const key = line.slice(0, colonIdx).trim();
-    const value = line
-      .slice(colonIdx + 1)
-      .trim()
-      .replace(/^["']|["']$/g, "");
-    data[key] = value;
-  }
-
-  return { data, content: match[2] };
-}
-
 function stripInlineMarkdown(text: string): string {
   return text
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
@@ -77,7 +65,7 @@ function stripInlineMarkdown(text: string): string {
     .trim();
 }
 
-function parseHeadings(content: string): DocHeading[] {
+export function parseHeadings(content: string): DocHeading[] {
   const slugger = new Slugger();
   const headings: DocHeading[] = [];
   const regex = /^(#{1,6})\s+(.+)$/gm;
@@ -87,13 +75,14 @@ function parseHeadings(content: string): DocHeading[] {
     const depth = match[1].length;
     if (depth < 2 || depth > 4) continue;
 
-    const text = stripInlineMarkdown(match[2].trim());
+    const heading = splitAnchorId(match[2].trim());
+    const text = stripInlineMarkdown(heading.text);
     if (!text) continue;
 
     headings.push({
       depth,
       text,
-      id: slugger.slug(text),
+      id: heading.id ?? slugger.slug(text),
     });
   }
 
@@ -114,28 +103,38 @@ function pathToSlug(path: string): string {
 }
 
 function pathToSourcePath(path: string): string {
-  return path.split("/public-docs/")[1] ?? path;
+  return `public-docs/${path.split("/public-docs/")[1] ?? path}`;
 }
 
-function loadDocs(): Doc[] {
+const docTranslations = groupTranslations(docModules);
+
+function loadDocs(locale: Locale): Doc[] {
   const docs: Doc[] = [];
 
-  for (const [path, raw] of Object.entries(docModules)) {
+  for (const group of docTranslations) {
+    const { raw, locale: contentLocale } = inLocale(group, locale);
     const { data, content } = parseFrontmatter(raw);
-    const slug = pathToSlug(path);
+    // Where a doc sits in the navigation is the English original's decision in every language.
+    const structure = parseFrontmatter(group.sources.en).data;
+    const slug = pathToSlug(group.path);
     const href = slug === "" ? "/docs" : `/docs/${slug}`;
-    const order = Number.parseInt(data.order ?? "999", 10);
+    const order = Number.parseInt(structure.order ?? "999", 10);
+    const sourcePath = pathToSourcePath(group.path);
 
     docs.push({
       slug,
       href,
-      sourcePath: `public-docs/${pathToSourcePath(path)}`,
+      sourcePath:
+        contentLocale === DEFAULT_LOCALE
+          ? sourcePath
+          : sourcePath.replace(/\.md$/, `.${contentLocale}.md`),
+      locale: contentLocale,
       frontmatter: {
         title: data.title ?? "",
         description: data.description ?? "",
         nav: data.nav ?? data.title ?? slug,
         order: Number.isFinite(order) ? order : 999,
-        category: data.category,
+        category: structure.category,
       },
       content,
       headings: parseHeadings(content),
@@ -146,15 +145,20 @@ function loadDocs(): Doc[] {
   return docs;
 }
 
-let cached: Doc[] | undefined;
+const cached = new Map<Locale, Doc[]>();
 
-export function getDocs(): Doc[] {
-  if (!cached) cached = loadDocs();
-  return cached;
+/** Every doc in a language, each in English where it has no translation yet. */
+export function getDocs(locale: Locale): Doc[] {
+  let docs = cached.get(locale);
+  if (!docs) {
+    docs = loadDocs(locale);
+    cached.set(locale, docs);
+  }
+  return docs;
 }
 
-export function getDoc(slug: string): Doc | undefined {
-  return getDocs().find((d) => d.slug === slug);
+export function getDoc(slug: string, locale: Locale): Doc | undefined {
+  return getDocs(locale).find((d) => d.slug === slug);
 }
 
 export function getLegacyDocsRedirect(pathname: string): string | undefined {
@@ -173,8 +177,10 @@ function formatLabel(segment: string): string {
 }
 
 function insertDocByPath(nodes: DocsNavNode[], doc: Doc, stripTopDirectory = false): void {
-  const relative = doc.sourcePath.replace(/^public-docs\//, "");
-  const segments = relative.replace(/\.md$/, "").split("/");
+  const relative = doc.sourcePath
+    .replace(/^public-docs\//, "")
+    .replace(doc.locale === DEFAULT_LOCALE ? ".md" : `.${doc.locale}.md`, "");
+  const segments = relative.split("/");
   const fileName = segments.pop() ?? "";
   const directories = segments;
 
@@ -310,4 +316,20 @@ export function getDocBreadcrumbGroups(doc: Doc, tree: DocsNavNode[]): { label: 
     .slice(0, -1)
     .filter((node): node is Extract<DocsNavNode, { type: "group" }> => node.type === "group")
     .map((node) => ({ label: node.label }));
+}
+
+/** The raw Markdown URL of a doc, in the language its content is written in. */
+export function docMarkdownPath(doc: Doc): string {
+  return withLocalePrefix(doc.slug === "" ? "/docs.md" : `/docs/${doc.slug}.md`, doc.locale);
+}
+
+/**
+ * Resolves a raw Markdown URL such as `/docs/cli.md` or `/zh-CN/docs/cli.md`. Returns null when the
+ * URL is not a docs Markdown URL, and `{ doc: undefined }` when it names no doc.
+ */
+export function resolveDocMarkdownPath(pathname: string): { doc: Doc | undefined } | null {
+  const { locale, path } = splitLocalePath(pathname);
+  if (path === "/docs.md") return { doc: getDoc("", locale) };
+  const match = /^\/docs\/(.+)\.md$/.exec(path);
+  return match ? { doc: getDoc(match[1], locale) } : null;
 }

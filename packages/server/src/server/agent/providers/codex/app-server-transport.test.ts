@@ -22,6 +22,44 @@ describe("Codex app-server transport", () => {
     child.stdin.end();
   });
 
+  test("keeps a JSON message intact when it contains raw U+2028/U+2029", async () => {
+    const child = createCodexAppServerChildProcess();
+    const client = new CodexAppServerClient(child, createTestLogger());
+
+    const request = client.request("thread/resume", {});
+    const text = "a\u2028b\u2029c\u0085d";
+    // Codex does not escape U+2028/U+2029 in JSON output, so write them raw.
+    const message = `{"id":1,"result":{"text":"${text}"}}\n`;
+    const bytes = Buffer.from(message, "utf8");
+    // Split mid-way (inside a multi-byte character) to exercise chunk boundaries.
+    child.stdout.write(bytes.subarray(0, 28));
+    child.stdout.write(bytes.subarray(28));
+
+    await expect(request).resolves.toEqual({ text });
+    child.stdout.end();
+    child.stderr.end();
+    child.stdin.end();
+  });
+
+  test("reads a multi-megabyte JSON message arriving in 64 KB chunks", async () => {
+    const child = createCodexAppServerChildProcess();
+    const client = new CodexAppServerClient(child, createTestLogger());
+
+    const request = client.request("thread/resume", {});
+    // A resumed long thread arrives as one large line, split into 64 KB stdout chunks.
+    const text = "x".repeat(32 * 1024 * 1024);
+    const bytes = Buffer.from(`{"id":1,"result":{"text":"${text}"}}\n`, "utf8");
+    const chunkSize = 64 * 1024;
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      child.stdout.write(bytes.subarray(offset, offset + chunkSize));
+    }
+
+    await expect(request).resolves.toEqual({ text });
+    child.stdout.end();
+    child.stderr.end();
+    child.stdin.end();
+  });
+
   test("dispose rejects pending requests instead of leaving them hanging", async () => {
     const child = createCodexAppServerChildProcess();
     const client = new CodexAppServerClient(child, createTestLogger());
@@ -143,5 +181,31 @@ describe("Codex app-server transport", () => {
     codex.child.stdout.end();
     codex.child.stderr.end();
     codex.child.stdin.end();
+  });
+});
+
+describe("Codex stdout byte admission", () => {
+  test("fails pending requests and the session before joining an oversized line", async () => {
+    const child = createCodexAppServerChildProcess();
+    const client = new CodexAppServerClient(child, createTestLogger());
+    const terminations: Error[] = [];
+    client.setUnexpectedTerminationHandler((error) => terminations.push(error));
+    const request = client.request("thread/resume", {}, 1000).catch((error: Error) => error);
+    const chunk = Buffer.alloc(64 * 1024, "x");
+    child.stdout.write('{"id":1,"result":"');
+    for (let index = 0; index < 2048; index++) child.stdout.write(chunk);
+    const error = await request;
+    expect(error).toMatchObject({
+      name: "ProviderStreamLimitError",
+      code: "PROVIDER_STREAM_LINE_TOO_LARGE",
+      limitBytes: 128 * 1024 * 1024,
+    });
+    expect(terminations).toEqual([error]);
+    expect(client.hasPendingRequests()).toBe(false);
+    child.stdout.write('"}\n{"id":1,"result":"late"}\n');
+    await expect(client.request("model/list")).rejects.toThrow("closed");
+    await client.dispose();
+    child.stdout.end();
+    child.stderr.end();
   });
 });

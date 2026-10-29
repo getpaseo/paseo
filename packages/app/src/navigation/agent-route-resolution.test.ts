@@ -5,6 +5,8 @@ const VALID_ROUTE = {
   serverId: "server-1",
   agentId: "agent-1",
   cachedWorkspaceId: null,
+  hasHydratedWorkspaces: true,
+  hasHydratedLayout: true,
 } as const;
 
 describe("resolveAgentRoute", () => {
@@ -31,6 +33,20 @@ describe("resolveAgentRoute", () => {
       ).toEqual({ kind: "waitingForHost", connectionStatus });
     },
   );
+
+  it.each([
+    { hasHydratedWorkspaces: false, hasHydratedLayout: true },
+    { hasHydratedWorkspaces: true, hasHydratedLayout: false },
+  ])("waits for workspace and layout hydration: %j", (hydration) => {
+    expect(
+      resolveAgentRoute({
+        ...VALID_ROUTE,
+        ...hydration,
+        connectionStatus: "online",
+        lookup: { kind: "found", workspaceId: "workspace-2" },
+      }),
+    ).toEqual({ kind: "fetchingAgent" });
+  });
 
   it("fetches the agent after its target host connects", () => {
     expect(

@@ -1,9 +1,14 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import readline from "node:readline";
 import type { Logger } from "pino";
 import { z } from "zod";
 
 import { terminateWithTreeKill } from "../../../../utils/tree-kill.js";
+
+import { ProviderLineReader, ProviderStreamLimitError } from "../jsonl-frame-decoder.js";
+
+// A measured long-thread resume was 19.75 MB; preserve the existing 32 MiB fixture
+// with 4x margin for longer threads. This is provider stdout, not the client protocol.
+export const CODEX_PROVIDER_LINE_BYTES = 128 * 1024 * 1024;
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 const APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
@@ -168,7 +173,8 @@ function readProviderTurnId(params: unknown): string | undefined {
 }
 
 export class CodexAppServerClient {
-  private readonly rl: readline.Interface;
+  private readonly stdoutLineReader: { close(): void };
+  private activeProviderRequests = 0;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly requestHandlers = new Map<string, RequestHandler>();
   private notificationHandler: NotificationHandler | null = null;
@@ -182,12 +188,24 @@ export class CodexAppServerClient {
     private readonly logger: Logger,
     private readonly getTraceContext: () => CodexAppServerTraceContext = () => ({}),
   ) {
-    this.rl = readline.createInterface({ input: child.stdout });
-    this.rl.on("line", (line) => {
-      void this.handleLine(line).catch((error) => {
-        this.logger.warn({ error, line }, "Failed to handle Codex app-server stdout line");
-      });
-    });
+    // Split only on LF: U+2028/U+2029 are valid raw characters inside Codex JSON.
+    const reader = new ProviderLineReader(
+      CODEX_PROVIDER_LINE_BYTES,
+      (line) => {
+        void this.handleLine(line).catch((error) => {
+          this.logger.warn({ error, line }, "Failed to handle Codex app-server stdout line");
+        });
+      },
+      (error) => this.handleStreamLimit(error),
+    );
+    const onData = (chunk: Buffer | string) => reader.write(chunk);
+    child.stdout.on("data", onData);
+    this.stdoutLineReader = {
+      close: () => {
+        reader.close();
+        child.stdout.off("data", onData);
+      },
+    };
 
     child.stderr.on("data", (chunk) => {
       this.stderrBuffer += chunk.toString();
@@ -221,6 +239,10 @@ export class CodexAppServerClient {
 
   setRequestHandler(method: string, handler: RequestHandler): void {
     this.requestHandlers.set(method, handler);
+  }
+
+  hasPendingRequests(): boolean {
+    return this.pending.size > 0 || this.activeProviderRequests > 0;
   }
 
   request(method: string, params?: unknown, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<unknown> {
@@ -259,7 +281,7 @@ export class CodexAppServerClient {
   async dispose(): Promise<void> {
     this.disposed = true;
     this.unexpectedTerminationHandler = null;
-    this.rl.close();
+    this.stdoutLineReader.close();
     this.rejectPending(new Error("Codex app-server client is closed"));
     try {
       this.child.stdin.end();
@@ -281,12 +303,21 @@ export class CodexAppServerClient {
     }
   }
 
+  private handleStreamLimit(failure: ProviderStreamLimitError): void {
+    // A rejected response/notification cannot be replayed safely. Fail the session,
+    // including live turns with no pending RPC, rather than dropping a stream unit.
+    this.handleUnexpectedTermination(failure);
+    void this.dispose().catch((err) => {
+      this.logger.warn({ err }, "Failed to terminate oversized Codex stdout producer");
+    });
+  }
+
   private handleUnexpectedTermination(error: Error): void {
     if (this.disposed) {
       return;
     }
     this.disposed = true;
-    this.rl.close();
+    this.stdoutLineReader.close();
     this.rejectPending(error);
     const handler = this.unexpectedTerminationHandler;
     this.unexpectedTerminationHandler = null;
@@ -360,6 +391,7 @@ export class CodexAppServerClient {
         this.traceRawEvent(request);
         const handler = this.requestHandlers.get(request.method);
         try {
+          this.activeProviderRequests++;
           const result = handler ? await handler(request.params, request.id) : {};
           this.writeJsonRpcResponse({ id: request.id, result });
         } catch (error) {
@@ -367,6 +399,8 @@ export class CodexAppServerClient {
             id: request.id,
             error: { message: error instanceof Error ? error.message : String(error) },
           });
+        } finally {
+          this.activeProviderRequests--;
         }
         return;
       }
