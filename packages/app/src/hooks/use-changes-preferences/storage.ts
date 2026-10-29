@@ -6,7 +6,7 @@ export const CHANGES_PREFERENCES_STORAGE_KEY = "@paseo:changes-preferences";
 export const LEGACY_WRAP_LINES_STORAGE_KEY = "diff-wrap-lines";
 export const CHANGES_PREFERENCES_QUERY_KEY = ["changes-preferences"];
 
-const changesPreferencesSchema = z.strictObject({
+export const changesPreferencesSchema = z.strictObject({
   layout: z.enum(["unified", "split"]).optional(),
   desktopTreeVisible: z.boolean().optional(),
   // Read the former overloaded preference once so existing installations keep their desktop tree.

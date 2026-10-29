@@ -30,6 +30,7 @@ const SECTION_LABELS = {
   shortcuts: "Shortcuts",
   integrations: "Integrations",
   permissions: "Permissions",
+  backup: "Backup",
   diagnostics: "Diagnostics",
   about: "About",
 } as const;

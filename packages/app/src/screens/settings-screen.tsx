@@ -43,6 +43,7 @@ import {
   PanelLeft,
   MessageSquare,
   ChevronRight,
+  ArchiveRestore,
 } from "lucide-react-native";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
@@ -81,6 +82,7 @@ import { PairLinkModal } from "@/components/pair-link-modal";
 import { KeyboardShortcutsSection } from "@/screens/settings/keyboard-shortcuts-section";
 import { EditorSection } from "@/screens/settings/editor-section";
 import { FilesSection } from "@/screens/settings/files-section";
+import { BackupSection } from "@/screens/settings/backup-section";
 import { Button } from "@/components/ui/button";
 import { CommunityLinks } from "@/components/community-links";
 import { SegmentedControl } from "@/components/ui/segmented-control";
@@ -224,6 +226,12 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
     icon: Shield,
     desktopOnly: true,
     Content: DesktopPermissionsSection,
+  },
+  {
+    id: "backup",
+    labelKey: "settings.sections.backup",
+    icon: ArchiveRestore,
+    Content: BackupSection,
   },
   { id: "diagnostics", labelKey: "settings.sections.diagnostics", icon: Stethoscope },
   { id: "about", labelKey: "settings.sections.about", icon: Info },

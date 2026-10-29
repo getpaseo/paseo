@@ -110,6 +110,27 @@ describe("createShortcutOverrideStore", () => {
     expect(h.errors).toHaveLength(1);
   });
 
+  it("replaces the whole map with an imported one, keeping unassigned entries", async () => {
+    const h = createHarness({ seed: { "new-workspace": "Mod+1", "close-tab": "Mod+W" } });
+
+    await h.store.replaceAll({ "new-workspace": "Mod+2", "toggle-sidebar": null });
+
+    expect(h.cached()).toEqual({ "new-workspace": "Mod+2", "toggle-sidebar": null });
+    expect(h.persisted()).toEqual({ "new-workspace": "Mod+2", "toggle-sidebar": null });
+  });
+
+  it("restores the previous map and rejects when an imported map cannot be saved", async () => {
+    const h = createHarness({ seed: { "new-workspace": "Mod+1" }, failWrites: [1] });
+
+    await expect(h.store.replaceAll({ "new-workspace": "Mod+2" })).rejects.toThrow(
+      "storage unavailable",
+    );
+
+    expect(h.cached()).toEqual({ "new-workspace": "Mod+1" });
+    expect(h.persisted()).toEqual({ "new-workspace": "Mod+1" });
+    expect(h.errors).toHaveLength(1);
+  });
+
   it("drops the whole map on reset", async () => {
     const h = createHarness({ seed: { "new-workspace": "Mod+1" } });
 
