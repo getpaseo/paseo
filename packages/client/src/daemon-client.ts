@@ -148,6 +148,7 @@ import type {
 } from "@getpaseo/protocol/agent-types";
 import type {
   AgentConfigApply,
+  AgentInstructionsUpdate,
   MutableDaemonConfig,
   MutableDaemonConfigPatch,
 } from "@getpaseo/protocol/messages";
@@ -902,6 +903,7 @@ export interface CreateScheduleOptions {
           isolation?: "local" | "worktree";
           title?: string | null;
           providerOptions?: AgentSessionConfig["providerOptions"];
+          featureValues?: AgentSessionConfig["featureValues"];
           systemPrompt?: string;
           mcpServers?: AgentSessionConfig["mcpServers"];
         };
@@ -4030,6 +4032,28 @@ export class DaemonClient {
     if (!payload.accepted) {
       throw new Error(payload.error ?? "setAgentFeature rejected");
     }
+  }
+
+  async updateAgentInstructions(
+    agentId: string,
+    instructions: AgentInstructionsUpdate,
+  ): Promise<AgentSnapshotPayload> {
+    // COMPAT(agentInstructionsUpdate): added 2026-10-28; remove after 2027-04-28 once the daemon floor supports it.
+    if (this.getLastServerInfoMessage()?.features?.agentInstructionsUpdate !== true) {
+      throw Object.assign(new Error("Update the host to update agent instructions."), {
+        code: "unsupported_capability",
+      });
+    }
+    const payload = await this.sendCorrelatedSessionRequest({
+      message: { type: "agent.update_instructions.request", agentId, ...instructions },
+      responseType: "agent.update_instructions.response",
+    });
+    if (!payload.accepted || !payload.agent) {
+      throw Object.assign(new Error(payload.error ?? "Instruction update rejected"), {
+        code: payload.code ?? "update_failed",
+      });
+    }
+    return payload.agent;
   }
 
   async setAgentThinkingOption(

@@ -271,6 +271,7 @@ test("createPaseoApi borrows daemon capabilities without exposing connection own
     "observeEvents",
     "projects",
     "providers",
+    "schedules",
     "terminals",
     "workspaces",
   ]);
@@ -307,6 +308,202 @@ test("agent handles send permission responses for their agent", async () => {
     },
   });
 
+  await client.close();
+});
+
+test("agent settings preserve provider notices and reject unsupported changes", async () => {
+  const { client, ws } = await connectClient();
+  const agent = client.agents.ref("agent_sdk");
+  const model = agent.setModel(null);
+  const modelRequest = parseSentSessionMessage(ws.sent.at(-1));
+  expect(modelRequest).toMatchObject({
+    type: "set_agent_model_request",
+    agentId: agent.id,
+    modelId: null,
+  });
+  ws.message(
+    sessionMessage({
+      type: "set_agent_model_response",
+      payload: {
+        requestId: modelRequest.requestId,
+        agentId: agent.id,
+        accepted: true,
+        error: null,
+      },
+    }),
+  );
+  await expect(model).resolves.toBeUndefined();
+
+  const thinking = agent.setThinkingOption("high");
+  const thinkingRequest = parseSentSessionMessage(ws.sent.at(-1));
+  expect(thinkingRequest).toMatchObject({
+    type: "set_agent_thinking_request",
+    agentId: agent.id,
+    thinkingOptionId: "high",
+  });
+  const notice = { type: "info", message: "Applied on the next turn" };
+  ws.message(
+    sessionMessage({
+      type: "set_agent_thinking_response",
+      payload: {
+        requestId: thinkingRequest.requestId,
+        agentId: agent.id,
+        accepted: true,
+        error: null,
+        notice,
+      },
+    }),
+  );
+  await expect(thinking).resolves.toEqual(notice);
+
+  const feature = agent.setFeature("fastMode", true);
+  const featureRequest = parseSentSessionMessage(ws.sent.at(-1));
+  expect(featureRequest).toMatchObject({
+    type: "set_agent_feature_request",
+    agentId: agent.id,
+    featureId: "fastMode",
+    value: true,
+  });
+  ws.message(
+    sessionMessage({
+      type: "set_agent_feature_response",
+      payload: {
+        requestId: featureRequest.requestId,
+        agentId: agent.id,
+        accepted: false,
+        error: "Feature unavailable",
+      },
+    }),
+  );
+  await expect(feature).rejects.toThrow("Feature unavailable");
+  expect(agent.current()).toBeNull();
+  await client.close();
+});
+
+test("instruction updates require host support before sending a request", async () => {
+  const { client, ws } = await connectClient();
+  const sent = ws.sent.length;
+  await expect(
+    client.agents.ref("agent_sdk").updateInstructions({ systemPrompt: "New" }),
+  ).rejects.toMatchObject({ code: "unsupported_capability" });
+  expect(ws.sent).toHaveLength(sent);
+  await client.close();
+});
+
+test("instruction updates refresh the handle only on an accepted response", async () => {
+  const { client, ws } = await connectClient({ agentInstructionsUpdate: true });
+  const before = createAgent();
+  const agent = client.agents.ref(before);
+  const failed = agent.updateInstructions({ systemPrompt: "New", mcpServers: {} });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "agent.update_instructions.request",
+    agentId: agent.id,
+    systemPrompt: "New",
+    mcpServers: {},
+  });
+  ws.message(
+    sessionMessage({
+      type: "agent.update_instructions.response",
+      payload: {
+        requestId: request.requestId,
+        agentId: agent.id,
+        accepted: false,
+        agent: null,
+        error: "Agent is busy",
+        code: "busy",
+      },
+    }),
+  );
+  await expect(failed).rejects.toMatchObject({ code: "busy", message: "Agent is busy" });
+  expect(agent.current()).toBe(before);
+
+  const updated = createAgent({ updatedAt: "2026-10-28T12:00:00.000Z" });
+  const success = agent.updateInstructions({ systemPrompt: "New" });
+  const nextRequest = parseSentSessionMessage(ws.sent.at(-1));
+  expect(nextRequest).not.toHaveProperty("mcpServers");
+  ws.message(
+    sessionMessage({
+      type: "agent.update_instructions.response",
+      payload: {
+        requestId: nextRequest.requestId,
+        agentId: agent.id,
+        accepted: true,
+        agent: updated,
+        error: null,
+      },
+    }),
+  );
+  await expect(success).resolves.toEqual(updated);
+  expect(agent.current()).toEqual(updated);
+  await client.close();
+});
+
+test("schedule actions retain new-agent configuration and daemon errors", async () => {
+  const { client, ws } = await connectClient();
+  const target = {
+    type: "new-agent" as const,
+    config: {
+      provider: "codex",
+      cwd: "/project",
+      systemPrompt: "Review the project",
+      featureValues: { fastMode: true },
+      mcpServers: { local: { type: "stdio" as const, command: "node", args: ["server.js"] } },
+    },
+  };
+  const create = client.schedules.create({
+    prompt: "Review changes",
+    cadence: { type: "cron", expression: "0 9 * * *" },
+    target,
+    requestId: "schedule-create",
+  });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "schedule/create",
+    requestId: "schedule-create",
+    target,
+  });
+  ws.message(
+    sessionMessage({
+      type: "schedule/create/response",
+      payload: {
+        requestId: "schedule-create",
+        schedule: null,
+        error: "Invalid cron timezone",
+      },
+    }),
+  );
+  await expect(create).resolves.toEqual({
+    requestId: "schedule-create",
+    schedule: null,
+    error: "Invalid cron timezone",
+  });
+
+  const update = client.schedules.update({
+    id: "schedule-1",
+    name: null,
+    maxRuns: null,
+    newAgentConfig: { thinkingOptionId: null },
+    requestId: "schedule-update",
+  });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "schedule/update",
+    scheduleId: "schedule-1",
+    name: null,
+    maxRuns: null,
+    newAgentConfig: { thinkingOptionId: null },
+    requestId: "schedule-update",
+  });
+  ws.message(
+    sessionMessage({
+      type: "schedule/update/response",
+      payload: {
+        requestId: "schedule-update",
+        schedule: null,
+        error: "Schedule not found",
+      },
+    }),
+  );
+  await expect(update).resolves.toMatchObject({ error: "Schedule not found" });
   await client.close();
 });
 

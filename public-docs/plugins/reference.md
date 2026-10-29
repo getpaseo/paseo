@@ -730,15 +730,17 @@ of its items, else the first host.
 
 `Component` receives `PluginSidebarItemProps`:
 
-| Field                     | Meaning                                                                                       |
-| ------------------------- | --------------------------------------------------------------------------------------------- |
-| `theme`, `host`, `layout` | As in `PluginScreenProps`.                                                                    |
-| `currentScreen`           | `{ screenId, params }` of this plugin's screen open on the item's host, or `null`.            |
-| `openScreen(input)`       | Opens one of this plugin's screens: `{ screenId, params? }`. Unknown screen IDs throw.        |
-| `openPopover(Content)`    | Opens `Content` anchored to the pressed row on wide layouts and as a bottom sheet on compact. |
+| Field                     | Meaning                                                                                                                  |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `theme`, `host`, `layout` | As in `PluginScreenProps`.                                                                                               |
+| `navigation`              | Optional navigation as in `PluginScreenProps`, scoped to the host rendering this item unless `serverId` is supplied.     |
+| `currentScreen`           | `{ screenId, params }` of this plugin's screen open on the item's host, or `null`.                                       |
+| `currentAgentId?`         | The focused native Agent ID on this item's host; `null` on other pages or non-Agent tabs. Older clients omit this field. |
+| `openScreen(input)`       | Opens one of this plugin's screens: `{ screenId, params? }`. Unknown screen IDs throw.                                   |
+| `openPopover(Content)`    | Opens `Content` anchored to the pressed row on wide layouts and as a bottom sheet on compact.                            |
 
-`Content` receives `theme`, `host`, `layout`, `close()`, and `openScreen(input)`. Opening a screen
-closes the popover.
+`Content` receives `theme`, `host`, `layout`, `navigation`, `close()`, and `openScreen(input)`.
+Opening a plugin screen, agent, workspace, or browser closes the popover and dismisses the compact sidebar.
 
 Render the item with the sidebar kit from `@getpaseo/plugin/client/ui`:
 

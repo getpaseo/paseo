@@ -83,6 +83,20 @@ console.log(result.lastMessage);
 
 `ref()` 不会联系 daemon。当你需要知道 Agent 是否仍然存在时，先调用 `refresh()`；如果不存在，它返回 `null`。
 
+## 更新会话指令 {#update-session-instructions}
+
+在会话空闲时更新长期角色指令，不需要换一个 Agent 或重新发送历史：
+
+```ts
+const snapshot = await agent.updateInstructions({
+  systemPrompt: "You review checkout changes. Explain risks before suggesting edits.",
+  // 省略 mcpServers 保留当前工具配置。
+});
+console.log(snapshot.id);
+```
+
+等待调用成功后再把应用中的角色设置标为“已应用”。daemon 会保留同一持久会话和时间线，拒绝正在运行、等待权限或仍有活动子 Agent 的情况，不会自动打断它们。此操作会重启 Provider 运行时，不能保证保留 Provider 未报告的后台任务。失败原因和恢复方式见[API 参考](./reference.md#agent-handle)。
+
 ## 创建子 Agent {#create-a-subagent}
 
 通过工作区创建子 Agent。句柄负责位置，因此调用方无需重复提供目录：

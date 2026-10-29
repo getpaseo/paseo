@@ -78,7 +78,7 @@ test.each(["React Native", "native"])(
   },
 );
 
-test("plugin handlers create workspaces and agents through their Paseo API", async () => {
+test("plugin handlers manage agents and persistent schedules through their Paseo API", async () => {
   const pluginDirectory = await mkdtemp(path.join(tmpdir(), "paseo-api-plugin-"));
   const workspaceDirectory = await mkdtemp(path.join(tmpdir(), "paseo-api-workspace-"));
   roots.push(pluginDirectory, workspaceDirectory);
@@ -113,6 +113,12 @@ const append = defineRpc({
   output: z.object({ seq: z.number(), epoch: z.string() }),
 });
 
+const configure = defineRpc({
+  name: "configure",
+  input: z.object({ agentId: z.string() }),
+  output: z.object({ scheduleId: z.string(), model: z.string(), feature: z.boolean(), runStatus: z.string() }),
+});
+
 export default function contribute(server: PluginServerContext) {
   server.handle(create, async ({ path }, { paseo }) => {
     const workspace = await paseo.workspaces.create({
@@ -138,12 +144,48 @@ export default function contribute(server: PluginServerContext) {
       data: { status },
     }),
   );
+  server.handle(configure, async ({ agentId }, { paseo }) => {
+    const agent = paseo.agents.ref(agentId);
+    await agent.waitForFinish();
+    await agent.setModel("test-model");
+    await agent.setThinkingOption(null);
+    await agent.setFeature("test_feature", true);
+    await agent.updateInstructions({ systemPrompt: "Plugin personality", mcpServers: {} });
+    const snapshot = await agent.refresh();
+    const created = await paseo.schedules.create({
+      name: "Plugin review", prompt: "Scheduled by a plugin handler",
+      cadence: { type: "cron", expression: "0 0 1 1 *", timezone: "UTC" },
+      target: { type: "agent", agentId },
+    });
+    if (created.error || !created.schedule) throw new Error(created.error ?? "Missing schedule");
+    const options = { id: created.schedule.id };
+    const paused = await paseo.schedules.pause(options);
+    if (paused.error) throw new Error(paused.error);
+    const updated = await paseo.schedules.update({ ...options, name: "Updated review" });
+    if (updated.error) throw new Error(updated.error);
+    const run = await paseo.schedules.runOnce(options);
+    if (run.error) throw new Error(run.error);
+    const logs = await paseo.schedules.logs(options);
+    if (logs.error) throw new Error(logs.error);
+    return {
+      scheduleId: options.id,
+      model: snapshot.agent.model,
+      feature: snapshot.agent.features.find((feature) => feature.id === "test_feature").value,
+      runStatus: logs.runs[0].status,
+    };
+  });
   return () => undefined;
 }`,
   );
 
+  const turnConfigs: Array<{ systemPrompt?: string }> = [];
   const daemon = await createTestPaseoDaemon({
-    agentClients: { ...createTestAgentClients(), pi: createTestAgentClient("pi") },
+    agentClients: {
+      ...createTestAgentClients(),
+      pi: createTestAgentClient("pi", {
+        onStartTurn: (_prompt, config) => turnConfigs.push(config),
+      }),
+    },
   });
   const client = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,
@@ -189,7 +231,24 @@ export default function contribute(server: PluginServerContext) {
         }),
       }),
     ]);
+    const configured = await client.invokePluginRpc("paseo-api", "configure", { agentId });
+    expect(configured).toEqual({
+      scheduleId: expect.any(String),
+      model: "test-model",
+      feature: true,
+      runStatus: "succeeded",
+    });
+    expect(turnConfigs.at(-1)?.systemPrompt).toBe("Plugin personality");
     await client.removePlugin("paseo-api");
+    const schedules = await client.scheduleList();
+    expect(schedules.error).toBeNull();
+    expect(schedules.schedules).toEqual([
+      expect.objectContaining({
+        name: "Updated review",
+        status: "paused",
+        target: { type: "agent", agentId },
+      }),
+    ]);
     const workspaces = await client.fetchWorkspaces();
     const agents = await client.fetchAgents();
     expect(workspaces.entries.map((workspace) => workspace.id)).toContain(

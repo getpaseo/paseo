@@ -103,6 +103,25 @@ work is gone. Report that exit as a turn failure so the agent lands in `error` w
 Claude and OMP report exits between turns. OMP relaunches from its session file on the next prompt;
 the unfinished turn is lost.
 
+### Instruction updates
+
+`agent.update_instructions.request` resumes an idle durable session with a replacement system prompt
+and optional MCP configuration. The manager keeps the canonical ID, timeline epoch, workspace, and
+labels. It uses the lifecycle lane plus an admission reservation: foreground work, permissions,
+provider-reported subagents, active external descendants, and child session opens prevent the
+update; new turns, provider commands, settings, and descendant opens cannot enter while it runs.
+Stored parent relationships include closed intermediary agents. Provider events are drained and
+readiness is rechecked immediately before closing the old runtime. The same optional Provider
+`canStopRuntime()` veto used by automatic cleanup protects background work; false, errors, and
+timeouts reject the update. Automatic cleanup cannot collect a reserved descendant. Open hooks
+that replace plugin tools run only after the old runtime acknowledges closure. Provider-private
+background work without observable activity is outside this guarantee.
+
+Close, resume, and registration failures reject the request and retain the old configuration for
+recovery. A runtime whose close failed or whose registration only partially completed stays fenced
+from new work until retry or Reload releases it safely. A successful response follows replacement
+registration and persistence; it never means only that a desired prompt was saved.
+
 ### Cancellation
 
 Provider interruption is idempotent at the `AgentSession` boundary. It resolves when the prior

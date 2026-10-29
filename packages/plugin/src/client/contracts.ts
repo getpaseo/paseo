@@ -70,12 +70,14 @@ export interface PluginScreenProps extends PluginSurfaceProps {
   params: PluginScreenParams;
 }
 
-export interface PluginPopoverProps extends PluginHostProps {
+export interface PluginPopoverProps extends PluginNavigableHostProps {
   close(): void;
   openScreen(input: PluginOpenScreenInput): void;
 }
 
-export interface PluginSidebarItemProps extends PluginHostProps {
+export interface PluginSidebarItemProps extends PluginNavigableHostProps {
+  /** Focused native agent on this item's host, else null; absent on older clients. */
+  currentAgentId?: string | null;
   /** This plugin's screen open on this item's host, with its params, else null. */
   currentScreen: PluginScreenLocation | null;
   openScreen(input: PluginOpenScreenInput): void;

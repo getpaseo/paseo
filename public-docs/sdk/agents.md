@@ -85,6 +85,20 @@ console.log(result.lastMessage);
 
 `ref()` does not contact the daemon. Call `refresh()` first when you need to know whether the agent still exists; it returns `null` if it does not.
 
+## Update session instructions
+
+Update long-lived role instructions while the conversation is idle, without replacing the Agent or resending its history:
+
+```ts
+const snapshot = await agent.updateInstructions({
+  systemPrompt: "You review checkout changes. Explain risks before suggesting edits.",
+  // Omit mcpServers to preserve the current tool configuration.
+});
+console.log(snapshot.id);
+```
+
+Mark application settings as applied only after the call succeeds. The daemon keeps the same durable conversation and timeline, and refuses active turns, pending permissions, and active children without interrupting them. This operation restarts the Provider runtime and cannot preserve background work the Provider does not report. See the [API reference](./reference.md#agent-handle) for error codes and recovery.
+
 ## Create a subagent
 
 Create a child through its workspace. The handle owns placement, so the caller does not repeat its directory:

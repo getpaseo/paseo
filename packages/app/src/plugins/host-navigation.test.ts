@@ -43,6 +43,31 @@ describe("plugin host navigation", () => {
     ]);
   });
 
+  it("dismisses the sidebar before navigating on the selected or explicitly requested host", () => {
+    const events: unknown[] = [];
+    const navigation = createPluginHostNavigation("selected", {
+      browserAvailable: false,
+      beforeNavigate: () => events.push("dismiss"),
+      openAgent: (input) => events.push(input),
+      openWorkspace: (input) => events.push(input),
+      resolveWorkspace: () => null,
+      createBrowser: () => {
+        throw new Error("Browser unavailable");
+      },
+    });
+    navigation.openAgent({ agentId: "companion" });
+    navigation.openAgent({ agentId: "companion", serverId: "remote" });
+    navigation.openWorkspace({ workspaceId: "project" });
+    expect(events).toEqual([
+      "dismiss",
+      { serverId: "selected", agentId: "companion" },
+      "dismiss",
+      { serverId: "remote", agentId: "companion" },
+      "dismiss",
+      { serverId: "selected", workspaceId: "project" },
+    ]);
+  });
+
   it("refuses unknown or removed workspaces before creating browser records", () => {
     const { navigation, destinations, browsers, workspaces } = setup();
     expect(() =>

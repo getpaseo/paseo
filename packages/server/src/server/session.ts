@@ -103,7 +103,11 @@ import {
   type WorkspaceLabelService,
 } from "./workspace-labels/index.js";
 
-import { AgentManager, AgentRunCancellationError } from "./agent/agent-manager.js";
+import {
+  AgentManager,
+  AgentRunCancellationError,
+  AgentInstructionsUpdateError,
+} from "./agent/agent-manager.js";
 import { buildTimelinePromptIndex } from "./agent/timeline-prompt-index.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type {
@@ -2427,7 +2431,7 @@ export class Session {
       this.dispatchHubExecutionMessage(msg) ??
       this.dispatchCreationMessage(msg, source) ??
       this.dispatchAgentLifecycleMessage(msg) ??
-      this.dispatchAgentConfigMessage(msg) ??
+      this.dispatchAgentConfigMessage(msg, source) ??
       this.dispatchCheckoutMessage(msg) ??
       this.dispatchWorkspaceLifecycleMessage(msg) ??
       this.dispatchWorkspaceFileMessage(msg, source) ??
@@ -2916,8 +2920,13 @@ export class Session {
     }
   }
 
-  private dispatchAgentConfigMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+  private dispatchAgentConfigMessage(
+    msg: SessionInboundMessage,
+    source?: object,
+  ): Promise<void> | undefined {
     switch (msg.type) {
+      case "agent.update_instructions.request":
+        return this.handleAgentInstructionsUpdate(msg, source);
       case "set_agent_mode_request":
         return this.agentConfigSession.handleSetAgentModeRequest(msg);
       case "set_agent_model_request":
@@ -4894,6 +4903,66 @@ export class Session {
       );
     } finally {
       this.rewindInitiators.delete(msg.agentId);
+    }
+  }
+
+  private async handleAgentInstructionsUpdate(
+    msg: Extract<SessionInboundMessage, { type: "agent.update_instructions.request" }>,
+    source?: object,
+  ): Promise<void> {
+    try {
+      if (!this.agentManager.getAgent(msg.agentId)) {
+        const record = await this.agentStorage.get(msg.agentId);
+        if (
+          record &&
+          !toAgentPersistenceHandle(
+            this.agentManager.getRegisteredProviderIds(),
+            record.persistence,
+          )
+        ) {
+          throw new AgentInstructionsUpdateError(
+            "persistence_unavailable",
+            "The agent cannot resume its conversation with updated instructions",
+          );
+        }
+      }
+      await ensureUnarchivedAgentLoaded(msg.agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+      const agent = await this.agentManager.updateAgentInstructions(msg.agentId, {
+        systemPrompt: msg.systemPrompt,
+        ...(msg.mcpServers !== undefined ? { mcpServers: msg.mcpServers } : {}),
+      });
+      this.emitForSource(
+        {
+          type: "agent.update_instructions.response",
+          payload: {
+            requestId: msg.requestId,
+            agentId: msg.agentId,
+            accepted: true,
+            agent: await this.buildAgentPayload(agent),
+            error: null,
+          },
+        },
+        source,
+      );
+    } catch (error) {
+      this.emitForSource(
+        {
+          type: "agent.update_instructions.response",
+          payload: {
+            requestId: msg.requestId,
+            agentId: msg.agentId,
+            accepted: false,
+            agent: null,
+            error: error instanceof Error ? error.message : "Failed to update agent instructions",
+            code: error instanceof AgentInstructionsUpdateError ? error.code : "update_failed",
+          },
+        },
+        source,
+      );
     }
   }
 

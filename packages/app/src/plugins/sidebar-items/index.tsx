@@ -1,5 +1,4 @@
 import type {
-  PluginHostProps,
   PluginOpenScreenInput,
   PluginPopoverProps,
   PluginScreenLocation,
@@ -39,6 +38,9 @@ import type { PluginSidebarSection } from "../types";
 import { SidebarItemFrameContext, type SidebarItemFrame } from "./frame";
 import { LegacyPluginSidebarRow } from "./legacy";
 import { resolvePluginPlatform } from "../platform";
+import { usePluginHostNavigation } from "../host-navigation";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { getPluginSidebarCurrentAgentId } from "./current-agent";
 
 export { SidebarRow, SidebarSeparator } from "./kit";
 
@@ -86,6 +88,9 @@ function PluginSidebarItemHost({
   const pathname = usePathname();
   const routeParams = useGlobalSearchParams();
   const { plugin, item } = selectPluginSidebarTarget(group, hostIdFromPathname(pathname));
+  const currentAgentId = useWorkspaceLayoutStore((state) =>
+    getPluginSidebarCurrentAgentId(plugin.serverId, pathname, state.layoutByWorkspace),
+  );
   const client = useHostRuntimeClient(plugin.serverId);
   const toast = useToast();
   // The content outlives `open` so the surface can play its exit and native sheet teardown.
@@ -125,6 +130,7 @@ function PluginSidebarItemHost({
             section={section}
             theme={theme}
             currentScreen={currentPluginScreen(plugin, pathname, routeParams)}
+            currentAgentId={currentAgentId}
             environment={environment}
             popover={popover}
             showPopover={showPopover}
@@ -145,6 +151,7 @@ function SidebarItemContent({
   section,
   theme,
   currentScreen,
+  currentAgentId,
   environment,
   popover,
   showPopover,
@@ -156,6 +163,7 @@ function SidebarItemContent({
   section: PluginSidebarSection;
   theme: PluginTheme;
   currentScreen: PluginScreenLocation | null;
+  currentAgentId: string | null;
   environment: PluginEnvironment;
   popover: PopoverContent | null;
   showPopover: (content: PopoverContent | null) => void;
@@ -168,21 +176,26 @@ function SidebarItemContent({
   const compact = useIsCompactFormFactor();
   const hostLabel =
     hosts.find((host) => host.serverId === plugin.serverId)?.label ?? plugin.serverId;
+  const beforeNavigate = useCallback(() => {
+    showPopover(null);
+    onBeforeNavigate?.();
+  }, [onBeforeNavigate, showPopover]);
+  const navigation = usePluginHostNavigation(plugin.serverId, beforeNavigate);
 
-  const hostProps = useMemo<PluginHostProps>(
+  const hostProps = useMemo(
     () => ({
       theme,
       host: { id: plugin.serverId, label: hostLabel },
       layout: { compact, platform: resolvePluginPlatform() },
+      navigation,
     }),
-    [compact, hostLabel, plugin.serverId, theme],
+    [compact, hostLabel, navigation, plugin.serverId, theme],
   );
   const openScreen = useCallback(
     (input: PluginOpenScreenInput) => {
       const { screenId, params } = parsePluginOpenScreenInput(plugin, input);
       rememberPluginContributionHost(pluginScreensHostKey(plugin.id), plugin.serverId);
-      showPopover(null);
-      onBeforeNavigate?.();
+      beforeNavigate();
       router.push(
         buildPluginSurfaceRoute(
           plugin.serverId,
@@ -192,7 +205,7 @@ function SidebarItemContent({
         ),
       );
     },
-    [onBeforeNavigate, plugin, showPopover],
+    [beforeNavigate, plugin],
   );
   const openPopover = useCallback(
     (Content: PopoverContent) => {
@@ -217,8 +230,8 @@ function SidebarItemContent({
     [anchorTo, item.id, item.title, offerAnchor, plugin, releaseAnchor, section],
   );
   const itemProps = useMemo<PluginSidebarItemProps>(
-    () => ({ ...hostProps, currentScreen, openScreen, openPopover }),
-    [currentScreen, hostProps, openPopover, openScreen],
+    () => ({ ...hostProps, currentScreen, currentAgentId, openScreen, openPopover }),
+    [currentScreen, currentAgentId, hostProps, openPopover, openScreen],
   );
   const Item = item.Component;
   const Popover = popover;

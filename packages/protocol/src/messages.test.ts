@@ -56,6 +56,43 @@ describe("project icon message security", () => {
   });
 });
 
+describe("agent instruction updates", () => {
+  test("distinguishes an omitted MCP configuration from an explicit clear", () => {
+    const request = {
+      type: "agent.update_instructions.request",
+      requestId: "update-1",
+      agentId: "agent-1",
+      systemPrompt: "",
+    };
+    expect(SessionInboundMessageSchema.parse(request)).not.toHaveProperty("mcpServers");
+    expect(SessionInboundMessageSchema.parse({ ...request, mcpServers: {} })).toMatchObject({
+      systemPrompt: "",
+      mcpServers: {},
+    });
+    expect(
+      SessionInboundMessageSchema.safeParse({
+        ...request,
+        mcpServers: { broken: { type: "http" } },
+      }).success,
+    ).toBe(false);
+  });
+
+  test("carries a typed rejection without claiming an applied agent snapshot", () => {
+    const response = {
+      type: "agent.update_instructions.response",
+      payload: {
+        requestId: "update-1",
+        agentId: "agent-1",
+        accepted: false,
+        agent: null,
+        error: "Child agents are active",
+        code: "active_children",
+      },
+    };
+    expect(SessionOutboundMessageSchema.parse(response)).toEqual(response);
+  });
+});
+
 describe("project icon revision compatibility", () => {
   const project = {
     projectId: "project-1",

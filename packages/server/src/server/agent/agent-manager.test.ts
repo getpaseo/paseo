@@ -271,6 +271,503 @@ class SessionRecordingAgentClient extends TestAgentClient {
   }
 }
 
+class InstructionUpdateClient extends TestAgentClient {
+  readonly sessions: TestAgentSession[] = [];
+  failResume = false;
+  persist = true;
+
+  override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+    this.createdConfigs.push(config);
+    return this.makeSession(config);
+  }
+
+  override async resumeSession(
+    handle: AgentPersistenceHandle,
+    config?: Partial<AgentSessionConfig>,
+  ): Promise<AgentSession> {
+    if (this.failResume) throw new Error("resume unavailable");
+    this.resumeOverrides.push(config);
+    const session = this.makeSession({
+      provider: this.provider,
+      cwd: config?.cwd ?? process.cwd(),
+      ...config,
+    });
+    session.describePersistence = () => handle;
+    return session;
+  }
+
+  private makeSession(config: AgentSessionConfig): TestAgentSession {
+    const session = new TestAgentSession(config);
+    if (!this.persist)
+      Object.assign(session, {
+        describePersistence: () => null,
+        getRuntimeInfo: async () => ({ provider: "codex", sessionId: null }),
+      });
+    Object.assign(session, { capabilities: { ...session.capabilities, supportsMcpServers: true } });
+    vi.spyOn(session, "close");
+    vi.spyOn(session, "interrupt");
+    this.sessions.push(session);
+    return session;
+  }
+}
+
+async function instructionUpdateFixture(persist = true) {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-instructions-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new InstructionUpdateClient();
+  client.persist = persist;
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  onTestFinished(async () => {
+    for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+  const agent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, systemPrompt: "Original instructions" },
+    undefined,
+    {
+      workspaceId: "workspace-instructions",
+      labels: { role: "companion" },
+    },
+  );
+  return { manager, client, storage, agent, workdir, session: client.sessions[0]! };
+}
+
+test("updateInstructions resumes the same conversation and preserves its timeline", async () => {
+  const { manager, client, agent, session, storage } = await instructionUpdateFixture();
+  await manager.appendTimelineItem(agent.id, {
+    type: "assistant_message",
+    text: "Keep this history",
+  });
+  const before = manager.fetchTimeline(agent.id);
+  const mcpServers = { tools: { type: "http" as const, url: "http://127.0.0.1:9999/mcp" } };
+  const updated = await manager.updateAgentInstructions(agent.id, {
+    systemPrompt: "New personality",
+    mcpServers,
+  });
+  expect(updated.id).toBe(agent.id);
+  expect(updated.persistence).toMatchObject(agent.persistence!);
+  expect(updated.labels).toEqual(agent.labels);
+  expect(updated.workspaceId).toBe(agent.workspaceId);
+  expect(manager.fetchTimeline(agent.id)).toEqual(before);
+  expect(client.resumeOverrides[0]).toMatchObject({ systemPrompt: "New personality", mcpServers });
+  expect(client.createdConfigs).toHaveLength(1);
+  expect(session.interrupt).not.toHaveBeenCalled();
+  expect((await storage.get(agent.id))?.config).toMatchObject({
+    systemPrompt: "New personality",
+    mcpServers,
+  });
+});
+
+test.each(["busy", "permission", "provider_child", "child", "no_persistence"] as const)(
+  "updateInstructions refuses %s before closing or interrupting",
+  async (condition) => {
+    const { manager, client, agent, session, workdir } = await instructionUpdateFixture(
+      condition !== "no_persistence",
+    );
+    let expectedCode = "busy";
+    if (condition === "busy") manager.streamAgent(agent.id, "Pending provider start");
+    if (condition === "permission") {
+      agent.pendingPermissions.set("permission", {
+        id: "permission",
+        provider: "codex",
+        name: "test",
+        kind: "tool",
+      });
+      expectedCode = "permission_pending";
+    }
+    if (condition === "provider_child") {
+      session.pushEvent({
+        type: "provider_subagent",
+        provider: "codex",
+        event: { type: "upsert", id: "child", status: "running" },
+      });
+      await vi.waitFor(() => expect(manager.listProviderSubagents(agent.id)).toHaveLength(1));
+      expectedCode = "active_children";
+    }
+    if (condition === "child") {
+      const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: agent.workspaceId,
+        labels: { [PARENT_AGENT_ID_LABEL]: agent.id },
+      });
+      manager.streamAgent(child.id, "Child pending provider start");
+      expectedCode = "active_children";
+    }
+    if (condition === "no_persistence") {
+      expectedCode = "persistence_unavailable";
+    }
+    await expect(
+      manager.updateAgentInstructions(agent.id, { systemPrompt: "New" }),
+    ).rejects.toMatchObject({ code: expectedCode });
+    expect(session.close).not.toHaveBeenCalled();
+    expect(session.interrupt).not.toHaveBeenCalled();
+    expect(client.resumeOverrides).toEqual([]);
+  },
+);
+
+test("updateInstructions waits for provider commands that bypass foreground turns", async () => {
+  const { manager, agent, session } = await instructionUpdateFixture();
+  const release = deferred<void>();
+  Object.assign(session, { tryHandleOutOfBand: () => ({ run: () => release.promise }) });
+  expect(await manager.tryRunOutOfBand(agent.id, "/goal pause")).toBe(true);
+  try {
+    await expect(
+      manager.updateAgentInstructions(agent.id, { systemPrompt: "New" }),
+    ).rejects.toMatchObject({ code: "busy" });
+    expect(session.close).not.toHaveBeenCalled();
+  } finally {
+    release.resolve();
+  }
+  await release.promise;
+  await expect(
+    manager.updateAgentInstructions(agent.id, { systemPrompt: "New" }),
+  ).resolves.toMatchObject({ id: agent.id });
+});
+
+test.each(["false", "error", "child"] as const)(
+  "updateInstructions respects provider runtime safety: %s",
+  async (kind) => {
+    const { manager, agent, session, workdir } = await instructionUpdateFixture();
+    let protectedSession = session;
+    if (kind === "child") {
+      const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: agent.workspaceId,
+        labels: { [PARENT_AGENT_ID_LABEL]: agent.id },
+      });
+      protectedSession = child.session as TestAgentSession;
+    }
+    Object.assign(protectedSession, {
+      canStopRuntime: async () => {
+        if (kind === "error") throw new Error("probe unavailable");
+        return false;
+      },
+    });
+    await expect(
+      manager.updateAgentInstructions(agent.id, { systemPrompt: "New" }),
+    ).rejects.toMatchObject({ code: kind === "child" ? "active_children" : "busy" });
+    expect(session.close).not.toHaveBeenCalled();
+    expect(session.interrupt).not.toHaveBeenCalled();
+  },
+);
+
+test("updateInstructions blocks automatic collection of its reserved descendants", async () => {
+  const { manager, agent, workdir, session } = await instructionUpdateFixture();
+  const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: agent.workspaceId,
+    labels: { [PARENT_AGENT_ID_LABEL]: agent.id },
+  });
+  const checking = deferred<void>();
+  const release = deferred<void>();
+  Object.assign(session, {
+    canStopRuntime: async () => {
+      checking.resolve();
+      await release.promise;
+      return true;
+    },
+  });
+  const update = manager.updateAgentInstructions(agent.id, { systemPrompt: "New" });
+  await checking.promise;
+  try {
+    expect(
+      manager
+        .getRuntimeCleanupCandidates()
+        .find((candidate) => candidate.agentId === child.id)
+        ?.isEligible(),
+    ).toBe(false);
+  } finally {
+    release.resolve();
+  }
+  await update;
+});
+
+test("updateInstructions reserves admission until the replacement is registered", async () => {
+  const { manager, agent, session, workdir } = await instructionUpdateFixture();
+  const closing = deferred<void>();
+  const release = deferred<void>();
+  vi.mocked(session.close).mockImplementationOnce(async () => {
+    closing.resolve();
+    await release.promise;
+  });
+  const update = manager.updateAgentInstructions(agent.id, { systemPrompt: "New" });
+  await closing.promise;
+  try {
+    expect(() => manager.streamAgent(agent.id, "Concurrent turn")).toThrow(
+      "instructions are being updated",
+    );
+    await expect(manager.tryRunOutOfBand(agent.id, "/test")).rejects.toThrow(
+      "instructions are being updated",
+    );
+    await expect(manager.setAgentModel(agent.id, "new-model")).rejects.toThrow(
+      "instructions are being updated",
+    );
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: agent.workspaceId,
+        labels: { [PARENT_AGENT_ID_LABEL]: agent.id },
+      }),
+    ).rejects.toThrow("instructions are being updated");
+    await expect(
+      manager.importProviderSession({
+        provider: "codex",
+        providerHandleId: "imported-child",
+        cwd: workdir,
+        workspaceId: agent.workspaceId!,
+        labels: { [PARENT_AGENT_ID_LABEL]: agent.id },
+      }),
+    ).rejects.toThrow("instructions are being updated");
+  } finally {
+    release.resolve();
+  }
+  await update;
+  await expect(manager.runAgent(agent.id, "Next turn")).resolves.toBeDefined();
+});
+
+test("updateInstructions failure leaves the old configuration recoverable", async () => {
+  const { manager, client, agent, storage } = await instructionUpdateFixture();
+  client.failResume = true;
+  await expect(
+    manager.updateAgentInstructions(agent.id, { systemPrompt: "Unapplied" }),
+  ).rejects.toThrow("resume unavailable");
+  expect(manager.getAgent(agent.id)).toBeNull();
+  expect(await storage.get(agent.id)).toMatchObject({
+    lastStatus: "closed",
+    config: { systemPrompt: "Original instructions" },
+    persistence: agent.persistence,
+  });
+  client.failResume = false;
+  await ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger });
+  await expect(
+    manager.updateAgentInstructions(agent.id, { systemPrompt: "Applied" }),
+  ).resolves.toMatchObject({ id: agent.id });
+});
+
+test("updateInstructions registration failure fences the replacement and restores old config", async () => {
+  const { manager, agent, client, storage } = await instructionUpdateFixture();
+  const applySnapshot = storage.applySnapshot.bind(storage);
+  let failed = false;
+  vi.spyOn(storage, "applySnapshot").mockImplementation(async (record, options) => {
+    if (!failed && record.config.systemPrompt === "Unapplied") {
+      failed = true;
+      throw new Error("storage unavailable");
+    }
+    return applySnapshot(record, options);
+  });
+  await expect(
+    manager.updateAgentInstructions(agent.id, { systemPrompt: "Unapplied" }),
+  ).rejects.toThrow("storage unavailable");
+  expect(manager.getAgent(agent.id)?.session).toBe(client.sessions[1]);
+  expect(manager.getAgent(agent.id)?.config.systemPrompt).toBe("Original instructions");
+  expect((await storage.get(agent.id))?.config.systemPrompt).toBe("Original instructions");
+  expect(() => manager.streamAgent(agent.id, "Unsafe turn")).toThrow(
+    "Retry updating instructions or reload",
+  );
+  await manager.updateAgentInstructions(agent.id, { systemPrompt: "Retry" });
+  expect(client.sessions[1]?.close).toHaveBeenCalledTimes(1);
+  await expect(manager.runAgent(agent.id, "Safe turn")).resolves.toBeDefined();
+});
+
+test("updateInstructions retains a writer when registration fails before publication", async () => {
+  const { manager, client, agent, storage } = await instructionUpdateFixture();
+  const get = storage.get.bind(storage);
+  let failed = false;
+  vi.spyOn(storage, "get").mockImplementation(async (id) => {
+    if (!failed && client.sessions.length === 2) {
+      failed = true;
+      vi.mocked(client.sessions[1]!.close).mockRejectedValueOnce(new Error("close unavailable"));
+      throw new Error("registration unavailable");
+    }
+    return get(id);
+  });
+  await expect(
+    manager.updateAgentInstructions(agent.id, { systemPrompt: "Unapplied" }),
+  ).rejects.toThrow("registration unavailable");
+  expect(manager.getAgent(agent.id)?.session).toBe(client.sessions[1]);
+  expect(() => manager.streamAgent(agent.id, "Unsafe turn")).toThrow(
+    "Retry updating instructions or reload",
+  );
+  await expect(
+    manager.updateAgentInstructions(agent.id, { systemPrompt: "Retry" }),
+  ).rejects.toThrow("close unavailable");
+  expect(client.sessions).toHaveLength(2);
+  await manager.updateAgentInstructions(agent.id, { systemPrompt: "Retry" });
+  expect(client.sessions).toHaveLength(3);
+  expect(client.sessions[1]!.close).toHaveBeenCalledTimes(2);
+});
+
+test("updateInstructions close failure blocks new work until recovery", async () => {
+  const { manager, agent, session } = await instructionUpdateFixture();
+  vi.mocked(session.close).mockRejectedValueOnce(new Error("close unavailable"));
+  await expect(manager.updateAgentInstructions(agent.id, { systemPrompt: "New" })).rejects.toThrow(
+    "close unavailable",
+  );
+  expect(manager.getAgent(agent.id)?.session).toBe(session);
+  expect(() => manager.streamAgent(agent.id, "Unsafe turn")).toThrow(
+    "Retry updating instructions or reload",
+  );
+  expect(session.interrupt).not.toHaveBeenCalled();
+  await manager.updateAgentInstructions(agent.id, { systemPrompt: "Retry" });
+  await expect(manager.runAgent(agent.id, "Safe turn")).resolves.toBeDefined();
+});
+
+test("updateInstructions close failure also fences settings queued in the same tick", async () => {
+  const { manager, agent, session } = await instructionUpdateFixture();
+  vi.mocked(session.close).mockRejectedValueOnce(new Error("close unavailable"));
+  const setMode = vi.spyOn(session, "setMode");
+  const update = manager.updateAgentInstructions(agent.id, { systemPrompt: "New" });
+  const setting = manager.setAgentMode(agent.id, "plan");
+  const results = await Promise.allSettled([update, setting]);
+  expect(results[0]).toMatchObject({
+    status: "rejected",
+    reason: { message: "close unavailable" },
+  });
+  expect(results[1]).toMatchObject({ status: "rejected", reason: { code: "busy" } });
+  expect(setMode).not.toHaveBeenCalled();
+  await manager.updateAgentInstructions(agent.id, { systemPrompt: "Retry" });
+  await expect(manager.setAgentMode(agent.id, "plan")).resolves.toBeDefined();
+});
+
+test("updateInstructions refuses a child whose provider session is still opening", async () => {
+  const { manager, client, agent, workdir, session } = await instructionUpdateFixture();
+  const opening = deferred<void>();
+  const release = deferred<void>();
+  const create = client.createSession.bind(client);
+  vi.spyOn(client, "createSession").mockImplementationOnce(async (config) => {
+    opening.resolve();
+    await release.promise;
+    return create(config);
+  });
+  const child = manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: agent.workspaceId,
+    labels: { [PARENT_AGENT_ID_LABEL]: agent.id },
+  });
+  await opening.promise;
+  try {
+    await expect(
+      manager.updateAgentInstructions(agent.id, { systemPrompt: "New" }),
+    ).rejects.toMatchObject({ code: "active_children" });
+    expect(session.close).not.toHaveBeenCalled();
+  } finally {
+    release.resolve();
+  }
+  await child;
+});
+
+test("updateInstructions refuses a child import still opening its provider session", async () => {
+  const { manager, client, agent, workdir, session } = await instructionUpdateFixture();
+  const opening = deferred<void>();
+  const release = deferred<void>();
+  Object.assign(client, {
+    importSession: async (input: ImportProviderSessionInput) => {
+      opening.resolve();
+      await release.promise;
+      return {
+        session: new TestAgentSession({ provider: "codex", cwd: workdir }),
+        config: { provider: "codex", cwd: workdir },
+        persistence: { provider: "codex", sessionId: input.providerHandleId },
+        timeline: [],
+      };
+    },
+  });
+  const child = manager.importProviderSession({
+    provider: "codex",
+    providerHandleId: "imported-child",
+    cwd: workdir,
+    workspaceId: agent.workspaceId!,
+    labels: { [PARENT_AGENT_ID_LABEL]: agent.id },
+  });
+  await opening.promise;
+  try {
+    await expect(
+      manager.updateAgentInstructions(agent.id, { systemPrompt: "New" }),
+    ).rejects.toMatchObject({ code: "active_children" });
+    expect(session.close).not.toHaveBeenCalled();
+  } finally {
+    release.resolve();
+  }
+  await child;
+});
+
+test("updateInstructions and descendant reloads exclude each other", async () => {
+  const { manager, client, agent, workdir, session } = await instructionUpdateFixture();
+  const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: agent.workspaceId,
+    labels: { [PARENT_AGENT_ID_LABEL]: agent.id },
+  });
+  const closing = deferred<void>();
+  const release = deferred<void>();
+  vi.mocked(client.sessions[1]!.close).mockImplementationOnce(async () => {
+    closing.resolve();
+    await release.promise;
+  });
+  const reload = manager.reloadAgentSession(child.id);
+  await closing.promise;
+  try {
+    await expect(
+      manager.updateAgentInstructions(agent.id, { systemPrompt: "New" }),
+    ).rejects.toMatchObject({ code: "active_children" });
+    expect(session.close).not.toHaveBeenCalled();
+  } finally {
+    release.resolve();
+  }
+  await reload;
+
+  const parentClosing = deferred<void>();
+  const parentRelease = deferred<void>();
+  vi.mocked(session.close).mockImplementationOnce(async () => {
+    parentClosing.resolve();
+    await parentRelease.promise;
+  });
+  const update = manager.updateAgentInstructions(agent.id, { systemPrompt: "New" });
+  await parentClosing.promise;
+  try {
+    await expect(manager.reloadAgentSession(child.id)).rejects.toMatchObject({ code: "busy" });
+  } finally {
+    parentRelease.resolve();
+  }
+  await update;
+});
+
+test("updateInstructions finds active descendants behind a closed parent", async () => {
+  const { manager, agent, workdir, session } = await instructionUpdateFixture();
+  const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: agent.workspaceId,
+    labels: { [PARENT_AGENT_ID_LABEL]: agent.id },
+  });
+  const grandchild = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: agent.workspaceId,
+    labels: { [PARENT_AGENT_ID_LABEL]: child.id },
+  });
+  await manager.closeAgent(child.id);
+  manager.streamAgent(grandchild.id, "Pending turn");
+  await expect(
+    manager.updateAgentInstructions(agent.id, { systemPrompt: "New" }),
+  ).rejects.toMatchObject({ code: "active_children" });
+  expect(session.close).not.toHaveBeenCalled();
+});
+
+test("updateInstructions rechecks provider activity after asynchronous preparation", async () => {
+  const { manager, agent, storage, session } = await instructionUpdateFixture();
+  const listing = deferred<void>();
+  const release = deferred<void>();
+  const list = storage.list.bind(storage);
+  vi.spyOn(storage, "list").mockImplementationOnce(async () => {
+    listing.resolve();
+    await release.promise;
+    return list();
+  });
+  const update = manager.updateAgentInstructions(agent.id, { systemPrompt: "New" });
+  await listing.promise;
+  session.pushEvent({
+    type: "provider_subagent",
+    provider: "codex",
+    event: { type: "upsert", id: "late-child", status: "running" },
+  });
+  release.resolve();
+  await expect(update).rejects.toMatchObject({ code: "active_children" });
+  expect(session.close).not.toHaveBeenCalled();
+  expect(session.interrupt).not.toHaveBeenCalled();
+});
+
 class HeldAgentCreationClient extends TestAgentClient {
   private readonly creationStarted = deferred<void>();
   private readonly creationAllowed = deferred<void>();

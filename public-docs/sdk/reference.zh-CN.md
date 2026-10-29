@@ -76,36 +76,46 @@ nav: API 参考
 
 ### Agent 句柄 {#agent-handle}
 
-| 成员                           | 结果                              | 行为                                                                    |
-| ------------------------------ | --------------------------------- | ----------------------------------------------------------------------- |
-| `id`                           | `string`                          | 稳定的 daemon Agent ID。                                                |
-| `address`                      | `AgentAddress`                    | 完整的 `{ serverId, agentId }` 身份；需要连接到主机才能确定。           |
-| `workspaceId`                  | `string \| null`                  | 当前所在的工作区。                                                      |
-| `cwd`                          | `string \| null`                  | 当前工作目录。                                                          |
-| `status`                       | Agent 状态或 `null`               | 当前的生命周期状态。                                                    |
-| `capabilities`                 | 能力标志或 `null`                 | Provider 会话支持的能力。                                               |
-| `availableModes`               | Agent 模式或 `null`               | 会话可以切换到的模式。                                                  |
-| `pendingPermissions`           | 权限请求或 `null`                 | 等待回应的请求。                                                        |
-| `activeTurn`                   | 当前轮次或 `null`                 | 正在进行的轮次，包含 `turnId` 和 `startedAt`。                          |
-| `lastUsage`                    | 用量或 `null`                     | 上一轮的 token 数、费用和上下文窗口用量。                               |
-| `lastError`                    | `string \| null`                  | daemon 为该 Agent 记录的最后一个错误。                                  |
-| `features`                     | Agent 功能或 `null`               | Provider 的功能开关和选择项及其当前值。                                 |
-| `runtimeInfo`                  | 运行时信息或 `null`               | 实时的 Provider、会话 ID、模型、思考选项和模式。                        |
-| `archivedAt`                   | `string \| null`                  | 归档时间戳；Agent 处于活动状态时为 `null`。                             |
-| `current()`                    | `PaseoAgent \| null`              | 此句柄观察到的当前详细值；从不发起请求。                                |
-| `refresh(requestId?)`          | `PaseoAgentRefetchResult \| null` | 获取当前的 Agent 及其所在项目。                                         |
-| `send(text, options?)`         | `Promise<void>`                   | 在 daemon 接受提示词后 resolve。                                        |
-| `respondToPermission(options)` | `Promise<void>`                   | 按 `requestId` 以允许或拒绝的 `response` 回应一个待处理的权限请求。     |
-| `run(text, options?)`          | `PaseoAgentRunResult`             | 发送提示词并等待该轮结束。`timeoutMs` 控制等待时间，默认 10 分钟。      |
-| `waitForFinish(timeoutMs?)`    | `PaseoAgentRunResult`             | 等待当前轮次结束，包括初始提示词。默认超时：10 分钟。                   |
-| `commands(options?)`           | `PaseoAgentCommandsResult`        | 向正在运行的会话查询它的斜杠命令和技能，包括内置的。选项：`requestId`。 |
-| `subscribe(handler)`           | 取消订阅函数                      | 把 Agent 目录更新过滤到此 ID，并刷新句柄的属性。                        |
-| `archive()`                    | `{ archivedAt }`                  | 软删除 Agent 并关闭它的运行时。                                         |
-| `detach()`                     | `Promise<void>`                   | 解除父子关系，但不停止 Agent。                                          |
+| 成员                                  | 结果                                                                                                                                                                                                                                                                                                                                                                                                  | 行为                                                                |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `id`                                  | `string`                                                                                                                                                                                                                                                                                                                                                                                              | 稳定的 daemon Agent ID。                                            |
+| `address`                             | `AgentAddress`                                                                                                                                                                                                                                                                                                                                                                                        | 完整的 `{ serverId, agentId }` 身份；需要连接到主机才能确定。       |
+| `workspaceId`                         | `string \| null`                                                                                                                                                                                                                                                                                                                                                                                      | 当前所在的工作区。                                                  |
+| `cwd`                                 | `string \| null`                                                                                                                                                                                                                                                                                                                                                                                      | 当前工作目录。                                                      |
+| `status`                              | Agent 状态或 `null`                                                                                                                                                                                                                                                                                                                                                                                   | 当前的生命周期状态。                                                |
+| `capabilities`                        | 能力标志或 `null`                                                                                                                                                                                                                                                                                                                                                                                     | Provider 会话支持的能力。                                           |
+| `availableModes`                      | Agent 模式或 `null`                                                                                                                                                                                                                                                                                                                                                                                   | 会话可以切换到的模式。                                              |
+| `pendingPermissions`                  | 权限请求或 `null`                                                                                                                                                                                                                                                                                                                                                                                     | 等待回应的请求。                                                    |
+| `activeTurn`                          | 当前轮次或 `null`                                                                                                                                                                                                                                                                                                                                                                                     | 正在进行的轮次，包含 `turnId` 和 `startedAt`。                      |
+| `lastUsage`                           | 用量或 `null`                                                                                                                                                                                                                                                                                                                                                                                         | 上一轮的 token 数、费用和上下文窗口用量。                           |
+| `lastError`                           | `string \| null`                                                                                                                                                                                                                                                                                                                                                                                      | daemon 为该 Agent 记录的最后一个错误。                              |
+| `features`                            | Agent 功能或 `null`                                                                                                                                                                                                                                                                                                                                                                                   | Provider 的功能开关和选择项及其当前值。                             |
+| `runtimeInfo`                         | 运行时信息或 `null`                                                                                                                                                                                                                                                                                                                                                                                   | 实时的 Provider、会话 ID、模型、思考选项和模式。                    |
+| `archivedAt`                          | `string \| null`                                                                                                                                                                                                                                                                                                                                                                                      | 归档时间戳；Agent 处于活动状态时为 `null`。                         |
+| `current()`                           | `PaseoAgent \| null`                                                                                                                                                                                                                                                                                                                                                                                  | 此句柄观察到的当前详细值；从不发起请求。                            |
+| `refresh(requestId?)`                 | `PaseoAgentRefetchResult \| null`                                                                                                                                                                                                                                                                                                                                                                     | 获取当前的 Agent 及其所在项目。                                     |
+| `send(text, options?)`                | `Promise<void>`                                                                                                                                                                                                                                                                                                                                                                                       | 在 daemon 接受提示词后 resolve。                                    |
+| `setModel(modelId)`                   | `Promise<void>`                                                                                                                                                                                                                                                                                                                                                                                       | 在当前 Provider 内选择模型 ID；`null` 恢复默认模型。                |
+| `setThinkingOption(thinkingOptionId)` | `Promise<AgentProviderNotice \| null>`                                                                                                                                                                                                                                                                                                                                                                | 选择推理选项，并返回 Provider 提示（如有）；`null` 恢复默认选项。   |
+| `setFeature(featureId, value)`        | `Promise<void>`                                                                                                                                                                                                                                                                                                                                                                                       | 修改 Agent 的 `features` 快照中公布的功能。                         |
+| `updateInstructions(options)`         | `Promise<PaseoAgent>`                                                                                                                                                                                                                                                                                                                                                                                 | 恢复同一持久会话并更新指令；成功后返回并缓存新快照。                |
+| `respondToPermission(options)`        | `Promise<void>`                                                                                                                                                                                                                                                                                                                                                                                       | 按 `requestId` 以允许或拒绝的 `response` 回应一个待处理的权限请求。 |
+| `run(text, options?)`                 | `PaseoAgentRunResult`                                                                                                                                                                                                                                                                                                                                                                                 | 发送提示词并等待该轮结束。`timeoutMs` 控制等待时间，默认 10 分钟。  |
+| `waitForFinish(timeoutMs?)`           | `PaseoAgentRunResult`                                                                                                                                                                                                                                                                                                                                                                                 | 等待当前轮次结束，包括初始提示词。默认超时：10 分钟。               |
+| `commands(options?)`                  | `updateInstructions({ systemPrompt, mcpServers? })` 需要支持 `agentInstructionsUpdate` 的主机。`systemPrompt` 是完整替换值，可以为空；省略 `mcpServers` 保留现有配置，传 `{}` 清空它。操作在同一个持久 Provider 会话上应用配置，保留 Agent ID、时间线及其 epoch、工作区和标签，不发送新的提示词。它会重启 Provider 运行时；Provider 未向 Paseo 报告的后台工作无法检测，因此不要在依赖这类进程时调用。 |
+
+调用会拒绝正在运行、初始化或等待权限的 Agent，以及仍有活动子 Agent 的会话；检查和更新期间会阻止新任务进入。错误的 `code` 为 `busy`、`permission_pending`、`active_children`、`persistence_unavailable` 或 `update_failed`；旧主机返回 `unsupported_capability`，不发送不兼容请求。只有成功返回才表示配置已应用。失败后旧配置保留；如果运行时关闭或注册失败，需重试此调用或在 Paseo 中 Reload，才能继续发送新任务。参见[更新会话指令](./agents.md#update-session-instructions)。
+
+`PaseoAgentCommandsResult` | 向正在运行的会话查询它的斜杠命令和技能，包括内置的。选项：`requestId`。 |
+| `subscribe(handler)` | 取消订阅函数 | 把 Agent 目录更新过滤到此 ID，并刷新句柄的属性。 |
+| `archive()` | `{ archivedAt }` | 软删除 Agent 并关闭它的运行时。 |
+| `detach()` | `Promise<void>` | 解除父子关系，但不停止 Agent。 |
 
 从 `workspaceId` 到 `archivedAt` 的属性反映句柄最近观察到的快照。由 `ref()` 得到的句柄在 `refresh()`、`run()`、`waitForFinish()`、时间线重新获取或 `subscribe()` 投递快照之前，这些属性都读作 `null`。已观察到的快照中的可选值也读作 `null`。当你需要整个快照，或需要区分这些状态时，请调用 `current()`。
 
 `PaseoAgentRunResult` 包含 `status`、`final`、`error` 和 `lastMessage`。存在 `final` 时会刷新句柄。
+
+daemon 或 Provider 拒绝设置变更时，调用会 reject。模型 ID 应来自当前 Provider 的 `providers.listModels`，不要使用创建时的 `provider/model` 格式。切换 Provider 需要创建新的 Agent。模型、推理选项和功能设置不会替换句柄缓存的快照；请调用 `refresh()` 或用 `subscribe()` 观察更新。返回的 `AgentProviderNotice` 包含 `type`（`info`、`warning` 或 `error`）和 `message`。
 
 `PaseoAgentCommandsResult` 包含 `agentId`、`commands` 和 `error`。每条命令都有 `name`、`description`、`argumentHint`，以及取值为 `"command"` 或 `"skill"` 的可选 `kind`。无法回答的 Provider 会在 `error` 中报告，而不是 reject；完全不提供命令列表的 Provider 返回空数组。
 
@@ -178,6 +188,28 @@ nav: API 参考
 capture 接受可选的 `start`、`end`、`stripAnsi` 和 `requestId`。行范围从零开始、包含两端，跨越回滚缓冲区和视口。负数范围从末尾开始计数；省略范围时捕获所有行。`stripAnsi` 默认为 `true`。终端不存在时返回空行。
 
 使用 `workspace.terminals.create(options?)` 和 `workspace.terminals.list(options?)` 可以从句柄提供工作区 ID。创建接受除 `workspaceId` 之外的相同选项；列表只接受 `requestId`。插件通过 `usePaseo()` 和处理函数的 `paseo` context 获得这些方法。
+
+## `client.schedules` {#clientschedules}
+
+定时任务属于所选主机，客户端断开或调用它的插件被移除后仍会继续运行。插件通过 `usePaseo()` 或服务端处理函数的 `paseo` 上下文使用相同方法。
+
+| 方法                          | 结果                         | 行为                                |
+| ----------------------------- | ---------------------------- | ----------------------------------- |
+| `create(options)`             | `PaseoScheduleCreateResult`  | 创建定时任务并返回 `schedule`。     |
+| `list(requestId?)`            | `PaseoScheduleListResult`    | 列出主机上的 `schedules`。          |
+| `inspect({ id, requestId? })` | `PaseoScheduleInspectResult` | 返回包含运行历史的 `schedule`。     |
+| `logs({ id, requestId? })`    | `PaseoScheduleLogsResult`    | 返回已记录的 `runs`。               |
+| `pause({ id, requestId? })`   | `PaseoSchedulePauseResult`   | 暂停后续自动运行。                  |
+| `resume({ id, requestId? })`  | `PaseoScheduleResumeResult`  | 恢复自动运行。                      |
+| `runOnce({ id, requestId? })` | `PaseoScheduleRunOnceResult` | 运行一次并返回更新后的 `schedule`。 |
+| `update(options)`             | `PaseoScheduleUpdateResult`  | 按 `id` 更新定时任务。              |
+| `delete({ id, requestId? })`  | `PaseoScheduleDeleteResult`  | 删除定时任务并返回 `scheduleId`。   |
+
+每个结果都包含 `requestId` 和 `error: string | null`。使用结果前先检查 `error`；daemon 错误通过该字段返回，传输和校验失败会 reject。
+
+创建时必须提供 `prompt`、cron `cadence: { type: "cron", expression, timezone? }` 和 `target`。用 `{ type: "agent", agentId }` 复用 Agent，或用 `{ type: "new-agent", config }` 在每次运行时创建新的 Agent。后一种配置分别接收 `provider`、`model` 和 `cwd`，可选字段包括 `modeId`、`thinkingOptionId`、`archiveOnFinish`、`isolation`、`title`、`providerOptions`、`featureValues`、`systemPrompt` 和 `mcpServers`。其他创建选项为 `name`、`maxRuns`、`expiresAt`、`runOnCreate` 和 `requestId`。
+
+更新接收 `id`，以及可选的 `name`、`prompt`、`cadence`、`maxRuns`、`expiresAt`、`requestId` 和 `newAgentConfig`。配置补丁支持 `provider`、`model`、`modeId`、`thinkingOptionId`、`archiveOnFinish`、`isolation` 和 `cwd`。传入 `null` 可清除 `name`、`maxRuns`、`expiresAt`、`model`、`modeId` 或 `thinkingOptionId`；省略的字段保持不变。
 
 ## `client.providers` {#clientproviders}
 
@@ -253,6 +285,6 @@ try {
 
 ## 错误与清理 {#errors-and-cleanup}
 
-连接、校验、拒绝和超时失败都会让对应的 promise reject。轮次的结果通过 `PaseoAgentRunResult.status` 返回，因为权限和 Provider 错误是 Agent 预期内的状态。
+连接、校验、拒绝和超时失败会让对应的 promise reject，方法明确说明通过结果中的 `error` 返回错误时除外。轮次的结果通过 `PaseoAgentRunResult.status` 返回，因为权限和 Provider 错误是 Agent 预期内的状态。
 
 请始终在 `finally` 中关闭客户端。关闭客户端会移除它的本地监听器和网络连接；它不会停止 Agent，也不会归档工作区。

@@ -22,6 +22,7 @@ import {
 } from "@getpaseo/protocol/agent-labels";
 import type { Logger } from "pino";
 import type { ToolPolicy } from "@getpaseo/protocol/agent-types";
+import type { AgentInstructionsUpdate } from "@getpaseo/protocol/messages";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
@@ -141,6 +142,16 @@ export class AgentRunCancellationError extends Error {
       `Cannot ${action} agent ${agentId} because its active run cancellation was not acknowledged`,
     );
     this.name = "AgentRunCancellationError";
+  }
+}
+
+export class AgentInstructionsUpdateError extends Error {
+  constructor(
+    readonly code: "busy" | "permission_pending" | "active_children" | "persistence_unavailable",
+    message: string,
+  ) {
+    super(message);
+    this.name = "AgentInstructionsUpdateError";
   }
 }
 
@@ -774,6 +785,10 @@ export class AgentManager {
   private readonly runtimeCleanupIdentities = new WeakMap<AgentSession, object>();
   private readonly collectingRuntimes = new Set<string>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
+  private readonly instructionUpdates = new Set<string>();
+  private readonly instructionUpdateDescendants = new Map<string, Set<string>>();
+  private readonly unavailableInstructionSessions = new WeakSet<AgentSession>();
+  private readonly pendingChildSessionOpens = new Map<string, number>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
@@ -910,10 +925,12 @@ export class AgentManager {
   async reloadStalePluginSession(agentId: string): Promise<void> {
     if (!this.needsPluginSessionReload(agentId)) return;
     await this.trackAgentRegistrationOperation(
-      this.runLifecycleMutation(agentId, async () => {
-        if (!this.needsPluginSessionReload(agentId)) return;
-        await this.reloadAgentSessionInternal(agentId);
-      }),
+      this.withChildSessionOpen(this.agents.get(agentId)?.labels, () =>
+        this.runLifecycleMutation(agentId, async () => {
+          if (!this.needsPluginSessionReload(agentId)) return;
+          await this.reloadAgentSessionInternal(agentId);
+        }),
+      ),
     );
   }
 
@@ -1349,7 +1366,11 @@ export class AgentManager {
     agentId: string | undefined,
     options: CreateAgentOptions,
   ): Promise<ManagedAgent> {
-    return this.trackAgentRegistrationOperation(this.createAgentInternal(config, agentId, options));
+    return this.trackAgentRegistrationOperation(
+      this.withChildSessionOpen(options.labels, () =>
+        this.createAgentInternal(config, agentId, options),
+      ),
+    );
   }
 
   private async createAgentInternal(
@@ -1442,13 +1463,15 @@ export class AgentManager {
       "resumeAgentFromPersistence",
     );
     return this.trackAgentRegistrationOperation(
-      this.runLifecycleMutation(resolvedAgentId, () =>
-        this.resumeAgentFromPersistenceInternal(
-          handle,
-          overrides,
-          resolvedAgentId,
-          options,
-          resumeOptions,
+      this.withChildSessionOpen(options?.labels, () =>
+        this.runLifecycleMutation(resolvedAgentId, () =>
+          this.resumeAgentFromPersistenceInternal(
+            handle,
+            overrides,
+            resolvedAgentId,
+            options,
+            resumeOptions,
+          ),
         ),
       ),
     );
@@ -1541,7 +1564,9 @@ export class AgentManager {
     workspaceId: string;
     labels?: Record<string, string>;
   }): Promise<ManagedAgent> {
-    return this.trackAgentRegistrationOperation(this.importProviderSessionInternal(input));
+    return this.trackAgentRegistrationOperation(
+      this.withChildSessionOpen(input.labels, () => this.importProviderSessionInternal(input)),
+    );
   }
 
   private async importProviderSessionInternal(input: {
@@ -1621,6 +1646,184 @@ export class AgentManager {
     }
   }
 
+  updateAgentInstructions(
+    agentId: string,
+    instructions: AgentInstructionsUpdate,
+  ): Promise<ManagedAgent> {
+    return this.trackAgentRegistrationOperation(
+      this.runLifecycleMutation(agentId, async () => {
+        this.assertInstructionsNotUpdating(agentId);
+        this.assertInstructionUpdateIdle(agentId);
+        this.instructionUpdates.add(agentId);
+        try {
+          await this.reserveInstructionDescendants(agentId);
+          return await this.reloadAgentSessionInternal(agentId, instructions, {
+            requireIdle: true,
+          });
+        } finally {
+          this.instructionUpdateDescendants.delete(agentId);
+          this.instructionUpdates.delete(agentId);
+        }
+      }),
+    );
+  }
+
+  private isDescendantOf(agentId: string, ancestorId: string): boolean {
+    const seen = new Set<string>();
+    let parentId = getParentAgentIdFromLabels(this.agents.get(agentId)?.labels);
+    while (parentId && !seen.has(parentId)) {
+      if (parentId === ancestorId) return true;
+      seen.add(parentId);
+      parentId = getParentAgentIdFromLabels(this.agents.get(parentId)?.labels);
+    }
+    return false;
+  }
+
+  private instructionUpdateOwner(agentId: string): string | undefined {
+    for (const updatingId of this.instructionUpdates) {
+      if (
+        agentId === updatingId ||
+        this.instructionUpdateDescendants.get(updatingId)?.has(agentId) ||
+        this.isDescendantOf(agentId, updatingId)
+      )
+        return updatingId;
+    }
+    return undefined;
+  }
+
+  private assertInstructionsNotUpdating(agentId: string): void {
+    const updatingId = this.instructionUpdateOwner(agentId);
+    if (updatingId)
+      throw new AgentInstructionsUpdateError(
+        "busy",
+        `Agent ${updatingId} instructions are being updated`,
+      );
+  }
+
+  private async reserveInstructionDescendants(agentId: string): Promise<void> {
+    const parents = new Map<string, string | null>();
+    for (const record of (await this.registry?.list()) ?? []) {
+      if (!record.archivedAt) parents.set(record.id, getParentAgentIdFromLabels(record.labels));
+    }
+    for (const agent of this.agents.values())
+      parents.set(agent.id, getParentAgentIdFromLabels(agent.labels));
+    const descendants = new Set<string>();
+    for (const [id, initialParent] of parents) {
+      const seen = new Set<string>();
+      let parent = initialParent;
+      while (parent && !seen.has(parent)) {
+        if (parent === agentId) {
+          descendants.add(id);
+          break;
+        }
+        seen.add(parent);
+        parent = parents.get(parent) ?? null;
+      }
+    }
+    this.instructionUpdateDescendants.set(agentId, descendants);
+  }
+
+  private assertRuntimeMutationAvailable(agentId: string): void {
+    this.assertInstructionsNotUpdating(agentId);
+    const session = this.agents.get(agentId)?.session;
+    if (session && this.unavailableInstructionSessions.has(session)) {
+      throw new AgentInstructionsUpdateError(
+        "busy",
+        "Retry updating instructions or reload before sending new work",
+      );
+    }
+  }
+
+  private async withChildSessionOpen<T>(
+    labels: Record<string, string> | undefined,
+    open: () => Promise<T>,
+  ): Promise<T> {
+    const parentId = getParentAgentIdFromLabels(labels);
+    if (!parentId) return open();
+    this.assertInstructionsNotUpdating(parentId);
+    this.pendingChildSessionOpens.set(
+      parentId,
+      (this.pendingChildSessionOpens.get(parentId) ?? 0) + 1,
+    );
+    try {
+      return await open();
+    } finally {
+      const remaining = this.pendingChildSessionOpens.get(parentId)! - 1;
+      if (remaining === 0) this.pendingChildSessionOpens.delete(parentId);
+      else this.pendingChildSessionOpens.set(parentId, remaining);
+    }
+  }
+
+  private assertInstructionUpdateIdle(agentId: string): void {
+    const agent = this.requireSessionAgent(agentId);
+    if (
+      agent.pendingPermissions.size > 0 ||
+      agent.inFlightPermissionResponses.size > 0 ||
+      agent.session.getPendingPermissions().length > 0
+    ) {
+      throw new AgentInstructionsUpdateError(
+        "permission_pending",
+        "Resolve pending permissions before updating instructions",
+      );
+    }
+    if (
+      this.hasInFlightRun(agentId) ||
+      this.foregroundMutationTails.has(agentId) ||
+      agent.activeTurnId ||
+      agent.pendingReplacement ||
+      agent.lifecycle === "running" ||
+      agent.lifecycle === "initializing"
+    ) {
+      throw new AgentInstructionsUpdateError(
+        "busy",
+        "Wait for the agent to finish before updating instructions",
+      );
+    }
+    const descendants = this.instructionUpdateDescendants.get(agentId);
+    const family = [
+      agent,
+      ...Array.from(this.agents.values()).filter(
+        (candidate) => descendants?.has(candidate.id) || this.isDescendantOf(candidate.id, agentId),
+      ),
+    ];
+    const openingDescendant = Array.from(this.pendingChildSessionOpens.keys()).some((parentId) =>
+      descendants?.has(parentId),
+    );
+    if (
+      openingDescendant ||
+      family.some(
+        (candidate) =>
+          (candidate.id !== agentId &&
+            (this.instructionUpdates.has(candidate.id) ||
+              this.collectingRuntimes.has(candidate.id))) ||
+          this.pendingChildSessionOpens.has(candidate.id) ||
+          this.providerSubagents.list(candidate.id).some((child) => child.status === "running") ||
+          (candidate.id !== agentId &&
+            (this.hasInFlightRun(candidate.id) ||
+              this.foregroundMutationTails.has(candidate.id) ||
+              candidate.activeTurnId ||
+              candidate.pendingReplacement ||
+              candidate.lifecycle === "running" ||
+              candidate.lifecycle === "initializing" ||
+              candidate.pendingPermissions.size > 0 ||
+              candidate.inFlightPermissionResponses.size > 0 ||
+              this.unavailableInstructionSessions.has(candidate.session) ||
+              candidate.session.getPendingPermissions().length > 0)),
+      )
+    ) {
+      throw new AgentInstructionsUpdateError(
+        "active_children",
+        "Wait for child agents to finish before updating instructions",
+      );
+    }
+    if (!agent.persistence) {
+      throw new AgentInstructionsUpdateError(
+        "persistence_unavailable",
+        "The agent cannot resume its conversation with updated instructions",
+      );
+    }
+  }
+
   // Hot-reload an active agent session with config overrides. By default the
   // in-memory timeline is preserved (used for voice-mode toggles and similar
   // config swaps). When `rehydrateFromDisk` is set, the timeline is wiped so a
@@ -1633,8 +1836,10 @@ export class AgentManager {
     options?: { rehydrateFromDisk?: boolean },
   ): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(
-      this.runLifecycleMutation(agentId, () =>
-        this.reloadAgentSessionInternal(agentId, overrides, options),
+      this.withChildSessionOpen(this.agents.get(agentId)?.labels, () =>
+        this.runLifecycleMutation(agentId, () =>
+          this.reloadAgentSessionInternal(agentId, overrides, options),
+        ),
       ),
     );
   }
@@ -1642,15 +1847,11 @@ export class AgentManager {
   private async reloadAgentSessionInternal(
     agentId: string,
     overrides?: Partial<AgentSessionConfig>,
-    options?: { rehydrateFromDisk?: boolean },
+    options: { rehydrateFromDisk?: boolean; requireIdle?: boolean } = {},
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
-    let existing = this.requireSessionAgent(agentId);
-    if (this.hasInFlightRun(agentId)) {
-      await this.cancelAgentRunBefore(agentId, "reload");
-      existing = this.requireSessionAgent(agentId);
-    }
-    const rehydrateFromDisk = options?.rehydrateFromDisk ?? false;
+    const existing = await this.prepareAgentForReload(agentId, options.requireIdle === true);
+    const rehydrateFromDisk = options.rehydrateFromDisk ?? false;
     const preservedHistoryPrimed = existing.historyPrimed;
     const preservedLastUsage = existing.lastUsage;
     const preservedLastError = existing.lastError;
@@ -1670,40 +1871,29 @@ export class AgentManager {
     );
     const hadPreviousPaseoToolPolicy = this.paseoToolPolicies.has(agentId);
     const previousPaseoToolPolicy = this.paseoToolPolicies.get(agentId);
-    const launchContext = await this.buildLaunchContext(
-      agentId,
-      client,
-      storedConfig.cwd,
-      paseoToolPolicy,
-      existing.launchEnv,
-      {
-        reason: "refresh",
-        purpose: "interactive",
-        workspaceId: existing.workspaceId,
-        title: await this.resolveInitialPersistedTitle(agentId, existing.config, null),
-        labels: existing.labels,
-      },
-    );
-    const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
-    if (
-      Object.keys(stripInternalPaseoMcpServer(providerLaunchConfig).mcpServers ?? {}).length > 0 &&
-      existing.session.capabilities.supportsMcpServers !== true
-    ) {
-      throw this.unsupportedMcpError(providerLaunchConfig, launchContext);
-    }
-
+    const prepareLaunch = () =>
+      this.prepareReloadLaunch(existing, client, { storedConfig, launchConfig, paseoToolPolicy });
+    let preparedLaunch = options.requireIdle ? null : await prepareLaunch();
+    if (options.requireIdle) await this.checkInstructionRuntimeSafety(existing);
     let session: AgentSession | undefined;
     let closedExisting: ManagedAgentClosed | undefined;
     let handedToRegistration = false;
     try {
       // A persisted thread can have only one writer, even when its turn is idle.
+      // A failed/timed-out close may still be in flight. Keep that runtime out
+      // of admission until a retry replaces it; the durable old config survives.
+      if (options.requireIdle) this.unavailableInstructionSessions.add(existing.session);
       await this.closeReloadedSession(existing.session, agentId);
       await this.drainSessionEvents(agentId);
-      this.cancelRunningProviderSubagents(agentId);
+      if (!options.requireIdle) this.cancelRunningProviderSubagents(agentId);
       closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
       await this.persistSnapshot(closedExisting);
       this.assertAcceptingAgentRegistrations();
 
+      // Open hooks replace plugin tool definitions. Only run them after the old
+      // idle runtime has acknowledged closure, so preflight rejection is inert.
+      preparedLaunch ??= await prepareLaunch();
+      const { providerLaunchConfig, launchContext } = preparedLaunch;
       this.paseoToolPolicies.set(agentId, paseoToolPolicy);
       session = handle
         ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
@@ -1722,7 +1912,7 @@ export class AgentManager {
 
       // Preserve existing labels and timeline during reload.
       handedToRegistration = true;
-      return this.registerSession(session, storedConfig, agentId, {
+      return await this.registerSession(session, storedConfig, agentId, {
         labels: existing.labels,
         workspaceId: existing.workspaceId,
         owner: existing.owner,
@@ -1735,29 +1925,180 @@ export class AgentManager {
         lastError: preservedLastError,
         attention: preservedAttention,
         restoring: true,
+        retainSessionOnFailure: options.requireIdle,
       });
     } catch (error) {
-      if (closedExisting) {
-        this.emitClosedAgent(closedExisting, { persist: false });
-      } else if (this.agents.get(agentId) === existing) {
-        existing.lifecycle = "error";
-        existing.lastError = error instanceof Error ? error.message : String(error);
-        this.emitState(existing);
-      }
+      const retained = await this.handleReloadFailure({
+        existing,
+        session,
+        closedExisting,
+        error,
+        requireIdle: options.requireIdle === true,
+        hadPreviousPaseoToolPolicy,
+        previousPaseoToolPolicy,
+      });
+      handedToRegistration ||= retained;
       throw error;
     } finally {
       if (!handedToRegistration) {
-        this.detachPluginTools(agentId);
-        if (hadPreviousPaseoToolPolicy) {
-          this.paseoToolPolicies.set(agentId, previousPaseoToolPolicy);
-        } else {
-          this.paseoToolPolicies.delete(agentId);
-        }
+        if (preparedLaunch || closedExisting) this.detachPluginTools(agentId);
+        this.restorePaseoToolPolicy(agentId, hadPreviousPaseoToolPolicy, previousPaseoToolPolicy);
         if (session) {
           await this.closeUnregisteredSession(session);
         }
       }
     }
+  }
+
+  private async handleReloadFailure(input: {
+    existing: ActiveManagedAgent;
+    session: AgentSession | undefined;
+    closedExisting: ManagedAgentClosed | undefined;
+    error: unknown;
+    requireIdle: boolean;
+    hadPreviousPaseoToolPolicy: boolean;
+    previousPaseoToolPolicy: ProviderPaseoToolsPolicy | undefined;
+  }): Promise<boolean> {
+    const { existing, session, closedExisting, error } = input;
+    if (input.requireIdle && session && closedExisting) {
+      this.restorePaseoToolPolicy(
+        existing.id,
+        input.hadPreviousPaseoToolPolicy,
+        input.previousPaseoToolPolicy,
+      );
+      await this.retainFailedInstructionSession(existing, session, error);
+      return true;
+    }
+    if (closedExisting) this.emitClosedAgent(closedExisting, { persist: false });
+    else if (this.agents.get(existing.id) === existing) {
+      existing.lifecycle = "error";
+      existing.lastError = error instanceof Error ? error.message : String(error);
+      this.emitState(existing);
+    }
+    return false;
+  }
+
+  private async prepareReloadLaunch(
+    existing: ActiveManagedAgent,
+    client: AgentClient,
+    config: PreparedSessionConfig,
+  ): Promise<{ providerLaunchConfig: AgentSessionConfig; launchContext: AgentLaunchContext }> {
+    const launchContext = await this.buildLaunchContext(
+      existing.id,
+      client,
+      config.storedConfig.cwd,
+      config.paseoToolPolicy,
+      existing.launchEnv,
+      {
+        reason: "refresh",
+        purpose: "interactive",
+        workspaceId: existing.workspaceId,
+        title: await this.resolveInitialPersistedTitle(existing.id, existing.config, null),
+        labels: existing.labels,
+      },
+    );
+    const providerLaunchConfig = this.resolveProviderLaunchConfig(
+      config.launchConfig,
+      launchContext,
+    );
+    if (
+      Object.keys(stripInternalPaseoMcpServer(providerLaunchConfig).mcpServers ?? {}).length > 0 &&
+      existing.session.capabilities.supportsMcpServers !== true
+    ) {
+      throw this.unsupportedMcpError(providerLaunchConfig, launchContext);
+    }
+    return { providerLaunchConfig, launchContext };
+  }
+
+  private async checkInstructionRuntimeSafety(existing: ActiveManagedAgent): Promise<void> {
+    const descendants = this.instructionUpdateDescendants.get(existing.id);
+    const family = [
+      existing,
+      ...Array.from(this.agents.values()).filter(
+        (candidate) =>
+          descendants?.has(candidate.id) || this.isDescendantOf(candidate.id, existing.id),
+      ),
+    ];
+    for (const candidate of family) {
+      // A failed update already fenced this writer; recovery must release it.
+      if (
+        this.unavailableInstructionSessions.has(candidate.session) ||
+        !candidate.session.canStopRuntime
+      )
+        continue;
+      let allowed = false;
+      try {
+        allowed = await withTimeout(
+          candidate.session.canStopRuntime(),
+          10_000,
+          "Runtime safety check timed out",
+        );
+      } catch {
+        /* A failed safety check is a veto, just like automatic cleanup. */
+      }
+      if (allowed !== true)
+        throw new AgentInstructionsUpdateError(
+          candidate.id === existing.id ? "busy" : "active_children",
+          "Provider background work prevents updating instructions",
+        );
+    }
+    // Probe awaits may deliver events; check again before releasing the writer.
+    await this.drainSessionEvents(existing.id);
+    this.assertInstructionUpdateIdle(existing.id);
+  }
+
+  private async prepareAgentForReload(
+    agentId: string,
+    requireIdle: boolean,
+  ): Promise<ActiveManagedAgent> {
+    if (requireIdle) this.assertInstructionUpdateIdle(agentId);
+    else if (this.hasInFlightRun(agentId)) await this.cancelAgentRunBefore(agentId, "reload");
+    return this.requireSessionAgent(agentId);
+  }
+
+  private restorePaseoToolPolicy(
+    agentId: string,
+    hadPrevious: boolean,
+    previous: ProviderPaseoToolsPolicy | undefined,
+  ): void {
+    if (hadPrevious) this.paseoToolPolicies.set(agentId, previous);
+    else this.paseoToolPolicies.delete(agentId);
+  }
+
+  private async retainFailedInstructionSession(
+    existing: ActiveManagedAgent,
+    session: AgentSession,
+    error: unknown,
+  ): Promise<void> {
+    const agentId = existing.id;
+    let replacement = this.agents.get(agentId);
+    if (!replacement) {
+      // Even failure before publication retains the writer until its close is
+      // acknowledged. A later retry owns releasing it safely.
+      replacement = this.buildManagedAgentForRegister({
+        resolvedAgentId: agentId,
+        session,
+        config: existing.config,
+        now: new Date(),
+        durableTimelineHasRows: existing.historyPrimed,
+        options: { ...existing, persistence: existing.persistence ?? undefined },
+      });
+      this.agents.set(agentId, replacement);
+    }
+    // Registration publishes before its final persistence/state checks. Keep a
+    // failed replacement fenced with the old configuration for retry or Reload.
+    this.unavailableInstructionSessions.add(session);
+    replacement.config = existing.config;
+    replacement.persistence = existing.persistence;
+    replacement.lifecycle = "error";
+    replacement.lastError = error instanceof Error ? error.message : String(error);
+    await this.persistSnapshot(replacement).catch((persistError: unknown) => {
+      this.logger.error(
+        { err: persistError, agentId },
+        "Failed to restore instruction configuration",
+      );
+    });
+    this.emitState(replacement, { persist: false });
   }
 
   private async closeReloadedSession(session: AgentSession, agentId: string): Promise<void> {
@@ -1894,6 +2235,8 @@ export class AgentManager {
   private runtimeHasNoPendingWork(agent: LiveManagedAgent): boolean {
     return (
       agent.lifecycle === "idle" &&
+      !this.instructionUpdateOwner(agent.id) &&
+      !this.unavailableInstructionSessions.has(agent.session) &&
       !agent.internal &&
       agent.activeForegroundTurnId === null &&
       !this.runs.hasRun(agent.id) &&
@@ -2185,6 +2528,17 @@ export class AgentManager {
   }
 
   async setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null> {
+    this.assertRuntimeMutationAvailable(agentId);
+    return this.runLifecycleMutation(agentId, () => {
+      this.assertRuntimeMutationAvailable(agentId);
+      return this.setAgentModeUnlocked(agentId, modeId);
+    });
+  }
+
+  private async setAgentModeUnlocked(
+    agentId: string,
+    modeId: string,
+  ): Promise<AgentProviderNotice | null> {
     const agent = this.requireSessionAgent(agentId);
     const notice = (await agent.session.setMode(modeId)) ?? null;
     await this.drainSessionEvents(agentId);
@@ -2201,6 +2555,14 @@ export class AgentManager {
   }
 
   async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
+    this.assertRuntimeMutationAvailable(agentId);
+    return this.runLifecycleMutation(agentId, () => {
+      this.assertRuntimeMutationAvailable(agentId);
+      return this.setAgentModelUnlocked(agentId, modelId);
+    });
+  }
+
+  private async setAgentModelUnlocked(agentId: string, modelId: string | null): Promise<void> {
     const agent = this.requireSessionAgent(agentId);
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
@@ -2220,6 +2582,17 @@ export class AgentManager {
   }
 
   async setAgentThinkingOption(
+    agentId: string,
+    thinkingOptionId: string | null,
+  ): Promise<AgentProviderNotice | null> {
+    this.assertRuntimeMutationAvailable(agentId);
+    return this.runLifecycleMutation(agentId, () => {
+      this.assertRuntimeMutationAvailable(agentId);
+      return this.setAgentThinkingOptionUnlocked(agentId, thinkingOptionId);
+    });
+  }
+
+  private async setAgentThinkingOptionUnlocked(
     agentId: string,
     thinkingOptionId: string | null,
   ): Promise<AgentProviderNotice | null> {
@@ -2254,6 +2627,18 @@ export class AgentManager {
   }
 
   async setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void> {
+    this.assertRuntimeMutationAvailable(agentId);
+    return this.runLifecycleMutation(agentId, () => {
+      this.assertRuntimeMutationAvailable(agentId);
+      return this.setAgentFeatureUnlocked(agentId, featureId, value);
+    });
+  }
+
+  private async setAgentFeatureUnlocked(
+    agentId: string,
+    featureId: string,
+    value: unknown,
+  ): Promise<void> {
     const agent = this.requireAgent(agentId);
 
     if (!agent.session.setFeature) {
@@ -2293,6 +2678,8 @@ export class AgentManager {
   }
 
   private async writeLabels(agentId: string, patch: AgentLabelPatch): Promise<WriteLabelsResult> {
+    const parentId = getParentAgentIdFromLabels(patch);
+    if (parentId) this.assertInstructionsNotUpdating(parentId);
     const liveAgent = this.agents.get(agentId);
     if (liveAgent) {
       liveAgent.labels = applyLabelPatch(liveAgent.labels, patch);
@@ -2627,6 +3014,7 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<boolean> {
+    this.assertRuntimeMutationAvailable(agentId);
     if (this.collectingRuntimes.has(agentId) || !this.agents.has(agentId)) {
       await this.waitForAgentClose(agentId);
       await ensureAgentLoaded(agentId, {
@@ -2635,6 +3023,7 @@ export class AgentManager {
         logger: this.logger,
       });
     }
+    this.assertRuntimeMutationAvailable(agentId);
     const agent = this.requireSessionAgent(agentId);
     // Providers parse slash commands from the raw text, so a command another agent sent
     // must reach them without its sender envelope.
@@ -2779,8 +3168,10 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): AsyncGenerator<AgentStreamEvent> {
+    this.assertRuntimeMutationAvailable(agentId);
     if (this.collectingRuntimes.has(agentId) || (!this.agents.has(agentId) && this.registry))
       return this.streamAfterRuntimeCollection(agentId, prompt, options);
+
     const existingAgent = this.requireSessionAgent(agentId);
     this.logger.trace(
       {
@@ -2981,6 +3372,7 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
+    this.assertRuntimeMutationAvailable(agentId);
     const snapshot = this.requireAgent(agentId);
     if (
       snapshot.lifecycle !== "running" &&
@@ -3013,6 +3405,7 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentSteerOptions,
   ): Promise<SteerResult> {
+    this.assertRuntimeMutationAvailable(agentId);
     const agent = this.requireSessionAgent(agentId);
     const expectedTurnId = agent.activeForegroundTurnId ?? agent.activeTurnId;
     if (!expectedTurnId || !agent.session.steerActiveTurn) {
@@ -3041,6 +3434,7 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentSteerOptions,
   ): Promise<ActiveTurnSteerDispatchResult> {
+    this.assertRuntimeMutationAvailable(agentId);
     const agent = this.requireSessionAgent(agentId);
     const expectedTurnId = agent.activeForegroundTurnId ?? agent.activeTurnId;
     if (!expectedTurnId) {
@@ -3768,6 +4162,8 @@ export class AgentManager {
       restoring?: boolean;
       initialTitle?: string | null;
       publishWhenReady?: boolean;
+      /** The reload caller retains a failed writer for safe, retryable cleanup. */
+      retainSessionOnFailure?: boolean;
       workspaceId?: string;
       owner?: AgentOwner;
       launchEnv?: Record<string, string>;
@@ -3854,7 +4250,7 @@ export class AgentManager {
       this.assertAgentRegistrationActive(managed);
       return { ...managed };
     } catch (error) {
-      if (!registered) {
+      if (!registered && !options?.retainSessionOnFailure) {
         await this.closeUnregisteredSession(session);
       }
       throw error;

@@ -11,11 +11,13 @@ import { createPluginHostNavigation } from "./host-navigation-model";
 
 export function usePluginHostNavigation(
   serverId: string,
+  beforeNavigate?: () => void,
 ): NonNullable<PluginSurfaceProps["navigation"]> {
   return useMemo(
     () =>
       createPluginHostNavigation(serverId, {
         browserAvailable: getIsElectron(),
+        beforeNavigate,
         openAgent: navigateToAgent,
         openWorkspace: navigateToWorkspace,
         createBrowser: createWorkspaceBrowser,
@@ -25,6 +27,6 @@ export function usePluginHostNavigation(
             workspaceId,
           }),
       }),
-    [serverId],
+    [serverId, beforeNavigate],
   );
 }

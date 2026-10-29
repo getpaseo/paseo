@@ -2073,6 +2073,30 @@ export const AgentConfigApplyResponseMessageSchema = z.object({
   payload: AgentActionResponsePayloadSchema,
 });
 
+export const AgentInstructionsUpdateSchema = z.object({
+  systemPrompt: z.string(),
+  mcpServers: z.record(z.string(), McpServerConfigSchema).optional(),
+});
+export type AgentInstructionsUpdate = z.infer<typeof AgentInstructionsUpdateSchema>;
+
+export const AgentInstructionsUpdateRequestMessageSchema = AgentInstructionsUpdateSchema.extend({
+  type: z.literal("agent.update_instructions.request"),
+  agentId: z.string(),
+  requestId: z.string(),
+});
+
+export const AgentInstructionsUpdateResponseMessageSchema = z.object({
+  type: z.literal("agent.update_instructions.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    accepted: z.boolean(),
+    agent: AgentSnapshotPayloadSchema.nullable(),
+    error: z.string().nullable(),
+    code: z.string().optional(),
+  }),
+});
+
 export const AgentDetachRequestMessageSchema = z.object({
   type: z.literal("agent.detach.request"),
   agentId: z.string(),
@@ -3377,6 +3401,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentThinkingRequestMessageSchema,
   SetAgentFeatureRequestMessageSchema,
   AgentConfigApplyRequestMessageSchema,
+  AgentInstructionsUpdateRequestMessageSchema,
   AgentDetachRequestMessageSchema,
   AgentRewindRequestMessageSchema,
   AgentPermissionResponseMessageSchema,
@@ -3855,6 +3880,7 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
+        agentInstructionsUpdate: z.boolean().optional(),
       })
       .optional(),
   })
@@ -7118,6 +7144,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentThinkingResponseMessageSchema,
   SetAgentFeatureResponseMessageSchema,
   AgentConfigApplyResponseMessageSchema,
+  AgentInstructionsUpdateResponseMessageSchema,
   AgentDetachResponseMessageSchema,
   AgentRewindResponseMessageSchema,
   UpdateAgentResponseMessageSchema,
