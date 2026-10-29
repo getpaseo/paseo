@@ -74,6 +74,37 @@ lines.on("line", (line) => {
   if (text.includes("RESUME")) name = "resume";
   if (text.includes("HANG")) name = "sigint-mid-text";
   if (text.includes("TOOL_HANG")) name = "sigint-mid-tool";
+  if (text.includes("STALE_ERROR")) {
+    const frames = fixture("text-turn").slice(1);
+    for (const frame of frames) {
+      if (frame.event === "result") {
+        emit({
+          event: "result",
+          result: {
+            conversation_id: conversationId,
+            status: "ERROR",
+            error: "Individual quota reached. Resets in 66h22m0s.",
+            denied_actions: [],
+          },
+        });
+      } else {
+        emit(frame);
+      }
+    }
+    return;
+  }
+  if (text.includes("UNANSWERED_ERROR")) {
+    emit({
+      event: "result",
+      result: {
+        conversation_id: conversationId,
+        status: "ERROR",
+        error: "Individual quota reached. Resets in 66h22m0s.",
+        denied_actions: [],
+      },
+    });
+    return;
+  }
   const frames = fixture(name).slice(1);
   if (name.startsWith("sigint")) {
     interrupted = frames[frames.length - 1];

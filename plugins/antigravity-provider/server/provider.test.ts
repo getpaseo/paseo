@@ -567,6 +567,45 @@ it("rejects mid-turn steering and reports a busy message without queueing a seco
   ).rejects.toThrow(/prompt.steer/);
 });
 
+it("treats trailing trajectory errors on answered turns as notices and settles completed", async () => {
+  const h = await harness();
+  await h.open();
+  const turn = await h.completed(await h.prompt("STALE_ERROR"));
+  expect(turn).toMatchObject({
+    type: "session.turn",
+    state: "completed",
+  });
+  const notice = h.events.find(
+    (event) => event.type === "session.notice" && event.notice.id.endsWith(":trajectory_error"),
+  );
+  expect(notice).toMatchObject({
+    type: "session.notice",
+    notice: {
+      severity: "warning",
+      title: "Antigravity reported a trajectory warning",
+      description: expect.stringMatching(/quota reached/i),
+    },
+  });
+});
+
+it("fails turns when an error result arrives without an answer", async () => {
+  const h = await harness();
+  await h.open();
+  const turn = await h.completed(await h.prompt("UNANSWERED_ERROR"));
+  expect(turn).toMatchObject({
+    type: "session.turn",
+    state: "failed",
+    error: {
+      message: expect.stringMatching(/quota reached/i),
+    },
+  });
+  expect(
+    h.events.some(
+      (event) => event.type === "session.notice" && event.notice.id.endsWith(":trajectory_error"),
+    ),
+  ).toBe(false);
+});
+
 describe("discovery", () => {
   it("reuses one discovered catalog for two opens and configure, and refreshes explicit catalog requests", async () => {
     const h = await harness();
