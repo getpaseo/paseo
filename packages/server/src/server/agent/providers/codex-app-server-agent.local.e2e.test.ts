@@ -265,6 +265,61 @@ describe("Codex app-server provider (local e2e)", () => {
   );
 
   test.runIf(isCodexInstalled())(
+    "reopens an agent that was never prompted without resuming its unsaved thread",
+    async () => {
+      const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-unprompted-cwd-"));
+      const codexHome = mkdtempSync(path.join(os.tmpdir(), "codex-unprompted-home-"));
+      const mockServer = await startMockResponsesServer([
+        assistantMessageSse("first"),
+        assistantMessageSse("second"),
+      ]);
+      const logger = createTestLogger();
+      const storage = new AgentStorage(path.join(cwd, "agents"), logger);
+      const manager = new AgentManager({
+        clients: { codex: new CodexAppServerAgentClient(logger) },
+        registry: storage,
+        logger,
+      });
+      let agentId: string | undefined;
+      try {
+        writeMockCodexConfig(codexHome, mockServer.url);
+        vi.stubEnv("CODEX_HOME", codexHome);
+        const created = await manager.createAgent(
+          { provider: "codex", cwd, modeId: "auto", model: "mock-model" },
+          undefined,
+          { workspaceId: undefined },
+        );
+        agentId = created.id;
+        // Codex writes a thread's rollout at its first turn, so there is nothing to resume yet.
+        expect(manager.getAgent(agentId)?.persistence).toBeNull();
+        await storage.flush();
+        expect((await storage.get(agentId))?.persistence).toBeNull();
+
+        await manager.reloadAgentSession(agentId);
+        await manager.runAgent(agentId, "first prompt after reopening");
+        const threadId = manager.getAgent(agentId)?.persistence?.sessionId;
+        expect(threadId).toEqual(expect.any(String));
+        await storage.flush();
+        expect((await storage.get(agentId))?.persistence?.sessionId).toBe(threadId);
+
+        const reloaded = await manager.reloadAgentSession(agentId);
+        expect(reloaded.persistence?.sessionId).toBe(threadId);
+        await manager.runAgent(agentId, "continue the saved thread");
+        expect(manager.getAgent(agentId)?.lifecycle).toBe("idle");
+        expect(mockServer.requestBodies.at(-1)).toContain("first prompt after reopening");
+      } finally {
+        if (agentId && manager.getAgent(agentId)) await manager.closeAgent(agentId);
+        await storage.flush();
+        vi.unstubAllEnvs();
+        await mockServer.close();
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(codexHome, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
+  test.runIf(isCodexInstalled())(
     "surfaces request_user_input from the app-server as question permissions and timeline tool calls",
     async () => {
       const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-app-server-question-cwd-"));
