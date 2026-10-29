@@ -109,6 +109,10 @@ import type {
   DaemonGetStatusResponse,
   DaemonGetPairingOfferResponse,
   DaemonConfigReloadResponse,
+  DaemonConfigExportResponse,
+  DaemonConfigImportPreviewResponse,
+  DaemonConfigImportApplyResponse,
+  HostConfigDocument,
   DiagnosticsResponse,
   AgentRewindResponseMessage,
   ListTerminalsResponse,
@@ -5535,6 +5539,39 @@ export class DaemonClient {
     });
   }
 
+  async exportConfig(): Promise<DaemonConfigExportResponse["payload"]> {
+    this.requireConfigTransferSupport();
+    return this.sendNamespacedCorrelatedSessionRequest({
+      message: { type: "daemon.config.export.request" },
+    });
+  }
+
+  async previewConfigImport(
+    document: HostConfigDocument,
+  ): Promise<DaemonConfigImportPreviewResponse["payload"]> {
+    this.requireConfigTransferSupport();
+    return this.sendNamespacedCorrelatedSessionRequest({
+      message: { type: "daemon.config.import.preview.request", document },
+    });
+  }
+
+  // Applying installs plugins, which builds them, so it gets the plugin install timeout.
+  async applyConfigImport(input: {
+    document: HostConfigDocument;
+    sections: string[];
+    plugins: string[];
+    enablePlugins: boolean;
+  }): Promise<DaemonConfigImportApplyResponse["payload"]> {
+    this.requireConfigTransferSupport();
+    const requestId = this.createRequestId();
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "daemon.config.import.apply.request", requestId, ...input },
+      responseType: "daemon.config.import.apply.response",
+      timeout: 300_000,
+    });
+  }
+
   async connectHub(
     hubUrl: string,
     token: string,
@@ -6708,6 +6745,13 @@ export class DaemonClient {
     // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.
     if (this.lastServerInfoMessage?.features?.hubRelationship !== true) {
       throw new Error("Update the host to use Hub relationship management.");
+    }
+  }
+
+  private requireConfigTransferSupport(): void {
+    // COMPAT(configTransfer): added in v0.14.0, remove gate after 2027-04-28.
+    if (this.lastServerInfoMessage?.features?.configTransfer !== true) {
+      throw new Error("Update the host to export or import its configuration.");
     }
   }
 
