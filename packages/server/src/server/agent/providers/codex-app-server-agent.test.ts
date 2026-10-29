@@ -226,6 +226,64 @@ function deferred<T>() {
 }
 
 describe("Codex active-turn steering admission", () => {
+  test("steers an accepted turn whose native id arrives after startTurn returns", async () => {
+    const appServer = createFakeCodexAppServer({
+      "turn/steer": () => ({ turn: { id: "native-A" } }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    try {
+      const { turnId } = await session.startTurn("FIRST");
+      const steer = session.steerActiveTurn("SECOND", { expectedTurnId: turnId });
+      appServer.startsTurn({ threadId: "thread-1", turnId: "native-A" });
+
+      await expect(steer).resolves.toEqual({ status: "accepted" });
+      expect(
+        appServer.requests().filter((request) => request.method === "turn/start"),
+      ).toHaveLength(1);
+      expect(appServer.requests().filter((request) => request.method === "turn/interrupt")).toEqual(
+        [],
+      );
+      expect(appServer.requests().find((request) => request.method === "turn/steer")).toMatchObject(
+        {
+          params: {
+            threadId: "thread-1",
+            expectedTurnId: "native-A",
+            input: [{ type: "text", text: "SECOND" }],
+          },
+        },
+      );
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("releases a waiting steer when the accepted turn ends before identification", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    try {
+      const { turnId } = await session.startTurn("FIRST");
+      const steer = session.steerActiveTurn("SECOND", { expectedTurnId: turnId });
+      appServer.completeTurn();
+
+      await expect(steer).resolves.toEqual({ status: "unavailable" });
+      expect(appServer.requests().filter((request) => request.method === "turn/steer")).toEqual([]);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("a steer without the clearing contract leaves permissions open", async () => {
     const appServer = createFakeCodexAppServer({
       "turn/steer": () => ({ turn: { id: "native-A" } }),

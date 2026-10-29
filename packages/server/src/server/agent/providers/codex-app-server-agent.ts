@@ -4456,9 +4456,18 @@ export class CodexAppServerAgentSession implements AgentSession {
   ): Promise<SteerResult> {
     const client = this.client;
     const threadId = this.currentThreadId;
-    const nativeTurnId = this.currentTurnId;
+    let nativeTurnId = this.currentTurnId;
     const foregroundTurnId = this.activeForegroundTurnId;
-    if (!client || !threadId || !nativeTurnId || foregroundTurnId !== options.expectedTurnId) {
+    if (!client || !threadId || foregroundTurnId !== options.expectedTurnId) {
+      return { status: "unavailable" };
+    }
+    const pendingIdentification = this.pendingForegroundTurnIdentification;
+    // The start acknowledgement precedes the notification that identifies the native
+    // turn. Keep this steer attached to the accepted foreground turn while it arrives.
+    if (!nativeTurnId && pendingIdentification?.foregroundTurnId === foregroundTurnId) {
+      nativeTurnId = await pendingIdentification.promise;
+    }
+    if (!nativeTurnId) {
       return { status: "unavailable" };
     }
     if (await this.resolveSlashCommandInvocation(prompt)) return { status: "unavailable" };
