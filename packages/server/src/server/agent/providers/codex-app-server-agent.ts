@@ -2545,6 +2545,14 @@ type ParsedCodexNotification =
   | { kind: "thread_started"; threadId: string }
   | { kind: "turn_started"; turnId: string; threadId: string | null }
   | {
+      kind: "hook_completed";
+      threadId: string;
+      turnId: string | null;
+      eventName: string;
+      status: string;
+      entries: Array<{ kind: string; text: string }>;
+    }
+  | {
       kind: "turn_completed";
       status: string;
       errorMessage: string | null;
@@ -2664,6 +2672,36 @@ function isCodexDeltaNotification(
 }
 
 const CodexNotificationSchema = z.union([
+  z
+    .object({
+      method: z.literal("hook/completed"),
+      params: z.object({
+        threadId: z.string(),
+        turnId: z.string().nullish(),
+        run: z.object({
+          eventName: z.string(),
+          status: z.string(),
+          entries: z.array(z.object({ kind: z.string(), text: z.string() })),
+        }),
+      }),
+    })
+    .transform(
+      ({ params }): ParsedCodexNotification => ({
+        kind: "hook_completed",
+        threadId: params.threadId,
+        turnId: params.turnId ?? null,
+        eventName: params.run.eventName,
+        status: params.run.status,
+        entries: params.run.entries,
+      }),
+    ),
+  z.object({ method: z.literal("hook/completed"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({
+      kind: "invalid_payload",
+      method,
+      params,
+    }),
+  ),
   z
     .object({ method: z.literal("thread/started"), params: ThreadStartedNotificationSchema })
     .transform(
@@ -3448,6 +3486,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private resolvedSandboxPolicy: Record<string, unknown> | null = null;
   private currentThreadId: string | null = null;
   private currentTurnId: string | null = null;
+  private promptRejection: string | null = null;
   private pendingForegroundTurnIdentification: {
     foregroundTurnId: string;
     promise: Promise<string | null>;
@@ -5557,6 +5596,9 @@ export class CodexAppServerAgentSession implements AgentSession {
       case "turn_completed":
         this.handleTurnCompletedNotification(parsed);
         return;
+      case "hook_completed":
+        this.handleHookCompletedNotification(parsed);
+        return;
       case "plan_updated":
         this.handlePlanUpdatedNotification(parsed);
         return;
@@ -6195,6 +6237,26 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.emitEvent({ type: "turn_started", provider: CODEX_PROVIDER });
   }
 
+  private handleHookCompletedNotification(
+    parsed: Extract<ParsedCodexNotification, { kind: "hook_completed" }>,
+  ): void {
+    const rejectsCurrentPrompt =
+      parsed.eventName === "userPromptSubmit" &&
+      parsed.status === "blocked" &&
+      this.currentTurnId !== null &&
+      parsed.turnId === this.currentTurnId;
+    if (!rejectsCurrentPrompt) return;
+
+    const feedback = parsed.entries
+      .filter(
+        (entry) => entry.kind === "feedback" || entry.kind === "stop" || entry.kind === "error",
+      )
+      .map((entry) => entry.text.trim())
+      .filter((text) => text.length > 0)
+      .join("\n\n");
+    this.promptRejection = feedback || "Prompt rejected by a UserPromptSubmit hook.";
+  }
+
   private handleTurnCompletedNotification(
     parsed: Extract<ParsedCodexNotification, { kind: "turn_completed" }>,
   ): void {
@@ -6210,11 +6272,12 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     this.completePendingRootCompactions();
-    if (parsed.status === "failed") {
+    // Codex completes rejected submissions successfully without accepting a user message.
+    if (parsed.status === "failed" || this.promptRejection !== null) {
       this.emitEvent({
         type: "turn_failed",
         provider: CODEX_PROVIDER,
-        error: parsed.errorMessage ?? "Codex turn failed",
+        error: this.promptRejection ?? parsed.errorMessage ?? "Codex turn failed",
       });
     } else if (parsed.status === "interrupted") {
       this.dismissInterruptedAsyncQuestions();
@@ -6239,6 +6302,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private resetTurnTrackingState(): void {
+    this.promptRejection = null;
     this.latestPlanResult = null;
     this.emittedItemStartedIds.clear();
     this.emittedItemCompletedIds.clear();
