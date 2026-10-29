@@ -2,6 +2,7 @@ import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { EditingTextInputHandle } from "@/components/ui/text-input";
 import { AdaptiveRenameModal } from "./rename-modal";
 
 const { theme, adaptiveInputState } = vi.hoisted(() => ({
@@ -70,9 +71,28 @@ vi.mock("@/components/adaptive-modal-sheet", async () => {
   };
   // Mirrors production AdaptiveTextInput: native-owned input seeded by
   // initialValue, remounted (via key) when resetKey changes so the new
-  // initialValue takes effect.
-  const AdaptiveTextInput = ReactModule.forwardRef<HTMLInputElement, Record<string, unknown>>(
+  // initialValue takes effect. Like production, the ref is an
+  // EditingTextInputHandle, not the DOM input itself.
+  const AdaptiveTextInput = ReactModule.forwardRef<EditingTextInputHandle, Record<string, unknown>>(
     (props, ref) => {
+      const inputRef = ReactModule.useRef<HTMLInputElement | null>(null);
+      ReactModule.useImperativeHandle(ref, () => ({
+        focus: () => inputRef.current?.focus(),
+        blur: () => inputRef.current?.blur(),
+        isFocused: () => document.activeElement === inputRef.current,
+        getText: () => inputRef.current?.value ?? "",
+        replaceText: (text, selection) => {
+          if (!inputRef.current) return;
+          inputRef.current.value = text;
+          if (selection) inputRef.current.setSelectionRange(selection.start, selection.end);
+        },
+        setSelection: (selection) =>
+          inputRef.current?.setSelectionRange(selection.start, selection.end),
+        reset: () => {
+          if (inputRef.current) inputRef.current.value = "";
+        },
+        getNativeRef: () => inputRef.current,
+      }));
       const p = props as {
         initialValue?: string;
         defaultValue?: string;
@@ -87,7 +107,7 @@ vi.mock("@/components/adaptive-modal-sheet", async () => {
         onSubmitEditing: p.onSubmitEditing,
       };
       return ReactModule.createElement("input", {
-        ref,
+        ref: inputRef,
         defaultValue: p.initialValue ?? p.defaultValue ?? "",
         disabled: p.editable === false,
         maxLength: p.maxLength,
