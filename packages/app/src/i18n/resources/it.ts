@@ -1978,7 +1978,6 @@ export const it: TranslationResources = {
     parent: {
       backToParent: "Torna all'agente principale",
       backTo: "Torna a {{label}}",
-      parent: "Principale",
       parentAgent: "Agente principale",
       openParent: "Apri agente principale",
     },
@@ -2207,6 +2206,7 @@ export const it: TranslationResources = {
       days: "{{value}} g",
       hours: "{{value}} h",
       minutes: "{{value}} min",
+      pair: "{{first}} {{second}}",
     },
     timing: {
       lastUpdated: "Ultimo aggiornamento {{relativeTime}}",
@@ -2214,6 +2214,8 @@ export const it: TranslationResources = {
       resetTimePassed: "L'orario di azzeramento è trascorso",
       resettingNow: "si azzera ora",
       resetsIn: "si azzera tra {{duration}}",
+      resetsAtWeekday: "{{weekday}} {{time}}",
+      resetsAtDate: "{{date}}, {{time}}",
       runsOutNow: "si esaurisce ora",
       runsOutIn: "si esaurisce tra {{duration}}",
       justNow: "proprio ora",
@@ -2930,6 +2932,14 @@ export const it: TranslationResources = {
       },
       agents: {
         unavailable: "Connettiti a questo host per gestire gli agenti",
+        resumeOnStartup: {
+          title: "Riprendi gli agenti dopo il riavvio",
+          info: "Riapre gli agenti che erano al lavoro quando l'host si è arrestato e invia il prompt di ripresa. Si applica sia ai riavvii regolari sia agli arresti anomali.",
+          hint: "Continua automaticamente il lavoro interrotto.",
+          prompt: "Prompt di ripresa",
+          edit: "Modifica",
+          editAccessibilityLabel: "Modifica prompt",
+        },
         idleRuntimeCleanup: {
           title: "Libera gli agenti inattivi",
           hint: "Libera memoria dopo un'ora di inattività.",
@@ -3028,6 +3038,10 @@ export const it: TranslationResources = {
           requestFailedTitle: "Errore",
           requestFailedMessage:
             "Invio della richiesta di riavvio non riuscito. Paseo si riconnette automaticamente: riprova quando l'host risulta online.",
+          closeTerminals: "Riavvia e chiudi i terminali",
+          closeTerminalsHint: "Chiude anche tutti i terminali in esecuzione su questo host.",
+          closeTerminalsConfirmMessage:
+            "Il daemon verrà riavviato e tutti i terminali presenti sull'host verranno chiusi, terminando i programmi in esecuzione. L'app si riconnetterà automaticamente.",
           dialogFailedMessage: "Impossibile aprire la finestra di conferma del riavvio.",
         },
         update: {
