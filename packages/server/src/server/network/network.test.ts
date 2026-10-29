@@ -9,6 +9,7 @@ import { afterEach, expect, test } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
 import { getGlobalDispatcher, setGlobalDispatcher } from "undici";
 import { initializeEnvironmentProxy, webSocketProxyAgent } from "./index.js";
+import { ConnectedHosts } from "../connected-hosts/index.js";
 const original = getGlobalDispatcher();
 const servers: Server[] = [];
 afterEach(async () => {
@@ -222,4 +223,21 @@ test("case-insensitive environment access reports a variable only once", () => {
     },
   );
   expect(initializeEnvironmentProxy(env)).toEqual(["https_proxy"]);
+});
+
+test("connected-host links send remote WebSockets through the environment proxy", async () => {
+  const recorder = await proxy();
+  initializeEnvironmentProxy({ HTTPS_PROXY: recorder.url });
+  const home = await mkdtemp(path.join(os.tmpdir(), "connected-host-proxy-"));
+  const hosts = new ConnectedHosts(home, { serverId: "self", label: "Self" });
+  try {
+    await hosts.add(
+      { connection: "wss://remote.invalid/ws" },
+      { sourceId: "test", manageSources: true },
+    );
+    await expect.poll(() => recorder.tunnels).toContain("remote.invalid:443");
+  } finally {
+    await hosts.close();
+    await rm(home, { recursive: true, force: true });
+  }
 });
