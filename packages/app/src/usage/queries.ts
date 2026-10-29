@@ -32,9 +32,10 @@ import {
 } from "./model";
 import type { UsageReportEntry, UsageView } from "./types";
 
-// The daemon caches each report for five minutes, so re-reading it is cheap. Only
-// an explicit refresh passes `forceRefresh` and reaches the source's API.
+// The daemon caches each report for five minutes, so re-reading it is cheap.
+// An explicit refresh passes `forceRefresh` to bypass that cache.
 const REPORTS_STALE_TIME_MS = 60_000;
+const REPORTS_REFETCH_INTERVAL_MS = 5 * 60_000;
 
 /** Every report list of a host: its own and each agent's. */
 function hostUsageQueryKey(serverId: string) {
@@ -161,17 +162,23 @@ export function useHostUsage(serverId: string): { view: UsageView; refresh: () =
 
 const NO_REPORTS: UsageReportEntry[] = [];
 
-/**
- * The reports of the sidebar's usage host, which is connected and reports usage; none until they
- * load, or without a host.
- */
-export function useUsageHostReports(serverId: string | null): UsageReportEntry[] {
+interface UsageHostReportsInput {
+  serverId: string | null;
+  shouldPoll?: boolean;
+}
+
+/** A host's reports, with periodic refresh enabled only by the visible sidebar summary. */
+export function useUsageHostReports({
+  serverId,
+  shouldPoll = false,
+}: UsageHostReportsInput): UsageReportEntry[] {
   const queryClient = useQueryClient();
   const query = useFetchQuery({
     queryKey: usageReportsQueryKey(serverId ?? ""),
     queryFn: serverId ? () => listReports(queryClient, serverId) : skipToken,
     dataShape: "list",
     staleTimeMs: REPORTS_STALE_TIME_MS,
+    refetchInterval: shouldPoll ? REPORTS_REFETCH_INTERVAL_MS : false,
   });
   return query.data ?? NO_REPORTS;
 }

@@ -28,7 +28,7 @@ interface UsagePreferencesState {
 /** The device's usage preferences, with pins resolved against a host's reports. */
 export function useUsagePreferences(serverId?: string): UsagePreferencesState {
   const defaultServerId = useUsageHostId();
-  return useUsageDisplay(useUsageHostReports(serverId ?? defaultServerId));
+  return useUsageDisplay(useUsageHostReports({ serverId: serverId ?? defaultServerId }));
 }
 
 /** The device's usage preferences, with pins resolved against the given reports. */
