@@ -62,6 +62,7 @@ export function useCloneGithubProject(
   repo: string,
   targetDirectory: string,
   cloneProtocol?: ProjectGithubCloneProtocol,
+  folderName?: string,
 ) => Promise<OpenProjectResult> {
   const normalizedServerId = serverId?.trim() ?? "";
   const client = useHostRuntimeClient(normalizedServerId);
@@ -78,11 +79,17 @@ export function useCloneGithubProject(
   const setHasHydratedWorkspaces = useSessionStore((state) => state.setHasHydratedWorkspaces);
 
   return useCallback(
-    async (repo: string, targetDirectory: string, cloneProtocol?: ProjectGithubCloneProtocol) => {
+    async (
+      repo: string,
+      targetDirectory: string,
+      cloneProtocol?: ProjectGithubCloneProtocol,
+      folderName?: string,
+    ) => {
       return cloneGithubProjectDirectly({
         serverId: normalizedServerId,
         repo,
         targetDirectory,
+        ...(folderName !== undefined ? { folderName } : {}),
         ...(cloneProtocol ? { cloneProtocol } : {}),
         isConnected,
         client,

@@ -2996,13 +2996,19 @@ export class DaemonClient {
   }
 
   async cloneGithubProject(
-    input: { repo: string; targetDirectory: string; cloneProtocol?: ProjectGithubCloneProtocol },
+    input: {
+      repo: string;
+      targetDirectory: string;
+      cloneProtocol?: ProjectGithubCloneProtocol;
+      folderName?: string;
+    },
     requestId?: string,
   ): Promise<ProjectGithubClonePayload> {
     const message = {
       type: "project.github.clone.request",
       repo: input.repo,
       targetDirectory: input.targetDirectory,
+      ...(input.folderName !== undefined ? { folderName: input.folderName } : {}),
       ...(input.cloneProtocol ? { cloneProtocol: input.cloneProtocol } : {}),
     } as const;
     return this.sendNamespacedCorrelatedSessionRequest<"project.github.clone.response">({
