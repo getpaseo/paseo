@@ -1960,7 +1960,6 @@ export const fr: TranslationResources = {
     parent: {
       backToParent: "Retour au parent",
       backTo: "Retour à {{label}}",
-      parent: "Parent",
       parentAgent: "Agent parent",
       openParent: "Ouvrir le parent",
     },
@@ -2188,6 +2187,7 @@ export const fr: TranslationResources = {
       days: "{{value}} j",
       hours: "{{value}} h",
       minutes: "{{value}} min",
+      pair: "{{first}} {{second}}",
     },
     timing: {
       lastUpdated: "Dernière mise à jour {{relativeTime}}",
@@ -2195,6 +2195,8 @@ export const fr: TranslationResources = {
       resetTimePassed: "Heure de réinitialisation dépassée",
       resettingNow: "réinitialisation en cours",
       resetsIn: "se réinitialise dans {{duration}}",
+      resetsAtWeekday: "{{weekday}} {{time}}",
+      resetsAtDate: "{{date}}, {{time}}",
       runsOutNow: "s’épuise maintenant",
       runsOutIn: "s’épuise dans {{duration}}",
       justNow: "à l’instant",
@@ -2804,6 +2806,14 @@ export const fr: TranslationResources = {
       },
       agents: {
         unavailable: "Connectez-vous à cet hôte pour gérer les agents",
+        resumeOnStartup: {
+          title: "Reprendre les agents après un redémarrage",
+          info: "Rouvre les agents qui travaillaient lorsque l’hôte s’est arrêté et envoie le message de reprise. S’applique après un redémarrage normal ou un plantage.",
+          hint: "Continuer automatiquement le travail interrompu.",
+          prompt: "Message de reprise",
+          edit: "Modifier",
+          editAccessibilityLabel: "Modifier le message",
+        },
         idleRuntimeCleanup: {
           title: "Libérer les agents inactifs",
           hint: "Libère de la mémoire après une heure d’inactivité.",
@@ -2903,6 +2913,10 @@ export const fr: TranslationResources = {
           requestFailedTitle: "Erreur",
           requestFailedMessage:
             "Impossible d’envoyer la demande de redémarrage. Paseo se reconnecte automatiquement : réessayez quand l’hôte apparaît en ligne.",
+          closeTerminals: "Redémarrer et fermer les terminaux",
+          closeTerminalsHint: "Redémarre et ferme aussi tous les terminaux ouverts sur cet hôte.",
+          closeTerminalsConfirmMessage:
+            "Le daemon va redémarrer et fermer tous ses terminaux, ce qui arrêtera les programmes qui y tournent. L'app se reconnectera automatiquement.",
           dialogFailedMessage:
             "Impossible d’ouvrir la boîte de dialogue de confirmation du redémarrage.",
         },

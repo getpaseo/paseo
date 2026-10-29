@@ -80,7 +80,7 @@ const tool = defineAgentTool({
   },
 });
 export default function contribute(server) {
-  server.before("agent.session_open", ({ request }) => {
+  server.addHook("agent.open.before", async ({ request }) => {
     if (request.labels.x !== "y") return;
     return { ...request, env: { ...request.env, OPEN_INFO: JSON.stringify({ title: request.title, labels: request.labels, reason: request.reason }) }, tools: [...request.tools, tool] };
   });
@@ -97,14 +97,14 @@ async function setup(
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-agent-tools-"));
   const recorder = recordingProvider(native, providerOptions);
   const daemon = await createTestPaseoDaemon({
-    daemonVersion: "0.13.2",
+    daemonVersion: "0.14.0-beta.1",
     agentClients: { codex: recorder.provider },
     mcpEnabled: true,
     providerOverrides: { codex: { paseoTools: policy } },
   });
   const client = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,
-    appVersion: "0.13.2",
+    appVersion: "0.14.0-beta.1",
   });
   const mcps: Client[] = [];
   async function install(id: string, code: string) {
@@ -112,7 +112,7 @@ async function setup(
     await mkdir(pluginDirectory);
     await writeFile(
       path.join(pluginDirectory, "paseo-plugin.json"),
-      JSON.stringify({ id, requirements: { paseo: ">=0.13.2" } }),
+      JSON.stringify({ id, requirements: { paseo: ">=0.14.0-beta.1" } }),
     );
     await writeFile(path.join(pluginDirectory, "index.server.ts"), code);
     await client.installDirectoryPlugin(pluginDirectory);
@@ -305,7 +305,7 @@ test("each plugin owns its tool array and callbacks can remove earlier attachmen
   const source = pluginSource.replace(
     "  return () => {};",
     `
-  server.before("agent.session_open", ({ request }) => {
+  server.addHook("agent.open.before", async ({ request }) => {
     if (request.labels.x === "y" && request.tools[0]?.name !== "plugin_echo") throw new Error("Lost plugin-local definitions");
     return { ...request, tools: [] };
   });
@@ -501,12 +501,12 @@ test("built-in plugins attach and execute tools while configured plugins are dis
   await mkdir(directory);
   await writeFile(
     path.join(directory, "paseo-plugin.json"),
-    JSON.stringify({ id: "builtin-tools", requirements: { paseo: ">=0.13.2" } }),
+    JSON.stringify({ id: "builtin-tools", requirements: { paseo: ">=0.14.0-beta.1" } }),
   );
   await writeFile(path.join(directory, "index.server.ts"), pluginSource);
   const recorder = recordingProvider(true);
   const daemon = await createTestPaseoDaemon({
-    daemonVersion: "0.13.2",
+    daemonVersion: "0.14.0-beta.1",
     agentClients: { codex: recorder.provider },
     pluginsEnabled: false,
     builtinPlugins: new BuiltinPluginLoader(root, ["builtin-tools"]),
@@ -762,7 +762,7 @@ test("the agent-tools example appends notes only for labeled agents", async () =
 const companyServer = { type: "http", url: "https://tools.example.com/mcp" } as const;
 const mcpSource = `
 export default function contribute(server) {
-  server.before("agent.session_open", ({ request }) => {
+  server.addHook("agent.open.before", async ({ request }) => {
     if (request.provider !== "codex") return;
     return { ...request, mcpServers: { ...request.mcpServers, company: ${JSON.stringify(companyServer)} },
       env: { ...request.env, OPEN_REASON: request.reason } };
@@ -993,16 +993,16 @@ test("session-open MCP maps are plugin-local and accumulate only across their ow
       "z-extend",
       `
 export default function contribute(server) {
-  server.before("agent.session_open", ({ request }) => {
+  server.addHook("agent.open.before", async ({ request }) => {
     if ("mcpServerOwners" in request) throw new Error("Daemon provenance leaked");
     if (Object.keys(request.mcpServers).length !== 0) throw new Error("Saw another plugin servers");
     return { ...request, mcpServers: { ...request.mcpServers, extra: { type: "stdio", command: "company-tools", args: ["--mcp"], env: { MODE: "agent" } } } };
   });
-  server.before("agent.session_open", ({ request }) => {
+  server.addHook("agent.open.before", async ({ request }) => {
     if (request.mcpServers.extra.command !== "company-tools") throw new Error("Lost own earlier server");
     return { ...request, mcpServers: { ...request.mcpServers, additional: { type: "http", url: "https://additional.example.com/mcp" } } };
   });
-  server.before("agent.session_open", () => undefined);
+  server.addHook("agent.open.before", async () => undefined);
   return () => {};
 }`,
     );
@@ -1016,7 +1016,7 @@ export default function contribute(server) {
     await h.install(
       "zz-remove",
       `export default function contribute(server) {
-  server.before("agent.session_open", ({ request }) => ({ ...request, mcpServers: {} }));
+  server.addHook("agent.open.before", async ({ request }) => ({ ...request, mcpServers: {} }));
   return () => {};
 }`,
     );
@@ -1034,7 +1034,7 @@ test("session-open MCP configs are validated before a provider launches", async 
     mcpSource.replace(JSON.stringify(companyServer), '{ type: "http", url: 42 }'),
   );
   try {
-    await expect(h.create()).rejects.toThrow(/Plugin tools-test.*before agent.session_open/s);
+    await expect(h.create()).rejects.toThrow(/Plugin tools-test.*agent.open.before/s);
     expect(h.launches).toHaveLength(0);
   } finally {
     await h.close();

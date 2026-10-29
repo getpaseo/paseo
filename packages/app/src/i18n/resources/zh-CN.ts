@@ -1892,7 +1892,6 @@ export const zhCN: TranslationResources = {
     parent: {
       backToParent: "返回父代理",
       backTo: "返回 {{label}}",
-      parent: "父代理",
       parentAgent: "父代理",
       openParent: "打开父代理",
     },
@@ -2118,6 +2117,7 @@ export const zhCN: TranslationResources = {
       days: "{{value}}天",
       hours: "{{value}}小时",
       minutes: "{{value}}分钟",
+      pair: "{{first}}{{second}}",
     },
     timing: {
       lastUpdated: "上次更新于 {{relativeTime}}",
@@ -2125,6 +2125,8 @@ export const zhCN: TranslationResources = {
       resetTimePassed: "重置时间已过",
       resettingNow: "正在重置",
       resetsIn: "将在 {{duration}}后重置",
+      resetsAtWeekday: "{{weekday}} {{time}}",
+      resetsAtDate: "{{date}} {{time}}",
       runsOutNow: "即将用尽",
       runsOutIn: "将在 {{duration}}后用尽",
       justNow: "刚刚",
@@ -2714,6 +2716,14 @@ export const zhCN: TranslationResources = {
       },
       agents: {
         unavailable: "连接到这个 Host 以管理 Agent",
+        resumeOnStartup: {
+          title: "重启后恢复智能体",
+          info: "重新打开主机停止时正在工作的智能体，并发送恢复提示。适用于正常重启和崩溃后的恢复。",
+          hint: "自动继续被中断的工作。",
+          prompt: "恢复提示",
+          edit: "编辑",
+          editAccessibilityLabel: "编辑提示",
+        },
         idleRuntimeCleanup: {
           title: "释放空闲 Agent",
           hint: "空闲一小时后释放内存。",
@@ -2805,6 +2815,10 @@ export const zhCN: TranslationResources = {
           offlineMessage: "这个 Host 已离线。Paseo 会自动重连，请等它恢复在线后再重启。",
           requestFailedTitle: "错误",
           requestFailedMessage: "发送重启请求失败。Paseo 会自动重连，请在 Host 显示在线后重试。",
+          closeTerminals: "重启并关闭终端",
+          closeTerminalsHint: "重启的同时关闭此主机上的所有终端。",
+          closeTerminalsConfirmMessage:
+            "这将重启守护进程并关闭其所有终端，终端中运行的程序会被结束。应用会自动重新连接。",
           dialogFailedMessage: "无法打开重启确认对话框。",
         },
         update: {

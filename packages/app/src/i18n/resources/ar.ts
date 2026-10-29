@@ -1914,7 +1914,6 @@ export const ar: TranslationResources = {
     parent: {
       backToParent: "العودة إلى الوكيل الأصلي",
       backTo: "العودة إلى {{label}}",
-      parent: "الأصل",
       parentAgent: "الوكيل الأصلي",
       openParent: "فتح الوكيل الأصلي",
     },
@@ -2158,6 +2157,7 @@ export const ar: TranslationResources = {
       minutes_few: "{{value}} دقائق",
       minutes_many: "{{value}} دقيقة",
       minutes_other: "{{value}} دقيقة",
+      pair: "{{first}} و{{second}}",
     },
     timing: {
       lastUpdated: "آخر تحديث {{relativeTime}}",
@@ -2165,6 +2165,8 @@ export const ar: TranslationResources = {
       resetTimePassed: "مضى وقت إعادة التعيين",
       resettingNow: "تتم إعادة التعيين الآن",
       resetsIn: "تتم إعادة التعيين خلال {{duration}}",
+      resetsAtWeekday: "{{weekday}} {{time}}",
+      resetsAtDate: "{{date}}، {{time}}",
       runsOutNow: "ينفد الآن",
       runsOutIn: "ينفد خلال {{duration}}",
       justNow: "الآن",
@@ -2779,6 +2781,14 @@ export const ar: TranslationResources = {
       },
       agents: {
         unavailable: "Connect to this host to manage agents",
+        resumeOnStartup: {
+          title: "استئناف الوكلاء بعد إعادة التشغيل",
+          info: "إعادة فتح الوكلاء الذين كانوا يعملون عند توقف المضيف وإرسال طلب الاستئناف. ينطبق ذلك بعد إعادة التشغيل العادية والتعطّل.",
+          hint: "متابعة العمل المنقطع تلقائيًا.",
+          prompt: "طلب الاستئناف",
+          edit: "تحرير",
+          editAccessibilityLabel: "تعديل الطلب",
+        },
         idleRuntimeCleanup: {
           title: "تحرير الوكلاء الخاملين",
           hint: "تحرير الذاكرة بعد ساعة من الخمول.",
@@ -2874,6 +2884,10 @@ export const ar: TranslationResources = {
           requestFailedTitle: "خطأ",
           requestFailedMessage:
             "فشل في إرسال طلب إعادة التشغيل.  يقوم Paseo بإعادة الاتصال تلقائيًا - حاول مرة أخرى بمجرد ظهور المضيف على أنه متصل بالإنترنت.",
+          closeTerminals: "إعادة التشغيل وإغلاق الطرفيات",
+          closeTerminalsHint: "يعيد التشغيل ويغلق أيضًا كل الطرفيات المفتوحة على هذا المضيف.",
+          closeTerminalsConfirmMessage:
+            "سيُعاد تشغيل الخدمة وتُغلق كل طرفياتها، مما ينهي البرامج التي تعمل فيها. سيعيد التطبيق الاتصال تلقائيًا.",
           dialogFailedMessage: "غير قادر على فتح مربع حوار تأكيد إعادة التشغيل.",
         },
         update: {

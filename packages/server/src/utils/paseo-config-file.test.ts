@@ -3,7 +3,6 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { writeFile, truncate, rm } from "node:fs/promises";
-import { measureMainThreadWork } from "../test-utils/main-thread-work.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -20,6 +19,24 @@ import {
   statPaseoConfigPath,
   writePaseoConfigForEdit,
 } from "./paseo-config-file.js";
+
+async function measureConfigRead(directory: string) {
+  const fixture = fileURLToPath(
+    new URL("./test-fixtures/config-responsiveness.ts", import.meta.url),
+  );
+  const { stdout, stderr } = await promisify(execFile)(
+    process.execPath,
+    ["--import", "tsx", fixture, directory],
+    { timeout: 15_000 },
+  );
+  process.stderr.write(stderr);
+  return JSON.parse(stdout) as {
+    result: Awaited<ReturnType<typeof readPaseoConfigForEdit>>;
+    blockingMs: number;
+    filesystemRequests: number;
+    yields: number;
+  };
+}
 
 describe("paseo config file substrate", () => {
   let tempDir: string;
@@ -67,6 +84,33 @@ describe("paseo config file substrate", () => {
     );
   });
 
+  it("excludes unrelated test-runner CPU from the config read budget", async () => {
+    await writeFile(join(tempDir, "paseo.json"), JSON.stringify({ worktree: { setup: "npm ci" } }));
+    const unrelatedWork = new Promise<void>((resolve) => {
+      setImmediate(() => {
+        const threadCpuUsage: (previous?: NodeJS.CpuUsage) => NodeJS.CpuUsage = Reflect.get(
+          process,
+          "threadCpuUsage",
+        );
+        const start = threadCpuUsage();
+        let elapsed: NodeJS.CpuUsage;
+        do {
+          elapsed = threadCpuUsage(start);
+        } while (elapsed.user + elapsed.system < 60_000);
+        resolve();
+      });
+    });
+    const { result, blockingMs, filesystemRequests } = await measureConfigRead(tempDir);
+    await unrelatedWork;
+    expect(result).toEqual({
+      ok: true,
+      config: { worktree: { setup: "npm ci" } },
+      revision: await statPaseoConfigPath(tempDir),
+    });
+    expect(filesystemRequests).toBeGreaterThan(0);
+    expect(blockingMs).toBeLessThan(20);
+  });
+
   it("keeps main-thread work below 20ms while admitting large configs", async () => {
     const config = {
       scripts: Object.fromEntries(
@@ -75,10 +119,7 @@ describe("paseo config file substrate", () => {
       worktree: { setup: "npm ci" },
     };
     await writeFile(join(tempDir, "paseo.json"), JSON.stringify(config));
-    const { result, blockingMs, filesystemRequests, yields } = await measureMainThreadWork(
-      "project config 7000 scripts main-thread work",
-      () => readPaseoConfigForEdit(tempDir),
-    );
+    const { result, blockingMs, filesystemRequests, yields } = await measureConfigRead(tempDir);
     expect(result).toEqual({ ok: true, config, revision: await statPaseoConfigPath(tempDir) });
     expect(blockingMs).toBeLessThan(20);
     expect(filesystemRequests).toBeGreaterThan(0);
@@ -90,10 +131,7 @@ describe("paseo config file substrate", () => {
       join(tempDir, "paseo.json"),
       JSON.stringify({ extra: "x".repeat(32 * 1024 * 1024) }),
     );
-    const { result, blockingMs, filesystemRequests } = await measureMainThreadWork(
-      "project config 32MiB main-thread work",
-      () => readPaseoConfigForEdit(tempDir),
-    );
+    const { result, blockingMs, filesystemRequests } = await measureConfigRead(tempDir);
     expect(blockingMs).toBeLessThan(20);
     expect(filesystemRequests).toBeGreaterThan(0);
     expect(result).toEqual({ ok: false, error: { code: "invalid_project_config" } });

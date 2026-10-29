@@ -203,6 +203,31 @@
                 "readFileSync",
                 "rmSync"
               ],
+              // Terminal child process: launcher readiness and PTY record ownership run outside the daemon.
+              "terminal/terminal-worker-process.ts": [
+                "chmodSync",
+                "closeSync",
+                "existsSync",
+                "openSync",
+                "rmSync",
+                "writeSync"
+              ],
+              // Worker startup only: choose and secure the local listening socket before accepting a controller.
+              "terminal/terminal-worker-socket-path.ts": ["lstatSync", "mkdirSync"],
+              // Startup only: build an independent worker installation before launching; Electron ASAR sources require plain fs reads.
+              "terminal/terminal-worker-runtime.ts": [
+                "chmodSync",
+                "existsSync",
+                "mkdirSync",
+                "readdirSync",
+                "readFileSync",
+                "renameSync",
+                "rmSync",
+                "statSync",
+                "writeFileSync"
+              ],
+              // TODO: CLI shim lookup moved out of terminal.ts; migrate the executable-resolution boundary together.
+              "terminal/paseo-cli-path.ts": ["existsSync"],
               // Node loader thread: TypeScript terminal-worker resolution runs in the loader, outside the daemon event loop.
               "terminal/terminal-ts-loader.mjs": ["existsSync"],
               // Terminal child process: executable preparation and shell integration run in the worker-backed terminal manager.

@@ -53,9 +53,16 @@ async function quickDragFirstRowAfterSecond(
   await page.mouse.move(source.x, source.y + 7);
   await expect(trailingScrim).toHaveCount(0);
   await page.mouse.move(target.x, target.y, { steps: 4 });
-  await page.mouse.up();
+  await finishSidebarDrag(page);
 
   await expect.poll(() => rowTestIds(rows)).toEqual([before[1], before[0]]);
+}
+
+async function finishSidebarDrag(page: Page): Promise<void> {
+  await page.mouse.up();
+  // dnd-kit's pointer sensor keeps its document click blocker for 50 ms after drop.
+  // Row order updates before that blocker is removed; wait before the next user action.
+  await page.waitForTimeout(60);
 }
 
 async function dragWithoutReordering(rows: Locator): Promise<void> {
@@ -66,7 +73,7 @@ async function dragWithoutReordering(rows: Locator): Promise<void> {
   await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2);
   await page.mouse.down();
   await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 5 });
-  await page.mouse.up();
+  await finishSidebarDrag(page);
   await expect.poll(() => rowTestIds(rows)).toEqual(before);
 }
 

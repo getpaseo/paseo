@@ -938,7 +938,6 @@ interface MobileBodyProps {
   handleSelect: (id: string) => void;
   renderOption: RenderOptionFn | undefined;
   children: ReactNode;
-  safeAreaBottom: number;
 }
 
 function MobileComboboxBody(props: MobileBodyProps): ReactElement | null {
@@ -961,21 +960,6 @@ function MobileComboboxSheet(props: MobileBodyProps): ReactElement {
     () => [styles.comboboxTitle, { color: props.titleColor }],
     [props.titleColor],
   );
-  const { footer, safeAreaBottom } = props;
-  const frameStyle = useMemo(
-    () => [styles.mobileSheetFrame, { paddingBottom: footer ? 0 : safeAreaBottom }],
-    [footer, safeAreaBottom],
-  );
-  const footerStyle = useMemo(
-    () => [styles.footer, { paddingBottom: safeAreaBottom }],
-    [safeAreaBottom],
-  );
-
-  const footerView = useMemo(
-    () => (footer ? <View style={footerStyle}>{footer}</View> : undefined),
-    [footer, footerStyle],
-  );
-
   const body = props.hasChildren ? (
     props.children
   ) : (
@@ -1006,48 +990,71 @@ function MobileComboboxSheet(props: MobileBodyProps): ReactElement {
       keyboardBlurBehavior="none"
       presentation={props.presentation}
     >
-      <SheetVisibleFrame footer={footerView}>
-        <View style={frameStyle}>
-          {props.header ? (
-            <SheetHeaderView header={props.header} onClose={props.onClose} />
-          ) : (
-            <>
-              <View style={styles.bottomSheetHeader}>
-                <Text key={props.titleColor} style={comboboxTitleStyle}>
-                  {props.title}
-                </Text>
-              </View>
-              {props.stickyHeader}
-              {!props.hasChildren && props.searchable ? (
-                <SearchInput
-                  placeholder={props.searchPlaceholder}
-                  onChangeText={props.setSearchQueryWithCallback}
-                  onSubmitEditing={props.handleSubmitSearch}
-                  autoFocus={false}
-                  useBottomSheetInput
-                  resetKey={props.searchResetKey}
-                />
-              ) : null}
-            </>
-          )}
-          {props.hasChildren && !props.mobileChildrenScrollEnabled ? (
-            body
-          ) : (
-            <BottomSheetScrollView
-              style={styles.mobileSheetBody}
-              contentContainerStyle={[
-                styles.comboboxScrollContent,
-                props.mobileChildrenContentContainerStyle,
-              ]}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-            >
-              {body}
-            </BottomSheetScrollView>
-          )}
-        </View>
-      </SheetVisibleFrame>
+      <ComboboxSheetFrame footer={props.footer}>
+        {props.header ? (
+          <SheetHeaderView header={props.header} onClose={props.onClose} />
+        ) : (
+          <>
+            <View style={styles.bottomSheetHeader}>
+              <Text key={props.titleColor} style={comboboxTitleStyle}>
+                {props.title}
+              </Text>
+            </View>
+            {props.stickyHeader}
+            {!props.hasChildren && props.searchable ? (
+              <SearchInput
+                placeholder={props.searchPlaceholder}
+                onChangeText={props.setSearchQueryWithCallback}
+                onSubmitEditing={props.handleSubmitSearch}
+                autoFocus={false}
+                useBottomSheetInput
+                resetKey={props.searchResetKey}
+              />
+            ) : null}
+          </>
+        )}
+        {props.hasChildren && !props.mobileChildrenScrollEnabled ? (
+          body
+        ) : (
+          <BottomSheetScrollView
+            style={styles.mobileSheetBody}
+            contentContainerStyle={[
+              styles.comboboxScrollContent,
+              props.mobileChildrenContentContainerStyle,
+            ]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {body}
+          </BottomSheetScrollView>
+        )}
+      </ComboboxSheetFrame>
     </IsolatedBottomSheetModal>
+  );
+}
+
+/**
+ * Rendered on the far side of the sheet's portal so it clears the screen's bottom inset, not the
+ * one left where the combobox was opened: inside a sheet tab, none is.
+ */
+function ComboboxSheetFrame({ footer, children }: { footer?: ReactNode; children: ReactNode }) {
+  const { bottom: safeAreaBottom } = useSafeAreaInsets();
+  const frameStyle = useMemo(
+    () => [styles.mobileSheetFrame, { paddingBottom: footer ? 0 : safeAreaBottom }],
+    [footer, safeAreaBottom],
+  );
+  const footerStyle = useMemo(
+    () => [styles.footer, { paddingBottom: safeAreaBottom }],
+    [safeAreaBottom],
+  );
+  const footerView = useMemo(
+    () => (footer ? <View style={footerStyle}>{footer}</View> : undefined),
+    [footer, footerStyle],
+  );
+  return (
+    <SheetVisibleFrame footer={footerView}>
+      <View style={frameStyle}>{children}</View>
+    </SheetVisibleFrame>
   );
 }
 
@@ -1327,7 +1334,6 @@ export function Combobox({
   const isMobile = useIsCompactFormFactor();
   const active = useRetainedPanelActive();
   const floatingLayer = useOverlayLayer("floating");
-  const safeAreaInsets = useSafeAreaInsets();
   const titleColor = theme.colors.foreground;
   const effectiveOptionsPosition = resolveEffectiveOptionsPosition(isMobile, optionsPosition);
   const isDesktopAboveSearch = resolveIsDesktopAboveSearch(isMobile, effectiveOptionsPosition);
@@ -1608,7 +1614,6 @@ export function Combobox({
         emptyText={resolvedEmptyText}
         handleSelect={handleSelect}
         renderOption={renderOption}
-        safeAreaBottom={safeAreaInsets.bottom}
       >
         {children}
       </MobileComboboxBody>

@@ -940,6 +940,15 @@ describe("DaemonConfigStore", () => {
 
     await store.patch({ idleRuntimeCleanup: true });
     expect(loadConfig(paseoHome, { env: {} }).idleRuntimeCleanup).toBe(true);
+    await store.patch({ resumeOnStartup: false, resumePrompt: "Keep going.\n" });
+    expect(loadPersistedConfig(paseoHome).agents).toMatchObject({
+      resumeOnStartup: false,
+      resumePrompt: "Keep going.\n",
+    });
+    expect(loadConfig(paseoHome, { env: {} })).toMatchObject({
+      resumeOnStartup: false,
+      resumePrompt: "Keep going.\n",
+    });
   });
 
   test("patch persists custom ACP provider overrides into config.json", async () => {

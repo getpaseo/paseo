@@ -9,7 +9,7 @@ import { useSessionStore, type Agent } from "@/stores/session-store";
 import { normalizeAgentSnapshot, projectAgentSnapshot } from "@/utils/agent-snapshots";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
-import { useSubagentOpensInSheet } from "./opens-in-sheet";
+import { useSubagentSheetTab } from "./sheet-tab";
 import { selectSubagentsForParent, type SubagentRow } from "./select";
 
 vi.mock("@react-native-async-storage/async-storage", () => {
@@ -116,28 +116,40 @@ afterEach(() => {
   });
 });
 
-describe("useSubagentOpensInSheet", () => {
-  it("re-renders the row's answer as the child's tab opens and closes", () => {
+describe("useSubagentSheetTab", () => {
+  it("re-renders the row's sheet as the child's tab opens and closes", () => {
     const row = seedParentWithChild();
     const store = useWorkspaceLayoutStore.getState();
     store.setLayoutMode("compact");
-    const target = { kind: "agent", agentId: "child" } as const;
 
     // The row renders its answer, as the track does, so a stale render is a stale answer.
-    const { result } = renderHook(() => useSubagentOpensInSheet(workspaceKey)(row));
-    expect(result.current).toBe(true);
+    const { result } = renderHook(() => useSubagentSheetTab(workspaceKey, "parent-tab")(row));
+    expect(result.current?.tab.target).toEqual({ kind: "agent", agentId: "child" });
 
     let tabId: string | null = null;
     act(() => {
-      const sheetTabId = store.openTab({ workspaceKey, target, intent: "reveal" });
-      tabId = sheetTabId ? store.openSheetAsTab(workspaceKey, sheetTabId) : null;
+      tabId = result.current ? store.openTabInFront(workspaceKey, result.current) : null;
     });
     expect(tabId).not.toBeNull();
-    expect(result.current).toBe(false);
+    expect(result.current).toBeNull();
 
     act(() => {
       store.closeTab(workspaceKey, tabId ?? "");
     });
-    expect(result.current).toBe(true);
+    expect(result.current?.tab.tabId).toBe(tabId);
+  });
+
+  it("hands a re-rendered row the same sheet", () => {
+    const row = seedParentWithChild();
+    useWorkspaceLayoutStore.getState().setLayoutMode("compact");
+
+    const { result, rerender } = renderHook(() =>
+      useSubagentSheetTab(workspaceKey, "parent-tab")(row),
+    );
+    const first = result.current;
+    rerender();
+
+    expect(first).not.toBeNull();
+    expect(result.current).toBe(first);
   });
 });

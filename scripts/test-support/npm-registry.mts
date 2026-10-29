@@ -50,6 +50,7 @@ export async function startNpmRegistry(packages: FixturePackage[]) {
     `registry=${url}/\n//127.0.0.1:${address.port}/:_authToken=fixture-token\ncache=${root}/cache\n`,
   );
   try {
+    const prepared = [];
     for (const [index, pkg] of packages.entries()) {
       const directory = path.join(root, String(index));
       await mkdir(directory);
@@ -65,11 +66,17 @@ export async function startNpmRegistry(packages: FixturePackage[]) {
         await mkdir(path.dirname(path.join(directory, file)), { recursive: true });
         await writeFile(path.join(directory, file), content);
       }
-      const { stdout } = await execCommand("npm", ["pack", "--ignore-scripts", "--json"], {
-        cwd: directory,
-      });
-      const packed: Array<{ filename: string }> = JSON.parse(stdout);
-      const artifact = await readFile(path.join(directory, packed[0].filename));
+      prepared.push({ directory, manifest, pkg, index });
+    }
+    // Pack all fixtures in one npm process instead of paying startup once per package.
+    const { stdout } = await execCommand(
+      "npm",
+      ["pack", "--ignore-scripts", "--json", ...prepared.map(({ directory }) => directory)],
+      { cwd: root },
+    );
+    const packed: Array<{ filename: string }> = JSON.parse(stdout);
+    for (const { manifest, pkg, index } of prepared) {
+      const artifact = await readFile(path.join(root, packed[index].filename));
       const artifactPath = `/artifacts/${index}.tgz`;
       artifacts.set(artifactPath, artifact);
       const published = {

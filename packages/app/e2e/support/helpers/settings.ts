@@ -560,3 +560,41 @@ export async function expectHostOnlineWithoutError(page: Page): Promise<void> {
   await expect(page.getByTestId("host-page-identity")).toContainText("Online");
   await expect(page.getByTestId("host-connection-error")).toHaveCount(0);
 }
+
+function restartRecoverySwitch(page: Page) {
+  return page.getByRole("switch", { name: "Resume agents after restart", exact: true });
+}
+
+function restartRecoveryEditButton(page: Page) {
+  return page.getByRole("button", { name: "Edit prompt", exact: true });
+}
+
+export async function setRestartRecoveryEnabled(page: Page, enabled: boolean) {
+  const toggle = restartRecoverySwitch(page);
+  await toggle.click();
+  await expectRestartRecoveryEnabled(page, enabled);
+}
+
+// The prompt is only editable while restart recovery is on.
+export async function expectRestartRecoveryEnabled(page: Page, enabled: boolean) {
+  await expect(restartRecoverySwitch(page)).toBeChecked({ checked: enabled });
+  await expect(restartRecoveryEditButton(page)).toBeEnabled({ enabled });
+}
+
+export async function editRestartRecoveryPrompt(page: Page, prompt: string) {
+  await restartRecoveryEditButton(page).click();
+  const sheet = page.getByTestId("host-page-restart-recovery-sheet");
+  await sheet.getByRole("textbox", { name: "Resume prompt", exact: true }).fill(prompt);
+  await sheet.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(sheet).toHaveCount(0);
+}
+
+export async function expectRestartRecoveryPrompt(page: Page, prompt: string) {
+  await restartRecoveryEditButton(page).click();
+  const sheet = page.getByTestId("host-page-restart-recovery-sheet");
+  await expect(sheet.getByRole("textbox", { name: "Resume prompt", exact: true })).toHaveValue(
+    prompt,
+  );
+  await sheet.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(sheet).toHaveCount(0);
+}

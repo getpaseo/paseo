@@ -590,6 +590,8 @@ export type ResolvedDaemonSettings = Pick<
   | "relayRequireProtectedSecurity"
   | "appBaseUrl"
   | "idleRuntimeCleanup"
+  | "resumeOnStartup"
+  | "resumePrompt"
   | "providerCatalogRefreshTimeoutMs"
   | "metadataGeneration"
   | "providerOverrides"
@@ -677,6 +679,7 @@ export function resolveReloadableConfig(
     relayEnabled: relay.enabled,
     relayRequireProtectedSecurity: relay.requireProtectedSecurity,
     idleRuntimeCleanup: persisted.agents?.idleRuntimeCleanup ?? true,
+    ...resolveRestartRecoveryConfig(persisted.agents),
     providerCatalogRefreshTimeoutMs: persisted.agents?.catalogRefreshTimeoutMs,
     metadataGeneration: persisted.agents?.metadataGeneration,
     providerOverrides: extractProviderOverrides(
@@ -826,4 +829,11 @@ function resolveSpeechOverrideControlledPaths(
   if (env.PASEO_VOICE_LLM_PROVIDER !== undefined) paths.push("features.voiceMode.llm.provider");
   if (env.PASEO_LOCAL_MODELS_DIR !== undefined) paths.push("providers.local.modelsDir");
   return paths;
+}
+
+function resolveRestartRecoveryConfig(agents: PersistedConfig["agents"]) {
+  return {
+    resumeOnStartup: agents?.resumeOnStartup ?? true,
+    resumePrompt: agents?.resumePrompt ?? "Resume working.",
+  };
 }
