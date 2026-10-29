@@ -24,7 +24,9 @@ export default defineConfig({
       transform(source, id) {
         // The ESM package contains a CommonJS WASM factory. Metro handles the
         // interop; Vite needs an ESM export instead of the CommonJS trailer.
-        if (!id.endsWith("/lib/module/web/wasm/md4c.js")) return;
+        // Vite can request the file with a version query (`md4c.js?v=<hash>`), so match the
+        // path without it.
+        if (!id.split("?")[0].endsWith("/lib/module/web/wasm/md4c.js")) return;
         const trailer = source.lastIndexOf("\nif (typeof exports === 'object'");
         if (trailer < 0) throw new Error("Markdown WASM CommonJS trailer was not found");
         return {

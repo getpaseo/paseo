@@ -98,7 +98,7 @@ The older `android`, `android:development`, and `ios` commands remain aliases fo
 `android:production` still builds and installs a release through Expo; use `build:apk` when you
 need an artifact. `android:clear` removes the generated Android project.
 
-Run `npm run test:android --workspace=@getpaseo/app` to prebuild Android and run native module unit tests. The app CI job runs this command with the Android toolchain.
+Run `npm run test:android --workspace=@getpaseo/app` explicitly with a local Android toolchain to prebuild Android and run native module unit tests. Ordinary CI does not prebuild Android or run these tests.
 
 ### Diagnostic logs without ADB
 
@@ -215,13 +215,16 @@ fastlane/metadata/android/
 │   ├── images/
 │   │   ├── icon.png            (512x512)
 │   │   ├── featureGraphic.png  (1024x500)
-│   │   └── phoneScreenshots/   (1.png, 2.png, ...)
+│   │   ├── phoneScreenshots/   (1.png, 2.png, ... linked to the store renders)
+│   │   └── tenInchScreenshots/ (1.png, 2.png, ... linked to the store renders)
 │   └── changelogs/             (generated — see below)
 ├── ja/
 └── zh-CN/
 ```
 
 Locale directories generally match `packages/app/src/i18n/locales.ts`, but note that `en` becomes `en-US`.
+
+Google Play reads its screenshots from the same folders; see [Store screenshots](release.md#store-screenshots).
 
 F-Droid changelogs are generated from `CHANGELOG.md`. Run `npm run fdroid:changelogs`; `npm run fdroid:changelogs:check` verifies without writing. It is wired into the npm `version` lifecycle, so a release picks it up automatically and `git add -A` stages the result.
 

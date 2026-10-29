@@ -486,3 +486,74 @@ diff --git a/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles
        ...(narrowedProps.style ? {
          style: styleSecrets.styles
        } : {}),
+diff --git a/node_modules/react-native-unistyles/lib/commonjs/web/runtime.js b/node_modules/react-native-unistyles/lib/commonjs/web/runtime.js
+index 305fa49..5957aa5 100644
+--- a/node_modules/react-native-unistyles/lib/commonjs/web/runtime.js
++++ b/node_modules/react-native-unistyles/lib/commonjs/web/runtime.js
+@@ -35,10 +35,17 @@ class UnistylesRuntime {
+     return this.darkMedia;
+   }
+   get colorScheme() {
++    // Read the scheme through fresh lists, never through lightMedia/darkMedia. Chromium defers
++    // MediaQueryList change events while the document is hidden and drops the pending event
++    // of any list whose `matches` was read before the document became visible again, which
++    // would silence the adaptive-theme listeners registered on those two lists.
++    if ((0, _utils.isServer)()) {
++      return _types.ColorScheme.Unspecified;
++    }
+     switch (true) {
+-      case this.getLightMedia()?.matches:
++      case window.matchMedia('(prefers-color-scheme: light)').matches:
+         return _types.ColorScheme.Light;
+-      case this.getDarkMedia()?.matches:
++      case window.matchMedia('(prefers-color-scheme: dark)').matches:
+         return _types.ColorScheme.Dark;
+       default:
+         return _types.ColorScheme.Unspecified;
+diff --git a/node_modules/react-native-unistyles/lib/module/web/runtime.js b/node_modules/react-native-unistyles/lib/module/web/runtime.js
+index 7f13a06..c487bee 100644
+--- a/node_modules/react-native-unistyles/lib/module/web/runtime.js
++++ b/node_modules/react-native-unistyles/lib/module/web/runtime.js
+@@ -31,10 +31,17 @@ export class UnistylesRuntime {
+     return this.darkMedia;
+   }
+   get colorScheme() {
++    // Read the scheme through fresh lists, never through lightMedia/darkMedia. Chromium defers
++    // MediaQueryList change events while the document is hidden and drops the pending event
++    // of any list whose `matches` was read before the document became visible again, which
++    // would silence the adaptive-theme listeners registered on those two lists.
++    if (isServer()) {
++      return ColorScheme.Unspecified;
++    }
+     switch (true) {
+-      case this.getLightMedia()?.matches:
++      case window.matchMedia('(prefers-color-scheme: light)').matches:
+         return ColorScheme.Light;
+-      case this.getDarkMedia()?.matches:
++      case window.matchMedia('(prefers-color-scheme: dark)').matches:
+         return ColorScheme.Dark;
+       default:
+         return ColorScheme.Unspecified;
+diff --git a/node_modules/react-native-unistyles/src/web/runtime.ts b/node_modules/react-native-unistyles/src/web/runtime.ts
+index a16dac0..6519858 100644
+--- a/node_modules/react-native-unistyles/src/web/runtime.ts
++++ b/node_modules/react-native-unistyles/src/web/runtime.ts
+@@ -41,8 +41,16 @@ export class UnistylesRuntime {
+     get colorScheme() {
++        // Read the scheme through fresh lists, never through lightMedia/darkMedia. Chromium defers
++        // MediaQueryList change events while the document is hidden and drops the pending event
++        // of any list whose `matches` was read before the document became visible again, which
++        // would silence the adaptive-theme listeners registered on those two lists.
++        if (isServer()) {
++            return ColorScheme.Unspecified
++        }
++
+         switch (true) {
+-            case this.getLightMedia()?.matches:
++            case window.matchMedia('(prefers-color-scheme: light)').matches:
+                 return ColorScheme.Light
+-            case this.getDarkMedia()?.matches:
++            case window.matchMedia('(prefers-color-scheme: dark)').matches:
+                 return ColorScheme.Dark
+             default:
+                 return ColorScheme.Unspecified

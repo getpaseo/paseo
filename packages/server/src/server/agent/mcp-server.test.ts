@@ -76,7 +76,7 @@ import type { GeneratedWorkspaceName } from "../worktree-branch-name-generator.j
 import type { ForgeService } from "../../services/forge-service.js";
 import { areEquivalentPaths } from "../../utils/path.js";
 import { createTerminalManager, type TerminalManager } from "../../terminal/terminal-manager.js";
-import { createWorkerTerminalManager } from "../../terminal/worker-terminal-manager.js";
+import { startWorkerTerminalManager } from "../../terminal/worker-terminal-manager.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { PASEO_TOOL_NAMES } from "@getpaseo/protocol/paseo-tool-presentation/index";
 import { MutableDaemonConfigSchema, type AgentProfile } from "@getpaseo/protocol/messages";
@@ -881,6 +881,7 @@ async function createAgentMcpServer(
     logger: options.logger,
     ...createFinishObservation({
       ...options,
+      waitForResume: async () => {},
       messages: () => messages,
       serverId: options.serverId ?? "self",
       hosts: () => {
@@ -1384,13 +1385,24 @@ describe("terminal MCP tools", () => {
   );
 
   it.each([
-    ["in-process", createTerminalManager],
-    ["worker", createWorkerTerminalManager],
+    ["in-process", async () => ({ manager: createTerminalManager(), home: null })],
+    [
+      "worker",
+      async () => {
+        const home = await mkdtemp(join(tmpdir(), "mcp-terminal-keys-home-"));
+        const manager = await startWorkerTerminalManager({
+          paseoHome: home,
+          paseoVersion: "0.0.0-test",
+          logger,
+        });
+        return { manager, home };
+      },
+    ],
   ] as const)(
     "delivers MCP key tokens through %s after terminal input modes change",
     async (_name, createManager) => {
       const { agentManager, agentStorage } = createTestDeps();
-      const terminalManager = createManager();
+      const { manager: terminalManager, home } = await createManager();
       const terminal = await terminalManager.createTerminal({
         cwd: process.cwd(),
         workspaceId: "ws-terminal-keys",
@@ -1420,15 +1432,15 @@ describe("terminal MCP tools", () => {
         logger,
       });
 
+      // Every step is a round trip through a real PTY. A loaded Windows runner (ConPTY) has
+      // taken over 3 s to reach READY, so each step gets the same window rather than 1 s.
+      const roundTrip = { timeout: 5000 };
       let output = "";
       const unsubscribe = terminal.subscribe((message) => {
         if (message.type === "output") {
           output += message.data;
         }
       });
-      // Every key travels through the PTY and back; on loaded Windows runners one round
-      // trip can take seconds, so each wait gets the same budget as the first.
-      const roundTrip = { timeout: 5000 };
       try {
         await vi.waitFor(async () => {
           const capture = await terminalManager.captureTerminal(terminal.id);
@@ -1465,6 +1477,7 @@ describe("terminal MCP tools", () => {
         await server.close();
         await terminalManager.killTerminalAndWait(terminal.id);
         terminalManager.killAll();
+        if (home) await rm(home, { recursive: true, force: true });
       }
     },
   );

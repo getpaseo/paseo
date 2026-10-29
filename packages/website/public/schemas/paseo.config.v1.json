@@ -513,6 +513,12 @@
         "idleRuntimeCleanup": {
           "type": "boolean"
         },
+        "resumeOnStartup": {
+          "type": "boolean"
+        },
+        "resumePrompt": {
+          "type": "string"
+        },
         "catalogRefreshTimeoutMs": {
           "type": "integer",
           "exclusiveMinimum": 0,

@@ -180,6 +180,8 @@ import {
   type WorkspacePaneContentModel,
 } from "@/screens/workspace/workspace-pane-content";
 import { useMountedTabSet } from "@/screens/workspace/use-mounted-tab-set";
+import { ensurePanelsRegistered } from "@/panels/register-panels";
+import { SheetPaneHostProvider, type SheetPaneHost } from "@/screens/workspace/sheet-pane";
 import { SheetTabs } from "@/screens/workspace/sheet-tabs";
 import type { PaneHost } from "@/panels/panel-manifest";
 import { WorkspaceFocusProvider } from "@/workspace/focus";
@@ -421,6 +423,10 @@ export const WorkspaceScreen = memo(function WorkspaceScreen({
   workspaceId,
   isRouteFocused,
 }: WorkspaceScreenProps) {
+  // Every reader of the panel registry renders inside the workspace screen, so it registers the
+  // panels before any of them renders. A reader importing the registration instead would import
+  // every panel, and the panels render readers.
+  ensurePanelsRegistered();
   const navigationFocused = useIsFocused();
   useEffect(() => {
     traceInstant("paseo.workspace.mount", { serverId, workspaceId });
@@ -764,13 +770,17 @@ function WorkspaceScreenGateFrame({ children }: { children: ReactNode }) {
 function WorkspaceContentProviders({
   children,
   workspaceKey,
+  sheetPaneHost,
 }: {
   children: ReactNode;
   workspaceKey: string | null;
+  sheetPaneHost: SheetPaneHost | null;
 }) {
   return (
     <WorkspaceFocusProvider workspaceKey={workspaceKey}>
-      <DiffDocumentWorkspaceCacheProvider>{children}</DiffDocumentWorkspaceCacheProvider>
+      <DiffDocumentWorkspaceCacheProvider>
+        <SheetPaneHostProvider value={sheetPaneHost}>{children}</SheetPaneHostProvider>
+      </DiffDocumentWorkspaceCacheProvider>
     </WorkspaceFocusProvider>
   );
 }
@@ -1342,10 +1352,6 @@ function WorkspaceScreenContent({
   const sheets = useWorkspaceLayoutStore((state) =>
     persistenceKey ? (state.sheetsByWorkspace[persistenceKey] ?? NO_SHEETS) : NO_SHEETS,
   );
-  // Only the top sheet is on screen.
-  const sheetTab = useWorkspaceLayoutStore((state) =>
-    persistenceKey ? (state.sheetsByWorkspace[persistenceKey]?.at(-1)?.tab ?? null) : null,
-  );
   const unpinWorkspaceAgent = useWorkspaceLayoutStore((state) => state.unpinAgent);
   const hideWorkspaceAgent = useWorkspaceLayoutStore((state) => state.hideAgent);
   const setWorkspaceTabState = useWorkspaceLayoutStore((state) => state.setTabState);
@@ -1417,7 +1423,6 @@ function WorkspaceScreenContent({
   const visibleAgentIds = useVisibleAgentIds({
     layout: workspaceLayout,
     tabs: uiTabs,
-    sheetTab,
     routeFocused: isRouteFocused,
     focusedPaneOnly: syncFocusedPaneOnly,
     explorerPaneId: explorerSidebarPaneId,
@@ -2916,6 +2921,8 @@ function WorkspaceScreenContent({
       paneId?: string | null;
       focusPaneBeforeOpen?: boolean;
       host?: PaneHost;
+      /** Overrides the guarded tab close, for a host that closes the tab its own way. */
+      onCloseCurrentTab?: () => void;
     }) =>
       buildWorkspacePaneContentModel({
         tab: input.tab,
@@ -2965,9 +2972,11 @@ function WorkspaceScreenContent({
                 });
               }
             : undefined,
-        onCloseCurrentTab: () => {
-          void handleCloseTabById(input.tab.tabId);
-        },
+        onCloseCurrentTab:
+          input.onCloseCurrentTab ??
+          (() => {
+            void handleCloseTabById(input.tab.tabId);
+          }),
         onRetargetCurrentTab: (target) => {
           if (!persistenceKey) {
             return;
@@ -3042,15 +3051,35 @@ function WorkspaceScreenContent({
     [buildPaneContentModel],
   );
   const buildSheetPaneContentModel = useCallback(
-    function buildSheetPaneContentModel(tab: WorkspaceTabDescriptor) {
+    function buildSheetPaneContentModel(tab: WorkspaceTabDescriptor, closeCurrentTab: () => void) {
       return buildPaneContentModel({
         tab,
         paneId: null,
         focusPaneBeforeOpen: false,
         host: "sheet",
+        onCloseCurrentTab: closeCurrentTab,
       });
     },
     [buildPaneContentModel],
+  );
+  const sheetPaneHost = useMemo<SheetPaneHost | null>(
+    () =>
+      persistenceKey
+        ? {
+            workspaceKey: persistenceKey,
+            serverId: normalizedServerId,
+            workspaceId: normalizedWorkspaceId,
+            isWorkspaceFocused: isRouteFocused,
+            buildContent: buildSheetPaneContentModel,
+          }
+        : null,
+    [
+      buildSheetPaneContentModel,
+      isRouteFocused,
+      normalizedServerId,
+      normalizedWorkspaceId,
+      persistenceKey,
+    ],
   );
   const handleFocusPane = useStableEvent(function handleFocusPane(paneId: string) {
     if (!persistenceKey || paneFocusSuppressedRef.current) {
@@ -3540,14 +3569,7 @@ function WorkspaceScreenContent({
           </StreamTopOverlayProvider>
         )}
       </FloatingHeaderLayout>
-      <SheetTabs
-        workspaceKey={persistenceKey}
-        serverId={normalizedServerId}
-        workspaceId={normalizedWorkspaceId}
-        isWorkspaceFocused={isRouteFocused}
-        buildContent={buildSheetPaneContentModel}
-        onCloseTab={handleCloseTabById}
-      />
+      <SheetTabs onCloseTab={handleCloseTabById} />
     </View>
   ) : (
     <View style={styles.centerColumn}>
@@ -3767,7 +3789,11 @@ function WorkspaceScreenContent({
     return gatedWorkspaceScreen;
   }
   return (
-    <WorkspaceContentProviders key={persistenceKey} workspaceKey={persistenceKey}>
+    <WorkspaceContentProviders
+      key={persistenceKey}
+      workspaceKey={persistenceKey}
+      sheetPaneHost={sheetPaneHost}
+    >
       <AssistantFileLinkResolverProvider
         client={client}
         serverId={normalizedServerId}
