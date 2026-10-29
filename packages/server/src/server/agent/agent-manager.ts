@@ -114,6 +114,7 @@ const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: false,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsContextUsage: false,
 };
 
 type TimeoutResult = "completed" | "timed_out";

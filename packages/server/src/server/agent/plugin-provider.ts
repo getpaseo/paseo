@@ -1672,6 +1672,7 @@ function agentCapabilities(capabilities: readonly string[]): AgentCapabilityFlag
     supportsRewindConversation: supports("session.revert.conversation"),
     supportsRewindFiles: supports("session.revert.files"),
     supportsRewindBoth: supports("session.revert.both"),
+    supportsContextUsage: false,
   };
 }
 

@@ -7,6 +7,7 @@ import {
   AgentSnapshotPayloadSchema,
   AgentTimelineItemPayloadSchema,
   ServerInfoStatusPayloadSchema,
+  SessionInboundMessageSchema,
   SessionOutboundMessageSchema,
   WSHelloMessageSchema,
   WorkspaceSetupSnapshotSchema,
@@ -292,6 +293,117 @@ describe("wire schema compatibility", () => {
     expect(parsed.capabilities.supportsRewindConversation).toBe(false);
     expect(parsed.capabilities.supportsRewindFiles).toBe(false);
     expect(parsed.capabilities.supportsRewindBoth).toBe(false);
+    expect(parsed.capabilities.supportsContextUsage).toBeUndefined();
+  });
+
+  test("old clients parse agent snapshots that include context usage support", () => {
+    const parsed = LegacyAgentSnapshotPayloadSchema.parse({
+      id: "agent-1",
+      provider: "claude",
+      cwd: "/tmp/project",
+      model: null,
+      thinkingOptionId: null,
+      effectiveThinkingOptionId: null,
+      createdAt: "2026-05-23T00:00:00.000Z",
+      updatedAt: "2026-05-23T00:00:00.000Z",
+      lastUserMessageAt: null,
+      status: "idle",
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+        supportsContextUsage: true,
+      },
+      currentModeId: null,
+      availableModes: [],
+      pendingPermissions: [],
+      persistence: null,
+      title: null,
+      labels: {},
+    });
+
+    expect(parsed.capabilities).toEqual({
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: true,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    });
+  });
+
+  test("server info parses when context usage is absent and when it is advertised", () => {
+    const absent = ServerInfoStatusPayloadSchema.parse({
+      status: "server_info",
+      serverId: "legacy-server",
+      features: { agentTurnIdentity: true },
+    });
+    expect(absent.features?.agentContextUsage).toBeUndefined();
+
+    const advertised = ServerInfoStatusPayloadSchema.parse({
+      status: "server_info",
+      serverId: "current-server",
+      features: { agentContextUsage: true },
+    });
+    expect(advertised.features?.agentContextUsage).toBe(true);
+  });
+
+  test("context usage request and response parse, including an error with no usage", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "agent.context_usage.get.request",
+        agentId: "agent-1",
+        requestId: "req-1",
+      }),
+    ).toEqual({
+      type: "agent.context_usage.get.request",
+      agentId: "agent-1",
+      requestId: "req-1",
+    });
+
+    const usage = {
+      totalTokens: 15564,
+      maxTokens: 300000,
+      autoCompactThreshold: 267000,
+      categories: [
+        { name: "System prompt", tokens: 4000 },
+        { name: "MCP tools", tokens: 800, deferred: true },
+      ],
+      memoryFiles: [{ path: "/repo/CLAUDE.md", type: "Project", tokens: 340 }],
+      mcpTools: [{ name: "search", serverName: "paseo", tokens: 90, loaded: true }],
+      skills: [{ name: "tdd", source: "project", tokens: 70 }],
+    };
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "agent.context_usage.get.response",
+        payload: { requestId: "req-1", agentId: "agent-1", usage, error: null },
+      }),
+    ).toEqual({
+      type: "agent.context_usage.get.response",
+      payload: { requestId: "req-1", agentId: "agent-1", usage, error: null },
+    });
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "agent.context_usage.get.response",
+        payload: {
+          requestId: "req-2",
+          agentId: "agent-1",
+          usage: null,
+          error: "Agent does not support context usage",
+        },
+      }),
+    ).toEqual({
+      type: "agent.context_usage.get.response",
+      payload: {
+        requestId: "req-2",
+        agentId: "agent-1",
+        usage: null,
+        error: "Agent does not support context usage",
+      },
+    });
   });
 
   test("notification timeline items parse their level and message", () => {

@@ -207,6 +207,14 @@ The answer comes from the running session, not from a directory scan, so it incl
 
 A provider that cannot produce a list reports that in `error` and returns an empty `commands` array. The call does not reject.
 
+## Ask what fills the context window
+
+```ts
+const { usage, error } = await agent.contextUsage();
+```
+
+Only providers whose agents report `capabilities.supportsContextUsage` answer; others return an error, and an older host throws "Update the host to see context usage." Each call costs the provider a request (one API request on Claude), so call it when someone asks for it, never per turn or on a timer.
+
 ## Archive or detach
 
 ```ts

@@ -99,6 +99,7 @@ nav: API 参考
 | `run(text, options?)`          | `PaseoAgentRunResult`             | 发送提示词并等待该轮结束。`timeoutMs` 控制等待时间，默认 10 分钟。      |
 | `waitForFinish(timeoutMs?)`    | `PaseoAgentRunResult`             | 等待当前轮次结束，包括初始提示词。默认超时：10 分钟。                   |
 | `commands(options?)`           | `PaseoAgentCommandsResult`        | 向正在运行的会话查询它的斜杠命令和技能，包括内置的。选项：`requestId`。 |
+| `contextUsage(options?)`       | `PaseoAgentContextUsageResult`    | 查询会话上下文窗口各类别的 token 占用；仅按需调用。选项：`requestId`。  |
 | `subscribe(handler)`           | 取消订阅函数                      | 把 Agent 目录更新过滤到此 ID，并刷新句柄的属性。                        |
 | `archive()`                    | `{ archivedAt }`                  | 软删除 Agent 并关闭它的运行时。                                         |
 | `detach()`                     | `Promise<void>`                   | 解除父子关系，但不停止 Agent。                                          |

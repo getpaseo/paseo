@@ -179,6 +179,7 @@ export interface AgentCapabilityFlags {
   supportsRewindConversation?: boolean;
   supportsRewindFiles?: boolean;
   supportsRewindBoth?: boolean;
+  supportsContextUsage?: boolean;
 }
 
 export interface AgentPersistenceHandle {
@@ -537,6 +538,41 @@ export interface AgentSlashCommand {
   kind?: AgentSlashCommandKind;
 }
 
+export interface AgentContextUsageCategory {
+  name: string;
+  tokens: number;
+  deferred?: boolean;
+}
+
+export interface AgentContextUsageMemoryFile {
+  path: string;
+  type: string;
+  tokens: number;
+}
+
+export interface AgentContextUsageMcpTool {
+  name: string;
+  serverName: string;
+  tokens: number;
+  loaded?: boolean;
+}
+
+export interface AgentContextUsageSkill {
+  name: string;
+  source: string;
+  tokens: number;
+}
+
+export interface AgentContextUsage {
+  totalTokens: number;
+  maxTokens: number;
+  autoCompactThreshold?: number;
+  categories: AgentContextUsageCategory[];
+  memoryFiles?: AgentContextUsageMemoryFile[];
+  mcpTools?: AgentContextUsageMcpTool[];
+  skills?: AgentContextUsageSkill[];
+}
+
 export interface ListImportableSessionsOptions {
   providerOptions?: ProviderOptions;
   limit?: number;
@@ -704,6 +740,7 @@ export interface AgentSession {
   /** Release live runtime resources without archiving or deleting the durable native session. */
   close(): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;
+  getContextUsage?(): Promise<AgentContextUsage>;
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
   setFeature?(featureId: string, value: unknown): Promise<void>;

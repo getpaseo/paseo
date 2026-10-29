@@ -33,6 +33,7 @@ const COPILOT_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: false,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsContextUsage: false,
 };
 
 const COPILOT_AGENT_MODE_ID = "https://agentclientprotocol.com/protocol/session-modes#agent";

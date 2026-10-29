@@ -166,6 +166,7 @@ const PI_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsContextUsage: false,
 };
 
 const PI_THINKING_OPTIONS: ReadonlyArray<{

@@ -278,6 +278,7 @@ export const DEFAULT_ACP_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: false,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsContextUsage: false,
 };
 
 function acpSessionListRequest(cursor: string | null | undefined, cwd: string | undefined) {

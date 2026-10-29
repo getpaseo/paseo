@@ -8471,3 +8471,86 @@ test("closes before admission when a protected-capable daemon is reached in lega
   expect(daemonReceived).toHaveLength(1);
   expect(JSON.parse(daemonReceived[0] as string)).toMatchObject({ type: "hello" });
 });
+
+test("rejects context usage when the host does not advertise it", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen({ features: {} });
+  await connected;
+
+  await expect(client.getAgentContextUsage("agent-1")).rejects.toThrow(
+    "Update the host to see context usage.",
+  );
+  expect(mock.sent).toEqual([]);
+});
+
+test("asks the host for context usage and returns the payload without throwing on error", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen({ features: { agentContextUsage: true } });
+  await connected;
+
+  const usage = {
+    totalTokens: 10,
+    maxTokens: 100,
+    categories: [{ name: "Messages", tokens: 10 }],
+  };
+  const success = client.getAgentContextUsage("agent-1", { requestId: "ctx-ok" });
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "agent.context_usage.get.request",
+    agentId: "agent-1",
+    requestId: "ctx-ok",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.context_usage.get.response",
+      payload: {
+        requestId: "ctx-ok",
+        agentId: "agent-1",
+        usage,
+        error: null,
+      },
+    }),
+  );
+  await expect(success).resolves.toEqual({
+    requestId: "ctx-ok",
+    agentId: "agent-1",
+    usage,
+    error: null,
+  });
+
+  const failure = client.getAgentContextUsage("agent-1", { requestId: "ctx-err" });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.context_usage.get.response",
+      payload: {
+        requestId: "ctx-err",
+        agentId: "agent-1",
+        usage: null,
+        error: "Agent does not support context usage",
+      },
+    }),
+  );
+  await expect(failure).resolves.toEqual({
+    requestId: "ctx-err",
+    agentId: "agent-1",
+    usage: null,
+    error: "Agent does not support context usage",
+  });
+});

@@ -425,6 +425,7 @@ const AgentCapabilityFlagsSchema: z.ZodType<AgentCapabilityFlags> = z
     supportsRewindFiles: z.boolean().optional().default(false),
     // COMPAT(rewind): added in v0.1.X, drop when floor >= v0.1.X.
     supportsRewindBoth: z.boolean().optional().default(false),
+    supportsContextUsage: z.boolean().optional(),
   })
   .catchall(z.boolean());
 
@@ -1960,6 +1961,50 @@ export const ProviderSubagentListRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const AgentContextUsageCategorySchema = z.object({
+  name: z.string(),
+  tokens: z.number(),
+  deferred: z.boolean().optional(),
+});
+
+const AgentContextUsageMemoryFileSchema = z.object({
+  path: z.string(),
+  type: z.string(),
+  tokens: z.number(),
+});
+
+const AgentContextUsageMcpToolSchema = z.object({
+  name: z.string(),
+  serverName: z.string(),
+  tokens: z.number(),
+  loaded: z.boolean().optional(),
+});
+
+const AgentContextUsageSkillSchema = z.object({
+  name: z.string(),
+  source: z.string(),
+  tokens: z.number(),
+});
+
+export const AgentContextUsageSchema = z.object({
+  totalTokens: z.number(),
+  maxTokens: z.number(),
+  autoCompactThreshold: z.number().optional(),
+  categories: z.array(AgentContextUsageCategorySchema),
+  memoryFiles: z.array(AgentContextUsageMemoryFileSchema).optional(),
+  mcpTools: z.array(AgentContextUsageMcpToolSchema).optional(),
+  skills: z.array(AgentContextUsageSkillSchema).optional(),
+});
+
+export type AgentContextUsageCategory = z.infer<typeof AgentContextUsageCategorySchema>;
+export type AgentContextUsage = z.infer<typeof AgentContextUsageSchema>;
+
+export const AgentContextUsageGetRequestMessageSchema = z.object({
+  type: z.literal("agent.context_usage.get.request"),
+  agentId: z.string(),
+  requestId: z.string(),
+});
+
 export const ProviderSubagentTimelineRequestMessageSchema = z.object({
   type: z.literal("agent.provider_subagents.timeline.get.request"),
   parentAgentId: z.string(),
@@ -3369,6 +3414,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AgentTimelineSearchRequestMessageSchema,
   AgentTimelineListPromptsRequestMessageSchema,
   ProviderSubagentListRequestMessageSchema,
+  AgentContextUsageGetRequestMessageSchema,
   ProviderSubagentTimelineRequestMessageSchema,
   SetAgentTimelineSubscriptionRequestMessageSchema,
   AgentForkContextRequestMessageSchema,
@@ -3784,6 +3830,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentForkContextCursor: z.boolean().optional(),
         // COMPAT(providerSubagents): added in v0.1.107, remove gate after 2027-01-12.
         providerSubagents: z.boolean().optional(),
+        // COMPAT(agentContextUsage): added in v0.14.0, remove gate after 2027-04-28.
+        agentContextUsage: z.boolean().optional(),
         // COMPAT(projectedSubagentTimeline): added after v0.8.0, remove gates after 2027-03-14; retain wire field.
         projectedSubagentTimeline: z.boolean().optional(),
         wholeTurnTimeline: z.boolean().optional(),
@@ -4845,6 +4893,16 @@ export const ProviderSubagentListResponseMessageSchema = z.object({
     requestId: z.string(),
     parentAgentId: z.string(),
     subagents: z.array(ProviderSubagentDescriptorPayloadSchema),
+    error: z.string().nullable(),
+  }),
+});
+
+export const AgentContextUsageGetResponseMessageSchema = z.object({
+  type: z.literal("agent.context_usage.get.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    usage: AgentContextUsageSchema.nullable(),
     error: z.string().nullable(),
   }),
 });
@@ -7085,6 +7143,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentTimelineSearchResponseMessageSchema,
   AgentTimelineListPromptsResponseMessageSchema,
   ProviderSubagentListResponseMessageSchema,
+  AgentContextUsageGetResponseMessageSchema,
   ProviderSubagentTimelineResponseMessageSchema,
   ProviderSubagentUpdateMessageSchema,
   SetAgentTimelineSubscriptionResponseMessageSchema,

@@ -9,6 +9,7 @@ export type { OwnedSubscription, SubscriptionObserver } from "./connection/index
 import type { DaemonClientConfig } from "./daemon-client.js";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import type {
+  AgentContextUsage,
   AgentSnapshotPayload,
   CreationSnapshot,
   CreateAgentRequestMessage,
@@ -35,6 +36,7 @@ import type {
   WorkspaceCreateRequest,
 } from "@getpaseo/protocol/messages";
 import { DaemonClient, type CreateAgentRequestOptions } from "./daemon-client.js";
+export type { AgentContextUsage };
 import {
   createTerminalActions,
   type PaseoTerminalActions,
@@ -304,6 +306,15 @@ export interface PaseoAgentCommandsOptions {
 
 export type PaseoAgentCommandsResult = ListCommandsResponse["payload"];
 
+export interface PaseoAgentContextUsageOptions {
+  requestId?: string;
+}
+
+export interface PaseoAgentContextUsageResult {
+  usage: AgentContextUsage | null;
+  error: string | null;
+}
+
 export type PaseoAgentUpdate = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
 
 export type PaseoAgentStream = Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"];
@@ -388,6 +399,13 @@ export interface PaseoAgentHandle {
    * rejecting.
    */
   commands(options?: PaseoAgentCommandsOptions): Promise<PaseoAgentCommandsResult>;
+  /**
+   * Asks the live session what fills its context window. Costs one provider
+   * request per call on Claude; call it on demand only. A provider that cannot
+   * answer reports that in `error` rather than rejecting. An older host rejects
+   * with "Update the host to see context usage."
+   */
+  contextUsage(options?: PaseoAgentContextUsageOptions): Promise<PaseoAgentContextUsageResult>;
   archive(): Promise<{ archivedAt: string }>;
   detach(): Promise<void>;
   subscribe(handler: (update: PaseoAgentUpdate) => void): () => void;
@@ -1021,6 +1039,10 @@ function createAgentHandleFactory(
         return result;
       },
       commands: (options) => daemonClient.listCommands({ agentId: id, ...options }),
+      contextUsage: async (options) => {
+        const { usage, error } = await daemonClient.getAgentContextUsage(id, options);
+        return { usage, error };
+      },
       archive: async () => {
         const result = await daemonClient.archiveAgent(id);
         if (current) {

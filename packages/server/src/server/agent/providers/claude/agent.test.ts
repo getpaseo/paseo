@@ -3986,6 +3986,39 @@ describe("ClaudeAgentSession context window usage", () => {
       },
     ]);
   });
+
+  test("getContextUsage reads the live query once and returns the mapped breakdown", async () => {
+    const getContextUsage = vi.fn(async () => ({
+      categories: [{ name: "Messages", tokens: 100, color: "blue", isDeferred: true }],
+      totalTokens: 100,
+      maxTokens: 200,
+      rawMaxTokens: 200,
+      percentage: 50,
+      gridRows: [],
+      model: "claude-sonnet-4-6",
+      memoryFiles: [],
+      mcpTools: [{ name: "search", serverName: "paseo", tokens: 12 }],
+      agents: [],
+      isAutoCompactEnabled: false,
+      apiUsage: null,
+      autoCompactThreshold: 180,
+    }));
+    const session = await createSessionForTurns([], { getContextUsage });
+
+    try {
+      await expect(session.getContextUsage?.()).resolves.toEqual({
+        totalTokens: 100,
+        maxTokens: 200,
+        autoCompactThreshold: 180,
+        categories: [{ name: "Messages", tokens: 100, deferred: true }],
+        memoryFiles: [],
+        mcpTools: [{ name: "search", serverName: "paseo", tokens: 12 }],
+      });
+      expect(getContextUsage).toHaveBeenCalledTimes(1);
+    } finally {
+      await session.close();
+    }
+  });
 });
 
 describe("toClaudeSdkMcpConfig", () => {

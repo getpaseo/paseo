@@ -730,6 +730,10 @@ export type ProviderSubagentListPayload = Extract<
   SessionOutboundMessage,
   { type: "agent.provider_subagents.list.response" }
 >["payload"];
+export type AgentContextUsageGetPayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent.context_usage.get.response" }
+>["payload"];
 export type ProviderSubagentTimelinePayload = Extract<
   SessionOutboundMessage,
   { type: "agent.provider_subagents.timeline.get.response" }
@@ -3732,6 +3736,34 @@ export class DaemonClient {
       throw new Error(payload.error);
     }
     return payload;
+  }
+
+  async getAgentContextUsage(
+    agentId: string,
+    options: { requestId?: string; timeout?: number } = {},
+  ): Promise<AgentContextUsageGetPayload> {
+    // COMPAT(agentContextUsage): added in v0.14.0, remove gate after 2027-04-28.
+    const features = this.getLastServerInfoMessage()?.features;
+    if (features?.agentContextUsage !== true) {
+      throw new Error("Update the host to see context usage.");
+    }
+    const requestId = this.createRequestId(options.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.context_usage.get.request",
+      agentId,
+      requestId,
+    });
+    return await this.sendRequest({
+      requestId,
+      message,
+      timeout: options.timeout,
+      options: { skipQueue: true },
+      select: (response) =>
+        response.type === "agent.context_usage.get.response" &&
+        response.payload.requestId === requestId
+          ? response.payload
+          : null,
+    });
   }
 
   async fetchProviderSubagentTimeline(
