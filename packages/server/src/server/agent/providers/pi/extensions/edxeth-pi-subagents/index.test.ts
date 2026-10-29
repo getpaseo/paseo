@@ -6,6 +6,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { edxethPiSubagents } from "./index.js";
+import { streamPiHistory } from "../../history-mapper.js";
+import { ProviderSubagentStore } from "../../../../provider-subagents/store.js";
 
 const args = {
   agent: "scout",
@@ -264,6 +266,31 @@ describe("edxeth/pi-subagents adapter", () => {
     expect(new Set(updates.map((event) => event.id)).size).toBe(1);
     expect(events.some(({ event }) => event.type === "timeline")).toBe(true);
   });
+
+  test.each(["foreground", "background"])(
+    "restores a completed %s child and its transcript to the consumer store",
+    async (mode) => {
+      const fixture = readSubagentFixture(new URL(`./fixtures/${mode}.json`, import.meta.url), {
+        from: `/tmp/paseo-edxeth-fixture/${mode}/child-session.jsonl`,
+        to: fileURLToPath(new URL(`./fixtures/${mode}-child-session.jsonl`, import.meta.url)),
+      });
+      const store = new ProviderSubagentStore();
+      for await (const event of streamPiHistory("pi", fixture.messages)) {
+        if (event.type === "provider_subagent") store.apply("parent", "pi", event.event);
+      }
+      const children = store.list("parent");
+      expect(children).toEqual([expect.objectContaining({ status: "completed", title: "marker" })]);
+      const transcript = store.fetchTimeline("parent", children[0]!.id);
+      expect(transcript.rows).toContainEqual(
+        expect.objectContaining({
+          item: expect.objectContaining({
+            type: "assistant_message",
+            text: mode === "foreground" ? "PASEO_EDXETH_UPSTREAM_OK" : "PASEO_EDXETH_LEAN_OK",
+          }),
+        }),
+      );
+    },
+  );
 
   test("settles a synchronous result on the card created when the tool started", () => {
     const host = createPiExtensionHost();
