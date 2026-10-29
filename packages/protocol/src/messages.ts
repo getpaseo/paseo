@@ -1444,6 +1444,48 @@ export const DaemonConfigReloadRequestSchema = z.object({
   requestId: z.string(),
 });
 
+// A host's portable configuration, produced by one daemon and applied on another. Section values,
+// plugin installations, and settings values stay loose on the wire: the receiving daemon validates
+// each one against its own schemas, so a field from a newer daemon fails only its own item.
+export const HostConfigDocumentSchema = z.object({
+  format: z.literal("paseo-host-config"),
+  version: z.number().int(),
+  daemonVersion: z.string().optional(),
+  config: z.record(z.string(), z.unknown()),
+  plugins: z.array(z.object({ id: z.string(), enabled: z.boolean(), installation: z.unknown() })),
+  manualPlugins: z.array(z.object({ id: z.string(), reason: z.string() })),
+  pluginSettings: z.array(
+    z.object({
+      pluginId: z.string(),
+      settingsId: z.string(),
+      version: z.number().int(),
+      values: z.unknown(),
+    }),
+  ),
+  redacted: z.array(z.object({ path: z.string(), kind: z.enum(["secret", "machine-path"]) })),
+});
+export type HostConfigDocument = z.infer<typeof HostConfigDocumentSchema>;
+
+export const DaemonConfigExportRequestSchema = z.object({
+  type: z.literal("daemon.config.export.request"),
+  requestId: z.string(),
+});
+
+export const DaemonConfigImportPreviewRequestSchema = z.object({
+  type: z.literal("daemon.config.import.preview.request"),
+  requestId: z.string(),
+  document: HostConfigDocumentSchema,
+});
+
+export const DaemonConfigImportApplyRequestSchema = z.object({
+  type: z.literal("daemon.config.import.apply.request"),
+  requestId: z.string(),
+  document: HostConfigDocumentSchema,
+  sections: z.array(z.string()),
+  plugins: z.array(z.string()),
+  enablePlugins: z.boolean(),
+});
+
 export const HubManagementDaemonConnectRequestSchema = z.object({
   type: z.literal("hub.management.daemon.connect.request"),
   requestId: z.string(),
@@ -3314,6 +3356,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   DaemonGetStatusRequestSchema,
   DaemonGetPairingOfferRequestSchema,
   DaemonConfigReloadRequestSchema,
+  DaemonConfigExportRequestSchema,
+  DaemonConfigImportPreviewRequestSchema,
+  DaemonConfigImportApplyRequestSchema,
   HubManagementDaemonConnectRequestSchema,
   HubManagementDaemonGetStatusRequestSchema,
   HubManagementDaemonDisconnectRequestSchema,
@@ -3708,6 +3753,8 @@ export const ServerInfoStatusPayloadSchema = z
         daemonStatusRpc: z.boolean().optional(),
         // COMPAT(daemonConfigReload): added in v0.4.0, remove gate after 2027-02-14.
         daemonConfigReload: z.boolean().optional(),
+        // COMPAT(configTransfer): added in v0.14.0, remove gate after 2027-04-28.
+        configTransfer: z.boolean().optional(),
         // COMPAT(speechSettings): added in v0.12.0, remove gate after 2027-04-18.
         speechSettings: z.boolean().optional(),
         // COMPAT(relayConfig): added in v0.2.6, remove gate after 2027-01-31.
@@ -5218,6 +5265,51 @@ export const DaemonConfigReloadResponseSchema = z.object({
       overrideControlledPaths: z.array(z.string()),
     })
     .passthrough(),
+});
+
+export const DaemonConfigExportResponseSchema = z.object({
+  type: z.literal("daemon.config.export.response"),
+  payload: z.object({ requestId: z.string(), document: HostConfigDocumentSchema }),
+});
+
+export const ConfigImportSectionPreviewSchema = z.object({
+  id: z.string(),
+  status: z.enum(["ready", "invalid", "unchanged"]),
+  changes: z.array(z.string()),
+  issues: z.array(z.string()),
+});
+
+export const ConfigImportPluginPreviewSchema = z.object({
+  id: z.string(),
+  status: z.enum(["install", "already-installed", "manual", "invalid"]),
+  source: z.string().optional(),
+  reason: z.string().optional(),
+});
+
+export const DaemonConfigImportPreviewResponseSchema = z.object({
+  type: z.literal("daemon.config.import.preview.response"),
+  payload: z.object({
+    requestId: z.string(),
+    sections: z.array(ConfigImportSectionPreviewSchema),
+    plugins: z.array(ConfigImportPluginPreviewSchema),
+    requiresPluginsEnabled: z.boolean(),
+    pluginsStartedByEnabling: z.array(z.string()),
+  }),
+});
+
+export const ConfigImportResultSchema = z.object({
+  item: z.string(),
+  outcome: z.enum(["applied", "skipped", "failed"]),
+  reason: z.string().optional(),
+});
+
+export const DaemonConfigImportApplyResponseSchema = z.object({
+  type: z.literal("daemon.config.import.apply.response"),
+  payload: z.object({
+    requestId: z.string(),
+    results: z.array(ConfigImportResultSchema),
+    reenter: z.array(z.object({ path: z.string(), kind: z.enum(["secret", "machine-path"]) })),
+  }),
 });
 
 export const DiagnosticsResponseSchema = z.object({
@@ -7104,6 +7196,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   DaemonGetStatusResponseSchema,
   DaemonGetPairingOfferResponseSchema,
   DaemonConfigReloadResponseSchema,
+  DaemonConfigExportResponseSchema,
+  DaemonConfigImportPreviewResponseSchema,
+  DaemonConfigImportApplyResponseSchema,
   HubManagementDaemonConnectResponseSchema,
   HubManagementDaemonGetStatusResponseSchema,
   HubManagementDaemonDisconnectResponseSchema,
@@ -7362,6 +7457,11 @@ export type ListAvailableProvidersResponse = z.infer<typeof ListAvailableProvide
 export type DaemonGetStatusResponse = z.infer<typeof DaemonGetStatusResponseSchema>;
 export type DaemonGetPairingOfferResponse = z.infer<typeof DaemonGetPairingOfferResponseSchema>;
 export type DaemonConfigReloadResponse = z.infer<typeof DaemonConfigReloadResponseSchema>;
+export type DaemonConfigExportResponse = z.infer<typeof DaemonConfigExportResponseSchema>;
+export type DaemonConfigImportPreviewResponse = z.infer<
+  typeof DaemonConfigImportPreviewResponseSchema
+>;
+export type DaemonConfigImportApplyResponse = z.infer<typeof DaemonConfigImportApplyResponseSchema>;
 export type DiagnosticsResponse = z.infer<typeof DiagnosticsResponseSchema>;
 export type GetProvidersSnapshotResponseMessage = z.infer<
   typeof GetProvidersSnapshotResponseMessageSchema

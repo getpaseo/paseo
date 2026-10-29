@@ -654,6 +654,11 @@ export class DaemonConfigStore {
     return result;
   }
 
+  /** The config file as the user saved it, read in order with pending writes. */
+  public readPersisted(): Promise<PersistedConfig> {
+    return this.enqueue(() => loadPersistedConfigAsync(this.paseoHome, this.logger));
+  }
+
   public readServicePorts(): Promise<NonNullable<PersistedConfig["worktrees"]>["servicePorts"]> {
     return this.enqueue(
       async () =>
