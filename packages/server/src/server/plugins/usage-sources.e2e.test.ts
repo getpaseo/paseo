@@ -392,6 +392,7 @@ dns.lookup = function(host, ...args) {
             HOME: root,
             USERPROFILE: root,
             CODEX_HOME: path.join(root, ".codex"),
+            CLAUDE_CONFIG_DIR: path.join(root, ".claude"),
             NODE_OPTIONS: `--require=${JSON.stringify(guard.replaceAll("\\", "/"))}`,
             https_proxy: `http://127.0.0.1:${address.port}`,
             no_proxy: "",
