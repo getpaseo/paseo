@@ -192,12 +192,7 @@ function PinnedUsageLine({
           <Fragment key={window.key}>
             {layout === "meters" ? (
               <View style={[styles.meterSlot, leadStyle]}>
-                <UsageMeter
-                  percent={window.percent}
-                  tone={window.tone}
-                  quiet
-                  style={styles.meter}
-                />
+                <UsageMeter percent={window.percent} tone={window.tone} quiet />
               </View>
             ) : null}
             <Text
@@ -268,10 +263,6 @@ const styles = StyleSheet.create((theme) => ({
     flexBasis: 0,
     minWidth: MIN_METER_WIDTH,
     marginRight: METER_GAP,
-  },
-  meter: {
-    height: 6,
-    borderRadius: 3,
   },
   percent: {
     flexShrink: 0,

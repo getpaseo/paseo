@@ -2149,6 +2149,7 @@ export const ko: TranslationResources = {
       days: "{{value}}일",
       hours: "{{value}}시간",
       minutes: "{{value}}분",
+      pair: "{{first}} {{second}}",
     },
     timing: {
       lastUpdated: "마지막 업데이트: {{relativeTime}}",
@@ -2156,6 +2157,8 @@ export const ko: TranslationResources = {
       resetTimePassed: "초기화 시간이 지났습니다",
       resettingNow: "지금 재설정 중",
       resetsIn: "{{duration}} 후 재설정",
+      resetsAtWeekday: "{{weekday}} {{time}}",
+      resetsAtDate: "{{date}} {{time}}",
       runsOutNow: "지금 한도에 도달",
       runsOutIn: "{{duration}} 후 한도에 도달",
       justNow: "방금",

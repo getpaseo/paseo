@@ -2157,6 +2157,7 @@ export const ar: TranslationResources = {
       minutes_few: "{{value}} دقائق",
       minutes_many: "{{value}} دقيقة",
       minutes_other: "{{value}} دقيقة",
+      pair: "{{first}} و{{second}}",
     },
     timing: {
       lastUpdated: "آخر تحديث {{relativeTime}}",
@@ -2164,6 +2165,8 @@ export const ar: TranslationResources = {
       resetTimePassed: "مضى وقت إعادة التعيين",
       resettingNow: "تتم إعادة التعيين الآن",
       resetsIn: "تتم إعادة التعيين خلال {{duration}}",
+      resetsAtWeekday: "{{weekday}} {{time}}",
+      resetsAtDate: "{{date}}، {{time}}",
       runsOutNow: "ينفد الآن",
       runsOutIn: "ينفد خلال {{duration}}",
       justNow: "الآن",
