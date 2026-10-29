@@ -1,3 +1,4 @@
+import { PluginTranslationRuntime } from "@getpaseo/plugin/client/host";
 import { usePaseo, useRpc } from "@getpaseo/plugin/client";
 import { defineRpc } from "@getpaseo/plugin";
 import type { PaseoApi } from "@getpaseo/client";
@@ -21,6 +22,8 @@ function installation(invoked: string[]): InstalledPlugin {
     serverId: "host",
     clientBundle: "",
     lifetime: new AbortController(),
+    locale: "en",
+    i18n: new PluginTranslationRuntime({ getLocale: () => "en", subscribe: () => () => {} }),
     paseo: { dispose: async () => undefined } as PaseoApi,
     invoke: async (method) => {
       invoked.push(method);
@@ -32,6 +35,7 @@ function installation(invoked: string[]): InstalledPlugin {
     surfaces: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
+    filePanels: [],
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],

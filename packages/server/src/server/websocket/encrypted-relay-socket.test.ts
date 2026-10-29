@@ -11,10 +11,6 @@ class BlockingChannel implements EncryptedRelayChannel {
   readonly closes: Array<{ code?: number; reason?: string }> = [];
   private resolveSend: (() => void) | null = null;
 
-  setState(state: "open"): void {
-    expect(state).toBe("open");
-  }
-
   send(data: string | ArrayBuffer): Promise<void> {
     this.sent.push(data);
     return new Promise((resolve) => {

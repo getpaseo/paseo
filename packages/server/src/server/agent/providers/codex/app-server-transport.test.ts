@@ -183,3 +183,29 @@ describe("Codex app-server transport", () => {
     codex.child.stdin.end();
   });
 });
+
+describe("Codex stdout byte admission", () => {
+  test("fails pending requests and the session before joining an oversized line", async () => {
+    const child = createCodexAppServerChildProcess();
+    const client = new CodexAppServerClient(child, createTestLogger());
+    const terminations: Error[] = [];
+    client.setUnexpectedTerminationHandler((error) => terminations.push(error));
+    const request = client.request("thread/resume", {}, 1000).catch((error: Error) => error);
+    const chunk = Buffer.alloc(64 * 1024, "x");
+    child.stdout.write('{"id":1,"result":"');
+    for (let index = 0; index < 2048; index++) child.stdout.write(chunk);
+    const error = await request;
+    expect(error).toMatchObject({
+      name: "ProviderStreamLimitError",
+      code: "PROVIDER_STREAM_LINE_TOO_LARGE",
+      limitBytes: 128 * 1024 * 1024,
+    });
+    expect(terminations).toEqual([error]);
+    expect(client.hasPendingRequests()).toBe(false);
+    child.stdout.write('"}\n{"id":1,"result":"late"}\n');
+    await expect(client.request("model/list")).rejects.toThrow("closed");
+    await client.dispose();
+    child.stdout.end();
+    child.stderr.end();
+  });
+});

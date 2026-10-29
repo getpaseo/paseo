@@ -55,6 +55,7 @@ describe("daemon E2E - Claude history lives in the provider's CLAUDE_CONFIG_DIR"
           cwd,
           message: { role: "assistant", content: "reply from the custom config dir" },
         },
+        { type: "custom-title", customTitle: "Renamed provider session", sessionId: SESSION_ID },
       ]
         .map((entry) => `${JSON.stringify(entry)}\n`)
         .join(""),
@@ -111,6 +112,7 @@ describe("daemon E2E - Claude history lives in the provider's CLAUDE_CONFIG_DIR"
       sessionId: SESSION_ID,
       cwd,
     });
+    expect(agent.title).toBe("Renamed provider session");
     await stopDaemon();
 
     const restartedClient = await startDaemon();

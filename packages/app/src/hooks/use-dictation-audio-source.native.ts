@@ -14,6 +14,7 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
   const onErrorRef = useRef(config.onError);
   const onInterruptionRef = useRef(config.onInterruption);
   const [volume, setVolume] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
   const engineRef = useRef<ReturnType<typeof createAudioEngine> | null>(null);
 
   const getOrCreateEngine = useCallback(() => {
@@ -21,20 +22,24 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
       return engineRef.current;
     }
 
-    engineRef.current = createAudioEngine({
-      onCaptureData: (pcm) => {
-        onPcmSegmentRef.current(Buffer.from(pcm).toString("base64"));
+    engineRef.current = createAudioEngine(
+      {
+        onCaptureData: (pcm) => {
+          onPcmSegmentRef.current(Buffer.from(pcm).toString("base64"));
+        },
+        onVolumeLevel: (level) => {
+          setVolume(level);
+        },
+        onError: (error) => {
+          onErrorRef.current?.(error);
+        },
+        onInterruption: () => {
+          onInterruptionRef.current?.();
+        },
+        onCaptureAvailabilityChange: (available) => setIsPaused(!available),
       },
-      onVolumeLevel: (level) => {
-        setVolume(level);
-      },
-      onError: (error) => {
-        onErrorRef.current?.(error);
-      },
-      onInterruption: () => {
-        onInterruptionRef.current?.();
-      },
-    });
+      { captureMode: "dictation" },
+    );
     return engineRef.current;
   }, []);
 
@@ -67,5 +72,6 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
     start,
     stop,
     volume,
+    isPaused,
   };
 }

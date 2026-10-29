@@ -1,12 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildExplorerCheckoutKey,
-  resolveExplorerTabForCheckout,
-  type ExplorerTab,
-} from "@/stores/explorer-tab-memory";
-import {
-  buildOpenFileExplorerPatch,
-  buildToggleFileExplorerPatch,
   DEFAULT_TREE_RAIL_WIDTH,
   migratePanelState,
   selectIsAgentListOpen,
@@ -22,80 +15,9 @@ function makePanelState(overrides: Partial<PanelCoreState> = {}): PanelCoreState
       agentListOpen: false,
       focusModeEnabled: false,
     },
-    explorerTab: "changes",
-    explorerTabByCheckout: {},
     ...overrides,
   };
 }
-
-describe("panel-store explorer tab resolution", () => {
-  const serverId = "server-1";
-  const cwd = "/tmp/repo";
-
-  it("defaults to changes for git checkouts", () => {
-    expect(
-      resolveExplorerTabForCheckout({
-        serverId,
-        cwd,
-        isGit: true,
-        explorerTabByCheckout: {},
-      }),
-    ).toBe("changes");
-  });
-
-  it("defaults to files for non-git checkouts", () => {
-    expect(
-      resolveExplorerTabForCheckout({
-        serverId,
-        cwd,
-        isGit: false,
-        explorerTabByCheckout: {},
-      }),
-    ).toBe("files");
-  });
-
-  it("restores a stored files tab for git checkouts", () => {
-    const key = buildExplorerCheckoutKey(serverId, cwd)!;
-    expect(
-      resolveExplorerTabForCheckout({
-        serverId,
-        cwd,
-        isGit: true,
-        explorerTabByCheckout: {
-          [key]: "files",
-        },
-      }),
-    ).toBe("files");
-  });
-
-  it("falls back to default when stored tab is invalid", () => {
-    const key = buildExplorerCheckoutKey(serverId, cwd)!;
-    expect(
-      resolveExplorerTabForCheckout({
-        serverId,
-        cwd,
-        isGit: true,
-        explorerTabByCheckout: {
-          [key]: "terminals" as unknown as ExplorerTab,
-        },
-      }),
-    ).toBe("changes");
-  });
-
-  it("coerces stored changes to files for non-git checkouts", () => {
-    const key = buildExplorerCheckoutKey(serverId, cwd)!;
-    expect(
-      resolveExplorerTabForCheckout({
-        serverId,
-        cwd,
-        isGit: false,
-        explorerTabByCheckout: {
-          [key]: "changes",
-        },
-      }),
-    ).toBe("files");
-  });
-});
 
 describe("panel-store migration", () => {
   it("defaults hidden-file visibility to showing hidden files", () => {
@@ -191,57 +113,12 @@ describe("panel-store visibility selectors", () => {
   });
 });
 
-describe("panel-store compact file explorer actions", () => {
-  it("opens the compact explorer and resolves the tab from the explicit checkout", () => {
-    const checkout = { serverId: "server-1", cwd: "/tmp/repo", isGit: true };
-    const key = buildExplorerCheckoutKey(checkout.serverId, checkout.cwd)!;
-    const state = makePanelState({
-      explorerTab: "changes",
-      explorerTabByCheckout: { [key]: "files" },
-    });
-
-    const patch = buildOpenFileExplorerPatch(state, checkout);
-
-    expect(patch.mobilePanel).toEqual({ target: "file-explorer", revision: 1 });
-    expect(patch.explorerTab).toBe("files");
-  });
-
-  it("toggles the explorer closed without changing the active tab", () => {
-    const state = makePanelState({
-      mobilePanel: { target: "file-explorer", revision: 1 },
-      explorerTab: "files",
-    });
-
-    const patch = buildToggleFileExplorerPatch(state, {
-      serverId: "server-1",
-      cwd: "/tmp/repo",
-      isGit: true,
-    });
-
-    expect(patch).toEqual({ mobilePanel: { target: "agent", revision: 2 } });
-  });
-
-  it("coerces changes to files for a non-git checkout", () => {
-    const checkout = { serverId: "server-1", cwd: "/tmp/repo", isGit: false };
-    const key = buildExplorerCheckoutKey(checkout.serverId, checkout.cwd)!;
-    const state = makePanelState({
-      explorerTab: "changes",
-      explorerTabByCheckout: { [key]: "changes" },
-    });
-
-    expect(buildOpenFileExplorerPatch(state, checkout).explorerTab).toBe("files");
-  });
-
-  it("opens with the default files tab for an explicit non-git checkout with no stored tab", () => {
-    const state = makePanelState({ explorerTab: "changes", explorerTabByCheckout: {} });
-
-    const patch = buildOpenFileExplorerPatch(state, {
-      serverId: "server-1",
-      cwd: "/tmp/non-git",
-      isGit: false,
-    });
-
-    expect(patch.mobilePanel).toEqual({ target: "file-explorer", revision: 1 });
-    expect(patch.explorerTab).toBe("files");
-  });
+it("discards obsolete checkout selection while preserving other panel preferences", () => {
+  const state = migratePanelState(
+    { explorerTab: "files", explorerTabByCheckout: { checkout: "changes" }, sidebarWidth: 400 },
+    16,
+  );
+  expect(state).not.toHaveProperty("explorerTab");
+  expect(state).not.toHaveProperty("explorerTabByCheckout");
+  expect(state.sidebarWidth).toBe(400);
 });

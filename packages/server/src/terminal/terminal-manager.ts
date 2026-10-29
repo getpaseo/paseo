@@ -1,5 +1,6 @@
 import {
   createTerminal,
+  type LocalTerminalSession,
   type TerminalActivityTransition,
   type TerminalSession,
   type TerminalStateSnapshot,
@@ -50,6 +51,11 @@ export type TerminalWorkspaceContributionChangedListener = (
 ) => void;
 
 export interface TerminalManager {
+  /**
+   * Set when this host's terminals cannot be served at all (a worker from a newer Paseo holds
+   * them). Callers that answer terminal requests report it instead of an empty list.
+   */
+  getUnavailableError?(): Error | null;
   getTerminals(cwd: string, options?: { workspaceId?: string }): Promise<TerminalSession[]>;
   createTerminal(options: {
     id?: string;
@@ -64,6 +70,8 @@ export interface TerminalManager {
     cols?: number;
     activityToken?: string;
     activityUrl?: string | null;
+    baseEnv?: Record<string, string>;
+    paseoCliPath?: string | null;
   }): Promise<TerminalSession>;
   registerCwdEnv(options: { cwd: string; env: Record<string, string> }): void;
   validateTerminalActivityToken(terminalId: string, token: string): "valid" | "unknown" | "invalid";
@@ -97,15 +105,21 @@ export interface TerminalManagerOptions {
   getTerminalActivityUrl?: () => string | null;
 }
 
+/** The in-process manager the terminal worker runs: it owns each PTY, so it knows its pid. */
+export interface LocalTerminalManager extends TerminalManager {
+  getTerminalProcessId(id: string): number | null;
+  getTerminalActivityToken(id: string): string | null;
+}
+
 function createActivityToken(): string {
   return randomBytes(32).toString("base64url");
 }
 
 export function createTerminalManager(
   managerOptions: TerminalManagerOptions = {},
-): TerminalManager {
+): LocalTerminalManager {
   const terminalsByCwd = new Map<string, TerminalSession[]>();
-  const terminalsById = new Map<string, TerminalSession>();
+  const terminalsById = new Map<string, LocalTerminalSession>();
   const terminalExitUnsubscribeById = new Map<string, () => void>();
   const terminalTitleUnsubscribeById = new Map<string, () => void>();
   const terminalActivityUnsubscribeById = new Map<string, () => void>();
@@ -186,7 +200,7 @@ export function createTerminalManager(
     return bestMatchRoot ? defaultEnvByRootCwd.get(bestMatchRoot) : undefined;
   }
 
-  function registerSession(session: TerminalSession): TerminalSession {
+  function registerSession(session: LocalTerminalSession): LocalTerminalSession {
     terminalsById.set(session.id, session);
     const unsubscribeExit = session.onExit(() => {
       removeSessionById(session.id, { kill: false });
@@ -321,6 +335,8 @@ export function createTerminalManager(
       cols?: number;
       activityToken?: string;
       activityUrl?: string | null;
+      baseEnv?: Record<string, string>;
+      paseoCliPath?: string | null;
     }): Promise<TerminalSession> {
       assertAbsolutePath(options.cwd);
 
@@ -355,6 +371,8 @@ export function createTerminalManager(
             ...(options.rows !== undefined ? { rows: options.rows } : {}),
             ...(options.cols !== undefined ? { cols: options.cols } : {}),
             ...(mergedEnv ? { env: mergedEnv } : {}),
+            ...(options.baseEnv ? { baseEnv: options.baseEnv } : {}),
+            ...(options.paseoCliPath === undefined ? {} : { paseoCliPath: options.paseoCliPath }),
             activityEnv,
           }),
         );
@@ -388,6 +406,14 @@ export function createTerminalManager(
 
     getTerminal(id: string): TerminalSession | undefined {
       return terminalsById.get(id);
+    },
+
+    getTerminalProcessId(id: string): number | null {
+      return terminalsById.get(id)?.pid ?? null;
+    },
+
+    getTerminalActivityToken(id: string): string | null {
+      return terminalActivityTokenById.get(id) ?? null;
     },
 
     async getTerminalState(

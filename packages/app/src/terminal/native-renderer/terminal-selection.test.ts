@@ -41,6 +41,93 @@ function rowWithText(
 }
 
 describe("native terminal selection", () => {
+  it.each([
+    { startCol: 1, endCol: 8, expected: "한글 문장" },
+    { startCol: 3, endCol: 8, expected: "글 문장" },
+    { startCol: 1, endCol: 1, expected: "한" },
+    { startCol: 0, endCol: 0, expected: "한" },
+    { startCol: 0, endCol: 1, expected: "한" },
+    { startCol: 4, endCol: 6, expected: " 문" },
+  ])(
+    "copies complete wide characters for selected columns $startCol through $endCol",
+    async ({ startCol, endCol, expected }) => {
+      const terminal = createNativeHeadlessTerminal({ rows: 3, cols: 30 });
+      const copied: string[] = [];
+      try {
+        await terminal.write("한글 문장");
+        const bounds = terminal.getBufferBounds();
+        const selection = createTerminalSelectionModel();
+        selection.begin({
+          coordinate: { row: bounds.cursorRow, col: endCol },
+          bounds,
+        });
+        selection.update({
+          coordinate: { row: bounds.cursorRow, col: startCol },
+          bounds,
+        });
+
+        await copyTerminalSelection({
+          terminal,
+          selection: selection.getSnapshot().range,
+          clipboard: {
+            writeText: async (text) => {
+              copied.push(text);
+            },
+          },
+        });
+
+        expect(copied).toEqual([expected]);
+      } finally {
+        terminal.dispose();
+      }
+    },
+  );
+
+  it("copies Korean output without adding spaces for continuation cells", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: 3, cols: 30 });
+    const copied: string[] = [];
+    try {
+      await terminal.write("한글 문장");
+      const bounds = terminal.getBufferBounds();
+      await copyTerminalSelection({
+        terminal,
+        selection: {
+          start: { row: bounds.cursorRow, col: 0 },
+          end: { row: bounds.cursorRow, col: bounds.cursorCol - 1 },
+          coordinateEpoch: bounds.coordinateEpoch,
+        },
+        clipboard: {
+          writeText: async (text) => {
+            copied.push(text);
+          },
+        },
+      });
+      expect(copied).toEqual(["한글 문장"]);
+    } finally {
+      terminal.dispose();
+    }
+  });
+
+  it("copies Korean text and real spaces without wide-character continuation spaces", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: 3, cols: 30 });
+    try {
+      await terminal.write("한글 문장 | 성공");
+      const bounds = terminal.getBufferBounds();
+      expect(
+        extractTerminalSelectedText({
+          terminal,
+          selection: {
+            start: { row: bounds.cursorRow, col: 0 },
+            end: { row: bounds.cursorRow, col: bounds.cursorCol - 1 },
+            coordinateEpoch: bounds.coordinateEpoch,
+          },
+        }),
+      ).toBe("한글 문장 | 성공");
+    } finally {
+      terminal.dispose();
+    }
+  });
+
   it("expands a long-press coordinate to the whole terminal word", async () => {
     const terminal = createNativeHeadlessTerminal({ rows: 4, cols: 32, scrollbackLines: 20 });
     await terminal.write("before PASEO_TARGET after\r\n");
@@ -62,6 +149,61 @@ describe("native terminal selection", () => {
       },
       text: "PASEO_TARGET",
     });
+  });
+
+  it.each([
+    { col: 0, expected: "한글", startCol: 0, endCol: 3 },
+    { col: 1, expected: "한글", startCol: 0, endCol: 3 },
+    { col: 2, expected: "한글", startCol: 0, endCol: 3 },
+    { col: 3, expected: "한글", startCol: 0, endCol: 3 },
+    { col: 5, expected: "문장", startCol: 5, endCol: 8 },
+    { col: 6, expected: "문장", startCol: 5, endCol: 8 },
+    { col: 7, expected: "문장", startCol: 5, endCol: 8 },
+    { col: 8, expected: "문장", startCol: 5, endCol: 8 },
+  ])(
+    "selects the whole Korean word from column $col, including continuation cells",
+    async ({ col, expected, startCol, endCol }) => {
+      const terminal = createNativeHeadlessTerminal({ rows: 3, cols: 30 });
+      try {
+        await terminal.write("한글 문장");
+        const bounds = terminal.getBufferBounds();
+        const row = bounds.cursorRow;
+        const selection = resolveTerminalWordSelection({ terminal, coordinate: { row, col } });
+
+        expect({ selection, text: extractTerminalSelectedText({ terminal, selection }) }).toEqual({
+          selection: {
+            start: { row, col: startCol },
+            end: { row, col: endCol },
+            coordinateEpoch: bounds.coordinateEpoch,
+          },
+          text: expected,
+        });
+      } finally {
+        terminal.dispose();
+      }
+    },
+  );
+
+  it.each([
+    { text: "한글 문장", col: 4, expected: "" },
+    { text: "(한글)", col: 2, expected: "한글" },
+    { text: "漢字 test", col: 1, expected: "漢字" },
+    { text: "a한b x", col: 2, expected: "a한b" },
+    { text: "🙂🙂 ok", col: 1, expected: "🙂🙂" },
+    { text: "e\u0301한 ok", col: 2, expected: "e\u0301한" },
+    { text: "한글", col: 3, expected: "한글" },
+  ])("preserves word boundaries in $text at column $col", async ({ text, col, expected }) => {
+    const terminal = createNativeHeadlessTerminal({ rows: 3, cols: 30 });
+    try {
+      await terminal.write(text);
+      const selection = resolveTerminalWordSelection({
+        terminal,
+        coordinate: { row: terminal.getBufferBounds().cursorRow, col },
+      });
+      expect(extractTerminalSelectedText({ terminal, selection })).toBe(expected);
+    } finally {
+      terminal.dispose();
+    }
   });
 
   it("maps screen coordinates through the current visible window", () => {

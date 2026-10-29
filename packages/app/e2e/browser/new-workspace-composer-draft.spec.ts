@@ -1,7 +1,14 @@
+import {
+  composerLocator,
+  enterComposerFullscreen,
+  exitComposerFullscreen,
+  resizeComposerViewport,
+} from "../support/helpers/composer";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { getE2EDaemonPort } from "../support/helpers/daemon-port";
 import {
+  delayBrowserWorkspaceCreatedResponse,
   expectNewWorkspaceDraft,
   expectNewWorkspaceProjectSelected,
   fillNewWorkspaceDraft,
@@ -133,4 +140,46 @@ test.describe("New workspace composer draft", () => {
       await project.cleanup();
     }
   });
+});
+
+test("fullscreen creation returns inline and keeps submission locked when reopened", async ({
+  page,
+}) => {
+  const project = await seedWorkspace({ repoPrefix: "fullscreen-submit-pending-" });
+  const delay = await delayBrowserWorkspaceCreatedResponse(page);
+  try {
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    await openNewWorkspaceComposer(page, project);
+    await resizeComposerViewport(page, "portrait");
+    await fillNewWorkspaceDraft(page, DRAFT);
+    await enterComposerFullscreen(page);
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+    await delay.waitForCreateRequest();
+
+    await test.step("submission returns inline with the original draft and spinner", async () => {
+      await expect(page.getByTestId("composer-fullscreen")).toHaveCount(0);
+      await expect(composerLocator(page)).toHaveValue(DRAFT);
+      await expect(composerLocator(page)).not.toBeEditable();
+      await expect(page.getByRole("button", { name: "Create", exact: true })).toBeDisabled();
+      await expect(page.getByRole("progressbar")).toBeVisible();
+    });
+    await test.step("fullscreen can reopen while pending without unlocking or duplicating submission", async () => {
+      await enterComposerFullscreen(page);
+      await expect(page.getByTestId("composer-fullscreen")).toBeVisible();
+      await expect(composerLocator(page)).toHaveValue(DRAFT);
+      await expect(composerLocator(page)).not.toBeEditable();
+      await expect(page.getByRole("button", { name: "Create", exact: true })).toBeDisabled();
+      await expect(page.getByRole("progressbar")).toBeVisible();
+      await exitComposerFullscreen(page);
+    });
+    delay.release();
+    await page.waitForURL((url) => url.pathname.includes("/workspace/"));
+    await expect(composerLocator(page)).toHaveValue("");
+    await expect(composerLocator(page)).toBeEditable();
+    expect(delay.agentRequests).toHaveLength(1);
+  } finally {
+    delay.release();
+    await project.cleanup();
+  }
 });

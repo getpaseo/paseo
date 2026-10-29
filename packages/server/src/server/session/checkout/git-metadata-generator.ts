@@ -3,6 +3,7 @@ import {
   StructuredAgentFallbackError,
   StructuredAgentResponseError,
   generateStructuredAgentResponseWithFallback,
+  type StructuredGenerationLogger,
 } from "../../agent/agent-response-loop.js";
 import type { AgentManager } from "../../agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "../../agent/provider-snapshot-manager.js";
@@ -37,7 +38,7 @@ export interface GitMetadataGenerator {
  * behaviour is unit-testable with a fake. Production wires
  * createAgentStructuredTextGeneration (resolve providers → run structured
  * generation); a failed generation throws StructuredAgent*Error, which the
- * generator catches and turns into the product fallback text.
+ * generator logs and turns into the product fallback text.
  */
 export interface StructuredTextGeneration {
   generate<T>(request: StructuredTextGenerationRequest<T>): Promise<T>;
@@ -49,6 +50,10 @@ export interface StructuredTextGenerationRequest<T> {
   schema: z.ZodType<T>;
   schemaName: string;
   agentTitle: string;
+}
+
+interface GitMetadataLogger {
+  error: (obj: object, msg?: string) => void;
 }
 
 type GitMetadataDiffSource = Pick<WorkspaceGitService, "getCheckoutDiff" | "resolveRepoRoot">;
@@ -90,8 +95,32 @@ interface PromptForDiffInput {
 export function createGitMetadataGenerator(deps: {
   workspaceGitService: GitMetadataDiffSource;
   generation: StructuredTextGeneration;
+  logger: GitMetadataLogger;
 }): GitMetadataGenerator {
-  const { workspaceGitService, generation } = deps;
+  const { workspaceGitService, generation, logger } = deps;
+
+  async function generateOrFallback<T>(
+    request: StructuredTextGenerationRequest<T>,
+    fallback: T,
+  ): Promise<T> {
+    try {
+      return await generation.generate(request);
+    } catch (error) {
+      if (!isStructuredGenerationFailure(error)) {
+        throw error;
+      }
+      logger.error(
+        {
+          err: error,
+          cwd: request.cwd,
+          schemaName: request.schemaName,
+          attempts: error instanceof StructuredAgentFallbackError ? error.attempts : undefined,
+        },
+        "Structured git metadata generation failed",
+      );
+      return fallback;
+    }
+  }
 
   async function buildPromptForDiff(input: PromptForDiffInput): Promise<string> {
     const diff = await workspaceGitService.getCheckoutDiff(input.cwd, input.diffOptions);
@@ -123,21 +152,17 @@ export function createGitMetadataGenerator(deps: {
         styleDefault: "Concise, imperative mood, no trailing period.",
         jsonFieldsHint: "Return JSON only with a single field 'message'.",
       });
-      try {
-        const result = await generation.generate({
+      const result = await generateOrFallback(
+        {
           cwd,
           prompt,
           schema: COMMIT_MESSAGE_SCHEMA,
           schemaName: "CommitMessage",
           agentTitle: "Commit generator",
-        });
-        return result.message;
-      } catch (error) {
-        if (isStructuredGenerationFailure(error)) {
-          return COMMIT_MESSAGE_FALLBACK;
-        }
-        throw error;
-      }
+        },
+        { message: COMMIT_MESSAGE_FALLBACK },
+      );
+      return result.message;
     },
 
     async generatePullRequestText(cwd, baseRef) {
@@ -150,20 +175,16 @@ export function createGitMetadataGenerator(deps: {
         styleDefault: "Clear, descriptive title; body explaining what changed and why.",
         jsonFieldsHint: "Return JSON only with fields 'title' and 'body'.",
       });
-      try {
-        return await generation.generate({
+      return generateOrFallback(
+        {
           cwd,
           prompt,
           schema: PULL_REQUEST_SCHEMA,
           schemaName: "PullRequest",
           agentTitle: "PR generator",
-        });
-      } catch (error) {
-        if (isStructuredGenerationFailure(error)) {
-          return PULL_REQUEST_FALLBACK;
-        }
-        throw error;
-      }
+        },
+        PULL_REQUEST_FALLBACK,
+      );
     },
   };
 }
@@ -180,6 +201,7 @@ export function createAgentStructuredTextGeneration(deps: {
   getFocusedSelection: (
     cwd: string,
   ) => ResolveStructuredGenerationProvidersOptions["currentSelection"];
+  logger: StructuredGenerationLogger;
 }): StructuredTextGeneration {
   return {
     async generate({ cwd, prompt, schema, schemaName, agentTitle }) {
@@ -198,6 +220,7 @@ export function createAgentStructuredTextGeneration(deps: {
         maxRetries: 2,
         providers,
         persistSession: false,
+        logger: deps.logger,
         agentConfigOverrides: {
           title: agentTitle,
           internal: true,
@@ -234,7 +257,9 @@ function diffChangeTypeFor(file: { isNew?: boolean; isDeleted?: boolean }): "A" 
   return "M";
 }
 
-function isStructuredGenerationFailure(error: unknown): boolean {
+function isStructuredGenerationFailure(
+  error: unknown,
+): error is StructuredAgentResponseError | StructuredAgentFallbackError {
   return (
     error instanceof StructuredAgentResponseError || error instanceof StructuredAgentFallbackError
   );

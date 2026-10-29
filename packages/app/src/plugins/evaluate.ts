@@ -1,6 +1,8 @@
+import { requirePluginText } from "@getpaseo/plugin/client/host";
 import type { createPluginHosts } from "./hosts";
 import { openExternalUrl } from "@/utils/open-external-url";
 import * as pluginUiRuntime from "./react-native/ui";
+import { useRevealedText } from "@/hooks/use-revealed-text";
 import { useSettings } from "./settings/use-settings";
 import * as pluginSharedRuntime from "@getpaseo/plugin";
 import * as pluginClientRuntime from "@getpaseo/plugin/client";
@@ -11,30 +13,33 @@ import * as ReactNative from "react-native";
 // eslint-disable-next-line no-restricted-imports -- plugin bundles receive TanStack's real runtime, not Paseo's query wrappers.
 import * as ReactQuery from "@tanstack/react-query";
 import * as Zod from "zod";
+import { type PluginCleanup } from "@getpaseo/plugin";
 import {
-  type PluginAttachmentSourceContribution,
-  type PluginCleanup,
-  type PluginThemeContribution,
-} from "@getpaseo/plugin";
-import {
-  type PluginCommandCenterItemContribution,
   type PluginClientContext,
-  type PluginClientSlashCommandContribution,
-  type PluginSidebarContribution,
-  type PluginScreenContribution,
+  type PluginAgentPanelContribution,
+  type PluginWorkspacePanelContribution as WorkspacePanelInput,
   type PluginScreenProps,
   type PluginScreenTitle,
-  type PluginSidebarItemContribution,
+  type PluginText,
   type PluginSurfaceProps,
   type PluginTimelineRendererContribution,
   type PluginTimelineTransformerContribution,
-  type PluginWorkspacePanelContribution,
   type PluginButtonRegistration,
 } from "@getpaseo/plugin/client";
-import type { EvaluatedPlugin, PluginSidebarSection } from "./types";
+import type {
+  EvaluatedPlugin,
+  PluginSidebarSection,
+  PluginAttachmentSourceContribution,
+  PluginThemeContribution,
+  PluginCommandCenterItemContribution,
+  PluginClientSlashCommandContribution,
+  PluginSidebarContribution,
+  PluginScreenContribution,
+  PluginSidebarItemContribution,
+  PluginWorkspacePanelContribution,
+} from "./types";
 import type { ComponentType } from "react";
-import { resolvePluginIcon } from "./icons";
-import { pluginReactNativeRuntime } from "./react-native/runtime";
+import { parsePluginIcon, parseSerializablePluginIcon } from "./icons";
 import { parsePluginThemeContribution } from "./themes";
 
 const CONTRIBUTION_ID = /^[a-z][a-z0-9-]*$/;
@@ -45,6 +50,7 @@ const TIMELINE_ITEM_TYPES = new Set([
   "reasoning",
   "tool_call",
   "todo",
+  "notification",
   "error",
   "compaction",
 ]);
@@ -76,6 +82,10 @@ function isComponentType(value: unknown): boolean {
   );
 }
 
+function normalizePluginText(text: import("@getpaseo/plugin/client").PluginText) {
+  return typeof text === "string" ? text.trim() : requirePluginText(text);
+}
+
 function requireId(value: string, label: string): string {
   const id = value.trim();
   if (!CONTRIBUTION_ID.test(id)) throw new Error(`Invalid ${label}: ${value}`);
@@ -83,14 +93,17 @@ function requireId(value: string, label: string): string {
 }
 
 /** A non-empty string, or a function of the screen's params resolved when the header renders. */
-function requireScreenTitle(screenId: string, title: unknown): PluginScreenTitle {
-  if (typeof title === "function") return title as PluginScreenTitle;
-  if (typeof title === "string" && title.trim()) return title.trim();
+function requireScreenTitle(screenId: string, title: unknown): PluginScreenTitle<PluginText> {
+  if (typeof title === "function") return title as PluginScreenTitle<PluginText>;
+  try {
+    return requirePluginText(title);
+  } catch {}
   throw new Error(`Screen ${screenId} needs a title: a non-empty string or a function of params`);
 }
 
 export type PluginClientRuntime = Pick<
   PluginClientContext,
+  | "i18n"
   | "playAudio"
   | "paseo"
   | "rpc"
@@ -101,6 +114,10 @@ export type PluginClientRuntime = Pick<
   | "addComposerPill"
   | "addHeaderButton"
 > & { hosts: ReturnType<typeof createPluginHosts> };
+
+// COMPAT(pluginReactNativeEntrypoint): added in v0.13.0, remove after 2027-04-20
+// The 0.12 entry exposed the reveal hook as well as UI components.
+const pluginReactNativeCompatRuntime = { ...pluginUiRuntime, useRevealedText };
 
 export function runPluginClientBundle(
   id: string,
@@ -113,6 +130,7 @@ export function runPluginClientBundle(
     settingsScreens: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
+    filePanels: [],
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
@@ -127,6 +145,7 @@ export function runPluginClientBundle(
     header: new Set(),
     footer: new Set(),
   };
+  const filePanelIds = new Set<string>();
   const workspacePanelIds = new Set<string>();
   const commandCenterItemIds = new Set<string>();
   const clientSlashCommandNames = new Set<string>();
@@ -137,7 +156,9 @@ export function runPluginClientBundle(
   const removals = new Set<PluginCleanup>();
   let setupComplete = false;
   let stopped = false;
-  function trackButton(registration: PluginButtonRegistration): PluginButtonRegistration {
+  function trackButton(
+    registration: PluginButtonRegistration<PluginText>,
+  ): PluginButtonRegistration<PluginText> {
     let active = true;
     const remove = () => {
       if (!active) return;
@@ -180,7 +201,7 @@ export function runPluginClientBundle(
     const normalizedId = requireId(contribution.id, `sidebar ${section} item id`);
     if (ids.has(normalizedId))
       throw new Error(`Duplicate sidebar ${section} item: ${normalizedId}`);
-    const title = contribution.title.trim();
+    const title = normalizePluginText(contribution.title);
     if (!title) throw new Error(`Sidebar item ${normalizedId} has no title`);
     if (!isComponentType(contribution.Component)) {
       throw new Error(`Sidebar item ${normalizedId} is not a component`);
@@ -192,16 +213,42 @@ export function runPluginClientBundle(
       () => ids.delete(normalizedId),
     );
   }
+  function registerPanel(contribution: PluginWorkspacePanelContribution): PluginCleanup {
+    const normalizedId = requireId(contribution.id, "workspace panel id");
+    if (workspacePanelIds.has(normalizedId)) {
+      throw new Error(`Duplicate workspace panel: ${normalizedId}`);
+    }
+    const title = normalizePluginText(contribution.title);
+    if (!title) throw new Error(`Workspace panel ${normalizedId} has no title`);
+    const icon = parsePluginIcon(`Workspace panel ${normalizedId}`, contribution.icon);
+    if (typeof contribution.Component !== "function") {
+      throw new Error(`Workspace panel ${normalizedId} is not a component`);
+    }
+    const locations = normalizePanelLocations(normalizedId, contribution.locations);
+    workspacePanelIds.add(normalizedId);
+    return register(
+      collector.workspacePanels,
+      {
+        ...contribution,
+        id: normalizedId,
+        title,
+        icon,
+        locations,
+      },
+      () => workspacePanelIds.delete(normalizedId),
+    );
+  }
   const pluginContext: PluginClientContext = {
     ...runtime,
     addSettingsScreen(contribution) {
       const screenId = requireId(contribution.id, "settings screen id");
       if (settingsScreenIds.has(screenId))
         throw new Error(`Duplicate settings screen: ${screenId}`);
-      if (!contribution.title.trim()) throw new Error(`Invalid settings screen: ${screenId}`);
-      resolvePluginIcon(contribution.icon);
+      if (!normalizePluginText(contribution.title))
+        throw new Error(`Invalid settings screen: ${screenId}`);
+      const icon = parsePluginIcon(`Settings screen ${screenId}`, contribution.icon);
       settingsScreenIds.add(screenId);
-      return register(collector.settingsScreens, { ...contribution, id: screenId }, () =>
+      return register(collector.settingsScreens, { ...contribution, id: screenId, icon }, () =>
         settingsScreenIds.delete(screenId),
       );
     },
@@ -241,12 +288,10 @@ export function runPluginClientBundle(
     // COMPAT(pluginSidebarAliases): added in v0.11.0, remove after 2027-03-29
     addSidebarItem(contribution: PluginSidebarContribution) {
       const normalizedId = requireId(contribution.id, "sidebar item id");
-      if (!contribution.icon.trim()) throw new Error(`Sidebar item ${normalizedId} has no icon`);
-      resolvePluginIcon(contribution.icon.trim());
       const legacy = {
         id: normalizedId,
-        title: contribution.title.trim(),
-        icon: contribution.icon.trim(),
+        title: normalizePluginText(contribution.title),
+        icon: parsePluginIcon(`Sidebar item ${normalizedId}`, contribution.icon),
         surface: requireId(contribution.surface, "sidebar surface id"),
       };
       // Shares the header's ids: the sidebar orders both kinds of item under one key.
@@ -256,45 +301,70 @@ export function runPluginClientBundle(
       ids.add(normalizedId);
       return register(collector.legacySidebarItems, legacy, () => ids.delete(normalizedId));
     },
-    addWorkspacePanel(contribution: PluginWorkspacePanelContribution) {
-      const normalizedId = requireId(contribution.id, "workspace panel id");
-      if (workspacePanelIds.has(normalizedId)) {
-        throw new Error(`Duplicate workspace panel: ${normalizedId}`);
+    addFilePanel(contribution) {
+      const panelId = requireId(contribution.id, "file panel id");
+      if (filePanelIds.has(panelId)) throw new Error(`Duplicate file panel: ${panelId}`);
+      const title = normalizePluginText(contribution.title);
+      if (!title) throw new Error(`File panel ${panelId} has no title`);
+      const icon = parsePluginIcon(`File panel ${panelId}`, contribution.icon);
+      const files = contribution.files;
+      const validEntries = (entries: unknown, extension: boolean): entries is string[] =>
+        Array.isArray(entries) &&
+        entries.every(
+          (entry) =>
+            typeof entry === "string" &&
+            entry.trim() === entry &&
+            entry.length > 0 &&
+            !/[\\/*?]/.test(entry) &&
+            (!extension || !entry.includes(".")),
+        );
+      if (
+        !files ||
+        Object.keys(files).some((key) => key !== "extensions" && key !== "filenames") ||
+        !validEntries(files.extensions, true) ||
+        (files.filenames !== undefined && !validEntries(files.filenames, false)) ||
+        (files.extensions.length === 0 && !files.filenames?.length)
+      ) {
+        throw new Error(`File panel ${panelId} has invalid selector`);
       }
-      const title = contribution.title.trim();
-      const icon = contribution.icon.trim();
-      if (!title) throw new Error(`Workspace panel ${normalizedId} has no title`);
-      if (!icon) throw new Error(`Workspace panel ${normalizedId} has no icon`);
-      if (contribution.context !== "workspace" && contribution.context !== "agent") {
-        throw new Error(`Workspace panel ${normalizedId} has invalid context`);
-      }
-      if (typeof contribution.Component !== "function") {
-        throw new Error(`Workspace panel ${normalizedId} is not a component`);
-      }
-      resolvePluginIcon(icon);
-      const locations = normalizePanelLocations(normalizedId, contribution.locations);
-      workspacePanelIds.add(normalizedId);
+      if (typeof contribution.Component !== "function")
+        throw new Error(`File panel ${panelId} is not a component`);
+      filePanelIds.add(panelId);
       return register(
-        collector.workspacePanels,
+        collector.filePanels,
         {
           ...contribution,
-          id: normalizedId,
+          id: panelId,
           title,
           icon,
-          locations,
+          files: {
+            extensions: [...files.extensions],
+            ...(files.filenames ? { filenames: [...files.filenames] } : {}),
+          },
         },
-        () => workspacePanelIds.delete(normalizedId),
+        () => filePanelIds.delete(panelId),
       );
+    },
+    addAgentPanel(contribution: PluginAgentPanelContribution<PluginText>) {
+      return registerPanel({ ...contribution, context: "agent" });
+    },
+    addWorkspacePanel(input: WorkspacePanelInput<PluginText>) {
+      // COMPAT(pluginAgentPanelAlias): added in v0.13.0, remove after 2027-04-23
+      if (input.context === "agent") return pluginContext.addAgentPanel(input);
+      // COMPAT(pluginPanelFlatProps): added in v0.13.0, remove after 2027-04-23
+      if (input.context !== undefined && input.context !== "workspace") {
+        throw new Error(`Workspace panel ${input.id} has invalid context`);
+      }
+      return registerPanel({ ...input, context: "workspace" });
     },
     addCommandCenterItem(contribution: PluginCommandCenterItemContribution) {
       const normalizedId = requireId(contribution.id, "Command Center item id");
       if (commandCenterItemIds.has(normalizedId)) {
         throw new Error(`Duplicate Command Center item: ${normalizedId}`);
       }
-      const title = contribution.title.trim();
-      const icon = contribution.icon.trim();
+      const title = normalizePluginText(contribution.title);
       if (!title) throw new Error(`Command Center item ${normalizedId} has no title`);
-      if (!icon) throw new Error(`Command Center item ${normalizedId} has no icon`);
+      const icon = parsePluginIcon(`Command Center item ${normalizedId}`, contribution.icon);
       if (
         contribution.context !== "global" &&
         contribution.context !== "workspace" &&
@@ -305,7 +375,6 @@ export function runPluginClientBundle(
       if (typeof contribution.onSelect !== "function") {
         throw new Error(`Command Center item ${normalizedId} has no callback`);
       }
-      resolvePluginIcon(icon);
       commandCenterItemIds.add(normalizedId);
       return register(
         collector.commandCenterItems,
@@ -324,7 +393,7 @@ export function runPluginClientBundle(
       if (clientSlashCommandNames.has(name)) {
         throw new Error(`Duplicate client slash command: ${name}`);
       }
-      const description = contribution.description.trim();
+      const description = normalizePluginText(contribution.description);
       if (!description) throw new Error(`Client slash command ${name} has no description`);
       if (contribution.context !== "workspace" && contribution.context !== "agent") {
         throw new Error(`Client slash command ${name} has invalid context`);
@@ -339,7 +408,7 @@ export function runPluginClientBundle(
           ...contribution,
           name,
           description,
-          argumentHint: contribution.argumentHint.trim(),
+          argumentHint: normalizePluginText(contribution.argumentHint),
         },
         () => clientSlashCommandNames.delete(name),
       );
@@ -349,19 +418,20 @@ export function runPluginClientBundle(
       if (attachmentSourceIds.has(normalizedId)) {
         throw new Error(`Duplicate attachment source: ${normalizedId}`);
       }
-      const title = contribution.title.trim();
-      const icon = contribution.icon.trim();
-      const pickerTitle = contribution.pickerTitle.trim();
-      const searchPlaceholder = contribution.searchPlaceholder.trim();
+      const title = normalizePluginText(contribution.title);
+      const pickerTitle = normalizePluginText(contribution.pickerTitle);
+      const searchPlaceholder = normalizePluginText(contribution.searchPlaceholder);
       const method = contribution.search.name.trim();
       if (!title) throw new Error(`Attachment source ${normalizedId} has no title`);
-      if (!icon) throw new Error(`Attachment source ${normalizedId} has no icon`);
+      const icon = parseSerializablePluginIcon(
+        `Attachment source ${normalizedId}`,
+        contribution.icon,
+      );
       if (!pickerTitle) throw new Error(`Attachment source ${normalizedId} has no picker title`);
       if (!searchPlaceholder) {
         throw new Error(`Attachment source ${normalizedId} has no search placeholder`);
       }
       if (!method) throw new Error(`Attachment source ${normalizedId} has no search RPC`);
-      resolvePluginIcon(icon);
       attachmentSourceIds.add(normalizedId);
       return register(
         collector.attachmentSources,
@@ -437,6 +507,8 @@ export function runPluginClientBundle(
     },
   };
   const runtimeRequire = (name: string): unknown => {
+    // COMPAT(pluginReactNativeEntrypoint): added in v0.13.0, remove after 2027-04-20
+    if (name === "@getpaseo/plugin/client/react-native") return pluginReactNativeCompatRuntime;
     if (name === "@getpaseo/plugin/client/ui") return pluginUiRuntime;
     if (name === "react") return React;
     if (name === "react/jsx-runtime") return ReactJsxRuntime;
@@ -455,9 +527,6 @@ export function runPluginClientBundle(
             runtime.hosts.getSnapshot,
           ),
       };
-    if (name === "@getpaseo/plugin/client/react-native") {
-      return pluginReactNativeRuntime;
-    }
     if (name === "@tanstack/react-query") return ReactQuery;
     if (name === "zod") return Zod;
     throw new Error(`Module "${name}" is not available in plugin client code`);
@@ -515,6 +584,7 @@ export function runPluginClientBundle(
     settingsScreens: collector.settingsScreens,
     sidebarItems: collector.sidebarItems,
     legacySidebarItems: collector.legacySidebarItems,
+    filePanels: collector.filePanels,
     workspacePanels: collector.workspacePanels as EvaluatedPlugin["workspacePanels"],
     commandCenterItems: collector.commandCenterItems,
     clientSlashCommands: collector.clientSlashCommands,

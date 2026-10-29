@@ -1,3 +1,4 @@
+import { usePanelStore } from "@/stores/panel-store";
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Modal,
@@ -81,7 +82,13 @@ export function useHostChooser() {
       );
 
       if (availableHosts.length === 0) {
-        (input.onNoHosts ?? (() => router.push(buildSettingsAddHostRoute(Date.now()))))();
+        (
+          input.onNoHosts ??
+          (() => {
+            usePanelStore.getState().showMobileAgent();
+            router.push(buildSettingsAddHostRoute(Date.now()));
+          })
+        )();
         return false;
       }
 
@@ -292,7 +299,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: theme.spacing[12],
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: "rgba(0, 0, 0, 0.5)",
   },
   panel: {

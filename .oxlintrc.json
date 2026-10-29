@@ -5,6 +5,7 @@
   },
   "ignorePatterns": [".dev/**"],
   "plugins": ["react", "react-perf", "unicorn", "typescript", "oxc", "import", "promise"],
+  "jsPlugins": ["./scripts/oxlint/paseo-plugin.mjs"],
   "categories": {
     "correctness": "error",
     "suspicious": "error",
@@ -84,6 +85,176 @@
     "max-nested-callbacks": ["error", { "max": 3 }]
   },
   "overrides": [
+    // Exceptions name individual APIs in individual modules; new APIs still fail in these files.
+    // TODO entries are runtime debt, not startup exemptions. Do not add directory-wide exceptions.
+    {
+      "files": ["packages/server/src/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"],
+      "rules": {
+        "paseo/no-sync-io": [
+          "error",
+          {
+            "allow": {
+              // TODO: literal executableExists is a synchronous public capability; move its callers and Windows existence predicates to async together.
+              "executable-resolution/executable-resolution.ts": ["existsSync"],
+              // TODO: winget enumeration shares synchronous existence predicates with literal lookup; convert the executable-resolution boundary together.
+              "executable-resolution/windows.ts": ["readdirSync"],
+              // TODO: live file-change classification is a synchronous event mapper; move the probe to async event ingestion.
+              "server/agent/providers/claude/agent.ts": ["existsSync"],
+              // TODO: new-session construction still resolves its project directory synchronously; move preparation before construction.
+              "server/agent/providers/claude/project-dir.ts": ["realpathSync"],
+              // TODO: live subagent output is read by a synchronous event mapper; add bounded async loading at ingestion.
+              "server/agent/providers/claude/subagents/workflow-output.ts": [
+                "closeSync",
+                "openSync",
+                "readSync"
+              ],
+              // TODO: diagnostics probes provider-owned auth/session storage; convert alongside provider discovery and readiness.
+              "server/agent/providers/omp/agent.ts": ["existsSync"],
+              // TODO: synchronous provider configuration discovery; move discovery into async launch preparation.
+              "server/agent/providers/omp/provider-config.ts": ["existsSync"],
+              // TODO: synchronous session-root selection is shared by descriptor builders; migrate callers with explicit readiness.
+              "server/agent/providers/omp/session-descriptor.ts": ["existsSync"],
+              // TODO: launch directory creation shares the server generation/start state machine; audit concurrent rotation before adding an await.
+              "server/agent/providers/opencode/server-manager.ts": ["mkdirSync"],
+              // TODO: launch preparation owns MCP config merge, extension generation and synchronous cleanup; migrate lifecycle and diagnostics together.
+              "server/agent/providers/pi/agent.ts": [
+                "existsSync",
+                "mkdtempSync",
+                "readFileSync",
+                "rmSync",
+                "writeFileSync"
+              ],
+              // Provider child process: Pi loads this extension outside the daemon; it reads child-agent status there.
+              "server/agent/providers/pi/extensions/pi-subagents/index.ts": ["readFileSync"],
+              // Startup/shutdown only: remove stale Unix listening sockets before bind and during disposal.
+              "server/bootstrap.ts": ["existsSync", "unlinkSync"],
+              // Startup configuration resolution: detect the bundled app distribution before the daemon listens.
+              "server/config.ts": ["existsSync"],
+              // Startup identity: load or create the daemon keypair before accepting connections.
+              "server/daemon-keypair.ts": ["existsSync", "readFileSync"],
+              // Fatal exit diagnostics: synchronously flush the exit reason when the worker is about to terminate.
+              "server/daemon-worker.ts": ["appendFileSync", "mkdirSync"],
+              // Startup host identity: memoized scutil lookup is warmed before listening; later callers use the cache.
+              "server/host-name.ts": ["execFileSync"],
+              // TODO: relationship persistence is atomic with enrollment/revocation state transitions; serialize those transitions before async writes.
+              "server/hub/relationship-controller.ts": [
+                "existsSync",
+                "readFileSync",
+                "renameSync",
+                "rmSync"
+              ],
+              // Local client bootstrap: reads the local credential and pid lock to select/authenticate a daemon connection.
+              "server/local-credential.ts": ["readFileSync"],
+              // Startup logger construction: create the log directory before opening the logging destination.
+              "server/logger.ts": ["mkdirSync"],
+              // TODO: runtime skill commands resolve their bundled source through a synchronous targets capability; migrate the capability and controller together.
+              "server/orchestration-skills/internal/paths.ts": ["existsSync"],
+              // Module initialization: the package version is resolved once and cached at import.
+              "server/package-version.ts": ["existsSync", "readFileSync"],
+              // Startup config and exported synchronous configuration API; runtime DaemonConfigStore uses the async load/save capabilities.
+              "server/persisted-config.ts": ["existsSync", "readFileSync"],
+              // Startup pid identity: read and memoize the Linux boot id for the daemon lock.
+              "server/pid-lock.ts": ["readFileSync"],
+              // Startup builtin loader construction: select the bundled plugin root before loading plugins.
+              "server/plugins/builtin/index.ts": ["existsSync"],
+              // Build child process: plugin graph traversal and esbuild preparation run in the isolated compiler process.
+              "server/plugins/compiler-build.ts": ["existsSync", "readFileSync", "realpathSync"],
+              // Build child process: select the esbuild binary for the isolated plugin compiler.
+              "server/plugins/compiler-esbuild.ts": ["existsSync"],
+              // Build child process: TypeScript resolution and source reads run in the isolated plugin compiler.
+              "server/plugins/compiler-imports.ts": ["readFileSync", "realpathSync"],
+              // TODO: plugin install/update/remove commits sources.json synchronously; preserve record/write ordering with an async mutation queue.
+              "server/plugins/managed-source.ts": ["existsSync", "readFileSync"],
+              // TODO: shared synchronous persistence supports startup identity plus Hub/plugin/push runtime writers; migrate those owners before removing these exports.
+              "server/private-files.ts": [
+                "chmodSync",
+                "mkdirSync",
+                "realpathSync",
+                "renameSync",
+                "rmSync",
+                "writeFileSync"
+              ],
+              // TODO: constructor load plus runtime renew/revoke/prune use synchronous persistence; introduce ordered async mutations and readiness.
+              "server/push/token-store.ts": ["existsSync", "readFileSync"],
+              // Startup identity: load or create the server id before accepting connections.
+              "server/server-id.ts": ["existsSync", "readFileSync"],
+              // Listener lifecycle only: unlink the Unix socket before binding or after stopping the proxy.
+              "server/service-proxy.ts": ["existsSync", "unlinkSync"],
+              // TODO: self-update origin validation exposes synchronous package-root and realpath checks; migrate validation and its runtime interface together.
+              "server/session/daemon/install-origin.ts": ["existsSync", "readFileSync"],
+              // TODO: npm self-update inspection probes the reported install path; move the probe into bounded async installation inspection.
+              "server/session/daemon/npm-global-cli.ts": ["lstatSync"],
+              // Speech child process: model-file validation runs in the worker-backed local speech provider.
+              "server/speech/providers/local/sherpa/sherpa-offline-recognizer.ts": ["existsSync"],
+              // Speech child process: native addon discovery and patchelf run outside the daemon.
+              "server/speech/providers/local/sherpa/sherpa-onnx-node-loader.ts": [
+                "existsSync",
+                "spawnSync"
+              ],
+              // Speech child process: model-file validation runs in the worker-backed local speech provider.
+              "server/speech/providers/local/sherpa/sherpa-tts.ts": ["existsSync"],
+              // TODO: static request selection and index injection need bounded async serving with response/error ownership; keep this as a separate request-path conversion.
+              "server/web-ui.ts": ["readFileSync", "statSync"],
+              // Startup registry hydration: check persisted workspace directories before the runtime reconciliation service starts.
+              "server/workspace-registry-bootstrap.ts": ["statSync"],
+              // Terminal child process: hook config installation/removal is owned by terminal creation and teardown in the worker.
+              "terminal/agent-hooks/agent-hook-installer.ts": [
+                "existsSync",
+                "readFileSync",
+                "rmSync"
+              ],
+              // Terminal child process: launcher readiness and PTY record ownership run outside the daemon.
+              "terminal/terminal-worker-process.ts": [
+                "chmodSync",
+                "closeSync",
+                "existsSync",
+                "openSync",
+                "rmSync",
+                "writeSync"
+              ],
+              // Worker startup only: choose and secure the local listening socket before accepting a controller.
+              "terminal/terminal-worker-socket-path.ts": ["lstatSync", "mkdirSync"],
+              // Startup only: build an independent worker installation before launching; Electron ASAR sources require plain fs reads.
+              "terminal/terminal-worker-runtime.ts": [
+                "chmodSync",
+                "existsSync",
+                "mkdirSync",
+                "readdirSync",
+                "readFileSync",
+                "renameSync",
+                "rmSync",
+                "statSync",
+                "writeFileSync"
+              ],
+              // TODO: CLI shim lookup moved out of terminal.ts; migrate the executable-resolution boundary together.
+              "terminal/paseo-cli-path.ts": ["existsSync"],
+              // Node loader thread: TypeScript terminal-worker resolution runs in the loader, outside the daemon event loop.
+              "terminal/terminal-ts-loader.mjs": ["existsSync"],
+              // Terminal child process: executable preparation and shell integration run in the worker-backed terminal manager.
+              "terminal/terminal.ts": [
+                "accessSync",
+                "chmodSync",
+                "existsSync",
+                "mkdirSync",
+                "readFileSync",
+                "statSync"
+              ],
+              // TODO: legacy realpath helpers still serve install-origin validation and other synchronous consumers; migrate remaining callers before removing them.
+              "utils/path.ts": ["realpathSync"]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "packages/server/src/**/*.{test,spec,fixture}.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+        "packages/server/src/**/test-utils/**",
+        "packages/server/src/server/daemon-e2e/**",
+        "packages/server/src/server/agent/providers/pi/extensions/*-test.ts"
+      ],
+      "rules": { "paseo/no-sync-io": "off" }
+    },
     {
       "files": [
         "plugins/*-provider/server/**/*.ts",
@@ -354,6 +525,117 @@
       ],
       "rules": {
         "no-restricted-imports": "off"
+      }
+    },
+    {
+      "files": ["packages/app/src/**/*.{ts,tsx}"],
+      "rules": {
+        "paseo/no-raw-pressable": "error"
+      }
+    },
+    // Press feedback is owned by the primitives in components/ui. Raw pressable burn-down:
+    // 94 files. They may only leave this list.
+    {
+      "files": [
+        "packages/app/src/components/ui/**/*.{ts,tsx}",
+        "packages/app/src/**/*.{test,spec}.{ts,tsx}",
+        "packages/app/src/agent-profiles/settings/agent-profile-appearance-field.tsx",
+        "packages/app/src/agent-skills/selection-sheet.tsx",
+        "packages/app/src/agent-stream/chat-outline/rail.web.tsx",
+        "packages/app/src/agent-stream/view.tsx",
+        "packages/app/src/app/pair-scan.tsx",
+        "packages/app/src/changelog/internal/changelog-sheet.tsx",
+        "packages/app/src/command-center/command-center.tsx",
+        "packages/app/src/components/adaptive-modal-sheet.tsx",
+        "packages/app/src/components/add-host-method-modal.tsx",
+        "packages/app/src/components/add-host-modal.tsx",
+        "packages/app/src/components/add-project-flow.tsx",
+        "packages/app/src/components/add-remote-ssh-host-modal.tsx",
+        "packages/app/src/components/agent-list.tsx",
+        "packages/app/src/components/app-diagnostic-sheet.tsx",
+        "packages/app/src/components/attachment-lightbox.tsx",
+        "packages/app/src/components/attachment-pill.tsx",
+        "packages/app/src/components/combined-model-selector.tsx",
+        "packages/app/src/components/compact-explorer-sidebar.tsx",
+        "packages/app/src/components/context-window-meter.tsx",
+        "packages/app/src/components/desktop/window-controls.tsx",
+        "packages/app/src/components/dictation-controls.tsx",
+        "packages/app/src/components/download-toast.tsx",
+        "packages/app/src/components/file-explorer-pane.tsx",
+        "packages/app/src/components/headers/back-header.tsx",
+        "packages/app/src/components/highlighted-code-block.tsx",
+        "packages/app/src/components/hosts/host-filter.tsx",
+        "packages/app/src/components/hosts/host-picker.tsx",
+        "packages/app/src/components/import-session-sheet.tsx",
+        "packages/app/src/components/left-sidebar.tsx",
+        "packages/app/src/components/markdown/fence/mermaid/host.native.tsx",
+        "packages/app/src/components/markdown/fence/mermaid/host.web.tsx",
+        "packages/app/src/components/message.tsx",
+        "packages/app/src/components/model-browser.tsx",
+        "packages/app/src/components/plan-card.tsx",
+        "packages/app/src/components/provider-diagnostic-sheet.tsx",
+        "packages/app/src/components/question-form-card.tsx",
+        "packages/app/src/components/realtime-voice-overlay.tsx",
+        "packages/app/src/components/schedules/schedule-row.tsx",
+        "packages/app/src/components/settings/collapsible-row.tsx",
+        "packages/app/src/components/settings/headings/settings-info-tip.tsx",
+        "packages/app/src/components/sidebar-callout.tsx",
+        "packages/app/src/components/sidebar-resize-handle.tsx",
+        "packages/app/src/components/sidebar-workspace-list.tsx",
+        "packages/app/src/components/sidebar/sidebar-group-toggle-row.tsx",
+        "packages/app/src/components/sidebar/sidebar-header-row.tsx",
+        "packages/app/src/components/sidebar/sidebar-section-header.tsx",
+        "packages/app/src/components/sidebar/sidebar-status-list.tsx",
+        "packages/app/src/components/sidebar/workspace-meta-row/index.tsx",
+        "packages/app/src/components/terminal-copy-paste-actions.tsx",
+        "packages/app/src/components/terminal-emulator-native-grid.native.tsx",
+        "packages/app/src/components/terminal-pane.tsx",
+        "packages/app/src/components/toast-host.tsx",
+        "packages/app/src/components/tool-call-sheet.tsx",
+        "packages/app/src/components/welcome-screen.tsx",
+        "packages/app/src/components/workspace-hover-card.tsx",
+        "packages/app/src/components/zoomable-viewport/toolbar.tsx",
+        "packages/app/src/composer/agent-controls/index.tsx",
+        "packages/app/src/composer/diff-stat-pill.tsx",
+        "packages/app/src/composer/dock/internal/background.native.tsx",
+        "packages/app/src/composer/draft/import-pill.tsx",
+        "packages/app/src/composer/index.tsx",
+        "packages/app/src/composer/tracks.tsx",
+        "packages/app/src/desktop/browser/pane/index.electron.tsx",
+        "packages/app/src/git/actions-split-button.tsx",
+        "packages/app/src/git/commits-section/commit-row.tsx",
+        "packages/app/src/git/commits-section/commits-section.tsx",
+        "packages/app/src/git/diff-pane.tsx",
+        "packages/app/src/git/forges/gitlab.view.tsx",
+        "packages/app/src/git/pull-request-panel/checks-section.tsx",
+        "packages/app/src/git/pull-request-panel/pane.tsx",
+        "packages/app/src/git/pull-request-panel/section-kit.tsx",
+        "packages/app/src/hosts/host-chooser.tsx",
+        "packages/app/src/mobile-panels/presentation.tsx",
+        "packages/app/src/panels/new-tab-panel.tsx",
+        "packages/app/src/panels/setup-panel.tsx",
+        "packages/app/src/plugins/buttons/view.tsx",
+        "packages/app/src/review/surface.tsx",
+        "packages/app/src/screens/open-project-screen.tsx",
+        "packages/app/src/screens/project-settings-screen.tsx",
+        "packages/app/src/screens/projects-screen.tsx",
+        "packages/app/src/screens/settings-screen.tsx",
+        "packages/app/src/screens/settings/host-appearance-section.tsx",
+        "packages/app/src/screens/settings/host-page.tsx",
+        "packages/app/src/screens/settings/providers-section.tsx",
+        "packages/app/src/screens/workspace/compact-workspace-header/tab-switcher.tsx",
+        "packages/app/src/screens/workspace/scripts/workspace-scripts-button.tsx",
+        "packages/app/src/screens/workspace/workspace-desktop-tabs-row.tsx",
+        "packages/app/src/screens/workspace/workspace-tab-presentation.tsx",
+        "packages/app/src/tool-calls/detail-level/overview/sheet.tsx",
+        "packages/app/src/usage/sidebar-item.tsx",
+        "packages/app/src/usage/window-bar.tsx",
+        "packages/app/src/workspace-labels/manager-modal.tsx",
+        "packages/app/src/workspace-labels/swatch.tsx",
+        "packages/app/src/workspace/open-in-editor/button.tsx"
+      ],
+      "rules": {
+        "paseo/no-raw-pressable": "off"
       }
     },
     {

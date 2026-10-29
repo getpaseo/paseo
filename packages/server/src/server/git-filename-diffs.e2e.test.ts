@@ -5,6 +5,44 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTestPaseoDaemon, DaemonClient } from "./test-utils/index.js";
 
+test("a rename-only commit returns zero added or deleted lines through the client", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "commit-rename-diff-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  const daemon = await createTestPaseoDaemon({ agentClients: {} });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    git("init", "-b", "main");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.com");
+    writeFileSync(join(cwd, "old.txt"), "same\n");
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "initial");
+    git("mv", "old.txt", "new.txt");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "rename");
+    const sha = git("rev-parse", "HEAD");
+
+    await client.connect();
+    const history = await client.listCheckoutCommits(cwd);
+    expect(history.commits.find((commit) => commit.sha === sha)?.files).toEqual([
+      { path: "new.txt", additions: 0, deletions: 0, status: "renamed" },
+    ]);
+    expect(await client.getCommitFileDiff(cwd, sha, "new.txt")).toEqual({
+      file: {
+        path: "new.txt",
+        isNew: false,
+        isDeleted: false,
+        additions: 0,
+        deletions: 0,
+        hunks: [],
+      },
+    });
+  } finally {
+    await client.close();
+    await daemon.close();
+    rmSync(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
 test.skipIf(process.platform === "win32")(
   "checkout and commit diffs preserve filenames that Git quotes",
   async () => {

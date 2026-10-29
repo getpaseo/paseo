@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_CONTENT_MAX_WIDTH } from "@/styles/theme";
 import type { StreamItem } from "@/types/stream";
 import {
-  clearAssistantImageMetadataCache,
-  setAssistantImageMetadata,
-} from "@/utils/assistant-image-metadata";
+  setAssistantMessageHeight,
+  clearAssistantMessageHeightEstimateCache,
+} from "@/utils/assistant-message-height-estimate";
 import {
   DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS,
   DEFAULT_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD,
@@ -70,6 +70,17 @@ function indexEntries(items: StreamItem[]): IndexedStreamItem[] {
 }
 
 describe("findMountedWindowStart", () => {
+  it("mounts complete autonomous runs and keeps same-run steers together", () => {
+    const items = [
+      { ...userMessage("human", 1), turnId: "first" },
+      { ...assistantMessage("reply", 2), turnId: "first" },
+      { ...toolCall("wake", 3), turnId: "autonomous" },
+      { ...userMessage("steer", 4), turnId: "autonomous" },
+      { ...assistantMessage("done", 5), turnId: "autonomous" },
+    ];
+    expect(findMountedWindowStart({ items, minMountedCount: 1 })).toBe(2);
+  });
+
   it("keeps all items mounted when the chat is below the threshold", () => {
     const items = [userMessage("u1", 1), assistantMessage("a1", 2)];
 
@@ -161,56 +172,18 @@ describe("estimateStreamItemHeight", () => {
     );
   });
 
-  it("uses local image dimensions only from the row's server and workspace", () => {
-    clearAssistantImageMetadataCache();
-    const imageContext = { serverId: "server-one", workspaceRoot: "/workspace/one" };
-    setAssistantImageMetadata(
-      { source: "portrait.png", ...imageContext },
-      { width: 800, height: 1600 },
-    );
+  it("uses the renderer's whole-message measurement at the measured width", () => {
+    clearAssistantMessageHeightEstimateCache();
     const item: StreamItem = {
       kind: "assistant_message",
-      id: "local-image",
-      text: "![Portrait](portrait.png)",
+      id: "measured",
+      text: "First paragraph\n\n![Image](image.png)",
       timestamp: createTimestamp(2),
     };
-
-    expect(estimateStreamItemHeight({ item, contentMaxWidth: 608, imageContext })).toBe(1264);
-    expect(
-      estimateStreamItemHeight({
-        item,
-        contentMaxWidth: 608,
-        imageContext: { ...imageContext, workspaceRoot: "/workspace/two" },
-      }),
-    ).toBe(464);
-    expect(
-      estimateStreamItemHeight({
-        item,
-        contentMaxWidth: 608,
-        imageContext: { ...imageContext, serverId: "server-two" },
-      }),
-    ).toBe(464);
-  });
-
-  it("uses cached assistant image metadata when available", () => {
-    clearAssistantImageMetadataCache();
-    setAssistantImageMetadata(
-      {
-        source: "https://example.com/tall.png",
-      },
-      { width: 800, height: 1600 },
-    );
-
-    const item: StreamItem = {
-      kind: "assistant_message",
-      id: "a-image",
-      text: "Look at this\n\n![Screenshot](https://example.com/tall.png)",
-      timestamp: createTimestamp(2),
-    };
-
-    expect(
-      estimateStreamItemHeight({ item, contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH }),
-    ).toBeGreaterThan(220);
+    setAssistantMessageHeight({ markdown: item.text, width: 608, height: 640 });
+    expect(estimateStreamItemHeight({ item, contentMaxWidth: 608 })).toBe(640);
+    expect(estimateStreamItemHeight({ item, contentMaxWidth: 320 })).toBe(220);
+    clearAssistantMessageHeightEstimateCache();
   });
 });
 

@@ -812,3 +812,14 @@ describe("checkout PR schemas", () => {
     });
   });
 });
+
+test.each([undefined, false, true])(
+  "accepts optional Hoplite capability (%s)",
+  (hopliteProvider) => {
+    const features = hopliteProvider === undefined ? {} : { hopliteProvider };
+    expect(
+      ServerInfoStatusPayloadSchema.parse({ status: "server_info", serverId: "test", features })
+        .features,
+    ).toEqual(features);
+  },
+);

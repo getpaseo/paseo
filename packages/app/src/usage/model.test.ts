@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { i18n } from "@/i18n/i18next";
 import {
+  resolveUsageReport,
   displayPercent,
-  formatUsageFreshness,
   resolveAgentUsageView,
   replaceReport,
   resolveUsageRefresh,
@@ -64,6 +65,18 @@ describe("resolveUsageView", () => {
     ).toEqual({ kind: "unavailable", message: "Connect to Laptop to see usage" });
   });
 
+  it("localizes unavailable host messages while retaining the host name", async () => {
+    await i18n.changeLanguage("ko");
+    expect(
+      resolveUsageView({
+        hostLabel: "Laptop",
+        isConnected: false,
+        supportsUsage: false,
+        query: undefined,
+      }),
+    ).toEqual({ kind: "unavailable", message: "Laptop에 연결하여 제공업체 사용량을 확인하세요" });
+  });
+
   it("moves from loading to ready to error", () => {
     const base = { hostLabel: "Laptop", isConnected: true, supportsUsage: true };
     expect(resolveUsageView({ ...base, query: undefined })).toEqual({ kind: "loading" });
@@ -77,6 +90,10 @@ describe("resolveUsageView", () => {
       }),
     ).toEqual({ kind: "error", message: "boom" });
   });
+});
+
+afterEach(async () => {
+  await i18n.changeLanguage("en");
 });
 
 const hosts: UsageHost[] = [
@@ -184,14 +201,6 @@ describe("displayPercent", () => {
   });
 });
 
-describe("formatUsageFreshness", () => {
-  it("says when the report was fetched", () => {
-    expect(formatUsageFreshness("now")).toBe("Updated just now");
-    expect(formatUsageFreshness("3m")).toBe("Updated 3m ago");
-    expect(formatUsageFreshness("Jan 15")).toBe("Updated Jan 15");
-  });
-});
-
 describe("resolveUsageRefresh", () => {
   it("is pending while a refresh runs, even after an earlier failure", () => {
     expect(resolveUsageRefresh({ isPending: true, error: new Error("boom") })).toBe("pending");
@@ -257,6 +266,22 @@ describe("settleReports", () => {
     expect(settleReports([refreshed, beta], [alpha, beta])).toEqual([refreshed, beta]);
   });
 
+  it("keeps the displayed order when providers finish a refresh in reverse order", () => {
+    const refreshed = entry({ sourceId: "alpha", planLabel: "New" });
+    const streamed = upsertReport(upsertReport([alpha, beta], beta), refreshed);
+    expect(settleReports(streamed, [beta, refreshed])).toEqual([refreshed, beta]);
+  });
+
+  it("drops missing reports and appends new ones without moving surviving reports", () => {
+    const gamma = entry({ sourceId: "gamma" });
+    const delta = entry({ sourceId: "delta" });
+    expect(settleReports([alpha, beta, gamma], [delta, gamma, alpha])).toEqual([
+      alpha,
+      gamma,
+      delta,
+    ]);
+  });
+
   it("takes the finished list as is when nothing was shown yet", () => {
     expect(settleReports(undefined, [alpha, beta])).toEqual([alpha, beta]);
   });
@@ -308,4 +333,75 @@ describe("resolveAgentUsageView", () => {
       }),
     ).toEqual({ kind: "error", message: "Unable to load usage: Unknown agent" });
   });
+});
+
+it("resolves retained usage and successful time without inventing old-daemon history", () => {
+  const success = entry({ windows: [{ id: "weekly", label: "Weekly", usedPct: 42 }] });
+  const failure: UsageReportEntry = {
+    ...success,
+    fetchedAt: "2026-01-01T00:06:00.000Z",
+    report: { status: "error", error: "Rate limited" },
+    lastSuccessful: {
+      fetchedAt: success.fetchedAt,
+      report: success.report as Extract<UsageReportEntry["report"], { status: "available" }>,
+    },
+  };
+  expect(resolveUsageReport(failure, i18n.t)).toEqual({
+    windows: success.report.status === "available" ? success.report.windows : [],
+    balances: [],
+    details: [],
+    planLabel: null,
+    successfulAt: success.fetchedAt,
+    retained: true,
+    messages: ["Rate limited"],
+  });
+  expect(resolveUsageReport({ ...failure, lastSuccessful: undefined }, i18n.t)).toEqual({
+    windows: [],
+    balances: [],
+    details: [],
+    planLabel: null,
+    successfulAt: null,
+    retained: false,
+    messages: ["Rate limited"],
+  });
+  expect(resolveUsageReport(success, i18n.t)).toEqual({
+    windows: success.report.status === "available" ? success.report.windows : [],
+    balances: [],
+    details: [],
+    planLabel: null,
+    successfulAt: success.fetchedAt,
+    retained: false,
+    messages: [],
+  });
+});
+
+it("orders failed polls by attempt time even when successful data is older", () => {
+  const success = entry({});
+  if (success.report.status !== "available") throw new Error("fixture must be available");
+  const failure: UsageReportEntry = {
+    ...success,
+    fetchedAt: "2026-01-01T00:06:00.000Z",
+    report: { status: "error", error: "Rate limited" },
+    lastSuccessful: { fetchedAt: success.fetchedAt, report: success.report },
+  };
+  expect(upsertReport([failure], success)).toEqual([failure]);
+  expect(settleReports([failure], [success])).toEqual([failure]);
+  expect(upsertReport([success], failure)).toEqual([failure]);
+});
+
+it("available and retained usage show the same successful completion time", () => {
+  const success: UsageReportEntry = { ...entry({}), successfulAt: "2026-01-01T00:00:15.000Z" };
+  if (success.report.status !== "available") throw new Error("fixture must be available");
+  expect(resolveUsageReport(success, i18n.t).successfulAt).toBe("2026-01-01T00:00:15.000Z");
+  const failure: UsageReportEntry = {
+    ...success,
+    successfulAt: undefined,
+    fetchedAt: "2026-01-01T00:06:00.000Z",
+    report: { status: "error", error: "Rate limited" },
+    lastSuccessful: { fetchedAt: success.successfulAt!, report: success.report },
+  };
+  expect(resolveUsageReport(failure, i18n.t).successfulAt).toBe(
+    resolveUsageReport(success, i18n.t).successfulAt,
+  );
+  expect(upsertReport([failure], success)).toEqual([failure]);
 });

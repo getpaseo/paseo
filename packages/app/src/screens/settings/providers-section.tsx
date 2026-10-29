@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useToast } from "@/contexts/toast-api-context";
 import { settingsStyles } from "@/styles/settings";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useHostFeature } from "@/runtime/host-features";
@@ -19,6 +20,7 @@ import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import {
   buildAcpProviderConfigPatch,
+  getAcpProviderCatalog,
   type AcpProviderCatalogItem,
 } from "@/hooks/use-acp-provider-catalog";
 import { ProviderCatalogList } from "@/components/provider-catalog-list";
@@ -325,7 +327,9 @@ export interface ProvidersSectionProps {
 
 export function ProvidersSection({ serverId }: ProvidersSectionProps) {
   const { t } = useTranslation();
+  const toast = useToast();
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const supportsHopliteProvider = useHostFeature(serverId, "hopliteProvider");
   const supportsProviderRemoval = useHostFeature(serverId, "providerRemoval");
   const { entries, isLoading, refresh } = useProvidersSnapshot(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
@@ -338,9 +342,16 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
   const providerDefinitions = useMemo(() => buildProviderDefinitions(entries), [entries]);
   const hasServer = serverId.length > 0;
 
-  /** Custom providers are deletable only when config.json holds their `extends` definition. */
+  /** Config owns derived providers and opt-in bundled catalog providers. */
   const isConfigOwnedProvider = useCallback(
-    (providerId: string) => Boolean(config?.providers?.[providerId]?.extends),
+    (providerId: string) =>
+      Boolean(
+        config?.providers?.[providerId] &&
+        (config.providers[providerId].extends ||
+          getAcpProviderCatalog().some(
+            (entry) => entry.id === providerId && entry.bundledProvider,
+          )),
+      ),
     [config],
   );
 
@@ -405,18 +416,15 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
       if (installingProviderId) return;
       setInstallingProviderId(entry.id);
       try {
-        await patchConfig(buildAcpProviderConfigPatch(entry));
+        await patchConfig(buildAcpProviderConfigPatch(entry, supportsHopliteProvider));
         await refresh([entry.id]);
       } catch (error) {
-        Alert.alert(
-          t("settings.providers.addErrorTitle"),
-          error instanceof Error ? error.message : String(error),
-        );
+        toast.error(error instanceof Error ? error.message : String(error));
       } finally {
         setInstallingProviderId((current) => (current === entry.id ? null : current));
       }
     },
-    [installingProviderId, patchConfig, refresh, t],
+    [installingProviderId, patchConfig, refresh, supportsHopliteProvider, toast],
   );
 
   return (

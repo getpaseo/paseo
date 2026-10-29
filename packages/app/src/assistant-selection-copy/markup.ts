@@ -19,43 +19,10 @@ export const MARKDOWN_COPY_ALT_ATTRIBUTE = "data-paseo-markdown-alt";
 export const TRAILING_CODE_LINE_BREAKS = /(\r?\n[ \t]*)+$/;
 
 export const markdownCopyDataSet = {
-  blockquote: { paseoMarkdownTag: "blockquote" },
-  br: { paseoMarkdownTag: "br" },
   code: { paseoMarkdownTag: "code" },
-  h1: { paseoMarkdownTag: "h1" },
-  h2: { paseoMarkdownTag: "h2" },
-  h3: { paseoMarkdownTag: "h3" },
-  h4: { paseoMarkdownTag: "h4" },
-  h5: { paseoMarkdownTag: "h5" },
-  h6: { paseoMarkdownTag: "h6" },
-  hr: { paseoMarkdownTag: "hr" },
-  ignore: { paseoMarkdownIgnore: "true" },
-  li: { paseoMarkdownTag: "li" },
-  listMarker: { paseoMarkdownIgnore: "true", paseoMarkdownListMarker: "true" },
-  ol: { paseoMarkdownTag: "ol" },
-  p: { paseoMarkdownTag: "p" },
   pre: { paseoMarkdownTag: "pre" },
-  s: { paseoMarkdownTag: "s" },
-  strong: { paseoMarkdownTag: "strong" },
-  em: { paseoMarkdownTag: "em" },
-  table: { paseoMarkdownTag: "table" },
-  tbody: { paseoMarkdownTag: "tbody" },
-  td: { paseoMarkdownTag: "td" },
-  th: { paseoMarkdownTag: "th" },
-  thead: { paseoMarkdownTag: "thead" },
-  tr: { paseoMarkdownTag: "tr" },
-  ul: { paseoMarkdownTag: "ul" },
-  unwrap: { paseoMarkdownUnwrap: "true" },
+  ignore: { paseoMarkdownIgnore: "true" },
 } as const;
-
-export type MarkdownCopyInlineTag = "br" | "code" | "em" | "s" | "strong";
-
-export function markdownCopyOrderedListDataSet(start: unknown) {
-  return {
-    ...markdownCopyDataSet.ol,
-    paseoMarkdownListStart: String(start ?? 1),
-  } as const;
-}
 
 export function markdownCopyCodeBlockDataSet(language: string | null | undefined) {
   const fenceLanguage = language?.trim().split(/\s+/)[0];
@@ -65,25 +32,7 @@ export function markdownCopyCodeBlockDataSet(language: string | null | undefined
   } as const;
 }
 
-/**
- * An image copies as the Markdown it came from. The rendered `img` points at a preview
- * URL for data and workspace images, and carries no alt text of its own.
- */
-export function markdownCopyImageDataSet(source: string, alt: string | undefined) {
-  return {
-    paseoMarkdownTag: "img",
-    paseoMarkdownSrc: source,
-    ...(alt ? { paseoMarkdownAlt: alt } : {}),
-  } as const;
-}
-
-export function markdownCopyTableCellDataSet(tag: "td" | "th", style: unknown) {
-  const alignment =
-    typeof style === "string"
-      ? style.match(/(?:^|;)\s*text-align\s*:\s*(left|right|center)/i)?.[1]
-      : null;
-  return {
-    ...markdownCopyDataSet[tag],
-    ...(alignment ? { paseoMarkdownAlign: alignment.toLowerCase() } : {}),
-  } as const;
+export const MARKDOWN_COPY_IMAGE_SOURCES_ATTRIBUTE = "data-paseo-markdown-image-sources";
+export function markdownCopyImageSourcesDataSet(sources: Record<string, string>) {
+  return { paseoMarkdownImageSources: JSON.stringify(sources) };
 }

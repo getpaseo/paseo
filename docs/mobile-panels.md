@@ -32,7 +32,9 @@ The UI worklet owns transient motion:
 
 React publishes the active panel only when the canonical target and the UI-thread position agree at
 the final anchor. Retained content never observes gesture previews, progress, or an unsettled target.
-The gesture hosts stay mounted. Native worklets own overlay opacity and pointer events while
+The gesture hosts stay mounted. The Gesture Handler web patch keeps initially disabled hosts
+from capturing paragraph pointers; that capture confines browser selection to its starting paragraph.
+Native worklets own overlay opacity and pointer events while
 React owns settled panel activity and accessibility. Keep hidden native overlays laid out: collapsing
 their scroll ranges makes Android spring retained offsets back to zero during touch cancellation or
 release. Native panel hosts and their dependent draggable lists

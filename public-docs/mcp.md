@@ -160,6 +160,8 @@ Heartbeat reads require an agent-scoped session and return only that agent's rec
 
 Schedule tools accept new-agent schedules only. Passing a heartbeat ID reports a target-type mismatch; an absent ID reports a missing record. Use the heartbeat read tools for heartbeat IDs. To change a heartbeat, delete it and create a replacement. Pause, resume, update, and run-once remain new-agent schedule operations.
 
+New-agent run workspaces are archived when each run ends by default. `create_schedule` and `update_schedule` do not expose **Archive on finish** (`archiveOnFinish`); [change the option in the app](/docs/schedules#keep-run-workspaces) to keep subsequent run workspaces active.
+
 ### Agent profiles
 
 | Tool            | Function                                                                                                                           |

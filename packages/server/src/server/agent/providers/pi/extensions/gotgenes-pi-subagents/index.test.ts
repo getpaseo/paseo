@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { fileURLToPath } from "node:url";
+import { ProviderSubagentStore } from "../../../../provider-subagents/store.js";
 import { createPiExtensionHost } from "../index.js";
 import { readSubagentFixture, verifySubagentFixture } from "../subagent-fixture-test.js";
 import { streamPiHistory } from "../../history-mapper.js";
@@ -25,6 +26,31 @@ function publishService(agents: Array<{ id: string; outputFile?: string }>): voi
 }
 
 describe("@gotgenes/pi-subagents adapter", () => {
+  test.each([true, false])(
+    "removes a refused resume from live and replayed subagents (background=%s)",
+    async (background) => {
+      // The result came from 23.4.0's real AgentTool and SubagentManager after releaseSession().
+      // The child session was a fake; releaseSession replaced waiting for the retention sweep.
+      const fixture = readSubagentFixture(
+        new URL("./fixtures/refused-resume.json", import.meta.url),
+      );
+      const start = fixture.events[0]!;
+      if (start.type !== "tool_execution_start") throw new Error("Expected a tool start");
+      start.args = { ...(start.args as object), run_in_background: background };
+      const assistant = fixture.messages[0]!;
+      if (assistant.role !== "assistant") throw new Error("Expected an assistant tool call");
+      for (const block of assistant.content) {
+        if (block.type === "toolCall") block.arguments = start.args;
+      }
+      const events = await verifySubagentFixture(fixture);
+      const store = new ProviderSubagentStore();
+      store.apply("parent", "pi", { type: "upsert", id: "previous-child", status: "completed" });
+      for (const event of events) store.apply("parent", "pi", event.event);
+      expect(events.map(({ event }) => event.type)).toEqual(["upsert", "remove"]);
+      expect(store.list("parent")).toMatchObject([{ id: "previous-child", status: "completed" }]);
+    },
+  );
+
   test("reports a child's file after the child republishes the gotgenes service", async () => {
     const notifications: string[] = [];
     const emit = loadRuntimeBridge();

@@ -30,7 +30,7 @@ import {
   openUsageFromIcon,
   openUsageFromItem,
   pinRow,
-  scrollUsage,
+  scrollUsageToWindow,
   setSummaryInSidebar,
   openUsageOptions,
   showUsageAs,
@@ -146,7 +146,9 @@ test.describe("Usage item", () => {
     compact: { viewport: COMPACT, showSidebar: openCompactSidebar },
   };
   for (const [size, { viewport, showSidebar }] of Object.entries(layouts)) {
-    test(`long usage reports scroll to the final window on ${size}`, async ({ page }) => {
+    test(`long usage reports scroll between their first and last windows on ${size}`, async ({
+      page,
+    }) => {
       test.setTimeout(120_000);
       const source = await installTallUsageSource();
       try {
@@ -161,10 +163,10 @@ test.describe("Usage item", () => {
         await waitForSettledPosition(content);
         await expect(content.getByText("Window 20", { exact: true })).not.toBeInViewport();
         await qaScreenshot(page, `${size}-usage-scroll-top`);
-        await scrollUsage(page, 5_000);
+        await scrollUsageToWindow(page, "Window 20");
         await expect(content.getByText("Window 20", { exact: true })).toBeInViewport();
         await qaScreenshot(page, `${size}-usage-scroll-bottom`);
-        await scrollUsage(page, -5_000);
+        await scrollUsageToWindow(page, "Window 1");
         await expect(content.getByText("Window 20", { exact: true })).not.toBeInViewport();
       } finally {
         await source.cleanup();

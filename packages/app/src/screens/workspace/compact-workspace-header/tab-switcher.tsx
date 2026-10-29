@@ -11,6 +11,7 @@ import {
   WorkspaceTabOptionRow,
   type WorkspaceTabPresentation,
 } from "@/screens/workspace/workspace-tab-presentation";
+import { useFilePanelOpenWithMenu } from "@/file-panels";
 import { MobileTabTrailingAccessory } from "@/screens/workspace/workspace-tab-trailing-accessory";
 import {
   buildWorkspaceTabMenuEntries,
@@ -235,15 +236,20 @@ function MobileWorkspaceTabOption({
     [t],
   );
   const fallbackLabel = getFallbackTabOptionLabel(tab, fallbackLabels);
+  const openWith = useFilePanelOpenWithMenu(
+    { serverId: normalizedServerId, workspaceId: normalizedWorkspaceId, tabId: tab.tabId },
+    menuTestIDBase,
+  );
   const trailingAccessory = useMemo(
     () => (
       <MobileTabTrailingAccessory
         menuTestIDBase={menuTestIDBase}
         presentationLabel={fallbackLabel}
         menuEntries={menuEntries}
+        openWith={openWith}
       />
     ),
-    [menuTestIDBase, fallbackLabel, menuEntries],
+    [menuTestIDBase, fallbackLabel, menuEntries, openWith],
   );
 
   const renderPresentation = useCallback(

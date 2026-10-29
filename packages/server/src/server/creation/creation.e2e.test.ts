@@ -4,7 +4,7 @@ import { BUILTIN_PROVIDER_IDS } from "@getpaseo/protocol/provider-manifest";
 import { WebSocket } from "ws";
 import { SessionInboundMessageSchema, WSOutboundMessageSchema } from "@getpaseo/protocol/messages";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
@@ -395,3 +395,181 @@ test.each(["agent", "workspace"] as const)(
   },
   60000,
 );
+
+test("combined worktree and agent creation owns setup on the workspace and replays one identity", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "workspace-owned-setup-"));
+  const daemon = await createCreationDaemon();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await initializeSetupRepository(directory);
+    await client.connect();
+    const input = {
+      idempotencyKey: "combined-workspace-setup",
+      source: { kind: "worktree" as const, cwd: directory, worktreeSlug: "combined-setup" },
+      agent: { config: { provider: "codex", cwd: directory } },
+    };
+    const first = await client.createWorkspace(input);
+    const replay = await client.createWorkspace(input);
+    expect(first.error).toBeNull();
+    expect(replay.error).toBeNull();
+    expect(replay.workspace?.id).toBe(first.workspace?.id);
+    expect(replay.agent?.id).toBe(first.agent?.id);
+    if (!first.workspace || !first.agent) throw new Error("Expected combined creation resources");
+    const observation = client.observeWorkspaceSetup(first.workspace.id);
+    await observation.ready;
+    await expect
+      .poll(async () => (await client.fetchWorkspaceSetupStatus(first.workspace!.id)).snapshot, {
+        timeout: 10000,
+      })
+      .toMatchObject({
+        status: "completed",
+        detail: {
+          log: "",
+          commands: [
+            expect.objectContaining({
+              log: expect.stringContaining("workspace setup output\n"),
+              status: "completed",
+            }),
+          ],
+        },
+      });
+    await observation.release();
+    expect(await readFile(join(first.workspace.workspaceDirectory!, "setup-runs"), "utf8")).toBe(
+      "once\n",
+    );
+    const timeline = await client.fetchAgentTimeline(first.agent.id);
+    expect(
+      timeline.entries.map((entry) => entry.item).filter((item) => item.type === "tool_call"),
+    ).toEqual([]);
+    expect(first.agent.workspaceId).toBe(first.workspace.id);
+    const conflict = await client.createWorkspace({
+      ...input,
+      source: { ...input.source, worktreeSlug: "different-intent" },
+    });
+    expect(conflict.error).toBe("workspace_request_key_conflict");
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+}, 60000);
+
+test.each(["create_agent_request", "agent.create.request"] as const)(
+  "%s rejects agent worktree placement at the wire boundary",
+  async (type) => {
+    const directory = await mkdtemp(join(tmpdir(), "agent-worktree-rejected-"));
+    const daemon = await createCreationDaemon();
+    const peer = await connectCreationPeer(daemon.port);
+    try {
+      for (const placement of [{ git: { createWorktree: true } }, { worktreeName: "legacy" }]) {
+        const response = await peer.request({
+          type,
+          requestId: randomUUID(),
+          config: { provider: "codex", cwd: directory },
+          ...placement,
+        });
+        if (response.type !== "agent.create.response" && response.type !== "status")
+          throw new Error("Expected agent creation response");
+        const error = response.payload.error;
+        expect(error).toContain("createWorkspace");
+      }
+    } finally {
+      peer.close();
+      await daemon.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+async function initializeSetupRepository(directory: string): Promise<void> {
+  execFileSync("git", ["init", "-b", "main", directory], { stdio: "pipe" });
+  await writeFile(
+    join(directory, "paseo.json"),
+    JSON.stringify({
+      worktree: {
+        setup: [
+          "node -e \"require('fs').appendFileSync('setup-runs', 'once\\n'); console.log('workspace setup output')\"",
+        ],
+      },
+    }),
+  );
+  execFileSync("git", ["add", "paseo.json"], { cwd: directory });
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "-m",
+      "setup fixture",
+    ],
+    { cwd: directory, stdio: "pipe" },
+  );
+}
+
+test("Hub-shaped keyed agent worktree creation uses workspace setup and preserves resource identity", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "keyed-agent-workspace-setup-"));
+  const daemon = await createCreationDaemon();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  const peer = await connectCreationPeer(daemon.port);
+  try {
+    await initializeSetupRepository(directory);
+    await client.connect();
+    const input = {
+      type: "create_agent_request" as const,
+      idempotencyKey: "keyed-agent-worktree",
+      config: { provider: "codex", cwd: directory },
+      worktree: { mode: "branch-off" as const, newBranch: "keyed-agent-setup", base: "main" },
+    };
+    const first = await peer.request({ ...input, requestId: "first" });
+    const replay = await peer.request({ ...input, requestId: "replay" });
+    if (
+      first.type !== "status" ||
+      first.payload.status !== "agent_created" ||
+      replay.type !== "status" ||
+      replay.payload.status !== "agent_created"
+    )
+      throw new Error("Expected agent creation responses");
+    expect(replay.payload.agent.id).toBe(first.payload.agent.id);
+    expect(replay.payload.agent.workspaceId).toBe(first.payload.agent.workspaceId);
+    const agent = first.payload.agent;
+    if (!agent.workspaceId) throw new Error("Expected agent workspace ownership");
+    await expect
+      .poll(async () => (await client.fetchWorkspaceSetupStatus(agent.workspaceId!)).snapshot, {
+        timeout: 10000,
+      })
+      .toMatchObject({
+        status: "completed",
+        detail: {
+          log: "",
+          commands: [
+            expect.objectContaining({ log: expect.stringContaining("workspace setup output\n") }),
+          ],
+        },
+      });
+    expect(await readFile(join(agent.cwd, "setup-runs"), "utf8")).toBe("once\n");
+    expect(
+      (await client.fetchAgentTimeline(agent.id)).entries
+        .map((entry) => entry.item)
+        .filter((item) => item.type === "tool_call"),
+    ).toEqual([]);
+    const conflict = await peer.request({
+      ...input,
+      requestId: "conflict",
+      worktree: { ...input.worktree, newBranch: "different-intent" },
+    });
+    expect(conflict).toMatchObject({
+      type: "status",
+      payload: { status: "agent_create_failed", error: "agent_request_key_conflict" },
+    });
+  } finally {
+    peer.close();
+    await client.close();
+    await daemon.close();
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+}, 60000);

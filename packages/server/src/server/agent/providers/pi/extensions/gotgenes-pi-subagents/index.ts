@@ -86,7 +86,7 @@ export const gotgenesPiSubagents: PiExtension = {
               detail,
               subagents: [{ type: "upsert" as const, id: call.callId, status: "failed" as const }],
             }
-          : { detail };
+          : { detail, subagents: [{ type: "remove" as const, id: call.callId }] };
       callsByAgent.set(details.data.agentId, call.callId);
       const file =
         outputFileFromToolResult(call.result) ?? pendingFilesByAgent.get(details.data.agentId);

@@ -1,6 +1,8 @@
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { Search, X } from "lucide-react";
 import { type ChangeEvent, type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { useLocalizePath } from "~/i18n";
 import { type BrowseQuery, browseHref, DEFAULT_WINDOW, parseSearchTerm } from "./links";
 
 const ICON_CLASS = "h-3.5 w-3.5 text-extra-muted-foreground";
@@ -20,6 +22,8 @@ export function PluginSearch({
   live?: boolean;
   className?: string;
 }) {
+  const { t } = useTranslation();
+  const localize = useLocalizePath();
   const navigate = useNavigate();
   const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
@@ -35,9 +39,12 @@ export function PluginSearch({
   );
   const show = useCallback(
     (next: string, { replace }: { replace: boolean }) => {
-      void navigate({ href: browseHref({ ...scope, q: next.trim() ? next : undefined }), replace });
+      void navigate({
+        href: localize(browseHref({ ...scope, q: next.trim() ? next : undefined })),
+        replace,
+      });
     },
-    [navigate, scope],
+    [localize, navigate, scope],
   );
   const edit = useCallback(
     (next: string) => {
@@ -72,7 +79,9 @@ export function PluginSearch({
     <form
       role="search"
       method="get"
-      action={browseHref({ ...scope, q: undefined, sort: "installs", window: DEFAULT_WINDOW })}
+      action={localize(
+        browseHref({ ...scope, q: undefined, sort: "installs", window: DEFAULT_WINDOW }),
+      )}
       onSubmit={handleSubmit}
       className={className}
     >
@@ -90,8 +99,8 @@ export function PluginSearch({
           name="q"
           value={term}
           onChange={handleChange}
-          placeholder="Search plugins"
-          aria-label="Search plugins"
+          placeholder={t("plugins.search")}
+          aria-label={t("plugins.search")}
           // Typing on the directory lands here; keep the caret in the box.
           autoFocus={Boolean(scope.q)}
           className="w-full rounded-lg border border-white/10 bg-white/[0.03] py-1.5 pl-8 pr-8 text-sm text-foreground placeholder:text-extra-muted-foreground focus:border-white/20 focus:outline-none [&::-webkit-search-cancel-button]:appearance-none"
@@ -100,7 +109,7 @@ export function PluginSearch({
           <button
             type="button"
             onClick={handleClear}
-            aria-label="Clear search"
+            aria-label={t("plugins.clearSearch")}
             className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1 transition-colors hover:bg-white/[0.06]"
           >
             <X className={ICON_CLASS} />

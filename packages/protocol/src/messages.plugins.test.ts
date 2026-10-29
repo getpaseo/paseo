@@ -23,6 +23,29 @@ describe("plugin protocol compatibility", () => {
       expect(SessionOutboundMessageSchema.parse(message)).toEqual(message);
     },
   );
+  it.each([
+    { type: "plugin.catalog.get.request", requestId: "catalog" },
+    {
+      type: "plugin.catalog.get.request",
+      requestId: "catalog",
+      cachedClientBundles: [{ id: "example", clientBundleHash: "a".repeat(64) }],
+    },
+  ])("parses plugin catalog requests %j", (request) => {
+    expect(SessionInboundMessageSchema.parse(request)).toEqual(request);
+  });
+  it("parses plugin catalogs that leave out a client bundle the client already holds", () => {
+    const message = {
+      type: "plugin.catalog.get.response",
+      payload: {
+        requestId: "catalog",
+        plugins: [
+          { id: "cached", clientBundleHash: "a".repeat(64) },
+          { id: "changed", clientBundle: "bundle", clientBundleHash: "b".repeat(64) },
+        ],
+      },
+    };
+    expect(SessionOutboundMessageSchema.parse(message)).toEqual(message);
+  });
   it("preserves manifest metadata in plugin list responses", () => {
     const message = {
       type: "plugin.list.response",

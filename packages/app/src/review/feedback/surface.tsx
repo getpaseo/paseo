@@ -80,17 +80,6 @@ function OpenReviewFeedbackAction({
   let notice: ReactNode = unavailableNotice;
   if (state.phase.kind === "failed")
     notice = <Text style={styles.error}>{state.phase.message}</Text>;
-  else if (state.phase.kind === "sent")
-    notice = (
-      <>
-        <SentNotice
-          recipient={state.phase.recipient}
-          serverId={serverId}
-          workspaceId={workspaceId}
-        />
-        {unavailableNotice}
-      </>
-    );
   return (
     <>
       {state.commentCount > 0 ? (
@@ -229,7 +218,7 @@ function RecipientRow({
   );
 }
 
-function SentNotice({
+export function FeedbackSentMessage({
   recipient,
   serverId,
   workspaceId,
@@ -241,7 +230,7 @@ function SentNotice({
   const { t } = useTranslation();
   const render = useCallback(
     (presentation: WorkspaceTabPresentation) => (
-      <Text style={styles.text}>
+      <Text style={styles.sentMessage}>
         {t("review.feedback.sent", { recipient: presentation.label })}
       </Text>
     ),
@@ -266,6 +255,10 @@ const styles = StyleSheet.create((theme) => ({
     right: theme.spacing[4],
     left: theme.spacing[4],
     alignItems: "flex-end",
+  },
+  sentMessage: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
   },
   text: {
     color: theme.colors.foreground,

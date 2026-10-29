@@ -12,6 +12,7 @@ import { resolvePaseoHome } from "../src/server/paseo-home.js";
 import { daemonLogPath } from "../src/server/daemon-instance.js";
 import { PRIVATE_FILE_MODE } from "../src/server/private-files.js";
 import { loadPersistedConfig } from "../src/server/persisted-config.js";
+import { reapTerminalWorkers } from "../src/terminal/terminal-worker-reaper.js";
 import { runSupervisor } from "./supervisor.js";
 import { resolveSupervisorLogFile } from "./supervisor-log-config.js";
 
@@ -175,6 +176,10 @@ async function main(): Promise<void> {
     onWorkerExit: () =>
       updatePidLock(paseoHome, { listen: null, serverId: null }, { ownerPid: process.pid }),
     onSupervisorExit: releaseLock,
+    cleanupTerminals: async (log) => {
+      const result = await reapTerminalWorkers({ paseoHome, log });
+      log("Terminal worker cleanup result", { ...result });
+    },
   });
   requestSupervisorShutdown = supervisor.requestShutdown;
 }

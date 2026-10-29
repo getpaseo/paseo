@@ -199,8 +199,8 @@ async function measure(run: number): Promise<Measurement> {
         root,
         (nextError, events) => {
           error ??= nextError;
-          delivered.push(...events);
           for (const event of events) {
+            delivered.push(event);
             if (!firstObservedAt.has(event.path))
               firstObservedAt.set(event.path, performance.now());
           }
@@ -456,7 +456,7 @@ async function measureDirectoryChurn(run: number): Promise<Measurement> {
     const setupStarted = performance.now();
     subscription = await observer.subscribe(root, (nextError, events) => {
       error ??= nextError;
-      delivered.push(...events);
+      for (const event of events) delivered.push(event);
     });
     const setupMs = performance.now() - setupStarted;
 

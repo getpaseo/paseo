@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { resolvePreferredEditorId } from "./use-preferred-editor";
+import { QueryClient } from "@tanstack/react-query";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { createPreferredEditorPreference, resolvePreferredEditorId } from "./use-preferred-editor";
 
 describe("resolvePreferredEditorId", () => {
   it("keeps the stored editor when it is still available", () => {
@@ -28,5 +30,80 @@ describe("resolvePreferredEditorId", () => {
 
   it("returns null when no editors are available", () => {
     expect(resolvePreferredEditorId([], "cursor")).toBeNull();
+  });
+});
+
+describe("project editor preferences", () => {
+  it("changing one project leaves another project's cached and persisted choice unchanged", async () => {
+    await AsyncStorage.clear();
+    await AsyncStorage.setItem("@paseo:preferred-editor", "vscode");
+    const queryClient = new QueryClient();
+    const projectA = createPreferredEditorPreference({
+      scope: { serverId: "host", projectId: "project-a" },
+      queryClient,
+      storage: AsyncStorage,
+    });
+    const projectB = createPreferredEditorPreference({
+      scope: { serverId: "host", projectId: "project-b" },
+      queryClient,
+      storage: AsyncStorage,
+    });
+    expect(await queryClient.fetchQuery(projectA.queryOptions)).toBe("vscode");
+    expect(await queryClient.fetchQuery(projectB.queryOptions)).toBe("vscode");
+    await projectA.update("cursor");
+    expect(await queryClient.fetchQuery(projectA.queryOptions)).toBe("cursor");
+    expect(await queryClient.fetchQuery(projectB.queryOptions)).toBe("vscode");
+    queryClient.clear();
+    expect(await queryClient.fetchQuery(projectA.queryOptions)).toBe("cursor");
+    expect(await queryClient.fetchQuery(projectB.queryOptions)).toBe("vscode");
+    expect(await AsyncStorage.getItem("@paseo:preferred-editor")).toBe("vscode");
+    queryClient.clear();
+  });
+  it("shares a choice across workspaces of the same project while isolating hosts", async () => {
+    await AsyncStorage.clear();
+    const queryClient = new QueryClient();
+    const root = createPreferredEditorPreference({
+      scope: { serverId: "host-a", projectId: "project" },
+      queryClient,
+      storage: AsyncStorage,
+    });
+    const worktree = createPreferredEditorPreference({
+      scope: { serverId: "host-a", projectId: "project" },
+      queryClient,
+      storage: AsyncStorage,
+    });
+    const otherHost = createPreferredEditorPreference({
+      scope: { serverId: "host-b", projectId: "project" },
+      queryClient,
+      storage: AsyncStorage,
+    });
+    await root.update("zed");
+    expect(await queryClient.fetchQuery(worktree.queryOptions)).toBe("zed");
+    expect(await queryClient.fetchQuery(otherHost.queryOptions)).toBeNull();
+    queryClient.clear();
+    expect(await queryClient.fetchQuery(worktree.queryOptions)).toBe("zed");
+    expect(await queryClient.fetchQuery(otherHost.queryOptions)).toBeNull();
+    queryClient.clear();
+  });
+
+  it("preserves the previous choice when saving fails", async () => {
+    await AsyncStorage.clear();
+    await AsyncStorage.setItem("@paseo:preferred-editor", "vscode");
+    const queryClient = new QueryClient();
+    const preference = createPreferredEditorPreference({
+      scope: { serverId: "host", projectId: "project" },
+      queryClient,
+      storage: {
+        getItem: AsyncStorage.getItem,
+        removeItem: AsyncStorage.removeItem,
+        async setItem() {
+          throw new Error("Storage is full");
+        },
+      },
+    });
+    expect(await queryClient.fetchQuery(preference.queryOptions)).toBe("vscode");
+    await expect(preference.update("cursor")).rejects.toThrow("Storage is full");
+    expect(await queryClient.fetchQuery(preference.queryOptions)).toBe("vscode");
+    queryClient.clear();
   });
 });

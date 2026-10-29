@@ -285,10 +285,15 @@ describe("OMP MCP host tools", () => {
       expect(omp.registeredHostTools().at(-1)?.[0]?.name).toMatch(/^mcp_local__echo_secret/);
       omp.processExit("crashed");
       await omp.startTurn("again");
-      await vi.waitFor(() => {
-        expect(omp.runtimeSessions()).toHaveLength(2);
-        expect(omp.registeredHostTools().at(-1)?.[0]?.name).toMatch(/^mcp_local__echo_secret/);
-      });
+      // The relaunch spawns a new runtime and MCP child; on a loaded Windows
+      // runner that has taken longer than vi.waitFor's default one second.
+      await vi.waitFor(
+        () => {
+          expect(omp.runtimeSessions()).toHaveLength(2);
+          expect(omp.registeredHostTools().at(-1)?.[0]?.name).toMatch(/^mcp_local__echo_secret/);
+        },
+        { timeout: 10_000 },
+      );
     } finally {
       await omp.close();
     }

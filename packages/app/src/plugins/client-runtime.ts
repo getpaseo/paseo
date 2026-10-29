@@ -24,6 +24,7 @@ export function createPluginClientRuntime(
   );
   return {
     ...capabilities,
+    i18n: installation.i18n,
     playAudio: createPlayAudio(audio, installation.lifetime.signal),
     hosts: createPluginHosts(getHostRuntimeStore(), installation.lifetime.signal),
     addComposerPill(contribution) {

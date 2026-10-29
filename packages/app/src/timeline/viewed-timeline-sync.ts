@@ -109,6 +109,15 @@ class TimelineReplicaOwner implements TimelineReplica {
   async prepare(agentId: string): Promise<void> {
     const existing = this.preparations.get(agentId);
     if (existing) return existing;
+    const timeline = selectAgentTimelineState(
+      useSessionStore.getState().sessions[this.serverId],
+      agentId,
+    );
+    // A route and the visible-chat owner can both prepare before catch-up finishes.
+    // Repainting that same cache would treat its history as a live head.
+    if (timeline.status !== "cold" && this.cachedRanges.has(agentId)) {
+      return;
+    }
     const preparation = this.load(agentId).finally(() => {
       if (this.preparations.get(agentId) === preparation) {
         this.preparations.delete(agentId);

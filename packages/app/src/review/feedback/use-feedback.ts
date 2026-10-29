@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { createElement, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import {
   useReviewDraftComments,
   getReviewDraftComments,
@@ -22,6 +22,8 @@ import {
   type FeedbackAttachment,
   type FeedbackRecipient,
 } from "./index";
+import { useToast } from "@/contexts/toast-context";
+import { FeedbackSentMessage } from "./surface";
 
 const feedbackScope = createReviewFeedbackScope();
 
@@ -32,6 +34,7 @@ export function useReviewFeedback(input: {
   attachment: FeedbackAttachment | null;
 }) {
   const { serverId, reviewDraftKey, workspaceId } = input;
+  const toast = useToast();
   const isCompact = useIsCompactFormFactor();
   const workspaceKey = workspaceId
     ? buildWorkspaceTabPersistenceKey({ serverId, workspaceId })
@@ -49,12 +52,14 @@ export function useReviewFeedback(input: {
     connected,
     attachment: input.attachment,
     sendBehavior: settings.sendBehavior,
+    toast,
   });
   live.current = {
     client,
     connected,
     attachment: input.attachment,
     sendBehavior: settings.sendBehavior,
+    toast,
   };
   const model = useMemo(
     () =>
@@ -85,12 +90,20 @@ export function useReviewFeedback(input: {
                   ).turnId ?? undefined)
                 : undefined,
           });
+          live.current.toast.show(
+            createElement(FeedbackSentMessage, {
+              recipient,
+              serverId,
+              workspaceId: workspaceId ?? "",
+            }),
+            { variant: "success" },
+          );
         },
         clearSent: (sentComments) =>
           clearSentReviewDraftComments({ key: reviewDraftKey, comments: sentComments }),
         failedMessage: () => i18n.t("review.feedback.failed"),
       }),
-    [reviewDraftKey, serverId, workspaceKey],
+    [reviewDraftKey, serverId, workspaceKey, workspaceId],
   );
   useEffect(() => {
     model.refresh();

@@ -1,7 +1,7 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, ChevronRight, CircleAlert, SquareTerminal } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { Pressable, type PressableStateCallbackType, ScrollView, Text, View } from "react-native";
@@ -17,6 +17,9 @@ import {
   type WorkspaceSetupSnapshot,
 } from "@/stores/workspace-setup-store";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import { useWorkspaceFields } from "@/stores/session-store-hooks";
+import { useRetainedPanelActive } from "@/components/retained-panel";
+import { useAppActivelyVisible } from "@/hooks/use-app-visible";
 import { useHostFeature } from "@/runtime/host-features";
 
 function useSetupPanelDescriptor(
@@ -24,13 +27,11 @@ function useSetupPanelDescriptor(
   context: { serverId: string; workspaceId: string },
 ): PanelDescriptor {
   const { t } = useTranslation();
-  const key = buildWorkspaceTabPersistenceKey({
-    serverId: context.serverId,
-    workspaceId: target.workspaceId,
-  });
-  const snapshot = useWorkspaceSetupStore((state) => (key ? (state.snapshots[key] ?? null) : null));
+  const fields = useWorkspaceFields(context.serverId, target.workspaceId, (workspace) => ({
+    status: workspace.setupStatus ?? null,
+  }));
 
-  if (snapshot?.status === "completed") {
+  if (fields?.status === "completed") {
     return {
       label: t("workspace.setup.descriptor.label"),
       subtitle: t("workspace.setup.descriptor.completed"),
@@ -41,7 +42,7 @@ function useSetupPanelDescriptor(
     };
   }
 
-  if (snapshot?.status === "failed") {
+  if (fields?.status === "failed") {
     return {
       label: t("workspace.setup.descriptor.label"),
       subtitle: t("workspace.setup.descriptor.failed"),
@@ -52,7 +53,7 @@ function useSetupPanelDescriptor(
     };
   }
 
-  if (snapshot?.status === "blocked") {
+  if (fields?.status === "blocked") {
     return {
       label: t("workspace.setup.descriptor.label"),
       subtitle: t("workspace.setup.descriptor.blocked"),
@@ -69,7 +70,7 @@ function useSetupPanelDescriptor(
     tooltip: t("workspace.setup.descriptor.workspace"),
     titleState: "ready",
     icon: SquareTerminal,
-    statusBucket: snapshot?.status === "running" ? "running" : null,
+    statusBucket: fields?.status === "running" ? "running" : null,
   };
 }
 
@@ -182,32 +183,19 @@ function resolveSetupStatusLabel(
   return labels.waiting;
 }
 
-function resolveCommandLog(
-  command: SetupCommand,
-  autoExpandIndex: number | null,
-  log: string,
-): string {
-  if ("log" in command && typeof command.log === "string") {
-    return command.log;
-  }
-  if (command.index === autoExpandIndex) return log;
-  return "";
-}
-
 interface BuildCommandRowPropsArgs {
   command: SetupCommand;
   autoExpandIndex: number | null;
-  log: string;
   expandedIndices: Set<number>;
   manuallyCollapsed: Set<number>;
   snapshotError: string | null | undefined;
 }
 
 function buildCommandRowState(args: BuildCommandRowPropsArgs) {
-  const { command, autoExpandIndex, log, expandedIndices, manuallyCollapsed, snapshotError } = args;
+  const { command, autoExpandIndex, expandedIndices, manuallyCollapsed, snapshotError } = args;
   const isExpanded = expandedIndices.has(command.index);
   const hasError = command.status === "failed" && Boolean(snapshotError);
-  const commandLog = resolveCommandLog(command, autoExpandIndex, log);
+  const commandLog = command.log;
   const hasLog = commandLog.trim().length > 0;
   const isExpandable = command.status !== "running" || hasLog || hasError;
   const isAutoExpanded = command.index === autoExpandIndex && !manuallyCollapsed.has(command.index);
@@ -216,33 +204,34 @@ function buildCommandRowState(args: BuildCommandRowPropsArgs) {
   return { hasError, hasLog, isExpandable, isAutoExpanded, showDetail, processedLog };
 }
 
-function useWorkspaceSetupSnapshot(serverId: string, workspaceId: string) {
+function useWorkspaceSetupSnapshot(serverId: string, workspaceId: string, enabled: boolean) {
   const client = useHostRuntimeClient(serverId);
   const key = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
   const snapshot = useWorkspaceSetupStore((state) => (key ? (state.snapshots[key] ?? null) : null));
-  const upsertProgress = useWorkspaceSetupStore((state) => state.upsertProgress);
-  const requestedRef = useRef(false);
-
+  const applySnapshot = useWorkspaceSetupStore((state) => state.applySnapshot);
+  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    if (snapshot || requestedRef.current || !client) return;
-    requestedRef.current = true;
-    client
-      .fetchWorkspaceSetupStatus(workspaceId)
-      .then((response) => {
-        if (response.snapshot) {
-          upsertProgress({
-            serverId,
-            payload: { workspaceId: response.workspaceId, ...response.snapshot },
-          });
-        }
-        return;
-      })
-      .catch(() => {
-        // Server may not support this yet — ignore.
-      });
-  }, [client, snapshot, serverId, upsertProgress, workspaceId]);
-
-  return snapshot;
+    if (!client || !enabled) return;
+    setError(null);
+    const subscription = client.observeWorkspaceSetup(workspaceId);
+    const detach = subscription.subscribe({
+      snapshot: (response) => {
+        applySnapshot({ serverId, workspaceId, snapshot: response.snapshot });
+      },
+      update: (message) => {
+        if (message.type === "workspace_setup_progress")
+          applySnapshot({ serverId, workspaceId, snapshot: message.payload });
+      },
+      error: (failure) => setError(failure instanceof Error ? failure.message : String(failure)),
+    });
+    return () => {
+      detach();
+      void subscription
+        .release()
+        .catch((failure) => console.warn("Failed to release setup observation", failure));
+    };
+  }, [client, enabled, serverId, applySnapshot, workspaceId]);
+  return { snapshot, error };
 }
 
 function useExpandedSetupCommands() {
@@ -273,12 +262,17 @@ function SetupPanel() {
   const { serverId, target } = usePaneContext();
   invariant(target.kind === "setup", "SetupPanel requires setup target");
 
-  const snapshot = useWorkspaceSetupSnapshot(serverId, target.workspaceId);
+  const isActive = useRetainedPanelActive();
+  const isVisible = useAppActivelyVisible();
+  const supportsObservation = useHostFeature(serverId, "workspaceSetupObservation");
+  const { snapshot, error: observationError } = useWorkspaceSetupSnapshot(
+    serverId,
+    target.workspaceId,
+    isActive && isVisible && supportsObservation,
+  );
 
   const commands = snapshot?.detail.commands ?? EMPTY_COMMANDS;
-  const log = snapshot?.detail.log ?? "";
-  const hasNoSetupCommands =
-    snapshot?.status === "completed" && commands.length === 0 && log.trim().length === 0;
+  const hasNoSetupCommands = snapshot?.status === "completed" && commands.length === 0;
   const isWaiting = !snapshot || (snapshot.status === "running" && commands.length === 0);
 
   const { expandedIndices, manuallyCollapsed, toggleExpanded } = useExpandedSetupCommands();
@@ -306,19 +300,22 @@ function SetupPanel() {
       <Text style={styles.hiddenStatus} testID="workspace-setup-status">
         {statusLabel}
       </Text>
-      <SetupPanelBody
-        serverId={serverId}
-        workspaceId={target.workspaceId}
-        snapshot={snapshot}
-        commands={commands}
-        log={log}
-        isWaiting={isWaiting}
-        hasNoSetupCommands={hasNoSetupCommands}
-        autoExpandIndex={autoExpandIndex}
-        expandedIndices={expandedIndices}
-        manuallyCollapsed={manuallyCollapsed}
-        onToggle={toggleExpanded}
-      />
+      {!supportsObservation && <Alert variant="warning" title={t("workspace.setup.updateHost")} />}
+      {observationError && <Alert variant="error" title={observationError} />}
+      {supportsObservation && !observationError && (
+        <SetupPanelBody
+          serverId={serverId}
+          workspaceId={target.workspaceId}
+          snapshot={snapshot}
+          commands={commands}
+          isWaiting={isWaiting}
+          hasNoSetupCommands={hasNoSetupCommands}
+          autoExpandIndex={autoExpandIndex}
+          expandedIndices={expandedIndices}
+          manuallyCollapsed={manuallyCollapsed}
+          onToggle={toggleExpanded}
+        />
+      )}
     </ScrollView>
   );
 }
@@ -328,7 +325,6 @@ interface SetupPanelBodyProps {
   workspaceId: string;
   snapshot: WorkspaceSetupSnapshot | null;
   commands: SetupCommand[];
-  log: string;
   isWaiting: boolean;
   hasNoSetupCommands: boolean;
   autoExpandIndex: number | null;
@@ -339,7 +335,7 @@ interface SetupPanelBodyProps {
 
 function SetupPanelBody(props: SetupPanelBodyProps) {
   const { t } = useTranslation();
-  const { snapshot, commands, log } = props;
+  const { snapshot, commands } = props;
   if (snapshot?.status === "blocked" && snapshot.blockedSource) {
     return (
       <BlockedSetupNotice
@@ -376,7 +372,6 @@ function SetupPanelBody(props: SetupPanelBodyProps) {
         const rowState = buildCommandRowState({
           command,
           autoExpandIndex: props.autoExpandIndex,
-          log,
           expandedIndices: props.expandedIndices,
           manuallyCollapsed: props.manuallyCollapsed,
           snapshotError: snapshot?.error,
@@ -391,7 +386,6 @@ function SetupPanelBody(props: SetupPanelBodyProps) {
           />
         );
       })}
-      <StandaloneLogView commands={commands} log={log} />
       <TopLevelSetupError snapshotError={snapshot?.error ?? null} commands={commands} />
     </View>
   );
@@ -507,25 +501,6 @@ function SetupCommandChevron({ showDetail }: { showDetail: boolean }) {
   );
   return (
     <ThemedChevronRight size={14} uniProps={foregroundMutedColorMapping} style={chevronStyle} />
-  );
-}
-
-function StandaloneLogView({ commands, log }: { commands: SetupCommand[]; log: string }) {
-  const { t } = useTranslation();
-  if (commands.length !== 0 || log.trim().length === 0) return null;
-  return (
-    <ScrollView
-      style={styles.logScroll}
-      contentContainerStyle={styles.logScrollContent}
-      showsVerticalScrollIndicator
-      testID="workspace-setup-log"
-      accessible
-      accessibilityLabel={t("workspace.setup.accessibility.log")}
-    >
-      <Text selectable dataSet={CODE_SURFACE_DATASET} style={styles.logText}>
-        {log}
-      </Text>
-    </ScrollView>
   );
 }
 

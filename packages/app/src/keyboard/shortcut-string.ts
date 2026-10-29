@@ -192,6 +192,7 @@ const MODIFIER_CODES = new Set([
  * override on a named key renders as a raw code — `ARROWLEFT`, not `←`.
  */
 const DISPLAY_KEY_ALIASES: Record<string, string> = {
+  Digit: "1-9",
   ArrowLeft: "Left",
   ArrowRight: "Right",
   ArrowUp: "Up",

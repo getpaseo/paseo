@@ -80,13 +80,6 @@ export async function pressDirectNewTabShortcut(page: Page, key: string): Promis
 
 // ─── Tab bar assertions ───────────────────────────────────────────────────
 
-/** Assert the inline plus button is visible in the tab bar. */
-export async function assertNewChatTileVisible(page: Page): Promise<void> {
-  await expect(
-    page.getByTestId("workspace-new-tab-button").filter({ visible: true }).first(),
-  ).toBeVisible();
-}
-
 /** Assert the New tab button is visible in the tab bar. */
 export async function assertNewTabMenuTriggerVisible(page: Page): Promise<void> {
   await expect(
@@ -130,13 +123,6 @@ export async function waitForTabWithTitle(
       .filter({ visible: true })
       .first(),
   ).toBeVisible({ timeout });
-}
-
-/** Assert the inline plus button is visible in the tab bar. */
-export async function assertSingleNewTabButton(page: Page): Promise<void> {
-  const buttons = page.getByTestId("workspace-new-tab-button").filter({ visible: true });
-  const count = await buttons.count();
-  expect(count).toBeGreaterThanOrEqual(1);
 }
 
 // ─── No-flash measurement ──────────────────────────────────────────────────

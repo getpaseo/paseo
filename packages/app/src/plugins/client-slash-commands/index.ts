@@ -36,8 +36,8 @@ export function usePluginClientSlashCommands(input: {
             {
               pluginId: plugin.id,
               name: contribution.name,
-              description: contribution.description,
-              argumentHint: contribution.argumentHint,
+              description: plugin.i18n.resolve(contribution.description, plugin.locale),
+              argumentHint: plugin.i18n.resolve(contribution.argumentHint, plugin.locale),
               async run(args: string) {
                 const context =
                   contribution.context === "agent"

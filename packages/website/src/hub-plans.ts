@@ -1,4 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
+import type { TFunction } from "i18next";
+import type { Locale } from "~/i18n";
 
 const HUB_PLANS_URL =
   import.meta.env.VITE_HUB_PLANS_URL ?? "https://hub.paseo.sh/api/billing/plans";
@@ -56,8 +58,8 @@ export const getHubPlans = createServerFn({ method: "GET" }).handler(async () =>
 });
 
 /** The plan's monthly figure in its own currency, e.g. "$15". */
-export function formatPlanPrice(price: HubPlanOffer["price"]): string {
-  return new Intl.NumberFormat("en", {
+export function formatPlanPrice(price: HubPlanOffer["price"], locale: Locale): string {
+  return new Intl.NumberFormat(locale, {
     style: "currency",
     currency: price.currency.toUpperCase(),
     minimumFractionDigits: 0,
@@ -66,10 +68,23 @@ export function formatPlanPrice(price: HubPlanOffer["price"]): string {
 
 /** What the figure is for: "per seat / month" when each seat is charged, "/ month" when the
  * plan costs nothing, since a free plan has no per-seat charge to describe. */
-export function planPriceQualifier(plan: HubPlanOffer): string {
-  const period = plan.price.intervalCount === 1 ? "month" : `${plan.price.intervalCount} months`;
-  if (plan.price.unitAmount === 0) return `/ ${period}`;
-  return `per ${plan.billing.unit.label} / ${period}`;
+export function planPriceQualifier(plan: HubPlanOffer, t: TFunction): string {
+  const count = plan.price.intervalCount;
+  const unit = billingUnitLabel(plan, t);
+  if (plan.price.unitAmount === 0) {
+    return count === 1 ? t("hub.pricing.perMonth") : t("hub.pricing.perMonths", { count });
+  }
+  return count === 1
+    ? t("hub.pricing.perUnitMonth", { unit })
+    : t("hub.pricing.perUnitMonths", { unit, count });
+}
+
+/**
+ * The billing unit in the page's language. Hub serves its catalog in English, so units the site
+ * knows are translated here and any other unit shows the catalog's label.
+ */
+export function billingUnitLabel(plan: HubPlanOffer, t: TFunction): string {
+  return plan.billing.unit.key === "seat" ? t("hub.pricing.seat") : plan.billing.unit.label;
 }
 
 function selectOffer(plans: readonly HubBillingPlan[], slug: string): HubPlanOffer {

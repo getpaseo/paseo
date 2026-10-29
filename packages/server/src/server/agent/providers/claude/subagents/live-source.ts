@@ -1,7 +1,8 @@
+import type { ProviderSubagentStatus } from "../../../provider-subagents/store.js";
+import { mapTaskStatus } from "./task-status.js";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import type { AgentMetadata } from "../../../agent-sdk-types.js";
-import type { ProviderSubagentStatus } from "../../../provider-subagents/store.js";
 import { resolveObservedClaudeModelId } from "../models.js";
 import type { SubagentObservation } from "./observation.js";
 import {
@@ -118,28 +119,6 @@ function readUsage(
 
 function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-/**
- * The descriptor has no paused or pending state, and neither is terminal, so both read as
- * running. `killed` is a cancellation, not a failure — the child was stopped, it did not error.
- */
-function mapTaskStatus(status: string | undefined): ProviderSubagentStatus | undefined {
-  switch (status) {
-    case "pending":
-    case "running":
-    case "paused":
-      return "running";
-    case "completed":
-      return "completed";
-    case "failed":
-      return "failed";
-    case "killed":
-    case "stopped":
-      return "canceled";
-    default:
-      return undefined;
-  }
 }
 
 export interface ClaudeTaskProtocolSourceInput {

@@ -73,9 +73,14 @@ const ASSISTANT_MARKDOWN = [
 ].join("\n");
 
 const EXPECTED_WHOLE_SELECTION_MARKDOWN = ASSISTANT_MARKDOWN.replace(
-  `${CROSS_STRUCTURE_MARKDOWN}\n\n`,
-  "",
+  "www.example.com stays",
+  "[www.example.com](http://www.example.com) stays",
 )
+  .replace(
+    "`https://example.com/generated` stays",
+    "[`https://example.com/generated`](https://example.com/generated) stays",
+  )
+  .replace(`${CROSS_STRUCTURE_MARKDOWN}\n\n`, "")
   .replace(
     "<https://autolink.example.com>",
     "[https://autolink.example.com](https://autolink.example.com)",
@@ -98,8 +103,7 @@ async function allowRichClipboard(context: BrowserContext): Promise<void> {
 }
 
 /**
- * The rows of one assistant message. A message renders one row per Markdown block, so
- * every locator and every text walk below covers the group, not a single block.
+ * Locate assistant rows by source-message identity.
  */
 function assistantMessageBlocks(page: Page): Locator {
   return page.locator("[data-message-id]").filter({ has: page.getByTestId("assistant-message") });
@@ -173,7 +177,7 @@ async function dragFromBelowImageTo(page: Page, text: string): Promise<void> {
   const blocks = assistantMessageBlocks(page);
   const target = blocks.getByText(text);
   await target.scrollIntoViewIfNeeded();
-  const frame = await blocks.locator('[data-paseo-markdown-tag="img"]').boundingBox();
+  const frame = await blocks.locator("img").boundingBox();
   const end = await target.evaluate((element, selectedText) => {
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
     while (walker.nextNode()) {
@@ -192,7 +196,8 @@ async function dragFromBelowImageTo(page: Page, text: string): Promise<void> {
   if (!frame) {
     throw new Error("Expected a rendered image");
   }
-  await page.mouse.move(end.left + 5, frame.y + frame.height + 4);
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
+  await page.mouse.move(end.left + 1, end.y - 14);
   await page.mouse.down();
   await page.mouse.move(end.x, end.y, { steps: 10 });
   await page.mouse.up();
@@ -210,18 +215,12 @@ async function selectAssistantListItemFromMarker(
 ): Promise<void> {
   const assistantMessage = assistantMessageBlocks(page);
   const item = assistantMessage
-    .locator(`[data-paseo-markdown-tag="${listTag}"]`)
+    .locator(listTag)
     .filter({ hasText: itemText })
-    .locator(':scope > [data-paseo-markdown-tag="li"]')
+    .locator(":scope > li")
     .filter({ hasText: itemText });
 
   await item.evaluate((element, selectedEndText) => {
-    const marker = element.querySelector(':scope > [data-paseo-markdown-list-marker="true"]');
-    const markerText = marker?.firstChild;
-    if (!(markerText instanceof Text)) {
-      throw new Error("Expected rendered list marker text");
-    }
-
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
     let endNode: Text | null = null;
     let endOffset = -1;
@@ -239,7 +238,7 @@ async function selectAssistantListItemFromMarker(
     }
 
     const range = document.createRange();
-    range.setStart(markerText, 0);
+    range.setStart(element, 0);
     range.setEnd(endNode, endOffset);
     const selection = window.getSelection();
     selection?.removeAllRanges();
@@ -254,7 +253,7 @@ async function doubleClickAssistantMarkdownText(
 ): Promise<void> {
   const assistantMessage = assistantMessageBlocks(page);
   await assistantMessage
-    .locator(`[data-paseo-markdown-tag="${tag}"]`)
+    .locator(tag)
     .filter({ hasText: text })
     .dblclick({ position: { x: 5, y: 5 } });
 }
@@ -276,39 +275,23 @@ async function selectAssistantTextRange(
           found = blockWalker.nextNode();
         }
       }
-      let cursor = 0;
-      const walker = { nextNode: () => nodes[cursor++] ?? null };
-      let startNode: Node | null = null;
-      let startOffset = -1;
-      let endNode: Node | null = null;
-      let endOffset = -1;
-      let textNode = walker.nextNode();
-      while (textNode) {
-        if (!startNode) {
-          const offset = textNode.textContent?.indexOf(selectedRange.startText) ?? -1;
-          if (offset >= 0) {
-            startNode = textNode;
-            startOffset = offset;
-          }
-        }
-        if (startNode) {
-          const offset = textNode.textContent?.indexOf(selectedRange.endText) ?? -1;
-          if (offset >= 0) {
-            endNode = textNode;
-            endOffset = offset + selectedRange.endText.length;
-            break;
-          }
-        }
-        textNode = walker.nextNode();
-      }
-      if (!startNode || !endNode) {
+      const text = nodes.map((node) => node.data).join("");
+      const start = text.indexOf(selectedRange.startText);
+      const end = text.indexOf(selectedRange.endText, start);
+      if (start < 0 || end < 0)
         throw new Error(
           `Could not find assistant text range: ${selectedRange.startText} — ${selectedRange.endText}`,
         );
-      }
+      const boundary = (offset: number, isEnd = false): [Text, number] => {
+        for (const node of nodes) {
+          if (offset < node.length || (isEnd && offset === node.length)) return [node, offset];
+          offset -= node.length;
+        }
+        throw new Error("Selection extends beyond message");
+      };
       const range = document.createRange();
-      range.setStart(startNode, startOffset);
-      range.setEnd(endNode, endOffset);
+      range.setStart(...boundary(start));
+      range.setEnd(...boundary(end + selectedRange.endText.length, true));
       const selection = window.getSelection();
       selection?.removeAllRanges();
       selection?.addRange(range);
@@ -428,16 +411,12 @@ test("copying an assistant selection preserves Markdown structure and links", as
       ["em", "emphasized prose"],
       ["s", "struck prose"],
     ]) {
-      const formattedProse = assistantMessage
-        .locator(`[data-paseo-markdown-tag="${tag}"]`)
-        .filter({ hasText: text });
+      const formattedProse = assistantMessage.locator(tag).filter({ hasText: text });
       await expect(formattedProse).toHaveCSS("font-family", "serif");
       await expect(formattedProse).not.toHaveAttribute("data-pmono");
     }
-    const inlineCode = assistantMessage
-      .locator('[data-paseo-markdown-tag="code"]')
-      .filter({ hasText: "apply_patch" });
-    await expect(inlineCode).toHaveAttribute("data-pmono", "");
+    const inlineCode = assistantMessage.locator("code").filter({ hasText: "apply_patch" });
+    await expect(inlineCode).toHaveCSS("font-family", /monospace|Mono/);
 
     await selectStructuredClipboardFixture(page);
     await copySelection(page);
@@ -466,7 +445,7 @@ test("copying an assistant selection preserves Markdown structure and links", as
       '<a href="file:///tmp/paseo%20notes.md#L4">workspace file</a>',
     );
     expect(clipboard.html).toContain("<code>https://example.com/generated</code>");
-    expect(clipboard.html).not.toContain(
+    expect(clipboard.html).toContain(
       '<a href="https://example.com/generated"><code>https://example.com/generated</code></a>',
     );
     expect(clipboard.html).toContain('<code class="language-typescript">');

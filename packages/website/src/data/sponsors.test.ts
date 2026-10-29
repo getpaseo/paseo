@@ -5,9 +5,14 @@ import { SPONSORS, sponsorHref } from "./sponsors";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
 const WEBSITE_PUBLIC = fileURLToPath(new URL("../../public", import.meta.url));
-const READMES = ["README.md", "README.zh-CN.md", "README.ja.md", "README.ko.md"];
+// Each README invites sponsors to the sponsor page in its own language, where the website has one.
+const READMES = [
+  { readme: "README.md", sponsorPage: "https://paseo.sh/sponsor" },
+  { readme: "README.zh-CN.md", sponsorPage: "https://paseo.sh/zh-CN/sponsor" },
+  { readme: "README.ja.md", sponsorPage: "https://paseo.sh/sponsor" },
+  { readme: "README.ko.md", sponsorPage: "https://paseo.sh/sponsor" },
+];
 const README_SPONSOR_CELLS = 3;
-const SPONSOR_PAGE_URL = "https://paseo.sh/sponsor";
 
 describe("sponsorHref", () => {
   it("tags the link with the placement it is shown in", () => {
@@ -48,17 +53,20 @@ describe("SPONSORS", () => {
     expect(existsSync(`${WEBSITE_PUBLIC}${sponsor.logo.onLight}`)).toBe(true);
   });
 
-  it.each(READMES)("fill the sponsors table in %s, followed by invitations", (readme) => {
-    const openCells = Math.max(0, README_SPONSOR_CELLS - SPONSORS.length);
+  it.each(READMES)(
+    "fill the sponsors table in $readme, followed by invitations",
+    ({ readme, sponsorPage }) => {
+      const openCells = Math.max(0, README_SPONSOR_CELLS - SPONSORS.length);
 
-    expect(readmeSponsorCells(readme)).toEqual([
-      ...SPONSORS.map((sponsor) => ({
-        href: sponsorHref(sponsor, "readme"),
-        onDark: `packages/website/public${sponsor.logo.onDark}`,
-        onLight: `packages/website/public${sponsor.logo.onLight}`,
-        description: sponsor.description,
-      })),
-      ...Array.from({ length: openCells }, () => ({ invite: SPONSOR_PAGE_URL })),
-    ]);
-  });
+      expect(readmeSponsorCells(readme)).toEqual([
+        ...SPONSORS.map((sponsor) => ({
+          href: sponsorHref(sponsor, "readme"),
+          onDark: `packages/website/public${sponsor.logo.onDark}`,
+          onLight: `packages/website/public${sponsor.logo.onLight}`,
+          description: sponsor.description,
+        })),
+        ...Array.from({ length: openCells }, () => ({ invite: sponsorPage })),
+      ]);
+    },
+  );
 });

@@ -1,10 +1,18 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, onTestFinished, test } from "vitest";
 
 import { DaemonClient } from "./test-utils/index.js";
+import { WebSocket } from "ws";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import {
+  DaemonClient as SocketDaemonClient,
+  type WebSocketLike,
+} from "@getpaseo/client/internal/daemon-client";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 
 // The reshaped workspace.create.request forwards its worktree `source`
@@ -18,6 +26,7 @@ function createGitRepoWithBranch(): { repoDir: string; tempRoot: string } {
   const tempRoot = mkdtempSync(path.join(tmpdir(), "workspace-create-worktree-source-"));
   const repoDir = path.join(tempRoot, "repo");
   execFileSync("git", ["init", "-b", "main", repoDir], { stdio: "pipe" });
+  execFileSync("git", ["config", "core.autocrlf", "false"], { cwd: repoDir, stdio: "pipe" });
   execFileSync("git", ["config", "user.email", "test@getpaseo.local"], {
     cwd: repoDir,
     stdio: "pipe",
@@ -60,9 +69,133 @@ test("workspace.create worktree source forwards action=checkout + refName into t
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 180000);
+
+test.each([false, true])(
+  "workspace.create opens worktree.terminals (setup service: %s)",
+  async (withSetupService) => {
+    const daemon = await createTestPaseoDaemon();
+    const { repoDir, tempRoot } = createGitRepoWithBranch();
+    writeFileSync(
+      path.join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          ...(withSetupService
+            ? {
+                // Launch the Windows service asynchronously so it outlives
+                // the setup command instead of holding setup open.
+                setup:
+                  process.platform === "win32"
+                    ? "Start-Process -FilePath node -ArgumentList 'setup.cjs','serve' -WorkingDirectory (Get-Location).Path -WindowStyle Hidden; while (!(Test-Path setup-pid.txt)) { Start-Sleep -Milliseconds 25 }"
+                    : "node setup.cjs",
+              }
+            : {}),
+          terminals: [
+            { name: "preview", command: "echo paseo-auto-terminal >> terminal-marker.txt" },
+          ],
+        },
+      }),
+    );
+    writeFileSync(
+      path.join(repoDir, "setup.cjs"),
+      `
+const fs = require("node:fs");
+if (process.argv[2] === "serve") {
+  require("node:net").createServer().listen(Number(process.env.PASEO_WORKTREE_PORT), "127.0.0.1", () => {
+    fs.writeFileSync("setup-pid.txt", String(process.pid));
+    process.send?.("ready");
+  });
+} else {
+  const child = require("node:child_process").spawn(process.execPath, [__filename, "serve"], {
+    detached: true,
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
+  });
+  child.once("message", () => { child.disconnect(); child.unref(); });
+}
+`,
+    );
+    execFileSync("git", ["add", "paseo.json", "setup.cjs"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add paseo.json"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      appVersion: "0.1.82",
+    });
+
+    let workspaceCwd: string | undefined;
+    try {
+      await client.connect();
+
+      // This is the request the New Workspace screen sends: the workspace is
+      // created on its own, with no agent in the same request.
+      const result = await client.createWorkspace({
+        source: {
+          kind: "worktree",
+          cwd: repoDir,
+          action: "branch-off",
+          branchName: "feature/auto-terminals",
+          worktreeSlug: "feature-auto-terminals",
+          baseBranch: "main",
+        },
+      });
+
+      expect(result.error).toBeNull();
+      const workspace = result.workspace;
+      if (!workspace) {
+        throw new Error("Expected a created workspace");
+      }
+
+      workspaceCwd = workspace.workspaceDirectory;
+      if (withSetupService) {
+        await expect
+          .poll(() => existsSync(path.join(workspaceCwd!, "setup-pid.txt")), { timeout: 30000 })
+          .toBe(true);
+      }
+      await expect
+        .poll(async () => (await client.fetchWorkspaceSetupStatus(workspace.id)).snapshot, {
+          timeout: 30000,
+        })
+        .toMatchObject({ status: "completed", error: null });
+      await expect
+        .poll(
+          async () =>
+            (
+              await client.listTerminals(workspace.workspaceDirectory, undefined, {
+                workspaceId: workspace.id,
+              })
+            ).terminals.map((terminal) => terminal.name),
+          { timeout: 30000 },
+        )
+        .toContain("preview");
+      await expect
+        .poll(
+          () => {
+            const marker = path.join(workspaceCwd!, "terminal-marker.txt");
+            return existsSync(marker) ? readFileSync(marker, "utf8").trim() : null;
+          },
+          { timeout: 10000 },
+        )
+        .toBe("paseo-auto-terminal");
+      expect(
+        (await client.listTerminals(workspaceCwd, undefined, { workspaceId: workspace.id }))
+          .terminals,
+      ).toHaveLength(1);
+    } finally {
+      const pidFile = workspaceCwd && path.join(workspaceCwd, "setup-pid.txt");
+      if (pidFile && existsSync(pidFile)) {
+        process.kill(Number(readFileSync(pidFile, "utf8")));
+      }
+      await client.close().catch(() => undefined);
+      await daemon.close();
+      await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  },
+  180000,
+);
 
 test("existing branch changes remain visible after archive and restore", async () => {
   const daemon = await createTestPaseoDaemon();
@@ -74,7 +207,7 @@ test("existing branch changes remain visible after archive and restore", async (
   onTestFinished(async () => {
     await client.close().catch(() => undefined);
     await daemon.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
   runGit(repoDir, "switch", "feature/existing-branch");
   commitFile(repoDir, "feature.txt", "feature change\n");
@@ -134,7 +267,7 @@ test("workspace.create keeps a branch-off name separate from its worktree slug",
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 180000);
 
@@ -168,7 +301,7 @@ test("workspace.create accepts a Git-valid branch-off name outside Paseo slug sy
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 180000);
 
@@ -210,7 +343,7 @@ test("workspace.create always creates a new worktree when the slug is already oc
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 180000);
 
@@ -255,7 +388,7 @@ test("workspace.create suffixes past an occupied detached worktree", async () =>
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 180000);
 
@@ -297,7 +430,7 @@ test("workspace.create suffixes an occupied checkout branch", async () => {
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 180000);
 
@@ -340,7 +473,7 @@ async function createRestorableWorkspace(baseRef: string) {
   onTestFinished(async () => {
     await client.close().catch(() => undefined);
     await daemon.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
   createDivergentBases(repoDir);
   await client.connect();
@@ -360,6 +493,7 @@ async function createRestorableWorkspace(baseRef: string) {
   commitFile(cwd, "feature.txt", "feature change\n");
   const head = runGit(cwd, "rev-parse", "HEAD");
   await client.checkoutRefresh(cwd);
+  expect(await client.getCheckoutStatus(cwd)).toMatchObject({ isPaseoOwnedWorktree: true });
   const before = await client.getCheckoutDiff(cwd, { mode: "base", baseRef: "main" });
   expect(before.error).toBeNull();
   expect(before.files.map((file) => file.path)).toEqual(["feature.txt"]);
@@ -470,3 +604,328 @@ async function expectMissingLocalMergeTarget({ client, cwd }: RestorableWorkspac
     ).error?.message,
   ).toContain("No local merge target is recorded");
 }
+
+function setupCommandOutput(detail: { commands: Array<{ log: string }> }): string {
+  return detail.commands.map((command) => command.log).join("\n");
+}
+
+// Setup output is opt-in even for multiple sockets sharing one logical client.
+test("setup details follow one workspace/source and restore after reconnect with minimal directory status", async () => {
+  const daemon = await createTestPaseoDaemon({ mcpEnabled: true });
+  const { repoDir, tempRoot } = createGitRepoWithBranch();
+  const clients: SocketDaemonClient[] = [];
+  const sockets = new Map<string, WebSocket[]>();
+  const setupWireTypes = new Set<string>();
+  const setupWireDetails: Array<{ log: string; commands: Array<{ log: string }> }> = [];
+  const observations: Array<{ release(): Promise<void> }> = [];
+  const workspaces: Array<{ id: string; workspaceDirectory?: string }> = [];
+  const mcp = new Client({ name: "setup-test", version: "1.0.0" });
+  try {
+    await mcp.connect(
+      new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${daemon.port}/mcp/agents`)),
+    );
+    writeFileSync(
+      path.join(repoDir, "paseo.json"),
+      JSON.stringify({ worktree: { setup: "node setup.cjs" } }),
+    );
+    writeFileSync(
+      path.join(repoDir, "setup.cjs"),
+      `
+const fs = require('node:fs');
+// Exercise a real child start beyond Vitest's default one-second polling window.
+setTimeout(() => {
+console.log('setup started');
+let wave = 0;
+const timer = setInterval(() => {
+  if (fs.existsSync('wave-' + wave)) {
+    console.log('wave-' + wave + ':' + 'setup output '.repeat(1000));
+    fs.writeFileSync('emitted-' + wave, 'ready');
+    wave++;
+  }
+  if (fs.existsSync('finish.txt')) { clearInterval(timer); process.exit(1); }
+}, 20);
+}, 1500);
+`,
+    );
+    writeFileSync(path.join(repoDir, ".gitignore"), "*.txt\nwave-*\nemitted-*\n");
+    execFileSync("git", ["add", "paseo.json", "setup.cjs", ".gitignore"], { cwd: repoDir });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "setup fixture"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    const connect = async (clientId: string) => {
+      const client = new SocketDaemonClient({
+        url: `ws://127.0.0.1:${daemon.port}/ws`,
+        clientId,
+        reconnect: { baseDelayMs: 10, maxDelayMs: 10 },
+        webSocketFactory: (url) => {
+          const socket = new WebSocket(url);
+          socket.on("message", (data, isBinary) => {
+            if (isBinary) return;
+            const frame = JSON.parse(data.toString());
+            const message = frame.message ?? frame;
+            if (message.type === "workspace_setup_progress") {
+              setupWireTypes.add(message.type);
+              setupWireDetails.push(message.payload.detail);
+            }
+            if (
+              message.type === "workspace_setup_status_response" ||
+              message.type === "workspace.setup.subscribe.response"
+            ) {
+              if (message.payload.snapshot) {
+                setupWireTypes.add(message.type);
+                setupWireDetails.push(message.payload.snapshot.detail);
+              }
+            }
+          });
+          sockets.set(clientId, [...(sockets.get(clientId) ?? []), socket]);
+          return socket as unknown as WebSocketLike;
+        },
+      });
+      clients.push(client);
+      await client.connect();
+      return client;
+    };
+    const creator = await connect("setup-creator");
+    const viewer = await connect("setup-viewer");
+    const sibling = await connect("setup-viewer");
+    const quiet = await connect("setup-quiet");
+    const viewerMessages: import("@getpaseo/protocol/messages").SessionOutboundMessage[] = [];
+    const quietMessages: import("@getpaseo/protocol/messages").SessionOutboundMessage[] = [];
+    const siblingMessages: import("@getpaseo/protocol/messages").SessionOutboundMessage[] = [];
+    viewer.subscribeRawMessages((message) => viewerMessages.push(message));
+    quiet.subscribeRawMessages((message) => quietMessages.push(message));
+    sibling.subscribeRawMessages((message) => siblingMessages.push(message));
+    const directory = quiet.observeWorkspaces();
+    observations.push(directory);
+    await directory.ready;
+    const waitForSetupStarted = async (workspaceId: string) => {
+      // Process startup is asynchronous, especially under Windows PowerShell. The daemon's
+      // output snapshot is the readiness barrier; a marker file can precede PTY delivery.
+      await expect
+        .poll(async () => (await viewer.fetchWorkspaceSetupStatus(workspaceId)).snapshot, {
+          timeout: 30000,
+        })
+        .toMatchObject({
+          status: "running",
+          detail: {
+            log: "",
+            commands: [expect.objectContaining({ log: expect.stringContaining("setup started") })],
+          },
+        });
+    };
+    for (const worktreeSlug of ["noisy-a", "noisy-b", "noisy-c"]) {
+      const result = await creator.createWorkspace({
+        source: { kind: "worktree", cwd: repoDir, worktreeSlug },
+      });
+      if (!result.workspace || result.error) throw new Error(result.error ?? "No workspace");
+      workspaces.push(result.workspace);
+      await waitForSetupStarted(result.workspace.id);
+    }
+    const external = await mcp.callTool({
+      name: "create_workspace",
+      arguments: { isolation: "worktree", path: repoDir, worktreeSlug: "noisy-mcp" },
+    });
+    if (typeof external.structuredContent?.workspaceId !== "string")
+      throw new Error("Missing MCP workspace");
+    const externalWorkspace = (await creator.fetchWorkspaces()).entries.find(
+      (entry) => entry.id === external.structuredContent!.workspaceId,
+    );
+    if (!externalWorkspace) throw new Error("Missing MCP directory entry");
+    workspaces.unshift(externalWorkspace);
+    await waitForSetupStarted(externalWorkspace.id);
+    const workspace = workspaces[0]!;
+    const details = viewer.observeWorkspaceSetup(workspace.id);
+    observations.push(details);
+    const initial = await details.ready;
+    expect(initial.snapshot).toMatchObject({
+      status: "running",
+      detail: {
+        log: "",
+        commands: [expect.objectContaining({ log: expect.stringContaining("setup started") })],
+      },
+    });
+    await expect
+      .poll(
+        () =>
+          new Set(
+            quietMessages
+              .filter(
+                (message) =>
+                  message.type === "workspace_update" &&
+                  message.payload.kind === "upsert" &&
+                  message.payload.workspace.setupStatus === "running",
+              )
+              .map((message) =>
+                message.type === "workspace_update" && message.payload.kind === "upsert"
+                  ? message.payload.workspace.id
+                  : "",
+              ),
+          ).size,
+      )
+      .toBe(4);
+    for (const entry of workspaces) {
+      writeFileSync(path.join(entry.workspaceDirectory!, "wave-0"), "go");
+      await expect
+        .poll(() => existsSync(path.join(entry.workspaceDirectory!, "emitted-0")))
+        .toBe(true);
+    }
+    await expect
+      .poll(
+        () =>
+          viewerMessages.filter(
+            (message) =>
+              message.type === "workspace_setup_progress" &&
+              setupCommandOutput(message.payload.detail).includes("wave-0:"),
+          ).length,
+      )
+      .toBeGreaterThan(0);
+    expect(
+      viewerMessages
+        .filter((message) => message.type === "workspace_setup_progress")
+        .map((message) => message.payload.workspaceId),
+    ).toEqual(expect.arrayContaining([workspace.id]));
+    expect(
+      new Set(
+        viewerMessages
+          .filter((message) => message.type === "workspace_setup_progress")
+          .map((message) => message.payload.workspaceId),
+      ),
+    ).toEqual(new Set([workspace.id]));
+    expect(quietMessages.filter((message) => message.type === "workspace_setup_progress")).toEqual(
+      [],
+    );
+    expect(
+      siblingMessages.filter((message) => message.type === "workspace_setup_progress"),
+    ).toEqual([]);
+    for (const message of quietMessages) {
+      if (message.type !== "workspace_update" || message.payload.kind !== "upsert") continue;
+      expect(message.payload.workspace).not.toHaveProperty("detail");
+      expect(message.payload.workspace).not.toHaveProperty("error");
+    }
+    const waveLogs = viewerMessages
+      .filter(
+        (message) =>
+          message.type === "workspace_setup_progress" &&
+          setupCommandOutput(message.payload.detail).includes("wave-0:"),
+      )
+      .map((message) =>
+        message.type === "workspace_setup_progress"
+          ? setupCommandOutput(message.payload.detail)
+          : "",
+      );
+    expect(waveLogs.length).toBe(new Set(waveLogs).size);
+    const restoredSnapshots: unknown[] = [];
+    details.subscribe({
+      snapshot: (snapshot) => restoredSnapshots.push(snapshot),
+      update: () => {},
+    });
+    const beforeReconnect = details.subscriptionId;
+    sockets.get("setup-viewer")![0]!.terminate();
+    await expect.poll(() => restoredSnapshots.length, { timeout: 10000 }).toBe(2);
+    expect(details.subscriptionId).not.toBe(beforeReconnect);
+    expect(restoredSnapshots[1]).toMatchObject({
+      snapshot: {
+        detail: {
+          log: "",
+          commands: [expect.objectContaining({ log: expect.stringContaining("wave-0:") })],
+        },
+      },
+    });
+    const subscriptionId = details.subscriptionId;
+    await details.release();
+    viewerMessages.length = 0;
+    writeFileSync(path.join(workspace.workspaceDirectory!, "wave-1"), "go");
+    await expect
+      .poll(() => existsSync(path.join(workspace.workspaceDirectory!, "emitted-1")))
+      .toBe(true);
+    // Wait until the daemon has consumed the output before checking wire silence.
+    await expect
+      .poll(
+        async () =>
+          (await viewer.fetchWorkspaceSetupStatus(workspace.id)).snapshot?.detail.commands[0]?.log,
+        {
+          timeout: 30000,
+        },
+      )
+      .toContain("wave-1:");
+    expect(viewerMessages.filter((message) => message.type === "workspace_setup_progress")).toEqual(
+      [],
+    );
+    const resumed = viewer.observeWorkspaceSetup(workspace.id);
+    observations.push(resumed);
+    expect((await resumed.ready).snapshot?.detail.commands[0]?.log).toContain("wave-1:");
+    expect(resumed.subscriptionId).not.toBe(subscriptionId);
+    expect(setupWireTypes).toEqual(
+      new Set([
+        "workspace_setup_progress",
+        "workspace_setup_status_response",
+        "workspace.setup.subscribe.response",
+      ]),
+    );
+    expect(setupWireDetails.length).toBeGreaterThan(0);
+    expect(setupWireDetails.every((detail) => detail.log === "")).toBe(true);
+    expect(
+      setupWireDetails.some((detail) =>
+        detail.commands.some((command) => command.log.includes("wave-1:")),
+      ),
+    ).toBe(true);
+    writeFileSync(path.join(workspaces[1]!.workspaceDirectory!, "finish.txt"), "fail");
+    await expect
+      .poll(
+        () =>
+          quietMessages.filter(
+            (message) =>
+              message.type === "workspace_update" &&
+              message.payload.kind === "upsert" &&
+              message.payload.workspace.id === workspaces[1]!.id &&
+              message.payload.workspace.setupStatus === "failed",
+          ).length,
+        { timeout: 30000 },
+      )
+      .toBe(1);
+    expect(quietMessages.filter((message) => message.type === "workspace_setup_progress")).toEqual(
+      [],
+    );
+    await resumed.release();
+    await directory.release();
+  } finally {
+    // End every fixture command and release observations while transports are live,
+    // including when an assertion fails before the normal release path.
+    for (const workspace of workspaces) {
+      writeFileSync(path.join(workspace.workspaceDirectory!, "finish.txt"), "stop");
+    }
+    for (const observation of observations) await observation.release();
+    await mcp.close();
+    for (const client of clients) await client.close();
+    await daemon.close();
+    await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+}, 180000);
+
+test("agent creation rejects legacy worktree intent without provisioning or executing setup", async () => {
+  const daemon = await createTestPaseoDaemon();
+  const { repoDir, tempRoot } = createGitRepoWithBranch();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    await expect(
+      client.createAgent({
+        provider: "codex",
+        cwd: repoDir,
+        git: {
+          createWorktree: true,
+          createNewBranch: true,
+          baseBranch: "main",
+          newBranchName: "legacy-setup",
+          worktreeSlug: "legacy-setup",
+        },
+      }),
+    ).rejects.toThrow("createWorkspace");
+    expect((await client.fetchWorkspaces()).entries).toEqual([]);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});

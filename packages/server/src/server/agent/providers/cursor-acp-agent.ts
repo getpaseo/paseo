@@ -92,6 +92,7 @@ export class CursorACPAgentClient extends GenericACPAgentClient {
       env: options.env,
       providerId: options.providerId,
       label: options.label,
+      usageProvider: "cursor",
       // cursor-agent publishes slash commands asynchronously via available_commands_update.
       waitForInitialCommands: true,
       initialCommandsWaitTimeoutMs: CURSOR_INITIAL_COMMANDS_WAIT_TIMEOUT_MS,

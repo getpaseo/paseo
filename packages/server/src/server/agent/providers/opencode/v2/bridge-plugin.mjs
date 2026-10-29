@@ -15,12 +15,14 @@ export default {
       if (allowMissing && response.status === 404) return null;
       if (!response.ok) {
         const payload = await response.json().catch(() => null);
+        const detail = formatErrorDetail(payload?.issues ?? payload?.details);
         const message =
           typeof payload?.error === "string" && payload.error
             ? payload.error
             : `Paseo tool bridge returned HTTP ${response.status}`;
-        const error = new Error(message);
+        const error = new Error(detail ? `${message}: ${detail}` : message);
         error.status = response.status;
+        if (detail) error.details = detail;
         throw error;
       }
       return response.json();
@@ -77,6 +79,17 @@ export default {
     };
   },
 };
+
+function formatErrorDetail(details) {
+  if (!Array.isArray(details)) return typeof details === "string" ? details : "";
+  return details
+    .map((issue) => {
+      const path =
+        Array.isArray(issue?.path) && issue.path.length > 0 ? issue.path.join(".") : "input";
+      return `${path}: ${issue?.message ?? "Invalid value"}`;
+    })
+    .join("; ");
+}
 
 // OpenCode tool content is text or a file; MCP images arrive as base64 data.
 function toOpenCodeContent(part) {

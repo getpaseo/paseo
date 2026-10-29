@@ -10,6 +10,8 @@ import {
   reportScrollJumps,
   scrollCadences,
   withVariedTimeline,
+  withStreamingReader,
+  holdParagraphThroughCompletion,
 } from "../support/helpers/timeline-scroll-smoothness";
 
 test("scroll detector distinguishes entered image growth from a simultaneous viewport jump", () => {
@@ -133,6 +135,58 @@ test("scroll detector accounts for delayed wheel input and growth below the new 
   ).toHaveLength(1);
 });
 
+test("scroll detector follows the entered image through resize and virtual offset correction", () => {
+  for (const height of [225, 1632]) {
+    const before: ScrollFrame = {
+      at: 1000,
+      scrollTop: 2208,
+      scrollHeight: 5000,
+      viewportHeight: 516,
+      virtualized: true,
+      loading: false,
+      rows: [
+        { id: "image", top: -704, height: 560 },
+        { id: "caption", top: -144, height: 100 },
+        { id: "old-reader", top: -44, height: 127 },
+      ],
+      anchor: "old-reader",
+      wheelTotal: 0,
+      lastWheelAt: 0,
+      inputFinishedAt: null,
+      imageLoads: 0,
+      mounted: 3,
+      unmounted: 0,
+    };
+    const resize = height - 560;
+    const after: ScrollFrame = {
+      ...before,
+      at: 1060,
+      // The virtualizer corrects 110px of estimates while the wheel moves 160px.
+      scrollTop: 1938,
+      scrollHeight: 5000 + resize - 110,
+      wheelTotal: 160,
+      lastWheelAt: 1020,
+      imageLoads: 1,
+      rows: [
+        { id: "image", top: -544, height },
+        { id: "caption", top: 16 + resize, height: 100 },
+        { id: "old-reader", top: 116 + resize, height: 127 },
+      ],
+    };
+    expect(findScrollJumps([before, after])).toEqual([]);
+    // Resizing must not excuse additional viewport movement.
+    expect(
+      findScrollJumps([
+        before,
+        {
+          ...after,
+          rows: after.rows.map((row) => ({ id: row.id, height: row.height, top: row.top + 100 })),
+        },
+      ]),
+    ).toHaveLength(1);
+  }
+});
+
 for (const cadence of scrollCadences) {
   test(`varied timeline preserves reading position during ${cadence.name} upward scrolling`, async ({
     page,
@@ -149,4 +203,23 @@ for (const cadence of scrollCadences) {
 
 test("reserves image space before its response arrives", async ({ page }, testInfo) => {
   await expectImageSpaceReserved(page, testInfo);
+});
+
+test("holds a paragraph still while a mixed response streams and completes", async ({ page }) => {
+  await withStreamingReader(async (agent) => {
+    const reading = await holdParagraphThroughCompletion(page, agent);
+    expect(
+      reading.textGrowth,
+      "the held reader must observe an actively growing response",
+    ).toBeGreaterThan(1000);
+    expect(
+      reading.maxFollowGap,
+      "follow-bottom must catch each streamed commit before the next frame",
+    ).toBeLessThanOrEqual(1);
+    expect(
+      reading.maxDrift,
+      "streaming must preserve the held paragraph's viewport position",
+    ).toBeLessThanOrEqual(1);
+    expect(reading.retained, "completion must retain the paragraph's DOM node").toBe(true);
+  });
 });

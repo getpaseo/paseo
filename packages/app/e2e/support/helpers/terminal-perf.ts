@@ -68,8 +68,8 @@ export async function navigateToTerminal(
   const workspaceRoute = buildTerminalWorkspaceUrl(input.workspaceId, input.terminalId);
   await page.goto(workspaceRoute);
 
-  // The workspace layout consumes `?open=...`, returns null during the effect,
-  // then replaces the URL with the clean workspace route after preparing the tab.
+  // The route seeds the legacy URL target into the pending-open model, then
+  // removes the query. Tab readiness below waits for that intent to be consumed.
   // On CI, Expo Router's rootNavigationState may take time to initialize,
   // so we allow a generous timeout here.
   const cleanWorkspaceRoute = buildWorkspaceUrl(input.workspaceId);
@@ -86,7 +86,8 @@ export async function navigateToTerminal(
   await terminalTab.waitFor({ state: "visible", timeout: 30_000 });
   await terminalTab.click();
 
-  const terminalSurface = page.locator('[data-testid="terminal-surface"]');
+  // Inactive terminal tabs retain their surfaces; interact with the selected tab.
+  const terminalSurface = page.getByTestId("terminal-surface").filter({ visible: true });
   await terminalSurface.waitFor({ state: "visible", timeout: 15_000 });
 
   // Wait for loading overlay to disappear (terminal attached)
