@@ -72,15 +72,18 @@ class SubscriptionPeer {
   async request(message: z.input<typeof SessionInboundMessageSchema>): Promise<void> {
     this.socket.send(JSON.stringify({ type: "session", message }));
     await expect
-      .poll(() =>
-        this.frames.some(
-          (frame) =>
-            frame.type === "session" &&
-            "payload" in frame.message &&
-            "requestId" in frame.message.payload &&
-            "requestId" in message &&
-            frame.message.payload.requestId === message.requestId,
-        ),
+      .poll(
+        () =>
+          this.frames.some(
+            (frame) =>
+              frame.type === "session" &&
+              "payload" in frame.message &&
+              "requestId" in frame.message.payload &&
+              "requestId" in message &&
+              frame.message.payload.requestId === message.requestId,
+          ),
+        // Diagnostics invoke external tools with their own multi-second deadlines.
+        { timeout: 10_000 },
       )
       .toBe(true);
   }
@@ -780,7 +783,8 @@ test("same-workspace terminal directory observers do not share a teardown slot",
     peer.frames.length = 0;
     const result = await admin.createTerminal(daemon.staticDir, "Observed terminal", undefined, {
       workspaceId: workspace.id,
-      command: "/bin/cat",
+      command: process.execPath,
+      args: ["-e", "process.stdin.on('data', data => process.stdout.write(data))"],
     });
     expect(result.error).toBe(null);
     await expect
@@ -829,7 +833,8 @@ test("terminal output has separate server IDs and binary slots, including in a s
     ).workspace!;
     const result = await admin.createTerminal(daemon.staticDir, "Output ownership", undefined, {
       workspaceId: workspace.id,
-      command: "/bin/cat",
+      command: process.execPath,
+      args: ["-e", "process.stdin.on('data', data => process.stdout.write(data))"],
     });
     expect(result.error).toBe(null);
     const idle = await SubscriptionPeer.connect(daemon.port, "terminal-output-session");
