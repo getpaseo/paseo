@@ -463,9 +463,8 @@ describe("createGitLabService", () => {
   it("maps a same-repo merge request view to a checkout target", async () => {
     const { service, calls } = makeService(() => ok(JSON.stringify(OPEN_MR)));
 
-    await expect(
-      service.getPullRequestCheckoutTarget?.({ cwd: "/repo", number: 14 }),
-    ).resolves.toEqual({
+    const target = await service.getPullRequestCheckoutTarget?.({ cwd: "/repo", number: 14 });
+    expect(target).toEqual({
       number: 14,
       baseRefName: "main",
       headRefName: "release/v0.4.0",
@@ -479,6 +478,12 @@ describe("createGitLabService", () => {
       isCrossRepository: false,
       headRefKind: "branch",
     });
+    expect(
+      service.buildPrLocalBranchName?.({
+        headRef: target!.headRefName,
+        checkoutTarget: target!,
+      }),
+    ).toBe("release/v0.4.0");
     expect(calls[0]).toEqual(["mr", "view", "14", "-F", "json"]);
   });
 
@@ -489,20 +494,26 @@ describe("createGitLabService", () => {
           ...OPEN_MR,
           source_project_id: 202,
           target_project_id: 101,
+          author: { username: "contributor" },
         }),
       ),
     );
 
-    await expect(
-      service.getPullRequestCheckoutTarget?.({ cwd: "/repo", number: 14 }),
-    ).resolves.toMatchObject({
+    const target = await service.getPullRequestCheckoutTarget?.({ cwd: "/repo", number: 14 });
+    expect(target).toMatchObject({
       number: 14,
       headRefName: "release/v0.4.0",
       isCrossRepository: true,
-      headOwnerLogin: null,
+      headOwnerLogin: "contributor",
       headRepositorySshUrl: null,
       headRepositoryUrl: null,
     });
+    expect(
+      service.buildPrLocalBranchName?.({
+        headRef: target!.headRefName,
+        checkoutTarget: target!,
+      }),
+    ).toBe("contributor/release/v0.4.0");
   });
 
   it("creates a merge request and parses the URL and iid from glab output", async () => {
