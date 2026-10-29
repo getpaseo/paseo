@@ -1597,6 +1597,46 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("closes a history-only Pi runtime after replaying its timeline", async () => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((runtimeSession) => {
+      runtimeSession.messages = [
+        { role: "user", content: "Old question" },
+        { role: "assistant", content: [{ type: "text", text: "Old answer" }] },
+      ];
+    });
+
+    const client: import("../../agent-sdk-types.js").AgentClient = createClient(pi);
+    const session = await client.resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: "/workspace/project" },
+      },
+      {},
+      undefined,
+      { purpose: "history" },
+    );
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) history.push(event);
+
+    expect(history).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "timeline",
+          provider: "pi",
+          item: expect.objectContaining({ type: "assistant_message", text: "Old answer" }),
+        }),
+      ]),
+    );
+    expect(pi.latestSession().closeCalls).toBe(1);
+
+    await session.close();
+    expect(pi.latestSession().closeCalls).toBe(1);
+  });
+
   test("resumes a session whose model was removed on the model Pi falls back to", async () => {
     const pi = new FakePi();
     pi.removeModel("9router/deepseek-v4-flash");
