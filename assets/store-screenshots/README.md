@@ -95,4 +95,8 @@ Callout crops are in native capture pixels. To find them, overlay a 100 px grid 
 
 6. Copy the captures into `raw/iphone/` or `raw/ipad/` under the names `render.mjs` uses, render, and check the preview.
 
+## Publish
+
+The stable release uploads these exports to the App Store and Google Play, and F-Droid reads the Google ones from the repo. See [Store screenshots](../../docs/release.md#store-screenshots). Keep the output file names stable: the Android metadata links to them by name.
+
 Dimensions are checked against [Apple's screenshot specifications](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications/) and [Google Play's preview asset requirements](https://support.google.com/googleplay/android-developer/answer/9866151?hl=en).
