@@ -294,6 +294,33 @@ function hasProfileChanged(input: {
   );
 }
 
+/**
+ * Merges hosts from a backup into this device's list by serverId. Connections and appearance
+ * come from the backup; a password never does, so a host already saved here keeps its own.
+ */
+export function importHostProfilesInProfiles(input: {
+  profiles: HostProfile[];
+  imported: HostProfile[];
+  now: string;
+}): HostProfile[] {
+  let next = input.profiles;
+  for (const host of input.imported) {
+    for (const connection of host.connections) {
+      next = upsertHostConnectionInProfiles({
+        profiles: next,
+        serverId: host.serverId,
+        label: host.label,
+        connection,
+        now: input.now,
+      });
+    }
+    next = next.map((profile) =>
+      profile.serverId === host.serverId ? { ...profile, appearance: host.appearance } : profile,
+    );
+  }
+  return next;
+}
+
 export function upsertHostConnectionInProfiles(input: {
   profiles: HostProfile[];
   serverId: string;
