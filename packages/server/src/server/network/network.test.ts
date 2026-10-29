@@ -136,11 +136,16 @@ test.each([
 
 test("daemon starts with an ignored proxy and writes one redacted warning to daemon.log", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "daemon-invalid-proxy-"));
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([key]) => !["http_proxy", "https_proxy"].includes(key.toLowerCase()),
+    ),
+  );
   const worker = fork(fileURLToPath(new URL("../daemon-worker.ts", import.meta.url)), [], {
     execArgv: ["--import", "tsx"],
     silent: true,
     env: {
-      ...process.env,
+      ...env,
       PASEO_HOME: home,
       HOME: home,
       USERPROFILE: home,
@@ -205,4 +210,16 @@ test("an ignored lowercase variable falls back to the uppercase variable", async
   });
   await once(socket, "error");
   expect(recorder.tunnels).toEqual(["vendor.invalid:443", "vendor.invalid:443"]);
+});
+
+test("case-insensitive environment access reports a variable only once", () => {
+  const env = new Proxy(
+    { https_proxy: "socks5://127.0.0.1:7890" },
+    {
+      get(target, key) {
+        return Reflect.get(target, typeof key === "string" ? key.toLowerCase() : key);
+      },
+    },
+  );
+  expect(initializeEnvironmentProxy(env)).toEqual(["https_proxy"]);
 });

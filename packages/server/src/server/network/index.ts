@@ -14,9 +14,11 @@ function readEnvironment(env: NodeJS.ProcessEnv): {
   environment: ProxyEnvironment;
   ignored: string[];
 } {
+  // process.env lookups are case-insensitive on Windows. Read each actual entry once.
+  const values = new Map(Object.entries(env));
   const ignored: string[] = [];
   function proxy(variable: string): string | undefined {
-    const value = env[variable];
+    const value = values.get(variable);
     if (value === undefined) return undefined;
     if (!value.trim()) return undefined;
     try {
@@ -36,7 +38,7 @@ function readEnvironment(env: NodeJS.ProcessEnv): {
     environment: {
       httpProxy,
       httpsProxy: proxy("https_proxy") ?? proxy("HTTPS_PROXY") ?? httpProxy,
-      noProxy: env.no_proxy ?? env.NO_PROXY ?? "",
+      noProxy: values.get("no_proxy") ?? values.get("NO_PROXY") ?? "",
     },
     ignored,
   };
