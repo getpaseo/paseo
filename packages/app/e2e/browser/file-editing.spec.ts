@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { Locator } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import {
   expandFolder,
@@ -71,11 +72,28 @@ async function selectFileView(page: Page, view: "Preview" | "Source"): Promise<v
   await expect(option).toHaveAttribute("aria-selected", "true");
 }
 
+async function expectAbove(upper: Locator, lower: Locator): Promise<void> {
+  const [upperBox, lowerBox] = await Promise.all([upper.boundingBox(), lower.boundingBox()]);
+  expect(upperBox).not.toBeNull();
+  expect(lowerBox).not.toBeNull();
+  expect(upperBox!.y + upperBox!.height).toBeLessThanOrEqual(lowerBox!.y);
+}
+
+/** How many times the app has read the file's contents from the daemon. */
+function fileReadCount(
+  gate: Awaited<ReturnType<typeof installDaemonWebSocketGate>>,
+  fileName: string,
+): number {
+  return gate
+    .getClientRequests("file_explorer_request")
+    .filter((request) => request.mode === "file" && String(request.path).endsWith(fileName)).length;
+}
+
 async function expectMarkdownImageLoaded(page: Page, name: string): Promise<void> {
-  const image = page.getByRole("img", { name, exact: true });
+  const image = page.getByRole("button", { name, exact: true });
   await expect(image).toBeVisible();
   await expect
-    .poll(() => image.locator("img").evaluate((element: HTMLImageElement) => element.naturalWidth))
+    .poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth))
     .toBeGreaterThan(0);
 }
 
@@ -105,6 +123,37 @@ async function seedAgentWithFileLink(input: LinkedFile) {
 }
 
 test.describe("CodeMirror workspace file editing", () => {
+  test("opens explicit screenshot links and explains missing files", async ({ page }) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "screenshot-markdown-link-",
+      title: "Screenshot file links",
+      initialPrompt: "Show screenshots",
+      featureValues: {
+        mockAssistantResponse:
+          "[Capture](.dev/tablet-review/capture.png) [Missing capture](.dev/tablet-review/missing.png)",
+      },
+    });
+    try {
+      await mkdir(path.join(session.cwd, ".dev/tablet-review"), { recursive: true });
+      await writeFile(path.join(session.cwd, ".dev/tablet-review/capture.png"), RED_PIXEL);
+      await openAgentRoute(page, session);
+      await test.step("Open the linked screenshot", async () => {
+        await openAssistantMarkdownLink(page, "Capture");
+        await expectFileTabOpen(page, ".dev/tablet-review/capture.png");
+        await expect(page.getByTestId("image-file-preview-canvas")).toBeVisible();
+      });
+      await test.step("Explain why the missing screenshot cannot open", async () => {
+        await returnToAssistant(page, session.agentId);
+        await openAssistantMarkdownLink(page, "Missing capture");
+        await expectFileTabOpen(page, ".dev/tablet-review/missing.png");
+        await expect(page.getByText("File not found", { exact: true })).toBeVisible();
+        await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+      });
+    } finally {
+      await session.cleanup();
+    }
+  });
+
   test("opens the non-ASCII file named by an assistant markdown link", async ({ page }) => {
     const session = await seedMockAgentWorkspace({
       repoPrefix: "encoded-markdown-link-",
@@ -221,7 +270,7 @@ test.describe("CodeMirror workspace file editing", () => {
       const fileLink = page.getByRole("link", { name: "Open target" }).first();
       await expect(fileLink).toBeVisible({ timeout: 15_000 });
       await fileLink.hover();
-      await expect(page.getByText("src/target.ts:42-45", { exact: true })).toBeVisible();
+      await expect(fileLink).toHaveAttribute("title", "src/target.ts:42-45");
     } finally {
       await workspace.cleanup();
     }
@@ -286,11 +335,7 @@ test.describe("CodeMirror workspace file editing", () => {
       title: "Unsupported large source",
       initialPrompt: "Generate a title and a git branch name. Return JSON only.",
     });
-    await writeFile(
-      path.join(session.cwd, "too-large.txt"),
-      Buffer.alloc(51 * 1024 * 1024),
-      "utf8",
-    );
+    await writeFile(path.join(session.cwd, "too-large.txt"), "x".repeat(51 * 1024 * 1024), "utf8");
 
     try {
       await openAgentRoute(page, session);
@@ -553,6 +598,11 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect(page.getByTestId("file-source-editor")).toBeVisible();
     await expect(page.getByLabel(/File size/)).toBeVisible();
     await expect(page.getByLabel(/lines/)).toBeVisible();
+    await expect(page.getByTestId("file-preview-mode")).toHaveCount(0);
+    await expectAbove(
+      page.getByTestId("file-panel-bar").filter({ visible: true }),
+      page.getByTestId("file-source-editor").filter({ visible: true }),
+    );
 
     await replaceEditorText(page, "const autosaved = 2;\n");
     await expect(page.getByTestId("workspace-tab-modified-file_source.ts")).toBeVisible();
@@ -654,6 +704,7 @@ test.describe("CodeMirror workspace file editing", () => {
     withWorkspace,
   }) => {
     test.setTimeout(90_000);
+    const gate = await installDaemonWebSocketGate(page);
     const workspace = await withWorkspace({ prefix: "file-editing-preview-" });
     const markdownPath = path.join(workspace.repoPath, "notes.md");
     const imagePath = path.join(workspace.repoPath, "pixel.png");
@@ -663,17 +714,30 @@ test.describe("CodeMirror workspace file editing", () => {
     await openWorkspaceFile(page, "notes.md");
 
     const visibleFilePane = page.getByTestId("workspace-file-pane").filter({ visible: true });
+    const toolbar = page.getByTestId("file-panel-bar").filter({ visible: true });
     await expect(visibleFilePane.getByText("First heading", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Preview", exact: true })).toBeVisible();
+    await expect(toolbar.getByLabel(/^File size/)).toBeVisible();
+    await expect(toolbar.getByLabel("2 lines")).toBeVisible();
     await writeFile(markdownPath, "# Updated heading\n", "utf8");
     await expect(visibleFilePane.getByText("Updated heading", { exact: true })).toBeVisible();
 
+    // Source shows the same read in the editor; the file is not read again.
+    const reads = fileReadCount(gate, "notes.md");
     await selectFileView(page, "Source");
     await expect(page.getByTestId("file-source-editor")).toBeVisible();
+    await expect(editor(page)).toContainText("# Updated heading");
+    await expect(toolbar.getByLabel("Line 1, column 1")).toBeVisible();
+    expect(fileReadCount(gate, "notes.md")).toBe(reads);
+
+    // Preview shows the edits made in Source.
     await replaceEditorText(page, "# Saved from source\n");
-    await expect.poll(() => readFile(markdownPath, "utf8")).toBe("# Saved from source\n");
+    await expect(page.getByTestId("workspace-tab-modified-file_notes.md")).toBeVisible();
     await selectFileView(page, "Preview");
     await expect(visibleFilePane.getByText("Saved from source", { exact: true })).toBeVisible();
+    await expect(toolbar.getByLabel("Line 1, column 1")).toHaveCount(0);
+    await expect.poll(() => readFile(markdownPath, "utf8")).toBe("# Saved from source\n");
+    await expect(page.getByTestId("workspace-tab-modified-file_notes.md")).not.toBeVisible();
 
     await openWorkspaceFile(page, "pixel.png");
     const image = visibleFilePane.locator("img");

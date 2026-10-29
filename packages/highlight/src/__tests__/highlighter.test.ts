@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { highlightCode, highlightLine } from "../highlighter.js";
+import { setImmediate } from "node:timers/promises";
+import { highlightCodeWithBudget, HIGHLIGHT_MAX_SOURCE_BYTES } from "../budgeted-highlighter.js";
+import type { HighlightToken } from "../types.js";
+import { highlightCode, highlightCodeInSteps, highlightLine } from "../highlighter.js";
 
 describe("highlightCode", () => {
   it("highlights JavaScript code with correct token styles", () => {
@@ -341,6 +344,69 @@ const title = "Hello";
   });
 });
 
+describe("highlightCodeInSteps", () => {
+  it("splits a large file into many bounded steps with the same result", () => {
+    const code = Array.from(
+      { length: 2000 },
+      (_, index) => `/* block ${index}\n comment */ export const item${index} = "${index}";`,
+    ).join("\n");
+    const steps = highlightCodeInSteps(code, "large.ts");
+    let count = 0;
+    let step = steps.next();
+    while (!step.done) {
+      count++;
+      step = steps.next();
+    }
+
+    expect(count).toBeGreaterThan(20);
+    expect(step.value).toEqual(highlightCode(code, "large.ts"));
+    expect(step.value[1]).toEqual([
+      { text: " comment */", style: "comment" },
+      { text: " ", style: null },
+      { text: "export", style: "keyword" },
+      { text: " ", style: null },
+      { text: "const", style: "keyword" },
+      { text: " ", style: null },
+      { text: "item0", style: "definition" },
+      { text: " ", style: null },
+      { text: "=", style: "operator" },
+      { text: " ", style: null },
+      { text: '"0"', style: "string" },
+      { text: ";", style: "punctuation" },
+    ]);
+  });
+
+  it("highlights the first lines first, then the whole file", () => {
+    const code = Array.from({ length: 1000 }, (_, index) => `const item${index} = ${index};`).join(
+      "\n",
+    );
+    const full = highlightCode(code, "large.ts");
+    const steps = highlightCodeInSteps(code, "large.ts", { firstLines: 100 });
+    const progress: HighlightToken[][][] = [];
+    let step = steps.next();
+    while (!step.done) {
+      if (step.value) progress.push(step.value);
+      step = steps.next();
+    }
+
+    expect(progress).toHaveLength(1);
+    expect(progress[0].slice(0, 100)).toEqual(full.slice(0, 100));
+    expect(progress[0][100]).toEqual([{ text: "const item100 = 100;", style: null }]);
+    expect(progress[0]).toHaveLength(1000);
+    expect(step.value).toEqual(full);
+  });
+
+  it("highlights the whole file at once when the first lines are most of it", () => {
+    const code = "const a = 1;\nconst b = 2;\nconst c = 3;";
+    const steps = [...iterate(highlightCodeInSteps(code, "small.ts", { firstLines: 2 }))];
+    expect(steps.filter(Boolean)).toEqual([]);
+  });
+});
+
+function* iterate<T>(steps: Generator<T, unknown, void>): Generator<T> {
+  for (let step = steps.next(); !step.done; step = steps.next()) yield step.value;
+}
+
 describe("highlightLine", () => {
   it("highlights a single line", () => {
     const tokens = highlightLine("const x = 1;", "test.js");
@@ -354,5 +420,57 @@ describe("highlightLine", () => {
     const tokens = highlightLine("hello", "test.xyz");
 
     expect(tokens).toEqual([{ text: "hello", style: null }]);
+  });
+});
+
+describe("highlightCodeWithBudget", () => {
+  it("yields to IO while producing byte-identical output below the source budget", async () => {
+    const code = "const value = Math.max(42, 7);\n".repeat(3_000);
+    const expected = JSON.stringify(highlightCode(code, "file.ts"));
+    let ticks = 0;
+    let longestGap = 0;
+    let lastTick = performance.now();
+    const timer = setInterval(() => {
+      const now = performance.now();
+      longestGap = Math.max(longestGap, now - lastTick);
+      lastTick = now;
+      ticks++;
+    }, 1);
+    try {
+      const actual = await highlightCodeWithBudget(code, "file.ts", {
+        yieldToEventLoop: setImmediate,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(ticks).toBeGreaterThan(1);
+      expect(longestGap).toBeLessThan(50);
+      expect(JSON.stringify(actual)).toBe(expected);
+    } finally {
+      clearInterval(timer);
+    }
+  });
+
+  it("budgets UTF-8 bytes before parsing, including multibyte text", async () => {
+    expect(
+      await highlightCodeWithBudget("é".repeat(HIGHLIGHT_MAX_SOURCE_BYTES / 2 + 1), "file.ts", {
+        yieldToEventLoop: setImmediate,
+      }),
+    ).toBeNull();
+    expect(
+      await highlightCodeWithBudget("a".repeat(HIGHLIGHT_MAX_SOURCE_BYTES + 1), "file.ts", {
+        yieldToEventLoop: setImmediate,
+      }),
+    ).toBeNull();
+  });
+
+  it("stops a parser that is cancelled between real event-loop turns", async () => {
+    const controller = new AbortController();
+    const pending = highlightCodeWithBudget(
+      "const value = Math.max(42, 7);\n".repeat(3_000),
+      "file.ts",
+      { yieldToEventLoop: setImmediate, signal: controller.signal },
+    );
+    await setImmediate();
+    controller.abort();
+    expect(await pending).toBeNull();
   });
 });

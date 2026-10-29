@@ -152,6 +152,8 @@ export const OmpSessionStateSchema = z
     thinkingLevel: OmpThinkingLevelSchema.optional(),
     isStreaming: z.boolean(),
     isCompacting: z.boolean(),
+    hasPendingAsyncWork: z.boolean().optional(),
+    isSettled: z.boolean().optional(),
     autoCompactionEnabled: z.boolean().optional(),
     fastModeEnabled: z.boolean().optional(),
     fastModeActive: z.boolean().optional(),
@@ -535,6 +537,7 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
     type: z.literal("prompt"),
     message: z.string(),
     images: z.array(OmpImageContentSchema).optional(),
+    streamingBehavior: z.enum(["steer", "followUp"]).optional(),
   }),
   z.object({
     ...OmpCommandBase,

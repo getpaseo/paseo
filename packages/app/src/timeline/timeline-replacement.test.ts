@@ -15,7 +15,7 @@ describe("requestTimelineReplacement", () => {
     await expect(requestTimelineReplacement(client, "agent-1")).rejects.toThrow("fetch complete");
 
     expect(requests).toEqual([
-      ["agent-1", { direction: "tail", projection: "projected", limit: 40 }],
+      ["agent-1", { direction: "tail", projection: "projected", wholeTurns: true, limit: 40 }],
     ]);
   });
 });

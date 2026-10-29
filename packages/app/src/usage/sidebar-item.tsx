@@ -34,9 +34,10 @@ import { UsageModal } from "./usage-modal";
 
 /** Each summary window with data on the usage host, under its source; empty while none has. */
 function useUsageSummary(): readonly PinnedUsageSource[] {
+  const { t } = useTranslation();
   const { preferences } = useUsagePreferences();
   const reports = useUsageHostReports(useUsageHostId());
-  return useMemo(() => resolvePinnedUsage(reports, preferences), [preferences, reports]);
+  return useMemo(() => resolvePinnedUsage(reports, preferences, t), [preferences, reports, t]);
 }
 
 /** Whether the sidebar Usage item has anything to show. */
@@ -191,12 +192,7 @@ function PinnedUsageLine({
           <Fragment key={window.key}>
             {layout === "meters" ? (
               <View style={[styles.meterSlot, leadStyle]}>
-                <UsageMeter
-                  percent={window.percent}
-                  tone={window.tone}
-                  quiet
-                  style={styles.meter}
-                />
+                <UsageMeter percent={window.percent} tone={window.tone} quiet />
               </View>
             ) : null}
             <Text
@@ -267,10 +263,6 @@ const styles = StyleSheet.create((theme) => ({
     flexBasis: 0,
     minWidth: MIN_METER_WIDTH,
     marginRight: METER_GAP,
-  },
-  meter: {
-    height: 6,
-    borderRadius: 3,
   },
   percent: {
     flexShrink: 0,

@@ -41,6 +41,7 @@ import {
   normalizeLayout,
   removePaneFromTree,
   removeTabFromTree,
+  selectSheetTab,
   stripEphemeralTabsFromLayout,
   type SplitNode,
   type SplitPane,
@@ -78,6 +79,39 @@ function createDeterministicWorkspaceLayoutIds() {
 
 const workspaceLayoutIds = createDeterministicWorkspaceLayoutIds();
 const workspaceLayoutStore = createWorkspaceLayoutStore(workspaceLayoutIds);
+
+it("bumps panel params revision when the same tab is opened again", () => {
+  const storage = {
+    getItem: async () => null,
+    setItem: async () => {},
+    removeItem: async () => {},
+  };
+  const store = createWorkspaceLayoutStore(workspaceLayoutIds, storage);
+  const workspaceKey = "server-1:workspace-params";
+  const targets = [
+    { kind: "file" as const, path: "notes.md", lineStart: 3 },
+    {
+      kind: "plugin" as const,
+      pluginId: "notes",
+      panelId: "workspace",
+      context: "workspace" as const,
+    },
+    {
+      kind: "plugin" as const,
+      pluginId: "notes",
+      panelId: "agent",
+      context: "agent" as const,
+      agentId: "agent-1",
+    },
+  ];
+  for (const target of targets) {
+    const first = store.getState().openTab({ workspaceKey, target, intent: "reveal" })!;
+    const revision = store.getState().panelRevisionByWorkspace[workspaceKey][first];
+    const second = store.getState().openTab({ workspaceKey, target, intent: "reveal" });
+    expect(second).toBe(first);
+    expect(store.getState().panelRevisionByWorkspace[workspaceKey][first]).toBe(revision + 1);
+  }
+});
 
 it("observes open chats across unmounted workspaces until their tabs close", () => {
   const store = createWorkspaceLayoutStore(workspaceLayoutIds);
@@ -4463,6 +4497,12 @@ describe("compact workspace sheet", () => {
     return store.getState().sheetsByWorkspace[workspaceKey]?.at(-1);
   }
 
+  function requireTopSheet(store: ReturnType<typeof createCompactStore>) {
+    const sheet = topSheet(store);
+    if (!sheet) throw new Error("Expected a sheet");
+    return sheet;
+  }
+
   function sheetTargets(store: ReturnType<typeof createCompactStore>) {
     return (store.getState().sheetsByWorkspace[workspaceKey] ?? []).map(
       (sheet) => sheet.tab.target,
@@ -4614,7 +4654,7 @@ describe("compact workspace sheet", () => {
       .getState()
       .openTab({ workspaceKey, target: { kind: "file", path: "src/other.ts" }, intent: "reveal" });
 
-    store.getState().openSheetAsTab(workspaceKey, nextTabId ?? "");
+    store.getState().openTabInFront(workspaceKey, requireTopSheet(store));
 
     expect(sheetTargets(store)).toEqual([]);
     expect(tabKinds(store)).toEqual(["terminal", "file"]);
@@ -4650,7 +4690,7 @@ describe("compact workspace sheet", () => {
     if (!sheetTabId) throw new Error("Expected a sheet tab");
     store.getState().setTabState(workspaceKey, sheetTabId, { scrollTop: 120 });
 
-    const tabId = store.getState().openSheetAsTab(workspaceKey, sheetTabId);
+    const tabId = store.getState().openTabInFront(workspaceKey, requireTopSheet(store));
 
     expect(tabId).toBe(sheetTabId);
     expect(topSheet(store)).toBeUndefined();
@@ -4754,6 +4794,40 @@ describe("compact workspace sheet", () => {
     expect(tabKinds(store)).toEqual(["terminal", "agent", "agent"]);
   });
 
+  it("describes the sheet a reveal would show without opening it, and opens it as a tab", () => {
+    seedAgents([
+      { id: "root", parentAgentId: null, workspaceId: "sheet-ws" },
+      { id: "child", parentAgentId: "root", workspaceId: "sheet-ws" },
+    ]);
+    const store = createCompactStore();
+    const rootTabId = store
+      .getState()
+      .openTab({ workspaceKey, target: { kind: "agent", agentId: "root" }, intent: "reveal" });
+
+    const sheet = selectSheetTab(store.getState(), {
+      workspaceKey,
+      target: { kind: "agent", agentId: "child" },
+      parentTabId: rootTabId ?? undefined,
+    });
+    expect(sheet?.parentTabId).toBe(rootTabId);
+    expect(
+      selectSheetTab(store.getState(), {
+        workspaceKey,
+        target: { kind: "agent", agentId: "root" },
+      }),
+    ).toBeNull();
+    expect(topSheet(store)).toBeUndefined();
+    if (!sheet) throw new Error("Expected a sheet tab");
+
+    const tabId = store.getState().openTabInFront(workspaceKey, sheet);
+
+    expect(tabId).toBe(sheet.tab.tabId);
+    expect(topSheet(store)).toBeUndefined();
+    const layout = store.getState().layoutByWorkspace[workspaceKey];
+    expect(findPaneById(layout.root, "main")?.focusedTabId).toBe(tabId);
+    expect(layout.parentTabIdByTabId?.[tabId ?? ""]).toBe(rootTabId);
+  });
+
   it("gives a sheet target opened from inside the sheet the sheet's own parent", () => {
     seedAgents([
       { id: "root", parentAgentId: null, workspaceId: "sheet-ws" },
@@ -4778,7 +4852,7 @@ describe("compact workspace sheet", () => {
     });
     expect(topSheet(store)?.parentTabId).toBe(rootTabId);
 
-    store.getState().openSheetAsTab(workspaceKey, fileSheetTabId ?? "");
+    store.getState().openTabInFront(workspaceKey, requireTopSheet(store));
     const layout = store.getState().layoutByWorkspace[workspaceKey];
     expect(layout.parentTabIdByTabId?.[fileSheetTabId ?? ""]).toBe(rootTabId);
   });
@@ -5096,6 +5170,21 @@ describe("compact workspace sheet", () => {
     expect(tabKinds(store)).toEqual(["terminal", "terminal"]);
   });
 
+  it("honors an explicit Explorer pane destination on compact layouts", () => {
+    const store = createCompactStore();
+    const paneId = store.getState().showExplorerSidebar(workspaceKey)!;
+    const tabId = store.getState().openTab({
+      workspaceKey,
+      target: fileTarget,
+      intent: "new",
+      placement: { mode: "pane", paneId },
+    });
+    expect(topSheet(store)).toBeUndefined();
+    expect(
+      findPaneById(store.getState().layoutByWorkspace[workspaceKey].root, paneId)?.focusedTabId,
+    ).toBe(tabId);
+  });
+
   it("keeps a chat shown in the sheet open for timeline sync until the sheet closes", () => {
     const store = createCompactStore();
     seedAgents([
@@ -5114,5 +5203,45 @@ describe("compact workspace sheet", () => {
     stop();
 
     expect(received).toEqual([[], ["child"], []]);
+  });
+});
+
+describe("pending workspace opens", () => {
+  it("retains an open across hydration and consumes it once only for its workspace", async () => {
+    const values = new Map<string, string>();
+    const store = createWorkspaceLayoutStore(undefined, {
+      getItem: async (key) => values.get(key) ?? null,
+      setItem: async (key, value) => {
+        values.set(key, value);
+      },
+      removeItem: async (key) => {
+        values.delete(key);
+      },
+    });
+    store.getState().deferOpenTab({
+      workspaceKey: "server:beta",
+      target: { kind: "agent", agentId: "b" },
+      intent: "reveal",
+      pin: true,
+    });
+    await store.persist.rehydrate();
+    expect(store.getState().consumePendingOpen("server:alpha")).toBeNull();
+    expect(
+      store
+        .getState()
+        .getWorkspaceTabs("server:alpha")
+        .filter((tab) => tab.target.kind === "agent"),
+    ).toEqual([]);
+    expect(store.getState().consumePendingOpen("server:beta")).toBe("agent_b");
+    expect(store.getState().consumePendingOpen("server:beta")).toBeNull();
+    expect(
+      store
+        .getState()
+        .getWorkspaceTabs("server:beta")
+        .filter((tab) => tab.target.kind === "agent")
+        .map((tab) => tab.target),
+    ).toEqual([{ kind: "agent", agentId: "b" }]);
+    expect(store.getState().pinnedAgentIdsByWorkspace["server:beta"]).toEqual(new Set(["b"]));
+    expect(store.getState().pendingOpenByWorkspace).toEqual({});
   });
 });

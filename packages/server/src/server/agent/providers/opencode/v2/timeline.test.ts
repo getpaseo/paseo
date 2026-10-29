@@ -1,4 +1,7 @@
+import { collectTimelineSnapshot } from "../test-utils/v2-timeline.js";
 import type { SessionMessageAssistant } from "@opencode/client";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { V2Timeline } from "./timeline.js";
 
@@ -13,7 +16,7 @@ function assistant(content: SessionMessageAssistant["content"]): SessionMessageA
   };
 }
 
-test("a completed edit carries the replaced and replacement text", () => {
+test("a completed edit carries the replaced and replacement text", async () => {
   // Captured from OpenCode 2.0.18, whose edit tool takes `path` instead of `filePath`.
   const edit = assistant([
     {
@@ -43,7 +46,7 @@ test("a completed edit carries the replaced and replacement text", () => {
     },
   ]);
 
-  expect(new V2Timeline().messages([edit])).toMatchObject([
+  expect(await collectTimelineSnapshot(new V2Timeline(), [edit])).toMatchObject([
     {
       item: {
         type: "tool_call",
@@ -55,7 +58,7 @@ test("a completed edit carries the replaced and replacement text", () => {
   ]);
 });
 
-test("a tool's image output is shown as an image, not as base64 in the tool output", () => {
+test("a tool's image output is shown as an image, not as base64 in the tool output", async () => {
   const png =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
   const screenshot = assistant([
@@ -78,7 +81,7 @@ test("a tool's image output is shown as an image, not as base64 in the tool outp
   ]);
   const timeline = new V2Timeline();
 
-  const events = timeline.messages([screenshot]);
+  const events = await collectTimelineSnapshot(timeline, [screenshot]);
 
   expect(JSON.stringify(events)).not.toContain(png);
   expect(events.map((event) => event.type === "timeline" && event.item)).toMatchObject([
@@ -90,8 +93,43 @@ test("a tool's image output is shown as an image, not as base64 in the tool outp
     },
     {
       type: "assistant_message",
-      text: expect.stringMatching(/^!\[Image\]\(file:\/\/.*paseo-attachments.*\.png\)$/),
+      text: expect.stringMatching(/^\n\n!\[Image\]\(file:\/\/.*paseo-attachments.*\.png\)\n\n$/),
     },
   ]);
-  expect(timeline.messages([screenshot])).toEqual([]);
+  expect(await collectTimelineSnapshot(timeline, [screenshot])).toEqual([]);
 });
+
+test("a surrogate pair split across deltas streams back intact", () => {
+  const timeline = new V2Timeline();
+  const part = { assistantMessageID: "answer", type: "text" as const, ordinal: 0 };
+  timeline.startPart(part);
+  const chunks = ["a\uD83D", "\uDE00b"].map((delta) => {
+    const event = timeline.delta({ ...part, delta });
+    return event?.type === "timeline" && event.item.type === "assistant_message"
+      ? event.item.text
+      : null;
+  });
+  expect(chunks).toEqual(["a\uD83D", "\uDE00b"]);
+  expect(chunks.join("")).toBe("a😀b");
+});
+
+function retainedBytesAfterStreaming(mode: "delta" | "snapshot", chunks: number): number {
+  const fixture = fileURLToPath(
+    new URL("../test-utils/v2-streamed-text-memory.ts", import.meta.url),
+  );
+  const output = execFileSync(
+    process.execPath,
+    ["--expose-gc", "--import", "tsx", fixture, mode, String(chunks)],
+    { encoding: "utf8" },
+  );
+  return Number(output);
+}
+
+test.each(["delta", "snapshot"] as const)(
+  "a long %s-streamed part holds memory in proportion to its text",
+  (mode) => {
+    const chunks = 2000;
+    const textBytes = chunks * 64;
+    expect(retainedBytesAfterStreaming(mode, chunks)).toBeLessThan(textBytes * 32);
+  },
+);

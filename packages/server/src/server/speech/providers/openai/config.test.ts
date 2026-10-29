@@ -1,5 +1,4 @@
 import { describe, expect, test } from "vitest";
-
 import { PersistedConfigSchema } from "../../../persisted-config.js";
 import { resolveOpenAiSpeechConfig } from "./config.js";
 import type { RequestedSpeechProviders } from "../../speech-types.js";
@@ -10,233 +9,139 @@ const ALL_OPENAI: RequestedSpeechProviders = {
   voiceStt: { provider: "openai", explicit: true },
   voiceTts: { provider: "openai", explicit: true },
 };
+function resolve(input: unknown, env: NodeJS.ProcessEnv = {}) {
+  return resolveOpenAiSpeechConfig({
+    persisted: PersistedConfigSchema.parse(input),
+    env,
+    providers: ALL_OPENAI,
+  });
+}
 
 describe("resolveOpenAiSpeechConfig", () => {
-  test("treats empty OPENAI_API_KEY as unset", () => {
-    const persisted = PersistedConfigSchema.parse({});
-    const env = {
-      OPENAI_API_KEY: "",
-    } as NodeJS.ProcessEnv;
-
-    const resolved = resolveOpenAiSpeechConfig({
-      env,
-      persisted,
-      providers: {
-        ...ALL_OPENAI,
-        dictationStt: { provider: "local", explicit: false },
-        voiceStt: { provider: "local", explicit: false },
-        voiceTts: { provider: "local", explicit: false },
+  test("treats empty credentials as unset", () => {
+    expect(resolve({}, { OPENAI_API_KEY: "", OPENAI_STT_API_KEY: " " })).toBeUndefined();
+  });
+  test("uses endpoint env before global env and ignores empty fallbacks", () => {
+    const result = resolve(
+      {},
+      {
+        OPENAI_API_KEY: " global ",
+        OPENAI_BASE_URL: " https://global/v1 ",
+        OPENAI_STT_API_KEY: " stt ",
+        OPENAI_STT_BASE_URL: " https://stt/v1 ",
+        OPENAI_TTS_API_KEY: " ",
+        OPENAI_TTS_BASE_URL: "",
       },
+    );
+    expect(result?.dictationStt).toEqual({ apiKey: "stt", baseUrl: "https://stt/v1" });
+    expect(result?.stt).toEqual({ apiKey: "stt", baseUrl: "https://stt/v1" });
+    expect(result?.tts).toEqual({
+      apiKey: "global",
+      baseUrl: "https://global/v1",
+      model: "tts-1",
+      voice: "alloy",
+      responseFormat: "pcm",
     });
-
-    expect(resolved).toBeUndefined();
   });
-
-  test("applies trimmed OPENAI_API_KEY to both STT and TTS", () => {
-    const persisted = PersistedConfigSchema.parse({});
-    const env = {
-      OPENAI_API_KEY: "  sk-test  ",
-    } as NodeJS.ProcessEnv;
-
-    const resolved = resolveOpenAiSpeechConfig({ env, persisted, providers: ALL_OPENAI });
-
-    expect(resolved?.stt?.apiKey).toBe("sk-test");
-    expect(resolved?.tts?.apiKey).toBe("sk-test");
-  });
-
-  test("resolves distinct endpoints for STT and TTS", () => {
-    const persisted = PersistedConfigSchema.parse({
-      providers: {
-        openai: {
-          stt: {
-            apiKey: "stt-key",
-            baseUrl: " https://stt.example.com/v1 ",
+  test("each site wins over endpoint and global env credentials and URL", () => {
+    const result = resolve(
+      {
+        features: {
+          dictation: {
+            stt: {
+              provider: "openai",
+              apiKey: "dictation",
+              baseUrl: "https://dictation/v1",
+              model: "dictation-model",
+              confidenceThreshold: -1,
+            },
           },
-          tts: {
-            apiKey: "tts-key",
-            baseUrl: " https://tts.example.com/v1 ",
+          voiceMode: {
+            stt: {
+              provider: "openai",
+              apiKey: "voice",
+              baseUrl: "https://voice/v1",
+              model: "voice-model",
+              confidenceThreshold: -2,
+            },
+            tts: {
+              provider: "openai",
+              apiKey: "tts",
+              baseUrl: "https://tts/v1",
+              model: "kokoro-v1:Q8_0",
+              voice: "Aiden",
+            },
           },
         },
       },
+      {
+        OPENAI_API_KEY: "global",
+        OPENAI_BASE_URL: "https://global/v1",
+        OPENAI_STT_API_KEY: "endpoint",
+        OPENAI_STT_BASE_URL: "https://endpoint/v1",
+        OPENAI_TTS_API_KEY: "endpoint",
+        OPENAI_TTS_BASE_URL: "https://endpoint/v1",
+      },
+    );
+    expect(result?.dictationStt).toEqual({
+      apiKey: "dictation",
+      baseUrl: "https://dictation/v1",
+      model: "dictation-model",
+      confidenceThreshold: -1,
     });
-
-    const resolved = resolveOpenAiSpeechConfig({
-      env: {} as NodeJS.ProcessEnv,
-      persisted,
-      providers: ALL_OPENAI,
+    expect(result?.stt).toEqual({
+      apiKey: "voice",
+      baseUrl: "https://voice/v1",
+      model: "voice-model",
+      confidenceThreshold: -2,
     });
-
-    expect(resolved?.stt?.apiKey).toBe("stt-key");
-    expect(resolved?.stt?.baseUrl).toBe("https://stt.example.com/v1");
-    expect(resolved?.tts?.apiKey).toBe("tts-key");
-    expect(resolved?.tts?.baseUrl).toBe("https://tts.example.com/v1");
+    expect(result?.tts).toEqual({
+      apiKey: "tts",
+      baseUrl: "https://tts/v1",
+      model: "kokoro-v1:Q8_0",
+      voice: "Aiden",
+      responseFormat: "pcm",
+    });
   });
-
-  test("prefers nested STT/TTS config over env and global fallbacks", () => {
-    const persisted = PersistedConfigSchema.parse({
-      providers: {
-        openai: {
-          apiKey: "fallback-config-key",
-          baseUrl: "https://global-config.example.com/v1",
-          stt: { apiKey: "stt-config-key", baseUrl: " https://stt.example.com/v1 " },
-          tts: { apiKey: "tts-config-key", baseUrl: " https://tts.example.com/v1 " },
+  test("env overrides model, voice and threshold at every OpenAI site", () => {
+    const result = resolve(
+      {
+        features: {
+          dictation: { stt: { provider: "openai", model: "dictation", confidenceThreshold: -1 } },
+          voiceMode: {
+            stt: { provider: "openai", model: "voice", confidenceThreshold: -2 },
+            tts: { provider: "openai", model: "configured", voice: "Aiden" },
+          },
         },
       },
-    });
-    const env = {
-      OPENAI_API_KEY: "env-key",
-      OPENAI_STT_API_KEY: "stt-env-key",
-      OPENAI_STT_BASE_URL: "https://stt-env.example.com/v1",
-      OPENAI_TTS_API_KEY: "tts-env-key",
-      OPENAI_TTS_BASE_URL: "https://tts-env.example.com/v1",
-      OPENAI_BASE_URL: "https://env.example.com/v1",
-    } as NodeJS.ProcessEnv;
-
-    const resolved = resolveOpenAiSpeechConfig({ env, persisted, providers: ALL_OPENAI });
-
-    expect(resolved?.stt?.apiKey).toBe("stt-config-key");
-    expect(resolved?.stt?.baseUrl).toBe("https://stt.example.com/v1");
-    expect(resolved?.tts?.apiKey).toBe("tts-config-key");
-    expect(resolved?.tts?.baseUrl).toBe("https://tts.example.com/v1");
-  });
-
-  test("uses STT/TTS env config when nested config is unset", () => {
-    const persisted = PersistedConfigSchema.parse({});
-    const env = {
-      OPENAI_API_KEY: "sk-test",
-      OPENAI_STT_API_KEY: "stt-env-key",
-      OPENAI_STT_BASE_URL: " https://stt-env.example.com/v1 ",
-      OPENAI_TTS_API_KEY: "tts-env-key",
-      OPENAI_TTS_BASE_URL: " https://tts-env.example.com/v1 ",
-      OPENAI_BASE_URL: "https://env.example.com/v1",
-    } as NodeJS.ProcessEnv;
-
-    const resolved = resolveOpenAiSpeechConfig({ env, persisted, providers: ALL_OPENAI });
-
-    expect(resolved?.stt?.apiKey).toBe("stt-env-key");
-    expect(resolved?.stt?.baseUrl).toBe("https://stt-env.example.com/v1");
-    expect(resolved?.tts?.apiKey).toBe("tts-env-key");
-    expect(resolved?.tts?.baseUrl).toBe("https://tts-env.example.com/v1");
-  });
-
-  test("falls back to global OpenAI config for both STT and TTS", () => {
-    const persisted = PersistedConfigSchema.parse({
-      providers: {
-        openai: {
-          apiKey: "fallback-config-key",
-          baseUrl: " https://global-config.example.com/v1 ",
-        },
+      {
+        OPENAI_API_KEY: "key",
+        STT_MODEL: "override",
+        TTS_MODEL: "tts-override",
+        TTS_VOICE: "Nova",
+        STT_CONFIDENCE_THRESHOLD: "-3",
       },
+    );
+    expect(result?.dictationStt).toEqual({
+      apiKey: "key",
+      model: "override",
+      confidenceThreshold: -3,
     });
-    const env = {} as NodeJS.ProcessEnv;
-
-    const resolved = resolveOpenAiSpeechConfig({ env, persisted, providers: ALL_OPENAI });
-
-    expect(resolved?.stt?.apiKey).toBe("fallback-config-key");
-    expect(resolved?.stt?.baseUrl).toBe("https://global-config.example.com/v1");
-    expect(resolved?.tts?.apiKey).toBe("fallback-config-key");
-    expect(resolved?.tts?.baseUrl).toBe("https://global-config.example.com/v1");
+    expect(result?.stt).toEqual({ apiKey: "key", model: "override", confidenceThreshold: -3 });
+    expect(result?.tts).toMatchObject({ model: "tts-override", voice: "Nova" });
   });
-
-  test("falls back to global OpenAI env config when feature inputs are unset", () => {
-    const persisted = PersistedConfigSchema.parse({});
-    const env = {
-      OPENAI_API_KEY: "env-key",
-      OPENAI_BASE_URL: " https://env.example.com/v1 ",
-    } as NodeJS.ProcessEnv;
-
-    const resolved = resolveOpenAiSpeechConfig({ env, persisted, providers: ALL_OPENAI });
-
-    expect(resolved?.stt?.apiKey).toBe("env-key");
-    expect(resolved?.stt?.baseUrl).toBe("https://env.example.com/v1");
-    expect(resolved?.tts?.apiKey).toBe("env-key");
-    expect(resolved?.tts?.baseUrl).toBe("https://env.example.com/v1");
+  test("only configures endpoints with credentials and ignores unused TTS options", () => {
+    const result = resolve(
+      { features: { dictation: { stt: { provider: "openai", apiKey: "dictation" } } } },
+      { TTS_VOICE: "arbitrary", TTS_MODEL: "arbitrary" },
+    );
+    expect(result).toEqual({ dictationStt: { apiKey: "dictation" } });
   });
-
-  test("ignores empty endpoint env vars and falls back to OPENAI_API_KEY", () => {
-    const persisted = PersistedConfigSchema.parse({});
-    const env = {
-      OPENAI_API_KEY: "global-key",
-      OPENAI_STT_API_KEY: "",
-      OPENAI_STT_BASE_URL: "  ",
-      OPENAI_TTS_API_KEY: "",
-      OPENAI_TTS_BASE_URL: "",
-    } as NodeJS.ProcessEnv;
-
-    const resolved = resolveOpenAiSpeechConfig({ env, persisted, providers: ALL_OPENAI });
-
-    expect(resolved?.stt?.apiKey).toBe("global-key");
-    expect(resolved?.tts?.apiKey).toBe("global-key");
-  });
-
-  test("omits TTS when only an STT key is configured", () => {
-    const persisted = PersistedConfigSchema.parse({
-      providers: {
-        openai: {
-          stt: { apiKey: "stt-only-key" },
-        },
-      },
+  test("does not borrow another site's key", () => {
+    const result = resolve({
+      features: { voiceMode: { stt: { provider: "openai", apiKey: "voice-only" } } },
     });
-
-    const resolved = resolveOpenAiSpeechConfig({
-      env: {} as NodeJS.ProcessEnv,
-      persisted,
-      providers: ALL_OPENAI,
-    });
-
-    expect(resolved?.stt?.apiKey).toBe("stt-only-key");
-    expect(resolved?.tts).toBeUndefined();
-  });
-
-  test("resolves STT even when an unused TTS env var is invalid", () => {
-    const persisted = PersistedConfigSchema.parse({
-      providers: {
-        openai: {
-          stt: { apiKey: "stt-only-key" },
-        },
-      },
-    });
-    const env = { TTS_VOICE: "not-a-real-voice", TTS_MODEL: "bogus-model" } as NodeJS.ProcessEnv;
-
-    const resolved = resolveOpenAiSpeechConfig({ env, persisted, providers: ALL_OPENAI });
-
-    expect(resolved?.stt?.apiKey).toBe("stt-only-key");
-    expect(resolved?.tts).toBeUndefined();
-  });
-
-  test("sends the model and voice an OpenAI-compatible server serves, as written", () => {
-    const persisted = PersistedConfigSchema.parse({
-      providers: {
-        openai: { tts: { apiKey: "tts-key", baseUrl: "https://tts.example.com/v1" } },
-      },
-      features: {
-        voiceMode: { tts: { provider: "openai", model: "kokoro-v1:Q8_0", voice: "Aiden" } },
-      },
-    });
-
-    const resolved = resolveOpenAiSpeechConfig({
-      env: {} as NodeJS.ProcessEnv,
-      persisted,
-      providers: ALL_OPENAI,
-    });
-
-    expect(resolved?.tts?.model).toBe("kokoro-v1:Q8_0");
-    expect(resolved?.tts?.voice).toBe("Aiden");
-  });
-
-  test("accepts OpenAI's own gpt-4o-mini-tts model", () => {
-    const persisted = PersistedConfigSchema.parse({
-      providers: { openai: { tts: { apiKey: "tts-key" } } },
-      features: { voiceMode: { tts: { provider: "openai", model: "gpt-4o-mini-tts" } } },
-    });
-
-    const resolved = resolveOpenAiSpeechConfig({
-      env: {} as NodeJS.ProcessEnv,
-      persisted,
-      providers: ALL_OPENAI,
-    });
-
-    expect(resolved?.tts?.model).toBe("gpt-4o-mini-tts");
-    expect(resolved?.tts?.voice).toBe("alloy");
+    expect(result?.dictationStt).toBeUndefined();
+    expect(result?.stt).toEqual({ apiKey: "voice-only" });
   });
 });

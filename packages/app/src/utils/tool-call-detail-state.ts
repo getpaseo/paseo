@@ -40,12 +40,6 @@ function hasMeaningfulFetchDetail(detail: Extract<ToolCallDetail, { type: "fetch
   return Boolean(detail.url || detail.result || detail.codeText);
 }
 
-function hasMeaningfulWorktreeSetupDetail(
-  detail: Extract<ToolCallDetail, { type: "worktree_setup" }>,
-): boolean {
-  return Boolean(detail.branchName || detail.worktreePath || detail.log);
-}
-
 function hasMeaningfulSubAgentDetail(
   detail: Extract<ToolCallDetail, { type: "sub_agent" }>,
 ): boolean {
@@ -81,7 +75,7 @@ export function hasMeaningfulToolCallDetail(detail: ToolCallDetail | undefined):
     case "fetch":
       return hasMeaningfulFetchDetail(detail);
     case "worktree_setup":
-      return hasMeaningfulWorktreeSetupDetail(detail);
+      return false;
     case "sub_agent":
       return hasMeaningfulSubAgentDetail(detail);
     case "plain_text":
@@ -98,6 +92,7 @@ export function isPendingToolCallDetail(params: {
   status: "executing" | "running" | "completed" | "failed" | "canceled";
   error: unknown;
 }): boolean {
+  if (params.detail?.type === "worktree_setup") return false;
   const isRunning = params.status === "running" || params.status === "executing";
   return isRunning && params.error == null && !hasMeaningfulToolCallDetail(params.detail);
 }

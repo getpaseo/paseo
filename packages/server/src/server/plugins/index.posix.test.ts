@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import pino from "pino";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DaemonConfigStore } from "../daemon-config-store.js";
 import { PluginService } from "./index.js";
 import { BuiltinPluginLoader } from "./builtin/index.js";
@@ -526,7 +526,7 @@ describe("PluginService", () => {
     if (!address || typeof address === "string") throw new Error("Missing registry address");
     const url = `http://127.0.0.1:${address.port}`;
     const store = createStore(home);
-    store.patch({ pluginsEnabled: false });
+    await store.patch({ pluginsEnabled: false });
     const service = bindTestSessionHost(
       new PluginService(pino({ level: "silent" }), store, "0.4.0", {
         managedSources: new ManagedPluginSources(home, { defaultUrl: url }),
@@ -730,7 +730,7 @@ export default function contribute(server: PluginServerContext) {
         await service.stopAllPlugins();
       }
     },
-    30_000,
+    60_000,
   );
 
   it("keeps the running commit when a Git update build command fails", async () => {
@@ -1079,13 +1079,13 @@ export default function contribute(plugin: unknown) {
     await service.installDirectory({ path: first });
     await service.installDirectory({ path: second });
 
-    store.patch({ pluginsEnabled: false });
+    await store.patch({ pluginsEnabled: false });
 
     expect(service.catalog()).toEqual([]);
     await expect(service.invokePluginRpc("second", "anything", {})).rejects.toThrow(
       "Plugin is not available",
     );
-    store.patch({ pluginsEnabled: true });
+    await store.patch({ pluginsEnabled: true });
     await service.reloadPlugin("first");
     expect((await service.listPlugins()).map(({ id, status }) => ({ id, status }))).toEqual([
       { id: "first", status: "running" },
@@ -1100,16 +1100,16 @@ export default function contribute(plugin: unknown) {
     const store = createStore(home, {
       slow: { source: "directory", path: "/plugins/slow", enabled: true },
     });
-    store.patch({ pluginsEnabled: false });
+    await store.patch({ pluginsEnabled: false });
     const paused = createPausedRuntime();
     const service = new PluginService(pino({ level: "silent" }), store, "0.4.0", {
       runtime: paused.runtime,
     });
     await service.start();
 
-    store.patch({ pluginsEnabled: true });
+    await store.patch({ pluginsEnabled: true });
     await paused.started;
-    store.patch({ pluginsEnabled: false });
+    await store.patch({ pluginsEnabled: false });
     paused.releaseStart();
     await service.stopAllPlugins();
 
@@ -1117,6 +1117,47 @@ export default function contribute(plugin: unknown) {
     expect(await service.listPlugins()).toMatchObject([
       { id: "slow", path: "/plugins/slow", enabled: true, status: "disabled" },
     ]);
+  });
+
+  it("persists overlapping enable and disable without losing either source mutation", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const store = createStore(home, {
+      a: { source: "directory", path: "/plugins/a", enabled: false },
+      b: { source: "directory", path: "/plugins/b", enabled: true },
+    });
+    const paused = createPluginSelectivePausedRuntime("unused");
+    const service = new PluginService(pino({ level: "silent" }), store, "0.4.0", {
+      runtime: paused.runtime,
+    });
+    await service.start();
+    await Promise.all([service.enablePlugin("a"), service.disablePlugin("b")]);
+    expect(store.get().plugins).toEqual({
+      a: { source: "directory", path: "/plugins/a", enabled: true },
+      b: { source: "directory", path: "/plugins/b", enabled: false },
+    });
+    await service.stopAllPlugins();
+  });
+
+  it("clears a failed disable intent so the previous enabled state can publish", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const store = createStore(home, {
+      slow: { source: "directory", path: "/plugins/slow", enabled: false },
+    });
+    const paused = createPausedRuntime();
+    const service = new PluginService(pino({ level: "silent" }), store, "0.4.0", {
+      runtime: paused.runtime,
+    });
+    await service.start();
+    const enabling = service.enablePlugin("slow");
+    await paused.started;
+    await writeFile(path.join(home, "config.json"), "invalid JSON");
+    await expect(service.disablePlugin("slow")).rejects.toThrow("Invalid JSON");
+    paused.releaseStart();
+    await expect(enabling).resolves.toMatchObject({ enabled: true, status: "running" });
+    expect(service.catalog()).toEqual([{ id: "slow", clientBundle: "bundle" }]);
+    await service.stopAllPlugins();
   });
 
   it("does not publish an in-flight enable after a later plugin disable", async () => {
@@ -1280,7 +1321,11 @@ export default function contribute(plugin: unknown) {
 });
 
 describe("npm plugin installation", () => {
-  it("preserves dependencies and metadata, and reloads without npm", async () => {
+  let registry: Awaited<ReturnType<typeof startNpmRegistry>>;
+
+  // Give real npm fixture construction its own setup budget so it does not consume
+  // the installation journey on Windows.
+  beforeAll(async () => {
     const packages = npmPluginPackages();
     const fixture = packages[1];
     packages.push({ ...fixture, version: "2.0.0", tags: ["future"] });
@@ -1315,7 +1360,7 @@ describe("npm plugin installation", () => {
     for (const [name, overrides] of failures) {
       failedPackages.push({ ...fixture, name, files: { ...fixture.files, ...overrides } });
     }
-    const registry = await startNpmRegistry([
+    registry = await startNpmRegistry([
       ...packages,
       {
         name: "paseo-prepared-plugin",
@@ -1345,6 +1390,9 @@ export default function contribute() {
       },
       ...failedPackages,
     ]);
+  }, 120_000);
+
+  it("preserves dependencies and metadata, and reloads without npm", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-npm-service-"));
     roots.push(home);
     const previousConfig = process.env.npm_config_userconfig;

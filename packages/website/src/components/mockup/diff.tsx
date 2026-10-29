@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Rows3,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Code, DiffStat } from "./atoms";
 import { TABBAR_H } from "./geometry";
 import { ReactFileIcon } from "./icons";
@@ -536,10 +537,11 @@ export function ChangesBranchRow() {
 }
 
 export function ChangesScopeRow() {
+  const { t } = useTranslation();
   return (
     <div className="flex h-[36px] shrink-0 items-center border-b border-mock-border px-[14px]">
       <span className="flex items-center gap-[5px] text-[12px] text-mock-fg-muted">
-        Uncommitted
+        {t("landing.mockup.app.uncommitted")}
         <ChevronDown size={12} />
       </span>
       <span className="ml-[9px] flex items-center gap-[5px] text-[11.5px] tabular-nums">
@@ -556,10 +558,11 @@ export function ChangesScopeRow() {
 }
 
 export function ChangesCommitsRow() {
+  const { t } = useTranslation();
   return (
     <div className="flex h-[36px] shrink-0 items-center gap-[8px] border-t border-mock-border px-[10px] text-[12px] text-mock-fg">
       <ChevronRight size={13} className="text-mock-fg-muted" />
-      Commits
+      {t("landing.mockup.app.commits")}
     </div>
   );
 }

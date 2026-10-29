@@ -12,17 +12,12 @@ export async function resolveSessionAdmission(input: {
   credential: WSHelloMessage["auth"];
   passwordHash: string | undefined;
   localCredential: string | null;
-  transport: "direct" | "relay";
 }): Promise<AdmissionResolution> {
-  const { credential, passwordHash, localCredential, transport } = input;
+  const { credential, passwordHash, localCredential } = input;
   if (!passwordHash) {
     return { admission: { principalId: "owner", permissions: OWNER_PERMISSIONS } };
   }
   if (!credential) {
-    // COMPAT(relayPasswordOptional): added in v0.9.1, remove once release N mobile builds are live on App Store and Play.
-    if (transport === "relay") {
-      return { admission: { principalId: "owner", permissions: OWNER_PERMISSIONS } };
-    }
     return { rejection: "password_required" };
   }
   if (credential.kind === "localCredential") {

@@ -8,6 +8,7 @@ import { AgentManager } from "../agent-manager.js";
 import type { AgentStreamEvent, AgentTimelineItem } from "../agent-sdk-types.js";
 import {
   MOCK_LOAD_TEST_DEFAULT_MODEL_ID,
+  MOCK_LOAD_TEST_HANDLED_COMMAND,
   MockLoadTestAgentClient,
 } from "./mock-load-test-agent.js";
 
@@ -47,6 +48,18 @@ describe("MockLoadTestAgentClient", () => {
         intervalMs: 40,
       },
     });
+  });
+
+  test("lists the command it handles without starting a turn", async () => {
+    const client = new MockLoadTestAgentClient();
+    const session = await client.createSession({ provider: "mock", cwd: process.cwd() });
+
+    const commands = (await session.listCommands?.()) ?? [];
+
+    expect(commands.map((command) => `/${command.name} ${command.argumentHint}`)).toEqual([
+      MOCK_LOAD_TEST_HANDLED_COMMAND,
+    ]);
+    expect(session.tryHandleOutOfBand?.(MOCK_LOAD_TEST_HANDLED_COMMAND)).not.toBeNull();
   });
 
   test("rejects the configured number of prompts before starting a retry", async () => {

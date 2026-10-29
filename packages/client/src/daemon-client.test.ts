@@ -1,13 +1,16 @@
 import { readFileSync } from "node:fs";
-import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
 import {
   DaemonClient,
+  DaemonConnectionError,
   supportsUsageReports,
   type DaemonClientTrace,
   type CreateAgentRequestOptions,
   type DaemonTransport,
   type Logger,
+  type PluginClientBundle,
+  type PluginClientBundleStore,
 } from "./daemon-client";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
@@ -200,38 +203,75 @@ test("traces WebSocket frames, message types, and JSON parse duration", async ()
   mock.triggerOpen({ preserveSent: true });
   await connectPromise;
 
-  expect(recorder.records).toEqual([
-    {
-      phase: "begin",
-      name: "paseo.ws.message.outbound",
-      args: { envelopeType: "hello", messageType: "hello" },
-    },
-    { phase: "end" },
-    {
-      phase: "begin",
-      name: "paseo.ws.frame.outbound",
-      args: { kind: "text", size: expect.any(String) },
-    },
-    { phase: "end" },
-    {
-      phase: "begin",
-      name: "paseo.ws.frame.inbound",
-      args: { kind: "text", size: expect.any(String) },
-    },
-    {
-      phase: "begin",
-      name: "paseo.ws.json.parse",
-      args: { size: expect.any(String) },
-    },
-    { phase: "end" },
-    {
-      phase: "begin",
-      name: "paseo.ws.message.inbound",
-      args: { envelopeType: "session", messageType: "status" },
-    },
-    { phase: "end" },
-    { phase: "end" },
-  ]);
+  const response = client.fetchAgents({ requestId: "diagnostic-request", scope: "active" });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: "diagnostic-request",
+        entries: [],
+        pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
+      },
+    }),
+  );
+  await response;
+  const spans = recorder.records.filter((record) => record.phase === "begin");
+  expect(spans).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        name: "paseo.ws.frame.inbound",
+        args: {
+          kind: "text",
+          size: expect.any(String),
+          sizeUnit: "utf16-code-units",
+          connectionAttempt: "1",
+        },
+      }),
+      expect.objectContaining({ name: "paseo.ws.json.parse" }),
+      expect.objectContaining({ name: "paseo.ws.validate" }),
+      expect.objectContaining({
+        name: "paseo.ws.message.outbound",
+        args: {
+          envelopeType: "session",
+          messageType: "fetch_agents_request",
+          requestId: "diagnostic-request",
+          connectionAttempt: "1",
+        },
+      }),
+      expect.objectContaining({
+        name: "paseo.ws.message.inbound",
+        args: {
+          envelopeType: "session",
+          messageType: "fetch_agents_response",
+          requestId: "diagnostic-request",
+          connectionAttempt: "1",
+        },
+      }),
+      expect.objectContaining({
+        name: "paseo.ws.dispatch",
+        args: {
+          messageType: "fetch_agents_response",
+          requestId: "diagnostic-request",
+          connectionAttempt: "1",
+        },
+      }),
+    ]),
+  );
+  const stack: string[] = [];
+  const parentage: [string, string | undefined][] = [];
+  for (const record of recorder.records) {
+    if (record.phase === "begin") {
+      parentage.push([record.name, stack.at(-1)]);
+      stack.push(record.name);
+    } else {
+      expect(stack.length).toBeGreaterThan(0);
+      stack.pop();
+    }
+  }
+  expect(stack).toEqual([]);
+  expect(parentage).toContainEqual(["paseo.ws.frame.outbound", "paseo.ws.message.outbound"]);
+  expect(parentage).toContainEqual(["paseo.ws.dispatch", "paseo.ws.frame.inbound"]);
+  expect(JSON.stringify(recorder.records)).not.toContain("trace_unit_test");
 });
 
 test("does not infer browser automation capabilities from Electron runtime", async () => {
@@ -873,9 +913,35 @@ test("keeps relay upgrade credentials out of the socket request", async () => {
     },
   });
   clients.push(client);
-  void client.connect();
+  const connecting = client.connect();
+  void connecting.catch(() => {});
   await vi.waitFor(() => expect(requests).toHaveLength(1));
   expect(requests[0]).toEqual({ url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2" });
+  await client.close();
+  await expect(connecting).rejects.toThrow("Daemon client closed");
+});
+
+test("keeps relay upgrade credentials out of the socket request without E2EE", async () => {
+  const mock = createMockTransport();
+  const requests: Array<{ url: string; headers?: Record<string, string>; protocols?: string[] }> =
+    [];
+  const client = new DaemonClient({
+    url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2",
+    clientId: "clsk_relay_header_test",
+    authHeader: "Bearer synthetic-review-token",
+    reconnect: { enabled: false },
+    transportFactory: (request) => {
+      requests.push(request);
+      return mock.transport;
+    },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  void connecting.catch(() => {});
+  await vi.waitFor(() => expect(requests).toHaveLength(1));
+  expect(requests[0]).toEqual({ url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2" });
+  await client.close();
+  await expect(connecting).rejects.toThrow("Daemon client closed");
 });
 
 test("refuses relay password auth without an encrypted hello", async () => {
@@ -1038,6 +1104,7 @@ test("advertises client capabilities in hello", async () => {
       timeline_notifications: true,
       plugin_timeline_items: true,
       workspace_setup_blocked: true,
+      workspace_setup_observation: true,
       hello_rejection: true,
       browser_host: {
         supportedCommands: ["list_tabs"],
@@ -1575,6 +1642,77 @@ test("preserves legacy fetchAgent id overload", async () => {
   await expect(responsePromise).rejects.toThrow("legacy fetch sentinel");
 });
 
+test.each([undefined, false, true])(
+  "loads history with whole-turn support advertised as %s",
+  async (wholeTurnTimeline) => {
+    const transport = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "history-compatibility",
+      reconnect: { enabled: false },
+      transportFactory: () => transport.transport,
+    });
+    clients.push(client);
+    const connected = client.connect();
+    transport.triggerOpen({
+      features: wholeTurnTimeline === undefined ? {} : { wholeTurnTimeline },
+    });
+    await connected;
+
+    const requests = [
+      { direction: "tail" as const },
+      { direction: "before" as const, cursor: { epoch: "epoch-1", seq: 50 } },
+      { direction: "after" as const, cursor: { epoch: "epoch-1", seq: 50 } },
+      { direction: "before" as const, cursor: { epoch: "epoch-1", seq: 80 }, mergeWindow: true },
+    ];
+    for (const [index, request] of requests.entries()) {
+      const requestId = `history-${index}`;
+      const result = client.fetchAgentTimeline("agent-1", {
+        ...request,
+        requestId,
+        wholeTurns: true,
+        limit: 40,
+        projection: "projected",
+      });
+      // Attach immediately so the old rejection is captured by the regression.
+      const completed = expect(result).resolves.toMatchObject({ requestId, entries: [] });
+      expect(parseSentFrame(transport.sent.at(-1))).toEqual({
+        type: "fetch_agent_timeline_request",
+        agentId: "agent-1",
+        requestId,
+        ...request,
+        limit: 40,
+        projection: "projected",
+        ...(wholeTurnTimeline === true ? { wholeTurns: true } : {}),
+      });
+      transport.triggerMessage(
+        wrapSessionMessage({
+          type: "fetch_agent_timeline_response",
+          payload: {
+            requestId,
+            agentId: "agent-1",
+            agent: null,
+            direction: request.direction,
+            projection: "projected",
+            epoch: "epoch-1",
+            reset: false,
+            staleCursor: false,
+            gap: false,
+            window: { minSeq: 0, maxSeq: 0, nextSeq: 1 },
+            startCursor: null,
+            endCursor: null,
+            hasOlder: false,
+            hasNewer: false,
+            entries: [],
+            error: null,
+          },
+        }),
+      );
+      await completed;
+    }
+  },
+);
+
 test("honors explicit fetchAgentTimeline timeout below the session RPC default", async () => {
   useHeartbeatClock();
   const logger = createMockLogger();
@@ -1961,6 +2099,382 @@ test("gets a structured plugin log snapshot", async () => {
       message: "ready",
     },
   ]);
+});
+
+describe("plugin catalog", () => {
+  async function connectedClient(createStore?: (serverId: string) => PluginClientBundleStore) {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger: createMockLogger(),
+      createPluginClientBundleStore: createStore,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+    const connectPromise = client.connect();
+    mock.triggerOpen({ features: { plugins: true } });
+    await connectPromise;
+    return { client, mock };
+  }
+
+  async function fetchCatalog(
+    harness: Awaited<ReturnType<typeof connectedClient>>,
+    respond: (request: Record<string, unknown>) => Array<Record<string, unknown>>,
+  ) {
+    const before = harness.mock.sent.length;
+    const response = harness.client.getPluginCatalog();
+    await vi.waitFor(() => expect(harness.mock.sent.length).toBeGreaterThan(before));
+    const request = parseSentFrame(harness.mock.sent.at(-1));
+    harness.mock.triggerMessage(
+      wrapSessionMessage({
+        type: "plugin.catalog.get.response",
+        payload: { requestId: request.requestId, plugins: respond(request) },
+      }),
+    );
+    return { request, plugins: await response };
+  }
+
+  test("reuses retained client bundles the daemon leaves out", async () => {
+    const harness = await connectedClient();
+    const first = await fetchCatalog(harness, () => [
+      { id: "kept", clientBundle: "kept bundle", clientBundleHash: "hash-kept" },
+      { id: "changed", clientBundle: "old bundle", clientBundleHash: "hash-old" },
+    ]);
+    expect(first.request).not.toHaveProperty("cachedClientBundles");
+
+    const second = await fetchCatalog(harness, () => [
+      { id: "kept", clientBundleHash: "hash-kept" },
+      { id: "changed", clientBundle: "new bundle", clientBundleHash: "hash-new" },
+    ]);
+
+    expect(second.request.cachedClientBundles).toEqual([
+      { id: "kept", clientBundleHash: "hash-kept" },
+      { id: "changed", clientBundleHash: "hash-old" },
+    ]);
+    expect(second.plugins).toEqual([
+      { id: "kept", clientBundle: "kept bundle", clientBundleHash: "hash-kept" },
+      { id: "changed", clientBundle: "new bundle", clientBundleHash: "hash-new" },
+    ]);
+    const third = await fetchCatalog(harness, () => []);
+    expect(third.request.cachedClientBundles).toEqual([
+      { id: "kept", clientBundleHash: "hash-kept" },
+      { id: "changed", clientBundleHash: "hash-new" },
+    ]);
+    const fourth = await fetchCatalog(harness, () => []);
+    expect(fourth.request).not.toHaveProperty("cachedClientBundles");
+  });
+
+  test("keeps fetching every bundle from a daemon that sends no bundle hashes", async () => {
+    const harness = await connectedClient();
+    const legacyCatalog = () => [{ id: "legacy", clientBundle: "legacy bundle" }];
+    await fetchCatalog(harness, legacyCatalog);
+
+    const second = await fetchCatalog(harness, legacyCatalog);
+
+    expect(second.request).not.toHaveProperty("cachedClientBundles");
+    expect(second.plugins).toEqual([{ id: "legacy", clientBundle: "legacy bundle" }]);
+  });
+
+  test("a fresh client advertises persisted bundles on its first fetch and expands omitted code", async () => {
+    let persisted: PluginClientBundle[] = [];
+    let loads = 0;
+    const store: PluginClientBundleStore = {
+      async load() {
+        loads++;
+        return persisted;
+      },
+      async replace(bundles) {
+        persisted = bundles;
+      },
+    };
+    const createdFor: string[] = [];
+    const createStore = (serverId: string) => {
+      createdFor.push(serverId);
+      return store;
+    };
+    const bundle = { id: "kept", clientBundleHash: "hash-kept", clientBundle: "stored code" };
+    const warm = await connectedClient(createStore);
+    await fetchCatalog(warm, () => [bundle]);
+    const cold = await connectedClient(createStore);
+    const first = await fetchCatalog(cold, () => [{ id: "kept", clientBundleHash: "hash-kept" }]);
+    expect(first.request.cachedClientBundles).toEqual([
+      { id: "kept", clientBundleHash: "hash-kept" },
+    ]);
+    expect(first.plugins).toEqual([bundle]);
+    expect(loads).toBe(2);
+    await fetchCatalog(cold, () => []);
+    expect(loads).toBe(2);
+    expect(createdFor).toEqual([
+      warm.client.getLastServerInfoMessage()!.serverId,
+      cold.client.getLastServerInfoMessage()!.serverId,
+    ]);
+    expect(persisted).toEqual([]);
+  });
+
+  test.each(["missing", "unreadable"])(
+    "a %s persistent cache requests full bundles",
+    async (state) => {
+      const store: PluginClientBundleStore = {
+        async load() {
+          if (state === "unreadable") throw new Error("Storage unavailable");
+          return [];
+        },
+        async replace() {},
+      };
+      const bundle = { id: "full", clientBundleHash: "hash-full", clientBundle: "full code" };
+      const result = await fetchCatalog(await connectedClient(() => store), () => [bundle]);
+      expect(result.request).not.toHaveProperty("cachedClientBundles");
+      expect(result.plugins).toEqual([bundle]);
+    },
+  );
+
+  test("failed cache writes never fail plugin loading", async () => {
+    const store: PluginClientBundleStore = {
+      async load() {
+        return [];
+      },
+      async replace() {
+        throw new Error("Disk full");
+      },
+    };
+    const bundle = { id: "full", clientBundleHash: "hash-full", clientBundle: "full code" };
+    expect(
+      (await fetchCatalog(await connectedClient(() => store), () => [bundle])).plugins,
+    ).toEqual([bundle]);
+  });
+
+  test.each([false, true])(
+    "usable catalogs do not wait for storage; latest write survives a failed first write: %s",
+    async (failFirstWrite) => {
+      const writes: PluginClientBundle[][] = [];
+      let finishWrite = () => {};
+      const blockedWrite = new Promise<void>((resolve) => {
+        finishWrite = resolve;
+      });
+      const store: PluginClientBundleStore = {
+        async load() {
+          return [];
+        },
+        async replace(bundles) {
+          writes.push(bundles);
+          if (writes.length === 1) {
+            await blockedWrite;
+            if (failFirstWrite) throw new Error("Disk full");
+          }
+        },
+      };
+      const harness = await connectedClient(() => store);
+      const first = { id: "plugin", clientBundle: "old", clientBundleHash: "hash-old" };
+      const changed = { id: "plugin", clientBundle: "new", clientBundleHash: "hash-new" };
+      try {
+        expect((await fetchCatalog(harness, () => [first])).plugins).toEqual([first]);
+        await vi.waitFor(() => expect(writes).toEqual([[first]]));
+        expect((await fetchCatalog(harness, () => [changed])).plugins).toEqual([changed]);
+        expect((await fetchCatalog(harness, () => [])).plugins).toEqual([]);
+        expect(writes).toEqual([[first]]);
+        finishWrite();
+        await vi.waitFor(() => expect(writes).toEqual([[first], []]));
+      } finally {
+        finishWrite();
+      }
+    },
+  );
+});
+
+test("keeps a plugin reload pending past the session RPC deadline", async () => {
+  useHeartbeatClock();
+  try {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const reload = client.reloadPlugin("example");
+    let settled: "pending" | "resolved" | "rejected" = "pending";
+    void reload.then(
+      () => {
+        settled = "resolved";
+        return null;
+      },
+      () => {
+        settled = "rejected";
+        return null;
+      },
+    );
+
+    const request = parseSentFrame(mock.sent[0]);
+    expect(request).toEqual({
+      type: "plugin.reload.request",
+      requestId: expect.any(String),
+      pluginId: "example",
+    });
+
+    // A daemon that reloads for almost two minutes is still reloading, not a failed request.
+    await vi.advanceTimersByTimeAsync(114_034);
+    expect(settled).toBe("pending");
+
+    // Another plugin's reload finishing early must not settle this request.
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "plugin.reload.response",
+        payload: {
+          requestId: "req-other-plugin",
+          plugin: { id: "other", path: "/plugins/other", enabled: true, status: "running" },
+        },
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe("pending");
+
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "plugin.reload.response",
+        payload: {
+          requestId: request.requestId,
+          plugin: { id: "example", path: "/plugins/example", enabled: true, status: "running" },
+        },
+      }),
+    );
+
+    await expect(reload).resolves.toEqual({
+      id: "example",
+      path: "/plugins/example",
+      enabled: true,
+      status: "running",
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("keeps enable and disable inside the session RPC deadline", async () => {
+  useHeartbeatClock();
+  try {
+    for (const action of ["enable", "disable"] as const) {
+      const mock = createMockTransport();
+      const client = new DaemonClient({
+        url: "ws://test",
+        clientId: "clsk_unit_test",
+        logger: createMockLogger(),
+        reconnect: { enabled: false },
+        transportFactory: () => mock.transport,
+      });
+      clients.push(client);
+
+      const connectPromise = client.connect();
+      mock.triggerOpen();
+      await connectPromise;
+
+      const pending =
+        action === "enable" ? client.enablePlugin("example") : client.disablePlugin("example");
+      let settled = false;
+      void pending.then(
+        () => {
+          settled = true;
+          return null;
+        },
+        () => {
+          settled = true;
+          return null;
+        },
+      );
+
+      expect(parseSentFrame(mock.sent[0])).toEqual({
+        type: `plugin.${action}.request`,
+        requestId: expect.any(String),
+        pluginId: "example",
+      });
+
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(pending).rejects.toThrow("Timeout waiting for message (60000ms)");
+    }
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("reports a plugin reload failure that arrives after the session RPC deadline", async () => {
+  useHeartbeatClock();
+  try {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    const reload = client.reloadPlugin("example");
+    const request = parseSentFrame(mock.sent[0]);
+
+    await vi.advanceTimersByTimeAsync(114_034);
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "rpc_error",
+        payload: {
+          requestId: request.requestId,
+          requestType: "plugin.reload.request",
+          error: "Request failed: Plugin failed to start: example",
+          code: "handler_error",
+        },
+      }),
+    );
+
+    await expect(reload).rejects.toThrow(
+      "Request failed: Plugin failed to start: example requestType=plugin.reload.request code=handler_error",
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("rejects a pending plugin reload when the connection closes", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const reload = client.reloadPlugin("example");
+  expect(parseSentFrame(mock.sent[0])).toMatchObject({ type: "plugin.reload.request" });
+
+  mock.triggerClose({ code: 1006, reason: "network lost" });
+
+  await expect(reload).rejects.toThrow(/network lost|disconnected|closed/i);
+
+  // Reconnecting must not resend the lost reload: only the caller decides to reload again.
+  const reconnecting = client.connect();
+  mock.triggerOpen();
+  await reconnecting;
+  expect(mock.sent).toEqual([]);
 });
 
 test("keeps waitForAgentUpsert initial fetch inside the requested deadline", async () => {
@@ -3140,62 +3654,6 @@ test("sends create_agent_request with workspace and caller identity", async () =
   await expect(createPromise).rejects.toThrow("compat test sentinel");
 });
 
-test("sends worktree target and autoArchive in create_agent_request", async () => {
-  const logger = createMockLogger();
-  const mock = createMockTransport();
-
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger,
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
-
-  const connectPromise = client.connect();
-  mock.triggerOpen();
-  await connectPromise;
-
-  const createPromise = client.createAgent({
-    provider: "codex",
-    cwd: "/tmp/project",
-    worktree: {
-      mode: "branch-off",
-      newBranch: "agent-lifecycle-dispatch",
-      base: "main",
-    },
-    autoArchive: true,
-  });
-
-  expect(mock.sent).toHaveLength(1);
-  const request = parseSentFrame(mock.sent[0]);
-  expect(request).toEqual(
-    expect.objectContaining({
-      type: "create_agent_request",
-      worktree: {
-        mode: "branch-off",
-        newBranch: "agent-lifecycle-dispatch",
-        base: "main",
-      },
-      autoArchive: true,
-    }),
-  );
-
-  mock.triggerMessage(
-    wrapSessionMessage({
-      type: "status",
-      payload: {
-        status: "agent_create_failed",
-        requestId: request.requestId,
-        error: "worktree auto archive sentinel",
-      },
-    }),
-  );
-
-  await expect(createPromise).rejects.toThrow("worktree auto archive sentinel");
-});
-
 test("sends internal in create_agent_request when the host advertises internal agents", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -3412,120 +3870,6 @@ test("sends structured attachments with create_agent_request", async () => {
   );
 
   await expect(createPromise).rejects.toThrow("attachment test sentinel");
-});
-
-test("sends worktree base-ref fields in create_agent_request git options", async () => {
-  const logger = createMockLogger();
-  const mock = createMockTransport();
-
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger,
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
-
-  const connectPromise = client.connect();
-  mock.triggerOpen();
-  await connectPromise;
-
-  const createPromise = client.createAgent({
-    provider: "codex",
-    cwd: "/tmp/project",
-    requestId: "req-agent-ref",
-    git: {
-      createWorktree: true,
-      worktreeSlug: "review-pr-123",
-      refName: "feature/worktree-base-ref",
-      action: "checkout",
-      githubPrNumber: 123,
-    },
-  });
-
-  expect(mock.sent).toHaveLength(1);
-  const request = parseSentFrame(mock.sent[0]);
-  expect(request.git).toEqual({
-    createWorktree: true,
-    worktreeSlug: "review-pr-123",
-    refName: "feature/worktree-base-ref",
-    action: "checkout",
-    githubPrNumber: 123,
-  });
-
-  mock.triggerMessage(
-    wrapSessionMessage({
-      type: "status",
-      payload: {
-        status: "agent_create_failed",
-        requestId: request.requestId,
-        error: "git ref fields sentinel",
-      },
-    }),
-  );
-
-  await expect(createPromise).rejects.toThrow("git ref fields sentinel");
-});
-
-test("omitting create_agent_request worktree base-ref fields preserves legacy wire shape", async () => {
-  const logger = createMockLogger();
-  const mock = createMockTransport();
-
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger,
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
-
-  const connectPromise = client.connect();
-  mock.triggerOpen();
-  await connectPromise;
-
-  const createPromise = client.createAgent({
-    provider: "codex",
-    cwd: "/tmp/project",
-    requestId: "req-agent-legacy",
-    git: {
-      createWorktree: true,
-      worktreeSlug: "feature-a",
-    },
-  });
-
-  expect(assertStr(mock.sent[0])).toBe(
-    JSON.stringify({
-      type: "session",
-      message: {
-        type: "create_agent_request",
-        config: {
-          provider: "codex",
-          cwd: "/tmp/project",
-        },
-        git: {
-          createWorktree: true,
-          worktreeSlug: "feature-a",
-        },
-        labels: {},
-        requestId: "req-agent-legacy",
-      },
-    }),
-  );
-
-  mock.triggerMessage(
-    wrapSessionMessage({
-      type: "status",
-      payload: {
-        status: "agent_create_failed",
-        requestId: "req-agent-legacy",
-        error: "legacy git shape sentinel",
-      },
-    }),
-  );
-
-  await expect(createPromise).rejects.toThrow("legacy git shape sentinel");
 });
 
 test("sends structured first-agent context attachments with create_paseo_worktree_request", async () => {
@@ -4216,6 +4560,40 @@ test("reconnects after relay close with replaced-by-new-connection reason", asyn
 
     second.triggerOpen();
     expect(client.getConnectionState().status).toBe("connected");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("stops reconnecting after the transport closes for an endpoint security failure", async () => {
+  const close = { code: 4002, reason: "legacy security below required minimum" };
+  const error = "Endpoint security handshake failed: legacy security below required minimum";
+  useHeartbeatClock();
+  try {
+    let attempts = 0;
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2",
+      clientId: "clsk_security_close_test",
+      e2ee: { enabled: true, daemonPublicKeyB64: "daemon-public-key" },
+      reconnect: { enabled: true, baseDelayMs: 1, maxDelayMs: 1 },
+      transportFactory: () => {
+        attempts += 1;
+        return mock.transport;
+      },
+    });
+    clients.push(client);
+
+    const connecting = client.connect();
+    void connecting.catch(() => {});
+    await vi.waitFor(() => expect(attempts).toBe(1));
+    mock.triggerClose(close);
+
+    await expect(connecting).rejects.toThrow(error);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(attempts).toBe(1);
+    expect(client.getConnectionState().status).toBe("disconnected");
+    expect(client.lastError).toContain(error);
   } finally {
     vi.useRealTimers();
   }
@@ -7648,4 +8026,448 @@ test("measures an outbound message in UTF-8 bytes against the daemon's message l
   );
   expect(mock.sent).toHaveLength(1);
   expect(client.getConnectionState().status).toBe("connected");
+});
+
+test("sends worktree target and autoArchive in create_agent_request", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const createPromise = client.createAgent({
+    provider: "codex",
+    cwd: "/tmp/project",
+    worktree: {
+      mode: "branch-off",
+      newBranch: "agent-lifecycle-dispatch",
+      base: "main",
+    },
+    autoArchive: true,
+  });
+
+  expect(mock.sent).toHaveLength(1);
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toEqual(
+    expect.objectContaining({
+      type: "create_agent_request",
+      worktree: {
+        mode: "branch-off",
+        newBranch: "agent-lifecycle-dispatch",
+        base: "main",
+      },
+      autoArchive: true,
+    }),
+  );
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_create_failed",
+        requestId: request.requestId,
+        error: "worktree auto archive sentinel",
+      },
+    }),
+  );
+
+  await expect(createPromise).rejects.toThrow("worktree auto archive sentinel");
+});
+
+test("ordinary lifecycle queues new calls, distinguishes submitted outcomes, and never resends lost requests", async () => {
+  const transports = [createMockTransport(), createMockTransport(), createMockTransport()];
+  let attempt = 0;
+  const client = new DaemonClient({
+    url: "ws://transport",
+    clientId: "ordinary-lifecycle",
+    reconnect: { enabled: false },
+    transportFactory: () => transports[attempt++]!.transport,
+  });
+  clients.push(client);
+  const first = transports[0]!;
+  const connecting = client.connect();
+  const initial = client.getDaemonConfig("initial").catch((error: unknown) => error);
+  expect(first.sent).toEqual([]);
+  first.triggerOpen();
+  await connecting;
+  expect(parseSentFrame(first.sent[0]).requestId).toBe("initial");
+  first.triggerMessage(
+    wrapSessionMessage({
+      type: "rpc_error",
+      payload: { requestId: "initial", error: "Denied", code: "access_denied" },
+    }),
+  );
+  expect(await initial).toMatchObject({ code: "access_denied", serverId: "srv_test_1" });
+  const submitted = client
+    .patchDaemonConfig({ pluginsEnabled: false }, "submitted")
+    .catch((error: unknown) => error);
+  first.triggerClose({ code: 1001, reason: "physical loss" });
+  const unknown = await submitted;
+  expect(unknown).toBeInstanceOf(DaemonConnectionError);
+  expect(unknown).toMatchObject({
+    code: "DAEMON_CONNECTION_LOST",
+    outcome: "unknown",
+    serverId: "srv_test_1",
+  });
+
+  expect(() => client.ensureConnected()).not.toThrow();
+  const second = transports[1]!;
+  const neverSent = client
+    .patchDaemonConfig({ pluginsEnabled: true }, "never-sent")
+    .catch((error: unknown) => error);
+  expect(second.sent).toEqual([]);
+  second.triggerClose({ code: 1001, reason: "handshake lost" });
+  const unavailable = await neverSent;
+  expect(unavailable).toBeInstanceOf(DaemonConnectionError);
+  expect(unavailable).toMatchObject({ code: "DAEMON_CONNECTION_LOST", serverId: "srv_test_1" });
+  expect((unavailable as DaemonConnectionError).outcome).toBeUndefined();
+
+  client.ensureConnected();
+  const third = transports[2]!;
+  const recovery = client.getDaemonConfig("recovery").catch((error: unknown) => error);
+  expect(third.sent).toEqual([]);
+  third.triggerOpen();
+  expect(third.sent.map(parseSentFrame).map((frame) => frame.requestId)).toEqual(["recovery"]);
+  third.triggerMessage(
+    wrapSessionMessage({
+      type: "rpc_error",
+      payload: { requestId: "recovery", error: "Denied", code: "access_denied" },
+    }),
+  );
+  expect(await recovery).toMatchObject({ code: "access_denied" });
+});
+
+test.each([false, true])(
+  "synchronous send rejection leaves no unknown outcome after close (close during handoff: %s)",
+  async (closeDuringSend) => {
+    const first = createMockTransport();
+    const second = createMockTransport();
+    const rejected = Object.assign(new Error("Transport rejected this send"), {
+      code: "resource_limit",
+    });
+    const originalSend = first.transport.send;
+    first.transport.send = (data) => {
+      if (typeof data === "string" && data.includes("set_daemon_config_request")) {
+        if (closeDuringSend) first.triggerClose({ code: 1001, reason: "closed during send" });
+        throw rejected;
+      }
+      originalSend(data);
+    };
+    let attempt = 0;
+    const client = new DaemonClient({
+      url: "ws://transport",
+      clientId: "rejected-send",
+      reconnect: { enabled: false },
+      transportFactory: () => [first, second][attempt++]!.transport,
+    });
+    clients.push(client);
+    const connected = client.connect();
+    first.triggerOpen();
+    await connected;
+    await expect(client.patchDaemonConfig({ pluginsEnabled: false }, "rejected")).rejects.toBe(
+      rejected,
+    );
+    first.triggerClose({ code: 1001, reason: "lost connection" });
+    client.ensureConnected();
+    const queued = client.getDaemonConfig("not-submitted").catch((error: unknown) => error);
+    second.triggerClose({ code: 1001, reason: "lost handshake" });
+    const failure = (await queued) as DaemonConnectionError;
+    expect(failure).toBeInstanceOf(DaemonConnectionError);
+    expect(failure.outcome).toBeUndefined();
+    expect((rejected as Error & { outcome?: string }).outcome).toBeUndefined();
+  },
+);
+
+test("initial acquisition preserves structured transport failures and ordinary offline errors retain their cause", async () => {
+  const transport = createMockTransport();
+  const failure = Object.assign(new Error("Destination identity changed"), {
+    code: "server_id_mismatch",
+    serverId: "srv_expected",
+  });
+  const client = new DaemonClient({
+    url: "ws://transport",
+    clientId: "structured-acquisition",
+    reconnect: { enabled: false },
+    transportFactory: () => transport.transport,
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  const rejected = expect(connecting).rejects.toBe(failure);
+  transport.triggerError(failure);
+  await rejected;
+  await expect(client.getDaemonConfig()).rejects.toMatchObject({
+    code: "DAEMON_CONNECTION_LOST",
+    cause: failure,
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Relay endpoint security through the real secure channel
+// ---------------------------------------------------------------------------
+
+import {
+  createDaemonChannel,
+  exportPublicKey,
+  generateKeyPair,
+  openDaemonSecureChannel,
+  type SecureChannel,
+  type Transport as RelayWire,
+} from "@getpaseo/relay/e2ee";
+
+/**
+ * An in-memory socket pair: the client side is a DaemonTransport, the daemon
+ * side is the relay Transport the daemon's secure channel runs over. Frames
+ * are delivered asynchronously like a real socket, and a close from either
+ * side reaches the other with its code, as the browser WebSocket does.
+ */
+function createRelayLink(options?: { toDaemon?: (text: string) => string }) {
+  const clientOpen = new Set<() => void>();
+  const clientClose = new Set<(event?: unknown) => void>();
+  const clientError = new Set<(event?: unknown) => void>();
+  const clientMessage = new Set<(data: unknown, isBinary: boolean) => void>();
+  let closed = false;
+  const wire: RelayWire = {
+    send: (data) => {
+      if (closed) throw new Error("socket closed");
+      const isBinary = typeof data !== "string";
+      setTimeout(() => {
+        for (const handler of clientMessage) handler(data, isBinary);
+      }, 0);
+    },
+    close: (code = 1005, reason = "") => shutdown(code, reason),
+    onmessage: null,
+    onclose: null,
+    onerror: null,
+  };
+  const shutdown = (code: number, reason: string) => {
+    if (closed) return;
+    closed = true;
+    setTimeout(() => {
+      wire.onclose?.(code, reason);
+      for (const handler of clientClose) handler({ code, reason });
+    }, 0);
+  };
+  const transport: DaemonTransport = {
+    send: (data) => {
+      if (closed) throw new Error("socket closed");
+      if (typeof data === "string") {
+        const text = options?.toDaemon ? options.toDaemon(data) : data;
+        setTimeout(() => wire.onmessage?.({ data: text, isBinary: false }), 0);
+        return;
+      }
+      const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
+      const copy = bytes.slice().buffer as ArrayBuffer;
+      setTimeout(() => wire.onmessage?.({ data: copy, isBinary: true }), 0);
+    },
+    close: (code = 1005, reason = "") => shutdown(code, reason),
+    onOpen: (handler) => {
+      clientOpen.add(handler);
+      return () => clientOpen.delete(handler);
+    },
+    onClose: (handler) => {
+      clientClose.add(handler);
+      return () => clientClose.delete(handler);
+    },
+    onError: (handler) => {
+      clientError.add(handler);
+      return () => clientError.delete(handler);
+    },
+    onMessage: (handler) => {
+      clientMessage.add(handler);
+      return () => clientMessage.delete(handler);
+    },
+  };
+  return {
+    transport,
+    wire,
+    open: () => {
+      for (const handler of clientOpen) handler();
+    },
+    isClosed: () => closed,
+  };
+}
+
+function serverInfoFrame(features: Record<string, boolean>): string {
+  return wrapSessionMessage({
+    type: "status",
+    payload: {
+      status: "server_info",
+      serverId: "srv_test",
+      hostname: null,
+      version: null,
+      features,
+    },
+  });
+}
+
+/** Opens the daemon side of a link and answers the application hello with the daemon's feature flags. */
+function serveProtectedDaemon(
+  link: ReturnType<typeof createRelayLink>,
+  keys: ReturnType<typeof generateKeyPair>,
+  features: Record<string, boolean>,
+  received: unknown[] = [],
+): void {
+  let channel: SecureChannel | null = null;
+  const pendingAnswers: string[] = [];
+  const opened = openDaemonSecureChannel(link.wire, {
+    daemonKeyPair: keys,
+    events: {
+      onmessage: (data) => {
+        received.push(data);
+        if (typeof data !== "string") return;
+        const frame = JSON.parse(data) as { type?: string };
+        if (frame.type !== "hello") return;
+        const answer = serverInfoFrame(features);
+        if (channel) void channel.send(answer);
+        else pendingAnswers.push(answer);
+      },
+    },
+  });
+  void (async () => {
+    try {
+      channel = await opened;
+      for (const answer of pendingAnswers.splice(0)) void channel.send(answer);
+    } catch {
+      // the test asserts on the client side
+    }
+  })();
+}
+
+test("connects in legacy mode to a daemon that only speaks the legacy construction", async () => {
+  const keys = generateKeyPair();
+  const modes: string[] = [];
+  const client = new DaemonClient({
+    url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2",
+    clientId: "clsk_security_legacy_daemon",
+    e2ee: {
+      enabled: true,
+      daemonPublicKeyB64: exportPublicKey(keys.publicKey),
+      onSecurityMode: (mode) => modes.push(mode),
+    },
+    reconnect: { enabled: false },
+    transportFactory: () => {
+      const link = createRelayLink();
+      const opened = createDaemonChannel(link.wire, keys, {
+        onmessage: (data) => {
+          if (typeof data !== "string") return;
+          if ((JSON.parse(data) as { type?: string }).type !== "hello") return;
+          void opened.then((ch) => ch.send(serverInfoFrame({ ownedSubscriptions: true })));
+        },
+      });
+      void opened.catch(() => {});
+      setTimeout(() => link.open(), 0);
+      return link.transport;
+    },
+  });
+  clients.push(client);
+
+  await client.connect();
+  expect(client.getConnectionState().status).toBe("connected");
+  expect(modes).toEqual(["legacy"]);
+});
+
+test("refuses legacy endpoint security on reconnect once the daemon negotiated protected", async () => {
+  const keys = generateKeyPair();
+  const modes: string[] = [];
+  const links: ReturnType<typeof createRelayLink>[] = [];
+  const legacyReceived: unknown[] = [];
+  const client = new DaemonClient({
+    url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2",
+    clientId: "clsk_security_latch",
+    e2ee: {
+      enabled: true,
+      daemonPublicKeyB64: exportPublicKey(keys.publicKey),
+      onSecurityMode: (mode) => modes.push(mode),
+    },
+    reconnect: { enabled: true, baseDelayMs: 1, maxDelayMs: 1 },
+    transportFactory: () => {
+      const link = createRelayLink();
+      links.push(link);
+      if (links.length === 1) {
+        serveProtectedDaemon(link, keys, { relayProtectedSecurity: true });
+      } else {
+        // A daemon that only speaks the legacy construction (older release).
+        void createDaemonChannel(link.wire, keys, {
+          onmessage: (data) => legacyReceived.push(data),
+        }).catch(() => {});
+      }
+      setTimeout(() => link.open(), 0);
+      return link.transport;
+    },
+  });
+  clients.push(client);
+
+  await client.connect();
+  expect(client.getConnectionState().status).toBe("connected");
+  expect(modes).toEqual(["protected"]);
+
+  // The relay drops the session; the client reconnects to a legacy-only daemon.
+  links[0].wire.close(1012, "Server disconnected");
+  await vi.waitFor(() => expect(links).toHaveLength(2));
+  await vi.waitFor(() => expect(links[1].isClosed()).toBe(true));
+  await vi.waitFor(() => expect(client.getConnectionState().status).toBe("disconnected"));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  expect(links).toHaveLength(2);
+  expect(modes).toEqual(["protected"]);
+  expect(legacyReceived).toEqual([]);
+  expect(client.lastError).toContain(
+    "Endpoint security handshake failed: daemon offered only legacy endpoint security",
+  );
+});
+
+test("closes before admission when a protected-capable daemon is reached in legacy mode", async () => {
+  const keys = generateKeyPair();
+  const daemonReceived: unknown[] = [];
+  let attempts = 0;
+  const client = new DaemonClient({
+    url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2",
+    clientId: "clsk_security_downgrade",
+    e2ee: { enabled: true, daemonPublicKeyB64: exportPublicKey(keys.publicKey) },
+    reconnect: { enabled: true, baseDelayMs: 1, maxDelayMs: 1 },
+    transportFactory: () => {
+      attempts += 1;
+      // A relay in the middle strips the protected offer from the client hello.
+      const link = createRelayLink({
+        toDaemon: (text) => {
+          if (!text.startsWith("{")) return text;
+          const parsed = JSON.parse(text) as Record<string, unknown>;
+          if (parsed.type !== "e2ee_hello") return text;
+          const { protected: _dropped, ...legacyHello } = parsed;
+          return JSON.stringify(legacyHello);
+        },
+      });
+      serveProtectedDaemon(link, keys, { relayProtectedSecurity: true }, daemonReceived);
+      setTimeout(() => link.open(), 0);
+      return link.transport;
+    },
+  });
+  clients.push(client);
+
+  const connecting = client.connect();
+  void connecting.catch(() => {});
+  const queued = client.ping({ timeoutMs: 10_000 });
+  void queued.catch(() => {});
+
+  await expect(connecting).rejects.toThrow(
+    "Endpoint security handshake failed: daemon requires protected endpoint security",
+  );
+  await expect(queued).rejects.toThrow();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  expect(attempts).toBe(1);
+  expect(client.getConnectionState().status).toBe("disconnected");
+  // Only the application hello reached the daemon; the queued command never did.
+  expect(daemonReceived).toHaveLength(1);
+  expect(JSON.parse(daemonReceived[0] as string)).toMatchObject({ type: "hello" });
 });

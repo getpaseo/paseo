@@ -1,10 +1,12 @@
+import { ClaudeRuntimeSafety } from "./runtime-safety.js";
+import type { Query, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
-import type { AgentStreamEvent } from "../../agent-sdk-types.js";
+import type { AgentSession, AgentStreamEvent } from "../../agent-sdk-types.js";
 import type { AgentTimelineRow } from "../../agent-manager.js";
 import { projectTimelineRows } from "../../timeline-projection.js";
 import { ClaudeAgentClient } from "./agent.js";
@@ -103,6 +105,39 @@ async function collectUntilTerminal(
     }
   }
   return events;
+}
+
+async function collectTimelineAcrossTurns(
+  session: AgentSession,
+  prompt: string,
+  turnCount: number,
+): Promise<AgentTimelineRow[]> {
+  const rows: AgentTimelineRow[] = [];
+  let currentTurnId: string | undefined;
+  let completedTurns = 0;
+  let unsubscribe = () => {};
+  const turnsCompleted = new Promise<void>((resolve) => {
+    unsubscribe = session.subscribe((event) => {
+      if (event.type === "turn_started") currentTurnId = event.turnId;
+      if (event.type === "timeline") {
+        rows.push({
+          seq: rows.length + 1,
+          timestamp: new Date(Date.UTC(2026, 9, 4, 0, 0, rows.length)).toISOString(),
+          item: event.item,
+          ...((event.turnId ?? currentTurnId) ? { turnId: event.turnId ?? currentTurnId } : {}),
+        });
+      }
+      if (event.type === "turn_completed" && ++completedTurns === turnCount) resolve();
+    });
+  });
+  try {
+    await session.startTurn(prompt);
+    await turnsCompleted;
+    return rows;
+  } finally {
+    unsubscribe();
+    await session.close();
+  }
 }
 
 describe("background Claude subagents", () => {
@@ -431,9 +466,150 @@ describe("background Claude subagents", () => {
         type: "sub_agent",
         subAgentType: "general-purpose",
         description: "Count files here",
+        log: "[Bash] ls -1",
       },
     });
   });
+
+  test.each(["before", "after"])(
+    "keeps one logged Task card when child tools start %s the parent finishes",
+    async (timing) => {
+      // A child can stream across the main session's turn boundary. Claude opens the next
+      // main-session turn with system/init; bare child frames do not open a turn.
+      queryFactory.mockImplementation(() =>
+        buildQueryMock([
+          { type: "system", subtype: "init", session_id: "bg-session", permissionMode: "default" },
+          {
+            type: "assistant",
+            message: {
+              model: "claude-haiku-4-5",
+              content: [
+                {
+                  type: "tool_use",
+                  id: "toolu_background",
+                  name: "Agent",
+                  input: {
+                    subagent_type: "general-purpose",
+                    description: "Count files here",
+                    prompt: "Run ls and reply with the number of entries.",
+                    run_in_background: true,
+                  },
+                },
+              ],
+            },
+          },
+          {
+            type: "system",
+            subtype: "task_started",
+            task_id: "bg-task",
+            tool_use_id: "toolu_background",
+            task_type: "local_agent",
+            subagent_type: "general-purpose",
+            description: "Count files here",
+            prompt: "Run ls and reply with the number of entries.",
+          },
+          {
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: "toolu_background",
+                  content: "Async agent launched successfully.",
+                },
+              ],
+            },
+          },
+          ...(timing === "after"
+            ? [
+                { type: "result", subtype: "success", usage: {}, total_cost_usd: 0 },
+                {
+                  type: "system",
+                  subtype: "init",
+                  session_id: "bg-session",
+                  permissionMode: "default",
+                },
+              ]
+            : []),
+          {
+            type: "assistant",
+            parent_tool_use_id: "toolu_background",
+            message: {
+              model: "claude-haiku-4-5",
+              content: [
+                {
+                  type: "tool_use",
+                  id: "toolu_ls",
+                  name: "Bash",
+                  input: { command: "ls -1", description: "List files" },
+                },
+              ],
+            },
+          },
+          ...(timing === "before"
+            ? [
+                { type: "result", subtype: "success", usage: {}, total_cost_usd: 0 },
+                {
+                  type: "system",
+                  subtype: "init",
+                  session_id: "bg-session",
+                  permissionMode: "default",
+                },
+              ]
+            : []),
+          {
+            type: "user",
+            parent_tool_use_id: "toolu_background",
+            message: {
+              role: "user",
+              content: [{ type: "tool_result", tool_use_id: "toolu_ls", content: "a\nb\nc" }],
+            },
+          },
+          {
+            type: "assistant",
+            parent_tool_use_id: "toolu_background",
+            message: { model: "claude-haiku-4-5", content: [{ type: "text", text: "3" }] },
+          },
+          {
+            type: "system",
+            subtype: "task_updated",
+            task_id: "bg-task",
+            patch: { status: "completed" },
+          },
+          {
+            type: "system",
+            subtype: "task_notification",
+            task_id: "bg-task",
+            tool_use_id: "toolu_background",
+            status: "completed",
+          },
+          { type: "result", subtype: "success", usage: {}, total_cost_usd: 0 },
+        ]),
+      );
+      const session = await new ClaudeAgentClient({
+        logger: createTestLogger(),
+        queryFactory,
+        resolveBinary: async () => "/test/claude/bin",
+      }).createSession({ provider: "claude", cwd: process.cwd() });
+      const rows = await collectTimelineAcrossTurns(session, "delegate work", 2);
+
+      const cards = projectTimelineRows({ rows, mode: "projected" })
+        .map((entry) => entry.item)
+        .filter((item) => item.type === "tool_call" && item.callId === "toolu_background");
+
+      expect(cards).toHaveLength(1);
+      expect(cards[0]).toMatchObject({
+        status: "completed",
+        detail: {
+          type: "sub_agent",
+          subAgentType: "general-purpose",
+          description: "Count files here",
+          log: "[Bash] ls -1",
+        },
+      });
+    },
+  );
 
   test.each([
     {
@@ -531,4 +707,138 @@ describe("background Claude subagents", () => {
       );
     },
   );
+});
+
+test("Claude runtime safety protects silent shells, monitors and pending completion notifications", () => {
+  const safety = new ClaudeRuntimeSafety();
+  const observe = (message: unknown) => safety.observe(message as SDKMessage);
+  observe({ type: "system", subtype: "init", claude_code_version: "2.1.292" });
+  expect(safety.canStopRuntime()).toBe(true);
+  observe({
+    type: "system",
+    subtype: "background_tasks_changed",
+    tasks: [
+      { task_id: "quiet-shell", task_type: "local_bash", description: "sleep 7200" },
+      { task_id: "monitor", task_type: "local_bash", description: "watch build" },
+      { task_id: "native-child", task_type: "local_agent", description: "research" },
+    ],
+  });
+  expect(safety.canStopRuntime()).toBe(false);
+  observe({ type: "system", subtype: "background_tasks_changed", tasks: [] });
+  expect(safety.canStopRuntime()).toBe(false);
+  for (const task_id of ["quiet-shell", "monitor"])
+    observe({ type: "system", subtype: "task_notification", task_id });
+  expect(safety.canStopRuntime()).toBe(false);
+  observe({ type: "system", subtype: "task_notification", task_id: "native-child" });
+  expect(safety.canStopRuntime()).toBe(true);
+  safety.reset();
+  observe({ type: "system", subtype: "init", claude_code_version: "2.1.220" });
+  expect(safety.canStopRuntime()).toBe(false);
+  observe({ type: "system", subtype: "background_tasks_changed", tasks: [] });
+  expect(safety.canStopRuntime()).toBe(true);
+});
+
+test("Claude session runtime safety observes pumped background work and autonomous replies", async () => {
+  let wake: (() => void) | undefined;
+  const channel = { closed: false };
+  const queue: Array<{ message: SDKMessage; consumed(): void }> = [];
+  const pump = (async function* () {
+    while (!channel.closed) {
+      const entry = queue.shift();
+      if (!entry) {
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+        continue;
+      }
+      yield entry.message;
+      entry.consumed();
+    }
+  })();
+  const push = (message: unknown) =>
+    new Promise<void>((consumed) => {
+      queue.push({ message: message as SDKMessage, consumed });
+      wake?.();
+    });
+  const end = () => {
+    channel.closed = true;
+    wake?.();
+  };
+  let nativeInput!: AsyncIterator<SDKUserMessage>;
+  let connected!: () => void;
+  const connection = new Promise<void>((resolve) => {
+    connected = resolve;
+  });
+  // The SDK Query is injected through the production adapter's existing launch port.
+  const query = {
+    next: () => pump.next(),
+    return: async () => {
+      end();
+      return pump.return(undefined);
+    },
+    close: end,
+    interrupt: async () => {},
+    setPermissionMode: async () => {},
+    setModel: async () => {},
+    supportedModels: async () => [],
+    supportedCommands: async () => [],
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+  } as unknown as Query;
+  const session = await new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveBinary: async () => "/test/claude/bin",
+    queryFactory: ({ prompt }) => {
+      if (typeof prompt === "string") throw new Error("Expected streaming input");
+      nativeInput = prompt[Symbol.asyncIterator]();
+      connected();
+      return query;
+    },
+  }).createSession({ provider: "claude", cwd: process.cwd() });
+  const init = {
+    type: "system",
+    subtype: "init",
+    session_id: "runtime-safety",
+    claude_code_version: "2.1.292",
+    permissionMode: "default",
+  };
+  const result = {
+    type: "result",
+    subtype: "success",
+    usage: { input_tokens: 1, output_tokens: 1 },
+    total_cost_usd: 0,
+  };
+  try {
+    await session.startTurn("start background work");
+    await connection;
+    const input = await nativeInput.next();
+    await push({ type: "command_lifecycle", command_uuid: input.value.uuid, state: "started" });
+    await push(init);
+    await push(result);
+    expect(await session.canStopRuntime!()).toBe(true);
+    await push({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [{ task_id: "monitor", task_type: "local_bash", description: "quiet monitor" }],
+    });
+    expect(await session.canStopRuntime!()).toBe(false);
+    await push({ type: "system", subtype: "background_tasks_changed", tasks: [] });
+    expect(await session.canStopRuntime!()).toBe(false);
+    await push({
+      type: "system",
+      subtype: "task_notification",
+      task_id: "monitor",
+      status: "completed",
+      output: "ready",
+      summary: "ready",
+    });
+    // Completion can wake Claude autonomously after the foreground turn has ended.
+    await push(init);
+    expect(await session.canStopRuntime!()).toBe(false);
+    await push(result);
+    expect(await session.canStopRuntime!()).toBe(true);
+  } finally {
+    await session.close();
+  }
 });

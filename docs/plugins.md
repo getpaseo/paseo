@@ -86,12 +86,22 @@ plugin before compiling and starting from disk. A failed reload stays failed; Pa
 the old code. Use `enable`, `disable`, and `remove` to manage one plugin. Removing a directory source
 never deletes it. The global `pluginsEnabled` switch remains available.
 
+## Client translations
+
+Plugin runtime translations follow the connected app, so never send a daemon locale through RPCs or add plugin resources to the app catalog. The installation owns the translation engine; native portal bridges must carry it alongside RPC and client-state contexts. Keep host label resolution at presentation time so language changes preserve the installation lifetime.
+
+The author contract is in [runtime translations](../public-docs/plugins/reference.md#runtime-translations).
+
 ## Built-in plugins
 
 Built-in plugins ship from `plugins/<id>/`, with `paseo-plugin.json`, `index.server.ts`,
 `server/`, and optional client entry and icon. Add the plugin ID to `builtinPlugins` in
 `packages/server/src/server/plugins/builtin/index.ts`; the workspace, build copy, and CI
 checks cover that registry. Unlisted directories do not load.
+
+The `worktree-include` built-in copies gitignored files selected by
+[`.worktreeinclude`](../public-docs/worktrees.md#copy-local-files-with-worktreeinclude)
+before setup and agents, through `worktree.create.after`.
 
 Desktop packaging ships the entire built-in plugin directory as an external resource,
 including declarations. The external esbuild compiler cannot read Electron's `app.asar`
@@ -106,6 +116,12 @@ Built-ins run in process and remain active independently of `pluginsEnabled`. Th
 absent from the installed plugin list and source configuration; their client bundles
 appear in the plugin catalog. Editing one in development requires a daemon restart.
 Directory, Git, and npm installs cannot use a built-in ID.
+
+A provider registration with `requiresConfiguration: true` participates only while its ID exists
+under `agents.providers`. Hoplite uses this for catalog opt-in. Add writes `{ "enabled": true }`
+without `extends`, so it selects the bundled adapter. Remove deletes the config entry; setting
+`enabled: false` keeps the entry. The bundled JavaScript still loads at startup, but an absent
+provider does not enter executable resolution or catalog discovery.
 
 Provider plugins use separate installation and provider IDs. `muse-provider` registers the
 selectable `muse` provider (Muse Code) and a usage source. Its `status({ launch })` reports
@@ -234,8 +250,9 @@ Do not put any other code modules in the plugin root.
 
 Shared files import contract helpers and types from `@getpaseo/plugin`. Server handler files import
 `PluginHandlerContext` from `@getpaseo/plugin/server`. Client files import Paseo UI from
-`@getpaseo/plugin/client/react-native`. Its `Icon` resolves a Lucide name using the client's installed icon
-set; an unknown name renders nothing so it cannot break the plugin surface.
+`@getpaseo/plugin/client/ui`. Its `Icon` draws a Lucide name from the client's installed
+icon set, or any `PluginIcon` through its `icon` prop; an unknown name or unsafe SVG renders nothing
+so it cannot break the plugin surface.
 Its controlled modal keeps presentation metadata on `<Modal title="…" icon={…}>` and body UI in
 `<Modal.Content>`. Body layout, sheet-aware scrolling, and clipboard actions follow the
 [host UI contract](../public-docs/plugins/reference.md#host-ui).
@@ -250,14 +267,14 @@ Classify every SDK export before adding it. All client entry points and implemen
 Zod schemas, and functions that run in both runtimes. A type-only import is still an architectural
 dependency; shared types must not refer to React components, hooks, Node APIs, or server contexts.
 
-| Entry                                                | Owns                                                                       | May depend on          |
-| ---------------------------------------------------- | -------------------------------------------------------------------------- | ---------------------- |
-| `@getpaseo/plugin`                                   | Shared data, schemas, RPC/settings definitions, runtime-neutral helpers    | Shared code only       |
-| `@getpaseo/plugin/server`                            | Server contexts, lifecycle contracts, and CLI process launch               | Shared and server code |
-| `@getpaseo/plugin/server/provider`, `/server/acp`    | Server provider contracts and adapters                                     | Shared and server code |
-| `@getpaseo/plugin/client`                            | Client contribution contexts, hooks, navigation, and UI contribution types | Shared and client code |
-| `@getpaseo/plugin/client/react-native`, `/client/ui` | Host-provided UI components                                                | Shared and client code |
-| `@getpaseo/plugin/client/host`                       | App-owned rendering integration; not a plugin-author entry                 | Shared and client code |
+| Entry                                             | Owns                                                                       | May depend on          |
+| ------------------------------------------------- | -------------------------------------------------------------------------- | ---------------------- |
+| `@getpaseo/plugin`                                | Shared data, schemas, RPC/settings definitions, runtime-neutral helpers    | Shared code only       |
+| `@getpaseo/plugin/server`                         | Server contexts, lifecycle contracts, and CLI process launch               | Shared and server code |
+| `@getpaseo/plugin/server/provider`, `/server/acp` | Server provider contracts and adapters                                     | Shared and server code |
+| `@getpaseo/plugin/client`                         | Client contribution contexts, hooks, navigation, and UI contribution types | Shared and client code |
+| `@getpaseo/plugin/client/ui`                      | Host-provided UI components                                                | Shared and client code |
+| `@getpaseo/plugin/client/host`                    | App-owned rendering integration; not a plugin-author entry                 | Shared and client code |
 
 Server code imports shared helpers from the root and server capabilities from `/server`. Client
 code imports shared helpers from the root and client capabilities from `/client`. Neither runtime
@@ -320,13 +337,12 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-The contribution function must return cleanup. Server cleanup may be async; Paseo waits for it when
-the plugin is reloaded, disabled, removed, disconnected, or shut down. Cleanup is for resources
-created by plugin code. Paseo removes registered contributions, unmounts surfaces, clears query
-state, rejects pending RPCs, closes the plugin's daemon session, and stops the subprocess. Cleanup
-errors are logged and do not interrupt host teardown.
+The contribution function must return cleanup for resources created by plugin code. Server cleanup
+may be async; Paseo waits for it when stopping the server plugin. Cleanup errors are logged and do
+not interrupt host teardown. Client installation retention and disposal follow the public
+[hosts and lifecycle contract](../public-docs/plugins/reference.md#hosts-and-lifecycle).
 
-Paseo owns the route, screen header, Lucide icon validation, close action, theme DTO, layout facts,
+Paseo owns the route, screen header, icon validation, close action, theme DTO, layout facts,
 and render error boundary. The contributed component owns the complete body below the header.
 The plugin owns the header's text through the screen's `title` (`resolvePluginScreenTitle` in
 `plugins/surface-contribution.ts`). A legacy `addSidebarItem` route (`/sidebar/<id>`) shows the
@@ -369,6 +385,15 @@ grace. During daemon startup, plugin sessions may connect while application WebS
 paused; the daemon accepts clients only after configured plugins have settled and the initial
 catalog is complete.
 
+The app retains client bundles per host in its file cache (IndexedDB on web), keyed by plugin ID
+and the daemon's SHA-256. A cold client verifies stored contents before advertising their hashes;
+missing or corrupt files request full bundles. Only the latest catalog's bundles remain. Hashing
+uses Expo's native async digest on mobile, avoiding a JavaScript hash loop on Hermes; reading and
+passing the bundle string still costs memory and time once per client lifetime.
+Persistence runs after catalog reconstruction without delaying installation. One write runs at a
+time; while storage is busy, only the newest pending catalog is kept. A failed write leaves the
+in-memory bundles usable, and a later catalog retries persistence.
+
 When the same plugin contribution exists on multiple hosts, Paseo shows it once in the sidebar and
 adds a host picker to the screen header. The selected host supplies the bundle, RPC transport, and
 query cache. Explicit SDK targets follow the [host API contract](../public-docs/plugins/reference.md#discover-hosts-and-target-another-host).
@@ -394,16 +419,43 @@ See the public [navigation fields](../public-docs/plugins/reference.md#screens-a
 and [external links and workspace browsers](../public-docs/plugins/reference.md#external-links-and-workspace-browsers)
 for the author-facing contract.
 
+### Plugin icons
+
+The [public reference](../public-docs/plugins/reference.md#icons) owns the author API: a contribution
+`icon` is a Lucide name, `{ svg }`, or a component.
+
+- `findSvgIconProblem` in the SDK root (`packages/plugin/src/icons.ts`) is the only SVG rule set.
+  The daemon applies it to provider and usage-source icon files; the app applies it to inline
+  icons. Change the rules there, never at a call site.
+- The app validates each icon once, at registration, through `parsePluginIcon` in
+  `packages/app/src/plugins/icons.ts`. Rendering trusts the stored icon.
+- That module is the only code that branches on the icon form. Surfaces draw with
+  `PluginIconView`, or take a stable component from `pluginIconComponent` when their slot expects
+  one. Lucide and SVG icons receive only size and color, so the host props a button passes to its
+  component icon never reach an SVG element.
+- Attachment sources take `PluginSerializableIcon`: composer drafts persist the source's icon with
+  each attachment, and a component cannot be stored.
+- The plugin compiler loads `.svg` imports as text, so `import icon from "./client/icon.svg"` is the
+  markup string.
+
 ## Lifecycle hooks
 
-Server entries register lifecycle observers with `server.on()` and request transforms with
-`server.before()`. The [public reference](../public-docs/plugins/reference.md#lifecycle-hooks)
-owns callback shapes, ordering, and failure behavior. `plugin-examples/lifecycle-logger` registers all
-eleven hooks; `plugin-examples/lifecycle-actions` demonstrates common automation callbacks.
+Server entries register async handlers with `server.addHook(name, handler)`, returning a cleanup
+function. Names follow `subject.operation.position`, ending in `before` or `after`. Waiting is a per-hook
+registry property, independent of position. The [hooks reference](../public-docs/plugins/hooks.md)
+owns payloads, ordering, failure behavior, and examples. `agent.create.before` edits saved
+configuration; `agent.open.before` contributes launch-only `env`, `tools`, and `mcpServers` on
+every open. Executable tool definitions stay in the plugin process; only metadata crosses the boundary.
+
+Worktree placement is resolved before Git source planning, so a hook can change the branch and base
+without undoing fetched refs. Restores use the recorded destination and bypass creation hooks.
+Workspace records decide ownership, including explicit non-ownership after recovery. Without a record,
+ownership checks prefer the marker-verified worktree root over the legacy
+path shape: a plugin can place a worktree several directories below the default worktrees root.
 
 Emit from the operation owner, not a client subscription. Provider history replay must not trigger
-live hooks. Observers must not be awaited inside agent mutations: a callback can send a prompt or
-answer a permission through its own daemon session. Awaiting it there deadlocks that command.
+live hooks. Notifications must not be awaited inside agent mutations: a handler can send a prompt
+or answer a permission through its own daemon session. Awaiting it there deadlocks that command.
 
 ## Contribute a provider
 
@@ -466,6 +518,11 @@ Validate and apply it inside the provider; core does not know your option shape.
 See [provider options](custom-providers.md#provider-options) for configuration and
 merge semantics.
 
+Providers add an optional veto to daemon baseline cleanup through the per-session
+[runtime safety query](../public-docs/plugins/providers.md#permit-idle-runtime-cleanup).
+The daemon calls the same `AgentSession.canStopRuntime()` interface for built-ins and plugins;
+the plugin bridge transports that query through the existing provider request/event protocol.
+
 Agent refresh closes the current provider session and opens it again with current configuration and
 persistence. Re-read credentials and provider-owned configuration on `session.open`; consume the
 daemon launch from `connect` and the per-session env and MCP servers from `session.open`. There is
@@ -485,15 +542,13 @@ provider implementation. The public [provider plugin guide](../public-docs/plugi
 owns author workflow, lifecycle, testing, and distribution guidance.
 
 `ProviderRegistration.icon` is a file path relative to the plugin directory, such as `icon.svg`.
-It must resolve inside that directory to a regular SVG file no larger than 64 KiB. The SVG must be
-self-contained: scripts, styles, `foreignObject`, event-handler attributes, JavaScript URLs, and
-external `href` or `xlink:href` references are rejected. Fragment references such as `#mark` are
-allowed. Paseo reads and sanitizes the file when the plugin starts; the string is never an inline
-SVG or URL.
+It must resolve inside that directory to a regular file that passes the shared SVG icon rules
+(see [Plugin icons](#plugin-icons)). Paseo reads and validates the file when the plugin starts; the
+string is never inline SVG or a URL.
 
 ## Usage sources
 
-Register a usage source from `index.server.ts` with `server.registerUsageSource()`. Import `UsageSourceRegistration` and normalization helpers from `@getpaseo/plugin/server/usage`. The plugin owns account discovery, harness labels, and credential-store reads; the daemon owns account grouping and the fetch cache. Agent popovers use only the agent's own login. The host-wide Usage modal falls back across an account's logins; any success shows usage only, and all failures show every login's labeled error and remedy. Follow the [usage source discovery contract](../public-docs/plugins/reference.md#usage-sources). The resolved launch environment crosses into the trusted, unsandboxed plugin subprocess for session discovery. Usage queries never run lifecycle hooks. Inputs are validated in the plugin process and remain daemon-side. `icon` uses the same sanitized SVG file rules as provider icons.
+Register a usage source from `index.server.ts` with `server.registerUsageSource()`. Import `UsageSourceRegistration` and normalization helpers from `@getpaseo/plugin/server/usage`. The plugin owns account discovery, harness labels, and credential-store reads; the daemon owns account grouping and the fetch cache. Agent popovers use only the agent's own login. The host-wide Usage modal falls back across an account's logins; any success shows usage only, and all failures show every login's labeled error and remedy. Follow the [usage source discovery contract](../public-docs/plugins/reference.md#usage-sources). The resolved launch environment crosses into the trusted, unsandboxed plugin subprocess for session discovery. Usage queries never run lifecycle hooks. Inputs are validated in the plugin process and remain daemon-side. `icon` uses the same SVG file rules as provider icons.
 
 The daemon calls discovery for `usage.list_reports`; the client gates this RPC on `server_info.features.usageSources`. The old `provider.usage.list` RPC maps discovered reports for older clients.
 
@@ -532,23 +587,49 @@ one section's order from built-ins, plugin groups, and the section's preference
   remembers under its own key. It shares header ids and the `plugin:<pluginId>:<id>` settings key
   with new-API items.
 
+## Contribute file panels
+
+Client `addFilePanel` registrations become the body of a file tab. The tab stats the file, picks a
+panel, and mounts it with a `PluginFile` handle; the panel reads, shows its own `Loading`, writes,
+and resolves conflicts. The host has no bar and no notion of a panel's views: the Markdown and HTML
+panels own their Preview and Source views, toolbar and editor buffer, and the tab only shows the
+dot a panel sets through `tab.setModified`. Source is the floor for text files no other built-in
+claims, never a candidate beside one. Built-in panels (Markdown, HTML, Image, and Source, Paseo's
+editor) take exactly `PluginFilePanelProps`, including params and persisted tab state, so a fix to reading, watching, or writing lands in one place:
+`packages/app/src/file-panels/file/`. Do not add a host-side read or loading gate for one panel;
+make that panel faster instead. Source highlights a large file on native in idle-time slices,
+the lines around the opening line first.
+
+The handle checks every write against the version it last read or wrote, so two panels or a panel
+and an agent cannot silently overwrite each other. The daemon reports the file's kind (text,
+image, binary) with its stat from a bounded sniff, which is how Source claims text files without a
+read. See the [public file panel reference](../public-docs/plugins/reference.md#file-panels) for
+the author API, selection, `DocumentFrame`, and the version requirement. The examples live in
+`plugin-examples/pdf-panel` and `plugin-examples/markdown-panel`.
+
 ## Contribute buttons
 
 Header buttons and composer pills share the client-only descriptor and registration lifecycle in
 `packages/app/src/plugins/buttons/`. The [public button reference](../public-docs/plugins/reference.md#header-buttons)
 owns the author API and placement rules. Keep presentation policy in this module so another
-placement can reuse behavior without copying registration or action state.
+placement can reuse behavior without copying registration or action state. The header overflow
+and the compact workspace menu share one builder that turns buttons into menu rows and pages; the
+workspace menu reaches it through `usePluginWorkspaceMenu`.
 
 Native sheets teleport their children. Button surfaces rebuild the installation's SDK, state,
-query, and toast providers inside the surface content, including overflow pages from different
-plugins. Providers only around the trigger do not reach those bodies.
+query, and toast providers inside the surface content. A host menu can hold buttons from several
+installations, so each of its rows and pages resolves its own installation's runtime. Providers
+only around the trigger do not reach those bodies.
 
 Request observation with `client.paseo.agents.list({ subscribe: {} })` and consume the returned
 `subscription` handle. Plain `list()` and agent/workspace directory `.subscribe(handler)` listeners create no daemon
 demand. Provider and project `subscribe()` calls establish their own demand. On capable daemons, each
 list-and-subscribe call has its own server ID, even for the same query. Older daemons retain
 [shared delivery behavior](protocol-compatibility.md#owned-observations). Handle snapshots
-also run after reconnect; replace your view before applying its subsequent updates. The installation
+also run after reconnect; replace your view before applying its subsequent updates. An installation
+stays loaded during a dropped connection while the app retains its `DaemonClient` object. An
+unchanged installation does not rerun setup on reconnect, so refresh state from those snapshots
+rather than from setup. Switching connections replaces the client object and reinstalls plugins. The installation
 owns every observation created through its API and releases them on unload, including setup failure.
 Mounted surfaces and command invocations have shorter API lifetimes.
 

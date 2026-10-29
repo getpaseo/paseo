@@ -358,6 +358,14 @@ export to `src`, but browser and Electron Metro resolve its `browser` export to
 `lib/module`; CommonJS consumers use `lib/commonjs`. A source-only patch leaves
 Electron running the old code.
 
+The adaptive-theme patch keeps `colorScheme` reads off the media-query lists
+owned by Unistyles' change listeners. Chromium defers their events while a window
+is hidden; reading `matches` on those same lists can consume the pending change.
+CSS variables then follow the OS theme while `withUnistyles` props retain the old
+colors. Keep this patch until upstream reads the scheme through separate lists.
+The desktop browser E2E checks both transition directions in an isolated Electron
+process, because Playwright's focus emulation prevents real hidden-page behavior.
+
 Register every dependency patch in `scripts/postinstall-patches.mjs`. A file in
 `patches/` is inert unless that script knows which installed package activates
 it.

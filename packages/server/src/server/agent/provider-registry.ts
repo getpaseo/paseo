@@ -97,6 +97,7 @@ export interface ProviderDefinition extends AgentProviderDefinition {
 
 /** Provider metadata and an unconfigured factory; the registry owns override application. */
 export interface RegisteredProviderDefinition extends AgentProviderDefinition {
+  requiresConfiguration?: boolean;
   iconSvg?: string;
   supportsExactMcpPreapproval: boolean;
   createClient: (logger: Logger, runtimeSettings?: ProviderRuntimeSettings) => AgentClient;
@@ -468,6 +469,7 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     describePersistence: () => mapPersistenceHandle(provider, inner.describePersistence()),
     interrupt: () => inner.interrupt(),
     close: () => inner.close(),
+    canStopRuntime: inner.canStopRuntime?.bind(inner),
     listCommands: inner.listCommands?.bind(inner),
     setModel: inner.setModel?.bind(inner),
     setThinkingOption: inner.setThinkingOption?.bind(inner),
@@ -925,6 +927,8 @@ export function buildProviderRegistry(
       throw new Error(`Plugin provider '${provider}' conflicts with a built-in provider`);
     }
     const override = providerOverrides[provider];
+    if (definition.requiresConfiguration && !override) continue;
+
     if (override?.extends) {
       logger.warn({ provider }, "Plugin provider shadowed by configured provider");
       continue;
