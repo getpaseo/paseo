@@ -548,6 +548,46 @@
                 "required": ["provider"],
                 "additionalProperties": false
               }
+            },
+            "title": {
+              "default": {},
+              "type": "object",
+              "properties": {
+                "instructions": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": {}
+            },
+            "branchName": {
+              "default": {},
+              "type": "object",
+              "properties": {
+                "instructions": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": {}
+            },
+            "commitMessage": {
+              "default": {},
+              "type": "object",
+              "properties": {
+                "instructions": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": {}
+            },
+            "pullRequest": {
+              "default": {},
+              "type": "object",
+              "properties": {
+                "instructions": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": {}
             }
           },
           "additionalProperties": false

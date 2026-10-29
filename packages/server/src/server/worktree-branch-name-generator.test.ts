@@ -326,6 +326,32 @@ describe("generateBranchNameFromFirstAgentContext", () => {
     expect(prompt).toContain("Aim for about 4 words");
   });
 
+  test("host-wide title instructions apply when the project sets none", async () => {
+    const { prompt } = await generateBranchPromptWithConfig(undefined, {
+      daemonConfig: {
+        metadataGeneration: { title: { instructions: "Titles in Simplified Chinese." } },
+      },
+    });
+
+    expect(prompt).toContain("Title style:\nTitles in Simplified Chinese.");
+    expect(prompt).not.toContain("Aim for about 4 words");
+    expect(prompt).toContain("Branch style:\nA short task-shaped slug");
+  });
+
+  test("project title instructions win over host-wide instructions", async () => {
+    const { prompt } = await generateBranchPromptWithConfig(
+      { metadataGeneration: { title: { instructions: "Project title style." } } },
+      {
+        daemonConfig: {
+          metadataGeneration: { title: { instructions: "Host title style." } },
+        },
+      },
+    );
+
+    expect(prompt).toContain("Title style:\nProject title style.");
+    expect(prompt).not.toContain("Host title style.");
+  });
+
   test("the contract is never overridable by user instructions", async () => {
     const { prompt } = await generateBranchPromptWithConfig({
       metadataGeneration: {
@@ -386,7 +412,14 @@ describe("generateBranchNameFromFirstAgentContext", () => {
   });
 });
 
-async function generateBranchPromptWithConfig(config: unknown): Promise<{ prompt: string }> {
+async function generateBranchPromptWithConfig(
+  config: unknown,
+  options: {
+    daemonConfig?: {
+      metadataGeneration?: { title?: { instructions?: string } };
+    };
+  } = {},
+): Promise<{ prompt: string }> {
   const repoRoot = createTempDir("paseo-branch-config-");
   if (typeof config === "string") {
     writeFileSync(path.join(repoRoot, "paseo.json"), config);
@@ -405,6 +438,7 @@ async function generateBranchPromptWithConfig(config: unknown): Promise<{ prompt
     workspaceGitService: createNoopWorkspaceGitService({
       resolveRepoRoot: async () => repoRoot,
     }),
+    ...(options.daemonConfig ? { daemonConfig: options.daemonConfig } : {}),
     firstAgentContext: { prompt: "Fix the login flow" },
     logger: createLogger(),
     deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },
