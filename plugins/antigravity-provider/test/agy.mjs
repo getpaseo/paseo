@@ -105,6 +105,25 @@ lines.on("line", (line) => {
     });
     return;
   }
+  if (text.includes("RUNNING_TOOL_ERROR")) {
+    const frames = fixture("sigint-mid-tool").slice(1);
+    for (const frame of frames) {
+      if (frame.event === "result") {
+        emit({
+          event: "result",
+          result: {
+            conversation_id: conversationId,
+            status: "ERROR",
+            error: "Tool execution failed abruptly",
+            denied_actions: [],
+          },
+        });
+      } else {
+        emit(frame);
+      }
+    }
+    return;
+  }
   const frames = fixture(name).slice(1);
   if (name.startsWith("sigint")) {
     interrupted = frames[frames.length - 1];

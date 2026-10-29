@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   PROVIDER_CAPABILITIES,
   ProviderEventSchema,
@@ -13,7 +13,7 @@ import {
   type ProviderLaunch,
   type ProviderPersistence,
 } from "@getpaseo/plugin/server/provider";
-import { signalPlan } from "./internal/signals.js";
+import { signalPlan, signalProcess } from "./internal/signals.js";
 import { createAntigravityProvider } from "./provider.js";
 
 const temporary: string[] = [];
@@ -606,6 +606,24 @@ it("fails turns when an error result arrives without an answer", async () => {
   ).toBe(false);
 });
 
+it("fails turns when an error result arrives while a tool is still running", async () => {
+  const h = await harness();
+  await h.open();
+  const turn = await h.completed(await h.prompt("RUNNING_TOOL_ERROR"));
+  expect(turn).toMatchObject({
+    type: "session.turn",
+    state: "failed",
+    error: {
+      message: expect.stringMatching(/abruptly/i),
+    },
+  });
+  expect(
+    h.events.some(
+      (event) => event.type === "session.notice" && event.notice.id.endsWith(":trajectory_error"),
+    ),
+  ).toBe(false);
+});
+
 describe("discovery", () => {
   it("reuses one discovered catalog for two opens and configure, and refreshes explicit catalog requests", async () => {
     const h = await harness();
@@ -727,6 +745,32 @@ describe("process signal plans", () => {
       });
     },
   );
+  it("ignores EPERM and ESRCH errors when signaling POSIX process groups", () => {
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+      const error = new Error("kill EPERM");
+      Object.assign(error, { code: "EPERM" });
+      throw error;
+    });
+    try {
+      expect(() => signalProcess({ platform: "linux", pid: 123, signal: "SIGKILL" })).not.toThrow();
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
+  it("propagates unexpected errors when signaling POSIX process groups", () => {
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+      const error = new Error("kill EINVAL");
+      Object.assign(error, { code: "EINVAL" });
+      throw error;
+    });
+    try {
+      expect(() => signalProcess({ platform: "linux", pid: 123, signal: "SIGKILL" })).toThrow(
+        /EINVAL/,
+      );
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
 });
 
 describe("image prompts", () => {
