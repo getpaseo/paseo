@@ -117,10 +117,9 @@ See [docs/development.md](docs/development.md) for full setup, build sync requir
 
 ## Release branches
 
-When the user says "this goes to next", create or
-retarget the PR to `next` and preserve that destination through delivery. Follow
-[release branch discipline](docs/release.md#release-branch-discipline) for creating
-and updating `next`, integrating it after a release, and releasing a hotfix from a tag.
+Merge normal PRs into `main`, including while a beta soaks or a release is being finalized. Each
+release builds in a short-lived release workspace from `origin/main` or a release tag; see
+[release base and source](docs/release.md#release-base-and-source).
 
 ## Critical rules
 

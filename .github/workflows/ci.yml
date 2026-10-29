@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
-  # Every base branch, so stacked PRs and PRs into `next` get the same checks.
+  # Every base branch, so stacked PRs and PRs into any base get the same checks.
   pull_request:
   merge_group:
   workflow_dispatch:
