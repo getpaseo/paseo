@@ -493,6 +493,14 @@ The supervisor alone publishes its ready worker's endpoint in `paseo.pid`, clear
 
 Worker restart retains supervisor arguments/environment and rereads the configuration file. Updating a package and observing its new worker version do not refresh the running supervisor code; the launcher owns full-process replacement. See [CLI lifecycle contracts](../public-docs/cli.md#daemon-management).
 
+## Outbound networking
+
+The daemon and its plugin processes honor `HTTPS_PROXY`, `HTTP_PROXY`, and `NO_PROXY`
+(including lowercase forms, which take precedence). Fetch and relay/Hub WebSockets
+share this policy. Loopback (`localhost`, `127.0.0.1`, `::1`) always goes direct.
+Agent and terminal environments are unchanged. System proxy settings and SOCKS-only
+`ALL_PROXY` configurations are not supported.
+
 ## Deployment models
 
 1. **Local daemon** (default): `paseo daemon start` on `127.0.0.1:6767`

@@ -1,3 +1,4 @@
+import { webSocketProxyAgent } from "../network/index.js";
 import { WebSocket } from "ws";
 import { z } from "zod";
 import type { WebSocketLike } from "../websocket-server.js";
@@ -166,6 +167,7 @@ export class DirectHubRelationshipRemote implements HubRelationshipRemote {
   openSocket(input: HubSocketCredentials, events: HubSocketEvents): HubSocketConnection {
     let sessionProtocol: "legacy" | "session-v1" = "legacy";
     const socket = new WebSocket(input.webSocketUrl, {
+      agent: webSocketProxyAgent(input.webSocketUrl),
       handshakeTimeout: this.requestTimeoutMs,
       headers: {
         authorization: `Bearer ${input.credential}`,

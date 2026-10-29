@@ -1,3 +1,4 @@
+import { initializeEnvironmentProxy } from "./network/index.js";
 import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { createPaseoDaemon, formatListenTarget } from "./bootstrap.js";
@@ -131,6 +132,7 @@ function applyCliFlagOverrides(config: ReturnType<typeof loadConfig>): void {
 }
 
 async function main() {
+  initializeEnvironmentProxy();
   const { paseoHome, logger, config } = bootstrapFromEnvironment();
   let daemon: Awaited<ReturnType<typeof createPaseoDaemon>> | null = null;
   let shutdownPromise: Promise<number> | null = null;

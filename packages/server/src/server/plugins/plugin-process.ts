@@ -1,3 +1,4 @@
+import { initializeEnvironmentProxy } from "../network/index.js";
 import { PluginAgentTools } from "./agent-tools.js";
 import { PluginHookHandlers } from "./lifecycle/index.js";
 import { evaluateBundle } from "./bundle-evaluator.js";
@@ -606,6 +607,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const parsed = PluginProcessRequestSchema.safeParse(raw);
     if (!worker && parsed.success && parsed.data.type === "initialize") {
       try {
+        initializeEnvironmentProxy();
         worker = createPluginWorker({ channel, contribute: evaluateBundle(parsed.data.bundle) });
       } catch (error) {
         channel.send({ type: "fatal", error: describeError(error) });
