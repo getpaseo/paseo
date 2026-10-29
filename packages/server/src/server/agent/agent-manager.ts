@@ -236,6 +236,7 @@ export type {
 
 export type AgentManagerEvent =
   | { type: "agent_state"; agent: ManagedAgent }
+  | { type: "agent_removed"; agentId: string; workspaceId?: string; internal: boolean }
   | { type: "provider_subagent"; event: ProviderSubagentStoreEvent }
   | { type: "timeline_replacement"; agentId: string; epoch: string }
   | {
@@ -3519,6 +3520,15 @@ export class AgentManager {
     await this.deleteCommittedTimeline(agentId);
   }
 
+  notifyAgentRemoved(agent: Pick<StoredAgentRecord, "id" | "workspaceId" | "internal">): void {
+    this.dispatch({
+      type: "agent_removed",
+      agentId: agent.id,
+      workspaceId: agent.workspaceId,
+      internal: agent.internal === true,
+    });
+  }
+
   async deleteCommittedTimeline(agentId: string): Promise<void> {
     await this.durableTimelineStore?.deleteAgent(agentId);
   }
@@ -5376,7 +5386,7 @@ export class AgentManager {
     for (const subscriber of this.subscribers) {
       if (
         subscriber.agentId &&
-        event.type === "agent_stream" &&
+        (event.type === "agent_stream" || event.type === "agent_removed") &&
         subscriber.agentId !== event.agentId
       ) {
         continue;
@@ -5412,6 +5422,7 @@ export class AgentManager {
 
   private eventBelongsToInternalAgent(event: AgentManagerEvent): boolean {
     if (event.type === "agent_state") return event.agent.internal === true;
+    if (event.type === "agent_removed") return event.internal;
     if (event.type === "agent_stream") return this.agents.get(event.agentId)?.internal === true;
     if (event.type !== "provider_subagent") return false;
     const parentAgentId =

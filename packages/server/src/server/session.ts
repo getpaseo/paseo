@@ -1992,6 +1992,24 @@ export class Session {
           return;
         }
 
+        if (event.type === "agent_removed") {
+          if (event.internal) return;
+          void this.agentUpdates
+            .removeAgent(event.agentId)
+            .then(() => {
+              if (event.workspaceId)
+                return this.emitWorkspaceUpdateForWorkspaceId(event.workspaceId);
+              return undefined;
+            })
+            .catch((error) => {
+              this.sessionLogger.error(
+                { err: error, agentId: event.agentId },
+                "Failed to emit agent removal",
+              );
+            });
+          return;
+        }
+
         if (event.type === "agent_state") {
           this.sessionLogger.trace(
             {
@@ -3337,10 +3355,8 @@ export class Session {
   private async handleDeleteAgentRequest(agentId: string, requestId: string): Promise<void> {
     this.sessionLogger.info({ agentId }, `Deleting agent ${agentId} from registry`);
 
-    const knownWorkspaceId =
-      this.agentManager.getAgent(agentId)?.workspaceId ??
-      (await this.agentStorage.get(agentId))?.workspaceId ??
-      null;
+    const knownAgent =
+      this.agentManager.getAgent(agentId) ?? (await this.agentStorage.get(agentId));
 
     // File-backed storage still needs an early delete fence before closeAgent().
     beginAgentDeleteIfSupported(this.agentStorage, agentId);
@@ -3361,6 +3377,8 @@ export class Session {
     try {
       await this.agentStorage.remove(agentId);
       await this.agentManager.deleteAgentState(agentId);
+      // Directory removal is daemon-wide; agent_deleted below stays a source-scoped RPC reply.
+      if (knownAgent) this.agentManager.notifyAgentRemoved(knownAgent);
     } catch (error) {
       this.sessionLogger.error({ err: error, agentId }, `Failed to fully delete agent ${agentId}`);
     }
@@ -3372,12 +3390,6 @@ export class Session {
         requestId,
       },
     });
-
-    await this.agentUpdates.removeAgent(agentId);
-
-    if (knownWorkspaceId) {
-      await this.emitWorkspaceUpdateForWorkspaceId(knownWorkspaceId);
-    }
   }
 
   private async handleArchiveAgentRequest(agentId: string, requestId: string): Promise<void> {
