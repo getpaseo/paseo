@@ -1,8 +1,8 @@
 /// <reference lib="dom" />
-import { webSocketProxyAgent } from "./network/index.js";
 import { WebSocket } from "ws";
 import type pino from "pino";
 import { buildRelayWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
+import { webSocketProxyAgent } from "./network/index.js";
 import type { ExternalSocketMetadata } from "./websocket-server.js";
 
 export interface RelayTransportOptions {

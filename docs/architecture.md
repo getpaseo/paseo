@@ -498,6 +498,8 @@ Worker restart retains supervisor arguments/environment and rereads the configur
 The daemon and its plugin processes honor `HTTPS_PROXY`, `HTTP_PROXY`, and `NO_PROXY`
 (including lowercase forms, which take precedence). Fetch and relay/Hub WebSockets
 share this policy. Loopback (`localhost`, `127.0.0.1`, `::1`) always goes direct.
+A proxy without a scheme uses HTTP. Invalid values and unsupported proxy schemes
+are ignored, with one warning naming the variable in `daemon.log`.
 Agent and terminal environments are unchanged. System proxy settings and SOCKS-only
 `ALL_PROXY` configurations are not supported.
 

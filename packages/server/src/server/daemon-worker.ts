@@ -1,6 +1,6 @@
-import { initializeEnvironmentProxy } from "./network/index.js";
 import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
+import { initializeEnvironmentProxy } from "./network/index.js";
 import { createPaseoDaemon, formatListenTarget } from "./bootstrap.js";
 import { loadConfig } from "./config.js";
 import { resolvePaseoHome } from "./paseo-home.js";
@@ -132,8 +132,12 @@ function applyCliFlagOverrides(config: ReturnType<typeof loadConfig>): void {
 }
 
 async function main() {
-  initializeEnvironmentProxy();
   const { paseoHome, logger, config } = bootstrapFromEnvironment();
+  for (const variable of initializeEnvironmentProxy()) {
+    writeWorkerLifecycleLog(paseoHome, "Ignoring invalid or unsupported HTTP proxy variable", {
+      variable,
+    });
+  }
   let daemon: Awaited<ReturnType<typeof createPaseoDaemon>> | null = null;
   let shutdownPromise: Promise<number> | null = null;
   let exitHookInstalled = false;

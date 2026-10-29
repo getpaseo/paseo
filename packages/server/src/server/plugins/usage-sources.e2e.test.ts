@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { cp, mkdir, mkdtemp, readFile as readTextFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -340,96 +340,72 @@ export default function contribute(server) {
   }
 }, 60_000);
 
-test("built-in usage plugins reach the environment proxy", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "usage-proxy-"));
-  const tunnels: string[] = [];
-  const proxy = createServer();
-  proxy.on("connect", (request, socket) => {
-    tunnels.push(request.url!);
-    socket.end("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
-  });
-  proxy.listen(0, "127.0.0.1");
-  await once(proxy, "listening");
-  const address = proxy.address();
-  if (!address || typeof address === "string") throw new Error("Missing proxy address");
-  const guard = path.join(root, "network-guard.cjs");
-  // Prevent vendor DNS/network access even when proxy support is broken.
-  await writeFile(
-    guard,
-    `const dns = require('node:dns');
+test.each(["builtin", "directory"])(
+  "%s usage plugins reach the environment proxy",
+  async (mode) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "usage-proxy-"));
+    const tunnels: string[] = [];
+    const proxy = createServer();
+    proxy.on("connect", (request, socket) => {
+      tunnels.push(request.url!);
+      socket.end("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
+    });
+    proxy.listen(0, "127.0.0.1");
+    await once(proxy, "listening");
+    const address = proxy.address();
+    if (!address || typeof address === "string") throw new Error("Missing proxy address");
+    const guard = path.join(root, "network-guard.cjs");
+    // Prevent vendor DNS/network access even when proxy support is broken.
+    await writeFile(
+      guard,
+      `const dns = require('node:dns');
 const lookup = dns.lookup;
 dns.lookup = function(host, ...args) {
   if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return lookup.call(this, host, ...args);
   args.at(-1)(Object.assign(new Error('External DNS forbidden in proxy test'), { code: 'ENOTFOUND' }));
 };`,
-  );
-  await mkdir(path.join(root, ".claude"));
-  await mkdir(path.join(root, ".codex"));
-  await writeFile(
-    path.join(root, ".claude", ".credentials.json"),
-    JSON.stringify({ claudeAiOauth: { accessToken: "fixture-claude" } }),
-  );
-  await writeFile(
-    path.join(root, ".codex", "auth.json"),
-    JSON.stringify({ tokens: { access_token: "fixture-codex", account_id: "fixture-account" } }),
-  );
-  const external = path.join(root, "external-codex");
-  await cp(path.join(resolveBuiltinPluginsRoot(), "codex-usage-source"), external, {
-    recursive: true,
-  });
-  const entry = path.join(external, "index.server.ts");
-  await writeFile(
-    entry,
-    (await readTextFile(entry, "utf8")).replace('id: "codex"', 'id: "external-codex"'),
-  );
-  try {
-    const directory = path.dirname(fileURLToPath(import.meta.url));
-    const moduleUrl = (file: string) =>
-      JSON.stringify(pathToFileURL(path.resolve(directory, file)).href);
-    await promisify(execFile)(
-      process.execPath,
-      [
-        "--import",
-        "tsx",
-        "--input-type=module",
-        "-e",
-        `
-      import { initializeEnvironmentProxy } from ${moduleUrl("../network/index.ts")};
-      import { DaemonClient } from ${moduleUrl("../test-utils/daemon-client.ts")};
-      import { createTestPaseoDaemon } from ${moduleUrl("../test-utils/paseo-daemon.ts")};
-      import { BuiltinPluginLoader, resolveBuiltinPluginsRoot } from ${moduleUrl("./builtin/index.ts")};
-      initializeEnvironmentProxy();
-      const daemon = await createTestPaseoDaemon({ pluginsEnabled: true, builtinPlugins: new BuiltinPluginLoader(resolveBuiltinPluginsRoot(), ["claude-usage-source", "codex-usage-source"]) });
-      const client = new DaemonClient({ url: 'ws://127.0.0.1:' + daemon.port + '/ws' });
-      try {
-        await client.connect();
-        await client.listUsageReports();
-        await client.installDirectoryPlugin(${JSON.stringify(external)}, 'external-codex');
-        const result = await client.listUsageReports({ forceRefresh: true });
-        if (!result.reports.some(report => report.sourceId === "external-codex")) throw new Error("Installed usage source missing");
-      } finally { await client.close(); await daemon.close(); }
-    `,
-      ],
-      {
-        timeout: 45_000,
-        maxBuffer: 1024 * 1024,
-        env: {
-          ...process.env,
-          HOME: root,
-          CODEX_HOME: path.join(root, ".codex"),
-          NODE_OPTIONS: `--require=${guard}`,
-          https_proxy: `http://127.0.0.1:${address.port}`,
-          no_proxy: "",
-          NO_PROXY: "",
-        },
-      },
     );
-    expect(tunnels).toContain("api.anthropic.com:443");
-    expect(tunnels).toContain("chatgpt.com:443");
-    expect(tunnels.filter((host) => host === "chatgpt.com:443").length).toBeGreaterThanOrEqual(3);
-  } finally {
-    proxy.closeAllConnections();
-    await new Promise<void>((resolve) => proxy.close(() => resolve()));
-    await rm(root, { recursive: true, force: true });
-  }
-}, 60_000);
+    await mkdir(path.join(root, ".claude"));
+    await mkdir(path.join(root, ".codex"));
+    await writeFile(
+      path.join(root, ".claude", ".credentials.json"),
+      JSON.stringify({ claudeAiOauth: { accessToken: "fixture-claude" } }),
+    );
+    await writeFile(
+      path.join(root, ".codex", "auth.json"),
+      JSON.stringify({ tokens: { access_token: "fixture-codex", account_id: "fixture-account" } }),
+    );
+    try {
+      await promisify(execFile)(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          fileURLToPath(new URL("./test-fixtures/usage-proxy-daemon.ts", import.meta.url)),
+          mode,
+        ],
+        {
+          timeout: 45_000,
+          maxBuffer: 1024 * 1024,
+          env: {
+            ...process.env,
+            HOME: root,
+            USERPROFILE: root,
+            CODEX_HOME: path.join(root, ".codex"),
+            NODE_OPTIONS: `--require=${JSON.stringify(guard.replaceAll("\\", "/"))}`,
+            https_proxy: `http://127.0.0.1:${address.port}`,
+            no_proxy: "",
+            NO_PROXY: "",
+          },
+        },
+      );
+      expect(tunnels).toContain("api.anthropic.com:443");
+      expect(tunnels).toContain("chatgpt.com:443");
+    } finally {
+      proxy.closeAllConnections();
+      await new Promise<void>((resolve) => proxy.close(() => resolve()));
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+  60_000,
+);

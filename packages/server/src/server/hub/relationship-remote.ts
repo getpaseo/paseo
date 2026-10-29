@@ -1,6 +1,6 @@
-import { webSocketProxyAgent } from "../network/index.js";
 import { WebSocket } from "ws";
 import { z } from "zod";
+import { webSocketProxyAgent } from "../network/index.js";
 import type { WebSocketLike } from "../websocket-server.js";
 
 const SOCKET_PING_INTERVAL_MS = 10_000;
