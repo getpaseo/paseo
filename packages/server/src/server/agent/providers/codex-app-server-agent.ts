@@ -1892,6 +1892,7 @@ function readCodexCollabAgentControl(item: unknown): CodexCollabAgentControl | n
       ? { kind: "submission", childThreadIds: receivers }
       : null;
   }
+  if (tool !== "wait" && tool !== "closeAgent") return null;
   const outcomeStates = toObjectRecord(record.agentsStates);
   const updates = Object.entries(outcomeStates ?? {}).flatMap(
     ([threadId, value]): CodexCollabAgentUpdate[] => {
@@ -1968,7 +1969,7 @@ function updateHistoricalSubAgentActivity(
   };
 }
 
-function readCodexHistoricalSubAgentThreadIds(item: unknown): string[] {
+function readCodexSpawnedSubAgentThreadIds(item: unknown): string[] {
   const activity = readCodexSubAgentActivity(item);
   if (activity) {
     return activity.kind === "started" ? [activity.agentThreadId] : [];
@@ -2237,7 +2238,7 @@ async function projectCodexThreadHistory(
           ? { providerTurnId: row.turnId }
           : {}),
       });
-      for (const childThreadId of readCodexHistoricalSubAgentThreadIds(item)) {
+      for (const childThreadId of readCodexSpawnedSubAgentThreadIds(item)) {
         subAgentsByThreadId.set(childThreadId, {
           timelineIndex: timeline.length - 1,
           pendingFollowUp: false,
@@ -4137,6 +4138,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.registerSubAgentToolCall({
         timelineItem: next.route.toolCall,
         rawItem: { agentThreadId: next.route.childThreadId },
+        childThreadIds: [next.route.childThreadId],
         parentCallId: next.parentCallId,
         parentSubagentId: next.parentSubagentId,
       });
@@ -5784,6 +5786,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private registerSubAgentToolCall(params: {
     timelineItem: ToolCallTimelineItem;
     rawItem: { [key: string]: unknown };
+    childThreadIds: readonly string[];
     parentCallId: string | null;
     parentSubagentId: string | null;
   }): string[] {
@@ -5825,16 +5828,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     this.subAgentCallsByCallId.set(timelineItem.callId, state);
 
-    const receiverThreadIds = Array.isArray(rawItem.receiverThreadIds)
-      ? rawItem.receiverThreadIds.filter((value): value is string => typeof value === "string")
-      : [];
-    const agentThreadId =
-      typeof rawItem.agentThreadId === "string" && rawItem.agentThreadId.length > 0
-        ? rawItem.agentThreadId
-        : null;
-    const childThreadIds = Array.from(
-      new Set(agentThreadId ? [...receiverThreadIds, agentThreadId] : receiverThreadIds),
-    ).filter((threadId) => threadId !== this.currentThreadId);
+    const childThreadIds = Array.from(new Set(params.childThreadIds)).filter(
+      (threadId) => threadId !== this.currentThreadId,
+    );
     for (const receiverThreadId of childThreadIds) {
       const owningCallId = this.subAgentCallIdByChildThreadId.get(receiverThreadId);
       if (owningCallId && owningCallId !== timelineItem.callId) {
@@ -6770,6 +6766,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         ? this.registerSubAgentToolCall({
             timelineItem,
             rawItem: parsed.item,
+            childThreadIds: readCodexSpawnedSubAgentThreadIds(parsed.item),
             parentCallId: childSubAgentCallId,
             parentSubagentId: resolveCodexParentSubagentId(childSubAgentCallId, parsed.threadId),
           })
@@ -6937,6 +6934,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     const registeredChildThreadIds = this.registerSubAgentToolCall({
       timelineItem,
       rawItem: parsed.item,
+      childThreadIds: readCodexSpawnedSubAgentThreadIds(parsed.item),
       parentCallId: childSubAgentCallId,
       parentSubagentId: resolveCodexParentSubagentId(childSubAgentCallId, parsed.threadId),
     });

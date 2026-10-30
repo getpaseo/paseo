@@ -174,6 +174,35 @@ describe("Codex collaboration history", () => {
     ).toEqual([{ id: "closeAgent", status: "canceled" }]);
   });
 
+  test.each(["notFound", "errored"])(
+    "preserves completion and shows a failed resume reporting %s",
+    async (status) => {
+      const history = await replay([
+        collab("spawnAgent", { first: "pendingInit" }, "spawn-first"),
+        collab("wait", { first: "completed" }),
+        collab("closeAgent", { first: "completed" }),
+        { ...collab("resumeAgent", { first: status }), status: "failed" },
+      ]);
+      expect(
+        history.flatMap((event) =>
+          event.type === "provider_subagent" && event.event.type === "upsert"
+            ? [event.event.status]
+            : [],
+        ),
+      ).toEqual(["completed"]);
+      expect(
+        history.flatMap((event) =>
+          event.type === "timeline" && event.item.type === "tool_call"
+            ? [{ id: event.item.callId, status: event.item.status }]
+            : [],
+        ),
+      ).toEqual([
+        { id: "spawn-first", status: "completed" },
+        { id: "resumeAgent", status: "failed" },
+      ]);
+    },
+  );
+
   test("stops counting a child closed while running", async () => {
     const history = await replay([
       collab("spawnAgent", { first: "pendingInit" }, "spawn-first"),
@@ -330,13 +359,15 @@ describe("Codex collaboration history", () => {
       });
       await vi.waitFor(() => expect(cards.get("mixed-wait")).toBe("running"));
       notify("item/completed", collab("wait", { first: "completed" }, "mixed-wait"));
+      notify("item/completed", collab("wait", { second: "completed" }, "wait-second"));
       appServer.completeTurn();
       await result;
+      expect([...statuses]).toEqual([["first", "completed"]]);
       expect([...cards]).toEqual([
         ["spawn-first", "completed"],
         ["mixed-wait", "completed"],
+        ["wait-second", "completed"],
       ]);
-      expect(statuses.get("first")).toBe("completed");
     } finally {
       await session.close();
       appServer.assertNoErrors();
