@@ -5,6 +5,7 @@ import {
   resolveDesktopAppContentMinimum,
   resolveDesktopSidebarVisibility,
   resolveDesktopSidebarWidth,
+  resolveDesktopDivisionLayout,
 } from "@/components/desktop-sidebar-layout";
 import {
   resolveSidebarFooterLayout,
@@ -18,8 +19,103 @@ import { MIN_SIDEBAR_WIDTH, usePanelStore } from "@/stores/panel-store";
 import {
   resolveContentBandPlacement,
   resolveLeadingCornerControlInset,
+  resolveTopBarLeadingInset,
 } from "@/components/headers/content-band-geometry.shared";
 import { reconcileAppContentWidthHandoff } from "@/contexts/app-content-width-context";
+
+describe("top-bar clearance projection", () => {
+  it("does not avoid the same fold twice after the whole content column moves", () => {
+    expect(
+      resolveTopBarLeadingInset({ nativeInset: 296, nativeLeadingOffset: 200, leadingOffset: 496 }),
+    ).toBe(0);
+    expect(
+      resolveTopBarLeadingInset({ nativeInset: 296, nativeLeadingOffset: 200, leadingOffset: 350 }),
+    ).toBe(146);
+  });
+
+  it("retains uncleared protection and does not invent an inset when moving back", () => {
+    expect(
+      resolveTopBarLeadingInset({
+        nativeInset: 296,
+        nativeLeadingOffset: 200,
+        leadingOffset: null,
+      }),
+    ).toBe(296);
+    expect(
+      resolveTopBarLeadingInset({ nativeInset: 0, nativeLeadingOffset: 496, leadingOffset: 200 }),
+    ).toBe(0);
+  });
+});
+
+describe("native fold column layout", () => {
+  const input = {
+    geometry: {
+      bounds: { x: 0, y: 0, width: 951, height: 669 },
+      divisions: [{ x: 455.5, y: 0, width: 40, height: 669 }],
+    },
+    windowWidth: 951,
+    windowHeight: 669,
+    leftInset: 0,
+    rightInset: 84,
+    minimumSidebarWidth: 200,
+    minimumContentWidth: 0,
+  };
+
+  it("places complete columns on each side instead of padding only the header", () => {
+    const layout = resolveDesktopDivisionLayout(input);
+    expect(layout).toEqual({ sidebarWidth: 455.5, gap: 40, contentWidth: 371.5 });
+    expect(layout!.sidebarWidth + layout!.gap + layout!.contentWidth + input.rightInset).toBe(951);
+  });
+
+  it("restores the requested sidebar width when the system division becomes inactive", () => {
+    expect(
+      resolveDesktopDivisionLayout({ ...input, geometry: { ...input.geometry, divisions: [] } }),
+    ).toBeNull();
+    expect(
+      resolveDesktopSidebarWidth({ requestedWidth: 200, viewportWidth: 867, minimumWidth: 200 }),
+    ).toBe(200);
+  });
+
+  it("does not reorganize side-by-side columns for a horizontal fold", () => {
+    expect(
+      resolveDesktopDivisionLayout({
+        ...input,
+        geometry: { ...input.geometry, divisions: [{ x: 0, y: 314.5, width: 951, height: 40 }] },
+      }),
+    ).toBeNull();
+  });
+
+  it("uses each physical safe inset independently", () => {
+    expect(resolveDesktopDivisionLayout({ ...input, leftInset: 84, rightInset: 0 })).toEqual({
+      sidebarWidth: 371.5,
+      gap: 40,
+      contentWidth: 455.5,
+    });
+  });
+
+  it("rejects a division sampled before the current window rotation", () => {
+    expect(
+      resolveDesktopDivisionLayout({ ...input, windowWidth: 669, windowHeight: 951 }),
+    ).toBeNull();
+  });
+
+  it("keeps required panel budgets when a physical half cannot contain them", () => {
+    expect(resolveDesktopDivisionLayout({ ...input, minimumContentWidth: 600 })).toBeNull();
+    expect(resolveDesktopDivisionLayout({ ...input, minimumSidebarWidth: 500 })).toBeNull();
+  });
+
+  it("shares according to the physical partition rather than the saved drag width", () => {
+    const sharing = {
+      requestedSidebarWidth: 200,
+      sidebarMinimumWidth: 200,
+      viewportWidth: 867,
+      contentMinimumWidth: 360,
+      divisionLayout: resolveDesktopDivisionLayout(input),
+    };
+    expect(canDesktopAppSidebarShare(sharing)).toBe(true);
+    expect(canDesktopAppSidebarShare({ ...sharing, contentMinimumWidth: 600 })).toBe(false);
+  });
+});
 
 describe("workspace width handoff", () => {
   it("uses each sidebar allocation before the native parent catches up", () => {

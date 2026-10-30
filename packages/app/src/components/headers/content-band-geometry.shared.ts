@@ -17,6 +17,8 @@ export interface ContentBandGeometry {
   placementBounds: ContentBandRect;
   margins: ContentBandInsets;
   exclusions: readonly ContentBandRect[];
+  /** Active fold partitions, separate from regions that physically occlude content. */
+  divisions: readonly ContentBandRect[];
 }
 
 export interface ContentBandGeometryProbeProps {
@@ -99,6 +101,19 @@ export function resolveContentBandPlacement(
     };
   }
   return { kind: "unavailable", availableWidth, requiredWidth: input.minimumContentWidth };
+}
+
+/** Credit the leading distance the current owner already moved away from a region. */
+export function resolveTopBarLeadingInset(input: {
+  nativeInset: number;
+  nativeLeadingOffset: number;
+  leadingOffset: number | null;
+}): number {
+  const clearedDistance = Math.max(
+    0,
+    (input.leadingOffset ?? input.nativeLeadingOffset) - input.nativeLeadingOffset,
+  );
+  return Math.max(0, input.nativeInset - clearedDistance);
 }
 
 export function resolveLeadingCornerControlInset(input: {

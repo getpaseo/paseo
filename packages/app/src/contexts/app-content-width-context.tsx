@@ -1,10 +1,14 @@
 import { createContext, type ReactNode } from "react";
 import { View } from "react-native";
+import type { DesktopDivisionLayout } from "@/components/desktop-sidebar-layout";
 
 // The app shell knows its allocation before nested native screen roots resize.
 // Null keeps the existing measured layout on platforms without modern window layout.
 export const AppContentWidthContext = createContext<number | null>(null);
 export const AppContentLeadingOffsetContext = createContext<number | null>(null);
+
+/** A native fold owns the split while active; saved sidebar widths remain unchanged. */
+export const DesktopSidebarDivisionContext = createContext<DesktopDivisionLayout | null>(null);
 
 interface AppContentWidthHandoff {
   allocatedWidth: number | null;

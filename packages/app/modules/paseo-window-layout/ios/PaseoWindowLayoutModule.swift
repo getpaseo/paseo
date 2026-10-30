@@ -435,6 +435,7 @@ private final class BottomBarLayoutObserver: UIView {
 private final class ContentBandLayoutView: UIView {
   var onChange: (() -> Void)?
   private(set) var exclusions: [CGRect] = []
+  private(set) var divisions: [CGRect] = []
   private(set) var placementBounds: CGRect = .zero
   private weak var regionOwner: UIView?
   private var ownerBottomLimit: CGFloat?
@@ -489,10 +490,15 @@ private final class ContentBandLayoutView: UIView {
     if #available(iOS 27.1, *) {
       let owner = regionOwner ?? superview ?? self
       // UIKit tracks these owner reads and invalidates constraints when regions change.
-      let regions = owner.reservedRegions(kind: .occlusion) + owner.reservedRegions(kind: .division)
-      let frames: [CGRect] = regions.filter(\.isActive).map { region in
+      let activeDivisions = owner.reservedRegions(kind: .division).filter(\.isActive)
+      var nextDivisions: [CGRect] = activeDivisions.map { region in
         self.convert(region.frame, from: owner)
       }
+      nextDivisions.sort { lhs, rhs in
+        lhs.minX == rhs.minX ? lhs.minY < rhs.minY : lhs.minX < rhs.minX
+      }
+      let regions = owner.reservedRegions(kind: .occlusion).filter(\.isActive) + activeDivisions
+      let frames = regions.map { self.convert($0.frame, from: owner) }
       let next = frames
         .sorted { lhs, rhs in
           lhs.minX == rhs.minX ? lhs.minY < rhs.minY : lhs.minX < rhs.minX
@@ -503,8 +509,9 @@ private final class ContentBandLayoutView: UIView {
         from: owner
       ).y
       nextPlacementBounds.size.height = max(0, placementBottom - nextPlacementBounds.minY)
-      if next != exclusions || nextPlacementBounds != placementBounds {
+      if next != exclusions || nextDivisions != divisions || nextPlacementBounds != placementBounds {
         exclusions = next
+        divisions = nextDivisions
         placementBounds = nextPlacementBounds
         onChange?()
       }
@@ -713,10 +720,12 @@ final class PaseoBottomBarGeometryView: ExpoView {
 private struct ContentBandGeometry: Equatable {
   let bounds: CGRect
   let horizontal: HorizontalContentGeometry
+  let divisions: [CGRect]
 
   var event: [String: Any] {
     var result = horizontal.event
     result["bounds"] = layoutRectPayload(bounds)
+    result["divisions"] = divisions.map { layoutRectPayload($0) }
     return result
   }
 }
@@ -804,7 +813,7 @@ final class PaseoContentBandGeometryView: ExpoView {
     let horizontal = HorizontalContentGeometry(left: insets.left, right: insets.right,
                                                exclusions: contentBand.exclusions,
                                                placementBounds: contentBand.placementBounds)
-    let geometry = ContentBandGeometry(bounds: bounds, horizontal: horizontal)
+    let geometry = ContentBandGeometry(bounds: bounds, horizontal: horizontal, divisions: contentBand.divisions)
     guard geometry != lastGeometry else { return }
     lastGeometry = geometry
     onGeometryChange(geometry.event)

@@ -8,7 +8,16 @@ import {
   type LucideIcon,
 } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import {
   Pressable,
   StyleSheet as RNStyleSheet,
@@ -66,6 +75,7 @@ import {
 } from "@/components/headers/bottom-bar-geometry";
 import { MIN_SIDEBAR_WIDTH } from "@/stores/panel-store/state";
 import { useKeyboardShift } from "@/keyboard/shift";
+import { DesktopSidebarDivisionContext } from "@/contexts/app-content-width-context";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useImportSession } from "@/hooks/use-import-session";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
@@ -907,6 +917,7 @@ function DesktopSidebar({
   active,
 }: DesktopSidebarProps) {
   const ownsTopLeft = useOwnsWindowChromeCorner("top-left");
+  const divisionLayout = useContext(DesktopSidebarDivisionContext);
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
@@ -948,12 +959,14 @@ function DesktopSidebar({
   const hideResizeGrip = useCallback(() => setResizePressed(false), []);
 
   useEffect(() => {
+    // A fold can interrupt a drag; do not restore its uncommitted width on unfold.
     resizeWidth.value = visibleSidebarWidth;
-  }, [resizeWidth, visibleSidebarWidth]);
+  }, [divisionLayout, resizeWidth, visibleSidebarWidth]);
 
   const resizeGesture = useMemo(
     () =>
       Gesture.Pan()
+        .enabled(divisionLayout === null)
         .hitSlop({ left: 8, right: 8, top: 0, bottom: 0 })
         .onBegin(() => {
           scheduleOnRN(showResizeGrip);
@@ -976,13 +989,14 @@ function DesktopSidebar({
             minimumWidth: sidebarMinimumWidth,
           });
         })
-        .onEnd(() => {
-          runOnJS(setSidebarWidth)(resizeWidth.value);
+        .onEnd((_event, success) => {
+          if (success) runOnJS(setSidebarWidth)(resizeWidth.value);
         })
         .onFinalize(() => {
           scheduleOnRN(hideResizeGrip);
         }),
     [
+      divisionLayout,
       hideResizeGrip,
       resizeWidth,
       startWidth,
@@ -993,10 +1007,16 @@ function DesktopSidebar({
       visibleSidebarWidth,
     ],
   );
+  const columnWidth = divisionLayout?.sidebarWidth ?? visibleSidebarWidth;
 
-  const resizeAnimatedStyle = useAnimatedStyle(() => ({
-    width: resizeWidth.value,
-  }));
+  // Keep one UI-thread width writer; a React width can be overwritten by the
+  // previously attached drag style when fold ownership changes.
+  const resizeAnimatedStyle = useAnimatedStyle(
+    () => ({
+      width: divisionLayout ? divisionLayout.sidebarWidth : resizeWidth.value,
+    }),
+    [divisionLayout],
+  );
 
   const desktopSidebarStyle = useMemo(
     () => [
@@ -1006,8 +1026,16 @@ function DesktopSidebar({
           ? staticStyles.desktopSidebarRetainedHidden
           : staticStyles.desktopSidebarHidden),
       resizeAnimatedStyle,
+      { marginRight: divisionLayout && active ? divisionLayout.gap : 0 },
+      // Match the shell allocation immediately; an actual resize gesture
+      // releases these bounds for the UI-thread drag width.
+      supportsModernWindowLayout &&
+        (divisionLayout !== null || !resizePressed) && {
+          minWidth: columnWidth,
+          maxWidth: columnWidth,
+        },
     ],
-    [active, resizeAnimatedStyle],
+    [active, columnWidth, divisionLayout, resizeAnimatedStyle, resizePressed],
   );
   const desktopSidebarBorderStyle = useMemo(
     () => [
@@ -1126,12 +1154,14 @@ function DesktopSidebar({
         />
         {supportsModernWindowLayout ? <Animated.View style={footerKeyboardStyle} /> : null}
 
-        <SidebarResizeHandle
-          edge="right"
-          gesture={resizeGesture}
-          pressed={resizePressed}
-          testID="left-sidebar-resize-handle"
-        />
+        {divisionLayout === null ? (
+          <SidebarResizeHandle
+            edge="right"
+            gesture={resizeGesture}
+            pressed={resizePressed}
+            testID="left-sidebar-resize-handle"
+          />
+        ) : null}
       </View>
     </Animated.View>
   );

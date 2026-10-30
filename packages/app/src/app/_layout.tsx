@@ -19,7 +19,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { AppState, useWindowDimensions, View } from "react-native";
+import { AppState, useWindowDimensions, View, StyleSheet as RNStyleSheet } from "react-native";
 import { GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -57,11 +57,18 @@ import {
   resolveDesktopAppContentMinimum,
   resolveDesktopSidebarVisibility,
   resolveDesktopSidebarWidth,
+  resolveDesktopDivisionLayout,
+  type DesktopDivisionLayout,
 } from "@/components/desktop-sidebar-layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { supportsModernWindowLayout } from "@/constants/modern-window-layout";
 import { HorizontalScrollProvider } from "@/contexts/horizontal-scroll-context";
-import { AppContentWidthFrame } from "@/contexts/app-content-width-context";
+import {
+  AppContentWidthFrame,
+  DesktopSidebarDivisionContext,
+} from "@/contexts/app-content-width-context";
+import { ContentBandGeometryProbe } from "@/components/headers/content-band-geometry";
+import type { ContentBandGeometry } from "@/components/headers/content-band-geometry.shared";
 import { SessionProvider } from "@/contexts/session-context";
 import { SidebarCalloutProvider } from "@/contexts/sidebar-callout-context";
 import { ToastProvider } from "@/contexts/toast-context";
@@ -352,9 +359,11 @@ function resolveAllocatedContentWidth(input: {
   desktopSidebarVisible: boolean;
   sidebarWidth: number;
   sidebarMinimumWidth: number;
+  divisionLayout: DesktopDivisionLayout | null;
 }): number | null {
   if (!supportsModernWindowLayout) return null;
   if (input.isCompactLayout) return input.windowWidth;
+  if (input.divisionLayout) return input.divisionLayout.contentWidth;
   if (!input.desktopSidebarVisible) return input.viewportWidth;
   return (
     input.viewportWidth -
@@ -363,6 +372,33 @@ function resolveAllocatedContentWidth(input: {
       viewportWidth: input.viewportWidth,
       minimumWidth: input.sidebarMinimumWidth,
     })
+  );
+}
+
+function useWorkspaceChromeStyle({
+  leftInset,
+  rightInset,
+  isCompactLayout,
+  divisionLayout,
+  desktopSidebarVisible,
+}: {
+  leftInset: number;
+  rightInset: number;
+  isCompactLayout: boolean;
+  divisionLayout: DesktopDivisionLayout | null;
+  desktopSidebarVisible: boolean;
+}) {
+  const hiddenSidebarOffset =
+    divisionLayout && !desktopSidebarVisible ? divisionLayout.sidebarWidth + divisionLayout.gap : 0;
+  return useMemo(
+    () => [
+      rowStyle,
+      !isCompactLayout && {
+        paddingLeft: leftInset + hiddenSidebarOffset,
+        paddingRight: rightInset,
+      },
+    ],
+    [leftInset, rightInset, isCompactLayout, hiddenSidebarOffset],
   );
 }
 
@@ -379,7 +415,8 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const sidebarMinimumWidth = usePanelStore((state) =>
     supportsModernWindowLayout ? state.sidebarMinimumWidth : MIN_SIDEBAR_WIDTH,
   );
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const [divisionGeometry, setDivisionGeometry] = useState<ContentBandGeometry | null>(null);
   const insets = useSafeAreaInsets();
   const viewportWidth = windowWidth - insets.left - insets.right;
 
@@ -436,6 +473,37 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     explorerVisible: isWorkspaceRoute && explorerVisible,
     isSettingsRoute: pathname.includes("/settings"),
   });
+  const divisionLayout = useMemo(
+    () =>
+      supportsModernWindowLayout &&
+      !isCompactLayout &&
+      isWorkspaceRoute &&
+      chromeEnabled &&
+      !isWorkspaceFocusModeEnabled
+        ? resolveDesktopDivisionLayout({
+            geometry: divisionGeometry,
+            windowWidth,
+            windowHeight,
+            leftInset: insets.left,
+            rightInset: insets.right,
+            minimumSidebarWidth: sidebarMinimumWidth,
+            minimumContentWidth: appContentMinimumWidth,
+          })
+        : null,
+    [
+      divisionGeometry,
+      windowWidth,
+      windowHeight,
+      insets.left,
+      insets.right,
+      sidebarMinimumWidth,
+      appContentMinimumWidth,
+      isCompactLayout,
+      isWorkspaceRoute,
+      chromeEnabled,
+      isWorkspaceFocusModeEnabled,
+    ],
+  );
   const desktopSidebarMounted = hasMountedDesktopSidebar && !isWorkspaceFocusModeEnabled;
   const desktopSidebarVisible = resolveDesktopSidebarVisibility({
     chromeEnabled,
@@ -447,6 +515,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       requestedSidebarWidth: sidebarWidth,
       sidebarMinimumWidth,
       viewportWidth,
+      divisionLayout,
     }),
   });
   const allocatedContentWidth = resolveAllocatedContentWidth({
@@ -456,6 +525,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     desktopSidebarVisible,
     sidebarWidth,
     sidebarMinimumWidth,
+    divisionLayout,
   });
   const hasTopLeftWindowControls = useHasWindowChromeObstruction("top-left");
   const appChromeLayout = resolveDesktopAppChromeLayout({
@@ -464,22 +534,31 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     sidebarControlsEnabled: chromeEnabled && !isWorkspaceFocusModeEnabled,
   });
   const sidebarChrome = (
-    <SidebarChrome
-      mounted={isCompactLayout ? chromeEnabled : desktopSidebarMounted}
-      visible={isCompactLayout ? chromeEnabled : desktopSidebarVisible}
-      keyboardShortcutsEnabled={keyboardShortcutsEnabled}
-    />
+    <DesktopSidebarDivisionContext value={divisionLayout}>
+      <SidebarChrome
+        mounted={isCompactLayout ? chromeEnabled : desktopSidebarMounted}
+        visible={isCompactLayout ? chromeEnabled : desktopSidebarVisible}
+        keyboardShortcutsEnabled={keyboardShortcutsEnabled}
+      />
+    </DesktopSidebarDivisionContext>
   );
   let themedSidebarChrome = sidebarChrome;
   if (isWeb) {
     themedSidebarChrome = <AppearanceStyleBoundary>{sidebarChrome}</AppearanceStyleBoundary>;
   }
-  const workspaceChromeStyle = useMemo(
-    () => [rowStyle, !isCompactLayout && { paddingLeft: insets.left, paddingRight: insets.right }],
-    [insets.left, insets.right, isCompactLayout],
-  );
+  const workspaceChromeStyle = useWorkspaceChromeStyle({
+    leftInset: insets.left,
+    rightInset: insets.right,
+    isCompactLayout,
+    divisionLayout,
+    desktopSidebarVisible,
+  });
   const workspaceChrome = (
     <View style={workspaceChromeStyle}>
+      <ContentBandGeometryProbe
+        style={RNStyleSheet.absoluteFill}
+        onGeometryChange={setDivisionGeometry}
+      />
       <WorkspaceLayoutModePublisher />
       {!isCompactLayout ? (
         <WindowChromeRegion corners={appChromeLayout.sidebarCorners}>
