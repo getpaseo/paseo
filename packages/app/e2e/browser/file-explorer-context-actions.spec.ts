@@ -2,7 +2,11 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { test } from "../support/fixtures";
-import { downloadFileFromExplorer, openFileExplorer } from "../support/helpers/file-explorer";
+import {
+  downloadFileFromExplorer,
+  openFileExplorer,
+  openFileFromExplorer,
+} from "../support/helpers/file-explorer";
 import { openChangesPanel } from "../support/helpers/workspace-tabs";
 import { gotoWorkspace } from "../support/helpers/launcher";
 import { daemonWsRoutePattern, getE2EDaemonPort } from "../support/helpers/daemon-port";
@@ -465,4 +469,24 @@ test("downloads a file over direct TCP with its original filename and bytes", as
   await downloaded.saveAs(savedFile);
   expect(await downloaded.failure()).toBeNull();
   expect(await readFile(savedFile)).toEqual(source);
+});
+
+test("downloads an unsupported spreadsheet from its preview", async ({ page }, testInfo) => {
+  const fileName = "rapport données.xlsx";
+  const source = await readFile(path.resolve("e2e/fixtures/synthetic.xlsx"));
+  await writeFile(path.join(workspace.workspaceDirectory, fileName), source);
+  await gotoWorkspace(page, workspace.workspaceId);
+  await openFileExplorer(page);
+  await openFileFromExplorer(page, fileName);
+  const pane = page.getByTestId("workspace-file-pane");
+  await expect(pane.getByText("Binary preview unavailable")).toBeVisible();
+  await pane.screenshot({ path: testInfo.outputPath("unsupported-preview.png") });
+  const downloaded = page.waitForEvent("download");
+  await pane.getByRole("button", { name: "Download" }).click();
+  const file = await downloaded;
+  expect(file.suggestedFilename()).toBe(fileName);
+  const saved = testInfo.outputPath(fileName);
+  await file.saveAs(saved);
+  expect(await file.failure()).toBeNull();
+  expect(await readFile(saved)).toEqual(source);
 });
