@@ -51,6 +51,11 @@ activity.disable();
 process.stderr.write(`Config profiling: ${Boolean(profiler)}\n`);
 const profile = profiler ? (await profiler.post("Profiler.stop")).profile : null;
 profiler?.disconnect();
+if (spans.length > 0) {
+  process.stderr.write(
+    `Config long callbacks: ${JSON.stringify(spans.map(({ start, end, cpuMs }) => ({ wallMs: (end - start) / 1000, cpuMs })))}\n`,
+  );
+}
 if (profile && spans.length > 0) {
   const nodes = new Map(profile.nodes.map((node) => [node.id, node]));
   const parents = new Map<number, number>();
@@ -62,13 +67,15 @@ if (profile && spans.length > 0) {
   for (const [index, id] of (profile.samples ?? []).entries()) {
     const delta = profile.timeDeltas?.[index] ?? 0;
     sampleTime += delta;
-    if (spans.some((span) => sampleTime >= span.start && sampleTime <= span.end)) {
-      samples.set(id, (samples.get(id) ?? 0) + delta);
-    }
+    const overlap = spans.reduce(
+      (total, span) =>
+        total +
+        Math.max(0, Math.min(sampleTime, span.end) - Math.max(sampleTime - delta, span.start)),
+      0,
+    );
+    if (overlap > 0) samples.set(id, (samples.get(id) ?? 0) + overlap);
   }
-  process.stderr.write(
-    `Config long callbacks: ${JSON.stringify(spans.map(({ start, end, cpuMs }) => ({ wallMs: (end - start) / 1000, cpuMs })))}\n`,
-  );
+
   const hottest = [...samples]
     .sort((a, b) => b[1] - a[1])
     .slice(0, 20)

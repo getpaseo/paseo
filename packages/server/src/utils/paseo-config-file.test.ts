@@ -1,6 +1,8 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { Worker } from "node:worker_threads";
+import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import { writeFile, truncate, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -60,6 +62,25 @@ async function measureConfigRead(directory: string, profile = false) {
     yields: number;
     workerMessages: number;
   };
+}
+
+// Temporary diagnostic: keep scheduling pressure present throughout the paired
+// cold reads, rather than depending on which other CI files are still running.
+async function withCpuContention<T>(action: () => Promise<T>): Promise<T> {
+  const workers = Array.from(
+    { length: 3 },
+    () =>
+      new Worker(
+        'require("node:worker_threads").parentPort.postMessage("ready"); while (true) { Math.sqrt(Math.random()); }',
+        { eval: true },
+      ),
+  );
+  try {
+    await Promise.all(workers.map((worker) => once(worker, "message")));
+    return await action();
+  } finally {
+    await Promise.all(workers.map((worker) => worker.terminate()));
+  }
 }
 
 describe("paseo config file substrate", () => {
@@ -138,7 +159,7 @@ describe("paseo config file substrate", () => {
   });
 
   it.each(
-    Array.from({ length: 500 }, (_, repetition) =>
+    Array.from({ length: 100 }, (_, repetition) =>
       [false, true].map((profile) => ({ repetition, profile })),
     ).flat(),
   )(
@@ -152,7 +173,7 @@ describe("paseo config file substrate", () => {
       };
       await writeFile(join(tempDir, "paseo.json"), JSON.stringify(config));
       const { result, blockingMs, filesystemRequests, yields, workerMessages } =
-        await measureConfigRead(tempDir, profile);
+        await withCpuContention(() => measureConfigRead(tempDir, profile));
       expect(result).toEqual({ ok: true, config, revision: await statPaseoConfigPath(tempDir) });
       expect(blockingMs).toBeLessThan(20);
       expect(filesystemRequests).toBeGreaterThan(0);
