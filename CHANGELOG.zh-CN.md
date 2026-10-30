@@ -13,7 +13,7 @@
 
 修复：
 
-- 会话打开钩子重载后如果没有改变 env、工具或 MCP 服务器，就保持当前 provider 进程，不再为下一条消息关掉它 ([#8267](https://github.com/getpaseo/paseo/issues/8267))
+- 会话打开钩子重载后如果没有改变 env、工具或 MCP 服务器，就保持当前 provider 进程，不再为下一条消息关掉它 ([#8269](https://github.com/getpaseo/paseo/pull/8269))
 
 ## 0.14.0 - 2026-10-29
 

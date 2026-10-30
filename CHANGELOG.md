@@ -13,7 +13,7 @@ Improved:
 
 Fixed:
 
-- Keep an open agent on its current provider process when a session-open plugin reloads without changing env, tools, or MCP servers ([#8267](https://github.com/getpaseo/paseo/issues/8267))
+- Keep an open agent on its current provider process when a session-open plugin reloads without changing env, tools, or MCP servers ([#8269](https://github.com/getpaseo/paseo/pull/8269))
 
 ## 0.14.0 - 2026-10-29
 
