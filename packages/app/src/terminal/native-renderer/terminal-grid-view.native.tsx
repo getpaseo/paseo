@@ -44,6 +44,7 @@ const INITIAL_CELL_HEIGHT_RATIO = 1.35;
 interface CellMetrics {
   cellWidth: number;
   cellHeight: number;
+  letterSpacing: number;
 }
 
 interface TerminalGridViewport {
@@ -57,6 +58,7 @@ interface TerminalGridRowProps {
   cellHeight: number;
   fontFamily?: string;
   fontSize: number;
+  letterSpacing: number;
   styleEpoch: string;
 }
 
@@ -81,6 +83,7 @@ function estimateCellMetrics(fontSize: number): CellMetrics {
   return {
     cellWidth: snapPixel(fontSize * INITIAL_CELL_WIDTH_RATIO),
     cellHeight: snapPixel(fontSize * INITIAL_CELL_HEIGHT_RATIO),
+    letterSpacing: 0,
   };
 }
 
@@ -112,8 +115,15 @@ function TerminalGridRun({ run, cellWidth, cellHeight, textStyle }: TerminalGrid
     [cellHeight, cellWidth, run.cellCount, run.style.backgroundColor],
   );
   const runTextStyle = useMemo<StyleProp<TextStyle>>(
-    () => [textStyle, run.style],
-    [run.style, textStyle],
+    () => [
+      textStyle,
+      run.style,
+      styles.runText,
+      // Native text layout rounds independently of the cell box. One extra cell
+      // prevents rounding from truncating a run that otherwise fits its cells.
+      { minWidth: (run.cellCount + 1) * cellWidth },
+    ],
+    [cellWidth, run.cellCount, run.style, textStyle],
   );
 
   return (
@@ -121,7 +131,7 @@ function TerminalGridRun({ run, cellWidth, cellHeight, textStyle }: TerminalGrid
       {run.renderKind === "custom-glyph" ? (
         <TerminalGridCustomGlyphRun run={run} cellWidth={cellWidth} cellHeight={cellHeight} />
       ) : (
-        <Text numberOfLines={1} style={runTextStyle}>
+        <Text numberOfLines={1} ellipsizeMode="clip" style={runTextStyle}>
           {run.text}
         </Text>
       )}
@@ -235,6 +245,7 @@ function TerminalGridRow({
   cellHeight,
   fontFamily,
   fontSize,
+  letterSpacing,
 }: TerminalGridRowProps) {
   const rowStyle = useMemo<StyleProp<ViewStyle>>(
     () => [styles.row, { height: cellHeight }],
@@ -248,9 +259,10 @@ function TerminalGridRow({
         lineHeight: cellHeight,
         fontFamily,
         fontSize,
+        letterSpacing,
       },
     ],
-    [cellHeight, fontFamily, fontSize],
+    [cellHeight, fontFamily, fontSize, letterSpacing],
   );
   const accessibilityLabel = useMemo(
     () =>
@@ -288,6 +300,7 @@ const MemoTerminalGridRow = memo(TerminalGridRow, (previous, next) => {
     previous.cellHeight === next.cellHeight &&
     previous.fontFamily === next.fontFamily &&
     previous.fontSize === next.fontSize &&
+    previous.letterSpacing === next.letterSpacing &&
     previous.styleEpoch === next.styleEpoch
   );
 });
@@ -381,6 +394,17 @@ export function TerminalGridView({
         measureTextLength: MEASURE_TEXT.length,
         roundToNearestPixel: (value) => PixelRatio.roundToNearestPixel(value),
       });
+      // Grid cells are snapped to physical pixels. Match the font's natural advance to that
+      // cell width so a full row still fits instead of triggering native Text truncation.
+      const letterSpacing =
+        nextMetrics.cellWidth - event.nativeEvent.layout.width / MEASURE_TEXT.length;
+      setMetrics((current) =>
+        current.cellWidth === nextMetrics.cellWidth &&
+        current.cellHeight === nextMetrics.cellHeight &&
+        current.letterSpacing === letterSpacing
+          ? current
+          : { ...nextMetrics, letterSpacing },
+      );
       const changedMetrics = resolveTerminalGridMetricsMeasurement(
         measuredMetricsRef.current,
         nextMetrics,
@@ -389,7 +413,6 @@ export function TerminalGridView({
         return;
       }
       measuredMetricsRef.current = changedMetrics;
-      setMetrics(changedMetrics);
       onCellMetricsChange?.(changedMetrics);
     },
     [onCellMetricsChange],
@@ -419,6 +442,7 @@ export function TerminalGridView({
             cellHeight={metrics.cellHeight}
             fontFamily={resolvedFontFamily}
             fontSize={fontSize}
+            letterSpacing={metrics.letterSpacing}
             styleEpoch={resolver.themeKey}
           />
         ))}
@@ -440,6 +464,12 @@ const styles = StyleSheet.create({
   },
   run: {
     overflow: "hidden",
+  },
+  runText: {
+    backgroundColor: "transparent",
+    position: "absolute",
+    left: 0,
+    top: 0,
   },
   customGlyphRun: {
     flex: 1,
