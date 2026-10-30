@@ -67,8 +67,16 @@ consume slices incrementally. Today the receiver buffers up to the existing
 Disconnect clears partial state and negotiation.
 
 The lower transport supplies its plaintext frame budget, including encryption
-overhead. The sender waits for each physical write before sending the next chunk.
+overhead. The sender waits for drain between chunks while ordinary messages keep
+the existing delivery path. Slow-client protections count messages queued behind
+an active transfer as well as bytes already in the socket.
 The framing module never selects an encryption construction.
+
+Native uploads retain the platform's existing queue limits. React Native's
+WebSocket does not report its queued bytes, so the client cannot wait for native
+drain. Android's installed OkHttp transport closes when a send would put more
+than 16 MiB in its queue. Negotiating chunking does not establish large native
+upload support; daemon-to-native responses still use the daemon's paced writes.
 
 ## Owned observations
 

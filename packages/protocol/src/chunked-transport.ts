@@ -14,41 +14,58 @@ export class ChunkedTransport {
   private closed = false;
   private pending: Promise<void> | undefined;
   private queuedBytes = 0;
+  private activeBytes = 0;
 
   constructor(
     private readonly io: {
       frameBytes: number;
-      send: (frame: Frame) => void | Promise<void>;
+      send: (frame: Frame, waitForDrain: boolean) => void | Promise<void>;
       deliver: (frame: Frame) => void;
     },
   ) {
     if (io.frameBytes <= HEADER) throw new Error("Invalid transport frame budget");
   }
 
-  send(frame: Frame): Promise<void> {
-    const bytes = typeof frame === "string" ? new TextEncoder().encode(frame) : frame;
-    if (bytes.byteLength > MAX_WEBSOCKET_MESSAGE_BYTES)
-      throw new Error("Logical message too large");
-    const chunk = this.enabled && bytes.byteLength > this.io.frameBytes;
+  /** Bytes waiting behind the active write; physical buffering owns the active frame. */
+  get queuedByteLength(): number {
+    return this.queuedBytes - this.activeBytes;
+  }
+  get isWriting(): boolean {
+    return this.pending !== undefined;
+  }
+
+  send(frame: Frame, waitForDrain = false): Promise<void> {
+    const budget = this.enabled ? this.io.frameBytes : MAX_WEBSOCKET_MESSAGE_BYTES;
+    let bytes: Uint8Array | undefined;
+    if (typeof frame !== "string") bytes = frame;
+    else if (frame.length * 3 > budget) bytes = new TextEncoder().encode(frame);
+    const byteLength = bytes?.byteLength ?? (frame as string).length * 3;
+    if (byteLength > MAX_WEBSOCKET_MESSAGE_BYTES) throw new Error("Logical message too large");
+    const chunk = this.enabled && byteLength > this.io.frameBytes;
     if (this.closed) throw new Error("Transport closed");
     const write = () => {
       if (this.closed) throw new Error("Transport closed");
-      return chunk ? this.sendChunks(bytes, typeof frame === "string") : this.io.send(frame);
+      this.activeBytes = byteLength;
+      return chunk
+        ? this.sendChunks(bytes!, typeof frame === "string")
+        : this.io.send(frame, waitForDrain);
     };
-    if (this.queuedBytes + bytes.byteLength > MAX_WEBSOCKET_MESSAGE_BYTES) {
+    if (this.queuedBytes + byteLength > MAX_WEBSOCKET_MESSAGE_BYTES) {
       this.close();
       return Promise.reject(new Error("Logical output queue exceeded its byte limit"));
     }
-    this.queuedBytes += bytes.byteLength;
+    this.queuedBytes += byteLength;
     let result: void | Promise<void>;
     try {
       result = this.pending ? this.pending.then(write) : write();
     } catch (error) {
-      this.queuedBytes -= bytes.byteLength;
+      this.queuedBytes -= byteLength;
+      this.activeBytes = 0;
       throw error;
     }
     if (!result) {
-      this.queuedBytes -= bytes.byteLength;
+      this.queuedBytes -= byteLength;
+      this.activeBytes = 0;
       return Promise.resolve();
     }
     const pending = Promise.resolve(result)
@@ -57,7 +74,8 @@ export class ChunkedTransport {
         throw error;
       })
       .finally(() => {
-        this.queuedBytes -= bytes.byteLength;
+        this.queuedBytes -= byteLength;
+        this.activeBytes = 0;
       });
     this.pending = pending;
     void pending.then(
@@ -83,7 +101,7 @@ export class ChunkedTransport {
         (offset === 0 ? 1 : 0) | (end === bytes.byteLength ? 2 : 0),
       ]);
       wire.set(bytes.subarray(offset, end), HEADER);
-      await this.io.send(wire);
+      await this.io.send(wire, true);
     }
   }
 

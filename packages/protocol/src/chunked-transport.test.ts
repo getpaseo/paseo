@@ -84,13 +84,16 @@ it("waits for drain before the next chunk and preserves logical ordering", async
   });
   sender.enabled = true;
   const first = sender.send("abcdefghij");
-  const second = sender.send("next");
+  const next = new Uint8Array([1, 2, 3, 4]);
+  const second = sender.send(next);
   await Promise.resolve();
   expect(frames).toHaveLength(1);
+  expect(sender.queuedByteLength).toBe(4);
   drain();
   await Promise.all([first, second]);
   expect(frames).toHaveLength(4);
-  expect(frames[3]).toBe("next");
+  expect(frames[3]).toEqual(next);
+  expect(sender.queuedByteLength).toBe(0);
 });
 
 it.each([
@@ -145,4 +148,19 @@ it("bounds logical messages waiting behind a blocked writer", async () => {
     drain();
     await first;
   }
+});
+
+it("requests drain for chunks while ordinary frames keep the immediate write path", async () => {
+  const waits: boolean[] = [];
+  const transport = new ChunkedTransport({
+    frameBytes: 8,
+    send: (_frame, wait) => {
+      waits.push(wait);
+    },
+    deliver: () => {},
+  });
+  transport.enabled = true;
+  await transport.send("small");
+  await transport.send("abcdefghij");
+  expect(waits).toEqual([false, true, true, true]);
 });

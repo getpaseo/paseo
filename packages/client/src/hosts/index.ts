@@ -92,7 +92,7 @@ export function createHostChannelTransport(
             code: "host_offline",
             serverId,
           });
-        origin.sendHostFrame(
+        return origin.sendHostFrame(
           routeId,
           typeof data === "string" || data instanceof Uint8Array ? data : new Uint8Array(data),
         );

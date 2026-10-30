@@ -1884,9 +1884,9 @@ export class DaemonClient {
       })
     ).routeId;
   }
-  sendHostFrame(routeId: string, data: string | Uint8Array): void {
+  sendHostFrame(routeId: string, data: string | Uint8Array): Promise<void> {
     if (typeof data === "string") {
-      this.sendSessionMessageStrict({
+      return this.sendSessionMessageStrict({
         type: "hosts.route.frame.request",
         routeId,
         data,
@@ -1894,7 +1894,7 @@ export class DaemonClient {
       });
     } else {
       if (!this.isConnected || !this.transport) throw this.unavailableError();
-      this.sendTransportFrame(encodeHostRouteFrame(routeId, data));
+      return this.sendTransportFrame(encodeHostRouteFrame(routeId, data));
     }
   }
   private readonly hostFrameListeners = new Set<(frame: HostRouteFrame) => void>();
@@ -2060,7 +2060,7 @@ export class DaemonClient {
     messageType: string,
     message: unknown,
     submitted?: () => void,
-  ): void {
+  ): Promise<void> {
     const isOpen =
       this.config.trace?.isEnabled() === true &&
       this.beginTraceSection("paseo.ws.message.outbound", {
@@ -2069,25 +2069,30 @@ export class DaemonClient {
         ...describeRequestIdentity(message),
       });
     try {
-      this.sendTransportFrame(JSON.stringify(message), submitted);
+      return this.sendTransportFrame(JSON.stringify(message), submitted);
     } finally {
       this.endTraceSection(isOpen);
     }
   }
 
-  private sendSessionPayload(payload: SessionInboundMessage): void {
-    this.sendJsonMessage("session", payload.type, { type: "session", message: payload }, () => {
-      if (!("requestId" in payload) || typeof payload.requestId !== "string") return;
-      for (const waiter of this.waiters) {
-        if (waiter.requestId === payload.requestId) waiter.submitted = true;
-      }
-    });
+  private sendSessionPayload(payload: SessionInboundMessage): Promise<void> {
+    return this.sendJsonMessage(
+      "session",
+      payload.type,
+      { type: "session", message: payload },
+      () => {
+        if (!("requestId" in payload) || typeof payload.requestId !== "string") return;
+        for (const waiter of this.waiters) {
+          if (waiter.requestId === payload.requestId) waiter.submitted = true;
+        }
+      },
+    );
   }
 
   private sendTransportFrame(
     frame: string | Uint8Array | ArrayBuffer,
     submitted?: () => void,
-  ): void {
+  ): Promise<void> {
     if (!this.transport) {
       throw this.unavailableError();
     }
@@ -2102,9 +2107,9 @@ export class DaemonClient {
       submitted?.();
       const payload = typeof frame === "string" ? frame : asUint8Array(frame)!;
       const transport = this.transport;
-      void this.chunkedTransport!.send(payload).catch(() =>
-        transport.close(4003, "Transport send failed"),
-      );
+      const write = this.chunkedTransport!.send(payload);
+      void write.catch(() => transport.close(4003, "Transport send failed"));
+      return write;
     } finally {
       this.endTraceSection(isOpen);
     }
@@ -2376,13 +2381,13 @@ export class DaemonClient {
     });
   }
 
-  private sendSessionMessageStrict(message: SessionInboundMessage): void {
+  private sendSessionMessageStrict(message: SessionInboundMessage): Promise<void> {
     if (!this.transport || this.connectionState.status !== "connected") {
       throw this.unavailableError();
     }
     const payload = SessionInboundMessageSchema.parse(message);
     try {
-      this.sendSessionPayload(payload);
+      return this.sendSessionPayload(payload);
     } catch (error) {
       throw error instanceof Error ? error : new Error(String(error));
     }

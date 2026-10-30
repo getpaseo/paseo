@@ -1836,3 +1836,58 @@ describe("list terminals across directories", () => {
     ]);
   });
 });
+
+test("a paused terminal consumer catches up through a snapshot instead of retaining every output frame", async () => {
+  const { existsSync } = await import("node:fs");
+  const cwd = tmpCwd();
+  tempDirs.push(cwd);
+  const marker = path.join(cwd, "output-complete");
+  const created = await createTerminalInWorkspace(ctx.client, {
+    cwd,
+    options: {
+      command: process.execPath,
+      args: [
+        "-e",
+        `
+      const fs = require('node:fs');
+      process.stdin.setRawMode?.(true);
+      process.stdin.resume();
+      process.stdin.once('data', () => {
+        const chunk = Buffer.alloc(256 * 1024, 120);
+        let remaining = 128;
+        const write = () => {
+          if (remaining-- === 0) { fs.writeFileSync(${JSON.stringify(marker)}, 'done'); return; }
+          process.stdout.write(chunk, write);
+        };
+        write();
+      });
+    `,
+      ],
+    },
+  });
+  const ws = await connectRawWebSocket(ctx.daemon.port);
+  try {
+    const slot = await subscribeRawTerminal(ws, created.terminal!.id, "slow-terminal");
+    await waitForRawBinaryFrame(
+      ws,
+      (frame) => frame.slot === slot && frame.opcode === TerminalStreamOpcode.Snapshot,
+    );
+    const capture = startTerminalOutputCapture(ws, slot);
+    try {
+      ws.pause();
+      sendRawTerminalInput(ws, slot, "go\n");
+      await waitForCondition(() => existsSync(marker), 20000);
+      ws.resume();
+      await waitForCondition(() => capture.snapshotCount > 0, 10000);
+      expect(ws.readyState).toBe(WebSocket.OPEN);
+      expect(capture.frames.reduce((total, frame) => total + frame.payloadBytes, 0)).toBeLessThan(
+        32 * 1024 * 1024,
+      );
+    } finally {
+      ws.resume();
+      capture.stop();
+    }
+  } finally {
+    await closeWebSocket(ws);
+  }
+}, 40000);

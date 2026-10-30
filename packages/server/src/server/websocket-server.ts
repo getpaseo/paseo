@@ -126,6 +126,7 @@ import {
   outboundFrameByteLength,
   physicalSocketHasCapacity,
   sendBoundedPhysicalFrameAndWait,
+  sendBoundedPhysicalFrame,
 } from "./websocket/physical-socket.js";
 
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
@@ -1285,13 +1286,18 @@ export class VoiceAssistantWebSocketServer {
     if (!transport) {
       transport = new ChunkedTransport({
         frameBytes: ws.maxFrameBytes ?? 32 * 1024 * 1024,
-        send: async (frame) => {
-          const sent = await sendBoundedPhysicalFrameAndWait({
+        send: (frame, waitForDrain) => {
+          const params = {
             socket: ws,
             frame,
             onHighWater: () => this.closeAtOutboundHighWater(ws),
-          });
-          if (!sent) throw new Error("Source is closed");
+          };
+          if (waitForDrain)
+            return sendBoundedPhysicalFrameAndWait(params).then((sent) => {
+              if (!sent) throw new Error("Source is closed");
+              return undefined;
+            });
+          if (!sendBoundedPhysicalFrame(params)) throw new Error("Source is closed");
         },
         deliver: (frame) =>
           this.handleRawMessage(ws, typeof frame === "string" ? frame : Buffer.from(frame)),
@@ -1301,6 +1307,27 @@ export class VoiceAssistantWebSocketServer {
     return transport;
   }
 
+  private socketBufferedAmount(ws: WebSocketLike): number | null {
+    const queued = this.chunkedSockets.get(ws)?.queuedByteLength ?? 0;
+    if (typeof ws.bufferedAmount === "number") return ws.bufferedAmount + queued;
+    return queued > 0 ? queued : null;
+  }
+
+  private sendSocketFrame(
+    ws: WebSocketLike,
+    frame: string | Uint8Array,
+    bytes: number,
+    waitForDrain = false,
+  ): Promise<void> {
+    const transport = this.chunkedSocket(ws);
+    const admittedBytes = transport.isWriting
+      ? bytes
+      : Math.min(bytes, ws.maxFrameBytes ?? 32 * 1024 * 1024);
+    if (!this.ensureOutboundCapacity(ws, admittedBytes))
+      return Promise.reject(new Error("Source is closed"));
+    return transport.send(frame, waitForDrain);
+  }
+
   private async sendMessageToClientAndWait(
     ws: WebSocketLike,
     message: WSOutboundMessage,
@@ -1308,7 +1335,7 @@ export class VoiceAssistantWebSocketServer {
     const prepared = this.prepareJsonDelivery([ws], message, true);
     if (!prepared) throw new Error("Source message delivery unavailable");
     try {
-      await this.chunkedSocket(ws).send(prepared.payload);
+      await this.sendSocketFrame(ws, prepared.payload, prepared.bytes, true);
       this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
     } catch (err) {
       this.logger.warn({ err }, "ws_send_failed");
@@ -1335,7 +1362,7 @@ export class VoiceAssistantWebSocketServer {
       return;
     }
     try {
-      await this.chunkedSocket(ws).send(frame);
+      await this.sendSocketFrame(ws, frame, frame.byteLength, true);
       this.runtimeMetrics.recordOutboundBinaryFrame(ws.bufferedAmount);
     } catch (err) {
       this.logger.warn({ err }, "ws_send_failed");
@@ -1346,16 +1373,14 @@ export class VoiceAssistantWebSocketServer {
   private sendFrameToClient(
     ws: WebSocketLike,
     frame: string | Uint8Array,
-    _frameBytes: number,
+    frameBytes: number,
     recordSent: () => void,
   ): void {
     try {
-      void this.chunkedSocket(ws)
-        .send(frame)
-        .then(recordSent, (err) => {
-          this.logger.warn({ err }, "ws_send_failed");
-          ws.close(1011, "Transport send failed");
-        });
+      void this.sendSocketFrame(ws, frame, frameBytes).then(recordSent, (err) => {
+        this.logger.warn({ err }, "ws_send_failed");
+        ws.close(1011, "Transport send failed");
+      });
     } catch (err) {
       this.logger.warn({ err }, "ws_send_failed");
     }
@@ -1363,7 +1388,13 @@ export class VoiceAssistantWebSocketServer {
 
   private ensureOutboundCapacity(ws: WebSocketLike, frameBytes: number): boolean {
     if (ws.readyState !== 1) return false;
-    if (physicalSocketHasCapacity(ws, frameBytes)) return true;
+    if (
+      physicalSocketHasCapacity(
+        { bufferedAmount: this.socketBufferedAmount(ws) ?? undefined },
+        frameBytes,
+      )
+    )
+      return true;
 
     this.closeAtOutboundHighWater(ws);
     return false;
@@ -1536,16 +1567,15 @@ export class VoiceAssistantWebSocketServer {
         if (!connection) {
           return null;
         }
-        if (source) return (source as WebSocketLike).bufferedAmount ?? null;
+        if (source) return this.socketBufferedAmount(source as WebSocketLike);
         // Relay-attached sockets are a WebSocketLike that doesn't expose
         // bufferedAmount. Return null when no socket gives a signal so the
         // terminal fallback can't mistake "no signal" for "client keeping up";
         // a direct ws reports its real buffered bytes (0 when drained).
         let maxBuffered: number | null = null;
         for (const socket of connection.sockets) {
-          if (typeof socket.bufferedAmount === "number") {
-            maxBuffered = Math.max(maxBuffered ?? 0, socket.bufferedAmount);
-          }
+          const buffered = this.socketBufferedAmount(socket);
+          if (buffered !== null) maxBuffered = Math.max(maxBuffered ?? 0, buffered);
         }
         return maxBuffered;
       },
@@ -1582,8 +1612,9 @@ export class VoiceAssistantWebSocketServer {
         let total = 0;
         for (const socket of this.sessions.keys()) {
           if (socket instanceof VirtualHostSocket) continue;
-          if (typeof socket.bufferedAmount !== "number") return null;
-          total += socket.bufferedAmount;
+          const buffered = this.socketBufferedAmount(socket);
+          if (buffered === null) return null;
+          total += buffered;
         }
         return total;
       },
@@ -2589,7 +2620,7 @@ export class VoiceAssistantWebSocketServer {
         identity: JSON.stringify([connection.principalId, connection.clientId]),
         permissions: () => connection.session.getPermissions(),
         routed: () => connection.session.isRouted(),
-        bufferedAmount: () => ws.bufferedAmount ?? null,
+        bufferedAmount: () => this.socketBufferedAmount(ws),
         delivery: connection.session.delivery,
         admit: (socket, permissions) =>
           this.attachSocket(socket, undefined, undefined, false, {

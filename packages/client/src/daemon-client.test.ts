@@ -8504,3 +8504,40 @@ test("uses the frame budget selected by an asynchronously opened transport", asy
     true,
   );
 });
+
+test.each([false, true])("routed sends wait for origin drain (binary=%s)", async (binary) => {
+  const mock = createMockTransport();
+  let drain!: () => void;
+  let blocked = false;
+  const send = mock.transport.send;
+  mock.transport.send = (frame) => {
+    send(frame);
+    if (blocked)
+      return new Promise<void>((resolve) => {
+        drain = resolve;
+      });
+  };
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "routed-drain",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen({ features: { binaryChunkingV1: true } });
+  await connecting;
+  blocked = true;
+  let finished = false;
+  const write = Promise.resolve(
+    client.sendHostFrame("route", binary ? new Uint8Array([1]) : "hello"),
+  ).then(() => {
+    finished = true;
+    return undefined;
+  });
+  await Promise.resolve();
+  expect(finished).toBe(false);
+  drain();
+  await write;
+  expect(finished).toBe(true);
+});
