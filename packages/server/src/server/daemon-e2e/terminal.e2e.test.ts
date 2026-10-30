@@ -871,6 +871,33 @@ test("visible terminal restore sends bounded ANSI history", async () => {
     expect(restoreText).not.toContain("restore-line-1186");
     expect(restoreText).not.toContain("restore-line-0001");
     expect(restoredLines.length).toBeLessThanOrEqual(15);
+
+    // A client asking for its configured scrollback is not capped at the old fixed
+    // window: the daemon serves up to the rows its model keeps, so switching away
+    // and back does not silently drop history.
+    const wideWs = await connectRawWebSocket(ctx.daemon.port);
+    try {
+      const wideFramePromise = waitForRawBinaryFrame(
+        wideWs,
+        (frame) => frame.opcode === TerminalStreamOpcode.Restore,
+        10000,
+      );
+      await subscribeRawTerminal(wideWs, terminalId, "subscribe-wide", {
+        mode: "visible-snapshot",
+        scrollbackLines: 900,
+        size: { rows: 10, cols: 80 },
+      });
+      const wideText = getFrameText(await wideFramePromise);
+      const wideLines = wideText.match(/restore-line-\d{4}/g) ?? [];
+
+      // The requested window in full: 900 scrollback rows plus the 10 row grid,
+      // which repeats the tail. The old 500 row clamp yields ~510 and fails here.
+      expect(wideLines.length).toBeGreaterThanOrEqual(900);
+      expect(Number(wideLines[0]?.slice(-4))).toBeLessThanOrEqual(400);
+      expect(wideLines.at(-1)).toBe("restore-line-1200");
+    } finally {
+      await closeWebSocket(wideWs);
+    }
   } finally {
     await closeWebSocket(ws);
   }
