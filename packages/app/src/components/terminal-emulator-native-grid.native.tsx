@@ -361,10 +361,13 @@ function NativeTerminalEmulator({
     (terminal: NativeHeadlessTerminal): NativeTerminalOutputDrain =>
       createNativeTerminalOutputDrain({
         write: async (chunk) => {
+          inputModeTrackerRef.current.feed(chunk);
           await terminal.write(chunk);
           emitInputModeChange();
         },
-        reset: () => {
+        reset: (size) => {
+          inputModeTrackerRef.current.reset();
+          if (size) terminal.resize(size);
           terminal.reset();
           emitInputModeChange();
         },
@@ -477,19 +480,12 @@ function NativeTerminalEmulator({
     ],
   );
 
-  const enqueueOutputText = useCallback(
-    (text: string) => {
-      if (text.length === 0) {
-        return;
-      }
-      const inputModeUpdate = inputModeTrackerRef.current.feed(text);
-      if (inputModeUpdate.changed) {
-        emitInputModeChange();
-      }
-      outputDrainRef.current?.enqueueText(text);
-    },
-    [emitInputModeChange],
-  );
+  const enqueueOutputText = useCallback((text: string) => {
+    if (text.length === 0) {
+      return;
+    }
+    outputDrainRef.current?.enqueueText(text);
+  }, []);
 
   const claimActiveTerminalSize = useCallback(() => {
     activeResizeClaimTokenRef.current += 1;
@@ -512,6 +508,7 @@ function NativeTerminalEmulator({
         const text = outputDecoderRef.current.decode(data, { stream: true });
         enqueueOutputText(text);
       },
+      replay: (event) => outputDrainRef.current?.replay(event),
       restoreOutput: (data: TerminalOutputData) => {
         outputDecoderRef.current.decode();
         resetInputModeTracker();

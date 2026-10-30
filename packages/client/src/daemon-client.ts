@@ -6414,7 +6414,7 @@ export class DaemonClient {
   }
 
   /**
-   * Snapshot/restore and output arrive in receive. Subscribe to the returned handle
+   * Replay begin/data/end and live output arrive in receive. Subscribe to the returned handle
    * for terminal_stream_exit: payload.error means observation failure, not PTY exit.
    * Either outcome detaches this slot and releases the handle automatically.
    */

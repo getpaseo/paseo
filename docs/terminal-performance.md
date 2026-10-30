@@ -19,6 +19,7 @@ Terminal frames share the daemon main event loop with all agent traffic. The `ev
 
 ## Invariants (the easy-to-break ones)
 
+- **Replay is incremental across the daemon and SDK.** The worker retains 1,000 history rows. Capable clients request their configured history; the worker bounds it by retained history. Older apps retain their own 200-row request. Explicit SDK history demand is unchanged against older ANSI hosts, which apply their existing 500-row ceiling. Begin resets once, chunks keep a streaming UTF-8 decoder/parser, and each renderer suppresses generated replies while parsing replay. Never concatenate capable replay chunks to feed the renderer.
 - **Coalescers are leading+trailing throttles.** The first chunk after an idle window flushes immediately (synchronously); only sustained bursts wait for the trailing timer. Reverting to trailing-only adds a full window (~5ms) to every keystroke echo.
 - **Output coalescing happens in the worker, before IPC.** One socket frame per pty chunk was a main-loop flood under build output. Non-output messages (snapshot/snapshotReady/titleChange/exit) must flush the coalescer first so ordering is preserved.
 - **Coalesced output carries the LAST chunk's revision.** Snapshot replay dedup (`replayTerminalOutputAfterSnapshot`) skips buffered output with `revision <= replayRevision`; a merged batch with a lower revision would be wrongly skipped (lost output).

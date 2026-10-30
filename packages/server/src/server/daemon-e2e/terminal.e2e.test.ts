@@ -1,3 +1,4 @@
+import { Terminal as HeadlessTerminal } from "@xterm/headless";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
@@ -80,6 +81,24 @@ async function waitForCondition(
   throw new Error(`Timed out after ${timeoutMs}ms waiting for condition`);
 }
 
+function readHeadlessState(terminal: HeadlessTerminal): TerminalState {
+  const buffer = terminal.buffer.active;
+  const lines: TerminalState["grid"] = [];
+  for (let row = 0; row < buffer.length; row++) {
+    const cells: TerminalState["grid"][number] = [];
+    for (let col = 0; col < terminal.cols; col++)
+      cells.push({ char: buffer.getLine(row)?.getCell(col)?.getChars() ?? "" });
+    lines.push(cells);
+  }
+  return {
+    rows: terminal.rows,
+    cols: terminal.cols,
+    grid: lines.slice(buffer.baseY),
+    scrollback: lines.slice(0, buffer.baseY),
+    cursor: { row: buffer.cursorY, col: buffer.cursorX },
+  };
+}
+
 async function waitForTerminalSnapshot(
   client: DaemonClient,
   terminalId: string,
@@ -92,16 +111,34 @@ async function waitForTerminalSnapshot(
       reject(new Error(`Timeout waiting for terminal snapshot (${timeout}ms)`));
     }, timeout);
 
+    let terminal: HeadlessTerminal | null = null;
+    let writes = Promise.resolve();
     const unsubscribe = client.onTerminalStreamEvent((event) => {
-      if (event.terminalId !== terminalId || event.type !== "snapshot") {
-        return;
+      if (event.terminalId !== terminalId || event.type !== "replay") return;
+      const replay = event.replay;
+      if (replay.type === "begin") {
+        terminal?.dispose();
+        terminal = new HeadlessTerminal({
+          rows: replay.rows ?? 24,
+          cols: replay.cols ?? 80,
+          scrollback: 1000,
+          allowProposedApi: true,
+        });
+      } else if (replay.type === "data") {
+        const active = terminal!;
+        writes = writes.then(() => new Promise<void>((done) => active.write(replay.data, done)));
+      } else {
+        void writes.then(() => {
+          const active = terminal!;
+          const state = readHeadlessState(active);
+          if (!predicate(state)) return null;
+          clearTimeout(timeoutHandle);
+          unsubscribe();
+          active.dispose();
+          resolve(state);
+          return null;
+        });
       }
-      if (!predicate(event.state)) {
-        return;
-      }
-      clearTimeout(timeoutHandle);
-      unsubscribe();
-      resolve(event.state);
     });
   });
 }
@@ -1836,3 +1873,68 @@ describe("list terminals across directories", () => {
     ]);
   });
 });
+
+test.each([400, 3000])(
+  "chunked SDK replay retains requested history for %s printed lines",
+  async (count) => {
+    const cwd = tmpCwd();
+    tempDirs.push(cwd);
+    const created = await createTerminalInWorkspace(ctx.client, {
+      cwd,
+      options: {
+        command: "/bin/sh",
+        args: [
+          "-lc",
+          `i=1; while [ $i -le ${count} ]; do printf '\\033[31mreplay-%04d界🙂 payload-abcdefghijklmnopqrstuvwxyz0123456789\\033[0m\\n' $i; i=$((i+1)); done; sleep 30`,
+        ],
+      },
+    });
+    const id = created.terminal!.id;
+    await waitForCondition(
+      async () =>
+        (await ctx.client.captureTerminal(id)).lines
+          .join("\n")
+          .includes(`replay-${String(count).padStart(4, "0")}`),
+      10000,
+    );
+    const events: import("@getpaseo/client").TerminalStreamEvent[] = [];
+    let end!: () => void;
+    const completed = new Promise<void>((resolve) => {
+      end = resolve;
+    });
+    const subscription = ctx.client.observeTerminal(
+      id,
+      (event) => {
+        events.push(event);
+        if (event.type === "replay" && event.replay.type === "end") end();
+      },
+      { restore: { mode: "visible-snapshot", scrollbackLines: 10000 } },
+    );
+    try {
+      await subscription.ready;
+      await completed;
+      const replay = events.flatMap((event) => (event.type === "replay" ? [event.replay] : []));
+      expect(replay[0]).toMatchObject({
+        type: "begin",
+        retainedHistoryLines: count === 3000 ? 1000 : expect.any(Number),
+      });
+      expect(replay.at(-1)).toEqual({ type: "end" });
+      const chunks = replay.flatMap((event) => (event.type === "data" ? [event.data] : []));
+      expect(chunks.every((chunk) => chunk.length <= 65536)).toBe(true);
+      const text = Buffer.concat(chunks).toString("utf8");
+      const begin = replay[0];
+      if (begin?.type !== "begin" || begin.rows === undefined)
+        throw new Error("Missing replay dimensions");
+      expect(text.match(/replay-\d{4}/g)).toHaveLength(Math.min(count, 1000 + begin.rows - 1));
+      expect(text).toContain(`replay-${String(count).padStart(4, "0")}界🙂`);
+      if (count === 400) expect(text).toContain("replay-0001界🙂");
+      else {
+        expect(text).not.toContain("replay-0001");
+        expect(chunks.length).toBeGreaterThan(1);
+      }
+    } finally {
+      await subscription.release();
+    }
+  },
+  30000,
+);

@@ -19,6 +19,7 @@ import type { TerminalRendererReadyChange } from "../utils/terminal-renderer-rea
 export interface TerminalEmulatorHandle {
   find?: TerminalFindHandle;
   writeOutput: (data: TerminalOutputData) => void;
+  replay: (event: import("@getpaseo/client").TerminalReplayEvent) => void;
   restoreOutput: (data: TerminalOutputData) => void;
   renderSnapshot: (state: TerminalState | null) => void;
   paste: (text: string) => void;

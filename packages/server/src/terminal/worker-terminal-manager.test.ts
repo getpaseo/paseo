@@ -1570,18 +1570,18 @@ it("hard cuts the unreleased cell transport, closing its terminals", async () =>
   expect(manager.getTerminal(old.terminalId)).toBeUndefined();
   const workers = await workerRecords(paseoHome);
   expect(workers).toHaveLength(1);
-  expect(workers[0]!.protocolVersion).toBe(2);
+  expect(workers[0]!.protocolVersion).toBe(3);
 });
 
 it("leaves a worker from a newer Paseo running, reports it incompatible, and closes it on a kill stop", async () => {
   const paseoHome = createTemporaryHome();
-  const newer = await leaveWorkerWithTerminal(paseoHome, 3);
+  const newer = await leaveWorkerWithTerminal(paseoHome, 4);
 
   manager = await startRealWorkerManager({ paseoHome });
 
   const unavailable = manager.getUnavailableError?.();
   expect(unavailable).toBeInstanceOf(TerminalWorkerIncompatibleError);
-  expect(unavailable?.message).toContain("worker protocol 3");
+  expect(unavailable?.message).toContain("worker protocol 4");
   await expect(manager.getTerminals(newer.cwd)).rejects.toBeInstanceOf(
     TerminalWorkerIncompatibleError,
   );
@@ -1799,9 +1799,12 @@ it("completes a replay larger than the socket budget while a sibling stays usabl
     if (event.type === "output") seen.push(event.data);
   });
   let bytes = 0;
-  const metadata = await manager.replayTerminal(terminal.id, undefined, (event) => {
+  const metadata = await manager.replayTerminal(terminal.id, undefined, async (event) => {
     if (event.type === "data") bytes += event.data.byteLength;
-    if (event.type === "begin") sibling.send({ type: "input", data: "go\r" });
+    if (event.type === "begin") {
+      sibling.send({ type: "input", data: "go\r" });
+      await waitForCondition(() => seen.join("").includes("SIBLING-ALIVE"), 10000);
+    }
   });
   expect(bytes).toBeGreaterThan(4 * 1024 * 1024);
   expect(metadata?.cols).toBe(1024);
@@ -1840,6 +1843,7 @@ it("completes a replay larger than the socket budget while a sibling stays usabl
     if (message.type === "helloAck") {
       framed.send({ type: "replayTerminal", terminalId: terminal.id, requestId: "stalled-replay" });
     } else if (message.type === "terminalReplay") {
+      framed.send({ type: "replayAcknowledged", requestId: message.requestId });
       if (message.event.type === "begin") {
         began = true;
         socket.pause();
@@ -1853,7 +1857,7 @@ it("completes a replay larger than the socket budget while a sibling stays usabl
       completed = message.ok;
   });
   try {
-    framed.send({ type: "hello", secret: record!.secret, protocolVersion: 2 });
+    framed.send({ type: "hello", secret: record!.secret, protocolVersion: 3 });
     await waitForCondition(() => began, 10000);
     framed.send({
       type: "send",
@@ -1903,6 +1907,8 @@ it("completes a replay larger than the socket budget while a sibling stays usabl
         terminalId: terminal.id,
         requestId: "overflow-replay",
       });
+    if (message.type === "terminalReplay")
+      stalledFrames.send({ type: "replayAcknowledged", requestId: message.requestId });
     if (message.type === "terminalReplay" && message.event.type === "begin") {
       overflowBegan = true;
       stalled.pause();
@@ -1911,7 +1917,7 @@ it("completes a replay larger than the socket budget while a sibling stays usabl
       overflowError = message.error;
   });
   try {
-    stalledFrames.send({ type: "hello", secret: record!.secret, protocolVersion: 2 });
+    stalledFrames.send({ type: "hello", secret: record!.secret, protocolVersion: 3 });
     await waitForCondition(() => overflowBegan, 10000);
     stalledFrames.send({
       type: "send",

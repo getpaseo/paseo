@@ -35,9 +35,9 @@ function replayFixture(
   return async (_id, _options, sink) => {
     const replay = await read();
     if (!replay) return null;
-    sink({ type: "begin", metadata: replay.metadata });
-    sink({ type: "data", data: replay.data });
-    sink({ type: "end" });
+    await sink({ type: "begin", metadata: replay.metadata });
+    await sink({ type: "data", data: replay.data });
+    await sink({ type: "end" });
     return replay.metadata;
   };
 }

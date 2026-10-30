@@ -21,7 +21,7 @@ export type TerminalReplayEvent =
   | { type: "begin"; metadata: TerminalReplayMetadata }
   | { type: "data"; data: Uint8Array }
   | { type: "end" };
-export type TerminalReplaySink = (event: TerminalReplayEvent) => void;
+export type TerminalReplaySink = (event: TerminalReplayEvent) => void | Promise<void>;
 export const TERMINAL_REPLAY_CHUNK_BYTES = 64 * 1024;
 
 export function* createTerminalReplay(
@@ -45,15 +45,15 @@ export function* createTerminalReplay(
   return metadata;
 }
 
-export function replayTerminal(
+export async function replayTerminal(
   session: LocalTerminalSession,
   options: TerminalReplayOptions | undefined,
   sink: TerminalReplaySink,
-): TerminalReplayMetadata {
+): Promise<TerminalReplayMetadata> {
   const replay = createTerminalReplay(session, options);
   let next = replay.next();
   while (!next.done) {
-    sink(next.value);
+    await sink(next.value);
     next = replay.next();
   }
   return next.value;
@@ -67,6 +67,7 @@ interface TerminalReplayPorts {
 /** Owns the worker's replay/live cut, bounded live tail and controller lifetime. */
 export function createTerminalReplayController(ports: TerminalReplayPorts) {
   let controller: FramedSocket | null = null;
+  const acknowledgements = new Map<string, { resolve(): void; reject(error: Error): void }>();
   // Only the live tail of a replaying terminal is held. Replay chunks use the socket's
   // write completion directly; they never enter this buffer or fill the shared socket.
   interface ReplayTail {
@@ -142,11 +143,18 @@ export function createTerminalReplayController(ports: TerminalReplayPorts) {
       while (!next.done) {
         if (tail.overflow)
           throw new Error("Terminal output exceeded the replay buffer; attach again");
+        const acknowledged = new Promise<void>((resolve, reject) => {
+          acknowledgements.set(message.requestId, { resolve, reject });
+        });
+        void acknowledged.catch(() => {});
+        // Register before sending: even a synchronous controller cannot race the acknowledgement.
         await connection.sendAndWait({
           type: "terminalReplay",
           requestId: message.requestId,
           event: next.value,
         });
+        await acknowledged;
+        acknowledgements.delete(message.requestId);
         next = replay.next();
       }
       released = true;
@@ -161,6 +169,8 @@ export function createTerminalReplayController(ports: TerminalReplayPorts) {
       tail.failure = error;
       if (!released) await releaseReplayTail(session, tail);
       throw error;
+    } finally {
+      acknowledgements.delete(message.requestId);
     }
   }
 
@@ -230,6 +240,11 @@ export function createTerminalReplayController(ports: TerminalReplayPorts) {
   }
 
   return {
+    acknowledge(requestId: string, error?: string): void {
+      const pending = acknowledgements.get(requestId);
+      if (error) pending?.reject(new Error(error));
+      else pending?.resolve();
+    },
     setConnection(connection: FramedSocket | null): void {
       const previous = controller;
       controller = connection;
@@ -237,6 +252,9 @@ export function createTerminalReplayController(ports: TerminalReplayPorts) {
       // Old writes settle on their original socket; new output and replay belong
       // exclusively to the replacement controller.
       replayTails.clear();
+      for (const pending of acknowledgements.values())
+        pending.reject(new Error("Terminal replay controller disconnected"));
+      acknowledgements.clear();
     },
     send: sendToController,
     async replay(

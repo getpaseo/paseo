@@ -552,6 +552,11 @@ function runWorker(argv: string[]): void {
         return;
       }
 
+      case "replayAcknowledged": {
+        replayController.acknowledge(message.requestId, message.error);
+        return;
+      }
+
       case "replayTerminal": {
         await replayController.replay(message);
         return;

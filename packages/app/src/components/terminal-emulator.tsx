@@ -40,6 +40,7 @@ import { focusWithRetries } from "../utils/web-focus";
 export interface TerminalEmulatorHandle {
   find?: TerminalFindHandle;
   writeOutput: (data: TerminalOutputData) => void;
+  replay: (event: import("@getpaseo/client").TerminalReplayEvent) => void;
   restoreOutput: (data: TerminalOutputData) => void;
   renderSnapshot: (state: TerminalState | null) => void;
   paste: (text: string) => void;
@@ -253,6 +254,18 @@ export default function TerminalEmulator({
         const data = args[0];
         if (data instanceof Uint8Array) runtimeRef.current?.write({ data });
       },
+      replay: (event) => {
+        if (!event || typeof event !== "object" || Array.isArray(event)) return;
+        if (event.type === "end") runtimeRef.current?.replay({ type: "end" });
+        if (event.type === "data" && event.data instanceof Uint8Array)
+          runtimeRef.current?.replay({ type: "data", data: event.data });
+        if (event.type === "begin")
+          runtimeRef.current?.replay({
+            type: "begin",
+            rows: typeof event.rows === "number" ? event.rows : undefined,
+            cols: typeof event.cols === "number" ? event.cols : undefined,
+          });
+      },
       restoreOutput: (...args) => {
         const data = args[0];
         if (data instanceof Uint8Array) runtimeRef.current?.restoreOutput({ data });
@@ -299,6 +312,7 @@ export default function TerminalEmulator({
       writeOutput: (data: TerminalOutputData) => {
         runtimeRef.current?.write({ data });
       },
+      replay: (event) => runtimeRef.current?.replay(event),
       restoreOutput: (data: TerminalOutputData) => {
         runtimeRef.current?.restoreOutput({ data });
       },

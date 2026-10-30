@@ -795,3 +795,48 @@ describe("terminal emulator runtime in a real browser", () => {
     expect(confirm).not.toHaveBeenCalled();
   });
 });
+
+describe("incremental replay lifecycle", () => {
+  it.each(["clear", "remount"] as const)(
+    "recovers live input after interrupted replay and %s",
+    async (cleanup) => {
+      const mounted = createTerminalHost({ width: 720, height: 360 });
+      mounted.runtime.replay({ type: "begin" });
+      mounted.runtime.replay({ type: "data", data: terminalOutput("interrupted") });
+      if (cleanup === "clear")
+        await new Promise<void>((resolve) => mounted.runtime.clear({ onCommitted: resolve }));
+      else {
+        mounted.runtime.unmount();
+        mounted.runtime.mount({
+          root: mounted.root,
+          host: mounted.host,
+          initialSnapshot: null,
+          scrollback: 1000,
+          theme: {},
+        });
+      }
+      await new Promise<void>((resolve) =>
+        mounted.runtime.write({ data: terminalOutput("live"), onCommitted: resolve }),
+      );
+      getBrowserTerminal().input("user-input", true);
+      expect(mounted.inputs).toContain("user-input");
+    },
+  );
+
+  it("suppresses generated replies until queued replay chunks commit after end", async () => {
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    mounted.runtime.replay({ type: "begin" });
+    mounted.runtime.replay({ type: "data", data: terminalOutput("\x1b]4;1;?\x07") });
+    mounted.runtime.replay({ type: "data", data: terminalOutput("\x1b]4;1;?\x07") });
+    mounted.runtime.replay({ type: "end" });
+    await new Promise<void>((resolve) =>
+      mounted.runtime.write({ data: terminalOutput("committed"), onCommitted: resolve }),
+    );
+    expect(mounted.inputs).toEqual([]);
+    await new Promise<void>((resolve) =>
+      mounted.runtime.write({ data: terminalOutput("\x1b]4;1;?\x07"), onCommitted: resolve }),
+    );
+    expect(mounted.inputs).toHaveLength(1);
+    expect(mounted.inputs[0]?.startsWith("\x1b]4;1;rgb:")).toBe(true);
+  });
+});

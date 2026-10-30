@@ -3,7 +3,7 @@ import {
   TerminalStreamOpcode,
   encodeTerminalStreamFrame,
 } from "@getpaseo/protocol/binary-frames/index";
-import type { TerminalReplayOptions } from "./terminal-replay.js";
+import type { TerminalReplaySink, TerminalReplayOptions } from "./terminal-replay.js";
 
 export const MAX_TERMINAL_OUTPUT_FRAME_BYTES = 256 * 1024;
 
@@ -63,4 +63,38 @@ function resolveVisibleRestoreScrollbackLines(value: number | undefined): number
     return DEFAULT_VISIBLE_RESTORE_SCROLLBACK_LINES;
   }
   return Math.min(Math.max(0, value), MAX_VISIBLE_RESTORE_SCROLLBACK_LINES);
+}
+
+/** The daemon's only old-app adapter. Capable delivery never assembles the replay. */
+export function createTerminalRestoreDelivery(input: {
+  slot: number;
+  chunked: boolean;
+  send(frame: Uint8Array): Promise<void>;
+}): TerminalReplaySink {
+  // COMPAT(terminalSingleRestore): added after v0.14.0; remove after 2027-04-30 when client floor supports chunked replay.
+  const legacyChunks: Uint8Array[] = [];
+  return async (event) => {
+    if (!input.chunked) {
+      if (event.type === "data") legacyChunks.push(event.data);
+      if (event.type === "end")
+        await input.send(
+          encodeTerminalRestoreFrame({
+            slot: input.slot,
+            data: Buffer.concat(legacyChunks),
+          }),
+        );
+      return;
+    }
+    const opcodes = {
+      begin: TerminalStreamOpcode.ReplayBegin,
+      data: TerminalStreamOpcode.ReplayData,
+      end: TerminalStreamOpcode.ReplayEnd,
+    };
+    let payload: string | Uint8Array | undefined;
+    if (event.type === "begin") payload = JSON.stringify(event.metadata);
+    if (event.type === "data") payload = event.data;
+    await input.send(
+      encodeTerminalStreamFrame({ slot: input.slot, opcode: opcodes[event.type], payload }),
+    );
+  };
 }

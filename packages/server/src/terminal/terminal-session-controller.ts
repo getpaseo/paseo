@@ -28,7 +28,7 @@ import { TerminalOutputCoalescer } from "./terminal-output-coalescer.js";
 import {
   MAX_CLIENT_BUFFERED_BYTES,
   MAX_TERMINAL_OUTPUT_FRAME_BYTES,
-  encodeTerminalRestoreFrame,
+  createTerminalRestoreDelivery,
   resolveRestoreAfterOutputOverflow,
   resolveTerminalRestoreSnapshotOptions,
   resolveTerminalSubscriptionSnapshotMode,
@@ -70,6 +70,7 @@ interface ActiveTerminalStream {
   readyRevision?: number;
   restore?: TerminalRestoreOptions;
   bufferedOutputs: BufferedTerminalOutput[];
+  bufferedOutputBytes: number;
   outputBytesSinceSnapshot: number;
   outputCoalescer: TerminalOutputCoalescer;
 }
@@ -83,6 +84,7 @@ export interface TerminalSessionControllerOptions {
   terminalManager: TerminalManager | null;
   emit: (msg: SessionOutboundMessage) => void;
   hasBinaryChannel: () => boolean;
+  supportsChunkedReplay?: (source: object) => boolean;
   isPathWithinRoot: (rootPath: string, candidatePath: string) => boolean;
   sessionLogger: pino.Logger;
   listTerminalWorkspaceRefs?: () => Promise<readonly TerminalWorkspaceRef[]>;
@@ -146,7 +148,7 @@ export class TerminalSessionController {
   private readonly activeStreams = new Map<number, ActiveTerminalStream>();
   private nextSlot = 0;
 
-  constructor(options: TerminalSessionControllerOptions) {
+  constructor(private readonly options: TerminalSessionControllerOptions) {
     this.terminalManager = options.terminalManager;
     this.emit = options.emit;
     this.hasBinaryChannel = options.hasBinaryChannel;
@@ -899,6 +901,7 @@ export class TerminalSessionController {
       readyRevision: undefined,
       restore: options?.restore,
       bufferedOutputs: [],
+      bufferedOutputBytes: 0,
       outputBytesSinceSnapshot: 0,
       outputCoalescer: new TerminalOutputCoalescer({
         timers: { setTimeout, clearTimeout },
@@ -971,6 +974,19 @@ export class TerminalSessionController {
           return;
         }
         if (activeStream.needsSnapshot || activeStream.snapshotInFlight) {
+          activeStream.bufferedOutputBytes += Buffer.byteLength(message.data);
+          if (activeStream.bufferedOutputBytes > MAX_CLIENT_BUFFERED_BYTES) {
+            activeStream.owner.emit({
+              type: "terminal_stream_exit",
+              payload: {
+                terminalId: activeStream.terminalId,
+                error: "Terminal replay live tail exceeded the buffer; attach again",
+              },
+            });
+            this.detachRegistration(activeStream);
+            void activeStream.owner.release();
+            return;
+          }
           activeStream.bufferedOutputs.push({
             data: message.data,
             revision: message.revision,
@@ -1075,19 +1091,45 @@ export class TerminalSessionController {
     terminalManager: TerminalManager,
     restore: TerminalRestoreOptions,
   ): Promise<SnapshotSendResult> {
-    const snapshotOptions = resolveTerminalRestoreSnapshotOptions(restore);
+    const chunked = this.options.supportsChunkedReplay?.(activeStream.owner.source) === true;
+    const snapshotOptions =
+      chunked && restore.mode !== "live"
+        ? { scrollbackLines: restore.scrollbackLines }
+        : resolveTerminalRestoreSnapshotOptions(restore);
     if (snapshotOptions === null) {
       return { shouldContinue: true };
     }
 
-    const chunks: Uint8Array[] = [];
-    // COMPAT(terminalSingleRestore): ANSI clients through v0.14 collect one restore;
-    // remove after the supported client floor implements chunked replay.
+    const deliver = createTerminalRestoreDelivery({
+      slot: activeStream.slot,
+      chunked,
+      send: (frame) => activeStream.owner.emitBinaryAndWait(frame),
+    });
     const snapshot = await terminalManager.replayTerminal(
       activeStream.terminalId,
       snapshotOptions,
-      (event) => {
-        if (event.type === "data") chunks.push(event.data);
+      async (event) => {
+        if (this.activeStreams.get(activeStream.slot) !== activeStream) return;
+        const buffered = this.options.getClientBufferedAmount?.(activeStream.owner.source);
+        if (
+          chunked &&
+          buffered !== null &&
+          buffered !== undefined &&
+          buffered > MAX_CLIENT_BUFFERED_BYTES
+        ) {
+          activeStream.owner.emit({
+            type: "terminal_stream_exit",
+            payload: {
+              terminalId: activeStream.terminalId,
+              error: "Terminal replay transport overflow; attach again",
+            },
+          });
+          this.detachRegistration(activeStream);
+          void activeStream.owner.release();
+
+          return;
+        }
+        await deliver(event);
       },
     );
     if (this.activeStreams.get(activeStream.slot) !== activeStream) {
@@ -1098,12 +1140,6 @@ export class TerminalSessionController {
       return { shouldContinue: false };
     }
 
-    activeStream.owner.emitBinary(
-      encodeTerminalRestoreFrame({
-        slot: activeStream.slot,
-        data: Buffer.concat(chunks),
-      }),
-    );
     // The restore frame went out-of-band; keep the replay that follows on the
     // coalescer's trailing path so it doesn't flush back-to-back with it.
     activeStream.outputCoalescer.markFlushed();
@@ -1120,6 +1156,7 @@ export class TerminalSessionController {
       activeStream.outputCoalescer.handle(replayPreamble);
     }
 
+    activeStream.bufferedOutputBytes = 0;
     const bufferedOutputs = activeStream.bufferedOutputs.splice(
       0,
       activeStream.bufferedOutputs.length,

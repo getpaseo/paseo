@@ -52,6 +52,14 @@ On capable daemons, connecting creates no timeline or event demand. Client subsc
 release it on unsubscribe, and restore it after reconnect. Raw message observers inspect traffic
 without requesting streams. Application caches and which agents are visible remain caller-owned.
 
+## Terminal ANSI replay
+
+`terminal_chunked_replay` is SDK-owned delivery behavior, separate from the daemon's
+`features.terminalChunkedReplay`. The daemon sends new binary opcodes only to a source
+advertising the capability. The SDK keeps the established subscribe request against older
+ANSI hosts and normalizes their single Restore frame into begin/data/end. JSON snapshot
+wire declarations remain accepted, but JSON snapshot frames have no rendering runtime.
+
 ## Owned observations
 
 `owned_subscriptions` and `server_info.features.ownedSubscriptions` negotiate the source-owned

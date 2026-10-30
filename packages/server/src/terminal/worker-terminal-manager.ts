@@ -599,7 +599,22 @@ export function createWorkerTerminalManager(
   function attachWorker(): void {
     worker.on("message", (message: TerminalWorkerToParentMessage) => {
       if (message.type === "terminalReplay") {
-        replaySinks.get(message.requestId)?.(message.event);
+        const sink = replaySinks.get(message.requestId);
+        void Promise.resolve()
+          .then(() => sink?.(message.event))
+          .then(
+            () =>
+              worker.send({ type: "replayAcknowledged", requestId: message.requestId }, () => {}),
+            (error: unknown) =>
+              worker.send(
+                {
+                  type: "replayAcknowledged",
+                  requestId: message.requestId,
+                  error: error instanceof Error ? error.message : String(error),
+                },
+                () => {},
+              ),
+          );
         return;
       }
       if (isResponse(message)) {
@@ -678,6 +693,11 @@ export function createWorkerTerminalManager(
     const request = new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         pendingRequests.delete(requestId);
+        if (sink)
+          worker.send(
+            { type: "replayAcknowledged", requestId, error: "Terminal replay delivery timed out" },
+            () => {},
+          );
         reject(new Error(`Terminal worker request timed out: ${input.type}`));
       }, requestTimeoutMs);
       pendingRequests.set(requestId, { resolve, reject, timeout });

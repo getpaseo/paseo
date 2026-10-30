@@ -1101,6 +1101,7 @@ test("advertises client capabilities in hello", async () => {
       projected_subagent_timeline: true,
       reasoning_merge_enum: true,
       terminal_reflowable_snapshot: true,
+      terminal_chunked_replay: true,
       timeline_notifications: true,
       plugin_timeline_items: true,
       workspace_setup_blocked: true,
@@ -6387,66 +6388,80 @@ test("emits output events for the active terminal stream", async () => {
   unsubscribe();
 });
 
-test("emits snapshot events for the subscribed terminal stream", async () => {
-  const logger = createMockLogger();
-  const mock = createMockTransport();
+test.each([5, 500, 10000])(
+  "preserves explicit %s history demand on an old ANSI host and normalizes restore",
+  async (history) => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
 
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger,
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
 
-  const connectPromise = client.connect();
-  mock.triggerOpen();
-  await connectPromise;
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
 
-  const snapshots: unknown[] = [];
-  client.onTerminalStreamEvent((event) => {
-    if (event.type !== "snapshot") {
-      return;
-    }
-    snapshots.push(event.state);
-  });
+    const events: unknown[] = [];
+    const replayEvents: unknown[] = [];
+    client.onTerminalStreamEvent((event) => {
+      if (event.type === "replay") replayEvents.push(event.replay);
+      events.push(event);
+    });
 
-  const subscribePromise = client.subscribeTerminal("term-1", { requestId: "sub-2" });
-  await vi.waitFor(() =>
-    expect(parseSentFrame(mock.sent.at(-1)).type).toBe("subscribe_terminal_request"),
-  );
-  mock.triggerMessage(
-    wrapSessionMessage({
-      type: "subscribe_terminal_response",
-      payload: {
-        subscriptionId: "server-" + String(parseSentFrame(mock.sent.at(-1)).requestId),
-        terminalId: "term-1",
+    const subscribePromise = client.subscribeTerminal("term-1", {
+      requestId: "sub-2",
+      restore: { mode: "visible-snapshot", scrollbackLines: history },
+    });
+    await vi.waitFor(() =>
+      expect(parseSentFrame(mock.sent.at(-1)).type).toBe("subscribe_terminal_request"),
+    );
+    expect(parseSentFrame(mock.sent.at(-1)).restore).toEqual({
+      mode: "visible-snapshot",
+      scrollbackLines: history,
+    });
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "subscribe_terminal_response",
+        payload: {
+          subscriptionId: "server-" + String(parseSentFrame(mock.sent.at(-1)).requestId),
+          terminalId: "term-1",
+          slot: 12,
+          error: null,
+          requestId: "sub-2",
+        },
+      }),
+    );
+    await subscribePromise;
+
+    const state = {
+      rows: 1,
+      cols: 5,
+      grid: [[{ char: "h" }, { char: "e" }, { char: "l" }, { char: "l" }, { char: "o" }]],
+      scrollback: [],
+      cursor: { row: 0, col: 5 },
+    };
+    mock.triggerMessage(
+      encodeTerminalStreamFrame({
+        opcode: TerminalStreamOpcode.Snapshot,
         slot: 12,
-        error: null,
-        requestId: "sub-2",
-      },
-    }),
-  );
-  await subscribePromise;
+        payload: encodeTerminalSnapshotPayload(state),
+      }),
+    );
 
-  const state = {
-    rows: 1,
-    cols: 5,
-    grid: [[{ char: "h" }, { char: "e" }, { char: "l" }, { char: "l" }, { char: "o" }]],
-    scrollback: [],
-    cursor: { row: 0, col: 5 },
-  };
-  mock.triggerMessage(
-    encodeTerminalStreamFrame({
-      opcode: TerminalStreamOpcode.Snapshot,
-      slot: 12,
-      payload: encodeTerminalSnapshotPayload(state),
-    }),
-  );
-
-  expect(snapshots).toEqual([state]);
-});
+    expect(events).toEqual([]);
+    const data = new TextEncoder().encode("\x1b[31mold ANSI host界🙂");
+    mock.triggerMessage(
+      encodeTerminalStreamFrame({ opcode: TerminalStreamOpcode.Restore, slot: 12, payload: data }),
+    );
+    expect(replayEvents).toEqual([{ type: "begin" }, { type: "data", data }, { type: "end" }]);
+  },
+);
 
 test("sends explicit terminal input and resize commands", async () => {
   const logger = createMockLogger();

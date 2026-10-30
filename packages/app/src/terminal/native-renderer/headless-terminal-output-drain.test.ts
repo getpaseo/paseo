@@ -268,3 +268,89 @@ describe("native terminal output drain", () => {
     });
   });
 });
+
+test("replays split Unicode and ANSI with one reset then live output", async () => {
+  const terminal = createNativeHeadlessTerminal({ rows: 4, cols: 40, scrollbackLines: 1000 });
+  let resets = 0;
+  const drain = createNativeTerminalOutputDrain({
+    write: (text) => terminal.write(text),
+    reset: (size) => {
+      resets++;
+      if (size) terminal.resize(size);
+      terminal.reset();
+    },
+    getViewportState: () => terminal.getViewportState(),
+    onPaint: () => {},
+  });
+  try {
+    drain.replay({ type: "begin", rows: 4, cols: 40, retainedHistoryLines: 400 });
+    const bytes = new TextEncoder().encode("\x1b[31m界🙂 replay\x1b[0m\r\n");
+    for (let i = 0; i < bytes.length; i++)
+      drain.replay({ type: "data", data: bytes.subarray(i, i + 1) });
+    drain.replay({ type: "end" });
+    drain.enqueueText("live");
+    await drain.flush();
+    expect(resets).toBe(1);
+    expect(
+      terminal
+        .getBufferWindow({ startRow: 0, rowCount: 4 })
+        .rows.map((row) =>
+          row
+            .filter((cell) => cell.width !== 0)
+            .map((cell) => cell.char)
+            .join(""),
+        )
+        .join("\n"),
+    ).toContain("界🙂 replay");
+    expect(
+      terminal
+        .getBufferWindow({ startRow: 0, rowCount: 4 })
+        .rows.map((row) =>
+          row
+            .filter((cell) => cell.width !== 0)
+            .map((cell) => cell.char)
+            .join(""),
+        )
+        .join("\n"),
+    ).toContain("live");
+  } finally {
+    drain.dispose();
+    terminal.dispose();
+  }
+});
+
+test("an empty replacement replay resets after an in-flight write finishes", async () => {
+  let finish!: () => void;
+  let started!: () => void;
+  const writing = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const blocked = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  let resets = 0;
+  const drain = createNativeTerminalOutputDrain({
+    write: async () => {
+      started();
+      await blocked;
+    },
+    reset: () => {
+      resets++;
+    },
+    getViewportState: () => null,
+    onPaint: () => {},
+  });
+  try {
+    drain.enqueueText("old terminal");
+    await writing;
+    drain.replay({ type: "begin" });
+    drain.replay({ type: "end" });
+    finish();
+    await drain.flush();
+    expect(resets).toBe(1);
+    expect(drain.getQueuedChars()).toBe(0);
+  } finally {
+    finish();
+    drain.dispose();
+  }
+});

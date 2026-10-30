@@ -911,6 +911,14 @@ export class TerminalEmulatorRuntime {
     });
   }
 
+  replay(event: import("@getpaseo/client").TerminalReplayEvent): void {
+    if (event.type === "begin") {
+      this.restoreOutput({ data: EMPTY_TERMINAL_OUTPUT, rows: event.rows, cols: event.cols });
+    } else if (event.type === "data") {
+      this.write({ data: event.data, suppressInput: true });
+    }
+  }
+
   restoreOutput(input: {
     data: TerminalOutputData;
     rows?: number;

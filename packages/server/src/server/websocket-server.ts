@@ -2016,6 +2016,7 @@ export class VoiceAssistantWebSocketServer {
         resumeOnStartupSetting: true,
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
         "terminal-restore-modes": true,
+        terminalChunkedReplay: true,
         // COMPAT(terminalInputModeReplay): added in v0.2.6, remove gate after 2027-02-02.
         "terminal-input-mode-replay": true,
         // COMPAT(terminalSizeOwnership): added in v0.2.6, remove gate after 2027-02-02.
