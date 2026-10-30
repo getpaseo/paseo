@@ -1,4 +1,11 @@
 import { ACPProviderOptionsSchema } from "./acp-options.js";
+import {
+  discoverACPSkills,
+  parseACPSkillInvocation,
+  renderACPSkillInvocation,
+  type DiscoveredACPSkill,
+  toSlashCommand,
+} from "./acp-skill-commands.js";
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
@@ -497,6 +504,7 @@ interface ACPAgentClientOptions {
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
   now?: () => number;
+  skillRoots?: readonly string[];
 }
 
 interface ACPAgentSessionOptions {
@@ -533,6 +541,13 @@ interface ACPAgentSessionOptions {
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
+  /**
+   * Roots Paseo scans for skills to offer in the `/` menu and expand into the
+   * prompt. Agents only expand the commands they discovered themselves, so
+   * skills the agent cannot see (e.g. skills reached through a symlink) need
+   * this client-side expansion.
+   */
+  skillRoots?: readonly string[];
 }
 
 export interface SpawnedACPProcess {
@@ -963,6 +978,7 @@ export class ACPAgentClient implements AgentClient {
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private readonly importPromptCache = new Map<string, ACPImportPromptCacheEntry>();
   private readonly now: () => number;
+  private readonly skillRoots: readonly string[];
   protected readonly terminateProcess: ProcessTerminator;
 
   constructor(options: ACPAgentClientOptions) {
@@ -992,6 +1008,7 @@ export class ACPAgentClient implements AgentClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.skillRoots = options.skillRoots ?? [];
     this.now = options.now ?? Date.now;
   }
 
@@ -1033,6 +1050,7 @@ export class ACPAgentClient implements AgentClient {
         extensionCommandsParser: this.extensionCommandsParser,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
+        skillRoots: this.skillRoots,
       },
     );
     await session.initializeNewSession();
@@ -1093,6 +1111,7 @@ export class ACPAgentClient implements AgentClient {
       extensionCommandsParser: this.extensionCommandsParser,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
+      skillRoots: this.skillRoots,
     });
     await session.initializeResumedSession();
     return session;
@@ -1764,6 +1783,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private cachedCommands: AgentSlashCommand[] = [];
   /** When the last command batch arrived; null while nothing has been published. */
   private commandsUpdatedAt: number | null = null;
+  private discoveredSkills: DiscoveredACPSkill[] = [];
+  private readonly skillRoots: readonly string[];
   private commandsReadySettled = false;
   private waitForInitialCommands: boolean;
   private initialCommandsWaitTimeoutMs: number;
@@ -1816,6 +1837,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.skillRoots = options.skillRoots ?? [];
   }
 
   get id(): string | null {
@@ -1991,11 +2013,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
     this.emitSubmittedUserMessage(prompt, messageId, turnId, options?.clientMessageId);
 
+    const expandedPrompt = await this.expandSkillPrompt(prompt);
+
     void this.connection
       .prompt({
         sessionId: this.sessionId,
         messageId,
-        prompt: toACPContentBlocks(prompt),
+        prompt: toACPContentBlocks(expandedPrompt),
       })
       .then((response) => {
         this.handlePromptResponse(response, turnId);
@@ -2014,6 +2038,45 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       });
 
     return { turnId };
+  }
+
+  /**
+   * Expand a leading `/name` that names a skill Paseo discovered but the agent
+   * did not advertise. The agent expands its own advertised commands, so only
+   * skills missing from `cachedCommands` are rewritten here; anything else
+   * reaches the agent unchanged and it decides what to do with it.
+   */
+  private async expandSkillPrompt(prompt: AgentPromptInput): Promise<AgentPromptInput> {
+    if (this.skillRoots.length === 0) {
+      return prompt;
+    }
+
+    await this.ensureSkillsDiscovered();
+    const advertisedNames = new Set(this.cachedCommands.map((command) => command.name));
+    const skills = this.discoveredSkills.filter((skill) => !advertisedNames.has(skill.name));
+
+    if (typeof prompt === "string") {
+      const invocation = parseACPSkillInvocation(prompt, skills);
+      return invocation ? renderACPSkillInvocation(invocation) : prompt;
+    }
+
+    const index = prompt.findIndex(
+      (block) => block.type === "text" && block.text.trim().length > 0,
+    );
+    if (index === -1) {
+      return prompt;
+    }
+    const block = prompt[index]!;
+    if (block.type !== "text") {
+      return prompt;
+    }
+    const invocation = parseACPSkillInvocation(block.text, skills);
+    if (!invocation) {
+      return prompt;
+    }
+    const expanded = [...prompt];
+    expanded[index] = { ...block, text: renderACPSkillInvocation(invocation) };
+    return expanded;
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -2089,13 +2152,48 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async listCommands(): Promise<AgentSlashCommand[]> {
+    await this.ensureSkillsDiscovered();
     if (this.commandsReadySettled || this.closed || !this.waitForInitialCommands) {
-      return this.cachedCommands;
+      return this.mergeDiscoveredSkills(this.cachedCommands);
     }
 
     await this.waitForCommandsToSettle();
     this.settleCommandsReady();
-    return this.cachedCommands;
+    return this.mergeDiscoveredSkills(this.cachedCommands);
+  }
+
+  /**
+   * Scan the configured roots once and cache the result. Discovery failures are
+   * swallowed: a missing or unreadable skill directory is the common case, and
+   * it must never block listing commands or starting a turn.
+   */
+  private async ensureSkillsDiscovered(): Promise<readonly DiscoveredACPSkill[]> {
+    if (this.skillRoots.length === 0 || this.discoveredSkills.length > 0) {
+      return this.discoveredSkills;
+    }
+    try {
+      this.discoveredSkills = await discoverACPSkills({ roots: this.skillRoots });
+    } catch (error) {
+      this.logger.warn({ err: error }, "Failed to discover ACP skills");
+      this.discoveredSkills = [];
+    }
+    return this.discoveredSkills;
+  }
+
+  /**
+   * Offer skills the agent cannot expand itself alongside its advertised
+   * commands. A name the agent already advertises wins: the agent will expand
+   * that one, so Paseo must not duplicate it.
+   */
+  private mergeDiscoveredSkills(agentCommands: AgentSlashCommand[]): AgentSlashCommand[] {
+    const agentNames = new Set(agentCommands.map((command) => command.name));
+    const extraSkills = this.discoveredSkills
+      .filter((skill) => !agentNames.has(skill.name))
+      .map(toSlashCommand);
+    if (extraSkills.length === 0) {
+      return agentCommands;
+    }
+    return [...agentCommands, ...extraSkills].sort((a, b) => a.name.localeCompare(b.name));
   }
 
   async setMode(modeId: string): Promise<void> {
