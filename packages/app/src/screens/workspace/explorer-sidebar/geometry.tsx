@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Gesture } from "react-native-gesture-handler";
-import { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
+import {
+  runOnJS,
+  useAnimatedReaction,
+  useAnimatedStyle,
+  useSharedValue,
+} from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { HEADER_TOP_PADDING_MOBILE } from "@/constants/layout";
@@ -10,7 +15,13 @@ import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
   SIDEBAR_RESIZE_FAIL_OFFSET,
 } from "@/components/sidebar-resize-handle-layout";
-import { resolveExplorerSidebarWidth } from "@/components/explorer-sidebar-layout";
+import {
+  finishExplorerSidebarResize,
+  reconcileExplorerSidebarResize,
+  resolveExplorerSidebarFrameWidth,
+  resolveExplorerSidebarWidth,
+  type ExplorerSidebarResize,
+} from "@/components/explorer-sidebar-layout";
 import type { ExplorerGeometryInput, ExplorerGeometry } from "./geometry-types";
 export function useExplorerGeometry({
   width,
@@ -22,11 +33,21 @@ export function useExplorerGeometry({
   const insets = useSafeAreaInsets();
   const resizeWidth = useSharedValue(width);
   const startWidth = useSharedValue(width);
-  const resizing = useSharedValue(false);
+  const resize = useSharedValue<ExplorerSidebarResize | null>(null);
   const [resizePressed, setResizePressed] = useState(false);
   useEffect(() => {
-    resizeWidth.value = width;
+    if (!supportsModernWindowLayout) resizeWidth.value = width;
   }, [resizeWidth, width]);
+
+  useAnimatedReaction(
+    () => ({ resize: resize.value, width, containerWidth, overlay, resizeEnabled }),
+    ({ resize: currentResize, ...allocation }) => {
+      if (!supportsModernWindowLayout) return;
+      const nextResize = reconcileExplorerSidebarResize(currentResize, allocation);
+      if (nextResize !== currentResize) resize.value = nextResize;
+    },
+    [containerWidth, overlay, resize, resizeEnabled, width],
+  );
 
   const showResizeGrip = useCallback(() => setResizePressed(true), []);
   const hideResizeGrip = useCallback(() => setResizePressed(false), []);
@@ -39,19 +60,38 @@ export function useExplorerGeometry({
         .activeOffsetX([-SIDEBAR_RESIZE_ACTIVATION_OFFSET, SIDEBAR_RESIZE_ACTIVATION_OFFSET])
         .failOffsetY([-SIDEBAR_RESIZE_FAIL_OFFSET, SIDEBAR_RESIZE_FAIL_OFFSET])
         .onStart((event) => {
-          resizing.value = true;
-          startWidth.value = width + event.translationX;
-          resizeWidth.value = width;
+          const currentWidth = supportsModernWindowLayout
+            ? resolveExplorerSidebarFrameWidth({
+                width,
+                containerWidth,
+                overlay,
+                resizeEnabled,
+                resize: resize.value,
+                resizeWidth: resizeWidth.value,
+              })
+            : width;
+          resize.value = { sourceWidth: width, containerWidth, pendingWidth: null };
+          startWidth.value = currentWidth + event.translationX;
+          resizeWidth.value = currentWidth;
         })
         .onUpdate((event) => {
+          if (supportsModernWindowLayout && !resize.value) return;
           resizeWidth.value = resolveExplorerSidebarWidth({
             requestedWidth: startWidth.value - event.translationX,
             containerWidth,
           });
         })
-        .onEnd(() => runOnJS(onResize)(resizeWidth.value))
-        .onFinalize(() => {
-          resizing.value = false;
+        .onEnd((_event, success) => {
+          if (supportsModernWindowLayout) {
+            resize.value = finishExplorerSidebarResize(resize.value, resizeWidth.value, success);
+            if (!success || !resize.value) return;
+          }
+          runOnJS(onResize)(resizeWidth.value);
+        })
+        .onFinalize((_event, success) => {
+          if (supportsModernWindowLayout && !success) {
+            resize.value = finishExplorerSidebarResize(resize.value, resizeWidth.value, false);
+          }
           scheduleOnRN(hideResizeGrip);
         }),
     [
@@ -59,8 +99,9 @@ export function useExplorerGeometry({
       onResize,
       containerWidth,
       hideResizeGrip,
+      overlay,
+      resize,
       resizeWidth,
-      resizing,
       showResizeGrip,
       startWidth,
       width,
@@ -70,9 +111,20 @@ export function useExplorerGeometry({
   // style attached across folding and explicitly size overlays to the workspace viewport.
   const animatedWidthStyle = useAnimatedStyle(() => {
     if (overlay) return { width: containerWidth };
-    if (supportsModernWindowLayout && !resizing.value) return { width };
+    if (supportsModernWindowLayout) {
+      return {
+        width: resolveExplorerSidebarFrameWidth({
+          width,
+          containerWidth,
+          overlay,
+          resizeEnabled,
+          resize: resize.value,
+          resizeWidth: resizeWidth.value,
+        }),
+      };
+    }
     return { width: resizeWidth.value };
-  }, [containerWidth, overlay, width]);
+  }, [containerWidth, overlay, resizeEnabled, width]);
   return {
     frameStyle: animatedWidthStyle,
     panelStyle: {

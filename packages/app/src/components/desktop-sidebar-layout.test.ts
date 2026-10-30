@@ -8,6 +8,7 @@ import {
 } from "@/components/desktop-sidebar-layout";
 import {
   resolveSidebarFooterLayout,
+  resolveSidebarFooterBarLayout,
   resolveSidebarFooterKeyboardSpacing,
   SIDEBAR_FOOTER_GROUP_GAP,
   SIDEBAR_FOOTER_MIN_BUTTON_WIDTH,
@@ -219,6 +220,69 @@ describe("desktop sidebar layout", () => {
     direction: "up" as const,
     placementBounds: { x: 0, y: -598, width: 466, height: 678 },
   };
+
+  const footerGeometry = (width: number) => ({
+    bounds: { x: 0, y: 0, width, height: 834 },
+    bar: { x: 9, y: 774, width: width - 9, height: 40 },
+    horizontal: {
+      placementBounds: { x: 0, y: -774, width, height: 814 },
+      margins: { left: 3, right: 0 },
+      exclusions: [{ x: 0, y: -774, width: 32, height: 834 }],
+    },
+  });
+
+  it("recovers a narrow footer using its exclusion-derived minimum before it can be displayed", () => {
+    const blocked = resolveSidebarFooterBarLayout({
+      geometry: footerGeometry(199),
+      safeAreaBottom: 20,
+    });
+    expect(blocked.available).toBe(false);
+    expect(blocked.requiredMinimumWidth).toBe(204);
+    const requestedWidth = 200;
+    const width = resolveDesktopSidebarWidth({
+      requestedWidth,
+      viewportWidth: 1210,
+      minimumWidth: (blocked.requiredMinimumWidth ?? 0) + 1,
+    });
+    expect(width).toBe(205);
+    const recovered = resolveSidebarFooterBarLayout({
+      geometry: footerGeometry(width - 1),
+      safeAreaBottom: 20,
+    });
+    expect(recovered.available).toBe(true);
+    expect(recovered.edgeInsets).toEqual({ left: 32, right: 8 });
+    expect(recovered.requiredMinimumWidth).toBe(204);
+  });
+
+  it("does not repeatedly widen a footer whose entire owner is vertically obstructed", () => {
+    const geometry = footerGeometry(199);
+    const blocked = resolveSidebarFooterBarLayout({
+      geometry: {
+        ...geometry,
+        horizontal: {
+          ...geometry.horizontal,
+          exclusions: [{ x: 0, y: -774, width: 500, height: 834 }],
+        },
+      },
+      safeAreaBottom: 20,
+    });
+    expect(blocked.available).toBe(false);
+    expect(blocked.requiredMinimumWidth).toBeUndefined();
+  });
+
+  it("starts above the local safe edge and accepts the measured native footer boundary", () => {
+    expect(
+      resolveSidebarFooterBarLayout({ geometry: null, safeAreaBottom: 34 }).bottomPadding,
+    ).toBe(34);
+    const geometry = footerGeometry(319);
+    expect(resolveSidebarFooterBarLayout({ geometry, safeAreaBottom: 34 }).bottomPadding).toBe(20);
+    expect(
+      resolveSidebarFooterBarLayout({
+        geometry: { ...geometry, bar: { ...geometry.bar, y: 794 } },
+        safeAreaBottom: 34,
+      }).bottomPadding,
+    ).toBe(0);
+  });
 
   it("does not reserve the top camera rail for bottom controls", () => {
     const placement = resolveContentBandPlacement({

@@ -15,16 +15,43 @@ describe("composer bottom placement", () => {
     expect(resolveComposerBottomPadding({ ...placement, keyboardProgress: 0 })).toBe(24);
   });
 
+  it.each([0, 20, 34])(
+    "uses the current local safe inset %s before native geometry arrives",
+    (safeAreaBottom) => {
+      expect(
+        resolveComposerBottomPadding({
+          restingClearance: null,
+          safeAreaBottom,
+          contentSpacing: 16,
+          keyboardProgress: 0,
+        }),
+      ).toBe(Math.max(safeAreaBottom, 16));
+    },
+  );
+
+  it("refines the Duo fallback to native clearance without changing the keyboard gap", () => {
+    const initial = { ...placement, restingClearance: null };
+    expect(resolveComposerBottomPadding({ ...initial, keyboardProgress: 0 })).toBe(34);
+    expect(resolveComposerBottomPadding({ ...placement, keyboardProgress: 0 })).toBe(24);
+
+    for (const geometry of [initial, placement]) {
+      const padding = resolveComposerBottomPadding({ ...geometry, keyboardProgress: 1 });
+      const keyboardTop = 669 - 264;
+      const composerBottom = 669 + Math.min(0, -264 + geometry.safeAreaBottom) - padding;
+      expect(keyboardTop - composerBottom).toBe(16);
+    }
+  });
+
   it("keeps the design content distance above the keyboard when bar and safe insets differ", () => {
     const padding = resolveComposerBottomPadding({ ...placement, keyboardProgress: 1 });
     expect(669 + Math.min(0, -264 + 34) - padding).toBe(389);
   });
 
-  it("retains content spacing when the resting bar needs no physical clearance", () => {
+  it("keeps a measured zero clearance instead of falling back to the safe inset", () => {
     expect(
       resolveComposerBottomPadding({
         restingClearance: 0,
-        safeAreaBottom: 0,
+        safeAreaBottom: 34,
         contentSpacing: 16,
         keyboardProgress: 0,
       }),

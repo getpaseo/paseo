@@ -143,7 +143,7 @@ function ModernComposerInsets({
   const { progress } = useReanimatedKeyboardAnimation();
   const barBottom = geometry
     ? Math.max(0, geometry.bounds.height - geometry.bar.y - geometry.bar.height)
-    : 0;
+    : null;
   const bottomPadding = useAnimatedStyle(() => ({
     paddingBottom: resolveComposerBottomPadding({
       restingClearance: barBottom,

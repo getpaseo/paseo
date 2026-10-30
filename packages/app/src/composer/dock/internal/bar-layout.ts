@@ -11,14 +11,16 @@ export const ComposerBarLayoutContext = createContext<{
 } | null>(null);
 
 export function resolveComposerBottomPadding(input: {
-  restingClearance: number;
+  /** Null until native geometry arrives; zero is a valid measured clearance. */
+  restingClearance: number | null;
   safeAreaBottom: number;
   contentSpacing: number;
   keyboardProgress: number;
 }): number {
   "worklet";
   return (
-    Math.max(input.restingClearance, input.contentSpacing) * (1 - input.keyboardProgress) +
+    Math.max(input.restingClearance ?? input.safeAreaBottom, input.contentSpacing) *
+      (1 - input.keyboardProgress) +
     (input.safeAreaBottom + input.contentSpacing) * input.keyboardProgress
   );
 }
