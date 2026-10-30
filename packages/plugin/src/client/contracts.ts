@@ -68,6 +68,8 @@ export interface PluginSurfaceProps extends PluginNavigableHostProps {}
 export interface PluginScreenProps extends PluginSurfaceProps {
   /** The params the screen was opened with; `{}` when none. */
   params: PluginScreenParams;
+  /** Override this screen's header title; pass null to restore its registered title. */
+  setTitle(title: string | null): void;
 }
 
 export interface PluginPopoverProps extends PluginHostProps {

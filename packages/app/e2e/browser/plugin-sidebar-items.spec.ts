@@ -372,7 +372,22 @@ test.describe("Plugin sidebar items", () => {
     await test.step("pressing Bot 2 opens the bot screen and highlights only its row", async () => {
       await bot2.click();
       await expectBotScreen(page, "bot-2");
+      await page.getByRole("button", { name: "Change screen title" }).click();
+      await expect(screenTitle(page)).toHaveText("Updated bot");
+      await expect(bot2).toHaveAccessibleName("Bot 2");
+      await page.getByRole("button", { name: "Reset screen title" }).click();
+      await expect(screenTitle(page)).toHaveText("Bot 2");
+      await page.setViewportSize(COMPACT);
+      await page.getByRole("button", { name: "Change screen title" }).click();
+      await expect(screenTitle(page)).toHaveText("Updated bot");
+      await page.getByRole("button", { name: "Reset screen title" }).click();
+      await expect(screenTitle(page)).toHaveText("Bot 2");
+      await page.setViewportSize(WIDE);
       await qaScreenshot(page, "phase6-desktop-sidebar-bots");
+      await page.getByRole("button", { name: "Change screen title" }).click();
+      await closeScreen(page);
+      await bot2.click();
+      await expectBotScreen(page, "bot-2");
     });
 
     await test.step("a reload keeps the screen and its params", async () => {

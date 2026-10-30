@@ -575,6 +575,7 @@ export default function contribute(client: PluginClientContext) {
 | `host`       | 所选主机的 `id` 和显示用的 `label`。                                                                                                                                                                                                                                                   |
 | `layout`     | `compact` 以及 `ios`、`android` 或 `web` 平台。                                                                                                                                                                                                                                        |
 | `params`     | 打开界面时传入的参数，键和值都是字符串。没有参数时为 `{}`。                                                                                                                                                                                                                            |
+| `setTitle`   | 用字符串更新当前界面的标题，传入 `null` 可恢复注册时的标题。侧边栏文字不受影响。                                                                                                                                                                                                       |
 | `navigation` | 可选的客户端导航。`openAgent({ agentId, serverId? })` 和 `openWorkspace({ workspaceId, serverId? })` 在 `serverId` 上打开目标，省略时在所选主机上打开。`openBrowser({ url, workspaceId, serverId? })` 仅在 Electron 上可用；见[链接和浏览器](#external-links-and-workspace-browsers)。 |
 
 路由、标题栏、关闭操作、主机选择器、错误边界和 query client 由 Paseo 负责。界面主体由插件负责。
