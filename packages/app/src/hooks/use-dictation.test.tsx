@@ -22,6 +22,34 @@ vi.mock("@/hooks/use-dictation-audio-source", () => ({
   },
 }));
 
+const recordings = vi.hoisted(() => ({
+  store: null as import("@/dictation/recordings").DictationRecordingStore | null,
+}));
+
+vi.mock("@/dictation/recordings", async () => {
+  const { createDictationRecordingStore } = await import("@/dictation/recordings/store");
+  type Recording = import("@/dictation/recordings").DictationRecording;
+  const metadata = new Map<string, Recording>();
+  const audio = new Map<string, string[]>();
+  recordings.store = createDictationRecordingStore({
+    listMetadata: async () => [...metadata.values()],
+    writeMetadata: async (recording) => void metadata.set(recording.id, recording),
+    writeSegments: async (id, segments) => void audio.set(id, segments),
+    readSegments: async (id) => audio.get(id) ?? null,
+    remove: async (id) => {
+      metadata.delete(id);
+      audio.delete(id);
+    },
+  });
+  return { getDictationRecordingStore: () => recordings.store };
+});
+
+async function savedRecordings() {
+  // Saves and outcome updates run after the hook's state settles.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  return recordings.store!.list();
+}
+
 function pcm16Base64(samples: number[]): string {
   const bytes = Buffer.alloc(samples.length * 2);
   samples.forEach((sample, index) => bytes.writeInt16LE(sample, index * 2));
@@ -147,5 +175,50 @@ describe("useDictation empty results", () => {
 
     expect(view.result.current.status).toBe("idle");
     expect(view.result.current.emptyReason).toBeNull();
+  });
+});
+
+describe("useDictation saved recordings", () => {
+  beforeEach(async () => {
+    audioSource.config = null;
+    for (const recording of await recordings.store!.list()) {
+      await recordings.store!.remove(recording.id);
+    }
+  });
+
+  it("keeps an empty result's audio and updates the same entry after retry", async () => {
+    const client = new FakeDictationClient();
+    const { view } = renderDictation(client);
+    const segments = [pcm16Base64([0, 40]), pcm16Base64([-30, 10])];
+
+    await record(view, segments);
+
+    const [saved] = await savedRecordings();
+    expect(saved.outcome).toEqual({ kind: "empty", reason: "silent-audio" });
+    expect(await recordings.store!.loadSegments(saved.id)).toEqual(segments);
+
+    client.transcript = "second try";
+    await act(async () => {
+      await view.result.current.retryFailedDictation();
+    });
+
+    expect(await savedRecordings()).toEqual([
+      { ...saved, outcome: { kind: "transcribed", text: "second try" } },
+    ]);
+  });
+
+  it("does not keep a recording the user cancelled", async () => {
+    const { view } = renderDictation(new FakeDictationClient());
+    await act(async () => {
+      await view.result.current.startDictation();
+    });
+    act(() => {
+      audioSource.config?.onPcmSegment(pcm16Base64([9000]));
+    });
+    await act(async () => {
+      await view.result.current.cancelDictation();
+    });
+
+    expect(await savedRecordings()).toEqual([]);
   });
 });
