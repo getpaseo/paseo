@@ -3,7 +3,6 @@ import type {
   TerminalWorkerRequest,
   TerminalWorkerToParentMessage,
 } from "./terminal-worker-protocol.js";
-import { renderTerminalSnapshotToAnsi } from "@getpaseo/protocol/terminal-snapshot";
 import type { LocalTerminalSession } from "./terminal.js";
 
 export interface TerminalReplayOptions {
@@ -28,15 +27,7 @@ export function* createTerminalReplay(
   session: LocalTerminalSession,
   options: TerminalReplayOptions | undefined,
 ): Generator<TerminalReplayEvent, TerminalReplayMetadata> {
-  const snapshot = session.getStateSnapshot({ ...options, includeWrapFlags: true });
-  const metadata = {
-    rows: snapshot.state.rows,
-    cols: snapshot.state.cols,
-    retainedHistoryLines: session.getRetainedHistoryLines(),
-    revision: snapshot.revision,
-    replayPreamble: session.getReplayPreamble(),
-  };
-  const data = Buffer.from(renderTerminalSnapshotToAnsi(snapshot.state), "utf8");
+  const { metadata, data } = session.serializeReplay(options);
   yield { type: "begin", metadata };
   for (let offset = 0; offset < data.length; offset += TERMINAL_REPLAY_CHUNK_BYTES) {
     yield { type: "data", data: data.subarray(offset, offset + TERMINAL_REPLAY_CHUNK_BYTES) };

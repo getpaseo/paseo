@@ -62,8 +62,8 @@ test.describe("retained terminal tab streams", () => {
   });
 
   for (const { count, retainedMarker } of [
-    { count: 400, retainedMarker: "history-0001界🙂" },
-    { count: 3000, retainedMarker: "history-2500界🙂" },
+    { count: 3000, retainedMarker: "history-0001界🙂" },
+    { count: 12050, retainedMarker: "history-3000界🙂" },
   ]) {
     test(`reattach restores retained styled Unicode history from ${count} lines`, async ({
       page,
@@ -87,7 +87,12 @@ test.describe("retained terminal tab streams", () => {
       expect(await getTerminalBufferText(page)).toContain(retainedMarker);
       await page.reload();
       await waitForTerminalContent(page, (text) => text.includes(last), 10000);
-      expect(await getTerminalBufferText(page)).toContain(retainedMarker);
+      const restored = await getTerminalBufferText(page);
+      expect(restored).toContain(retainedMarker);
+      expect(restored.match(/history-\d{4,5}/g)?.length).toBeGreaterThanOrEqual(
+        Math.min(count, 10000),
+      );
+      if (count > 10000) expect(restored).not.toContain("history-0001界🙂");
     });
   }
 });

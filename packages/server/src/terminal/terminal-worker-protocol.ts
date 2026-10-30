@@ -176,7 +176,7 @@ export type TerminalWorkerEvent =
   | {
       type: "terminalMessage";
       terminalId: string;
-      message: Exclude<ServerMessage, { type: "snapshot" }>;
+      message: ServerMessage;
       replayPreamble: string;
     }
   | {

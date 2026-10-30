@@ -45,6 +45,7 @@ import type { TerminalState } from "@getpaseo/protocol/messages";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type {
   TerminalWorkerRequest,
+  WorkerTerminalState,
   TerminalWorkerToParentMessage,
 } from "./terminal-worker-protocol.js";
 import { createTerminalWorkerProcessInspector } from "./terminal-worker-processes.js";
@@ -148,15 +149,8 @@ function readRenderedTokenIndexesFromState(state: TerminalState): number[] {
   return indexes;
 }
 
-function createTerminalState(): TerminalState {
-  const blankCell = { char: " " };
-  return {
-    rows: 1,
-    cols: 1,
-    grid: [[blankCell]],
-    scrollback: [],
-    cursor: { row: 0, col: 0 },
-  };
+function createTerminalState(): WorkerTerminalState {
+  return { rows: 1, cols: 1, hasOutput: false };
 }
 
 class FakeTerminalWorker extends EventEmitter {
@@ -442,17 +436,17 @@ it("creates a terminal through the worker and streams output", async () => {
     }),
   );
   const messages: string[] = [];
-  let snapshots = 0;
+  let readinessEvents = 0;
   const unsubscribe = session.subscribe((message) => {
     if (message.type === "output") {
       messages.push(message.data);
     }
-    if (message.type === "snapshot") {
-      snapshots += 1;
+    if (message.type === "snapshotReady") {
+      readinessEvents += 1;
     }
   });
   await new Promise((resolve) => setTimeout(resolve, 100));
-  const snapshotsBeforeOutput = snapshots;
+  expect(readinessEvents).toBe(1);
 
   session.send({ type: "input", data: "hello\r" });
 
@@ -461,7 +455,7 @@ it("creates a terminal through the worker and streams output", async () => {
   unsubscribe();
 
   expect(messages.join("")).toContain("worker-output:hello");
-  expect(snapshots).toBe(snapshotsBeforeOutput);
+  expect(readinessEvents).toBe(1);
 });
 
 it("delivers rapid small writes complete and in order through worker coalescing", async () => {
@@ -497,12 +491,12 @@ it("delivers rapid small writes complete and in order through worker coalescing"
   session.subscribe((message) => {
     if (message.type === "output") {
       events.push({ type: "output", data: message.data });
-    } else if (message.type === "snapshot" || message.type === "snapshotReady") {
+    } else if (message.type === "snapshotReady") {
       events.push({ type: message.type });
     }
   });
 
-  // Let the snapshot subscription settle, then trigger the burst.
+  // Let readiness settle, then trigger the burst.
   await new Promise((resolve) => setTimeout(resolve, 100));
   writeFileSync(burstGatePath, "go");
 
@@ -518,14 +512,13 @@ it("delivers rapid small writes complete and in order through worker coalescing"
 
   await waitForCondition(() => events.some((event) => event.type === "output"), 10000);
 
-  // No snapshot may land after output it should have preceded: every snapshot
-  // event must come before the first output event.
+  // Readiness precedes the ordered live stream.
   const firstOutputIndex = events.findIndex((event) => event.type === "output");
   expect(firstOutputIndex).toBeGreaterThanOrEqual(0);
-  const snapshotAfterOutput = events
+  const readinessAfterOutput = events
     .slice(firstOutputIndex + 1)
-    .find((event) => event.type === "snapshot" || event.type === "snapshotReady");
-  expect(snapshotAfterOutput).toBeUndefined();
+    .find((event) => event.type === "snapshotReady");
+  expect(readinessAfterOutput).toBeUndefined();
 });
 
 it("pulls fresh terminal state from the worker authority", async () => {
@@ -1740,15 +1733,12 @@ it("replays bounded ANSI chunks before concurrent live output and reconstructs r
   const events: string[] = [];
   const chunks: Uint8Array[] = [];
   let live = "";
-  const unsubscribe = session.subscribe(
-    (event) => {
-      if (event.type === "output") {
-        events.push("live");
-        live += event.data;
-      }
-    },
-    { initialSnapshot: "ready" },
-  );
+  const unsubscribe = session.subscribe((event) => {
+    if (event.type === "output") {
+      events.push("live");
+      live += event.data;
+    }
+  });
   const metadata = await manager.replayTerminal(session.id, undefined, (event) => {
     events.push(event.type);
     if (event.type === "begin") session.send({ type: "input", data: "go\r" });
@@ -2339,4 +2329,64 @@ it.each([true, false])(
       await viewers.delivery.close();
     }
   },
+);
+
+it.each([3000, 12050])(
+  "retains ten thousand history rows and restores exact demands after %s printed rows",
+  async (count) => {
+    manager = await startRealWorkerManager();
+    const session = trackTerminal(
+      await manager.createTerminal({
+        cwd: createTemporaryHome(),
+        workspaceId: "ten-thousand",
+        rows: 4,
+        cols: 80,
+        ...nodeTerminalCommand(
+          `for(let i=0;i<${count};i++) process.stdout.write("\\x1b[31mrow-"+String(i).padStart(5,"0")+" 界é🙂\\x1b[0m\\r\\n");setInterval(()=>{},1000)`,
+        ),
+      }),
+    );
+    await waitForCondition(
+      async () =>
+        (await manager!.captureTerminal(session.id, { start: -5 })).lines
+          .join("")
+          .includes("row-" + String(count - 1).padStart(5, "0")),
+      15000,
+    );
+    for (const history of [0, 200, 1000, 10000]) {
+      const chunks: Uint8Array[] = [];
+      const metadata = await manager.replayTerminal(
+        session.id,
+        { scrollbackLines: history },
+        (event) => {
+          if (event.type === "data") chunks.push(event.data);
+        },
+      );
+      expect(metadata).toMatchObject({
+        rows: 4,
+        cols: 80,
+        retainedHistoryLines: Math.min(10000, count - 3),
+      });
+      expect(chunks.every((chunk) => chunk.byteLength <= 64 * 1024)).toBe(true);
+      const restored = new xterm.Terminal({
+        rows: 4,
+        cols: 80,
+        scrollback: 10000,
+        allowProposedApi: true,
+      });
+      try {
+        await new Promise<void>((resolve) => restored.write(Buffer.concat(chunks), resolve));
+        const buffer = restored.buffer.active;
+        const labels = Array.from({ length: buffer.length }, (_, i) =>
+          buffer.getLine(i)!.translateToString(true),
+        ).filter((line) => line.includes("row-"));
+        expect(labels).toHaveLength(Math.min(count, history + 3));
+        expect(labels[0]).toContain("row-" + String(count - labels.length).padStart(5, "0"));
+        expect(labels.at(-1)).toContain("row-" + String(count - 1).padStart(5, "0") + " 界é🙂");
+      } finally {
+        restored.dispose();
+      }
+    }
+  },
+  30000,
 );

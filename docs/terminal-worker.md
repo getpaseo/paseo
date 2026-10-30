@@ -15,6 +15,8 @@ supervisor (paseo.pid) ──► daemon worker ──► launcher ──► term
 - The worker exits on its own when it has no controller and no terminals, on `shutdown`, on SIGTERM (killing its terminals), and when its record disappears (a deleted `$PASEO_HOME`: nobody can ever reach it again).
 - Its stderr goes to `$PASEO_HOME/terminal-worker.log`. No pipe to the daemon survives the daemon.
 
+The worker retains a fixed 10,000 history rows plus the screen in its existing xterm. Replay uses `@xterm/addon-serialize` 0.14 against headless xterm 6; no second cell grid or lifetime byte log is retained. This addon omits cursor visibility and DECSCUSR presentation, so the session supplements those sequences from xterm’s cursor state. Standard modes come from the serializer; the existing input-mode tracker retains protocol modes such as Kitty and Win32 input. Commit that tracker with parsed output so replay bytes and metadata describe the same cut.
+
 Which triggers keep terminals and which close them is owned by the stop reason (`keepTerminals`) that flows from the request through the supervisor to `stop()`. The kill side always ends in the reaper (`terminal-worker-reaper.ts`), the only path that signals terminal processes outside a connected daemon.
 
 ## Record, socket and secret

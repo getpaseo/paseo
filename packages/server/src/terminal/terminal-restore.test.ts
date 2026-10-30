@@ -9,15 +9,9 @@ import {
   encodeTerminalRestoreFrame,
   resolveRestoreAfterOutputOverflow,
   resolveTerminalRestoreSnapshotOptions,
-  resolveTerminalSubscriptionSnapshotMode,
 } from "./terminal-restore.js";
 
 describe("terminal restore policy", () => {
-  test("uses ready snapshots only for restore-aware subscriptions", () => {
-    expect(resolveTerminalSubscriptionSnapshotMode(undefined)).toBe("state");
-    expect(resolveTerminalSubscriptionSnapshotMode({ mode: "live" })).toBe("ready");
-  });
-
   test("resolves bounded restore snapshot options", () => {
     expect(resolveTerminalRestoreSnapshotOptions({ mode: "live" })).toBeNull();
     expect(resolveTerminalRestoreSnapshotOptions({ mode: "full-snapshot" })).toBeUndefined();

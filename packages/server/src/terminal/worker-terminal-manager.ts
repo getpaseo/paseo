@@ -290,18 +290,11 @@ export function createWorkerTerminalManager(
         }
         sendBestEffortRequest({ type: "send", terminalId: record.info.id, message });
       },
-      subscribe(
-        listener: (msg: ServerMessage) => void,
-        options?: { initialSnapshot?: "state" | "ready" },
-      ): () => void {
+      subscribe(listener: (msg: ServerMessage) => void): () => void {
         record.messageListeners.add(listener);
-        if (options?.initialSnapshot === "ready") {
-          queueMicrotask(() => {
-            if (record.messageListeners.has(listener)) {
-              listener({ type: "snapshotReady", revision: 0 });
-            }
-          });
-        }
+        queueMicrotask(() => {
+          if (record.messageListeners.has(listener)) listener({ type: "snapshotReady" });
+        });
         return () => {
           record.messageListeners.delete(listener);
         };

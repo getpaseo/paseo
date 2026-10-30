@@ -3,7 +3,6 @@ import { describe, expect, test } from "vitest";
 
 import {
   createNativeHeadlessTerminal,
-  type TerminalCellRow,
   type TerminalViewportState,
 } from "./headless-terminal-state";
 import { createNativeTerminalBenchmarkPayload } from "./native-terminal-benchmark-payload";
@@ -12,7 +11,8 @@ import {
   NATIVE_TERMINAL_PARSE_CHUNK_CHARS,
 } from "./headless-terminal-output-drain";
 import { createNativeTerminalScreenModel, type TerminalScreenState } from "./terminal-screen-model";
-import { renderTerminalSnapshotToAnsi } from "@getpaseo/protocol/terminal-snapshot";
+import { Terminal as ReplaySource } from "@xterm/headless";
+import { SerializeAddon } from "@xterm/addon-serialize";
 
 const ROWS = 12;
 const COLS = 80;
@@ -42,33 +42,6 @@ function createFrameRecorder() {
   };
 }
 
-function lineCells(line: string, cols: number): TerminalCellRow {
-  const cells: TerminalCellRow = [];
-  for (let index = 0; index < cols; index += 1) {
-    cells.push({ char: line[index] ?? " ", width: 1 });
-  }
-  return cells;
-}
-
-function terminalStateFromLines(input: {
-  lines: string[];
-  rows: number;
-  cols: number;
-  cursor: TerminalViewportState["cursor"];
-}) {
-  const grid: TerminalCellRow[] = [];
-  for (let row = 0; row < input.rows; row += 1) {
-    grid.push(lineCells(input.lines[row] ?? "", input.cols));
-  }
-  return {
-    rows: input.rows,
-    cols: input.cols,
-    grid,
-    scrollback: [],
-    cursor: input.cursor,
-  };
-}
-
 async function runScheduledWork(input: {
   callbacks: Array<() => void>;
   flush: Promise<void>;
@@ -81,11 +54,13 @@ async function runScheduledWork(input: {
 }
 
 async function benchmarkSnapshot(lineCount: number) {
-  const terminal = createNativeHeadlessTerminal({ rows: ROWS, cols: COLS, scrollbackLines: 100 });
-  await terminal.write(
-    createNativeTerminalBenchmarkPayload({ startLine: 0, lineCount, cols: COLS }),
-  );
-  return terminal.getState();
+  return {
+    rows: ROWS,
+    cols: COLS,
+    data: new TextEncoder().encode(
+      createNativeTerminalBenchmarkPayload({ startLine: 0, lineCount, cols: COLS }),
+    ),
+  };
 }
 
 function createScreenRestorer(
@@ -112,7 +87,7 @@ function createScreenRestorer(
       drain.replay({ type: "begin", rows: snapshot.rows, cols: snapshot.cols });
       drain.replay({
         type: "data",
-        data: new TextEncoder().encode(renderTerminalSnapshotToAnsi(snapshot)),
+        data: snapshot.data,
       });
       drain.replay({ type: "end" });
       await drain.flush();
@@ -220,26 +195,22 @@ describe("native terminal output drain", () => {
       scheduleFrame: frameRecorder.scheduleFrame,
       cancelFrame: frameRecorder.cancelFrame,
     });
-    const restoredSnapshot = terminalStateFromLines({
-      rows: 4,
-      cols: 32,
-      lines: ["restored-one", "restored-two"],
-      cursor: { row: 1, col: "restored-two".length },
-    });
+    const restoredCursor = { row: 1, col: "restored-two".length };
+    const replay = new TextEncoder().encode("restored-one\r\nrestored-two");
 
     await terminal.write("old-one\r\nold-two\r\nold-three\r\n");
     drain.enqueueText("stale-queued\r\n");
     drain.replay({ type: "begin" });
     drain.replay({
       type: "data",
-      data: new TextEncoder().encode(renderTerminalSnapshotToAnsi(restoredSnapshot)),
+      data: replay,
     });
     drain.replay({ type: "end" });
     await runScheduledWork({ callbacks: scheduledWork, flush: drain.flush() });
 
     const state = terminal.getViewportState();
     expect(state.grid.map(rowText)).toEqual(["restored-one", "restored-two", "", ""]);
-    expect(state.cursor).toEqual(restoredSnapshot.cursor);
+    expect(state.cursor).toEqual(restoredCursor);
   });
 
   test("snapshot restore preserves a scrolled viewport anchor while replacing terminal state", async () => {
@@ -257,7 +228,7 @@ describe("native terminal output drain", () => {
       paintedMode: screen?.scroll.mode,
       paintedTopRow: rowText(screen?.viewport.grid[0] ?? []),
       beforeTopRow,
-      restoredBottomRows: terminal.getState().grid.slice(-2).map(rowText),
+      restoredBottomRows: terminal.getViewportState().grid.slice(-2).map(rowText),
     }).toEqual({
       paintedMode: "scrolled",
       paintedTopRow: beforeTopRow,
@@ -379,7 +350,7 @@ test("replay geometry returns to measured layout before live writes and unchange
   const sizes: number[] = [];
   const drain = createNativeTerminalOutputDrain({
     write: async (text) => {
-      sizes.push(terminal.getState().cols);
+      sizes.push(terminal.getViewportState().cols);
       await terminal.write(text);
     },
     reset: (size) => {
@@ -404,10 +375,10 @@ test("replay geometry returns to measured layout before live writes and unchange
     });
     expect(focus.measuredSizeChanged).toBe(false);
     expect(focus.resizeClaim).toMatchObject(measured);
-    expect(terminal.getState()).toMatchObject(measured);
+    expect(terminal.getViewportState()).toMatchObject(measured);
     expect(terminal.getBufferBounds().cols).toBe(40);
     const lines = terminal
-      .getState()
+      .getViewportState()
       .grid.map((row) =>
         row
           .map((cell) => cell.char)
@@ -463,7 +434,7 @@ test.each(["clear", "replacement", "dispose"] as const)(
       await writing;
       local.cols = 60;
       drain.resize();
-      expect(terminal.getState().cols).toBe(120);
+      expect(terminal.getViewportState().cols).toBe(120);
       drain.replay({ type: "end" });
       if (action === "clear") drain.clear();
       else if (action === "dispose") {
@@ -477,7 +448,7 @@ test.each(["clear", "replacement", "dispose"] as const)(
       finish();
       await drain.flush();
       expect(restores).toBe(action === "dispose" ? 0 : 1);
-      if (action !== "dispose") expect(terminal.getState()).toMatchObject(local);
+      if (action !== "dispose") expect(terminal.getViewportState()).toMatchObject(local);
     } finally {
       finish();
       drain.dispose();
@@ -487,9 +458,13 @@ test.each(["clear", "replacement", "dispose"] as const)(
 );
 
 test("holds captured geometry across mid-replay measurement changes", async () => {
-  const source = createNativeHeadlessTerminal({ rows: 4, cols: 8, scrollbackLines: 100 });
-  await source.write("ABCDEFGH\r\n12345678\r\nabcdefgh\r\nxyz\x1b[2;8H");
-  const ansi = new TextEncoder().encode(renderTerminalSnapshotToAnsi(source.getState()));
+  const source = new ReplaySource({ rows: 4, cols: 8, scrollback: 100, allowProposedApi: true });
+  const serializer = new SerializeAddon();
+  source.loadAddon(serializer);
+  await new Promise<void>((resolve) =>
+    source.write("ABCDEFGH\r\n12345678\r\nabcdefgh\r\nxyz\x1b[2;8H", resolve),
+  );
+  const ansi = new TextEncoder().encode(serializer.serialize());
   const terminal = createNativeHeadlessTerminal({ rows: 4, cols: 8, scrollbackLines: 100 });
   const expected = createNativeHeadlessTerminal({ rows: 4, cols: 8, scrollbackLines: 100 });
   await expected.write(new TextDecoder().decode(ansi));
@@ -513,7 +488,20 @@ test("holds captured geometry across mid-replay measurement changes", async () =
     drain.replay({ type: "data", data: ansi });
     drain.replay({ type: "end" });
     await drain.flush();
-    expect(terminal.getState()).toEqual(expected.getState());
+    expect(terminal.getViewportState()).toEqual(expected.getViewportState());
+    const actualBounds = terminal.getBufferBounds();
+    const expectedBounds = expected.getBufferBounds();
+    expect(
+      terminal.getBufferWindow({
+        startRow: actualBounds.oldestRow,
+        rowCount: actualBounds.newestRow - actualBounds.oldestRow + 1,
+      }),
+    ).toEqual(
+      expected.getBufferWindow({
+        startRow: expectedBounds.oldestRow,
+        rowCount: expectedBounds.newestRow - expectedBounds.oldestRow + 1,
+      }),
+    );
   } finally {
     drain.dispose();
   }

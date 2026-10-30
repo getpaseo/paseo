@@ -1867,7 +1867,7 @@ describe("list terminals across directories", () => {
   });
 });
 
-test.each([400, 3000])(
+test.each([3000, 12050])(
   "chunked SDK replay retains requested history for %s printed lines",
   async (count) => {
     const cwd = tmpCwd();
@@ -1909,7 +1909,7 @@ test.each([400, 3000])(
       const replay = events.flatMap((event) => (event.type === "replay" ? [event.replay] : []));
       expect(replay[0]).toMatchObject({
         type: "begin",
-        retainedHistoryLines: count === 3000 ? 1000 : expect.any(Number),
+        retainedHistoryLines: count === 12050 ? 10000 : expect.any(Number),
       });
       expect(replay.at(-1)).toEqual({ type: "end" });
       const chunks = replay.flatMap((event) => (event.type === "data" ? [event.data] : []));
@@ -1918,9 +1918,9 @@ test.each([400, 3000])(
       const begin = replay[0];
       if (begin?.type !== "begin" || begin.rows === undefined)
         throw new Error("Missing replay dimensions");
-      expect(text.match(/replay-\d{4}/g)).toHaveLength(Math.min(count, 1000 + begin.rows - 1));
+      expect(text.match(/replay-\d{4,5}/g)).toHaveLength(Math.min(count, 10000 + begin.rows - 1));
       expect(text).toContain(`replay-${String(count).padStart(4, "0")}界🙂`);
-      if (count === 400) expect(text).toContain("replay-0001界🙂");
+      if (count === 3000) expect(text).toContain("replay-0001界🙂");
       else {
         expect(text).not.toContain("replay-0001");
         expect(chunks.length).toBeGreaterThan(1);

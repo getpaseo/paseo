@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 import { currentBootId } from "../server/pid-lock.js";
 import { PRIVATE_FILE_MODE } from "../server/private-files.js";
 import { createTerminalManager } from "./terminal-manager.js";
-import { captureTerminalLines } from "./terminal-capture.js";
 import { TerminalOutputCoalescer } from "./terminal-output-coalescer.js";
 import type { TerminalExitInfo, LocalTerminalSession } from "./terminal.js";
 import { attachFramedSocket, type FramedSocket } from "./terminal-worker-frames.js";
@@ -330,29 +329,22 @@ function runWorker(argv: string[]): void {
     });
     outputCoalescerByTerminalId.set(session.id, outputCoalescer);
 
-    const unsubscribeMessage = session.subscribe(
-      (message) => {
-        if (message.type === "snapshot") return;
-        if (message.type === "output") {
-          pendingOutputRevision = message.revision;
-          outputCoalescer.handle(message.data);
-          return;
-        }
-        // Non-output messages (snapshot/snapshotReady/titleChange) must not jump
-        // ahead of buffered output: flush the coalescer first, then forward.
-        outputCoalescer.flush();
-        sendToController({
-          type: "terminalMessage",
-          terminalId: session.id,
-          message,
-          replayPreamble: session.getReplayPreamble(),
-        });
-      },
-      // Creation already sends an authoritative state in terminalCreated. A second
-      // asynchronous state snapshot can arrive after the create response and
-      // overwrite a resize issued immediately by the caller.
-      { initialSnapshot: "ready" },
-    );
+    const unsubscribeMessage = session.subscribe((message) => {
+      if (message.type === "output") {
+        pendingOutputRevision = message.revision;
+        outputCoalescer.handle(message.data);
+        return;
+      }
+      // Non-output messages (snapshotReady/titleChange) must not jump
+      // ahead of buffered output: flush the coalescer first, then forward.
+      outputCoalescer.flush();
+      sendToController({
+        type: "terminalMessage",
+        terminalId: session.id,
+        message,
+        replayPreamble: session.getReplayPreamble(),
+      });
+    });
     const unsubscribeExit = session.onExit((info) => {
       outputCoalescer.flush();
       clearTerminalSubscriptions(session.id);
@@ -568,7 +560,7 @@ function runWorker(argv: string[]): void {
       case "captureTerminal": {
         const session = manager.getTerminal(message.terminalId);
         const result = session
-          ? captureTerminalLines(session, {
+          ? session.captureLines({
               start: message.start,
               end: message.end,
               stripAnsi: message.stripAnsi,

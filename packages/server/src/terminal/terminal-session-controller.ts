@@ -31,7 +31,6 @@ import {
   createTerminalRestoreDelivery,
   resolveRestoreAfterOutputOverflow,
   resolveTerminalRestoreSnapshotOptions,
-  resolveTerminalSubscriptionSnapshotMode,
   type TerminalRestoreOptions,
 } from "./terminal-restore.js";
 import type { TerminalReplayMetadata } from "./terminal-replay.js";
@@ -948,48 +947,45 @@ export class TerminalSessionController {
 
     this.activeStreams.set(slot, activeStream);
 
-    const unsubscribeOutput = terminal.subscribe(
-      (message) => {
-        if (this.activeStreams.get(slot) !== activeStream) {
-          return;
-        }
-        if (message.type === "snapshot" || message.type === "snapshotReady") {
-          activeStream.snapshotReady = true;
-          activeStream.outputCoalescer.flush();
-          activeStream.needsSnapshot = true;
-          void this.trySendSnapshot(activeStream);
-          return;
-        }
-        if (message.type === "titleChange") {
-          return;
-        }
-        if (message.data.length === 0) {
-          return;
-        }
-        if (activeStream.needsSnapshot || activeStream.snapshotInFlight) {
-          activeStream.bufferedOutputBytes += Buffer.byteLength(message.data);
-          if (activeStream.bufferedOutputBytes > MAX_CLIENT_BUFFERED_BYTES) {
-            activeStream.owner.emit({
-              type: "terminal_stream_exit",
-              payload: {
-                terminalId: activeStream.terminalId,
-                error: "Terminal replay live tail exceeded the buffer; attach again",
-              },
-            });
-            this.detachRegistration(activeStream);
-            void activeStream.owner.release();
-            return;
-          }
-          activeStream.bufferedOutputs.push({
-            data: message.data,
-            revision: message.revision,
+    const unsubscribeOutput = terminal.subscribe((message) => {
+      if (this.activeStreams.get(slot) !== activeStream) {
+        return;
+      }
+      if (message.type === "snapshotReady") {
+        activeStream.snapshotReady = true;
+        activeStream.outputCoalescer.flush();
+        activeStream.needsSnapshot = true;
+        void this.trySendSnapshot(activeStream);
+        return;
+      }
+      if (message.type === "titleChange") {
+        return;
+      }
+      if (message.data.length === 0) {
+        return;
+      }
+      if (activeStream.needsSnapshot || activeStream.snapshotInFlight) {
+        activeStream.bufferedOutputBytes += Buffer.byteLength(message.data);
+        if (activeStream.bufferedOutputBytes > MAX_CLIENT_BUFFERED_BYTES) {
+          activeStream.owner.emit({
+            type: "terminal_stream_exit",
+            payload: {
+              terminalId: activeStream.terminalId,
+              error: "Terminal replay live tail exceeded the buffer; attach again",
+            },
           });
+          this.detachRegistration(activeStream);
+          void activeStream.owner.release();
           return;
         }
-        activeStream.outputCoalescer.handle(message.data);
-      },
-      { initialSnapshot: resolveTerminalSubscriptionSnapshotMode(options?.restore) },
-    );
+        activeStream.bufferedOutputs.push({
+          data: message.data,
+          revision: message.revision,
+        });
+        return;
+      }
+      activeStream.outputCoalescer.handle(message.data);
+    });
     const unsubscribeExit = terminal.onExit(() =>
       this.detachStream(terminal.id, { emitExit: true }),
     );

@@ -21,14 +21,6 @@ const MAX_VISIBLE_RESTORE_SCROLLBACK_LINES = 500;
 
 export type TerminalRestoreOptions = NonNullable<SubscribeTerminalRequest["restore"]>;
 
-export type TerminalSubscriptionSnapshotMode = "state" | "ready";
-
-export function resolveTerminalSubscriptionSnapshotMode(
-  restore: TerminalRestoreOptions | undefined,
-): TerminalSubscriptionSnapshotMode {
-  return restore ? "ready" : "state";
-}
-
 export function resolveRestoreAfterOutputOverflow(
   restore: TerminalRestoreOptions | undefined,
 ): TerminalRestoreOptions | undefined {

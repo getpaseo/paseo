@@ -10,7 +10,7 @@ import {
   type TerminalActivityTransition,
   type TerminalSession,
 } from "./terminal.js";
-import { captureTerminalLines, type CaptureTerminalLinesResult } from "./terminal-capture.js";
+import { type CaptureTerminalLinesResult } from "./terminal-capture.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { resolve, sep } from "node:path";
 import { assertAbsolutePath, isSameOrDescendantPath } from "../server/path-utils.js";
@@ -489,7 +489,7 @@ export function createTerminalManager(
           totalLines: 0,
         };
       }
-      return captureTerminalLines(session, options);
+      return session.captureLines(options);
     },
 
     listDirectories(): string[] {
