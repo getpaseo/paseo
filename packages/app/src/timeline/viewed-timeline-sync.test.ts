@@ -940,13 +940,35 @@ test("retrying membership restores a previously loaded chat", async () => {
   (await world.nextMembership()).succeed();
   (await world.nextFetch("agent-a")).respond({ hasNewer: false });
   await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+  world.cursors.set("agent-a", { epoch: "epoch-agent-a", endSeq: 10 });
   world.show("workspace", ["agent-b"]);
   (await world.nextMembership()).fail("subscription unavailable");
   await world.nextError();
   world.sync.retryVisibleAgentTimeline("agent-a");
   (await world.nextMembership()).succeed();
-  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
   (await world.nextFetch("agent-b")).respond({ hasNewer: false });
+  const resumed = await world.nextFetch("agent-a");
+  expect(resumed.request).toMatchObject({
+    direction: "after",
+    cursor: { epoch: "epoch-agent-a", seq: 10 },
+  });
+  resumed.respond({ hasNewer: false });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+});
+
+test("a fetch that finishes after membership failure cannot clear the error", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.show("workspace", ["agent-a"]);
+  (await world.nextMembership()).succeed();
+  const inFlight = await world.nextFetch("agent-a");
+  world.show("workspace", ["agent-b"]);
+  (await world.nextMembership()).fail("subscription unavailable");
+  await world.nextError();
+  inFlight.respond({ hasNewer: false });
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("error");
 });
 
 test("a failed membership retry returns to error", async () => {

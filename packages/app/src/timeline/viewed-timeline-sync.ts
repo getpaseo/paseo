@@ -686,17 +686,6 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     }
   };
 
-  const settleMembershipErrors = (requested: string[]) => {
-    for (const agentId of requested) {
-      const catchUp = catchUps.get(agentId);
-      if (catchUp?.status === "error" && manualRetries.has(agentId)) {
-        startCatchUp(agentId, { request: catchUp.request, supersede: true });
-      } else if (catchUp?.status === "complete" && visibilityCatchUpErrors.has(agentId)) {
-        setVisibilityCatchUpReady(agentId);
-      }
-    }
-  };
-
   const reconcileMembership = async (): Promise<void> => {
     if (disposed || !connected) return;
     const generation = membershipGeneration;
@@ -713,13 +702,14 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     } catch (error) {
       if (disposed || !connected || generation !== membershipGeneration) return;
       membershipNeedsRetry = true;
+      acknowledged = [];
+      for (const agentId of requested) cancelCatchUp(agentId);
       setVisibilityCatchUpError(requested, error);
       ports.reportError(error);
       return;
     }
     if (disposed || !connected || generation !== membershipGeneration) return;
     acknowledged = requested;
-    settleMembershipErrors(requested);
     startAcknowledgedCatchUps();
   };
 
