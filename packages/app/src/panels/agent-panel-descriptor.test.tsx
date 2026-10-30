@@ -78,6 +78,7 @@ describe("shared agent descriptor", () => {
       requiresAttention: false,
       attentionReason: null,
       isTurnActive: false,
+      hasActiveDescendants: false,
       icon: TestIcon,
       ...overrides,
     });
@@ -103,6 +104,20 @@ describe("shared agent descriptor", () => {
 
   it("shows an active turn as running before the lifecycle update arrives", () => {
     expect(describeAgent({ isTurnActive: true }).statusBucket).toBe("running");
+  });
+
+  it("preserves own active, error and permission priorities above inherited work", () => {
+    expect(describeAgent({ hasActiveDescendants: true }).statusBucket).toBe("running");
+    expect(describeAgent({ status: "error", hasActiveDescendants: true }).statusBucket).toBe(
+      "failed",
+    );
+    expect(
+      describeAgent({ status: "error", isTurnActive: true, hasActiveDescendants: true })
+        .statusBucket,
+    ).toBe("running");
+    expect(
+      describeAgent({ pendingPermissionCount: 1, hasActiveDescendants: true }).statusBucket,
+    ).toBe("needs_input");
   });
 
   it("surfaces pending permissions even while the turn is running", () => {

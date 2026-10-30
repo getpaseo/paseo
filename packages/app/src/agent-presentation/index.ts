@@ -1,3 +1,5 @@
+import { useHasActiveDescendants } from "@/subagents/select";
+import { subagentActivityStatus } from "@/subagents/activity";
 import { useShallow } from "zustand/shallow";
 import { useProviderIcon } from "@/components/provider-icons";
 import type { PanelDescriptor } from "@/panels/panel-registry";
@@ -49,8 +51,12 @@ export function useAgentDescriptor(
       };
     }),
   );
+  const hasActiveDescendants = useHasActiveDescendants({
+    serverId: context.serverId,
+    parentAgentId: target.agentId,
+  });
   const icon = useProviderIcon(descriptorState.provider, context.serverId);
-  return buildAgentDescriptor({ ...descriptorState, icon });
+  return buildAgentDescriptor({ ...descriptorState, hasActiveDescendants, icon });
 }
 
 export function buildAgentDescriptor(input: {
@@ -61,6 +67,7 @@ export function buildAgentDescriptor(input: {
   requiresAttention: boolean;
   attentionReason: Agent["attentionReason"];
   isTurnActive: boolean;
+  hasActiveDescendants: boolean;
   icon: PanelDescriptor["icon"];
 }): PanelDescriptor {
   const provider = input.provider;
@@ -74,7 +81,11 @@ export function buildAgentDescriptor(input: {
     icon: input.icon,
     statusBucket: input.status
       ? deriveSidebarStateBucket({
-          status: input.isTurnActive ? "running" : input.status,
+          status: subagentActivityStatus({
+            status: input.status,
+            isSelfActive: input.isTurnActive,
+            hasActiveDescendants: input.hasActiveDescendants,
+          }),
           pendingPermissionCount: input.pendingPermissionCount,
           requiresAttention: input.requiresAttention,
           attentionReason: input.attentionReason,

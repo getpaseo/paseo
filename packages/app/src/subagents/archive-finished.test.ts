@@ -16,6 +16,7 @@ function paseo(id: string, status: PaseoSubagentRow["status"] = "idle"): PaseoSu
       status === "running"
         ? { phase: "open", turnId: null, startedAt: null, cancellationRequestId: null }
         : { phase: "idle", cancellationRequestId: null },
+    hasActiveDescendants: false,
     requiresAttention: false,
     createdAt: new Date(),
   };
@@ -34,6 +35,7 @@ function provider(
     description: null,
     subtitle: null,
     status,
+    hasActiveDescendants: false,
     requiresAttention: false,
     createdAt: new Date(),
   };
@@ -48,6 +50,8 @@ function managed(
     id,
     status,
     parentAgentId: "parent",
+    turn: { phase: "idle", cancellationRequestId: null },
+    hasActiveDescendants: false,
     archivedAt: null,
     ...overrides,
   };
@@ -64,6 +68,98 @@ function deferred<T>() {
 }
 
 describe("createArchiveFinishedSubagents", () => {
+  it("waits for cold native discovery before rechecking a managed subtree", async () => {
+    const hydration = deferred<void>();
+    let snapshot = managed("child");
+    const calls: string[] = [];
+    const archive = createArchiveFinishedSubagents([paseo("child")], {
+      parentAgentId: "parent",
+      hydrateActivity: () => hydration.promise,
+      getManagedSubagent: () => snapshot,
+      archiveManagedSubagent: async ({ agentId: id }) => {
+        calls.push(id);
+      },
+      dismissProviderSubagents: () => undefined,
+    });
+    const operation = archive.archiveFinished();
+    expect(archive.getState().status.kind).toBe("archiving");
+    expect(calls).toEqual([]);
+    snapshot = managed("child", "idle", { hasActiveDescendants: true });
+    hydration.resolve();
+    expect((await operation).skippedPaseoIds).toEqual(["child"]);
+    expect(calls).toEqual([]);
+  });
+
+  it("reports discovery failures without archiving and allows retry", async () => {
+    const error = new Error("Native list unavailable");
+    let unavailable = true;
+    const calls: string[] = [];
+    const archive = createArchiveFinishedSubagents([paseo("child")], {
+      parentAgentId: "parent",
+      hydrateActivity: async () => {
+        if (unavailable) throw error;
+      },
+      getManagedSubagent: () => managed("child"),
+      archiveManagedSubagent: async ({ agentId: id }) => {
+        calls.push(id);
+      },
+      dismissProviderSubagents: () => undefined,
+    });
+    expect((await archive.archiveFinished()).failures).toEqual([{ id: "child", error }]);
+    expect(calls).toEqual([]);
+    expect(archive.getState().status).toEqual({ kind: "failed", failedCount: 1, totalCount: 1 });
+    unavailable = false;
+    expect((await archive.archiveFinished()).archivedPaseoIds).toEqual(["child"]);
+  });
+
+  it("excludes both kinds of finished rows with running descendants", () => {
+    const rows = [
+      { ...paseo("managed"), hasActiveDescendants: true },
+      { ...provider("native"), hasActiveDescendants: true },
+      {
+        ...paseo("open-turn"),
+        turn: {
+          phase: "open" as const,
+          turnId: null,
+          startedAt: null,
+          cancellationRequestId: null,
+        },
+      },
+    ];
+    const archive = createArchiveFinishedSubagents(rows, {
+      parentAgentId: "parent",
+      hydrateActivity: async () => undefined,
+      getManagedSubagent: () => undefined,
+      archiveManagedSubagent: async () => undefined,
+      dismissProviderSubagents: () => undefined,
+    });
+    expect(archive.getState().eligibleCount).toBe(0);
+  });
+
+  it("rechecks descendants immediately before later managed archives without waiting for new rows", async () => {
+    const first = deferred<void>();
+    const current = new Map([
+      ["first", managed("first")],
+      ["later", managed("later")],
+    ]);
+    const calls: string[] = [];
+    const archive = createArchiveFinishedSubagents([paseo("first"), paseo("later")], {
+      parentAgentId: "parent",
+      hydrateActivity: async () => undefined,
+      getManagedSubagent: ({ agentId: id }) => current.get(id),
+      archiveManagedSubagent: async ({ agentId: id }) => {
+        calls.push(id);
+        await first.promise;
+      },
+      dismissProviderSubagents: () => undefined,
+    });
+    const operation = archive.archiveFinished();
+    current.set("later", managed("later", "idle", { hasActiveDescendants: true }));
+    first.resolve();
+    expect((await operation).skippedPaseoIds).toEqual(["later"]);
+    expect(calls).toEqual(["first"]);
+  });
+
   it("dismisses provider rows before sequential managed archives and reports combined progress", async () => {
     const first = deferred<void>();
     const second = deferred<void>();
@@ -77,6 +173,7 @@ describe("createArchiveFinishedSubagents", () => {
       [provider("native"), paseo("first"), paseo("second", "error"), paseo("resumed")],
       {
         parentAgentId: "parent",
+        hydrateActivity: async () => undefined,
         getManagedSubagent: ({ agentId: id }) => current.get(id),
         archiveManagedSubagent: ({ agentId: id }) => {
           events.push(`archive:${id}`);
@@ -94,6 +191,7 @@ describe("createArchiveFinishedSubagents", () => {
     });
 
     const operation = archive.archiveFinished();
+    await Promise.resolve();
     expect(archive.getState()).toEqual({
       eligibleCount: 4,
       status: { kind: "archiving", completedCount: 1, totalCount: 4 },
@@ -131,6 +229,7 @@ describe("createArchiveFinishedSubagents", () => {
     const calls: string[] = [];
     const archive = createArchiveFinishedSubagents([paseo("first"), paseo("second")], {
       parentAgentId: "parent",
+      hydrateActivity: async () => undefined,
       getManagedSubagent: ({ agentId: id }) => current.get(id),
       archiveManagedSubagent: ({ agentId: id }) => {
         calls.push(id);
@@ -142,6 +241,7 @@ describe("createArchiveFinishedSubagents", () => {
     });
 
     const firstAttempt = archive.archiveFinished();
+    await Promise.resolve();
     archive.setRows([paseo("second")]);
     const firstError = new Error("first failed");
     first.reject(firstError);
@@ -174,6 +274,7 @@ describe("createArchiveFinishedSubagents", () => {
     });
 
     const retryAttempt = archive.archiveFinished();
+    await Promise.resolve();
     expect(archive.getState()).toEqual({
       eligibleCount: 1,
       status: { kind: "archiving", completedCount: 0, totalCount: 1 },
@@ -205,6 +306,7 @@ describe("createArchiveFinishedSubagents", () => {
     ]);
     const archive = createArchiveFinishedSubagents([paseo("first"), paseo("second")], {
       parentAgentId: "parent",
+      hydrateActivity: async () => undefined,
       getManagedSubagent: ({ agentId: id }) => current.get(id),
       archiveManagedSubagent: async ({ agentId: id }) => {
         throw id === "first" ? firstError : secondError;
@@ -231,6 +333,7 @@ describe("createArchiveFinishedSubagents", () => {
     const current = new Map([["failed", managed("failed")]]);
     const archive = createArchiveFinishedSubagents([paseo("failed")], {
       parentAgentId: "parent",
+      hydrateActivity: async () => undefined,
       getManagedSubagent: ({ agentId: id }) => current.get(id),
       archiveManagedSubagent: async () => {
         current.set("failed", managed("failed", "running"));
@@ -257,6 +360,7 @@ describe("createArchiveFinishedSubagents", () => {
     const current = new Map([["failed", managed("failed")]]);
     const archive = createArchiveFinishedSubagents([paseo("failed")], {
       parentAgentId: "parent",
+      hydrateActivity: async () => undefined,
       getManagedSubagent: ({ agentId: id }) => current.get(id),
       archiveManagedSubagent: async () => {
         current.set("failed", managed("failed", "initializing"));
@@ -298,6 +402,7 @@ describe("createArchiveFinishedSubagents", () => {
       const current = new Map([["failed", managed("failed")]]);
       const archive = createArchiveFinishedSubagents([paseo("failed")], {
         parentAgentId: "parent",
+        hydrateActivity: async () => undefined,
         getManagedSubagent: ({ agentId: id }) => current.get(id),
         archiveManagedSubagent: async () => {
           updateSnapshot(current);
@@ -326,6 +431,7 @@ describe("createArchiveFinishedSubagents", () => {
     const calls: string[] = [];
     const archive = createArchiveFinishedSubagents([paseo("first"), paseo("second")], {
       parentAgentId: "parent",
+      hydrateActivity: async () => undefined,
       getManagedSubagent: ({ agentId: id }) => current.get(id),
       archiveManagedSubagent: async ({ agentId: id }) => {
         calls.push(id);
@@ -385,6 +491,7 @@ describe("createArchiveFinishedSubagents", () => {
     const archived: string[] = [];
     const archive = createArchiveFinishedSubagents(rows, {
       parentAgentId: "parent",
+      hydrateActivity: async () => undefined,
       getManagedSubagent: ({ agentId: id }) => current.get(id),
       archiveManagedSubagent: async ({ agentId: id }) => {
         archived.push(id);
@@ -414,6 +521,7 @@ describe("createArchiveFinishedSubagents", () => {
     const dismissed: string[][] = [];
     const archive = createArchiveFinishedSubagents([...descriptors.values()], {
       parentAgentId: "parent",
+      hydrateActivity: async () => undefined,
       getManagedSubagent: () => undefined,
       archiveManagedSubagent: async () => undefined,
       dismissProviderSubagents: (ids) => dismissed.push(ids),
