@@ -13,11 +13,28 @@ const directory = process.argv[2];
 assert.ok(directory, "Config directory is required");
 await nextTurn();
 let workerMessages = 0;
+const threadCpuUsage: (previous?: NodeJS.CpuUsage) => NodeJS.CpuUsage = Reflect.get(
+  process,
+  "threadCpuUsage",
+);
+const callbackStarts = new Map<number, { start: number; cpu: NodeJS.CpuUsage }>();
+const spans: { start: number; end: number; cpuMs: number }[] = [];
+const currentMicros = () => Number(process.hrtime.bigint() / 1000n);
 const activity = createHook({
-  before() {
+  before(id) {
+    callbackStarts.set(id, { start: currentMicros(), cpu: threadCpuUsage() });
     if (executionAsyncResource() instanceof MessagePort) workerMessages++;
   },
-}).enable();
+  after(id) {
+    const start = callbackStarts.get(id);
+    if (!start) return;
+    callbackStarts.delete(id);
+    const end = currentMicros();
+    const cpu = threadCpuUsage(start.cpu);
+    if (end - start.start > 8000)
+      spans.push({ start: start.start, end, cpuMs: (cpu.user + cpu.system) / 1000 });
+  },
+});
 const profiler = process.argv[3] === "profile" ? new Session() : null;
 if (profiler) {
   profiler.connect();
@@ -25,6 +42,8 @@ if (profiler) {
   await profiler.post("Profiler.setSamplingInterval", { interval: 100 });
   await profiler.post("Profiler.start");
 }
+await nextTurn();
+activity.enable();
 const measured = await measureMainThreadWork("project config main-thread work", () =>
   readPaseoConfigForEdit(directory),
 );
@@ -32,16 +51,24 @@ activity.disable();
 process.stderr.write(`Config profiling: ${Boolean(profiler)}\n`);
 const profile = profiler ? (await profiler.post("Profiler.stop")).profile : null;
 profiler?.disconnect();
-if (profile && measured.blockingMs >= 20) {
+if (profile && spans.length > 0) {
   const nodes = new Map(profile.nodes.map((node) => [node.id, node]));
   const parents = new Map<number, number>();
   for (const node of profile.nodes) {
     for (const child of node.children ?? []) parents.set(child, node.id);
   }
   const samples = new Map<number, number>();
+  let sampleTime = profile.startTime;
   for (const [index, id] of (profile.samples ?? []).entries()) {
-    samples.set(id, (samples.get(id) ?? 0) + (profile.timeDeltas?.[index] ?? 0));
+    const delta = profile.timeDeltas?.[index] ?? 0;
+    sampleTime += delta;
+    if (spans.some((span) => sampleTime >= span.start && sampleTime <= span.end)) {
+      samples.set(id, (samples.get(id) ?? 0) + delta);
+    }
   }
+  process.stderr.write(
+    `Config long callbacks: ${JSON.stringify(spans.map(({ start, end, cpuMs }) => ({ wallMs: (end - start) / 1000, cpuMs })))}\n`,
+  );
   const hottest = [...samples]
     .sort((a, b) => b[1] - a[1])
     .slice(0, 20)

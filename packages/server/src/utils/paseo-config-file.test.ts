@@ -138,7 +138,7 @@ describe("paseo config file substrate", () => {
   });
 
   it.each(
-    Array.from({ length: 150 }, (_, repetition) =>
+    Array.from({ length: 500 }, (_, repetition) =>
       [false, true].map((profile) => ({ repetition, profile })),
     ).flat(),
   )(
