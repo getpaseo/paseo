@@ -10,23 +10,50 @@ export const PressHighlight = forwardRef<View, PressHighlightProps>(function Pre
   ref,
 ) {
   const highlighted = useSharedValue(0);
+  const touchStartX = useSharedValue(0);
+  const touchStartY = useSharedValue(0);
   const corners = useMemo(() => resolveHighlightCorners(props.style), [props.style]);
   const animatedHighlightStyle = useAnimatedStyle(() => ({ opacity: highlighted.value }));
-  // This gesture owns visual acknowledgement only. Pressable remains the sole owner of
-  // activation, cancellation, accessibility, and the caller's drag/long-press callbacks.
+  // Never activate the highlight recognizer: Android mouse taps activate on
+  // ACTION_BUTTON_RELEASE before Pressable receives ACTION_UP, cancelling its press
+  // (including presses on nested action buttons). Observe touches and fail on release.
   const pressGesture = useMemo(
     () =>
-      Gesture.Tap()
+      Gesture.Manual()
         .enabled(disabled !== true && highlightStyle != null)
-        .maxDistance(8)
         .shouldCancelWhenOutside(true)
-        .onBegin(() => {
+        .onTouchesDown((event, stateManager) => {
+          const touch = event.changedTouches[0];
+          if (!touch || event.numberOfTouches !== 1) {
+            stateManager.fail();
+            return;
+          }
+          touchStartX.value = touch.absoluteX;
+          touchStartY.value = touch.absoluteY;
           highlighted.value = 1;
+        })
+        .onTouchesMove((event, stateManager) => {
+          const touch = event.changedTouches[0];
+          if (!touch || event.numberOfTouches !== 1) {
+            stateManager.fail();
+            return;
+          }
+          const deltaX = touch.absoluteX - touchStartX.value;
+          const deltaY = touch.absoluteY - touchStartY.value;
+          if (deltaX * deltaX + deltaY * deltaY > 8 * 8) {
+            stateManager.fail();
+          }
+        })
+        .onTouchesUp((_event, stateManager) => {
+          stateManager.fail();
+        })
+        .onTouchesCancelled((_event, stateManager) => {
+          stateManager.fail();
         })
         .onFinalize(() => {
           highlighted.value = 0;
         }),
-    [disabled, highlightStyle, highlighted],
+    [disabled, highlightStyle, highlighted, touchStartX, touchStartY],
   );
 
   const highlight = highlightStyle ? (
