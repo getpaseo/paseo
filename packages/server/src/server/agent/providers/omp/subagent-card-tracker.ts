@@ -9,10 +9,11 @@ interface OmpSubagentCardChild {
 
 /**
  * Fills a task card's description and child session from OMP's sub-agent events. The card is a
- * launch marker; the child's activity belongs to the sub-agent's own timeline.
+ * launch marker that names the task's first child; the children's activity belongs to their own
+ * timelines.
  */
 export class OmpSubagentCardTracker {
-  private readonly children = new Map<string, Map<number, OmpSubagentCardChild>>();
+  private readonly firstChildren = new Map<string, OmpSubagentCardChild>();
 
   handleLifecycle(
     payload: OmpSubagentLifecyclePayload,
@@ -48,10 +49,7 @@ export class OmpSubagentCardTracker {
     if (baseDetail.type !== "sub_agent") {
       return baseDetail;
     }
-    const children = this.children.get(toolCallId);
-    const first = children
-      ? [...children.values()].sort((left, right) => left.index - right.index)[0]
-      : undefined;
+    const first = this.firstChildren.get(toolCallId);
     if (!first) {
       return baseDetail;
     }
@@ -65,11 +63,11 @@ export class OmpSubagentCardTracker {
   }
 
   delete(toolCallId: string): void {
-    this.children.delete(toolCallId);
+    this.firstChildren.delete(toolCallId);
   }
 
   clear(): void {
-    this.children.clear();
+    this.firstChildren.clear();
   }
 
   private update(
@@ -81,9 +79,11 @@ export class OmpSubagentCardTracker {
     if (!toolCallId) {
       return;
     }
-    const children = this.children.get(toolCallId) ?? new Map<number, OmpSubagentCardChild>();
-    this.children.set(toolCallId, children);
-    const existing = children.get(input.index);
+    const first = this.firstChildren.get(toolCallId);
+    if (first && input.index > first.index) {
+      return;
+    }
+    const existing = first?.index === input.index ? first : undefined;
     const next: OmpSubagentCardChild = {
       index: input.index,
       description: readTrimmedString(input.description) ?? existing?.description,
@@ -96,7 +96,7 @@ export class OmpSubagentCardTracker {
     ) {
       return;
     }
-    children.set(input.index, next);
+    this.firstChildren.set(toolCallId, next);
     emitToolCall(toolCallId);
   }
 }

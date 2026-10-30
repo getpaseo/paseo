@@ -112,4 +112,31 @@ describe("OmpSubagentCardTracker", () => {
       log: "",
     });
   });
+  test("leaves the card alone when a later child of the same task starts", () => {
+    const emitted: string[] = [];
+    const emit = (toolCallId: string) => {
+      emitted.push(toolCallId);
+      return true;
+    };
+    const tracker = new OmpSubagentCardTracker();
+    tracker.handleLifecycle(LIFECYCLE, emit);
+    tracker.handleLifecycle(
+      {
+        ...LIFECYCLE,
+        id: "Second",
+        index: 1,
+        description: "Second child",
+        sessionFile: "/s.jsonl",
+      },
+      emit,
+    );
+
+    expect(emitted).toEqual([PARENT_TOOL_CALL_ID]);
+    expect(tracker.detailFor(PARENT_TOOL_CALL_ID, { type: "sub_agent", log: "" })).toEqual({
+      type: "sub_agent",
+      description: "Run echo in subagent",
+      childSessionId: SESSION_FILE,
+      log: "",
+    });
+  });
 });

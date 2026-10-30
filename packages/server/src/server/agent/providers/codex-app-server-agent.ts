@@ -3485,6 +3485,9 @@ export class CodexAppServerAgentSession implements AgentSession {
   private compactionTriggerByItemId = new Map<string, "auto" | "manual">();
   private pendingRootCompactionItemIds = new Set<string>();
   private pendingAnonymousRootCompactions = 0;
+  // Child threads with a compaction shown as loading. Some Codex builds settle it only through
+  // `thread/compacted` or the end of the child's turn.
+  private pendingChildCompactionThreadIds = new Set<string>();
   // Codex can report one completed compaction through both channels:
   // `thread/compacted` and a completed `contextCompaction` item.
   private unpairedCompactionNotificationCompletions = 0;
@@ -5514,6 +5517,9 @@ export class CodexAppServerAgentSession implements AgentSession {
       case "patch_apply_completed":
         this.handlePatchApplyCompletedNotification(parsed, callId);
         return;
+      case "context_compacted":
+        this.settleChildCompaction(parsed.threadId);
+        return;
       default:
         // Aggregate child telemetry is redundant and must not leak into the
         // root timeline. Concrete legacy tools are projected above for Codex
@@ -5797,7 +5803,13 @@ export class CodexAppServerAgentSession implements AgentSession {
   ): boolean {
     if (
       childSubAgentCallId &&
-      this.handleSubAgentContextCompactionItem(childSubAgentCallId, parsed.item, "completed")
+      parsed.threadId &&
+      this.handleSubAgentContextCompactionItem(
+        childSubAgentCallId,
+        parsed.threadId,
+        parsed.item,
+        "completed",
+      )
     ) {
       return true;
     }
@@ -5989,17 +6001,27 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private handleSubAgentContextCompactionItem(
     callId: string,
+    childThreadId: string,
     item: { id?: string; type?: string; [key: string]: unknown },
     status: "loading" | "completed",
   ): boolean {
     if (!this.isContextCompactionItem(item)) {
       return false;
     }
-    for (const childThreadId of this.subAgentCallsByCallId.get(callId)?.childThreadIds ?? []) {
+    if (status === "loading") {
+      this.pendingChildCompactionThreadIds.add(childThreadId);
       this.emitProviderSubagentTimeline(childThreadId, { type: "compaction", status });
+    } else {
+      this.settleChildCompaction(childThreadId);
     }
     this.emitSubAgentActivityUpdate(callId);
     return true;
+  }
+
+  private settleChildCompaction(childThreadId: string): void {
+    if (this.pendingChildCompactionThreadIds.delete(childThreadId)) {
+      this.emitProviderSubagentTimeline(childThreadId, { type: "compaction", status: "completed" });
+    }
   }
 
   private shouldSkipCompletedThreadItem(
@@ -6132,6 +6154,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   ): void {
     const subAgentCallId = this.getSubAgentCallIdForThread(parsed.threadId);
     if (subAgentCallId) {
+      if (parsed.threadId) this.settleChildCompaction(parsed.threadId);
       let status: ToolCallTimelineItem["status"] = "completed";
       if (parsed.status === "failed") {
         status = "failed";
@@ -6718,7 +6741,13 @@ export class CodexAppServerAgentSession implements AgentSession {
     const childSubAgentCallId = this.getSubAgentCallIdForThread(parsed.threadId);
     if (
       childSubAgentCallId &&
-      this.handleSubAgentContextCompactionItem(childSubAgentCallId, parsed.item, "loading")
+      parsed.threadId &&
+      this.handleSubAgentContextCompactionItem(
+        childSubAgentCallId,
+        parsed.threadId,
+        parsed.item,
+        "loading",
+      )
     ) {
       return;
     }

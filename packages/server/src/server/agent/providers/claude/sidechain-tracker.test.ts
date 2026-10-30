@@ -38,6 +38,46 @@ describe("ClaudeSidechainTracker", () => {
     expect(childCallIds(next)).toEqual(["next"]);
   });
 
+  it("shows a streamed child tool call's input once the assistant message brings it", () => {
+    const tracker = new ClaudeSidechainTracker({ getToolInput: () => null });
+    const frames = [
+      {
+        type: "stream_event",
+        parent_tool_use_id: "task-1",
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "tool_use", id: "bash-1", name: "Bash", input: {} },
+        },
+      },
+      {
+        type: "assistant",
+        parent_tool_use_id: "task-1",
+        message: {
+          content: [
+            { type: "tool_use", id: "bash-1", name: "Bash", input: { command: "echo child" } },
+          ],
+        },
+      },
+    ] as unknown as SDKMessage[];
+
+    const childCards = frames
+      .flatMap((frame) => tracker.handleMessage(frame, "task-1"))
+      .flatMap((event) =>
+        event.type === "provider_subagent" &&
+        event.event.type === "timeline" &&
+        event.event.item.type === "tool_call"
+          ? [event.event.item]
+          : [],
+      );
+
+    expect(childCards.at(-1)).toMatchObject({
+      callId: "bash-1",
+      status: "running",
+      detail: { type: "shell", command: "echo child" },
+    });
+  });
+
   it("uses Claude's native agent name for the provider subagent title", () => {
     const tracker = new ClaudeSidechainTracker({
       getToolInput: () => ({

@@ -402,13 +402,12 @@ export class ClaudeSidechainTracker {
     const key =
       readTrimmedString(block.id) ??
       `stream:${block.name}:${typeof event.index === "number" ? event.index : 0}`;
-    return [
-      {
-        key,
-        toolName: block.name,
-        input: block.input ?? null,
-      },
-    ];
+    // A streamed call starts with `{}` until its input arrives, so an empty input is not final.
+    const input =
+      block.input && typeof block.input === "object" && Object.keys(block.input).length > 0
+        ? block.input
+        : null;
+    return [{ key, toolName: block.name, input }];
   }
 
   private extractSubAgentActionCandidates(message: SDKMessage): SubAgentActionCandidate[] {

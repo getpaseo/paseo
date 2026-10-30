@@ -4872,6 +4872,54 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
+  test("settles a child compaction once when the item completion is missing or duplicated", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    for (const child of ["compacted-child", "turn-ended-child"]) {
+      await asInternals(session).handleNotification("item/completed", {
+        threadId: "test-thread",
+        item: {
+          type: "subAgentActivity",
+          id: `spawn-${child}`,
+          kind: "started",
+          agentThreadId: child,
+          agentPath: `/root/${child}`,
+        },
+      });
+      await asInternals(session).handleNotification("item/started", {
+        threadId: child,
+        item: { type: "contextCompaction", id: `${child}-compaction` },
+      });
+    }
+    await asInternals(session).handleNotification("thread/compacted", {
+      threadId: "compacted-child",
+    });
+    await asInternals(session).handleNotification("item/completed", {
+      threadId: "compacted-child",
+      item: { type: "contextCompaction", id: "compacted-child-compaction" },
+    });
+    await asInternals(session).handleNotification("turn/completed", {
+      threadId: "turn-ended-child",
+      turn: { status: "completed" },
+    });
+
+    const compactions = events.flatMap((event) =>
+      event.type === "provider_subagent" && event.event.type === "timeline"
+        ? [
+            `${event.event.id} ${event.event.item.type === "compaction" ? event.event.item.status : ""}`,
+          ]
+        : [],
+    );
+    expect(compactions).toEqual([
+      "compacted-child loading",
+      "turn-ended-child loading",
+      "compacted-child completed",
+      "turn-ended-child completed",
+    ]);
+  });
+
   test("keeps the parent sub-agent running when a child command fails during the child turn", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
