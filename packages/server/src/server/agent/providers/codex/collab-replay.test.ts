@@ -86,19 +86,77 @@ describe("Codex collaboration history", () => {
     ).toEqual([{ id: "first", status: "canceled" }]);
   });
 
-  test("stops counting an errored child whose close record reports failed", async () => {
-    const history = await replay([
-      collab("spawnAgent", { first: "pendingInit" }, "spawn-first"),
-      { ...collab("closeAgent", { first: "errored" }), status: "failed" },
-    ]);
-    expect(
-      history.flatMap((event) =>
-        event.type === "provider_subagent" && event.event.type === "upsert"
-          ? [{ id: event.event.id, status: event.event.status }]
-          : [],
-      ),
-    ).toEqual([{ id: "first", status: "canceled" }]);
-  });
+  test.each(["wait", "closeAgent"])(
+    "restores an errored child as failed after %s",
+    async (tool) => {
+      const history = await replay([
+        collab("spawnAgent", { first: "pendingInit" }, "spawn-first"),
+        { ...collab(tool, { first: "errored" }), status: "failed" },
+      ]);
+      expect(
+        history.flatMap((event) =>
+          event.type === "provider_subagent" && event.event.type === "upsert"
+            ? [{ id: event.event.id, status: event.event.status }]
+            : [],
+        ),
+      ).toEqual([{ id: "first", status: "failed" }]);
+      expect(
+        history.flatMap((event) =>
+          event.type === "timeline" && event.item.type === "tool_call"
+            ? [{ id: event.item.callId, status: event.item.status, error: event.item.error }]
+            : [],
+        ),
+      ).toEqual([{ id: "spawn-first", status: "failed", error: { message: "Sub-agent failed" } }]);
+    },
+  );
+
+  test.each(["wait", "closeAgent"])(
+    "settles a live errored child as failed after %s",
+    async (tool) => {
+      const appServer = createFakeCodexAppServer();
+      const session = new CodexAppServerAgentSession(
+        { provider: "codex", cwd: process.cwd(), modeId: "full-access" },
+        null,
+        createTestLogger(),
+        async () => appServer.child,
+      );
+      const statuses = new Map<string, string>();
+      const cards = new Map<string, { status: string; error: unknown }>();
+      session.subscribe((event) => {
+        if (event.type === "provider_subagent" && event.event.type === "upsert") {
+          statuses.set(event.event.id, event.event.status);
+        }
+        if (event.type === "timeline" && event.item.type === "tool_call") {
+          cards.set(event.item.callId, { status: event.item.status, error: event.item.error });
+        }
+      });
+      function notify(method: string, item: ReturnType<typeof collab>) {
+        appServer.child.stdout.write(
+          `${JSON.stringify({ method, params: { threadId: "thread-1", item } })}\n`,
+        );
+      }
+      try {
+        const result = session.run("Delegate the work.");
+        await appServer.waitForTurnStart();
+        notify("item/completed", collab("spawnAgent", { first: "pendingInit" }, "spawn-first"));
+        notify("item/started", {
+          ...collab(tool, { first: "errored" }),
+          status: "inProgress",
+          agentsStates: {},
+        });
+        notify("item/completed", { ...collab(tool, { first: "errored" }), status: "failed" });
+        appServer.completeTurn();
+        await result;
+        expect([...statuses]).toEqual([["first", "failed"]]);
+        expect([...cards]).toEqual([
+          ["spawn-first", { status: "failed", error: { message: "Sub-agent failed" } }],
+        ]);
+      } finally {
+        await session.close();
+        appServer.assertNoErrors();
+      }
+    },
+  );
 
   test("preserves completion when a close carries an older running snapshot", async () => {
     const history = await replay([
@@ -134,6 +192,53 @@ describe("Codex collaboration history", () => {
       { id: "first", status: expected },
       { id: "second", status: "running" },
     ]);
+  });
+
+  test("settles a rendered live wait when its completion lists only the finished receiver", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      { provider: "codex", cwd: process.cwd(), modeId: "full-access" },
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const cards = new Map<string, string>();
+    const statuses = new Map<string, string>();
+    session.subscribe((event) => {
+      if (event.type === "timeline" && event.item.type === "tool_call") {
+        cards.set(event.item.callId, event.item.status);
+      }
+      if (event.type === "provider_subagent" && event.event.type === "upsert") {
+        statuses.set(event.event.id, event.event.status);
+      }
+    });
+    function notify(method: string, item: ReturnType<typeof collab>) {
+      appServer.child.stdout.write(
+        `${JSON.stringify({ method, params: { threadId: "thread-1", item } })}\n`,
+      );
+    }
+    try {
+      const result = session.run("Wait for the children.");
+      await appServer.waitForTurnStart();
+      notify("item/completed", collab("spawnAgent", { first: "pendingInit" }, "spawn-first"));
+      notify("item/started", {
+        ...collab("wait", { first: "running", second: "running" }, "mixed-wait"),
+        status: "inProgress",
+        agentsStates: {},
+      });
+      await vi.waitFor(() => expect(cards.get("mixed-wait")).toBe("running"));
+      notify("item/completed", collab("wait", { first: "completed" }, "mixed-wait"));
+      appServer.completeTurn();
+      await result;
+      expect([...cards]).toEqual([
+        ["spawn-first", "completed"],
+        ["mixed-wait", "completed"],
+      ]);
+      expect(statuses.get("first")).toBe("completed");
+    } finally {
+      await session.close();
+      appServer.assertNoErrors();
+    }
   });
 
   test("keeps completed live children settled until an explicit follow-up", async () => {

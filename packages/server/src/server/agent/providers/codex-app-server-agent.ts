@@ -1884,7 +1884,9 @@ function readCodexCollabAgentControl(item: unknown): CodexCollabAgentControl | n
     ([threadId, value]): CodexCollabAgentUpdate[] => {
       const state = toObjectRecord(value);
       if (typeof state?.status !== "string") return [];
-      const status = normalizeCollabAgentChildStatus(state.status);
+      // Unlike a spawn snapshot, a control result can report the child's final error.
+      const status =
+        state.status === "errored" ? "failed" : normalizeCollabAgentChildStatus(state.status);
       return [
         {
           threadId,
@@ -5823,23 +5825,34 @@ export class CodexAppServerAgentSession implements AgentSession {
     return childThreadIds;
   }
 
+  private handleRegisteredCollabAgentControl(
+    rawItem: { [key: string]: unknown },
+    control: CodexCollabAgentControl,
+  ): boolean {
+    for (const update of control.updates) {
+      const callId = this.subAgentCallIdByChildThreadId.get(update.threadId);
+      if (!callId) continue;
+      const state = this.subAgentCallsByCallId.get(callId);
+      if (!state) continue;
+      const status = resolveCodexCollabAgentUpdate(state.toolCall.status, update);
+      if (status !== state.toolCall.status) {
+        this.emitSubAgentActivityUpdate(callId, status, { reopen: update.reopen });
+      }
+    }
+    // A control rendered at start must also render its completion, even if
+    // Codex's final result lists fewer receivers than its started record.
+    const hasOwnCard = typeof rawItem.id === "string" && this.subAgentCallsByCallId.has(rawItem.id);
+    return (
+      !hasOwnCard &&
+      control.childThreadIds.length > 0 &&
+      control.childThreadIds.every((id) => this.subAgentCallIdByChildThreadId.has(id))
+    );
+  }
+
   private handleRegisteredSubAgentActivity(rawItem: { [key: string]: unknown }): boolean {
     const control = readCodexCollabAgentControl(rawItem);
     if (control) {
-      for (const update of control.updates) {
-        const callId = this.subAgentCallIdByChildThreadId.get(update.threadId);
-        if (!callId) continue;
-        const state = this.subAgentCallsByCallId.get(callId);
-        if (!state) continue;
-        const status = resolveCodexCollabAgentUpdate(state.toolCall.status, update);
-        if (status !== state.toolCall.status) {
-          this.emitSubAgentActivityUpdate(callId, status, { reopen: update.reopen });
-        }
-      }
-      return (
-        control.childThreadIds.length > 0 &&
-        control.childThreadIds.every((id) => this.subAgentCallIdByChildThreadId.has(id))
-      );
+      return this.handleRegisteredCollabAgentControl(rawItem, control);
     }
     const activity = readCodexSubAgentActivity(rawItem);
     if (!activity) {
