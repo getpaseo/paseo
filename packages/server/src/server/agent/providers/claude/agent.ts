@@ -6444,6 +6444,10 @@ function convertClaudeHistoryEntryPreamble(
   if (entry.type === "user" && isSyntheticHistoryUserEntry(entry)) {
     return { shortCircuit: [] };
   }
+  const steeredPrompt = readSteeredPromptHistoryItem(entry);
+  if (steeredPrompt) {
+    return { shortCircuit: [steeredPrompt] };
+  }
   // Only user and assistant records are conversation turns. Claude Code 2.1.x also journals each
   // API request as `api-request-blob` records whose message replays the system context.
   if (entry.type !== "user" && entry.type !== "assistant") {
@@ -6468,6 +6472,21 @@ function convertClaudeHistoryEntryPreamble(
 
 function isProviderImageMessage(item: AgentTimelineItem): boolean {
   return item.type === "assistant_message" && isProviderImageMarkdown(item.text);
+}
+
+/**
+ * A message steered into a running turn. Claude Code gives it no user entry: it records a
+ * queued_command attachment in prompt mode, under the uuid Paseo minted for the message, which is
+ * also what a rewind to it resolves. The other modes carry task notifications, not user messages.
+ */
+function readSteeredPromptHistoryItem(entry: ClaudeHistoryEntry): AgentTimelineItem | null {
+  if (entry.type !== "attachment") return null;
+  const attachment = toObjectRecord(entry.attachment);
+  if (attachment?.type !== "queued_command" || attachment.commandMode !== "prompt") return null;
+  const text = extractUserMessageText(attachment.prompt);
+  if (!text) return null;
+  const messageId = readTrimmedString(attachment.source_uuid);
+  return { type: "user_message", text, ...(messageId ? { messageId } : {}) };
 }
 
 export async function convertClaudeHistoryEntry(
