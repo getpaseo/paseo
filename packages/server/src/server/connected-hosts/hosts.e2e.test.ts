@@ -2107,17 +2107,24 @@ test(
       config: { provider: "claude/claude-test", modeId: "full-access" },
       title: "Large history",
     });
-    const text = "x".repeat(50 * 1024 * 1024);
-    await b.daemon.agentManager.appendTimelineItem(agent.id, { type: "assistant_message", text });
+    // Keep each row below the established item budget; exercise transport size across rows.
+    const text = "x".repeat(240 * 1024);
+    const rowCount = 220;
+    for (let index = 0; index < rowCount; index++) {
+      await b.daemon.agentManager.appendTimelineItem(agent.id, { type: "user_message", text });
+    }
     await origin.paseo.hosts.add({ connection: `127.0.0.1:${b.port}` });
     const serverId = (await online(origin.paseo)).hosts[0]!.serverId!;
     const remote = await origin.paseo.hosts.client(serverId);
-    const response = await remote.agents.ref(agent.id).timeline.refetch({ limit: 20 });
+    const response = await remote.agents.ref(agent.id).timeline.refetch({ limit: 0 });
     const messages = response.entries.flatMap((row) =>
-      row.item.type === "assistant_message" ? [row.item.text] : [],
+      row.item.type === "user_message" ? [row.item.text] : [],
     );
-    expect(messages).toHaveLength(1);
-    expect(messages[0] === text).toBe(true);
+    expect(messages).toHaveLength(rowCount);
+    expect(messages.every((message) => message === text)).toBe(true);
+    expect(
+      messages.reduce((bytes, message) => bytes + Buffer.byteLength(message), 0),
+    ).toBeGreaterThan(50 * 1024 * 1024);
     expect((await remote.workspaces.list()).entries).toHaveLength(1);
     await remote.dispose();
   },
