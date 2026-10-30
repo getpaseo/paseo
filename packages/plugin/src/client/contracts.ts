@@ -165,6 +165,15 @@ export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
   agentId?: string;
 }
 
+export type PluginWorkspaceGrouping = "project" | "status";
+
+/** Client-local presentation of the workspace list. */
+export interface PluginWorkspaceList {
+  getGrouping(): PluginWorkspaceGrouping;
+  setGrouping(grouping: PluginWorkspaceGrouping): void;
+  subscribeGrouping(listener: (grouping: PluginWorkspaceGrouping) => void): PluginCleanup;
+}
+
 // COMPAT(pluginSidebarAliases): added in v0.11.0, remove after 2027-03-29
 interface PluginClientContextAliases {
   /** @deprecated Use `addScreen`. */
@@ -175,6 +184,8 @@ interface PluginClientContextAliases {
 
 export interface PluginClientContext extends PluginCommandCapabilities, PluginClientContextAliases {
   readonly i18n: import("./translations.js").PluginI18n;
+  /** Read and change this app's workspace-list presentation. */
+  readonly workspaceList: PluginWorkspaceList;
   /** Play a base64-encoded audio file on this client; resolves when playback ends. */
   playAudio(source: { base64: string; mimeType: string }): Promise<void>;
   addSettingsScreen(contribution: PluginSettingsScreenContribution<PluginText>): PluginCleanup;
