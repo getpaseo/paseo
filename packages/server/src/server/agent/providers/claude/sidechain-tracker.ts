@@ -137,6 +137,7 @@ export class ClaudeSidechainTracker {
       type: "sub_agent",
       ...(state.subAgentType ? { subAgentType: state.subAgentType } : {}),
       ...(state.description ? { description: state.description } : {}),
+      // COMPAT(subagent-log): remove after 2027-04-30.
       log: "",
       actions: [],
     };

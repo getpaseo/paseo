@@ -199,6 +199,7 @@ function deriveOpencodeTaskDetail(
     ...(subAgentType ? { subAgentType } : {}),
     ...(description ? { description } : {}),
     ...(childSessionId ? { childSessionId } : {}),
+    // COMPAT(subagent-log): remove after 2027-04-30.
     log: "",
     actions: [],
   };

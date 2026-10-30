@@ -36,6 +36,11 @@ describe("@tintinweb/pi-subagents adapter", () => {
     });
     expect(mapping?.subagents).toEqual([
       expect.objectContaining({ id: "call-1", status: "completed" }),
+      {
+        type: "timeline",
+        id: "call-1",
+        item: { type: "assistant_message", text: "Wrapped up (turn limit)" },
+      },
     ]);
     expect(mapping?.detail).toEqual({
       type: "sub_agent",
@@ -53,6 +58,18 @@ describe("@tintinweb/pi-subagents adapter", () => {
         .filter((event) => event.event.type === "upsert")
         .map((event) => (event.event.type === "upsert" ? event.event.status : null)),
     ).toEqual(["running", "completed"]);
+    expect(
+      events.flatMap((event) => (event.event.type === "timeline" ? [event.event] : [])),
+    ).toEqual([
+      {
+        type: "timeline",
+        id: "call_458926",
+        item: {
+          type: "assistant_message",
+          text: "Agent completed in 6.6s (1 tool uses, 18.8k token).\n\nThe workspace directory `/tmp/paseo-pi-extension-phase3/workspace` is empty (no files or hidden dotfiles).",
+        },
+      },
+    ]);
   });
   test("uses a structured notification to complete a background child", async () => {
     const source = readSubagentFixture(new URL("./fixtures/background.json", import.meta.url));
