@@ -783,9 +783,48 @@ describe("terminal-session-controller backpressure snapshot fallback", () => {
   }
 
   test.each([false, true])(
+    "preserves visible history defaults and explicit requests across delivery (chunked=%s)",
+    async (chunked) => {
+      const replayOpcodes = chunked
+        ? [
+            TerminalStreamOpcode.ReplayBegin,
+            TerminalStreamOpcode.ReplayData,
+            TerminalStreamOpcode.ReplayEnd,
+          ]
+        : [TerminalStreamOpcode.Restore];
+      for (const [restore, expected] of [
+        [{ mode: "visible-snapshot" }, [{ scrollbackLines: 200 }]],
+        [{ mode: "visible-snapshot", scrollbackLines: 0 }, [{ scrollbackLines: 0 }]],
+        [{ mode: "visible-snapshot", scrollbackLines: 5 }, [{ scrollbackLines: 5 }]],
+        [{ mode: "visible-snapshot", scrollbackLines: 500 }, [{ scrollbackLines: 500 }]],
+        [
+          { mode: "visible-snapshot", scrollbackLines: 10000 },
+          [{ scrollbackLines: chunked ? 10000 : 500 }],
+        ],
+        [{ mode: "full-snapshot" }, [chunked ? { scrollbackLines: undefined } : undefined]],
+        [{ mode: "live" }, []],
+      ] as const) {
+        const fixture = await setup(() => 0, chunked, undefined, restore);
+        expect(fixture.replayOptions).toEqual(expected);
+        fixture.ready();
+        await waitForCoalescerFlush();
+        expect(fixture.replayOptions).toEqual([...expected, ...expected]);
+        expect(fixture.frames.map((frame) => frame.opcode)).toEqual(
+          restore.mode === "live" ? [] : replayOpcodes,
+        );
+        fixture.pushOutput("after-restore");
+        await waitForCoalescerFlush();
+        expect(fixture.frames.at(-1)?.opcode).toBe(TerminalStreamOpcode.Output);
+        expect(new TextDecoder().decode(fixture.frames.at(-1)!.payload)).toBe("after-restore");
+      }
+    },
+  );
+
+  test.each([false, true])(
     "bounds recovery without changing attach demand (chunked=%s)",
     async (chunked) => {
       for (const [restore, history] of [
+        [{ mode: "visible-snapshot" }, 500],
         [{ mode: "visible-snapshot", scrollbackLines: 10000 }, 500],
         [{ mode: "full-snapshot" }, 500],
         [{ mode: "visible-snapshot", scrollbackLines: 5 }, 5],

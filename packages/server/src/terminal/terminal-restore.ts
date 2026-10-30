@@ -33,18 +33,25 @@ export function resolveRestoreAfterOutputOverflow(
   };
 }
 
-export function resolveTerminalRestoreSnapshotOptions(
-  restore: TerminalRestoreOptions,
-): TerminalReplayOptions | null | undefined {
+export function resolveTerminalRestoreSnapshotOptions({
+  restore,
+  chunked,
+}: {
+  restore: TerminalRestoreOptions;
+  chunked: boolean;
+}): TerminalReplayOptions | null | undefined {
   if (restore.mode === "live") {
     return null;
   }
-  if (restore.mode === "visible-snapshot") {
-    return {
-      scrollbackLines: resolveVisibleRestoreScrollbackLines(restore.scrollbackLines),
-    };
+  if (restore.mode === "full-snapshot") {
+    return chunked ? { scrollbackLines: restore.scrollbackLines } : undefined;
   }
-  return undefined;
+  const scrollbackLines = restore.scrollbackLines ?? DEFAULT_VISIBLE_RESTORE_SCROLLBACK_LINES;
+  return {
+    scrollbackLines: chunked
+      ? scrollbackLines
+      : Math.min(scrollbackLines, MAX_VISIBLE_RESTORE_SCROLLBACK_LINES),
+  };
 }
 
 export function encodeTerminalRestoreFrame(input: { slot: number; data: Uint8Array }): Uint8Array {
@@ -53,13 +60,6 @@ export function encodeTerminalRestoreFrame(input: { slot: number; data: Uint8Arr
     slot: input.slot,
     payload: input.data,
   });
-}
-
-function resolveVisibleRestoreScrollbackLines(value: number | undefined): number {
-  if (typeof value !== "number") {
-    return DEFAULT_VISIBLE_RESTORE_SCROLLBACK_LINES;
-  }
-  return Math.min(Math.max(0, value), MAX_VISIBLE_RESTORE_SCROLLBACK_LINES);
 }
 
 /** The daemon's only old-app adapter. Capable delivery never assembles the replay. */

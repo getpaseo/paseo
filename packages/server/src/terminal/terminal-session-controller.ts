@@ -1085,10 +1085,7 @@ export class TerminalSessionController {
     restore: TerminalRestoreOptions,
   ): Promise<SnapshotSendResult> {
     const chunked = this.options.supportsChunkedReplay?.(activeStream.owner.source) === true;
-    const snapshotOptions =
-      chunked && restore.mode !== "live"
-        ? { scrollbackLines: restore.scrollbackLines }
-        : resolveTerminalRestoreSnapshotOptions(restore);
+    const snapshotOptions = resolveTerminalRestoreSnapshotOptions({ restore, chunked });
     if (snapshotOptions === null) {
       return { shouldContinue: true, replay: null };
     }

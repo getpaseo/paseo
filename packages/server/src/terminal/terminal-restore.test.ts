@@ -13,15 +13,24 @@ import {
 
 describe("terminal restore policy", () => {
   test("resolves bounded restore snapshot options", () => {
-    expect(resolveTerminalRestoreSnapshotOptions({ mode: "live" })).toBeNull();
-    expect(resolveTerminalRestoreSnapshotOptions({ mode: "full-snapshot" })).toBeUndefined();
-    expect(resolveTerminalRestoreSnapshotOptions({ mode: "visible-snapshot" })).toEqual({
+    expect(
+      resolveTerminalRestoreSnapshotOptions({ restore: { mode: "live" }, chunked: false }),
+    ).toBeNull();
+    expect(
+      resolveTerminalRestoreSnapshotOptions({ restore: { mode: "full-snapshot" }, chunked: false }),
+    ).toBeUndefined();
+    expect(
+      resolveTerminalRestoreSnapshotOptions({
+        restore: { mode: "visible-snapshot" },
+        chunked: false,
+      }),
+    ).toEqual({
       scrollbackLines: 200,
     });
     expect(
       resolveTerminalRestoreSnapshotOptions({
-        mode: "visible-snapshot",
-        scrollbackLines: 999,
+        restore: { mode: "visible-snapshot", scrollbackLines: 999 },
+        chunked: false,
       }),
     ).toEqual({ scrollbackLines: 500 });
   });
