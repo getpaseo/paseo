@@ -1,4 +1,5 @@
 import path from "node:path";
+import { stat } from "node:fs/promises";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { measureMainThreadWork } from "../../test-utils/main-thread-work.js";
 import { createTestRegistries, createTestLogger } from "./reconciliation-registries.js";
@@ -53,6 +54,9 @@ const service = new WorkspaceReconciliationService({
 
 // Compile before launch and measure in plain Node, outside the test runner's
 // thread and TypeScript loader. Keep the first real reconciliation cold.
+// Initialize async filesystem support using the bundle, leaving every project
+// and workspace path untouched until the first reconciliation.
+await stat(process.argv[1]);
 await nextTurn();
 try {
   const measured = await measureMainThreadWork("workspace reconciliation main-thread work", () =>
