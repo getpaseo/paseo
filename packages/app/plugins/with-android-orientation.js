@@ -1,17 +1,7 @@
-const { withAndroidManifest, withMainActivity, withDangerousMod } = require("expo/config-plugins");
-const fs = require("node:fs");
-const path = require("node:path");
+const { withMainActivity } = require("expo/config-plugins");
 
 module.exports = function withAndroidOrientation(config) {
-  // The manifest locks phones before the first activity frame. Tablets start unlocked.
-  config = withAndroidManifest(config, (mod) => {
-    const activity = mod.modResults.manifest.application[0].activity.find(
-      (item) => item.$["android:name"] === ".MainActivity",
-    );
-    activity.$["android:screenOrientation"] = "@integer/paseo_orientation";
-    return mod;
-  });
-  config = withMainActivity(config, (mod) => {
+  return withMainActivity(config, (mod) => {
     const activity = mod.modResults;
     if (activity.language !== "kt") throw new Error("Expected Kotlin MainActivity");
     const marker = "  // Paseo orientation policy";
@@ -45,23 +35,4 @@ ${anchor}`,
     }
     return mod;
   });
-  return withDangerousMod(config, [
-    "android",
-    async (mod) => {
-      const res = path.join(mod.modRequest.platformProjectRoot, "app/src/main/res");
-      // ActivityInfo uses 1 for portrait and -1 for unspecified.
-      for (const [dir, value] of [
-        ["values", "1"],
-        ["values-sw600dp", "-1"],
-      ]) {
-        const target = path.join(res, dir);
-        fs.mkdirSync(target, { recursive: true });
-        fs.writeFileSync(
-          path.join(target, "paseo_orientation.xml"),
-          `<resources><integer name="paseo_orientation">${value}</integer></resources>\n`,
-        );
-      }
-      return mod;
-    },
-  ]);
 };
