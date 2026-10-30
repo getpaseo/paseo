@@ -1,4 +1,8 @@
-import type { SubscribeTerminalRequest } from "@getpaseo/protocol/messages";
+import type {
+  SubscribeTerminalRequest,
+  TerminalCell,
+  TerminalState,
+} from "@getpaseo/protocol/messages";
 import {
   TerminalStreamOpcode,
   encodeTerminalSnapshotPayload,
@@ -72,6 +76,48 @@ export function encodeTerminalRestoreFrame(input: {
     slot: input.slot,
     payload: renderTerminalSnapshotToAnsi(input.snapshot.state),
   });
+}
+
+// COMPAT(terminalUnicode11Widths): added in v0.11.3, remove after 2027-04-11.
+// The wide ranges of xterm's Unicode 6 table (UnicodeV6 in @xterm/headless).
+const UNICODE6_WIDE_RANGES: ReadonlyArray<readonly [number, number]> = [
+  [0x1100, 0x115f],
+  [0x2329, 0x232a],
+  [0x2e80, 0x303e],
+  [0x3040, 0xa4cf],
+  [0xac00, 0xd7a3],
+  [0xf900, 0xfaff],
+  [0xfe10, 0xfe19],
+  [0xfe30, 0xfe6f],
+  [0xff00, 0xff60],
+  [0xffe0, 0xffe6],
+  [0x20000, 0x2fffd],
+  [0x30000, 0x3fffd],
+];
+
+function isUnicode6Wide(char: string): boolean {
+  const codePoint = char.codePointAt(0) ?? 0;
+  return UNICODE6_WIDE_RANGES.some(([start, end]) => codePoint >= start && codePoint <= end);
+}
+
+function toUnicode6Row(row: TerminalCell[]): TerminalCell[] {
+  if (!row.some((cell) => cell.char === "")) {
+    return row;
+  }
+  return row.map((cell, index) =>
+    cell.char === "" && !isUnicode6Wide(row[index - 1]?.char ?? "") ? { ...cell, char: " " } : cell,
+  );
+}
+
+// A client with Unicode 6 widths moves an emoji only one column and skips its
+// spacer cell, so the rest of the row lands one column left. Send the spacer
+// as a space instead. Unicode 6 already counts CJK as two cells, so CJK spacers stay.
+export function toUnicode6Widths(state: TerminalState): TerminalState {
+  return {
+    ...state,
+    grid: state.grid.map(toUnicode6Row),
+    scrollback: state.scrollback.map(toUnicode6Row),
+  };
 }
 
 function resolveVisibleRestoreScrollbackLines(value: number | undefined): number {

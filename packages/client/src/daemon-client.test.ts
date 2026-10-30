@@ -1101,6 +1101,7 @@ test("advertises client capabilities in hello", async () => {
       projected_subagent_timeline: true,
       reasoning_merge_enum: true,
       terminal_reflowable_snapshot: true,
+      terminal_unicode11_widths: true,
       timeline_notifications: true,
       plugin_timeline_items: true,
       workspace_setup_blocked: true,

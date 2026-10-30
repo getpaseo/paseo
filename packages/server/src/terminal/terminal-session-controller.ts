@@ -33,9 +33,10 @@ import {
   resolveRestoreAfterOutputOverflow,
   resolveTerminalRestoreSnapshotOptions,
   resolveTerminalSubscriptionSnapshotMode,
+  toUnicode6Widths,
   type TerminalRestoreOptions,
 } from "./terminal-restore.js";
-import type { TerminalSession } from "./terminal.js";
+import type { TerminalSession, TerminalStateSnapshot } from "./terminal.js";
 import type { TerminalManager, TerminalsChangedEvent } from "./terminal-manager.js";
 import { applyTerminalSize } from "./terminal-size-ownership.js";
 import { TerminalWorkerIncompatibleError } from "./terminal-worker-pool.js";
@@ -92,6 +93,9 @@ export interface TerminalSessionControllerOptions {
   // daemon attaches per-row soft-wrap flags to snapshots; otherwise it omits them
   // so old (strict-schema) clients still parse the snapshot.
   clientSupportsWrapReflow?: (source: object) => boolean;
+  // COMPAT(terminalUnicode11Widths): added in v0.11.3, remove after 2027-04-11.
+  // Whether the client measures emoji with Unicode 11 widths, as the daemon does.
+  clientSupportsUnicode11Widths?: (source: object) => boolean;
   // Current max bytes queued on the client's transport(s) but not yet sent.
   // Drives the snapshot catch-up fallback: a keeping-up client reports ~0 and
   // keeps streaming; a backed-up client trips the snapshot path. Defaults to a
@@ -146,6 +150,7 @@ export class TerminalSessionController {
   private readonly listTerminalWorkspaceRefs: () => Promise<readonly TerminalWorkspaceRef[]>;
   private readonly listTerminalWorkspaceRoots: () => Promise<readonly string[]>;
   private readonly clientSupportsWrapReflow: (source: object) => boolean;
+  private readonly clientSupportsUnicode11Widths: (source: object) => boolean;
   private readonly getClientBufferedAmount: (source: object) => number | null;
 
   private readonly subscribedDirectories = new Map<string, TerminalDirectorySubscription>();
@@ -164,6 +169,7 @@ export class TerminalSessionController {
       options.listTerminalWorkspaceRoots ??
       (async () => (await this.listTerminalWorkspaceRefs()).map((workspace) => workspace.cwd));
     this.clientSupportsWrapReflow = options.clientSupportsWrapReflow ?? (() => false);
+    this.clientSupportsUnicode11Widths = options.clientSupportsUnicode11Widths ?? (() => false);
     this.getClientBufferedAmount = options.getClientBufferedAmount ?? (() => 0);
   }
 
@@ -1088,7 +1094,7 @@ export class TerminalSessionController {
     activeStream.owner.emitBinary(
       encodeLegacyTerminalSnapshotFrame({
         slot: activeStream.slot,
-        snapshot,
+        snapshot: this.snapshotForClient(activeStream, snapshot),
       }),
     );
     // The snapshot frame went out-of-band; keep the replay that follows on the
@@ -1122,13 +1128,22 @@ export class TerminalSessionController {
     activeStream.owner.emitBinary(
       encodeTerminalRestoreFrame({
         slot: activeStream.slot,
-        snapshot,
+        snapshot: this.snapshotForClient(activeStream, snapshot),
       }),
     );
     // The restore frame went out-of-band; keep the replay that follows on the
     // coalescer's trailing path so it doesn't flush back-to-back with it.
     activeStream.outputCoalescer.markFlushed();
     return { shouldContinue: true, replayRevision: snapshot.revision };
+  }
+
+  private snapshotForClient(
+    activeStream: ActiveTerminalStream,
+    snapshot: TerminalStateSnapshot,
+  ): TerminalStateSnapshot {
+    return this.clientSupportsUnicode11Widths(activeStream.owner.source)
+      ? snapshot
+      : { ...snapshot, state: toUnicode6Widths(snapshot.state) };
   }
 
   private replayTerminalOutputAfterSnapshot(

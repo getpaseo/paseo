@@ -2019,6 +2019,8 @@ export class VoiceAssistantWebSocketServer {
         "terminal-restore-modes": true,
         // COMPAT(terminalInputModeReplay): added in v0.2.6, remove gate after 2027-02-02.
         "terminal-input-mode-replay": true,
+        // COMPAT(terminalUnicode11Widths): added in v0.11.3, remove gate after 2027-04-11.
+        "terminal-unicode11-widths": true,
         // COMPAT(terminalSizeOwnership): added in v0.2.6, remove gate after 2027-02-02.
         "terminal-size-ownership": true,
         workspaceTerminals: true,

@@ -428,10 +428,17 @@ async function waitForCoalescerFlush(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 30));
 }
 
-describe("terminal-session-controller wrap-flag gating", () => {
-  function setup(clientSupportsWrapReflow?: () => boolean): {
+describe("terminal-session-controller client capability gating", () => {
+  function setup(
+    options: Pick<
+      TerminalSessionControllerOptions,
+      "clientSupportsWrapReflow" | "clientSupportsUnicode11Widths"
+    > = {},
+    state: TerminalState = terminalState("hello"),
+  ): {
     controller: ReturnType<typeof createController>;
     getTerminalState: ReturnType<typeof vi.fn>;
+    restorePayloads: string[];
   } {
     const terminal: TerminalSession = {
       id: "term-1",
@@ -460,8 +467,9 @@ describe("terminal-session-controller wrap-flag gating", () => {
       killAndWait: vi.fn(),
     };
     const getTerminalState = vi.fn(() =>
-      Promise.resolve<TerminalStateSnapshot>({ state: terminalState("hello"), revision: 1 }),
+      Promise.resolve<TerminalStateSnapshot>({ state, revision: 1 }),
     );
+    const restorePayloads: string[] = [];
     const terminalManager = {
       getTerminals: vi.fn(),
       createTerminal: vi.fn(),
@@ -483,13 +491,18 @@ describe("terminal-session-controller wrap-flag gating", () => {
     const controller = createController({
       terminalManager,
       emit: vi.fn(),
-      emitBinary: vi.fn(),
+      emitBinary: (bytes) => {
+        const frame = decodeTerminalStreamFrame(bytes);
+        if (frame?.opcode === TerminalStreamOpcode.Restore) {
+          restorePayloads.push(new TextDecoder().decode(frame.payload));
+        }
+      },
       hasBinaryChannel: () => true,
       isPathWithinRoot: () => false,
       sessionLogger: createLogger(),
-      ...(clientSupportsWrapReflow ? { clientSupportsWrapReflow } : {}),
+      ...options,
     });
-    return { controller, getTerminalState };
+    return { controller, getTerminalState, restorePayloads };
   }
 
   async function subscribe(controller: ReturnType<typeof createController>): Promise<void> {
@@ -503,7 +516,7 @@ describe("terminal-session-controller wrap-flag gating", () => {
   }
 
   test("requests wrap flags when the client supports reflowable snapshots", async () => {
-    const { controller, getTerminalState } = setup(() => true);
+    const { controller, getTerminalState } = setup({ clientSupportsWrapReflow: () => true });
     await subscribe(controller);
     expect(getTerminalState).toHaveBeenCalledWith(
       "term-1",
@@ -518,6 +531,20 @@ describe("terminal-session-controller wrap-flag gating", () => {
       "term-1",
       expect.objectContaining({ includeWrapFlags: false }),
     );
+  });
+
+  test("keeps emoji columns for clients without Unicode 11 widths", async () => {
+    const emoji = String.fromCodePoint(0x1f4be);
+    const state = terminalState("");
+    state.grid = [[{ char: emoji }, { char: "" }, { char: "a" }]];
+    const oldClient = setup({}, state);
+    const currentClient = setup({ clientSupportsUnicode11Widths: () => true }, state);
+
+    await subscribe(oldClient.controller);
+    await subscribe(currentClient.controller);
+
+    expect(oldClient.restorePayloads[0]).toContain(`${emoji} a`);
+    expect(currentClient.restorePayloads[0]).toContain(`${emoji}a`);
   });
 });
 

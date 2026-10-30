@@ -1,5 +1,6 @@
 import * as pty from "node-pty";
 import xterm, { type Terminal as TerminalType } from "@xterm/headless";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { randomUUID } from "crypto";
 import {
   accessSync,
@@ -987,6 +988,10 @@ export async function createTerminal(
     scrollback: 1000,
     allowProposedApi: true,
   });
+  // Match the client's character widths. The default Unicode 6 table counts most
+  // emoji as one cell, so cursor-positioned redraws after an emoji land one cell off.
+  terminal.loadAddon(new Unicode11Addon());
+  terminal.unicode.activeVersion = "11";
 
   ensureNodePtySpawnHelperExecutableForCurrentPlatform();
 
