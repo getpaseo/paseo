@@ -447,6 +447,28 @@ test("reports a chat current only once its parked follow-up page completes", asy
   world.sync.dispose();
 });
 
+test("a gap during manual retry is recovered before reporting ready", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.show("workspace", ["agent-a"]);
+  (await world.nextMembership()).succeed();
+  (await world.nextFetch("agent-a")).fail("unavailable");
+  await world.nextError();
+  world.sync.retryVisibleAgentTimeline("agent-a");
+  const retry = await world.nextFetch("agent-a");
+  world.sync.recoverGap("agent-a", { epoch: "epoch-agent-a", endSeq: 9 });
+  retry.respond({ hasNewer: false });
+  await vi.waitFor(() => expect(world.pendingFetchCount).toBe(1));
+  const recovery = await world.nextFetch("agent-a");
+  expect(recovery.request).toMatchObject({
+    direction: "after",
+    cursor: { epoch: "epoch-agent-a", seq: 9 },
+  });
+  expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("retrying");
+  recovery.respond({ hasNewer: false });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+});
+
 test("reports a chat current once the latest-tail fallback replaces an overflowing catch-up", async () => {
   const world = new TimelineWorld();
   world.cursors.set("agent-a", { epoch: "epoch-agent-a", endSeq: 42 });
