@@ -85,6 +85,9 @@ export function createHostChannelTransport(
       })
       .catch(close);
     return {
+      get supportsDrain() {
+        return origin.supportsDrain;
+      },
       maxFrameBytes: MAX_HOST_CHANNEL_FRAME_BYTES,
       send(data) {
         if (closed || !routeId)

@@ -8664,3 +8664,121 @@ test("malformed chunk metadata still closes the client transport", async () => {
   mock.triggerMessage(new Uint8Array([0x31, 2, 0, 3, 65]));
   expect(closed).toHaveBeenCalledWith(4003, "Invalid chunked transport");
 });
+
+test.each([FileTransferOpcode.FileBegin, FileTransferOpcode.FileChunk, FileTransferOpcode.FileEnd])(
+  "upload stops at a queued pre-write rejection (opcode=%s)",
+  async (opcode) => {
+    const mock = createMockTransport();
+    const send = mock.transport.send;
+    let drain!: () => void;
+    let blocked = false;
+    const attempts: number[] = [];
+    mock.transport.send = (frame) => {
+      if (typeof frame !== "string") {
+        const decoded = decodeFileTransferFrame(assertUint8Array(frame));
+        if (decoded) {
+          attempts.push(decoded.opcode);
+          if (decoded.opcode === opcode) throw new Error("upload capacity");
+        } else if (blocked)
+          return new Promise<void>((resolve) => {
+            drain = resolve;
+          });
+      }
+      return send(frame);
+    };
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "upload-admission",
+      transportFactory: () => mock.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    mock.triggerOpen();
+    await connecting;
+    blocked = true;
+    const first = client.sendHostFrame("route", new Uint8Array([1]));
+    const upload = client.uploadFile({
+      fileName: "file.bin",
+      mimeType: "application/octet-stream",
+      bytes: new Uint8Array([1, 2]),
+      chunkSize: 1,
+    });
+    let rejected: unknown;
+    void upload.catch((error) => {
+      rejected = error;
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    drain();
+    await first;
+    await vi.waitFor(() => expect(rejected).toMatchObject({ message: "upload capacity" }), {
+      timeout: 500,
+    });
+    expect(attempts.at(-1)).toBe(opcode);
+    expect(client.isConnected).toBe(true);
+  },
+);
+
+test.each(["latency", "dictation start", "dictation finish"])(
+  "queued control send rejection reaches its caller (%s)",
+  async (operation) => {
+    const mock = createMockTransport();
+    const send = mock.transport.send;
+    let blocked = false;
+    let drain!: () => void;
+    mock.transport.send = (frame) => {
+      if (!blocked) return send(frame);
+      if (typeof frame !== "string")
+        return new Promise<void>((resolve) => {
+          drain = resolve;
+        });
+      throw new Error("control capacity");
+    };
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "control-admission",
+      transportFactory: () => mock.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    mock.triggerOpen();
+    await connecting;
+    blocked = true;
+    const first = client.sendHostFrame("route", new Uint8Array([1]));
+    let result: Promise<unknown>;
+    if (operation === "latency") result = client.measureLatency({ timeoutMs: 1000 });
+    else if (operation === "dictation start")
+      result = client.startDictationStream("dictation", "pcm");
+    else result = client.finishDictationStream("dictation", 0);
+    const rejected = expect(result).rejects.toThrow("control capacity");
+    drain();
+    await first;
+    await rejected;
+    expect(client.isConnected).toBe(true);
+  },
+);
+
+test("routed channels inherit an origin without drain support", async () => {
+  const { createHostChannelTransport } = await import("./hosts/index.js");
+  const mock = createMockTransport();
+  mock.transport.supportsDrain = false;
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "unpaced-route",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen();
+  await connecting;
+  const route = createHostChannelTransport(
+    client,
+    "srv_destination",
+    "scope",
+    "route",
+  )({ url: "ws://route" });
+  expect(route.supportsDrain).toBe(false);
+  route.close();
+});

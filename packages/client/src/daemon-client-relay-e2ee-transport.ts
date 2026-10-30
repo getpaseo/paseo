@@ -224,6 +224,7 @@ export function createEncryptedTransport(
   });
 
   return {
+    supportsDrain: base.supportsDrain,
     maxFrameBytes: maxSecuredPlaintextByteLength(MAX_RELAY_WEBSOCKET_MESSAGE_BYTES),
     send: (data) => {
       if (!channel) {

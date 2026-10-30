@@ -1,4 +1,6 @@
 export interface DaemonTransport {
+  /** False when the underlying socket cannot report write drain. */
+  supportsDrain?: boolean;
   maxFrameBytes?: number;
   send: (data: string | Uint8Array | ArrayBuffer) => void | Promise<void>;
   close: (code?: number, reason?: string) => void;
@@ -14,10 +16,13 @@ export type DaemonTransportFactory = (options: {
   protocols?: string[];
 }) => DaemonTransport;
 
-export type WebSocketFactory = (
-  url: string,
-  options?: { headers?: Record<string, string>; protocols?: string[] },
-) => WebSocketLike;
+export interface WebSocketFactory {
+  (
+    url: string,
+    options?: { headers?: Record<string, string>; protocols?: string[] },
+  ): WebSocketLike;
+  supportsDrain?: boolean;
+}
 
 export interface WebSocketLike {
   bufferedAmount?: number;

@@ -75,8 +75,9 @@ The framing module never selects an encryption construction.
 Native uploads retain the platform's existing queue limits. React Native's
 WebSocket does not report its queued bytes, so the client cannot wait for native
 drain. Android's installed OkHttp transport closes when a send would put more
-than 16 MiB in its queue. Negotiating chunking does not establish large native
-upload support; daemon-to-native responses still use the daemon's paced writes.
+than 16 MiB in its queue. The native transport disables outbound chunking, including
+on routed channels, and retains its existing single-frame admission errors.
+Inbound chunking remains enabled; daemon-to-native responses use the daemon's paced writes.
 
 ## Owned observations
 

@@ -22,6 +22,7 @@ export class ChunkedTransport {
   constructor(
     private readonly io: {
       frameBytes: number;
+      supportsDrain?: boolean;
       send: (frame: Frame, waitForDrain: boolean) => void | Promise<void>;
       deliver: (frame: Frame) => void;
       onFailure?: (error: unknown) => void;
@@ -41,7 +42,8 @@ export class ChunkedTransport {
   send(frame: Frame, options: { waitForDrain?: boolean; byteLength?: number } = {}): Promise<void> {
     const byteLength = options.byteLength ?? frameByteLength(frame);
     if (byteLength > MAX_WEBSOCKET_MESSAGE_BYTES) throw new Error("Logical message too large");
-    const chunk = this.enabled && byteLength > this.io.frameBytes;
+    const chunk =
+      this.enabled && this.io.supportsDrain !== false && byteLength > this.io.frameBytes;
     if (this.closed) throw new Error("Transport closed");
     const write = () => {
       if (this.closed) throw new Error("Transport closed");

@@ -172,6 +172,9 @@ export function createHostTransportFactory(
       close();
     });
     return {
+      get supportsDrain() {
+        return transport?.supportsDrain;
+      },
       get maxFrameBytes() {
         return transport?.maxFrameBytes;
       },

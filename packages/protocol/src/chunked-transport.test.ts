@@ -368,3 +368,25 @@ it.each([false, true])("delivery errors leave framing usable (chunked=%s)", asyn
   expect(delivered).toEqual(["A"]);
   await transport.send("still connected");
 });
+
+it("unpaced transports retain ordinary outbound admission and accept inbound chunks", async () => {
+  const frames: unknown[] = [];
+  const delivered: unknown[] = [];
+  const transport = new ChunkedTransport({
+    frameBytes: 8,
+    supportsDrain: false,
+    send: (frame) => {
+      frames.push(frame);
+      if (typeof frame === "string" && frame.length > 8) throw new Error("single frame limit");
+    },
+    deliver: (frame) => {
+      delivered.push(frame);
+    },
+  });
+  transport.enabled = true;
+  expect(() => transport.send("too large for one frame")).toThrow("single frame limit");
+  expect(frames).toEqual(["too large for one frame"]);
+  transport.receive(new Uint8Array([0x31, 1, 0, 3, 65]));
+  expect(delivered).toEqual(["A"]);
+  await transport.send("small");
+});
