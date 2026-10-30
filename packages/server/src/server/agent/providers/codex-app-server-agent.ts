@@ -1888,7 +1888,12 @@ function readCodexCollabAgentUpdates(item: unknown): CodexCollabAgentUpdate[] {
       ? [
           {
             threadId,
-            status: mapped.status,
+            status:
+              record.tool === "closeAgent" &&
+              record.status === "completed" &&
+              mapped.status === "running"
+                ? "canceled"
+                : mapped.status,
             shutdown: state.status === "shutdown",
             reopen: record.tool === "sendInput" && record.status === "completed",
           },
