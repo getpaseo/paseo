@@ -1,3 +1,4 @@
+import { i18n } from "@/i18n/i18next";
 import type { SubscribeTerminalRequest } from "@getpaseo/protocol/messages";
 
 export interface ResolveTerminalRestoreOptionsInput {
@@ -9,9 +10,9 @@ export interface ResolveTerminalRestoreOptionsInput {
 
 export function resolveTerminalRestoreOptions(
   input: ResolveTerminalRestoreOptionsInput,
-): SubscribeTerminalRequest["restore"] | undefined {
+): NonNullable<SubscribeTerminalRequest["restore"]> {
   if (!input.supportsTerminalRestoreModes) {
-    return undefined;
+    throw new Error(i18n.t("workspace.terminal.restoreRequiresUpdate"));
   }
 
   return {

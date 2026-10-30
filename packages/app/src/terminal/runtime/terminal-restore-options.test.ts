@@ -4,14 +4,14 @@ import { resolveTerminalRestoreOptions } from "./terminal-restore-options";
 
 describe("terminal restore options", () => {
   it("omits restore options for daemons without terminal restore modes", () => {
-    expect(
+    expect(() =>
       resolveTerminalRestoreOptions({
         scrollbackLines: 10000,
         supportsTerminalRestoreModes: false,
         canClaimSize: true,
         size: { rows: 24, cols: 80 },
       }),
-    ).toBeUndefined();
+    ).toThrow("Update the host to view terminals.");
   });
 
   it("requests visible snapshot restore with configured scrollback for capable daemons", () => {

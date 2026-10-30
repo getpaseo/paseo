@@ -13,7 +13,6 @@ import {
   type ViewStyle,
 } from "react-native";
 import type { ITheme } from "@xterm/xterm";
-import type { TerminalState } from "@getpaseo/protocol/messages";
 import {
   TerminalInputModeTracker,
   terminalInputModeStatesEqual,
@@ -120,43 +119,8 @@ function resolvePanResponderPoint(
   };
 }
 
-function initialNativeTerminalSize(snapshot: TerminalState | null): TerminalMeasuredSize {
-  return {
-    rows: snapshot?.rows ?? MIN_NATIVE_TERMINAL_ROWS,
-    cols: snapshot?.cols ?? MIN_NATIVE_TERMINAL_COLS,
-  };
-}
-
-function screenStateFromViewport(viewport: TerminalViewportState): TerminalScreenState {
-  const visibleRows = viewport.grid.length;
-  const currentViewport = {
-    firstRow: viewport.firstRow,
-    lastRow: Math.min(viewport.newestRow, viewport.firstRow + Math.max(1, visibleRows) - 1),
-  };
-  return {
-    viewport,
-    scroll: {
-      mode: "following",
-      firstRow: viewport.firstRow,
-      visibleRows,
-      oldestRow: viewport.oldestRow,
-      newestRow: viewport.newestRow,
-      currentViewport,
-      bottomViewport: currentViewport,
-    },
-  };
-}
-
-function viewportStateFromSnapshot(state: TerminalState): TerminalViewportState {
-  return {
-    rows: state.grid.length,
-    cols: state.cols,
-    firstRow: 0,
-    oldestRow: 0,
-    newestRow: Math.max(0, state.grid.length - 1),
-    grid: state.grid,
-    cursor: state.cursor,
-  };
+function initialNativeTerminalSize(): TerminalMeasuredSize {
+  return { rows: MIN_NATIVE_TERMINAL_ROWS, cols: MIN_NATIVE_TERMINAL_COLS };
 }
 
 function NativeTerminalEmulator({
@@ -169,7 +133,6 @@ function NativeTerminalEmulator({
   fontSize,
   keyboardInset = 0,
   isKeyboardVisible = false,
-  initialSnapshot = null,
   onInput,
   onTerminalKey,
   onResize,
@@ -181,20 +144,18 @@ function NativeTerminalEmulator({
   resizeRequestToken = 0,
 }: TerminalEmulatorProps) {
   const terminalRef = useRef<NativeHeadlessTerminal | null>(null);
-  const mountInputRef = useRef({ streamKey, initialSnapshot });
+  const mountInputRef = useRef({ streamKey });
   if (
     resolveNativeTerminalMountAction({
       mountedStreamKey: mountInputRef.current.streamKey,
       nextStreamKey: streamKey,
     }) === "mount"
   ) {
-    mountInputRef.current = { streamKey, initialSnapshot };
+    mountInputRef.current = { streamKey };
   }
   const inputRef = useRef<TerminalInputHandle>(null);
-  const terminalSizeRef = useRef<TerminalMeasuredSize>(initialNativeTerminalSize(initialSnapshot));
-  const resizePolicyRef = useRef(
-    createTerminalResizePolicy(initialNativeTerminalSize(initialSnapshot)),
-  );
+  const terminalSizeRef = useRef<TerminalMeasuredSize>(initialNativeTerminalSize());
+  const resizePolicyRef = useRef(createTerminalResizePolicy(initialNativeTerminalSize()));
   const activeResizeClaimTokenRef = useRef(0);
   const layoutRef = useRef<TerminalMeasuredLayout | null>(null);
   const metricsRef = useRef<TerminalGridCellMetrics | null>(null);
@@ -220,11 +181,7 @@ function NativeTerminalEmulator({
     ...inputModeTrackerRef.current.getState(),
     applicationCursorKeys: false,
   });
-  const [terminalScreen, setTerminalScreen] = useState<TerminalScreenState | null>(() => {
-    return initialSnapshot
-      ? screenStateFromViewport(viewportStateFromSnapshot(initialSnapshot))
-      : null;
-  });
+  const [terminalScreen, setTerminalScreen] = useState<TerminalScreenState | null>(null);
   const [selectionRange, setSelectionRange] = useState<TerminalSelectionRange | null>(null);
   const selectionRangeRef = useRef<TerminalSelectionRange | null>(null);
   const hasNotifiedSelectionRef = useRef(false);
@@ -365,6 +322,7 @@ function NativeTerminalEmulator({
           await terminal.write(chunk);
           emitInputModeChange();
         },
+        restoreSize: () => terminal.resize(terminalSizeRef.current),
         reset: (size) => {
           inputModeTrackerRef.current.reset();
           if (size) terminal.resize(size);
@@ -434,51 +392,41 @@ function NativeTerminalEmulator({
     [schedulePaint],
   );
 
-  const resetTerminal = useCallback(
-    (snapshot: TerminalState | null) => {
-      outputDrainRef.current?.dispose();
-      outputDrainRef.current = null;
-      terminalRef.current?.dispose();
-      screenModelRef.current = null;
-      latestResolvedScreenRef.current = null;
-      clearSelection();
-      const measuredSize = resolveMeasuredNativeTerminalSize({
-        layout: layoutRef.current,
-        metrics: metricsRef.current,
-      });
-      const size =
-        measuredSize ??
-        (snapshot ? { rows: snapshot.rows, cols: snapshot.cols } : terminalSizeRef.current);
-      terminalSizeRef.current = size;
-      resizePolicyRef.current = createTerminalResizePolicy(size);
-      outputDecoderRef.current.decode();
-      const terminal = createNativeHeadlessTerminal({
-        rows: size.rows,
-        cols: size.cols,
-        scrollbackLines,
-      });
-      terminalRef.current = terminal;
-      screenModelRef.current = createNativeTerminalScreenModel({ terminal });
-      const outputDrain = createOutputDrain(terminal);
-      outputDrainRef.current = outputDrain;
-      const screen = snapshot
-        ? screenStateFromViewport(viewportStateFromSnapshot(snapshot))
-        : resolveTerminalScreen(terminal);
-      commitTerminalScreen(screen);
-      resetInputModeTracker();
-      if (snapshot) {
-        outputDrain.restoreSnapshot(snapshot);
-      }
-    },
-    [
-      commitTerminalScreen,
-      createOutputDrain,
-      resetInputModeTracker,
-      resolveTerminalScreen,
+  const resetTerminal = useCallback(() => {
+    outputDrainRef.current?.dispose();
+    outputDrainRef.current = null;
+    terminalRef.current?.dispose();
+    screenModelRef.current = null;
+    latestResolvedScreenRef.current = null;
+    clearSelection();
+    const measuredSize = resolveMeasuredNativeTerminalSize({
+      layout: layoutRef.current,
+      metrics: metricsRef.current,
+    });
+    const size = measuredSize ?? terminalSizeRef.current;
+    terminalSizeRef.current = size;
+    resizePolicyRef.current = createTerminalResizePolicy(size);
+    outputDecoderRef.current.decode();
+    const terminal = createNativeHeadlessTerminal({
+      rows: size.rows,
+      cols: size.cols,
       scrollbackLines,
-      clearSelection,
-    ],
-  );
+    });
+    terminalRef.current = terminal;
+    screenModelRef.current = createNativeTerminalScreenModel({ terminal });
+    const outputDrain = createOutputDrain(terminal);
+    outputDrainRef.current = outputDrain;
+    const screen = resolveTerminalScreen(terminal);
+    commitTerminalScreen(screen);
+    resetInputModeTracker();
+  }, [
+    commitTerminalScreen,
+    createOutputDrain,
+    resetInputModeTracker,
+    resolveTerminalScreen,
+    scrollbackLines,
+    clearSelection,
+  ]);
 
   const enqueueOutputText = useCallback((text: string) => {
     if (text.length === 0) {
@@ -509,27 +457,6 @@ function NativeTerminalEmulator({
         enqueueOutputText(text);
       },
       replay: (event) => outputDrainRef.current?.replay(event),
-      restoreOutput: (data: TerminalOutputData) => {
-        outputDecoderRef.current.decode();
-        resetInputModeTracker();
-        const text = outputDecoderRef.current.decode(data, { stream: false });
-        outputDrainRef.current?.restoreText(text);
-      },
-      renderSnapshot: (state: TerminalState | null) => {
-        outputDecoderRef.current.decode();
-        resetInputModeTracker();
-        if (!state) {
-          resetTerminal(null);
-          return;
-        }
-        clearSelection();
-        const outputDrain = outputDrainRef.current;
-        if (!outputDrain) {
-          resetTerminal(state);
-          return;
-        }
-        outputDrain.restoreSnapshot(state);
-      },
       paste: (text: string) => {
         if (text.length === 0) {
           return;
@@ -560,7 +487,6 @@ function NativeTerminalEmulator({
         screenModelRef.current?.reset();
         clearSelection();
         resetInputModeTracker();
-        terminalRef.current?.reset();
         schedulePaint();
       },
       claimSize: claimActiveTerminalSize,
@@ -579,14 +505,13 @@ function NativeTerminalEmulator({
       claimActiveTerminalSizeForAction,
       clearSelection,
       resetInputModeTracker,
-      resetTerminal,
       schedulePaint,
     ],
   );
 
   useEffect(() => {
     hasNotifiedMeasuredSizeRef.current = false;
-    resetTerminal(mountInputRef.current.initialSnapshot);
+    resetTerminal();
     callbacksRef.current.onRendererReadyChange?.({ streamKey, isReady: true });
     return () => {
       callbacksRef.current.onRendererReadyChange?.({ streamKey, isReady: false });

@@ -2,7 +2,7 @@ import { Terminal as HeadlessTerminal } from "@xterm/headless";
 import { Terminal as ClientTerminal } from "@xterm/xterm";
 import { describe, expect, it } from "vitest";
 
-import { renderTerminalSnapshotToAnsi } from "./terminal-snapshot";
+import { renderTerminalSnapshotToAnsi } from "@getpaseo/protocol/terminal-snapshot";
 
 interface SnapshotCell {
   char: string;

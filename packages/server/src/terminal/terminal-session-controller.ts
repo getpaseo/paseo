@@ -1102,25 +1102,6 @@ export class TerminalSessionController {
       snapshotOptions,
       async (event) => {
         if (this.activeStreams.get(activeStream.slot) !== activeStream) return;
-        const buffered = this.options.getClientBufferedAmount?.(activeStream.owner.source);
-        if (
-          chunked &&
-          buffered !== null &&
-          buffered !== undefined &&
-          buffered > MAX_CLIENT_BUFFERED_BYTES
-        ) {
-          activeStream.owner.emit({
-            type: "terminal_stream_exit",
-            payload: {
-              terminalId: activeStream.terminalId,
-              error: "Terminal replay transport overflow; attach again",
-            },
-          });
-          this.detachRegistration(activeStream);
-          void activeStream.owner.release();
-
-          return;
-        }
         await deliver(event);
       },
     );

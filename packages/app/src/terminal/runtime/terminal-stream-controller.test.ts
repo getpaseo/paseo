@@ -1,3 +1,4 @@
+import { resolveTerminalRestoreOptions } from "./terminal-restore-options";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { describe, expect, it } from "vitest";
 
@@ -282,4 +283,29 @@ it("reports observation failure without declaring the PTY exited, then allows re
   expect(h.outputs).toHaveLength(1);
   expect(h.statuses.at(-1)?.error).toBe(null);
   h.controller.dispose();
+});
+
+it("does not resize or attach on a JSON-era host and reports the required update", () => {
+  const client = new FakeTerminalStreamClient();
+  const statuses: TerminalStreamControllerStatus[] = [];
+  const controller = new TerminalStreamController({
+    client,
+    getPreferredSize: () => ({ rows: 24, cols: 40 }),
+    onOutput: () => {},
+    getRestoreOptions: () =>
+      resolveTerminalRestoreOptions({
+        supportsTerminalRestoreModes: false,
+        scrollbackLines: 10000,
+        canClaimSize: true,
+        size: { rows: 24, cols: 40 },
+      }),
+    onStatusChange: (status) => statuses.push(status),
+  });
+  controller.setTerminal({ terminalId: "old-host-terminal" });
+  expect(client.subscribeCalls).toEqual([]);
+  expect(client.resizeCalls).toEqual([]);
+  expect(statuses.at(-1)).toMatchObject({
+    isAttaching: false,
+    error: "Update the host to view terminals.",
+  });
 });

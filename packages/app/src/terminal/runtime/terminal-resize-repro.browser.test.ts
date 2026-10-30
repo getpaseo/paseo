@@ -1,3 +1,4 @@
+import { renderTerminalSnapshotToAnsi } from "@getpaseo/protocol/terminal-snapshot";
 import { page } from "@vitest/browser/context";
 import { afterEach, describe, expect, it } from "vitest";
 import type { TerminalState } from "@getpaseo/protocol/messages";
@@ -57,7 +58,6 @@ function mount(width: number, height: number): Mounted {
   runtime.mount({
     root,
     host,
-    initialSnapshot: null,
     scrollback: 10_000,
     theme: { background: "#0b0b0b", foreground: "#e6e6e6", cursor: "#e6e6e6" },
   });
@@ -90,9 +90,15 @@ function someRowContains(term: InspectableTerminal, text: string): boolean {
   return dumpRows(term).some((r) => r.text.includes(text));
 }
 
-function renderSnapshotCommitted(runtime: TerminalEmulatorRuntime, state: TerminalState) {
+function replayCommitted(runtime: TerminalEmulatorRuntime, state: TerminalState) {
   return new Promise<void>((resolve) => {
-    runtime.renderSnapshot({ state, onCommitted: resolve });
+    runtime.replay({ type: "begin", rows: state.rows, cols: state.cols });
+    runtime.replay({
+      type: "data",
+      data: new TextEncoder().encode(renderTerminalSnapshotToAnsi(state)),
+    });
+    runtime.replay({ type: "end" });
+    runtime.write({ data: new Uint8Array([0]), onCommitted: resolve });
   });
 }
 
@@ -149,7 +155,7 @@ describe("terminal resize reflow repro (Paseo terminal)", () => {
 
     // 1) Mid-stream snapshot arrives (server overflowed 256KB). It carries the
     //    long line wrapped at the server width as separate grid rows.
-    await renderSnapshotCommitted(m.runtime, buildWrappedSnapshot(narrowCols));
+    await replayCommitted(m.runtime, buildWrappedSnapshot(narrowCols));
     await waitFor(() => someRowContains(m.terminal, "[15:30:00.123]"));
 
     // 2) Normal post-snapshot streaming resumes (autowrap on -> soft-wrapped).

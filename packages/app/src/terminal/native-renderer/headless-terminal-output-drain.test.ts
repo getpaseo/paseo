@@ -1,3 +1,4 @@
+import { createTerminalResizePolicy, updateTerminalResizePolicy } from "./terminal-resize-policy";
 import { describe, expect, test } from "vitest";
 
 import {
@@ -11,7 +12,7 @@ import {
   NATIVE_TERMINAL_PARSE_CHUNK_CHARS,
 } from "./headless-terminal-output-drain";
 import { createNativeTerminalScreenModel, type TerminalScreenState } from "./terminal-screen-model";
-import { renderTerminalSnapshotToAnsi } from "../runtime/terminal-snapshot";
+import { renderTerminalSnapshotToAnsi } from "@getpaseo/protocol/terminal-snapshot";
 
 const ROWS = 12;
 const COLS = 80;
@@ -94,6 +95,7 @@ function createScreenRestorer(
   const frameRecorder = createFrameRecorder();
   let screen: TerminalScreenState | null = null;
   const drain = createNativeTerminalOutputDrain({
+    restoreSize: () => {},
     write: (chunk) => terminal.write(chunk),
     reset: () => terminal.reset(),
     getViewportState: () => {
@@ -107,7 +109,12 @@ function createScreenRestorer(
 
   return {
     async restore(snapshot: Awaited<ReturnType<typeof benchmarkSnapshot>>) {
-      drain.restoreSnapshot(snapshot);
+      drain.replay({ type: "begin", rows: snapshot.rows, cols: snapshot.cols });
+      drain.replay({
+        type: "data",
+        data: new TextEncoder().encode(renderTerminalSnapshotToAnsi(snapshot)),
+      });
+      drain.replay({ type: "end" });
       await drain.flush();
       frameRecorder.frames[0]?.();
       return screen;
@@ -122,6 +129,7 @@ describe("native terminal output drain", () => {
     const frameRecorder = createFrameRecorder();
     const payload = "x".repeat(NATIVE_TERMINAL_PARSE_CHUNK_CHARS * 2);
     const drain = createNativeTerminalOutputDrain({
+      restoreSize: () => {},
       write: async (chunk) => {
         writes.push(chunk);
       },
@@ -170,6 +178,7 @@ describe("native terminal output drain", () => {
     const paintedStates: TerminalViewportState[] = [];
     const frameRecorder = createFrameRecorder();
     const drain = createNativeTerminalOutputDrain({
+      restoreSize: () => {},
       write: (chunk) => terminal.write(chunk),
       reset: () => terminal.reset(),
       getViewportState: () => terminal.getViewportState(),
@@ -202,6 +211,7 @@ describe("native terminal output drain", () => {
     const scheduledWork: Array<() => void> = [];
     const frameRecorder = createFrameRecorder();
     const drain = createNativeTerminalOutputDrain({
+      restoreSize: () => {},
       write: (chunk) => terminal.write(chunk),
       reset: () => terminal.reset(),
       getViewportState: () => terminal.getViewportState(),
@@ -219,7 +229,12 @@ describe("native terminal output drain", () => {
 
     await terminal.write("old-one\r\nold-two\r\nold-three\r\n");
     drain.enqueueText("stale-queued\r\n");
-    drain.restoreText(renderTerminalSnapshotToAnsi(restoredSnapshot));
+    drain.replay({ type: "begin" });
+    drain.replay({
+      type: "data",
+      data: new TextEncoder().encode(renderTerminalSnapshotToAnsi(restoredSnapshot)),
+    });
+    drain.replay({ type: "end" });
     await runScheduledWork({ callbacks: scheduledWork, flush: drain.flush() });
 
     const state = terminal.getViewportState();
@@ -273,6 +288,7 @@ test("replays split Unicode and ANSI with one reset then live output", async () 
   const terminal = createNativeHeadlessTerminal({ rows: 4, cols: 40, scrollbackLines: 1000 });
   let resets = 0;
   const drain = createNativeTerminalOutputDrain({
+    restoreSize: () => {},
     write: (text) => terminal.write(text),
     reset: (size) => {
       resets++;
@@ -330,6 +346,7 @@ test("an empty replacement replay resets after an in-flight write finishes", asy
   });
   let resets = 0;
   const drain = createNativeTerminalOutputDrain({
+    restoreSize: () => {},
     write: async () => {
       started();
       await blocked;
@@ -354,3 +371,114 @@ test("an empty replacement replay resets after an in-flight write finishes", asy
     drain.dispose();
   }
 });
+
+test("replay geometry returns to measured layout before live writes and unchanged-layout focus", async () => {
+  const measured = { rows: 24, cols: 40 };
+  const terminal = createNativeHeadlessTerminal({ ...measured, scrollbackLines: 1000 });
+  const policy = createTerminalResizePolicy(measured);
+  const sizes: number[] = [];
+  const drain = createNativeTerminalOutputDrain({
+    write: async (text) => {
+      sizes.push(terminal.getState().cols);
+      await terminal.write(text);
+    },
+    reset: (size) => {
+      if (size) terminal.resize(size);
+      terminal.reset();
+    },
+    restoreSize: () => terminal.resize(measured),
+    getViewportState: () => terminal.getViewportState(),
+    onPaint: () => {},
+  });
+  try {
+    drain.replay({ type: "begin", rows: 30, cols: 120 });
+    drain.replay({ type: "data", data: new TextEncoder().encode("x".repeat(100) + "\r\n") });
+    drain.replay({ type: "end" });
+    drain.enqueueText("LIVE-" + "y".repeat(60));
+    await drain.flush();
+    expect(sizes).toEqual([120, 40]);
+    const focus = updateTerminalResizePolicy(policy, {
+      source: "claim",
+      size: measured,
+      claimToken: 1,
+    });
+    expect(focus.measuredSizeChanged).toBe(false);
+    expect(focus.resizeClaim).toMatchObject(measured);
+    expect(terminal.getState()).toMatchObject(measured);
+    expect(terminal.getBufferBounds().cols).toBe(40);
+    const lines = terminal
+      .getState()
+      .grid.map((row) =>
+        row
+          .map((cell) => cell.char)
+          .join("")
+          .trimEnd(),
+      )
+      .join("\n");
+    expect(lines).toContain("LIVE-" + "y".repeat(35) + "\n" + "y".repeat(25));
+  } finally {
+    drain.dispose();
+    terminal.dispose();
+  }
+});
+
+test.each(["clear", "replacement", "dispose"] as const)(
+  "cancels queued replay geometry on %s",
+  async (action) => {
+    const local = { rows: 24, cols: 40 };
+    const terminal = createNativeHeadlessTerminal({ ...local, scrollbackLines: 1000 });
+    let finish!: () => void;
+    const block = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    let started!: () => void;
+    const writing = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let first = true;
+    let restores = 0;
+    const drain = createNativeTerminalOutputDrain({
+      restoreSize: () => {
+        restores++;
+        terminal.resize(local);
+      },
+      reset: (size) => {
+        if (size) terminal.resize(size);
+        terminal.reset();
+      },
+      write: async (text) => {
+        await terminal.write(text);
+        if (first) {
+          first = false;
+          started();
+          await block;
+        }
+      },
+      getViewportState: () => terminal.getViewportState(),
+      onPaint: () => {},
+    });
+    try {
+      drain.replay({ type: "begin", rows: 30, cols: 120 });
+      drain.replay({ type: "data", data: new TextEncoder().encode("old") });
+      await writing;
+      drain.replay({ type: "end" });
+      if (action === "clear") drain.clear();
+      else if (action === "dispose") {
+        drain.dispose();
+        drain.clear();
+      } else {
+        drain.replay({ type: "begin", rows: 20, cols: 80 });
+        drain.replay({ type: "data", data: new TextEncoder().encode("new") });
+        drain.replay({ type: "end" });
+      }
+      finish();
+      await drain.flush();
+      expect(restores).toBe(action === "dispose" ? 0 : 1);
+      if (action !== "dispose") expect(terminal.getState()).toMatchObject(local);
+    } finally {
+      finish();
+      drain.dispose();
+      terminal.dispose();
+    }
+  },
+);

@@ -7,7 +7,6 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { LigaturesAddon } from "@xterm/addon-ligatures/lib/addon-ligatures.mjs";
 import { Terminal, type ITheme, type IMarker } from "@xterm/xterm";
-import type { TerminalState } from "@getpaseo/protocol/messages";
 import {
   type TerminalInputModeState,
   TerminalInputModeTracker,
@@ -24,7 +23,6 @@ import {
   resolveMacTerminalEditingShortcut,
   shouldInterceptDomTerminalKey,
 } from "@/utils/terminal-keys";
-import { renderTerminalSnapshotToAnsi } from "./terminal-snapshot";
 import {
   createTerminalLocalFileLinkProvider,
   type TerminalLocalFileLinkSource,
@@ -55,7 +53,6 @@ const FIND_HIGHLIGHT_LIMIT = 20_000;
 export interface TerminalEmulatorRuntimeMountInput {
   root: HTMLDivElement;
   host: HTMLDivElement;
-  initialSnapshot: TerminalState | null;
   scrollback: number;
   theme: ITheme;
   fontFamily?: string;
@@ -134,7 +131,7 @@ interface TerminalEmulatorRuntimeDisposables {
 }
 
 interface TerminalOutputOperation {
-  type: "write" | "clear" | "snapshot";
+  type: "write" | "clear" | "snapshot" | "fit";
   data: TerminalOutputData;
   rows?: number;
   cols?: number;
@@ -777,10 +774,6 @@ export class TerminalEmulatorRuntime {
       fitAndEmitResize({ forceRefresh: true, shouldClaim: false });
     }, 0);
 
-    if (input.initialSnapshot) {
-      this.renderSnapshot({ state: input.initialSnapshot });
-    }
-
     this.processOutputQueue();
 
     const disposables: TerminalEmulatorRuntimeDisposables = {
@@ -898,28 +891,18 @@ export class TerminalEmulatorRuntime {
     onFilePaste?.(file);
   }
 
-  renderSnapshot(input: { state: TerminalState | null; onCommitted?: () => void }): void {
-    if (!input.state) {
-      this.clear(input);
-      return;
-    }
-    this.restoreOutput({
-      data: encodeTerminalOutput(renderTerminalSnapshotToAnsi(input.state)),
-      rows: input.state.rows,
-      cols: input.state.cols,
-      ...(input.onCommitted ? { onCommitted: input.onCommitted } : {}),
-    });
-  }
-
   replay(event: import("@getpaseo/client").TerminalReplayEvent): void {
     if (event.type === "begin") {
       this.restoreOutput({ data: EMPTY_TERMINAL_OUTPUT, rows: event.rows, cols: event.cols });
     } else if (event.type === "data") {
       this.write({ data: event.data, suppressInput: true });
+    } else {
+      this.outputOperations.push({ type: "fit", data: EMPTY_TERMINAL_OUTPUT });
+      this.processOutputQueue();
     }
   }
 
-  restoreOutput(input: {
+  private restoreOutput(input: {
     data: TerminalOutputData;
     rows?: number;
     cols?: number;
@@ -1183,6 +1166,17 @@ export class TerminalEmulatorRuntime {
       expectedOperation.onCommitted?.();
       this.processOutputQueue();
     };
+
+    if (operation.type === "fit") {
+      // xterm resize flushes its write buffer synchronously. Leave the parser's
+      // commit callback before fitting, or that flush consumes the next write.
+      queueMicrotask(() => {
+        if (this.inFlightOutputOperation !== operation || this.terminal !== terminal) return;
+        this.fitAndEmitResize?.({ shouldClaim: false });
+        finalizeOperation(operation);
+      });
+      return;
+    }
 
     if (operation.type === "clear") {
       this.inputModeDecoder.decode();

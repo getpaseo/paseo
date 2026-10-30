@@ -43,7 +43,9 @@ function replayFixture(
 }
 
 function createController(
-  options: TerminalSessionControllerOptions & { emitBinary(frame: Uint8Array): void },
+  options: TerminalSessionControllerOptions & {
+    emitBinary(frame: Uint8Array): void | Promise<void>;
+  },
 ) {
   const source = {};
   const ownership = new SessionDelivery(
@@ -676,7 +678,12 @@ describe("terminal-session-controller workspace-scoped subscriptions", () => {
 });
 
 describe("terminal-session-controller backpressure snapshot fallback", () => {
-  async function setup(getClientBufferedAmount: () => number | null): Promise<{
+  async function setup(
+    getClientBufferedAmount: () => number | null,
+    chunked = false,
+    pace?: () => Promise<void>,
+  ): Promise<{
+    messages: SessionOutboundMessage[];
     pushOutput: (data: string) => void;
     frames: TerminalStreamFrame[];
   }> {
@@ -726,13 +733,18 @@ describe("terminal-session-controller backpressure snapshot fallback", () => {
     };
 
     const frames: TerminalStreamFrame[] = [];
+    const messages: SessionOutboundMessage[] = [];
     const controller = createController({
       terminalManager,
-      emit: vi.fn(),
+      emit: (message) => {
+        messages.push(message);
+      },
+      supportsChunkedReplay: () => chunked,
       emitBinary: (bytes) => {
         const frame = decodeTerminalStreamFrame(bytes);
         if (frame) {
           frames.push(frame);
+          if (frame.opcode === TerminalStreamOpcode.ReplayBegin) return pace?.();
         }
       },
       hasBinaryChannel: () => true,
@@ -754,6 +766,7 @@ describe("terminal-session-controller backpressure snapshot fallback", () => {
     return {
       pushOutput: (data) => terminalListener?.({ type: "output", data, revision: 2 }),
       frames,
+      messages,
     };
   }
 
@@ -817,6 +830,32 @@ describe("terminal-session-controller backpressure snapshot fallback", () => {
     await waitForCoalescerFlush();
 
     expect(frames.some((frame) => frame.opcode === TerminalStreamOpcode.Restore)).toBe(true);
+  });
+  test("paces capable catch-up while the direct socket drains instead of ending the stream", async () => {
+    let buffered = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { pushOutput, frames, messages } = await setup(
+      () => buffered,
+      true,
+      () => (buffered ? gate : Promise.resolve()),
+    );
+    buffered = 8 * 1024 * 1024;
+    pushOutput("y".repeat(300 * 1024));
+    await waitForCoalescerFlush();
+    expect(messages.filter((message) => message.type === "terminal_stream_exit")).toEqual([]);
+    expect(frames.map((frame) => frame.opcode)).toEqual([TerminalStreamOpcode.ReplayBegin]);
+    buffered = 0;
+    release();
+    await waitForCoalescerFlush();
+    expect(frames.map((frame) => frame.opcode)).toContain(TerminalStreamOpcode.ReplayEnd);
+    frames.length = 0;
+    buffered = 8 * 1024 * 1024; // Small output must stay live after the replay resets its byte counter.
+    pushOutput("live-after-recovery");
+    await waitForCoalescerFlush();
+    expect(frames.map((frame) => frame.opcode)).toEqual([TerminalStreamOpcode.Output]);
   });
 });
 

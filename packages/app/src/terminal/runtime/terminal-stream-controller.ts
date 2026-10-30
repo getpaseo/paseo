@@ -66,10 +66,10 @@ export class TerminalStreamController {
       this.options.onStatusChange?.({ terminalId: null, isAttaching: false, error: null });
       return;
     }
-    const restore = this.options.getRestoreOptions?.();
     this.options.onStatusChange?.({ terminalId: nextTerminalId, isAttaching: true, error: null });
     let subscription: ReturnType<DaemonClient["observeTerminal"]>;
     try {
+      const restore = this.options.getRestoreOptions?.();
       const preferredSize = restore?.size ?? this.options.getPreferredSize();
       if (preferredSize)
         this.options.client.sendTerminalInput(nextTerminalId, {
