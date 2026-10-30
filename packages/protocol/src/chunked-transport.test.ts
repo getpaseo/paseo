@@ -126,3 +126,23 @@ it("reconnect discards partial state and requires negotiation again", () => {
   fresh.receive(new Uint8Array([0x31, 1, 0, 3, 67]));
   expect(delivered).toEqual(["C"]);
 });
+
+it("bounds logical messages waiting behind a blocked writer", async () => {
+  let drain!: () => void;
+  const transport = new ChunkedTransport({
+    frameBytes: 32 * 1024 * 1024,
+    send: () =>
+      new Promise<void>((resolve) => {
+        drain = resolve;
+      }),
+    deliver: () => {},
+  });
+  const first = transport.send(new Uint8Array(100 * 1024 * 1024));
+  const overflow = transport.send("one more byte");
+  try {
+    await expect(overflow).rejects.toThrow("queue");
+  } finally {
+    drain();
+    await first;
+  }
+});

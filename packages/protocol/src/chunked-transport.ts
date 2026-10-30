@@ -13,6 +13,7 @@ export class ChunkedTransport {
   private kind = 0;
   private closed = false;
   private pending: Promise<void> | undefined;
+  private queuedBytes = 0;
 
   constructor(
     private readonly io: {
@@ -34,12 +35,30 @@ export class ChunkedTransport {
       if (this.closed) throw new Error("Transport closed");
       return chunk ? this.sendChunks(bytes, typeof frame === "string") : this.io.send(frame);
     };
-    const result = this.pending ? this.pending.then(write) : write();
-    if (!result) return Promise.resolve();
-    const pending = Promise.resolve(result).catch((error) => {
+    if (this.queuedBytes + bytes.byteLength > MAX_WEBSOCKET_MESSAGE_BYTES) {
       this.close();
+      return Promise.reject(new Error("Logical output queue exceeded its byte limit"));
+    }
+    this.queuedBytes += bytes.byteLength;
+    let result: void | Promise<void>;
+    try {
+      result = this.pending ? this.pending.then(write) : write();
+    } catch (error) {
+      this.queuedBytes -= bytes.byteLength;
       throw error;
-    });
+    }
+    if (!result) {
+      this.queuedBytes -= bytes.byteLength;
+      return Promise.resolve();
+    }
+    const pending = Promise.resolve(result)
+      .catch((error) => {
+        this.close();
+        throw error;
+      })
+      .finally(() => {
+        this.queuedBytes -= bytes.byteLength;
+      });
     this.pending = pending;
     void pending.then(
       () => {
