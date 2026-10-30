@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer, type Server } from "node:http";
 import { once } from "node:events";
+import { connect } from "node:net";
 import { afterEach, expect, test } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
 import { getGlobalDispatcher, setGlobalDispatcher } from "undici";
@@ -198,10 +199,13 @@ test("accepts a scheme-less corporate proxy hostname", () => {
 test("an ignored lowercase variable falls back to the uppercase variable", async () => {
   const recorder = await proxy();
   expect(
-    initializeEnvironmentProxy({
-      https_proxy: "socks5://proxy.invalid",
-      HTTPS_PROXY: recorder.url,
-    }),
+    initializeEnvironmentProxy(
+      {
+        https_proxy: "socks5://proxy.invalid",
+        HTTPS_PROXY: recorder.url,
+      },
+      "linux",
+    ),
   ).toEqual(["https_proxy"]);
   await expect(
     fetch("https://vendor.invalid", { signal: AbortSignal.timeout(500) }),
@@ -241,3 +245,97 @@ test("connected-host links send remote WebSockets through the environment proxy"
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test.each(["corp.internal,*", "vendor.invalid:0443"])(
+  "fetch and WebSockets share NO_PROXY=%s",
+  async (noProxy) => {
+    const recorder = await proxy();
+    initializeEnvironmentProxy({ HTTPS_PROXY: recorder.url, NO_PROXY: noProxy });
+    expect(webSocketProxyAgent("wss://vendor.invalid")).toBeUndefined();
+    await expect(
+      fetch("https://vendor.invalid", { signal: AbortSignal.timeout(500) }),
+    ).rejects.toThrow();
+    expect(recorder.tunnels).toEqual([]);
+  },
+);
+
+test("Windows mixed-case environment names route and bypass both transports", async () => {
+  const recorder = await proxy();
+  // Windows preserves spelling but treats environment names without regard to case.
+  initializeEnvironmentProxy({ Https_Proxy: recorder.url, No_Proxy: "other.invalid" }, "win32");
+  expect(webSocketProxyAgent("wss://other.invalid")).toBeUndefined();
+  await expect(
+    fetch("https://other.invalid", { signal: AbortSignal.timeout(500) }),
+  ).rejects.toThrow();
+  expect(webSocketProxyAgent("wss://vendor.invalid")).toBeDefined();
+  await expect(
+    fetch("https://vendor.invalid", { signal: AbortSignal.timeout(500) }),
+  ).rejects.toThrow();
+  const socket = new WebSocket("wss://vendor.invalid", {
+    agent: webSocketProxyAgent("wss://vendor.invalid"),
+  });
+  await once(socket, "error");
+  expect(recorder.tunnels).toEqual(["vendor.invalid:443", "vendor.invalid:443"]);
+});
+
+test("POSIX mixed-case names do not override standard proxy names", async () => {
+  const recorder = await proxy();
+  initializeEnvironmentProxy(
+    { Https_Proxy: recorder.url, HTTPS_PROXY: recorder.url, No_Proxy: "*" },
+    "linux",
+  );
+  expect(webSocketProxyAgent("wss://vendor.invalid")).toBeDefined();
+  await expect(
+    fetch("https://vendor.invalid", { signal: AbortSignal.timeout(500) }),
+  ).rejects.toThrow();
+  expect(recorder.tunnels).toEqual(["vendor.invalid:443"]);
+});
+
+test("proxy credentials stay on CONNECT and do not reach the HTTP origin", async () => {
+  let originAuthorization: string | undefined;
+  const origin = createServer((request, response) => {
+    originAuthorization = request.headers["proxy-authorization"];
+    response.end("through proxy");
+  });
+  const originAddress = new URL(`http://${await listen(origin)}`);
+  const authorizations: (string | undefined)[] = [];
+  const server = createServer();
+  server.on("connect", (request, socket, head) => {
+    authorizations.push(request.headers["proxy-authorization"]);
+    const upstream = connect(Number(originAddress.port), "127.0.0.1", () => {
+      socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      if (head.length) upstream.write(head);
+      socket.pipe(upstream).pipe(socket);
+    });
+    socket.on("error", () => upstream.destroy());
+    upstream.on("error", () => socket.destroy());
+    socket.on("close", () => upstream.destroy());
+  });
+  initializeEnvironmentProxy({ HTTP_PROXY: `http://user:@${await listen(server)}` });
+  const response = await fetch("http://vendor.invalid", { signal: AbortSignal.timeout(3000) });
+  expect(await response.text()).toBe("through proxy");
+  expect(authorizations).toEqual([`Basic ${Buffer.from("user:").toString("base64")}`]);
+  expect(originAuthorization).toBeUndefined();
+});
+
+test.each(["user:@", ":secret@", "user:secret@"])(
+  "fetch and WebSockets authenticate proxy credentials %s",
+  async (credentials) => {
+    const authorizations: (string | undefined)[] = [];
+    const server = createServer();
+    server.on("connect", (request, socket) => {
+      authorizations.push(request.headers["proxy-authorization"]);
+      socket.end("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
+    });
+    initializeEnvironmentProxy({ HTTPS_PROXY: `http://${credentials}${await listen(server)}` });
+    await expect(
+      fetch("https://vendor.invalid", { signal: AbortSignal.timeout(500) }),
+    ).rejects.toThrow();
+    const socket = new WebSocket("wss://vendor.invalid", {
+      agent: webSocketProxyAgent("wss://vendor.invalid"),
+    });
+    await once(socket, "error");
+    const expected = `Basic ${Buffer.from(credentials.slice(0, -1)).toString("base64")}`;
+    expect(authorizations).toEqual([expected, expected]);
+  },
+);

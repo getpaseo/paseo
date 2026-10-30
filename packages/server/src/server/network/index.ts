@@ -1,5 +1,5 @@
 import type { Agent } from "node:http";
-import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
+import { EnvHttpProxyAgent, Pool, setGlobalDispatcher } from "undici";
 import { HttpsProxyAgent } from "https-proxy-agent";
 
 interface ProxyEnvironment {
@@ -8,14 +8,22 @@ interface ProxyEnvironment {
   noProxy: string;
 }
 
-let environment = readEnvironment(process.env).environment;
+let environment = readEnvironment(process.env, process.platform).environment;
 
-function readEnvironment(env: NodeJS.ProcessEnv): {
+function readEnvironment(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): {
   environment: ProxyEnvironment;
   ignored: string[];
 } {
   // process.env lookups are case-insensitive on Windows. Read each actual entry once.
-  const values = new Map(Object.entries(env));
+  const values = new Map(
+    Object.entries(env).map(([name, value]) => [
+      platform === "win32" ? name.toLowerCase() : name,
+      value,
+    ]),
+  );
   const ignored: string[] = [];
   function proxy(variable: string): string | undefined {
     const value = values.get(variable);
@@ -45,18 +53,41 @@ function readEnvironment(env: NodeJS.ProcessEnv): {
 }
 
 function bypassList(noProxy: string): string {
-  return noProxy.trim() === "*" ? "*" : `${noProxy},localhost,127.0.0.1,[::1],::1`;
+  return noProxy.split(/[,\s]+/).includes("*") ? "*" : `${noProxy},localhost,127.0.0.1,[::1],::1`;
+}
+
+function proxyClient(origin: URL, options: object) {
+  const pool = new Pool(origin, options);
+  if (!origin.username && !origin.password) return pool;
+  const credentials = `${decodeURIComponent(origin.username)}:${decodeURIComponent(origin.password)}`;
+  const authorization = `Basic ${Buffer.from(credentials).toString("base64")}`;
+  // This pool only sends CONNECT requests to this proxy, never requests to the origin.
+  // undici's URL auth requires both fields; HTTP Basic also permits either field to be empty.
+  return pool.compose(
+    (dispatch) => (request, handler) =>
+      dispatch(
+        {
+          ...request,
+          headers: { ...request.headers, "proxy-authorization": authorization },
+        },
+        handler,
+      ),
+  );
 }
 
 /** Install once at startup; return ignored variable names for logging without exposing credentials. */
-export function initializeEnvironmentProxy(env: NodeJS.ProcessEnv = process.env): string[] {
-  const resolved = readEnvironment(env);
+export function initializeEnvironmentProxy(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  const resolved = readEnvironment(env, platform);
   environment = resolved.environment;
   setGlobalDispatcher(
     new EnvHttpProxyAgent({
       httpProxy: environment.httpProxy,
       httpsProxy: environment.httpsProxy,
       noProxy: bypassList(environment.noProxy),
+      clientFactory: proxyClient,
     }),
   );
   return resolved.ignored;
@@ -74,7 +105,7 @@ export function webSocketProxyAgent(address: string): Agent | undefined {
     entries.some((entry) => {
       if (entry === "*") return true;
       const match = entry.match(/^(.+):(\d+)$/);
-      if (match && match[2] !== port) return false;
+      if (match && Number(match[2]) !== Number(port)) return false;
       const host = (match ? match[1]! : entry).replace(/^\*?\./, "");
       return host !== "" && (hostname === host || hostname.endsWith(`.${host}`));
     })
