@@ -1860,6 +1860,59 @@ function readCodexSubAgentActivity(item: unknown): CodexSubAgentActivity | null 
   };
 }
 
+interface CodexCollabAgentUpdate {
+  threadId: string;
+  status: ToolCallTimelineItem["status"];
+  shutdown: boolean;
+  reopen: boolean;
+}
+
+function readCodexCollabAgentUpdates(item: unknown): CodexCollabAgentUpdate[] {
+  const record = toObjectRecord(item);
+  if (
+    !record ||
+    normalizeCodexThreadItemType(typeof record.type === "string" ? record.type : undefined) !==
+      "collabAgentToolCall" ||
+    record.tool === "spawnAgent"
+  ) {
+    return [];
+  }
+  return Object.entries(toObjectRecord(record.agentsStates) ?? {}).flatMap(([threadId, value]) => {
+    const state = toObjectRecord(value);
+    if (typeof state?.status !== "string") return [];
+    const mapped = mapCodexToolCallFromThreadItem({
+      type: "collabAgentToolCall",
+      id: record.id,
+      tool: record.tool,
+      status: "completed",
+      agentsStates: { [threadId]: state },
+    });
+    return mapped
+      ? [
+          {
+            threadId,
+            status: mapped.status,
+            shutdown: state.status === "shutdown",
+            reopen: record.tool === "sendInput" && record.status === "completed",
+          },
+        ]
+      : [];
+  });
+}
+
+function resolveCodexCollabAgentUpdate(
+  previous: ToolCallTimelineItem["status"],
+  update: CodexCollabAgentUpdate,
+): ToolCallTimelineItem["status"] {
+  if (
+    isTerminalSubAgentStatus(previous) &&
+    (update.shutdown || (update.status === "running" && !update.reopen))
+  ) {
+    return previous;
+  }
+  return update.status;
+}
+
 function shouldIgnoreMirroredLifecycleItem(source: "item" | "codex_event", item: unknown): boolean {
   return source === "codex_event" && !readCodexSubAgentActivity(item);
 }
@@ -2093,6 +2146,27 @@ async function requestCodexThreadHistory(
   return CodexThreadReadResponseSchema.parse(response);
 }
 
+function updateHistoricalCollabAgentCalls(
+  timeline: PersistedTimelineEntry[],
+  timelineIndexByThreadId: Map<string, number>,
+  item: unknown,
+): boolean {
+  let updated = false;
+  for (const update of readCodexCollabAgentUpdates(item)) {
+    const existingIndex = timelineIndexByThreadId.get(update.threadId);
+    const existing = existingIndex === undefined ? undefined : timeline[existingIndex];
+    if (existingIndex === undefined || existing?.item.type !== "tool_call") continue;
+    const status = resolveCodexCollabAgentUpdate(existing.item.status, update);
+    const toolCall: ToolCallTimelineItem =
+      status === "failed"
+        ? { ...existing.item, status, error: { message: "Sub-agent failed" } }
+        : { ...existing.item, status, error: null };
+    timeline[existingIndex] = { ...existing, item: toolCall };
+    updated = true;
+  }
+  return updated;
+}
+
 async function loadCodexThreadHistoryTimeline(params: {
   threadId: string;
   cwd: string | null;
@@ -2103,6 +2177,9 @@ async function loadCodexThreadHistoryTimeline(params: {
   const subAgentTimelineIndexByThreadId = new Map<string, number>();
   for (const turn of response.thread.turns) {
     for (const item of turn.items) {
+      if (updateHistoricalCollabAgentCalls(timeline, subAgentTimelineIndexByThreadId, item)) {
+        continue;
+      }
       const historicalSubAgentActivity = readCodexSubAgentActivity(item);
       if (historicalSubAgentActivity) {
         const existingIndex = subAgentTimelineIndexByThreadId.get(
@@ -5761,6 +5838,19 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private handleRegisteredSubAgentActivity(rawItem: { [key: string]: unknown }): boolean {
+    let updatedExistingSubagent = false;
+    for (const update of readCodexCollabAgentUpdates(rawItem)) {
+      const callId = this.subAgentCallIdByChildThreadId.get(update.threadId);
+      if (!callId) continue;
+      const state = this.subAgentCallsByCallId.get(callId);
+      if (!state) continue;
+      const status = resolveCodexCollabAgentUpdate(state.toolCall.status, update);
+      if (status !== state.toolCall.status) {
+        this.emitSubAgentActivityUpdate(callId, status, { reopen: update.reopen });
+      }
+      updatedExistingSubagent = true;
+    }
+    if (updatedExistingSubagent) return true;
     const activity = readCodexSubAgentActivity(rawItem);
     if (!activity) {
       return false;
