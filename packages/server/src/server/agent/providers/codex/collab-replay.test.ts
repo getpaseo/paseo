@@ -104,6 +104,76 @@ describe("Codex collaboration history", () => {
     },
   );
 
+  test.each([
+    ["completed", "closeAgent", "errored", "failed"],
+    ["errored", "closeAgent", "completed", "completed"],
+    ["completed", "wait", "running", "running"],
+    ["completed", "closeAgent", "running", "canceled"],
+  ])(
+    "replaces the earlier %s outcome after a follow-up and %s result %s",
+    async (initialStatus, tool, resultStatus, expected) => {
+      const history = await replay([
+        collab("spawnAgent", { first: "pendingInit" }, "spawn-first"),
+        collab("spawnAgent", { second: "pendingInit" }, "spawn-second"),
+        {
+          ...collab("wait", { first: initialStatus, second: "completed" }),
+          status: initialStatus === "errored" ? "failed" : "completed",
+        },
+        { ...collab("sendInput", { first: "running" }), prompt: "Do more work" },
+        {
+          ...collab(tool, { first: resultStatus }),
+          status: resultStatus === "errored" ? "failed" : "completed",
+        },
+      ]);
+      expect(
+        history.flatMap((event) =>
+          event.type === "provider_subagent" && event.event.type === "upsert"
+            ? [{ id: event.event.id, status: event.event.status }]
+            : [],
+        ),
+      ).toEqual([
+        { id: "first", status: expected },
+        { id: "second", status: "completed" },
+      ]);
+      expect(
+        history.flatMap((event) =>
+          event.type === "timeline" &&
+          event.item.type === "tool_call" &&
+          event.item.callId === "spawn-first"
+            ? [event.item.status]
+            : [],
+        ),
+      ).toEqual([expected]);
+    },
+  );
+
+  test("keeps the prior outcome when a follow-up submission fails", async () => {
+    const history = await replay([
+      collab("spawnAgent", { first: "pendingInit" }, "spawn-first"),
+      collab("wait", { first: "completed" }),
+      { ...collab("sendInput", { first: "running" }), status: "failed", prompt: "Do more work" },
+      collab("wait", { first: "running" }, "stale-wait"),
+    ]);
+    expect(
+      history.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "upsert"
+          ? [event.event.status]
+          : [],
+      ),
+    ).toEqual(["completed"]);
+  });
+
+  test("settles a close card without a registered spawn", async () => {
+    const history = await replay([collab("closeAgent", { external: "running" })]);
+    expect(
+      history.flatMap((event) =>
+        event.type === "timeline" && event.item.type === "tool_call"
+          ? [{ id: event.item.callId, status: event.item.status }]
+          : [],
+      ),
+    ).toEqual([{ id: "closeAgent", status: "canceled" }]);
+  });
+
   test("stops counting a child closed while running", async () => {
     const history = await replay([
       collab("spawnAgent", { first: "pendingInit" }, "spawn-first"),

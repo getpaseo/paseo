@@ -545,12 +545,18 @@ function readStatus(value: unknown): string | undefined {
   return typeof value.status === "string" ? value.status : undefined;
 }
 
-export function normalizeCollabAgentChildStatus(status: string): ToolCallTimelineItem["status"] {
+export function normalizeCollabAgentChildStatus(
+  status: string,
+  tool?: string,
+): ToolCallTimelineItem["status"] {
   const normalized = status.trim().toLowerCase();
   switch (normalized) {
     case "error":
     case "errored":
-      return "running";
+      return tool === "wait" || tool === "closeAgent" ? "failed" : "running";
+    case "running":
+    case "pendinginit":
+      return tool === "closeAgent" ? "canceled" : "running";
     case "shutdown":
       return "canceled";
     case "notfound":
@@ -580,7 +586,7 @@ function resolveCollabAgentStatus(
   const childStatuses = Object.values(item.agentsStates ?? {})
     .map(readStatus)
     .filter((status): status is string => typeof status === "string" && status.trim().length > 0)
-    .map(normalizeCollabAgentChildStatus);
+    .map((status) => normalizeCollabAgentChildStatus(status, item.tool));
 
   if (childStatuses.some((status) => status === "failed")) {
     return "failed";
