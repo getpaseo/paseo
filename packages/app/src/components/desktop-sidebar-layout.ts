@@ -54,11 +54,12 @@ function resolveDesktopPanelWidth(input: {
 export function resolveDesktopSidebarWidth(input: {
   requestedWidth: number;
   viewportWidth: number;
+  minimumWidth: number;
 }): number {
   "worklet";
   return resolveDesktopPanelWidth({
     ...input,
-    minimumWidth: MIN_SIDEBAR_WIDTH,
+    minimumWidth: Math.max(MIN_SIDEBAR_WIDTH, input.minimumWidth),
     maximumWidth: MAX_SIDEBAR_WIDTH,
   });
 }
@@ -74,6 +75,7 @@ export function resolveDesktopAppContentMinimum(input: {
 export function canDesktopAppSidebarShare(input: {
   contentMinimumWidth: number;
   requestedSidebarWidth: number;
+  sidebarMinimumWidth: number;
   viewportWidth: number;
 }): boolean {
   return (
@@ -81,6 +83,7 @@ export function canDesktopAppSidebarShare(input: {
       resolveDesktopSidebarWidth({
         requestedWidth: input.requestedSidebarWidth,
         viewportWidth: input.viewportWidth,
+        minimumWidth: input.sidebarMinimumWidth,
       }) >=
     input.contentMinimumWidth
   );

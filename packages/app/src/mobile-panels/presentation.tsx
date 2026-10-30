@@ -18,6 +18,8 @@ interface MobilePanelOverlayProps {
   dockVisible?: boolean;
   frameStyle?: ComponentProps<typeof Animated.View>["style"];
   panelStyle?: ComponentProps<typeof Animated.View>["style"];
+  /** Measures the stationary host, outside the panel's gesture translation. */
+  probe?: ReactNode;
 }
 
 export function MobilePanelOverlay({
@@ -28,6 +30,7 @@ export function MobilePanelOverlay({
   presentation = "overlay",
   dockVisible = false,
   frameStyle,
+  probe,
 }: MobilePanelOverlayProps) {
   const { position, windowWidth } = useMobilePanelsRuntime();
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
@@ -102,6 +105,7 @@ export function MobilePanelOverlay({
           docked && !dockVisible && { display: "none" },
         ]}
       >
+        {probe}
         <Animated.View style={[docked ? styles.dockedPanel : styles.overlay, overlayAnimatedStyle]}>
           <Pressable
             accessible={false}

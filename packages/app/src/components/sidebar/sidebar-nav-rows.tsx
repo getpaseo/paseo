@@ -1,10 +1,21 @@
 import { router, usePathname } from "expo-router";
 import { CalendarClock, History, Plus, Search } from "lucide-react-native";
-import { memo, useCallback, useMemo, useRef, type ComponentType, type ReactNode } from "react";
+import {
+  memo,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
-import { View, type StyleProp, type ViewStyle } from "react-native";
+import { View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
+import { RetainedPanelActivity } from "@/components/retained-panel";
+import { TopBarLeadingControlInsetContext } from "@/components/headers/top-bar-safe-area.shared";
+import { density } from "@/styles/density";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { PluginSidebarItem } from "@/plugins/sidebar-items";
 import { canCreateWorktreeForProjectKind } from "@/projects/host-projects";
@@ -33,6 +44,9 @@ interface SidebarNavRowsProps extends SidebarNavRowProps {
   style?: StyleProp<ViewStyle>;
   /** Sits to the right of the first row, which shrinks to make room. */
   firstRowTrailing?: ReactNode;
+  firstRowStyle?: StyleProp<ViewStyle>;
+  onFirstRowLayout?: (event: LayoutChangeEvent) => void;
+  firstRowAvailable?: boolean;
 }
 
 /**
@@ -40,7 +54,14 @@ interface SidebarNavRowsProps extends SidebarNavRowProps {
  * `sidebarNavItems` preference. Renders nothing — not even the bordered group
  * wrapper — when every item is hidden and there is no `firstRowTrailing`.
  */
-export function SidebarNavRows({ style, onBeforeNavigate, firstRowTrailing }: SidebarNavRowsProps) {
+export function SidebarNavRows({
+  style,
+  onBeforeNavigate,
+  firstRowTrailing,
+  firstRowStyle,
+  onFirstRowLayout,
+  firstRowAvailable = true,
+}: SidebarNavRowsProps) {
   const { items } = useSidebarNavItems("header");
   const visibleItems = useMemo(() => items.filter((item) => item.visible), [items]);
   const groupRef = useRef<View | null>(null);
@@ -66,15 +87,33 @@ export function SidebarNavRows({ style, onBeforeNavigate, firstRowTrailing }: Si
   return (
     <View ref={groupRef} collapsable={false} style={style}>
       {firstRowTrailing ? (
-        <View style={styles.firstRow}>
-          <View style={styles.firstRowItem}>{firstRow}</View>
-          {firstRowTrailing}
-        </View>
+        <RetainedPanelActivity active={firstRowAvailable}>
+          <View
+            style={[styles.firstRow, firstRowStyle, !firstRowAvailable && styles.unavailable]}
+            onLayout={onFirstRowLayout}
+            pointerEvents={firstRowAvailable ? "auto" : "none"}
+            accessibilityElementsHidden={!firstRowAvailable}
+            importantForAccessibility={firstRowAvailable ? "auto" : "no-hide-descendants"}
+          >
+            <View style={styles.firstRowItem}>{firstRow}</View>
+            {firstRowTrailing}
+          </View>
+        </RetainedPanelActivity>
       ) : (
-        firstRow
+        <SidebarFirstNavRow>{firstRow}</SidebarFirstNavRow>
       )}
       {restRows}
     </View>
+  );
+}
+
+function SidebarFirstNavRow({ children }: { children: ReactNode }) {
+  const leadingInset = useContext(TopBarLeadingControlInsetContext);
+  // Clear the corner vertically so every navigation row keeps the same leading rail.
+  return leadingInset > 0 ? (
+    <View style={styles.firstRowCornerClearance}>{children}</View>
+  ) : (
+    children
   );
 }
 
@@ -193,6 +232,8 @@ const BUILTIN_ROWS: Record<BuiltinSidebarNavId, ComponentType<SidebarNavRowProps
 };
 
 const styles = StyleSheet.create({
+  firstRowCornerClearance: { paddingTop: density.tightRowHeight },
+  unavailable: { opacity: 0 },
   firstRow: {
     flexDirection: "row",
     alignItems: "center",

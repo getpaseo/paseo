@@ -60,6 +60,8 @@ export interface PanelState {
   diffCollapsedFoldersByWorkspace: Record<string, string[]>;
   collapsedFilePathsByWorkspace: Record<string, string[]>;
   sidebarWidth: number;
+  // Live footer geometry; never persisted or applied to the preferred sidebar width.
+  sidebarMinimumWidth: number;
   explorerSortOption: SortOption;
   explorerShowHiddenFiles: boolean;
   treeRailWidth: number;
@@ -86,6 +88,7 @@ export interface PanelState {
   setDiffCollapsedFoldersForWorkspace: (workspaceKey: string, dirPaths: string[]) => void;
   setCollapsedFilePathsForWorkspace: (workspaceKey: string, paths: string[]) => void;
   setSidebarWidth: (width: number) => void;
+  setSidebarMinimumWidth: (width: number) => void;
   setExplorerSortOption: (option: SortOption) => void;
   toggleExplorerShowHiddenFiles: () => void;
   setTreeRailWidth: (width: number) => void;
@@ -119,6 +122,7 @@ export const usePanelStore = create<PanelState>()(
       diffCollapsedFoldersByWorkspace: {},
       collapsedFilePathsByWorkspace: {},
       sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
+      sidebarMinimumWidth: MIN_SIDEBAR_WIDTH,
       explorerSortOption: "name",
       explorerShowHiddenFiles: true,
       treeRailWidth: DEFAULT_TREE_RAIL_WIDTH,
@@ -230,6 +234,13 @@ export const usePanelStore = create<PanelState>()(
           },
         })),
       setSidebarWidth: (width) => set({ sidebarWidth: clampSidebarWidth(width) }),
+      setSidebarMinimumWidth: (width) =>
+        set((state) => {
+          const sidebarMinimumWidth = Math.max(MIN_SIDEBAR_WIDTH, width);
+          return sidebarMinimumWidth === state.sidebarMinimumWidth
+            ? state
+            : { sidebarMinimumWidth };
+        }),
       setExplorerSortOption: (option) => set({ explorerSortOption: option }),
       toggleExplorerShowHiddenFiles: () =>
         set((state) => ({ explorerShowHiddenFiles: !state.explorerShowHiddenFiles })),

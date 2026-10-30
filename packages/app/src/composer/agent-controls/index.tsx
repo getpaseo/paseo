@@ -1,6 +1,7 @@
 import {
   memo,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -78,7 +79,10 @@ import {
   type ComposerControlDensity,
   type ComposerControlPresentation,
 } from "@/composer/agent-controls/layout";
-import { ComposerControlLayoutProvider } from "@/composer/agent-controls/layout-context";
+import {
+  ComposerControlLayoutProvider,
+  ComposerControlWidthContext,
+} from "@/composer/agent-controls/layout-context";
 import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
 import { CompactModelSheet } from "@/composer/agent-controls/model-sheet";
@@ -508,6 +512,7 @@ function ControlledAgentControls({
   const isCompactFormFactor = useIsCompactFormFactor();
   const isCompact = isCompactLayout ?? isCompactFormFactor;
   const { fontScale } = useWindowDimensions();
+  const allocatedWidth = useContext(ComposerControlWidthContext);
   const [activeSheet, setActiveSheet] = useState<ActiveSheet>(null);
   const [openSelector, setOpenSelector] = useState<AgentControlSelector | null>(null);
   const initialDensity: ComposerControlDensity = isCompact ? "tight" : "full";
@@ -571,7 +576,22 @@ function ControlledAgentControls({
     }),
     [canSelectModel, canSelectThinking, featureControls, fontScale, modeControl],
   );
-  const presentation = useMemo(() => resolveComposerControlPresentation(density), [density]);
+  const resolvedDensity =
+    allocatedWidth === undefined
+      ? density
+      : resolveComposerControlDensity({
+          availableWidth: allocatedWidth,
+          currentDensity: density,
+          controls: controlPresence,
+        });
+  if (resolvedDensity !== density) {
+    densityRef.current = resolvedDensity;
+    setDensity(resolvedDensity);
+  }
+  const presentation = useMemo(
+    () => resolveComposerControlPresentation(resolvedDensity),
+    [resolvedDensity],
+  );
   const layoutContextValue = useMemo(
     () => ({
       glyphSize: resolveComposerToolbarGlyphSize(isNative ? "native" : "web"),
@@ -596,19 +616,21 @@ function ControlledAgentControls({
 
   const handleLayout = useCallback(
     (event: LayoutChangeEvent) => {
+      if (allocatedWidth !== undefined) return;
       const availableWidth = readMeasuredWidth(event);
       if (availableWidth === null) return;
       availableWidthRef.current = availableWidth;
       updateDensityForWidth(availableWidth);
     },
-    [updateDensityForWidth],
+    [allocatedWidth, updateDensityForWidth],
   );
 
   useEffect(() => {
+    if (allocatedWidth !== undefined) return;
     if (availableWidthRef.current > 0) {
       updateDensityForWidth(availableWidthRef.current);
     }
-  }, [updateDensityForWidth]);
+  }, [allocatedWidth, updateDensityForWidth]);
 
   const modelDisabled = disabled;
 

@@ -5,9 +5,12 @@ import { ScrollView } from "@/components/ui/scroll-view";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { HEADER_INNER_HEIGHT } from "@/constants/layout";
+import { supportsModernWindowLayout } from "@/constants/modern-window-layout";
+import { BottomBarGeometryProbe } from "@/components/headers/bottom-bar-geometry";
+import type { BottomBarGeometry } from "@/components/headers/bottom-bar-geometry";
 import { resolveContentMaxWidth, useAppSettings } from "@/hooks/use-settings";
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import { KeyboardTranslateView } from "@/keyboard/shift";
-import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 import { View, type LayoutChangeEvent, type ViewProps, StyleSheet } from "react-native";
 import { StyleSheet as ThemedStyleSheet } from "react-native-unistyles";
 import Animated, {
@@ -17,12 +20,16 @@ import Animated, {
   type SharedValue,
 } from "react-native-reanimated";
 import { useKeyboardShift } from "@/keyboard/shift";
+import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import {
   resolveCenteredClearance,
   resolveComposerSlotCapacity,
   updateComposerCapacity,
   type ComposerCapacity,
 } from "./internal/capacity";
+import { ComposerBarLayoutContext, resolveComposerBottomPadding } from "./internal/bar-layout";
+import { AppContentWidthContext } from "@/contexts/app-content-width-context";
+import { SPACING } from "@/styles/theme";
 
 const ViewportSizing = createContext<SharedValue<ComposerCapacity | undefined> | null>(null);
 
@@ -120,6 +127,39 @@ interface ComposerDockProps {
   fullscreen?: boolean;
 }
 
+function ModernComposerInsets({
+  children,
+  bottomInset,
+  fullscreen,
+  fullscreenSurface,
+  geometry,
+}: {
+  children: ReactNode;
+  bottomInset: number;
+  fullscreen: boolean;
+  fullscreenSurface: ViewProps["style"];
+  geometry: BottomBarGeometry | null;
+}) {
+  const { progress } = useReanimatedKeyboardAnimation();
+  const barBottom = geometry
+    ? Math.max(0, geometry.bounds.height - geometry.bar.y - geometry.bar.height)
+    : 0;
+  const bottomPadding = useAnimatedStyle(() => ({
+    paddingBottom: resolveComposerBottomPadding({
+      restingClearance: barBottom,
+      safeAreaBottom: bottomInset,
+      contentSpacing: SPACING[4],
+      keyboardProgress: progress.value,
+    }),
+  }));
+
+  return (
+    <Animated.View style={fullscreen ? dockStyles.surface : [dockStyles.composer, bottomPadding]}>
+      <View style={fullscreen ? fullscreenSurface : dockStyles.composer}>{children}</View>
+    </Animated.View>
+  );
+}
+
 /** The stationary viewport, translated surface, and bounded composer are one owner. */
 export function ComposerDock({
   children: [content, composer, overlay],
@@ -127,7 +167,23 @@ export function ComposerDock({
   fullscreen = false,
 }: ComposerDockProps) {
   const insets = useSafeAreaInsets();
+  const containerWidth = useContext(AppContentWidthContext);
   const contentMaxWidth = resolveContentMaxWidth(useAppSettings().settings);
+  const surfaceWidth =
+    containerWidth === null || fullscreen
+      ? undefined
+      : Math.min(Math.max(0, containerWidth - 2 * SPACING[4]), contentMaxWidth);
+  const [surfaceExtent, setSurfaceExtent] = useState(0);
+  const [barGeometry, setBarGeometry] = useState<BottomBarGeometry | null>(null);
+  const barLayout = useMemo(
+    () => ({
+      onSurfaceHeightChange: setSurfaceExtent,
+      ownsBottomGutter: !fullscreen,
+      containerWidth: fullscreen ? undefined : (containerWidth ?? undefined),
+      surfaceWidth,
+    }),
+    [fullscreen, containerWidth, surfaceWidth],
+  );
   const centeredClearance = useCenteredClearance(insets.bottom);
   // Preserve the existing centered form's visual balance on tablets.
   const bottomInset = centered && !fullscreen ? HEADER_INNER_HEIGHT + 24 : 0;
@@ -186,6 +242,9 @@ export function ComposerDock({
   }
   return (
     <ComposerViewport style={dockStyles.viewport}>
+      {supportsModernWindowLayout && !fullscreen && surfaceExtent > 0 ? (
+        <BottomBarGeometryProbe extent={surfaceExtent} onGeometryChange={setBarGeometry} />
+      ) : null}
       <KeyboardTranslateView style={dockStyles.surface} enabled={!fullscreen}>
         <View
           testID="composer-dock-content"
@@ -204,15 +263,28 @@ export function ComposerDock({
           style={fullscreen ? dockStyles.fullscreenSlot : dockStyles.composer}
           fullscreen={fullscreen}
         >
-          <View
-            style={
-              fullscreen
-                ? fullscreenSurface
-                : [dockStyles.composer, { paddingBottom: insets.bottom }]
-            }
-          >
-            {composer}
-          </View>
+          {supportsModernWindowLayout ? (
+            <ModernComposerInsets
+              bottomInset={insets.bottom}
+              fullscreen={fullscreen}
+              fullscreenSurface={fullscreenSurface}
+              geometry={barGeometry}
+            >
+              <ComposerBarLayoutContext.Provider value={barLayout}>
+                {composer}
+              </ComposerBarLayoutContext.Provider>
+            </ModernComposerInsets>
+          ) : (
+            <View
+              style={
+                fullscreen
+                  ? fullscreenSurface
+                  : [dockStyles.composer, { paddingBottom: insets.bottom }]
+              }
+            >
+              {composer}
+            </View>
+          )}
         </ComposerViewportContent>
         {overlay}
       </KeyboardTranslateView>

@@ -6,6 +6,36 @@ import {
   resolveComposerCapacity,
   updateComposerCapacity,
 } from "./capacity";
+import { resolveComposerBottomPadding } from "./bar-layout";
+
+describe("composer bottom placement", () => {
+  const placement = { restingClearance: 24, safeAreaBottom: 34, contentSpacing: 16 };
+
+  it("preserves native resting placement without stacking a second gutter", () => {
+    expect(resolveComposerBottomPadding({ ...placement, keyboardProgress: 0 })).toBe(24);
+  });
+
+  it("keeps the design content distance above the keyboard when bar and safe insets differ", () => {
+    const padding = resolveComposerBottomPadding({ ...placement, keyboardProgress: 1 });
+    expect(669 + Math.min(0, -264 + 34) - padding).toBe(389);
+  });
+
+  it("retains content spacing when the resting bar needs no physical clearance", () => {
+    expect(
+      resolveComposerBottomPadding({
+        restingClearance: 0,
+        safeAreaBottom: 0,
+        contentSpacing: 16,
+        keyboardProgress: 0,
+      }),
+    ).toBe(16);
+  });
+
+  it("moves continuously from the existing resting frame as keyboard motion starts", () => {
+    const padding = resolveComposerBottomPadding({ ...placement, keyboardProgress: 0.01 });
+    expect(669 + Math.min(0, -2.64 + 0.34) - padding).toBeCloseTo(642.44);
+  });
+});
 
 describe("composer viewport", () => {
   it("caps the complete compact composer at sixty percent of keyboard-reserved space", () => {

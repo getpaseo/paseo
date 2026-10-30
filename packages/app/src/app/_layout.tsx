@@ -56,9 +56,12 @@ import {
   resolveDesktopAppChromeLayout,
   resolveDesktopAppContentMinimum,
   resolveDesktopSidebarVisibility,
+  resolveDesktopSidebarWidth,
 } from "@/components/desktop-sidebar-layout";
 import { isNative, isWeb } from "@/constants/platform";
+import { supportsModernWindowLayout } from "@/constants/modern-window-layout";
 import { HorizontalScrollProvider } from "@/contexts/horizontal-scroll-context";
+import { AppContentWidthFrame } from "@/contexts/app-content-width-context";
 import { SessionProvider } from "@/contexts/session-context";
 import { SidebarCalloutProvider } from "@/contexts/sidebar-callout-context";
 import { ToastProvider } from "@/contexts/toast-context";
@@ -109,7 +112,7 @@ import {
   useHosts,
 } from "@/runtime/host-runtime";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
-import { usePanelStore } from "@/stores/panel-store";
+import { MIN_SIDEBAR_WIDTH, usePanelStore } from "@/stores/panel-store";
 import { flushDraftPersistStorage } from "@/stores/draft-store";
 import { getNextThemePreference, ICON_STROKE_WIDTH } from "@/styles/theme";
 import { useSessionStore } from "@/stores/session-store";
@@ -342,6 +345,27 @@ interface AppContainerProps {
 
 const WINDOW_SIDEBAR_TOGGLE_HORIZONTAL_PADDING = 12;
 
+function resolveAllocatedContentWidth(input: {
+  isCompactLayout: boolean;
+  windowWidth: number;
+  viewportWidth: number;
+  desktopSidebarVisible: boolean;
+  sidebarWidth: number;
+  sidebarMinimumWidth: number;
+}): number | null {
+  if (!supportsModernWindowLayout) return null;
+  if (input.isCompactLayout) return input.windowWidth;
+  if (!input.desktopSidebarVisible) return input.viewportWidth;
+  return (
+    input.viewportWidth -
+    resolveDesktopSidebarWidth({
+      requestedWidth: input.sidebarWidth,
+      viewportWidth: input.viewportWidth,
+      minimumWidth: input.sidebarMinimumWidth,
+    })
+  );
+}
+
 function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppContainerProps) {
   const keyboardActionDispatcher = useKeyboardActionDispatcher();
   const daemons = useHosts();
@@ -352,6 +376,9 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   const isFocusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
   const isDesktopAgentListOpen = usePanelStore((state) => state.desktop.agentListOpen);
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
+  const sidebarMinimumWidth = usePanelStore((state) =>
+    supportsModernWindowLayout ? state.sidebarMinimumWidth : MIN_SIDEBAR_WIDTH,
+  );
   const { width: windowWidth } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const viewportWidth = windowWidth - insets.left - insets.right;
@@ -418,8 +445,17 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     canShare: canDesktopAppSidebarShare({
       contentMinimumWidth: appContentMinimumWidth,
       requestedSidebarWidth: sidebarWidth,
+      sidebarMinimumWidth,
       viewportWidth,
     }),
+  });
+  const allocatedContentWidth = resolveAllocatedContentWidth({
+    isCompactLayout,
+    windowWidth,
+    viewportWidth,
+    desktopSidebarVisible,
+    sidebarWidth,
+    sidebarMinimumWidth,
   });
   const hasTopLeftWindowControls = useHasWindowChromeObstruction("top-left");
   const appChromeLayout = resolveDesktopAppChromeLayout({
@@ -454,7 +490,13 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
         <WindowChromeRegion
           corners={isCompactLayout && chromeEnabled ? "both" : appChromeLayout.contentCorners}
         >
-          <View style={flexStyle}>{children}</View>
+          <AppContentWidthFrame
+            width={allocatedContentWidth}
+            viewportWidth={viewportWidth}
+            leadingInset={insets.left}
+          >
+            {children}
+          </AppContentWidthFrame>
         </WindowChromeRegion>
       </WorkspaceExplorerOpenGesture>
     </View>

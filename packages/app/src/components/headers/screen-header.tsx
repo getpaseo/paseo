@@ -10,6 +10,7 @@ import {
   HEADER_TOP_PADDING_MOBILE,
   useIsCompactFormFactor,
 } from "@/constants/layout";
+import { supportsModernWindowLayout } from "@/constants/modern-window-layout";
 import { WindowChromeSafeArea } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 
@@ -20,6 +21,8 @@ interface ScreenHeaderProps {
   rightStyle?: StyleProp<ViewStyle>;
   borderless?: boolean;
   onRowLayout?: (event: LayoutChangeEvent) => void;
+  /** The surrounding top bar owns safe-area clearance and vertical spacing. */
+  safeAreaManaged?: boolean;
 }
 
 /**
@@ -33,19 +36,20 @@ export function ScreenHeader({
   rightStyle,
   borderless,
   onRowLayout,
+  safeAreaManaged = false,
 }: ScreenHeaderProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const isMobile = useIsCompactFormFactor();
-  // Only add extra padding on mobile for better touch targets; on desktop, only use safe area insets
-  const topPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
+  const managesSafeArea = supportsModernWindowLayout && safeAreaManaged;
+  const topPadding = managesSafeArea ? 0 : insets.top + (isMobile ? HEADER_TOP_PADDING_MOBILE : 0);
   const baseHorizontalPadding = isMobile ? theme.spacing[2] : theme.spacing[3];
 
-  const innerStyle = useMemo(
-    () => [styles.inner, { paddingTop: insets.top + topPadding }],
-    [insets.top, topPadding],
+  const innerStyle = useMemo(() => [styles.inner, { paddingTop: topPadding }], [topPadding]);
+  const rowStyle = useMemo(
+    () => [styles.row, managesSafeArea && styles.embeddedRow, borderless && styles.borderless],
+    [borderless, managesSafeArea],
   );
-  const rowStyle = useMemo(() => [styles.row, borderless && styles.borderless], [borderless]);
   const leftCombinedStyle = useMemo(() => [styles.left, leftStyle], [leftStyle]);
   const rightCombinedStyle = useMemo(() => [styles.right, rightStyle], [rightStyle]);
 
@@ -97,6 +101,9 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
     flexShrink: 0,
+  },
+  embeddedRow: {
+    height: HEADER_INNER_HEIGHT,
   },
   borderless: {
     borderBottomColor: "transparent",

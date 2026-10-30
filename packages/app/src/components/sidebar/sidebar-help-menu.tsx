@@ -23,6 +23,7 @@ import { useHostRuntimeIsConnected, useHosts } from "@/runtime/host-runtime";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useSessionStore } from "@/stores/session-store";
 import { density } from "@/styles/density";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { HostProfile } from "@/types/host-connection";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
@@ -77,7 +78,7 @@ function HostVersionHint({ host }: { host: HostProfile }) {
   );
 }
 
-export function SidebarHelpMenu() {
+export function SidebarHelpMenu({ buttonWidth }: { buttonWidth?: number } = {}) {
   const { t } = useTranslation();
   const shortcutsAvailable = useKeyboardShortcutsAvailable();
   const openAppDiagnostic = useAppDiagnosticStore((state) => state.open);
@@ -104,7 +105,11 @@ export function SidebarHelpMenu() {
         <TooltipTrigger asChild>
           <View>
             <DropdownMenuTrigger
-              style={styles.trigger}
+              style={
+                buttonWidth === undefined
+                  ? styles.trigger
+                  : [styles.trigger, inlineUnistylesStyle({ width: buttonWidth })]
+              }
               testID="sidebar-help"
               accessibilityRole="button"
               accessibilityLabel={t("sidebar.help.trigger")}

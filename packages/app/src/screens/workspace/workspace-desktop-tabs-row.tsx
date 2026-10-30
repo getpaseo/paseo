@@ -1,7 +1,9 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
   Fragment,
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -74,6 +76,7 @@ import {
 } from "@/screens/workspace/workspace-tab-chip-backdrop";
 import type { Theme } from "@/styles/theme";
 import { RenderProfile } from "@/utils/render-profiler";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { TrailingActionScrim } from "@/components/ui/trailing-action-scrim";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { useCompactTimeAgo } from "@/hooks/use-time-ago";
@@ -92,6 +95,9 @@ import {
   useHorizontalScrollBoundary,
 } from "@/components/ui/horizontal-scroll-boundary";
 import { useSessionStore } from "@/stores/session-store";
+
+/** Actual modern top-bar content allocation; other hosts retain local measurement. */
+export const WorkspaceDesktopTabsRowWidthContext = createContext<number | undefined>(undefined);
 
 const DROPDOWN_WIDTH = 220;
 const DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH = 36;
@@ -1017,6 +1023,20 @@ export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
   );
 }
 
+function useAllocatedTabsWidth() {
+  const allocatedWidth = useContext(WorkspaceDesktopTabsRowWidthContext);
+  const [measuredWidth, setMeasuredWidth] = useState(0);
+  const onLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      if (allocatedWidth === undefined) updateMeasuredWidth(setMeasuredWidth, event);
+    },
+    [allocatedWidth],
+  );
+  const availableWidth = allocatedWidth ?? measuredWidth;
+  const viewportWidth = allocatedWidth ?? (availableWidth > 0 ? availableWidth : null);
+  return { availableWidth, viewportWidth, onLayout };
+}
+
 function ResolvedWorkspaceDesktopTabsRow({
   host = "main",
   launchPurpose = "primary",
@@ -1054,8 +1074,13 @@ function ResolvedWorkspaceDesktopTabsRow({
 }: ResolvedWorkspaceDesktopTabsRowProps) {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
+  const active = useRetainedPanelActive();
+  const {
+    availableWidth: availableTabsWidth,
+    viewportWidth,
+    onLayout: handleTabsContainerLayout,
+  } = useAllocatedTabsWidth();
   const newTabKeys = useShortcutKeys("workspace-tab-new");
-  const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
   const tabsScrollRef = useRef<ScrollView>(null);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
   const tabScrollBoundary = useHorizontalScrollBoundary();
@@ -1063,10 +1088,6 @@ function ResolvedWorkspaceDesktopTabsRow({
     () => new Map<string, WorkspaceTabLabelMeasurement>(),
   );
   const [trackSnapshot, setTrackSnapshot] = useState<WorkspaceTabTrackSnapshot | null>(null);
-
-  const handleTabsContainerLayout = useCallback((event: LayoutChangeEvent) => {
-    updateMeasuredWidth(setTabsContainerWidth, event);
-  }, []);
 
   const handleExitFocusModeLayout = useCallback((event: LayoutChangeEvent) => {
     updateMeasuredWidth(setExitFocusModeWidth, event);
@@ -1154,7 +1175,7 @@ function ResolvedWorkspaceDesktopTabsRow({
     });
   }, [currentTabLabelKeys]);
   const publishMeasuredTrack = useCallback(() => {
-    if (tabsContainerWidth <= 0) {
+    if (availableTabsWidth <= 0) {
       return;
     }
     const labelWidths = completeWorkspaceTabLabelWidths(tabLabels, labelMeasurements);
@@ -1176,7 +1197,7 @@ function ResolvedWorkspaceDesktopTabsRow({
         labelWidths,
       };
     });
-  }, [labelMeasurements, tabLabelSignature, tabLabels, tabs, tabsContainerWidth]);
+  }, [availableTabsWidth, labelMeasurements, tabLabelSignature, tabLabels, tabs]);
 
   useLayoutEffect(() => {
     publishMeasuredTrack();
@@ -1216,7 +1237,7 @@ function ResolvedWorkspaceDesktopTabsRow({
 
   const { layout } = useWorkspaceTabLayout({
     tabLabelWidths: trackSnapshot?.labelWidths ?? [],
-    viewportWidthOverride: tabsContainerWidth > 0 ? tabsContainerWidth : null,
+    viewportWidthOverride: viewportWidth,
     metrics: layoutMetrics,
     compact: isCompact,
   });
@@ -1248,14 +1269,14 @@ function ResolvedWorkspaceDesktopTabsRow({
 
   const handleNewTabKeyboardAction = useCallback(
     (action: KeyboardActionDefinition): boolean => {
-      if (!ownsKeyboardShortcuts) return false;
+      if (!active || !ownsKeyboardShortcuts) return false;
       if (action.id === "workspace.tab.menu.open") {
         createNewTab();
         return true;
       }
       return false;
     },
-    [createNewTab, ownsKeyboardShortcuts],
+    [active, createNewTab, ownsKeyboardShortcuts],
   );
 
   useKeyboardActionHandler({
@@ -1266,7 +1287,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       paneId,
     }),
     actions: ["workspace.tab.menu.open"],
-    enabled: ownsKeyboardShortcuts,
+    enabled: active && ownsKeyboardShortcuts,
     priority: 200,
     handle: handleNewTabKeyboardAction,
   });

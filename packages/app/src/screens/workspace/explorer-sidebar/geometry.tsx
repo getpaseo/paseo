@@ -4,6 +4,7 @@ import { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimat
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { HEADER_TOP_PADDING_MOBILE } from "@/constants/layout";
+import { supportsModernWindowLayout } from "@/constants/modern-window-layout";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
@@ -21,6 +22,7 @@ export function useExplorerGeometry({
   const insets = useSafeAreaInsets();
   const resizeWidth = useSharedValue(width);
   const startWidth = useSharedValue(width);
+  const resizing = useSharedValue(false);
   const [resizePressed, setResizePressed] = useState(false);
   useEffect(() => {
     resizeWidth.value = width;
@@ -37,6 +39,7 @@ export function useExplorerGeometry({
         .activeOffsetX([-SIDEBAR_RESIZE_ACTIVATION_OFFSET, SIDEBAR_RESIZE_ACTIVATION_OFFSET])
         .failOffsetY([-SIDEBAR_RESIZE_FAIL_OFFSET, SIDEBAR_RESIZE_FAIL_OFFSET])
         .onStart((event) => {
+          resizing.value = true;
           startWidth.value = width + event.translationX;
           resizeWidth.value = width;
         })
@@ -47,13 +50,17 @@ export function useExplorerGeometry({
           });
         })
         .onEnd(() => runOnJS(onResize)(resizeWidth.value))
-        .onFinalize(() => scheduleOnRN(hideResizeGrip)),
+        .onFinalize(() => {
+          resizing.value = false;
+          scheduleOnRN(hideResizeGrip);
+        }),
     [
       resizeEnabled,
       onResize,
       containerWidth,
       hideResizeGrip,
       resizeWidth,
+      resizing,
       showResizeGrip,
       startWidth,
       width,
@@ -61,12 +68,11 @@ export function useExplorerGeometry({
   );
   // Reanimated retains the last animated value when its style is removed. Keep this
   // style attached across folding and explicitly size overlays to the workspace viewport.
-  const animatedWidthStyle = useAnimatedStyle(
-    () => ({
-      width: overlay ? containerWidth : resizeWidth.value,
-    }),
-    [containerWidth, overlay],
-  );
+  const animatedWidthStyle = useAnimatedStyle(() => {
+    if (overlay) return { width: containerWidth };
+    if (supportsModernWindowLayout && !resizing.value) return { width };
+    return { width: resizeWidth.value };
+  }, [containerWidth, overlay, width]);
   return {
     frameStyle: animatedWidthStyle,
     panelStyle: {

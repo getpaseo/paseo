@@ -13,6 +13,7 @@ import {
   mutedIconColorMapping,
 } from "@/components/ui/icon-button-chrome";
 import { HEADER_INNER_HEIGHT_MOBILE, HEADER_TOP_PADDING_MOBILE } from "@/constants/layout";
+import { supportsModernWindowLayout } from "@/constants/modern-window-layout";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 
 const ThemedArrowLeft = withUnistyles(ArrowLeft);
@@ -32,6 +33,8 @@ interface CompactHeaderProps {
   loading?: boolean;
   /** Icon actions inherit the island chrome through the shared button primitives. */
   actions?: ReactNode;
+  /** The surrounding top bar owns safe-area clearance and vertical spacing. */
+  safeAreaManaged?: boolean;
 }
 
 /**
@@ -49,18 +52,20 @@ export function CompactHeader({
   subtitle,
   loading = false,
   actions,
+  safeAreaManaged = false,
 }: CompactHeaderProps) {
   const insets = useSafeAreaInsets();
+  const managesSafeArea = supportsModernWindowLayout && safeAreaManaged;
   const rootStyle = useMemo(
     () => [
       styles.root,
       {
-        paddingTop: insets.top + HEADER_TOP_PADDING_MOBILE,
-        marginLeft: insets.left,
-        marginRight: insets.right,
+        paddingTop: managesSafeArea ? 0 : insets.top + HEADER_TOP_PADDING_MOBILE,
+        marginLeft: managesSafeArea ? 0 : insets.left,
+        marginRight: managesSafeArea ? 0 : insets.right,
       },
     ],
-    [insets.top, insets.left, insets.right],
+    [insets.top, insets.left, insets.right, managesSafeArea],
   );
 
   return (
