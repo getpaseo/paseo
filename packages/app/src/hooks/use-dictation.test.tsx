@@ -5,6 +5,7 @@ import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DictationAudioSourceConfig } from "./use-dictation-audio-source.types";
 import { useDictation, type UseDictationOptions } from "./use-dictation";
+import { SILENCE_HOLD_MS } from "./use-dictation.shared";
 
 const audioSource = vi.hoisted(() => ({
   config: null as DictationAudioSourceConfig | null,
@@ -147,5 +148,48 @@ describe("useDictation empty results", () => {
 
     expect(view.result.current.status).toBe("idle");
     expect(view.result.current.emptyReason).toBeNull();
+  });
+});
+
+describe("useDictation silence indicator", () => {
+  beforeEach(() => {
+    audioSource.config = null;
+  });
+
+  it("reports silence until audible audio arrives, and again after a pause", async () => {
+    vi.useFakeTimers();
+    try {
+      const { view } = renderDictation(new FakeDictationClient());
+      expect(view.result.current.isHearingSilence).toBe(false);
+
+      await act(async () => {
+        await view.result.current.startDictation();
+      });
+      expect(view.result.current.isHearingSilence).toBe(true);
+
+      act(() => {
+        audioSource.config?.onPcmSegment(pcm16Base64([0, 20, -30]));
+      });
+      expect(view.result.current.isHearingSilence).toBe(true);
+
+      act(() => {
+        audioSource.config?.onPcmSegment(pcm16Base64([0, 6000, -7000]));
+      });
+      expect(view.result.current.isHearingSilence).toBe(false);
+
+      act(() => {
+        vi.advanceTimersByTime(SILENCE_HOLD_MS - 100);
+        audioSource.config?.onPcmSegment(pcm16Base64([5000]));
+        vi.advanceTimersByTime(SILENCE_HOLD_MS - 100);
+      });
+      expect(view.result.current.isHearingSilence).toBe(false);
+
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      expect(view.result.current.isHearingSilence).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

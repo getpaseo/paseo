@@ -563,6 +563,7 @@ function MessageInputOverlay({
   dictationStatus,
   dictationError,
   dictationEmptyReason,
+  isDictationHearingSilence,
   onCancelRecording,
   onAcceptRecording,
   onAcceptAndSendRecording,
@@ -587,6 +588,7 @@ function MessageInputOverlay({
   dictationStatus: React.ComponentProps<typeof DictationOverlay>["status"];
   dictationError: string | null;
   dictationEmptyReason: React.ComponentProps<typeof DictationOverlay>["emptyReason"];
+  isDictationHearingSilence: boolean;
   onCancelRecording: () => Promise<void>;
   onAcceptRecording: () => Promise<void>;
   onAcceptAndSendRecording: () => Promise<void>;
@@ -605,6 +607,7 @@ function MessageInputOverlay({
         status={dictationStatus}
         errorText={dictationStatus === "failed" ? (dictationError ?? undefined) : undefined}
         emptyReason={dictationEmptyReason}
+        isHearingSilence={isDictationHearingSilence}
         onCancel={onCancelRecording}
         onAccept={onAcceptRecording}
         onAcceptAndSend={onAcceptAndSendRecording}
@@ -1543,6 +1546,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       error: dictationError,
       status: dictationStatus,
       emptyReason: dictationEmptyReason,
+      isHearingSilence: isDictationHearingSilence,
       startDictation,
       cancelDictation,
       confirmDictation,
@@ -2191,6 +2195,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             dictationStatus={dictationStatus}
             dictationError={dictationError}
             dictationEmptyReason={dictationEmptyReason}
+            isDictationHearingSilence={isDictationHearingSilence}
             onCancelRecording={handleCancelRecording}
             onAcceptRecording={handleAcceptRecording}
             onAcceptAndSendRecording={handleAcceptAndSendRecording}
@@ -2213,6 +2218,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         dictationStatus,
         dictationError,
         dictationEmptyReason,
+        isDictationHearingSilence,
         handleCancelRecording,
         handleAcceptRecording,
         handleAcceptAndSendRecording,

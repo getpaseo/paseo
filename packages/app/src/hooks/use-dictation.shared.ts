@@ -31,6 +31,8 @@ export interface UseDictationResult {
   error: string | null;
   status: DictationStatus;
   emptyReason: DictationEmptyReason | null;
+  // True while recording and no audible audio has arrived in the last SILENCE_HOLD_MS.
+  isHearingSilence: boolean;
   startDictation: () => Promise<void>;
   cancelDictation: () => Promise<void>;
   confirmDictation: () => Promise<void>;
@@ -40,6 +42,8 @@ export interface UseDictationResult {
 }
 
 export const DURATION_TICK_MS = 1000;
+// Long enough to ride out the pauses between words without flickering.
+export const SILENCE_HOLD_MS = 1500;
 export const PCM_DICTATION_FORMAT = "audio/pcm;rate=16000;bits=16";
 
 export const toError = (error: unknown): Error => {

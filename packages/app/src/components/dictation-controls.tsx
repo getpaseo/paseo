@@ -175,6 +175,7 @@ export function DictationOverlay({
   status,
   errorText,
   emptyReason,
+  isHearingSilence = false,
   onCancel,
   onAccept,
   onAcceptAndSend,
@@ -183,6 +184,7 @@ export function DictationOverlay({
 }: Omit<DictationControlsProps, "onStart" | "disabled" | "transcript"> & {
   errorText?: string;
   emptyReason?: DictationEmptyReason | null;
+  isHearingSilence?: boolean;
 }) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -194,10 +196,14 @@ export function DictationOverlay({
   const actionsDisabled = isProcessing;
   const handleCancel = isFailed && onDiscard ? onDiscard : onCancel;
   const resultText = resolveResultText({ t, status, errorText, emptyReason });
+  // Gray while the microphone delivers only silence, so a muted or misrouted input is
+  // visible before the user stops talking.
+  const surface = isHearingSilence ? theme.colors.surface3 : theme.colors.accent;
+  const onSurface = isHearingSilence ? theme.colors.foreground : theme.colors.accentForeground;
 
   const containerStyle = useMemo(
-    () => [overlayStyles.container, { backgroundColor: theme.colors.accent }],
-    [theme.colors.accent],
+    () => [overlayStyles.container, { backgroundColor: surface }],
+    [surface],
   );
   const overlayCancelButtonStyle = useMemo(
     () => [
@@ -207,16 +213,16 @@ export function DictationOverlay({
     [actionsDisabled, isFailed],
   );
   const overlayTimerTextStyle = useMemo(
-    () => [overlayStyles.timerText, { color: theme.colors.accentForeground }],
-    [theme.colors.accentForeground],
+    () => [overlayStyles.timerText, { color: onSurface }],
+    [onSurface],
   );
   const overlayTranscriptTextStyle = useMemo(
-    () => [overlayStyles.transcriptText, { color: theme.colors.accentForeground, opacity: 0.95 }],
-    [theme.colors.accentForeground],
+    () => [overlayStyles.transcriptText, { color: onSurface, opacity: 0.95 }],
+    [onSurface],
   );
   const overlayRetryButtonStyle = useMemo(
-    () => [overlayStyles.actionButton, { backgroundColor: theme.colors.accentForeground }],
-    [theme.colors.accentForeground],
+    () => [overlayStyles.actionButton, { backgroundColor: onSurface }],
+    [onSurface],
   );
   const overlayConfirmButtonStyle = overlayRetryButtonStyle;
 
@@ -225,7 +231,7 @@ export function DictationOverlay({
   }
 
   return (
-    <View style={containerStyle}>
+    <View style={containerStyle} testID="dictation-overlay">
       <Pressable
         onPress={handleCancel}
         disabled={actionsDisabled && !isFailed}
@@ -233,17 +239,17 @@ export function DictationOverlay({
         accessibilityLabel={t("message.dictation.cancel")}
         style={overlayCancelButtonStyle}
       >
-        <X size={theme.iconSize.lg} color={theme.colors.accentForeground} strokeWidth={2.5} />
+        <X size={theme.iconSize.lg} color={onSurface} strokeWidth={2.5} />
       </Pressable>
 
       <View style={overlayStyles.centerContainer}>
         <View style={overlayStyles.meterRow}>
           <VolumeMeter
             volume={volume}
-            isMuted={false}
+            isMuted={isHearingSilence}
             isSpeaking={false}
             orientation="horizontal"
-            color={theme.colors.accentForeground}
+            color={onSurface}
           />
           <Text style={overlayTimerTextStyle}>{formatDuration(duration)}</Text>
         </View>
@@ -262,7 +268,7 @@ export function DictationOverlay({
       <View style={overlayStyles.actionButtonsContainer}>
         {actionsDisabled ? (
           <View style={overlayStyles.loadingContainer}>
-            <LoadingSpinner size="small" color={theme.colors.accentForeground} />
+            <LoadingSpinner size="small" color={onSurface} />
           </View>
         ) : null}
         {!actionsDisabled && isFailed && canRetry ? (
@@ -272,7 +278,7 @@ export function DictationOverlay({
             accessibilityLabel={t("message.dictation.retry")}
             style={overlayRetryButtonStyle}
           >
-            <RefreshCcw size={theme.iconSize.lg} color={theme.colors.accent} strokeWidth={2.5} />
+            <RefreshCcw size={theme.iconSize.lg} color={surface} strokeWidth={2.5} />
           </Pressable>
         ) : null}
         {!actionsDisabled && !isFailed ? (
@@ -283,11 +289,7 @@ export function DictationOverlay({
               accessibilityLabel={t("message.dictation.insert")}
               style={[overlayStyles.actionButton, OVERLAY_ACCEPT_BUTTON_BG]}
             >
-              <Pencil
-                size={theme.iconSize.lg}
-                color={theme.colors.accentForeground}
-                strokeWidth={2.5}
-              />
+              <Pencil size={theme.iconSize.lg} color={onSurface} strokeWidth={2.5} />
             </Pressable>
             <Pressable
               onPress={onAcceptAndSend}
@@ -295,7 +297,7 @@ export function DictationOverlay({
               accessibilityLabel={t("message.dictation.insertAndSend")}
               style={overlayConfirmButtonStyle}
             >
-              <ArrowUp size={theme.iconSize.lg} color={theme.colors.accent} strokeWidth={2.5} />
+              <ArrowUp size={theme.iconSize.lg} color={surface} strokeWidth={2.5} />
             </Pressable>
           </>
         ) : null}
