@@ -86,6 +86,35 @@ describe("Codex collaboration history", () => {
     ).toEqual([{ id: "first", status: "canceled" }]);
   });
 
+  test("stops counting an errored child whose close record reports failed", async () => {
+    const history = await replay([
+      collab("spawnAgent", { first: "pendingInit" }, "spawn-first"),
+      { ...collab("closeAgent", { first: "errored" }), status: "failed" },
+    ]);
+    expect(
+      history.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "upsert"
+          ? [{ id: event.event.id, status: event.event.status }]
+          : [],
+      ),
+    ).toEqual([{ id: "first", status: "canceled" }]);
+  });
+
+  test("preserves completion when a close carries an older running snapshot", async () => {
+    const history = await replay([
+      collab("spawnAgent", { first: "pendingInit" }, "spawn-first"),
+      collab("wait", { first: "completed" }),
+      collab("closeAgent", { first: "running" }),
+    ]);
+    expect(
+      history.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "upsert"
+          ? [{ id: event.event.id, status: event.event.status }]
+          : [],
+      ),
+    ).toEqual([{ id: "first", status: "completed" }]);
+  });
+
   test.each([
     ["shutdown", "canceled"],
     ["notFound", "failed"],

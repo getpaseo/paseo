@@ -1861,7 +1861,7 @@ function readCodexSubAgentActivity(item: unknown): CodexSubAgentActivity | null 
 interface CodexCollabAgentUpdate {
   threadId: string;
   status: ToolCallTimelineItem["status"];
-  shutdown: boolean;
+  preservesTerminal: boolean;
   reopen: boolean;
 }
 
@@ -1888,11 +1888,8 @@ function readCodexCollabAgentControl(item: unknown): CodexCollabAgentControl | n
       return [
         {
           threadId,
-          status:
-            record.tool === "closeAgent" && record.status === "completed" && status === "running"
-              ? "canceled"
-              : status,
-          shutdown: state.status === "shutdown",
+          status: record.tool === "closeAgent" && status === "running" ? "canceled" : status,
+          preservesTerminal: state.status === "shutdown" || record.tool === "closeAgent",
           reopen: record.tool === "sendInput" && record.status === "completed",
         },
       ];
@@ -1913,7 +1910,7 @@ function resolveCodexCollabAgentUpdate(
 ): ToolCallTimelineItem["status"] {
   if (
     isTerminalSubAgentStatus(previous) &&
-    (update.shutdown || (update.status === "running" && !update.reopen))
+    (update.preservesTerminal || (update.status === "running" && !update.reopen))
   ) {
     return previous;
   }
