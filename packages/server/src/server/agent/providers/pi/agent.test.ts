@@ -3706,3 +3706,49 @@ describe("Pi tool-result images", () => {
     },
   );
 });
+
+test("Pi image rendering preserves turn ownership across an interrupt and follow-up", async () => {
+  const { pi, session, events } = await createSession();
+  onTestFinished(() => session.close());
+  const native = pi.latestSession();
+  const first = await session.startTurn("read image");
+  native.emit({
+    type: "tool_execution_end",
+    toolCallId: "large-image",
+    toolName: "screenshot",
+    result: {
+      content: [
+        {
+          type: "image",
+          data: Buffer.alloc(8 * 1024 * 1024, 73).toString("base64"),
+          mimeType: "image/png",
+        },
+      ],
+    },
+    isError: false,
+  });
+  native.finishTurn();
+  await session.interrupt();
+  const followup = await session.startTurn("follow-up after image");
+  await waitForImmediate();
+  await waitForImmediate();
+  await expect
+    .poll(() =>
+      events
+        .timelineItems()
+        .some((item) => item.type === "assistant_message" && item.text.includes("![Image](")),
+    )
+    .toBe(true);
+  expect(events.turnCompletedEvents().some((event) => event.turnId === followup.turnId)).toBe(
+    false,
+  );
+  const imageEvent = events.timelineAndCompletionEvents();
+  expect(
+    imageEvent.some(
+      (event) => event.type === "timeline" && event.item.type === "assistant_message",
+    ),
+  ).toBe(true);
+  expect(followup.turnId).not.toBe(first.turnId);
+  native.finishTurn();
+  await events.nextTurnCompletion();
+});

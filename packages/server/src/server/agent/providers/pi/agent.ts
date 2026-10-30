@@ -1206,7 +1206,7 @@ export class PiRpcAgentSession implements AgentSession {
   private closed = false;
   private readonly closeController = new AbortController();
   private readonly pendingExtensionHydrations = new Set<Promise<void>>();
-  private pendingRuntimeEvents: Promise<void> | null = null;
+  private pendingOutput: Promise<void> | null = null;
   // Pi publishes the terminal before acknowledging abort. Autonomous runs have no
   // turn ID; retain their errors too until the cancellation request settles.
   private interruptingTurn: { turnId: string | undefined; error: string | null } | null = null;
@@ -1256,20 +1256,7 @@ export class PiRpcAgentSession implements AgentSession {
     });
 
     this.runtimeSession.onEvent((event) => {
-      const handle = () => {
-        if (!this.closed) return this.handleRuntimeEvent(event);
-      };
-      const pending = this.pendingRuntimeEvents ? this.pendingRuntimeEvents.then(handle) : handle();
-      if (pending) {
-        const settled = pending.catch((error) => {
-          this.logger.error({ err: error }, "Pi runtime event failed");
-        });
-        this.pendingRuntimeEvents = settled;
-        void settled.then(() => {
-          if (this.pendingRuntimeEvents === settled) this.pendingRuntimeEvents = null;
-          return undefined;
-        });
-      }
+      this.handleRuntimeEvent(event);
     });
   }
 
@@ -1621,7 +1608,7 @@ export class PiRpcAgentSession implements AgentSession {
       this.pendingExtensionUiRequests.size ||
       this.pendingExtensionResults.size ||
       this.pendingExtensionHydrations.size ||
-      this.pendingRuntimeEvents ||
+      this.pendingOutput ||
       this.pendingSteerSubmissions.length ||
       this.pendingNoTurnOutputs.length ||
       this.interruptingTurn
@@ -1642,7 +1629,7 @@ export class PiRpcAgentSession implements AgentSession {
     try {
       await this.runtimeSession.close();
     } finally {
-      await Promise.all([this.pendingRuntimeEvents, ...this.pendingExtensionHydrations]);
+      await Promise.all([this.pendingOutput, ...this.pendingExtensionHydrations]);
       this.rejectAllExtensionResults(new Error("Pi session closed"));
       this.cleanup?.();
     }
@@ -1706,9 +1693,31 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private emit(event: AgentStreamEvent): void {
-    for (const subscriber of this.subscribers) {
-      subscriber(event);
+    if (this.pendingOutput) {
+      this.emitAsync(() => Promise.resolve([event]));
+      return;
     }
+    this.publish(event);
+  }
+
+  private publish(event: AgentStreamEvent): void {
+    for (const subscriber of this.subscribers) subscriber(event);
+  }
+
+  // Keep timeline order while images are materialized, without delaying provider state changes.
+  private emitAsync(render: () => Promise<AgentStreamEvent[]>): void {
+    const pending = (this.pendingOutput ?? Promise.resolve())
+      .then(render)
+      .then((events) => {
+        if (!this.closed) for (const event of events) this.publish(event);
+        return undefined;
+      })
+      .catch((error) => this.logger.error({ err: error }, "Pi output rendering failed"));
+    this.pendingOutput = pending;
+    void pending.then(() => {
+      if (this.pendingOutput === pending) this.pendingOutput = null;
+      return undefined;
+    });
   }
 
   private emitExtensionOutput(output: PiExtensionEventOutput | undefined, turnId?: string): void {
@@ -2121,7 +2130,7 @@ export class PiRpcAgentSession implements AgentSession {
     });
   }
 
-  private handleRuntimeEvent(event: PiRuntimeEvent): void | Promise<void> {
+  private handleRuntimeEvent(event: PiRuntimeEvent): void {
     if (isExtensionUiRequestEvent(event)) {
       this.handleExtensionUiRequest(event);
       return;
@@ -2154,7 +2163,8 @@ export class PiRpcAgentSession implements AgentSession {
       return;
     }
     if (isPiAgentSessionEvent(event)) {
-      return this.handleSessionEvent(event);
+      this.handleSessionEvent(event);
+      return;
     }
   }
 
@@ -2181,7 +2191,7 @@ export class PiRpcAgentSession implements AgentSession {
     });
   }
 
-  private handleSessionEvent(event: PiAgentSessionEvent): void | Promise<void> {
+  private handleSessionEvent(event: PiAgentSessionEvent): void {
     const turnId = this.currentTurnIdForEvent();
     if (event.type === "agent_end" || event.type === "agent_settled") {
       this.handleTurnBoundaryEvent({ event, turnId });
@@ -2265,7 +2275,8 @@ export class PiRpcAgentSession implements AgentSession {
         return;
       }
       case "tool_execution_end": {
-        return this.handleToolExecutionEnd(event);
+        this.handleToolExecutionEnd(event);
+        return;
       }
       case "compaction_start":
         this.emitCompactionTimeline({
@@ -2328,7 +2339,7 @@ export class PiRpcAgentSession implements AgentSession {
 
   private handleToolExecutionEnd(
     event: Extract<PiAgentSessionEvent, { type: "tool_execution_end" }>,
-  ): void | Promise<void> {
+  ): void {
     const toolCall =
       this.activeToolCalls.get(event.toolCallId) ?? parseToolArgs(event.toolName, null);
     this.activeToolCalls.delete(event.toolCallId);
@@ -2348,19 +2359,21 @@ export class PiRpcAgentSession implements AgentSession {
     });
     this.emitToolCallEvent(event.toolCallId, toolCall, status, result, error);
     if (images.length === 0) return;
-    return this.emitToolResultImages(images, this.currentTurnIdForEvent());
+    const turnId = this.currentTurnIdForEvent();
+    this.emitAsync(() => this.renderToolResultImages(images, turnId));
   }
 
-  private async emitToolResultImages(
+  private async renderToolResultImages(
     images: ProviderImageOutput[],
     turnId: string | undefined,
-  ): Promise<void> {
+  ): Promise<AgentStreamEvent[]> {
+    const events: AgentStreamEvent[] = [];
     for (const image of images) {
       const imageItem = await renderProviderImageOutputAsAssistantMarkdown(image, {
         materialize: materializeProviderImage,
       });
       if (imageItem && !this.closed) {
-        this.emit({
+        events.push({
           type: "timeline",
           provider: this.provider,
           turnId,
@@ -2368,6 +2381,7 @@ export class PiRpcAgentSession implements AgentSession {
         });
       }
     }
+    return events;
   }
 
   private emitCompactionTimeline(input: {
