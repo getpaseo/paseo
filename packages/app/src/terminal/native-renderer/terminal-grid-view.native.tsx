@@ -407,10 +407,11 @@ export function TerminalGridView({
 
   return (
     <View onLayout={handleContainerLayout} pointerEvents="none" style={containerStyle}>
+      {/* Measure against the viewport, independently of the grid width derived from these metrics. */}
+      <Text onLayout={handleMeasure} pointerEvents="none" style={measureStyle}>
+        {MEASURE_TEXT}
+      </Text>
       <View style={gridStyle}>
-        <Text onLayout={handleMeasure} pointerEvents="none" style={measureStyle}>
-          {MEASURE_TEXT}
-        </Text>
         {rows.map((row) => (
           <MemoTerminalGridRow
             key={row.index}
