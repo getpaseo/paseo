@@ -581,6 +581,9 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
       let fsCalls = 0;
       const hook = createHook({ init(_id, type) { if (type.startsWith('FSREQ')) fsCalls++; } });
       await tick();
+      // Do not charge garbage left by repository setup to the event filter.
+      // Allocations and GC caused by the measured callback remain in its budget.
+      global.gc();
       const { blockingMs } = await measureMainThreadWork('Git filter main-thread work', async () => {
         await marker('FILTER_START');
         hook.enable();
@@ -614,6 +617,7 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
     const { stdout, stderr } = await promisify(execFile)(
       process.execPath,
       [
+        "--expose-gc",
         "--import",
         "tsx",
         ...(tracing ? ["--trace-sync-io"] : []),

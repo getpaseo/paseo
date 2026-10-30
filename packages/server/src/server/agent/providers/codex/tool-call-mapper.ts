@@ -186,7 +186,7 @@ const CodexCollabAgentToolCallItemSchema = z
     id: z.string().min(1),
     status: z.string().optional(),
     error: z.unknown().optional(),
-    prompt: z.string().optional(),
+    prompt: z.string().nullish(),
     tool: z.string().optional(),
     receiverThreadIds: z.array(z.string()).optional(),
     agentsStates: z.record(z.string(), z.unknown()).optional(),
@@ -545,12 +545,18 @@ function readStatus(value: unknown): string | undefined {
   return typeof value.status === "string" ? value.status : undefined;
 }
 
-function normalizeCollabAgentChildStatus(status: string): ToolCallTimelineItem["status"] {
+export function normalizeCollabAgentChildStatus(
+  status: string,
+  tool?: string,
+): ToolCallTimelineItem["status"] {
   const normalized = status.trim().toLowerCase();
   switch (normalized) {
     case "error":
     case "errored":
-      return "running";
+      return tool === "wait" || tool === "closeAgent" ? "failed" : "running";
+    case "running":
+    case "pendinginit":
+      return tool === "closeAgent" ? "canceled" : "running";
     case "shutdown":
       return "canceled";
     case "notfound":
@@ -572,10 +578,15 @@ function resolveCollabAgentStatus(
     return "failed";
   }
 
+  // Sending input completes the submission, not the child's new turn.
+  if (item.tool === "sendInput") {
+    return parentStatus;
+  }
+
   const childStatuses = Object.values(item.agentsStates ?? {})
     .map(readStatus)
     .filter((status): status is string => typeof status === "string" && status.trim().length > 0)
-    .map(normalizeCollabAgentChildStatus);
+    .map((status) => normalizeCollabAgentChildStatus(status, item.tool));
 
   if (childStatuses.some((status) => status === "failed")) {
     return "failed";
