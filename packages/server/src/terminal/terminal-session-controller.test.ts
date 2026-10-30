@@ -1,3 +1,5 @@
+import type { TerminalReplayOptions } from "./terminal-replay.js";
+import type { TerminalRestoreOptions } from "./terminal-restore.js";
 import type { TerminalReplayMetadata } from "./terminal-replay.js";
 import { describe, expect, test, vi } from "vitest";
 import pino from "pino";
@@ -682,10 +684,13 @@ describe("terminal-session-controller backpressure snapshot fallback", () => {
     getClientBufferedAmount: () => number | null,
     chunked = false,
     pace?: () => Promise<void>,
+    restore?: TerminalRestoreOptions,
   ): Promise<{
     messages: SessionOutboundMessage[];
     pushOutput: (data: string) => void;
     frames: TerminalStreamFrame[];
+    replayOptions: Array<TerminalReplayOptions | undefined>;
+    ready: () => void;
   }> {
     let terminalListener: ((message: ServerMessage) => void) | null = null;
     const terminal: TerminalSession = {
@@ -712,12 +717,16 @@ describe("terminal-session-controller backpressure snapshot fallback", () => {
       kill: vi.fn(),
       killAndWait: vi.fn(),
     };
+    const replayOptions: Array<TerminalReplayOptions | undefined> = [];
     const terminalManager: TerminalManager = {
       getTerminals: vi.fn(),
       createTerminal: vi.fn(),
       registerCwdEnv: vi.fn(),
       getTerminal: vi.fn(() => terminal),
-      replayTerminal: replayFixture(async () => terminalReplay("live", 1)),
+      replayTerminal: (id, options, sink) => {
+        replayOptions.push(options);
+        return replayFixture(async () => terminalReplay("live", 1))(id, options, sink);
+      },
       setTerminalTitle: vi.fn(),
       killTerminal: vi.fn(),
       killTerminalAndWait: vi.fn(),
@@ -757,6 +766,7 @@ describe("terminal-session-controller backpressure snapshot fallback", () => {
       type: "subscribe_terminal_request",
       terminalId: "term-1",
       requestId: "req-1",
+      restore,
     });
     await waitForCoalescerFlush();
     // Drop the initial subscribe snapshot frame so each test only sees frames
@@ -764,11 +774,43 @@ describe("terminal-session-controller backpressure snapshot fallback", () => {
     frames.length = 0;
 
     return {
+      replayOptions,
+      ready: () => terminalListener?.({ type: "snapshotReady" }),
       pushOutput: (data) => terminalListener?.({ type: "output", data, revision: 2 }),
       frames,
       messages,
     };
   }
+
+  test.each([false, true])(
+    "bounds recovery without changing attach demand (chunked=%s)",
+    async (chunked) => {
+      for (const [restore, history] of [
+        [{ mode: "visible-snapshot", scrollbackLines: 10000 }, 500],
+        [{ mode: "full-snapshot" }, 500],
+        [{ mode: "visible-snapshot", scrollbackLines: 5 }, 5],
+        [{ mode: "visible-snapshot", scrollbackLines: 0 }, 0],
+        [{ mode: "full-snapshot", scrollbackLines: 0 }, 0],
+        [{ mode: "live", scrollbackLines: 0 }, 0],
+        [{ mode: "live" }, 500],
+        [undefined, 500],
+      ] as const) {
+        const fixture = await setup(() => 8 * 1024 * 1024, chunked, undefined, restore);
+        const initial = fixture.replayOptions.slice();
+        fixture.pushOutput("pressure".repeat(40000));
+        await waitForCoalescerFlush();
+        expect(fixture.replayOptions.at(-1)).toEqual({ scrollbackLines: history });
+        expect(fixture.replayOptions).toHaveLength(initial.length + 1);
+        fixture.ready(); // Worker adoption must use the original demand, even on the same stream.
+        await waitForCoalescerFlush();
+        expect(fixture.replayOptions.slice(initial.length + 1)).toEqual(initial);
+        fixture.frames.length = 0;
+        fixture.pushOutput("after-catch-up");
+        await waitForCoalescerFlush();
+        expect(fixture.frames.map((frame) => frame.opcode)).toEqual([TerminalStreamOpcode.Output]);
+      }
+    },
+  );
 
   test("streams all output without a snapshot when the client keeps up", async () => {
     const { pushOutput, frames } = await setup(() => 0);

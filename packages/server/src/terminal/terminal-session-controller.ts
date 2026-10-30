@@ -929,7 +929,6 @@ export class TerminalSessionController {
             // The snapshot replaces this batch only after it succeeds. If the
             // terminal disappears during the read, completion still owns these bytes.
             activeStream.snapshotOutput = payload;
-            activeStream.restore = resolveRestoreAfterOutputOverflow(activeStream.restore);
             activeStream.needsSnapshot = true;
             void this.trySendSnapshot(activeStream);
             return;
@@ -1029,7 +1028,12 @@ export class TerminalSessionController {
     activeStream.outputCoalescer.flush();
     activeStream.snapshotInFlight = true;
     try {
-      const restore = activeStream.restore;
+      // A pressure catch-up replaces the skipped batch with a recent window.
+      // Keep the subscription demand intact for later adoption/full restores.
+      const restore =
+        activeStream.snapshotOutput !== undefined
+          ? resolveRestoreAfterOutputOverflow(activeStream.restore)
+          : activeStream.restore;
       const snapshotResult = restore
         ? await this.emitRestoreSnapshot(activeStream, terminalManager, restore)
         : await this.emitRestoreSnapshot(activeStream, terminalManager, { mode: "full-snapshot" });

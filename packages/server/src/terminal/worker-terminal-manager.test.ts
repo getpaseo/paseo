@@ -1958,6 +1958,7 @@ function terminalViewers(
   terminalManager: DaemonTerminalManager,
   terminalId: string,
   chunked = true,
+  getClientBufferedAmount?: (source: object) => number | null,
 ) {
   const frames: Array<{ source: object; frame: TerminalStreamFrame }> = [];
   const messages: Array<{ source: object; message: SessionOutboundMessage }> = [];
@@ -1990,6 +1991,7 @@ function terminalViewers(
     },
     hasBinaryChannel: () => true,
     supportsChunkedReplay: () => chunked,
+    getClientBufferedAmount,
     isPathWithinRoot: () => true,
     sessionLogger: pino({ level: "silent" }),
   });
@@ -2354,6 +2356,8 @@ it.each([3000, 12050])(
   "retains ten thousand history rows and restores exact demands after %s printed rows",
   async (count) => {
     manager = await startRealWorkerManager();
+    const gate = createTemporaryHome();
+    const releaseNewline = join(gate, "newline");
     const session = trackTerminal(
       await manager.createTerminal({
         cwd: createTemporaryHome(),
@@ -2361,7 +2365,14 @@ it.each([3000, 12050])(
         rows: 4,
         cols: 80,
         ...nodeTerminalCommand(
-          `for(let i=0;i<${count};i++) process.stdout.write("\\x1b[31mrow-"+String(i).padStart(5,"0")+" 界é🙂\\x1b[0m\\r\\n");setInterval(()=>{},1000)`,
+          `const fs=require("node:fs");
+          const watcher=fs.watch(${JSON.stringify(gate)},()=>{
+            if(fs.existsSync(${JSON.stringify(releaseNewline)})){
+              watcher.close();process.stdout.write("\\r\\nROWS-COMPLETE");
+            }
+          });
+          for(let i=0;i<${count};i++) process.stdout.write("\\x1b[31mrow-"+String(i).padStart(5,"0")+" 界é🙂\\x1b[0m"+(i===${count}-1?"":"\\r\\n"));
+          setInterval(()=>{},1000)`,
         ),
       }),
     );
@@ -2370,6 +2381,14 @@ it.each([3000, 12050])(
         (await manager!.captureTerminal(session.id, { start: -5 })).lines
           .join("")
           .includes("row-" + String(count - 1).padStart(5, "0")),
+      15000,
+    );
+    // A visible final label can precede its trailing CRLF. Hold that transition
+    // deliberately, then observe content on the following row before capture.
+    writeFileSync(releaseNewline, "release");
+    await waitForCondition(
+      async () =>
+        (await manager!.captureTerminal(session.id, { start: -1 })).lines[0] === "ROWS-COMPLETE",
       15000,
     );
     for (const history of [0, 200, 1000, 10000]) {
@@ -2399,6 +2418,8 @@ it.each([3000, 12050])(
         const labels = Array.from({ length: buffer.length }, (_, i) =>
           buffer.getLine(i)!.translateToString(true),
         ).filter((line) => line.includes("row-"));
+        expect({ row: buffer.cursorY, col: buffer.cursorX }).toEqual({ row: 3, col: 13 });
+        expect(buffer.getLine(buffer.length - 1)!.translateToString(true)).toBe("ROWS-COMPLETE");
         expect(labels).toHaveLength(Math.min(count, history + 3));
         expect(labels[0]).toContain("row-" + String(count - labels.length).padStart(5, "0"));
         expect(labels.at(-1)).toContain("row-" + String(count - 1).padStart(5, "0") + " 界é🙂");
@@ -2408,4 +2429,171 @@ it.each([3000, 12050])(
     }
   },
   30000,
+);
+
+it.each([false, true])(
+  "shrinks real ten-thousand-row pressure recovery and preserves reattach (chunked=%s)",
+  async (chunked) => {
+    manager = await startRealWorkerManager();
+    const session = trackTerminal(
+      await manager.createTerminal({
+        cwd: createTemporaryHome(),
+        workspaceId: "pressure-history",
+        rows: 4,
+        cols: 120,
+        ...nodeTerminalCommand(`
+      process.stdin.setRawMode(true);
+      let row = 0;
+      function print(count) {
+        for(let i=0;i<count;i++,row++) process.stdout.write("\\x1b[31mrow-" + String(row).padStart(5,"0") + " 界é🙂 " + "log ".repeat(20) + "\\x1b[0m\\r\\n");
+      }
+      print(12050);
+      process.stdout.write("READY\\r\\n");
+      process.stdin.on("data", data => {
+        if(data.toString().includes("BURST")) { print(4000); process.stdout.write("BURST-DONE\\r\\n"); }
+        else process.stdout.write("ECHO:" + data.toString() + "\\r\\n");
+      });
+      setInterval(()=>{},1000);
+    `),
+      }),
+    );
+    await waitForCondition(
+      async () =>
+        (await manager!.captureTerminal(session.id, { start: -5 })).lines
+          .join("")
+          .includes("READY"),
+      15000,
+    );
+    const desktop = {},
+      phone = {},
+      fresh = {};
+    let pressure = false;
+    const viewers = terminalViewers(manager, session.id, chunked, (source) =>
+      source === phone && pressure ? 8 * 1024 * 1024 : 0,
+    );
+    const restore = { mode: "full-snapshot" as const, scrollbackLines: 10000 };
+    function payloads(source: object): Buffer[] {
+      const result: Buffer[] = [];
+      let chunks: Uint8Array[] = [];
+      for (const { source: owner, frame } of viewers.frames) {
+        if (owner !== source) continue;
+        if (frame.opcode === TerminalStreamOpcode.Restore) result.push(Buffer.from(frame.payload));
+        if (frame.opcode === TerminalStreamOpcode.ReplayBegin) chunks = [];
+        if (frame.opcode === TerminalStreamOpcode.ReplayData) chunks.push(frame.payload);
+        if (frame.opcode === TerminalStreamOpcode.ReplayEnd) result.push(Buffer.concat(chunks));
+      }
+      return result;
+    }
+    async function parse(payload: Uint8Array) {
+      const receiver = new xterm.Terminal({
+        rows: 4,
+        cols: 120,
+        scrollback: 10000,
+        allowProposedApi: true,
+      });
+      try {
+        await new Promise<void>((resolve) => receiver.write(payload, resolve));
+        const buffer = receiver.buffer.active;
+        return {
+          history: buffer.baseY,
+          text: Array.from({ length: buffer.length }, (_, i) =>
+            buffer.getLine(i)!.translateToString(true),
+          ).join("\n"),
+        };
+      } finally {
+        receiver.dispose();
+      }
+    }
+    try {
+      await viewers.attach(desktop, "healthy", restore);
+      await viewers.attach(phone, "pressured", restore);
+      await waitForCondition(
+        () => payloads(phone).length === 1 && payloads(desktop).length === 1,
+        15000,
+      );
+      const initial = payloads(phone)[0]!;
+      expect((await parse(initial)).history).toBe(10000);
+      pressure = true;
+      session.send({ type: "input", data: "BURST" });
+      await waitForCondition(() => payloads(phone).length >= 2, 15000);
+      pressure = false;
+      // The final burst marker may belong to the replay cut or to its live tail.
+      // Read the same replay/output exchange a renderer sees rather than assuming
+      // worker parsing and daemon request scheduling cut the burst at one point.
+      async function currentView(source: object) {
+        const frames = viewers.frames
+          .filter((row) => row.source === source)
+          .map((row) => row.frame);
+        const start = frames.findLastIndex(
+          (frame) =>
+            frame.opcode === TerminalStreamOpcode.Restore ||
+            frame.opcode === TerminalStreamOpcode.ReplayBegin,
+        );
+        return parse(
+          Buffer.concat(
+            frames
+              .slice(start)
+              .filter(
+                (frame) =>
+                  frame.opcode === TerminalStreamOpcode.Restore ||
+                  frame.opcode === TerminalStreamOpcode.ReplayData ||
+                  frame.opcode === TerminalStreamOpcode.Output,
+              )
+              .map((frame) => frame.payload),
+          ),
+        );
+      }
+      await waitForCondition(
+        async () =>
+          (await currentView(phone)).text.includes("BURST-DONE") &&
+          (await currentView(desktop)).text.includes("BURST-DONE"),
+        15000,
+      );
+      const recovery = payloads(phone)[1]!;
+      const recovered = await parse(recovery);
+      expect(recovered.history).toBe(500);
+      expect(recovered.text).toContain("界é🙂");
+      for (const source of [phone, desktop]) {
+        const indexes = [...(await currentView(source)).text.matchAll(/row-(\d+)/g)].map((match) =>
+          Number(match[1]),
+        );
+        expect(indexes.at(-1)).toBe(16049);
+        expect(indexes).toEqual(Array.from({ length: indexes.length }, (_, i) => indexes[0]! + i));
+      }
+      expect(recovery.byteLength).toBeLessThan(initial.byteLength / 10);
+      expect(recovery.byteLength).toBeLessThan(256 * 1024);
+      expect(payloads(desktop)).toHaveLength(1); // The healthy peer keeps its full replay and live stream.
+      session.send({ type: "input", data: "AFTER-CATCH-UP" });
+      await waitForCondition(
+        () =>
+          viewers.text(phone).includes("ECHO:AFTER-CATCH-UP") &&
+          viewers.text(desktop).includes("ECHO:AFTER-CATCH-UP"),
+        10000,
+      );
+      expect(viewers.text(phone).match(/ECHO:AFTER-CATCH-UP/g)).toHaveLength(1);
+      expect(viewers.text(desktop).match(/ECHO:AFTER-CATCH-UP/g)).toHaveLength(1);
+      await viewers.delivery.detach(phone);
+      await viewers.attach(fresh, "reattach", restore);
+      await waitForCondition(() => payloads(fresh).length === 1, 15000);
+      const reattached = await parse(payloads(fresh)[0]!);
+      expect(reattached.history).toBe(10000);
+      expect(reattached.text).toContain("row-16049");
+      expect(reattached.text).toContain("ECHO:AFTER-CATCH-UP");
+      expect(viewers.ended(desktop)).toHaveLength(0);
+      expect(viewers.ended(phone)).toHaveLength(0);
+      process.stdout.write(
+        JSON.stringify({
+          chunked,
+          initialBytes: initial.byteLength,
+          recoveryBytes: recovery.byteLength,
+          reattachBytes: payloads(fresh)[0]!.byteLength,
+          retainedHistory: reattached.history,
+          recoveryHistory: recovered.history,
+        }) + "\n",
+      );
+    } finally {
+      await viewers.delivery.close();
+    }
+  },
+  45000,
 );

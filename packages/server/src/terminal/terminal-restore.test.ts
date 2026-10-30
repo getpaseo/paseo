@@ -26,12 +26,14 @@ describe("terminal restore policy", () => {
     ).toEqual({ scrollbackLines: 500 });
   });
 
-  test("promotes live restore to visible restore after output overflow", () => {
+  test("bounds pressure recovery for every restore mode", () => {
     expect(resolveRestoreAfterOutputOverflow({ mode: "live" })).toEqual({
       mode: "visible-snapshot",
+      scrollbackLines: 500,
     });
     expect(resolveRestoreAfterOutputOverflow({ mode: "full-snapshot" })).toEqual({
-      mode: "full-snapshot",
+      mode: "visible-snapshot",
+      scrollbackLines: 500,
     });
   });
 

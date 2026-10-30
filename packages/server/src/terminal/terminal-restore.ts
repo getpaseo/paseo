@@ -23,11 +23,14 @@ export type TerminalRestoreOptions = NonNullable<SubscribeTerminalRequest["resto
 
 export function resolveRestoreAfterOutputOverflow(
   restore: TerminalRestoreOptions | undefined,
-): TerminalRestoreOptions | undefined {
-  if (restore?.mode === "live") {
-    return { mode: "visible-snapshot" };
-  }
-  return restore;
+): TerminalRestoreOptions {
+  return {
+    mode: "visible-snapshot",
+    scrollbackLines: Math.min(
+      restore?.scrollbackLines ?? MAX_VISIBLE_RESTORE_SCROLLBACK_LINES,
+      MAX_VISIBLE_RESTORE_SCROLLBACK_LINES,
+    ),
+  };
 }
 
 export function resolveTerminalRestoreSnapshotOptions(

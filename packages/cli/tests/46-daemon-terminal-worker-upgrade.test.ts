@@ -34,7 +34,7 @@ import {
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getAvailablePort } from "./helpers/network.ts";
+import { createServer } from "node:net";
 
 if (process.platform === "win32") {
   console.log("Skipping terminal worker upgrade CLI test on Windows (POSIX shell terminals).");
@@ -49,7 +49,6 @@ const paseoHome = join(root, "home");
 const cliHome = join(root, "os-home");
 const workDir = join(root, "work");
 for (const dir of [paseoHome, cliHome, workDir]) mkdirSync(dir, { recursive: true });
-const port = await getAvailablePort();
 const currentProtocolVersion = 5;
 const zsh = ["/bin/zsh", "/usr/bin/zsh"].find((candidate) => existsSync(candidate)) ?? null;
 
@@ -336,7 +335,18 @@ async function terminalIds(installation: Installation): Promise<string[]> {
 }
 
 async function startDaemon(installation: Installation, extraEnv: Record<string, string> = {}) {
-  await paseo(installation, ["daemon", "start"], extraEnv);
+  const result = await paseo(installation, ["daemon", "start", "--json"], extraEnv);
+  lastListen = (JSON.parse(result.stdout) as { listen: string }).listen;
+  assert.match(lastListen, /^127\.0\.0\.1:[1-9]\d*$/, "start publishes the actual bound port");
+  if (competingListener.listening) {
+    const competitor = competingListener.address();
+    assert(competitor && typeof competitor !== "string");
+    assert.notEqual(
+      Number(lastListen.split(":").at(-1)),
+      competitor.port,
+      "each daemon binds its own endpoint while the released port belongs to a peer",
+    );
+  }
 }
 
 async function stopDaemon(installation: Installation, keepTerminals = false) {
@@ -371,10 +381,14 @@ const a = createInstallation("A", "0.98.0");
 const b = createInstallation("B", "0.99.0");
 let restoreA: (() => void) | null = null;
 let passed = false;
+let lastListen = "";
+const competingListener = createServer();
 
 try {
   for (const [field, value] of [
-    ["daemon.listen", `127.0.0.1:${port}`],
+    // Let the listening daemon reserve its port atomically. Clients discover the
+    // actual endpoint from this home's PID record after every start.
+    ["daemon.listen", "127.0.0.1:0"],
     ["daemon.relay.enabled", "false"],
     ["features.dictation.enabled", "false"],
     ["features.voiceMode.enabled", "false"],
@@ -432,6 +446,15 @@ try {
   restoreA();
   restoreA = null;
   console.log("✓ closed and cleaned up\n");
+
+  // A released endpoint belongs to nobody. Reproduce another process taking it
+  // between starts; worker adoption is keyed by the home, not by a stable TCP port.
+  const releasedPort = Number(lastListen.split(":").at(-1));
+  await new Promise<void>((resolve, reject) => {
+    competingListener.once("error", reject);
+    competingListener.listen(releasedPort, "127.0.0.1", resolve);
+  });
+  console.log(`Competing listener owns released port ${releasedPort}`);
 
   // There is no supported previous wire at protocol 5. Future previous-version classification
   // is covered by terminal-worker-protocol.test.ts; do not simulate an unreleased drain adapter.
@@ -513,6 +536,17 @@ try {
         console.error(readFileSync(logPath, "utf8").split("\n").slice(-60).join("\n"));
       }
     }
+  }
+  if (competingListener.listening) {
+    await new Promise<void>((resolve, reject) =>
+      competingListener.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      }),
+    );
   }
   restoreA?.();
   for (const installation of [b, a]) {
