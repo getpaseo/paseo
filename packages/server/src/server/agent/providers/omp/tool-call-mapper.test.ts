@@ -331,4 +331,84 @@ describe("OMP tool call mapper", () => {
       query: "console.log($A)",
     });
   });
+
+  test("extracts core grep and ls result text from object results without metadata", () => {
+    expect(
+      mapOmpToolDetail(
+        parseToolArgs("grep", { pattern: "extractTextFromToolResult", path: "src" }),
+        parseToolResult({ content: [{ type: "text", text: "src/example.ts:12:match" }] }),
+      ),
+    ).toEqual({
+      type: "search",
+      query: "extractTextFromToolResult",
+      toolName: "grep",
+      content: "src/example.ts:12:match",
+    });
+    expect(
+      mapOmpToolDetail(
+        parseToolArgs("ls", { path: "src/server/agent" }),
+        parseToolResult({ content: [{ type: "text", text: "agent.ts\ncommands.ts" }] }),
+      ),
+    ).toEqual({
+      type: "search",
+      query: "src/server/agent",
+      content: "agent.ts\ncommands.ts",
+    });
+  });
+
+  test("joins multiple grep text blocks and keeps raw-string results", () => {
+    expect(
+      mapOmpToolDetail(
+        parseToolArgs("grep", { pattern: "TODO" }),
+        parseToolResult({
+          content: [
+            { type: "text", text: "src/a.ts:1:TODO fix" },
+            { type: "text", text: "src/b.ts:8:TODO later" },
+          ],
+        }),
+      ),
+    ).toEqual({
+      type: "search",
+      query: "TODO",
+      toolName: "grep",
+      content: "src/a.ts:1:TODO fix\nsrc/b.ts:8:TODO later",
+    });
+    expect(
+      mapOmpToolDetail(
+        parseToolArgs("grep", { pattern: "TODO" }),
+        parseToolResult("src/a.ts:1:TODO fix"),
+      ),
+    ).toEqual({
+      type: "search",
+      query: "TODO",
+      toolName: "grep",
+      content: "src/a.ts:1:TODO fix",
+    });
+  });
+
+  test("recognizes OMP's semantic find arguments as a search detail", () => {
+    const toolCall = parseToolArgs("find", {
+      query: "handleToolResult",
+      grep_keywords: ["parseToolResult"],
+      path: "packages/server/src",
+    });
+    expect(toolCall.kind).toBe("find");
+    expect(
+      mapOmpToolDetail(
+        toolCall,
+        parseToolResult({
+          content: [{ type: "text", text: "packages/server/src/a.ts:9:handleToolResult" }],
+        }),
+      ),
+    ).toEqual({
+      type: "search",
+      query: "handleToolResult",
+      toolName: "search",
+      content: "packages/server/src/a.ts:9:handleToolResult",
+    });
+  });
+
+  test("keeps the removed OMP find pattern contract unrecognized", () => {
+    expect(parseToolArgs("find", { pattern: "handleToolResult", limit: 5 }).kind).toBe("unknown");
+  });
 });

@@ -220,4 +220,98 @@ describe("Pi history mapper", () => {
       },
     ]);
   });
+
+  test("replays grep and find tool results with object text as search details", async () => {
+    await expect(
+      collectHistory([
+        {
+          role: "assistant",
+          responseId: "response-search",
+          content: [
+            { type: "toolCall", id: "tool-grep-1", name: "grep", arguments: { pattern: "needle" } },
+            {
+              type: "toolCall",
+              id: "tool-find-1",
+              name: "find",
+              arguments: { pattern: "needle", path: "src" },
+            },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "tool-grep-1",
+          toolName: "grep",
+          content: [
+            { type: "text", text: "src/alpha.ts:12:needle" },
+            { type: "text", text: "src/beta.ts:5:needle" },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "tool-find-1",
+          toolName: "find",
+          content: [{ type: "text", text: "src/alpha.ts:12:needle" }],
+        },
+      ]),
+    ).resolves.toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: {
+          type: "tool_call",
+          callId: "tool-grep-1",
+          name: "grep",
+          status: "running",
+          detail: { type: "search", query: "needle", toolName: "grep", content: undefined },
+          error: null,
+        },
+      },
+      {
+        type: "timeline",
+        provider: "pi",
+        item: {
+          type: "tool_call",
+          callId: "tool-find-1",
+          name: "find",
+          status: "running",
+          detail: { type: "search", query: "needle", toolName: "search", content: undefined },
+          error: null,
+        },
+      },
+      {
+        type: "timeline",
+        provider: "pi",
+        item: {
+          type: "tool_call",
+          callId: "tool-grep-1",
+          name: "grep",
+          status: "completed",
+          detail: {
+            type: "search",
+            query: "needle",
+            toolName: "grep",
+            content: "src/alpha.ts:12:needle\nsrc/beta.ts:5:needle",
+          },
+          error: null,
+        },
+      },
+      {
+        type: "timeline",
+        provider: "pi",
+        item: {
+          type: "tool_call",
+          callId: "tool-find-1",
+          name: "find",
+          status: "completed",
+          detail: {
+            type: "search",
+            query: "needle",
+            toolName: "search",
+            content: "src/alpha.ts:12:needle",
+          },
+          error: null,
+        },
+      },
+    ]);
+  });
 });

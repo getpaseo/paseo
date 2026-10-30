@@ -55,4 +55,47 @@ describe("Pi tool call mapper", () => {
       output: { text: "custom result" },
     });
   });
+
+  test("extracts object result text blocks for grep, find, and ls search details", () => {
+    const result = parseToolResult({
+      content: [
+        { type: "text", text: "src/alpha.ts:12:needle" },
+        { type: "text", text: "src/beta.ts:5:needle" },
+      ],
+    });
+
+    expect(mapToolDetail(parseToolArgs("grep", { pattern: "needle" }), result)).toEqual({
+      type: "search",
+      query: "needle",
+      toolName: "grep",
+      content: "src/alpha.ts:12:needle\nsrc/beta.ts:5:needle",
+    });
+    expect(
+      mapToolDetail(parseToolArgs("find", { pattern: "needle", path: "src", limit: 5 }), result),
+    ).toEqual({
+      type: "search",
+      query: "needle",
+      toolName: "search",
+      content: "src/alpha.ts:12:needle\nsrc/beta.ts:5:needle",
+    });
+    expect(mapToolDetail(parseToolArgs("ls", { path: "src" }), result)).toEqual({
+      type: "search",
+      query: "src",
+      content: "src/alpha.ts:12:needle\nsrc/beta.ts:5:needle",
+    });
+  });
+
+  test("preserves raw string results as grep search content", () => {
+    expect(
+      mapToolDetail(
+        parseToolArgs("grep", { pattern: "needle" }),
+        parseToolResult("src/alpha.ts:12:needle"),
+      ),
+    ).toEqual({
+      type: "search",
+      query: "needle",
+      toolName: "grep",
+      content: "src/alpha.ts:12:needle",
+    });
+  });
 });
