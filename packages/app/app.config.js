@@ -1,3 +1,4 @@
+const withAndroidOrientation = require("./plugins/with-android-orientation");
 const fs = require("node:fs");
 const path = require("node:path");
 const pkg = require("./package.json");
@@ -142,6 +143,7 @@ export default {
       searchPaths: ["../../node_modules", "./node_modules"],
     },
     plugins: [
+      withAndroidOrientation,
       "expo-router",
       withPasteInput,
       withAndroidScroll,

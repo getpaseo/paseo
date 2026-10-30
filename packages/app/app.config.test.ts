@@ -59,3 +59,52 @@ describe("Android app config", () => {
     30_000,
   );
 });
+
+it("allows Android tablets to rotate without a portrait manifest lock", async () => {
+  const manifest = await resolveAndroidManifest();
+  const activity = manifest.application[0].activity.find(
+    (entry: ManifestEntry) => entry.$["android:name"] === ".MainActivity",
+  );
+  expect(activity.$["android:screenOrientation"]).toBe("@integer/paseo_orientation");
+}, 30_000);
+
+it("generates portrait phone and unrestricted tablet orientation resources", async () => {
+  const { mkdtemp, readFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const root = await mkdtemp(join(tmpdir(), "paseo-orientation-"));
+  try {
+    const plugin = createRequire(import.meta.url)("./plugins/with-android-orientation.js");
+    const config = plugin({ name: "test", slug: "test" });
+    await config.mods.android.dangerous({
+      modRequest: { platformProjectRoot: root },
+      modResults: {},
+    });
+    const resource = (directory: string) =>
+      readFile(join(root, "app/src/main/res", directory, "paseo_orientation.xml"), "utf8");
+    expect(await resource("values")).toContain('name="paseo_orientation">1</integer>');
+    expect(await resource("values-sw600dp")).toContain('name="paseo_orientation">-1</integer>');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("updates the native orientation before launch and when screen size changes", async () => {
+  const plugin = createRequire(import.meta.url)("./plugins/with-android-orientation.js");
+  const config = plugin({ name: "test", slug: "test" });
+  const result = await config.mods.android.mainActivity({
+    modRequest: {},
+    modResults: {
+      language: "kt",
+      contents:
+        "class MainActivity {\n  override fun onCreate(savedInstanceState: Bundle?) {\n    super.onCreate(null)\n  }\n}",
+    },
+  });
+  expect(result.modResults.contents).toContain("smallestScreenWidthDp >= 600");
+  expect(result.modResults.contents).toContain("SCREEN_ORIENTATION_UNSPECIFIED");
+  expect(result.modResults.contents).toContain("SCREEN_ORIENTATION_PORTRAIT");
+  expect(result.modResults.contents).toContain(
+    "updateOrientation(resources.configuration)\n    super.onCreate(null)",
+  );
+  expect(result.modResults.contents).toContain("updateOrientation(newConfig)");
+});
