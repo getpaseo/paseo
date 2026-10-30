@@ -2404,6 +2404,10 @@ export const ar: TranslationResources = {
         description: "يتم الاحتفاظ بالخطوط في المخزن المؤقت الطرفي المدمج",
         accessibilityLabel: "خطوط التمرير Terminal",
       },
+      chatCopyOnSelect: {
+        label: "النسخ عند التحديد",
+        description: "نسخ نص المحادثة إلى الحافظة عند تحديده",
+      },
       autoExpandReasoning: {
         label: "عرض التفكير دائماً",
         description: "إظهار تفكير الوكيل وخطوات الاستدلال بشكل كامل بشكل افتراضي",

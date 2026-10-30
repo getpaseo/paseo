@@ -2420,6 +2420,10 @@ export const fr: TranslationResources = {
         description: "Lignes conservées dans le tampon du terminal intégré",
         accessibilityLabel: "Lignes d’historique du terminal",
       },
+      chatCopyOnSelect: {
+        label: "Copier à la sélection",
+        description: "Copie le texte de la conversation dans le presse-papiers dès sa sélection",
+      },
       autoExpandReasoning: {
         label: "Toujours afficher le raisonnement",
         description: "Afficher par défaut le raisonnement de l’agent entièrement déplié",
