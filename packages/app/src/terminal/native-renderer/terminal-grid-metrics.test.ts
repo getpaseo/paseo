@@ -5,6 +5,7 @@ import {
   resolveTerminalGridMetricsMeasurement,
   resolveMeasuredTerminalCellMetrics,
   resolveTerminalCursorOffset,
+  resolveTerminalTextLetterSpacing,
 } from "./terminal-grid-metrics";
 
 describe("native terminal grid metrics", () => {
@@ -61,6 +62,39 @@ describe("native terminal grid metrics", () => {
       x: 577.968,
       y: 48,
     });
+  });
+
+  it.each([1, 2, 2.75, 3, 3.5])(
+    "spaces font glyphs so text ends on the pixel-snapped cell grid at density %s",
+    (density) => {
+      const measurement = {
+        measuredTextWidth: 72.246,
+        measuredTextHeight: 16.2,
+        measureTextLength: 10,
+        roundToNearestPixel: (value: number) => Math.round(value * density) / density,
+      };
+      const { cellWidth } = resolveMeasuredTerminalCellMetrics(measurement);
+      const letterSpacing = resolveTerminalTextLetterSpacing({
+        ...measurement,
+        cellWidth,
+        cellsPerGlyph: 1,
+      });
+      const glyphAdvance = measurement.measuredTextWidth / measurement.measureTextLength;
+
+      expect(80 * (glyphAdvance + letterSpacing)).toBeCloseTo(80 * cellWidth, 10);
+    },
+  );
+
+  it("spaces wide fallback glyphs to exactly two cells each", () => {
+    const cellWidth = 22 / 3;
+    const letterSpacing = resolveTerminalTextLetterSpacing({
+      measuredTextWidth: 103.8,
+      measureTextLength: 10,
+      cellWidth,
+      cellsPerGlyph: 2,
+    });
+
+    expect(24 * (10.38 + letterSpacing)).toBeCloseTo(48 * cellWidth, 10);
   });
 
   it("emits measured metrics once until the measurement changes", () => {
