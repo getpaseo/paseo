@@ -72,4 +72,18 @@ describe("terminal restore policy", () => {
     expect(frame?.slot).toBe(4);
     expect(new TextDecoder().decode(frame?.payload ?? new Uint8Array())).toContain("restored");
   });
+
+  test("restore frames put an alternate-screen snapshot back on the alternate screen", () => {
+    // The client resets the emulator before replaying a restore frame, so the frame
+    // itself has to switch buffers. Painted into the normal buffer instead, a TUI's
+    // later repaints reach scrollback and the wheel scrolls stale frames.
+    const alternate: TerminalState = { ...terminalState("restored"), alternateScreen: true };
+    const frame = decodeTerminalStreamFrame(
+      encodeTerminalRestoreFrame({ slot: 4, snapshot: { state: alternate, revision: 1 } }),
+    );
+
+    const payload = new TextDecoder().decode(frame?.payload ?? new Uint8Array());
+    expect(payload.startsWith("\u001b[?1049h")).toBe(true);
+    expect(payload.indexOf("restored")).toBeGreaterThan("\u001b[?1049h".length);
+  });
 });

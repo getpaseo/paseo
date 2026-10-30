@@ -151,4 +151,54 @@ describe("terminal-snapshot", () => {
 
     expect(extractState(client)).toEqual(snapshot);
   });
+
+  it("puts an alternate-screen snapshot back on the alternate screen after a reset", async () => {
+    // A restore repaints the snapshot behind a RIS, which also drops the alternate
+    // screen. Painted into the normal buffer instead, the program's next repaints
+    // reach scrollback: the wheel ends up scrolling stale frames of a live TUI.
+    const source = new HeadlessTerminal({
+      rows: 3,
+      cols: 10,
+      allowProposedApi: true,
+      scrollback: 100,
+    });
+    await writeToTerminal(source, "\u001b[?1049hTUI frame");
+
+    const snapshot = {
+      ...extractState(source),
+      alternateScreen: source.buffer.active.type === "alternate",
+    };
+
+    const client = new ClientTerminal({
+      rows: snapshot.rows,
+      cols: snapshot.cols,
+      allowProposedApi: true,
+      scrollback: 100,
+    });
+    await writeToTerminal(client, "\u001bc" + renderTerminalSnapshotToAnsi(snapshot));
+
+    expect(client.buffer.active.type).toBe("alternate");
+    expect(client.buffer.active.baseY).toBe(0);
+    expect(
+      extractRow(client, 0)
+        .map((cell) => cell.char)
+        .join("")
+        .trimEnd(),
+    ).toBe("TUI frame");
+  });
+
+  it("leaves a normal-screen snapshot in the normal buffer", async () => {
+    const source = new HeadlessTerminal({ rows: 2, cols: 8, allowProposedApi: true });
+    await writeToTerminal(source, "shell prompt");
+
+    const client = new ClientTerminal({
+      rows: 2,
+      cols: 8,
+      allowProposedApi: true,
+      scrollback: 100,
+    });
+    await writeToTerminal(client, "\u001bc" + renderTerminalSnapshotToAnsi(extractState(source)));
+
+    expect(client.buffer.active.type).toBe("normal");
+  });
 });

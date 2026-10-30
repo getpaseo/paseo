@@ -1304,6 +1304,7 @@ export async function createTerminal(
         scrollbackLines: snapshotOptions?.scrollbackLines,
       }),
       cursor: extractCursorState(terminal),
+      ...(terminal.buffer.active.type === "alternate" ? { alternateScreen: true } : {}),
       ...(title ? { title } : {}),
       ...(snapshotOptions?.includeWrapFlags
         ? {
