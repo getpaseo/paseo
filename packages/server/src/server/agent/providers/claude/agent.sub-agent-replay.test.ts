@@ -737,7 +737,7 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
     );
   }, 120_000);
 
-  test("limits retained child shell output to the timeline's existing content limit", async () => {
+  test("limits retained child shell output to the timeline item budget", async () => {
     const output = "x".repeat(128 * 1024);
     writeSession({
       parentLines: [taskToolUse(), taskToolResult()],
@@ -782,7 +782,10 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
         type: "timeline",
         id: TOOL_USE_ID,
         item: expect.objectContaining({
-          detail: expect.objectContaining({ type: "shell", output: output.slice(0, 64 * 1024) }),
+          detail: expect.objectContaining({
+            type: "shell",
+            output: expect.stringMatching(/^x+…\[truncated \d+\.\d KB\]$/),
+          }),
         }),
       }),
     ]);

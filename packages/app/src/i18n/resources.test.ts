@@ -832,7 +832,6 @@ describe("translation resources", () => {
     expect(en.common.placeholders.search).toBe("Search...");
     expect(en.common.empty.noResults).toBe("No results found");
     expect(en.common.empty.noOptionsMatchSearch).toBe("No options match your search.");
-    expect(en.toolCallDetails.subAgentActivity).toBe("Sub-agent activity");
     expect(en.panels.file.failedToLoadPreview).toBe("Failed to load file preview");
   });
 

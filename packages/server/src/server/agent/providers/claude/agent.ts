@@ -4667,7 +4667,7 @@ class ClaudeAgentSession implements AgentSession {
   /**
    * The Task card in the parent transcript, built from the declaration.
    *
-   * The sidechain tracker also emits this card, enriched with the child's action log, and the two
+   * The sidechain tracker also emits this card when it first sees the child, and the two
    * collapse on the shared tool-call id. Emitting it at declaration matters because a
    * backgrounded subagent produces no sidechain frames at all — verified on the wire — so the
    * tracker never runs for one and its card would otherwise stay an unlabeled "Task".
@@ -6276,6 +6276,7 @@ function buildClaudeSubagentCardDetail(
     type: "sub_agent",
     ...(facts.title ? { subAgentType: facts.title } : {}),
     ...(facts.description ? { description: facts.description } : {}),
+    // COMPAT(subagent-log): remove after 2027-04-30.
     log: "",
     actions: [],
   };
