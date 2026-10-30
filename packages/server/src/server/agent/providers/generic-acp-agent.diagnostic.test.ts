@@ -3,7 +3,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { runProviderRefreshWithDeadline } from "../provider-refresh-deadline.js";
@@ -203,16 +204,28 @@ describe("GenericACPAgentClient diagnostics", () => {
   });
 
   test("reports a hung ACP session/new phase without failing the diagnostic", async () => {
-    await withFakeACPAgent("hang-session", async (scriptPath, mode) => {
+    await withFakeACPAgent("hang-session", async (scriptPath, mode, testDir) => {
+      const tracePath = path.join(testDir, "phase-trace.jsonl");
       const client = new GenericACPAgentClient({
         logger: createTestLogger(),
-        command: [process.execPath, scriptPath, mode],
+        command: [process.execPath, scriptPath, mode, "", tracePath],
         providerId: "grok",
         label: "Grok",
         diagnosticPhaseTimeoutMs: TEST_ACP_TIMEOUT_MS,
       });
 
-      const { diagnostic } = await client.getDiagnostic();
+      // Freeze phase deadlines until the child actually reaches session/new. Process startup
+      // and initialize latency must not consume the session timeout this test exercises.
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      let diagnostic: string;
+      try {
+        const pending = client.getDiagnostic();
+        await waitForSessionNew(tracePath);
+        await vi.advanceTimersByTimeAsync(TEST_ACP_TIMEOUT_MS);
+        ({ diagnostic } = await pending);
+      } finally {
+        vi.useRealTimers();
+      }
 
       expect(diagnostic).toContain("Grok (ACP)");
       expect(diagnostic).toContain("Provider ID: grok");
@@ -356,6 +369,14 @@ async function withTempDir(prefix: string, run: (testDir: string) => Promise<voi
   }
 }
 
+async function waitForSessionNew(tracePath: string): Promise<void> {
+  const readyBy = Date.now() + 10_000;
+  while (!(await readFile(tracePath, "utf8").catch(() => "")).includes("session/new")) {
+    if (Date.now() >= readyBy) throw new Error("Fake ACP agent did not reach session/new");
+    await delay(20);
+  }
+}
+
 async function expectProcessExit(pid: number): Promise<void> {
   const deadline = Date.now() + 2_000;
   while (Date.now() < deadline) {
@@ -426,6 +447,7 @@ rl.on("line", (line) => {
 
   if (message.method === "session/new") {
     if (mode === "hang-session") {
+      if (initializeTracePath) fs.appendFileSync(initializeTracePath, "session/new\\n");
       return;
     }
 
