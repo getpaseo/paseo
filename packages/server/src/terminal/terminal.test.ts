@@ -1565,7 +1565,9 @@ it.each([false, true])(
   async (alternate) => {
     const gate = mkdtempSync(join(tmpdir(), "terminal-cursor-cut-"));
     temporaryDirs.push(gate);
+    const releaseContent = join(gate, "content");
     const releaseCursor = join(gate, "position");
+    const cursorWritten = join(gate, "cursor-written");
     const content =
       Array.from({ length: 8 }, (_, i) => "normal-" + i + "\r\n").join("") +
       (alternate ? "\x1b[?1049h\x1b[H" : "") +
@@ -1579,10 +1581,27 @@ it.each([false, true])(
         command: process.execPath,
         args: [
           "-e",
-          `const fs=require("node:fs");const watcher=fs.watch(${JSON.stringify(gate)},()=>{if(fs.existsSync(${JSON.stringify(releaseCursor)})){watcher.close();process.stdout.write("\\x1b[2;7H");}});process.stdout.write(${JSON.stringify(content)});setInterval(()=>{},1000)`,
+          `const fs=require("node:fs");let started=false,positioned=false;
+          function emitReleased(){
+            if(!started&&fs.existsSync(${JSON.stringify(releaseContent)})){
+              started=true;process.stdout.write(${JSON.stringify(content)});
+            }
+            if(!positioned&&fs.existsSync(${JSON.stringify(releaseCursor)})){
+              positioned=true;watcher.close();process.stdout.write("\\x1b[2;7H",()=>fs.writeFileSync(${JSON.stringify(cursorWritten)},"written"));
+            }
+          }
+          const watcher=fs.watch(${JSON.stringify(gate)},emitReleased);
+          emitReleased();setInterval(()=>{},1000)`,
         ],
       }),
     );
+    // Subscribe before releasing program output so failure diagnostics contain
+    // the actual PTY/ConPTY wire, rather than assuming it preserves program bytes.
+    const received: string[] = [];
+    const unsubscribe = session.subscribe((message) => {
+      if (message.type === "output") received.push(message.data);
+    });
+    writeFileSync(releaseContent, "content");
     const deadline = Date.now() + 5000;
     while (!session.captureLines().lines.some((line) => line.includes("VIEW-READY"))) {
       if (Date.now() > deadline) throw new Error("source content did not parse");
@@ -1590,7 +1609,70 @@ it.each([false, true])(
     }
     // VIEW-READY precedes the last cursor update; its visible text is not a capture barrier.
     writeFileSync(releaseCursor, "position");
-    await waitForState(session, (state) => state.cursor.row === 1 && state.cursor.col === 6);
+    try {
+      await waitForState(session, (state) => state.cursor.row === 1 && state.cursor.col === 6);
+    } catch (error) {
+      async function inspect(data: string) {
+        const terminal = new xterm.Terminal({
+          rows: 4,
+          cols: 16,
+          scrollback: 10000,
+          allowProposedApi: true,
+        });
+        const presentation: number[][] = [];
+        const visibility: Array<{ final: string; params: number[] }> = [];
+        terminal.parser.registerCsiHandler({ intermediates: " ", final: "q" }, (params) => {
+          presentation.push(params as number[]);
+          return false;
+        });
+        for (const final of ["h", "l"])
+          terminal.parser.registerCsiHandler({ prefix: "?", final }, (params) => {
+            visibility.push({ final, params: params as number[] });
+            return false;
+          });
+        const modes = new TerminalInputModeTracker();
+        modes.feed(data);
+        try {
+          await new Promise<void>((resolve) => terminal.write(data, resolve));
+          const buffer = terminal.buffer.active;
+          return {
+            buffer: buffer.type,
+            cursor: { row: buffer.cursorY, col: buffer.cursorX },
+            lines: Array.from({ length: buffer.length }, (_, i) =>
+              buffer.getLine(i)!.translateToString(true),
+            ),
+            modes: terminal.modes,
+            inputModes: modes.getState(),
+            presentation,
+            visibility,
+          };
+        } finally {
+          terminal.dispose();
+        }
+      }
+      const replay = session.serializeReplay();
+      const ansi = new TextDecoder().decode(replay.data);
+      throw new Error(
+        "Terminal fidelity capture failed: " +
+          JSON.stringify({
+            platform: process.platform,
+            alternate,
+            error: String(error),
+            cursorWriteCompleted: existsSync(cursorWritten),
+            received,
+            raw: await inspect(received.join("")),
+            replay: {
+              metadata: replay.metadata,
+              ansi,
+              parsed: await inspect(ansi + replay.metadata.replayPreamble),
+            },
+            capture: session.captureLines(),
+          }),
+        { cause: error },
+      );
+    } finally {
+      unsubscribe();
+    }
     const replay = session.serializeReplay();
     const ansi = new TextDecoder().decode(replay.data);
     expect(ansi).toContain("\x1b[?25l\x1b[5 q");
