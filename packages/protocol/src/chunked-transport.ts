@@ -1,6 +1,9 @@
 import { MAX_WEBSOCKET_MESSAGE_BYTES } from "./websocket-message-limit.js";
 
 type Frame = string | Uint8Array;
+
+/** A malformed wire frame, distinct from a consumer delivery failure. */
+export class ChunkedTransportProtocolError extends Error {}
 // Reserved outside the application binary opcode space. Version, kind, flags follow.
 const OPCODE = 0x31;
 const HEADER = 4;
@@ -119,53 +122,59 @@ export class ChunkedTransport {
 
   receive(frame: Frame): void {
     if (this.closed) return;
+    let message: Frame | undefined;
     try {
-      if (typeof frame === "string" || frame[0] !== OPCODE) {
-        if (this.assembly) throw new Error("Interrupted chunked message");
-        this.io.deliver(frame);
-        return;
-      }
-      if (
-        !this.enabled ||
-        frame.length <= HEADER ||
-        frame[1] !== 1 ||
-        frame[2]! > 1 ||
-        (frame[3]! & ~3) !== 0
-      )
-        throw new Error("Invalid chunk header");
-      const start = (frame[3]! & 1) !== 0;
-      const end = (frame[3]! & 2) !== 0;
-      if (start === !!this.assembly) throw new Error("Invalid chunk sequence");
-      if (start) {
-        this.assembly = new Uint8Array(0);
-        this.kind = frame[2]!;
-        this.size = 0;
-      }
-      if (frame[2] !== this.kind) throw new Error("Chunk kind changed");
-      this.size += frame.length - HEADER;
-      if (this.size > MAX_WEBSOCKET_MESSAGE_BYTES) throw new Error("Logical message too large");
-      const payload = frame.subarray(HEADER);
-      if (this.assembly!.byteLength < this.size) {
-        const capacity = Math.min(
-          MAX_WEBSOCKET_MESSAGE_BYTES,
-          Math.max(this.size, this.assembly!.byteLength * 2, 16384),
-        );
-        const grown = new Uint8Array(capacity);
-        grown.set(this.assembly!.subarray(0, this.size - payload.byteLength));
-        this.assembly = grown;
-      }
-      this.assembly!.set(payload, this.size - payload.byteLength);
-      if (!end) return;
-      const data = this.assembly!.subarray(0, this.size);
-      this.assembly = undefined;
-      this.size = 0;
-      this.io.deliver(
-        this.kind === 0 ? new TextDecoder("utf-8", { fatal: true }).decode(data) : data.slice(),
-      );
+      message = this.assemble(frame);
     } catch (error) {
       this.close();
-      throw error;
+      throw new ChunkedTransportProtocolError(
+        error instanceof Error ? error.message : String(error),
+        { cause: error },
+      );
     }
+    if (message !== undefined) this.io.deliver(message);
+  }
+
+  private assemble(frame: Frame): Frame | undefined {
+    if (typeof frame === "string" || frame[0] !== OPCODE) {
+      if (this.assembly) throw new Error("Interrupted chunked message");
+      return frame;
+    }
+    if (
+      !this.enabled ||
+      frame.length <= HEADER ||
+      frame[1] !== 1 ||
+      frame[2]! > 1 ||
+      (frame[3]! & ~3) !== 0
+    )
+      throw new Error("Invalid chunk header");
+    const start = (frame[3]! & 1) !== 0;
+    const end = (frame[3]! & 2) !== 0;
+    if (start === !!this.assembly) throw new Error("Invalid chunk sequence");
+    if (start) {
+      this.assembly = new Uint8Array(0);
+      this.kind = frame[2]!;
+      this.size = 0;
+    }
+    if (frame[2] !== this.kind) throw new Error("Chunk kind changed");
+    this.size += frame.length - HEADER;
+    if (this.size > MAX_WEBSOCKET_MESSAGE_BYTES) throw new Error("Logical message too large");
+    const payload = frame.subarray(HEADER);
+    if (this.assembly!.byteLength < this.size) {
+      const capacity = Math.min(
+        MAX_WEBSOCKET_MESSAGE_BYTES,
+        Math.max(this.size, this.assembly!.byteLength * 2, 16384),
+      );
+      const grown = new Uint8Array(capacity);
+      grown.set(this.assembly!.subarray(0, this.size - payload.byteLength));
+      this.assembly = grown;
+    }
+    this.assembly!.set(payload, this.size - payload.byteLength);
+    if (!end) return;
+    const data = this.assembly!.subarray(0, this.size);
+    this.assembly = undefined;
+    this.size = 0;
+    return this.kind === 0 ? new TextDecoder("utf-8", { fatal: true }).decode(data) : data.slice();
   }
 
   private fail(error: unknown): void {

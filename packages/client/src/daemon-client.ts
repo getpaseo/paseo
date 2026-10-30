@@ -1,4 +1,7 @@
-import { ChunkedTransport } from "@getpaseo/protocol/chunked-transport";
+import {
+  ChunkedTransport,
+  ChunkedTransportProtocolError,
+} from "@getpaseo/protocol/chunked-transport";
 import {
   HOST_ROUTE_OPCODE,
   encodeHostRouteFrame,
@@ -1682,7 +1685,8 @@ export class DaemonClient {
             if (typeof data === "string" || bytes)
               this.chunkedTransport!.receive(typeof data === "string" ? data : bytes!);
             else this.handleTransportMessage(data);
-          } catch {
+          } catch (error) {
+            if (!(error instanceof ChunkedTransportProtocolError)) throw error;
             transport.close(4003, "Invalid chunked transport");
           }
         }),

@@ -348,3 +348,23 @@ it("a queued pre-write rejection does not poison the next logical send", async (
   expect(delivered).toEqual(["sibling"]);
   expect(failures).toEqual([]);
 });
+
+it.each([false, true])("delivery errors leave framing usable (chunked=%s)", async (chunked) => {
+  let fail = true;
+  const delivered: (string | Uint8Array)[] = [];
+  const transport = new ChunkedTransport({
+    frameBytes: 64,
+    send: () => {},
+    deliver: (frame) => {
+      if (fail) throw new Error("listener failed");
+      delivered.push(frame);
+    },
+  });
+  transport.enabled = chunked;
+  const frame = chunked ? new Uint8Array([0x31, 1, 0, 3, 65]) : "A";
+  expect(() => transport.receive(frame)).toThrow("listener failed");
+  fail = false;
+  transport.receive(frame);
+  expect(delivered).toEqual(["A"]);
+  await transport.send("still connected");
+});

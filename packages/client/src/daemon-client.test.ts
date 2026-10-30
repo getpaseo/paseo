@@ -8607,3 +8607,60 @@ test("RPC deadlines remain active while a preceding frame waits for drain", asyn
     await first;
   }
 });
+
+test.each([false, true])(
+  "event listener errors do not close the transport (chunked=%s)",
+  async (chunked) => {
+    const mock = createMockTransport();
+    const closed = vi.fn();
+    mock.transport.close = closed;
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "listener-error",
+      transportFactory: () => mock.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    mock.triggerOpen({ features: { binaryChunkingV1: chunked } });
+    await connecting;
+    const unsubscribe = client.subscribe(() => {
+      throw new Error("listener failed");
+    });
+    const text = wrapSessionMessage({
+      type: "agent_deleted",
+      payload: { agentId: "agent-test", requestId: "listener-test" },
+    });
+    const payload = new TextEncoder().encode(text);
+    const frame = chunked ? new Uint8Array([0x31, 1, 0, 3, ...payload]) : text;
+    expect(() => mock.triggerMessage(frame)).toThrow("listener failed");
+    expect(closed).not.toHaveBeenCalled();
+    unsubscribe();
+    const events: string[] = [];
+    client.subscribe((event) => {
+      events.push(event.type);
+    });
+    mock.triggerMessage(frame);
+    expect(events).toEqual(["agent_deleted"]);
+    await client.sendHostFrame("route", "still connected");
+    expect(client.isConnected).toBe(true);
+  },
+);
+
+test("malformed chunk metadata still closes the client transport", async () => {
+  const mock = createMockTransport();
+  const closed = vi.fn();
+  mock.transport.close = closed;
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "malformed-chunk",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen({ features: { binaryChunkingV1: true } });
+  await connecting;
+  mock.triggerMessage(new Uint8Array([0x31, 2, 0, 3, 65]));
+  expect(closed).toHaveBeenCalledWith(4003, "Invalid chunked transport");
+});

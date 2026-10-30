@@ -1,4 +1,7 @@
-import { ChunkedTransport } from "@getpaseo/protocol/chunked-transport";
+import {
+  ChunkedTransport,
+  ChunkedTransportProtocolError,
+} from "@getpaseo/protocol/chunked-transport";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import {
   createAgentMessageDelivery,
@@ -2220,7 +2223,8 @@ export class VoiceAssistantWebSocketServer {
       const data = args[0] as Buffer | ArrayBuffer | Buffer[] | string;
       try {
         this.chunkedSocket(ws).receive(typeof data === "string" ? data : bufferFromWsData(data));
-      } catch {
+      } catch (error) {
+        if (!(error instanceof ChunkedTransportProtocolError)) throw error;
         ws.close(1002, "Invalid chunked transport");
       }
     });

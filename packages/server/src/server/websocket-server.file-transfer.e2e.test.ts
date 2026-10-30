@@ -255,3 +255,12 @@ test("an awaited timeline framing overflow closes the actual daemon socket", asy
     await client.close();
   }
 }, 60000);
+
+test("malformed chunk metadata closes the daemon socket with a protocol error", async () => {
+  daemon = await createTestPaseoDaemon();
+  const source = await connectSocket(daemon.port, "invalid-framing", { binary_chunking_v1: true });
+  sockets.push(source);
+  const closed = new Promise<number>((resolve) => source.once("close", (code) => resolve(code)));
+  source.send(new Uint8Array([0x31, 2, 0, 3, 65]));
+  expect(await closed).toBe(1002);
+});
