@@ -9,8 +9,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
 import pino from "pino";
+import photon from "@silvia-odwyer/photon-node";
 import type { CreationSnapshot, SessionOutboundMessage } from "@getpaseo/protocol/messages";
-import type { AgentTimelineItem } from "../agent/agent-sdk-types.js";
+import type { AgentPromptInput, AgentTimelineItem } from "../agent/agent-sdk-types.js";
+import { readImageDimensions } from "../agent/image-dimensions.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
@@ -479,6 +481,117 @@ test.each(["create_agent_request", "agent.create.request"] as const)(
       await rm(directory, { recursive: true, force: true });
     }
   },
+);
+
+test("creation clamps image attachments before provider dispatch and later turns stay usable", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "creation-image-clamp-"));
+  const prompts: AgentPromptInput[] = [];
+  const daemon = await createCreationDaemon({
+    agentClients: createTestAgentClients({
+      onStartTurn(prompt, config) {
+        if (!config.internal) prompts.push(prompt);
+      },
+    }),
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  const raster = new photon.PhotonImage(new Uint8Array(4864 * 2524 * 4).fill(0x80), 4864, 2524);
+  let data: string;
+  try {
+    data = Buffer.from(raster.get_bytes()).toString("base64");
+  } finally {
+    raster.free();
+  }
+  try {
+    await client.connect();
+    const agent = await client.createAgent({
+      provider: "codex",
+      cwd: directory,
+      initialPrompt: "Describe this screenshot.",
+      images: [{ data, mimeType: "image/png" }],
+    });
+    await client.waitForFinish(agent.id, 10_000);
+    const firstPrompt = prompts[0];
+    if (!Array.isArray(firstPrompt)) throw new Error("Expected image prompt blocks");
+    const image = firstPrompt.find((block) => block.type === "image");
+    if (!image || image.type !== "image") throw new Error("Expected an image block");
+    expect(image.mimeType).toBe("image/png");
+    expect(readImageDimensions(Buffer.from(image.data, "base64"))).toEqual({
+      width: 2000,
+      height: 1038,
+    });
+
+    await client.sendMessage(agent.id, "Describe twenty more images.", {
+      images: Array.from({ length: 20 }, () => ({ data: image.data, mimeType: image.mimeType })),
+    });
+    await client.waitForFinish(agent.id, 10_000);
+    await client.sendMessage(agent.id, "Continue without images.");
+    await client.waitForFinish(agent.id, 10_000);
+    expect(prompts).toHaveLength(3);
+    expect(prompts[2]).toBe("Continue without images.");
+
+    await expect(
+      client.sendMessage(agent.id, "Reject an oversized animation.", {
+        images: [{ data, mimeType: "image/gif" }],
+      }),
+    ).rejects.toThrow("cannot be resized");
+    await client.sendMessage(agent.id, "Continue after rejection.");
+    await client.waitForFinish(agent.id, 10_000);
+    expect(prompts).toHaveLength(4);
+    expect(prompts[3]).toBe("Continue after rejection.");
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+}, 60000);
+
+test.each(["create_agent_request", "agent.create.request", "directory", "worktree"] as const)(
+  "%s creation rejects oversized image attachments before provisioning resources",
+  async (kind) => {
+    const directory = await mkdtemp(join(tmpdir(), "creation-image-limit-"));
+    const daemon = await createCreationDaemon();
+    const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    const peer = await connectCreationPeer(daemon.port);
+    const header = Buffer.alloc(24);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header);
+    header.writeUInt32BE(13, 8);
+    header.write("IHDR", 12, "ascii");
+    header.writeUInt32BE(60_000, 16);
+    header.writeUInt32BE(60_000, 20);
+    const agent = {
+      config: { provider: "codex", cwd: directory },
+      initialPrompt: "Describe this image.",
+      images: [{ data: header.toString("base64"), mimeType: "image/png" }],
+    };
+    try {
+      await initializeSetupRepository(directory);
+      await client.connect();
+      const response =
+        kind === "directory" || kind === "worktree"
+          ? await peer.request({
+              type: "workspace.create.request",
+              requestId: "rejected-image",
+              source:
+                kind === "directory"
+                  ? { kind: "directory", path: directory }
+                  : { kind: "worktree", cwd: directory, worktreeSlug: "rejected-image" },
+              agent,
+            })
+          : await peer.request({ ...agent, type: kind, requestId: "rejected-image" });
+      expect(response).toMatchObject({
+        payload: { error: expect.stringContaining("pixel decode ceiling") },
+      });
+      expect((await client.fetchAgents()).entries).toEqual([]);
+      expect((await client.fetchWorkspaces()).entries).toEqual([]);
+      expect((await client.getPaseoWorktreeList({ cwd: directory })).worktrees).toEqual([]);
+    } finally {
+      peer.close();
+      await client.close();
+      await daemon.close();
+      await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  },
+  60000,
 );
 
 async function initializeSetupRepository(directory: string): Promise<void> {
