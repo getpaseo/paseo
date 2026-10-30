@@ -10,7 +10,10 @@ import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
 import type { LayoutChangeEvent } from "react-native";
 import { ExplorerSidebarDock } from "@/screens/workspace/explorer-sidebar";
 import { ExplorerFrame } from "./explorer-sidebar/frame";
-import { AppContentWidthContext } from "@/contexts/app-content-width-context";
+import {
+  AppContentWidthContext,
+  reconcileAppContentWidthHandoff,
+} from "@/contexts/app-content-width-context";
 import { resolveExplorerSidebarWidth } from "@/components/explorer-sidebar-layout";
 import { WorkspaceTabDragScope } from "@/components/workspace-tab-drag-scope";
 import {
@@ -802,22 +805,34 @@ function WorkspacePanelSurface({
   children,
   tabIds,
   workspaceKey,
-  onLayout,
+  parentWidth,
 }: {
-  onLayout: (event: LayoutChangeEvent) => void;
+  parentWidth: number;
   workspaceKey: string;
   launcher: NewTabLauncher;
   children: ReactNode;
   tabIds: readonly string[];
 }) {
   const isCompact = useIsCompactFormFactor();
+  const allocatedWidth = useContext(AppContentWidthContext);
+  const [widthHandoff, setWidthHandoff] = useState(() =>
+    reconcileAppContentWidthHandoff(undefined, allocatedWidth, parentWidth),
+  );
+  const handoff = reconcileAppContentWidthHandoff(widthHandoff, allocatedWidth, parentWidth);
+  if (handoff !== widthHandoff) setWidthHandoff(handoff);
+  const pendingWidth = handoff.pendingWidth;
+  const surfaceStyle = useMemo(
+    () => [
+      styles.threePaneRow,
+      pendingWidth !== null && { width: pendingWidth, alignSelf: "flex-start" as const },
+    ],
+    [pendingWidth],
+  );
   return (
     <WorkspaceComposerEditingSessionsProvider workspaceKey={workspaceKey} tabIds={tabIds}>
       <NewTabLauncherProvider value={launcher}>
         <SheetHostScope enabled={!isCompact}>
-          <View style={styles.threePaneRow} onLayout={onLayout}>
-            {children}
-          </View>
+          <View style={surfaceStyle}>{children}</View>
         </SheetHostScope>
       </NewTabLauncherProvider>
     </WorkspaceComposerEditingSessionsProvider>
@@ -1138,6 +1153,7 @@ function useWorkspaceColumnAllocation({
   isExplorerSidebarShowing: boolean;
   desktopFocusModeEnabled: boolean;
 }) {
+  // Measure the unpinned route parent, not the row carrying the pending allocation.
   const [workspaceViewportWidth, setWorkspaceViewportWidth] = useState(0);
   const measureWorkspaceWidth = useCallback(
     (event: LayoutChangeEvent) => setWorkspaceViewportWidth(event.nativeEvent.layout.width),
@@ -1168,7 +1184,12 @@ function useWorkspaceColumnAllocation({
     allocatedWorkspaceWidth === null
       ? null
       : Math.max(0, allocatedWorkspaceWidth - dockedExplorerWidth);
-  return { measureWorkspaceWidth, explorerContainerWidth, centerColumnWidth };
+  return {
+    measureWorkspaceWidth,
+    workspaceViewportWidth,
+    explorerContainerWidth,
+    centerColumnWidth,
+  };
 }
 
 function WorkspaceScreenContent({
@@ -3769,15 +3790,19 @@ function WorkspaceScreenContent({
       </View>
     </View>
   );
-  const { measureWorkspaceWidth, explorerContainerWidth, centerColumnWidth } =
-    useWorkspaceColumnAllocation({
-      persistenceKey,
-      workspaceLayout,
-      explorerSidebarPaneId,
-      isMobile,
-      isExplorerSidebarShowing,
-      desktopFocusModeEnabled,
-    });
+  const {
+    measureWorkspaceWidth,
+    workspaceViewportWidth,
+    explorerContainerWidth,
+    centerColumnWidth,
+  } = useWorkspaceColumnAllocation({
+    persistenceKey,
+    workspaceLayout,
+    explorerSidebarPaneId,
+    isMobile,
+    isExplorerSidebarShowing,
+    desktopFocusModeEnabled,
+  });
 
   const sharedExplorer = useMemo(() => {
     if (!workspaceLayout || !explorerSidebarPaneId || !persistenceKey) return null;
@@ -3906,7 +3931,7 @@ function WorkspaceScreenContent({
 
   const renderedWorkspaceScreen = (
     <RenderProfile id="WorkspaceScreenContent">
-      <View style={containerStyle}>
+      <View style={containerStyle} onLayout={measureWorkspaceWidth}>
         <WorkspaceDocumentTitleEffectSlot
           tab={activeTabDescriptor}
           serverId={normalizedServerId}
@@ -3914,7 +3939,7 @@ function WorkspaceScreenContent({
           isRouteFocused={isRouteFocused}
         />
         <WorkspacePanelSurface
-          onLayout={measureWorkspaceWidth}
+          parentWidth={workspaceViewportWidth}
           launcher={newTabLauncher}
           workspaceKey={workspacePanelKey}
           tabIds={workspacePanelTabIds}

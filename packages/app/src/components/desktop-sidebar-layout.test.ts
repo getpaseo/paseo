@@ -19,6 +19,49 @@ import {
   resolveContentBandPlacement,
   resolveLeadingCornerControlInset,
 } from "@/components/headers/content-band-geometry.shared";
+import { reconcileAppContentWidthHandoff } from "@/contexts/app-content-width-context";
+
+describe("workspace width handoff", () => {
+  it("uses each sidebar allocation before the native parent catches up", () => {
+    const closed = reconcileAppContentWidthHandoff(undefined, 1210, 1210);
+    const opening = reconcileAppContentWidthHandoff(closed, 890, 1210);
+    expect(opening.pendingWidth).toBe(890);
+    const open = reconcileAppContentWidthHandoff(opening, 890, 890);
+    expect(open.pendingWidth).toBeNull();
+    const closing = reconcileAppContentWidthHandoff(open, 1210, 890);
+    expect(closing.pendingWidth).toBe(1210);
+    expect(reconcileAppContentWidthHandoff(closing, 1210, 1210).pendingWidth).toBeNull();
+  });
+
+  it("yields live sidebar resizing to native layout after acknowledgement", () => {
+    const opening = reconcileAppContentWidthHandoff(undefined, 890, 1210);
+    const acknowledged = reconcileAppContentWidthHandoff(opening, 890, 890);
+    const dragging = reconcileAppContentWidthHandoff(acknowledged, 890, 810);
+    expect(dragging.pendingWidth).toBeNull();
+    expect(reconcileAppContentWidthHandoff(dragging, 810, 810).pendingWidth).toBeNull();
+  });
+
+  it("accepts pixel-rounded native widths before yielding to live resize", () => {
+    const width = 547 + 1 / 3;
+    const pending = reconcileAppContentWidthHandoff(undefined, width, 890);
+    const acknowledged = reconcileAppContentWidthHandoff(pending, width, Math.fround(width));
+    expect(acknowledged.pendingWidth).toBeNull();
+    expect(reconcileAppContentWidthHandoff(acknowledged, width, 500).pendingWidth).toBeNull();
+  });
+
+  it("does not release a newer allocation for an older native size", () => {
+    const opening = reconcileAppContentWidthHandoff(undefined, 890, 1210);
+    const resized = reconcileAppContentWidthHandoff(opening, 547, 1210);
+    expect(reconcileAppContentWidthHandoff(resized, 547, 890).pendingWidth).toBe(547);
+    expect(reconcileAppContentWidthHandoff(resized, 547, 547).pendingWidth).toBeNull();
+  });
+
+  it("preserves zero-width allocations and the unallocated platform path", () => {
+    const zero = reconcileAppContentWidthHandoff(undefined, 0, 890);
+    expect(zero.pendingWidth).toBe(0);
+    expect(reconcileAppContentWidthHandoff(zero, null, 890).pendingWidth).toBeNull();
+  });
+});
 
 describe("desktop sidebar layout", () => {
   it("projects corner clearance from the current sidebar allocation without a new native sample", () => {

@@ -260,7 +260,7 @@ final class PaseoTopBarGeometryView: ExpoView {
     var left: CGFloat = 0
     var right: CGFloat = bounds.width
     var noFit = false
-    var usesNativeNavigationPlacement = false
+    var usesNativeBarPlacement = false
     let ownerLeadingOffset = max(0, convert(bounds, to: window).minX - window.bounds.minX)
     var leadingCornerInset: CGFloat = 0
     var requiresLeadingCornerSlot = false
@@ -293,7 +293,7 @@ final class PaseoTopBarGeometryView: ExpoView {
           left = max(0, frame.minX - bounds.minX - contentPadding)
           right = min(bounds.width, frame.maxX - bounds.minX + contentPadding)
         }
-        usesNativeNavigationPlacement = navigationGroup && !usesTopEdgePlacement && frame.height >= extent
+        usesNativeBarPlacement = !usesTopEdgePlacement && frame.height >= extent
       }
 
       if usesTopEdgePlacement {
@@ -313,9 +313,9 @@ final class PaseoTopBarGeometryView: ExpoView {
         requiresLeadingCornerSlot = (barGuide?.layoutFrame.minY ?? bounds.minY) > bounds.minY
       }
 
-      // Native navigation keeps the complete bar placement. Reapply occlusions only
-      // when our edge layout overrides it; folds still divide either placement.
-      let exclusions = usesNativeNavigationPlacement ? divisionRegionFrames : reservedRegionFrames
+      // Keep a complete native bar placement. Reapply occlusions only when our
+      // top-edge layout overrides it; folds still divide either placement.
+      let exclusions = usesNativeBarPlacement ? divisionRegionFrames : reservedRegionFrames
       if let centerY = alignmentCenterY, primaryRowHeight > 0 {
         top = max(0, centerY - primaryRowHeight / 2 - padding)
       }
