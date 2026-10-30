@@ -1,3 +1,11 @@
+import { TerminalSessionController } from "./terminal-session-controller.js";
+import { SessionDelivery } from "../server/session/owned-subscriptions/index.js";
+import {
+  decodeTerminalStreamFrame,
+  TerminalStreamOpcode,
+  type TerminalStreamFrame,
+} from "@getpaseo/protocol/binary-frames/index";
+import type { SessionOutboundMessage } from "../server/messages.js";
 import { createConnection } from "node:net";
 import { attachFramedSocket } from "./terminal-worker-frames.js";
 import xterm from "@xterm/headless";
@@ -174,7 +182,11 @@ const temporaryDirs: string[] = [];
 
 // A real detached worker in a throwaway home; afterEach closes its terminals and the worker.
 async function startRealWorkerManager(
-  options: { getTerminalActivityUrl?: () => string | null; paseoHome?: string } = {},
+  options: {
+    getTerminalActivityUrl?: () => string | null;
+    requestTimeoutMs?: number;
+    paseoHome?: string;
+  } = {},
 ): Promise<DaemonTerminalManager> {
   const { paseoHome = createTemporaryHome(), ...rest } = options;
   return startWorkerTerminalManager({
@@ -1570,18 +1582,18 @@ it("hard cuts the unreleased cell transport, closing its terminals", async () =>
   expect(manager.getTerminal(old.terminalId)).toBeUndefined();
   const workers = await workerRecords(paseoHome);
   expect(workers).toHaveLength(1);
-  expect(workers[0]!.protocolVersion).toBe(3);
+  expect(workers[0]!.protocolVersion).toBe(4);
 });
 
 it("leaves a worker from a newer Paseo running, reports it incompatible, and closes it on a kill stop", async () => {
   const paseoHome = createTemporaryHome();
-  const newer = await leaveWorkerWithTerminal(paseoHome, 4);
+  const newer = await leaveWorkerWithTerminal(paseoHome, 5);
 
   manager = await startRealWorkerManager({ paseoHome });
 
   const unavailable = manager.getUnavailableError?.();
   expect(unavailable).toBeInstanceOf(TerminalWorkerIncompatibleError);
-  expect(unavailable?.message).toContain("worker protocol 4");
+  expect(unavailable?.message).toContain("worker protocol 5");
   await expect(manager.getTerminals(newer.cwd)).rejects.toBeInstanceOf(
     TerminalWorkerIncompatibleError,
   );
@@ -1730,7 +1742,8 @@ it("replays bounded ANSI chunks before concurrent live output and reconstructs r
   await waitForCondition(() => live.includes("LIVE-AFTER-REPLAY"), 10000);
   unsubscribe();
   expect(events[0]).toBe("begin");
-  expect(events.indexOf("live")).toBeGreaterThan(events.indexOf("end"));
+  expect(events.lastIndexOf("end")).toBeGreaterThan(events.lastIndexOf("data"));
+  expect(live.match(/LIVE-AFTER-REPLAY/g)).toHaveLength(1);
   expect(chunks.length).toBeGreaterThan(1);
   expect(chunks.every((chunk) => chunk.byteLength <= 64 * 1024)).toBe(true);
   expect(metadata?.rows).toBe(8);
@@ -1857,7 +1870,7 @@ it("completes a replay larger than the socket budget while a sibling stays usabl
       completed = message.ok;
   });
   try {
-    framed.send({ type: "hello", secret: record!.secret, protocolVersion: 3 });
+    framed.send({ type: "hello", secret: record!.secret, protocolVersion: 4 });
     await waitForCondition(() => began, 10000);
     framed.send({
       type: "send",
@@ -1884,7 +1897,7 @@ it("completes a replay larger than the socket budget while a sibling stays usabl
     expect(resumedBytes).toBe(bytes);
     await waitForCondition(() => existingLiveOutput.includes("SAME-TERMINAL-LIVE"), 10000);
     expect(existingLiveOutput.match(/SAME-TERMINAL-LIVE/g)).toHaveLength(1);
-    expect(replayOrder.indexOf("live")).toBeGreaterThan(replayOrder.indexOf("end"));
+    expect(replayOrder.indexOf("live")).toBeLessThan(replayOrder.indexOf("end"));
   } finally {
     socket.destroy();
   }
@@ -1892,58 +1905,6 @@ it("completes a replay larger than the socket budget while a sibling stays usabl
   expect(
     (await manager.captureTerminal(terminal.id)).lines.some((line) => line.includes("READY-WIDE")),
   ).toBe(true);
-  await manager.detach();
-  const stalled = createConnection(record!.socketPath);
-  let overflowBegan = false;
-  let overflowError: string | null = null;
-  const existingViewerEvents: string[] = [];
-  const stalledFrames = attachFramedSocket(stalled, (value) => {
-    const message = value as TerminalWorkerToParentMessage | { type: "helloAck" };
-    if (message.type === "terminalMessage" && message.terminalId === terminal.id)
-      existingViewerEvents.push(message.message.type);
-    if (message.type === "helloAck")
-      stalledFrames.send({
-        type: "replayTerminal",
-        terminalId: terminal.id,
-        requestId: "overflow-replay",
-      });
-    if (message.type === "terminalReplay")
-      stalledFrames.send({ type: "replayAcknowledged", requestId: message.requestId });
-    if (message.type === "terminalReplay" && message.event.type === "begin") {
-      overflowBegan = true;
-      stalled.pause();
-    }
-    if (message.type === "response" && message.requestId === "overflow-replay" && !message.ok)
-      overflowError = message.error;
-  });
-  try {
-    stalledFrames.send({ type: "hello", secret: record!.secret, protocolVersion: 3 });
-    await waitForCondition(() => overflowBegan, 10000);
-    stalledFrames.send({
-      type: "send",
-      terminalId: terminal.id,
-      requestId: "produce-overflow",
-      message: { type: "input", data: "burst\r" },
-    });
-    await waitForCondition(() => existsSync(overflowProgress), 10000);
-    expect(stalled.destroyed).toBe(false);
-    stalled.resume();
-    await waitForCondition(() => overflowError !== null, 10000);
-    expect(overflowError).toBe("Terminal output exceeded the replay buffer; attach again");
-    expect(existingViewerEvents).toContain("streamError");
-  } finally {
-    stalled.destroy();
-  }
-  manager = await startRealWorkerManager({ paseoHome });
-  const recovered = await manager.replayTerminal(terminal.id, { scrollbackLines: 200 }, () => {});
-  expect(recovered!.cols).toBe(1024);
-  expect(
-    (await manager.captureTerminal(terminal.id)).lines.some((line) =>
-      line.includes("RECOVERED-LIVE"),
-    ),
-  ).toBe(true);
-  expect(manager.getTerminal(sibling.id)?.id).toBe(sibling.id);
-  expect(recovered!.retainedHistoryLines).toBe(1000);
   const exitingReplay = await manager.replayTerminal(
     terminal.id,
     { scrollbackLines: 200 },
@@ -1955,3 +1916,260 @@ it("completes a replay larger than the socket budget while a sibling stays usabl
   await waitForCondition(() => manager!.getTerminal(terminal.id) === undefined, 10000);
   expect(manager.getTerminal(sibling.id)?.id).toBe(sibling.id);
 }, 60000);
+
+function terminalViewers(terminalManager: DaemonTerminalManager, terminalId: string) {
+  const frames: Array<{ source: object; frame: TerminalStreamFrame }> = [];
+  const messages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+  let blockedSource: object | null = null;
+  let started = false;
+  let finish!: (error?: Error) => void;
+  const block = new Promise<void>((resolve, reject) => {
+    finish = (error) => (error ? reject(error) : resolve());
+  });
+  const delivery = new SessionDelivery(
+    (source, message) => {
+      messages.push({ source, message });
+    },
+    async (source, bytes) => {
+      const frame = decodeTerminalStreamFrame(bytes)!;
+      frames.push({ source, frame });
+      if (source === blockedSource && frame.opcode === TerminalStreamOpcode.ReplayBegin) {
+        started = true;
+        await block;
+      }
+    },
+  );
+  const controller = new TerminalSessionController({
+    terminalManager,
+    emit: (message) => {
+      delivery.reply(message);
+    },
+    hasBinaryChannel: () => true,
+    supportsChunkedReplay: () => true,
+    isPathWithinRoot: () => true,
+    sessionLogger: pino({ level: "silent" }),
+  });
+  return {
+    frames,
+    messages,
+    delivery,
+    controller,
+    block(source: object) {
+      blockedSource = source;
+    },
+    started: () => started,
+    finish,
+    async attach(source: object, requestId: string) {
+      delivery.attach(source, true);
+      const request = {
+        type: "subscribe_terminal_request" as const,
+        terminalId,
+        requestId,
+        restore: { mode: "visible-snapshot" as const, scrollbackLines: 1000 },
+      };
+      await delivery.request(source, request, () => controller.dispatch(request, delivery));
+    },
+    text(source: object) {
+      return frames
+        .filter((row) => row.source === source && row.frame.opcode === TerminalStreamOpcode.Output)
+        .map((row) => Buffer.from(row.frame.payload).toString("utf8"))
+        .join("");
+    },
+    ended(source: object) {
+      return messages.filter(
+        (row) => row.source === source && row.message.type === "terminal_stream_exit",
+      );
+    },
+    replayed(source: object) {
+      return frames.some(
+        (row) => row.source === source && row.frame.opcode === TerminalStreamOpcode.ReplayEnd,
+      );
+    },
+  };
+}
+
+it("isolates a rejected replay sink while another viewer of the same terminal stays live", async () => {
+  manager = await startRealWorkerManager();
+  const session = trackTerminal(
+    await manager.createTerminal({
+      cwd: createTemporaryHome(),
+      workspaceId: "two-viewers",
+      ...nodeTerminalCommand(
+        'process.stdout.write("READY\\r\\n"); process.stdin.on("data", data => process.stdout.write("ECHO:" + data)); setInterval(() => {}, 1000);',
+      ),
+    }),
+  );
+  await waitForCondition(
+    async () =>
+      (await manager!.captureTerminal(session.id)).lines.some((line) => line.includes("READY")),
+    10000,
+  );
+  const viewers = terminalViewers(manager, session.id);
+  const desktop = {},
+    phone = {},
+    fresh = {};
+  try {
+    await viewers.attach(desktop, "desktop");
+    await waitForCondition(() => viewers.replayed(desktop), 10000);
+    viewers.block(phone);
+    await viewers.attach(phone, "phone");
+    await waitForCondition(viewers.started, 10000);
+    session.send({ type: "input", data: "BEFORE-FAILURE\r" });
+    await waitForCondition(() => viewers.text(desktop).includes("ECHO:BEFORE-FAILURE"), 1500);
+    expect(viewers.ended(desktop)).toHaveLength(0);
+    expect(viewers.ended(phone)).toHaveLength(0);
+    viewers.finish(new Error("Phone socket closed"));
+    await waitForCondition(() => viewers.ended(phone).length === 1, 10000);
+    expect(viewers.ended(phone)[0]?.message).toMatchObject({
+      payload: { error: "Phone socket closed" },
+    });
+    session.send({ type: "input", data: "AFTER-FAILURE\r" });
+    await waitForCondition(() => viewers.text(desktop).includes("ECHO:AFTER-FAILURE"), 10000);
+    expect(viewers.ended(desktop)).toHaveLength(0);
+    await viewers.attach(fresh, "fresh");
+    await waitForCondition(() => viewers.replayed(fresh), 10000);
+    expect(manager.getTerminal(session.id)).toBe(session);
+  } finally {
+    viewers.finish();
+    await viewers.delivery.close();
+  }
+}, 20000);
+
+it.each(["overflow", "timeout", "complete"] as const)(
+  "keeps healthy same-terminal viewers live during replay %s",
+  async (outcome) => {
+    manager = await startRealWorkerManager({
+      requestTimeoutMs: outcome === "timeout" ? 2000 : 10000,
+    });
+    const session = trackTerminal(
+      await manager.createTerminal({
+        cwd: createTemporaryHome(),
+        workspaceId: "per-viewer-tail",
+        ...nodeTerminalCommand(`
+        process.stdout.write("READY\\r\\n");
+        process.stdin.on("data", data => {
+          if (data.toString().includes("burst")) process.stdout.write("x".repeat(5 * 1024 * 1024) + "\\r\\nBURST-DONE\\r\\n");
+          else process.stdout.write("ECHO:" + data);
+        });
+        setInterval(() => {}, 1000);
+      `),
+      }),
+    );
+    await waitForCondition(
+      async () =>
+        (await manager!.captureTerminal(session.id)).lines.some((line) => line.includes("READY")),
+      10000,
+    );
+    const viewers = terminalViewers(manager, session.id);
+    const desktop = {},
+      phone = {},
+      concurrent = {};
+    try {
+      await viewers.attach(desktop, "desktop");
+      await waitForCondition(() => viewers.replayed(desktop), 10000);
+      viewers.block(phone);
+      await viewers.attach(phone, "phone");
+      await waitForCondition(viewers.started, 10000);
+      session.send({ type: "input", data: "DURING-REPLAY\r" });
+      await waitForCondition(() => viewers.text(desktop).includes("ECHO:DURING-REPLAY"), 1500);
+      if (outcome === "complete") {
+        await viewers.attach(concurrent, "concurrent");
+        await waitForCondition(() => viewers.replayed(concurrent), 1500);
+        expect(viewers.replayed(phone)).toBe(false);
+        viewers.finish();
+        await waitForCondition(() => viewers.text(phone).includes("ECHO:DURING-REPLAY"), 10000);
+        expect(viewers.text(phone).match(/ECHO:DURING-REPLAY/g)).toHaveLength(1);
+        const order = viewers.frames
+          .filter((row) => row.source === phone)
+          .map((row) => row.frame.opcode);
+        expect(order.indexOf(TerminalStreamOpcode.Output)).toBeGreaterThan(
+          order.indexOf(TerminalStreamOpcode.ReplayEnd),
+        );
+        expect(viewers.ended(phone)).toHaveLength(0);
+      } else {
+        if (outcome === "overflow") session.send({ type: "input", data: "burst\r" });
+        await waitForCondition(() => viewers.ended(phone).length === 1, 10000);
+        const error =
+          outcome === "overflow"
+            ? "Terminal replay live tail exceeded the buffer; attach again"
+            : "Terminal worker request timed out: replayTerminal";
+        expect(viewers.ended(phone)[0]?.message).toMatchObject({ payload: { error } });
+        viewers.finish(); // A late sink completion must not acknowledge another request.
+        await viewers.attach(concurrent, "fresh");
+        await waitForCondition(() => viewers.replayed(concurrent), 10000);
+      }
+      session.send({ type: "input", data: "AFTER-REPLAY\r" });
+      await waitForCondition(() => viewers.text(desktop).includes("ECHO:AFTER-REPLAY"), 10000);
+      expect(viewers.ended(desktop)).toHaveLength(0);
+      expect(manager.getTerminal(session.id)).toBe(session);
+    } finally {
+      viewers.finish();
+      await viewers.delivery.close();
+    }
+  },
+  25000,
+);
+
+it("cancels a replay on controller replacement and ignores its late sink completion", async () => {
+  const paseoHome = createTemporaryHome();
+  manager = await startRealWorkerManager({ paseoHome });
+  const session = trackTerminal(
+    await manager.createTerminal({
+      cwd: paseoHome,
+      workspaceId: "replay-replacement",
+      ...nodeTerminalCommand('process.stdout.write("READY\\r\\n"); setInterval(() => {}, 1000);'),
+    }),
+  );
+  await waitForCondition(
+    async () =>
+      (await manager!.captureTerminal(session.id)).lines.some((line) => line.includes("READY")),
+    10000,
+  );
+  let releaseOld!: () => void;
+  const oldGate = new Promise<void>((resolve) => {
+    releaseOld = resolve;
+  });
+  let began = false;
+  const oldReplay = manager.replayTerminal(session.id, undefined, async (event) => {
+    if (event.type === "begin") {
+      began = true;
+      await oldGate;
+    }
+  });
+  const failure = oldReplay.catch((error) => error as Error);
+  let releaseNew!: () => void;
+  const newGate = new Promise<void>((resolve) => {
+    releaseNew = resolve;
+  });
+  try {
+    await waitForCondition(() => began, 10000);
+    const [record] = await workerRecords(paseoHome);
+    const replacement = await connectTerminalWorker({
+      socketPath: record!.socketPath,
+      secret: record!.secret,
+    });
+    await waitForCondition(() => !replacement.connected, 10000);
+    expect(await failure).toBeInstanceOf(Error);
+    let newBegan = false;
+    let ended = false;
+    const freshReplay = manager.replayTerminal(session.id, undefined, async (event) => {
+      if (event.type === "begin") {
+        newBegan = true;
+        await newGate;
+      }
+      if (event.type === "end") ended = true;
+    });
+    await waitForCondition(() => newBegan, 10000);
+    releaseOld();
+    // A real worker request crosses the replacement socket while its replay remains blocked.
+    expect((await manager.captureTerminal(session.id)).lines.join("")).toContain("READY");
+    expect(ended).toBe(false);
+    releaseNew();
+    expect(await freshReplay).not.toBeNull();
+    expect(ended).toBe(true);
+    expect(manager.getTerminal(session.id)).toBe(session);
+  } finally {
+    releaseOld();
+    releaseNew();
+  }
+}, 20000);

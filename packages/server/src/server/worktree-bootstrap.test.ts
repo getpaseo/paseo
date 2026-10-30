@@ -210,13 +210,7 @@ describe("runWorktreeAutoTerminals", () => {
             getTitle: () => undefined,
             getExitInfo: () => null,
             hasOutput: () => false,
-            getState: () => ({
-              rows: 0,
-              cols: 0,
-              grid: [],
-              scrollback: [],
-              cursor: { row: 0, col: 0 },
-            }),
+
             kill: () => {},
             killAndWait: async () => {},
           };
@@ -314,13 +308,7 @@ describe("runWorktreeAutoTerminals", () => {
             };
           },
           hasOutput: () => true,
-          getState: () => ({
-            rows: 1,
-            cols: 1,
-            grid: [[{ char: "$" }]],
-            scrollback: [],
-            cursor: { row: 0, col: 0 },
-          }),
+
           kill: () => {},
           onTitleChange: () => () => {},
           onActivityChange: () => () => {},

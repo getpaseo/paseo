@@ -64,50 +64,14 @@ interface TerminalReplayPorts {
   flushOutput(id: string): void;
 }
 
-/** Owns the worker's replay/live cut, bounded live tail and controller lifetime. */
+/** Worker-owned ANSI capture and paced delivery; live observations never wait for a replay. */
 export function createTerminalReplayController(ports: TerminalReplayPorts) {
   let controller: FramedSocket | null = null;
   const acknowledgements = new Map<string, { resolve(): void; reject(error: Error): void }>();
-  // Only the live tail of a replaying terminal is held. Replay chunks use the socket's
-  // write completion directly; they never enter this buffer or fill the shared socket.
-  interface ReplayTail {
-    readers: number;
-    bytes: number;
-    connection: FramedSocket;
-    output: TerminalWorkerToParentMessage[];
-    overflow: boolean;
-    failure: unknown;
-    completed: Promise<void>;
-    resolve: () => void;
-    reject: (error: unknown) => void;
-    exit?: Extract<TerminalWorkerToParentMessage, { type: "terminalExit" }>;
-  }
-  const replayTails = new Map<string, ReplayTail>();
-  const MAX_REPLAY_TAIL_BYTES = 4 * 1024 * 1024;
 
   function sendToController(message: TerminalWorkerToParentMessage): void {
-    if (
-      message.type === "terminalExit" ||
-      (message.type === "terminalMessage" && message.message.type === "output")
-    ) {
-      const tail = replayTails.get(message.terminalId);
-      if (tail) {
-        if (message.type === "terminalExit") {
-          tail.exit = message;
-          return;
-        }
-        if (!tail.overflow && message.message.type === "output") {
-          tail.bytes += Buffer.byteLength(message.message.data);
-          if (tail.bytes > MAX_REPLAY_TAIL_BYTES) {
-            tail.overflow = true;
-            tail.output = [];
-          } else tail.output.push(message);
-        }
-        return;
-      }
-    }
-    // With no controller the event is dropped; the headless terminal keeps the screen, and the
-    // next daemon reads it through listTerminals.
+    // A stalled physical controller is different from a stalled viewer: all its
+    // observations must reconnect to the surviving worker after this socket closes.
     if (controller && controller.socket.writableLength > 4 * 1024 * 1024) {
       controller.socket.destroy();
       return;
@@ -116,10 +80,9 @@ export function createTerminalReplayController(ports: TerminalReplayPorts) {
   }
 
   async function deliverReplay(
+    connection: FramedSocket,
     message: Extract<TerminalWorkerRequest, { type: "replayTerminal" }>,
   ): Promise<void> {
-    const connection = controller;
-    if (!connection) return;
     ports.flushOutput(message.terminalId);
     const session = ports.getSession(message.terminalId);
     if (!session) {
@@ -131,23 +94,17 @@ export function createTerminalReplayController(ports: TerminalReplayPorts) {
       });
       return;
     }
-    const existingTail = replayTails.get(session.id);
-    const tail =
-      existingTail?.connection === connection ? existingTail : createReplayTail(connection);
-    tail.readers++;
-    replayTails.set(session.id, tail);
-    let released = false;
+    // Flush and capture share one synchronous turn. Each daemon viewer buffers
+    // its own live tail and discards revisions already included in this cut.
+    const replay = createTerminalReplay(session, message.options);
+    let next = replay.next();
     try {
-      const replay = createTerminalReplay(session, message.options);
-      let next = replay.next();
       while (!next.done) {
-        if (tail.overflow)
-          throw new Error("Terminal output exceeded the replay buffer; attach again");
+        if (controller !== connection) throw new Error("Terminal replay controller disconnected");
         const acknowledged = new Promise<void>((resolve, reject) => {
           acknowledgements.set(message.requestId, { resolve, reject });
         });
         void acknowledged.catch(() => {});
-        // Register before sending: even a synchronous controller cannot race the acknowledgement.
         await connection.sendAndWait({
           type: "terminalReplay",
           requestId: message.requestId,
@@ -157,86 +114,15 @@ export function createTerminalReplayController(ports: TerminalReplayPorts) {
         acknowledgements.delete(message.requestId);
         next = replay.next();
       }
-      released = true;
-      await releaseReplayTail(session, tail);
       await connection.sendAndWait({
         type: "response",
         requestId: message.requestId,
         ok: true,
         result: next.value,
       });
-    } catch (error) {
-      tail.failure = error;
-      if (!released) await releaseReplayTail(session, tail);
-      throw error;
     } finally {
       acknowledgements.delete(message.requestId);
     }
-  }
-
-  function createReplayTail(connection: FramedSocket): ReplayTail {
-    let resolve!: () => void;
-    let reject!: (error: unknown) => void;
-    const completed = new Promise<void>((onResolve, onReject) => {
-      resolve = onResolve;
-      reject = onReject;
-    });
-    // A write can fail before every reader reaches the shared completion barrier.
-    void completed.catch(() => {});
-    return {
-      connection,
-      readers: 0,
-      bytes: 0,
-      output: [],
-      overflow: false,
-      failure: null,
-      completed,
-      resolve,
-      reject,
-    };
-  }
-
-  async function releaseReplayTail(session: LocalTerminalSession, tail: ReplayTail): Promise<void> {
-    if (--tail.readers === 0) {
-      try {
-        while (!tail.failure && !tail.overflow && tail.readers === 0 && tail.output.length > 0) {
-          if (controller !== tail.connection) throw new Error("Terminal worker controller changed");
-          const output = tail.output.shift()!;
-          if (output.type === "terminalMessage" && output.message.type === "output")
-            tail.bytes -= Buffer.byteLength(output.message.data);
-          await tail.connection.sendAndWait(output);
-        }
-      } catch (error) {
-        tail.failure = error;
-      } finally {
-        finishReplayTail(session, tail);
-      }
-    }
-    await tail.completed;
-  }
-
-  function finishReplayTail(session: LocalTerminalSession, tail: ReplayTail): void {
-    if (tail.readers !== 0) return;
-    if (replayTails.get(session.id) === tail) replayTails.delete(session.id);
-    if ((tail.overflow || tail.failure) && controller === tail.connection) {
-      // The live stream is shared by every viewer of this terminal. Once its tail
-      // is discarded none of those viewers may continue from the old screen.
-      sendToController({
-        type: "terminalMessage",
-        terminalId: session.id,
-        message: {
-          type: "streamError",
-          error: "Terminal output exceeded the replay buffer; attach again",
-        },
-        replayPreamble: session.getReplayPreamble(),
-      });
-    }
-    if (tail.exit && controller === tail.connection) sendToController(tail.exit);
-    if (tail.failure || tail.overflow)
-      tail.reject(
-        tail.failure ?? new Error("Terminal output exceeded the replay buffer; attach again"),
-      );
-    else tail.resolve();
   }
 
   return {
@@ -246,12 +132,10 @@ export function createTerminalReplayController(ports: TerminalReplayPorts) {
       else pending?.resolve();
     },
     setConnection(connection: FramedSocket | null): void {
+      if (controller === connection) return;
       const previous = controller;
       controller = connection;
-      if (previous !== connection) previous?.socket.destroy();
-      // Old writes settle on their original socket; new output and replay belong
-      // exclusively to the replacement controller.
-      replayTails.clear();
+      previous?.socket.destroy();
       for (const pending of acknowledgements.values())
         pending.reject(new Error("Terminal replay controller disconnected"));
       acknowledgements.clear();
@@ -263,7 +147,7 @@ export function createTerminalReplayController(ports: TerminalReplayPorts) {
       const connection = controller;
       if (!connection) return;
       try {
-        await deliverReplay(request);
+        await deliverReplay(connection, request);
       } catch (error) {
         await connection
           .sendAndWait({

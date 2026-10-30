@@ -92,7 +92,6 @@ export type ClientMessage =
   | { type: "mouse"; row: number; col: number; button: number; action: "down" | "up" | "move" };
 
 export type ServerMessage =
-  | { type: "streamError"; error: string }
   | { type: "output"; data: string; revision?: number }
   | { type: "snapshot"; state: TerminalState; revision?: number }
   | { type: "snapshotReady"; revision?: number; replayPreamble?: string }

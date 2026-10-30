@@ -597,16 +597,22 @@ export function createWorkerTerminalManager(
   }
 
   function attachWorker(): void {
-    worker.on("message", (message: TerminalWorkerToParentMessage) => {
+    const connection = worker;
+    connection.on("message", (message: TerminalWorkerToParentMessage) => {
       if (message.type === "terminalReplay") {
         const sink = replaySinks.get(message.requestId);
         void Promise.resolve()
           .then(() => sink?.(message.event))
           .then(
             () =>
-              worker.send({ type: "replayAcknowledged", requestId: message.requestId }, () => {}),
+              pendingRequests.has(message.requestId) &&
+              connection.send(
+                { type: "replayAcknowledged", requestId: message.requestId },
+                () => {},
+              ),
             (error: unknown) =>
-              worker.send(
+              pendingRequests.has(message.requestId) &&
+              connection.send(
                 {
                   type: "replayAcknowledged",
                   requestId: message.requestId,
@@ -634,14 +640,15 @@ export function createWorkerTerminalManager(
       handleWorkerEvent(message);
     });
 
-    worker.on("close", () => {
+    connection.on("close", () => {
+      if (worker !== connection) return;
       workerDisconnected = true;
       rejectPendingRequests(new Error("Terminal worker connection closed"));
       const reconnect = managerOptions.reconnect;
       if (!detached && reconnect) {
         reconnecting = (async () => {
-          const connection = await reconnect();
-          if (!connection) {
+          const recovered = await reconnect();
+          if (!recovered) {
             for (const terminalId of Array.from(recordsById.keys())) {
               handleTerminalExitEvent({
                 type: "terminalExit",
@@ -652,10 +659,10 @@ export function createWorkerTerminalManager(
             return;
           }
           if (detached) {
-            connection.disconnect();
+            recovered.disconnect();
             return;
           }
-          worker = connection;
+          worker = recovered;
           workerDisconnected = false;
           attachWorker();
           await adoptTerminals();
@@ -687,6 +694,7 @@ export function createWorkerTerminalManager(
     if (workerDisconnected || !worker.connected) {
       return Promise.reject(new Error("Terminal worker is not running"));
     }
+    const connection = worker;
     const requestId = randomUUID();
     if (sink) replaySinks.set(requestId, sink);
     const message = { ...input, requestId } as TerminalWorkerRequest;
@@ -694,14 +702,14 @@ export function createWorkerTerminalManager(
       const timeout = setTimeout(() => {
         pendingRequests.delete(requestId);
         if (sink)
-          worker.send(
+          connection.send(
             { type: "replayAcknowledged", requestId, error: "Terminal replay delivery timed out" },
             () => {},
           );
         reject(new Error(`Terminal worker request timed out: ${input.type}`));
       }, requestTimeoutMs);
       pendingRequests.set(requestId, { resolve, reject, timeout });
-      worker.send(message, (error) => {
+      connection.send(message, (error) => {
         if (!error) {
           return;
         }

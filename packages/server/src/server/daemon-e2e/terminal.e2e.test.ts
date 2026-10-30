@@ -1297,7 +1297,7 @@ test("resize updates server dimensions without sending a live snapshot", async (
 
   await new Promise((resolve) => setTimeout(resolve, 300));
 
-  const state = ctx.daemon.daemon.terminalManager?.getTerminal(terminalId)?.getState();
+  const state = ctx.daemon.daemon.terminalManager?.getTerminal(terminalId)?.getSize();
   expect(state?.rows).toBe(10);
   expect(state?.cols).toBe(40);
 
@@ -1314,7 +1314,7 @@ test("the latest resize from any attached client owns the PTY size", async () =>
   );
 
   const readSize = () => {
-    const state = ctx.daemon.daemon.terminalManager?.getTerminal(terminalId)?.getState();
+    const state = ctx.daemon.daemon.terminalManager?.getTerminal(terminalId)?.getSize();
     return state ? { rows: state.rows, cols: state.cols } : null;
   };
   const expectSize = async (size: { rows: number; cols: number }) => {

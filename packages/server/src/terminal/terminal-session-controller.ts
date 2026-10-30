@@ -952,14 +952,6 @@ export class TerminalSessionController {
         if (this.activeStreams.get(slot) !== activeStream) {
           return;
         }
-        if (message.type === "streamError") {
-          activeStream.owner.emit({
-            type: "terminal_stream_exit",
-            payload: { terminalId: activeStream.terminalId, error: message.error },
-          });
-          void activeStream.owner.release();
-          return;
-        }
         if (message.type === "snapshot" || message.type === "snapshotReady") {
           activeStream.readyRevision = message.revision;
           activeStream.outputCoalescer.flush();
