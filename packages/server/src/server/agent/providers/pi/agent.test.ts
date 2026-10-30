@@ -3710,6 +3710,8 @@ describe("Pi tool-result images", () => {
 test("Pi image rendering preserves turn ownership across an interrupt and follow-up", async () => {
   const { pi, session, events } = await createSession();
   onTestFinished(() => session.close());
+  const emitted: AgentStreamEvent[] = [];
+  session.subscribe((event) => emitted.push(event));
   const native = pi.latestSession();
   const first = await session.startTurn("read image");
   native.emit({
@@ -3742,13 +3744,13 @@ test("Pi image rendering preserves turn ownership across an interrupt and follow
   expect(events.turnCompletedEvents().some((event) => event.turnId === followup.turnId)).toBe(
     false,
   );
-  const imageEvent = events.timelineAndCompletionEvents();
-  expect(
-    imageEvent.some(
-      (event) => event.type === "timeline" && event.item.type === "assistant_message",
-    ),
-  ).toBe(true);
-  expect(followup.turnId).not.toBe(first.turnId);
+  const imageEvent = emitted.find(
+    (event) =>
+      event.type === "timeline" &&
+      event.item.type === "assistant_message" &&
+      event.item.text.includes("![Image]("),
+  );
+  expect(imageEvent).toMatchObject({ turnId: first.turnId });
   native.finishTurn();
   await events.nextTurnCompletion();
 });

@@ -111,3 +111,28 @@ describe("splitPiToolResultImages", () => {
     expect(result).toMatchObject({ exitCode: 0 });
   });
 });
+
+test("tool-result images remove nested structured image data while preserving metadata", () => {
+  const data = Buffer.from("nested screenshot bytes").toString("base64");
+  const result = parseToolResult({
+    content: [{ type: "image", data, mimeType: "image/png" }],
+    structuredContent: {
+      content: [{ type: "image", data, mimeType: "image/png", width: 64 }],
+      captureId: "capture-1",
+      read: { type: "image", data, mimeType: "image/png", note: "Read image file" },
+      extra: { data: "keep ordinary data" },
+    },
+  });
+  const split = splitPiToolResultImages(result);
+  const detail = mapToolDetail(parseToolArgs("screenshot", {}), split.result);
+  expect(JSON.stringify(detail)).not.toContain(data);
+  expect(split.images).toEqual([{ data, mimeType: "image/png" }]);
+  expect(split.result).toMatchObject({
+    structuredContent: {
+      content: [{ type: "image", data: "[image]", mimeType: "image/png", width: 64 }],
+      captureId: "capture-1",
+      read: { type: "image", data: "[image]", mimeType: "image/png", note: "Read image file" },
+      extra: { data: "keep ordinary data" },
+    },
+  });
+});

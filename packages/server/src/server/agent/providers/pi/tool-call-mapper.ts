@@ -274,9 +274,23 @@ export function splitPiToolResultImages(result: PiToolResult): {
     result: {
       ...result,
       content,
-      ...(toPiImageOutput(result.structuredContent) ? { structuredContent: "[image]" } : {}),
+      ...(result.structuredContent === undefined
+        ? {}
+        : { structuredContent: withoutImageData(result.structuredContent) }),
     },
   };
+}
+
+function withoutImageData(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutImageData);
+  if (value === null || typeof value !== "object") return value;
+  const image = toPiImageOutput(value);
+  return Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [
+      key,
+      image && key === "data" ? "[image]" : withoutImageData(child),
+    ]),
+  );
 }
 
 function toPiImageOutput(block: unknown): ProviderImageOutput | null {
