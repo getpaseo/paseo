@@ -1,4 +1,3 @@
-const withAndroidOrientation = require("./plugins/with-android-orientation");
 const fs = require("node:fs");
 const path = require("node:path");
 const pkg = require("./package.json");
@@ -103,7 +102,7 @@ export default {
     name: variant.name,
     slug: "voice-mobile",
     version: nativeReleaseVersion.appVersion,
-    orientation: "portrait",
+    orientation: "default",
     icon: "./assets/images/icon.png",
     scheme: "paseo",
     userInterfaceStyle: "automatic",
@@ -143,7 +142,6 @@ export default {
       searchPaths: ["../../node_modules", "./node_modules"],
     },
     plugins: [
-      withAndroidOrientation,
       "expo-router",
       withPasteInput,
       withAndroidScroll,

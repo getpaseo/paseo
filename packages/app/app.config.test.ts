@@ -60,30 +60,37 @@ describe("Android app config", () => {
   );
 });
 
-it("keeps the Android manifest portrait for phone startup", async () => {
+it("follows system rotation on Android", async () => {
   const manifest = await resolveAndroidManifest();
   const activity = manifest.application[0].activity.find(
     (entry: ManifestEntry) => entry.$["android:name"] === ".MainActivity",
   );
-  expect(activity.$["android:screenOrientation"]).toBe("portrait");
+  expect(activity.$["android:screenOrientation"]).toBe("unspecified");
 }, 30_000);
 
-it("updates the native orientation before launch and when screen size changes", async () => {
-  const plugin = createRequire(import.meta.url)("./plugins/with-android-orientation.js");
-  const config = plugin({ name: "test", slug: "test" });
-  const result = await config.mods.android.mainActivity({
-    modRequest: {},
-    modResults: {
-      language: "kt",
-      contents:
-        "class MainActivity {\n  override fun onCreate(savedInstanceState: Bundle?) {\n    super.onCreate(null)\n  }\n}",
-    },
-  });
-  expect(result.modResults.contents).toContain("smallestScreenWidthDp >= 600");
-  expect(result.modResults.contents).toContain("SCREEN_ORIENTATION_UNSPECIFIED");
-  expect(result.modResults.contents).toContain("SCREEN_ORIENTATION_PORTRAIT");
-  expect(result.modResults.contents).toContain(
-    "updateOrientation(resources.configuration)\n    super.onCreate(null)",
-  );
-  expect(result.modResults.contents).toContain("updateOrientation(newConfig)");
-});
+it("allows all orientations on iPhone and iPad", async () => {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const root = await mkdtemp(join(tmpdir(), "paseo-ios-config-"));
+  try {
+    const { exp } = await getPrebuildConfigAsync(__dirname, { platforms: ["ios"] });
+    await compileModsAsync(exp, {
+      projectRoot: root,
+      introspect: true,
+      platforms: ["ios"],
+      assertMissingModProviders: false,
+    });
+    const plist = exp._internal.modResults.ios.infoPlist;
+    const orientations = [
+      "UIInterfaceOrientationPortrait",
+      "UIInterfaceOrientationPortraitUpsideDown",
+      "UIInterfaceOrientationLandscapeLeft",
+      "UIInterfaceOrientationLandscapeRight",
+    ];
+    expect(plist.UISupportedInterfaceOrientations).toEqual(orientations);
+    expect(plist["UISupportedInterfaceOrientations~ipad"]).toEqual(orientations);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}, 30_000);
