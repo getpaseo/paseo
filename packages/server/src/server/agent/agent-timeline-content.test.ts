@@ -1,3 +1,4 @@
+import { AgentTimelineItemPayloadSchema } from "@getpaseo/protocol/messages";
 import { describe, expect, test } from "vitest";
 
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
@@ -91,8 +92,50 @@ describe("agent timeline content", () => {
     });
     if (item.type !== "tool_call" || item.detail.type !== "unknown") throw new Error("shape");
     const output = item.detail.output as unknown[];
-    expect(output.at(-1)).toMatch(/^…\[truncated \d+ items\]$/);
+    expect(output.length).toBeLessThan(1_000_000);
+    expect(output.every((value) => value === 1)).toBe(true);
     expect(serializedBytes(item)).toBeLessThanOrEqual(64 * 1024);
+  });
+
+  test("keeps short strings whole and limits idempotently when an item has many strings", () => {
+    const callId = "3f2b8c1e-9a4d-4e6f-8b2a-1c3d5e7f9a0b";
+    const item = limitAgentTimelineItemContent({
+      type: "tool_call",
+      callId,
+      name: "mcp__search__files",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "unknown",
+        input: { query: "useWorkspaceSomethingVeryDescriptive" },
+        output: Array.from(
+          { length: 10_000 },
+          (_, index) => `${String(index).padStart(5, "0")}${"p".repeat(28)}`,
+        ),
+      },
+    });
+    if (item.type !== "tool_call" || item.detail.type !== "unknown") throw new Error("shape");
+    expect(item.callId).toBe(callId);
+    expect(item.detail.input).toEqual({ query: "useWorkspaceSomethingVeryDescriptive" });
+    const output = item.detail.output as string[];
+    expect(output.length).toBeLessThan(10_000);
+    expect(output.every((path) => path.length === 33)).toBe(true);
+    expect(serializedBytes(item)).toBeLessThanOrEqual(64 * 1024);
+    expect(limitAgentTimelineItemContent(item)).toBe(item);
+  });
+
+  test("keeps a long typed array valid against the wire schema", () => {
+    const item = limitAgentTimelineItemContent({
+      type: "todo",
+      items: Array.from({ length: 20_000 }, (_, index) => ({
+        text: `Task ${index}`,
+        completed: false,
+      })),
+    });
+    if (item.type !== "todo") throw new Error("shape");
+    expect(item.items.length).toBeLessThan(20_000);
+    expect(AgentTimelineItemPayloadSchema.safeParse(item).success).toBe(true);
+    expect(serializedBytes(item)).toBeLessThanOrEqual(256 * 1024);
   });
 
   test("is stable on an already-limited item", () => {

@@ -4,11 +4,14 @@ import type { JsonValue } from "@getpaseo/protocol/agent-types";
 export const PLUGIN_TIMELINE_DATA_MAX_BYTES = 64 * 1024;
 
 // One timeline fetch sends its entries in one WebSocket message, so every item must stay small.
-// Budgets count UTF-16 units plus a fixed cost per node; neither is exact JSON bytes.
+// Budgets count UTF-16 units plus a fixed cost per node; neither is exact JSON bytes. They bound
+// long strings and long arrays, not wide objects (every entry is kept) or multi-byte text.
 const TOOL_CALL_BUDGET = 64 * 1024;
 const ITEM_BUDGET = 256 * 1024;
 const NODE_COST = 8;
 const MARKER_COST = 32;
+// Ids, names, paths and queries stay whole, so an item keeps its identity across passes.
+const SHORT_STRING = 1024;
 const MAX_DEPTH = 64;
 
 export function assertPluginTimelineDataSize(data: JsonValue): void {
@@ -94,13 +97,15 @@ function cut(value: unknown, depth: number, state: CutState): unknown {
   if (Array.isArray(value)) {
     let changed = false;
     const output: unknown[] = [];
-    for (const [index, element] of value.entries()) {
-      if (state.remaining <= 0) {
-        output.push(`…[truncated ${value.length - index} items]`);
+    for (const element of value) {
+      const remainingBefore = state.remaining;
+      const next = cut(element, depth + 1, state);
+      if (state.remaining < 0) {
+        // Drop this and later elements. A marker element would break typed arrays.
+        state.remaining = remainingBefore;
         changed = true;
         break;
       }
-      const next = cut(element, depth + 1, state);
       changed ||= next !== element;
       output.push(next);
     }
@@ -130,11 +135,11 @@ export function limitAgentTimelineItemContent(item: AgentTimelineItem): AgentTim
   if (!size.tooDeep && size.nodeCost + stringTotal <= budget) return item;
 
   // Strings get what structure leaves, but at least half the budget, less a margin for JSON
-  // escaping. Arrays stop once the copy has spent the budget, which bounds items whose
-  // structure alone is too big.
+  // escaping. Arrays drop the elements that do not fit, which bounds items whose short strings
+  // or structure alone are too big.
   const markerCost =
-    MARKER_COST * size.stringLengths.filter((length) => length > MARKER_COST).length;
+    MARKER_COST * size.stringLengths.filter((length) => length > SHORT_STRING).length;
   const available = (budget * 15) / 16 - Math.min(size.nodeCost, budget / 2) - markerCost;
-  const stringCap = Math.max(MARKER_COST, findStringCap(size.stringLengths, available));
+  const stringCap = Math.max(SHORT_STRING, findStringCap(size.stringLengths, available));
   return cut(item, 0, { stringCap, remaining: budget }) as AgentTimelineItem;
 }
