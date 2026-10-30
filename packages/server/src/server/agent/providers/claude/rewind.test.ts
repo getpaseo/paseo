@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import type { Query } from "@anthropic-ai/claude-agent-sdk";
 
 import {
+  findSteeredMessageParent,
   revertClaudeConversation,
   revertClaudeConversationAndFiles,
   revertClaudeFiles,
@@ -215,6 +216,58 @@ describe("Claude rewind against the Claude SDK", () => {
     expect(readMessageTexts(path.join(projectDir, `${currentSessionId}.jsonl`))).toEqual([
       "first",
       "first reply",
+    ]);
+  });
+
+  test("forks just before a message steered into a running turn", async () => {
+    tempRoot = mkdtempSync(path.join(tmpdir(), "claude-rewind-steer-"));
+    delete process.env.CLAUDE_CONFIG_DIR;
+    const projectDir = path.join(tempRoot, "projects", "-repo");
+    mkdirSync(projectDir, { recursive: true });
+    const sessionId = randomUUID();
+    const firstUser = randomUUID();
+    const toolUse = randomUUID();
+    const toolResult = randomUUID();
+    const steeredMessage = randomUUID();
+    const queuedCommand = randomUUID();
+    const transcriptPath = path.join(projectDir, `${sessionId}.jsonl`);
+    writeTranscript(transcriptPath, sessionId, [
+      { type: "user", uuid: firstUser, parentUuid: null, text: "first" },
+      { type: "assistant", uuid: toolUse, parentUuid: firstUser, text: "running a tool" },
+      { type: "user", uuid: toolResult, parentUuid: toolUse, text: "tool output" },
+      // What Claude Code writes when it reads a steered message between two tool calls.
+      JSON.stringify({
+        type: "attachment",
+        uuid: queuedCommand,
+        parentUuid: toolResult,
+        sessionId,
+        attachment: {
+          type: "queued_command",
+          prompt: [{ type: "text", text: "steered" }],
+          source_uuid: steeredMessage,
+        },
+      }),
+      { type: "assistant", uuid: randomUUID(), parentUuid: queuedCommand, text: "reply to steer" },
+    ]);
+
+    const parent = await findSteeredMessageParent(transcriptPath, steeredMessage);
+    expect(parent).toBe(toolResult);
+    expect(await findSteeredMessageParent(transcriptPath, randomUUID())).toBeNull();
+
+    let currentSessionId = sessionId;
+    await revertClaudeConversation({
+      sdk: realClaudeRewindSdk,
+      sessionId,
+      transcriptPath,
+      messageId: parent!,
+      setSessionId: (nextSessionId) => {
+        currentSessionId = nextSessionId;
+      },
+    });
+    expect(readMessageTexts(path.join(projectDir, `${currentSessionId}.jsonl`))).toEqual([
+      "first",
+      "running a tool",
+      "tool output",
     ]);
   });
 });

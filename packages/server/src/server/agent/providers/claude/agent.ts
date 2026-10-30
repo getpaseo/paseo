@@ -82,6 +82,7 @@ import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { discoverClaudeModels } from "./model-discovery.js";
 import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
 import {
+  findSteeredMessageParent,
   realClaudeRewindSdk,
   revertClaudeConversation,
   revertClaudeFiles,
@@ -2627,7 +2628,7 @@ class ClaudeAgentSession implements AgentSession {
       return { status: "unavailable" };
     }
     this.enqueueSteer(input, message, options.clearPendingPermissions === true);
-    return { status: "accepted" };
+    return { status: "accepted", ...(message.uuid ? { providerMessageId: message.uuid } : {}) };
   }
 
   private enqueueSteer(
@@ -3094,7 +3095,7 @@ class ClaudeAgentSession implements AgentSession {
 
   async revertConversation(input: { messageId: string }): Promise<void> {
     await this.ensureHistoryReady();
-    const target = this.resolveConversationRewindTarget(input.messageId);
+    const target = await this.resolveConversationRewindTarget(input.messageId);
     if (target.kind === "fresh-session") {
       this.startFreshConversationSession();
       return;
@@ -3429,12 +3430,24 @@ class ClaudeAgentSession implements AgentSession {
     return messageId;
   }
 
-  private resolveConversationRewindTarget(messageId: string): ClaudeConversationRewindTarget {
+  private async resolveConversationRewindTarget(
+    messageId: string,
+  ): Promise<ClaudeConversationRewindTarget> {
     const targetUserMessageId = this.resolveClaudeMessageId(messageId);
     const index = this.rewindTurnAnchors.findIndex(
       (anchor) => anchor.userMessageId === targetUserMessageId,
     );
     if (index < 0) {
+      // A message steered into a running turn opens no turn of its own.
+      const transcriptPath = this.claudeSessionId
+        ? await this.resolveHistoryPath(this.claudeSessionId)
+        : null;
+      const steerParent = transcriptPath
+        ? await findSteeredMessageParent(transcriptPath, targetUserMessageId)
+        : null;
+      if (steerParent) {
+        return { kind: "fork", messageId: steerParent };
+      }
       throw new Error(`Claude rewind target ${messageId} is not in the tracked conversation`);
     }
 
