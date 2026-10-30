@@ -1,13 +1,19 @@
-import { pathToFileURL } from "node:url";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { connectDaemonClient } from "./daemon-client-loader";
-import { spawn, execFileSync, type ChildProcess, type SpawnOptions } from "node:child_process";
+import { promisify } from "node:util";
+import {
+  spawn,
+  execFile,
+  execFileSync,
+  type ChildProcess,
+  type SpawnOptions,
+} from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { withDisabledE2ESpeechEnv } from "./speech-env";
 import { killProcessTree, spawnTsx } from "./spawn-node";
+
+const execFileAsync = promisify(execFile);
 
 export interface IsolatedHostDaemon {
   serverId: string;
@@ -157,30 +163,20 @@ export async function startIsolatedHostDaemon(
     : path.resolve(__dirname, "../../../../server");
   let child: ChildProcess | null = null;
   const stopDaemon = async (): Promise<void> => {
-    // The daemon lifecycle owns its worker and detached PTYs. Waiting only for
-    // the supervisor lets a surviving worker recreate the home during removal.
-    // Load the ESM lifecycle entry natively, as daemon-client-loader does for
-    // the SDK; Playwright's CommonJS transform cannot load its createRequire.
-    const lifecycleUrl = pathToFileURL(
-      path.resolve(__dirname, "../../../../server/dist/server/server/daemon-instance.js"),
-    ).href;
-    const { stopDaemonInstance } = (await import(
-      lifecycleUrl
-    )) as typeof import("@getpaseo/server/daemon-control");
-    await stopDaemonInstance(paseoHome, {
-      force: true,
-      requestShutdown: async () => {
-        const client = await connectDaemonClient<DaemonClient>({
-          port,
-          clientIdPrefix: "isolated-host-cleanup",
-        });
-        try {
-          await client.shutdownServer();
-        } finally {
-          await client.close();
-        }
-      },
-    });
+    // The CLI owns graceful shutdown, forced cleanup and detached terminal
+    // reaping. Keep its ESM graph out of Playwright's transforming loader.
+    await execFileAsync(
+      process.execPath,
+      [
+        path.resolve(__dirname, "../../../../cli/dist/index.js"),
+        "daemon",
+        "stop",
+        "--home",
+        paseoHome,
+        "--force",
+      ],
+      { timeout: 30_000 },
+    );
     await killProcessTree(child);
   };
   const spawnDaemon = async (): Promise<ChildProcess> => {
