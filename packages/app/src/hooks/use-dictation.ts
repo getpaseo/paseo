@@ -2,12 +2,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { DictationStreamSender } from "@/dictation/dictation-stream-sender";
+import {
+  resolveDictationEmptyReason,
+  type DictationEmptyReason,
+} from "@/dictation/empty-transcript-reason";
+import { isAudiblePeak, pcm16PeakFromBase64 } from "@/dictation/pcm-level";
 import { useDictationAudioSource } from "@/hooks/use-dictation-audio-source";
 import { generateMessageId } from "@/types/stream";
 import { AttemptGuard } from "@/utils/attempt-guard";
 import {
   DURATION_TICK_MS,
   PCM_DICTATION_FORMAT,
+  SILENCE_HOLD_MS,
   toError,
   type DictationStatus,
   type UseDictationOptions,
@@ -33,7 +39,33 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<DictationStatus>("idle");
+  const [emptyReason, setEmptyReason] = useState<DictationEmptyReason | null>(null);
   const latestPartialTranscriptRef = useRef("");
+  // Loudest sample captured in the current recording; explains an empty transcript.
+  const recordingPeakRef = useRef(0);
+  const [isHearingSilence, setIsHearingSilence] = useState(true);
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const resetHeardSound = useCallback(() => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    setIsHearingSilence(true);
+  }, []);
+
+  // Called for every audible chunk, so it only re-renders on the silent -> heard edge.
+  const markHeardSound = useCallback(() => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+    } else {
+      setIsHearingSilence(false);
+    }
+    silenceTimerRef.current = setTimeout(() => {
+      silenceTimerRef.current = null;
+      setIsHearingSilence(true);
+    }, SILENCE_HOLD_MS);
+  }, []);
 
   const onTranscriptRef = useRef(onTranscript);
   useEffect(() => {
@@ -133,8 +165,10 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
 
   const clearStreamingState = useCallback(() => {
     senderRef.current?.clearAll();
+    recordingPeakRef.current = 0;
     latestPartialTranscriptRef.current = "";
     setPartialTranscript("");
+    setEmptyReason(null);
   }, []);
 
   const startNewStream = useCallback(async (reason: string) => {
@@ -194,11 +228,19 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
 
       const transcriptText =
         text.trim().length > 0 ? text.trim() : latestPartialTranscriptRef.current.trim();
-      clearStreamingState();
 
       if (!transcriptText) {
+        // Keep the audio so the user can retry, and say why nothing came back.
+        setStatus("empty");
+        setEmptyReason(
+          resolveDictationEmptyReason({
+            segmentCount: senderRef.current?.getSegmentCount() ?? 0,
+            peak: recordingPeakRef.current,
+          }),
+        );
         return;
       }
+      clearStreamingState();
       onTranscriptRef.current?.(transcriptText, { requestId });
     },
     [clearStreamingState],
@@ -228,6 +270,11 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
 
   const audio = useDictationAudioSource({
     onPcmSegment: (audioData) => {
+      const peak = pcm16PeakFromBase64(audioData);
+      recordingPeakRef.current = Math.max(recordingPeakRef.current, peak);
+      if (isAudiblePeak(peak)) {
+        markHeardSound();
+      }
       senderRef.current?.enqueueSegment(audioData);
     },
     onError: (err) => {
@@ -270,6 +317,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     setIsProcessing(false);
     setStatus("recording");
     clearStreamingState();
+    resetHeardSound();
 
     try {
       await audio.start();
@@ -298,6 +346,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     client,
     enableDuration,
     reportError,
+    resetHeardSound,
     startDurationTracking,
     startNewStream,
     stopDurationTracking,
@@ -395,6 +444,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       return;
     }
     setError(null);
+    setEmptyReason(null);
     setStatus("uploading");
     setIsProcessing(true);
     isProcessingRef.current = true;
@@ -445,13 +495,19 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   useEffect(() => {
     const attemptGuard = attemptGuardRef.current;
     const audioStop = audioStopRef;
+    const silenceTimer = silenceTimerRef;
     return () => {
       attemptGuard.cancel();
       stopDurationTracking();
+      if (silenceTimer.current) {
+        clearTimeout(silenceTimer.current);
+      }
       void audioStop.current().catch(() => undefined);
       senderRef.current?.dispose();
     };
   }, [stopDurationTracking]);
+
+  const effectiveStatus = status === "recording" && audio.isPaused ? "paused" : status;
 
   return {
     isRecording,
@@ -461,7 +517,9 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     volume: audio.volume,
     duration,
     error,
-    status: status === "recording" && audio.isPaused ? "paused" : status,
+    status: effectiveStatus,
+    emptyReason,
+    isHearingSilence: isRecording && effectiveStatus === "recording" && isHearingSilence,
     startDictation,
     cancelDictation,
     confirmDictation,
