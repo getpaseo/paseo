@@ -120,10 +120,15 @@ See [background workspaces](./workspaces.md) for caller inheritance and inclusiv
 
 ## `client.projects`
 
-| Method               | Result                   | Behavior                                                                                       |
-| -------------------- | ------------------------ | ---------------------------------------------------------------------------------------------- |
-| `list(options?)`     | `PaseoProjectListResult` | Lists every registered project, including projects with no active workspaces.                  |
-| `subscribe(handler)` | Unsubscribe function     | Requests future project updates; unsubscribe releases demand. `list()` supplies initial state. |
+| Method                       | Result                   | Behavior                                                                                            |
+| ---------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------- |
+| `list(options?)`             | `PaseoProjectListResult` | Lists every registered project, including projects with no active workspaces.                       |
+| `subscribe(handler)`         | Unsubscribe function     | Requests future project updates; unsubscribe releases demand. `list()` supplies initial state.      |
+| `setIcon(projectId, source)` | `Promise<void>`          | Uploads a project icon or restores automatic detection. Rejects when the daemon refuses the change. |
+
+`source` is `{ type: "upload", data: "data:image/png;base64,..." }` or
+`{ type: "automatic" }`. Upload image bytes acquired by your plugin; the daemon does not fetch URLs.
+The icon is a persistent project setting shared by clients. Removing the plugin does not undo it.
 
 See [events](./events.md#follow-provider-catalog-changes) for explicit event observation and cleanup.
 

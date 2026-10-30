@@ -96,7 +96,7 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: "center",
       gap: theme.spacing[2],
       borderRadius: theme.borderRadius.lg,
-      borderWidth: 1,
+      borderWidth: theme.components.button.borderWidth ?? 1,
       borderColor: "transparent",
     },
     md: {
@@ -132,7 +132,15 @@ const styles = StyleSheet.create((theme) => {
       borderColor: theme.colors.destructive,
     },
     pressed: {
-      opacity: 0.85,
+      opacity: theme.components.button.pressedOpacity ?? 0.85,
+      ...(theme.components.button.pressedScale === undefined
+        ? {}
+        : {
+            transform: [{ scale: theme.components.button.pressedScale }],
+          }),
+    },
+    hovered: {
+      opacity: theme.components.button.hoverOpacity ?? 1,
     },
     disabled: {
       opacity: theme.opacity[50],
@@ -140,7 +148,7 @@ const styles = StyleSheet.create((theme) => {
     text: {
       color: theme.colors.foreground,
       ...geometry.buttonText,
-      fontWeight: theme.fontWeight.normal,
+      fontWeight: theme.components.button.fontWeight ?? theme.fontWeight.normal,
     },
     textXs: {
       ...geometry.buttonTextXs,
@@ -225,11 +233,12 @@ export function Button({
       styles.base,
       sizeStyle,
       variantStyle,
+      hovered ? styles.hovered : null,
       pressed ? styles.pressed : null,
       isDisabled ? styles.disabled : null,
       style,
     ],
-    [sizeStyle, variantStyle, isDisabled, style],
+    [sizeStyle, variantStyle, isDisabled, hovered, style],
   );
 
   const resolvedTextStyle = useMemo(

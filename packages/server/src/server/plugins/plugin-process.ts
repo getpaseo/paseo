@@ -24,6 +24,7 @@ import { createPluginClientId } from "./plugin-session-identity.js";
 
 import { PluginSettingsStore } from "./settings/index.js";
 import { readPluginProviderIcon } from "./provider-icon.js";
+import { WorkerWorkspaceActivities } from "./worker-workspace-activities.js";
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -76,6 +77,10 @@ export function createPluginWorker(options: {
   let daemonClient: DaemonClient | null = null;
   let paseo: PaseoApi | null = null;
   let stopping = false;
+  let ready = false;
+  const workspaceActivities = new WorkerWorkspaceActivities((activities) => {
+    if (ready) send({ type: "workspaceActivities.changed", activities });
+  });
   function send(message: PluginProcessMessage): void {
     channel.send(message);
   }
@@ -283,6 +288,7 @@ export function createPluginWorker(options: {
         )
       : null;
     const contributedCleanup = contribute({
+      addWorkspaceActivity: (contribution) => workspaceActivities.add(contribution),
       handle: (contract, handler) =>
         register(contract, (input, context) => handler(contract.input.parse(input), context)),
       registerProvider,
@@ -307,8 +313,10 @@ export function createPluginWorker(options: {
             : undefined,
         })),
     );
+    ready = true;
     send({
       type: "ready",
+      workspaceActivities: workspaceActivities.snapshot(),
       methods: [...handlers.keys()].sort(),
       hooks: hooks.catalog(),
       providers: [...providers.values()]
@@ -321,6 +329,7 @@ export function createPluginWorker(options: {
   async function shutdown(): Promise<void> {
     if (stopping) return;
     stopping = true;
+    workspaceActivities.close();
     const releaseApi = paseo
       ?.dispose()
       .catch((error) => console.error("Plugin API cleanup failed", error));
@@ -446,6 +455,7 @@ export function createPluginWorker(options: {
     const message = parsed.data;
     if (message.type === "initialize") {
       void initialize(message).catch(async (error) => {
+        workspaceActivities.close();
         send({ type: "fatal", error: describeError(error) });
         await paseo
           ?.dispose()

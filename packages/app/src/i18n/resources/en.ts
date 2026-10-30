@@ -1,4 +1,13 @@
 export const en = {
+  floatingWidgets: {
+    show: "Show {{title}}",
+    move: "Move {{title}} to next corner",
+    drag: "Drag to move {{title}}",
+    switchHost: "Switch host for {{title}}. Current host: {{host}}",
+    collapse: "Collapse {{title}}",
+    expand: "Expand {{title}}",
+    hide: "Hide {{title}}",
+  },
   paneFind: {
     connectionFailure: "Could not search this chat. Check the host connection and retry.",
     historyChangedFailure: "The chat changed while searching. Search again.",

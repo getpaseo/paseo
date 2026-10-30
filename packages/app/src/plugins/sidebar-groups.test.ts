@@ -39,6 +39,9 @@ function installed(
     clientSlashCommands: [],
     attachmentSources: [],
     themes: [],
+    providerIconOverrides: [],
+    workspaceStatusRenderers: [],
+    floatingWidgets: [],
     timelineTransformers: [],
     timelineRenderers: [],
   };

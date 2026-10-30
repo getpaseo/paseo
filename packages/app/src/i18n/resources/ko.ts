@@ -2,6 +2,15 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  floatingWidgets: {
+    show: "{{title}} 표시",
+    move: "{{title}}을(를) 다음 모서리로 이동",
+    drag: "드래그하여 {{title}} 이동",
+    switchHost: "{{title}}의 호스트 전환. 현재 호스트: {{host}}",
+    collapse: "{{title}} 접기",
+    expand: "{{title}} 펼치기",
+    hide: "{{title}} 숨기기",
+  },
   paneFind: {
     connectionFailure: "이 채팅을 검색할 수 없습니다. 호스트 연결을 확인하고 다시 시도하세요.",
     historyChangedFailure: "검색 중에 채팅이 변경되었습니다. 다시 검색하세요.",

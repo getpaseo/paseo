@@ -19,6 +19,21 @@ export interface PluginTheme {
   };
 }
 
+/** Immutable plugin-facing activity data, independent of transport message schemas. */
+export interface PluginWorkspaceActivitySnapshot {
+  readonly id: string;
+  readonly pluginId: string;
+  readonly activityId: string;
+  readonly workspaceId: string;
+  readonly kind: string;
+  readonly label: string;
+  readonly status: "running" | "attention" | "needs_input" | "failed";
+  readonly icon?: string;
+  readonly count?: number;
+  readonly items?: readonly { readonly id: string; readonly label: string }[];
+  readonly changedAt: string;
+}
+
 export interface PluginWorkspaceSnapshot {
   readonly id: string;
   readonly projectId: string;
@@ -31,6 +46,8 @@ export interface PluginWorkspaceSnapshot {
   readonly title: string | null;
   readonly status: "needs_input" | "failed" | "running" | "attention" | "done";
   readonly statusEnteredAt: string | null;
+  readonly activities?: readonly PluginWorkspaceActivitySnapshot[];
+  readonly primaryActivityId?: string | null;
   readonly archivingAt: string | null;
   readonly diffStat: { readonly additions: number; readonly deletions: number } | null;
 }
@@ -65,11 +82,70 @@ export interface PluginThemeColors {
   ring: string;
 }
 
+export interface PluginThemeRowStyle {
+  /** Desktop minimum height. Compact layouts retain at least a 44pt target. */
+  minHeight?: number;
+  paddingHorizontal?: number;
+  paddingVertical?: number;
+  radius?: number;
+  gap?: number;
+  fontWeight?: "400" | "500" | "600";
+}
+
+/** Optional presentation overrides. They never replace controls or change their behavior. */
+export interface PluginThemeComponents {
+  button?: {
+    radius?: number;
+    borderWidth?: number;
+    fontWeight?: "400" | "500" | "600";
+    hoverOpacity?: number;
+    pressedOpacity?: number;
+    pressedScale?: number;
+    sizes?: Partial<
+      Record<"xs" | "sm" | "md" | "lg", { minHeight?: number; paddingHorizontal?: number }>
+    >;
+  };
+  iconButton?: {
+    radius?: number;
+    highlightColor?: string;
+  };
+  sidebar?: {
+    projectRow?: PluginThemeRowStyle;
+    workspaceRow?: PluginThemeRowStyle;
+    /** Indent of the workspaces nested under a project. */
+    workspaceIndent?: number;
+    groupGap?: number;
+  };
+  projectIcon?: {
+    /** Sidebar size; compact layouts retain the built-in minimum. */
+    size?: number;
+    /** Explicitly rounds both generated initials and uploaded artwork. Omit to keep their defaults. */
+    radius?: number;
+    background?: string;
+    foreground?: string;
+    borderColor?: string;
+    borderWidth?: number;
+  };
+  statusIndicator?: {
+    size?: number;
+    runningStyle?: "ring" | "dot";
+    animation?: "default" | "none";
+    colors?: {
+      running?: string;
+      needsInput?: string;
+      failed?: string;
+      attention?: string;
+      inactive?: string;
+    };
+  };
+}
+
 export interface PluginThemeContribution<Text extends PluginText = string> {
   id: string;
   name: Text;
   appearance: "light" | "dark";
   colors: PluginThemeColors;
+  components?: PluginThemeComponents;
 }
 
 export interface PluginAttachmentSourceContribution<Text extends PluginText = string> {

@@ -1,4 +1,5 @@
 import type { PluginText } from "@getpaseo/plugin/client";
+import type { EvaluatedFloatingWidget } from "./floating-widgets/model";
 import type { PaseoApi } from "@getpaseo/client";
 import type { QueryClient } from "@tanstack/react-query";
 import type { PluginRequirements } from "@getpaseo/protocol/messages";
@@ -17,6 +18,8 @@ import type {
   PluginScreenContribution as SDKPluginScreenContribution,
   PluginSettingsScreenContribution as SDKPluginSettingsScreenContribution,
   PluginTimelineRendererContribution,
+  PluginProviderIconOverrideContribution,
+  PluginWorkspaceStatusRendererContribution,
   PluginTimelineTransformerContribution,
   PluginPanelLocation,
   PluginWorkspacePanelContribution as SDKPluginWorkspacePanelContribution,
@@ -47,6 +50,7 @@ export interface EvaluatedPlugin {
   id: string;
   cleanup: PluginCleanup;
   surfaces: PluginScreenContribution[];
+  floatingWidgets: EvaluatedFloatingWidget[];
   settingsScreens: PluginSettingsScreenContribution[];
   sidebarItems: Record<PluginSidebarSection, PluginSidebarItemContribution[]>;
   // COMPAT(pluginSidebarAliases): added in v0.11.0, remove after 2027-03-29
@@ -58,6 +62,8 @@ export interface EvaluatedPlugin {
   clientSlashCommands: PluginClientSlashCommandContribution[];
   attachmentSources: PluginAttachmentSourceContribution[];
   themes: PluginThemeContribution[];
+  providerIconOverrides: PluginProviderIconOverrideContribution[];
+  workspaceStatusRenderers: PluginWorkspaceStatusRendererContribution[];
   timelineTransformers: PluginTimelineTransformerContribution[];
   timelineRenderers: PluginTimelineRendererContribution[];
 }

@@ -31,6 +31,10 @@ import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sideba
 import { DensityIcon } from "@/components/ui/density-icon";
 import { TrailingActionScrim } from "@/components/ui/trailing-action-scrim";
 import { useWorkspaceLabelDefinitions } from "@/workspace-labels";
+import { primaryWorkspaceActivity, workspaceActivityLabel } from "@/workspace-status/activities";
+import { WorkspaceActivityIcon, WorkspaceActivitiesLabel } from "./workspace-activity";
+import type { WorkspaceActivity } from "@getpaseo/protocol/messages";
+import { WorkspaceStatusRenderer } from "@/workspace-status/renderer";
 
 const needsInputColorMapping = (theme: Theme) => ({
   color: theme.colors.surface0,
@@ -121,6 +125,10 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
     settings: { workspaceTitleSource },
   } = useAppSettings();
   const workspaceLabel = resolveSidebarWorkspacePrimaryLabel({ workspace, workspaceTitleSource });
+  const primaryActivity = primaryWorkspaceActivity({
+    ...workspace,
+    status: workspace.statusBucket,
+  });
   // The workspace carries label names; their colors live in its host's catalog, so the row is
   // where the two meet — the meta line is handed finished definitions.
   const labels = useWorkspaceLabelDefinitions(workspace.serverId, workspace.labels);
@@ -136,24 +144,28 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   return (
     <View style={styles.workspaceRowContent}>
       <View style={styles.workspaceRowMain}>
-        {leadingProjectName ? (
-          <ProjectStatusIndicator
-            iconDataUri={leadingProjectIconDataUri}
-            displayName={leadingProjectName}
-            projectViewKey={workspace.projectViewKey}
-            statusBucket={workspace.statusBucket}
-            backdrop={backdrop}
-            loading={isLoading}
-            testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
-          />
-        ) : (
-          <WorkspaceStatusIndicator
-            bucket={workspace.statusBucket}
-            workspaceKind={workspace.workspaceKind}
-            loading={isLoading}
-            reserveIdleSpace={reserveIdleStatusIndicatorSpace}
-          />
-        )}
+        <WorkspaceStatusRenderer workspace={workspace} loading={isLoading}>
+          {leadingProjectName ? (
+            <ProjectStatusIndicator
+              iconDataUri={leadingProjectIconDataUri}
+              displayName={leadingProjectName}
+              projectViewKey={workspace.projectViewKey}
+              statusBucket={workspace.statusBucket}
+              primaryActivity={primaryActivity}
+              backdrop={backdrop}
+              loading={isLoading}
+              testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
+            />
+          ) : (
+            <WorkspaceStatusIndicator
+              bucket={workspace.statusBucket}
+              workspaceKind={workspace.workspaceKind}
+              loading={isLoading}
+              reserveIdleSpace={reserveIdleStatusIndicatorSpace}
+              activity={primaryActivity}
+            />
+          )}
+        </WorkspaceStatusRenderer>
         <View style={styles.workspaceContentColumn}>
           <View style={styles.workspaceTitleRow}>
             <Text style={workspaceBranchTextStyle} numberOfLines={1}>
@@ -169,6 +181,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             serviceSummary={serviceSummary}
             labels={labels}
           />
+          <WorkspaceActivitiesLabel activities={workspace.activities ?? []} />
         </View>
       </View>
       {showShortcutBadge && shortcutNumber !== null ? (
@@ -185,11 +198,13 @@ function WorkspaceStatusIndicator({
   workspaceKind,
   loading = false,
   reserveIdleSpace = true,
+  activity = null,
 }: {
   bucket: SidebarWorkspaceEntry["statusBucket"];
   workspaceKind: SidebarWorkspaceEntry["workspaceKind"];
   loading?: boolean;
   reserveIdleSpace?: boolean;
+  activity?: WorkspaceActivity | null;
 }) {
   // Busy is the only status that moves, and it is the ring rather than a dot for the same
   // reason it is a dot elsewhere: every status in the sidebar sits in this one slot, so busy
@@ -199,6 +214,20 @@ function WorkspaceStatusIndicator({
     return (
       <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-loading">
         <StatusRing />
+      </View>
+    );
+  }
+
+  if (activity) {
+    return (
+      <View
+        accessible
+        role="status"
+        style={styles.workspaceStatusDot}
+        accessibilityLabel={workspaceActivityLabel(activity)}
+        testID="workspace-status-indicator-plugin"
+      >
+        <WorkspaceActivityIcon activity={activity} />
       </View>
     );
   }
@@ -463,7 +492,7 @@ const styles = StyleSheet.create((theme) => ({
   workspaceRowMain: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: theme.spacing[2],
+    gap: theme.components.sidebar.workspaceRow?.gap ?? theme.spacing[2],
     width: "100%",
   },
   workspaceContentColumn: {
@@ -500,16 +529,17 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: 1,
   },
   standaloneStatusDot: {
-    width: STATUS_INDICATOR_FILLED_DOT_SIZE,
-    height: STATUS_INDICATOR_FILLED_DOT_SIZE,
+    width: theme.components.statusIndicator.size ?? STATUS_INDICATOR_FILLED_DOT_SIZE,
+    height: theme.components.statusIndicator.size ?? STATUS_INDICATOR_FILLED_DOT_SIZE,
     borderRadius: theme.borderRadius.full,
     backgroundColor: getStatusDotColor({ theme, bucket: "attention" }) ?? undefined,
   },
   idleStatusDot: {
-    width: STATUS_INDICATOR_FILLED_DOT_SIZE,
-    height: STATUS_INDICATOR_FILLED_DOT_SIZE,
+    width: theme.components.statusIndicator.size ?? STATUS_INDICATOR_FILLED_DOT_SIZE,
+    height: theme.components.statusIndicator.size ?? STATUS_INDICATOR_FILLED_DOT_SIZE,
     borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.foregroundExtraMuted,
+    backgroundColor:
+      theme.components.statusIndicator.colors?.inactive ?? theme.colors.foregroundExtraMuted,
     opacity: 0.3,
   },
   // The title owns the first line outright now that the host, change request and CI moved
@@ -517,7 +547,7 @@ const styles = StyleSheet.create((theme) => ({
   workspaceBranchText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
-    fontWeight: "400",
+    fontWeight: theme.components.sidebar.workspaceRow?.fontWeight ?? "400",
     lineHeight: TITLE_LINE_HEIGHT,
     opacity: 0.76,
     flex: 1,

@@ -2,8 +2,11 @@
 export type {
   PluginTheme,
   PluginWorkspaceSnapshot,
+  PluginWorkspaceActivitySnapshot,
   PluginAgentSnapshot,
   PluginThemeColors,
+  PluginThemeComponents,
+  PluginThemeRowStyle,
   PluginThemeContribution,
   PluginAttachmentSourceContribution,
   PluginTimelineData,

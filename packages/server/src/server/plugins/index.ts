@@ -38,6 +38,9 @@ import type { PluginUsageSourceMetadata } from "./plugin-process-protocol.js";
 const BUILTIN_PROVIDER_ID_SET: ReadonlySet<string> = new Set(BUILTIN_PROVIDER_IDS);
 
 interface PluginRuntimePort {
+  listWorkspaceActivities?: PluginRuntime["listWorkspaceActivities"];
+  subscribeWorkspaceActivities?: PluginRuntime["subscribeWorkspaceActivities"];
+  archiveWorkspaceActivities?: PluginRuntime["archiveWorkspaceActivities"];
   subscribeSessionOpenChanges?: PluginRuntime["subscribeSessionOpenChanges"];
   isToolPluginAvailable?: PluginRuntime["isToolPluginAvailable"];
   callTool?: PluginRuntime["callTool"];
@@ -138,8 +141,23 @@ export class PluginService {
   }
 
   readonly emit: PluginLifecycle["emit"] = (name, event) => {
+    if (name === "workspace.archive.after" && "workspace" in event) {
+      this.archiveWorkspaceActivities(event.workspace.id);
+    }
     this.runtime.emit?.(name, event);
   };
+
+  listWorkspaceActivities(): import("@getpaseo/protocol/messages").WorkspaceActivity[] {
+    return this.runtime.listWorkspaceActivities?.() ?? [];
+  }
+
+  subscribeWorkspaceActivities(listener: (workspaceIds: readonly string[]) => void): () => void {
+    return this.runtime.subscribeWorkspaceActivities?.(listener) ?? (() => {});
+  }
+
+  archiveWorkspaceActivities(workspaceId: string): void {
+    this.runtime.archiveWorkspaceActivities?.(workspaceId);
+  }
 
   subscribeSessionOpenChanges(listener: () => void): () => void {
     return this.runtime.subscribeSessionOpenChanges?.(listener) ?? (() => {});

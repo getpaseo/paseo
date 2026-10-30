@@ -10,6 +10,7 @@ import { resolveAppVersion } from "@/utils/app-version";
 import { createPluginClientRuntime } from "./client-runtime";
 import { runPluginClientBundle } from "./evaluate";
 import type { InstalledPlugin } from "./types";
+import { replaceProviderIconOverrides } from "@/data/provider-icons";
 
 type CatalogPlugin = Awaited<ReturnType<DaemonClient["getPluginCatalog"]>>[number];
 
@@ -102,6 +103,7 @@ export class PluginRegistry {
           queryClient: new QueryClient(),
           cleanup: () => undefined,
           surfaces: [],
+          floatingWidgets: [],
           settingsScreens: [],
           sidebarItems: { header: [], footer: [] },
           legacySidebarItems: [],
@@ -111,6 +113,8 @@ export class PluginRegistry {
           clientSlashCommands: [],
           attachmentSources: [],
           themes: [],
+          providerIconOverrides: [],
+          workspaceStatusRenderers: [],
           timelineTransformers: [],
           timelineRenderers: [],
         };
@@ -212,6 +216,7 @@ export class PluginRegistry {
       .sort((left, right) =>
         `${left.serverId}/${left.id}`.localeCompare(`${right.serverId}/${right.id}`),
       );
+    replaceProviderIconOverrides(this.snapshot);
     for (const listener of this.listeners) listener();
   }
 }

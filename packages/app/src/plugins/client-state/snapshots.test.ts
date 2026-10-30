@@ -86,6 +86,46 @@ describe("plugin context snapshots", () => {
     expect(workspace.diffStat).toEqual({ additions: 12, deletions: 3 });
   });
 
+  it("copies and freezes workspace activity members without freezing store records", () => {
+    const activity = {
+      id: "tasks/builds",
+      pluginId: "tasks",
+      activityId: "builds",
+      workspaceId: workspace.id,
+      kind: "background-task",
+      label: "Builds",
+      status: "running" as const,
+      count: 1,
+      changedAt: "2026-08-16T10:00:00.000Z",
+      items: [{ id: "build-1", label: "Build" }],
+    };
+    const source = { ...workspace, activities: [activity], primaryActivityId: activity.id };
+    const snapshot = createPluginWorkspaceSnapshot(source);
+    expect(createPluginWorkspaceSnapshot(source)).toBe(snapshot);
+    const projected = snapshot.activities![0]!;
+    expect(snapshot.primaryActivityId).toBe(activity.id);
+    expect(projected).toEqual(activity);
+    expect(snapshot.activities).not.toBe(source.activities);
+    expect(projected).not.toBe(activity);
+    expect(projected.items).not.toBe(activity.items);
+    expect(projected.items![0]).not.toBe(activity.items[0]);
+    expect(Object.isFrozen(snapshot.activities)).toBe(true);
+    expect(Object.isFrozen(projected)).toBe(true);
+    expect(Object.isFrozen(projected.items)).toBe(true);
+    expect(Object.isFrozen(projected.items![0])).toBe(true);
+    expect(Reflect.set(projected.items![0]!, "label", "Hostile rename")).toBe(false);
+    expect(Reflect.set(projected.items!, 0, { id: "other", label: "Other" })).toBe(false);
+    expect(activity.items[0]?.label).toBe("Build");
+    expect(Object.isFrozen(activity.items)).toBe(false);
+    expect(Object.isFrozen(activity.items[0])).toBe(false);
+
+    activity.items[0]!.label = "Store update";
+    expect(projected.items![0]?.label).toBe("Build");
+    expect(createPluginWorkspaceSnapshot({ ...source }).activities![0]!.items![0]?.label).toBe(
+      "Store update",
+    );
+  });
+
   it("commits a deeply immutable matching agent snapshot without exposing store records", () => {
     const snapshot = createPluginAgentSnapshot(agent, workspace.id);
     expect(createPluginAgentSnapshot(agent, workspace.id)).toBe(snapshot);

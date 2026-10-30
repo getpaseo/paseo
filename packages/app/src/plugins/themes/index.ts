@@ -24,6 +24,82 @@ const hexColorSchema = z
   .string()
   .regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, "Must be a hex color");
 
+const radiusSchema = z.number().min(0).max(9999);
+const paddingSchema = z.number().min(0).max(48);
+const fontWeightSchema = z.enum(["400", "500", "600"]);
+const rowStyleSchema = z.strictObject({
+  minHeight: z.number().min(24).max(96).optional(),
+  paddingHorizontal: paddingSchema.optional(),
+  paddingVertical: paddingSchema.optional(),
+  radius: radiusSchema.optional(),
+  gap: z.number().min(0).max(32).optional(),
+  fontWeight: fontWeightSchema.optional(),
+});
+const buttonSizeSchema = z.strictObject({
+  minHeight: z.number().min(24).max(96).optional(),
+  paddingHorizontal: paddingSchema.optional(),
+});
+const componentStylesSchema = z.strictObject({
+  button: z
+    .strictObject({
+      radius: radiusSchema.optional(),
+      borderWidth: z.number().min(0).max(4).optional(),
+      fontWeight: fontWeightSchema.optional(),
+      hoverOpacity: z.number().min(0.3).max(1).optional(),
+      pressedOpacity: z.number().min(0.3).max(1).optional(),
+      pressedScale: z.number().min(0.9).max(1).optional(),
+      sizes: z
+        .strictObject({
+          xs: buttonSizeSchema.optional(),
+          sm: buttonSizeSchema.optional(),
+          md: buttonSizeSchema.optional(),
+          lg: buttonSizeSchema.optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+  iconButton: z
+    .strictObject({
+      radius: radiusSchema.optional(),
+      highlightColor: hexColorSchema.optional(),
+    })
+    .optional(),
+  sidebar: z
+    .strictObject({
+      projectRow: rowStyleSchema.optional(),
+      workspaceRow: rowStyleSchema.optional(),
+      workspaceIndent: z.number().min(0).max(48).optional(),
+      groupGap: z.number().min(0).max(48).optional(),
+    })
+    .optional(),
+  projectIcon: z
+    .strictObject({
+      size: z.number().min(12).max(32).optional(),
+      radius: radiusSchema.optional(),
+      background: hexColorSchema.optional(),
+      foreground: hexColorSchema.optional(),
+      borderColor: hexColorSchema.optional(),
+      borderWidth: z.number().min(0).max(4).optional(),
+    })
+    .optional(),
+  statusIndicator: z
+    .strictObject({
+      size: z.number().min(4).max(16).optional(),
+      runningStyle: z.enum(["ring", "dot"]).optional(),
+      animation: z.enum(["default", "none"]).optional(),
+      colors: z
+        .strictObject({
+          running: hexColorSchema.optional(),
+          needsInput: hexColorSchema.optional(),
+          failed: hexColorSchema.optional(),
+          attention: hexColorSchema.optional(),
+          inactive: hexColorSchema.optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+});
+
 const contributionSchema: z.ZodType<PluginThemeContribution> = z.strictObject({
   id: z.string(),
   name: z.union([z.string().trim().min(1).max(60), z.custom<PluginMessage>(isPluginMessage)]),
@@ -38,6 +114,7 @@ const contributionSchema: z.ZodType<PluginThemeContribution> = z.strictObject({
     mutedForeground: hexColorSchema,
     ring: hexColorSchema,
   }),
+  components: componentStylesSchema.optional(),
 });
 
 export interface PluginThemeOption {
@@ -117,9 +194,23 @@ function buildLightPluginTheme(contribution: PluginThemeContribution): Theme {
 }
 
 function buildPluginTheme(contribution: PluginThemeContribution): Theme {
-  return contribution.appearance === "light"
-    ? buildLightPluginTheme(contribution)
-    : buildDarkPluginTheme(contribution);
+  const theme =
+    contribution.appearance === "light"
+      ? buildLightPluginTheme(contribution)
+      : buildDarkPluginTheme(contribution);
+  // Rebuild from the built-in defaults on every catalog update. A removed override must not
+  // survive a plugin reload or a switch to another theme in the same reserved slot.
+  const components = contribution.components;
+  return {
+    ...theme,
+    components: {
+      button: components?.button ?? theme.components.button,
+      iconButton: components?.iconButton ?? theme.components.iconButton,
+      sidebar: components?.sidebar ?? theme.components.sidebar,
+      projectIcon: components?.projectIcon ?? theme.components.projectIcon,
+      statusIndicator: components?.statusIndicator ?? theme.components.statusIndicator,
+    },
+  };
 }
 
 function selectTarget(id: string, targets: PluginThemeTarget[]): PluginThemeTarget {

@@ -2,6 +2,15 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
+  floatingWidgets: {
+    show: "Mostrar {{title}}",
+    move: "Mover {{title}} para o próximo canto",
+    drag: "Arraste para mover {{title}}",
+    switchHost: "Trocar o host de {{title}}. Host atual: {{host}}",
+    collapse: "Recolher {{title}}",
+    expand: "Expandir {{title}}",
+    hide: "Ocultar {{title}}",
+  },
   paneFind: {
     connectionFailure:
       "Não foi possível pesquisar nesta conversa. Verifique a conexão com o host e tente novamente.",

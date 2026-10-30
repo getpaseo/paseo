@@ -2,6 +2,15 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  floatingWidgets: {
+    show: "显示{{title}}",
+    move: "将{{title}}移到下一个角落",
+    drag: "拖动以移动{{title}}",
+    switchHost: "切换{{title}}的主机。当前主机：{{host}}",
+    collapse: "收起{{title}}",
+    expand: "展开{{title}}",
+    hide: "隐藏{{title}}",
+  },
   paneFind: {
     connectionFailure: "无法搜索此聊天。请检查主机连接后重试。",
     historyChangedFailure: "搜索期间聊天已更改。请重新搜索。",

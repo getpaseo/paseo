@@ -10,11 +10,17 @@ import { openSettingsSection } from "../support/helpers/settings";
 const PLUGIN_ID = "plugin-theme-e2e";
 
 // Catppuccin Mocha: base, text, surface0, surface1, mauve, subtext0, overlay0.
-const PLUGIN_SOURCE = `export default function contribute(plugin) {
+const PLUGIN_SOURCE = `import React from "react";
+import { SettingsAction } from "@getpaseo/plugin/client/ui";
+export default function contribute(plugin) {
+  plugin.addFloatingWidget({ id: "appearance-probe", title: "Appearance probe", size: { width: 320, height: 100 },
+    Component() { return React.createElement(SettingsAction, { label: "Shared button", actionLabel: "Theme action", onPress() {} }); }
+  });
   plugin.addTheme({
     id: "mocha",
     name: "Catppuccin Mocha",
     appearance: "dark",
+    components: { button: { radius: 9999 }, statusIndicator: { runningStyle: "dot", animation: "none" } },
     colors: {
       background: "#1e1e2e",
       foreground: "#cdd6f4",
@@ -30,6 +36,7 @@ const PLUGIN_SOURCE = `export default function contribute(plugin) {
     id: "latte",
     name: "Catppuccin Latte",
     appearance: "light",
+    components: { button: { radius: 4 } },
     colors: {
       background: "#eff1f5",
       foreground: "#4c4f69",
@@ -68,6 +75,10 @@ test("applies a contributed theme and falls back when its plugin is gone", async
     await expect(page.getByTestId("settings-sidebar")).toBeVisible();
     await openSettingsSection(page, "appearance");
 
+    const probe = page.getByRole("button", { name: "Theme action", exact: true });
+    await expect(probe).toBeVisible();
+    const defaultRadius = await probe.evaluate((element) => getComputedStyle(element).borderRadius);
+
     const sectionTitle = page.getByText("Theme", { exact: true }).first();
     await page.getByLabel("Theme: System", { exact: true }).click();
     const mochaItem = page.getByText("Catppuccin Mocha", { exact: true });
@@ -82,12 +93,14 @@ test("applies a contributed theme and falls back when its plugin is gone", async
       await page.getByText("Catppuccin Latte", { exact: true }).click();
       await expect(page.getByLabel("Theme: Catppuccin Latte", { exact: true })).toBeVisible();
       await expect(sectionTitle).toHaveCSS("color", LATTE_MUTED_FOREGROUND);
+      await expect(probe).toHaveCSS("border-radius", "4px");
       await page.getByLabel("Theme: Catppuccin Latte", { exact: true }).click();
     });
 
     await mochaItem.click();
     await expect(page.getByLabel("Theme: Catppuccin Mocha", { exact: true })).toBeVisible();
     await expect(sectionTitle).toHaveCSS("color", MOCHA_MUTED_FOREGROUND);
+    await expect(probe).toHaveCSS("border-radius", "9999px");
     await page.screenshot({
       path: testInfo.outputPath("plugin-theme-applied.png"),
       fullPage: true,
@@ -99,6 +112,16 @@ test("applies a contributed theme and falls back when its plugin is gone", async
         timeout: 30_000,
       });
       await expect(sectionTitle).toHaveCSS("color", MOCHA_MUTED_FOREGROUND);
+      await expect(probe).toHaveCSS("border-radius", "9999px");
+    });
+
+    await test.step("switching back to a built-in theme clears component overrides", async () => {
+      await page.getByLabel("Theme: Catppuccin Mocha", { exact: true }).click();
+      await page.getByText("System", { exact: true }).click();
+      await expect(probe).toHaveCSS("border-radius", defaultRadius);
+      await page.getByLabel("Theme: System", { exact: true }).click();
+      await page.getByText("Catppuccin Mocha", { exact: true }).click();
+      await expect(probe).toHaveCSS("border-radius", "9999px");
     });
 
     await test.step("removing the plugin falls back to the default theme", async () => {

@@ -1,8 +1,7 @@
 import { useStore } from "zustand";
-import { providerSnapshotIcons } from "@/data/provider-icons";
+import { providerIconOverrides, providerSnapshotIcons } from "@/data/provider-icons";
 import { Bot } from "lucide-react-native";
-import { createElement, useCallback, type ComponentType } from "react";
-import { SvgXml } from "react-native-svg";
+import { useCallback, type ComponentType } from "react";
 import { TERMINAL_PROFILE_ICON_NAMES } from "@getpaseo/protocol/provider-icon-names";
 import { AntigravityIcon } from "@/components/icons/antigravity-icon";
 import { ClaudeIcon } from "@/components/icons/claude-icon";
@@ -16,6 +15,8 @@ import { PiIcon } from "@/components/icons/pi-icon";
 import { ACP_PROVIDER_ICON_SVGS } from "@/assets/acp-provider-icons";
 import { ACP_PROVIDER_CATALOG } from "@/data/acp-provider-catalog";
 import { resolveProviderIconName } from "@/components/provider-icon-name";
+import { SvgIcon } from "@/components/svg-icon";
+import { pluginIconComponent } from "@/plugins/icons";
 
 export interface ProviderIconProps {
   size: number;
@@ -50,10 +51,7 @@ for (const name of TERMINAL_PROFILE_ICON_NAMES) {
 const catalogIconComponents = new Map<string, ProviderIconComponent>();
 const snapshotIconComponents = new Map<string, ProviderIconComponent>();
 
-/** Renders a sanitized SVG string from a host catalog, tinted through `currentColor`. */
-export function SvgIcon({ svg, size, color }: ProviderIconProps & { svg: string }) {
-  return createElement(SvgXml, { xml: svg, width: size, height: size, color });
-}
+export { SvgIcon } from "@/components/svg-icon";
 
 function createSvgIcon(provider: string, iconSvg: string): ProviderIconComponent {
   const SvgProviderIcon: ProviderIconComponent = ({ size, color }) =>
@@ -99,19 +97,30 @@ function resolveProviderIcon(provider: string, svg?: string): ProviderIconCompon
 }
 
 export function useProviderIcon(provider: string, serverId?: string | null): ProviderIconComponent {
+  const override = useStore(providerIconOverrides, (state) =>
+    serverId ? state.get(serverId)?.get(provider) : undefined,
+  );
   const svg = useStore(providerSnapshotIcons, (state) =>
     serverId ? state.get(serverId)?.get(provider) : undefined,
   );
-  return resolveProviderIcon(provider, svg);
+  return override ? pluginIconComponent(override) : resolveProviderIcon(provider, svg);
 }
 
 /** Subscribe once for consumers that render a collection of providers. */
 export function useProviderIcons(serverId?: string | null) {
+  const overrides = useStore(providerIconOverrides, (state) =>
+    serverId ? state.get(serverId) : undefined,
+  );
   const icons = useStore(providerSnapshotIcons, (state) =>
     serverId ? state.get(serverId) : undefined,
   );
   return useCallback(
-    (provider: string) => resolveProviderIcon(provider, icons?.get(provider)),
-    [icons],
+    (provider: string) => {
+      const override = overrides?.get(provider);
+      return override
+        ? pluginIconComponent(override)
+        : resolveProviderIcon(provider, icons?.get(provider));
+    },
+    [icons, overrides],
   );
 }

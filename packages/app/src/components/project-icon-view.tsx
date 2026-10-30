@@ -1,10 +1,8 @@
 import { useMemo } from "react";
 import { type StyleProp, Text, type TextStyle, View } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 import { ProjectIconImage } from "@/components/project-icon-image";
 import { deriveIdentityColorName, identityColor } from "@/styles/identity-colors";
-
-const WHITE_TEXT = { color: "#ffffff" } as const;
-const FALLBACK_LAYOUT = { alignItems: "center", justifyContent: "center" } as const;
 
 /**
  * Corner radius of the *generated* project icon — the colored square with an initial — as a
@@ -12,9 +10,8 @@ const FALLBACK_LAYOUT = { alignItems: "center", justifyContent: "center" } as co
  * sheet. Fixed tokens did not give that: the radius scale is coarse at the bottom, so small icons
  * landed on 2pt and looked square while large ones were visibly rounder.
  *
- * This is ours to shape. A **user-uploaded icon is never rounded** — it is someone's mark, and
- * clipping its corners distorts branding we don't own. A square logo stays square, a round one is
- * already round.
+ * Uploaded artwork keeps its own silhouette unless the selected theme explicitly supplies a
+ * project-icon radius. The default only rounds our generated initial tile.
  */
 const RADIUS_RATIO = 0.25;
 
@@ -43,18 +40,12 @@ export function ProjectIconView({
   size: number;
   textStyle: StyleProp<TextStyle>;
 }) {
-  // The uploaded image is sized but never clipped — see projectIconRadius.
-  const box = useMemo(() => ({ width: size, height: size }), [size]);
+  const box = useMemo(() => styles.image(size), [size]);
   const fallbackStyles = useMemo(
-    () => [
-      box,
-      { borderRadius: projectIconRadius(size) },
-      FALLBACK_LAYOUT,
-      { backgroundColor: identityColor(deriveIdentityColorName(projectViewKey)) },
-    ],
-    [box, size, projectViewKey],
+    () => styles.fallback(size, identityColor(deriveIdentityColorName(projectViewKey))),
+    [size, projectViewKey],
   );
-  const textStyles = useMemo(() => [textStyle, WHITE_TEXT], [textStyle]);
+  const textStyles = useMemo(() => [textStyle, styles.text], [textStyle]);
 
   const fallback = useMemo(
     () => (
@@ -71,3 +62,25 @@ export function ProjectIconView({
     fallback
   );
 }
+
+const styles = StyleSheet.create((theme) => ({
+  image: (size: number) => ({
+    width: size,
+    height: size,
+    borderRadius: theme.components.projectIcon.radius ?? 0,
+    backgroundColor: theme.components.projectIcon.background,
+    borderWidth: theme.components.projectIcon.borderWidth ?? 0,
+    borderColor: theme.components.projectIcon.borderColor ?? "transparent",
+  }),
+  fallback: (size: number, identity: string) => ({
+    width: size,
+    height: size,
+    borderRadius: theme.components.projectIcon.radius ?? projectIconRadius(size),
+    backgroundColor: theme.components.projectIcon.background ?? identity,
+    borderWidth: theme.components.projectIcon.borderWidth ?? 0,
+    borderColor: theme.components.projectIcon.borderColor ?? "transparent",
+    alignItems: "center",
+    justifyContent: "center",
+  }),
+  text: { color: theme.components.projectIcon.foreground ?? "#ffffff" },
+}));

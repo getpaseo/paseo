@@ -1,4 +1,8 @@
 import type { PluginHookAgent } from "@getpaseo/plugin/server";
+import {
+  WorkspaceActivityInputSchema,
+  type WorkspaceActivityInput,
+} from "@getpaseo/protocol/workspace-activity";
 import { UsageScopeSchema, type UsageScope } from "@getpaseo/plugin/server/usage";
 import type {
   ProviderConnectRequest,
@@ -78,6 +82,7 @@ export type PluginProcessRequest =
   | { type: "paseo_close" };
 
 export type PluginProcessMessage =
+  | { type: "workspaceActivities.changed"; activities: WorkspaceActivityInput[] }
   | { type: "settings.changed"; settingsId: string }
   | { type: "hooks.changed"; hooks: string[] }
   | {
@@ -86,6 +91,7 @@ export type PluginProcessMessage =
       providers: PluginProviderMetadata[];
       usageSources?: PluginUsageSourceMetadata[];
       hooks?: string[];
+      workspaceActivities?: WorkspaceActivityInput[];
     }
   | { type: "result"; requestId: string; output: unknown }
   | { type: "error"; requestId: string; error: string }
@@ -110,6 +116,13 @@ export type PluginProcessMessage =
   | { type: "paseo_close" };
 
 const hooksSchema = z.array(z.string());
+const workspaceActivitiesSchema = z
+  .array(WorkspaceActivityInputSchema)
+  .max(512)
+  .refine(
+    (activities) => new Set(activities.map((activity) => activity.id)).size === activities.length,
+    "Workspace activity ids must be unique within a plugin",
+  );
 
 const providerMetadataSchema = z
   .object({
@@ -266,6 +279,12 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
 export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.discriminatedUnion(
   "type",
   [
+    z
+      .object({
+        type: z.literal("workspaceActivities.changed"),
+        activities: workspaceActivitiesSchema,
+      })
+      .strict(),
     z.object({ type: z.literal("settings.changed"), settingsId: z.string() }).strict(),
     z.object({ type: z.literal("hooks.changed"), hooks: hooksSchema }).strict(),
     z
@@ -274,6 +293,7 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
         methods: z.array(z.string()),
         providers: z.array(providerMetadataSchema),
         usageSources: z.array(usageSourceMetadataSchema).optional(),
+        workspaceActivities: workspaceActivitiesSchema.optional(),
         hooks: hooksSchema.optional(),
       })
       .strict(),

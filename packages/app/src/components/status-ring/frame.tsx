@@ -1,16 +1,14 @@
 import type { ReactNode } from "react";
-import { StyleSheet as RNStyleSheet, View } from "react-native";
+import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 import { getStatusDotColor } from "@/utils/status-dot-color";
 import {
-  STATUS_RING_FRAME_SIZE,
   STATUS_RING_HEAD_OPACITY,
-  STATUS_RING_SIZE,
   STATUS_RING_STROKE,
   STATUS_RING_TRACK_OPACITY,
+  getStatusRingGeometry,
 } from "@/components/status-ring/geometry";
-import { STATUS_INDICATOR_FILLED_DOT_SIZE } from "@/utils/status-indicator-geometry";
 
 export interface StatusRingProps {
   // The surface the ring is drawn on top of, named rather than resolved, because theme colours
@@ -19,6 +17,12 @@ export interface StatusRingProps {
   // tab dot, the project tile under a sidebar badge. Leave it out where the ring sits on flat
   // background and has nothing to knock out.
   backdrop?: SurfaceBackdrop | null;
+}
+
+export interface StatusRingAppearanceProps extends StatusRingProps {
+  dotSize: number;
+  dotOnly: boolean;
+  animated: boolean;
 }
 
 /**
@@ -64,18 +68,22 @@ function getBackdropStyle(backdrop: SurfaceBackdrop | null | undefined) {
 // one crashes when the theme changes — Unistyles and Reanimated both mutate the same native node.
 // See docs/unistyles.md. The colour it needs lives on `styles.arc`, one level in, on a view
 // Reanimated never touches.
-export const rotatorStyles = RNStyleSheet.create({
-  rotator: {
+export function statusRingRotatorStyle(dotSize: number) {
+  const { ringSize } = getStatusRingGeometry(dotSize);
+  return {
     position: "absolute",
-    width: STATUS_RING_SIZE,
-    height: STATUS_RING_SIZE,
-  },
-});
+    width: ringSize,
+    height: ringSize,
+  } as const;
+}
 
 export const styles = StyleSheet.create((theme) => {
+  const { dotSize, ringSize, frameSize } = getStatusRingGeometry(
+    theme.components.statusIndicator.size,
+  );
   const circle = {
-    width: STATUS_RING_SIZE,
-    height: STATUS_RING_SIZE,
+    width: ringSize,
+    height: ringSize,
     borderRadius: theme.borderRadius.full,
     borderWidth: STATUS_RING_STROKE,
   } as const;
@@ -83,8 +91,8 @@ export const styles = StyleSheet.create((theme) => {
 
   return {
     frame: {
-      width: STATUS_RING_FRAME_SIZE,
-      height: STATUS_RING_FRAME_SIZE,
+      width: frameSize,
+      height: frameSize,
       borderRadius: theme.borderRadius.full,
       alignItems: "center",
       justifyContent: "center",
@@ -103,6 +111,7 @@ export const styles = StyleSheet.create((theme) => {
       position: "absolute",
       borderColor: runningColor,
       opacity: STATUS_RING_TRACK_OPACITY,
+      display: theme.components.statusIndicator.runningStyle === "dot" ? "none" : "flex",
     },
 
     // The moving quarter. Three sides transparent leaves the top border alone, which on a fully
@@ -114,9 +123,11 @@ export const styles = StyleSheet.create((theme) => {
       opacity: STATUS_RING_HEAD_OPACITY,
     },
 
+    staticArc: { position: "absolute" },
+
     centerDot: {
-      width: STATUS_INDICATOR_FILLED_DOT_SIZE,
-      height: STATUS_INDICATOR_FILLED_DOT_SIZE,
+      width: dotSize,
+      height: dotSize,
       borderRadius: theme.borderRadius.full,
       backgroundColor: runningColor,
     },

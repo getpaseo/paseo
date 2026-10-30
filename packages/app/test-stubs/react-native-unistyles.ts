@@ -1,6 +1,13 @@
 import { lightHighlightColors } from "@getpaseo/highlight";
 
 const testTheme = {
+  components: {
+    button: {},
+    iconButton: {},
+    sidebar: {},
+    projectIcon: {},
+    statusIndicator: {},
+  },
   colorScheme: "light",
   colors: {
     syntax: lightHighlightColors,

@@ -111,7 +111,7 @@ const styles = StyleSheet.create((theme) => ({
       md: HEADER_CONTROL_HEIGHT,
     },
     padding: 0,
-    borderRadius: theme.borderRadius.md,
+    borderRadius: theme.components.iconButton.radius ?? theme.borderRadius.md,
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
@@ -122,7 +122,7 @@ const styles = StyleSheet.create((theme) => ({
     width: SMALL_ICON_BUTTON_SIZE,
     height: SMALL_ICON_BUTTON_SIZE,
     padding: 0,
-    borderRadius: theme.borderRadius.md,
+    borderRadius: theme.components.iconButton.radius ?? theme.borderRadius.md,
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
@@ -133,7 +133,7 @@ const styles = StyleSheet.create((theme) => ({
     width: COMPACT_SMALL_ICON_BUTTON_SIZE,
     height: COMPACT_SMALL_ICON_BUTTON_SIZE,
     padding: 0,
-    borderRadius: theme.borderRadius.md,
+    borderRadius: theme.components.iconButton.radius ?? theme.borderRadius.md,
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
@@ -141,10 +141,11 @@ const styles = StyleSheet.create((theme) => ({
     outlineColor: "transparent",
   },
   round: {
-    borderRadius: theme.borderRadius.full,
+    borderRadius: theme.components.iconButton.radius ?? theme.borderRadius.full,
   },
   highlighted: {
-    backgroundColor: theme.colors.interactionHighlight,
+    backgroundColor:
+      theme.components.iconButton.highlightColor ?? theme.colors.interactionHighlight,
   },
   disabled: {
     opacity: theme.opacity[50],

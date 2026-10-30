@@ -9,7 +9,7 @@ import {
 } from "@getpaseo/plugin";
 import type { PluginIcon } from "@getpaseo/plugin/client";
 import type { IconProps } from "@getpaseo/plugin/client/ui";
-import { SvgIcon } from "@/components/provider-icons";
+import { SvgIcon } from "@/components/svg-icon";
 
 /** Host surfaces may thin a Lucide stroke; SVG and plugin components ignore it. */
 type HostIconProps = PluginIconProps & { strokeWidth?: number };

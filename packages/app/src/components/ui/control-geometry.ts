@@ -187,6 +187,20 @@ export function resolveControlInteractionStyles(
 }
 
 export function createControlGeometry(theme: Theme) {
+  function buttonGeometry(size: ButtonControlSize, radius: number, padding: number) {
+    const appearance = theme.components.button;
+    const override = appearance.sizes?.[size];
+    const defaultHeight = buttonControlHeight[size];
+    return {
+      // A compact layout must not lose its existing touch target to a desktop theme preset.
+      minHeight: {
+        xs: Math.max(defaultHeight, override?.minHeight ?? defaultHeight),
+        md: override?.minHeight ?? defaultHeight,
+      },
+      paddingHorizontal: override?.paddingHorizontal ?? padding,
+      borderRadius: appearance.radius ?? radius,
+    };
+  }
   const controlBorderWidth = theme.borderWidth[1];
   const fieldTextXsLineHeight = fieldLineHeight(theme.fontSize.sm);
   const fieldTextSmLineHeight = fieldLineHeight(theme.fontSize.base);
@@ -240,26 +254,10 @@ export function createControlGeometry(theme: Theme) {
   } satisfies { minHeight: number; justifyContent: "center" };
 
   return {
-    buttonXs: {
-      minHeight: buttonControlHeight.xs,
-      paddingHorizontal: theme.spacing[3],
-      borderRadius: theme.borderRadius.xl,
-    },
-    buttonSm: {
-      minHeight: buttonControlHeight.sm,
-      paddingHorizontal: theme.spacing[3],
-      borderRadius: theme.borderRadius.xl,
-    },
-    buttonMd: {
-      minHeight: buttonControlHeight.md,
-      paddingHorizontal: theme.spacing[4],
-      borderRadius: theme.borderRadius["2xl"],
-    },
-    buttonLg: {
-      minHeight: buttonControlHeight.lg,
-      paddingHorizontal: theme.spacing[6],
-      borderRadius: theme.borderRadius["2xl"],
-    },
+    buttonXs: buttonGeometry("xs", theme.borderRadius.xl, theme.spacing[3]),
+    buttonSm: buttonGeometry("sm", theme.borderRadius.xl, theme.spacing[3]),
+    buttonMd: buttonGeometry("md", theme.borderRadius["2xl"], theme.spacing[4]),
+    buttonLg: buttonGeometry("lg", theme.borderRadius["2xl"], theme.spacing[6]),
     buttonText: {
       fontSize: theme.fontSize.base,
     },

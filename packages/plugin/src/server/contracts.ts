@@ -5,6 +5,10 @@ import type { PluginCleanup } from "../contracts.js";
 import type { ProviderRegistration } from "./provider.js";
 import type { UsageSourceRegistration } from "./usage.js";
 import type { PluginLifecycleRegistration } from "./lifecycle.js";
+import type {
+  PluginWorkspaceActivityContribution,
+  PluginWorkspaceActivityRegistration,
+} from "./workspace-activity.js";
 
 export interface PluginHandlerContext {
   paseo: PaseoApi;
@@ -28,6 +32,10 @@ export interface PluginSettings<Schema extends ZodType> {
 }
 
 export interface PluginServerContext extends PluginLifecycleRegistration {
+  /** Contribute activity to an existing workspace for this plugin's running lifetime. */
+  addWorkspaceActivity(
+    contribution: PluginWorkspaceActivityContribution,
+  ): PluginWorkspaceActivityRegistration;
   registerSettings<Schema extends ZodType>(
     definition: import("../settings.js").SettingsDefinition<Schema>,
   ): PluginSettings<Schema>;

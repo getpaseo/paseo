@@ -37,9 +37,7 @@ export function StatusIcon({
 }: StatusIconProps): ReactElement {
   const bucket = statusBucket;
   const isRunning = bucket === "running";
-  let statusDotColor: string | undefined;
-  if (bucket === "failed") statusDotColor = styles.statusDotFailed.color;
-  else if (bucket === "attention") statusDotColor = styles.statusDotAttention.color;
+  const showStatusDot = bucket === "failed" || bucket === "attention";
   const showNeedsInputAlert = bucket === "needs_input";
   const agentIconWrapperStyle = useMemo(
     () => [styles.agentIconWrapper, { width: size, height: size }],
@@ -48,12 +46,11 @@ export function StatusIcon({
   const statusDotStyle = useMemo(
     () => [
       styles.statusDot,
-      {
-        backgroundColor: statusDotColor,
-        borderColor: statusDotBorderColor ?? styles[backdrop].borderColor,
-      },
+      bucket === "failed" ? styles.statusDotFailed : styles.statusDotAttention,
+      styles[backdrop],
+      statusDotBorderColor ? { borderColor: statusDotBorderColor } : null,
     ],
-    [statusDotColor, statusDotBorderColor, backdrop],
+    [bucket, statusDotBorderColor, backdrop],
   );
 
   return (
@@ -68,7 +65,7 @@ export function StatusIcon({
           <StatusRing backdrop={backdrop} />
         </View>
       ) : null}
-      {statusDotColor ? <View style={statusDotStyle} /> : null}
+      {showStatusDot ? <View style={statusDotStyle} /> : null}
       {showNeedsInputAlert ? (
         <View style={styles.statusAlertOverlay}>
           <ThemedCircleAlert size={STATUS_INDICATOR_ALERT_SIZE} uniProps={needsInputAlertMapping} />
@@ -89,15 +86,29 @@ const styles = StyleSheet.create((theme) => ({
     position: "absolute",
     right: DEFAULT_STATUS_DOT_OFFSET,
     bottom: DEFAULT_STATUS_DOT_OFFSET,
-    width: STATUS_INDICATOR_DOT_SIZE,
-    height: STATUS_INDICATOR_DOT_SIZE,
+    width:
+      theme.components.statusIndicator.size === undefined
+        ? STATUS_INDICATOR_DOT_SIZE
+        : theme.components.statusIndicator.size + 2,
+    height:
+      theme.components.statusIndicator.size === undefined
+        ? STATUS_INDICATOR_DOT_SIZE
+        : theme.components.statusIndicator.size + 2,
     borderRadius: theme.borderRadius.full,
     borderWidth: 1,
   },
   statusRing: {
     position: "absolute",
-    right: getStatusRingOffset(DEFAULT_STATUS_DOT_OFFSET, STATUS_INDICATOR_DOT_SIZE),
-    bottom: getStatusRingOffset(DEFAULT_STATUS_DOT_OFFSET, STATUS_INDICATOR_DOT_SIZE),
+    right: getStatusRingOffset(
+      DEFAULT_STATUS_DOT_OFFSET,
+      STATUS_INDICATOR_DOT_SIZE,
+      theme.components.statusIndicator.size,
+    ),
+    bottom: getStatusRingOffset(
+      DEFAULT_STATUS_DOT_OFFSET,
+      STATUS_INDICATOR_DOT_SIZE,
+      theme.components.statusIndicator.size,
+    ),
   },
   surface0: { borderColor: theme.colors.surface0 },
   surface1: { borderColor: theme.colors.surface1 },
@@ -111,9 +122,9 @@ const styles = StyleSheet.create((theme) => ({
     bottom: STATUS_ALERT_OFFSET,
   },
   statusDotFailed: {
-    color: getStatusDotColor({ theme, bucket: "failed" }) ?? undefined,
+    backgroundColor: getStatusDotColor({ theme, bucket: "failed" }) ?? undefined,
   },
   statusDotAttention: {
-    color: getStatusDotColor({ theme, bucket: "attention" }) ?? undefined,
+    backgroundColor: getStatusDotColor({ theme, bucket: "attention" }) ?? undefined,
   },
 }));

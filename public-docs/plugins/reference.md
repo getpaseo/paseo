@@ -1065,6 +1065,36 @@ Paseo draws inline SVG at the surface's icon size and passes the surface's icon 
 A component receives `PluginIconProps`, `{ size, color }`, and renders within that size. Header
 buttons and composer pills pass [`PluginButtonIconProps`](#custom-icons-and-popover-content).
 
+#### Provider icon overrides
+
+A client plugin can replace the icon of any exact provider ID on its own host, including a built-in
+provider or one registered by another plugin:
+
+```ts
+import brandSvg from "./client/brand.svg";
+
+const remove = client.addProviderIconOverride({
+  id: "codex-brand",
+  provider: "codex",
+  icon: { svg: brandSvg },
+});
+
+// Restore the next applicable icon without uninstalling the plugin.
+remove();
+```
+
+`icon` accepts a Lucide name or inline SVG (`PluginSerializableIcon`); component icons are not
+accepted. The contribution ID is unique within the plugin. The icon follows the surface's size and
+color. This changes presentation only and does not register or configure a provider.
+
+Overrides apply only to the host where the plugin is installed. They take precedence over built-in
+marks and provider-supplied SVG. When several contributions target the same provider, the smallest
+plugin ID, then contribution ID in code-unit order wins, independently of installation order.
+Removing the contribution, disabling or uninstalling its plugin, or disconnecting its host removes
+that override. To replace it during a plugin's lifetime, call its cleanup and register the new icon.
+Unknown Lucide names and unsafe SVG fail registration; malformed SVG XML uses a generic icon so the
+surrounding controls remain usable.
+
 #### SVG rules
 
 Inline SVG, provider icons, and usage-source icons follow the same rules:
@@ -1298,6 +1328,186 @@ unpainted.
 
 Themes need a host that supports them. A client released before `addTheme` cannot evaluate that client entry and reports
 `client.addTheme is not a function`. Update the client.
+
+### Component appearance
+
+Themes may also supply `components` to style shared buttons and sidebar rows. These options require
+a client containing the component appearance extension; older clients reject the new fields.
+Use a matching minimum Paseo version in your manifest when adopting these APIs.
+
+```ts
+components: {
+  button: {
+    radius: 9999,
+    fontWeight: "500",
+    pressedOpacity: 1,
+    pressedScale: 0.97,
+    sizes: { sm: { minHeight: 28, paddingHorizontal: 12 } },
+  },
+  iconButton: { radius: 9999 },
+  sidebar: {
+    projectRow: { minHeight: 36, gap: 8, fontWeight: "500" },
+    workspaceRow: { radius: 8, paddingVertical: 6 },
+    workspaceIndent: 12,
+    groupGap: 8,
+  },
+  projectIcon: { size: 24, radius: 8, borderWidth: 1, borderColor: "#d7d7d4" },
+  statusIndicator: { size: 8, runningStyle: "dot", animation: "none" },
+}
+```
+
+| Group             | Settings                                                                                                                                                                                                                          |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `button`          | `radius` (0–9999), `borderWidth` (0–4), `fontWeight` (`"400"`, `"500"`, `"600"`), `hoverOpacity` / `pressedOpacity` (0.3–1), `pressedScale` (0.9–1), `sizes.xs/sm/md/lg` with `minHeight` (24–96) and `paddingHorizontal` (0–48). |
+| `iconButton`      | `radius` (0–9999), `highlightColor`.                                                                                                                                                                                              |
+| `sidebar`         | `projectRow` / `workspaceRow` with `minHeight`, `paddingHorizontal`, `paddingVertical`, `radius`, `gap`, `fontWeight`; `workspaceIndent` / `groupGap` (0–48). These change row geometry, not ordering or grouping behavior.       |
+| `projectIcon`     | Sidebar `size` (12–32), `radius`, `background`, `foreground`, `borderColor`, `borderWidth`. An explicit radius also rounds uploaded artwork.                                                                                      |
+| `statusIndicator` | `size` (4–16), `runningStyle` (`"ring"` or `"dot"`), `animation` (`"default"` or `"none"`), `colors` with `running`, `needsInput`, `failed`, `attention`, `inactive`.                                                             |
+
+Colors use the palette's hex formats. Omitted settings preserve built-in appearance. Switching,
+removing, or reloading a theme resets its overrides. User font settings and compact touch target
+minimums still apply. Themes do not change status meaning or priority. For custom project artwork,
+call `usePaseo().projects.setIcon(projectId, source)`; see the [SDK reference](/docs/sdk/reference#clientprojects).
+
+## Workspace status renderer
+
+Use `client.addWorkspaceStatusRenderer({ id, Component })` to replace the leading status mark of
+workspace rows on the plugin's host. Return its cleanup function to remove the renderer. The host
+keeps the row's navigation and accessible aggregate-status label; the drawing is clipped to its
+`size` and receives no pointer events. Removing the plugin or throwing during rendering restores
+the built-in mark. If several plugins register a renderer, the first by plugin ID and contribution
+ID wins. Project headers retain their aggregate status presentation.
+
+The component receives `PluginWorkspaceStatusRendererProps`: `host`, `theme`, `layout`, `size`,
+`loading`, `workspace: { id, name, status }`, `statusDetails`, `activities`, and `primaryActivityId`.
+These snapshots are immutable. `workspace.status` remains the authoritative aggregate; drawing a
+different mark does not change agent state, sorting, filtering, or notification priority.
+During a local start, `workspace.status` can lead the next host inventory; use `loading` to show
+that pending transition.
+
+`statusDetails` is `null` when the host does not provide the inventory. An unavailable inventory
+does not mean zero tasks. A supplied inventory contains:
+
+- `nativeStatus`: the workspace aggregate before plugin activities, including terminal activity.
+- `rootStatus` and `roots`: the aggregate and records for all workspace roots. A workspace can have
+  several roots; the app does not choose one main agent. Each root includes its lifecycle status and
+  any parent agent/workspace IDs. A child placed in another workspace is a root in that workspace.
+- `subordinates`: running descendants reported by the host, with stable opaque `id`, `source`
+  (`paseo` or `provider`), `kind`, `status`, `count`, provider, label and parent IDs. Each record has
+  `count: 1`. Completed children are omitted. Provider-owned children are included only when their
+  provider reports them; this is not an inventory of arbitrary detached processes. Provider
+  workflows normalized as children retain the provider's label. `parentSubagentId` uses the same
+  opaque namespace as subordinate `id`; that parent may be absent if it is no longer running.
+
+`activities` is independently `null` when plugin activity reporting is unavailable. Each activity
+may contain stable member `items: [{ id, label }]`; scope those IDs by the activity's ID. Without
+`items`, `count` describes an aggregate: draw anonymous segments with a shared group color rather
+than inventing identities for individual tasks. Parent/root records and subordinate records do
+not overlap, and activity counts are separate from both.
+
+## Floating widgets
+
+`client.addFloatingWidget` contributes a draggable surface inside the Paseo app. It remains mounted
+across routes and sits below menus and modals, without a full-screen backdrop. Pointer events outside
+the widget pass through to the application. This is not an operating-system desktop window.
+
+```tsx
+import { Text } from "react-native";
+import type { PluginClientContext, PluginFloatingWidgetProps } from "@getpaseo/plugin/client";
+
+function Widget({ theme, DragHandle }: PluginFloatingWidgetProps) {
+  return (
+    <DragHandle accessibilityLabel="Activity widget" onPress={() => console.log("Activate")}>
+      <Text style={{ color: theme.colors.foreground }}>Activity summary</Text>
+    </DragHandle>
+  );
+}
+
+export default function contribute(client: PluginClientContext) {
+  const widget = client.addFloatingWidget({
+    id: "activity",
+    title: "Activity widget",
+    Component: Widget,
+    size: { width: 220, height: 180 },
+    initialPosition: "bottom-right",
+    initiallyVisible: true,
+    chrome: "none",
+  });
+  return () => widget.remove();
+}
+```
+
+`size` supplies positive dimensions up to 1024. Paseo clamps the content to the available viewport,
+safe area, and keyboard space. `initialPosition` accepts the four corner names. The returned handle
+has `update({ title?, size? })`, `show()`, `hide()`, and `remove()`.
+
+`chrome` defaults to `"toolbar"`, which supplies a drag handle, source host, collapse, and close
+buttons. Choose `"none"` for content alone, without a minimum toolbar width or reserved toolbar
+height. Command Center always supplies show, hide, and move-to-next-corner actions using the widget’s title;
+when several hosts contribute the widget, it also supplies a source-host switcher. Each action names
+its current host. Removing the registration removes these commands too.
+
+Components receive `PluginFloatingWidgetProps`: host/theme/layout props, the actual content `size`,
+`hide()`, `collapse()`, and a stable `DragHandle` component. Wrap only the region that should receive
+drag gestures with `DragHandle`; keep transparent surroundings in `pointerEvents="box-none"` views.
+The handle accepts `style`, `testID`, accessibility props, `onPress`, `onLongPress`, and
+`delayLongPress` (450ms by default). A pointer movement beyond 6 logical pixels starts dragging and
+cancels the pending press actions, even if the pointer returns to its starting point. Long-press does
+not fire an additional tap on release. Keyboard activation still calls `onPress`. With `chrome:
+"none"`, `collapse()` hides the widget; its show action restores it.
+
+Use host hooks such as `usePaseo()` or `useRpc()`. No workspace or agent context is implied. A widget
+installed on several hosts is displayed once. Calling `show()` selects that registration's host;
+`hide()`, `update()`, and `remove()` affect only that registration. Without an explicit choice, host
+ordering provides a stable default. Route changes preserve position; app restarts do not currently
+persist position or visibility. Plugin teardown removes the widget and its commands. The client must
+contain the floating widget extension before evaluating this entry.
+
+## Workspace activities
+
+Server plugins can contribute activity that continues independently of an agent turn:
+
+```ts
+const activity = server.addWorkspaceActivity({
+  id: "background-task-42",
+  workspaceId: task.owner.workspaceId,
+  kind: "background-task",
+  label: "Background tasks",
+  status: "running",
+  icon: "SquareTerminal",
+  count: 1,
+});
+activity.update({ count: 2 });
+// When the last task finishes:
+activity.remove();
+```
+
+`id` is unique within a plugin instance (at most 128 characters). `workspaceId` is explicit and
+immutable; use the task owner's workspace, not a guess from its working directory. `kind` and
+`label` describe the activity. `status` is `running`, `attention`, `needs_input`, or `failed`;
+completed work is removed. `icon` is an optional Lucide name and `count` is an optional positive
+integer. `update` changes these fields except `id` and `workspaceId`. The daemon supplies the
+plugin namespace and `changedAt` timestamp.
+
+For a group of tasks, optional `items: [{ id, label }]` supplies the complete membership (up to
+512 items). Item IDs must be unique within the activity and remain stable while the task runs;
+each item inherits the group's kind and status. The host derives `count` from the list, or requires
+an explicitly supplied count to match it. Update the list when a task starts, finishes, or changes
+its label. A status renderer can assign a stable color to each item; a count-only activity supports
+anonymous segments but does not identify individual tasks.
+
+Activities participate in workspace filtering, ordering, project aggregation, and live updates to
+all clients. Workspace snapshots expose optional `activities` and `primaryActivityId`. A workspace's
+native needs-input or failed status retains the primary mark; other native statuses win ties. The sidebar shows the
+winning activity's icon and retains concurrent activity labels. An activity does not change
+`agent.status`, so an idle agent with a running background task remains idle.
+
+Registration is in-memory for the current plugin process. Remove it when work completes; stopping,
+disabling, removing, or crashing a plugin clears its registrations. A client disconnect does not.
+Archived or removed workspaces do not reappear because of late updates. Plugins with persistent
+jobs should rebuild their activities from their own job store on startup. The daemon advertises
+`server_info.features.pluginWorkspaceActivities`; both daemon and client need this extension to
+show custom activity indicators.
 
 ## Settings screens
 

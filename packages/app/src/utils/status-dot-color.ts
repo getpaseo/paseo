@@ -7,6 +7,7 @@ export function getStatusDotColor(input: {
   showDoneAsInactive?: boolean;
 }): string | null {
   const { theme, bucket, showDoneAsInactive = false } = input;
+  const colors = theme.components.statusIndicator.colors;
 
   // The one place the statusDot* band is read. Dots sit louder than the check icons and host
   // badges on the same row — see the band's note in theme.ts — so going through the status
@@ -16,19 +17,19 @@ export function getStatusDotColor(input: {
   // its job is the one busy state that asks for nothing, so it should not sit in the same
   // color as the states that do.
   if (bucket === "needs_input") {
-    return theme.colors.statusDotWarning;
+    return colors?.needsInput ?? theme.colors.statusDotWarning;
   }
   if (bucket === "failed") {
-    return theme.colors.statusDotDanger;
+    return colors?.failed ?? theme.colors.statusDotDanger;
   }
   if (bucket === "running") {
-    return theme.colors.statusDotRunning;
+    return colors?.running ?? theme.colors.statusDotRunning;
   }
   if (bucket === "attention") {
-    return theme.colors.statusDotSuccess;
+    return colors?.attention ?? theme.colors.statusDotSuccess;
   }
   if (bucket === "done") {
-    return showDoneAsInactive ? theme.colors.border : null;
+    return showDoneAsInactive ? (colors?.inactive ?? theme.colors.border) : null;
   }
   return null;
 }

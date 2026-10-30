@@ -1,4 +1,6 @@
 import { AgentMessageSchema } from "./agent-message.js";
+import { WorkspaceActivitySchema } from "./workspace-activity.js";
+export { WorkspaceActivitySchema, type WorkspaceActivity } from "./workspace-activity.js";
 import {
   HostsListRequestSchema,
   HostsAddRequestSchema,
@@ -1322,6 +1324,41 @@ const WorkspaceStateBucketSchema = z.enum([
   "attention",
   "done",
 ]);
+
+export const WorkspaceStatusDetailsSchema = z.object({
+  /** Native aggregate before plugin activities, including terminal activity. */
+  nativeStatus: WorkspaceStateBucketSchema,
+  /** Aggregate of workspace roots only; a workspace need not have one unique main agent. */
+  rootStatus: WorkspaceStateBucketSchema,
+  roots: z.array(
+    z.object({
+      id: z.string(),
+      provider: z.string(),
+      label: z.string().nullable(),
+      status: WorkspaceStateBucketSchema,
+      lifecycleStatus: z.enum(AGENT_LIFECYCLE_STATUSES),
+      parentAgentId: z.string().nullable(),
+      parentWorkspaceId: z.string().nullable(),
+    }),
+  ),
+  /** Running descendants only, each owned by this workspace. Completed children are omitted. */
+  subordinates: z.array(
+    z.object({
+      id: z.string(),
+      source: z.enum(["paseo", "provider"]),
+      kind: z.literal("subagent"),
+      provider: z.string(),
+      label: z.string().nullable(),
+      status: WorkspaceStateBucketSchema,
+      count: z.literal(1),
+      parentAgentId: z.string(),
+      /** Opaque subordinate id, in the same namespace as `id`; the parent may no longer be running. */
+      parentSubagentId: z.string().nullable(),
+    }),
+  ),
+});
+
+export type WorkspaceStatusDetails = z.infer<typeof WorkspaceStatusDetailsSchema>;
 
 export const FetchWorkspacesRequestMessageSchema = z.object({
   includeBackground: z.boolean().optional(),
@@ -3737,6 +3774,10 @@ export const ServerInfoStatusPayloadSchema = z
         pluginThemes: z.boolean().optional(),
         pluginSettings: z.boolean().optional(),
         pluginTimelineItems: z.boolean().optional(),
+        // COMPAT(pluginWorkspaceActivities): added in v0.14.0, remove gate after 2027-04-27.
+        pluginWorkspaceActivities: z.boolean().optional(),
+        // COMPAT(workspaceStatusDetails): added in v0.14.0, remove gate after 2027-04-28.
+        workspaceStatusDetails: z.boolean().optional(),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: z.boolean().optional(),
         // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, remove gate after 2027-04-26.
@@ -4170,6 +4211,12 @@ export const WorkspaceDescriptorPayloadSchema = z
     background: z.boolean().optional(),
     archivingAt: z.string().nullable().optional().default(null),
     status: WorkspaceStateBucketSchema,
+    // COMPAT(pluginWorkspaceActivities): added in v0.14.0, remove optional after 2027-04-27.
+    activities: z.array(WorkspaceActivitySchema).optional(),
+    /** The plugin activity winning over native state, or null when native state wins. */
+    primaryActivityId: z.string().nullable().optional(),
+    // COMPAT(workspaceStatusDetails): added in v0.14.0, remove optional after 2027-04-28.
+    statusDetails: WorkspaceStatusDetailsSchema.optional(),
     // Best-effort workspace status entry timestamp. Old daemons omit the
     // field; old clients treat missing and null equivalently. The transform
     // coerces a missing field to `null` so downstream code never has to

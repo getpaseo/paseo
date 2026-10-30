@@ -3,7 +3,18 @@ import { QueryClient } from "@tanstack/react-query";
 import type { PluginThemeContribution } from "@getpaseo/plugin";
 import { describe, expect, it } from "vitest";
 import { darkTheme, lightTheme } from "@/styles/theme";
-import { collectPluginThemes, rememberPluginThemeHost } from "./themes";
+import {
+  collectPluginThemes,
+  parsePluginThemeContribution,
+  rememberPluginThemeHost,
+} from "./themes";
+import { createSidebarRowGeometry } from "@/styles/sidebar-geometry";
+import { getStatusDotColor } from "@/utils/status-dot-color";
+import {
+  getStatusRingGeometry,
+  getStatusRingOffset,
+  statusRingAppearance,
+} from "@/components/status-ring/geometry";
 import { toPluginTheme } from "./theme";
 import type { InstalledPlugin } from "./types";
 
@@ -44,7 +55,7 @@ const LATTE: PluginThemeContribution = {
   },
 };
 
-function installed(serverId: string, themes: PluginThemeContribution[]): InstalledPlugin {
+function installed(serverId: string, themes: InstalledPlugin["themes"]): InstalledPlugin {
   return {
     id: "catppuccin",
     cleanup: () => undefined,
@@ -58,6 +69,7 @@ function installed(serverId: string, themes: PluginThemeContribution[]): Install
     invoke: async () => undefined,
     settingsScreens: [],
     surfaces: [],
+    floatingWidgets: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
     filePanels: [],
@@ -66,6 +78,8 @@ function installed(serverId: string, themes: PluginThemeContribution[]): Install
     clientSlashCommands: [],
     attachmentSources: [],
     themes,
+    providerIconOverrides: [],
+    workspaceStatusRenderers: [],
     timelineTransformers: [],
     timelineRenderers: [],
   };
@@ -92,6 +106,104 @@ describe("toPluginTheme", () => {
 });
 
 describe("plugin theme palettes", () => {
+  it("accepts component presentation and rebuilds every group from defaults after removal", () => {
+    const contribution = parsePluginThemeContribution({
+      ...MOCHA,
+      components: {
+        button: { radius: 9999, sizes: { md: { minHeight: 32 } } },
+        iconButton: { radius: 9999, highlightColor: "#ffffff20" },
+        sidebar: {
+          projectRow: { minHeight: 28, paddingHorizontal: 16, fontWeight: "500" },
+          workspaceIndent: 12,
+        },
+        projectIcon: { radius: 9999, size: 24, background: "#202020" },
+        statusIndicator: {
+          size: 8,
+          runningStyle: "dot",
+          animation: "none",
+          colors: { running: "#abcdef" },
+        },
+      },
+    });
+    const configured = collectPluginThemes(
+      [installed("host-a", [contribution])],
+      new Set(["host-a"]),
+    )[0].theme;
+    expect(configured.components).toEqual(contribution.components);
+    expect(getStatusDotColor({ theme: configured, bucket: "running" })).toBe("#abcdef");
+    expect(getStatusDotColor({ theme: configured, bucket: "failed" })).toBe(
+      darkTheme.colors.statusDotDanger,
+    );
+    expect(createSidebarRowGeometry(configured, "projectRow")).toMatchObject({
+      minHeight: { xs: 44, md: 28 },
+      paddingLeft: 16,
+      paddingRight: 16,
+    });
+    expect(createSidebarRowGeometry(configured, "workspaceRow")).toMatchObject({
+      minHeight: { xs: 44, md: 36 },
+      paddingLeft: 8,
+      paddingRight: 12,
+    });
+    expect(statusRingAppearance(configured)).toEqual({
+      dotSize: 8,
+      dotOnly: true,
+      animated: false,
+    });
+    expect(getStatusRingGeometry(8)).toEqual({ dotSize: 8, ringSize: 14, frameSize: 16 });
+    expect(getStatusRingOffset(-4, 12, 8)).toBe(-6);
+
+    const reset = collectPluginThemes([installed("host-a", [MOCHA])], new Set(["host-a"]))[0].theme;
+    expect(reset.components).toEqual(darkTheme.components);
+    expect(getStatusDotColor({ theme: reset, bucket: "running" })).toBe(
+      darkTheme.colors.statusDotRunning,
+    );
+    expect(statusRingAppearance(reset)).toEqual({ dotSize: 6, dotOnly: false, animated: true });
+    expect(darkTheme.components.button).toEqual({});
+    expect(collectPluginThemes([], new Set(["host-a"]))).toEqual([]);
+  });
+
+  it.each([
+    { button: { radius: -1 } },
+    { button: { sizes: { md: { minHeight: 0 } } } },
+    { button: { pressedOpacity: 0 } },
+    { button: { sizes: { enormous: { minHeight: 40 } } } },
+    { button: { onPress: "replace" } },
+    { sidebar: { projectRow: { paddingVertical: Infinity } } },
+    { projectIcon: { size: 400 } },
+    { statusIndicator: { animation: "custom-code" } },
+    { statusIndicator: { colors: { running: "url(https://example.com)" } } },
+    { unknownComponent: {} },
+  ])("rejects invalid or unknown component fields: %j", (components) => {
+    expect(() => parsePluginThemeContribution({ ...MOCHA, components })).toThrow();
+  });
+
+  it("can stop the ring without hiding it and does not surface an inactive status by color alone", () => {
+    const theme = collectPluginThemes(
+      [
+        installed("host-a", [
+          {
+            ...MOCHA,
+            components: { statusIndicator: { animation: "none", colors: { inactive: "#123456" } } },
+          },
+        ]),
+      ],
+      new Set(["host-a"]),
+    )[0].theme;
+    expect(statusRingAppearance(theme)).toEqual({ dotSize: 6, dotOnly: false, animated: false });
+    expect(getStatusDotColor({ theme, bucket: "done" })).toBeNull();
+    expect(getStatusDotColor({ theme, bucket: "done", showDoneAsInactive: true })).toBe("#123456");
+  });
+
+  it("treats explicitly undefined component groups as omitted", () => {
+    const contribution = parsePluginThemeContribution({
+      ...MOCHA,
+      components: { button: undefined, statusIndicator: undefined },
+    });
+    const theme = collectPluginThemes([installed("host-a", [contribution])], new Set(["host-a"]))[0]
+      .theme;
+    expect(theme.components).toEqual(darkTheme.components);
+  });
+
   it("expands a contributed palette onto the semantic and terminal tokens", () => {
     const option = collectPluginThemes([installed("host-a", [MOCHA])], new Set(["host-a"]))[0];
     const theme = option.theme;

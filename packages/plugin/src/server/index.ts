@@ -1,4 +1,9 @@
 export type {
+  PluginWorkspaceActivityContribution,
+  PluginWorkspaceActivityUpdate,
+  PluginWorkspaceActivityRegistration,
+} from "./workspace-activity.js";
+export type {
   UsageSourceRegistration,
   UsageReport,
   UsageWindow,

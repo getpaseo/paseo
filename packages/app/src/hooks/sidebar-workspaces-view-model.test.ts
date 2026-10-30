@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { WorkspaceActivity } from "@getpaseo/protocol/messages";
+import type { PendingCreateAttempt } from "@/stores/create-flow-store";
 import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import type { WorkspaceStructureProject } from "@/projects/workspace-structure";
 import { buildWorkspaceAgentActivityIndex } from "@/utils/workspace-agent-activity";
@@ -11,6 +13,7 @@ import {
   computeSidebarOrderUpdates,
   createSidebarWorkspacePlacementSelector,
   createSidebarWorkspaceEntry,
+  createProjectActivitiesSelector,
   deriveProjectStatusBucket,
   deriveSidebarLoadingState,
   shouldShowSidebarHostLabels,
@@ -771,6 +774,138 @@ function projectWorkspace(id: string, status: WorkspaceDescriptor["status"]): Wo
     status,
   });
 }
+
+describe("createProjectActivitiesSelector", () => {
+  const shell: WorkspaceActivity = {
+    id: "shell/background",
+    pluginId: "shell",
+    activityId: "background",
+    workspaceId: "ws-1",
+    kind: "async-shell",
+    label: "Background shells",
+    status: "running",
+    count: 2,
+    icon: "SquareTerminal",
+    changedAt: "2026-10-27T12:00:00.000Z",
+  };
+  const placements = [
+    workspacePlacement({ workspaceId: "ws-1" }),
+    workspacePlacement({ workspaceId: "ws-2" }),
+  ];
+
+  function projectSession() {
+    return sessionWith({
+      workspaces: [
+        {
+          ...projectWorkspace("ws-1", "running"),
+          activities: [shell],
+          primaryActivityId: shell.id,
+        },
+        projectWorkspace("ws-2", "done"),
+      ],
+    });
+  }
+
+  it("keeps a pending native creation ahead of a same-bucket plugin activity", () => {
+    const pending: PendingCreateAttempt = {
+      draftId: "draft",
+      serverId: "srv",
+      workspaceId: "ws-2",
+      agentId: null,
+      clientMessageId: "message",
+      text: "Start",
+      timestamp: 1_000,
+      lifecycle: "active",
+    };
+    const state = { sessions: { srv: projectSession() } };
+    const select = createProjectActivitiesSelector({
+      workspaces: placements,
+      enabled: true,
+      pendingCreateAttempts: { draft: pending },
+    });
+
+    expect(
+      deriveProjectStatusBucket({
+        workspaces: placements,
+        sessions: state.sessions,
+        pendingCreateAttempts: { draft: pending },
+      }),
+    ).toBe("running");
+    expect(select(state)).toEqual({ primary: null, activities: [shell], count: 2 });
+
+    // The hook rebinds the selector when creation state changes, even if the directory did not.
+    const settled = createProjectActivitiesSelector({
+      workspaces: placements,
+      enabled: true,
+      pendingCreateAttempts: {},
+    });
+    expect(settled(state).primary).toEqual(shell);
+  });
+
+  it("uses the native activity index when the directory still says done", () => {
+    const session = projectSession();
+    const select = createProjectActivitiesSelector({ workspaces: placements, enabled: true });
+    expect(select({ sessions: { srv: session } }).primary).toEqual(shell);
+
+    const nativeRunning = sessionWith({
+      workspaces: [...session.workspaces.values()],
+      agents: [agent({ id: "native", workspaceId: "ws-2", status: "running" })],
+    });
+    const state = {
+      sessions: {
+        srv: { ...session, workspaceAgentActivity: nativeRunning.workspaceAgentActivity },
+      },
+    };
+    expect(deriveProjectStatusBucket({ workspaces: placements, sessions: state.sessions })).toBe(
+      "running",
+    );
+    expect(select(state)).toEqual({ primary: null, activities: [shell], count: 2 });
+  });
+
+  it("does not scan workspaces again on token updates or updates to an unrelated host", () => {
+    const session = projectSession();
+    const getWorkspace = vi.spyOn(session.workspaces, "get");
+    const select = createProjectActivitiesSelector({ workspaces: placements, enabled: true });
+    const first = select({ sessions: { srv: session } });
+    getWorkspace.mockClear();
+
+    const afterToken = select({ sessions: { srv: { ...session } } });
+    const afterOtherHost = select({ sessions: { srv: { ...session }, other: projectSession() } });
+    expect(afterToken).toBe(first);
+    expect(afterOtherHost).toBe(first);
+    expect(getWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("refreshes activities on a directory update and clears a removed contribution", () => {
+    const session = projectSession();
+    const select = createProjectActivitiesSelector({ workspaces: placements, enabled: true });
+    expect(select({ sessions: { srv: session } }).primary).toEqual(shell);
+    const cleared = {
+      ...session,
+      workspaces: new Map([
+        ["ws-1", projectWorkspace("ws-1", "done")],
+        ["ws-2", projectWorkspace("ws-2", "done")],
+      ]),
+    };
+    expect(select({ sessions: { srv: cleared } })).toEqual({
+      primary: null,
+      activities: [],
+      count: 0,
+    });
+  });
+
+  it("does not read workspace entries while the project is expanded", () => {
+    const session = projectSession();
+    const getWorkspace = vi.spyOn(session.workspaces, "get");
+    const select = createProjectActivitiesSelector({ workspaces: placements, enabled: false });
+    expect(select({ sessions: { srv: session } })).toEqual({
+      primary: null,
+      activities: [],
+      count: 0,
+    });
+    expect(getWorkspace).not.toHaveBeenCalled();
+  });
+});
 
 describe("deriveProjectStatusBucket", () => {
   it("is done when the project has no workspaces", () => {

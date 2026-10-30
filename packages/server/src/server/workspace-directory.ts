@@ -20,6 +20,7 @@ import {
   type TerminalActivity,
 } from "@getpaseo/protocol/terminal-activity";
 import type { ProviderSubagentDescriptor } from "./agent/provider-subagents/store.js";
+import type { WorkspaceActivity } from "@getpaseo/protocol/messages";
 
 const FETCH_WORKSPACES_SORT_KEYS = [
   "status_priority",
@@ -63,9 +64,22 @@ type WorkspaceProjectDescriptor = FetchWorkspacesResponsePayload["emptyProjects"
 
 export type WorkspaceUpdatesFilter = FetchWorkspacesRequestFilter;
 
+function agentStateBucket(agent: AgentSnapshotPayload): WorkspaceStateBucket {
+  return deriveAgentStateBucket({
+    status: agent.status,
+    pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
+    requiresAttention: agent.requiresAttention,
+    attentionReason: agent.attentionReason ?? null,
+  });
+}
+
+function providerSubagentStatusId(parentAgentId: string, subagentId: string): string {
+  return `provider/${encodeURIComponent(parentAgentId)}/${encodeURIComponent(subagentId)}`;
+}
+
 export type ProviderSubagentWorkspaceActivity = Pick<
   ProviderSubagentDescriptor,
-  "parentAgentId" | "status" | "updatedAt"
+  "id" | "parentAgentId" | "parentSubagentId" | "provider" | "title" | "status" | "updatedAt"
 >;
 
 export interface WorkspaceDirectoryDeps {
@@ -79,6 +93,7 @@ export interface WorkspaceDirectoryDeps {
   listAgentPayloads(): Promise<AgentSnapshotPayload[]>;
   workspaceLastUserMessageTimes(): Promise<ReadonlyMap<string, string>>;
   listProviderSubagentActivity(): Promise<ProviderSubagentWorkspaceActivity[]>;
+  listPluginWorkspaceActivities?(): readonly WorkspaceActivity[];
   listTerminalActivityContributions(): Promise<
     Array<{ cwd: string; workspaceId?: string; activity: TerminalActivity | null }>
   >;
@@ -270,6 +285,14 @@ export class WorkspaceDirectory {
     const activeAgents = agents.filter(
       (agent) => !agent.archivedAt && this.deps.isProviderVisibleToClient(agent.provider),
     );
+    for (const descriptor of descriptorsByWorkspaceId.values()) {
+      descriptor.statusDetails = {
+        nativeStatus: descriptor.status,
+        rootStatus: "done",
+        roots: [],
+        subordinates: [],
+      };
+    }
     this.applyAgentBucketContributions({
       activeAgents,
       descriptorsByWorkspaceId,
@@ -286,6 +309,13 @@ export class WorkspaceDirectory {
       descriptorsByWorkspaceId,
       activityEntriesByWorkspaceId,
     });
+    for (const descriptor of descriptorsByWorkspaceId.values()) {
+      const details = descriptor.statusDetails!;
+      details.nativeStatus = descriptor.status;
+      details.roots.sort((a, b) => a.id.localeCompare(b.id));
+      details.subordinates.sort((a, b) => a.id.localeCompare(b.id));
+    }
+    this.applyPluginActivityContributions(descriptorsByWorkspaceId, activityEntriesByWorkspaceId);
 
     const contributingAgentsByWorkspaceId = groupAgentsByWorkspaceId(
       activeAgents,
@@ -316,6 +346,37 @@ export class WorkspaceDirectory {
     }
 
     return descriptorsByWorkspaceId;
+  }
+
+  private applyPluginActivityContributions(
+    descriptors: Map<string, WorkspaceDescriptorPayload>,
+    timestampEntries: Map<string, WorkspaceBucketTimestampEntry[]>,
+  ): void {
+    const nativeUrgent = new Set<string>();
+    for (const descriptor of descriptors.values()) {
+      descriptor.activities = [];
+      descriptor.primaryActivityId = null;
+      if (descriptor.status === "needs_input" || descriptor.status === "failed")
+        nativeUrgent.add(descriptor.id);
+    }
+    for (const activity of this.deps.listPluginWorkspaceActivities?.() ?? []) {
+      // Attribution is strictly by workspace id. Missing and archived workspaces contribute nothing.
+      const descriptor = descriptors.get(activity.workspaceId);
+      if (!descriptor) continue;
+      descriptor.activities?.push(activity);
+      const entries = timestampEntries.get(activity.workspaceId) ?? [];
+      entries.push({ bucket: activity.status, changedAtIso: activity.changedAt });
+      timestampEntries.set(activity.workspaceId, entries);
+      // Equal-priority native activity owns the primary mark. Iteration is stable by activity id.
+      if (
+        !nativeUrgent.has(descriptor.id) &&
+        getWorkspaceStateBucketPriority(activity.status) <
+          getWorkspaceStateBucketPriority(descriptor.status)
+      ) {
+        descriptor.status = activity.status;
+        descriptor.primaryActivityId = activity.id;
+      }
+    }
   }
 
   private applyProviderSubagentContributions(params: {
@@ -349,6 +410,19 @@ export class WorkspaceDirectory {
       if (!descriptor) {
         continue;
       }
+      descriptor.statusDetails?.subordinates.push({
+        id: providerSubagentStatusId(subagent.parentAgentId, subagent.id),
+        source: "provider",
+        kind: "subagent",
+        provider: subagent.provider,
+        label: subagent.title,
+        status: "running",
+        count: 1,
+        parentAgentId: subagent.parentAgentId,
+        parentSubagentId: subagent.parentSubagentId
+          ? providerSubagentStatusId(subagent.parentAgentId, subagent.parentSubagentId)
+          : null,
+      });
       if (
         getWorkspaceStateBucketPriority("running") <
         getWorkspaceStateBucketPriority(descriptor.status)
@@ -382,14 +456,7 @@ export class WorkspaceDirectory {
       if (!isWorkspaceRoot && agent.status !== "running") {
         continue;
       }
-      const bucket = isWorkspaceRoot
-        ? deriveAgentStateBucket({
-            status: agent.status,
-            pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
-            requiresAttention: agent.requiresAttention,
-            attentionReason: agent.attentionReason ?? null,
-          })
-        : "running";
+      const bucket = isWorkspaceRoot ? agentStateBucket(agent) : "running";
 
       const workspaceId = workspaceAgent.workspaceId;
       if (!workspaceId) {
@@ -398,6 +465,38 @@ export class WorkspaceDirectory {
       const existing = descriptorsByWorkspaceId.get(workspaceId);
       if (!existing) {
         continue;
+      }
+      const details = existing.statusDetails!;
+      const parentAgentId = getParentAgentIdFromLabels(agent.labels);
+      if (isWorkspaceRoot) {
+        details.roots.push({
+          id: agent.id,
+          provider: agent.provider,
+          label: agent.title ?? null,
+          status: bucket,
+          lifecycleStatus: agent.status,
+          parentAgentId,
+          parentWorkspaceId: parentAgentId
+            ? (activeAgentsById.get(parentAgentId)?.workspaceId ?? null)
+            : null,
+        });
+        if (
+          getWorkspaceStateBucketPriority(bucket) <
+          getWorkspaceStateBucketPriority(details.rootStatus)
+        )
+          details.rootStatus = bucket;
+      } else if (parentAgentId) {
+        details.subordinates.push({
+          id: `paseo/${agent.id}`,
+          source: "paseo",
+          kind: "subagent",
+          provider: agent.provider,
+          label: agent.title ?? null,
+          status: agentStateBucket(agent),
+          count: 1,
+          parentAgentId,
+          parentSubagentId: null,
+        });
       }
       if (
         getWorkspaceStateBucketPriority(bucket) < getWorkspaceStateBucketPriority(existing.status)

@@ -11,6 +11,7 @@ import { WorkspaceDirectory } from "./workspace-directory.js";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "./workspace-registry.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type { ProviderSubagentWorkspaceActivity } from "./workspace-directory.js";
+import type { WorkspaceActivity } from "@getpaseo/protocol/messages";
 
 const NOW = "2026-03-01T12:00:00.000Z";
 
@@ -65,6 +66,7 @@ class WorkspaceStatus {
 
   private readonly agents: AgentSnapshotPayload[] = [];
   private readonly providerSubagents: ProviderSubagentWorkspaceActivity[] = [];
+  private pluginActivities: WorkspaceActivity[] = [];
   private readonly terminals: Array<{
     cwd: string;
     workspaceId?: string;
@@ -86,6 +88,7 @@ class WorkspaceStatus {
       return times;
     },
     listProviderSubagentActivity: async () => this.providerSubagents,
+    listPluginWorkspaceActivities: () => this.pluginActivities,
     listTerminalActivityContributions: async () => this.terminals,
     isProviderVisibleToClient: () => true,
     buildWorkspaceDescriptor: async ({ workspace }) => ({
@@ -143,8 +146,22 @@ class WorkspaceStatus {
     );
   }
 
-  hasProviderSubagent(input: ProviderSubagentWorkspaceActivity): void {
-    this.providerSubagents.push(input);
+  hasProviderSubagent(
+    input: Pick<ProviderSubagentWorkspaceActivity, "parentAgentId" | "status" | "updatedAt"> &
+      Partial<ProviderSubagentWorkspaceActivity>,
+  ): void {
+    const subagent = {
+      id: "provider-child",
+      parentSubagentId: null,
+      provider: "claude",
+      title: "Research",
+      ...input,
+    };
+    const index = this.providerSubagents.findIndex(
+      (entry) => entry.id === subagent.id && entry.parentAgentId === subagent.parentAgentId,
+    );
+    if (index === -1) this.providerSubagents.push(subagent);
+    else this.providerSubagents[index] = subagent;
   }
 
   hasWorktreeWorkspace(): void {
@@ -178,6 +195,19 @@ class WorkspaceStatus {
       requestId: "workspace-status",
     });
     return entries.entries[0]?.status ?? "done";
+  }
+
+  setPluginActivities(activities: WorkspaceActivity[]): void {
+    this.pluginActivities = activities;
+  }
+
+  async descriptors(): Promise<WorkspaceDescriptorPayload[]> {
+    const result = await this.directory.listFetchEntries({
+      type: "fetch_workspaces_request",
+      requestId: "activity-descriptors",
+      sort: [{ key: "status_priority", direction: "asc" }],
+    });
+    return result.entries;
   }
 
   async workspaceStatuses(): Promise<Record<string, WorkspaceDescriptorPayload["status"]>> {
@@ -263,6 +293,147 @@ interface AgentState {
   requiresAttention?: boolean;
   attentionReason?: AgentSnapshotPayload["attentionReason"];
 }
+
+describe("workspace status details", () => {
+  test("separates roots, running managed/provider descendants, and plugin activity counts", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasRootAgent({ id: "parent-agent", status: "idle" });
+    workspace.hasRootAgent({ id: "second-root", status: "error" });
+    workspace.hasDelegatedAgent({ id: "managed-child", status: "running" });
+    workspace.hasDelegatedAgent({ id: "finished-child", status: "idle" });
+    workspace.hasDelegatedAgent({ id: "archived-child", status: "running", archivedAt: NOW });
+    workspace.hasProviderSubagent({
+      id: "nested-child",
+      parentAgentId: "managed-child",
+      parentSubagentId: "provider-parent",
+      status: "running",
+      updatedAt: NOW,
+    });
+    workspace.setPluginActivities([
+      {
+        id: "shells/tasks",
+        pluginId: "shells",
+        activityId: "tasks",
+        workspaceId: "workspace-1",
+        kind: "async-shell",
+        label: "Shells",
+        count: 3,
+        status: "running",
+        changedAt: NOW,
+      },
+    ]);
+    const descriptor = await workspace.workspaceDescriptor();
+    expect(descriptor.statusDetails).toMatchObject({
+      nativeStatus: "failed",
+      rootStatus: "failed",
+    });
+    expect(descriptor.statusDetails?.roots.map((root) => root.id)).toEqual([
+      "parent-agent",
+      "second-root",
+    ]);
+    expect(descriptor.statusDetails?.roots[0]).toMatchObject({
+      status: "done",
+      lifecycleStatus: "idle",
+    });
+    expect(descriptor.statusDetails?.subordinates).toEqual([
+      expect.objectContaining({
+        id: "paseo/managed-child",
+        source: "paseo",
+        parentAgentId: "parent-agent",
+        count: 1,
+      }),
+      expect.objectContaining({
+        id: "provider/managed-child/nested-child",
+        source: "provider",
+        parentSubagentId: "provider/managed-child/provider-parent",
+        count: 1,
+      }),
+    ]);
+    expect(descriptor.activities?.[0]?.count).toBe(3);
+    workspace.hasProviderSubagent({
+      id: "nested-child",
+      parentAgentId: "managed-child",
+      status: "completed",
+      updatedAt: NOW,
+    });
+    expect((await workspace.workspaceDescriptor()).statusDetails?.subordinates).toHaveLength(1);
+  });
+
+  test("links nested provider children with the same opaque ID namespace", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasRootAgent({ id: "root/with space", status: "idle" });
+    workspace.hasProviderSubagent({
+      id: "provider/parent",
+      parentAgentId: "root/with space",
+      status: "running",
+      updatedAt: NOW,
+    });
+    workspace.hasProviderSubagent({
+      id: "nested/child",
+      parentAgentId: "root/with space",
+      parentSubagentId: "provider/parent",
+      status: "running",
+      updatedAt: NOW,
+    });
+    const items = (await workspace.workspaceDescriptor()).statusDetails?.subordinates;
+    const parent = items?.find((item) => item.id.endsWith("/provider%2Fparent"));
+    const child = items?.find((item) => item.id.endsWith("/nested%2Fchild"));
+    expect(parent?.id).toBe("provider/root%2Fwith%20space/provider%2Fparent");
+    expect(child?.parentSubagentId).toBe(parent?.id);
+    expect(child?.parentAgentId).toBe("root/with space");
+  });
+
+  test("makes a cross-workspace managed child a root only in its own workspace", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasWorktreeWorkspace();
+    workspace.hasRootAgent({ id: "parent-agent", status: "idle" });
+    workspace.hasDelegatedAgentInWorktree({ id: "other-workspace-child", status: "running" });
+    workspace.hasProviderSubagent({
+      parentAgentId: "other-workspace-child",
+      status: "running",
+      updatedAt: NOW,
+    });
+    const descriptors = await workspace.descriptors();
+    expect(descriptors.find((entry) => entry.id === "workspace-1")?.statusDetails).toMatchObject({
+      rootStatus: "done",
+      subordinates: [],
+    });
+    const other = descriptors.find((entry) => entry.id === "workspace-worktree")?.statusDetails;
+    expect(other?.roots).toEqual([
+      expect.objectContaining({
+        id: "other-workspace-child",
+        parentAgentId: "parent-agent",
+        parentWorkspaceId: "workspace-1",
+      }),
+    ]);
+    expect(other?.subordinates).toHaveLength(1);
+  });
+
+  test("retains native and root idle when only plugin background work is running", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasRootAgent({ id: "parent-agent", status: "idle" });
+    workspace.setPluginActivities([
+      {
+        id: "shells/tasks",
+        pluginId: "shells",
+        activityId: "tasks",
+        workspaceId: "workspace-1",
+        kind: "async-shell",
+        label: "Shells",
+        count: 2,
+        status: "running",
+        changedAt: NOW,
+      },
+    ]);
+    const descriptor = await workspace.workspaceDescriptor();
+    expect(descriptor.status).toBe("running");
+    expect(descriptor.statusDetails).toMatchObject({
+      nativeStatus: "done",
+      rootStatus: "done",
+      subordinates: [],
+    });
+  });
+});
 
 function createAgent(
   input: AgentState & { cwd: string; labels?: Record<string, string>; workspaceId?: string },
@@ -564,6 +735,93 @@ describe("WorkspaceDirectory", () => {
     expect(descriptor.status).toBe("running");
     // terminal timestamp (2027) is newer than agent updatedAt (NOW = 2026-03-01)
     expect(descriptor.statusEnteredAt).toBe("2027-01-01T00:00:00.000Z");
+  });
+});
+
+describe("WorkspaceDirectory plugin activities", () => {
+  const activity: WorkspaceActivity = {
+    id: "shell/task-1",
+    pluginId: "shell",
+    activityId: "task-1",
+    workspaceId: "workspace-1",
+    kind: "async-shell",
+    label: "Background task",
+    status: "running",
+    changedAt: NOW,
+    icon: "Timer",
+    count: 1,
+  };
+
+  test("background work changes the workspace status and sort order without changing agents", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.hasSiblingWorkspaceSameCwd();
+    workspace.setPluginActivities([activity]);
+    expect(await workspace.descriptors()).toEqual([
+      expect.objectContaining({
+        id: "workspace-1",
+        status: "running",
+        primaryActivityId: activity.id,
+        activities: [activity],
+        statusEnteredAt: NOW,
+      }),
+      expect.objectContaining({ id: "workspace-1-sibling", status: "done", activities: [] }),
+    ]);
+    workspace.setPluginActivities([]);
+    expect(await workspace.workspaceStatus()).toBe("done");
+  });
+
+  test("metadata changes preserve status entry time and unknown workspace ids contribute nothing", async () => {
+    const workspace = new WorkspaceStatus();
+    workspace.setPluginActivities([activity]);
+    await workspace.descriptors();
+    workspace.setPluginActivities([
+      { ...activity, count: 3, changedAt: "2026-03-02T12:00:00Z" },
+      { ...activity, id: "shell/missing", workspaceId: "missing", status: "failed" },
+    ]);
+    expect(await workspace.descriptors()).toEqual([
+      expect.objectContaining({
+        status: "running",
+        statusEnteredAt: NOW,
+        activities: [expect.objectContaining({ count: 3 })],
+      }),
+    ]);
+  });
+
+  test("native running wins ties and native failures cannot be hidden by a plugin's input request", async () => {
+    const running = new WorkspaceStatus();
+    running.hasRootAgent({ id: "running-agent", status: "running" });
+    running.setPluginActivities([activity]);
+    expect(await running.descriptors()).toEqual([
+      expect.objectContaining({
+        status: "running",
+        primaryActivityId: null,
+        activities: [activity],
+      }),
+    ]);
+    const failed = new WorkspaceStatus();
+    failed.hasRootAgent({ id: "failed-agent", status: "error" });
+    failed.setPluginActivities([{ ...activity, status: "needs_input" }]);
+    expect(await failed.descriptors()).toEqual([
+      expect.objectContaining({ status: "failed", primaryActivityId: null }),
+    ]);
+  });
+
+  test("the most urgent plugin activity wins when native activity is idle", async () => {
+    const workspace = new WorkspaceStatus();
+    const needsInput = {
+      ...activity,
+      id: "shell/prompt",
+      activityId: "prompt",
+      status: "needs_input" as const,
+    };
+    workspace.setPluginActivities([activity, needsInput]);
+    expect(await workspace.descriptors()).toEqual([
+      expect.objectContaining({
+        status: "needs_input",
+        primaryActivityId: needsInput.id,
+        activities: [activity, needsInput],
+      }),
+    ]);
   });
 });
 

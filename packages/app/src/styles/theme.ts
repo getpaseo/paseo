@@ -1,4 +1,5 @@
 import { Platform } from "react-native";
+import type { PluginThemeComponents } from "@getpaseo/plugin";
 import { darkHighlightColors, lightHighlightColors } from "@getpaseo/highlight";
 
 export const baseColors = {
@@ -652,6 +653,7 @@ export const DEFAULT_CONTENT_MAX_WIDTH = 820;
 // them at runtime via `UnistylesRuntime.updateTheme`. The remaining tokens keep their
 // literal types.
 interface CommonTheme {
+  components: Required<PluginThemeComponents>;
   spacing: typeof SPACING;
   fontSize: Record<keyof typeof FONT_SIZE, number>;
   fontFamily: { ui: string; mono: string };
@@ -665,6 +667,13 @@ interface CommonTheme {
 }
 
 const commonTheme: CommonTheme = {
+  components: {
+    button: {},
+    iconButton: {},
+    sidebar: {},
+    projectIcon: {},
+    statusIndicator: {},
+  },
   spacing: SPACING,
   fontSize: FONT_SIZE,
   fontFamily: { ui: DEFAULT_UI_FONT_STACK, mono: DEFAULT_MONO_FONT_STACK },

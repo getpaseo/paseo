@@ -29,6 +29,9 @@ function plugin(input: {
     clientSlashCommands: [],
     attachmentSources: [],
     themes: [],
+    providerIconOverrides: [],
+    workspaceStatusRenderers: [],
+    floatingWidgets: [],
     timelineTransformers: [
       {
         id: "report",

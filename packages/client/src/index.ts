@@ -22,6 +22,7 @@ import type {
   ListProviderModelsResponseMessage,
   ProjectListRequestMessage,
   ProjectListResponseMessage,
+  ProjectIconSource,
   ListProviderModesResponseMessage,
   MutableDaemonConfig,
   MutableDaemonConfigPatch,
@@ -200,6 +201,8 @@ export interface PaseoWorkspaceHandle {
 
 export interface PaseoProjectActions {
   list(options?: PaseoProjectListOptions): Promise<PaseoProjectListResult>;
+  /** Set an uploaded project image, or restore automatic icon discovery. */
+  setIcon(projectId: string, source: ProjectIconSource): Promise<void>;
   subscribe(handler: PaseoProjectUpdateHandler): () => void;
 }
 
@@ -726,6 +729,7 @@ export function createPaseoApi(
     terminals,
     projects: {
       list: (options) => daemonClient.listProjects(options),
+      setIcon: (projectId, source) => daemonClient.setProjectIcon(projectId, source),
       subscribe: (handler) => {
         return subscribeEvent("project.update", (message) => {
           if (message.type === "project.update") handler(message.payload);

@@ -8,6 +8,7 @@ import {
 import type { Theme } from "@/styles/theme";
 
 const theme = {
+  components: { button: {} },
   borderRadius: {
     md: 6,
     lg: 8,
@@ -43,6 +44,30 @@ const theme = {
 } as unknown as Theme;
 
 describe("control geometry", () => {
+  it("uses button overrides while preserving the compact target and user font ramp", () => {
+    const custom = {
+      ...theme,
+      components: {
+        ...theme.components,
+        button: {
+          radius: 9999,
+          sizes: { md: { minHeight: 32, paddingHorizontal: 20 } },
+        },
+      },
+      fontSize: { ...theme.fontSize, base: 18 },
+    };
+    const geometry = createControlGeometry(custom);
+
+    expect(geometry.buttonMd).toEqual({
+      minHeight: { xs: 44, md: 32 },
+      paddingHorizontal: 20,
+      borderRadius: 9999,
+    });
+    expect(geometry.buttonXs.minHeight.md).toBe(28);
+    expect(geometry.buttonText.fontSize).toBe(18);
+    expect(geometry.formTextInputMd.borderRadius).toBe(theme.borderRadius.lg);
+  });
+
   it("keeps resting control borders transparent while preserving border geometry", () => {
     const geometry = createControlGeometry(theme);
 
@@ -133,9 +158,9 @@ describe("control geometry", () => {
     expect(geometry.segmentedSegmentXs.borderRadius).toBe(geometry.buttonXs.borderRadius);
     expect(geometry.segmentedSegmentSm.borderRadius).toBe(geometry.buttonSm.borderRadius);
     expect(geometry.segmentedSegmentMd.borderRadius).toBe(geometry.buttonMd.borderRadius);
-    expect(geometry.segmentedContainerXs.minHeight).toBe(geometry.buttonXs.minHeight);
-    expect(geometry.segmentedContainerSm.minHeight).toBe(geometry.buttonSm.minHeight);
-    expect(geometry.segmentedContainerMd.minHeight).toBe(geometry.buttonMd.minHeight);
+    expect(geometry.segmentedContainerXs.minHeight).toBe(geometry.buttonXs.minHeight.md);
+    expect(geometry.segmentedContainerSm.minHeight).toBe(geometry.buttonSm.minHeight.md);
+    expect(geometry.segmentedContainerMd.minHeight).toBe(geometry.buttonMd.minHeight.md);
     expect(geometry.segmentedSegmentXs.minHeight).toBe(24);
     expect(geometry.segmentedSegmentSm.minHeight).toBe(28);
     expect(geometry.segmentedSegmentMd.minHeight).toBe(38);
@@ -145,12 +170,12 @@ describe("control geometry", () => {
     const geometry = createControlGeometry(theme);
 
     // xs is a genuinely smaller tier, not sm with a different font.
-    expect(geometry.buttonXs.minHeight).toBe(28);
-    expect(geometry.buttonSm.minHeight).toBe(32);
-    expect(geometry.buttonMd.minHeight).toBe(44);
-    expect(geometry.buttonXs.minHeight).toBe(buttonControlHeight.xs);
-    expect(geometry.buttonSm.minHeight).toBe(buttonControlHeight.sm);
-    expect(geometry.buttonMd.minHeight).toBe(buttonControlHeight.md);
+    expect(geometry.buttonXs.minHeight.md).toBe(28);
+    expect(geometry.buttonSm.minHeight.md).toBe(32);
+    expect(geometry.buttonMd.minHeight.md).toBe(44);
+    expect(geometry.buttonXs.minHeight.md).toBe(buttonControlHeight.xs);
+    expect(geometry.buttonSm.minHeight.md).toBe(buttonControlHeight.sm);
+    expect(geometry.buttonMd.minHeight.md).toBe(buttonControlHeight.md);
 
     // Same size name means the same label size on every control kind.
     expect(geometry.segmentedLabelXs.fontSize).toBe(12);

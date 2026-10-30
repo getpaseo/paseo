@@ -486,6 +486,8 @@ export interface SessionOptions {
   daemonConfigStore: DaemonConfigStore;
   pluginRuntime?: {
     wait: import("./plugins/lifecycle/index.js").PluginLifecycle["wait"];
+    listWorkspaceActivities?(): import("@getpaseo/protocol/messages").WorkspaceActivity[];
+    subscribeWorkspaceActivities?(listener: (workspaceIds: readonly string[]) => void): () => void;
     before: import("./plugins/lifecycle/index.js").PluginLifecycle["before"];
     emit: import("./plugins/lifecycle/index.js").PluginLifecycle["emit"];
     listPlugins(): Promise<import("@getpaseo/protocol/messages").PluginListItem[]>;
@@ -786,6 +788,7 @@ export class Session {
     }
   >();
   private unsubscribeTerminalWorkspaceContributionEvents: (() => void) | null = null;
+  private unsubscribePluginWorkspaceActivities: (() => void) | null = null;
   private readonly agentUpdates: AgentUpdatesService;
   private readonly workspaceUpdatesSubscriptions = new Map<
     string,
@@ -1100,6 +1103,7 @@ export class Session {
           this.unsubscribeWorkspaceMutations,
           this.unsubscribePluginChanges,
           this.unsubscribeTerminalWorkspaceContributionEvents,
+          this.unsubscribePluginWorkspaceActivities,
           this.providerCatalogSession.isObserving,
           this.hubExecutionController?.isObserving,
         ].filter(Boolean).length,
@@ -1246,6 +1250,7 @@ export class Session {
       workspaceLastUserMessageTimes: () => this.agentDirectory.workspaceLastUserMessageTimes(),
       listProviderSubagentActivity: async () => this.agentManager.listProviderSubagentActivity(),
       listTerminalActivityContributions: () => this.listTerminalActivityContributions(),
+      listPluginWorkspaceActivities: () => this.pluginRuntime?.listWorkspaceActivities?.() ?? [],
       isProviderVisibleToClient: (provider) => this.isProviderVisibleToClient(provider),
       buildWorkspaceDescriptor: (input) => this.buildWorkspaceDescriptor(input),
     });
@@ -1729,6 +1734,15 @@ export class Session {
 
   private refreshWorkspaceProducers(observing: boolean): void {
     if (observing) {
+      this.unsubscribePluginWorkspaceActivities ??=
+        this.pluginRuntime?.subscribeWorkspaceActivities?.((workspaceIds) => {
+          void this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds).catch((error) =>
+            this.sessionLogger.warn(
+              { err: error, workspaceIds },
+              "Failed to emit plugin workspace activity",
+            ),
+          );
+        }) ?? null;
       this.unsubscribeProjectMutations ??=
         this.projectRegistry.subscribeToMutations?.((mutation) =>
           this.enqueueRegistryMutation(() => this.handleProjectMutation(mutation)),
@@ -1747,6 +1761,8 @@ export class Session {
           );
         }) ?? null;
     } else {
+      this.unsubscribePluginWorkspaceActivities?.();
+      this.unsubscribePluginWorkspaceActivities = null;
       this.unsubscribeProjectMutations?.();
       this.unsubscribeProjectMutations = null;
       this.unsubscribeWorkspaceMutations?.();
@@ -8739,6 +8755,8 @@ export class Session {
     this.unsubscribeWorkspaceMutations?.();
     this.unsubscribeWorkspaceMutations = null;
     this.agentUpdates.dispose();
+    this.unsubscribePluginWorkspaceActivities?.();
+    this.unsubscribePluginWorkspaceActivities = null;
     await this.hubExecutionController?.cleanup();
     if (this.unsubscribeTerminalWorkspaceContributionEvents) {
       this.unsubscribeTerminalWorkspaceContributionEvents();

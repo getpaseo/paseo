@@ -37,6 +37,11 @@ import { PluginProcessMessageSchema } from "./plugin-process-protocol.js";
 import { PluginSessionSocket } from "./session-socket.js";
 import { InternalPluginChild } from "./internal-child.js";
 import { evaluateBundle } from "./bundle-evaluator.js";
+import { WorkspaceActivityRegistry } from "./workspace-activities.js";
+import type {
+  WorkspaceActivity,
+  WorkspaceActivityInput,
+} from "@getpaseo/protocol/workspace-activity";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const TOOL_CALL_TIMEOUT_MS = 10 * 60_000;
@@ -59,6 +64,7 @@ interface PluginChild {
   disconnect(): void;
   on(event: "message", listener: (message: unknown) => void): this;
   on(event: "close", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+  on(event: "disconnect", listener: () => void): this;
 }
 
 interface PendingInvocation {
@@ -78,6 +84,7 @@ interface LoadedPlugin {
   hooks: string[];
   providers: readonly PluginProviderMetadata[];
   usageSources: readonly PluginUsageSourceMetadata[];
+  workspaceActivities: WorkspaceActivityInput[];
   child: PluginChild | null;
   outputCapture: PluginOutputCapture | null;
   pending: Map<string, PendingInvocation>;
@@ -273,6 +280,7 @@ function send(child: PluginChild, message: PluginProcessRequest): Promise<void> 
 }
 
 export class PluginRuntime {
+  private readonly workspaceActivities = new WorkspaceActivityRegistry();
   private readonly plugins = new Map<string, LoadedPlugin>();
   private readonly pendingEvents = new Set<Promise<void>>();
   private readonly logTails = new Map<string, PluginLogTail>();
@@ -301,6 +309,18 @@ export class PluginRuntime {
   subscribe(listener: (pluginId: string, error?: string) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  listWorkspaceActivities(): WorkspaceActivity[] {
+    return this.workspaceActivities.list();
+  }
+
+  subscribeWorkspaceActivities(listener: (workspaceIds: readonly string[]) => void): () => void {
+    return this.workspaceActivities.subscribe(listener);
+  }
+
+  archiveWorkspaceActivities(workspaceId: string): void {
+    this.workspaceActivities.archiveWorkspace(workspaceId);
   }
 
   subscribeSessionOpenChanges(listener: () => void): () => void {
@@ -335,6 +355,10 @@ export class PluginRuntime {
       throw new Error(`Plugin start cancelled: ${pluginId}`);
     }
     this.plugins.set(pluginId, loaded);
+    this.workspaceActivities.replace(
+      { pluginId, instanceId: loaded.instanceId },
+      loaded.workspaceActivities,
+    );
     this.notifySessionOpenChange(loaded);
     this.appendLog(pluginId, "stdout", "[paseo] Plugin ready");
   }
@@ -355,6 +379,10 @@ export class PluginRuntime {
       clientBundle: bundles.clientBundle ?? "",
     });
     this.plugins.set(input.id, loaded);
+    this.workspaceActivities.replace(
+      { pluginId: input.id, instanceId: loaded.instanceId },
+      loaded.workspaceActivities,
+    );
     this.notifySessionOpenChange(loaded);
     this.appendLog(input.id, "stdout", "[paseo] Plugin ready");
   }
@@ -367,6 +395,7 @@ export class PluginRuntime {
     const loaded = this.plugins.get(pluginId);
     if (!loaded) return false;
     this.plugins.delete(pluginId);
+    this.workspaceActivities.removeOwner(loaded.instanceId);
     this.notifySessionOpenChange(loaded);
     this.rejectPending(loaded, `Plugin stopped: ${pluginId}`);
     await this.stopPlugin(loaded);
@@ -756,6 +785,7 @@ export class PluginRuntime {
     const loaded = [...this.plugins.values()];
     this.plugins.clear();
     for (const plugin of loaded) {
+      this.workspaceActivities.removeOwner(plugin.instanceId);
       this.notifySessionOpenChange(plugin);
       this.rejectPending(plugin, `Plugin stopped: ${plugin.id}`);
     }
@@ -784,6 +814,7 @@ export class PluginRuntime {
         hooks: [],
         providers: [],
         usageSources: [],
+        workspaceActivities: [],
         child: null,
         outputCapture: null,
         pending: new Map(),
@@ -830,6 +861,7 @@ export class PluginRuntime {
         throw error;
       });
     let loaded: LoadedPlugin | null = null;
+    let pendingWorkspaceActivities: WorkspaceActivityInput[] | null = null;
     let ready: Extract<PluginProcessMessage, { type: "ready" }>;
     try {
       ready = await new Promise<Extract<PluginProcessMessage, { type: "ready" }>>(
@@ -867,13 +899,19 @@ export class PluginRuntime {
               });
             } else if (message.type === "paseo_close") {
               session.socket.peerClosed();
+            } else if (message.type === "workspaceActivities.changed") {
+              if (loaded) this.handleChildMessage(loaded, message);
+              else pendingWorkspaceActivities = message.activities;
             } else if (message.type === "ready") {
               if (settled) return;
               settled = true;
               clearTimeout(timeout);
               resolve(message);
             } else if (message.type === "fatal") {
-              fail(new Error(message.error));
+              if (loaded) {
+                this.workspaceActivities.removeOwner(loaded.instanceId);
+                terminatePluginChild(child);
+              } else fail(new Error(message.error));
             } else if (loaded) {
               this.handleChildMessage(loaded, message);
             }
@@ -885,6 +923,14 @@ export class PluginRuntime {
               return;
             }
             void this.handleChildClose(loaded);
+          });
+          child.on("disconnect", () => {
+            session.socket.peerClosed();
+            if (loaded) {
+              this.workspaceActivities.removeOwner(loaded.instanceId);
+            } else {
+              fail(new Error(`Plugin ${pluginId} disconnected during initialization`));
+            }
           });
           void send(child, {
             type: "initialize",
@@ -914,6 +960,7 @@ export class PluginRuntime {
       hooks: ready.hooks ?? [],
       providers: ready.providers ?? [],
       usageSources: ready.usageSources ?? [],
+      workspaceActivities: pendingWorkspaceActivities ?? ready.workspaceActivities ?? [],
       child,
       outputCapture,
       pending,
@@ -990,6 +1037,16 @@ export class PluginRuntime {
   }
 
   private handleChildMessage(loaded: LoadedPlugin, message: PluginProcessMessage): void {
+    if (message.type === "workspaceActivities.changed") {
+      loaded.workspaceActivities = message.activities;
+      if (this.plugins.get(loaded.id) === loaded && loaded.child?.connected) {
+        this.workspaceActivities.replace(
+          { pluginId: loaded.id, instanceId: loaded.instanceId },
+          message.activities,
+        );
+      }
+      return;
+    }
     if (message.type === "hooks.changed") {
       const hadSessionOpen = loaded.hooks.includes("agent.open.before");
       loaded.hooks = message.hooks;
@@ -1308,6 +1365,7 @@ export class PluginRuntime {
   }
 
   private async handleChildClose(loaded: LoadedPlugin): Promise<void> {
+    this.workspaceActivities.removeOwner(loaded.instanceId);
     loaded.sessionSocket?.peerClosed();
     const wasPublished = this.plugins.get(loaded.id) === loaded;
     if (wasPublished) {
@@ -1324,6 +1382,7 @@ export class PluginRuntime {
   }
 
   private async stopPlugin(loaded: LoadedPlugin): Promise<void> {
+    this.workspaceActivities.removeOwner(loaded.instanceId);
     this.appendLog(loaded.id, "stdout", "[paseo] Stopping plugin");
     for (const [connectionId, state] of loaded.providerConnections) {
       if (state.connected) continue;

@@ -2,6 +2,15 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const es: TranslationResources = {
+  floatingWidgets: {
+    show: "Mostrar {{title}}",
+    move: "Mover {{title}} a la siguiente esquina",
+    drag: "Arrastrar para mover {{title}}",
+    switchHost: "Cambiar el host de {{title}}. Host actual: {{host}}",
+    collapse: "Contraer {{title}}",
+    expand: "Expandir {{title}}",
+    hide: "Ocultar {{title}}",
+  },
   paneFind: {
     connectionFailure:
       "No se pudo buscar en este chat. Comprueba la conexión con el host y vuelve a intentarlo.",

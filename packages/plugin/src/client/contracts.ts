@@ -20,6 +20,12 @@ import type {
   PluginCleanup,
 } from "../contracts.js";
 import type { PluginIconProps, PluginSerializableIcon } from "../icons.js";
+import type {
+  PluginFloatingWidgetContribution,
+  PluginFloatingWidgetRegistration,
+} from "./floating-widgets.js";
+import type { PluginProviderIconOverrideContribution } from "./provider-icons.js";
+import type { PluginWorkspaceStatusRendererContribution } from "./workspace-status.js";
 
 export interface PluginHostProps {
   theme: PluginTheme;
@@ -181,6 +187,9 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   addScreen(contribution: PluginScreenContribution<PluginText>): PluginCleanup;
   addSidebarHeaderItem(contribution: PluginSidebarItemContribution<PluginText>): PluginCleanup;
   addSidebarFooterItem(contribution: PluginSidebarItemContribution<PluginText>): PluginCleanup;
+  addFloatingWidget(
+    contribution: PluginFloatingWidgetContribution<PluginText>,
+  ): PluginFloatingWidgetRegistration<PluginText>;
   addAgentPanel(contribution: PluginAgentPanelContribution<PluginText>): PluginCleanup;
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution<PluginText>): PluginCleanup;
   addCommandCenterItem(
@@ -195,6 +204,12 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   ): PluginButtonRegistration<PluginText>;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution<PluginText>): PluginCleanup;
   addTheme(contribution: PluginThemeContribution<PluginText>): PluginCleanup;
+  /** Override a provider's icon on this installation's host until removed. */
+  addProviderIconOverride(contribution: PluginProviderIconOverrideContribution): PluginCleanup;
+  /** Replace workspace status marks on this host; navigation remains owned by Paseo. */
+  addWorkspaceStatusRenderer(
+    contribution: PluginWorkspaceStatusRendererContribution,
+  ): PluginCleanup;
   addFilePanel(contribution: PluginFilePanelContribution<PluginText>): PluginCleanup;
   addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(
     contribution: PluginTimelineTransformerContribution<ItemType>,

@@ -376,6 +376,49 @@ test("project actions list registered projects through the existing RPC", async 
   await client.close();
 });
 
+test("project icons can be restored or uploaded and report daemon rejection", async () => {
+  const { client, ws } = await connectClient();
+  for (const source of [
+    { type: "automatic" } as const,
+    { type: "upload", data: "data:image/png;base64,aGVsbG8=" } as const,
+  ]) {
+    const pending = client.projects.setIcon("project_sdk", source);
+    const sent = parseSentSessionMessage(ws.sent.at(-1));
+    expect(sent).toMatchObject({
+      type: "project.icon.set.request",
+      projectId: "project_sdk",
+      source,
+    });
+    ws.message(
+      sessionMessage({
+        type: "project.icon.set.response",
+        payload: {
+          requestId: sent.requestId,
+          projectId: "project_sdk",
+          accepted: true,
+          error: null,
+        },
+      }),
+    );
+    await expect(pending).resolves.toBeUndefined();
+  }
+  const rejected = client.projects.setIcon("missing", { type: "automatic" });
+  const sent = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "project.icon.set.response",
+      payload: {
+        requestId: sent.requestId,
+        projectId: "missing",
+        accepted: false,
+        error: "Unknown project",
+      },
+    }),
+  );
+  await expect(rejected).rejects.toThrow("Unknown project");
+  await client.close();
+});
+
 test("project actions subscribe to existing project updates", async () => {
   const { client, ws } = await connectClient();
   const updates: string[] = [];

@@ -41,6 +41,8 @@ import type {
 import type { ComponentType } from "react";
 import { parsePluginIcon, parseSerializablePluginIcon } from "./icons";
 import { parsePluginThemeContribution } from "./themes";
+import { parseFloatingWidget, parseFloatingWidgetSize } from "./floating-widgets/validation";
+import { nextFloatingWidgetReveal, type EvaluatedFloatingWidget } from "./floating-widgets/model";
 
 const CONTRIBUTION_ID = /^[a-z][a-z0-9-]*$/;
 const PANEL_LOCATIONS = ["workspace", "explorer"] as const;
@@ -127,6 +129,7 @@ export function runPluginClientBundle(
 ): EvaluatedPlugin {
   const collector: Omit<EvaluatedPlugin, "id" | "cleanup"> = {
     surfaces: [],
+    floatingWidgets: [],
     settingsScreens: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
@@ -136,10 +139,13 @@ export function runPluginClientBundle(
     clientSlashCommands: [],
     attachmentSources: [],
     themes: [],
+    providerIconOverrides: [],
+    workspaceStatusRenderers: [],
     timelineTransformers: [],
     timelineRenderers: [],
   };
   const surfaceIds = new Set<string>();
+  const floatingWidgetIds = new Set<string>();
   const settingsScreenIds = new Set<string>();
   const sidebarItemIds: Record<PluginSidebarSection, Set<string>> = {
     header: new Set(),
@@ -151,6 +157,8 @@ export function runPluginClientBundle(
   const clientSlashCommandNames = new Set<string>();
   const attachmentSourceIds = new Set<string>();
   const themeIds = new Set<string>();
+  const providerIconOverrideIds = new Set<string>();
+  const workspaceStatusRendererIds = new Set<string>();
   const timelineTransformerIds = new Set<string>();
   const timelineRendererIds = new Set<string>();
   const removals = new Set<PluginCleanup>();
@@ -274,6 +282,51 @@ export function runPluginClientBundle(
     },
     addSidebarFooterItem(contribution: PluginSidebarItemContribution) {
       return addSidebarItem("footer", contribution);
+    },
+    addFloatingWidget(input) {
+      if (stopped) throw new Error("Plugin has stopped");
+      const widgetId = requireId(input.id, "floating widget id");
+      if (floatingWidgetIds.has(widgetId))
+        throw new Error(`Duplicate floating widget: ${widgetId}`);
+      const contribution = parseFloatingWidget({ ...input, id: widgetId });
+      let active = true;
+      const widget: EvaluatedFloatingWidget = {
+        contribution,
+        visible: contribution.initiallyVisible ?? true,
+        revealRevision: 0,
+        show() {
+          if (!active || stopped) return;
+          widget.visible = true;
+          widget.revealRevision = nextFloatingWidgetReveal();
+          notifyChange();
+        },
+        hide() {
+          if (!active || stopped) return;
+          widget.visible = false;
+          notifyChange();
+        },
+      };
+      floatingWidgetIds.add(widgetId);
+      const remove = register(collector.floatingWidgets, widget, () => {
+        active = false;
+        floatingWidgetIds.delete(widgetId);
+      });
+      return {
+        show: widget.show,
+        hide: widget.hide,
+        remove,
+        update(patch) {
+          if (!active || stopped) return;
+          const title =
+            patch.title === undefined ? widget.contribution.title : requirePluginText(patch.title);
+          const size =
+            patch.size === undefined
+              ? widget.contribution.size
+              : parseFloatingWidgetSize(patch.size);
+          widget.contribution = { ...widget.contribution, title, size };
+          notifyChange();
+        },
+      };
     },
     // COMPAT(pluginSidebarAliases): added in v0.11.0, remove after 2027-03-29
     // Titled by its id; a legacy item pointing at it lends the header its own title instead.
@@ -453,6 +506,39 @@ export function runPluginClientBundle(
       themeIds.add(normalizedId);
       return register(collector.themes, theme, () => themeIds.delete(normalizedId));
     },
+    addProviderIconOverride(contribution) {
+      if (stopped) throw new Error("Plugin has stopped");
+      const iconId = requireId(contribution.id, "provider icon override id");
+      if (providerIconOverrideIds.has(iconId)) {
+        throw new Error(`Duplicate provider icon override: ${iconId}`);
+      }
+      const provider = contribution.provider.trim();
+      if (!provider) throw new Error(`Provider icon override ${iconId} has no provider`);
+      const icon = parseSerializablePluginIcon(
+        `Provider icon override ${iconId}`,
+        contribution.icon,
+      );
+      providerIconOverrideIds.add(iconId);
+      return register(collector.providerIconOverrides, { id: iconId, provider, icon }, () =>
+        providerIconOverrideIds.delete(iconId),
+      );
+    },
+    addWorkspaceStatusRenderer(contribution) {
+      if (stopped) throw new Error("Plugin has stopped");
+      const rendererId = requireId(contribution.id, "workspace status renderer id");
+      if (workspaceStatusRendererIds.has(rendererId)) {
+        throw new Error(`Duplicate workspace status renderer: ${rendererId}`);
+      }
+      if (!isComponentType(contribution.Component)) {
+        throw new Error(`Workspace status renderer ${rendererId} is not a component`);
+      }
+      workspaceStatusRendererIds.add(rendererId);
+      return register(
+        collector.workspaceStatusRenderers,
+        { id: rendererId, Component: contribution.Component },
+        () => workspaceStatusRendererIds.delete(rendererId),
+      );
+    },
     addTimelineTransformer(contribution: PluginTimelineTransformerContribution) {
       const normalizedId = requireId(contribution.id, "timeline transformer id");
       if (timelineTransformerIds.has(normalizedId)) {
@@ -581,6 +667,7 @@ export function runPluginClientBundle(
     id,
     cleanup,
     surfaces: collector.surfaces,
+    floatingWidgets: collector.floatingWidgets,
     settingsScreens: collector.settingsScreens,
     sidebarItems: collector.sidebarItems,
     legacySidebarItems: collector.legacySidebarItems,
@@ -590,6 +677,8 @@ export function runPluginClientBundle(
     clientSlashCommands: collector.clientSlashCommands,
     attachmentSources: collector.attachmentSources,
     themes: collector.themes,
+    providerIconOverrides: collector.providerIconOverrides,
+    workspaceStatusRenderers: collector.workspaceStatusRenderers,
     timelineTransformers: collector.timelineTransformers,
     timelineRenderers: collector.timelineRenderers,
   };

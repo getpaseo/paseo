@@ -1,4 +1,5 @@
 import { STATUS_INDICATOR_FILLED_DOT_SIZE } from "@/utils/status-indicator-geometry";
+import type { Theme } from "@/styles/theme";
 
 // The running indicator is a status dot with a rotating ring around it, and the whole set of
 // numbers below is a budget rather than four independent choices. The centre matches every other
@@ -44,6 +45,25 @@ export function getStatusRingRotation(nowMs: number): number {
  * slot, so growing them in place would walk the indicator off the corner. Callers keep their
  * existing dot offset and pass it through here to grow around the same centre point.
  */
-export function getStatusRingOffset(dotOffset: number, dotSize: number): number {
-  return dotOffset - (STATUS_RING_FRAME_SIZE - dotSize) / 2;
+export function getStatusRingGeometry(dotSize = STATUS_INDICATOR_FILLED_DOT_SIZE) {
+  const ringSize = dotSize + (STATUS_RING_GAP + STATUS_RING_STROKE) * 2;
+  return { dotSize, ringSize, frameSize: ringSize + STATUS_RING_HALO_INSET * 2 };
+}
+
+export function getStatusRingOffset(
+  dotOffset: number,
+  dotSize: number,
+  indicatorSize = STATUS_INDICATOR_FILLED_DOT_SIZE,
+): number {
+  return dotOffset - (getStatusRingGeometry(indicatorSize).frameSize - dotSize) / 2;
+}
+
+/** Only this leaf subscribes to theme changes that affect the animation's lifecycle. */
+export function statusRingAppearance(theme: Theme) {
+  const appearance = theme.components.statusIndicator;
+  return {
+    dotSize: appearance.size ?? STATUS_INDICATOR_FILLED_DOT_SIZE,
+    dotOnly: appearance.runningStyle === "dot",
+    animated: appearance.runningStyle !== "dot" && appearance.animation !== "none",
+  };
 }

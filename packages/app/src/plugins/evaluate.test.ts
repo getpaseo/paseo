@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { PluginFloatingWidgetRegistration } from "@getpaseo/plugin/client";
+import type { InstalledPlugin } from "./types";
+import { groupFloatingWidgets, selectFloatingWidgetTarget } from "./floating-widgets/model";
 import { useRevealedText } from "@/hooks/use-revealed-text";
 import { runPluginClientBundle, type PluginClientRuntime } from "./evaluate";
 
@@ -29,7 +32,251 @@ function bundle(body: string): string {
   })`;
 }
 
+describe("provider icon overrides", () => {
+  it("registers sanitized icons and releases them with the plugin lifetime", async () => {
+    const plugin = evaluatePluginClientBundle(
+      "appearance",
+      bundle(`
+        const remove = plugin.addProviderIconOverride({ id: "brand", provider: "custom-provider", icon: "Star" });
+        remove();
+        remove();
+        plugin.addProviderIconOverride({ id: "brand", provider: " codex ", icon: { svg: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /></svg>' } });
+      `),
+    );
+    expect(plugin.providerIconOverrides).toEqual([
+      {
+        id: "brand",
+        provider: "codex",
+        icon: { svg: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /></svg>' },
+      },
+    ]);
+    await plugin.cleanup();
+    expect(plugin.providerIconOverrides).toEqual([]);
+  });
+
+  it.each([
+    ['id: "Bad"', "provider icon override id"],
+    ['provider: " "', "no provider"],
+    ['icon: "NotAnIcon"', "unknown Lucide"],
+    ['icon: { svg: "<svg><script /></svg>" }', "script elements"],
+    ["icon: () => null", "expected a Lucide"],
+  ])("rejects invalid provider icon overrides: %s", (override, message) => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "appearance",
+        bundle(`
+      plugin.addProviderIconOverride({ id: "brand", provider: "codex", icon: "Star", ${override} });
+    `),
+      ),
+    ).toThrow(message);
+  });
+
+  it("rejects duplicate registrations and releases registrations after failed setup", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "appearance",
+        bundle(`
+      const input = { id: "brand", provider: "codex", icon: "Star" };
+      plugin.addProviderIconOverride(input);
+      plugin.addProviderIconOverride(input);
+    `),
+      ),
+    ).toThrow("Duplicate provider icon override");
+    expect(() =>
+      evaluatePluginClientBundle(
+        "appearance",
+        bundle(`
+      globalThis.__failedIconPlugin = plugin;
+      plugin.addProviderIconOverride({ id: "brand", provider: "codex", icon: "Star" });
+      throw new Error("setup failed");
+    `),
+      ),
+    ).toThrow("setup failed");
+    const context = Reflect.get(
+      globalThis,
+      "__failedIconPlugin",
+    ) as import("@getpaseo/plugin/client").PluginClientContext;
+    expect(() =>
+      context.addProviderIconOverride({ id: "later", provider: "codex", icon: "Star" }),
+    ).toThrow("Plugin has stopped");
+    Reflect.deleteProperty(globalThis, "__failedIconPlugin");
+  });
+});
+
+describe("workspace status renderers", () => {
+  it("keeps a memoized renderer for its registration lifetime and rejects use after stop", async () => {
+    const plugin = evaluatePluginClientBundle(
+      "status",
+      bundle(`
+      globalThis.__statusPluginContext = plugin;
+      const Component = require("react").memo(() => null);
+      const remove = plugin.addWorkspaceStatusRenderer({ id: "orbit", Component });
+      remove();
+      remove();
+      plugin.addWorkspaceStatusRenderer({ id: "orbit", Component });
+    `),
+    );
+    expect(plugin.workspaceStatusRenderers).toHaveLength(1);
+    expect(plugin.workspaceStatusRenderers[0]?.id).toBe("orbit");
+    await plugin.cleanup();
+    expect(plugin.workspaceStatusRenderers).toEqual([]);
+    const context = Reflect.get(
+      globalThis,
+      "__statusPluginContext",
+    ) as import("@getpaseo/plugin/client").PluginClientContext;
+    expect(() =>
+      context.addWorkspaceStatusRenderer({ id: "later", Component: () => null }),
+    ).toThrow("Plugin has stopped");
+    Reflect.deleteProperty(globalThis, "__statusPluginContext");
+  });
+
+  it.each([
+    ['id: "Bad"', "workspace status renderer id"],
+    ['Component: "div"', "not a component"],
+    ["Component: {}", "not a component"],
+  ])("rejects invalid status renderers: %s", (override, message) => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "status",
+        bundle(`
+      plugin.addWorkspaceStatusRenderer({ id: "orbit", Component() { return null; }, ${override} });
+    `),
+      ),
+    ).toThrow(message);
+  });
+
+  it("rejects duplicate renderer IDs", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "status",
+        bundle(`
+      const input = { id: "orbit", Component() { return null; } };
+      plugin.addWorkspaceStatusRenderer(input);
+      plugin.addWorkspaceStatusRenderer(input);
+    `),
+      ),
+    ).toThrow("Duplicate workspace status renderer");
+  });
+});
+
 describe("evaluatePluginClientBundle", () => {
+  it("updates, hides, restores and removes a floating widget without reviving it after teardown", async () => {
+    const changed = vi.fn();
+    const plugin = runPluginClientBundle(
+      "pets",
+      bundle(`
+      globalThis.__floatingRegistration = plugin.addFloatingWidget({
+        id: "pet", title: "Pet", Component() { return null; }, initiallyVisible: false,
+      });
+    `),
+      runtime,
+      changed,
+    );
+    const registration = Reflect.get(
+      globalThis,
+      "__floatingRegistration",
+    ) as PluginFloatingWidgetRegistration;
+    const widget = plugin.floatingWidgets[0]!;
+    expect(widget.visible).toBe(false);
+    expect(changed).not.toHaveBeenCalled();
+    registration.show();
+    expect(widget.visible).toBe(true);
+    const firstReveal = widget.revealRevision;
+    expect(firstReveal).toBeGreaterThan(0);
+    registration.update({ title: "Activity widget", size: { width: 192, height: 240 } });
+    expect(widget.contribution.title).toBe("Activity widget");
+    expect(widget.contribution.size).toEqual({ width: 192, height: 240 });
+    expect(() =>
+      registration.update({ title: "Broken", size: { width: NaN, height: 20 } }),
+    ).toThrow("size");
+    expect(widget.contribution.title).toBe("Activity widget");
+    registration.hide();
+    expect(widget.visible).toBe(false);
+    registration.show();
+    expect(widget.revealRevision).toBeGreaterThan(firstReveal);
+    await plugin.cleanup();
+    expect(plugin.floatingWidgets).toEqual([]);
+    changed.mockClear();
+    registration.show();
+    registration.hide();
+    registration.update({ title: "Gone" });
+    registration.remove();
+    expect(changed).not.toHaveBeenCalled();
+    expect(widget.contribution.title).toBe("Activity widget");
+    Reflect.deleteProperty(globalThis, "__floatingRegistration");
+  });
+
+  it("honors show across host installations and keeps hide scoped to its own installation", async () => {
+    const make = (serverId: string) => {
+      const evaluated = evaluatePluginClientBundle(
+        "pet",
+        bundle(`
+        globalThis.__floating_${serverId} = plugin.addFloatingWidget({
+          id: "pet", title: "Pet", Component() { return null; },
+        });
+      `),
+      );
+      return { ...evaluated, serverId } as InstalledPlugin;
+    };
+    const a = make("a");
+    const b = make("b");
+    const showA = Reflect.get(globalThis, "__floating_a") as PluginFloatingWidgetRegistration;
+    const showB = Reflect.get(globalThis, "__floating_b") as PluginFloatingWidgetRegistration;
+    const group = groupFloatingWidgets([a, b])[0]!;
+    showA.show();
+    expect(selectFloatingWidgetTarget(group, null).plugin).toBe(a);
+    showA.hide();
+    showB.show();
+    expect(selectFloatingWidgetTarget(group, "a").plugin).toBe(b);
+    expect(selectFloatingWidgetTarget(group, "a").widget.visible).toBe(true);
+    showA.show();
+    showB.hide();
+    expect(selectFloatingWidgetTarget(group, "b").plugin).toBe(a);
+    expect(selectFloatingWidgetTarget(group, "b").widget.visible).toBe(true);
+    await Promise.all([a.cleanup(), b.cleanup()]);
+    Reflect.deleteProperty(globalThis, "__floating_a");
+    Reflect.deleteProperty(globalThis, "__floating_b");
+  });
+
+  it.each([
+    ["size: { width: 0, height: 10 }", "size"],
+    ['initialPosition: "outside"', "initial position"],
+    ['initiallyVisible: "yes"', "visibility"],
+    ['chrome: "window"', "chrome"],
+    ['Component: "div"', "component"],
+  ])("rejects an invalid floating widget (%s)", (options, message) => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "pet",
+        bundle(`
+      plugin.addFloatingWidget({ id: "pet", title: "Pet", Component() { return null; }, ${options} });
+    `),
+      ),
+    ).toThrow(message);
+  });
+
+  it("rejects duplicate widget ids and allows ids to be reused after removal", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "pet",
+        bundle(`
+      const input = { id: "pet", title: "Pet", Component() { return null; } };
+      plugin.addFloatingWidget(input);
+      plugin.addFloatingWidget(input);
+    `),
+      ),
+    ).toThrow("Duplicate floating widget");
+    const plugin = evaluatePluginClientBundle(
+      "pet",
+      bundle(`
+      const input = { id: "pet", title: "Pet", Component: require("react").memo(() => null) };
+      plugin.addFloatingWidget(input).remove();
+      plugin.addFloatingWidget(input);
+    `),
+    );
+    expect(plugin.floatingWidgets).toHaveLength(1);
+  });
+
   it("releases button registrations when client setup throws", () => {
     let active = 0;
     function addButton() {

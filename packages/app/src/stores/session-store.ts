@@ -123,6 +123,9 @@ export interface WorkspaceDescriptor {
   labels?: string[];
   status: WorkspaceDescriptorPayload["status"];
   statusEnteredAt: Date | null;
+  activities?: WorkspaceDescriptorPayload["activities"];
+  primaryActivityId?: string | null;
+  statusDetails?: WorkspaceDescriptorPayload["statusDetails"];
   archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
   scripts: WorkspaceDescriptorPayload["scripts"];
@@ -167,6 +170,9 @@ export function normalizeWorkspaceDescriptor(
     labels: payload.labels ?? [],
     status: payload.status,
     statusEnteredAt,
+    activities: payload.activities,
+    primaryActivityId: payload.primaryActivityId,
+    statusDetails: payload.statusDetails,
     archivingAt: payload.archivingAt ?? null,
     diffStat: payload.diffStat ?? null,
     scripts: (payload.scripts ?? []).map((s) => Object.assign({}, s)),

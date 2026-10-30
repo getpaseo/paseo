@@ -2,6 +2,15 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
+  floatingWidgets: {
+    show: "إظهار {{title}}",
+    move: "نقل {{title}} إلى الزاوية التالية",
+    drag: "اسحب لتحريك {{title}}",
+    switchHost: "تبديل المضيف لـ {{title}}. المضيف الحالي: {{host}}",
+    collapse: "طي {{title}}",
+    expand: "توسيع {{title}}",
+    hide: "إخفاء {{title}}",
+  },
   paneFind: {
     connectionFailure: "تعذر البحث في هذه المحادثة. تحقق من الاتصال بالمضيف وأعد المحاولة.",
     historyChangedFailure: "تغيّرت المحادثة أثناء البحث. أعد البحث.",

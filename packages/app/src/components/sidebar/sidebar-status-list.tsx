@@ -1,3 +1,4 @@
+import { createSidebarRowGeometry } from "@/styles/sidebar-geometry";
 import {
   memo,
   useCallback,
@@ -28,7 +29,7 @@ import type { HostBadgeModel } from "@/hosts/appearance";
 import { isWeb as platformIsWeb, isNative as platformIsNative } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { StyleSheet } from "react-native-unistyles";
-import { density, densityIconBox, densityIconProps } from "@/styles/density";
+import { densityIconBox, densityIconProps } from "@/styles/density";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import { withUnistyles } from "react-native-unistyles";
 import {
@@ -1063,14 +1064,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   // Matches `projectBlockExpanded` in sidebar-workspace-list.tsx. See the note there.
   statusGroupBlockExpanded: {
-    paddingBottom: theme.spacing[3],
+    paddingBottom: theme.components.sidebar.groupGap ?? theme.spacing[3],
   },
   statusWorkspaceListContainer: {},
   statusGroupRow: {
-    minHeight: density.rowHeight,
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius.lg,
+    ...createSidebarRowGeometry(theme, "projectRow"),
     marginBottom: theme.spacing[2],
     flexDirection: "row",
     alignItems: "center",
@@ -1087,7 +1085,7 @@ const styles = StyleSheet.create((theme) => ({
   statusGroupRowLeft: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[2],
+    gap: theme.components.sidebar.projectRow?.gap ?? theme.spacing[2],
     flex: 1,
     minWidth: 0,
   },
@@ -1109,7 +1107,7 @@ const styles = StyleSheet.create((theme) => ({
   statusGroupTitle: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
-    fontWeight: "400",
+    fontWeight: theme.components.sidebar.projectRow?.fontWeight ?? "400",
     minWidth: 0,
     flexShrink: 1,
   },
@@ -1117,12 +1115,8 @@ const styles = StyleSheet.create((theme) => ({
     position: "relative",
   },
   workspaceRow: {
-    minHeight: density.rowHeight,
+    ...createSidebarRowGeometry(theme, "workspaceRow"),
     marginBottom: theme.spacing[0.5],
-    paddingVertical: theme.spacing[2],
-    paddingLeft: theme.spacing[2],
-    paddingRight: theme.spacing[3],
-    borderRadius: theme.borderRadius.lg,
     flexDirection: "column",
     alignItems: "stretch",
     justifyContent: "flex-start",

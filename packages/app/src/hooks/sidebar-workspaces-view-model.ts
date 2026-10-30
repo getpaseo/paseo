@@ -1,4 +1,8 @@
 import { deriveEffectiveWorkspaceStatus } from "@/workspace-status";
+import {
+  summarizeWorkspaceActivities,
+  type WorkspaceActivitySource,
+} from "@/workspace-status/activities";
 import equal from "fast-deep-equal";
 import type { PrHint } from "@/git/pr-hint";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
@@ -55,6 +59,9 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   archiveUnpushedCommitCount: number | null;
   scripts: WorkspaceDescriptor["scripts"];
   hasRunningScripts: boolean;
+  activities?: WorkspaceDescriptor["activities"];
+  primaryActivityId?: string | null;
+  statusDetails?: WorkspaceDescriptor["statusDetails"];
 }
 
 export interface SidebarProjectEntry {
@@ -170,6 +177,9 @@ export function createSidebarWorkspaceEntry(input: {
     currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
+    activities: input.workspace.activities,
+    primaryActivityId: input.workspace.primaryActivityId,
+    statusDetails: input.workspace.statusDetails,
     archivingAt: input.workspace.archivingAt,
     diffStat: input.workspace.diffStat,
     prHint: selectPrHintFromStatus(
@@ -188,6 +198,64 @@ const EMPTY_WORKSPACE_LABELS: string[] = [];
 export interface ProjectStatusSession {
   workspaces: Map<string, WorkspaceDescriptor>;
   workspaceAgentActivity: Map<string, WorkspaceAgentActivity>;
+}
+
+/** A collapsed project's activity mark follows the same effective status as its status bucket. */
+export function createProjectActivitiesSelector(input: {
+  workspaces: readonly SidebarWorkspacePlacement[];
+  enabled: boolean;
+  pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
+}) {
+  const hosts = [...new Set(input.workspaces.map((workspace) => workspace.serverId))];
+  const previous = new Map<string, Partial<ProjectStatusSession>>();
+  let initialized = false;
+  let summary = summarizeWorkspaceActivities([]);
+
+  return (state: { sessions: Record<string, ProjectStatusSession | undefined> }) => {
+    if (!input.enabled) return summary;
+
+    // Streaming updates replace session objects, but preserve these structurally shared indexes.
+    // Compare one pair per host before walking workspaces or allocating a new activity summary.
+    let changed = !initialized;
+    for (const serverId of hosts) {
+      const session = state.sessions[serverId];
+      const before = previous.get(serverId);
+      if (
+        before?.workspaces !== session?.workspaces ||
+        before?.workspaceAgentActivity !== session?.workspaceAgentActivity
+      ) {
+        changed = true;
+        previous.set(serverId, {
+          workspaces: session?.workspaces,
+          workspaceAgentActivity: session?.workspaceAgentActivity,
+        });
+      }
+    }
+    if (!changed) return summary;
+    initialized = true;
+
+    const sources: WorkspaceActivitySource[] = [];
+    for (const { serverId, workspaceId } of input.workspaces) {
+      const session = state.sessions[serverId];
+      if (!session) continue;
+      const key = resolveWorkspaceMapKeyByIdentity({ workspaces: session.workspaces, workspaceId });
+      const workspace = key ? session.workspaces.get(key) : undefined;
+      if (!workspace) continue;
+      sources.push({
+        status: deriveEffectiveWorkspaceStatus({
+          serverId,
+          workspace,
+          pendingCreateAttempts: input.pendingCreateAttempts,
+          workspaceAgentActivity: session.workspaceAgentActivity,
+        }).status,
+        activities: workspace.activities,
+        primaryActivityId: workspace.primaryActivityId,
+      });
+    }
+    const next = summarizeWorkspaceActivities(sources);
+    if (!equal(summary, next)) summary = next;
+    return summary;
+  };
 }
 
 /**

@@ -18,8 +18,120 @@ import { z } from "zod";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { createTestAgentClient, createTestAgentClients } from "../test-utils/fake-agent-client.js";
+import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 
 const roots: string[] = [];
+
+test("plugin workspace activities synchronize clients and clear on removal, crash, and archive", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-activity-plugin-"));
+  const workspaceDirectory = await mkdtemp(path.join(tmpdir(), "paseo-activity-workspace-"));
+  roots.push(directory, workspaceDirectory);
+  await writeFile(
+    path.join(directory, "paseo-plugin.json"),
+    JSON.stringify({
+      id: "activity-test",
+      requirements: { paseo: `>=${resolveDaemonVersion(import.meta.url)}` },
+    }),
+  );
+  await writeFile(
+    path.join(directory, "index.server.ts"),
+    `
+import { defineRpc } from "@getpaseo/plugin";
+import { z } from "zod";
+export default function(server) {
+  let activity;
+  const rpc = (name, input) => defineRpc({ name, input, output: z.null() });
+  server.handle(rpc("start", z.object({ workspaceId: z.string() })), ({ workspaceId }) => {
+    activity = server.addWorkspaceActivity({ id: "shell", workspaceId, kind: "async-shell", label: "Background shell", status: "running", icon: "Timer", count: 1 });
+    return null;
+  });
+  server.handle(rpc("update", z.object({ count: z.number() })), ({ count }) => { activity.update({ count }); return null; });
+  server.handle(rpc("finish", z.object({})), () => { activity.remove(); return null; });
+  server.handle(rpc("crash", z.object({})), () => { setImmediate(() => process.exit(17)); return null; });
+  return () => {};
+}`,
+  );
+  const daemon = await createTestPaseoDaemon({ pluginsEnabled: true });
+  const first = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  const second = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await first.connect();
+    await second.connect();
+    const opened = await first.openProject(workspaceDirectory);
+    if (!opened.workspace) throw new Error(opened.error ?? "Workspace did not open");
+    const workspaceId = opened.workspace.id;
+    function activitySources(view: Map<string, WorkspaceDescriptorPayload>) {
+      return view.get(workspaceId)?.activities?.map((activity) => activity.pluginId);
+    }
+    const views = [
+      new Map<string, WorkspaceDescriptorPayload>(),
+      new Map<string, WorkspaceDescriptorPayload>(),
+    ];
+    for (const [index, client] of [first, second].entries()) {
+      const result = await client.fetchWorkspaces({ subscribe: {} });
+      for (const workspace of result.entries) views[index]!.set(workspace.id, workspace);
+      result.subscription.subscribe({
+        snapshot: (snapshot) => {
+          views[index]!.clear();
+          for (const workspace of snapshot.entries) views[index]!.set(workspace.id, workspace);
+        },
+        update: (message) => {
+          if (message.type !== "workspace_update") return;
+          if (message.payload.kind === "upsert")
+            views[index]!.set(message.payload.workspace.id, message.payload.workspace);
+          else views[index]!.delete(message.payload.id);
+        },
+      });
+    }
+    await first.installDirectoryPlugin(directory);
+    await first.installDirectoryPlugin(directory, "activity-other");
+    await first.invokePluginRpc("activity-test", "start", { workspaceId });
+    await expect
+      .poll(() => views.map((view) => view.get(workspaceId)?.primaryActivityId))
+      .toEqual(["activity-test/shell", "activity-test/shell"]);
+    expect(views[0]!.get(workspaceId)).toMatchObject({
+      status: "running",
+      activities: [{ pluginId: "activity-test", kind: "async-shell", icon: "Timer", count: 1 }],
+    });
+    const enteredAt = views[0]!.get(workspaceId)?.statusEnteredAt;
+    await first.invokePluginRpc("activity-test", "update", { count: 2 });
+    await expect
+      .poll(() => views.map((view) => view.get(workspaceId)?.activities?.[0]?.count))
+      .toEqual([2, 2]);
+    expect(views[0]!.get(workspaceId)?.statusEnteredAt).toEqual(enteredAt);
+    await first.invokePluginRpc("activity-other", "start", { workspaceId });
+    await expect.poll(() => views[1]!.get(workspaceId)?.activities?.length).toBe(2);
+    await first.disablePlugin("activity-test");
+    await expect
+      .poll(() => views.map(activitySources))
+      .toEqual([["activity-other"], ["activity-other"]]);
+
+    await first.close();
+    expect(
+      (await second.fetchWorkspaces()).entries.find((workspace) => workspace.id === workspaceId),
+    ).toMatchObject({ status: "running", primaryActivityId: "activity-other/shell" });
+    await second.invokePluginRpc("activity-other", "finish", {});
+    await expect.poll(() => views[1]!.get(workspaceId)?.status).toBe("done");
+    await second.invokePluginRpc("activity-other", "start", { workspaceId });
+    await expect.poll(() => views[1]!.get(workspaceId)?.status).toBe("running");
+    await second.invokePluginRpc("activity-other", "crash", {}).catch(() => undefined);
+    await expect.poll(() => views[1]!.get(workspaceId)?.activities).toEqual([]);
+    expect(views[1]!.get(workspaceId)?.status).toBe("done");
+
+    await second.enablePlugin("activity-test");
+    await second.invokePluginRpc("activity-test", "start", { workspaceId });
+    await expect.poll(() => views[1]!.get(workspaceId)?.status).toBe("running");
+    await second.archiveWorkspace(workspaceId);
+    await expect.poll(() => views[1]!.has(workspaceId)).toBe(false);
+    // A late task progress update cannot recreate an archived row.
+    await second.invokePluginRpc("activity-test", "update", { count: 3 });
+    expect((await second.fetchWorkspaces()).entries).toEqual([]);
+  } finally {
+    await first.close();
+    await second.close();
+    await daemon.close();
+  }
+}, 60_000);
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));

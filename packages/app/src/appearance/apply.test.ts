@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { PluginThemeComponents } from "@getpaseo/plugin";
 import { darkHighlightColors, resolveSyntaxColors } from "@getpaseo/highlight";
 import { DEFAULT_UI_FONT_STACK, REGISTERED_THEMES } from "@/styles/theme";
 import { applyAppearance, type AppearanceInput } from "./apply";
@@ -23,6 +24,7 @@ type ThemeUpdater = (theme: FakeTheme) => FakeTheme;
 // is a frozen `as const` literal; the updater only touches these fields. Casting a
 // fake of this shape through `unknown` to ThemeUpdater's param is test-only.
 interface FakeTheme {
+  components?: PluginThemeComponents;
   colorScheme: "light" | "dark";
   fontFamily: { ui: string; mono: string };
   fontSize: {
@@ -85,6 +87,18 @@ describe("applyAppearance", () => {
   beforeEach(() => {
     updateTheme.mockClear();
     runtime.themeName = undefined;
+  });
+
+  it("keeps component styling while the user's font choices take effect", () => {
+    applyAppearance(makeInput({ uiFontFamily: "Inter", uiBaseFontSize: 18 }));
+    const updater = updateTheme.mock.calls[0]?.[1] as unknown as ThemeUpdater;
+    const themed = makeFakeTheme();
+    themed.components = { button: { radius: 9999 }, sidebar: { workspaceIndent: 12 } };
+    const updated = updater(themed);
+
+    expect(updated.components).toEqual(themed.components);
+    expect(updated.fontFamily.ui).toBe("Inter");
+    expect(updated.fontSize.base).toBe(18);
   });
 
   it("patches every registered Unistyles theme exactly once", () => {

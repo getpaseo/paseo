@@ -41,6 +41,9 @@ function installation(invoked: string[]): InstalledPlugin {
     clientSlashCommands: [],
     attachmentSources: [],
     themes: [],
+    providerIconOverrides: [],
+    workspaceStatusRenderers: [],
+    floatingWidgets: [],
     timelineTransformers: [],
     timelineRenderers: [],
   };

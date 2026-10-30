@@ -1,4 +1,19 @@
 export type {
+  PluginFloatingWidgetContribution,
+  PluginFloatingWidgetDragHandleProps,
+  PluginFloatingWidgetPosition,
+  PluginFloatingWidgetProps,
+  PluginFloatingWidgetRegistration,
+  PluginFloatingWidgetSize,
+} from "./floating-widgets.js";
+export type { PluginProviderIconOverrideContribution } from "./provider-icons.js";
+export type {
+  PluginWorkspaceStatusRendererContribution,
+  PluginWorkspaceStatusRendererProps,
+  PluginWorkspaceStatusDetails,
+  PluginWorkspaceStatusActivity,
+} from "./workspace-status.js";
+export type {
   PluginHostProps,
   PluginTab,
   PluginPanelProps,

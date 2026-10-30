@@ -22,6 +22,25 @@ export function createPluginWorkspaceSnapshot(
     title: workspace.title ?? null,
     status: workspace.status,
     statusEnteredAt: workspace.statusEnteredAt?.toISOString() ?? null,
+    ...(workspace.activities
+      ? {
+          activities: Object.freeze(
+            workspace.activities.map((activity) =>
+              Object.freeze({
+                ...activity,
+                ...(activity.items
+                  ? {
+                      items: Object.freeze(
+                        activity.items.map((item) => Object.freeze({ ...item })),
+                      ),
+                    }
+                  : {}),
+              }),
+            ),
+          ),
+          primaryActivityId: workspace.primaryActivityId ?? null,
+        }
+      : {}),
     archivingAt: workspace.archivingAt,
     diffStat,
   });

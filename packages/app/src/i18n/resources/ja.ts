@@ -2,6 +2,15 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
+  floatingWidgets: {
+    show: "{{title}}を表示",
+    move: "{{title}}を次の隅に移動",
+    drag: "ドラッグして{{title}}を移動",
+    switchHost: "{{title}}のホストを切り替え。現在のホスト：{{host}}",
+    collapse: "{{title}}を折りたたむ",
+    expand: "{{title}}を展開",
+    hide: "{{title}}を非表示",
+  },
   paneFind: {
     connectionFailure:
       "このチャットを検索できませんでした。ホストへの接続を確認して再試行してください。",

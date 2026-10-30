@@ -1,3 +1,4 @@
+import { createSidebarRowGeometry } from "@/styles/sidebar-geometry";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
@@ -30,7 +31,7 @@ import {
   type ActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { density, densityIconBox, densityIconProps } from "@/styles/density";
+import { densityIconBox, densityIconProps } from "@/styles/density";
 import type { Theme } from "@/styles/theme";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import { getSidebarRowBackdrop } from "@/components/sidebar/sidebar-row-backdrop";
@@ -947,6 +948,7 @@ function ProjectHeaderRow({
       <View style={styles.projectRowLeft}>
         <ProjectLeadingVisual
           displayName={displayName}
+          workspaces={project.workspaces}
           iconDataUri={iconDataUri}
           statusBucket={statusBucket}
           projectViewKey={project.viewKey}
@@ -1762,7 +1764,7 @@ function ProjectBlock({
   if (!collapsed) {
     if (project.workspaces.length > 0) {
       projectChildren = (
-        <>
+        <View style={styles.projectWorkspaceListContainer}>
           {manualSort ? (
             <DraggableList
               testID={`sidebar-workspace-list-${project.viewKey}`}
@@ -1793,7 +1795,7 @@ function ProjectBlock({
               testID={`sidebar-project-show-more-${project.viewKey}`}
             />
           ) : null}
-        </>
+        </View>
       );
     } else if (rowModel.trailingAction.kind === "new_workspace") {
       projectChildren = (
@@ -2569,9 +2571,10 @@ const styles = StyleSheet.create((theme) => ({
   // the rows underneath the header, so a collapsed project gives it back and a column of collapsed
   // headers closes up to the pitch of a list instead of staying spaced for content that is gone.
   projectBlockExpanded: {
-    paddingBottom: theme.spacing[3],
+    paddingBottom: theme.components.sidebar.groupGap ?? theme.spacing[3],
   },
   workspaceListContainer: {},
+  projectWorkspaceListContainer: { paddingLeft: theme.components.sidebar.workspaceIndent ?? 0 },
   // Kept in step with `workspaceRow` above. It stands in a project's list where a workspace row
   // would be, so it takes that row's geometry and both of its fills.
   //
@@ -2579,12 +2582,12 @@ const styles = StyleSheet.create((theme) => ({
   // the step in reads as belonging to that project. Padding rather than margin, so the hover and
   // pressed fills stay the same box as every other row in the sidebar.
   newWorkspaceGhostRow: {
-    minHeight: density.rowHeight,
+    ...createSidebarRowGeometry(theme, "workspaceRow"),
     marginBottom: theme.spacing[0.5],
-    paddingVertical: theme.spacing[2],
-    paddingLeft: theme.spacing[4],
-    paddingRight: theme.spacing[3],
-    borderRadius: theme.borderRadius.lg,
+    paddingLeft:
+      (theme.components.sidebar.workspaceRow?.paddingHorizontal ?? theme.spacing[2]) +
+      theme.spacing[2] +
+      (theme.components.sidebar.workspaceIndent ?? 0),
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
@@ -2619,10 +2622,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   projectRow: {
     position: "relative",
-    minHeight: density.rowHeight,
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius.lg,
+    ...createSidebarRowGeometry(theme, "projectRow"),
     marginBottom: theme.spacing[1],
     flexDirection: "row",
     alignItems: "center",
@@ -2647,7 +2647,7 @@ const styles = StyleSheet.create((theme) => ({
   projectRowLeft: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[2],
+    gap: theme.components.sidebar.projectRow?.gap ?? theme.spacing[2],
     flex: 1,
     minWidth: 0,
   },
@@ -2661,7 +2661,7 @@ const styles = StyleSheet.create((theme) => ({
   projectTitle: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
-    fontWeight: "400",
+    fontWeight: theme.components.sidebar.projectRow?.fontWeight ?? "400",
     minWidth: 0,
     flexShrink: 1,
   },
@@ -2745,12 +2745,8 @@ const styles = StyleSheet.create((theme) => ({
     right: theme.spacing[2],
   },
   workspaceRow: {
-    minHeight: density.rowHeight,
+    ...createSidebarRowGeometry(theme, "workspaceRow"),
     marginBottom: theme.spacing[0.5],
-    paddingVertical: theme.spacing[2],
-    paddingLeft: theme.spacing[2],
-    paddingRight: theme.spacing[3],
-    borderRadius: theme.borderRadius.lg,
     flexDirection: "column",
     alignItems: "stretch",
     justifyContent: "center",

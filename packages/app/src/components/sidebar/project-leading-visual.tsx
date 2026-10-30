@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronRight, CircleAlert } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { getStatusBucketLabel } from "@/hooks/sidebar-status-view-model";
-import { densityIconBox, densityIconProps } from "@/styles/density";
+import { densityIconBox, densityIconSize } from "@/styles/density";
 import type { Theme } from "@/styles/theme";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import {
@@ -21,6 +21,12 @@ import {
 import { StatusRing } from "@/components/status-ring";
 import { getStatusRingOffset } from "@/components/status-ring/geometry";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
+import type { WorkspaceActivity } from "@getpaseo/protocol/messages";
+import type { SidebarWorkspacePlacement } from "@/hooks/sidebar-workspaces-view-model";
+import { useProjectActivities } from "@/hooks/use-project-activities";
+import { WorkspaceActivityIcon } from "./workspace-activity";
+import { workspaceActivityLabel } from "@/workspace-status/activities";
+import { isCompactBreakpoint } from "@/constants/layout";
 
 // Every surfaced status shares one badge shell, so the badge never changes size or position
 // between states. Only the thing inside it changes.
@@ -40,7 +46,13 @@ const STATUS_BADGE_OFFSET = -4;
 // The filled alert occupies the full badge shell so needs-input remains more prominent than
 // the passive status dots.
 const DensityProjectIconView = withUnistyles(ProjectIconView);
-const projectIconProps = densityIconProps("md", () => ({}));
+const projectIconProps = (theme: Theme, rt: { breakpoint?: string }) => ({
+  size:
+    theme.components.projectIcon.size === undefined
+      ? densityIconSize(rt, "md")
+      : Math.max(isCompactBreakpoint(rt.breakpoint) ? 20 : 0, theme.components.projectIcon.size),
+});
+const EMPTY_WORKSPACES: readonly SidebarWorkspacePlacement[] = [];
 
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
 const ThemedCircleAlert = withUnistyles(CircleAlert);
@@ -66,6 +78,7 @@ export function ProjectLeadingVisual({
   chevron = null,
   showChevron = false,
   isArchiving = false,
+  workspaces = EMPTY_WORKSPACES,
 }: {
   displayName: string;
   iconDataUri: string | null;
@@ -77,7 +90,9 @@ export function ProjectLeadingVisual({
   chevron?: "expand" | "collapse" | null;
   showChevron?: boolean;
   isArchiving?: boolean;
+  workspaces?: readonly SidebarWorkspacePlacement[];
 }) {
+  const activity = useProjectActivities(workspaces, statusBucket !== null);
   if (showChevron && chevron !== null) {
     return (
       <View style={styles.projectLeadingVisualSlot}>
@@ -100,6 +115,7 @@ export function ProjectLeadingVisual({
       displayName={displayName}
       projectViewKey={projectViewKey}
       statusBucket={statusBucket}
+      primaryActivity={activity.primary?.status === statusBucket ? activity.primary : null}
       backdrop={backdrop}
     />
   );
@@ -118,6 +134,7 @@ export function ProjectStatusIndicator({
   backdrop,
   loading = false,
   testID,
+  primaryActivity = null,
 }: {
   iconDataUri: string | null;
   displayName: string;
@@ -127,6 +144,7 @@ export function ProjectStatusIndicator({
   backdrop: SidebarSurfaceBackdrop;
   loading?: boolean;
   testID?: string;
+  primaryActivity?: WorkspaceActivity | null;
 }) {
   const placeholderInitial = projectIconPlaceholderLabelFromDisplayName(displayName)
     .charAt(0)
@@ -153,12 +171,25 @@ export function ProjectStatusIndicator({
           placeholderInitial={placeholderInitial}
           projectViewKey={projectViewKey}
         />
-        {badgeContent === null || badgeBucket === null ? null : (
-          <ProjectStatusBadge
-            content={badgeContent}
-            statusBucket={badgeBucket}
-            backdrop={backdrop}
-          />
+        {primaryActivity && !loading ? (
+          <View
+            accessible
+            role="status"
+            style={[styles.statusBadge, getStatusBadgeBackdropStyle(backdrop)]}
+            accessibilityLabel={workspaceActivityLabel(primaryActivity)}
+            testID="project-status-indicator-plugin"
+          >
+            <WorkspaceActivityIcon activity={primaryActivity} size={12} />
+          </View>
+        ) : (
+          badgeContent !== null &&
+          badgeBucket !== null && (
+            <ProjectStatusBadge
+              content={badgeContent}
+              statusBucket={badgeBucket}
+              backdrop={backdrop}
+            />
+          )
         )}
       </View>
     </View>
@@ -260,14 +291,17 @@ function getStatusDotColorStyle(bucket: ProjectStatusBadgeDotBucket): ViewStyle 
 }
 
 const styles = StyleSheet.create((theme) => {
+  const size = theme.components.projectIcon.size;
+  const iconBox = size === undefined ? densityIconBox("md") : { xs: Math.max(20, size), md: size };
+  const dotSize = theme.components.statusIndicator.size ?? STATUS_INDICATOR_FILLED_DOT_SIZE;
   // Dot statuses sit *inside* the shell rather than replacing it, so they carry the same ring
   // the alert does. The geometry is shared here and baked into each colored variant so the
   // style prop stays a single stable object; the colors come from the one bucket-to-color map
   // so this badge can't drift from the status dots everywhere else.
   const statusDot = (bucket: ProjectStatusBadgeDotBucket) =>
     ({
-      width: STATUS_INDICATOR_FILLED_DOT_SIZE,
-      height: STATUS_INDICATOR_FILLED_DOT_SIZE,
+      width: dotSize,
+      height: dotSize,
       borderRadius: theme.borderRadius.full,
       backgroundColor: getStatusDotColor({ theme, bucket }) ?? undefined,
     }) as const;
@@ -278,8 +312,8 @@ const styles = StyleSheet.create((theme) => {
     // only as tall as the icon puts it above the title and the kebab — which is why the
     // workspace status indicator is as tall as `LEADING_SLOT_HEIGHT`.
     projectLeadingVisualSlot: {
-      width: densityIconBox("md"),
-      height: LEADING_SLOT_HEIGHT,
+      width: iconBox,
+      height: size === undefined ? LEADING_SLOT_HEIGHT : Math.max(LEADING_SLOT_HEIGHT, size),
       flexShrink: 0,
       alignItems: "center",
       justifyContent: "center",
@@ -287,11 +321,11 @@ const styles = StyleSheet.create((theme) => {
     // Anchors the corner badge to the icon rather than to the taller slot.
     projectIconBox: {
       position: "relative",
-      width: densityIconBox("md"),
-      height: densityIconBox("md"),
+      width: iconBox,
+      height: iconBox,
     },
     projectIconFallbackText: {
-      fontSize: 9,
+      fontSize: size === undefined ? 9 : Math.round(size * 0.5),
     },
     // The shell the alert and dot statuses share. It straddles the icon's bottom-right corner
     // (half in, half out) so the lettered project box stays readable. The shell is a knockout:
@@ -301,8 +335,8 @@ const styles = StyleSheet.create((theme) => {
       position: "absolute",
       right: STATUS_BADGE_OFFSET,
       bottom: STATUS_BADGE_OFFSET,
-      width: STATUS_BADGE_SIZE,
-      height: STATUS_BADGE_SIZE,
+      width: Math.max(STATUS_BADGE_SIZE, dotSize + 2),
+      height: Math.max(STATUS_BADGE_SIZE, dotSize + 2),
       borderRadius: theme.borderRadius.full,
       alignItems: "center",
       justifyContent: "center",
@@ -311,8 +345,16 @@ const styles = StyleSheet.create((theme) => {
     // Same corner as the shell, re-centred for the wider ring.
     statusRingAnchor: {
       position: "absolute",
-      right: getStatusRingOffset(STATUS_BADGE_OFFSET, STATUS_BADGE_SIZE),
-      bottom: getStatusRingOffset(STATUS_BADGE_OFFSET, STATUS_BADGE_SIZE),
+      right: getStatusRingOffset(
+        STATUS_BADGE_OFFSET,
+        STATUS_BADGE_SIZE,
+        theme.components.statusIndicator.size,
+      ),
+      bottom: getStatusRingOffset(
+        STATUS_BADGE_OFFSET,
+        STATUS_BADGE_SIZE,
+        theme.components.statusIndicator.size,
+      ),
     },
     statusBadgeOnSidebar: { backgroundColor: theme.colors.surfaceSidebar },
     statusBadgeOnSidebarHover: { backgroundColor: theme.colors.surfaceSidebarHover },

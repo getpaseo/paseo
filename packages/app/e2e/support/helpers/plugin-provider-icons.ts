@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Locator, TestInfo } from "@playwright/test";
 import { expect, test as base, type Page } from "../fixtures";
@@ -6,7 +7,7 @@ import { gotoAppShell, openSettings } from "./app";
 import { openModelPicker } from "./agent-profiles";
 import { openAgentRoute } from "./mock-agent";
 import { connectNewWorkspaceDaemonClient, openGlobalNewWorkspaceComposer } from "./new-workspace";
-import { copyPluginExample } from "./plugin-fixture";
+import { copyPluginExample, pluginRequirements } from "./plugin-fixture";
 import { seedWorkspace, type SeededWorkspace } from "./seed-client";
 import { getServerId } from "./server-id";
 import { openSettingsHostSection } from "./settings";
@@ -61,6 +62,7 @@ interface ProviderIconJourney {
   testInfo: TestInfo;
   iconPaths: string[];
   workspace: SeededWorkspace;
+  client: Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
 }
 
 export const test = base.extend<{ providerIcons: ProviderIconJourney }>({
@@ -78,7 +80,7 @@ export const test = base.extend<{ providerIcons: ProviderIconJourney }>({
             await page.setViewportSize(WIDE);
             await gotoAppShell(page);
             const iconPaths = await readIconPaths(page, plugin.directory);
-            await provide({ page, testInfo, iconPaths, workspace });
+            await provide({ page, testInfo, iconPaths, workspace, client });
           } finally {
             await workspace.cleanup();
           }
@@ -172,4 +174,104 @@ export async function verifyExistingAgentModelIcon({
     );
     await capture(page, testInfo, "agent-selected-model");
   });
+}
+
+const OVERRIDE_PLUGIN_ID = "provider-icon-overrides-example";
+const CUSTOM_OVERRIDE_PATH = "M3 12L12 3L21 12L12 21Z";
+const BUILTIN_OVERRIDE_PATH = "M4 4H20V20H4ZM8 8V16H16V8Z";
+
+function overrideSource(customSvg: string): string {
+  return `import type { PluginClientContext } from "@getpaseo/plugin/client";
+export default function contribute(client: PluginClientContext) {
+  client.addProviderIconOverride({ id: "custom", provider: "direct-example", icon: { svg: ${JSON.stringify(customSvg)} } });
+  client.addProviderIconOverride({ id: "builtin", provider: "codex", icon: { svg: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="${BUILTIN_OVERRIDE_PATH}" /></svg>' } });
+  return () => {};
+}`;
+}
+
+export async function verifyProviderIconOverrides(journey: ProviderIconJourney): Promise<void> {
+  const { page, client, testInfo, iconPaths } = journey;
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-provider-icon-overrides-"));
+  const clientPath = path.join(directory, "index.client.ts");
+  const pageErrors: string[] = [];
+  const onPageError = (error: Error) => pageErrors.push(error.message);
+  page.on("pageerror", onPageError);
+  let installed = false;
+  try {
+    await openSettings(page);
+    await openSettingsHostSection(page, getServerId(), "providers");
+    const builtin = page.getByRole("button", { name: "Codex provider details", exact: true });
+    await expect(builtin).toBeVisible();
+    // ProviderRow draws its navigation chevron first and provider mark second.
+    // LoadingSpinner is a separate, transient SVG in the status label after them.
+    const builtinMark = builtin.locator("svg").nth(1);
+    await expect(builtinMark).toBeVisible();
+    const originalBuiltin = await builtinMark.evaluateAll(readIconDrawings);
+
+    await test.step("a client plugin overrides both built-in and plugin-provided icons", async () => {
+      await writeFile(
+        path.join(directory, "paseo-plugin.json"),
+        JSON.stringify({ id: OVERRIDE_PLUGIN_ID, requirements: pluginRequirements }),
+      );
+      await writeFile(
+        clientPath,
+        overrideSource(
+          `<svg viewBox="0 0 24 24"><path fill="currentColor" d="${CUSTOM_OVERRIDE_PATH}" /></svg>`,
+        ),
+      );
+      await client.installDirectoryPlugin(directory);
+      installed = true;
+      await expectProviderIcon(builtin, [BUILTIN_OVERRIDE_PATH]);
+      await expectProviderIcon(
+        page.getByRole("button", { name: "Direct provider example provider details", exact: true }),
+        [CUSTOM_OVERRIDE_PATH],
+      );
+      await capture(page, testInfo, "provider-icon-overrides");
+      await page.getByTestId("settings-back-to-workspace").click();
+      await verifyNewWorkspaceModelIcon({ ...journey, iconPaths: [CUSTOM_OVERRIDE_PATH] });
+    });
+
+    await test.step("malformed SVG falls back without breaking the selected model control", async () => {
+      const selected = page.getByRole("button", { name: MODEL_LABEL, exact: true });
+      const iconCount = await selected.locator("svg").count();
+      await writeFile(clientPath, overrideSource('<svg viewBox="0 0 24 24"><path'));
+      await client.reloadPlugin(OVERRIDE_PLUGIN_ID);
+      await expect
+        .poll(() => selected.locator("svg").evaluateAll(readIconDrawings))
+        .not.toContainEqual([CUSTOM_OVERRIDE_PATH]);
+      await expect(selected).toBeVisible();
+      await expect(selected.locator("svg")).toHaveCount(iconCount);
+      await openModelPicker(page);
+      await expect(page.getByTestId("model-row-direct-example-example-1")).toBeVisible();
+      await page.keyboard.press("Escape");
+      expect(pageErrors).toEqual([]);
+    });
+
+    await test.step("removing the override restores the host SVG and built-in mark immediately", async () => {
+      await client.removePlugin(OVERRIDE_PLUGIN_ID);
+      installed = false;
+      await expectProviderIcon(
+        page.getByRole("button", { name: MODEL_LABEL, exact: true }),
+        iconPaths,
+      );
+      await openSettings(page);
+      await openSettingsHostSection(page, getServerId(), "providers");
+      await expect.poll(() => builtinMark.evaluateAll(readIconDrawings)).toEqual(originalBuiltin);
+      await expect
+        .poll(() => builtin.locator("svg").evaluateAll(readIconDrawings))
+        .not.toContainEqual([BUILTIN_OVERRIDE_PATH]);
+      await expectProviderIcon(
+        page.getByRole("button", { name: "Direct provider example provider details", exact: true }),
+        iconPaths,
+      );
+      await capture(page, testInfo, "provider-icons-restored");
+    });
+  } finally {
+    page.off("pageerror", onPageError);
+    try {
+      if (installed) await client.removePlugin(OVERRIDE_PLUGIN_ID);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
 }

@@ -39,6 +39,7 @@ import {
 import { formatCheckPresentationCountsLabel } from "@/git/check-presentation-copy";
 import { CheckPresentationIcon, getCheckPresentationTone } from "@/git/check-presentation.view";
 import { buildForgeChecksUrl } from "@/git/forge-url";
+import { WorkspaceActivitiesLabel } from "@/components/sidebar/workspace-activity";
 
 const HOVER_CARD_WIDTH = 260;
 
@@ -105,6 +106,7 @@ function WorkspaceHoverCardContent({
         </View>
       ) : null}
       <HostRow serverId={workspace.serverId} />
+      <WorkspaceActivitiesLabel activities={workspace.activities ?? []} />
       {workspace.currentBranch ? (
         <CopyableInfoRow
           icon={ThemedGitBranch}

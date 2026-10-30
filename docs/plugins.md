@@ -1,7 +1,8 @@
 # Plugins
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
-client slash commands, timeline items, header buttons, composer pills, app themes, composer attachment sources, and settings screens.
+client slash commands, timeline items, header buttons, composer pills, app themes, floating widgets,
+workspace activities, composer attachment sources, and settings screens.
 Paseo executes `index.server.ts` in a subprocess and `index.client.tsx` in every connected app.
 
 > **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
@@ -342,6 +343,10 @@ may be async; Paseo waits for it when stopping the server plugin. Cleanup errors
 not interrupt host teardown. Client installation retention and disposal follow the public
 [hosts and lifecycle contract](../public-docs/plugins/reference.md#hosts-and-lifecycle).
 
+Floating components use the same installation providers but have no implicit workspace or agent.
+Keep their portal below modal and popover hosts so a plugin cannot cover a permission prompt. See
+the [floating widget contract](../public-docs/plugins/reference.md#floating-widgets).
+
 Paseo owns the route, screen header, icon validation, close action, theme DTO, layout facts,
 and render error boundary. The contributed component owns the complete body below the header.
 The plugin owns the header's text through the screen's `title` (`resolvePluginScreenTitle` in
@@ -437,6 +442,23 @@ The [public reference](../public-docs/plugins/reference.md#icons) owns the autho
   each attachment, and a component cannot be stored.
 - The plugin compiler loads `.svg` imports as text, so `import icon from "./client/icon.svg"` is the
   markup string.
+
+### Provider icon overrides
+
+`client.addProviderIconOverride({ id, provider, icon })` contributes a presentation-only replacement
+for an exact provider ID, including built-in and plugin-provided providers. It returns the normal
+cleanup function. Icons use `PluginSerializableIcon` and the shared registration validator; React
+components are not accepted. Provider configuration and capabilities are unaffected.
+
+Overrides belong to the plugin installation's host. `PluginRegistry.publish()` rebuilds the
+override map in `data/provider-icons.ts` from live installations, so remove, reload, disable, and
+host removal restore the next applicable icon automatically. The smallest plugin ID, followed by
+the smallest contribution ID in code-unit order, wins a conflict. Provider hooks consult this map
+before the existing built-in/catalog/snapshot lookup; a caller without a host never uses overrides.
+Unchanged host maps retain their references. Malformed SVG XML falls back to a generic mark through
+the shared `components/svg-icon.ts` renderer without breaking the surrounding UI.
+
+See the public [provider icon override API](../public-docs/plugins/reference.md#provider-icon-overrides).
 
 ## Lifecycle hooks
 
@@ -754,7 +776,9 @@ subscription cleanup belongs in the plugin's contribution cleanup when it outliv
 
 ## Contribute a theme
 
-`addTheme` takes a small light or dark palette and a display name. Paseo expands it through the
+`addTheme` takes a small light or dark palette, a display name, and optional component appearance.
+Use the [component appearance contract](../public-docs/plugins/reference.md#component-appearance)
+instead of mutating global geometry tiers shared by unrelated controls. Paseo expands the palette through the
 same semantic builders as the built-in themes, so plugins do not depend on the complete app token
 contract. Unistyles needs every theme name at `StyleSheet.configure` time, so
 `packages/app/src/styles/theme.ts` reserves one light and one dark plugin slot. The appearance
@@ -774,6 +798,12 @@ not repaint the app. Without a preference the sorted registry snapshot decides, 
 stable rather than arrival-ordered. The app resolves that id
 against the installed catalog on every change; an id nothing contributes falls back to the default
 preference instead of painting the reserved slot's placeholder colors.
+
+Workspace activity is server state, independent of appearance. Keep plugin contributions in the
+runtime instance's activity registry and feed the existing workspace directory; a client-only badge
+would disagree with filters and other connected clients. Native signals win equal priority, and
+plugin teardown clears contributions without changing agent lifecycle. See the
+[workspace activity contract](../public-docs/plugins/reference.md#workspace-activities).
 
 Existing plugin authors should follow the standalone [v0.8 runtime-entry migration guide](../public-docs/plugins/migration.md).
 

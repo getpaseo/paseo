@@ -13,8 +13,88 @@ import { PluginAgentClientRegistry } from "../agent/plugin-provider.js";
 import { PluginRuntime } from "./runtime.js";
 import { resolveDaemonVersion } from "../daemon-version.js";
 import type { PluginSessionSocket } from "./session-socket.js";
+import type { WorkspaceActivityInput } from "@getpaseo/protocol/workspace-activity";
 
 const temporaryDirectories: string[] = [];
+
+describe("plugin workspace activity lifecycle", () => {
+  const activity: WorkspaceActivityInput = {
+    id: "task",
+    workspaceId: "workspace",
+    kind: "async-shell",
+    label: "Background task",
+    status: "running",
+  };
+
+  it("publishes ready activities and does not let an old instance affect a replacement", async () => {
+    const directory = await createPlugin("activities", "export default () => () => {};");
+    const oldChild = createReloadChild("old", [], [], [], [activity]);
+    const newChild = createReloadChild("new", [], [], [], [{ ...activity, count: 2 }]);
+    const children = [oldChild, newChild];
+    const runtime = createTestRuntime({ spawnChild: () => children.shift()! });
+    const changes: string[][] = [];
+    runtime.subscribeWorkspaceActivities((ids) => changes.push([...ids]));
+    try {
+      await runtime.startPlugin("activities", directory);
+      expect(runtime.listWorkspaceActivities()).toEqual([
+        expect.objectContaining({ id: "activities/task" }),
+      ]);
+      await runtime.stopPluginById("activities");
+      expect(runtime.listWorkspaceActivities()).toEqual([]);
+      await runtime.startPlugin("activities", directory);
+      oldChild.emitMessage({
+        type: "workspaceActivities.changed",
+        activities: [{ ...activity, status: "failed" }],
+      });
+      expect(runtime.listWorkspaceActivities()).toEqual([
+        expect.objectContaining({ status: "running", count: 2 }),
+      ]);
+      newChild.kill();
+      await Promise.resolve();
+      expect(runtime.listWorkspaceActivities()).toEqual([]);
+      expect(changes).toEqual([["workspace"], ["workspace"], ["workspace"], ["workspace"]]);
+    } finally {
+      await runtime.stopAll();
+    }
+  });
+
+  it("does not publish activity when a prepared plugin start is cancelled", async () => {
+    const directory = await createPlugin("activities-cancel", "export default () => () => {};");
+    const child = createReloadChild("cancel", [], [], [], [activity]);
+    const runtime = createTestRuntime({ spawnChild: () => child });
+    let publishChecks = 0;
+    const changed: string[][] = [];
+    runtime.subscribeWorkspaceActivities((ids) => changed.push([...ids]));
+    try {
+      await expect(
+        runtime.startPlugin("activities-cancel", directory, () => ++publishChecks === 1),
+      ).rejects.toThrow("cancelled");
+      expect(runtime.listWorkspaceActivities()).toEqual([]);
+      expect(changed).toEqual([]);
+    } finally {
+      await runtime.stopAll();
+    }
+  });
+
+  it("initialization failure cannot leak registrations", async () => {
+    const directory = await createPlugin(
+      "activities-fail",
+      `export default function(server) {
+      server.addWorkspaceActivity(${JSON.stringify(activity)});
+      throw new Error("startup failed after registering");
+    }`,
+    );
+    const runtime = createTestRuntime();
+    try {
+      await expect(runtime.startPlugin("activities-fail", directory)).rejects.toThrow(
+        "startup failed after registering",
+      );
+      expect(runtime.listWorkspaceActivities()).toEqual([]);
+    } finally {
+      await runtime.stopAll();
+    }
+  });
+});
 
 function hasCompletedAgentTurn(events: readonly AgentStreamEvent[]): boolean {
   return events.some((event) => event.type === "turn_completed");
@@ -61,6 +141,7 @@ function createReloadChild(
   events: string[],
   methods: string[] = [],
   providers: Array<{ id: string; label: string }> = [],
+  workspaceActivities: WorkspaceActivityInput[] = [],
 ) {
   const listeners = new Map<string, Array<(message: never) => void>>();
   const emit = (event: string, message: unknown) => {
@@ -75,7 +156,9 @@ function createReloadChild(
       callback?.(null);
       if (message.type === "initialize") {
         events.push(`start:${name}`);
-        queueMicrotask(() => emit("message", { type: "ready", methods, providers }));
+        queueMicrotask(() =>
+          emit("message", { type: "ready", methods, providers, workspaceActivities }),
+        );
       }
       if (message.type === "shutdown") {
         events.push(`shutdown:${name}`);
