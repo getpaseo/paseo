@@ -1,6 +1,8 @@
+import type { z } from "zod";
 import type { SubscribeTerminalRequest } from "@getpaseo/protocol/messages";
 import {
   TerminalStreamOpcode,
+  type TerminalReplayMetadataSchema,
   encodeTerminalStreamFrame,
 } from "@getpaseo/protocol/binary-frames/index";
 import type { TerminalReplaySink, TerminalReplayOptions } from "./terminal-replay.js";
@@ -91,7 +93,14 @@ export function createTerminalRestoreDelivery(input: {
       end: TerminalStreamOpcode.ReplayEnd,
     };
     let payload: string | Uint8Array | undefined;
-    if (event.type === "begin") payload = JSON.stringify(event.metadata);
+    if (event.type === "begin") {
+      const begin = {
+        rows: event.metadata.rows,
+        cols: event.metadata.cols,
+        retainedHistoryLines: event.metadata.retainedHistoryLines,
+      } satisfies z.infer<typeof TerminalReplayMetadataSchema>;
+      payload = JSON.stringify(begin);
+    }
     if (event.type === "data") payload = event.data;
     input.send(
       encodeTerminalStreamFrame({ slot: input.slot, opcode: opcodes[event.type], payload }),

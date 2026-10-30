@@ -5,6 +5,7 @@ import {
   decodeTerminalStreamFrame,
 } from "@getpaseo/protocol/binary-frames/index";
 import {
+  createTerminalRestoreDelivery,
   encodeTerminalRestoreFrame,
   resolveRestoreAfterOutputOverflow,
   resolveTerminalRestoreSnapshotOptions,
@@ -52,4 +53,41 @@ describe("terminal restore policy", () => {
     expect(frame?.slot).toBe(4);
     expect(new TextDecoder().decode(frame?.payload ?? new Uint8Array())).toContain("restored");
   });
+});
+
+test("projects chunked replay begin onto the declared wire metadata", () => {
+  const frames: Uint8Array[] = [];
+  const deliver = createTerminalRestoreDelivery({
+    slot: 7,
+    chunked: true,
+    send: (frame) => {
+      frames.push(frame);
+    },
+  });
+  deliver({
+    type: "begin",
+    metadata: {
+      rows: 30,
+      cols: 120,
+      retainedHistoryLines: 842,
+      revision: 5123,
+      replayPreamble: "\x1b[?2004h",
+    },
+  });
+  const data = new TextEncoder().encode("\x1b[31m界 replay\x1b[0m");
+  deliver({ type: "data", data });
+  deliver({ type: "end" });
+  const decoded = frames.map((frame) => decodeTerminalStreamFrame(frame)!);
+  expect(decoded.map((frame) => ({ slot: frame.slot, opcode: frame.opcode }))).toEqual([
+    { slot: 7, opcode: TerminalStreamOpcode.ReplayBegin },
+    { slot: 7, opcode: TerminalStreamOpcode.ReplayData },
+    { slot: 7, opcode: TerminalStreamOpcode.ReplayEnd },
+  ]);
+  expect(JSON.parse(new TextDecoder().decode(decoded[0]!.payload))).toEqual({
+    rows: 30,
+    cols: 120,
+    retainedHistoryLines: 842,
+  });
+  expect(decoded[1]!.payload).toEqual(data);
+  expect(decoded[2]!.payload.byteLength).toBe(0);
 });
