@@ -140,7 +140,7 @@ function ModernComposerInsets({
   fullscreenSurface: ViewProps["style"];
   geometry: BottomBarGeometry | null;
 }) {
-  const { progress } = useReanimatedKeyboardAnimation();
+  const { progress, height } = useReanimatedKeyboardAnimation();
   const barBottom = geometry
     ? Math.max(0, geometry.bounds.height - geometry.bar.y - geometry.bar.height)
     : null;
@@ -150,6 +150,7 @@ function ModernComposerInsets({
       safeAreaBottom: bottomInset,
       contentSpacing: SPACING[4],
       keyboardProgress: progress.value,
+      keyboardHeight: height.value,
     }),
   }));
 

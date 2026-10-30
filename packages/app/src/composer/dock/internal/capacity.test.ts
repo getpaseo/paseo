@@ -9,7 +9,12 @@ import {
 import { resolveComposerBottomPadding } from "./bar-layout";
 
 describe("composer bottom placement", () => {
-  const placement = { restingClearance: 24, safeAreaBottom: 34, contentSpacing: 16 };
+  const placement = {
+    restingClearance: 24,
+    safeAreaBottom: 34,
+    contentSpacing: 16,
+    keyboardHeight: 264,
+  };
 
   it("preserves native resting placement without stacking a second gutter", () => {
     expect(resolveComposerBottomPadding({ ...placement, keyboardProgress: 0 })).toBe(24);
@@ -23,6 +28,7 @@ describe("composer bottom placement", () => {
           restingClearance: null,
           safeAreaBottom,
           contentSpacing: 16,
+          keyboardHeight: 0,
           keyboardProgress: 0,
         }),
       ).toBe(Math.max(safeAreaBottom, 16));
@@ -53,14 +59,29 @@ describe("composer bottom placement", () => {
         restingClearance: 0,
         safeAreaBottom: 34,
         contentSpacing: 16,
+        keyboardHeight: 0,
         keyboardProgress: 0,
       }),
     ).toBe(16);
   });
 
   it("moves continuously from the existing resting frame as keyboard motion starts", () => {
-    const padding = resolveComposerBottomPadding({ ...placement, keyboardProgress: 0.01 });
+    const padding = resolveComposerBottomPadding({
+      ...placement,
+      keyboardHeight: 2.64,
+      keyboardProgress: 0.01,
+    });
     expect(669 + Math.min(0, -2.64 + 0.34) - padding).toBeCloseTo(642.44);
+  });
+
+  it("keeps resting clearance during a zero-height rotation keyboard report", () => {
+    const padding = resolveComposerBottomPadding({
+      ...placement,
+      keyboardHeight: 0,
+      keyboardProgress: 1,
+    });
+    expect(padding).toBe(24);
+    expect(669 - padding).toBe(645);
   });
 });
 

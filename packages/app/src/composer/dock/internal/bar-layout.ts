@@ -16,11 +16,14 @@ export function resolveComposerBottomPadding(input: {
   safeAreaBottom: number;
   contentSpacing: number;
   keyboardProgress: number;
+  keyboardHeight: number;
 }): number {
   "worklet";
+  // Rotation can report progress=1 with no keyboard; it must not open the gutter.
+  const progress = Math.abs(input.keyboardHeight) > 0 ? input.keyboardProgress : 0;
   return (
     Math.max(input.restingClearance ?? input.safeAreaBottom, input.contentSpacing) *
-      (1 - input.keyboardProgress) +
-    (input.safeAreaBottom + input.contentSpacing) * input.keyboardProgress
+      (1 - progress) +
+    (input.safeAreaBottom + input.contentSpacing) * progress
   );
 }
