@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { extractTextFromToolResult } from "../../tool-call-mapper.js";
 import { outputFileFromToolResult } from "../child-session.js";
 import type { PiExtension, PiExtensionToolCall } from "../contract.js";
 
@@ -57,7 +56,7 @@ export const tintinwebPiSubagents: PiExtension = {
         type: "sub_agent" as const,
         subAgentType: title,
         description,
-        log: extractTextFromToolResult(call.result)?.trim() ?? "",
+        log: "",
       };
       if (call.status === "running")
         return {
@@ -110,7 +109,7 @@ export const tintinwebPiSubagents: PiExtension = {
       const detail = {
         type: "sub_agent" as const,
         description: details.success ? details.data.description : undefined,
-        log: extractTextFromToolResult(call.result)?.trim() ?? "",
+        log: "",
       };
       if (call.status === "running" || !details.success) return { detail };
       return {

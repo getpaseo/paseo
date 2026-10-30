@@ -1991,7 +1991,6 @@ export const zhCN: TranslationResources = {
   toolCallDetails: {
     error: "错误",
     empty: "没有可用的更多详情",
-    subAgentActivity: "Sub-agent 活动",
     input: "输入",
     output: "输出",
   },

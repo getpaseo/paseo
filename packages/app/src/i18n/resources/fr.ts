@@ -2060,7 +2060,6 @@ export const fr: TranslationResources = {
   toolCallDetails: {
     error: "Erreur",
     empty: "Aucun détail supplémentaire disponible",
-    subAgentActivity: "Activité du sous-agent",
     input: "Entrée",
     output: "Sortie",
   },

@@ -131,7 +131,7 @@ export const piSubagents: PiExtension = {
         type: "sub_agent" as const,
         subAgentType: args.data.agent,
         description: args.data.task,
-        log: extractTextFromToolResult(call.result)?.trim() ?? "",
+        log: "",
       };
       const base = {
         type: "upsert" as const,

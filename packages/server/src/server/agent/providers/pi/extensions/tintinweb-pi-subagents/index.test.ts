@@ -41,7 +41,7 @@ describe("@tintinweb/pi-subagents adapter", () => {
       type: "sub_agent",
       subAgentType: "Explore",
       description: "Inspect",
-      log: "Wrapped up (turn limit)",
+      log: "",
     });
   });
   test("maps captured foreground lifecycle live and on replay", async () => {
@@ -147,7 +147,7 @@ describe("@tintinweb/pi-subagents adapter", () => {
       expect(mapping?.detail).toEqual({
         type: "sub_agent",
         description: undefined,
-        log: "Wrapped up (turn limit)",
+        log: "",
       });
     },
   );

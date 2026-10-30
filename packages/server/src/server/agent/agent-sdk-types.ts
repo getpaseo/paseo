@@ -313,7 +313,9 @@ export type ToolCallDetail =
       subAgentType?: string;
       description?: string;
       childSessionId?: string;
-      log: string;
+      // COMPAT(subagent-log): added in v0.14.1, remove after 2027-04-30. Apps before v0.14.1
+      // require `log`; every producer sends it empty. Drop the field and those producers' `log: ""`.
+      log?: string;
       actions?: Array<{
         index: number;
         toolName: string;

@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { extractTextFromToolResult } from "../../tool-call-mapper.js";
 import { outputFileFromToolResult } from "../child-session.js";
 import { GOTGENES_CHILD_SESSION_MARKER, gotgenesRuntimeBridge } from "./runtime-bridge.js";
 import type { PiExtension, PiExtensionToolCall } from "../contract.js";
@@ -64,7 +63,7 @@ export const gotgenesPiSubagents: PiExtension = {
         type: "sub_agent" as const,
         subAgentType: title,
         description,
-        log: extractTextFromToolResult(call.result)?.trim() ?? "",
+        log: "",
       };
       if (call.status === "running")
         return {
@@ -118,7 +117,7 @@ export const gotgenesPiSubagents: PiExtension = {
       const detail = {
         type: "sub_agent" as const,
         description: details.success ? details.data.description : undefined,
-        log: extractTextFromToolResult(call.result)?.trim() ?? "",
+        log: "",
       };
       if (call.status === "running" || !details.success) return { detail };
       const file = details.data.transcriptPath;
