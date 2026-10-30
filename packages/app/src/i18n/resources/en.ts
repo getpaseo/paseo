@@ -368,6 +368,11 @@ export const en = {
       insertAndSend: "Insert transcription and send",
       failed: "Dictation failed: {{error}}",
       failedRetry: "Dictation failed. Tap retry.",
+      empty: {
+        noAudio: "No audio was recorded. Is another app using the microphone?",
+        silentAudio: "Only silence was recorded. Check your microphone.",
+        noSpeech: "No speech was recognized. Tap retry to try again.",
+      },
     },
     question: {
       responseFailed: "Could not send your response. Try again.",
@@ -2407,6 +2412,19 @@ export const en = {
         title: "Dictation",
         enabled: "Dictation",
         enabledHint: "Speak into the message box instead of typing",
+      },
+      recordings: {
+        title: "Recent dictations",
+        info: "The last 20 dictations stay on this device, so a failed or empty one can be transcribed again without speaking it again.",
+        empty: "No dictations yet.",
+        loadError: "Couldn't load recent dictations",
+        pending: "Not transcribed yet",
+        retry: "Retry",
+        copy: "Copy transcript",
+        delete: "Delete",
+        deleteTitle: "Delete this recording?",
+        deleteMessage: "Its audio is removed from this device.",
+        audioMissing: "This recording's audio is no longer on this device.",
       },
       voiceMode: {
         title: "Voice mode",

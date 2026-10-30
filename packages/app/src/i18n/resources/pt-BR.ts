@@ -375,6 +375,11 @@ export const ptBR: TranslationResources = {
       insertAndSend: "Inserir transcrição e enviar",
       failed: "Falha no ditado: {{error}}",
       failedRetry: "Falha no ditado. Toque para tentar novamente.",
+      empty: {
+        noAudio: "Nenhum áudio foi gravado. Outro app está usando o microfone?",
+        silentAudio: "Só foi gravado silêncio. Verifique seu microfone.",
+        noSpeech: "Nenhuma fala foi reconhecida. Toque para tentar novamente.",
+      },
     },
     question: {
       responseFailed: "Não foi possível enviar sua resposta. Tente novamente.",
@@ -2315,6 +2320,19 @@ export const ptBR: TranslationResources = {
         title: "Ditado",
         enabled: "Ditado",
         enabledHint: "Fale na caixa de mensagem em vez de digitar",
+      },
+      recordings: {
+        title: "Ditados recentes",
+        info: "Os últimos 20 ditados ficam neste dispositivo, então um ditado que falhou ou veio vazio pode ser transcrito de novo sem falar outra vez.",
+        empty: "Nenhum ditado ainda.",
+        loadError: "Não foi possível carregar os ditados recentes",
+        pending: "Ainda não transcrito",
+        retry: "Tentar novamente",
+        copy: "Copiar transcrição",
+        delete: "Excluir",
+        deleteTitle: "Excluir esta gravação?",
+        deleteMessage: "O áudio é removido deste dispositivo.",
+        audioMissing: "O áudio desta gravação não está mais neste dispositivo.",
       },
       voiceMode: {
         title: "Modo de voz",

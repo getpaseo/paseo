@@ -376,6 +376,11 @@ export const es: TranslationResources = {
       insertAndSend: "Insertar transcripción y enviar",
       failed: "Fallo en el dictado:{{error}}",
       failedRetry: "El dictado falló. Toca reintentar.",
+      empty: {
+        noAudio: "No se grabó audio. ¿Otra app está usando el micrófono?",
+        silentAudio: "Solo se grabó silencio. Revisa tu micrófono.",
+        noSpeech: "No se reconoció ninguna voz. Toca reintentar para volver a intentarlo.",
+      },
     },
     question: {
       responseFailed: "No se pudo enviar tu respuesta. Inténtalo de nuevo.",
@@ -2330,6 +2335,19 @@ export const es: TranslationResources = {
         title: "Dictado",
         enabled: "Dictado",
         enabledHint: "Habla en el cuadro de mensaje en lugar de escribir",
+      },
+      recordings: {
+        title: "Dictados recientes",
+        info: "Los últimos 20 dictados se guardan en este dispositivo, así que uno fallido o vacío se puede transcribir de nuevo sin volver a hablar.",
+        empty: "Aún no hay dictados.",
+        loadError: "No se pudieron cargar los dictados recientes",
+        pending: "Aún sin transcribir",
+        retry: "Reintentar",
+        copy: "Copiar transcripción",
+        delete: "Eliminar",
+        deleteTitle: "¿Eliminar esta grabación?",
+        deleteMessage: "Su audio se borra de este dispositivo.",
+        audioMissing: "El audio de esta grabación ya no está en este dispositivo.",
       },
       voiceMode: {
         title: "Modo de voz",
