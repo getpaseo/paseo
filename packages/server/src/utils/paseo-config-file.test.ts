@@ -133,22 +133,25 @@ describe("paseo config file substrate", () => {
     expect(blockingMs).toBeLessThan(20);
   });
 
-  it("keeps main-thread work below 20ms while admitting large configs", async () => {
-    const config = {
-      scripts: Object.fromEntries(
-        Array.from({ length: 7_000 }, (_, i) => [`script${i}`, { command: "echo hi" }]),
-      ),
-      worktree: { setup: "npm ci" },
-    };
-    await writeFile(join(tempDir, "paseo.json"), JSON.stringify(config));
-    const { result, blockingMs, filesystemRequests, yields, workerMessages } =
-      await measureConfigRead(tempDir);
-    expect(result).toEqual({ ok: true, config, revision: await statPaseoConfigPath(tempDir) });
-    expect(blockingMs).toBeLessThan(20);
-    expect(filesystemRequests).toBeGreaterThan(0);
-    expect(yields).toBeGreaterThan(0);
-    expect(workerMessages).toBe(0);
-  });
+  it.each(Array.from({ length: 30 }, (_, i) => i))(
+    "keeps main-thread work below 20ms while admitting large configs (%i)",
+    async () => {
+      const config = {
+        scripts: Object.fromEntries(
+          Array.from({ length: 7_000 }, (_, i) => [`script${i}`, { command: "echo hi" }]),
+        ),
+        worktree: { setup: "npm ci" },
+      };
+      await writeFile(join(tempDir, "paseo.json"), JSON.stringify(config));
+      const { result, blockingMs, filesystemRequests, yields, workerMessages } =
+        await measureConfigRead(tempDir);
+      expect(result).toEqual({ ok: true, config, revision: await statPaseoConfigPath(tempDir) });
+      expect(blockingMs).toBeLessThan(20);
+      expect(filesystemRequests).toBeGreaterThan(0);
+      expect(yields).toBeGreaterThan(0);
+      expect(workerMessages).toBe(0);
+    },
+  );
 
   it("rejects a 32MiB config with main-thread work below 20ms", async () => {
     await writeFile(
