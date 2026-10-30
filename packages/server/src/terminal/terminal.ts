@@ -547,8 +547,12 @@ function serializeCursorPresentation(terminal: TerminalType): string {
       };
     }
   )._core.coreService;
-  const style = { block: 2, underline: 4, bar: 6 }[core.decPrivateModes.cursorStyle ?? "block"];
-  return `\x1b[?25${core.isCursorHidden ? "l" : "h"}\x1b[${style - (core.decPrivateModes.cursorBlink ? 1 : 0)} q`;
+  const visibility = `\x1b[?25${core.isCursorHidden ? "l" : "h"}`;
+  const cursorStyle = core.decPrivateModes.cursorStyle;
+  // Unset presentation belongs to each renderer's configured defaults.
+  if (cursorStyle === undefined) return visibility;
+  const style = { block: 2, underline: 4, bar: 6 }[cursorStyle];
+  return `${visibility}\x1b[${style - (core.decPrivateModes.cursorBlink ? 1 : 0)} q`;
 }
 
 function normalizeProcessToken(token: string): string {

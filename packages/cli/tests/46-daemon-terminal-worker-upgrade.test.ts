@@ -10,11 +10,10 @@
  *    `stop --keep-terminals` and moving A's node-pty, worker bundle and shell integration away,
  *    a daemon from B adopts the same worker and opens a new, working terminal in it with B's
  *    environment and CLI, while the first terminal keeps A's.
- * 2. Worker protocol versions (PASEO_TERMINAL_WORKER_PROTOCOL_OVERRIDE): a worker one version
- *    old drains (keeps its terminal, new ones open in a second worker, it exits after its last
- *    terminal and its copy is deleted); one two versions old is shut down; one from a newer
- *    Paseo is left running, reported as terminal_worker_incompatible, and closed by
- *    `daemon stop`.
+ * 2. Worker protocol versions (PASEO_TERMINAL_WORKER_PROTOCOL_OVERRIDE): protocols 0–4
+ *    are obsolete unreleased wires, so their programs/workers/copies are closed and a current
+ *    worker serves new terminals. A truly newer protocol is left running, reported as
+ *    terminal_worker_incompatible, and closed by `daemon stop`.
  *
  * Every process it starts is stopped in `finally`.
  */
@@ -51,6 +50,7 @@ const cliHome = join(root, "os-home");
 const workDir = join(root, "work");
 for (const dir of [paseoHome, cliHome, workDir]) mkdirSync(dir, { recursive: true });
 const port = await getAvailablePort();
+const currentProtocolVersion = 5;
 const zsh = ["/bin/zsh", "/usr/bin/zsh"].find((candidate) => existsSync(candidate)) ?? null;
 
 interface Installation {
@@ -387,6 +387,7 @@ try {
   const t1 = await openTerminal(a, "t1");
   const [firstWorker] = workerRecords();
   assert(firstWorker, "one worker runs");
+  assert.equal(firstWorker.protocolVersion, currentProtocolVersion, "the current wire is adopted");
   assert.match(firstWorker.runtime ?? "", /^0\.98\.0-[0-9a-f]{12}$/);
   const copyA = join(paseoHome, "terminal-worker", firstWorker.runtime!);
   assert(
@@ -432,54 +433,53 @@ try {
   restoreA = null;
   console.log("✓ closed and cleaned up\n");
 
-  console.log("Test 4: a worker one protocol version old drains");
-  const old = await leaveWorkerWithProtocol(a, 0, "t3");
-  await startDaemon(b);
-  const workers = workerRecords();
-  assert.equal(workers.length, 2, "the old worker drains beside a new one");
-  const current = workers.find((record) => record.pid !== old.workerPid)!;
-  assert.equal(current.protocolVersion, 1);
-  assert.match(current.runtime ?? "", /^0\.99\.0-/);
-  assert((await terminalIds(b)).includes(old.terminal.id), "the old worker's terminal is listed");
-  await type(b, old.terminal.id, "echo still-served");
-  await waitForScreen(b, old.terminal.id, "\nstill-served");
-  const t4 = await openTerminal(b, "t4");
-  assert.deepEqual(
-    workerRecords()
-      .find((record) => record.pid === current.pid)!
-      .terminals.map((terminal) => terminal.id),
-    [t4.id],
-    "new terminals open in the current worker",
-  );
-  await paseo(b, ["terminal", "kill", old.terminal.id]);
-  await waitFor(
-    () => !isAlive(old.workerPid),
-    () => `the drained worker ${old.workerPid} did not exit`,
-  );
-  await waitFor(
-    () => !runtimeCopies().includes(old.runtime),
-    () => `the drained worker's copy ${old.runtime} was not deleted: ${runtimeCopies().join(", ")}`,
-  );
-  assert.deepEqual(runtimeCopies(), [current.runtime], "the current worker's copy stays");
-  await type(b, t4.id, "echo after-drain");
-  await waitForScreen(b, t4.id, "\nafter-drain");
-  await stopDaemon(b);
-  console.log("✓ drained, exited, copy deleted\n");
+  // There is no supported previous wire at protocol 5. Future previous-version classification
+  // is covered by terminal-worker-protocol.test.ts; do not simulate an unreleased drain adapter.
+  for (const protocolVersion of [0, 1, 2, 3, 4]) {
+    console.log(`Test 4: obsolete protocol ${protocolVersion} is closed before serving terminals`);
+    const obsolete = await leaveWorkerWithProtocol(
+      a,
+      protocolVersion,
+      `obsolete-${protocolVersion}`,
+    );
+    await startDaemon(b);
+    await waitFor(
+      () => !isAlive(obsolete.workerPid) && !isAlive(obsolete.terminal.pid),
+      () => "the obsolete worker or its terminal survived",
+    );
+    assert(!(await terminalIds(b)).includes(obsolete.terminal.id), "its terminal is gone");
+    const [current] = workerRecords();
+    assert.equal(workerRecords().length, 1, "one current worker runs");
+    assert(current);
+    assert.equal(current.protocolVersion, currentProtocolVersion);
+    assert.match(current.runtime ?? "", /^0\.99\.0-/);
+    await waitFor(
+      () => !runtimeCopies().includes(obsolete.runtime),
+      () => `the obsolete worker's copy ${obsolete.runtime} was not deleted`,
+    );
+    assert.deepEqual(runtimeCopies(), [current.runtime], "the current copy stays");
+    const replacement = await openTerminal(b, `replacement-${protocolVersion}`);
+    assert.deepEqual(
+      workerRecords()
+        .find((record) => record.pid === current.pid)!
+        .terminals.map((terminal) => terminal.id),
+      [replacement.id],
+      "new terminals open in the current worker",
+    );
+    await type(b, replacement.id, `echo after-protocol-cut-${protocolVersion}`);
+    await waitForScreen(b, replacement.id, `\nafter-protocol-cut-${protocolVersion}`);
+    await stopDaemon(b);
+    await waitFor(
+      () => !isAlive(replacement.pid) && !isAlive(current.pid),
+      () => "the replacement worker or program outlived daemon stop",
+    );
+    assert.deepEqual(workerRecords(), [], "no worker record is left");
+    assert.deepEqual(runtimeCopies(), [], "no copy is left");
+    console.log("✓ obsolete closed, current usable, copies cleaned up\n");
+  }
 
-  console.log("Test 5: a worker two protocol versions old is shut down");
-  const obsolete = await leaveWorkerWithProtocol(a, -1, "t5");
-  await startDaemon(b);
-  await waitFor(
-    () => !isAlive(obsolete.workerPid) && !isAlive(obsolete.terminal.pid),
-    () => "the obsolete worker or its terminal survived",
-  );
-  assert(!(await terminalIds(b)).includes(obsolete.terminal.id), "its terminal is gone");
-  assert.equal(workerRecords().length, 1, "one current worker runs");
-  await stopDaemon(b);
-  console.log("✓ shut down\n");
-
-  console.log("Test 6: a worker from a newer Paseo is left running and reported");
-  const newer = await leaveWorkerWithProtocol(a, 2, "t6");
+  console.log("Test 5: a worker from a newer Paseo is left running and reported");
+  const newer = await leaveWorkerWithProtocol(a, currentProtocolVersion + 1, "newer");
   await startDaemon(b);
   const listed = await run(b, ["terminal", "ls", "--all", "--json"]);
   assert.notEqual(listed.exitCode, 0, "terminal ls fails");

@@ -1,6 +1,10 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "../support/fixtures";
-import { getTerminalBufferText, waitForTerminalContent } from "../support/helpers/terminal-perf";
+import {
+  expectTerminalCursor,
+  getTerminalBufferText,
+  waitForTerminalContent,
+} from "../support/helpers/terminal-perf";
 import { TerminalE2EHarness } from "../support/helpers/terminal-dsl";
 
 interface AttachOverlayProbeWindow extends Window {
@@ -93,6 +97,32 @@ test.describe("retained terminal tab streams", () => {
         Math.min(count, 10000),
       );
       if (count > 10000) expect(restored).not.toContain("history-0001界🙂");
+    });
+  }
+  for (const input of [
+    { name: "client blinking bar", presentation: "", shape: "bar" as const, blinking: true },
+    {
+      name: "program blinking underline",
+      presentation: "\x1b[3 q",
+      shape: "underline" as const,
+      blinking: true,
+    },
+  ]) {
+    test(`reattach preserves the ${input.name} cursor`, async ({ page }) => {
+      const terminal = await harness.createTerminal({
+        name: "cursor-presentation",
+        command: process.execPath,
+        args: [
+          "-e",
+          `process.stdout.write(${JSON.stringify(input.presentation + "CURSOR-READY\r\n")});setInterval(()=>{},1000)`,
+        ],
+      });
+      await harness.openTerminal(page, { terminalId: terminal.id });
+      await waitForTerminalContent(page, (text) => text.includes("CURSOR-READY"), 10000);
+      await expectTerminalCursor(page, input);
+      await page.reload();
+      await waitForTerminalContent(page, (text) => text.includes("CURSOR-READY"), 10000);
+      await expectTerminalCursor(page, input);
     });
   }
 });

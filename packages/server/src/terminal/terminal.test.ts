@@ -1563,10 +1563,13 @@ it.runIf(isPlatform("linux", "darwin"))(
 it.each([false, true])(
   "serializes styled Unicode, cursor presentation and modes directly (alternate=%s)",
   async (alternate) => {
+    const gate = mkdtempSync(join(tmpdir(), "terminal-cursor-cut-"));
+    temporaryDirs.push(gate);
+    const releaseCursor = join(gate, "position");
     const content =
       Array.from({ length: 8 }, (_, i) => "normal-" + i + "\r\n").join("") +
       (alternate ? "\x1b[?1049h\x1b[H" : "") +
-      "\x1b[38;2;255;128;64;4m界é🙂\x1b[0m\r\nVIEW-READY\x1b[?1h\x1b[?2004h\x1b[>1u\x1b[?9001h\x1b[?7l\x1b[?1000h\x1b[5 q\x1b[?25l\x1b[2;7H";
+      "\x1b[38;2;255;128;64;4m界é🙂\x1b[0m\r\nVIEW-READY\x1b[?1h\x1b[?2004h\x1b[>1u\x1b[?9001h\x1b[?7l\x1b[?1000h\x1b[5 q\x1b[?25l";
     const session = trackSession(
       await createTerminal({
         cwd: realpathSync(tmpdir()),
@@ -1574,7 +1577,10 @@ it.each([false, true])(
         rows: 4,
         cols: 16,
         command: process.execPath,
-        args: ["-e", `process.stdout.write(${JSON.stringify(content)});setInterval(()=>{},1000)`],
+        args: [
+          "-e",
+          `const fs=require("node:fs");const watcher=fs.watch(${JSON.stringify(gate)},()=>{if(fs.existsSync(${JSON.stringify(releaseCursor)})){watcher.close();process.stdout.write("\\x1b[2;7H");}});process.stdout.write(${JSON.stringify(content)});setInterval(()=>{},1000)`,
+        ],
       }),
     );
     const deadline = Date.now() + 5000;
@@ -1582,6 +1588,9 @@ it.each([false, true])(
       if (Date.now() > deadline) throw new Error("source content did not parse");
       await delay(20);
     }
+    // VIEW-READY precedes the last cursor update; its visible text is not a capture barrier.
+    writeFileSync(releaseCursor, "position");
+    await waitForState(session, (state) => state.cursor.row === 1 && state.cursor.col === 6);
     const replay = session.serializeReplay();
     const ansi = new TextDecoder().decode(replay.data);
     expect(ansi).toContain("\x1b[?25l\x1b[5 q");
@@ -1632,6 +1641,55 @@ it.each([false, true])(
     }
   },
 );
+
+it.each([
+  { name: "unset", presentation: "", style: undefined, visible: true },
+  {
+    name: "reset to client default",
+    presentation: "\x1b[5 q\x1b[0 q",
+    style: undefined,
+    visible: true,
+  },
+  { name: "unset hidden", presentation: "\x1b[?25l", style: undefined, visible: false },
+  ...[1, 2, 3, 4, 5, 6].map((style) => ({
+    name: `explicit style ${style}`,
+    presentation: `\x1b[${style} q\x1b[?25l`,
+    style,
+    visible: false,
+  })),
+])("replays cursor presentation without replacing client defaults ($name)", async (input) => {
+  const session = trackSession(
+    await createTerminal({
+      cwd: realpathSync(tmpdir()),
+      workspaceId: "cursor-presentation",
+      command: process.execPath,
+      args: [
+        "-e",
+        `process.stdout.write(${JSON.stringify(input.presentation + "CURSOR-READY\r\n")});setInterval(()=>{},1000)`,
+      ],
+    }),
+  );
+  await waitForLines(session, ["CURSOR-READY"]);
+  const { data } = session.serializeReplay();
+  const ansi = new TextDecoder().decode(data);
+  const receiver = new xterm.Terminal({
+    cursorStyle: "bar",
+    cursorBlink: true,
+    allowProposedApi: true,
+  });
+  const styles: number[] = [];
+  receiver.parser.registerCsiHandler({ intermediates: " ", final: "q" }, (params) => {
+    styles.push(Number(params[0]));
+    return false;
+  });
+  try {
+    await new Promise<void>((resolve) => receiver.write(data, resolve));
+    expect(styles).toEqual(input.style === undefined ? [] : [input.style]);
+    expect(ansi).toContain(`\x1b[?25${input.visible ? "h" : "l"}`);
+  } finally {
+    receiver.dispose();
+  }
+});
 
 it("captures input modes at the same committed cut as serialized bytes", async () => {
   const session = trackSession(

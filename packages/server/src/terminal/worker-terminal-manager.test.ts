@@ -1708,7 +1708,7 @@ it.skipIf(isPlatform("win32"))(
   },
 );
 
-it("replays bounded ANSI chunks before concurrent live output and reconstructs retained text", async () => {
+it("replays bounded ANSI chunks independently of live output and reconstructs the revision cut", async () => {
   const cwd = createTemporaryHome();
   manager = await startRealWorkerManager();
   const session = trackTerminal(
@@ -1719,7 +1719,7 @@ it("replays bounded ANSI chunks before concurrent live output and reconstructs r
       cols: 120,
       ...nodeTerminalCommand(`
       for (let i = 0; i < 800; i++) process.stdout.write("\\x1b[31m" + String(i).padStart(4, "0") + ":" + "x".repeat(100) + "\\x1b[0m\\r\\n");
-      process.stdin.on("data", () => process.stdout.write("LIVE-AFTER-REPLAY\\r\\n"));
+      require("node:readline").createInterface({ input: process.stdin }).on("line", line => process.stdout.write(line === "before" ? "PRE-CUT\\r\\n" : "LIVE-AFTER-REPLAY\\r\\n"));
       setInterval(() => {}, 1000);
     `),
     }),
@@ -1729,25 +1729,42 @@ it("replays bounded ANSI chunks before concurrent live output and reconstructs r
       (await manager!.captureTerminal(session.id)).lines.some((line) => line.startsWith("0799:")),
     10000,
   );
-  const expected = await manager.captureTerminal(session.id);
   const events: string[] = [];
+  const replayEvents: string[] = [];
+  const liveOutputs: Array<{ data: string; revision?: number }> = [];
   const chunks: Uint8Array[] = [];
   let live = "";
   const unsubscribe = session.subscribe((event) => {
     if (event.type === "output") {
       events.push("live");
+      liveOutputs.push(event);
       live += event.data;
     }
   });
+  session.send({ type: "input", data: "before\r" });
+  await waitForCondition(() => live.includes("PRE-CUT"), 10000);
+  const expected = await manager.captureTerminal(session.id);
   const metadata = await manager.replayTerminal(session.id, undefined, (event) => {
     events.push(event.type);
+    replayEvents.push(event.type);
     if (event.type === "begin") session.send({ type: "input", data: "go\r" });
     if (event.type === "data") chunks.push(event.data);
   });
   await waitForCondition(() => live.includes("LIVE-AFTER-REPLAY"), 10000);
   unsubscribe();
-  expect(events[0]).toBe("begin");
-  expect(events.lastIndexOf("end")).toBeGreaterThan(events.lastIndexOf("data"));
+  // Existing live observers are independent of replay. Pre-cut output may also be
+  // flushed by capture before begin; only the replay events have begin/data/end order.
+  expect(events[0]).toBe("live");
+  expect(replayEvents[0]).toBe("begin");
+  expect(replayEvents.at(-1)).toBe("end");
+  expect(replayEvents.slice(1, -1)).toEqual(chunks.map(() => "data"));
+  const beforeCut = liveOutputs.filter((output) => output.data.includes("PRE-CUT"));
+  const afterCut = liveOutputs.filter((output) => output.data.includes("LIVE-AFTER-REPLAY"));
+  expect(beforeCut).toHaveLength(1);
+  expect(afterCut).toHaveLength(1);
+  expect(beforeCut[0]!.revision).toBeDefined();
+  expect(beforeCut[0]!.revision).toBeLessThanOrEqual(metadata!.revision);
+  expect(afterCut[0]!.revision).toBeGreaterThan(metadata!.revision);
   expect(live.match(/LIVE-AFTER-REPLAY/g)).toHaveLength(1);
   expect(chunks.length).toBeGreaterThan(1);
   expect(chunks.every((chunk) => chunk.byteLength <= 64 * 1024)).toBe(true);
@@ -1765,6 +1782,8 @@ it("replays bounded ANSI chunks before concurrent live output and reconstructs r
     expect(
       Array.from({ length: buffer.length }, (_, i) => buffer.getLine(i)!.translateToString(true)),
     ).toEqual(expected.lines);
+    expect(expected.lines.filter((line) => line.includes("PRE-CUT"))).toHaveLength(1);
+    expect(expected.lines.some((line) => line.includes("LIVE-AFTER-REPLAY"))).toBe(false);
     expect(buffer.getLine(0)!.getCell(0)!.getFgColor()).toBe(1);
   } finally {
     terminal.dispose();
