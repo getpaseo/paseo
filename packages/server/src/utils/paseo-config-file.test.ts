@@ -1,8 +1,6 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { Worker } from "node:worker_threads";
-import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import { writeFile, truncate, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -46,14 +44,10 @@ afterAll(() => {
   rmSync(probeDirectory, { recursive: true, force: true });
 });
 
-async function measureConfigRead(directory: string, profile = false) {
-  const { stdout, stderr } = await promisify(execFile)(
-    process.execPath,
-    [probePath, directory, profile ? "profile" : "plain"],
-    {
-      timeout: 15_000,
-    },
-  );
+async function measureConfigRead(directory: string) {
+  const { stdout, stderr } = await promisify(execFile)(process.execPath, [probePath, directory], {
+    timeout: 15_000,
+  });
   process.stderr.write(stderr);
   return JSON.parse(stdout) as {
     result: Awaited<ReturnType<typeof readPaseoConfigForEdit>>;
@@ -62,25 +56,6 @@ async function measureConfigRead(directory: string, profile = false) {
     yields: number;
     workerMessages: number;
   };
-}
-
-// Temporary diagnostic: keep scheduling pressure present throughout the paired
-// cold reads, rather than depending on which other CI files are still running.
-async function withCpuContention<T>(action: () => Promise<T>): Promise<T> {
-  const workers = Array.from(
-    { length: 3 },
-    () =>
-      new Worker(
-        'require("node:worker_threads").parentPort.postMessage("ready"); while (true) { Math.sqrt(Math.random()); }',
-        { eval: true },
-      ),
-  );
-  try {
-    await Promise.all(workers.map((worker) => once(worker, "message")));
-    return await action();
-  } finally {
-    await Promise.all(workers.map((worker) => worker.terminate()));
-  }
 }
 
 describe("paseo config file substrate", () => {
@@ -158,29 +133,22 @@ describe("paseo config file substrate", () => {
     expect(blockingMs).toBeLessThan(20);
   });
 
-  it.each(
-    Array.from({ length: 100 }, (_, repetition) =>
-      [false, true].map((profile) => ({ repetition, profile })),
-    ).flat(),
-  )(
-    "keeps main-thread work below 20ms while admitting large configs (repetition=$repetition, profile=$profile)",
-    async ({ profile }) => {
-      const config = {
-        scripts: Object.fromEntries(
-          Array.from({ length: 7_000 }, (_, i) => [`script${i}`, { command: "echo hi" }]),
-        ),
-        worktree: { setup: "npm ci" },
-      };
-      await writeFile(join(tempDir, "paseo.json"), JSON.stringify(config));
-      const { result, blockingMs, filesystemRequests, yields, workerMessages } =
-        await withCpuContention(() => measureConfigRead(tempDir, profile));
-      expect(result).toEqual({ ok: true, config, revision: await statPaseoConfigPath(tempDir) });
-      expect(blockingMs).toBeLessThan(20);
-      expect(filesystemRequests).toBeGreaterThan(0);
-      expect(yields).toBeGreaterThan(0);
-      expect(workerMessages).toBe(0);
-    },
-  );
+  it("keeps main-thread work below 20ms while admitting large configs", async () => {
+    const config = {
+      scripts: Object.fromEntries(
+        Array.from({ length: 7_000 }, (_, i) => [`script${i}`, { command: "echo hi" }]),
+      ),
+      worktree: { setup: "npm ci" },
+    };
+    await writeFile(join(tempDir, "paseo.json"), JSON.stringify(config));
+    const { result, blockingMs, filesystemRequests, yields, workerMessages } =
+      await measureConfigRead(tempDir);
+    expect(result).toEqual({ ok: true, config, revision: await statPaseoConfigPath(tempDir) });
+    expect(blockingMs).toBeLessThan(20);
+    expect(filesystemRequests).toBeGreaterThan(0);
+    expect(yields).toBeGreaterThan(0);
+    expect(workerMessages).toBe(0);
+  });
 
   it("rejects a 32MiB config with main-thread work below 20ms", async () => {
     await writeFile(
