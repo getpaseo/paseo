@@ -545,7 +545,7 @@ function readStatus(value: unknown): string | undefined {
   return typeof value.status === "string" ? value.status : undefined;
 }
 
-function normalizeCollabAgentChildStatus(status: string): ToolCallTimelineItem["status"] {
+export function normalizeCollabAgentChildStatus(status: string): ToolCallTimelineItem["status"] {
   const normalized = status.trim().toLowerCase();
   switch (normalized) {
     case "error":

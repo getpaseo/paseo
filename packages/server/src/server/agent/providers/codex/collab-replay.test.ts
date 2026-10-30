@@ -116,12 +116,27 @@ describe("Codex collaboration history", () => {
       async () => appServer.child,
     );
     const statuses = new Map<string, string>();
+    const timelineCallIds = new Set<string>();
     session.subscribe((event) => {
       if (event.type === "provider_subagent" && event.event.type === "upsert") {
         statuses.set(event.event.id, event.event.status);
       }
+      if (event.type === "timeline" && event.item.type === "tool_call") {
+        timelineCallIds.add(event.item.callId);
+      }
     });
     function complete(tool: string, states: Record<string, string>, id = tool) {
+      if (tool !== "spawnAgent") {
+        appServer.child.stdout.write(
+          `${JSON.stringify({
+            method: "item/started",
+            params: {
+              threadId: "thread-1",
+              item: { ...collab(tool, states, id), status: "inProgress", agentsStates: {} },
+            },
+          })}\n`,
+        );
+      }
       appServer.child.stdout.write(
         `${JSON.stringify({
           method: "item/completed",
@@ -147,6 +162,7 @@ describe("Codex collaboration history", () => {
       expect(statuses.get("first")).toBe("completed");
       complete("sendInput", { first: "running" });
       await vi.waitFor(() => expect(statuses.get("first")).toBe("running"));
+      expect([...timelineCallIds]).toEqual(["spawn-first", "spawn-second"]);
     } finally {
       await session.close();
       appServer.assertNoErrors();

@@ -58,6 +58,7 @@ import {
   mapCodexToolCallEnvelope,
   mapCodexToolCallFromThreadItem,
   normalizeCommandExecutionCommand,
+  normalizeCollabAgentChildStatus,
   splitCodexMcpToolResultImages,
 } from "./codex/tool-call-mapper.js";
 import {
@@ -1864,7 +1865,12 @@ interface CodexCollabAgentUpdate {
   reopen: boolean;
 }
 
-function readCodexCollabAgentUpdates(item: unknown): CodexCollabAgentUpdate[] {
+interface CodexCollabAgentControl {
+  childThreadIds: string[];
+  updates: CodexCollabAgentUpdate[];
+}
+
+function readCodexCollabAgentControl(item: unknown): CodexCollabAgentControl | null {
   const record = toObjectRecord(item);
   if (
     !record ||
@@ -1872,34 +1878,33 @@ function readCodexCollabAgentUpdates(item: unknown): CodexCollabAgentUpdate[] {
       "collabAgentToolCall" ||
     record.tool === "spawnAgent"
   ) {
-    return [];
+    return null;
   }
-  return Object.entries(toObjectRecord(record.agentsStates) ?? {}).flatMap(([threadId, value]) => {
-    const state = toObjectRecord(value);
-    if (typeof state?.status !== "string") return [];
-    const mapped = mapCodexToolCallFromThreadItem({
-      type: "collabAgentToolCall",
-      id: record.id,
-      tool: record.tool,
-      status: "completed",
-      agentsStates: { [threadId]: state },
-    });
-    return mapped
-      ? [
-          {
-            threadId,
-            status:
-              record.tool === "closeAgent" &&
-              record.status === "completed" &&
-              mapped.status === "running"
-                ? "canceled"
-                : mapped.status,
-            shutdown: state.status === "shutdown",
-            reopen: record.tool === "sendInput" && record.status === "completed",
-          },
-        ]
-      : [];
-  });
+  const updates = Object.entries(toObjectRecord(record.agentsStates) ?? {}).flatMap(
+    ([threadId, value]): CodexCollabAgentUpdate[] => {
+      const state = toObjectRecord(value);
+      if (typeof state?.status !== "string") return [];
+      const status = normalizeCollabAgentChildStatus(state.status);
+      return [
+        {
+          threadId,
+          status:
+            record.tool === "closeAgent" && record.status === "completed" && status === "running"
+              ? "canceled"
+              : status,
+          shutdown: state.status === "shutdown",
+          reopen: record.tool === "sendInput" && record.status === "completed",
+        },
+      ];
+    },
+  );
+  const receivers = Array.isArray(record.receiverThreadIds)
+    ? record.receiverThreadIds.filter((id): id is string => typeof id === "string")
+    : [];
+  return {
+    childThreadIds: [...new Set([...receivers, ...updates.map((update) => update.threadId)])],
+    updates,
+  };
 }
 
 function resolveCodexCollabAgentUpdate(
@@ -2123,8 +2128,9 @@ function updateHistoricalCollabAgentCalls(
   timelineIndexByThreadId: Map<string, number>,
   item: unknown,
 ): boolean {
-  let updated = false;
-  for (const update of readCodexCollabAgentUpdates(item)) {
+  const control = readCodexCollabAgentControl(item);
+  if (!control) return false;
+  for (const update of control.updates) {
     const existingIndex = timelineIndexByThreadId.get(update.threadId);
     const existing = existingIndex === undefined ? undefined : timeline[existingIndex];
     if (existingIndex === undefined || existing?.item.type !== "tool_call") continue;
@@ -2134,9 +2140,11 @@ function updateHistoricalCollabAgentCalls(
         ? { ...existing.item, status, error: { message: "Sub-agent failed" } }
         : { ...existing.item, status, error: null };
     timeline[existingIndex] = { ...existing, item: toolCall };
-    updated = true;
   }
-  return updated;
+  return (
+    control.childThreadIds.length > 0 &&
+    control.childThreadIds.every((id) => timelineIndexByThreadId.has(id))
+  );
 }
 
 async function loadCodexThreadHistoryTimeline(params: {
@@ -5819,19 +5827,23 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private handleRegisteredSubAgentActivity(rawItem: { [key: string]: unknown }): boolean {
-    let updatedExistingSubagent = false;
-    for (const update of readCodexCollabAgentUpdates(rawItem)) {
-      const callId = this.subAgentCallIdByChildThreadId.get(update.threadId);
-      if (!callId) continue;
-      const state = this.subAgentCallsByCallId.get(callId);
-      if (!state) continue;
-      const status = resolveCodexCollabAgentUpdate(state.toolCall.status, update);
-      if (status !== state.toolCall.status) {
-        this.emitSubAgentActivityUpdate(callId, status, { reopen: update.reopen });
+    const control = readCodexCollabAgentControl(rawItem);
+    if (control) {
+      for (const update of control.updates) {
+        const callId = this.subAgentCallIdByChildThreadId.get(update.threadId);
+        if (!callId) continue;
+        const state = this.subAgentCallsByCallId.get(callId);
+        if (!state) continue;
+        const status = resolveCodexCollabAgentUpdate(state.toolCall.status, update);
+        if (status !== state.toolCall.status) {
+          this.emitSubAgentActivityUpdate(callId, status, { reopen: update.reopen });
+        }
       }
-      updatedExistingSubagent = true;
+      return (
+        control.childThreadIds.length > 0 &&
+        control.childThreadIds.every((id) => this.subAgentCallIdByChildThreadId.has(id))
+      );
     }
-    if (updatedExistingSubagent) return true;
     const activity = readCodexSubAgentActivity(rawItem);
     if (!activity) {
       return false;
