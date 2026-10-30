@@ -572,6 +572,11 @@ function resolveCollabAgentStatus(
     return "failed";
   }
 
+  // Sending input completes the submission, not the child's new turn.
+  if (item.tool === "sendInput") {
+    return parentStatus;
+  }
+
   const childStatuses = Object.values(item.agentsStates ?? {})
     .map(readStatus)
     .filter((status): status is string => typeof status === "string" && status.trim().length > 0)

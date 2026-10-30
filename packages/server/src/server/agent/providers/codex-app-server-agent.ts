@@ -1875,12 +1875,12 @@ function readCodexCollabAgentControl(item: unknown): CodexCollabAgentControl | n
     !record ||
     normalizeCodexThreadItemType(typeof record.type === "string" ? record.type : undefined) !==
       "collabAgentToolCall" ||
-    record.tool === "spawnAgent"
+    record.tool === "spawnAgent" ||
+    record.tool === "sendInput"
   ) {
     return null;
   }
-  // sendInput samples status at submission; child lifecycle events own the new turn.
-  const outcomeStates = record.tool === "sendInput" ? {} : toObjectRecord(record.agentsStates);
+  const outcomeStates = toObjectRecord(record.agentsStates);
   const updates = Object.entries(outcomeStates ?? {}).flatMap(
     ([threadId, value]): CodexCollabAgentUpdate[] => {
       const state = toObjectRecord(value);

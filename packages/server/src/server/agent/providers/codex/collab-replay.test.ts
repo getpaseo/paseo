@@ -72,6 +72,38 @@ describe("Codex collaboration history", () => {
     ]);
   });
 
+  test.each(["completed", "interrupted", "running"])(
+    "keeps follow-up instructions in replay without applying the %s submission snapshot",
+    async (submissionStatus) => {
+      const history = await replay([
+        collab("spawnAgent", { first: "pendingInit" }, "spawn-first"),
+        collab("wait", { first: "completed" }),
+        { ...collab("sendInput", { first: submissionStatus }), prompt: "Now add tests" },
+      ]);
+      expect(
+        history.flatMap((event) =>
+          event.type === "timeline" && event.item.type === "tool_call"
+            ? [{ id: event.item.callId, status: event.item.status, detail: event.item.detail }]
+            : [],
+        ),
+      ).toEqual([
+        { id: "spawn-first", status: "completed", detail: expect.anything() },
+        {
+          id: "sendInput",
+          status: "completed",
+          detail: expect.objectContaining({ description: "Now add tests" }),
+        },
+      ]);
+      expect(
+        history.flatMap((event) =>
+          event.type === "provider_subagent" && event.event.type === "upsert"
+            ? [{ id: event.event.id, status: event.event.status }]
+            : [],
+        ),
+      ).toEqual([{ id: "first", status: "completed" }]);
+    },
+  );
+
   test("stops counting a child closed while running", async () => {
     const history = await replay([
       collab("spawnAgent", { first: "pendingInit" }, "spawn-first"),
@@ -252,27 +284,34 @@ describe("Codex collaboration history", () => {
         async () => appServer.child,
       );
       const statuses = new Map<string, string>();
-      const timelineCallIds = new Set<string>();
+      const timelineCards = new Map<string, { status: string; detail: unknown }>();
       let parentMessage = "";
       session.subscribe((event) => {
         if (event.type === "provider_subagent" && event.event.type === "upsert") {
           statuses.set(event.event.id, event.event.status);
         }
         if (event.type === "timeline" && event.item.type === "tool_call") {
-          timelineCallIds.add(event.item.callId);
+          timelineCards.set(event.item.callId, {
+            status: event.item.status,
+            detail: event.item.detail,
+          });
         }
         if (event.type === "timeline" && event.item.type === "assistant_message") {
           parentMessage = event.item.text;
         }
       });
       function complete(tool: string, states: Record<string, string>, id = tool) {
+        const item = {
+          ...collab(tool, states, id),
+          ...(tool === "sendInput" ? { prompt: "Now add tests" } : {}),
+        };
         if (tool !== "spawnAgent") {
           appServer.child.stdout.write(
             `${JSON.stringify({
               method: "item/started",
               params: {
                 threadId: "thread-1",
-                item: { ...collab(tool, states, id), status: "inProgress", agentsStates: {} },
+                item: { ...item, status: "inProgress", agentsStates: {} },
               },
             })}\n`,
           );
@@ -280,7 +319,7 @@ describe("Codex collaboration history", () => {
         appServer.child.stdout.write(
           `${JSON.stringify({
             method: "item/completed",
-            params: { threadId: "thread-1", item: collab(tool, states, id) },
+            params: { threadId: "thread-1", item },
           })}\n`,
         );
       }
@@ -306,10 +345,14 @@ describe("Codex collaboration history", () => {
         appServer.says({ threadId: "thread-1", text: "Follow-up submitted." });
         await vi.waitFor(() => expect(parentMessage).toBe("Follow-up submitted."));
         expect(statuses.get("first")).toBe("running");
+        expect([...timelineCards.keys()]).toEqual(["spawn-first", "spawn-second", "sendInput"]);
+        expect(timelineCards.get("sendInput")).toEqual({
+          status: "completed",
+          detail: expect.objectContaining({ description: "Now add tests" }),
+        });
         // Only the child's completion settles the follow-up.
         appServer.completeTurn({ threadId: "first" });
         await vi.waitFor(() => expect(statuses.get("first")).toBe("completed"));
-        expect([...timelineCallIds]).toEqual(["spawn-first", "spawn-second"]);
       } finally {
         await session.close();
         appServer.assertNoErrors();
