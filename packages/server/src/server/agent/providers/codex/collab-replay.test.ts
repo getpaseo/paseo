@@ -241,65 +241,79 @@ describe("Codex collaboration history", () => {
     }
   });
 
-  test("keeps completed live children settled until an explicit follow-up", async () => {
-    const appServer = createFakeCodexAppServer();
-    const session = new CodexAppServerAgentSession(
-      { provider: "codex", cwd: process.cwd(), modeId: "full-access" },
-      null,
-      createTestLogger(),
-      async () => appServer.child,
-    );
-    const statuses = new Map<string, string>();
-    const timelineCallIds = new Set<string>();
-    session.subscribe((event) => {
-      if (event.type === "provider_subagent" && event.event.type === "upsert") {
-        statuses.set(event.event.id, event.event.status);
-      }
-      if (event.type === "timeline" && event.item.type === "tool_call") {
-        timelineCallIds.add(event.item.callId);
-      }
-    });
-    function complete(tool: string, states: Record<string, string>, id = tool) {
-      if (tool !== "spawnAgent") {
+  test.each(["completed", "interrupted", "running"])(
+    "keeps a live follow-up running despite a late %s sendInput snapshot",
+    async (submissionStatus) => {
+      const appServer = createFakeCodexAppServer();
+      const session = new CodexAppServerAgentSession(
+        { provider: "codex", cwd: process.cwd(), modeId: "full-access" },
+        null,
+        createTestLogger(),
+        async () => appServer.child,
+      );
+      const statuses = new Map<string, string>();
+      const timelineCallIds = new Set<string>();
+      let parentMessage = "";
+      session.subscribe((event) => {
+        if (event.type === "provider_subagent" && event.event.type === "upsert") {
+          statuses.set(event.event.id, event.event.status);
+        }
+        if (event.type === "timeline" && event.item.type === "tool_call") {
+          timelineCallIds.add(event.item.callId);
+        }
+        if (event.type === "timeline" && event.item.type === "assistant_message") {
+          parentMessage = event.item.text;
+        }
+      });
+      function complete(tool: string, states: Record<string, string>, id = tool) {
+        if (tool !== "spawnAgent") {
+          appServer.child.stdout.write(
+            `${JSON.stringify({
+              method: "item/started",
+              params: {
+                threadId: "thread-1",
+                item: { ...collab(tool, states, id), status: "inProgress", agentsStates: {} },
+              },
+            })}\n`,
+          );
+        }
         appServer.child.stdout.write(
           `${JSON.stringify({
-            method: "item/started",
-            params: {
-              threadId: "thread-1",
-              item: { ...collab(tool, states, id), status: "inProgress", agentsStates: {} },
-            },
+            method: "item/completed",
+            params: { threadId: "thread-1", item: collab(tool, states, id) },
           })}\n`,
         );
       }
-      appServer.child.stdout.write(
-        `${JSON.stringify({
-          method: "item/completed",
-          params: { threadId: "thread-1", item: collab(tool, states, id) },
-        })}\n`,
-      );
-    }
-    try {
-      const result = session.run("Delegate the work.");
-      await appServer.waitForTurnStart();
-      complete("spawnAgent", { first: "pendingInit" }, "spawn-first");
-      complete("spawnAgent", { second: "pendingInit" }, "spawn-second");
-      complete("wait", { first: "completed", second: "running" });
-      await vi.waitFor(() => {
+      try {
+        const result = session.run("Delegate the work.");
+        await appServer.waitForTurnStart();
+        complete("spawnAgent", { first: "pendingInit" }, "spawn-first");
+        complete("spawnAgent", { second: "pendingInit" }, "spawn-second");
+        complete("wait", { first: "completed", second: "running" });
+        await vi.waitFor(() => {
+          expect(statuses.get("first")).toBe("completed");
+          expect(statuses.get("second")).toBe("running");
+        });
+        complete("closeAgent", { first: "shutdown" });
+        complete("wait", { first: "running" }, "stale-wait");
+        appServer.says({ threadId: "thread-1", text: "Still waiting." });
+        appServer.completeTurn();
+        await result;
         expect(statuses.get("first")).toBe("completed");
-        expect(statuses.get("second")).toBe("running");
-      });
-      complete("closeAgent", { first: "shutdown" });
-      complete("wait", { first: "running" }, "stale-wait");
-      appServer.says({ threadId: "thread-1", text: "Still waiting." });
-      appServer.completeTurn();
-      await result;
-      expect(statuses.get("first")).toBe("completed");
-      complete("sendInput", { first: "running" });
-      await vi.waitFor(() => expect(statuses.get("first")).toBe("running"));
-      expect([...timelineCallIds]).toEqual(["spawn-first", "spawn-second"]);
-    } finally {
-      await session.close();
-      appServer.assertNoErrors();
-    }
-  });
+        appServer.startsTurn({ threadId: "first", turnId: "follow-up" });
+        await vi.waitFor(() => expect(statuses.get("first")).toBe("running"));
+        complete("sendInput", { first: submissionStatus });
+        appServer.says({ threadId: "thread-1", text: "Follow-up submitted." });
+        await vi.waitFor(() => expect(parentMessage).toBe("Follow-up submitted."));
+        expect(statuses.get("first")).toBe("running");
+        // Only the child's completion settles the follow-up.
+        appServer.completeTurn({ threadId: "first" });
+        await vi.waitFor(() => expect(statuses.get("first")).toBe("completed"));
+        expect([...timelineCallIds]).toEqual(["spawn-first", "spawn-second"]);
+      } finally {
+        await session.close();
+        appServer.assertNoErrors();
+      }
+    },
+  );
 });

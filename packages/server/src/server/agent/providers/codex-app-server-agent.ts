@@ -1862,7 +1862,6 @@ interface CodexCollabAgentUpdate {
   threadId: string;
   status: ToolCallTimelineItem["status"];
   preservesTerminal: boolean;
-  reopen: boolean;
 }
 
 interface CodexCollabAgentControl {
@@ -1880,7 +1879,9 @@ function readCodexCollabAgentControl(item: unknown): CodexCollabAgentControl | n
   ) {
     return null;
   }
-  const updates = Object.entries(toObjectRecord(record.agentsStates) ?? {}).flatMap(
+  // sendInput samples status at submission; child lifecycle events own the new turn.
+  const outcomeStates = record.tool === "sendInput" ? {} : toObjectRecord(record.agentsStates);
+  const updates = Object.entries(outcomeStates ?? {}).flatMap(
     ([threadId, value]): CodexCollabAgentUpdate[] => {
       const state = toObjectRecord(value);
       if (typeof state?.status !== "string") return [];
@@ -1892,7 +1893,6 @@ function readCodexCollabAgentControl(item: unknown): CodexCollabAgentControl | n
           threadId,
           status: record.tool === "closeAgent" && status === "running" ? "canceled" : status,
           preservesTerminal: state.status === "shutdown" || record.tool === "closeAgent",
-          reopen: record.tool === "sendInput" && record.status === "completed",
         },
       ];
     },
@@ -1912,7 +1912,7 @@ function resolveCodexCollabAgentUpdate(
 ): ToolCallTimelineItem["status"] {
   if (
     isTerminalSubAgentStatus(previous) &&
-    (update.preservesTerminal || (update.status === "running" && !update.reopen))
+    (update.preservesTerminal || update.status === "running")
   ) {
     return previous;
   }
@@ -5836,7 +5836,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       if (!state) continue;
       const status = resolveCodexCollabAgentUpdate(state.toolCall.status, update);
       if (status !== state.toolCall.status) {
-        this.emitSubAgentActivityUpdate(callId, status, { reopen: update.reopen });
+        this.emitSubAgentActivityUpdate(callId, status);
       }
     }
     // A control rendered at start must also render its completion, even if
