@@ -1,4 +1,4 @@
-import type { ZCodeConfigOption } from "./catalog.js";
+import type { ZCodeSessionSettings } from "./catalog.js";
 import type { ZCodeRequestFrame } from "./wire.js";
 
 export type { ZCodeRequestFrame } from "./wire.js";
@@ -40,7 +40,7 @@ export interface ZCodeTransport {
    * Reads a session snapshot. ZCode returns its model, mode and thought-level
    * options on the snapshot, so the catalog is read through a session.
    */
-  readSnapshot(input: { sessionId: string }): Promise<{ configOptions?: ZCodeConfigOption[] }>;
+  readSnapshot(input: { sessionId: string }): Promise<{ settings?: ZCodeSessionSettings }>;
   listSessions(input: { workspace?: ZCodeWorkspaceRef; limit?: number }): Promise<unknown[]>;
   setModel(input: { sessionId: string; model: string }): Promise<void>;
   setMode(input: { sessionId: string; mode: string }): Promise<void>;

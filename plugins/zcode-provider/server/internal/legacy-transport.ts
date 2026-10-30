@@ -1,5 +1,5 @@
 import { ZCODE_CAPABILITIES } from "../capabilities.js";
-import type { ZCodeConfigOption } from "./catalog.js";
+import type { ZCodeSessionSettings } from "./catalog.js";
 import type { ZCodeProcess } from "./process.js";
 import { isMethodNotFound } from "./rpc.js";
 import type {
@@ -159,10 +159,13 @@ export function createLegacyTransport(process: ZCodeProcess): ZCodeTransport {
       await call("session/close", { sessionId: input.sessionId });
     },
     async readSnapshot(input) {
+      // The legacy snapshot carries the session's settings. The flat
+      // configOptions array is the v4 workspace-config projection of those
+      // same settings, and this path never sends it.
       const snapshot = (await call("session/read", {
         sessionId: input.sessionId,
-      })) as { configOptions?: ZCodeConfigOption[] };
-      return { configOptions: snapshot?.configOptions ?? [] };
+      })) as { settings?: ZCodeSessionSettings };
+      return { settings: snapshot?.settings };
     },
     async listSessions(input) {
       const result = (await call("session/list", {
