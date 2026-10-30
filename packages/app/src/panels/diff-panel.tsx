@@ -10,6 +10,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { PaneContentToolbar } from "@/components/ui/pane-content-toolbar";
 import { isWeb, isNative } from "@/constants/platform";
 import { DiffDocument } from "@/git/diff-document";
+import { PluginDiffPanelHost } from "@/plugins/diff-panels/host";
 import { ChangesSurface, DiffLayoutToggle, resolveDiffLayout } from "@/git/diff-pane";
 import { useCommitDiffFiles } from "@/git/use-diff-files";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
@@ -161,6 +162,10 @@ function CommitDiffPanel() {
     enabled: Boolean(cwd),
   });
   const mode = useMemo(() => ({ kind: "commit" as const }), []);
+  const pluginDiffParams = useMemo(
+    () => ({ kind: "commit" as const, sha: target.sha, files }),
+    [target.sha, files],
+  );
 
   let body: ReactNode;
   if (!cwd) {
@@ -182,11 +187,13 @@ function CommitDiffPanel() {
     body = <PanelState message={t("panels.diff.empty")} testID="commit-diff-empty" />;
   } else {
     body = (
-      <DiffDocument
-        files={files}
-        displayPreferences={panelPreferences.displayPreferences}
-        mode={mode}
-      />
+      <PluginDiffPanelHost params={pluginDiffParams}>
+        <DiffDocument
+          files={files}
+          displayPreferences={panelPreferences.displayPreferences}
+          mode={mode}
+        />
+      </PluginDiffPanelHost>
     );
   }
 

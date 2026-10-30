@@ -29,9 +29,10 @@ import {
 } from "./terminal.js";
 import type { TerminalState } from "@getpaseo/protocol/messages";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
-import type {
-  TerminalWorkerRequest,
-  TerminalWorkerToParentMessage,
+import {
+  TERMINAL_WORKER_PROTOCOL_VERSION,
+  type TerminalWorkerRequest,
+  type TerminalWorkerToParentMessage,
 } from "./terminal-worker-protocol.js";
 import { createTerminalWorkerProcessInspector } from "./terminal-worker-processes.js";
 import {
@@ -259,6 +260,7 @@ it("reconnects a live worker without replacing terminal sessions or processes", 
   const terminal = await manager.createTerminal({
     workspaceId: "ws-reconnect",
     cwd: paseoHome,
+    presentation: "embedded",
     ...nodeTerminalCommand(
       "process.stdin.on('data', chunk => process.stdout.write('echo:' + chunk)); setInterval(() => {}, 1000)",
     ),
@@ -284,6 +286,8 @@ it("reconnects a live worker without replacing terminal sessions or processes", 
   }, 10000);
   await waitForCondition(() => replayRequests > 0, 1000);
   expect(manager.getTerminal(terminal.id)).toBe(terminal);
+  expect(terminal.presentation).toBe("embedded");
+  expect((await manager.getTerminals(paseoHome))[0]?.presentation).toBe("embedded");
   expect(await recordedTerminalPids(paseoHome)).toEqual(pids);
   expect((await workerRecords(paseoHome)).map((record) => record.pid)).toEqual([before!.pid]);
   const output: string[] = [];
@@ -343,7 +347,7 @@ it.each(["current", "draining"] as const)(
   "keeps the peer usable when the %s worker dies",
   async (target) => {
     const paseoHome = createTemporaryHome();
-    const old = await leaveWorkerWithTerminal(paseoHome, 0);
+    const old = await leaveWorkerWithTerminal(paseoHome, TERMINAL_WORKER_PROTOCOL_VERSION - 1);
     manager = await startRealWorkerManager({ paseoHome });
     const added = await manager.createTerminal({
       workspaceId: "ws-peer",
@@ -706,16 +710,19 @@ it("injects parent-minted terminal activity env through the worker", async () =>
   expect(env.path?.split(delimiter)[0]).toBe(paseoCliBinDir);
 });
 
-it("adopts a detached worker's terminals with their activity tokens and keeps them usable", async () => {
-  const paseoHome = createTemporaryHome();
-  const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-adopt-"));
-  temporaryDirs.push(cwd);
-  const envPath = join(cwd, "adopt-env.json");
-  const first = await startRealWorkerManager({ paseoHome });
-  const created = await first.createTerminal({
-    workspaceId: "ws-adopt",
-    cwd,
-    ...nodeTerminalCommand(`
+it.each([undefined, "standalone", "embedded"] as const)(
+  "adopts a detached worker's %s terminals with their metadata and keeps them usable",
+  async (presentation) => {
+    const paseoHome = createTemporaryHome();
+    const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-adopt-"));
+    temporaryDirs.push(cwd);
+    const envPath = join(cwd, "adopt-env.json");
+    const first = await startRealWorkerManager({ paseoHome });
+    const created = await first.createTerminal({
+      workspaceId: "ws-adopt",
+      cwd,
+      ...(presentation !== undefined ? { presentation } : {}),
+      ...nodeTerminalCommand(`
       require("node:fs").writeFileSync(
         ${JSON.stringify(envPath)},
         JSON.stringify({ token: process.env.PASEO_ACTIVITY_TOKEN }),
@@ -725,24 +732,28 @@ it("adopts a detached worker's terminals with their activity tokens and keeps th
       });
       setInterval(() => {}, 1000);
     `),
-  });
-  await waitForCondition(() => existsSync(envPath), 10000);
-  const { token } = JSON.parse(readFileSync(envPath, "utf8")) as { token: string };
+    });
+    expect(created.presentation).toBe(presentation);
+    await waitForCondition(() => existsSync(envPath), 10000);
+    const { token } = JSON.parse(readFileSync(envPath, "utf8")) as { token: string };
 
-  await first.detach();
-  manager = await startRealWorkerManager({ paseoHome });
+    await first.detach();
+    manager = await startRealWorkerManager({ paseoHome });
 
-  const adopted = manager.getTerminal(created.id);
-  expect(adopted?.workspaceId).toBe("ws-adopt");
-  expect(await manager.getTerminals(cwd)).toHaveLength(1);
-  expect(manager.validateTerminalActivityToken(created.id, token)).toBe("valid");
-  const messages: string[] = [];
-  adopted?.subscribe((message) => {
-    if (message.type === "output") messages.push(message.data);
-  });
-  adopted?.send({ type: "input", data: "after-adopt\r" });
-  await waitForCondition(() => messages.join("").includes("adopted-output:after-adopt"), 10000);
-});
+    const adopted = manager.getTerminal(created.id);
+    expect(adopted?.workspaceId).toBe("ws-adopt");
+    expect(adopted?.presentation).toBe(presentation);
+    expect((await manager.getTerminals(cwd))[0]?.presentation).toBe(presentation);
+    expect(await manager.getTerminals(cwd)).toHaveLength(1);
+    expect(manager.validateTerminalActivityToken(created.id, token)).toBe("valid");
+    const messages: string[] = [];
+    adopted?.subscribe((message) => {
+      if (message.type === "output") messages.push(message.data);
+    });
+    adopted?.send({ type: "input", data: "after-adopt\r" });
+    await waitForCondition(() => messages.join("").includes("adopted-output:after-adopt"), 10000);
+  },
+);
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -1533,7 +1544,7 @@ async function leaveWorkerWithTerminal(
 
 it("drains a worker one protocol older: it keeps its terminal, new ones open in a second worker, and it exits after its last", async () => {
   const paseoHome = createTemporaryHome();
-  const old = await leaveWorkerWithTerminal(paseoHome, 0);
+  const old = await leaveWorkerWithTerminal(paseoHome, TERMINAL_WORKER_PROTOCOL_VERSION - 1);
 
   manager = await startRealWorkerManager({ paseoHome });
 
@@ -1541,7 +1552,7 @@ it("drains a worker one protocol older: it keeps its terminal, new ones open in 
   const workers = await workerRecords(paseoHome);
   expect(workers).toHaveLength(2);
   const current = workers.find((record) => record.pid !== old.workerPid)!;
-  expect(current.protocolVersion).toBe(1);
+  expect(current.protocolVersion).toBe(TERMINAL_WORKER_PROTOCOL_VERSION);
   const added = await manager.createTerminal({
     workspaceId: "ws-protocol",
     cwd: old.cwd,
@@ -1565,7 +1576,7 @@ it("drains a worker one protocol older: it keeps its terminal, new ones open in 
 
 it("shuts down a worker two protocol versions old, closing its terminals", async () => {
   const paseoHome = createTemporaryHome();
-  const old = await leaveWorkerWithTerminal(paseoHome, -1);
+  const old = await leaveWorkerWithTerminal(paseoHome, TERMINAL_WORKER_PROTOCOL_VERSION - 2);
 
   manager = await startRealWorkerManager({ paseoHome });
 
@@ -1576,18 +1587,18 @@ it("shuts down a worker two protocol versions old, closing its terminals", async
   expect(manager.getTerminal(old.terminalId)).toBeUndefined();
   const workers = await workerRecords(paseoHome);
   expect(workers).toHaveLength(1);
-  expect(workers[0]!.protocolVersion).toBe(1);
+  expect(workers[0]!.protocolVersion).toBe(TERMINAL_WORKER_PROTOCOL_VERSION);
 });
 
 it("leaves a worker from a newer Paseo running, reports it incompatible, and closes it on a kill stop", async () => {
   const paseoHome = createTemporaryHome();
-  const newer = await leaveWorkerWithTerminal(paseoHome, 2);
+  const newer = await leaveWorkerWithTerminal(paseoHome, TERMINAL_WORKER_PROTOCOL_VERSION + 1);
 
   manager = await startRealWorkerManager({ paseoHome });
 
   const unavailable = manager.getUnavailableError?.();
   expect(unavailable).toBeInstanceOf(TerminalWorkerIncompatibleError);
-  expect(unavailable?.message).toContain("worker protocol 2");
+  expect(unavailable?.message).toContain(`worker protocol ${TERMINAL_WORKER_PROTOCOL_VERSION + 1}`);
   await expect(manager.getTerminals(newer.cwd)).rejects.toBeInstanceOf(
     TerminalWorkerIncompatibleError,
   );
@@ -1696,8 +1707,14 @@ it.skipIf(isPlatform("win32"))(
 
 it("opens new terminals in a new worker once one of two draining workers exits", async () => {
   const paseoHome = createTemporaryHome();
-  const first = await launchDetachedWorkerWithTerminal(paseoHome, 0);
-  const second = await launchDetachedWorkerWithTerminal(paseoHome, 0);
+  const first = await launchDetachedWorkerWithTerminal(
+    paseoHome,
+    TERMINAL_WORKER_PROTOCOL_VERSION - 1,
+  );
+  const second = await launchDetachedWorkerWithTerminal(
+    paseoHome,
+    TERMINAL_WORKER_PROTOCOL_VERSION - 1,
+  );
 
   manager = await startRealWorkerManager({ paseoHome });
 
@@ -1724,7 +1741,7 @@ it("opens new terminals in a new worker once one of two draining workers exits",
   expect(workers.map((record) => record.pid).sort()).toEqual(await liveWorkerPids(paseoHome));
   expect(workers).toHaveLength(2);
   const started = workers.find((record) => record.pid !== second.workerPid)!;
-  expect(started.protocolVersion).toBe(1);
+  expect(started.protocolVersion).toBe(TERMINAL_WORKER_PROTOCOL_VERSION);
   expect(
     (
       await readTerminalWorkerRecord(

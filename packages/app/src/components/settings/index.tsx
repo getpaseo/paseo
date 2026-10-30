@@ -13,6 +13,7 @@ import type {
   SettingsRowProps,
   SettingsSwitchProps,
   SettingsSelectProps,
+  SelectProps,
   SettingsInputProps,
   SettingsActionProps,
 } from "@getpaseo/plugin/client/ui";
@@ -132,29 +133,47 @@ export function SettingsSelect<Value extends string>({
   disabled,
   ...row
 }: SettingsSelectProps<Value> & AppRowExtras) {
-  const selectedLabel = options.find((option) => option.value === value)?.label ?? value;
   return (
     <SettingsRow {...row}>
-      <DropdownMenu>
-        <DropdownTrigger
-          disabled={disabled}
-          accessibilityRole="button"
-          accessibilityLabel={`${row.label}: ${selectedLabel}`}
-        >
-          {selectedLabel}
-        </DropdownTrigger>
-        <DropdownMenuContent side="bottom" align="end" width={220}>
-          {options.map((option) => (
-            <SettingsOption
-              key={option.value}
-              option={option}
-              selected={option.value === value}
-              onValueChange={onValueChange}
-            />
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <Select
+        label={row.label}
+        value={value}
+        options={options}
+        onValueChange={onValueChange}
+        disabled={disabled}
+      />
     </SettingsRow>
+  );
+}
+
+export function Select<Value extends string>({
+  label,
+  value,
+  options,
+  onValueChange,
+  disabled,
+}: SelectProps<Value>) {
+  const selectedLabel = options.find((option) => option.value === value)?.label ?? value;
+  return (
+    <DropdownMenu>
+      <DropdownTrigger
+        disabled={disabled}
+        accessibilityRole="button"
+        accessibilityLabel={`${label}: ${selectedLabel}`}
+      >
+        {selectedLabel}
+      </DropdownTrigger>
+      <DropdownMenuContent side="bottom" align="end" width={220}>
+        {options.map((option) => (
+          <SettingsOption
+            key={option.value}
+            option={option}
+            selected={option.value === value}
+            onValueChange={onValueChange}
+          />
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

@@ -61,6 +61,7 @@ export interface TerminalManager {
     id?: string;
     cwd: string;
     workspaceId: string;
+    presentation?: "standalone" | "embedded";
     name?: string;
     title?: string;
     env?: Record<string, string>;
@@ -326,6 +327,7 @@ export function createTerminalManager(
       id?: string;
       cwd: string;
       workspaceId: string;
+      presentation?: "standalone" | "embedded";
       name?: string;
       title?: string;
       env?: Record<string, string>;
@@ -364,6 +366,7 @@ export function createTerminalManager(
             id: terminalId,
             cwd: options.cwd,
             workspaceId: options.workspaceId,
+            presentation: options.presentation,
             name: options.name ?? defaultName,
             ...(options.title ? { title: options.title } : {}),
             ...(options.command ? { command: options.command } : {}),

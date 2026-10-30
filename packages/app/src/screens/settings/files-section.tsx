@@ -63,7 +63,7 @@ function FilePanelSettingsRowView({
 }) {
   const { t } = useTranslation();
   const { selectorKey, associatedPanelId } = row;
-  const label = filePanelSelectorLabel(selectorKey);
+  const label = filePanelSelectorLabel(t, selectorKey);
   const value = associatedValueLabel(t, row);
   const choose = useCallback(
     (panelId: string) => onChoose(selectorKey, panelId),

@@ -32,7 +32,11 @@ import {
 } from "../local-links/terminal-local-link-provider";
 import { isFindShortcut, type FindShortcutPlatform } from "@/pane-find/find-shortcut";
 import { isMacUserAgent } from "@/utils/mac-user-agent";
-import { resolveTerminalFontFamily, resolveTerminalFontSize } from "./terminal-font";
+import {
+  resolveTerminalFontFamily,
+  resolveTerminalFontSize,
+  resolveTerminalLineHeight,
+} from "./terminal-font";
 import { imageExtension, readTerminalFile, type TerminalFile } from "../file-paste";
 
 export type TerminalOutputData = Uint8Array;
@@ -60,6 +64,7 @@ export interface TerminalEmulatorRuntimeMountInput {
   theme: ITheme;
   fontFamily?: string;
   fontSize?: number;
+  lineHeight?: number;
 }
 
 export interface TerminalEmulatorRuntimeCallbacks {
@@ -520,7 +525,7 @@ export class TerminalEmulatorRuntime {
       fontSize: resolveTerminalFontSize(input.fontSize),
       // OSC 8 hyperlinks; without a handler xterm prompts and calls window.open().
       linkHandler: { activate: openExternalLink },
-      lineHeight: 1.0,
+      lineHeight: resolveTerminalLineHeight(input.lineHeight),
       macOptionIsMeta: true,
       minimumContrastRatio: 1,
       rescaleOverlappingGlyphs: true,
@@ -965,7 +970,7 @@ export class TerminalEmulatorRuntime {
     this.refreshVisibleRows();
   }
 
-  setFont(input: { fontFamily?: string; fontSize?: number }): void {
+  setFont(input: { fontFamily?: string; fontSize?: number; lineHeight?: number }): void {
     const terminal = this.terminal;
     if (!terminal) {
       return;
@@ -974,6 +979,7 @@ export class TerminalEmulatorRuntime {
     try {
       terminal.options.fontFamily = resolveTerminalFontFamily(input.fontFamily);
       terminal.options.fontSize = resolveTerminalFontSize(input.fontSize);
+      terminal.options.lineHeight = resolveTerminalLineHeight(input.lineHeight);
     } catch {
       // ignore
       return;

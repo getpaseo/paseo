@@ -1987,11 +1987,14 @@ export const fr: TranslationResources = {
       filePanels: {
         pickerTitleExtension: "Ouvrir les fichiers .{{extension}} avec",
         pickerTitleFilename: "Ouvrir {{filename}} avec",
+        pickerTitleText: "Ouvrir les fichiers texte avec",
+        allTextFiles: "Tous les fichiers texte",
         dontAskAgain: "Ne plus demander",
         use: "Utiliser",
         openWith: "Ouvrir avec…",
         alwaysUseExtension: "Toujours utiliser pour .{{extension}}",
         alwaysUseFilename: "Toujours utiliser pour {{filename}}",
+        alwaysUseText: "Toujours utiliser pour les fichiers texte",
         option: "{{title}} — {{owner}}",
         builtin: {
           owner: "Paseo",

@@ -106,6 +106,7 @@ export class PluginRegistry {
           sidebarItems: { header: [], footer: [] },
           legacySidebarItems: [],
           filePanels: [],
+          diffPanels: [],
           workspacePanels: [],
           commandCenterItems: [],
           clientSlashCommands: [],

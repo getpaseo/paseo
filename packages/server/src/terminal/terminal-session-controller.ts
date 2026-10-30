@@ -309,11 +309,15 @@ export class TerminalSessionController {
   }
 
   private toTerminalInfo(
-    terminal: Pick<TerminalSession, "id" | "name" | "workspaceId" | "getTitle" | "getActivity">,
+    terminal: Pick<
+      TerminalSession,
+      "id" | "name" | "workspaceId" | "presentation" | "getTitle" | "getActivity"
+    >,
   ): {
     id: string;
     name: string;
     workspaceId: string;
+    presentation?: "standalone" | "embedded";
     title?: string;
     activity: TerminalActivity | null;
   } {
@@ -323,6 +327,7 @@ export class TerminalSessionController {
       id: terminal.id,
       name: terminal.name,
       workspaceId: terminal.workspaceId,
+      ...(terminal.presentation !== undefined ? { presentation: terminal.presentation } : {}),
       ...(title ? { title } : {}),
       activity,
     };
@@ -598,6 +603,7 @@ export class TerminalSessionController {
       const session = await this.terminalManager.createTerminal({
         cwd: msg.cwd,
         workspaceId,
+        ...(msg.presentation !== undefined ? { presentation: msg.presentation } : {}),
         name: msg.name,
         command: msg.command,
         args: msg.args,
@@ -612,6 +618,7 @@ export class TerminalSessionController {
             name: session.name,
             cwd: session.cwd,
             workspaceId: session.workspaceId,
+            ...(session.presentation !== undefined ? { presentation: session.presentation } : {}),
             ...(session.getTitle() ? { title: session.getTitle() } : {}),
             activity: session.getActivity(),
           },

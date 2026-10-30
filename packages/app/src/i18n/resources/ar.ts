@@ -1941,11 +1941,14 @@ export const ar: TranslationResources = {
       filePanels: {
         pickerTitleExtension: "فتح ملفات .{{extension}} باستخدام",
         pickerTitleFilename: "فتح {{filename}} باستخدام",
+        pickerTitleText: "فتح الملفات النصية باستخدام",
+        allTextFiles: "كل الملفات النصية",
         dontAskAgain: "لا تسألني مرة أخرى",
         use: "استخدام",
         openWith: "فتح باستخدام…",
         alwaysUseExtension: "استخدام دائمًا لـ .{{extension}}",
         alwaysUseFilename: "استخدام دائمًا لـ {{filename}}",
+        alwaysUseText: "استخدام دائمًا للملفات النصية",
         option: "{{title}} — {{owner}}",
         builtin: {
           owner: "Paseo",

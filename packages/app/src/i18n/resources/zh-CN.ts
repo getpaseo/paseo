@@ -1919,11 +1919,14 @@ export const zhCN: TranslationResources = {
       filePanels: {
         pickerTitleExtension: "打开 .{{extension}} 文件的方式",
         pickerTitleFilename: "打开 {{filename}} 的方式",
+        pickerTitleText: "打开文本文件的方式",
+        allTextFiles: "所有文本文件",
         dontAskAgain: "不再询问",
         use: "使用",
         openWith: "打开方式…",
         alwaysUseExtension: "始终用于 .{{extension}}",
         alwaysUseFilename: "始终用于 {{filename}}",
+        alwaysUseText: "始终用于文本文件",
         option: "{{title}} — {{owner}}",
         builtin: {
           owner: "Paseo",

@@ -39,6 +39,43 @@ describe("buildFilePanelSettingsRows", () => {
     expect(rows(catalog())).toEqual([]);
   });
 
+  it("offers a device-wide text-editor default without enumerating extensions", () => {
+    const editor: HostedCandidate = {
+      id: "plugin:editor/text",
+      builtin: false,
+      files: { kind: "text" },
+    };
+    const row = rows(catalog(editor), { "kind:text": editor.id }).find(
+      (entry) => entry.selectorKey === "kind:text",
+    );
+    expect(row).toEqual({
+      selectorKey: "kind:text",
+      candidates: [editor, source],
+      associatedPanelId: editor.id,
+    });
+  });
+
+  it("does not offer a text editor for image settings while keeping text defaults", () => {
+    const editor: HostedCandidate = {
+      id: "plugin:editor/text",
+      builtin: false,
+      files: { kind: "text" },
+    };
+    expect(rows(catalog(editor)).find((row) => row.selectorKey === "ext:png")).toBeUndefined();
+    const viewer: HostedCandidate = {
+      id: "plugin:viewer/png",
+      builtin: false,
+      files: { extensions: ["png"] },
+    };
+    expect(
+      rows(catalog(editor, viewer)).find((row) => row.selectorKey === "ext:png")?.candidates,
+    ).toEqual([builtinImage, viewer]);
+    expect(rows(catalog(editor)).find((row) => row.selectorKey === "ext:md")?.candidates).toEqual([
+      builtinMarkdown,
+      editor,
+    ]);
+  });
+
   it("lists a key a plugin panel claims with the built-in first and no Source", () => {
     const plugin = richMarkdown("host-a");
     expect(rows(catalog(plugin))).toEqual([

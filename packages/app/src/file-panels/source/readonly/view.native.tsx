@@ -3,6 +3,7 @@ import { FlatList, Text, View, type ListRenderItem } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { HighlightToken } from "@getpaseo/highlight";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
+import { CODE_LINE_HEIGHT_RATIO } from "@/styles/code-typography";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { EditorVisualTheme } from "../editor/extensions.web";
 import { FilePanelLoading } from "../../loading";
@@ -118,7 +119,7 @@ const renderSourceLine: ListRenderItem<HighlightToken[]> = ({ item, index }) => 
 );
 
 const styles = StyleSheet.create((theme) => ({
-  line: { flexDirection: "row", minHeight: theme.fontSize.code * 1.45 },
+  line: { flexDirection: "row", minHeight: theme.fontSize.code * CODE_LINE_HEIGHT_RATIO },
   gutter: {
     width: 56,
     paddingRight: theme.spacing[3],
@@ -131,6 +132,6 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     fontFamily: theme.fontFamily.mono,
     fontSize: theme.fontSize.code,
-    lineHeight: theme.fontSize.code * 1.45,
+    lineHeight: theme.fontSize.code * CODE_LINE_HEIGHT_RATIO,
   },
 }));

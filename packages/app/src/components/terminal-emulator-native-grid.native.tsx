@@ -167,6 +167,8 @@ function NativeTerminalEmulator({
   scrollbackLines,
   fontFamily,
   fontSize,
+  lineHeight,
+  selectionColors,
   keyboardInset = 0,
   isKeyboardVisible = false,
   initialSnapshot = null,
@@ -987,6 +989,8 @@ function NativeTerminalEmulator({
       xtermTheme={xtermTheme}
       fontFamily={fontFamily}
       fontSize={fontSize}
+      lineHeight={lineHeight}
+      selectionColors={selectionColors}
       style={styles.nativeGrid}
       selection={selectionRange}
       onCellMetricsChange={handleCellMetricsChange}

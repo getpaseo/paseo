@@ -156,6 +156,44 @@ describe("FilePanelChoiceModel", () => {
     expect(tab.navigateToLine(1)).toBe(source);
   });
 
+  it("keeps a line-capable text editor for initial and subsequent file-link targets", () => {
+    const editor: FilePanelCandidate = {
+      id: "plugin:editor/text",
+      builtin: false,
+      files: { kind: "text" },
+      supportsLineNavigation: true,
+    };
+    const tab = openTab({ "kind:text": editor.id }, [...filePanelCatalog([editor])], {
+      path: "index.ts",
+      lineNavigation: 1,
+    });
+    expect(tab.panel()).toBe(editor.id);
+    expect(tab.picker()).toBeNull();
+    expect(tab.navigateToLine(2)).toBe(editor.id);
+    expect(tab.retarget("README.md")).toBe(editor.id);
+    tab.model.openWith(markdown);
+    expect(tab.panel()).toBe(markdown);
+    expect(tab.navigateToLine(3)).toBe(markdown);
+  });
+
+  it("restores the remembered line-capable editor when its catalog arrives after the file", () => {
+    const editor: FilePanelCandidate = {
+      id: "plugin:editor/text",
+      builtin: false,
+      files: { kind: "text" },
+      supportsLineNavigation: true,
+    };
+    const candidates: FilePanelCandidate[] = [...filePanelCatalog([])];
+    const tab = openTab({ "kind:text": editor.id }, candidates, {
+      path: "index.ts",
+      lineNavigation: 1,
+    });
+    expect(tab.panel()).toBe(source);
+    candidates.splice(0, 0, editor);
+    expect(tab.panel()).toBe(editor.id);
+    expect(tab.picker()).toBeNull();
+  });
+
   it("opens the built-in panel for the same line target in a retargeted tab", () => {
     const tab = openTab({}, undefined, { lineNavigation: 1 });
     tab.model.openWith(rich.id);
@@ -194,6 +232,92 @@ describe("FilePanelChoiceModel", () => {
     tab.model.toggleAlwaysUse();
     expect(associations).toEqual({});
     expect(tab.panel()).toBe(rich.id);
+  });
+
+  it("keeps the all-text editor when remembering a Markdown-specific viewer", () => {
+    const editor: FilePanelCandidate = {
+      id: "plugin:editor/neovim",
+      builtin: false,
+      files: { kind: "text" },
+      supportsLineNavigation: true,
+    };
+    const associations: Record<string, string> = { "kind:text": editor.id };
+    const candidates = [...filePanelCatalog([editor])];
+    const tab = openTab(associations, candidates);
+    tab.model.openWith(markdown);
+    tab.render();
+    tab.model.toggleAlwaysUse();
+    const typeScriptTab = openTab(associations, candidates, { path: "index.ts" });
+    expect(typeScriptTab.panel()).toBe(editor.id);
+    expect(typeScriptTab.picker()).toBeNull();
+    expect(openTab(associations, candidates).panel()).toBe(markdown);
+    expect(associations).toEqual({ "kind:text": editor.id, "ext:md": markdown });
+  });
+
+  it("remembers an initial Markdown picker choice only for Markdown files", () => {
+    const editor: FilePanelCandidate = {
+      id: "plugin:editor/neovim",
+      builtin: false,
+      files: { kind: "text" },
+    };
+    const associations: Record<string, string> = {};
+    const candidates = [...filePanelCatalog([editor])];
+    const tab = openTab(associations, candidates);
+    tab.model.selectInPicker(markdown);
+    tab.model.setRemember(true);
+    tab.model.confirmPicker();
+    expect(associations).toEqual({ "ext:md": markdown });
+    expect(openTab(associations, candidates).picker()).toBeNull();
+    expect(openTab(associations, candidates, { path: "index.ts" }).picker()).not.toBeNull();
+  });
+
+  it("updates the remembered scope when the picker switches between Markdown and all text", () => {
+    const editor: FilePanelCandidate = {
+      id: "plugin:editor/text",
+      builtin: false,
+      files: { kind: "text" },
+    };
+    const associations: Record<string, string> = {};
+    const candidates = [...filePanelCatalog([editor])];
+    const tab = openTab(associations, candidates);
+    expect(tab.picker()?.selectorKey).toBe("ext:md");
+    tab.model.selectInPicker(editor.id);
+    expect(tab.picker()?.selectorKey).toBe("kind:text");
+    tab.model.selectInPicker(markdown);
+    expect(tab.picker()?.selectorKey).toBe("ext:md");
+    tab.model.selectInPicker(editor.id);
+    tab.model.setRemember(true);
+    tab.model.confirmPicker();
+    expect(associations).toEqual({ "kind:text": editor.id });
+    const typeScriptTab = openTab(associations, candidates, { path: "index.ts" });
+    expect(typeScriptTab.panel()).toBe(editor.id);
+    expect(typeScriptTab.picker()).toBeNull();
+    expect(openTab(associations, candidates).picker()).toBeNull();
+  });
+
+  it("keeps a filename picker choice from becoming the all-text default", () => {
+    const editor: FilePanelCandidate = {
+      id: "plugin:editor/text",
+      builtin: false,
+      files: { kind: "text" },
+    };
+    const named: FilePanelCandidate = {
+      id: "plugin:readme/view",
+      builtin: false,
+      files: { extensions: [], filenames: ["README.md"] },
+    };
+    const associations: Record<string, string> = {};
+    const candidates = [...filePanelCatalog([editor, named])];
+    const tab = openTab(associations, candidates, { path: "README.md" });
+    tab.model.selectInPicker(editor.id);
+    expect(tab.picker()?.selectorKey).toBe("name:README.md");
+    tab.model.setRemember(true);
+    tab.model.confirmPicker();
+    expect(associations).toEqual({ "name:README.md": editor.id });
+    const sameName = openTab(associations, candidates, { path: "docs/README.md" });
+    expect(sameName.panel()).toBe(editor.id);
+    expect(sameName.picker()).toBeNull();
+    expect(openTab(associations, candidates, { path: "other.md" }).picker()).not.toBeNull();
   });
 
   it("asks when a plugin panel arrives after the file first rendered", () => {

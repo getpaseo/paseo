@@ -35,3 +35,32 @@ test("an older host rejects terminal operations before sending requests", async 
   expect(() => terminal.capture()).toThrow("Update the host");
   await expect(terminal.kill()).rejects.toThrow("Update the host");
 });
+
+test("a host without embedded terminal support rejects creation before starting a process", async () => {
+  const unexpectedRequest = () => {
+    throw new Error("Unexpected daemon request");
+  };
+  const terminals = createTerminalActions(
+    {
+      ensureConnected: () => {},
+      getLastServerInfoMessage: () => ({
+        status: "server_info",
+        serverId: "older-host",
+        hostname: null,
+        version: null,
+        features: { workspaceTerminals: true },
+      }),
+      createTerminal: unexpectedRequest,
+      listTerminals: unexpectedRequest,
+      sendTerminalInput: unexpectedRequest,
+      captureTerminal: unexpectedRequest,
+      killTerminal: unexpectedRequest,
+    },
+    unexpectedRequest,
+  );
+  for (const cwd of [undefined, "/repo"]) {
+    await expect(
+      terminals.create({ workspaceId: "wks_existing", cwd, presentation: "embedded" }),
+    ).rejects.toThrow("Update the host");
+  }
+});

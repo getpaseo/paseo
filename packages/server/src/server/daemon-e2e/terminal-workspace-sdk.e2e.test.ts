@@ -34,19 +34,31 @@ test("SDK and workspace handles preserve ownership and actual process directorie
   const nested = path.join(cwd, "nested");
   await mkdir(nested);
   const a = await sdk.terminals.create({ workspaceId: first, name: "Main" });
-  const b = await sdk.workspaces.ref(second).terminals.create({ name: "Feature", cwd: nested });
+  const b = await sdk.workspaces.ref(second).terminals.create({
+    name: "Feature",
+    cwd: nested,
+    presentation: "standalone",
+  });
   const c = await sdk.terminals.create({
     workspaceId: second,
     cwd: daemon.staticDir,
     name: "Outside",
+    presentation: "embedded",
   });
   expect(a.current()).toEqual({ id: a.id, workspaceId: first, cwd, name: "Main" });
-  expect(b.current()).toEqual({ id: b.id, workspaceId: second, cwd: nested, name: "Feature" });
+  expect(b.current()).toEqual({
+    id: b.id,
+    workspaceId: second,
+    cwd: nested,
+    name: "Feature",
+    presentation: "standalone",
+  });
   expect(c.current()).toEqual({
     id: c.id,
     workspaceId: second,
     cwd: daemon.staticDir,
     name: "Outside",
+    presentation: "embedded",
   });
   const result = await sdk.workspaces.ref(second).terminals.list({ requestId: "feature-list" });
   expect(result.requestId).toBe("feature-list");
@@ -125,7 +137,7 @@ test("plugin handlers operate terminals through their host-owned Paseo API", asy
     `
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
-const operate = defineRpc({ name: "operate", input: z.object({ workspaceId: z.string(), command: z.string() }), output: z.object({ workspaceIds: z.array(z.string()), lines: z.array(z.string()), remaining: z.number() }) });
+const operate = defineRpc({ name: "operate", input: z.object({ workspaceId: z.string(), command: z.string() }), output: z.object({ workspaceIds: z.array(z.string()), presentations: z.array(z.string()), lines: z.array(z.string()), remaining: z.number() }) });
 async function waitForTerminalOutput(terminal, text) {
   const deadline = Date.now() + 10000;
   while (Date.now() < deadline) {
@@ -138,7 +150,7 @@ async function waitForTerminalOutput(terminal, text) {
 export default function contribute(server) {
   server.handle(operate, async ({ workspaceId, command }, { paseo }) => {
     const workspace = paseo.workspaces.ref(workspaceId);
-    const terminal = await workspace.terminals.create({ command, args: ["-e", "process.stdin.setRawMode(true); process.stdin.resume(); console.log('PLUGIN READY'); let hex = ''; process.stdin.on('data', data => { hex += data.toString('hex'); console.log('PLUGIN:' + hex); });"] });
+    const terminal = await workspace.terminals.create({ presentation: "embedded", command, args: ["-e", "process.stdin.setRawMode(true); process.stdin.resume(); console.log('PLUGIN READY'); let hex = ''; process.stdin.on('data', data => { hex += data.toString('hex'); console.log('PLUGIN:' + hex); });"] });
     try {
       await waitForTerminalOutput(terminal, "PLUGIN READY");
       terminal.write("Enter");
@@ -147,7 +159,7 @@ export default function contribute(server) {
       const lines = await waitForTerminalOutput(terminal, "PLUGIN:456e7465720d");
       const listed = await workspace.terminals.list();
       await paseo.terminals.ref(terminal.id).kill();
-      return { workspaceIds: listed.entries.map(entry => entry.workspaceId), lines, remaining: (await workspace.terminals.list()).entries.length };
+      return { workspaceIds: listed.entries.map(entry => entry.workspaceId), presentations: listed.entries.map(entry => entry.presentation), lines, remaining: (await workspace.terminals.list()).entries.length };
     } finally {
       await terminal.kill();
     }
@@ -164,6 +176,7 @@ export default function contribute(server) {
     });
     expect(result).toMatchObject({
       workspaceIds: [workspaceId],
+      presentations: ["embedded"],
       remaining: 0,
       lines: expect.arrayContaining([expect.stringContaining("PLUGIN:456e7465720d")]),
     });

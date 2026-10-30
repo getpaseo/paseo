@@ -607,6 +607,27 @@ read. See the [public file panel reference](../public-docs/plugins/reference.md#
 the author API, selection, `DocumentFrame`, and the version requirement. The examples live in
 `plugin-examples/pdf-panel` and `plugin-examples/markdown-panel`.
 
+General editors can declare `files: { kind: "text" }` and `supportsLineNavigation: true`.
+The text preference is a fallback behind filename and extension preferences. File links retain
+their line targets when the selected editor supports them, including when its catalog loads later.
+
+## Embedded terminal and diff panels
+
+`TerminalView` uses the existing terminal renderer inside a plugin panel. Process creation and
+lifetime remain with the terminal SDK. Terminals created with `presentation: "embedded"` do not
+open extra standalone tabs. Older daemons must reject embedded creation before starting a process.
+
+`appearance="editor"` follows host code typography and colors. The default appearance retains
+ordinary terminal settings. Both update the existing renderer without restarting the process.
+The [public reference](../public-docs/plugins/reference.md#terminalview) describes platform limits.
+
+`addDiffPanel` replaces the body of a working or commit diff. The host retains the file list and
+comparison controls. The plugin can return `children` to use the built-in body. Persisted state
+is separate for each plugin and panel under `pluginDiffPanels`.
+
+Hermes interop applies only to client bundles. Eager evaluation of CommonJS getters breaks Node
+dependencies whose exports must remain lazy.
+
 ## Contribute buttons
 
 Header buttons and composer pills share the client-only descriptor and registration lifecycle in

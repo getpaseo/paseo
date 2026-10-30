@@ -1951,11 +1951,14 @@ export const ko: TranslationResources = {
       filePanels: {
         pickerTitleExtension: ".{{extension}} 파일 열기 방식",
         pickerTitleFilename: "{{filename}} 열기 방식",
+        pickerTitleText: "텍스트 파일 열기 방식",
+        allTextFiles: "모든 텍스트 파일",
         dontAskAgain: "다시 묻지 않기",
         use: "사용",
         openWith: "다음으로 열기…",
         alwaysUseExtension: ".{{extension}}에 항상 사용",
         alwaysUseFilename: "{{filename}}에 항상 사용",
+        alwaysUseText: "텍스트 파일에 항상 사용",
         option: "{{title}} — {{owner}}",
         builtin: {
           owner: "Paseo",

@@ -1974,11 +1974,14 @@ export const ptBR: TranslationResources = {
       filePanels: {
         pickerTitleExtension: "Abrir arquivos .{{extension}} com",
         pickerTitleFilename: "Abrir {{filename}} com",
+        pickerTitleText: "Abrir arquivos de texto com",
+        allTextFiles: "Todos os arquivos de texto",
         dontAskAgain: "Não perguntar novamente",
         use: "Usar",
         openWith: "Abrir com…",
         alwaysUseExtension: "Sempre usar para .{{extension}}",
         alwaysUseFilename: "Sempre usar para {{filename}}",
+        alwaysUseText: "Sempre usar para arquivos de texto",
         option: "{{title}} — {{owner}}",
         builtin: {
           owner: "Paseo",

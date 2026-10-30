@@ -866,6 +866,9 @@ describe("file panels", () => {
     ['files: { extensions: ["pdf"] }', 'files: { extensions: ["foo/bar"] }', "selector"],
     ['files: { extensions: ["pdf"] }', "files: { extensions: [] }", "selector"],
     ['files: { extensions: ["pdf"] }', 'files: { extensions: [], filenames: ["a/b"] }', "selector"],
+    ['files: { extensions: ["pdf"] }', 'files: { kind: "binary" }', "selector"],
+    ['files: { extensions: ["pdf"] }', 'files: { kind: "text", extensions: ["ts"] }', "selector"],
+    ['title: "PDF"', 'title: "PDF", supportsLineNavigation: "yes"', "line-navigation capability"],
     ['id: "pdf"', 'id: "Bad"', "file panel id"],
     ['title: "PDF"', 'title: " "', "title"],
     ["Component() { return null; }", "Component: {}", "component"],
@@ -891,5 +894,44 @@ describe("file panels", () => {
         bundle(`plugin.addFilePanel(${source}); plugin.addFilePanel(${source})`),
       ),
     ).toThrow("Duplicate file panel");
+  });
+});
+
+describe("diff panels", () => {
+  const panel = '{ id: "editor", title: "Editor", Component() { return null; } }';
+
+  it.each([
+    ['id: "editor"', 'id: "Bad"', "diff panel id"],
+    ['title: "Editor"', 'title: " "', "title"],
+    ["Component() { return null; }", "Component: {}", "component"],
+  ])("rejects an unusable contribution %s → %s", (from, to, error) => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "diffs",
+        bundle(`plugin.addDiffPanel(${panel.replace(from, to)})`),
+      ),
+    ).toThrow(error);
+  });
+
+  it("rejects conflicting diff panel identities", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "diffs",
+        bundle(`plugin.addDiffPanel(${panel}); plugin.addDiffPanel(${panel})`),
+      ),
+    ).toThrow("Duplicate diff panel");
+  });
+
+  it("allows an identity to be reused after its contribution is removed", () => {
+    const plugin = evaluatePluginClientBundle(
+      "diffs",
+      bundle(`
+        const remove = plugin.addDiffPanel(${panel});
+        remove();
+        remove();
+        plugin.addDiffPanel(${panel});
+      `),
+    );
+    expect(plugin.diffPanels).toHaveLength(1);
   });
 });

@@ -384,9 +384,9 @@ async function compileTarget(entryPath: string, target: PluginBuildTarget): Prom
   checkSharedDependencies(result.metafile.inputs, pluginDirectory);
   const output = result.outputFiles[0]?.text;
   if (!output) throw new Error(`Plugin ${target} compilation produced no output`);
-  const eager = makeHermesInteropEager(output);
-  let prepared = eager;
-  if (target === "client") prepared = await minifyClientBundle(eager);
+  // Only Hermes needs eager interop. Node dependencies can expose getters that must stay lazy.
+  let prepared = output;
+  if (target === "client") prepared = await minifyClientBundle(makeHermesInteropEager(output));
   return wrapCommonJsBundle(prepared);
 }
 

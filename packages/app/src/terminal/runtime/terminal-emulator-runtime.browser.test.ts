@@ -1,6 +1,7 @@
 import { page, userEvent } from "@vitest/browser/context";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TerminalInputModeState } from "@getpaseo/protocol/terminal-input-mode";
+import type { Terminal } from "@xterm/xterm";
 import type { TerminalFile } from "../file-paste";
 import {
   encodeTerminalOutput,
@@ -35,6 +36,7 @@ type BrowserTerminal = TerminalSize & {
   input: (data: string, wasUserInput?: boolean) => void;
   refresh: (start: number, end: number) => void;
   reset: () => void;
+  buffer: Terminal["buffer"];
 };
 
 interface MountedTerminal {
@@ -737,6 +739,37 @@ describe("terminal emulator runtime in a real browser", () => {
     await nextFrame();
 
     expect(mounted.inputs).toEqual([]);
+  });
+
+  it("refits live typography and restores terminal spacing without losing output or focus", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    mounted.runtime.setFont({ fontFamily: "monospace", fontSize: 16 });
+    const baseline = latestSize(mounted.sizes);
+    await writeLines(mounted, ["keep this buffer"]);
+    mounted.runtime.focus();
+    const focused = document.activeElement;
+    expect(focused).toBe(mounted.host.querySelector("textarea"));
+    const terminal = getBrowserTerminal();
+
+    mounted.runtime.setFont({ fontFamily: "monospace", fontSize: 16, lineHeight: 1.8 });
+    await waitFor({ predicate: () => latestSize(mounted.sizes).rows < baseline.rows });
+    expect(latestSize(mounted.sizes).cols).toBe(baseline.cols);
+
+    mounted.runtime.setFont({ fontFamily: "monospace", fontSize: 20, lineHeight: 1.8 });
+    await waitFor({ predicate: () => latestSize(mounted.sizes).cols < baseline.cols });
+
+    mounted.runtime.setFont({ fontFamily: "monospace", fontSize: 16 });
+    await waitFor({
+      predicate: () => {
+        const size = latestSize(mounted.sizes);
+        return size.rows === baseline.rows && size.cols === baseline.cols;
+      },
+    });
+    expect(getBrowserTerminal()).toBe(terminal);
+    expect(terminal.buffer.active.getLine(0)?.translateToString(true)).toBe("keep this buffer");
+    expect(document.activeElement).toBe(focused);
   });
 
   it("replays snapshots without synchronously resetting the visible terminal", async () => {

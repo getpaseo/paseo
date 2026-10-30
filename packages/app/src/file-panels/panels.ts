@@ -7,6 +7,7 @@ export interface PluginFilePanel {
   id: string;
   builtin: false;
   files: PluginFilePanelContribution["files"];
+  supportsLineNavigation?: boolean;
   plugin: InstalledPlugin;
   contribution: PluginFilePanelContribution;
 }
@@ -33,6 +34,7 @@ function hostFilePanels(plugins: readonly InstalledPlugin[]): readonly FilePanel
         id: `plugin:${plugin.id}/${contribution.id}`,
         builtin: false,
         files: contribution.files,
+        supportsLineNavigation: contribution.supportsLineNavigation,
         plugin,
         contribution,
       })),

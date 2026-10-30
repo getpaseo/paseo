@@ -93,6 +93,7 @@ import {
   type TerminalRendererReadyChange,
 } from "@/utils/terminal-renderer-readiness";
 import { useAppSettings } from "@/hooks/use-settings";
+import { CODE_LINE_HEIGHT_RATIO } from "@/styles/code-typography";
 import { classifyForResolution, fetchDaemonResolution } from "@/assistant-file-links/resolver";
 import type {
   TerminalLocalFileLinkSource,
@@ -108,6 +109,7 @@ interface TerminalPaneProps {
   serverId: string;
   cwd: string;
   terminalId: string;
+  appearance?: "terminal" | "editor";
   isWorkspaceFocused: boolean;
   isPaneFocused: boolean;
   onOpenFileExplorer: () => void;
@@ -262,6 +264,7 @@ export function TerminalPane({
   serverId,
   cwd,
   terminalId,
+  appearance = "terminal",
   isWorkspaceFocused,
   isPaneFocused,
   onOpenFileExplorer,
@@ -272,11 +275,34 @@ export function TerminalPane({
   const isAppActivelyVisible = useAppActivelyVisible();
   const { theme } = useUnistyles();
   const { settings } = useAppSettings();
-  const xtermTheme = useMemo(() => toXtermTheme(theme.colors.terminal), [theme]);
+  const xtermTheme = useMemo(() => {
+    const terminalTheme = toXtermTheme(theme.colors.terminal);
+    if (appearance === "terminal") return terminalTheme;
+    return {
+      ...terminalTheme,
+      background: theme.colors.surface0,
+      foreground: theme.colors.foreground,
+      cursor: theme.colors.terminal.cursor,
+      cursorAccent: theme.colors.surface0,
+      selectionBackground: theme.colors.terminal.selectionBackground,
+      selectionForeground: theme.colors.foreground,
+    };
+  }, [appearance, theme]);
   const terminalFontFamily = useMemo(() => {
+    if (appearance === "editor") return theme.fontFamily.mono;
     const trimmed = settings.monoFontFamily.trim();
     return trimmed.length > 0 ? trimmed : undefined;
-  }, [settings.monoFontFamily]);
+  }, [appearance, settings.monoFontFamily, theme.fontFamily.mono]);
+  const terminalSelectionColors = useMemo(
+    () =>
+      appearance === "editor"
+        ? {
+            background: theme.colors.terminal.selectionBackground,
+            foreground: theme.colors.foreground,
+          }
+        : undefined,
+    [appearance, theme.colors.terminal.selectionBackground, theme.colors.foreground],
+  );
   const isMobile = useIsCompactFormFactor();
   const showVirtualKeyBar = shouldShowTerminalVirtualKeyBar({ isNative, isCompact: isMobile });
   const [keyBarWidth, setKeyBarWidth] = useState(0);
@@ -1212,7 +1238,9 @@ export function TerminalPane({
             xtermTheme={xtermTheme}
             scrollbackLines={settings.terminalScrollbackLines}
             fontFamily={terminalFontFamily}
-            fontSize={settings.codeFontSize}
+            fontSize={appearance === "editor" ? theme.fontSize.code : settings.codeFontSize}
+            lineHeight={appearance === "editor" ? CODE_LINE_HEIGHT_RATIO : undefined}
+            selectionColors={terminalSelectionColors}
             keyboardInset={keyboardInset}
             isKeyboardVisible={isKeyboardVisible}
             swipeGesturesEnabled={swipeGesturesEnabled}

@@ -31,6 +31,7 @@ describe("resolveFilePanel", () => {
       panel: alternative,
       candidates: [markdown, alternative],
       selectorKey: "ext:md",
+      specificSelectorKey: "ext:md",
       associatedPanelId: alternative.id,
     });
   });
@@ -57,6 +58,7 @@ describe("resolveFilePanel", () => {
       panel: null,
       candidates: [],
       selectorKey: "ext:ts",
+      specificSelectorKey: "ext:ts",
       associatedPanelId: null,
     });
   });
@@ -66,6 +68,7 @@ describe("resolveFilePanel", () => {
       panel: every,
       candidates: [every],
       selectorKey: "ext:ts",
+      specificSelectorKey: "ext:ts",
       associatedPanelId: null,
     });
     expect(resolve({ file: { ...file, kind: "binary" }, candidates: [every] }).panel).toBeNull();
@@ -101,6 +104,7 @@ describe("resolveFilePanel", () => {
       panel: named,
       candidates: [markdown, named],
       selectorKey: "name:README.MD",
+      specificSelectorKey: "name:README.MD",
       associatedPanelId: named.id,
     });
     expect(resolve({ file: { ...file, path: "README.md" }, candidates: [named] }).panel).toBeNull();
@@ -123,6 +127,7 @@ describe("resolveFilePanel", () => {
         panel: named,
         candidates: [named],
         selectorKey: "name:Dockerfile",
+        specificSelectorKey: "name:Dockerfile",
         associatedPanelId: null,
       });
     },
@@ -131,6 +136,51 @@ describe("resolveFilePanel", () => {
     const upper = { ...alternative, files: { extensions: ["MD"] } };
     expect(resolve({ candidates: [upper] }).panel).toBe(upper);
     expect(resolve({ file: { ...file, path: "README" } }).selectorKey).toBe("ext:");
+  });
+  it("offers a catch-all text editor for extensionless files, but not images or binaries", () => {
+    const editor: FilePanelCandidate = {
+      id: "plugin:editor/text",
+      builtin: false,
+      files: { kind: "text" },
+    };
+    expect(
+      resolve({ file: { path: "/repo/Makefile", kind: "text" }, candidates: [editor] }),
+    ).toMatchObject({ panel: editor, selectorKey: "kind:text" });
+    for (const kind of ["image", "binary"] as const) {
+      expect(
+        resolve({ file: { path: "/repo/data", kind }, candidates: [editor] }).panel,
+      ).toBeNull();
+    }
+  });
+
+  it("prefers filename and extension choices over the default text editor", () => {
+    const editor: FilePanelCandidate = {
+      id: "plugin:editor/text",
+      builtin: false,
+      files: { kind: "text" },
+    };
+    const named: FilePanelCandidate = {
+      id: "plugin:readme/view",
+      builtin: false,
+      files: { extensions: [], filenames: ["README.MD"] },
+    };
+    const candidates = [markdown, alternative, named, editor];
+    const associations = { "kind:text": editor.id };
+    expect(resolve({ candidates, associations }).panel).toBe(editor);
+    expect(
+      resolve({ candidates, associations: { ...associations, "ext:md": alternative.id } }).panel,
+    ).toBe(alternative);
+    expect(
+      resolve({
+        candidates,
+        associations: {
+          ...associations,
+          "ext:md": alternative.id,
+          "name:README.MD": named.id,
+        },
+      }).panel,
+    ).toBe(named);
+    expect(resolve({ candidates: [markdown], associations }).panel).toBe(markdown);
   });
 });
 

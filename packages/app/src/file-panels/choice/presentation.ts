@@ -29,15 +29,17 @@ export function filePanelOptionLabel(t: TFunction, panel: FilePanel): string {
   });
 }
 
-/** ".md" for an extension key, "Dockerfile" for a filename key. */
-export function filePanelSelectorLabel(selectorKey: string): string {
+/** Human-readable association scope, including catch-all text panels. */
+export function filePanelSelectorLabel(t: TFunction, selectorKey: string): string {
   const selector = parseFilePanelSelectorKey(selectorKey);
+  if (selector.kind === "kind") return t("panels.file.filePanels.allTextFiles");
   return selector.kind === "name" ? selector.value : `.${selector.value}`;
 }
 
 /** "Open .md files with" for an extension key, "Open Dockerfile with" for a filename key. */
 export function filePanelPickerTitle(t: TFunction, selectorKey: string): string {
   const selector = parseFilePanelSelectorKey(selectorKey);
+  if (selector.kind === "kind") return t("panels.file.filePanels.pickerTitleText");
   return selector.kind === "name"
     ? t("panels.file.filePanels.pickerTitleFilename", { filename: selector.value })
     : t("panels.file.filePanels.pickerTitleExtension", { extension: selector.value });
@@ -46,6 +48,7 @@ export function filePanelPickerTitle(t: TFunction, selectorKey: string): string 
 /** "Always use for .md", "Always use for Dockerfile". */
 export function filePanelAlwaysUseLabel(t: TFunction, selectorKey: string): string {
   const selector = parseFilePanelSelectorKey(selectorKey);
+  if (selector.kind === "kind") return t("panels.file.filePanels.alwaysUseText");
   return selector.kind === "name"
     ? t("panels.file.filePanels.alwaysUseFilename", { filename: selector.value })
     : t("panels.file.filePanels.alwaysUseExtension", { extension: selector.value });
