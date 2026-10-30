@@ -14,6 +14,10 @@ for await (const line of lines) {
     process.exit(1);
   }
   const id = request.id;
+  if (request.method === "session/create") {
+    process.stdout.write(`${JSON.stringify({ id, result: { sessionId: "s1" } })}\n`);
+    continue;
+  }
   if (request.method === "session/events") {
     process.stdout.write(`${JSON.stringify({ id, result: { events: [] } })}\n`);
     continue;
