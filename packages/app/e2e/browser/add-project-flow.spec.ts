@@ -66,6 +66,20 @@ async function expectProjectHasNoWorkspaces(projectId: string): Promise<void> {
   }
 }
 
+function resultsOverflow(element: HTMLElement): boolean {
+  return element.scrollHeight > element.clientHeight + 1;
+}
+
+function rowIsBelowResults(element: HTMLElement): boolean {
+  const scroller = element.closest("[data-testid='add-project-flow-results']");
+  if (!(scroller instanceof HTMLElement)) return false;
+  return element.getBoundingClientRect().top >= scroller.getBoundingClientRect().bottom - 1;
+}
+
+function resultsScrollTop(element: HTMLElement): number {
+  return element.scrollTop;
+}
+
 test.describe("Add Project command-center flow", () => {
   test.describe.configure({ timeout: 180_000 });
 
@@ -296,6 +310,51 @@ test.describe("Add Project command-center flow", () => {
       projectPath: projectPickerFixture.projectPath,
     });
     await expectProjectHasNoWorkspaces(projectId);
+  });
+
+  test("a long directory result list scrolls and its last row can be selected", async ({
+    page,
+  }) => {
+    const parentDirectory = await mkdtemp(path.join(homedir(), "paseo-e2e-add-project-list-"));
+    const nonce = randomUUID().replaceAll("-", "").slice(0, 8);
+    const directoryCount = 30;
+    const query = `kbd-${nonce}`;
+    const lastName = `${query}-${String(directoryCount).padStart(2, "0")}`;
+    const lastPath = path.join(parentDirectory, lastName);
+    let projectId: string | null = null;
+
+    try {
+      await Promise.all(
+        Array.from({ length: directoryCount }, (_, index) =>
+          mkdir(path.join(parentDirectory, `${query}-${String(index + 1).padStart(2, "0")}`)),
+        ),
+      );
+      await gotoAppShell(page);
+      await openAddProjectFlow(page);
+      await chooseAddProjectMethod(page, "directory-search");
+      await addProjectFlowInput(page).fill(query);
+
+      const results = page.getByTestId("add-project-flow-results");
+      const lastRow = page.getByTestId(`add-project-flow-path-${encodeURIComponent(lastPath)}`);
+      await expect(lastRow).toBeAttached({ timeout: 30_000 });
+      await expect.poll(() => results.evaluate(resultsOverflow)).toBe(true);
+      await expect.poll(() => lastRow.evaluate(rowIsBelowResults)).toBe(true);
+
+      await lastRow.scrollIntoViewIfNeeded();
+      await expect.poll(() => results.evaluate(resultsScrollTop)).toBeGreaterThan(0);
+      await lastRow.click();
+
+      projectId = await expectOpenedProject(page, lastName);
+      await expectNewWorkspaceForAddedProject(page, {
+        serverId: getServerId(),
+        projectId,
+        projectName: lastName,
+        projectPath: lastPath,
+      });
+    } finally {
+      await removeCreatedProject(lastPath, projectId).catch(() => undefined);
+      await rm(parentDirectory, { recursive: true, force: true });
+    }
   });
 
   test("keyboard navigation keeps the selected row inside the visible results", async ({
