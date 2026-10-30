@@ -11,6 +11,10 @@ Improved:
 
 - Added `server.addHook` with `subject.operation.position` names and the awaited `worktree.create.after` hook before setup and agents; deprecated the previous plugin hook registration methods without changing their behavior ([#8081](https://github.com/getpaseo/paseo/pull/8081))
 
+Fixed:
+
+- Keep an open agent on its current provider process when a session-open plugin reloads without changing env, tools, or MCP servers ([#8267](https://github.com/getpaseo/paseo/issues/8267))
+
 ## 0.14.0 - 2026-10-29
 
 Plugins can now add tools to individual agents and configure their MCP servers when sessions open.
