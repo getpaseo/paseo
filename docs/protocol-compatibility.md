@@ -54,6 +54,10 @@ without requesting streams. Application caches and which agents are visible rema
 
 ## Terminal ANSI replay
 
+Terminal replay intentionally drops JSON-era apps, an exception to the general cross-version policy:
+use app v0.1.81 or newer. Earlier apps omit `restore` and reject ANSI Restore (`0x05`), so they show
+only subsequent live output, without the existing screen or history.
+
 `terminal_chunked_replay` is SDK-owned delivery behavior. The daemon sends new binary opcodes only to a source
 advertising the capability. The SDK keeps the established subscribe request against older
 ANSI hosts and normalizes their single Restore frame into begin/data/end. `observeTerminal` defaults
