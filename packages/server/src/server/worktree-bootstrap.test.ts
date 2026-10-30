@@ -209,6 +209,7 @@ describe("runWorktreeAutoTerminals", () => {
             getSize: () => ({ rows: 0, cols: 0 }),
             getTitle: () => undefined,
             getExitInfo: () => null,
+            hasOutput: () => false,
             getState: () => ({
               rows: 0,
               cols: 0,
@@ -312,6 +313,7 @@ describe("runWorktreeAutoTerminals", () => {
               }
             };
           },
+          hasOutput: () => true,
           getState: () => ({
             rows: 1,
             cols: 1,

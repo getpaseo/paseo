@@ -6,9 +6,9 @@ How terminal output stays low-latency, what the invariants are, and how to measu
 
 ```
 pty (node-pty, forked worker process)
-  → headless xterm parse (worker, snapshot fidelity)
-  → TerminalOutputCoalescer (worker, ≤1 IPC message per 5ms per terminal)
-  → process.send IPC → daemon main process
+  → headless xterm parse (worker, ANSI replay fidelity)
+  → TerminalOutputCoalescer (worker, ≤1 socket frame per 5ms per terminal)
+  → framed local socket → daemon main process
   → TerminalOutputCoalescer (per client stream, terminal-session-controller.ts)
   → binary ws frame (2-byte header + raw bytes)
   → client decode (daemon-client.ts) → stream router → emulator runtime
@@ -20,9 +20,9 @@ Terminal frames share the daemon main event loop with all agent traffic. The `ev
 ## Invariants (the easy-to-break ones)
 
 - **Coalescers are leading+trailing throttles.** The first chunk after an idle window flushes immediately (synchronously); only sustained bursts wait for the trailing timer. Reverting to trailing-only adds a full window (~5ms) to every keystroke echo.
-- **Output coalescing happens in the worker, before IPC.** One `process.send` per pty chunk was a main-loop flood under build output. Non-output messages (snapshot/snapshotReady/titleChange/exit) must flush the coalescer first so ordering is preserved.
+- **Output coalescing happens in the worker, before IPC.** One socket frame per pty chunk was a main-loop flood under build output. Non-output messages (snapshot/snapshotReady/titleChange/exit) must flush the coalescer first so ordering is preserved.
 - **Coalesced output carries the LAST chunk's revision.** Snapshot replay dedup (`replayTerminalOutputAfterSnapshot`) skips buffered output with `revision <= replayRevision`; a merged batch with a lower revision would be wrongly skipped (lost output).
-- **The input-mode tracker runs once per process boundary, not per hop.** The worker owns the authoritative tracker; the daemon caches the replay preamble from `getTerminalState` responses and `snapshotReady` messages. Do not reintroduce a per-chunk `feed()` on the daemon main loop.
+- **The input-mode tracker runs once per process boundary, not per hop.** The worker owns the authoritative tracker; the daemon caches the replay preamble from replay responses and `snapshotReady` messages. Do not reintroduce a per-chunk `feed()` on the daemon main loop.
 - **Snapshot catch-up is backpressure-gated.** A stream falls back to a full snapshot only when `outputBytesSinceSnapshot > MAX_TERMINAL_OUTPUT_FRAME_BYTES` (256KB) **and** the client transport reports `bufferedAmount > MAX_CLIENT_BUFFERED_BYTES` (4MB). A client that keeps draining streams continuously, no matter how much output is produced. Before this gate existed, every 256KB of build output dropped a frame and forced a full JSON cell-grid snapshot (~200k objects across IPC) — the historical source of spiky lag and GC hitches.
 - **Plugin daemon sessions report IPC queue bytes.** Their virtual socket increments `bufferedAmount` before `process.send` and decrements it only in the send callback. Text and binary frames share that ordered queue, so the normal snapshot catch-up and physical high-water gates remain valid for server-side plugin SDK traffic.
 - **Client output writes are not serialized per frame.** The emulator runtime drains contiguous plain writes straight into xterm (which buffers internally). Only barrier ops (`clear`, `snapshot`, `suppressInput` writes) wait — behind a zero-length sentinel write — so resets can't interleave with in-flight output.

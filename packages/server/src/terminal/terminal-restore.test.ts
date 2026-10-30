@@ -4,29 +4,12 @@ import {
   TerminalStreamOpcode,
   decodeTerminalStreamFrame,
 } from "@getpaseo/protocol/binary-frames/index";
-import type { TerminalCell, TerminalState } from "@getpaseo/protocol/messages";
 import {
   encodeTerminalRestoreFrame,
   resolveRestoreAfterOutputOverflow,
   resolveTerminalRestoreSnapshotOptions,
   resolveTerminalSubscriptionSnapshotMode,
 } from "./terminal-restore.js";
-
-function terminalRow(text: string, cols = 80): TerminalCell[] {
-  return Array.from({ length: cols }, (_, index) => ({
-    char: text[index] ?? " ",
-  }));
-}
-
-function terminalState(text: string): TerminalState {
-  return {
-    rows: 1,
-    cols: 80,
-    grid: [terminalRow(text)],
-    scrollback: [],
-    cursor: { row: 0, col: text.length },
-  };
-}
 
 describe("terminal restore policy", () => {
   test("uses ready snapshots only for restore-aware subscriptions", () => {
@@ -61,10 +44,7 @@ describe("terminal restore policy", () => {
     const frame = decodeTerminalStreamFrame(
       encodeTerminalRestoreFrame({
         slot: 4,
-        snapshot: {
-          state: terminalState("restored"),
-          revision: 1,
-        },
+        data: new TextEncoder().encode("restored"),
       }),
     );
 

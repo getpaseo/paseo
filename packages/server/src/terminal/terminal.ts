@@ -92,6 +92,7 @@ export type ClientMessage =
   | { type: "mouse"; row: number; col: number; button: number; action: "down" | "up" | "move" };
 
 export type ServerMessage =
+  | { type: "streamError"; error: string }
   | { type: "output"; data: string; revision?: number }
   | { type: "snapshot"; state: TerminalState; revision?: number }
   | { type: "snapshotReady"; revision?: number; replayPreamble?: string }
@@ -114,8 +115,7 @@ export interface TerminalSession {
   onTitleChange(listener: (title?: string) => void): () => void;
   onActivityChange(listener: (transition: TerminalActivityTransition) => void): () => void;
   getSize(): { rows: number; cols: number };
-  getState(): TerminalState;
-  getStateSnapshot(options?: TerminalStateSnapshotOptions): TerminalStateSnapshot;
+  hasOutput(): boolean;
   getReplayPreamble(): string;
   getTitle(): string | undefined;
   getActivity(): TerminalActivity | null;
@@ -130,6 +130,9 @@ export interface TerminalSession {
 /** A session that owns its PTY in this process, so it knows the program's pid. */
 export interface LocalTerminalSession extends TerminalSession {
   readonly pid: number;
+  getRetainedHistoryLines(): number;
+  getState(): TerminalState;
+  getStateSnapshot(options?: TerminalStateSnapshotOptions): TerminalStateSnapshot;
 }
 
 function parseCommandFinishedOsc(data: string): TerminalCommandFinishedInfo | null {
@@ -1606,6 +1609,11 @@ export async function createTerminal(
     getSize,
     getState,
     getStateSnapshot,
+    getRetainedHistoryLines: () => terminal.buffer.active.baseY,
+    hasOutput: () =>
+      [...getState().scrollback, ...getState().grid].some((row) =>
+        row.some((cell) => cell.char.trim().length > 0),
+      ),
     getReplayPreamble,
     getTitle,
     getActivity,

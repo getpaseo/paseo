@@ -1,6 +1,6 @@
 import stripAnsi from "strip-ansi";
 import type { TerminalCell } from "@getpaseo/protocol/messages";
-import type { TerminalSession } from "./terminal.js";
+import type { LocalTerminalSession } from "./terminal.js";
 
 export interface CaptureTerminalLinesOptions {
   start?: number;
@@ -46,7 +46,7 @@ function resolveCaptureLineIndex(
 }
 
 export function captureTerminalLines(
-  terminal: TerminalSession,
+  terminal: Pick<LocalTerminalSession, "getState">,
   options: CaptureTerminalLinesOptions = {},
 ): CaptureTerminalLinesResult {
   const state = terminal.getState();

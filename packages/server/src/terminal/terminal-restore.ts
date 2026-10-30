@@ -1,11 +1,9 @@
 import type { SubscribeTerminalRequest } from "@getpaseo/protocol/messages";
 import {
   TerminalStreamOpcode,
-  encodeTerminalSnapshotPayload,
   encodeTerminalStreamFrame,
 } from "@getpaseo/protocol/binary-frames/index";
-import { renderTerminalSnapshotToAnsi } from "@getpaseo/protocol/terminal-snapshot";
-import type { TerminalStateSnapshot, TerminalStateSnapshotOptions } from "./terminal.js";
+import type { TerminalReplayOptions } from "./terminal-replay.js";
 
 export const MAX_TERMINAL_OUTPUT_FRAME_BYTES = 256 * 1024;
 
@@ -40,7 +38,7 @@ export function resolveRestoreAfterOutputOverflow(
 
 export function resolveTerminalRestoreSnapshotOptions(
   restore: TerminalRestoreOptions,
-): TerminalStateSnapshotOptions | null | undefined {
+): TerminalReplayOptions | null | undefined {
   if (restore.mode === "live") {
     return null;
   }
@@ -52,25 +50,11 @@ export function resolveTerminalRestoreSnapshotOptions(
   return undefined;
 }
 
-export function encodeLegacyTerminalSnapshotFrame(input: {
-  slot: number;
-  snapshot: TerminalStateSnapshot;
-}): Uint8Array {
-  return encodeTerminalStreamFrame({
-    opcode: TerminalStreamOpcode.Snapshot,
-    slot: input.slot,
-    payload: encodeTerminalSnapshotPayload(input.snapshot.state),
-  });
-}
-
-export function encodeTerminalRestoreFrame(input: {
-  slot: number;
-  snapshot: TerminalStateSnapshot;
-}): Uint8Array {
+export function encodeTerminalRestoreFrame(input: { slot: number; data: Uint8Array }): Uint8Array {
   return encodeTerminalStreamFrame({
     opcode: TerminalStreamOpcode.Restore,
     slot: input.slot,
-    payload: renderTerminalSnapshotToAnsi(input.snapshot.state),
+    payload: input.data,
   });
 }
 

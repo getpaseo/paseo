@@ -28,7 +28,6 @@ import { TerminalOutputCoalescer } from "./terminal-output-coalescer.js";
 import {
   MAX_CLIENT_BUFFERED_BYTES,
   MAX_TERMINAL_OUTPUT_FRAME_BYTES,
-  encodeLegacyTerminalSnapshotFrame,
   encodeTerminalRestoreFrame,
   resolveRestoreAfterOutputOverflow,
   resolveTerminalRestoreSnapshotOptions,
@@ -88,11 +87,6 @@ export interface TerminalSessionControllerOptions {
   sessionLogger: pino.Logger;
   listTerminalWorkspaceRefs?: () => Promise<readonly TerminalWorkspaceRef[]>;
   listTerminalWorkspaceRoots?: () => Promise<readonly string[]>;
-  // Whether the connected client can reflow restored snapshots. When true the
-  // daemon attaches per-row soft-wrap flags to snapshots; otherwise it omits them
-  // so old (strict-schema) clients still parse the snapshot.
-  clientSupportsWrapReflow?: (source: object) => boolean;
-  // Current max bytes queued on the client's transport(s) but not yet sent.
   // Drives the snapshot catch-up fallback: a keeping-up client reports ~0 and
   // keeps streaming; a backed-up client trips the snapshot path. Defaults to a
   // constant 0 (no backpressure signal) so callers without a transport always
@@ -145,7 +139,6 @@ export class TerminalSessionController {
   private readonly sessionLogger: pino.Logger;
   private readonly listTerminalWorkspaceRefs: () => Promise<readonly TerminalWorkspaceRef[]>;
   private readonly listTerminalWorkspaceRoots: () => Promise<readonly string[]>;
-  private readonly clientSupportsWrapReflow: (source: object) => boolean;
   private readonly getClientBufferedAmount: (source: object) => number | null;
 
   private readonly subscribedDirectories = new Map<string, TerminalDirectorySubscription>();
@@ -163,7 +156,6 @@ export class TerminalSessionController {
     this.listTerminalWorkspaceRoots =
       options.listTerminalWorkspaceRoots ??
       (async () => (await this.listTerminalWorkspaceRefs()).map((workspace) => workspace.cwd));
-    this.clientSupportsWrapReflow = options.clientSupportsWrapReflow ?? (() => false);
     this.getClientBufferedAmount = options.getClientBufferedAmount ?? (() => 0);
   }
 
@@ -957,6 +949,14 @@ export class TerminalSessionController {
         if (this.activeStreams.get(slot) !== activeStream) {
           return;
         }
+        if (message.type === "streamError") {
+          activeStream.owner.emit({
+            type: "terminal_stream_exit",
+            payload: { terminalId: activeStream.terminalId, error: message.error },
+          });
+          void activeStream.owner.release();
+          return;
+        }
         if (message.type === "snapshot" || message.type === "snapshotReady") {
           activeStream.readyRevision = message.revision;
           activeStream.outputCoalescer.flush();
@@ -1027,7 +1027,7 @@ export class TerminalSessionController {
       const restore = activeStream.restore;
       const snapshotResult = restore
         ? await this.emitRestoreSnapshot(activeStream, terminalManager, restore)
-        : await this.emitLegacySnapshot(activeStream, terminalManager);
+        : await this.emitRestoreSnapshot(activeStream, terminalManager, { mode: "full-snapshot" });
       if (!snapshotResult.shouldContinue) {
         return;
       }
@@ -1070,33 +1070,6 @@ export class TerminalSessionController {
     }
   }
 
-  private async emitLegacySnapshot(
-    activeStream: ActiveTerminalStream,
-    terminalManager: TerminalManager,
-  ): Promise<SnapshotSendResult> {
-    const snapshot = await terminalManager.getTerminalState(activeStream.terminalId, {
-      includeWrapFlags: this.clientSupportsWrapReflow(activeStream.owner.source),
-    });
-    if (this.activeStreams.get(activeStream.slot) !== activeStream) {
-      return { shouldContinue: false };
-    }
-    if (!snapshot) {
-      this.detachStream(activeStream.terminalId, { emitExit: true });
-      return { shouldContinue: false };
-    }
-
-    activeStream.owner.emitBinary(
-      encodeLegacyTerminalSnapshotFrame({
-        slot: activeStream.slot,
-        snapshot,
-      }),
-    );
-    // The snapshot frame went out-of-band; keep the replay that follows on the
-    // coalescer's trailing path so it doesn't flush back-to-back with it.
-    activeStream.outputCoalescer.markFlushed();
-    return { shouldContinue: true, replayRevision: snapshot.revision };
-  }
-
   private async emitRestoreSnapshot(
     activeStream: ActiveTerminalStream,
     terminalManager: TerminalManager,
@@ -1107,10 +1080,16 @@ export class TerminalSessionController {
       return { shouldContinue: true };
     }
 
-    const snapshot = await terminalManager.getTerminalState(activeStream.terminalId, {
-      ...snapshotOptions,
-      includeWrapFlags: this.clientSupportsWrapReflow(activeStream.owner.source),
-    });
+    const chunks: Uint8Array[] = [];
+    // COMPAT(terminalSingleRestore): ANSI clients through v0.14 collect one restore;
+    // remove after the supported client floor implements chunked replay.
+    const snapshot = await terminalManager.replayTerminal(
+      activeStream.terminalId,
+      snapshotOptions,
+      (event) => {
+        if (event.type === "data") chunks.push(event.data);
+      },
+    );
     if (this.activeStreams.get(activeStream.slot) !== activeStream) {
       return { shouldContinue: false };
     }
@@ -1122,7 +1101,7 @@ export class TerminalSessionController {
     activeStream.owner.emitBinary(
       encodeTerminalRestoreFrame({
         slot: activeStream.slot,
-        snapshot,
+        data: Buffer.concat(chunks),
       }),
     );
     // The restore frame went out-of-band; keep the replay that follows on the

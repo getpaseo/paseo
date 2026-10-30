@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { classifyTerminalWorkerProtocol } from "./terminal-worker-protocol.js";
 
 describe("classifyTerminalWorkerProtocol", () => {
+  it("rejects the unreleased cell protocol without a draining adapter", () => {
+    expect(classifyTerminalWorkerProtocol(1, 2)).toBe("obsolete");
+  });
   it.each([
     [5, "current"],
     [4, "previous"],

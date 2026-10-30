@@ -40,9 +40,15 @@ The worker writes `$PASEO_HOME/terminal-worker/<pid>.json` (owner-only) with its
 
 Never more than two workers run. A new worker launches only when none is current, none is incompatible and fewer than two run. The count comes from the records, so an unreachable or unidentified worker counts, and so does one a cleanup could not confirm gone. When two run, the daemon starts with no current worker, and the first terminal created after one of them exits launches it.
 
-**The frozen envelope never changes across versions:** the frame format (4-byte length + `v8.serialize`), `hello`/`helloAck`, the `listTerminals` info fields and `shutdown`. That is what lets any daemon close any worker: a kill stop sends `shutdown` to a newer worker it cannot otherwise drive. When you bump the version, keep a previous-version adapter so the draining worker can still be driven, and drop the adapter for the version before that.
+**The frozen envelope never changes across versions:** the frame format (4-byte length + `v8.serialize`), `hello`/`helloAck`, the `listTerminals` info fields and `shutdown`. That is what lets any daemon close any worker: a kill stop sends `shutdown` to a newer worker it cannot otherwise drive. Protocol 2 hard cuts the unreleased protocol 1 cell transport: protocol 1 workers are obsolete and close. For future versions, keep a previous-version adapter so the draining worker can still be driven, and drop the adapter for the version before that.
 
 Tests stand up other versions with `PASEO_TERMINAL_WORKER_PROTOCOL_OVERRIDE`, read by the worker. It is test-only.
+
+## Display replay
+
+The worker keeps the headless xterm model and generates ANSI. A replay request emits begin metadata (dimensions, retained history, revision and input modes), at most 64 KiB per data chunk, and end before later live output. Capture is synchronous with PTY callbacks; flush the output coalescer before the cut so a later batch never includes bytes already in replay. Retained-history metadata counts the worker history before the request limit.
+
+Replay waits for each socket write to complete before sending the next chunk. PTYs keep parsing while writes wait. The replaying terminal holds at most 4 MiB of live output until replay ends; exceeding that bound fails the replay and ends every display stream of that terminal with an error requiring a fresh attach. Existing viewers share the worker live stream, so they must also stop before bytes resume after a discarded tail. Sibling terminals continue streaming. Live traffic that fills the shared socket beyond 4 MiB disconnects the stalled controller; the daemon reconnects and requests fresh replay. Existing ANSI clients receive one collected Restore frame from the daemon. Capture stays a worker request; bootstrap readiness uses `hasOutput`, not a transported grid.
 
 ## Running from its own copy
 
