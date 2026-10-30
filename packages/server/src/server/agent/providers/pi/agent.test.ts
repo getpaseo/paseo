@@ -3643,3 +3643,66 @@ test("closing Pi during image conversion rejects its pending start", async () =>
   await session.close();
   await rejected;
 });
+
+describe("Pi tool-result images", () => {
+  test.each([false, true])(
+    "tool-result images precede the reply and completion (isError=%s)",
+    async (isError) => {
+      const { pi, session, events } = await createSession();
+      onTestFinished(() => session.close());
+      const fakeSession = pi.latestSession();
+      await session.startTurn("run");
+      fakeSession.emit({
+        type: "tool_execution_start",
+        toolCallId: "shot-1",
+        toolName: "screenshot",
+        args: {},
+      });
+      fakeSession.emit({
+        type: "tool_execution_end",
+        toolCallId: "shot-1",
+        toolName: "screenshot",
+        result: {
+          content: [
+            { type: "text", text: "captured" },
+            { type: "image", data: Buffer.from("hello").toString("base64"), mimeType: "image/png" },
+          ],
+          structuredContent: {
+            type: "image",
+            data: Buffer.from("hello").toString("base64"),
+            mimeType: "image/png",
+            note: "captured",
+          },
+        },
+        isError,
+      });
+      fakeSession.emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", delta: "Image read complete." },
+      });
+      fakeSession.finishTurn();
+      await events.nextTurnCompletion();
+
+      const items = events.timelineItems();
+      const toolIndex = items.findIndex(
+        (item) =>
+          item.type === "tool_call" &&
+          item.callId === "shot-1" &&
+          item.status === (isError ? "failed" : "completed"),
+      );
+      expect(toolIndex).toBeGreaterThanOrEqual(0);
+      // Base64 must never reach the tool output stringifier.
+      expect(JSON.stringify(items[toolIndex])).not.toContain(
+        Buffer.from("hello").toString("base64"),
+      );
+      expect(items.slice(toolIndex + 1)).toEqual([
+        expect.objectContaining({
+          type: "assistant_message",
+          text: expect.stringContaining("![Image]("),
+        }),
+        expect.objectContaining({ type: "assistant_message", text: "Image read complete." }),
+      ]);
+      expect(events.timelineAndCompletionEvents().at(-1)).toEqual({ type: "turn_completed" });
+    },
+  );
+});

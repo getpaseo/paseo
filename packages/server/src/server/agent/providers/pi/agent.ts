@@ -64,7 +64,11 @@ import {
   streamPiHistory,
   type PiCapturedUserMessageEntry,
 } from "./history-mapper.js";
-import { materializeProviderImage } from "../provider-image-output.js";
+import {
+  materializeProviderImage,
+  renderProviderImageOutputAsAssistantMarkdown,
+  type ProviderImageOutput,
+} from "../provider-image-output.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import {
   createPiExtensionHost,
@@ -89,6 +93,7 @@ import {
   mapToolDetail,
   parseToolArgs,
   parseToolResult,
+  splitPiToolResultImages,
   type PiToolResult,
   type PiTrackedToolCall,
 } from "./tool-call-mapper.js";
@@ -1201,6 +1206,7 @@ export class PiRpcAgentSession implements AgentSession {
   private closed = false;
   private readonly closeController = new AbortController();
   private readonly pendingExtensionHydrations = new Set<Promise<void>>();
+  private pendingRuntimeEvents: Promise<void> | null = null;
   // Pi publishes the terminal before acknowledging abort. Autonomous runs have no
   // turn ID; retain their errors too until the cancellation request settles.
   private interruptingTurn: { turnId: string | undefined; error: string | null } | null = null;
@@ -1250,7 +1256,20 @@ export class PiRpcAgentSession implements AgentSession {
     });
 
     this.runtimeSession.onEvent((event) => {
-      this.handleRuntimeEvent(event);
+      const handle = () => {
+        if (!this.closed) return this.handleRuntimeEvent(event);
+      };
+      const pending = this.pendingRuntimeEvents ? this.pendingRuntimeEvents.then(handle) : handle();
+      if (pending) {
+        const settled = pending.catch((error) => {
+          this.logger.error({ err: error }, "Pi runtime event failed");
+        });
+        this.pendingRuntimeEvents = settled;
+        void settled.then(() => {
+          if (this.pendingRuntimeEvents === settled) this.pendingRuntimeEvents = null;
+          return undefined;
+        });
+      }
     });
   }
 
@@ -1602,6 +1621,7 @@ export class PiRpcAgentSession implements AgentSession {
       this.pendingExtensionUiRequests.size ||
       this.pendingExtensionResults.size ||
       this.pendingExtensionHydrations.size ||
+      this.pendingRuntimeEvents ||
       this.pendingSteerSubmissions.length ||
       this.pendingNoTurnOutputs.length ||
       this.interruptingTurn
@@ -1622,7 +1642,7 @@ export class PiRpcAgentSession implements AgentSession {
     try {
       await this.runtimeSession.close();
     } finally {
-      await Promise.all(this.pendingExtensionHydrations);
+      await Promise.all([this.pendingRuntimeEvents, ...this.pendingExtensionHydrations]);
       this.rejectAllExtensionResults(new Error("Pi session closed"));
       this.cleanup?.();
     }
@@ -2101,7 +2121,7 @@ export class PiRpcAgentSession implements AgentSession {
     });
   }
 
-  private handleRuntimeEvent(event: PiRuntimeEvent): void {
+  private handleRuntimeEvent(event: PiRuntimeEvent): void | Promise<void> {
     if (isExtensionUiRequestEvent(event)) {
       this.handleExtensionUiRequest(event);
       return;
@@ -2134,8 +2154,7 @@ export class PiRpcAgentSession implements AgentSession {
       return;
     }
     if (isPiAgentSessionEvent(event)) {
-      this.handleSessionEvent(event);
-      return;
+      return this.handleSessionEvent(event);
     }
   }
 
@@ -2162,7 +2181,7 @@ export class PiRpcAgentSession implements AgentSession {
     });
   }
 
-  private handleSessionEvent(event: PiAgentSessionEvent): void {
+  private handleSessionEvent(event: PiAgentSessionEvent): void | Promise<void> {
     const turnId = this.currentTurnIdForEvent();
     if (event.type === "agent_end" || event.type === "agent_settled") {
       this.handleTurnBoundaryEvent({ event, turnId });
@@ -2246,8 +2265,7 @@ export class PiRpcAgentSession implements AgentSession {
         return;
       }
       case "tool_execution_end": {
-        this.handleToolExecutionEnd(event);
-        return;
+        return this.handleToolExecutionEnd(event);
       }
       case "compaction_start":
         this.emitCompactionTimeline({
@@ -2310,13 +2328,16 @@ export class PiRpcAgentSession implements AgentSession {
 
   private handleToolExecutionEnd(
     event: Extract<PiAgentSessionEvent, { type: "tool_execution_end" }>,
-  ): void {
+  ): void | Promise<void> {
     const toolCall =
       this.activeToolCalls.get(event.toolCallId) ?? parseToolArgs(event.toolName, null);
     this.activeToolCalls.delete(event.toolCallId);
 
-    const result = parseToolResult(event.result);
-    const error = event.isError ? event.result : null;
+    // Pull image blocks out of the result so base64 never reaches the tool output, then render
+    // each one as an assistant_message markdown image after the tool_call (mirroring the Claude
+    // provider, upstream #1717).
+    const { images, result } = splitPiToolResultImages(parseToolResult(event.result));
+    const error = event.isError ? result : null;
     const status = event.isError ? "failed" : "completed";
     this.extensionHost.onToolEnd({
       callId: event.toolCallId,
@@ -2326,6 +2347,27 @@ export class PiRpcAgentSession implements AgentSession {
       result,
     });
     this.emitToolCallEvent(event.toolCallId, toolCall, status, result, error);
+    if (images.length === 0) return;
+    return this.emitToolResultImages(images, this.currentTurnIdForEvent());
+  }
+
+  private async emitToolResultImages(
+    images: ProviderImageOutput[],
+    turnId: string | undefined,
+  ): Promise<void> {
+    for (const image of images) {
+      const imageItem = await renderProviderImageOutputAsAssistantMarkdown(image, {
+        materialize: materializeProviderImage,
+      });
+      if (imageItem && !this.closed) {
+        this.emit({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: imageItem,
+        });
+      }
+    }
   }
 
   private emitCompactionTimeline(input: {
