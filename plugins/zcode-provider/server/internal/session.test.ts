@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 import { ZCodeSession } from "./session.js";
-import type { ProviderEvent, ProviderPrompt } from "@getpaseo/plugin/server/provider";
+import type {
+  ProviderEvent,
+  ProviderPrompt,
+  ProviderToolCallDetail,
+} from "@getpaseo/plugin/server/provider";
 import type { ZCodeEvent, ZCodeTransport } from "./transport.js";
 
 /**
@@ -179,5 +183,31 @@ describe("ZCode session turn state", () => {
     expect(started[0]!.turnId).not.toBe(started[1]!.turnId);
     expect(completed).toHaveLength(1);
     expect(completed[0]!.turnId).toBe(started[0]!.turnId);
+  });
+
+  test("remembers a scheduled tool call's detail for the later variants", () => {
+    const harness = fakeTransport();
+    const session = new ZCodeSession({
+      id: "paseo-1",
+      transport: harness.transport,
+      emit: () => undefined,
+    });
+
+    harness.emit({
+      type: "tool.updated",
+      sessionId: "zcode-1",
+      seq: 1,
+      payload: {
+        toolCallId: "t1",
+        toolName: "read_file",
+        kind: "scheduled",
+        input: { path: "/a" },
+      },
+    });
+
+    // The map is the session's own state, and the timeline mapper reads it.
+    const details = (session as unknown as { toolDetails: Map<string, ProviderToolCallDetail> })
+      .toolDetails;
+    expect(details.get("t1")).toEqual({ type: "read", filePath: "/a" });
   });
 });

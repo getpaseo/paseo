@@ -1,4 +1,9 @@
-import type { ProviderEvent, ProviderPrompt } from "@getpaseo/plugin/server/provider";
+import type {
+  ProviderEvent,
+  ProviderPrompt,
+  ProviderToolCallDetail,
+} from "@getpaseo/plugin/server/provider";
+import { toolDetailFor } from "./timeline.js";
 import type { ZCodeEvent, ZCodeTransport } from "./transport.js";
 
 export type TurnPhase = "idle" | "running" | "stopping" | "settled";
@@ -27,6 +32,8 @@ export class ZCodeSession {
   private readonly nativeTurnIds = new Map<string, string>();
   /** The most recently started turn, used when an event carries no usable id. */
   private activeTurnId: string | undefined;
+  /** The detail of each tool call, keyed by tool call id. */
+  private readonly toolDetails = new Map<string, ProviderToolCallDetail>();
 
   private nativeSessionId = "";
   private cancelInFlight: Promise<void> | undefined;
@@ -159,6 +166,7 @@ export class ZCodeSession {
   }
 
   private handleEvent(event: ZCodeEvent): void {
+    this.recordToolDetail(event);
     if (event.type === "turn.started") {
       this.handleTurnStarted(event);
       return;
@@ -166,6 +174,20 @@ export class ZCodeSession {
     if (event.type === "turn.completed" || event.type === "turn.failed") {
       this.handleTurnFinished(event);
     }
+  }
+
+  /**
+   * ZCode carries a tool call's input only on the `scheduled` variant. The
+   * later `result` and `error` variants describe the same call without it,
+   * so the detail is remembered here and read back when the call is mapped.
+   */
+  private recordToolDetail(event: ZCodeEvent): void {
+    if (event.type !== "tool.updated") return;
+    const payload = event.payload as
+      | { kind?: string; toolCallId?: string; input?: unknown }
+      | undefined;
+    if (payload?.kind !== "scheduled" || !payload.toolCallId) return;
+    this.toolDetails.set(payload.toolCallId, toolDetailFor(payload.input));
   }
 
   private handleTurnStarted(event: ZCodeEvent): void {
