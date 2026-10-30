@@ -1011,7 +1011,9 @@ async function publishReview(agentId: string, { paseo }: PluginHandlerContext) {
 | `version` | 正整数     | 是       | 选择渲染器契约的版本。                       |
 | `data`    | 兼容 JSON  | 是       | 渲染器负载，JSON 序列化后最多 64 KiB。       |
 
-daemon 会根据发起调用的插件会话写入 `pluginId`，并拒绝来自非插件会话的此 RPC。该行会实时出现，在时间线重新获取后依然保留，并且对于同一插件和 `id` 只保留最新的值。如果它的渲染器缺失，Paseo 会显示现有的“不可用”行。daemon 会拒绝超过限制的 `data`，而不是截断它。支持此操作的 daemon 会声明 `server_info.features.pluginTimelineItems`。
+daemon 会根据发起调用的插件会话写入 `pluginId`，并拒绝来自非插件会话的此 RPC。该行会实时出现，在时间线重新获取后依然保留，并且对于同一插件和 `id` 只保留最新的值。如果它的渲染器缺失，Paseo 会显示现有的“不可用”行。
+
+`kind` 以小写字母开头，只包含小写字母、数字或连字符，与 `addTimelineRenderer` 使用的规则相同。daemon 会拒绝其他任何 `kind`。daemon 会拒绝超过限制的 `data`，而不是截断它。支持此操作的 daemon 会声明 `server_info.features.pluginTimelineItems`。
 
 ## 主题与布局 {#theme-and-layout}
 

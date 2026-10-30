@@ -124,7 +124,10 @@ import {
   updateAgentCommand,
 } from "./agent/lifecycle-command.js";
 import { buildStoredAgentPayload, toAgentPayload } from "./agent/agent-projections.js";
-import { assertPluginTimelineDataSize } from "./agent/agent-timeline-content.js";
+import {
+  assertPluginTimelineDataSize,
+  assertPluginTimelineKind,
+} from "./agent/agent-timeline-content.js";
 import { parsePluginClientId } from "./plugins/plugin-session-identity.js";
 import { buildAgentForkContextAttachment } from "./agent/activity-curator.js";
 import { buildAgentPrompt } from "./agent/prompt-attachments.js";
@@ -7951,6 +7954,7 @@ export class Session {
   ): Promise<void> {
     const pluginId = parsePluginClientId(this.clientId);
     if (!pluginId) throw new Error("Only plugin sessions can append plugin timeline items");
+    assertPluginTimelineKind(msg.item.kind);
     assertPluginTimelineDataSize(msg.item.data);
     const { seq, epoch } = await this.agentManager.appendTimelineItem(msg.agentId, {
       ...msg.item,
