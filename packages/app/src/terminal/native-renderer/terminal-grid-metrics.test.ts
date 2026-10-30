@@ -5,6 +5,7 @@ import {
   resolveTerminalGridMetricsMeasurement,
   resolveMeasuredTerminalCellMetrics,
   resolveTerminalCursorOffset,
+  resolveTerminalLetterSpacing,
 } from "./terminal-grid-metrics";
 
 describe("native terminal grid metrics", () => {
@@ -74,5 +75,15 @@ describe("native terminal grid metrics", () => {
         cellHeight: 16,
       }),
     ).toEqual({ cellWidth: 7.3, cellHeight: 16 });
+  });
+
+  it("spreads the pixel-snapping difference across glyphs as letter spacing", () => {
+    expect(
+      resolveTerminalLetterSpacing({
+        cellWidth: 7,
+        measuredTextWidth: 72.2,
+        measureTextLength: 10,
+      }),
+    ).toBeCloseTo(-0.22);
   });
 });

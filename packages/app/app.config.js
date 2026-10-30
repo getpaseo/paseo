@@ -162,6 +162,7 @@ export default {
       ],
       ...buildProfile.notificationPlugins,
       "expo-audio",
+      ["expo-font", { fonts: ["./assets/fonts/SymbolsNerdFontMono-Regular.ttf"] }],
       [
         "expo-gradle-jvmargs",
         {

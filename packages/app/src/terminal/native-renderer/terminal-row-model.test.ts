@@ -37,7 +37,8 @@ describe("terminal row model", () => {
     });
 
     expect(rows[0].runs.map((run) => ({ text: run.text, cellCount: run.cellCount }))).toEqual([
-      { text: "A界", cellCount: 3 },
+      { text: "A", cellCount: 2 },
+      { text: "界", cellCount: 1 },
     ]);
   });
 
@@ -116,5 +117,41 @@ describe("terminal row model", () => {
       ["   Claude Code", "text"],
     ]);
     expect(row.runs.map((run) => run.text).join("")).toBe(mascot);
+  });
+
+  test("isolates non-ASCII glyphs so fallback font widths cannot push later text", () => {
+    const resolver = createTerminalCellStyleResolver(DEFAULT_TERMINAL_THEME);
+    const line = "✓ Login…ok";
+
+    const [row] = buildRows({
+      grid: [Array.from(line).map((char) => cell(char))],
+      resolver,
+    });
+
+    expect(row.runs.map((run) => [run.text, run.cellCount])).toEqual([
+      ["✓", 1],
+      [" Login", 6],
+      ["…", 1],
+      ["ok", 2],
+    ]);
+    expect(row.runs.map((run) => run.text).join("")).toBe(line);
+  });
+
+  test("renders Nerd Font private-use glyphs with the symbols font", () => {
+    const resolver = createTerminalCellStyleResolver(DEFAULT_TERMINAL_THEME);
+    const line = "\ue0b0\uf418 main \u{f0001}";
+
+    const [row] = buildRows({
+      grid: [Array.from(line).map((char) => cell(char))],
+      resolver,
+    });
+
+    expect(
+      row.runs.map((run) => [run.text, run.renderKind === "text" ? run.font : run.renderKind]),
+    ).toEqual([
+      ["\ue0b0\uf418", "symbols"],
+      [" main ", "text"],
+      ["\u{f0001}", "symbols"],
+    ]);
   });
 });

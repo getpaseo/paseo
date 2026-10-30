@@ -44,6 +44,15 @@ export function resolveMeasuredTerminalCellMetrics(
   };
 }
 
+export function resolveTerminalLetterSpacing(input: {
+  cellWidth: number;
+  measuredTextWidth: number;
+  measureTextLength: number;
+}): number {
+  const advance = input.measuredTextWidth / Math.max(1, input.measureTextLength);
+  return input.cellWidth - advance;
+}
+
 export function resolveTerminalGridMetricsMeasurement(
   previous: TerminalGridCellMetrics | null,
   next: TerminalGridCellMetrics,
