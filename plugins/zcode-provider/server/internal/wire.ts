@@ -84,8 +84,8 @@ export interface ZCodeRequestFrame {
 }
 
 export type ZCodeFrame =
-  | ({ kind: "request" } & ZCodeRequestFrame)
-  | ({ kind: "event" } & ZCodeEventFrame)
+  | { kind: "request"; request: ZCodeRequestFrame }
+  | { kind: "event"; event: ZCodeEventFrame }
   | { kind: "response"; id: string; result: unknown }
   | { kind: "error"; id: string; code: number; message: string; data?: unknown };
 
@@ -115,13 +115,15 @@ export function decodeFrame(line: string): ZCodeFrame | undefined {
   if (request.success) {
     return {
       kind: "request",
-      id: String(request.data.id),
-      method: request.data.method,
-      params: request.data.params,
+      request: {
+        id: String(request.data.id),
+        method: request.data.method,
+        params: request.data.params,
+      },
     };
   }
   const event = eventFrameSchema.safeParse(parsed);
-  if (event.success) return { kind: "event", ...event.data };
+  if (event.success) return { kind: "event", event: event.data };
   const response = responseFrameSchema.safeParse(parsed);
   if (!response.success) return undefined;
   if (response.data.error) {

@@ -14,8 +14,11 @@ describe("ZCode frame decoding", () => {
         futureField: { anything: true },
       }),
     );
-    expect(frame).toMatchObject({ type: "message.upserted", sessionId: "s1", seq: 3 });
-    expect(frame).not.toHaveProperty("futureField");
+    expect(frame).toMatchObject({
+      kind: "event",
+      event: { type: "message.upserted", sessionId: "s1", seq: 3 },
+    });
+    expect(frame).not.toHaveProperty("event.futureField");
   });
 
   test("ignores an event type it does not know", () => {
@@ -58,9 +61,11 @@ describe("ZCode frame decoding", () => {
     );
     expect(frame).toEqual({
       kind: "request",
-      id: "9",
-      method: "interaction/requestPermission",
-      params: { requestId: "p1" },
+      request: {
+        id: "9",
+        method: "interaction/requestPermission",
+        params: { requestId: "p1" },
+      },
     });
   });
 
