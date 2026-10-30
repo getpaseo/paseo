@@ -44,10 +44,14 @@ afterAll(() => {
   rmSync(probeDirectory, { recursive: true, force: true });
 });
 
-async function measureConfigRead(directory: string) {
-  const { stdout, stderr } = await promisify(execFile)(process.execPath, [probePath, directory], {
-    timeout: 15_000,
-  });
+async function measureConfigRead(directory: string, profile = false) {
+  const { stdout, stderr } = await promisify(execFile)(
+    process.execPath,
+    [probePath, directory, profile ? "profile" : "plain"],
+    {
+      timeout: 15_000,
+    },
+  );
   process.stderr.write(stderr);
   return JSON.parse(stdout) as {
     result: Awaited<ReturnType<typeof readPaseoConfigForEdit>>;
@@ -133,9 +137,13 @@ describe("paseo config file substrate", () => {
     expect(blockingMs).toBeLessThan(20);
   });
 
-  it.each(Array.from({ length: 30 }, (_, i) => i))(
-    "keeps main-thread work below 20ms while admitting large configs (%i)",
-    async () => {
+  it.each(
+    Array.from({ length: 150 }, (_, repetition) =>
+      [false, true].map((profile) => ({ repetition, profile })),
+    ).flat(),
+  )(
+    "keeps main-thread work below 20ms while admitting large configs (repetition=$repetition, profile=$profile)",
+    async ({ profile }) => {
       const config = {
         scripts: Object.fromEntries(
           Array.from({ length: 7_000 }, (_, i) => [`script${i}`, { command: "echo hi" }]),
@@ -144,7 +152,7 @@ describe("paseo config file substrate", () => {
       };
       await writeFile(join(tempDir, "paseo.json"), JSON.stringify(config));
       const { result, blockingMs, filesystemRequests, yields, workerMessages } =
-        await measureConfigRead(tempDir);
+        await measureConfigRead(tempDir, profile);
       expect(result).toEqual({ ok: true, config, revision: await statPaseoConfigPath(tempDir) });
       expect(blockingMs).toBeLessThan(20);
       expect(filesystemRequests).toBeGreaterThan(0);

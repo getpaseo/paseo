@@ -18,19 +18,26 @@ const activity = createHook({
     if (executionAsyncResource() instanceof MessagePort) workerMessages++;
   },
 }).enable();
-const profiler = new Session();
-profiler.connect();
-await profiler.post("Profiler.enable");
-await profiler.post("Profiler.setSamplingInterval", { interval: 100 });
-await profiler.post("Profiler.start");
+const profiler = process.argv[3] === "profile" ? new Session() : null;
+if (profiler) {
+  profiler.connect();
+  await profiler.post("Profiler.enable");
+  await profiler.post("Profiler.setSamplingInterval", { interval: 100 });
+  await profiler.post("Profiler.start");
+}
 const measured = await measureMainThreadWork("project config main-thread work", () =>
   readPaseoConfigForEdit(directory),
 );
 activity.disable();
-const { profile } = await profiler.post("Profiler.stop");
-profiler.disconnect();
-if (measured.blockingMs >= 20) {
+process.stderr.write(`Config profiling: ${Boolean(profiler)}\n`);
+const profile = profiler ? (await profiler.post("Profiler.stop")).profile : null;
+profiler?.disconnect();
+if (profile && measured.blockingMs >= 20) {
   const nodes = new Map(profile.nodes.map((node) => [node.id, node]));
+  const parents = new Map<number, number>();
+  for (const node of profile.nodes) {
+    for (const child of node.children ?? []) parents.set(child, node.id);
+  }
   const samples = new Map<number, number>();
   for (const [index, id] of (profile.samples ?? []).entries()) {
     samples.set(id, (samples.get(id) ?? 0) + (profile.timeDeltas?.[index] ?? 0));
@@ -40,7 +47,18 @@ if (measured.blockingMs >= 20) {
     .slice(0, 20)
     .map(([id, micros]) => {
       const frame = nodes.get(id)!.callFrame;
-      return { function: frame.functionName, line: frame.lineNumber, milliseconds: micros / 1000 };
+      const callers: string[] = [];
+      let parent = parents.get(id);
+      while (parent !== undefined && callers.length < 5) {
+        callers.push(nodes.get(parent)!.callFrame.functionName);
+        parent = parents.get(parent);
+      }
+      return {
+        function: frame.functionName,
+        callers,
+        line: frame.lineNumber,
+        milliseconds: micros / 1000,
+      };
     });
   process.stderr.write(`Config CPU diagnostic: ${JSON.stringify(hottest)}\n`);
 }
