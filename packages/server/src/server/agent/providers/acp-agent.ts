@@ -1,3 +1,5 @@
+import { zSessionNotification } from "@agentclientprotocol/sdk/dist/schema/zod.gen.js";
+
 import { ACPProviderOptionsSchema } from "./acp-options.js";
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -297,6 +299,14 @@ const BASE_ACP_CLIENT_CAPABILITIES: ACPClientCapabilities = {
 
 export type ACPClientCapabilityMeta = Record<string, unknown>;
 
+// Cursor accepts `true` or a non-null object for `_meta.subagents` and ignores anything else, so
+// the stream filter must follow the same predicate instead of treating any present value as an
+// enabled capability.
+function clientAdvertisesSubagents(meta: ACPClientCapabilityMeta | undefined): boolean {
+  const value = meta?.subagents;
+  return value === true || (typeof value === "object" && value !== null);
+}
+
 export function buildACPClientCapabilities(
   meta?: ACPClientCapabilityMeta,
   override?: ACPClientCapabilities,
@@ -352,10 +362,36 @@ function normalizeACPIncomingMessage(message: AnyMessage): AnyMessage {
   return message;
 }
 
+/**
+ * cursor-agent ships two subagent lifecycle variants ahead of the ACP schema
+ * (`subagent_spawned` / `subagent_state_update`). The SDK rejects them at validation time and
+ * reports each one through console.error, so a client that advertises the capability would log
+ * noise for every child agent. Drop only those two variants, and only while the SDK rejects
+ * them: the same schema gates both sides, so a newer SDK that understands them passes them
+ * through untouched.
+ */
+function isUnsupportedSubagentUpdate(message: AnyMessage): boolean {
+  if (!("method" in message) || "id" in message || message.method !== "session/update") {
+    return false;
+  }
+  const params = (message as { params?: unknown }).params;
+  const variant = (params as { update?: { sessionUpdate?: unknown } } | null | undefined)?.update
+    ?.sessionUpdate;
+  if (variant !== "subagent_spawned" && variant !== "subagent_state_update") {
+    return false;
+  }
+  return !zSessionNotification.safeParse(params).success;
+}
+
 export function createLoggedNdJsonStream(
   output: NodeWritableStream,
   input: NodeReadableStream,
-  options: { logger: Logger; provider: string },
+  options: {
+    logger: Logger;
+    provider: string;
+    // Set when the client advertises a capability whose vendor variants this SDK does not know.
+    ignoreUnsupportedSubagentUpdates?: boolean;
+  },
 ): ACPStream {
   const textEncoder = new TextEncoder();
   const textDecoder = new TextDecoder();
@@ -378,15 +414,16 @@ export function createLoggedNdJsonStream(
           const lines = content.split("\n");
           content = lines.pop() || "";
 
-          for (const line of lines) {
-            const trimmedLine = line.trim();
-            if (!trimmedLine) {
-              continue;
-            }
-
+          const handleLine = (line: string) => {
             try {
-              const message: AnyMessage = JSON.parse(trimmedLine);
-              controller.enqueue(normalizeACPIncomingMessage(message));
+              const message = normalizeACPIncomingMessage(JSON.parse(line));
+              if (
+                options.ignoreUnsupportedSubagentUpdates &&
+                isUnsupportedSubagentUpdate(message)
+              ) {
+                return;
+              }
+              controller.enqueue(message);
             } catch (error) {
               options.logger.warn(
                 {
@@ -395,6 +432,13 @@ export function createLoggedNdJsonStream(
                 },
                 "ACP agent emitted non-JSON stdout; ignoring line",
               );
+            }
+          };
+
+          for (const line of lines) {
+            const trimmedLine = line.trim();
+            if (trimmedLine) {
+              handleLine(trimmedLine);
             }
           }
         }
@@ -1435,7 +1479,11 @@ export class ACPAgentClient implements AgentClient {
     const stream = createLoggedNdJsonStream(
       Writable.toWeb(child.stdin),
       Readable.toWeb(child.stdout),
-      { logger: this.logger, provider: this.provider },
+      {
+        logger: this.logger,
+        provider: this.provider,
+        ignoreUnsupportedSubagentUpdates: clientAdvertisesSubagents(this.clientCapabilityMeta),
+      },
     );
     const connection = new ClientSideConnection(() => client, stream);
 
@@ -2930,7 +2978,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const stream = createLoggedNdJsonStream(
       Writable.toWeb(child.stdin),
       Readable.toWeb(child.stdout),
-      { logger: this.logger, provider: this.provider },
+      {
+        logger: this.logger,
+        provider: this.provider,
+        ignoreUnsupportedSubagentUpdates: clientAdvertisesSubagents(this.clientCapabilityMeta),
+      },
     );
     const connection = new ClientSideConnection(() => this, stream);
     // Take ownership before initialize so the outer initialization guard can

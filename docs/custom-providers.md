@@ -565,6 +565,10 @@ container. When delegating filesystem operations to Paseo (`fs.readTextFile: tru
 or `fs.writeTextFile: true`), ensure the agent and Paseo share equivalent
 absolute workspace paths.
 
+`clientCapabilities` in provider options covers `fs` and `terminal` only; the option schema drops
+other keys, so a vendor capability such as Cursor's `subagents` cannot be configured here. Cursor's
+adapter supplies it through `clientCapabilityMeta` (see [providers.md](providers.md)).
+
 ### Generic ACP diagnostics
 
 Paseo diagnostics for `extends: "acp"` providers report the configured command, resolved launcher binary, version output, ACP `initialize`, ACP `session/new`, model count, modes, and final status.
