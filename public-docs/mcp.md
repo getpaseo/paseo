@@ -100,7 +100,7 @@ MCP does not expose an agent-detach tool. Detaching is a manual user action in t
 | `get_agent_activity` | Return recent agent timeline entries as a curated summary.                                                                                                     |
 | `set_agent_mode`     | Switch an agent's session mode.                                                                                                                                |
 
-Paseo agents receive finish, error, and permission notifications by default; set `notifyOnFinish: false` to disable them. External MCP clients use `get_agent_status` and `get_agent_activity` to check results.
+Paseo agents receive finish, error, and permission notifications by default; set `notifyOnFinish: false` to disable them. On `create_agent`, `notifyOnFinish: "every"` also reports each later run of a subagent on the same host until it is archived or detached. External MCP clients use `get_agent_status` and `get_agent_activity` to check results.
 
 ### Workspaces
 
