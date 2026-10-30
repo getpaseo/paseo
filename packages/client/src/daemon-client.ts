@@ -1,3 +1,4 @@
+import { ChunkedTransport } from "@getpaseo/protocol/chunked-transport";
 import {
   HOST_ROUTE_OPCODE,
   encodeHostRouteFrame,
@@ -1366,6 +1367,7 @@ export class DaemonClient {
     failed: (error) => this.logger.error({ err: error }, "Subscription failed"),
   });
   private transport: DaemonTransport | null = null;
+  private chunkedTransport: ChunkedTransport | null = null;
   private helloAuth: HelloAuth;
   private transportCleanup: Array<() => void> = [];
   private rawMessageListeners: Set<(message: SessionOutboundMessage) => void> = new Set();
@@ -1560,6 +1562,13 @@ export class DaemonClient {
       });
       this.traceConnectionAttempt += 1;
       this.transport = transport;
+      this.chunkedTransport = new ChunkedTransport({
+        get frameBytes() {
+          return transport.maxFrameBytes ?? 32 * 1024 * 1024;
+        },
+        send: (frame) => transport.send(frame),
+        deliver: (frame) => this.handleTransportMessage(frame),
+      });
       this.lastServerInfoMessage = null;
       this.authFailureReasonValue = null;
 
@@ -1666,7 +1675,15 @@ export class DaemonClient {
           });
         }),
         transport.onMessage((data) => {
-          if (this.transport === transport) this.handleTransportMessage(data);
+          if (this.transport !== transport) return;
+          const bytes = asUint8Array(data);
+          try {
+            if (typeof data === "string" || bytes)
+              this.chunkedTransport!.receive(typeof data === "string" ? data : bytes!);
+            else this.handleTransportMessage(data);
+          } catch {
+            transport.close(4003, "Invalid chunked transport");
+          }
         }),
       ];
     } catch (error) {
@@ -2083,7 +2100,11 @@ export class DaemonClient {
     });
     try {
       submitted?.();
-      this.transport.send(frame);
+      const payload = typeof frame === "string" ? frame : asUint8Array(frame)!;
+      const transport = this.transport;
+      void this.chunkedTransport!.send(payload).catch(() =>
+        transport.close(4003, "Transport send failed"),
+      );
     } finally {
       this.endTraceSection(isOpen);
     }
@@ -6763,6 +6784,8 @@ export class DaemonClient {
   }
 
   private disposeTransport(code = 1001, reason = "Reconnecting"): void {
+    this.chunkedTransport?.close();
+    this.chunkedTransport = null;
     this.owned.disconnected();
     this.providerSnapshotUpdates.clear();
     this.stopLivenessHeartbeat();
@@ -7289,6 +7312,10 @@ export class DaemonClient {
     if (consumerMessage.type === "status") {
       const serverInfo = parseServerInfoStatusPayload(consumerMessage.payload);
       if (serverInfo) {
+        if (this.chunkedTransport)
+          this.chunkedTransport.enabled =
+            serverInfo.features?.binaryChunkingV1 === true &&
+            this.config.capabilities?.[CLIENT_CAPS.binaryChunkingV1] !== false;
         this.lastServerInfoMessage = serverInfo;
         this.destinationServerId = serverInfo.serverId;
         this.connectionFailure = undefined;

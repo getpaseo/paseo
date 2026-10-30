@@ -1,3 +1,4 @@
+import { ChunkedTransport } from "@getpaseo/protocol/chunked-transport";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import {
   createAgentMessageDelivery,
@@ -124,7 +125,6 @@ import {
   MAX_PHYSICAL_SOCKET_BUFFERED_BYTES,
   outboundFrameByteLength,
   physicalSocketHasCapacity,
-  sendBoundedPhysicalFrame,
   sendBoundedPhysicalFrameAndWait,
 } from "./websocket/physical-socket.js";
 
@@ -440,6 +440,7 @@ function bufferFromWsData(data: Buffer | ArrayBuffer | Buffer[] | string): Buffe
 }
 
 export interface WebSocketLike {
+  maxFrameBytes?: number;
   readyState: number;
   bufferedAmount?: number;
   send: (
@@ -1273,6 +1274,33 @@ export class VoiceAssistantWebSocketServer {
     return { sockets: writableSockets, payload, bytes: outboundFrameByteLength(payload) };
   }
 
+  private negotiateChunking(ws: WebSocketLike, hello: WSHelloMessage): void {
+    this.chunkedSocket(ws).enabled = hello.capabilities?.[CLIENT_CAPS.binaryChunkingV1] === true;
+  }
+
+  private readonly chunkedSockets = new WeakMap<WebSocketLike, ChunkedTransport>();
+
+  private chunkedSocket(ws: WebSocketLike): ChunkedTransport {
+    let transport = this.chunkedSockets.get(ws);
+    if (!transport) {
+      transport = new ChunkedTransport({
+        frameBytes: ws.maxFrameBytes ?? 32 * 1024 * 1024,
+        send: async (frame) => {
+          const sent = await sendBoundedPhysicalFrameAndWait({
+            socket: ws,
+            frame,
+            onHighWater: () => this.closeAtOutboundHighWater(ws),
+          });
+          if (!sent) throw new Error("Source is closed");
+        },
+        deliver: (frame) =>
+          this.handleRawMessage(ws, typeof frame === "string" ? frame : Buffer.from(frame)),
+      });
+      this.chunkedSockets.set(ws, transport);
+    }
+    return transport;
+  }
+
   private async sendMessageToClientAndWait(
     ws: WebSocketLike,
     message: WSOutboundMessage,
@@ -1280,13 +1308,7 @@ export class VoiceAssistantWebSocketServer {
     const prepared = this.prepareJsonDelivery([ws], message, true);
     if (!prepared) throw new Error("Source message delivery unavailable");
     try {
-      const sent = await sendBoundedPhysicalFrameAndWait({
-        socket: ws,
-        frame: prepared.payload,
-        frameBytes: prepared.bytes,
-        onHighWater: () => this.closeAtOutboundHighWater(ws),
-      });
-      if (!sent) throw new Error("Source is closed");
+      await this.chunkedSocket(ws).send(prepared.payload);
       this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
     } catch (err) {
       this.logger.warn({ err }, "ws_send_failed");
@@ -1313,14 +1335,7 @@ export class VoiceAssistantWebSocketServer {
       return;
     }
     try {
-      const sent = await sendBoundedPhysicalFrameAndWait({
-        socket: ws,
-        frame,
-        onHighWater: () => this.closeAtOutboundHighWater(ws),
-      });
-      if (!sent) {
-        throw new Error("Physical WebSocket is not open");
-      }
+      await this.chunkedSocket(ws).send(frame);
       this.runtimeMetrics.recordOutboundBinaryFrame(ws.bufferedAmount);
     } catch (err) {
       this.logger.warn({ err }, "ws_send_failed");
@@ -1331,17 +1346,16 @@ export class VoiceAssistantWebSocketServer {
   private sendFrameToClient(
     ws: WebSocketLike,
     frame: string | Uint8Array,
-    frameBytes: number,
+    _frameBytes: number,
     recordSent: () => void,
   ): void {
     try {
-      const sent = sendBoundedPhysicalFrame({
-        socket: ws,
-        frame,
-        frameBytes,
-        onHighWater: () => this.closeAtOutboundHighWater(ws),
-      });
-      if (sent) recordSent();
+      void this.chunkedSocket(ws)
+        .send(frame)
+        .then(recordSent, (err) => {
+          this.logger.warn({ err }, "ws_send_failed");
+          ws.close(1011, "Transport send failed");
+        });
     } catch (err) {
       this.logger.warn({ err }, "ws_send_failed");
     }
@@ -1688,6 +1702,7 @@ export class VoiceAssistantWebSocketServer {
     pending: PendingConnection;
   }): Promise<void> {
     const { ws, message, pending } = params;
+    this.negotiateChunking(ws, message);
 
     if (message.protocolVersion < 1) {
       this.clearPendingConnection(ws);
@@ -1952,6 +1967,7 @@ export class VoiceAssistantWebSocketServer {
         usageSetting: true,
         usageSources: true,
         ownedSubscriptions: true,
+        binaryChunkingV1: true,
         agentRequestReceipts: true,
         workspaceRequestReceipts: true,
         creationLifecycle: true,
@@ -2165,10 +2181,15 @@ export class VoiceAssistantWebSocketServer {
   private bindSocketHandlers(ws: WebSocketLike): void {
     ws.on("message", (...args: unknown[]) => {
       const data = args[0] as Buffer | ArrayBuffer | Buffer[] | string;
-      this.handleRawMessage(ws, data);
+      try {
+        this.chunkedSocket(ws).receive(typeof data === "string" ? data : bufferFromWsData(data));
+      } catch {
+        ws.close(1002, "Invalid chunked transport");
+      }
     });
 
     ws.on("close", async (...args: unknown[]) => {
+      this.chunkedSockets.get(ws)?.close();
       const code = args[0];
       const reason = args[1];
       await this.detachSocket(ws, {

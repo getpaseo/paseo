@@ -172,9 +172,12 @@ export function createHostTransportFactory(
       close();
     });
     return {
+      get maxFrameBytes() {
+        return transport?.maxFrameBytes;
+      },
       send(data) {
         if (closed || !transport) throw new Error("Host transport is unavailable");
-        transport.send(data);
+        return transport.send(data);
       },
       close,
       onOpen(handler) {

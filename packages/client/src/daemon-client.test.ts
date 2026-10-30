@@ -1094,6 +1094,7 @@ test("advertises client capabilities in hello", async () => {
       provider_snapshot_references: true,
       explicit_event_subscriptions: true,
       owned_subscriptions: true,
+      binary_chunking_v1: true,
       compact_provider_snapshots: true,
       custom_mode_icons: true,
       project_updates: true,
@@ -6817,91 +6818,102 @@ test("drops legacy agent_stream tool_call payloads and logs validation warning",
   expect(logger.warn).toHaveBeenCalled();
 });
 
-test("parses canonical fetch_agent_timeline_response payloads without crashing", async () => {
-  const logger = createMockLogger();
-  const mock = createMockTransport();
+test.each([false, true])(
+  "parses canonical timeline responses with chunking=%s",
+  async (chunked) => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
 
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger,
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
 
-  const connectPromise = client.connect();
-  mock.triggerOpen();
-  await connectPromise;
+    const connectPromise = client.connect();
+    mock.triggerOpen({ features: { ownedSubscriptions: true, binaryChunkingV1: chunked } });
+    await connectPromise;
 
-  const received: unknown[] = [];
-  const unsubscribe = client.on("fetch_agent_timeline_response", (msg) => {
-    received.push(msg);
-  });
+    const received: unknown[] = [];
+    const unsubscribe = client.on("fetch_agent_timeline_response", (msg) => {
+      received.push(msg);
+    });
 
-  mock.triggerMessage(
-    wrapSessionMessage({
-      type: "fetch_agent_timeline_response",
+    const command = chunked ? "x".repeat(50 * 1024 * 1024) : "pwd";
+    const { ChunkedTransport } = await import("@getpaseo/protocol/chunked-transport");
+    const sender = new ChunkedTransport({
+      frameBytes: 24 * 1024 * 1024,
+      send: (frame) => mock.triggerMessage(frame),
+      deliver: () => {},
+    });
+    sender.enabled = chunked;
+    await sender.send(
+      wrapSessionMessage({
+        type: "fetch_agent_timeline_response",
+        payload: {
+          requestId: "req-1",
+          agentId: "agent_cli",
+          agent: null,
+          direction: "tail",
+          projection: "projected",
+          epoch: "epoch-1",
+          reset: false,
+          staleCursor: false,
+          gap: false,
+          window: { minSeq: 1, maxSeq: 1, nextSeq: 2 },
+          startCursor: { epoch: "epoch-1", seq: 1 },
+          endCursor: { epoch: "epoch-1", seq: 1 },
+          hasOlder: false,
+          hasNewer: false,
+          entries: [
+            {
+              timestamp: "2026-02-08T20:20:00.000Z",
+              provider: "codex",
+              seqStart: 1,
+              seqEnd: 1,
+              sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }],
+              collapsed: [],
+              item: {
+                type: "tool_call",
+                callId: "call_cli_snapshot",
+                name: "shell",
+                status: "running",
+                detail: {
+                  type: "shell",
+                  command,
+                },
+                error: null,
+              },
+            },
+          ],
+          error: null,
+        },
+      }),
+    );
+
+    unsubscribe();
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({
       payload: {
-        requestId: "req-1",
-        agentId: "agent_cli",
-        agent: null,
-        direction: "tail",
-        projection: "projected",
-        epoch: "epoch-1",
-        reset: false,
-        staleCursor: false,
-        gap: false,
-        window: { minSeq: 1, maxSeq: 1, nextSeq: 2 },
-        startCursor: { epoch: "epoch-1", seq: 1 },
-        endCursor: { epoch: "epoch-1", seq: 1 },
-        hasOlder: false,
-        hasNewer: false,
         entries: [
           {
-            timestamp: "2026-02-08T20:20:00.000Z",
-            provider: "codex",
-            seqStart: 1,
-            seqEnd: 1,
-            sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }],
-            collapsed: [],
             item: {
               type: "tool_call",
-              callId: "call_cli_snapshot",
-              name: "shell",
               status: "running",
-              detail: {
-                type: "shell",
-                command: "pwd",
-              },
               error: null,
+              detail: { type: "shell", command },
             },
           },
         ],
-        error: null,
       },
-    }),
-  );
-
-  unsubscribe();
-
-  expect(received).toHaveLength(1);
-  expect(received[0]).toMatchObject({
-    payload: {
-      entries: [
-        {
-          item: {
-            type: "tool_call",
-            status: "running",
-            error: null,
-            detail: { type: "shell" },
-          },
-        },
-      ],
-    },
-  });
-  expect(logger.warn).not.toHaveBeenCalled();
-});
+    });
+    expect(logger.warn).not.toHaveBeenCalled();
+  },
+);
 
 test("rejects and logs a correlated response that violates the protocol schema", async () => {
   const mock = createMockTransport();
@@ -8470,4 +8482,25 @@ test("closes before admission when a protected-capable daemon is reached in lega
   // Only the application hello reached the daemon; the queued command never did.
   expect(daemonReceived).toHaveLength(1);
   expect(JSON.parse(daemonReceived[0] as string)).toMatchObject({ type: "hello" });
+});
+
+test("uses the frame budget selected by an asynchronously opened transport", async () => {
+  const mock = createMockTransport();
+  mock.transport.maxFrameBytes = 1024;
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "dynamic-budget",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.transport.maxFrameBytes = 16;
+  mock.triggerOpen({ features: { binaryChunkingV1: true } });
+  await connecting;
+  client.sendHostFrame("route", new Uint8Array(100));
+  await vi.waitFor(() => expect(mock.sent.length).toBeGreaterThan(1));
+  expect(mock.sent.every((frame) => typeof frame !== "string" && frame.byteLength <= 16)).toBe(
+    true,
+  );
 });

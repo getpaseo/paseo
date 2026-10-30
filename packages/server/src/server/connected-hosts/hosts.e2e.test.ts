@@ -2091,3 +2091,34 @@ test.each(["removed", "disabled"] as const)(
     ).toEqual([]);
   },
 );
+
+test(
+  "a 50 MiB timeline crosses a routed host without dropping content or the route",
+  { timeout: 30000 },
+  async () => {
+    const b = await daemon();
+    const a = await daemon();
+    const destination = await api(b);
+    const origin = await api(a);
+    const workspace = await destination.paseo.workspaces.create({
+      source: { kind: "directory", path: b.staticDir },
+    });
+    const agent = await workspace.agents.create({
+      config: { provider: "claude/claude-test", modeId: "full-access" },
+      title: "Large history",
+    });
+    const text = "x".repeat(50 * 1024 * 1024);
+    await b.daemon.agentManager.appendTimelineItem(agent.id, { type: "assistant_message", text });
+    await origin.paseo.hosts.add({ connection: `127.0.0.1:${b.port}` });
+    const serverId = (await online(origin.paseo)).hosts[0]!.serverId!;
+    const remote = await origin.paseo.hosts.client(serverId);
+    const response = await remote.agents.ref(agent.id).timeline.refetch({ limit: 20 });
+    const messages = response.entries.flatMap((row) =>
+      row.item.type === "assistant_message" ? [row.item.text] : [],
+    );
+    expect(messages).toHaveLength(1);
+    expect(messages[0] === text).toBe(true);
+    expect((await remote.workspaces.list()).entries).toHaveLength(1);
+    await remote.dispose();
+  },
+);

@@ -52,6 +52,24 @@ On capable daemons, connecting creates no timeline or event demand. Client subsc
 release it on unsubscribe, and restore it after reconnect. Raw message observers inspect traffic
 without requesting streams. Application caches and which agents are visible remain caller-owned.
 
+## Binary chunking
+
+`binary_chunking_v1` in hello and optional `server_info.features.binaryChunkingV1`
+negotiate connection-scoped framing. Application serializers and routed envelopes use
+the same boundary. Small messages and handshakes keep their existing representation.
+Older peers retain existing frame limits.
+
+The reserved binary opcode `0x31` is followed by version `1`, original kind
+(`0` text, `1` binary), and START/END flag bits `0`/`1`. Remaining bytes are an
+unchanged slice. There is no total length or chunk count; a future receiver can
+consume slices incrementally. Today the receiver buffers up to the existing
+100 MiB logical limit and decodes UTF-8 only after END. Transfers cannot interleave.
+Disconnect clears partial state and negotiation.
+
+The lower transport supplies its plaintext frame budget, including encryption
+overhead. The sender waits for each physical write before sending the next chunk.
+The framing module never selects an encryption construction.
+
 ## Owned observations
 
 `owned_subscriptions` and `server_info.features.ownedSubscriptions` negotiate the source-owned

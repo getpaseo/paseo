@@ -1,5 +1,6 @@
 export interface DaemonTransport {
-  send: (data: string | Uint8Array | ArrayBuffer) => void;
+  maxFrameBytes?: number;
+  send: (data: string | Uint8Array | ArrayBuffer) => void | Promise<void>;
   close: (code?: number, reason?: string) => void;
   onMessage: (handler: (data: unknown, isBinary: boolean) => void) => () => void;
   onOpen: (handler: () => void) => () => void;
@@ -19,6 +20,7 @@ export type WebSocketFactory = (
 ) => WebSocketLike;
 
 export interface WebSocketLike {
+  bufferedAmount?: number;
   readyState: number;
   send: (data: string | Uint8Array | ArrayBuffer) => void;
   close: (code?: number, reason?: string) => void;

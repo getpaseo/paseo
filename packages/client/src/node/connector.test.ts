@@ -44,12 +44,14 @@ test("a slow consumer cannot exceed the shared byte budget and close releases re
   socket.pause();
   await ready;
   const frame = new Uint8Array(1024 * 1024);
-  for (let index = 0; index < 4; index++) transport.send(frame);
+  const writes = Array.from({ length: 4 }, () => transport.send(frame));
+  const drained = Promise.allSettled(writes);
   expect(budget.bufferedBytes).toBe(4 * 1024 * 1024);
   expect(() => transport.send(frame)).toThrow("Connected host buffer limit reached");
   expect(budget.bufferedBytes).toBeLessThanOrEqual(budget.limit);
   transport.close();
   await expect.poll(() => budget.bufferedBytes).toBe(0);
+  await drained;
 });
 test("direct connector preserves 25 MiB binary frames in both directions", async () => {
   const server = await endpoint();
@@ -124,17 +126,20 @@ test("encrypted connector rejects overload synchronously and preserves the physi
   });
   await new Promise<void>((resolve) => transport.onOpen(resolve));
   await ready;
+  expect(transport.maxFrameBytes).toBeLessThan(32 * 1024 * 1024);
   peer.pause();
   const frame = new Uint8Array(1024 * 1024).fill(173);
   let rejected: unknown;
+  const writes: (void | Promise<void>)[] = [];
   for (let index = 0; index < 8; index++) {
     try {
-      transport.send(frame);
+      writes.push(transport.send(frame));
     } catch (error) {
       rejected = error;
       break;
     }
   }
+  const drained = Promise.allSettled(writes);
   expect(rejected).toMatchObject({ code: "resource_limit" });
   expect(budget.bufferedBytes).toBeLessThanOrEqual(budget.limit);
   await new Promise<void>((resolve) => setImmediate(resolve));
@@ -142,6 +147,7 @@ test("encrypted connector rejects overload synchronously and preserves the physi
   expect(closed).toBe(false);
   transport.send("sibling control");
   peer.resume();
+  await drained;
   await expect.poll(() => received.includes("sibling control")).toBe(true);
   expect(received.filter((data) => data instanceof ArrayBuffer).length).toBeGreaterThan(0);
   expect(
