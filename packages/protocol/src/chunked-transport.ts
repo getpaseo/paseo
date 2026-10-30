@@ -8,7 +8,7 @@ const HEADER = 4;
 /** Connection-scoped ordered framing, below serialization and routing, above encryption. */
 export class ChunkedTransport {
   enabled = false;
-  private parts: Uint8Array[] | undefined;
+  private assembly: Uint8Array | undefined;
   private size = 0;
   private kind = 0;
   private closed = false;
@@ -21,6 +21,7 @@ export class ChunkedTransport {
       frameBytes: number;
       send: (frame: Frame, waitForDrain: boolean) => void | Promise<void>;
       deliver: (frame: Frame) => void;
+      onFailure?: (error: unknown) => void;
     },
   ) {
     if (io.frameBytes <= HEADER) throw new Error("Invalid transport frame budget");
@@ -34,12 +35,8 @@ export class ChunkedTransport {
     return this.pending !== undefined;
   }
 
-  send(frame: Frame, waitForDrain = false): Promise<void> {
-    const budget = this.enabled ? this.io.frameBytes : MAX_WEBSOCKET_MESSAGE_BYTES;
-    let bytes: Uint8Array | undefined;
-    if (typeof frame !== "string") bytes = frame;
-    else if (frame.length * 3 > budget) bytes = new TextEncoder().encode(frame);
-    const byteLength = bytes?.byteLength ?? (frame as string).length * 3;
+  send(frame: Frame, options: { waitForDrain?: boolean; byteLength?: number } = {}): Promise<void> {
+    const byteLength = options.byteLength ?? frameByteLength(frame);
     if (byteLength > MAX_WEBSOCKET_MESSAGE_BYTES) throw new Error("Logical message too large");
     const chunk = this.enabled && byteLength > this.io.frameBytes;
     if (this.closed) throw new Error("Transport closed");
@@ -47,12 +44,18 @@ export class ChunkedTransport {
       if (this.closed) throw new Error("Transport closed");
       this.activeBytes = byteLength;
       return chunk
-        ? this.sendChunks(bytes!, typeof frame === "string")
-        : this.io.send(frame, waitForDrain);
+        ? this.sendChunks(
+            typeof frame === "string" ? new TextEncoder().encode(frame) : frame,
+            typeof frame === "string",
+          )
+        : this.io.send(frame, options.waitForDrain === true);
     };
     if (this.queuedBytes + byteLength > MAX_WEBSOCKET_MESSAGE_BYTES) {
-      this.close();
-      return Promise.reject(new Error("Logical output queue exceeded its byte limit"));
+      const error = new Error("Logical output queue exceeded its byte limit");
+      this.fail(error);
+      const rejected = Promise.reject<void>(error);
+      void rejected.catch(() => {});
+      return rejected;
     }
     this.queuedBytes += byteLength;
     let result: void | Promise<void>;
@@ -61,6 +64,7 @@ export class ChunkedTransport {
     } catch (error) {
       this.queuedBytes -= byteLength;
       this.activeBytes = 0;
+      this.fail(error);
       throw error;
     }
     if (!result) {
@@ -70,7 +74,7 @@ export class ChunkedTransport {
     }
     const pending = Promise.resolve(result)
       .catch((error) => {
-        this.close();
+        this.fail(error);
         throw error;
       })
       .finally(() => {
@@ -109,7 +113,7 @@ export class ChunkedTransport {
     if (this.closed) return;
     try {
       if (typeof frame === "string" || frame[0] !== OPCODE) {
-        if (this.parts) throw new Error("Interrupted chunked message");
+        if (this.assembly) throw new Error("Interrupted chunked message");
         this.io.deliver(frame);
         return;
       }
@@ -123,27 +127,32 @@ export class ChunkedTransport {
         throw new Error("Invalid chunk header");
       const start = (frame[3]! & 1) !== 0;
       const end = (frame[3]! & 2) !== 0;
-      if (start === !!this.parts) throw new Error("Invalid chunk sequence");
+      if (start === !!this.assembly) throw new Error("Invalid chunk sequence");
       if (start) {
-        this.parts = [];
+        this.assembly = new Uint8Array(0);
         this.kind = frame[2]!;
         this.size = 0;
       }
       if (frame[2] !== this.kind) throw new Error("Chunk kind changed");
       this.size += frame.length - HEADER;
       if (this.size > MAX_WEBSOCKET_MESSAGE_BYTES) throw new Error("Logical message too large");
-      this.parts!.push(frame.slice(HEADER));
-      if (!end) return;
-      const data = new Uint8Array(this.size);
-      let offset = 0;
-      for (const part of this.parts!) {
-        data.set(part, offset);
-        offset += part.length;
+      const payload = frame.subarray(HEADER);
+      if (this.assembly!.byteLength < this.size) {
+        const capacity = Math.min(
+          MAX_WEBSOCKET_MESSAGE_BYTES,
+          Math.max(this.size, this.assembly!.byteLength * 2, 16384),
+        );
+        const grown = new Uint8Array(capacity);
+        grown.set(this.assembly!.subarray(0, this.size - payload.byteLength));
+        this.assembly = grown;
       }
-      this.parts = undefined;
+      this.assembly!.set(payload, this.size - payload.byteLength);
+      if (!end) return;
+      const data = this.assembly!.subarray(0, this.size);
+      this.assembly = undefined;
       this.size = 0;
       this.io.deliver(
-        this.kind === 0 ? new TextDecoder("utf-8", { fatal: true }).decode(data) : data,
+        this.kind === 0 ? new TextDecoder("utf-8", { fatal: true }).decode(data) : data.slice(),
       );
     } catch (error) {
       this.close();
@@ -151,10 +160,36 @@ export class ChunkedTransport {
     }
   }
 
+  private fail(error: unknown): void {
+    if (this.closed) return;
+    this.close();
+    this.io.onFailure?.(error);
+  }
+
   close(): void {
     this.closed = true;
     this.enabled = false;
-    this.parts = undefined;
+    this.assembly = undefined;
     this.size = 0;
   }
+}
+
+function frameByteLength(frame: Frame): number {
+  if (typeof frame !== "string") return frame.byteLength;
+  let bytes = 0;
+  for (let index = 0; index < frame.length; index++) {
+    const code = frame.charCodeAt(index);
+    if (code <= 0x7f) bytes++;
+    else if (code <= 0x7ff) bytes += 2;
+    else if (
+      code >= 0xd800 &&
+      code <= 0xdbff &&
+      frame.charCodeAt(index + 1) >= 0xdc00 &&
+      frame.charCodeAt(index + 1) <= 0xdfff
+    ) {
+      bytes += 4;
+      index++;
+    } else bytes += 3;
+  }
+  return bytes;
 }

@@ -1567,6 +1567,7 @@ export class DaemonClient {
           return transport.maxFrameBytes ?? 32 * 1024 * 1024;
         },
         send: (frame) => transport.send(frame),
+        onFailure: () => transport.close(4003, "Transport send failed"),
         deliver: (frame) => this.handleTransportMessage(frame),
       });
       this.lastServerInfoMessage = null;
@@ -2106,10 +2107,7 @@ export class DaemonClient {
     try {
       submitted?.();
       const payload = typeof frame === "string" ? frame : asUint8Array(frame)!;
-      const transport = this.transport;
-      const write = this.chunkedTransport!.send(payload);
-      void write.catch(() => transport.close(4003, "Transport send failed"));
-      return write;
+      return this.chunkedTransport!.send(payload);
     } finally {
       this.endTraceSection(isOpen);
     }

@@ -164,3 +164,139 @@ it("requests drain for chunks while ordinary frames keep the immediate write pat
   await transport.send("abcdefghij");
   expect(waits).toEqual([false, true, true, true]);
 });
+
+it("charges queued ASCII messages by their UTF-8 bytes", async () => {
+  let drain!: () => void;
+  let blocked = true;
+  const transport = new ChunkedTransport({
+    frameBytes: 32 * 1024 * 1024,
+    send: () => {
+      if (blocked) {
+        blocked = false;
+        return new Promise<void>((resolve) => {
+          drain = resolve;
+        });
+      }
+    },
+    deliver: () => {},
+  });
+  transport.enabled = true;
+  const first = transport.send(new Uint8Array([1]));
+  const text = "x".repeat(10 * 1024 * 1024);
+  const queued = Array.from({ length: 4 }, () => transport.send(text));
+  const settled = Promise.allSettled(queued);
+  expect(transport.queuedByteLength).toBe(40 * 1024 * 1024);
+  drain();
+  await first;
+  expect((await settled).map((result) => result.status)).toEqual([
+    "fulfilled",
+    "fulfilled",
+    "fulfilled",
+    "fulfilled",
+  ]);
+});
+
+it("notifies the socket owner when an awaited send overflows the queue", async () => {
+  let drain!: () => void;
+  const failures: unknown[] = [];
+  const transport = new ChunkedTransport({
+    frameBytes: 32 * 1024 * 1024,
+    send: () =>
+      new Promise<void>((resolve) => {
+        drain = resolve;
+      }),
+    deliver: () => {},
+    onFailure: (error) => {
+      failures.push(error);
+    },
+  });
+  const first = transport.send(new Uint8Array(100 * 1024 * 1024));
+  const overflow = transport.send("extra");
+  await expect(overflow).rejects.toThrow("queue");
+  drain();
+  await first;
+  expect(failures).toHaveLength(1);
+});
+
+it("bounds retained reassembly memory for many one-byte chunks", async () => {
+  const { spawnSync } = await import("node:child_process");
+  // Exercise the built package as a Node consumer; CI builds it before protocol tests.
+  const entry = new URL("../dist/chunked-transport.js", import.meta.url).href;
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--expose-gc",
+      "--input-type=module",
+      "-e",
+      `
+    import { ChunkedTransport } from ${JSON.stringify(entry)};
+    let delivered = 0;
+    const receiver = new ChunkedTransport({ frameBytes: 8, send() {}, deliver(frame) { delivered = frame.byteLength; } });
+    receiver.enabled = true;
+    global.gc();
+    const before = process.memoryUsage().heapUsed;
+    receiver.receive(new Uint8Array([0x31, 1, 1, 1, 65]));
+    for (let index = 0; index < 300000; index++) receiver.receive(new Uint8Array([0x31, 1, 1, 0, 65]));
+    global.gc();
+    const growth = process.memoryUsage().heapUsed - before;
+    receiver.receive(new Uint8Array([0x31, 1, 1, 2, 66]));
+    console.log(JSON.stringify({ growth, delivered }));
+  `,
+    ],
+    { encoding: "utf8", timeout: 15000 },
+  );
+  expect(result.status, result.stderr).toBe(0);
+  const observed = JSON.parse(result.stdout);
+  expect(observed.delivered).toBe(300002);
+  expect(observed.growth).toBeLessThan(8 * 1024 * 1024);
+}, 20000);
+
+it.each(["ASCII", "中", "🌍", "\ud800", "\udc00", "\ud800x"])(
+  "accounts for queued UTF-8 text %j exactly",
+  async (text) => {
+    let drain!: () => void;
+    let blocked = true;
+    const transport = new ChunkedTransport({
+      frameBytes: 1024,
+      send: () => {
+        if (blocked) {
+          blocked = false;
+          return new Promise<void>((resolve) => {
+            drain = resolve;
+          });
+        }
+      },
+      deliver: () => {},
+    });
+    const first = transport.send(new Uint8Array([1]));
+    const second = transport.send(text);
+    expect(transport.queuedByteLength).toBe(new TextEncoder().encode(text).byteLength);
+    drain();
+    await Promise.all([first, second]);
+  },
+);
+
+it.each([false, true])(
+  "notifies the owner once when a writer fails (async=%s)",
+  async (asynchronous) => {
+    const failures: unknown[] = [];
+    const error = new Error("write failed");
+    const transport = new ChunkedTransport({
+      frameBytes: 1024,
+      deliver: () => {},
+      onFailure: (failure) => {
+        failures.push(failure);
+      },
+      send: () => {
+        if (asynchronous) return Promise.reject(error);
+        throw error;
+      },
+    });
+    await expect(async () => transport.send("hello", { waitForDrain: true })).rejects.toThrow(
+      "write failed",
+    );
+    expect(failures).toEqual([error]);
+    expect(() => transport.send("again")).toThrow("Transport closed");
+    expect(failures).toEqual([error]);
+  },
+);

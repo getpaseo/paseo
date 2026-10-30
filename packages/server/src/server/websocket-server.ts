@@ -1275,7 +1275,9 @@ export class VoiceAssistantWebSocketServer {
     return { sockets: writableSockets, payload, bytes: outboundFrameByteLength(payload) };
   }
 
-  private negotiateChunking(ws: WebSocketLike, hello: WSHelloMessage): void {
+  private sendHelloResponse(ws: WebSocketLike, session: Session, hello: WSHelloMessage): void {
+    // The peer learns our support from this ordinary response before receiving chunks.
+    this.sendToClient(ws, this.createServerInfoMessage(session));
     this.chunkedSocket(ws).enabled = hello.capabilities?.[CLIENT_CAPS.binaryChunkingV1] === true;
   }
 
@@ -1286,6 +1288,12 @@ export class VoiceAssistantWebSocketServer {
     if (!transport) {
       transport = new ChunkedTransport({
         frameBytes: ws.maxFrameBytes ?? 32 * 1024 * 1024,
+        onFailure: (err) =>
+          this.closePhysicalSocket({
+            ws,
+            logMessage: "Closing physical WebSocket after outbound framing failure",
+            logFields: { err },
+          }),
         send: (frame, waitForDrain) => {
           const params = {
             socket: ws,
@@ -1325,7 +1333,7 @@ export class VoiceAssistantWebSocketServer {
       : Math.min(bytes, ws.maxFrameBytes ?? 32 * 1024 * 1024);
     if (!this.ensureOutboundCapacity(ws, admittedBytes))
       return Promise.reject(new Error("Source is closed"));
-    return transport.send(frame, waitForDrain);
+    return transport.send(frame, { waitForDrain, byteLength: bytes });
   }
 
   private async sendMessageToClientAndWait(
@@ -1379,7 +1387,6 @@ export class VoiceAssistantWebSocketServer {
     try {
       void this.sendSocketFrame(ws, frame, frameBytes).then(recordSent, (err) => {
         this.logger.warn({ err }, "ws_send_failed");
-        ws.close(1011, "Transport send failed");
       });
     } catch (err) {
       this.logger.warn({ err }, "ws_send_failed");
@@ -1733,7 +1740,6 @@ export class VoiceAssistantWebSocketServer {
     pending: PendingConnection;
   }): Promise<void> {
     const { ws, message, pending } = params;
-    this.negotiateChunking(ws, message);
 
     if (message.protocolVersion < 1) {
       this.clearPendingConnection(ws);
@@ -1816,7 +1822,7 @@ export class VoiceAssistantWebSocketServer {
       this.externalSessionsByKey.set(sessionKey, connection);
     }
     pending.identity.sessionId = connection.session.getSessionId();
-    this.sendToClient(ws, this.createServerInfoMessage(connection.session));
+    this.sendHelloResponse(ws, connection.session, message);
     connection.connectionLogger.info(
       {
         ...toConnectionLogFields(pending.identity),
@@ -1952,7 +1958,7 @@ export class VoiceAssistantWebSocketServer {
     existing.sockets.add(ws);
     this.sessions.set(ws, existing);
     pending.identity.sessionId = existing.session.getSessionId();
-    this.sendToClient(ws, this.createServerInfoMessage(existing.session));
+    this.sendHelloResponse(ws, existing.session, message);
     pending.connectionLogger.info(
       {
         ...toConnectionLogFields(pending.identity),
