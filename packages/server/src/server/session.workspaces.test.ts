@@ -5426,6 +5426,77 @@ test("refresh_agent_request leaves workspace archival independent when its direc
   expect(findByType(emitted, "rpc_error")).toBeUndefined();
 });
 
+test("refresh_agent_request arriving while a refresh of the same agent resumes waits for it", async () => {
+  // A client gives up on a slow refresh after its request timeout and asks again. The refresh in
+  // flight has taken the agent out of the manager, so a second one used to fail with "Unknown
+  // agent", and every retry after it did the same while the first was still resuming.
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => {
+      if (isSessionOutboundMessage(message)) emitted.push(message);
+    },
+  });
+  const agentId = "agent-refreshed-twice";
+  const cwd = path.resolve("/tmp/paseo-refresh-twice");
+  session.filesystem.isDirectory = async () => true;
+  session.agentStorage.get = async (id: string) =>
+    id === agentId
+      ? makeStoredAgent({ id: agentId, cwd, updatedAt: "2026-03-10T00:00:00.000Z" })
+      : null;
+  session.agentStorage.upsert = async () => {};
+  const managed = makeManagedAgent({
+    id: agentId,
+    cwd,
+    lifecycle: "idle",
+    updatedAt: "2026-03-10T00:00:00.000Z",
+  });
+  let loaded: ManagedAgent | null = managed;
+  let releaseResume!: () => void;
+  const resumed = new Promise<void>((resolve) => {
+    releaseResume = resolve;
+  });
+  let reloads = 0;
+  session.agentManager.getAgent = () => loaded;
+  session.interruptAgentIfRunning = async () => undefined;
+  session.agentManager.reloadAgentSession = async () => {
+    reloads += 1;
+    loaded = null;
+    await resumed;
+    loaded = managed;
+    return managed;
+  };
+  session.agentManager.hydrateTimelineFromProvider = async () => {
+    if (!loaded) throw new Error(`Unknown agent '${agentId}'`);
+  };
+  session.agentManager.getTimeline = () => [];
+  session.agentUpdates.forwardLiveAgent = async () => undefined;
+
+  const first = session.handleMessage({
+    type: "refresh_agent_request",
+    agentId,
+    requestId: "req-first",
+  });
+  await waitForImmediate();
+  const retry = session.handleMessage({
+    type: "refresh_agent_request",
+    agentId,
+    requestId: "req-retry",
+  });
+  await waitForImmediate();
+  releaseResume();
+  await Promise.all([first, retry]);
+
+  expect(reloads).toBe(1);
+  expect(findByType(emitted, "rpc_error")).toBeUndefined();
+  const refreshed = emitted.filter(
+    (m) => m.type === "status" && (m.payload as { status?: string }).status === "agent_refreshed",
+  );
+  expect(refreshed.map((m) => (m.payload as { requestId?: string }).requestId).sort()).toEqual([
+    "req-first",
+    "req-retry",
+  ]);
+});
+
 test("refresh_agent_request leaves workspace archival independent when its directory is missing", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests({
