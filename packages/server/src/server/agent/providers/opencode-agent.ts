@@ -138,6 +138,7 @@ const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: false,
   supportsRewindFiles: false,
   supportsRewindBoth: true,
+  supportsContextUsage: false,
 };
 
 const OPENCODE_BUILD_MODE_ID = "build";

@@ -220,6 +220,7 @@ export function buildStoredAgentPayload(
     supportsRewindConversation: false,
     supportsRewindFiles: false,
     supportsRewindBoth: false,
+    supportsContextUsage: false,
   } as const;
 
   const createdAt = new Date(record.createdAt);

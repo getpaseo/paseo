@@ -124,6 +124,7 @@ const OMP_CORE_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsContextUsage: false,
 };
 
 export interface OmpAgentClientOptions {

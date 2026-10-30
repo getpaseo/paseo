@@ -1833,3 +1833,39 @@ test("agent reload reopens through the daemon RPC then returns the observed snap
     await client.close();
   }
 });
+
+test("agent handles pass context usage errors through without throwing", async () => {
+  const { client, ws } = await connectClient({
+    providerUsageList: true,
+    providersSnapshotCwd: true,
+    ownedSubscriptions: true,
+    agentContextUsage: true,
+  });
+  const agent = client.agents.ref("agent_sdk");
+
+  const usagePromise = agent.contextUsage({ requestId: "agent-context-usage" });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "agent.context_usage.get.request",
+    agentId: "agent_sdk",
+    requestId: "agent-context-usage",
+  });
+
+  ws.message(
+    sessionMessage({
+      type: "agent.context_usage.get.response",
+      payload: {
+        requestId: "agent-context-usage",
+        agentId: "agent_sdk",
+        usage: null,
+        error: "Agent does not support context usage",
+      },
+    }),
+  );
+
+  await expect(usagePromise).resolves.toEqual({
+    usage: null,
+    error: "Agent does not support context usage",
+  });
+  await client.close();
+});

@@ -201,6 +201,14 @@ const skills = commands.filter((command) => command.kind === "skill");
 
 无法生成列表的 Provider 会在 `error` 中报告，并返回空的 `commands` 数组。该调用不会 reject。
 
+## 查询上下文窗口的占用 {#ask-what-fills-the-context-window}
+
+```ts
+const { usage, error } = await agent.contextUsage();
+```
+
+只有报告 `capabilities.supportsContextUsage` 的 Provider 会回答；其他 Provider 返回错误，更旧的主机会抛出 "Update the host to see context usage."。每次调用都会向 Provider 发出一次请求（在 Claude 上是一次 API 请求），所以只在需要时调用，不要每轮或定时调用。
+
 ## 归档或解除父子关系 {#archive-or-detach}
 
 ```ts

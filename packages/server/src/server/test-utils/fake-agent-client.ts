@@ -34,6 +34,7 @@ const TEST_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: false,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsContextUsage: false,
 };
 
 const TEST_FEATURE_ID = "test_feature";

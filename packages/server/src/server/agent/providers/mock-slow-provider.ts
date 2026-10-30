@@ -23,6 +23,7 @@ const CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: false,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsContextUsage: false,
 };
 
 export class MockSlowProviderClient implements AgentClient {

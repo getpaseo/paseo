@@ -80,6 +80,7 @@ import {
 } from "./options.js";
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { discoverClaudeModels } from "./model-discovery.js";
+import { toAgentContextUsage } from "./context-usage.js";
 import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
 import {
   realClaudeRewindSdk,
@@ -119,6 +120,7 @@ import {
   type AgentRunResult,
   type AgentSession,
   type AgentSessionConfig,
+  type AgentContextUsage,
   type AgentSlashCommand,
   type SteerActiveTurnOptions,
   type SteerResult,
@@ -379,6 +381,7 @@ const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: true,
   supportsRewindBoth: true,
+  supportsContextUsage: true,
 };
 
 const DEFAULT_MODES: AgentMode[] = [
@@ -3090,6 +3093,11 @@ class ClaudeAgentSession implements AgentSession {
       commandMap.set(REWIND_COMMAND_NAME, REWIND_COMMAND);
     }
     return Array.from(commandMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async getContextUsage(): Promise<AgentContextUsage> {
+    const query = await this.ensureQuery();
+    return toAgentContextUsage(await query.getContextUsage());
   }
 
   async revertConversation(input: { messageId: string }): Promise<void> {

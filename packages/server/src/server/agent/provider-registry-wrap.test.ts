@@ -23,6 +23,7 @@ type OptionalAgentSessionMethodName = {
 const OPTIONAL_AGENT_SESSION_METHOD_NAMES = [
   "steerActiveTurn",
   "listCommands",
+  "getContextUsage",
   "setModel",
   "setThinkingOption",
   "setFeature",
@@ -148,6 +149,11 @@ class FakeSession implements AgentSession {
     this.recordedCalls.push("setModel");
   }
 
+  async getContextUsage() {
+    this.recordedCalls.push("getContextUsage");
+    return { totalTokens: 1, maxTokens: 2, categories: [] };
+  }
+
   async setThinkingOption() {
     this.recordedCalls.push("setThinkingOption");
   }
@@ -191,6 +197,7 @@ describe("wrapSessionProvider", () => {
 
     await wrapped.steerActiveTurn?.("follow-up", { expectedTurnId: "turn-1" });
     await wrapped.listCommands?.();
+    await wrapped.getContextUsage?.();
     await wrapped.setModel?.("sonnet");
     await wrapped.setThinkingOption?.("high");
     await wrapped.setFeature?.("feature-1", true);
@@ -206,6 +213,7 @@ describe("wrapSessionProvider", () => {
     expect(session.recordedCalls).toEqual([
       "steerActiveTurn",
       "listCommands",
+      "getContextUsage",
       "setModel",
       "setThinkingOption",
       "setFeature",

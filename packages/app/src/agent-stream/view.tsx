@@ -306,6 +306,7 @@ const AGENT_CAPABILITY_FLAG_KEYS: (keyof AgentCapabilityFlags)[] = [
   "supportsRewindConversation",
   "supportsRewindFiles",
   "supportsRewindBoth",
+  "supportsContextUsage",
 ];
 
 const EMPTY_STREAM_HEAD: StreamItem[] = [];

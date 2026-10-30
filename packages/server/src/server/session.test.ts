@@ -6045,3 +6045,160 @@ test("a failing direct source observes fire-and-forget file replies without unha
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("context usage returns the live breakdown for an agent that supports it", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const usage = {
+    totalTokens: 10,
+    maxTokens: 100,
+    categories: [{ name: "Messages", tokens: 10 }],
+  };
+  const getContextUsage = vi.fn(async () => usage);
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      getAgent: vi.fn(() => ({ session: { getContextUsage } })),
+    },
+  });
+
+  await session.handleMessage({
+    type: "agent.context_usage.get.request",
+    agentId: "agent-1",
+    requestId: "ctx-1",
+  });
+
+  expect(getContextUsage).toHaveBeenCalledTimes(1);
+  expect(messages).toEqual([
+    {
+      type: "agent.context_usage.get.response",
+      payload: {
+        requestId: "ctx-1",
+        agentId: "agent-1",
+        usage,
+        error: null,
+      },
+    },
+  ]);
+});
+
+test("context usage reports agents whose sessions lack the method", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      getAgent: vi.fn(() => ({ session: {} })),
+    },
+  });
+
+  await session.handleMessage({
+    type: "agent.context_usage.get.request",
+    agentId: "agent-1",
+    requestId: "ctx-unsupported",
+  });
+
+  expect(messages).toEqual([
+    {
+      type: "agent.context_usage.get.response",
+      payload: {
+        requestId: "ctx-unsupported",
+        agentId: "agent-1",
+        usage: null,
+        error: "Agent does not support context usage",
+      },
+    },
+  ]);
+});
+
+test("context usage reports an unknown agent without a breakdown", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      getAgent: vi.fn(() => undefined),
+    },
+  });
+
+  await session.handleMessage({
+    type: "agent.context_usage.get.request",
+    agentId: "missing-agent",
+    requestId: "ctx-missing",
+  });
+
+  expect(messages).toEqual([
+    {
+      type: "agent.context_usage.get.response",
+      payload: {
+        requestId: "ctx-missing",
+        agentId: "missing-agent",
+        usage: null,
+        error: "Agent not found: missing-agent",
+      },
+    },
+  ]);
+});
+
+test("context usage reports an archived agent without a breakdown", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({
+    messages,
+    agentStorage: {
+      get: vi.fn().mockResolvedValue({ archivedAt: "2026-01-01T00:00:00.000Z" }),
+    },
+  });
+
+  await session.handleMessage({
+    type: "agent.context_usage.get.request",
+    agentId: "agent-archived",
+    requestId: "ctx-archived",
+  });
+
+  expect(messages).toEqual([
+    {
+      type: "agent.context_usage.get.response",
+      payload: {
+        requestId: "ctx-archived",
+        agentId: "agent-archived",
+        usage: null,
+        error: "Agent is archived: agent-archived",
+      },
+    },
+  ]);
+});
+
+test("context usage returns the provider error when the query throws", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      getAgent: vi.fn(() => ({
+        session: {
+          getContextUsage: vi.fn(async () => {
+            throw new Error("context usage failed");
+          }),
+        },
+      })),
+    },
+  });
+
+  await session.handleMessage({
+    type: "agent.context_usage.get.request",
+    agentId: "agent-1",
+    requestId: "ctx-failed",
+  });
+
+  expect(messages).toEqual([
+    {
+      type: "agent.context_usage.get.response",
+      payload: {
+        requestId: "ctx-failed",
+        agentId: "agent-1",
+        usage: null,
+        error: "context usage failed",
+      },
+    },
+  ]);
+});

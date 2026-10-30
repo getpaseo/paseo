@@ -498,6 +498,7 @@ interface AgentSession {
   close(): Promise<void>;
   // Optional:
   listCommands?(): Promise<AgentSlashCommand[]>;
+  getContextUsage?(): Promise<AgentContextUsage>;
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
   setFeature?(featureId: string, value: unknown): Promise<void>;

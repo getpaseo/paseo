@@ -2814,6 +2814,8 @@ export class Session {
         return this.handleAgentTimelineListPromptsRequest(msg, source);
       case "agent.provider_subagents.list.request":
         return this.handleProviderSubagentListRequest(msg);
+      case "agent.context_usage.get.request":
+        return this.handleAgentContextUsageRequest(msg);
       case "agent.provider_subagents.timeline.get.request":
         return this.handleProviderSubagentTimelineRequest(msg, source);
       case "session.events.set_subscription.request": {
@@ -8089,6 +8091,50 @@ export class Session {
           requestId: msg.requestId,
           parentAgentId: msg.parentAgentId,
           subagents: [],
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  private async handleAgentContextUsageRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.context_usage.get.request" }>,
+  ): Promise<void> {
+    try {
+      const agent = await ensureUnarchivedAgentLoaded(msg.agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+      if (!agent.session?.getContextUsage) {
+        this.emit({
+          type: "agent.context_usage.get.response",
+          payload: {
+            requestId: msg.requestId,
+            agentId: msg.agentId,
+            usage: null,
+            error: "Agent does not support context usage",
+          },
+        });
+        return;
+      }
+      const usage = await agent.session.getContextUsage();
+      this.emit({
+        type: "agent.context_usage.get.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          usage,
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "agent.context_usage.get.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          usage: null,
           error: error instanceof Error ? error.message : String(error),
         },
       });

@@ -64,6 +64,7 @@ const CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: true,
   supportsRewindBoth: true,
+  supportsContextUsage: false,
 };
 
 const MODELS: AgentModelDefinition[] = [
