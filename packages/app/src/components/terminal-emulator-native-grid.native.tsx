@@ -50,9 +50,9 @@ import {
 import {
   TERMINAL_GESTURE_LONG_PRESS_MS,
   TERMINAL_GESTURE_TAP_TOLERANCE_PX,
-  advanceTerminalScrollGesture,
   classifyTerminalGestureIntent,
-  resolveTerminalGestureReleaseAction,
+  routeTerminalGestureRelease,
+  routeTerminalScrollGesture,
   type TerminalGestureIntent,
 } from "../terminal/native-renderer/terminal-selection-gesture";
 import { resolveNativeTerminalMountAction } from "../terminal/native-renderer/terminal-mount-policy";
@@ -95,6 +95,7 @@ interface NativeTerminalPanState {
   didNavigate: boolean;
   movedBeyondTapTolerance: boolean;
   intent: TerminalGestureIntent | null;
+  origin: { x: number; y: number };
 }
 
 interface NativeTerminalSelectionPress {
@@ -214,6 +215,7 @@ function NativeTerminalEmulator({
     didNavigate: false,
     movedBeyondTapTolerance: false,
     intent: null,
+    origin: { x: 0, y: 0 },
   });
   const inputModeTrackerRef = useRef(new TerminalInputModeTracker());
   const lastInputModeStateRef = useRef<TerminalInputModeState>({
@@ -775,31 +777,33 @@ function NativeTerminalEmulator({
   );
 
   const handlePanResponderScroll = useCallback(
-    (currentDy: number) => {
-      const cellHeight = metricsRef.current?.cellHeight;
-      if (!cellHeight || cellHeight <= 0) {
+    (gesture: PanResponderGestureState) => {
+      const metrics = metricsRef.current;
+      const viewport = resolveSelectionViewport();
+      if (!metrics || metrics.cellHeight <= 0 || !viewport) {
         return;
       }
       const panState = panStateRef.current;
-      const update = advanceTerminalScrollGesture({
+      const { state, route } = routeTerminalScrollGesture({
         state: panState,
-        currentDy,
-        cellHeight,
+        currentDy: gesture.dy,
+        point: { x: panState.origin.x + gesture.dx, y: panState.origin.y + gesture.dy },
+        metrics,
+        viewport,
+        inputMode: inputModeTrackerRef.current,
       });
-      panState.lastDy = update.state.lastDy;
-      panState.rowRemainder = update.state.rowRemainder;
-      panState.didScroll = update.state.didScroll;
-      const { rowDelta } = update;
-      if (rowDelta === 0) {
+      panState.lastDy = state.lastDy;
+      panState.rowRemainder = state.rowRemainder;
+      panState.didScroll = state.didScroll;
+      if (route.kind === "scrollback") {
+        applyScroll(route.direction, route.rows);
         return;
       }
-      if (rowDelta > 0) {
-        applyScroll("up", rowDelta);
-        return;
+      if (route.kind === "input") {
+        callbacksRef.current.onInput?.(route.data);
       }
-      applyScroll("down", Math.abs(rowDelta));
     },
-    [applyScroll],
+    [applyScroll, resolveSelectionViewport],
   );
 
   const panResponder = useMemo(
@@ -828,6 +832,10 @@ function NativeTerminalEmulator({
           return intent === "scroll" || intent === "select";
         },
         onPanResponderGrant: (event) => {
+          const point = {
+            x: event.nativeEvent.locationX,
+            y: event.nativeEvent.locationY,
+          };
           panStateRef.current = {
             lastDy: 0,
             rowRemainder: 0,
@@ -835,10 +843,7 @@ function NativeTerminalEmulator({
             didNavigate: false,
             movedBeyondTapTolerance: false,
             intent: null,
-          };
-          const point = {
-            x: event.nativeEvent.locationX,
-            y: event.nativeEvent.locationY,
+            origin: point,
           };
           const pressStatus = selectionRangeRef.current ? "selecting" : "pressing";
           selectionPressRef.current = {
@@ -875,7 +880,7 @@ function NativeTerminalEmulator({
           }
 
           if (panState.intent === "scroll") {
-            handlePanResponderScroll(gesture.dy);
+            handlePanResponderScroll(gesture);
             return;
           }
           if (panState.didNavigate) {
@@ -903,7 +908,7 @@ function NativeTerminalEmulator({
 
             if (intent === "scroll") {
               selectionPressRef.current = null;
-              handlePanResponderScroll(gesture.dy);
+              handlePanResponderScroll(gesture);
               return;
             }
 
@@ -932,8 +937,9 @@ function NativeTerminalEmulator({
             didNavigate: false,
             movedBeyondTapTolerance: false,
             intent: null,
+            origin: { x: 0, y: 0 },
           };
-          const releaseAction = resolveTerminalGestureReleaseAction({
+          const { action: releaseAction, mouseInput } = routeTerminalGestureRelease({
             status: selectionPress?.status ?? "idle",
             startedWithSelection: selectionPress?.startedWithSelection,
             didScroll,
@@ -942,10 +948,17 @@ function NativeTerminalEmulator({
             pressDurationMs: selectionPress ? Date.now() - selectionPress.startedAt : 0,
             longPressMs: TERMINAL_GESTURE_LONG_PRESS_MS,
             scrollMode: terminalScreenRef.current?.scroll.mode ?? "following",
+            point: { x: selectionPress?.startX ?? 0, y: selectionPress?.startY ?? 0 },
+            metrics: metricsRef.current,
+            viewport: resolveSelectionViewport(),
+            inputMode: inputModeTrackerRef.current,
           });
           if (releaseAction === "select" && selectionPress) {
             beginSelectionAtPoint({ x: selectionPress.startX, y: selectionPress.startY });
             return;
+          }
+          if (mouseInput !== null) {
+            callbacksRef.current.onInput?.(mouseInput);
           }
           if (releaseAction === "focus" || releaseAction === "clear") {
             focusTerminalFromTap();
@@ -961,6 +974,7 @@ function NativeTerminalEmulator({
             didNavigate: false,
             movedBeyondTapTolerance: false,
             intent: null,
+            origin: { x: 0, y: 0 },
           };
         },
       }),
@@ -969,6 +983,7 @@ function NativeTerminalEmulator({
       clearSelectionLongPressTimeout,
       focusTerminalFromTap,
       handlePanResponderScroll,
+      resolveSelectionViewport,
       updateSelectionAtPoint,
     ],
   );

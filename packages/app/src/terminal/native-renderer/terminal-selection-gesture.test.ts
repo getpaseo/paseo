@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 
 import {
   TERMINAL_GESTURE_LONG_PRESS_MS,
@@ -7,7 +8,63 @@ import {
   advanceTerminalScrollGesture,
   classifyTerminalGestureIntent,
   resolveTerminalGestureReleaseAction,
+  routeTerminalGestureRelease,
+  routeTerminalScrollGesture,
+  type TerminalGestureReleaseRouteInput,
+  type TerminalScrollGestureRoute,
 } from "./terminal-selection-gesture";
+
+const PI_FULLSCREEN_MOUSE_ENABLE =
+  "\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1004h\x1b[?1006h";
+const PI_FULLSCREEN_MOUSE_DISABLE = "\x1b[?1006l\x1b[?1004l\x1b[?1003l\x1b[?1002l\x1b[?1000l";
+
+function trackerFromOutput(output: string): TerminalInputModeTracker {
+  const tracker = new TerminalInputModeTracker();
+  tracker.feed(output);
+  return tracker;
+}
+
+function dragRoutes(input: {
+  inputMode: TerminalInputModeTracker;
+  dys: number[];
+  point?: { x: number; y: number };
+}): TerminalScrollGestureRoute[] {
+  let state = { lastDy: 0, rowRemainder: 0, didScroll: false };
+  const routes: TerminalScrollGestureRoute[] = [];
+  for (const currentDy of input.dys) {
+    const update = routeTerminalScrollGesture({
+      state,
+      currentDy,
+      point: input.point ?? { x: 25, y: 50 },
+      metrics: { cellWidth: 8, cellHeight: 14 },
+      viewport: { rows: 30, cols: 40 },
+      inputMode: input.inputMode,
+    });
+    state = update.state;
+    routes.push(update.route);
+  }
+  return routes;
+}
+
+function tapRelease(
+  overrides: Partial<TerminalGestureReleaseRouteInput> = {},
+): ReturnType<typeof routeTerminalGestureRelease> {
+  return routeTerminalGestureRelease({
+    status: "pressing",
+    startedWithSelection: false,
+    didScroll: false,
+    didNavigate: false,
+    movedBeyondTapTolerance: false,
+    pressDurationMs: 80,
+    longPressMs: TERMINAL_GESTURE_LONG_PRESS_MS,
+    scrollMode: "following",
+    point: { x: 25, y: 50 },
+    metrics: { cellWidth: 8, cellHeight: 14 },
+    viewport: { rows: 30, cols: 40 },
+    inputMode: trackerFromOutput(PI_FULLSCREEN_MOUSE_ENABLE),
+    ...overrides,
+  });
+}
 
 describe("native terminal gesture policy", () => {
   describe("advanceTerminalScrollGesture", () => {
@@ -349,6 +406,145 @@ describe("native terminal gesture policy", () => {
           scrollMode: "following",
         }),
       ).toEqual("none");
+    });
+  });
+  describe("routeTerminalScrollGesture", () => {
+    it("sends SGR wheel reports at the touched cell while a fullscreen app tracks the mouse", () => {
+      const inputMode = trackerFromOutput(PI_FULLSCREEN_MOUSE_ENABLE);
+
+      expect(dragRoutes({ inputMode, dys: [13, 28, 42, 14] })).toEqual([
+        { kind: "none" },
+        { kind: "input", data: "\x1b[<64;4;4M\x1b[<64;4;4M" },
+        { kind: "input", data: "\x1b[<64;4;4M" },
+        { kind: "input", data: "\x1b[<65;4;4M\x1b[<65;4;4M" },
+      ]);
+    });
+
+    it("keeps ordinary shell drags in local scrollback", () => {
+      const inputMode = trackerFromOutput("\x1b[?2004h$ ls\r\n");
+
+      expect(dragRoutes({ inputMode, dys: [13, 28, 14] })).toEqual([
+        { kind: "none" },
+        { kind: "scrollback", direction: "up", rows: 2 },
+        { kind: "scrollback", direction: "down", rows: 1 },
+      ]);
+    });
+
+    it("returns drags to local scrollback after the app disables mouse tracking", () => {
+      const inputMode = trackerFromOutput(PI_FULLSCREEN_MOUSE_ENABLE);
+      inputMode.feed(PI_FULLSCREEN_MOUSE_DISABLE);
+
+      expect(dragRoutes({ inputMode, dys: [28] })).toEqual([
+        { kind: "scrollback", direction: "up", rows: 2 },
+      ]);
+    });
+
+    it("keeps forwarding wheel input after a reconnect replays the daemon preamble", () => {
+      const daemon = trackerFromOutput(PI_FULLSCREEN_MOUSE_ENABLE);
+      const client = trackerFromOutput(PI_FULLSCREEN_MOUSE_ENABLE);
+      client.reset();
+      client.feed(daemon.getPreamble());
+
+      expect(dragRoutes({ inputMode: client, dys: [14] })).toEqual([
+        { kind: "input", data: "\x1b[<64;4;4M" },
+      ]);
+    });
+
+    it("keeps pixel reports integral at fractional cell boundaries", () => {
+      const inputMode = trackerFromOutput("\x1b[?1003h\x1b[?1016h");
+      const { route } = routeTerminalScrollGesture({
+        state: { lastDy: 0, rowRemainder: 0, didScroll: false },
+        currentDy: 15,
+        point: { x: 999, y: 999 },
+        metrics: { cellWidth: 8.25, cellHeight: 14.25 },
+        viewport: { rows: 3, cols: 3 },
+        inputMode,
+      });
+      expect(route).toEqual({ kind: "input", data: "\x1b[<64;25;43M" });
+    });
+
+    it("clamps wheel reports to the visible grid", () => {
+      const inputMode = trackerFromOutput(PI_FULLSCREEN_MOUSE_ENABLE);
+
+      expect(dragRoutes({ inputMode, dys: [-14], point: { x: 999, y: -5 } })).toEqual([
+        { kind: "input", data: "\x1b[<65;40;1M" },
+      ]);
+    });
+  });
+
+  describe("routeTerminalGestureRelease", () => {
+    it("clicks the tapped cell and still focuses while a fullscreen app tracks the mouse", () => {
+      expect(tapRelease()).toEqual({
+        action: "focus",
+        mouseInput: "\x1b[<0;4;4M\x1b[<0;4;4m",
+      });
+    });
+
+    it("only focuses on an ordinary shell tap", () => {
+      expect(tapRelease({ inputMode: trackerFromOutput("\x1b[?2004h$ ls\r\n") })).toEqual({
+        action: "focus",
+        mouseInput: null,
+      });
+    });
+
+    it("sends only the press for X10 tracking", () => {
+      expect(tapRelease({ inputMode: trackerFromOutput("\x1b[?9h") })).toEqual({
+        action: "focus",
+        mouseInput: "\x1b[M $$",
+      });
+    });
+
+    it("keeps a long press as local selection without clicking", () => {
+      expect(tapRelease({ pressDurationMs: TERMINAL_GESTURE_LONG_PRESS_MS + 50 })).toEqual({
+        action: "select",
+        mouseInput: null,
+      });
+    });
+
+    it.each([
+      ["moved beyond tap tolerance", { movedBeyondTapTolerance: true }],
+      ["scrolled", { didScroll: true }],
+    ])("never clicks after a drag that %s", (_name, overrides) => {
+      expect(tapRelease(overrides)).toEqual({ action: "none", mouseInput: null });
+    });
+
+    it("clears an existing selection without clicking", () => {
+      expect(tapRelease({ status: "selecting", startedWithSelection: true })).toEqual({
+        action: "clear",
+        mouseInput: null,
+      });
+    });
+
+    it("does not send live mouse input from a scrolled-back viewport", () => {
+      expect(tapRelease({ scrollMode: "scrolled" })).toEqual({
+        action: "focus",
+        mouseInput: null,
+      });
+    });
+
+    it("does not click before the grid is measured", () => {
+      expect(tapRelease({ metrics: null, viewport: null })).toEqual({
+        action: "focus",
+        mouseInput: null,
+      });
+    });
+
+    it("clamps clicks to the visible grid", () => {
+      expect(tapRelease({ point: { x: 999, y: -5 } })).toEqual({
+        action: "focus",
+        mouseInput: "\x1b[<0;40;1M\x1b[<0;40;1m",
+      });
+    });
+
+    it("keeps pixel clicks integral at fractional cell boundaries", () => {
+      expect(
+        tapRelease({
+          inputMode: trackerFromOutput("\x1b[?1000h\x1b[?1016h"),
+          point: { x: 999, y: 999 },
+          metrics: { cellWidth: 8.25, cellHeight: 14.25 },
+          viewport: { rows: 3, cols: 3 },
+        }),
+      ).toEqual({ action: "focus", mouseInput: "\x1b[<0;25;43M\x1b[<0;25;43m" });
     });
   });
 });
