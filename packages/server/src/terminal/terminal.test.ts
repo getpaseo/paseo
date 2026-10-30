@@ -1,4 +1,5 @@
 import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
+import { createTerminalSerializer } from "./terminal-serializer.js";
 import { readTerminalState } from "./test-utils/terminal-state.js";
 import type { TerminalState } from "@getpaseo/protocol/messages";
 import { describe, it, expect, afterEach, vi } from "vitest";
@@ -1563,121 +1564,28 @@ it.runIf(isPlatform("linux", "darwin"))(
 it.each([false, true])(
   "serializes styled Unicode, cursor presentation and modes directly (alternate=%s)",
   async (alternate) => {
-    const gate = mkdtempSync(join(tmpdir(), "terminal-cursor-cut-"));
-    temporaryDirs.push(gate);
-    const releaseContent = join(gate, "content");
-    const releaseCursor = join(gate, "position");
-    const cursorWritten = join(gate, "cursor-written");
+    // Exercise the serializer's input model directly. ConPTY renders program
+    // output: it consumes input modes and need not publish a hidden cursor move.
+    const terminal = new xterm.Terminal({
+      rows: 4,
+      cols: 16,
+      scrollback: 10000,
+      allowProposedApi: true,
+    });
+    const serialize = createTerminalSerializer(terminal);
+    const inputModes = new TerminalInputModeTracker();
     const content =
       Array.from({ length: 8 }, (_, i) => "normal-" + i + "\r\n").join("") +
       (alternate ? "\x1b[?1049h\x1b[H" : "") +
       "\x1b[38;2;255;128;64;4m界é🙂\x1b[0m\r\nVIEW-READY\x1b[?1h\x1b[?2004h\x1b[>1u\x1b[?9001h\x1b[?7l\x1b[?1000h\x1b[5 q\x1b[?25l";
-    const session = trackSession(
-      await createTerminal({
-        cwd: realpathSync(tmpdir()),
-        workspaceId: "serialize",
-        rows: 4,
-        cols: 16,
-        command: process.execPath,
-        args: [
-          "-e",
-          `const fs=require("node:fs");let started=false,positioned=false;
-          function emitReleased(){
-            if(!started&&fs.existsSync(${JSON.stringify(releaseContent)})){
-              started=true;process.stdout.write(${JSON.stringify(content)});
-            }
-            if(!positioned&&fs.existsSync(${JSON.stringify(releaseCursor)})){
-              positioned=true;watcher.close();process.stdout.write("\\x1b[2;7H",()=>fs.writeFileSync(${JSON.stringify(cursorWritten)},"written"));
-            }
-          }
-          const watcher=fs.watch(${JSON.stringify(gate)},emitReleased);
-          emitReleased();setInterval(()=>{},1000)`,
-        ],
-      }),
-    );
-    // Subscribe before releasing program output so failure diagnostics contain
-    // the actual PTY/ConPTY wire, rather than assuming it preserves program bytes.
-    const received: string[] = [];
-    const unsubscribe = session.subscribe((message) => {
-      if (message.type === "output") received.push(message.data);
-    });
-    writeFileSync(releaseContent, "content");
-    const deadline = Date.now() + 5000;
-    while (!session.captureLines().lines.some((line) => line.includes("VIEW-READY"))) {
-      if (Date.now() > deadline) throw new Error("source content did not parse");
-      await delay(20);
-    }
-    // VIEW-READY precedes the last cursor update; its visible text is not a capture barrier.
-    writeFileSync(releaseCursor, "position");
-    try {
-      await waitForState(session, (state) => state.cursor.row === 1 && state.cursor.col === 6);
-    } catch (error) {
-      async function inspect(data: string) {
-        const terminal = new xterm.Terminal({
-          rows: 4,
-          cols: 16,
-          scrollback: 10000,
-          allowProposedApi: true,
-        });
-        const presentation: number[][] = [];
-        const visibility: Array<{ final: string; params: number[] }> = [];
-        terminal.parser.registerCsiHandler({ intermediates: " ", final: "q" }, (params) => {
-          presentation.push(params as number[]);
-          return false;
-        });
-        for (const final of ["h", "l"])
-          terminal.parser.registerCsiHandler({ prefix: "?", final }, (params) => {
-            visibility.push({ final, params: params as number[] });
-            return false;
-          });
-        const modes = new TerminalInputModeTracker();
-        modes.feed(data);
-        try {
-          await new Promise<void>((resolve) => terminal.write(data, resolve));
-          const buffer = terminal.buffer.active;
-          return {
-            buffer: buffer.type,
-            cursor: { row: buffer.cursorY, col: buffer.cursorX },
-            lines: Array.from({ length: buffer.length }, (_, i) =>
-              buffer.getLine(i)!.translateToString(true),
-            ),
-            modes: terminal.modes,
-            inputModes: modes.getState(),
-            presentation,
-            visibility,
-          };
-        } finally {
-          terminal.dispose();
-        }
-      }
-      const replay = session.serializeReplay();
-      const ansi = new TextDecoder().decode(replay.data);
-      throw new Error(
-        "Terminal fidelity capture failed: " +
-          JSON.stringify({
-            platform: process.platform,
-            alternate,
-            error: String(error),
-            cursorWriteCompleted: existsSync(cursorWritten),
-            received,
-            raw: await inspect(received.join("")),
-            replay: {
-              metadata: replay.metadata,
-              ansi,
-              parsed: await inspect(ansi + replay.metadata.replayPreamble),
-            },
-            capture: session.captureLines(),
-          }),
-        { cause: error },
-      );
-    } finally {
-      unsubscribe();
-    }
-    const replay = session.serializeReplay();
-    const ansi = new TextDecoder().decode(replay.data);
+    const output = content + "\x1b[2;7H";
+    await new Promise<void>((resolve) => terminal.write(output, resolve));
+    inputModes.feed(output);
+    const data = serialize();
+    const ansi = new TextDecoder().decode(data);
     expect(ansi).toContain("\x1b[?25l\x1b[5 q");
     expect(ansi).not.toContain("NaN");
-    expect(replay.metadata.retainedHistoryLines).toBeGreaterThan(0);
+    expect(terminal.buffer.normal.baseY).toBeGreaterThan(0);
     const receiver = new xterm.Terminal({
       rows: 4,
       cols: 16,
@@ -1685,21 +1593,20 @@ it.each([false, true])(
       allowProposedApi: true,
     });
     try {
-      await new Promise<void>((resolve) => receiver.write(replay.data, resolve));
-      await new Promise<void>((resolve) => receiver.write(replay.metadata.replayPreamble, resolve));
+      await new Promise<void>((resolve) => receiver.write(data, resolve));
+      await new Promise<void>((resolve) => receiver.write(inputModes.getPreamble(), resolve));
       expect(receiver.buffer.active.type).toBe(alternate ? "alternate" : "normal");
       const lines = Array.from({ length: receiver.buffer.active.length }, (_, i) =>
         receiver.buffer.active.getLine(i)!.translateToString(true),
       );
       expect(lines.join("\n")).toContain("界é🙂");
       expect(lines.join("\n")).toContain("VIEW-READY");
-      const colored = receiver.buffer.active.getLine(receiver.buffer.active.baseY)!.getCell(0)!;
-      if (alternate) {
-        expect(colored.getChars()).toBe("界");
-        expect(colored.getFgColor()).toBe(0xff8040);
-        expect(colored.isUnderline()).not.toBe(0);
-        expect(receiver.buffer.normal.getLine(0)!.translateToString(true)).toBe("normal-0");
-      }
+      const coloredIndex = lines.findIndex((line) => line.includes("界"));
+      const colored = receiver.buffer.active.getLine(coloredIndex)!.getCell(0)!;
+      expect(colored.getChars()).toBe("界");
+      expect(colored.getFgColor()).toBe(0xff8040);
+      expect(colored.isUnderline()).not.toBe(0);
+      expect(receiver.buffer.normal.getLine(0)!.translateToString(true)).toBe("normal-0");
       expect({ row: receiver.buffer.active.cursorY, col: receiver.buffer.active.cursorX }).toEqual({
         row: 1,
         col: 6,
@@ -1711,7 +1618,7 @@ it.each([false, true])(
         mouseTrackingMode: "vt200",
       });
       const modes = new TerminalInputModeTracker();
-      modes.feed(ansi + replay.metadata.replayPreamble);
+      modes.feed(ansi + inputModes.getPreamble());
       expect(modes.getState()).toMatchObject({
         kittyKeyboardFlags: 1,
         win32InputMode: true,
@@ -1720,6 +1627,7 @@ it.each([false, true])(
       });
     } finally {
       receiver.dispose();
+      terminal.dispose();
     }
   },
 );
@@ -1814,3 +1722,147 @@ it("captures input modes at the same committed cut as serialized bytes", async (
     unsubscribe();
   }
 });
+
+it.each(
+  [false, true].flatMap((alternate) => [
+    {
+      alternate,
+      pendingWrap: false,
+      position: "\x1b[3;16H",
+      cursor: { row: 2, col: 15 },
+      after: { row: 2, col: 16 },
+    },
+    {
+      alternate,
+      pendingWrap: true,
+      position: "",
+      cursor: { row: 0, col: 16 },
+      after: { row: 1, col: 1 },
+    },
+  ]),
+)(
+  "replays a full-width row without losing cursor state ($alternate, pendingWrap=$pendingWrap)",
+  async (input) => {
+    const source = new xterm.Terminal({
+      rows: 4,
+      cols: 16,
+      scrollback: 10000,
+      allowProposedApi: true,
+    });
+    const serialize = createTerminalSerializer(source);
+    const receiver = new xterm.Terminal({
+      rows: 4,
+      cols: 16,
+      scrollback: 10000,
+      allowProposedApi: true,
+    });
+    try {
+      await new Promise<void>((resolve) =>
+        source.write(
+          (input.alternate ? "\x1b[?1049h" : "") + "x".repeat(16) + input.position,
+          resolve,
+        ),
+      );
+      expect({ row: source.buffer.active.cursorY, col: source.buffer.active.cursorX }).toEqual(
+        input.cursor,
+      );
+      await new Promise<void>((resolve) => receiver.write(serialize(), resolve));
+      expect({ row: receiver.buffer.active.cursorY, col: receiver.buffer.active.cursorX }).toEqual(
+        input.cursor,
+      );
+      await new Promise<void>((resolve) => receiver.write("Z", resolve));
+      expect({ row: receiver.buffer.active.cursorY, col: receiver.buffer.active.cursorX }).toEqual(
+        input.after,
+      );
+    } finally {
+      receiver.dispose();
+      source.dispose();
+    }
+  },
+);
+
+it.each([false, true])(
+  "replays the observed PTY projection including startup modes (alternate=%s)",
+  async (alternate) => {
+    const gate = mkdtempSync(join(tmpdir(), "terminal-projection-"));
+    temporaryDirs.push(gate);
+    const release = join(gate, "output");
+    const content =
+      Array.from({ length: 8 }, (_, i) => `normal-${i}\r\n`).join("") +
+      (alternate ? "\x1b[?1049h\x1b[H" : "") +
+      "\x1b[38;2;255;128;64;4m界é🙂\x1b[0m\r\nVIEW-READY\x1b[?1h\x1b[?2004h\x1b[>1u\x1b[?9001h\x1b[?7l\x1b[?1000h\x1b[5 q\x1b[?25l\x1b[2;7H";
+    const session = trackSession(
+      await createTerminal({
+        cwd: realpathSync(tmpdir()),
+        workspaceId: "projection",
+        rows: 4,
+        cols: 16,
+        command: process.execPath,
+        args: [
+          "-e",
+          `const fs=require("node:fs");let sent=false;
+      function emit(){if(!sent&&fs.existsSync(${JSON.stringify(release)})){sent=true;watcher.close();process.stdout.write(${JSON.stringify(content)});}}
+      const watcher=fs.watch(${JSON.stringify(gate)},emit);emit();setInterval(()=>{},1000);`,
+        ],
+      }),
+    );
+    const bootstrap = session.serializeReplay();
+    const output: string[] = [];
+    const unsubscribe = session.subscribe((message) => {
+      if (message.type === "output") output.push(message.data);
+    });
+    const reference = new xterm.Terminal({
+      rows: 4,
+      cols: 16,
+      scrollback: 10000,
+      allowProposedApi: true,
+    });
+    const receiver = new xterm.Terminal({
+      rows: 4,
+      cols: 16,
+      scrollback: 10000,
+      allowProposedApi: true,
+    });
+    try {
+      await new Promise<void>((resolve) => reference.write(bootstrap.data, resolve));
+      await new Promise<void>((resolve) =>
+        reference.write(bootstrap.metadata.replayPreamble, resolve),
+      );
+      writeFileSync(release, "release");
+      const deadline = Date.now() + 5000;
+      while (!session.captureLines().lines.some((line) => line.includes("VIEW-READY"))) {
+        if (Date.now() > deadline) throw new Error("PTY did not render fixture output");
+        await delay(20);
+      }
+      // Bootstrap and these committed output events cover precisely this source cut.
+      // Program bytes are not the oracle: ConPTY consumes modes and renders cells.
+      const replay = session.serializeReplay();
+      const committed = output.join("");
+      await new Promise<void>((resolve) => reference.write(committed, resolve));
+      await new Promise<void>((resolve) => receiver.write(replay.data, resolve));
+      await new Promise<void>((resolve) => receiver.write(replay.metadata.replayPreamble, resolve));
+      const text = (terminal: typeof receiver) =>
+        Array.from({ length: terminal.buffer.active.length }, (_, i) =>
+          terminal.buffer.active.getLine(i)!.translateToString(true).trimEnd(),
+        );
+      expect(text(receiver)).toEqual(text(reference));
+      expect(text(receiver).join("\n")).toContain("界é🙂");
+      expect(text(receiver).join("\n")).toContain("VIEW-READY");
+      expect(receiver.buffer.active.type).toBe(alternate ? "alternate" : "normal");
+      expect({ row: receiver.buffer.active.cursorY, col: receiver.buffer.active.cursorX }).toEqual({
+        row: reference.buffer.active.cursorY,
+        col: reference.buffer.active.cursorX,
+      });
+      expect(receiver.modes).toEqual(reference.modes);
+      const expectedModes = new TerminalInputModeTracker();
+      expectedModes.feed(bootstrap.metadata.replayPreamble + committed);
+      const actualModes = new TerminalInputModeTracker();
+      actualModes.feed(new TextDecoder().decode(replay.data) + replay.metadata.replayPreamble);
+      expect(actualModes.getState()).toEqual(expectedModes.getState());
+    } finally {
+      unsubscribe();
+      receiver.dispose();
+      reference.dispose();
+    }
+  },
+);

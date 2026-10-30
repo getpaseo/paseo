@@ -25,7 +25,7 @@ import {
   findExecutable,
   findExecutableWithoutProbing,
 } from "../executable-resolution/executable-resolution.js";
-import { SerializeAddon } from "@xterm/addon-serialize";
+import { createTerminalSerializer } from "./terminal-serializer.js";
 import {
   captureTerminalLines,
   type CaptureTerminalLinesOptions,
@@ -534,27 +534,6 @@ function prependPathEntry(currentPath: string, entry: string): string {
   return [entry, ...entries].join(delimiter);
 }
 
-// Stable addon 0.14 serializes buffer/modes but omits DECSCUSR and cursor visibility.
-// xterm 6 keeps the program-selected presentation in coreService, not public options.
-function serializeCursorPresentation(terminal: TerminalType): string {
-  const core = (
-    terminal as unknown as {
-      _core: {
-        coreService: {
-          isCursorHidden: boolean;
-          decPrivateModes: { cursorStyle?: "block" | "underline" | "bar"; cursorBlink?: boolean };
-        };
-      };
-    }
-  )._core.coreService;
-  const visibility = `\x1b[?25${core.isCursorHidden ? "l" : "h"}`;
-  const cursorStyle = core.decPrivateModes.cursorStyle;
-  // Unset presentation belongs to each renderer's configured defaults.
-  if (cursorStyle === undefined) return visibility;
-  const style = { block: 2, underline: 4, bar: 6 }[cursorStyle];
-  return `${visibility}\x1b[${style - (core.decPrivateModes.cursorBlink ? 1 : 0)} q`;
-}
-
 function normalizeProcessToken(token: string): string {
   if (token.length === 0) {
     return token;
@@ -825,8 +804,7 @@ export async function createTerminal(
     allowProposedApi: true,
   });
 
-  const serializer = new SerializeAddon();
-  terminal.loadAddon(serializer);
+  const serialize = createTerminalSerializer(terminal);
 
   ensureNodePtySpawnHelperExecutableForCurrentPlatform();
 
@@ -1143,10 +1121,7 @@ export async function createTerminal(
       revision: stateRevision,
       replayPreamble: getReplayPreamble(),
     };
-    const ansi =
-      serializer.serialize({ scrollback: replayOptions?.scrollbackLines }) +
-      serializeCursorPresentation(terminal);
-    return { metadata, data: Buffer.from(ansi, "utf8") };
+    return { metadata, data: serialize(replayOptions) };
   }
 
   function getSize(): { rows: number; cols: number } {
