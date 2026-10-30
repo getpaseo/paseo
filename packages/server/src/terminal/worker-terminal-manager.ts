@@ -885,8 +885,6 @@ export function createWorkerTerminalManager(
         { type: "replayTerminal", terminalId: id, options },
         sink,
       )) as TerminalReplayMetadata | null;
-      const record = recordsById.get(id);
-      if (record && metadata) record.replayPreamble = metadata.replayPreamble;
       return metadata;
     },
 

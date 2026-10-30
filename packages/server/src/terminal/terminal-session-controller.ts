@@ -34,6 +34,7 @@ import {
   resolveTerminalSubscriptionSnapshotMode,
   type TerminalRestoreOptions,
 } from "./terminal-restore.js";
+import type { TerminalReplayMetadata } from "./terminal-replay.js";
 import type { TerminalSession } from "./terminal.js";
 import type { TerminalManager, TerminalsChangedEvent } from "./terminal-manager.js";
 import { applyTerminalSize } from "./terminal-size-ownership.js";
@@ -76,10 +77,9 @@ interface ActiveTerminalStream {
   outputCoalescer: TerminalOutputCoalescer;
 }
 
-interface SnapshotSendResult {
-  shouldContinue: boolean;
-  replayRevision?: number;
-}
+type SnapshotSendResult =
+  | { shouldContinue: false }
+  | { shouldContinue: true; replay: TerminalReplayMetadata | null };
 
 export interface TerminalSessionControllerOptions {
   terminalManager: TerminalManager | null;
@@ -1041,7 +1041,7 @@ export class TerminalSessionController {
         return;
       }
       activeStream.snapshotOutput = undefined;
-      this.replayTerminalOutputAfterSnapshot(activeStream, terminal, snapshotResult.replayRevision);
+      this.replayTerminalOutputAfterSnapshot(activeStream, terminal, snapshotResult.replay);
       activeStream.needsSnapshot = false;
       activeStream.outputBytesSinceSnapshot = 0;
     } catch (error) {
@@ -1090,7 +1090,7 @@ export class TerminalSessionController {
         ? { scrollbackLines: restore.scrollbackLines }
         : resolveTerminalRestoreSnapshotOptions(restore);
     if (snapshotOptions === null) {
-      return { shouldContinue: true };
+      return { shouldContinue: true, replay: null };
     }
 
     const deliver = createTerminalRestoreDelivery({
@@ -1118,15 +1118,17 @@ export class TerminalSessionController {
     // The restore frame went out-of-band; keep the replay that follows on the
     // coalescer's trailing path so it doesn't flush back-to-back with it.
     activeStream.outputCoalescer.markFlushed();
-    return { shouldContinue: true, replayRevision: snapshot.revision };
+    return { shouldContinue: true, replay: snapshot };
   }
 
   private replayTerminalOutputAfterSnapshot(
     activeStream: ActiveTerminalStream,
     terminal: TerminalSession,
-    replayRevision: number | undefined,
+    replay: TerminalReplayMetadata | null,
   ): void {
-    const replayPreamble = terminal.getReplayPreamble();
+    // A captured viewer must start from its cut, then apply the buffered mode changes.
+    // Live-only subscriptions have no capture and start from the current shared modes.
+    const replayPreamble = replay === null ? terminal.getReplayPreamble() : replay.replayPreamble;
     if (replayPreamble.length > 0) {
       activeStream.outputCoalescer.handle(replayPreamble);
     }
@@ -1137,11 +1139,7 @@ export class TerminalSessionController {
       activeStream.bufferedOutputs.length,
     );
     for (const output of bufferedOutputs) {
-      if (
-        replayRevision !== undefined &&
-        output.revision !== undefined &&
-        output.revision <= replayRevision
-      ) {
+      if (replay !== null && output.revision !== undefined && output.revision <= replay.revision) {
         continue;
       }
       activeStream.outputCoalescer.handle(output.data);

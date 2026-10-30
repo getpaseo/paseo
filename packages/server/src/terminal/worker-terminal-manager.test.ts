@@ -1,3 +1,6 @@
+import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
+import { encodeTerminalKeyInput } from "@getpaseo/protocol/terminal-key-input";
+import type { SubscribeTerminalRequest } from "@getpaseo/protocol/messages";
 import { TerminalSessionController } from "./terminal-session-controller.js";
 import { SessionDelivery } from "../server/session/owned-subscriptions/index.js";
 import {
@@ -385,27 +388,36 @@ it.each(["current", "draining"] as const)(
   "keeps the peer usable when the %s worker dies",
   async (target) => {
     const paseoHome = createTemporaryHome();
-    await launchDetachedWorkerWithTerminal(paseoHome);
-    const old = await launchDetachedWorkerWithTerminal(paseoHome);
+    const seeds = [
+      await launchDetachedWorkerWithTerminal(paseoHome),
+      await launchDetachedWorkerWithTerminal(paseoHome),
+    ];
+    // Exercise an existing seed adopted as current; launch age does not imply draining ownership.
+    const [firstAdopted] = await workerRecords(paseoHome);
+    const seed = seeds.find((candidate) => candidate.workerPid === firstAdopted!.pid)!;
     manager = await startRealWorkerManager({ paseoHome });
     const added = await manager.createTerminal({
       workspaceId: "ws-peer",
-      cwd: old.cwd,
+      cwd: seed.cwd,
       ...nodeTerminalCommand("setInterval(() => {}, 1000)"),
     });
-    const current = (await workerRecords(paseoHome)).find(
-      (record) => record.pid !== old.workerPid,
+    const records = await workerRecords(paseoHome);
+    const current = records.find((record) =>
+      record.terminals.some((terminal) => terminal.id === added.id),
     )!;
-    const deadId = target === "current" ? added.id : old.terminalId;
-    const healthyId = target === "current" ? old.terminalId : added.id;
+    const draining = records.find((record) => record.pid !== current.pid)!;
+    const drainingId = draining.terminals[0]!.id;
+    const deadId = target === "current" ? added.id : drainingId;
+    const healthyId = target === "current" ? drainingId : added.id;
     const healthy = manager.getTerminal(healthyId);
-    process.kill(target === "current" ? current.pid : old.workerPid, "SIGKILL");
+    expect(healthy).toBeDefined();
+    process.kill(target === "current" ? current.pid : draining.pid, "SIGKILL");
     await waitForCondition(() => !manager!.getTerminal(deadId), 10000);
     expect(manager.getTerminal(healthyId)).toBe(healthy);
     expect(await readReplay(manager, healthyId)).not.toBeNull();
     await manager.createTerminal({
       workspaceId: "ws-peer",
-      cwd: old.cwd,
+      cwd: seed.cwd,
       ...nodeTerminalCommand("setInterval(() => {}, 1000)"),
     });
     expect((await workerRecords(paseoHome)).length).toBeLessThanOrEqual(2);
@@ -546,7 +558,7 @@ it("pulls fresh terminal state from the worker authority", async () => {
 // preamble-caching contract is verified on Linux/macOS; the daemon's input-mode
 // handling runs identically on every platform once the escape is observed.
 it.skipIf(isPlatform("win32"))(
-  "caches the input-mode replay preamble from the worker after getTerminalState",
+  "caches input modes from worker output independently of replay capture",
   async () => {
     const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-preamble-"));
     temporaryDirs.push(cwd);
@@ -564,11 +576,10 @@ it.skipIf(isPlatform("win32"))(
       }),
     );
 
-    await waitForCondition(async () => {
-      const snapshot = await readReplay(manager!, session.id);
-      return snapshot !== null && session.getReplayPreamble() === "\x1b[=1;1u";
-    }, 10000);
-
+    await waitForCondition(() => session.getReplayPreamble() === "\x1b[=1;1u", 10000);
+    // Initial shared modes must be ready without a replay response repairing the cache.
+    expect(session.getReplayPreamble()).toBe("\x1b[=1;1u");
+    expect(await readReplay(manager!, session.id)).not.toBeNull();
     expect(session.getReplayPreamble()).toBe("\x1b[=1;1u");
   },
 );
@@ -855,6 +866,7 @@ it("never adopts a live worker's terminals after a kill cleanup it could not fin
 // the shim; the PATH is restored as soon as it is up.
 async function startWorkerWithSlowProcessTable(
   delaySeconds: number,
+  options: { paseoHome?: string; requestTimeoutMs?: number } = {},
 ): Promise<DaemonTerminalManager> {
   const realPs = (process.env.PATH ?? "")
     .split(delimiter)
@@ -868,7 +880,7 @@ async function startWorkerWithSlowProcessTable(
   const originalPath = process.env.PATH;
   process.env.PATH = `${shimDir}${delimiter}${originalPath ?? ""}`;
   try {
-    return await startRealWorkerManager();
+    return await startRealWorkerManager(options);
   } finally {
     process.env.PATH = originalPath;
   }
@@ -1982,13 +1994,20 @@ function terminalViewers(
     },
     started: () => started,
     finish,
-    async attach(source: object, requestId: string) {
+    async attach(
+      source: object,
+      requestId: string,
+      restore: NonNullable<SubscribeTerminalRequest["restore"]> = {
+        mode: "visible-snapshot",
+        scrollbackLines: 1000,
+      },
+    ) {
       delivery.attach(source, true);
       const request = {
         type: "subscribe_terminal_request" as const,
         terminalId,
         requestId,
-        restore: { mode: "visible-snapshot" as const, scrollbackLines: 1000 },
+        restore,
       };
       await delivery.request(source, request, () => controller.dispatch(request, delivery));
     },
@@ -2113,20 +2132,28 @@ it("keeps concurrent viewer replays and live output ordered behind slow app deli
 it.each([true, false])(
   "queues replay independently of app delivery past the worker deadline (chunked=%s)",
   async (chunked) => {
-    manager = await startRealWorkerManager({ requestTimeoutMs: 800 });
-    const session = trackTerminal(
-      await manager.createTerminal({
-        cwd: createTemporaryHome(),
-        workspaceId: "slow-delivery",
-        ...nodeTerminalCommand(
-          'process.stdout.write("READY\\r\\n"); process.stdin.on("data", data => process.stdout.write("ECHO:" + data)); setInterval(() => {}, 1000);',
-        ),
-      }),
-    );
+    const paseoHome = createTemporaryHome();
+    // Slow program identification belongs to setup, not the replay request deadline.
+    // The POSIX shim deterministically exceeds 800 ms; Windows keeps its real OS path.
+    manager = isPlatform("win32")
+      ? await startRealWorkerManager({ paseoHome })
+      : await startWorkerWithSlowProcessTable(1, { paseoHome });
+    const created = await manager.createTerminal({
+      cwd: paseoHome,
+      workspaceId: "slow-delivery",
+      ...nodeTerminalCommand(
+        'process.stdout.write("READY\\r\\n"); process.stdin.on("data", data => process.stdout.write("ECHO:" + data)); setInterval(() => {}, 1000);',
+      ),
+    });
     await waitForCondition(
-      async () => (await manager!.captureTerminal(session.id)).lines.join("").includes("READY"),
+      async () => (await manager!.captureTerminal(created.id)).lines.join("").includes("READY"),
       10000,
     );
+    await manager.detach();
+    manager = await startRealWorkerManager({ paseoHome, requestTimeoutMs: 800 });
+    const session = manager.getTerminal(created.id);
+    if (!session) throw new Error("Replay fixture did not adopt its prepared terminal");
+    trackTerminal(session);
     const viewers = terminalViewers(manager, session.id, chunked);
     const phone = {};
     viewers.block(phone);
@@ -2207,4 +2234,109 @@ it.each(["replacement", "socket-overflow"] as const)(
     }
   },
   30000,
+);
+
+it.each([true, false])(
+  "keeps live modes after a replay captured enabled=%s while restoring its own modes first",
+  async (enabled) => {
+    const on = "\x1b[?1h\x1b[?2004h";
+    const off = "\x1b[?1l\x1b[?2004l";
+    const captured = enabled ? on : "";
+    const latest = enabled ? "" : on;
+    const live = (enabled ? off : on) + "MODE-LIVE";
+    const worker = new FakeTerminalWorker();
+    manager = createWorkerTerminalManager({ worker, requestTimeoutMs: 1000 });
+    worker.emitWorkerMessage({
+      type: "terminalCreated",
+      terminal: {
+        id: "mode-terminal",
+        name: "Terminal",
+        cwd: "/tmp",
+        workspaceId: "modes",
+        activity: null,
+      },
+      state: createTerminalState(),
+    });
+    worker.emitWorkerMessage({
+      type: "terminalMessage",
+      terminalId: "mode-terminal",
+      replayPreamble: captured,
+      message: { type: "snapshotReady", revision: 1 },
+    });
+    const session = manager.getTerminal("mode-terminal")!;
+    const viewers = terminalViewers(manager, session.id);
+    const restoring = {},
+      following = {};
+    try {
+      await viewers.attach(restoring, "restoring");
+      await waitForCondition(
+        () => worker.sentMessages.some((message) => message.type === "replayTerminal"),
+        1000,
+      );
+      const request = worker.sentMessages.find((message) => message.type === "replayTerminal")!;
+      const metadata = {
+        rows: 30,
+        cols: 120,
+        retainedHistoryLines: 10,
+        revision: 1,
+        replayPreamble: captured,
+      };
+      worker.emitWorkerMessage({
+        type: "terminalReplay",
+        requestId: request.requestId,
+        event: { type: "begin", metadata },
+      });
+      worker.emitWorkerMessage({
+        type: "terminalReplay",
+        requestId: request.requestId,
+        event: { type: "data", data: Buffer.from("CAPTURE-A") },
+      });
+      worker.emitWorkerMessage({
+        type: "terminalMessage",
+        terminalId: session.id,
+        replayPreamble: latest,
+        message: { type: "output", data: live, revision: 2 },
+      });
+      expect(session.getReplayPreamble()).toBe(latest);
+      worker.emitWorkerMessage({
+        type: "terminalReplay",
+        requestId: request.requestId,
+        event: { type: "data", data: Buffer.from("CAPTURE-B") },
+      });
+      worker.emitWorkerMessage({
+        type: "terminalReplay",
+        requestId: request.requestId,
+        event: { type: "end" },
+      });
+      worker.emitWorkerMessage({
+        type: "response",
+        requestId: request.requestId,
+        ok: true,
+        result: metadata,
+      });
+      await waitForCondition(() => viewers.text(restoring).includes("MODE-LIVE"), 1000);
+      expect(session.getReplayPreamble()).toBe(latest);
+      expect(viewers.text(restoring)).toBe(captured + live);
+      const sequence = viewers.frames
+        .filter((row) => row.source === restoring)
+        .map((row) => row.frame.opcode);
+      expect(sequence.indexOf(TerminalStreamOpcode.Output)).toBeGreaterThan(
+        sequence.indexOf(TerminalStreamOpcode.ReplayEnd),
+      );
+      const modes = new TerminalInputModeTracker();
+      modes.feed(session.getReplayPreamble());
+      expect(encodeTerminalKeyInput({ key: "ArrowUp" }, { inputMode: modes.getState() })).toBe(
+        enabled ? "\x1b[A" : "\x1bOA",
+      );
+      expect(modes.getState().bracketedPaste).toBe(!enabled);
+      await viewers.attach(following, "live-following", { mode: "live" });
+      await waitForCondition(() => latest === "" || viewers.text(following).length > 0, 1000);
+      expect(viewers.text(following)).toBe(latest);
+      expect(
+        worker.sentMessages.filter((message) => message.type === "replayTerminal"),
+      ).toHaveLength(1);
+    } finally {
+      await viewers.delivery.close();
+    }
+  },
 );

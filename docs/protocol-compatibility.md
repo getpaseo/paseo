@@ -56,7 +56,9 @@ without requesting streams. Application caches and which agents are visible rema
 
 `terminal_chunked_replay` is SDK-owned delivery behavior. The daemon sends new binary opcodes only to a source
 advertising the capability. The SDK keeps the established subscribe request against older
-ANSI hosts and normalizes their single Restore frame into begin/data/end. JSON snapshot
+ANSI hosts and normalizes their single Restore frame into begin/data/end. `observeTerminal` defaults
+to an explicit full snapshot: omitting restore on an ANSI-era host selects its discarded JSON path.
+Explicit caller restore modes and history counts pass through unchanged. JSON snapshot
 wire declarations remain accepted, but JSON snapshot frames have no rendering runtime.
 Terminals require `terminal-restore-modes`; older hosts show an update message without attaching.
 

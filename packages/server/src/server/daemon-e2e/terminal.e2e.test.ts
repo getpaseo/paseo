@@ -1931,3 +1931,67 @@ test.each([400, 3000])(
   },
   30000,
 );
+
+test.each([false, true])(
+  "default SDK observation replays a terminal without waiting for output (quietScreen=%s)",
+  async (quietScreen) => {
+    const cwd = tmpCwd();
+    tempDirs.push(cwd);
+    const created = await createTerminalInWorkspace(ctx.client, {
+      cwd,
+      options: {
+        command: process.execPath,
+        args: [
+          "-e",
+          `${quietScreen ? 'process.stdout.write("QUIET-SCREEN\\r\\n");' : ""} process.stdin.on("data", data => process.stdout.write("LIVE:" + data)); setInterval(() => {}, 1000);`,
+        ],
+      },
+    });
+    const id = created.terminal!.id;
+    if (quietScreen)
+      await waitForCondition(
+        async () => (await ctx.client.captureTerminal(id)).lines.join("").includes("QUIET-SCREEN"),
+        10000,
+      );
+    const events: import("@getpaseo/client").TerminalStreamEvent[] = [];
+    const observation = ctx.client.observeTerminal(id, (event) => events.push(event));
+    try {
+      await observation.ready;
+      await waitForCondition(
+        () => events.some((event) => event.type === "replay" && event.replay.type === "end"),
+        10000,
+      );
+      const replay = events.flatMap((event) => (event.type === "replay" ? [event.replay] : []));
+      const begin = replay[0];
+      if (begin?.type !== "begin" || !begin.rows || !begin.cols)
+        throw new Error("Missing replay begin geometry");
+      expect(replay.at(-1)).toEqual({ type: "end" });
+      const terminal = new HeadlessTerminal({
+        rows: begin.rows,
+        cols: begin.cols,
+        allowProposedApi: true,
+      });
+      try {
+        for (const event of replay)
+          if (event.type === "data")
+            await new Promise<void>((resolve) => terminal.write(event.data, resolve));
+        const text = extractStateText(readHeadlessState(terminal));
+        expect(text).toBe(quietScreen ? "QUIET-SCREEN" : "");
+      } finally {
+        terminal.dispose();
+      }
+      ctx.client.sendTerminalInput(id, { type: "input", data: "next\r" });
+      await waitForCondition(
+        () =>
+          events.some(
+            (event) =>
+              event.type === "output" && new TextDecoder().decode(event.data).includes("LIVE:next"),
+          ),
+        10000,
+      );
+    } finally {
+      await observation.release();
+    }
+  },
+  30000,
+);

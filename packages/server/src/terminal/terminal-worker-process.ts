@@ -475,6 +475,14 @@ function runWorker(argv: string[]): void {
         terminal: toTerminalInfo(session),
         state,
       });
+      // Startup output/readiness may have arrived while recording the program,
+      // before the daemon knew this terminal. Publish its current modes after creation.
+      sendToController({
+        type: "terminalMessage",
+        terminalId: session.id,
+        message: { type: "snapshotReady" },
+        replayPreamble: session.getReplayPreamble(),
+      });
       sendToController({
         type: "response",
         requestId: message.requestId,

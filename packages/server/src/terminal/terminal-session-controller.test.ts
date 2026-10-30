@@ -23,10 +23,10 @@ interface ReplayFixture {
   data: Uint8Array;
   metadata: TerminalReplayMetadata;
 }
-function terminalReplay(text: string, revision: number): ReplayFixture {
+function terminalReplay(text: string, revision: number, replayPreamble = ""): ReplayFixture {
   return {
     data: Buffer.from(text),
-    metadata: { rows: 1, cols: 80, retainedHistoryLines: 0, revision, replayPreamble: "" },
+    metadata: { rows: 1, cols: 80, retainedHistoryLines: 0, revision, replayPreamble },
   };
 }
 function replayFixture(
@@ -168,7 +168,7 @@ describe("terminal-session-controller restore", () => {
     expect(binaryFrames).toEqual([]);
 
     terminalListener?.({ type: "output", data: "restore-after\n", revision: 2 });
-    snapshot.resolve(terminalReplay("restore-before", 1));
+    snapshot.resolve(terminalReplay("restore-before", 1, "\x1b[?1h\x1b[?2004h"));
     await snapshot.promise;
     await new Promise((resolve) => setTimeout(resolve, 20));
 
