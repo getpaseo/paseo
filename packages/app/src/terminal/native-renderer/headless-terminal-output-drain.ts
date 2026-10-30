@@ -14,6 +14,7 @@ export interface NativeTerminalParseSample {
 export interface NativeTerminalOutputDrain {
   replay(event: import("@getpaseo/client").TerminalReplayEvent): void;
   enqueueText(text: string): void;
+  resize(): void;
   clear(): void;
   flush(): Promise<void>;
   dispose(): void;
@@ -75,6 +76,7 @@ export function createNativeTerminalOutputDrain(
   let drainScheduled = false;
   let draining = false;
   let disposed = false;
+  let replaying = false;
   let paintFrame: number | null = null;
   let generation = 0;
   const replayDecoder = new TextDecoder();
@@ -138,7 +140,10 @@ export function createNativeTerminalOutputDrain(
         if (operation.type !== "write") {
           operations.shift();
           if (operation.type === "reset") options.reset(operation.size);
-          else options.restoreSize();
+          else {
+            options.restoreSize();
+            replaying = false;
+          }
           requestPaint();
           continue;
         }
@@ -172,6 +177,7 @@ export function createNativeTerminalOutputDrain(
     replay(event): void {
       if (disposed) return;
       if (event.type === "begin") {
+        replaying = true;
         generation++;
         replayDecoder.decode();
         operations = [
@@ -196,6 +202,12 @@ export function createNativeTerminalOutputDrain(
       if (last?.type === "write") last.text += text;
       else operations.push({ type: "write", text });
       queuedChars += text.length;
+      scheduleDrain();
+    },
+
+    resize(): void {
+      if (disposed || replaying) return;
+      operations.push({ type: "restore-size" });
       scheduleDrain();
     },
 

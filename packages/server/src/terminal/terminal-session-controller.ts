@@ -67,7 +67,8 @@ interface ActiveTerminalStream {
   needsSnapshot: boolean;
   snapshotInFlight: boolean;
   retrySnapshotErrors: boolean;
-  readyRevision?: number;
+  // Readiness is independent of revision: reconnect adoption has no revision.
+  snapshotReady: boolean;
   restore?: TerminalRestoreOptions;
   bufferedOutputs: BufferedTerminalOutput[];
   bufferedOutputBytes: number;
@@ -898,7 +899,7 @@ export class TerminalSessionController {
       snapshotInFlight: false,
       retrySnapshotErrors: options.retrySnapshotErrors,
       exiting: false,
-      readyRevision: undefined,
+      snapshotReady: false,
       restore: options?.restore,
       bufferedOutputs: [],
       bufferedOutputBytes: 0,
@@ -953,7 +954,7 @@ export class TerminalSessionController {
           return;
         }
         if (message.type === "snapshot" || message.type === "snapshotReady") {
-          activeStream.readyRevision = message.revision;
+          activeStream.snapshotReady = true;
           activeStream.outputCoalescer.flush();
           activeStream.needsSnapshot = true;
           void this.trySendSnapshot(activeStream);
@@ -1025,7 +1026,7 @@ export class TerminalSessionController {
       this.detachStream(activeStream.terminalId, { emitExit: true });
       return;
     }
-    if (activeStream.restore && activeStream.readyRevision === undefined) {
+    if (activeStream.restore && !activeStream.snapshotReady) {
       return;
     }
 
@@ -1095,14 +1096,15 @@ export class TerminalSessionController {
     const deliver = createTerminalRestoreDelivery({
       slot: activeStream.slot,
       chunked,
-      send: (frame) => activeStream.owner.emitBinaryAndWait(frame),
+      // Network delivery belongs to the bounded application transport, not the worker request.
+      send: (frame) => activeStream.owner.emitBinary(frame),
     });
     const snapshot = await terminalManager.replayTerminal(
       activeStream.terminalId,
       snapshotOptions,
-      async (event) => {
+      (event) => {
         if (this.activeStreams.get(activeStream.slot) !== activeStream) return;
-        await deliver(event);
+        deliver(event);
       },
     );
     if (this.activeStreams.get(activeStream.slot) !== activeStream) {

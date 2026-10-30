@@ -461,6 +461,9 @@ test.each(["clear", "replacement", "dispose"] as const)(
       drain.replay({ type: "begin", rows: 30, cols: 120 });
       drain.replay({ type: "data", data: new TextEncoder().encode("old") });
       await writing;
+      local.cols = 60;
+      drain.resize();
+      expect(terminal.getState().cols).toBe(120);
       drain.replay({ type: "end" });
       if (action === "clear") drain.clear();
       else if (action === "dispose") {
@@ -482,3 +485,36 @@ test.each(["clear", "replacement", "dispose"] as const)(
     }
   },
 );
+
+test("holds captured geometry across mid-replay measurement changes", async () => {
+  const source = createNativeHeadlessTerminal({ rows: 4, cols: 8, scrollbackLines: 100 });
+  await source.write("ABCDEFGH\r\n12345678\r\nabcdefgh\r\nxyz\x1b[2;8H");
+  const ansi = new TextEncoder().encode(renderTerminalSnapshotToAnsi(source.getState()));
+  const terminal = createNativeHeadlessTerminal({ rows: 4, cols: 8, scrollbackLines: 100 });
+  const expected = createNativeHeadlessTerminal({ rows: 4, cols: 8, scrollbackLines: 100 });
+  await expected.write(new TextDecoder().decode(ansi));
+  expected.resize({ rows: 4, cols: 4 });
+  let measured = { rows: 4, cols: 8 };
+  const drain = createNativeTerminalOutputDrain({
+    write: (chunk) => terminal.write(chunk),
+    reset: (size) => {
+      if (size) terminal.resize(size);
+      terminal.reset();
+    },
+    restoreSize: () => terminal.resize(measured),
+    getViewportState: () => terminal.getViewportState(),
+    onPaint: () => {},
+  });
+  try {
+    drain.replay({ type: "begin", rows: 4, cols: 8 });
+    await drain.flush();
+    measured = { rows: 4, cols: 4 };
+    drain.resize();
+    drain.replay({ type: "data", data: ansi });
+    drain.replay({ type: "end" });
+    await drain.flush();
+    expect(terminal.getState()).toEqual(expected.getState());
+  } finally {
+    drain.dispose();
+  }
+});

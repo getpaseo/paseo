@@ -6,6 +6,7 @@ describe("classifyTerminalWorkerProtocol", () => {
     expect(classifyTerminalWorkerProtocol(1, 2)).toBe("obsolete");
     expect(classifyTerminalWorkerProtocol(2, 3)).toBe("obsolete");
     expect(classifyTerminalWorkerProtocol(3, 4)).toBe("obsolete");
+    expect(classifyTerminalWorkerProtocol(4, 5)).toBe("obsolete");
   });
   it.each([
     [6, "current"],

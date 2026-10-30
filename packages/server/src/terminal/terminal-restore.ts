@@ -69,15 +69,15 @@ function resolveVisibleRestoreScrollbackLines(value: number | undefined): number
 export function createTerminalRestoreDelivery(input: {
   slot: number;
   chunked: boolean;
-  send(frame: Uint8Array): Promise<void>;
+  send(frame: Uint8Array): void;
 }): TerminalReplaySink {
   // COMPAT(terminalSingleRestore): added after v0.14.0; remove after 2027-04-30 when client floor supports chunked replay.
   const legacyChunks: Uint8Array[] = [];
-  return async (event) => {
+  return (event) => {
     if (!input.chunked) {
       if (event.type === "data") legacyChunks.push(event.data);
       if (event.type === "end")
-        await input.send(
+        input.send(
           encodeTerminalRestoreFrame({
             slot: input.slot,
             data: Buffer.concat(legacyChunks),
@@ -93,7 +93,7 @@ export function createTerminalRestoreDelivery(input: {
     let payload: string | Uint8Array | undefined;
     if (event.type === "begin") payload = JSON.stringify(event.metadata);
     if (event.type === "data") payload = event.data;
-    await input.send(
+    input.send(
       encodeTerminalStreamFrame({ slot: input.slot, opcode: opcodes[event.type], payload }),
     );
   };

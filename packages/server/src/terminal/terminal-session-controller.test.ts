@@ -831,7 +831,7 @@ describe("terminal-session-controller backpressure snapshot fallback", () => {
 
     expect(frames.some((frame) => frame.opcode === TerminalStreamOpcode.Restore)).toBe(true);
   });
-  test("paces capable catch-up while the direct socket drains instead of ending the stream", async () => {
+  test("queues capable catch-up without waiting for the direct socket to drain", async () => {
     let buffered = 0;
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -846,7 +846,11 @@ describe("terminal-session-controller backpressure snapshot fallback", () => {
     pushOutput("y".repeat(300 * 1024));
     await waitForCoalescerFlush();
     expect(messages.filter((message) => message.type === "terminal_stream_exit")).toEqual([]);
-    expect(frames.map((frame) => frame.opcode)).toEqual([TerminalStreamOpcode.ReplayBegin]);
+    expect(frames.map((frame) => frame.opcode)).toEqual([
+      TerminalStreamOpcode.ReplayBegin,
+      TerminalStreamOpcode.ReplayData,
+      TerminalStreamOpcode.ReplayEnd,
+    ]);
     buffered = 0;
     release();
     await waitForCoalescerFlush();
@@ -1292,3 +1296,51 @@ test.each([false, true])(
     }
   },
 );
+
+test("bounds a capturing viewer tail without ending a healthy viewer", async () => {
+  const pending = deferred<ReplayFixture | null>();
+  let reads = 0;
+  const f = exitFixture(() =>
+    ++reads === 2 ? pending.promise : Promise.resolve(terminalReplay("retained", 0)),
+  );
+  const desktop = {},
+    phone = {};
+  try {
+    await f.subscribe(desktop, true, "desktop");
+    await waitForCoalescerFlush();
+    await f.subscribe(phone, true, "phone");
+    f.output("x".repeat(4 * 1024 * 1024 + 1), 1);
+    await waitForCoalescerFlush();
+    expect(
+      f.frames.filter(
+        (row) => row.source === phone && row.message?.type === "terminal_stream_exit",
+      ),
+    ).toHaveLength(1);
+    expect(
+      f.frames.filter(
+        (row) => row.source === desktop && row.message?.type === "terminal_stream_exit",
+      ),
+    ).toHaveLength(0);
+    expect(
+      f.frames.some(
+        (row) => row.source === desktop && row.binary?.opcode === TerminalStreamOpcode.Output,
+      ),
+    ).toBe(true);
+    pending.resolve(terminalReplay("phone", 1));
+    await waitForCoalescerFlush();
+    f.output("AFTER-OVERFLOW", 2);
+    await waitForCoalescerFlush();
+    expect(
+      f.frames.some(
+        (row) =>
+          row.source === desktop &&
+          row.binary?.opcode === TerminalStreamOpcode.Output &&
+          Buffer.from(row.binary.payload).toString().includes("AFTER-OVERFLOW"),
+      ),
+    ).toBe(true);
+    expect(f.delivery.registrationCount).toBe(1);
+  } finally {
+    pending.resolve(null);
+    await f.delivery.close();
+  }
+});

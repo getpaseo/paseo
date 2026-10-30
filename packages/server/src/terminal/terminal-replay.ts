@@ -21,7 +21,7 @@ export type TerminalReplayEvent =
   | { type: "begin"; metadata: TerminalReplayMetadata }
   | { type: "data"; data: Uint8Array }
   | { type: "end" };
-export type TerminalReplaySink = (event: TerminalReplayEvent) => void | Promise<void>;
+export type TerminalReplaySink = (event: TerminalReplayEvent) => void;
 export const TERMINAL_REPLAY_CHUNK_BYTES = 64 * 1024;
 
 export function* createTerminalReplay(
@@ -53,7 +53,7 @@ export async function replayTerminal(
   const replay = createTerminalReplay(session, options);
   let next = replay.next();
   while (!next.done) {
-    await sink(next.value);
+    sink(next.value);
     next = replay.next();
   }
   return next.value;
@@ -67,7 +67,6 @@ interface TerminalReplayPorts {
 /** Worker-owned ANSI capture and paced delivery; live observations never wait for a replay. */
 export function createTerminalReplayController(ports: TerminalReplayPorts) {
   let controller: FramedSocket | null = null;
-  const acknowledgements = new Map<string, { resolve(): void; reject(error: Error): void }>();
 
   function sendToController(message: TerminalWorkerToParentMessage): void {
     // A stalled physical controller is different from a stalled viewer: all its
@@ -98,47 +97,29 @@ export function createTerminalReplayController(ports: TerminalReplayPorts) {
     // its own live tail and discards revisions already included in this cut.
     const replay = createTerminalReplay(session, message.options);
     let next = replay.next();
-    try {
-      while (!next.done) {
-        if (controller !== connection) throw new Error("Terminal replay controller disconnected");
-        const acknowledged = new Promise<void>((resolve, reject) => {
-          acknowledgements.set(message.requestId, { resolve, reject });
-        });
-        void acknowledged.catch(() => {});
-        await connection.sendAndWait({
-          type: "terminalReplay",
-          requestId: message.requestId,
-          event: next.value,
-        });
-        await acknowledged;
-        acknowledgements.delete(message.requestId);
-        next = replay.next();
-      }
+    while (!next.done) {
+      if (controller !== connection) throw new Error("Terminal replay controller disconnected");
       await connection.sendAndWait({
-        type: "response",
+        type: "terminalReplay",
         requestId: message.requestId,
-        ok: true,
-        result: next.value,
+        event: next.value,
       });
-    } finally {
-      acknowledgements.delete(message.requestId);
+      next = replay.next();
     }
+    await connection.sendAndWait({
+      type: "response",
+      requestId: message.requestId,
+      ok: true,
+      result: next.value,
+    });
   }
 
   return {
-    acknowledge(requestId: string, error?: string): void {
-      const pending = acknowledgements.get(requestId);
-      if (error) pending?.reject(new Error(error));
-      else pending?.resolve();
-    },
     setConnection(connection: FramedSocket | null): void {
       if (controller === connection) return;
       const previous = controller;
       controller = connection;
       previous?.socket.destroy();
-      for (const pending of acknowledgements.values())
-        pending.reject(new Error("Terminal replay controller disconnected"));
-      acknowledgements.clear();
     },
     send: sendToController,
     async replay(

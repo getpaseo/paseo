@@ -379,8 +379,7 @@ function NativeTerminalEmulator({
       hasNotifiedMeasuredSizeRef.current = true;
       terminalSizeRef.current = policyResult.measuredSize;
       if (policyResult.measuredSizeChanged) {
-        terminalRef.current?.resize(policyResult.measuredSize);
-        schedulePaint();
+        outputDrainRef.current?.resize();
       }
       callbacksRef.current.onResize?.({
         rows: policyResult.measuredSize.rows,
@@ -389,7 +388,7 @@ function NativeTerminalEmulator({
         forceClaim: policyResult.resizeClaim?.force,
       });
     },
-    [schedulePaint],
+    [],
   );
 
   const resetTerminal = useCallback(() => {

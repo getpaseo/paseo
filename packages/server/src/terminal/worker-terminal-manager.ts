@@ -600,27 +600,18 @@ export function createWorkerTerminalManager(
     const connection = worker;
     connection.on("message", (message: TerminalWorkerToParentMessage) => {
       if (message.type === "terminalReplay") {
-        const sink = replaySinks.get(message.requestId);
-        void Promise.resolve()
-          .then(() => sink?.(message.event))
-          .then(
-            () =>
-              pendingRequests.has(message.requestId) &&
-              connection.send(
-                { type: "replayAcknowledged", requestId: message.requestId },
-                () => {},
-              ),
-            (error: unknown) =>
-              pendingRequests.has(message.requestId) &&
-              connection.send(
-                {
-                  type: "replayAcknowledged",
-                  requestId: message.requestId,
-                  error: error instanceof Error ? error.message : String(error),
-                },
-                () => {},
-              ),
-          );
+        // Consumption queues into the application's bounded transport synchronously.
+        // Never wait for app network delivery or accumulate a second replay queue here.
+        if (worker !== connection || !pendingRequests.has(message.requestId)) return;
+        try {
+          replaySinks.get(message.requestId)?.(message.event);
+        } catch (error) {
+          const pending = pendingRequests.get(message.requestId)!;
+          clearTimeout(pending.timeout);
+          pendingRequests.delete(message.requestId);
+          replaySinks.delete(message.requestId);
+          pending.reject(error instanceof Error ? error : new Error(String(error)));
+        }
         return;
       }
       if (isResponse(message)) {
@@ -701,11 +692,6 @@ export function createWorkerTerminalManager(
     const request = new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         pendingRequests.delete(requestId);
-        if (sink)
-          connection.send(
-            { type: "replayAcknowledged", requestId, error: "Terminal replay delivery timed out" },
-            () => {},
-          );
         reject(new Error(`Terminal worker request timed out: ${input.type}`));
       }, requestTimeoutMs);
       pendingRequests.set(requestId, { resolve, reject, timeout });

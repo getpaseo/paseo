@@ -277,6 +277,7 @@ export class TerminalEmulatorRuntime {
     },
   };
 
+  private replayResize: TerminalResizeRequest | null = null;
   private fitAndEmitResize: ((input?: TerminalResizeRequest) => void) | null = null;
   private lastSize: { rows: number; cols: number } | null = null;
   private cleanup: (() => void) | null = null;
@@ -649,6 +650,7 @@ export class TerminalEmulatorRuntime {
     window.__paseoTerminal = terminal;
 
     const fitAndEmitResize = (resizeInput?: TerminalResizeRequest): void => {
+      if (this.deferReplayResize(resizeInput)) return;
       const forceRefresh = resizeInput?.forceRefresh ?? false;
       const shouldClaim = resizeInput?.shouldClaim ?? true;
       const forceClaim = resizeInput?.forceClaim ?? false;
@@ -893,6 +895,7 @@ export class TerminalEmulatorRuntime {
 
   replay(event: import("@getpaseo/client").TerminalReplayEvent): void {
     if (event.type === "begin") {
+      this.replayResize ??= { shouldClaim: false };
       this.restoreOutput({ data: EMPTY_TERMINAL_OUTPUT, rows: event.rows, cols: event.cols });
     } else if (event.type === "data") {
       this.write({ data: event.data, suppressInput: true });
@@ -917,6 +920,16 @@ export class TerminalEmulatorRuntime {
       ...(input.onCommitted ? { onCommitted: input.onCommitted } : {}),
     });
     this.processOutputQueue();
+  }
+
+  private deferReplayResize(input?: TerminalResizeRequest): boolean {
+    if (!this.replayResize) return false;
+    this.replayResize = {
+      forceRefresh: this.replayResize.forceRefresh || input?.forceRefresh,
+      shouldClaim: this.replayResize.shouldClaim || (input?.shouldClaim ?? true),
+      forceClaim: this.replayResize.forceClaim || input?.forceClaim,
+    };
+    return true;
   }
 
   resize(input?: TerminalResizeRequest): void {
@@ -1038,6 +1051,7 @@ export class TerminalEmulatorRuntime {
       commit();
     }
     this.hasUngatedWrites = false;
+    this.replayResize = null;
 
     this.cleanup?.();
     this.cleanup = null;
@@ -1172,7 +1186,9 @@ export class TerminalEmulatorRuntime {
       // commit callback before fitting, or that flush consumes the next write.
       queueMicrotask(() => {
         if (this.inFlightOutputOperation !== operation || this.terminal !== terminal) return;
-        this.fitAndEmitResize?.({ shouldClaim: false });
+        const resize = this.replayResize ?? { shouldClaim: false };
+        this.replayResize = null;
+        this.fitAndEmitResize?.(resize);
         finalizeOperation(operation);
       });
       return;
@@ -1183,11 +1199,22 @@ export class TerminalEmulatorRuntime {
       this.inputModeTracker.reset();
       this.emitInputModeChange();
       terminal.reset();
-      finalizeOperation(operation);
+      if (!this.replayResize) {
+        finalizeOperation(operation);
+        return;
+      }
+      queueMicrotask(() => {
+        if (this.inFlightOutputOperation !== operation || this.terminal !== terminal) return;
+        const resize = this.replayResize ?? { shouldClaim: false };
+        this.replayResize = null;
+        this.fitAndEmitResize?.(resize);
+        finalizeOperation(operation);
+      });
       return;
     }
 
     if (operation.type === "snapshot") {
+      this.replayResize ??= { shouldClaim: false };
       this.inputModeDecoder.decode();
       this.inputModeTracker.reset();
       this.emitInputModeChange();
