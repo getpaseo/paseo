@@ -2129,3 +2129,42 @@ test(
     await remote.dispose();
   },
 );
+
+test("a pre-write host budget rejection leaves sibling routes connected", async () => {
+  const { HostTransportBudget } = await import("@getpaseo/client/node");
+  const b = await daemon();
+  const origin = createHostClient(
+    `127.0.0.1:${b.port}`,
+    { clientId: "budget-origin", reconnect: { enabled: false } },
+    new HostTransportBudget(1024 * 1024),
+  );
+  cleanup.push(() => origin.close());
+  await origin.connect();
+  const serverId = origin.getLastServerInfoMessage()!.serverId;
+  const routeIds = [
+    await origin.openHostLink("budget-first"),
+    await origin.openHostLink("budget-sibling"),
+  ];
+  const peers = routeIds.map(
+    (id, index) =>
+      new DaemonClient({
+        url: "ws://host-link/ws",
+        clientId: `budget-child-${index}`,
+        reconnect: { enabled: false },
+        transportFactory: createHostChannelTransport(origin, serverId, `budget-${index}`, id),
+      }),
+  );
+  for (const peer of peers) {
+    cleanup.push(() => peer.close());
+    await peer.connect();
+  }
+  await expect(async () =>
+    origin.sendHostFrame(routeIds[0]!, new Uint8Array(2 * 1024 * 1024)),
+  ).rejects.toMatchObject({ code: "resource_limit" });
+  await peers[1]!.ping({ timeoutMs: 2000 });
+  expect([origin.isConnected, ...peers.map((peer) => peer.isConnected)]).toEqual([
+    true,
+    true,
+    true,
+  ]);
+}, 30000);

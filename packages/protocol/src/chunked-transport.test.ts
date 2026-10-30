@@ -276,27 +276,75 @@ it.each(["ASCII", "中", "🌍", "\ud800", "\udc00", "\ud800x"])(
   },
 );
 
+it("notifies the owner once when an accepted writer fails", async () => {
+  const failures: unknown[] = [];
+  const error = new Error("write failed");
+  const transport = new ChunkedTransport({
+    frameBytes: 1024,
+    deliver: () => {},
+    onFailure: (failure) => {
+      failures.push(failure);
+    },
+    send: () => Promise.reject(error),
+  });
+  await expect(transport.send("hello", { waitForDrain: true })).rejects.toThrow("write failed");
+  expect(failures).toEqual([error]);
+  expect(() => transport.send("again")).toThrow("Transport closed");
+  expect(failures).toEqual([error]);
+});
+
 it.each([false, true])(
-  "notifies the owner once when a writer fails (async=%s)",
-  async (asynchronous) => {
+  "a pre-write rejection preserves the sender (chunked=%s)",
+  async (chunked) => {
     const failures: unknown[] = [];
-    const error = new Error("write failed");
+    let reject = true;
     const transport = new ChunkedTransport({
-      frameBytes: 1024,
+      frameBytes: 8,
       deliver: () => {},
-      onFailure: (failure) => {
-        failures.push(failure);
+      onFailure: (error) => {
+        failures.push(error);
       },
       send: () => {
-        if (asynchronous) return Promise.reject(error);
-        throw error;
+        if (reject) throw new Error("capacity");
       },
     });
-    await expect(async () => transport.send("hello", { waitForDrain: true })).rejects.toThrow(
-      "write failed",
-    );
-    expect(failures).toEqual([error]);
-    expect(() => transport.send("again")).toThrow("Transport closed");
-    expect(failures).toEqual([error]);
+    transport.enabled = chunked;
+    expect(() => transport.send("abcdefghij")).toThrow("capacity");
+    expect(failures).toEqual([]);
+    reject = false;
+    await transport.send("sibling");
   },
 );
+
+it("a queued pre-write rejection does not poison the next logical send", async () => {
+  let drain!: () => void;
+  const failures: unknown[] = [];
+  const delivered: string[] = [];
+  const transport = new ChunkedTransport({
+    frameBytes: 1024,
+    deliver: () => {},
+    onFailure: (error) => {
+      failures.push(error);
+    },
+    send: (frame) => {
+      if (frame === "blocked")
+        return new Promise<void>((resolve) => {
+          drain = resolve;
+        });
+      if (frame === "reject") throw new Error("capacity");
+      delivered.push(frame as string);
+    },
+  });
+  const first = transport.send("blocked");
+  const rejected = transport.send("reject");
+  const sibling = transport.send("sibling");
+  const results = Promise.allSettled([first, rejected, sibling]);
+  drain();
+  expect((await results).map((result) => result.status)).toEqual([
+    "fulfilled",
+    "rejected",
+    "fulfilled",
+  ]);
+  expect(delivered).toEqual(["sibling"]);
+  expect(failures).toEqual([]);
+});

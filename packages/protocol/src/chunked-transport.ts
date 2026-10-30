@@ -43,12 +43,19 @@ export class ChunkedTransport {
     const write = () => {
       if (this.closed) throw new Error("Transport closed");
       this.activeBytes = byteLength;
-      return chunk
+      // A synchronous rejection did not admit a frame. Only accepted writes can
+      // fail the connection; queued admission failures still belong to their sender.
+      const result = chunk
         ? this.sendChunks(
             typeof frame === "string" ? new TextEncoder().encode(frame) : frame,
             typeof frame === "string",
           )
         : this.io.send(frame, options.waitForDrain === true);
+      if (!result) return;
+      return result.catch((error) => {
+        this.fail(error);
+        throw error;
+      });
     };
     if (this.queuedBytes + byteLength > MAX_WEBSOCKET_MESSAGE_BYTES) {
       const error = new Error("Logical output queue exceeded its byte limit");
@@ -64,7 +71,6 @@ export class ChunkedTransport {
     } catch (error) {
       this.queuedBytes -= byteLength;
       this.activeBytes = 0;
-      this.fail(error);
       throw error;
     }
     if (!result) {
@@ -72,29 +78,25 @@ export class ChunkedTransport {
       this.activeBytes = 0;
       return Promise.resolve();
     }
-    const pending = Promise.resolve(result)
-      .catch((error) => {
-        this.fail(error);
-        throw error;
-      })
-      .finally(() => {
-        this.queuedBytes -= byteLength;
-        this.activeBytes = 0;
-      });
-    this.pending = pending;
-    void pending.then(
-      () => {
-        if (this.pending === pending) this.pending = undefined;
-        return undefined;
-      },
-      () => {},
+    const completion = Promise.resolve(result).finally(() => {
+      this.queuedBytes -= byteLength;
+      this.activeBytes = 0;
+    });
+    const tail = completion.then(
+      () => undefined,
+      () => undefined,
     );
-    return pending;
+    this.pending = tail;
+    void tail.then(() => {
+      if (this.pending === tail) this.pending = undefined;
+      return undefined;
+    });
+    return completion;
   }
 
-  private async sendChunks(bytes: Uint8Array, text: boolean): Promise<void> {
+  private sendChunks(bytes: Uint8Array, text: boolean): Promise<void> {
     const capacity = this.io.frameBytes - HEADER;
-    for (let offset = 0; offset < bytes.byteLength; offset += capacity) {
+    const writeChunk = (offset: number) => {
       if (this.closed) throw new Error("Transport closed");
       const end = Math.min(bytes.byteLength, offset + capacity);
       const wire = new Uint8Array(HEADER + end - offset);
@@ -105,8 +107,14 @@ export class ChunkedTransport {
         (offset === 0 ? 1 : 0) | (end === bytes.byteLength ? 2 : 0),
       ]);
       wire.set(bytes.subarray(offset, end), HEADER);
-      await this.io.send(wire, true);
-    }
+      return this.io.send(wire, true);
+    };
+    const first = writeChunk(0);
+    return (async () => {
+      await first;
+      for (let offset = capacity; offset < bytes.byteLength; offset += capacity)
+        await writeChunk(offset);
+    })();
   }
 
   receive(frame: Frame): void {

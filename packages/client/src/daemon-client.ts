@@ -1267,7 +1267,7 @@ function toReasonCode(reason: string | null | undefined): string | null {
 }
 
 interface PendingSend {
-  send: () => void;
+  send: () => void | Promise<void>;
   resolve: () => void;
   reject: (error: Error) => void;
   timeoutHandle: ReturnType<typeof setTimeout>;
@@ -2166,7 +2166,7 @@ export class DaemonClient {
   private sendSessionMessageOrThrow(message: SessionInboundMessage): Promise<void> {
     return this.sendWhenConnected(() => {
       const payload = SessionInboundMessageSchema.parse(message);
-      this.sendSessionPayload(payload);
+      return this.sendSessionPayload(payload);
     });
   }
 
@@ -2175,13 +2175,12 @@ export class DaemonClient {
     return this.sendWhenConnected(() => undefined);
   }
 
-  private sendWhenConnected(send: () => void): Promise<void> {
+  private sendWhenConnected(send: () => void | Promise<void>): Promise<void> {
     const status = this.connectionState.status;
 
     // If connected, send immediately
     if (this.transport && status === "connected") {
-      send();
-      return Promise.resolve();
+      return Promise.resolve(send());
     }
 
     // If connecting, queue the message to be sent once connected
@@ -2220,8 +2219,7 @@ export class DaemonClient {
       clearTimeout(pending.timeoutHandle);
       try {
         if (this.transport && this.connectionState.status === "connected") {
-          pending.send();
-          pending.resolve();
+          void Promise.resolve(pending.send()).then(pending.resolve, pending.reject);
         } else {
           pending.reject(new DaemonConnectionError("Connection lost before message could be sent"));
         }
@@ -2277,19 +2275,17 @@ export class DaemonClient {
       { ...params.options, requestId: params.requestId },
     );
 
+    // The response deadline still applies while the transport waits for drain.
+    void promise.catch(() => undefined);
     try {
-      await this.sendSessionMessageOrThrow(wire.message);
+      const sent = this.sendSessionMessageOrThrow(wire.message);
+      const result = await Promise.race([promise, sent.then(() => promise)]);
+      if (result.kind === "error") throw result.error;
+      return result.value;
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       cancel(err);
-      void promise.catch(() => undefined);
       throw err;
-    }
-
-    try {
-      const result = await promise;
-      if (result.kind === "error") throw result.error;
-      return result.value;
     } finally {
       await wire.finish();
     }

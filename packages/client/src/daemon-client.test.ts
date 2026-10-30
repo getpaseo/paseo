@@ -8541,3 +8541,69 @@ test.each([false, true])("routed sends wait for origin drain (binary=%s)", async
   await write;
   expect(finished).toBe(true);
 });
+
+test("a queued admission failure rejects its RPC without closing the client", async () => {
+  const mock = createMockTransport();
+  const send = mock.transport.send;
+  let block = false;
+  let drain!: () => void;
+  mock.transport.send = (frame) => {
+    if (!block) return send(frame);
+    if (typeof frame !== "string")
+      return new Promise<void>((resolve) => {
+        drain = resolve;
+      });
+    throw new Error("capacity");
+  };
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "queued-admission",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen();
+  await connecting;
+  block = true;
+  const first = client.sendHostFrame("route", new Uint8Array([1]));
+  const ping = client.ping({ timeoutMs: 1000 });
+  void ping.catch(() => {});
+  drain();
+  await first;
+  await expect(ping).rejects.toThrow("capacity");
+  expect(client.isConnected).toBe(true);
+});
+
+test("RPC deadlines remain active while a preceding frame waits for drain", async () => {
+  const mock = createMockTransport();
+  const send = mock.transport.send;
+  let blocked = false;
+  let drain!: () => void;
+  mock.transport.send = (frame) => {
+    if (!blocked) return send(frame);
+    if (typeof frame !== "string")
+      return new Promise<void>((resolve) => {
+        drain = resolve;
+      });
+  };
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "drain-deadline",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen();
+  await connecting;
+  blocked = true;
+  const first = client.sendHostFrame("route", new Uint8Array([1]));
+  try {
+    await expect(client.ping({ timeoutMs: 20 })).rejects.toThrow("Timeout waiting for message");
+    expect(client.isConnected).toBe(true);
+  } finally {
+    drain();
+    await first;
+  }
+});

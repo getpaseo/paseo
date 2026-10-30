@@ -67,12 +67,13 @@ test("direct connector preserves 25 MiB binary frames in both directions", async
   await ready;
   const bytes = new Uint8Array(25 * 1024 * 1024).fill(173);
   const echoed = once(socket, "message");
-  transport.send(bytes);
+  const sending = transport.send(bytes);
   const [sent, binary] = await echoed;
   expect(binary).toBe(true);
   expect(Buffer.from(sent as Uint8Array).equals(bytes)).toBe(true);
   socket.send(bytes);
   expect(Buffer.from(await received).equals(bytes)).toBe(true);
+  await sending;
 });
 
 import {
@@ -145,9 +146,10 @@ test("encrypted connector rejects overload synchronously and preserves the physi
   await new Promise<void>((resolve) => setImmediate(resolve));
   expect(errors).toEqual([]);
   expect(closed).toBe(false);
-  transport.send("sibling control");
+  const sibling = transport.send("sibling control");
   peer.resume();
   await drained;
+  await sibling;
   await expect.poll(() => received.includes("sibling control")).toBe(true);
   expect(received.filter((data) => data instanceof ArrayBuffer).length).toBeGreaterThan(0);
   expect(

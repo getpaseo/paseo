@@ -593,7 +593,7 @@ async function waitForCapturedLog(
     }
   }, 90000);
 
-  test("oversized attachments fail without disconnecting or resubmitting over the relay", async () => {
+  test("large messages cross the relay in both directions and logical oversize rejects without disconnecting", async () => {
     await startRelay({ useLocalRelay: true });
     const daemon = await createTestPaseoDaemon({
       relayEnabled: true,
@@ -623,42 +623,72 @@ async function waitForCapturedLog(
       const statuses: string[] = [];
       client.subscribeConnectionStatus((state) => statuses.push(state.status));
       for (const imageMiB of [30, 61]) {
-        // Attachments are base64 in the JSON, then E2EE base64 expands the frame again.
         const images = [
           { data: "A".repeat(4 * Math.ceil((imageMiB * 1024 * 1024) / 3)), mimeType: "image/png" },
         ];
-        await expect(
-          withTimeout(
-            client.createWorkspace({
-              source: { kind: "directory", path: daemon.staticDir },
-              agent: {
-                provider: "claude",
-                cwd: daemon.staticDir,
-                initialPrompt: "Describe these screens.",
-                images,
-              },
-            }),
-            10000,
-            "Workspace creation did not settle",
-          ),
-        ).rejects.toThrow(/too large.*32\.0 MiB/);
-        expect((await client.fetchAgents()).entries).toEqual([]);
+        await withTimeout(
+          client.createWorkspace({
+            source: { kind: "directory", path: daemon.staticDir },
+            agent: {
+              provider: "claude",
+              cwd: daemon.staticDir,
+              initialPrompt: "Describe these screens.",
+              images,
+            },
+          }),
+          30000,
+          "Chunked workspace creation did not settle",
+        );
       }
+      expect((await client.fetchAgents()).entries).toHaveLength(2);
+      await expect(
+        client.createWorkspace({
+          source: { kind: "directory", path: daemon.staticDir },
+          agent: {
+            provider: "claude",
+            cwd: daemon.staticDir,
+            initialPrompt: "Describe these screens.",
+            images: [{ data: "A".repeat(101 * 1024 * 1024), mimeType: "image/png" }],
+          },
+        }),
+      ).rejects.toThrow(/too large.*100\.0 MiB/);
+      expect((await client.fetchAgents()).entries).toHaveLength(2);
       const agent = await client.createAgent({ provider: "claude", cwd: daemon.staticDir });
+      await client.sendMessage(agent.id, "Describe these screens.", {
+        images: [{ data: "A".repeat(40 * 1024 * 1024), mimeType: "image/png" }],
+      });
       await expect(
         client.sendMessage(agent.id, "Describe these screens.", {
-          images: [{ data: "A".repeat(40 * 1024 * 1024), mimeType: "image/png" }],
+          images: [{ data: "A".repeat(101 * 1024 * 1024), mimeType: "image/png" }],
         }),
-      ).rejects.toThrow(/too large.*32\.0 MiB/);
+      ).rejects.toThrow(/too large.*100\.0 MiB/);
       await client.sendMessage(agent.id, "A small follow-up still works.");
-      expect((await client.fetchAgents()).entries).toHaveLength(1);
+      expect((await client.fetchAgents()).entries).toHaveLength(3);
+      // Respect the per-item content budget while exceeding the relay frame limit.
+      const text = "x".repeat(240 * 1024);
+      for (let row = 0; row < 220; row++)
+        await daemon.daemon.agentManager.appendTimelineItem(agent.id, {
+          type: "user_message",
+          text,
+        });
+      const timeline = await client.fetchAgentTimeline(agent.id, {
+        projection: "canonical",
+        limit: 0,
+        timeout: 30000,
+      });
+      const delivered = timeline.entries.filter(
+        (row) => row.item.type === "user_message" && row.item.text === text,
+      );
+      expect(delivered).toHaveLength(220);
+      expect(delivered.length * Buffer.byteLength(text)).toBeGreaterThan(50 * 1024 * 1024);
+      await client.ping();
       expect(statuses).toEqual(["connected"]);
     } finally {
       await client?.close();
       await daemon.close();
       await stopRelay();
     }
-  }, 60000);
+  }, 120000);
 
   test("daemon connects to relay and client ping/pong works through relay", async () => {
     process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
