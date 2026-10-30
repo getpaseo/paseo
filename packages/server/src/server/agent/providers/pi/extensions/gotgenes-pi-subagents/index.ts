@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { extractTextFromToolResult } from "../../tool-call-mapper.js";
 import { outputFileFromToolResult } from "../child-session.js";
 import { GOTGENES_CHILD_SESSION_MARKER, gotgenesRuntimeBridge } from "./runtime-bridge.js";
 import type { PiExtension, PiExtensionToolCall } from "../contract.js";
@@ -92,6 +93,10 @@ export const gotgenesPiSubagents: PiExtension = {
         outputFileFromToolResult(call.result) ?? pendingFilesByAgent.get(details.data.agentId);
       pendingFilesByAgent.delete(details.data.agentId);
       const childSessions = childSession(call.callId, file);
+      const childStatus = status(details.data.status);
+      // Without a session file, as on replay, the child's answer is the tool result.
+      const answer =
+        !file && childStatus !== "running" ? extractTextFromToolResult(call.result)?.trim() : "";
       return {
         detail,
         subagents: [
@@ -101,8 +106,17 @@ export const gotgenesPiSubagents: PiExtension = {
             title,
             description,
             toolCallId: call.callId,
-            status: status(details.data.status),
+            status: childStatus,
           },
+          ...(answer
+            ? [
+                {
+                  type: "timeline" as const,
+                  id: call.callId,
+                  item: { type: "assistant_message" as const, text: answer },
+                },
+              ]
+            : []),
         ],
         childSessions,
       };
