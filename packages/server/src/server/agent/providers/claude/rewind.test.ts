@@ -6,7 +6,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import type { Query } from "@anthropic-ai/claude-agent-sdk";
 
 import {
-  findSteeredMessageParent,
+  findUserMessageParent,
   revertClaudeConversation,
   revertClaudeConversationAndFiles,
   revertClaudeFiles,
@@ -250,9 +250,9 @@ describe("Claude rewind against the Claude SDK", () => {
       { type: "assistant", uuid: randomUUID(), parentUuid: queuedCommand, text: "reply to steer" },
     ]);
 
-    const parent = await findSteeredMessageParent(transcriptPath, steeredMessage);
+    const parent = await findUserMessageParent(transcriptPath, steeredMessage);
     expect(parent).toBe(toolResult);
-    expect(await findSteeredMessageParent(transcriptPath, randomUUID())).toBeNull();
+    expect(await findUserMessageParent(transcriptPath, randomUUID())).toBeNull();
 
     let currentSessionId = sessionId;
     await revertClaudeConversation({

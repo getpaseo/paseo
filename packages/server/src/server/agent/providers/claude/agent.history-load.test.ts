@@ -614,6 +614,87 @@ describe("ClaudeAgentSession persisted history load", () => {
     );
   });
 
+  function compactedTranscript(): Array<Record<string, unknown>> {
+    const boundary = (uuid: string, parentUuid: string | null) => ({
+      type: "system",
+      subtype: "compact_boundary",
+      uuid,
+      parentUuid,
+      compactMetadata: { trigger: "auto", preTokens: 1000 },
+    });
+    return [
+      { type: "user", uuid: "u1", parentUuid: null, message: { content: "first" } },
+      // Over a megabyte, so the backwards search crosses chunks inside one line, and naming
+      // compact_boundary in its text without being one.
+      {
+        type: "assistant",
+        uuid: "a1",
+        parentUuid: "u1",
+        message: { content: `"compact_boundary" ${"x".repeat(1_200_000)}` },
+      },
+      boundary("b1", null),
+      { type: "user", uuid: "u2", parentUuid: "b1", message: { content: "second" } },
+      { type: "assistant", uuid: "a2", parentUuid: "u2", message: { content: "second reply" } },
+      boundary("b2", null),
+      { type: "user", uuid: "s2", parentUuid: "b2", message: { content: "summary" } },
+      { type: "user", uuid: "u3", parentUuid: "s2", message: { content: "third" } },
+      { type: "assistant", uuid: "a3", parentUuid: "u3", message: { content: "third reply" } },
+      { type: "user", uuid: "u4", parentUuid: "a3", message: { content: "fourth" } },
+      { type: "assistant", uuid: "a4", parentUuid: "u4", message: { content: "fourth reply" } },
+    ];
+  }
+
+  test("replays the session from its last compact boundary on", async () => {
+    const entries = compactedTranscript();
+    mkdirSync(path.dirname(transcriptPath()), { recursive: true });
+    writeFileSync(
+      transcriptPath(),
+      `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+    );
+
+    await withClaudeReplayHistory(transcriptPath(), async (history) => {
+      expect(history.startsAtCompaction).toBe(true);
+      expect(await Array.fromAsync(history.parentEntries)).toEqual(entries.slice(5));
+    });
+
+    writeFileSync(
+      transcriptPath(),
+      entries
+        .slice(0, 2)
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
+    );
+    await withClaudeReplayHistory(transcriptPath(), async (history) => {
+      expect(history.startsAtCompaction).toBe(false);
+      expect(await Array.fromAsync(history.parentEntries)).toEqual(entries.slice(0, 2));
+    });
+  });
+
+  test("rewinds across the compaction the replay started at", async () => {
+    const entries = compactedTranscript();
+    mkdirSync(path.dirname(transcriptPath()), { recursive: true });
+    writeFileSync(transcriptPath(), entries.map((entry) => JSON.stringify(entry)).join("\n"));
+    const forks: string[] = [];
+    const rewindSdk: ClaudeRewindSdk = {
+      async forkSession(_sessionId, options) {
+        forks.push(options.upToMessageId);
+        return { sessionId: SESSION_ID };
+      },
+    };
+    const session = await resume(undefined, rewindSdk);
+    try {
+      // The first turn after the compaction has no earlier turn in the replay, but the
+      // conversation goes on before it: keep the summary rather than starting a fresh session.
+      await session.revertConversation?.({ messageId: "u3" });
+      // A message from before the compaction is found in the transcript.
+      await session.revertConversation?.({ messageId: "u2" });
+      await session.revertConversation?.({ messageId: "u4" });
+    } finally {
+      await session.close();
+    }
+    expect(forks).toEqual(["s2", "b1", "a3"]);
+  });
+
   test("replays a message steered into a running turn as the user's message", async () => {
     const queued = (commandMode: string, prompt: unknown, sourceUuid?: string) => ({
       type: "attachment",

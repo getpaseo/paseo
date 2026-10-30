@@ -82,7 +82,7 @@ import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { discoverClaudeModels } from "./model-discovery.js";
 import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
 import {
-  findSteeredMessageParent,
+  findUserMessageParent,
   realClaudeRewindSdk,
   revertClaudeConversation,
   revertClaudeFiles,
@@ -2393,6 +2393,7 @@ class ClaudeAgentSession implements AgentSession {
   private userMessageIds: string[] = [];
   private readonly emittedUserMessageIds = new Set<string>();
   private readonly rewindTurnAnchors: ClaudeRewindTurnAnchor[] = [];
+  private historyStartsAtCompaction = false;
   private readonly rewindSdk: ClaudeRewindSdk;
   private pendingFreshSessionId: string | null = null;
   private recentStderr = "";
@@ -3345,6 +3346,7 @@ class ClaudeAgentSession implements AgentSession {
     this.userMessageIds = [];
     this.emittedUserMessageIds.clear();
     this.rewindTurnAnchors.length = 0;
+    this.historyStartsAtCompaction = false;
     this.taskState.reset();
   }
 
@@ -3438,15 +3440,11 @@ class ClaudeAgentSession implements AgentSession {
       (anchor) => anchor.userMessageId === targetUserMessageId,
     );
     if (index < 0) {
-      // A message steered into a running turn opens no turn of its own.
-      const transcriptPath = this.claudeSessionId
-        ? await this.resolveHistoryPath(this.claudeSessionId)
-        : null;
-      const steerParent = transcriptPath
-        ? await findSteeredMessageParent(transcriptPath, targetUserMessageId)
-        : null;
-      if (steerParent) {
-        return { kind: "fork", messageId: steerParent };
+      // Not a turn the replay saw: a message steered into a running turn, which opens no turn of
+      // its own, or one from before the compaction the replay started at.
+      const parent = await this.findUserMessageParentInTranscript(targetUserMessageId);
+      if (parent) {
+        return { kind: "fork", messageId: parent };
       }
       throw new Error(`Claude rewind target ${messageId} is not in the tracked conversation`);
     }
@@ -3462,7 +3460,21 @@ class ClaudeAgentSession implements AgentSession {
         return { kind: "fork", messageId: assistantMessageId };
       }
     }
+    // The replay began at a compaction, so the conversation goes on before the first turn it saw.
+    if (this.historyStartsAtCompaction) {
+      const parent = await this.findUserMessageParentInTranscript(targetUserMessageId);
+      if (parent) {
+        return { kind: "fork", messageId: parent };
+      }
+    }
     return { kind: "fresh-session" };
+  }
+
+  private async findUserMessageParentInTranscript(messageId: string): Promise<string | null> {
+    const transcriptPath = this.claudeSessionId
+      ? await this.resolveHistoryPath(this.claudeSessionId)
+      : null;
+    return transcriptPath ? await findUserMessageParent(transcriptPath, messageId) : null;
   }
 
   private async retireQuery(): Promise<void> {
@@ -5388,6 +5400,7 @@ class ClaudeAgentSession implements AgentSession {
   private async loadPersistedHistory(sessionId: string): Promise<void> {
     let historyPath: string | null = null;
     this.replayingHistory = true;
+    this.historyStartsAtCompaction = false;
     try {
       this.taskState.reset();
       historyPath = await this.resolveHistoryPath(sessionId);
@@ -5399,6 +5412,7 @@ class ClaudeAgentSession implements AgentSession {
         return;
       }
       await withClaudeReplayHistory(historyPath, async (history) => {
+        this.historyStartsAtCompaction = history.startsAtCompaction;
         const replay = await this.ingestPersistedSidechains(history);
         await this.ingestPersistedHistory(history.parentEntries, replay);
       });

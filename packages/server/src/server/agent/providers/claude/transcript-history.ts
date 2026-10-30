@@ -28,6 +28,7 @@ interface RecordLocation {
 async function* locatedRecords(
   file: string,
   fd: FileHandle,
+  from = 0,
 ): AsyncGenerator<{ entry: TranscriptEntry; location: RecordLocation }> {
   const stat = await fd.stat();
   // Opening a directory succeeds on some platforms; it must never look like empty history.
@@ -38,15 +39,17 @@ async function* locatedRecords(
       path: file,
     });
   }
-  let remaining = stat.size;
-  let offset = 0;
+  let remaining = stat.size - from;
+  let offset = from;
+  let position = from;
   let pieces: Buffer[] = [];
   let length = 0;
   while (remaining > 0) {
     const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, remaining));
-    const { bytesRead: count } = await fd.read(buffer, 0, buffer.length, null);
+    const { bytesRead: count } = await fd.read(buffer, 0, buffer.length, position);
     if (count === 0) break;
     remaining -= count;
+    position += count;
     let start = 0;
     let end: number;
     while ((end = buffer.indexOf(10, start)) !== -1 && end < count) {
@@ -83,6 +86,50 @@ async function* locatedRecords(
         timestamp: normalizeProviderReplayTimestamp(entry.timestamp),
       },
     };
+}
+
+const COMPACT_BOUNDARY = Buffer.from('"compact_boundary"');
+
+function isCompactBoundary(line: Buffer): boolean {
+  if (!line.includes(COMPACT_BOUNDARY)) return false;
+  const entry = parseRecord(line.toString("utf8"));
+  return entry?.type === "system" && entry.subtype === "compact_boundary";
+}
+
+/**
+ * Where the last compact boundary starts, or 0 when the transcript has none. Read backwards from
+ * the end, so a transcript of hundreds of megabytes costs only the part written since its last
+ * compaction.
+ */
+async function lastCompactBoundaryOffset(fd: FileHandle): Promise<number> {
+  let position = (await fd.stat()).size;
+  // Bytes from `position` on that come before the first newline read so far: the end of a line
+  // whose start is still unread.
+  let partial = Buffer.alloc(0);
+  while (position > 0) {
+    const length = Math.min(1024 * 1024, position);
+    position -= length;
+    const chunk = Buffer.allocUnsafe(length);
+    let read = 0;
+    while (read < length) {
+      const { bytesRead: count } = await fd.read(chunk, read, length - read, position + read);
+      if (count === 0) return 0;
+      read += count;
+    }
+    const buffer = Buffer.concat([chunk, partial]);
+    let lineEnd = buffer.length;
+    while (lineEnd > 0) {
+      const newline = buffer.lastIndexOf(10, lineEnd - 1);
+      if (newline === -1) break;
+      if (isCompactBoundary(buffer.subarray(newline + 1, lineEnd))) {
+        return position + newline + 1;
+      }
+      lineEnd = newline;
+    }
+    partial = buffer.subarray(0, lineEnd);
+    await setImmediate();
+  }
+  return 0;
 }
 
 /** Indexed sources parse only their own records using descriptors owned by this replay. */
@@ -146,7 +193,14 @@ async function readOptionalFile(file: string): Promise<string | null> {
 /** Discover sources without retaining transcript contents. Unrelated sidechains stay excluded
  * by the replay ownership resolver; workflow children retain their separate run ownership. */
 export interface ClaudeReplayHistory {
+  /**
+   * The session's own entries from its last compact boundary on. Claude Code sends the model
+   * nothing from before it, and replaying a long session from its start read the whole
+   * transcript, hundreds of megabytes for sessions with screenshots, before the agent could run.
+   */
   parentEntries: AsyncIterable<TranscriptEntry>;
+  /** True when parentEntries start at a compact boundary rather than at the session's start. */
+  startsAtCompaction: boolean;
   subagents: {
     agentId: string;
     meta: ClaudeSubagentMeta | null;
@@ -217,13 +271,16 @@ async function indexHistory(
   }
   const parentLocations: RecordLocation[] = [];
   const locationsByAgentId = new Map<string, RecordLocation[]>();
+  let parentStart = 0;
   async function scan(
     file: string,
     visit: (entry: TranscriptEntry, location: RecordLocation) => void,
   ): Promise<void> {
     const fd = await fs.open(file, "r");
     descriptors.set(file, fd);
-    for await (const { entry, location } of locatedRecords(file, fd)) visit(entry, location);
+    const from = file === historyPath ? await lastCompactBoundaryOffset(fd) : 0;
+    if (file === historyPath) parentStart = from;
+    for await (const { entry, location } of locatedRecords(file, fd, from)) visit(entry, location);
   }
   for (const file of sidechainFiles) {
     await scan(file, (entry, location) => {
@@ -251,6 +308,7 @@ async function indexHistory(
   }
   return {
     parentEntries: indexedRecords(parentLocations, descriptors),
+    startsAtCompaction: parentStart > 0,
     subagents: [...locationsByAgentId].map(([agentId, locations]) => ({
       agentId,
       meta: metaByAgentId.get(agentId) ?? null,
