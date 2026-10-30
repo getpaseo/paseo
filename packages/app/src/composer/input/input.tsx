@@ -205,6 +205,8 @@ export interface MessageInputRef {
   getText: () => string;
   getInputSnapshot: () => ComposerInputSnapshot;
   replaceText: (text: string, selection?: { start: number; end: number }) => void;
+  /** Web-only: appends text pasted outside the editor and focuses it. False when the editor can't take it. */
+  appendPastedText: (text: string) => boolean;
   runKeyboardAction: (action: MessageInputKeyboardActionKind) => boolean;
   /**
    * Web-only: return the underlying DOM element for focus assertions/retries.
@@ -1418,6 +1420,17 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       getInputSnapshot: () =>
         getComposerInputSnapshot(textInputRef.current, valueRef.current, selectionRef.current),
       replaceText,
+      appendPastedText: (pasted) => {
+        if (!isWeb || disabled || readOnly || isDictating || isRealtimeVoiceForCurrentAgent) {
+          return false;
+        }
+        const element = getTextInputNativeElement(textInputRef.current);
+        // Routes stacked over this one keep it mounted but not laid out.
+        if (!element || element.getClientRects().length === 0) return false;
+        replaceText(`${textInputRef.current?.getText() ?? valueRef.current}${pasted}`);
+        textInputRef.current?.focus();
+        return true;
+      },
       runKeyboardAction: (action) =>
         runMessageInputKeyboardAction(action, {
           focusInput: () => textInputRef.current?.focus(),
