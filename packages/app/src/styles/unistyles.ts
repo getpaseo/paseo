@@ -6,7 +6,7 @@ StyleSheet.configure({
   breakpoints: {
     xs: 0,
     sm: 576,
-    md: 720,
+    md: 600,
     lg: 992,
     xl: 1200,
   },

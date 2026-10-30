@@ -1,3 +1,4 @@
+import { Modal } from "@/components/ui/modal";
 import {
   Children,
   cloneElement,
@@ -16,9 +17,7 @@ import { createPortal } from "react-dom";
 import {
   Dimensions,
   Platform,
-  Modal,
   Pressable,
-  StatusBar,
   View,
   type PressableProps,
   type StyleProp,
@@ -28,6 +27,7 @@ import { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { FloatingSurface } from "@/components/ui/floating";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { isNative, isWeb } from "@/constants/platform";
 import { getOverlayRoot, OVERLAY_Z } from "@/lib/overlay-root";
 
@@ -257,8 +257,15 @@ export function Tooltip({
   });
 
   const isCompact = useIsCompactFormFactor();
+  const active = useRetainedPanelActive();
   const opensOnPress = isNative || isCompact;
-  const enabled = opensOnPress ? enabledOnMobile : enabledOnDesktop;
+  const enabled = active && (opensOnPress ? enabledOnMobile : enabledOnDesktop);
+
+  // Remove the portal in the inactive commit, before the retained chat freezes.
+  // Closing also prevents the tooltip from returning when its panel is shown again.
+  useEffect(() => {
+    if (!active && isOpen) setIsOpen(false);
+  }, [active, isOpen, setIsOpen]);
 
   const value = useMemo<TooltipContextValue>(
     () => ({
@@ -329,6 +336,10 @@ export function TooltipTrigger({
       clearOpenTimer();
     };
   }, [clearOpenTimer]);
+
+  useEffect(() => {
+    if (!ctx.enabled) clearOpenTimer();
+  }, [ctx.enabled, clearOpenTimer]);
 
   const handleHoverIn = useCallback(
     (e?: unknown) => {
@@ -474,11 +485,10 @@ export function TooltipContent({
       return () => {};
     }
 
-    const statusBarHeight = Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0;
     let cancelled = false;
 
     void measureElement(ctx.triggerRef.current).then((rect) => {
-      if (!cancelled) setTriggerRect({ ...rect, y: rect.y + statusBarHeight });
+      if (!cancelled) setTriggerRect(rect);
       return undefined;
     });
 

@@ -11,6 +11,10 @@ import {
   expectWorkspaceTabVisible,
   openWorkspaceWithAgents,
 } from "../support/helpers/archive-tab";
+import {
+  expectAgentAbsentFromWorkspaceLayout,
+  seedForeignPinnedAgentTab,
+} from "../support/helpers/workspace-layout";
 import { clickNewChat } from "../support/helpers/launcher";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
@@ -93,10 +97,97 @@ async function closeFirstVisibleDraftTab(page: Page): Promise<void> {
   await closeButton.first().click();
 }
 
+async function openWorkspaceTabUrl(page: Page, route: string): Promise<void> {
+  await page.evaluate((url) => {
+    window.history.pushState(null, "", url);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, route);
+  await expectAppRoute(page, route.split("?")[0]);
+}
+
 test.describe("Workspace navigation regression", () => {
   test.describe.configure({ timeout: 240_000 });
 
-  test("opens a notification's workspace on a different offline host", async ({ page }) => {
+  test("removes a foreign pinned agent when restoring a saved workspace layout", async ({
+    page,
+  }, testInfo) => {
+    const serverId = getServerId();
+    const firstWorkspace = await seedWorkspace({
+      repoPrefix: "workspace-owner-",
+      title: "Original workspace",
+    });
+    const secondWorkspace = await seedWorkspace({
+      repoPrefix: "workspace-restored-",
+      title: "Restored workspace",
+    });
+    try {
+      const firstAgent = await createMockIdleAgent(firstWorkspace.client, {
+        cwd: firstWorkspace.repoPath,
+        workspaceId: firstWorkspace.workspaceId,
+        title: "Original workspace agent",
+      });
+      const secondAgent = await createMockIdleAgent(secondWorkspace.client, {
+        cwd: secondWorkspace.repoPath,
+        workspaceId: secondWorkspace.workspaceId,
+        title: "Restored workspace agent",
+      });
+      await gotoAppShell(page);
+      await openWorkspaceWithAgents(page, [firstAgent, secondAgent]);
+      await seedForeignPinnedAgentTab(page, {
+        serverId,
+        workspaceId: secondWorkspace.workspaceId,
+        agentId: firstAgent.id,
+      });
+
+      await page.reload();
+      await waitForSidebarHydration(page);
+      await waitForWorkspaceTabsVisible(page);
+      await expectWorkspaceHeader(page, {
+        title: secondWorkspace.workspaceName,
+        subtitle: secondWorkspace.projectDisplayName,
+      });
+      await testInfo.attach("hydrated-workspace", {
+        body: await page.screenshot({ path: testInfo.outputPath("hydrated-workspace.png") }),
+        contentType: "image/png",
+      });
+      await expectAgentAbsentFromWorkspaceLayout(page, {
+        serverId,
+        workspaceId: secondWorkspace.workspaceId,
+        agentId: firstAgent.id,
+      });
+      await expectOnlyWorkspaceAgentTabsVisible(page, [secondAgent.id]);
+      await testInfo.attach("restored-workspace", {
+        body: await page.screenshot({ path: testInfo.outputPath("restored-workspace.png") }),
+        contentType: "image/png",
+      });
+
+      await switchWorkspaceViaSidebar({
+        page,
+        serverId,
+        workspaceId: firstWorkspace.workspaceId,
+      });
+      await waitForWorkspaceTabsVisible(page);
+      await expectOnlyWorkspaceAgentTabsVisible(page, [firstAgent.id]);
+      const agents = await firstWorkspace.client.fetchAgents();
+      expect(
+        agents.entries.find(({ agent }) => agent.id === firstAgent.id)?.agent.workspaceId,
+      ).toBe(firstWorkspace.workspaceId);
+      expect(
+        agents.entries.find(({ agent }) => agent.id === secondAgent.id)?.agent.workspaceId,
+      ).toBe(secondWorkspace.workspaceId);
+      await testInfo.attach("original-workspace", {
+        body: await page.screenshot({ path: testInfo.outputPath("original-workspace.png") }),
+        contentType: "image/png",
+      });
+    } finally {
+      await secondWorkspace.cleanup();
+      await firstWorkspace.cleanup();
+    }
+  });
+
+  test("keeps an offline notification on the agent route until the host connects", async ({
+    page,
+  }) => {
     const target = {
       serverId: "notification-offline-host",
       workspaceId: "notification-workspace",
@@ -123,14 +214,33 @@ test.describe("Workspace navigation regression", () => {
       );
     }, target);
 
-    await expectAppRoute(
-      page,
-      buildHostWorkspaceOpenRoute(target.serverId, target.workspaceId, `agent:${target.agentId}`),
-      { timeout: 30_000 },
-    );
-    await expect(page.getByText("Connecting", { exact: true })).toBeVisible();
-    await expect(page.getByText("Notification Host", { exact: true })).toBeVisible();
-    await expect(page.getByText("Add a project", { exact: true })).toHaveCount(0);
+    await expectAppRoute(page, buildHostAgentDetailRoute(target.serverId, target.agentId), {
+      timeout: 30_000,
+    });
+    await expect(page.getByTestId("agent-route-waiting-for-host")).toBeVisible();
+    await expect(page.getByText(/Notification Host/).first()).toBeVisible();
+  });
+
+  test("cold agent targets hydrate their workspace without opening the compact sidebar", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "notification-cold-compact-" });
+    try {
+      const agent = await createMockIdleAgent(workspace.client, {
+        cwd: workspace.repoPath,
+        workspaceId: workspace.workspaceId,
+        title: "Cold notification agent",
+      });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await gotoAppShell(page);
+      await page.goto(buildHostAgentDetailRoute(getServerId(), agent.id));
+      await expectAppRoute(page, buildHostWorkspaceRoute(getServerId(), workspace.workspaceId), {
+        timeout: 30_000,
+      });
+      await expectComposerVisible(page);
+    } finally {
+      await workspace.cleanup();
+    }
   });
 
   test("shows the New launcher after returning from settings and closing the last agent draft tab", async ({
@@ -321,7 +431,7 @@ test.describe("Workspace navigation regression", () => {
     }
   });
 
-  test("sidebar navigation and reload keep workspace selection and tabs aligned", async ({
+  test("a stale notification workspace preserves retained workspace selection and tabs", async ({
     page,
   }) => {
     const serverId = getServerId();
@@ -435,7 +545,7 @@ test.describe("Workspace navigation regression", () => {
             }),
           );
         },
-        { agentId: secondAgent.id, serverId, workspaceId: secondWorkspace.workspaceId },
+        { agentId: secondAgent.id, serverId, workspaceId: firstWorkspace.workspaceId },
       );
       await waitForWorkspaceTabsVisible(page);
       await expect(page).toHaveURL(buildHostWorkspaceRoute(serverId, secondWorkspace.workspaceId), {
@@ -462,6 +572,22 @@ test.describe("Workspace navigation regression", () => {
       await expect(secondDeckEntry).toBeAttached();
       await expect(secondDeckEntry).toBeHidden();
       await expectWorkspaceDeckEntryCount(page, 2);
+
+      await expectAgentAbsentFromWorkspaceLayout(page, {
+        serverId,
+        workspaceId: firstWorkspace.workspaceId,
+        agentId: secondAgent.id,
+      });
+      await openWorkspaceTabUrl(
+        page,
+        buildHostWorkspaceOpenRoute(serverId, firstWorkspace.workspaceId, `agent:${firstAgent.id}`),
+      );
+      await expectWorkspaceTabVisible(page, firstAgent.id);
+      await expectAgentAbsentFromWorkspaceLayout(page, {
+        serverId,
+        workspaceId: secondWorkspace.workspaceId,
+        agentId: firstAgent.id,
+      });
 
       await page.reload();
       await waitForSidebarHydration(page);

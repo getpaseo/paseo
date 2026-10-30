@@ -1,4 +1,11 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { AgentStorage } from "./agent-storage.js";
+import { createIdleRuntimeCleanup } from "./idle-runtime-cleanup/index.js";
 import { relative } from "node:path";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import type {
   ProviderConnection,
   ProviderLaunch,
@@ -19,6 +26,21 @@ import {
   isStaleProviderSessionError,
   StaleProviderSessionError,
 } from "./stale-provider-session-error.js";
+
+test("long concurrent plugin and child streams retain text-sized history and release it on archive", () => {
+  const fixture = fileURLToPath(new URL("./test-utils/plugin-stream-memory.ts", import.meta.url));
+  const output = execFileSync(
+    process.execPath,
+    ["--expose-gc", "--max-old-space-size=512", "--import", "tsx", fixture],
+    {
+      encoding: "utf8",
+      timeout: 20_000,
+    },
+  );
+  const memory = JSON.parse(output) as { retained: number; closed: number };
+  expect(memory.retained).toBeLessThan(24 * 1024 * 1024);
+  expect(memory.closed).toBeLessThan(6 * 1024 * 1024);
+});
 
 const CAPABILITIES = [
   "prompt.message",
@@ -287,6 +309,99 @@ function expectNestedChildren(events: AgentStreamEvent[]) {
 }
 
 describe("PluginAgentClientRegistry", () => {
+  test("history keeps the tool's first position when completion follows later text", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const client = registry.clients()[harness.registration.id]!;
+    const session = await client.createSession({ provider: client.provider, cwd: "/tmp" });
+    const opened = harness.inputs.find((input) => input.type === "session.open");
+    if (opened?.type !== "session.open") throw new Error("missing session open");
+    const tool = {
+      type: "tool_call" as const,
+      id: "tool-position",
+      callId: "call-position",
+      name: "read",
+      detail: { type: "unknown" as const, input: null, output: null },
+      error: null,
+    };
+    try {
+      harness.emit({
+        type: "timeline.item",
+        sessionId: opened.sessionId,
+        item: { ...tool, status: "running" },
+      });
+      harness.emit({
+        type: "timeline.item",
+        sessionId: opened.sessionId,
+        item: { type: "assistant_message", id: "later-text", text: "Working" },
+      });
+      harness.emit({
+        type: "timeline.item",
+        sessionId: opened.sessionId,
+        item: { ...tool, status: "completed" },
+      });
+      const items = [];
+      for await (const event of session.streamHistory())
+        if (event.type === "timeline") items.push(event.item);
+      expect(items).toEqual([
+        {
+          type: "tool_call",
+          callId: "call-position",
+          name: "read",
+          detail: tool.detail,
+          error: null,
+          status: "completed",
+        },
+        { type: "assistant_message", messageId: "later-text", text: "Working" },
+      ]);
+    } finally {
+      await session.close();
+      await registry.shutdown();
+    }
+  });
+
+  test("detached text deltas preserve split surrogates and history replays one complete message", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const client = registry.clients()[harness.registration.id]!;
+    const session = await client.createSession({ provider: client.provider, cwd: "/tmp" });
+    const opened = harness.inputs.find((input) => input.type === "session.open");
+    if (opened?.type !== "session.open") throw new Error("missing session open");
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const prefix = "long prefix ".repeat(10);
+    const first = prefix + "a\uD83D";
+    const complete = first + "\uDE00b";
+    try {
+      for (const text of [first, complete, complete]) {
+        harness.emit({
+          type: "timeline.item",
+          sessionId: opened.sessionId,
+          item: { type: "assistant_message", id: "split-message", text },
+        });
+      }
+      const deltas = events.flatMap((event) =>
+        event.type === "timeline" && event.item.type === "assistant_message"
+          ? [event.item.text]
+          : [],
+      );
+      expect(deltas).toEqual([first, "\uDE00b"]);
+      expect(deltas.join("")).toBe(prefix + "a😀b");
+      const history: AgentStreamEvent[] = [];
+      for await (const event of session.streamHistory()) history.push(event);
+      expect(
+        history.flatMap((event) =>
+          event.type === "timeline" && event.item.type === "assistant_message" ? [event.item] : [],
+        ),
+      ).toEqual([{ type: "assistant_message", messageId: "split-message", text: complete }]);
+    } finally {
+      await session.close();
+      await registry.shutdown();
+    }
+  });
+
   test("stores only agent options while the plugin receives merged defaults", async () => {
     const logger = createTestLogger();
     const harness = createProviderHarness();
@@ -305,7 +420,7 @@ describe("PluginAgentClientRegistry", () => {
     });
     const own = { nested: { replace: "agent" } };
     const agent = await manager.createAgent(
-      { provider: "plugin-direct", cwd: "/tmp", providerOptions: own },
+      { provider: "plugin-direct", cwd: tmpdir(), providerOptions: own },
       undefined,
       { workspaceId: undefined },
     );
@@ -480,6 +595,137 @@ describe("PluginAgentClientRegistry", () => {
       registry.replace([]);
     }
   });
+
+  test.each(["completed", "canceled", "failed"] as const)(
+    "reports a reused plugin child as running until its next turn is %s",
+    async (outcome) => {
+      const logger = createTestLogger();
+      const harness = createProviderHarness();
+      const plugins = new PluginAgentClientRegistry(logger);
+      plugins.replace([harness.registration]);
+      const registry = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
+      const manager = new AgentManager({
+        logger,
+        clients: { "plugin-direct": registry["plugin-direct"].createClient(logger) },
+        providerDefinitions: { "plugin-direct": registry["plugin-direct"] },
+      });
+      try {
+        const agent = await manager.createAgent(
+          { provider: "plugin-direct", cwd: tmpdir() },
+          undefined,
+          { workspaceId: undefined },
+        );
+        const open = harness.inputs.find((input) => input.type === "session.open")!;
+        harness.emit({
+          type: "session.opened",
+          sessionId: "reusable-child",
+          parentSessionId: open.sessionId,
+          capabilities: [],
+          restoration: "parent",
+          title: "Plugin child",
+          cwd: tmpdir(),
+        });
+        harness.emit({
+          type: "session.turn",
+          sessionId: "reusable-child",
+          turnId: "first-turn",
+          state: "started",
+        });
+        harness.emit({
+          type: "session.turn",
+          sessionId: "reusable-child",
+          turnId: "first-turn",
+          state: "completed",
+        });
+        await nextTurn();
+        const [child] = manager.listProviderSubagents(agent.id);
+        expect(child).toMatchObject({
+          id: "reusable-child",
+          title: "Plugin child",
+          status: "completed",
+        });
+
+        harness.emit({
+          type: "session.turn",
+          sessionId: "reusable-child",
+          turnId: "second-turn",
+          state: "started",
+        });
+        await nextTurn();
+        expect(manager.listProviderSubagents(agent.id)).toMatchObject([
+          { id: child.id, title: child.title, status: "running" },
+        ]);
+
+        harness.emit({
+          type: "session.turn",
+          sessionId: "reusable-child",
+          turnId: "second-turn",
+          state: outcome,
+        });
+        await nextTurn();
+        expect(manager.listProviderSubagents(agent.id)).toMatchObject([
+          { id: child.id, title: child.title, status: outcome },
+        ]);
+      } finally {
+        await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+        await plugins.shutdown();
+      }
+    },
+  );
+
+  test.each(["started", "completed", "canceled", "failed"] as const)(
+    "replays a reused plugin child's latest turn state: %s",
+    async (state) => {
+      const harness = createProviderHarness({
+        openChildren(rootSessionId, emit) {
+          emit({
+            type: "session.opened",
+            sessionId: "reusable-child",
+            parentSessionId: rootSessionId,
+            capabilities: [],
+            restoration: "parent",
+            cwd: "/workspace",
+          });
+          for (const [turnId, turnState] of [
+            ["first-turn", "started"],
+            ["first-turn", "completed"],
+            ["second-turn", "started"],
+          ] as const) {
+            emit({ type: "session.turn", sessionId: "reusable-child", turnId, state: turnState });
+          }
+          if (state !== "started") {
+            emit({
+              type: "session.turn",
+              sessionId: "reusable-child",
+              turnId: "second-turn",
+              state,
+            });
+          }
+        },
+      });
+      const registry = new PluginAgentClientRegistry(createTestLogger());
+      registry.replace([harness.registration]);
+      try {
+        const session = await registry.clients()[harness.registration.id]!.createSession({
+          provider: harness.registration.id,
+          cwd: "/workspace",
+        });
+        const statuses = [];
+        for await (const event of session.streamHistory()) {
+          if (
+            event.type === "provider_subagent" &&
+            event.event.type === "upsert" &&
+            event.event.id === "reusable-child"
+          ) {
+            statuses.push(event.event.status);
+          }
+        }
+        expect(statuses.at(-1)).toBe(state === "started" ? "running" : state);
+      } finally {
+        await registry.shutdown();
+      }
+    },
+  );
 
   test("gates persistence operations on negotiated provider capabilities", async () => {
     const harness = createProviderHarness({ capabilities: ["session.persistence"] });
@@ -1232,5 +1478,112 @@ test("config-required plugin membership is independent of enablement and other p
     }
   } finally {
     await plugins.shutdown();
+  }
+});
+
+test.each([true, false, "error", "wrong-session", "missing"] as const)(
+  "plugin runtime safety query: %s",
+  async (answer) => {
+    const harness = createProviderHarness({
+      capabilities:
+        answer === "missing" ? CAPABILITIES : [...CAPABILITIES, "session.can_stop_runtime"],
+      handleInput: async (input, emit) => {
+        if (input.type !== "session.can_stop_runtime") return false;
+        if (answer === "error")
+          emit({
+            type: "request.failed",
+            requestId: input.requestId,
+            error: { message: "Probe failed" },
+          });
+        else
+          emit({
+            type: "session.can_stop_runtime",
+            requestId: input.requestId,
+            sessionId: answer === "wrong-session" ? "child-1" : input.sessionId,
+            canStop: answer === true,
+          });
+        return true;
+      },
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const client = registry.clients()[harness.registration.id]!;
+    const session = await client.createSession({ provider: harness.registration.id, cwd: "/tmp" });
+    try {
+      if (answer === "error" || answer === "wrong-session") {
+        await expect(session.canStopRuntime!()).rejects.toThrow(
+          answer === "error" ? "Probe failed" : "another session",
+        );
+      } else if (answer === "missing") expect(session.canStopRuntime).toBeUndefined();
+      else expect(await session.canStopRuntime!()).toBe(answer === true);
+      const requests = harness.inputs.filter((input) => input.type === "session.can_stop_runtime");
+      expect(requests).toHaveLength(answer === "missing" ? 0 : 1);
+      if (answer !== "missing")
+        expect(requests[0]).toMatchObject({
+          sessionId: harness.inputs.find((input) => input.type === "session.open")?.sessionId,
+        });
+    } finally {
+      await session.close();
+      await registry.shutdown();
+    }
+  },
+);
+
+test("plugin without a runtime safety capability uses baseline collection without a query", async () => {
+  const home = await mkdtemp(join(tmpdir(), "plugin-baseline-cleanup-"));
+  const logger = createTestLogger();
+  const storage = new AgentStorage(join(home, "agents"), logger);
+  const harness = createProviderHarness();
+  const registry = new PluginAgentClientRegistry(logger);
+  registry.replace([harness.registration]);
+  const manager = new AgentManager({ clients: registry.clients(), registry: storage, logger });
+  const agent = await manager.createAgent(
+    { provider: harness.registration.id, cwd: home },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const cleanup = createIdleRuntimeCleanup({
+    enabled: true,
+    logger,
+    runtimes: () => manager.getRuntimeCleanupCandidates(),
+    now: () => agent.updatedAt.getTime() + 60 * 60_000,
+    schedule: () => () => {},
+  });
+  try {
+    expect(agent.session?.canStopRuntime).toBeUndefined();
+    expect((await cleanup.sweep()).collected).toHaveLength(1);
+    expect(manager.getAgent(agent.id)).toBeNull();
+    expect(harness.inputs.filter((input) => input.type === "session.can_stop_runtime")).toEqual([]);
+  } finally {
+    await cleanup.close();
+    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+    await registry.shutdown();
+    await storage.flush();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("plugin provider import launches with runtime MCP servers and returns only saved configuration", async () => {
+  const harness = createProviderHarness();
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([harness.registration]);
+  const client = registry.clients()[harness.registration.id]!;
+  const storedConfig = { provider: harness.registration.id, cwd: "/project" };
+  const company = { type: "http", url: "https://tools.example.com/mcp" } as const;
+  try {
+    const imported = await client.importSession!(
+      { providerHandleId: 'plugin:{"version":1,"data":{"token":"root"}}', cwd: "/project" },
+      { config: { ...storedConfig, mcpServers: { company } }, storedConfig },
+    );
+    expect(harness.inputs).toContainEqual(
+      expect.objectContaining({
+        type: "session.open",
+        config: expect.objectContaining({ mcpServers: { company } }),
+      }),
+    );
+    expect(imported.config).toEqual(storedConfig);
+    await imported.session.close();
+  } finally {
+    await registry.shutdown();
   }
 });

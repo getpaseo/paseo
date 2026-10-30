@@ -208,6 +208,85 @@ it("lets the engine own code boundaries while classifying candidate values", asy
   ]);
 });
 
+describe("bare URL sentence punctuation", () => {
+  it.each([".", ",", ";", ":", "!", "?", ")", ").", "...", "?!"])(
+    "leaves %s outside the link and preserves the rendered sentence",
+    async (punctuation) => {
+      const url = "https://github.com/getpaseo/paseo/pull/7357";
+      const source = `${url}${punctuation} Not merged.`;
+      const prepared = prepareMarkdownSource(source);
+      const tree = recognizeTextLinks(
+        await parseMarkdown(prepared.render(), { latexMath: false }),
+        prepared.linkRecognition.text,
+        prepared.linkRecognition.inlineCode,
+      );
+      expect(tree.children?.[0]?.children).toEqual([
+        {
+          type: "Link",
+          attributes: { url },
+          children: [{ type: "Text", content: url }],
+        },
+        { type: "Text", content: `${punctuation} Not merged.` },
+      ]);
+    },
+  );
+
+  it.each([
+    "https://example.com/a.b",
+    "https://example.com/a?foo=bar&baz=2",
+    "https://example.com/a#L10",
+    "https://en.wikipedia.org/wiki/Function_(mathematics)",
+    "https://example.com/a_(b_(c))",
+  ])("preserves internal URL punctuation: %s", async (url) => {
+    const tree = await parseMarkdown(prepareMarkdownSource(`${url}.`).render());
+    expect(tree.children?.[0]?.children).toEqual([
+      {
+        type: "Link",
+        attributes: { url },
+        children: [{ type: "Text", content: url }],
+      },
+      { type: "Text", content: "." },
+    ]);
+  });
+
+  it.each([
+    ["http://127.0.0.1:8059/?token=t-1", ""],
+    ["http://example.com:8080/a", "."],
+    ["http://localhost:8059/?token=t-1", "."],
+    ["http://localhost:8059/?token=t-1", ")"],
+    ["http://user@127.0.0.1:8059/?token=t-1", '"'],
+    ["http://user:pass@127.0.0.1:8059/?token=t-1", ""],
+    ["http://localhost", ":"],
+    ["http://[::1]:8059/?token=t-1", "'"],
+    ["https://github.com/o/r/compare/main...user:repo:fix/branch", ""],
+    ["https://example.com/a:b/c", ":"],
+  ])("links %s whole and leaves %j outside", async (url, punctuation) => {
+    const prepared = prepareMarkdownSource(`See ${url}${punctuation} now`);
+    const tree = recognizeTextLinks(
+      await parseMarkdown(prepared.render(), { latexMath: false }),
+      prepared.linkRecognition.text,
+      prepared.linkRecognition.inlineCode,
+    );
+    expect(tree.children?.[0]?.children).toEqual([
+      { type: "Text", content: "See " },
+      {
+        type: "Link",
+        attributes: expect.objectContaining({ url }),
+        children: [{ type: "Text", content: url }],
+      },
+      { type: "Text", content: `${punctuation} now` },
+    ]);
+  });
+
+  it.each(["[Authored](https://example.com/a.)", "<https://example.com/a.>"])(
+    "preserves punctuation in explicit destinations: %s",
+    async (source) => {
+      const tree = await parseMarkdown(prepareMarkdownSource(source).render());
+      expect(tree.children?.[0]?.children?.[0]?.attributes?.url).toBe("https://example.com/a.");
+    },
+  );
+});
+
 it("requires workspace context for relative inline paths and escapes literal regex characters", () => {
   const source = "`src/app/[id].tsx` and `src/a+b.ts` and `README.md` and `/tmp/file.ts`";
   const withoutWorkspace = prepareMarkdownSource(source).linkRecognition.inlineCode;
@@ -307,7 +386,7 @@ describe("shared Markdown theme colours", () => {
     ["dark", darkTheme],
     ["light", lightTheme],
   ] as const)("uses %s theme colours for tables and task labels", (_name, theme) => {
-    const { markdownStyle: style } = createMarkdownStyles(theme);
+    const { markdownStyle: style } = createMarkdownStyles(theme, { blockGap: 16 });
     expect(style.table).toMatchObject({
       color: theme.colors.foreground,
       headerTextColor: theme.colors.foreground,
@@ -337,7 +416,7 @@ it.each([
 ] as const)(
   "uses %s theme colours for quotes, admonitions, code, links and dividers",
   (_name, theme) => {
-    const { markdownStyle: style } = createMarkdownStyles(theme);
+    const { markdownStyle: style } = createMarkdownStyles(theme, { blockGap: 16 });
     expect(style.blockquote).toMatchObject({
       color: `${theme.colors.foreground}cc`,
       backgroundColor: theme.colors.surface1,
@@ -364,7 +443,7 @@ it.each([
 );
 
 it.each([darkTheme, lightTheme])("supplies the theme selection colour to the renderer", (theme) => {
-  expect(createMarkdownStyles(theme)).toHaveProperty(
+  expect(createMarkdownStyles(theme, { blockGap: 16 })).toHaveProperty(
     "selectionColor",
     theme.colors.terminal.selectionBackground,
   );
@@ -431,7 +510,7 @@ it("preserves backslashes and decodes entities inside HTML code", () => {
 it.each([false, true])(
   "caps inline images to the paragraph line height (compact: %s)",
   (compact) => {
-    const { markdownStyle } = createMarkdownStyles(darkTheme, compact);
+    const { markdownStyle } = createMarkdownStyles(darkTheme, { compact, blockGap: 16 });
     expect(markdownStyle.inlineImage?.size).toBe(markdownStyle.paragraph?.lineHeight);
   },
 );
@@ -718,3 +797,25 @@ it("replaces the native placeholder only after the resolved URL decodes", () => 
   const prepared = prepareMarkdownSource("![image](shot.png)", undefined, { supportsSvg: false });
   expect(prepared.render(new Map([["shot.png", url]]))).toBe(`![image](<${url}>)`);
 });
+
+it("makes the web Markdown container selectable in Safari as well as unprefixed browsers", () => {
+  expect(createMarkdownStyles(lightTheme, { blockGap: 12 }).containerStyle).toEqual({
+    userSelect: "text",
+    WebkitUserSelect: "text",
+  });
+});
+
+it.each([false, true])(
+  "scales inline code from theme tokens with its surrounding block (compact: %s)",
+  (compact) => {
+    const theme = {
+      ...darkTheme,
+      fontSize: { ...darkTheme.fontSize, code: 13, content: 17, base: 16 },
+    };
+    const { markdownStyle } = createMarkdownStyles(theme, { compact, blockGap: 16 });
+    const bodySize = compact ? theme.fontSize.base : theme.fontSize.content;
+    expect(markdownStyle.code).not.toHaveProperty("fontSize");
+    expect(markdownStyle.code).toHaveProperty("fontScale", theme.fontSize.code / bodySize);
+    expect(markdownStyle.codeBlock?.fontSize).toBe(theme.fontSize.code);
+  },
+);

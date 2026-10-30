@@ -5,7 +5,6 @@ import {
   type AgentFileExplorerState,
   type ExplorerDirectory,
 } from "@/stores/session-store";
-import { explorerFileFromReadResult } from "@/file-explorer/read-result";
 import { usePanelStore } from "@/stores/panel-store";
 import { revealExplorerDirectory } from "@/file-explorer/tree";
 import { parentExplorerPath } from "@/utils/explorer-paths";
@@ -13,7 +12,6 @@ import { parentExplorerPath } from "@/utils/explorer-paths";
 function createExplorerState(): AgentFileExplorerState {
   return {
     directories: new Map(),
-    files: new Map(),
     isLoading: false,
     lastError: null,
     pendingRequest: null,
@@ -148,7 +146,6 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
             lastError: null,
             pendingRequest: null,
             directories: state.directories,
-            files: state.files,
           };
 
           const directories = new Map(state.directories);
@@ -193,70 +190,6 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       });
     },
     [requestDirectoryListing, workspaceStateKey],
-  );
-
-  const requestFilePreview = useCallback(
-    async (path: string) => {
-      if (!workspaceStateKey) {
-        return;
-      }
-      const normalizedPath = path && path.length > 0 ? path : ".";
-      updateExplorerState((state) => ({
-        ...state,
-        isLoading: true,
-        lastError: null,
-        pendingRequest: { path: normalizedPath, mode: "file" },
-      }));
-
-      if (!normalizedWorkspaceRoot) {
-        updateExplorerState((state) => ({
-          ...state,
-          isLoading: false,
-          lastError: t("workspace.fileExplorer.states.unavailable"),
-          pendingRequest: null,
-        }));
-        return;
-      }
-
-      if (!client) {
-        updateExplorerState((state) => ({
-          ...state,
-          isLoading: false,
-          lastError: t("workspace.terminal.hostDisconnected"),
-          pendingRequest: null,
-        }));
-        return;
-      }
-
-      try {
-        const file = await client.readFile(normalizedWorkspaceRoot, normalizedPath);
-        updateExplorerState((state) => {
-          const nextState: AgentFileExplorerState = {
-            ...state,
-            isLoading: false,
-            lastError: null,
-            pendingRequest: null,
-            directories: state.directories,
-            files: state.files,
-          };
-
-          const files = new Map(state.files);
-          const explorerFile = explorerFileFromReadResult(file);
-          files.set(explorerFile.path, explorerFile);
-          nextState.files = files;
-
-          return nextState;
-        });
-      } catch (error) {
-        updateExplorerState((state) => ({
-          ...state,
-          isLoading: false,
-          lastError: error instanceof Error ? error.message : t("panels.file.failedToLoadPreview"),
-          pendingRequest: null,
-        }));
-      }
-    },
-    [client, normalizedWorkspaceRoot, t, updateExplorerState, workspaceStateKey],
   );
 
   const requestFileDownloadToken = useCallback(
@@ -379,7 +312,6 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
     workspaceStateKey,
     revealDirectory,
     requestDirectoryListing,
-    requestFilePreview,
     requestFileDownloadToken,
     requestFileBytes,
     createEntry,

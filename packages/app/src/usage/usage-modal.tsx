@@ -4,8 +4,7 @@ import { View } from "react-native";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { builtinSidebarNavLabelKey } from "@/sidebar-nav/model";
 import { useHostUsageWithControls } from "./controls";
-import { usageCopy } from "./copy";
-import { useUsagePreferences } from "./display";
+import { useUsageDisplay } from "./display";
 import { useUsageHostSelection } from "./hosts";
 import type { UsageHost } from "./model";
 import { UsageBody, UsageMessage } from "./usage-section";
@@ -22,11 +21,12 @@ interface UsageModalProps {
  * title row.
  */
 export function UsageModal(props: UsageModalProps) {
+  const { t } = useTranslation();
   const { serverId, connectedHosts, select } = useUsageHostSelection();
   if (!serverId) {
     return (
       <UsageModalFrame {...props}>
-        <UsageMessage text={usageCopy.noHosts} />
+        <UsageMessage text={t("providerUsage.noHosts")} />
       </UsageModalFrame>
     );
   }
@@ -52,12 +52,12 @@ function HostUsageModal({
   hosts: UsageHost[];
   onSelectHost: (serverId: string) => void;
 }) {
-  const { display } = useUsagePreferences();
   const hostSelection = useMemo(
     () => ({ hosts, serverId, onSelect: onSelectHost }),
     [hosts, onSelectHost, serverId],
   );
   const { view, refresh, controls } = useHostUsageWithControls(hostSelection);
+  const { display } = useUsageDisplay(view.kind === "ready" ? view.reports : []);
   return (
     <UsageModalFrame {...props} actions={controls}>
       <View testID={`usage-host-${serverId}`}>

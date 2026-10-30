@@ -17,6 +17,7 @@ import { SessionDelivery } from "../server/session/owned-subscriptions/index.js"
 import type { TerminalManager, TerminalsChangedEvent } from "./terminal-manager.js";
 import { isSameOrDescendantPath } from "../server/path-utils.js";
 import { PluginSessionSocket } from "../server/plugins/session-socket.js";
+import { TerminalWorkerIncompatibleError } from "./terminal-worker-pool.js";
 
 function createController(
   options: TerminalSessionControllerOptions & { emitBinary(frame: Uint8Array): void },
@@ -345,6 +346,76 @@ describe("terminal-session-controller legacy terminal creation", () => {
       expect.objectContaining({ cwd: "/work/repo", workspaceId: "ws-1", rows: 55, cols: 136 }),
     );
   });
+});
+
+describe("terminal-session-controller with terminals held by a newer Paseo", () => {
+  const incompatible = new TerminalWorkerIncompatibleError({
+    paseoVersion: "9.9.9",
+    protocolVersion: 7,
+  });
+
+  function incompatibleManager(): TerminalManager {
+    return {
+      getUnavailableError: () => incompatible,
+      getTerminals: vi.fn(async () => Promise.reject(incompatible)),
+      createTerminal: vi.fn(async () => Promise.reject(incompatible)),
+      registerCwdEnv: vi.fn(),
+      validateTerminalActivityToken: vi.fn(() => "unknown"),
+      getTerminal: vi.fn(),
+      getTerminalState: vi.fn(),
+      setTerminalTitle: vi.fn(),
+      setTerminalActivity: vi.fn(),
+      clearTerminalAttention: vi.fn(),
+      killTerminal: vi.fn(),
+      killTerminalAndWait: vi.fn(),
+      captureTerminal: vi.fn(),
+      // The incompatible worker's terminals are not in this daemon's view.
+      listDirectories: vi.fn(() => []),
+      killAll: vi.fn(),
+      subscribeTerminalsChanged: vi.fn(() => vi.fn()),
+      subscribeTerminalActivity: vi.fn(() => vi.fn()),
+      subscribeTerminalWorkspaceContributionChanged: vi.fn(() => vi.fn()),
+    };
+  }
+
+  test.each([
+    { type: "list_terminals_request" as const, requestId: "req-list" },
+    { type: "list_terminals_request" as const, requestId: "req-list-cwd", cwd: "/work/repo" },
+    {
+      type: "create_terminal_request" as const,
+      requestId: "req-create",
+      cwd: "/work/repo",
+      workspaceId: "ws-1",
+    },
+  ])(
+    "answers $type ($requestId) with a terminal_worker_incompatible rpc_error",
+    async (request) => {
+      const outboundMessages: SessionOutboundMessage[] = [];
+      const controller = createController({
+        terminalManager: incompatibleManager(),
+        emit: (message) => outboundMessages.push(message),
+        emitBinary: vi.fn(),
+        hasBinaryChannel: () => true,
+        isPathWithinRoot: isSameOrDescendantPath,
+        sessionLogger: createLogger(),
+        listTerminalWorkspaceRefs: async () => [{ workspaceId: "ws-1", cwd: "/work/repo" }],
+      });
+
+      await controller.dispatch(request);
+
+      expect(outboundMessages).toEqual([
+        {
+          type: "rpc_error",
+          payload: {
+            requestId: request.requestId,
+            requestType: request.type,
+            error: incompatible.message,
+            code: "terminal_worker_incompatible",
+          },
+        },
+      ]);
+    },
+  );
 });
 
 async function flushMicrotasks(): Promise<void> {

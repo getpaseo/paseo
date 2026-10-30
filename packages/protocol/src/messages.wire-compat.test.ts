@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import { z } from "zod";
 import {
+  MutableDaemonConfigSchema,
+  MutableDaemonConfigPatchSchema,
   UsageReportEntrySchema,
   AgentSnapshotPayloadSchema,
   AgentTimelineItemPayloadSchema,
@@ -473,4 +475,102 @@ test("usage entries accept older failures and additive successful snapshots", ()
       lastSuccessful: { fetchedAt: oldEntry.fetchedAt, report: oldEntry.report },
     }).success,
   ).toBe(false);
+});
+
+// Frozen setup detail shape from v0.8.0: log is required, command output is optional.
+const ReleasedSetupDetailSchema = z.object({
+  type: z.literal("worktree_setup"),
+  worktreePath: z.string(),
+  branchName: z.string(),
+  log: z.string(),
+  commands: z.array(
+    z.object({
+      index: z.number().int().positive(),
+      command: z.string(),
+      cwd: z.string(),
+      log: z.string().optional().default(""),
+      status: z.enum(["running", "completed", "failed"]),
+      exitCode: z.number().nullable(),
+      durationMs: z.number().nonnegative().optional(),
+    }),
+  ),
+  truncated: z.boolean().optional(),
+});
+
+test("released setup clients parse empty combined logs and retain command output", () => {
+  const detail = {
+    type: "worktree_setup",
+    worktreePath: "/workspace",
+    branchName: "feature",
+    log: "",
+    commands: [
+      {
+        index: 1,
+        command: "echo ready",
+        cwd: "/workspace",
+        log: "ready\n",
+        status: "completed",
+        exitCode: 0,
+      },
+    ],
+  };
+  const parsed = ReleasedSetupDetailSchema.parse(JSON.parse(JSON.stringify(detail)));
+  expect(parsed).toEqual(detail);
+  expect(parsed.commands[0]?.log).toBe("ready\n");
+  const { log: _log, ...withoutLegacyField } = detail;
+  expect(ReleasedSetupDetailSchema.safeParse(withoutLegacyField).success).toBe(false);
+  expect(
+    WorkspaceSetupSnapshotSchema.parse({
+      status: "completed",
+      detail: { ...detail, log: "old daemon combined output" },
+      error: null,
+    }).detail.log,
+  ).toBe("old daemon combined output");
+});
+
+test("local STT language survives wire reads and patches", () => {
+  const patch = {
+    features: {
+      dictation: { stt: { provider: "local", language: "fr" } },
+      voiceMode: { stt: { provider: "local", language: null } },
+    },
+  };
+  expect(MutableDaemonConfigPatchSchema.parse(patch)).toEqual(patch);
+});
+
+test("speech config reads remain compatible with clients before features and future providers", () => {
+  const oldSchema = MutableDaemonConfigSchema.omit({ features: true, envOverrides: true });
+  const oldRead = oldSchema.parse({
+    providers: {},
+    relay: { enabled: false },
+    mcp: { enabled: true, injectIntoAgents: true },
+  });
+  const read = {
+    ...oldRead,
+    features: {
+      dictation: { enabled: true, stt: { provider: "local", language: "fr" } },
+      voiceMode: {
+        enabled: false,
+        stt: { provider: "future", model: "future-model", region: "eu" },
+        tts: { provider: "openai", hasApiKey: false },
+      },
+    },
+    envOverrides: { "features.voiceMode.stt.provider": "PASEO_VOICE_STT_PROVIDER" },
+  };
+  expect(oldSchema.parse(read)).toEqual(read);
+  expect(MutableDaemonConfigSchema.parse(oldRead)).toEqual(oldRead);
+  expect(MutableDaemonConfigSchema.parse(read).features?.dictation.stt).toEqual(
+    read.features.dictation.stt,
+  );
+  expect(MutableDaemonConfigSchema.parse(read).features?.voiceMode.stt).toEqual(
+    read.features.voiceMode.stt,
+  );
+  const oldPatchSchema = MutableDaemonConfigPatchSchema.omit({ features: true });
+  const oldPatch = oldPatchSchema.parse({ relay: { enabled: true } });
+  expect(MutableDaemonConfigPatchSchema.parse(oldPatch)).toEqual(oldPatch);
+  expect(
+    MutableDaemonConfigPatchSchema.parse({
+      features: { voiceMode: { stt: { provider: "future", region: "eu" } } },
+    }).features?.voiceMode?.stt,
+  ).toEqual({ provider: "future", region: "eu" });
 });

@@ -1,7 +1,8 @@
 import { MockLoadTestAgentClient } from "./agent/providers/mock-load-test-agent.js";
 import { createPaseoApi } from "@getpaseo/client";
+import type { AgentManager } from "./agent/agent-manager.js";
 import { execFileSync } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test } from "vitest";
 import type { z } from "zod";
@@ -71,15 +72,18 @@ class SubscriptionPeer {
   async request(message: z.input<typeof SessionInboundMessageSchema>): Promise<void> {
     this.socket.send(JSON.stringify({ type: "session", message }));
     await expect
-      .poll(() =>
-        this.frames.some(
-          (frame) =>
-            frame.type === "session" &&
-            "payload" in frame.message &&
-            "requestId" in frame.message.payload &&
-            "requestId" in message &&
-            frame.message.payload.requestId === message.requestId,
-        ),
+      .poll(
+        () =>
+          this.frames.some(
+            (frame) =>
+              frame.type === "session" &&
+              "payload" in frame.message &&
+              "requestId" in frame.message.payload &&
+              "requestId" in message &&
+              frame.message.payload.requestId === message.requestId,
+          ),
+        // Diagnostics invoke external tools with their own multi-second deadlines.
+        { timeout: 10_000 },
       )
       .toBe(true);
   }
@@ -117,6 +121,16 @@ class SubscriptionPeer {
   close(): void {
     this.socket.terminate();
   }
+}
+
+function removedAgentIds(peer: SubscriptionPeer): string[] {
+  return peer.frames.flatMap((frame) =>
+    frame.type === "session" &&
+    frame.message.type === "agent_update" &&
+    frame.message.payload.kind === "remove"
+      ? [frame.message.payload.agentId]
+      : [],
+  );
 }
 
 test("a pure list reply belongs only to its source socket in a shared logical session", async () => {
@@ -224,6 +238,96 @@ test("combined filtered agent lists create independent server-owned observations
     await daemon.close();
   }
 });
+
+test.each([
+  {
+    state: "live",
+    prepare: async (_manager: AgentManager, _agentId: string) => {},
+  },
+  {
+    state: "stored-only",
+    prepare: (manager: AgentManager, agentId: string) => manager.closeAgent(agentId),
+  },
+])(
+  "$state agent deletion reaches directory observers across logical sessions without broadcasting its reply",
+  async ({ prepare }) => {
+    const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+    const admin = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      appVersion: "0.8.0",
+    });
+    const peers: SubscriptionPeer[] = [];
+    try {
+      await admin.connect();
+      const workspace = (
+        await admin.createWorkspace({ source: { kind: "directory", path: daemon.staticDir } })
+      ).workspace;
+      if (!workspace) throw new Error("Workspace creation failed");
+      const removed = await admin.createAgent({
+        provider: "codex",
+        cwd: daemon.staticDir,
+        workspaceId: workspace.id,
+      });
+      const survivor = await admin.createAgent({
+        provider: "codex",
+        cwd: daemon.staticDir,
+        workspaceId: workspace.id,
+      });
+      const sentinel = path.join(daemon.staticDir, "keep-project-file.txt");
+      await writeFile(sentinel, "keep this project file\n");
+      await prepare(daemon.daemon.agentManager, removed.id);
+      const requester = await SubscriptionPeer.connect(daemon.port, "deletion-origin");
+      const sibling = await SubscriptionPeer.connect(daemon.port, "deletion-origin");
+      const observer = await SubscriptionPeer.connect(daemon.port, "deletion-observer");
+      const legacy = await SubscriptionPeer.connect(daemon.port, "deletion-legacy", {
+        owned_subscriptions: false,
+      });
+      peers.push(requester, sibling, observer, legacy);
+      for (const [index, peer] of peers.entries()) {
+        await peer.request({
+          type: "fetch_agents_request",
+          requestId: `directory-${index}`,
+          subscribe: {},
+        });
+        const entries = peer.frames.flatMap((frame) =>
+          frame.type === "session" && frame.message.type === "fetch_agents_response"
+            ? frame.message.payload.entries.map((entry) => entry.agent.id)
+            : [],
+        );
+        expect(entries.sort()).toEqual([removed.id, survivor.id].sort());
+        peer.frames.length = 0;
+      }
+      await requester.request({
+        type: "delete_agent_request",
+        requestId: "delete-observed-agent",
+        agentId: removed.id,
+      });
+      await expect
+        .poll(() => peers.map(removedAgentIds))
+        .toEqual([[removed.id], [removed.id], [removed.id], [removed.id]]);
+      const replies = peers.map((peer) =>
+        peer.frames.flatMap((frame) =>
+          frame.type === "session" && frame.message.type === "agent_deleted"
+            ? [frame.message.payload]
+            : [],
+        ),
+      );
+      expect(replies).toEqual([
+        [{ agentId: removed.id, requestId: "delete-observed-agent" }],
+        [],
+        [],
+        [],
+      ]);
+      expect(await daemon.daemon.agentStorage.get(removed.id)).toBeNull();
+      expect((await daemon.daemon.agentStorage.get(survivor.id))?.id).toBe(survivor.id);
+      expect(await readFile(sentinel, "utf8")).toBe("keep this project file\n");
+    } finally {
+      for (const peer of peers) peer.close();
+      await admin.close();
+      await daemon.close();
+    }
+  },
+);
 
 test("workspace filters and identical queries coexist until their own release", async () => {
   const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
@@ -679,7 +783,8 @@ test("same-workspace terminal directory observers do not share a teardown slot",
     peer.frames.length = 0;
     const result = await admin.createTerminal(daemon.staticDir, "Observed terminal", undefined, {
       workspaceId: workspace.id,
-      command: "/bin/cat",
+      command: process.execPath,
+      args: ["-e", "process.stdin.on('data', data => process.stdout.write(data))"],
     });
     expect(result.error).toBe(null);
     await expect
@@ -728,7 +833,8 @@ test("terminal output has separate server IDs and binary slots, including in a s
     ).workspace!;
     const result = await admin.createTerminal(daemon.staticDir, "Output ownership", undefined, {
       workspaceId: workspace.id,
-      command: "/bin/cat",
+      command: process.execPath,
+      args: ["-e", "process.stdin.on('data', data => process.stdout.write(data))"],
     });
     expect(result.error).toBe(null);
     const idle = await SubscriptionPeer.connect(daemon.port, "terminal-output-session");
@@ -1423,7 +1529,7 @@ test("request outcomes for import and attention reach only their requesting sock
   });
   const requester = await SubscriptionPeer.connect(daemon.port, "reply-shared");
   const sibling = await SubscriptionPeer.connect(daemon.port, "reply-shared");
-  const admin = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  const admin = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
   try {
     await admin.connect();
     await requester.request({
@@ -1462,7 +1568,7 @@ test("request outcomes for import and attention reach only their requesting sock
       }),
     );
     const agent = await admin.createAgent({
-      provider: "codex",
+      provider: "mock",
       cwd: daemon.staticDir,
       title: "Attention",
     });

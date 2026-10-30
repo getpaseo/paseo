@@ -78,6 +78,45 @@ test("listed client bundle is published while plugins are disabled; unlisted dir
   }
 }, 60_000);
 
+test("a repeated catalog fetch leaves out the client bundle the client already holds", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-builtin-catalog-cache-"));
+  roots.push(root);
+  const directory = await fixture(root, "large", true);
+  // About the size of a real plugin client bundle.
+  await writeFile(
+    path.join(directory, "index.client.tsx"),
+    `const payload = ${JSON.stringify("x".repeat(1_000_000))};
+export default function contribute() { void payload; return () => {}; }`,
+  );
+  const daemon = await createTestPaseoDaemon({
+    daemonVersion: "0.9.2",
+    pluginsEnabled: false,
+    builtinPlugins: new BuiltinPluginLoader(root, ["large"]),
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.9.2" });
+  const responseBytes: number[] = [];
+  const unsubscribe = client.subscribeRawMessages((message) => {
+    if (message.type === "plugin.catalog.get.response") {
+      responseBytes.push(JSON.stringify(message).length);
+    }
+  });
+  try {
+    await client.connect();
+    const first = await client.getPluginCatalog();
+    const second = await client.getPluginCatalog();
+
+    expect(second).toEqual(first);
+    expect(second[0]?.clientBundle).toContain("x".repeat(1_000_000));
+    expect(responseBytes).toHaveLength(2);
+    expect(responseBytes[0]).toBeGreaterThan(1_000_000);
+    expect(responseBytes[1]).toBeLessThan(500);
+  } finally {
+    unsubscribe();
+    await client.close();
+    await daemon.close();
+  }
+}, 60_000);
+
 test("directory, Git, and npm installs reject a built-in ID", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "paseo-builtin-install-"));
   roots.push(root);

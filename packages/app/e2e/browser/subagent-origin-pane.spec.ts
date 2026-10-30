@@ -1,10 +1,19 @@
+import { buildSeededHost } from "../support/helpers/daemon-registry";
+import { submitMessage } from "../support/helpers/composer";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page } from "../support/fixtures";
 import { runWorkspaceActionFromCommandCenter } from "../support/helpers/command-center-workspace-actions";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { seedWorkspace } from "../support/helpers/seed-client";
-import { openSubagentsTrack, seedParentWithSubagent } from "../support/helpers/subagents";
+import {
+  delegateFleetThroughMcp,
+  expectManagedSubagentArchived,
+  openSubagentsTrack,
+  seedParentWithSubagent,
+} from "../support/helpers/subagents";
+
+test.use({ e2eInjectPaseoTools: true });
 
 const SETTINGS_KEY = "@paseo:app-settings";
 
@@ -116,6 +125,29 @@ test("opening an already-tabbed subagent reveals its left tab without a duplicat
   }
 });
 
+test("a subagent's parent pill returns to its parent", async ({ page }) => {
+  const workspace = await seedWorkspace({ repoPrefix: "subagent-parent-pill-" });
+  try {
+    const pair = await seedParentWithSubagent(workspace, {
+      parentTitle: "Refactor auth flow",
+      childTitle: "Write session tests",
+    });
+    await page.setViewportSize({ width: 1400, height: 900 });
+    await openAgentRoute(page, { workspaceId: pair.workspaceId, agentId: pair.child.id });
+
+    const pill = page.getByTestId("composer-parent-agent-pill");
+    await expect(pill).toHaveAccessibleName("Back to Refactor auth flow");
+    await pill.click();
+
+    await expect(page.getByTestId(`workspace-tab-agent_${pair.parent.id}`)).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
 test("a preferred chat file link still opens beside its right-pane agent", async ({ page }) => {
   const target = "linked.ts:3";
   const workspace = await seedMockAgentWorkspace({
@@ -145,5 +177,191 @@ test("a preferred chat file link still opens beside its right-pane agent", async
     await expect(left.getByTestId("workspace-tab-file_linked.ts")).toHaveCount(0);
   } finally {
     await workspace.cleanup();
+  }
+});
+
+test("MCP delegates to self and B and opens both qualified children in ordinary conversations", async ({
+  page,
+}) => {
+  const fleet = await delegateFleetThroughMcp();
+  let appSockets = 0;
+  let routeOpens = 0;
+  const activeDaemonSockets = new Set<unknown>();
+  const observationRequests: Record<string, number> = {};
+  page.on("websocket", (socket) => {
+    appSockets++;
+    if (new URL(socket.url()).pathname === "/ws") {
+      activeDaemonSockets.add(socket);
+      socket.on("close", () => activeDaemonSockets.delete(socket));
+    }
+    socket.on("framesent", ({ payload }) => {
+      if (typeof payload !== "string" || !payload.startsWith("{")) return;
+      if (String(payload).includes('"hosts.route.open.request"')) routeOpens++;
+      const outer = JSON.parse(String(payload));
+      const request = outer.type === "session" ? outer.message : null;
+      if (
+        request?.type &&
+        (request.subscribe !== undefined ||
+          request.observe === true ||
+          request.type.endsWith("set_subscription.request"))
+      )
+        observationRequests[request.type] = (observationRequests[request.type] ?? 0) + 1;
+    });
+  });
+  try {
+    await openAgentRoute(page, {
+      workspaceId: fleet.workspace.workspaceId,
+      agentId: fleet.parent.id,
+    });
+    await openSubagentsTrack(page);
+    await expect(page.getByTestId(`subagents-track-row-${fleet.local.agentId}`)).toContainText(
+      "MCP child on A",
+    );
+    await expect(page.getByTestId(`subagents-track-row-${fleet.remote.agentId}`)).toContainText(
+      "MCP child on B",
+    );
+    await expect(page.getByTestId(`subagents-track-row-${fleet.remote.agentId}`)).toContainText(
+      "Fleet B",
+    );
+    await page.getByTestId(`subagents-track-row-${fleet.local.agentId}`).click();
+    await expect(page.getByTestId(`workspace-tab-agent_${fleet.local.agentId}`)).toBeVisible();
+    await submitMessage(page, "LOCAL_UI_TARGET");
+    await expect(page.getByText("LOCAL_UI_TARGET", { exact: true })).toBeVisible();
+    expect((await fleet.b.fetchAgent(fleet.local.agentId))?.agent.lastUserMessageAt).toBeNull();
+    await page.getByTestId(`workspace-tab-agent_${fleet.parent.id}`).click();
+    await openSubagentsTrack(page);
+    await page.getByTestId(`subagents-track-row-${fleet.remote.agentId}`).click();
+    await expect(page).toHaveURL((url) =>
+      url.pathname.includes(`/h/${fleet.remote.serverId}/workspace/`),
+    );
+    await submitMessage(page, "REMOTE_UI_TARGET");
+    await expect(page.getByText("REMOTE_UI_TARGET", { exact: true })).toBeVisible();
+    expect((await fleet.a.fetchAgent(fleet.remote.agentId))?.agent.lastUserMessageAt).toBeNull();
+    await fleet.expectCompletion(fleet.local);
+    await fleet.expectCompletion(fleet.remote);
+    await openAgentRoute(page, {
+      workspaceId: fleet.workspace.workspaceId,
+      agentId: fleet.parent.id,
+    });
+    await expect(
+      page.getByRole("button", { name: /Agent finished.*MCP child on A/ }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /Agent finished.*MCP child on B/ }),
+    ).toBeVisible();
+    const owners = await page.evaluate(() => {
+      const runtime = Reflect.get(globalThis, "__paseoHostRuntimeStore") as {
+        getHosts(): Array<{ serverId: string }>;
+        getSnapshot(
+          serverId: string,
+        ): { connectionStatus: string; clientGeneration: number } | null;
+      };
+      return runtime.getHosts().map((host) => {
+        const snapshot = runtime.getSnapshot(host.serverId);
+        return {
+          serverId: host.serverId,
+          connectionStatus: snapshot?.connectionStatus,
+          clientGeneration: snapshot?.clientGeneration,
+        };
+      });
+    });
+    console.log("Fleet ordinary route counts", {
+      appSockets,
+      activeDaemonSockets: activeDaemonSockets.size,
+      routeOpens,
+      owners,
+      observationRequests,
+    });
+  } finally {
+    await fleet.close();
+  }
+});
+
+async function openFleetParentWithDirectB(
+  page: Page,
+  fleet: Awaited<ReturnType<typeof delegateFleetThroughMcp>>,
+) {
+  await page.goto("/", { waitUntil: "commit" });
+  const host = buildSeededHost({
+    serverId: fleet.remote.serverId,
+    endpoint: `127.0.0.1:${fleet.destination.port}`,
+    label: "Fleet B",
+    nowIso: new Date().toISOString(),
+  });
+  await page.evaluate((extraHost) => {
+    localStorage.setItem("@paseo:e2e-extra-hosts", JSON.stringify([extraHost]));
+  }, host);
+  await openAgentRoute(page, {
+    workspaceId: fleet.workspace.workspaceId,
+    agentId: fleet.parent.id,
+  });
+  await openSubagentsTrack(page);
+  await expect(page.getByTestId(`subagents-track-row-${fleet.remote.agentId}`)).toContainText(
+    "MCP child on B",
+  );
+}
+
+async function openFleetChild(
+  page: Page,
+  fleet: Awaited<ReturnType<typeof delegateFleetThroughMcp>>,
+) {
+  await page.getByTestId(`subagents-track-row-${fleet.remote.agentId}`).click();
+  await expect(page).toHaveURL(
+    (url) => url.pathname === `/h/${fleet.remote.serverId}/workspace/${fleet.remote.workspaceId}`,
+  );
+}
+
+test("a directly connected B opens and archives its MCP child from A's track", async ({ page }) => {
+  const fleet = await delegateFleetThroughMcp();
+  try {
+    await openFleetParentWithDirectB(page, fleet);
+    await openFleetChild(page, fleet);
+    await expect(page.getByRole("button", { name: "MCP child on B", exact: true })).toBeVisible();
+    await submitMessage(page, "DIRECT_B_TARGET");
+    await expect(page.getByText("DIRECT_B_TARGET", { exact: true })).toBeVisible();
+    expect((await fleet.a.fetchAgent(fleet.remote.agentId))?.agent.lastUserMessageAt).toBeNull();
+    await openFleetParentWithDirectB(page, fleet);
+    await page.getByTestId(`subagents-track-row-${fleet.remote.agentId}`).hover();
+    page.once("dialog", (dialog) => {
+      void dialog.accept();
+    });
+    await page.getByRole("button", { name: "Archive MCP child on B", exact: true }).click();
+    await expectManagedSubagentArchived({ client: fleet.b }, fleet.remote.agentId);
+    await expect(page.getByTestId(`subagents-track-row-${fleet.remote.agentId}`)).toHaveCount(0);
+    expect((await fleet.a.fetchAgent(fleet.remote.agentId))?.agent.archivedAt).toBeNull();
+    await expect(page.getByText(/already connected through another route/)).toHaveCount(0);
+  } finally {
+    await fleet.close();
+  }
+});
+
+test("an unavailable B child opens its cached workspace with existing reconnecting behavior", async ({
+  page,
+}) => {
+  const fleet = await delegateFleetThroughMcp();
+  try {
+    await openFleetParentWithDirectB(page, fleet);
+    await fleet.destination.close();
+    await expect
+      .poll(() =>
+        page.evaluate((serverId) => {
+          const runtime = Reflect.get(globalThis, "__paseoHostRuntimeStore") as {
+            getSnapshot(id: string): { serverId: string; connectionStatus: string } | null;
+          };
+          return runtime.getSnapshot(serverId);
+        }, fleet.remote.serverId),
+      )
+      .toMatchObject({
+        serverId: fleet.remote.serverId,
+        connectionStatus: expect.stringMatching(/^(offline|connecting|error)$/),
+      });
+    await openFleetChild(page, fleet);
+    await expect(page.getByTestId("workspace-header-title").filter({ visible: true })).toHaveText(
+      "B workspace",
+    );
+    await expect(page.getByRole("button", { name: "MCP child on B", exact: true })).toBeVisible();
+    await expect(page.getByText(/already connected through another route/)).toHaveCount(0);
+  } finally {
+    await fleet.close();
   }
 });
