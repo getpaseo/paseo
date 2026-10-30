@@ -186,7 +186,7 @@ const CodexCollabAgentToolCallItemSchema = z
     id: z.string().min(1),
     status: z.string().optional(),
     error: z.unknown().optional(),
-    prompt: z.string().optional(),
+    prompt: z.string().nullish(),
     tool: z.string().optional(),
     receiverThreadIds: z.array(z.string()).optional(),
     agentsStates: z.record(z.string(), z.unknown()).optional(),

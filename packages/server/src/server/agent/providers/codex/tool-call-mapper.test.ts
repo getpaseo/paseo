@@ -213,6 +213,20 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it("accepts a nullable prompt in completed collaboration control items", () => {
+    expect(
+      mapCodexToolCallFromThreadItem({
+        type: "collabAgentToolCall",
+        id: "wait-child",
+        tool: "wait",
+        prompt: null,
+        status: "completed",
+        receiverThreadIds: ["child"],
+        agentsStates: { child: { status: "completed" } },
+      }),
+    ).toMatchObject({ callId: "wait-child", status: "completed" });
+  });
+
   it("maps collabAgentToolCall into canonical sub-agent detail", () => {
     const item = mapCodexToolCallFromThreadItem({
       type: "collabAgentToolCall",
