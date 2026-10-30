@@ -182,7 +182,10 @@ class ProviderRuntime {
       const launch = await this.resolveLaunch();
       if (this.registration.status)
         return ProviderStatusSchema.parse(await this.registration.status({ launch }));
-      if (!this.registration.command) await this.getConnection();
+      // No resolved launch means the plugin owns its own executable, so it has
+      // to report its own availability. A resolved launch already proves the
+      // executable exists.
+      if (!launch) await this.getConnection();
       return { available: true };
     } catch (error) {
       return {

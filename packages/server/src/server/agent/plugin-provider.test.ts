@@ -2181,10 +2181,12 @@ describe("plugin launch resolution", () => {
   function probeRegistration(
     resolveCommand: () => Promise<readonly [string, ...string[]] | undefined>,
     launches: (ProviderLaunch | undefined)[],
+    command?: readonly [string, ...string[]],
   ): ProviderRegistration {
     return {
       id: "launch-resolution-probe",
       label: "Launch Resolution Probe",
+      ...(command ? { command } : {}),
       async resolveCommand() {
         return resolveCommand();
       },
@@ -2255,13 +2257,64 @@ describe("plugin launch resolution", () => {
     const launches: (ProviderLaunch | undefined)[] = [];
     const pluginCommand = await executable("plugin-zcode");
     const client = clientFor(
-      probeRegistration(async () => [pluginCommand], launches),
+      probeRegistration(async () => [pluginCommand, "--plugin-arg"], launches),
       {
         appendArgs: ["--extra"],
       },
     );
     await expect(client.isAvailable()).resolves.toBe(true);
     expect(launches.at(-1)?.command).toBe(pluginCommand);
+    expect(launches.at(-1)?.args).toEqual(["--plugin-arg", "--extra"]);
+  });
+
+  test("a declared command wins over the plugin's own resolution", async () => {
+    const launches: (ProviderLaunch | undefined)[] = [];
+    const declaredCommand = await executable("declared-zcode");
+    const hookCommand = await executable("hook-zcode");
+    let hookCalls = 0;
+    const client = clientFor(
+      probeRegistration(
+        async () => {
+          hookCalls += 1;
+          return [hookCommand];
+        },
+        launches,
+        [declaredCommand],
+      ),
+    );
+    await expect(client.isAvailable()).resolves.toBe(true);
+    expect(launches.at(-1)?.command).toBe(declaredCommand);
+    expect(hookCalls).toBe(0);
+  });
+
+  test("a plugin that resolves its own command is probed without connecting", async () => {
+    const pluginCommand = await executable("plugin-zcode");
+    let resolveCalls = 0;
+    let connectCalls = 0;
+    const registration: ProviderRegistration = {
+      id: "launch-resolution-probe",
+      label: "Launch Resolution Probe",
+      async resolveCommand() {
+        resolveCalls += 1;
+        return [pluginCommand];
+      },
+      async connect() {
+        connectCalls += 1;
+        return {
+          version: 1,
+          capabilities: [],
+          async send() {},
+          onEvent() {
+            return () => undefined;
+          },
+          async close() {},
+        };
+      },
+    };
+    const client = clientFor(registration);
+    await expect(client.isAvailable()).resolves.toBe(true);
+    expect(connectCalls).toBe(0);
+    expect(resolveCalls).toBe(1);
   });
 
   test("a missing user override target fails hard", async () => {
