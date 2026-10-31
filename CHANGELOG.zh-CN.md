@@ -11,6 +11,10 @@
 
 - 新增采用 `subject.operation.position` 命名的 `server.addHook` 和在 setup 及 Agent 之前等待的 `worktree.create.after` 钩子，弃用原有的插件钩子注册方法并保留原有行为 ([#8081](https://github.com/getpaseo/paseo/pull/8081))
 
+修复：
+
+- 会话打开钩子重载后如果没有改变 env、工具或 MCP 服务器，就保持当前 provider 进程，不再为下一条消息关掉它 ([#8269](https://github.com/getpaseo/paseo/pull/8269))
+
 ## 0.14.0 - 2026-10-29
 
 插件现在可以为单个 Agent 添加工具，并在会话打开时配置其 MCP 服务器。
