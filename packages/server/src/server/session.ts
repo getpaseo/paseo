@@ -4761,6 +4761,7 @@ export class Session {
     this.sessionLogger.info({ agentId }, `Refreshing agent ${agentId} from persistence`);
 
     try {
+      await this.restoreOwningWorkspaceForLegacyAgentRefresh(agentId);
       // Runtime replacement is serialized, but the reply also needs provider history.
       // Another replacement during hydration can remove the agent before that reply.
       // Share the whole reload and hydration across connections, including failures.
@@ -4819,7 +4820,6 @@ export class Session {
   }
 
   private async refreshAgentFromPersistence(agentId: string): Promise<ManagedAgent> {
-    await this.restoreOwningWorkspaceForLegacyAgentRefresh(agentId);
     await unarchiveAgentState(this.agentStorage, this.agentManager, agentId);
     let snapshot: ManagedAgent;
     const existing = this.agentManager.getAgent(agentId);
