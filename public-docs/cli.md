@@ -124,6 +124,8 @@ When an existing Paseo agent runs the same command, Paseo recognizes it through 
 
 Use `--output-schema` to return only matching JSON output. You can pass a schema file path or an inline JSON schema object. This mode cannot be used with `--no-wait`.
 
+When the answer does not match the schema, Paseo asks the agent again, up to two more times. `--max-retries <n>` changes the count, and `--max-retries 0` fails on the first mismatch. A failure exits with status 1 and prints `OUTPUT_SCHEMA_FAILED`; its `details` carry `validationErrors` and the agent's `lastResponse`.
+
 By default, `paseo run` waits for completion. Use `--no-wait` to return immediately while the agent keeps running, the same flag `paseo send` takes.
 
 The old `run --background` and `-d` aliases still mean `--no-wait`. They are deprecated, hidden
@@ -316,9 +318,15 @@ paseo send <id> "now run the tests"
 paseo send <id> --image screenshot.png "what's wrong here?"
 paseo send <id> --no-wait "run this task"
 paseo send <id> --behavior interrupt "stop and do this instead"
+paseo send <id> --output-schema schema.json "list the open questions"
+paseo send <id> --wait-timeout 30m "run the full suite"
 ```
 
 Agent-originated sends (`PASEO_AGENT_ID` set) default to steering the running turn. Other sends default to interrupting it. Use `--behavior steer` or `--behavior interrupt` to override the default. Steering uses the same fallback as the client: if steering is unavailable, the running turn is interrupted and replaced.
+
+`send` waits up to 10 minutes for the agent to finish. Use `--wait-timeout <duration>` (for example `30s`, `5m`, `1h`) to change that.
+
+Use `--output-schema` to ask an existing agent for JSON and print only that. It works as in [`paseo run`](#running-agents): the schema is added to your message, the agent's last reply is checked against it, and a mismatch is sent back to the same agent up to `--max-retries` times (default 2). It cannot be used with `--no-wait`.
 
 ## Viewing logs
 
