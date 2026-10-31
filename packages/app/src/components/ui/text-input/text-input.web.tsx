@@ -1,9 +1,12 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
 import { TextInput } from "react-native";
+import type { NativeSyntheticEvent, TextInputSelectionChangeEventData } from "react-native";
 import type { EditingTextInputHandle, EditingTextInputProps } from "./types";
 
 interface WebTextInputElement extends TextInput {
   value?: string;
+  selectionStart?: number | null;
+  selectionEnd?: number | null;
   setSelectionRange?: (start: number, end: number) => void;
   addEventListener(type: "compositionstart" | "compositionend", listener: EventListener): void;
   removeEventListener(type: "compositionstart" | "compositionend", listener: EventListener): void;
@@ -27,6 +30,8 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
     const isComposingRef = useRef(false);
     const onChangeTextRef = useRef(onChangeText);
     onChangeTextRef.current = onChangeText;
+    const onSelectionChangeRef = useRef(allProps.onSelectionChange);
+    onSelectionChangeRef.current = allProps.onSelectionChange;
 
     useEffect(() => {
       const input = inputRef.current as WebTextInputElement | null;
@@ -38,9 +43,18 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
       const endComposition = () => {
         isComposingRef.current = false;
         const nextText = input.value ?? "";
-        if (nextText === textRef.current) return;
-        textRef.current = nextText;
-        onChangeTextRef.current?.(nextText);
+        if (nextText !== textRef.current) {
+          textRef.current = nextText;
+          onChangeTextRef.current?.(nextText);
+        }
+        const start = input.selectionStart ?? nextText.length;
+        const end = input.selectionEnd ?? start;
+        onSelectionChangeRef.current?.({
+          nativeEvent: {
+            selection: { start, end },
+            text: nextText,
+          },
+        } as unknown as NativeSyntheticEvent<TextInputSelectionChangeEventData>);
       };
 
       input.addEventListener("compositionstart", startComposition);
