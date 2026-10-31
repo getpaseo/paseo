@@ -438,6 +438,7 @@ export const ko: TranslationResources = {
     },
     row: {
       importing: "가져오는 중...",
+      cwdMissing: "폴더가 더 이상 존재하지 않습니다",
     },
   },
   workspace: {

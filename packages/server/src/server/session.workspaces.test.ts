@@ -3232,6 +3232,7 @@ test("fetch_agent_history_request skips rows whose workspace project record is m
 test("fetch_recent_provider_sessions_request lists importable provider sessions by handle", async () => {
   const emitted: Array<{ type: string; payload: unknown }> = [];
   const session = createSessionForWorkspaceTests();
+  const recentCwd = mkdtempSync(path.join(tmpdir(), "paseo-recent-provider-sessions-"));
 
   session.emit = (message) => emitted.push(message as { type: string; payload: unknown });
   session.agentManager.listAgents = () => [
@@ -3257,7 +3258,7 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
       provider: "codex",
       sessionId: "stored-session",
       nativeHandle: "stored-handle",
-      cwd: "/tmp/recent",
+      cwd: recentCwd,
       title: "Already stored",
       lastActivityAt: "2026-04-30T12:04:00.000Z",
       firstPrompt: "stored prompt",
@@ -3265,7 +3266,7 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
     makeImportableProviderSession({
       provider: "claude",
       sessionId: "wrong-provider",
-      cwd: "/tmp/recent",
+      cwd: recentCwd,
       title: "Wrong provider",
       lastActivityAt: "2026-04-30T12:03:00.000Z",
     }),
@@ -3273,7 +3274,7 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
       provider: "codex",
       sessionId: "older-session",
       nativeHandle: "older-handle",
-      cwd: "/tmp/recent",
+      cwd: recentCwd,
       title: "Older than since",
       lastActivityAt: "2026-04-29T23:59:59.000Z",
     }),
@@ -3281,7 +3282,7 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
       provider: "codex",
       sessionId: "newer-session",
       nativeHandle: "newer-handle",
-      cwd: "/tmp/recent",
+      cwd: recentCwd,
       title: "Newer import",
       lastActivityAt: "2026-04-30T12:02:00.000Z",
       firstPrompt: "newer prompt",
@@ -3290,7 +3291,7 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
       provider: "codex",
       sessionId: "second-session",
       nativeHandle: "second-handle",
-      cwd: "/tmp/recent",
+      cwd: recentCwd,
       title: "Second import",
       lastActivityAt: "2026-04-30T12:00:00.000Z",
       firstPrompt: "second prompt",
@@ -3299,7 +3300,7 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
       provider: "codex",
       sessionId: "third-session",
       nativeHandle: "third-handle",
-      cwd: "/tmp/recent",
+      cwd: recentCwd,
       title: "Third import",
       lastActivityAt: "2026-04-30T11:59:00.000Z",
       firstPrompt: "third prompt",
@@ -3308,7 +3309,7 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
       provider: "codex",
       sessionId: "live-session",
       nativeHandle: "live-handle",
-      cwd: "/tmp/recent",
+      cwd: recentCwd,
       title: "Already live",
       lastActivityAt: "2026-04-30T12:01:00.000Z",
       firstPrompt: "live prompt",
@@ -3330,7 +3331,7 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
     {
       id: "stored-agent",
       provider: "codex",
-      cwd: "/tmp/recent",
+      cwd: recentCwd,
       createdAt: "2026-04-30T00:00:00.000Z",
       updatedAt: "2026-04-30T00:00:00.000Z",
       title: "Stored",
@@ -3347,7 +3348,7 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
   await session.handleMessage({
     type: "fetch_recent_provider_sessions_request",
     requestId: "req-recent-provider-sessions",
-    cwd: "/tmp/recent",
+    cwd: recentCwd,
     providers: ["codex"],
     since: "2026-04-30T00:00:00.000Z",
     limit: 2,
@@ -3363,27 +3364,31 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
             providerId: "codex",
             providerLabel: "Codex",
             providerHandleId: "newer-handle",
-            cwd: "/tmp/recent",
+            cwd: recentCwd,
             title: "Newer import",
             firstPromptPreview: "newer prompt",
             lastPromptPreview: "newer prompt",
             lastActivityAt: "2026-04-30T12:02:00.000Z",
+            cwdMissing: false,
           },
           {
             providerId: "codex",
             providerLabel: "Codex",
             providerHandleId: "second-handle",
-            cwd: "/tmp/recent",
+            cwd: recentCwd,
             title: "Second import",
             firstPromptPreview: "second prompt",
             lastPromptPreview: "second prompt",
             lastActivityAt: "2026-04-30T12:00:00.000Z",
+            cwdMissing: false,
           },
         ],
         filteredAlreadyImportedCount: 2,
       },
     },
   ]);
+
+  rmSync(recentCwd, { recursive: true, force: true });
 });
 
 test("fetch_recent_provider_sessions_request forwards providerFilter to agent manager", async () => {

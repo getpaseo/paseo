@@ -929,6 +929,9 @@ export const RecentProviderSessionDescriptorPayloadSchema = z.object({
   firstPromptPreview: z.string().nullable(),
   lastPromptPreview: z.string().nullable(),
   lastActivityAt: z.string(),
+  // The session's directory is gone, so importing it would fail. Absent from daemons that do
+  // not check, which the app treats as present.
+  cwdMissing: z.boolean().optional(),
 });
 
 export type RecentProviderSessionDescriptorPayload = z.infer<

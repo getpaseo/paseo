@@ -66,6 +66,7 @@ export interface ListImportableProviderSessionsInput {
   agentManager: Pick<AgentManager, "listAgents" | "listImportableSessions">;
   agentStorage: Pick<AgentStorage, "list">;
   providerSnapshotManager: Pick<ProviderSnapshotManager, "getProviderLabel">;
+  isDirectory: (path: string) => Promise<boolean>;
 }
 
 export interface ListImportableProviderSessionsResult {
@@ -119,7 +120,7 @@ export function normalizeImportAgentRequest(
 export async function listImportableProviderSessions(
   input: ListImportableProviderSessionsInput,
 ): Promise<ListImportableProviderSessionsResult> {
-  const { request, agentManager, agentStorage, providerSnapshotManager } = input;
+  const { request, agentManager, agentStorage, providerSnapshotManager, isDirectory } = input;
   const limit = request.limit ?? 20;
   const sinceTimestamp = parseRecentProviderSessionsSince(request.since);
   const providerFilter = request.providers ? new Set(request.providers) : undefined;
@@ -161,14 +162,19 @@ export async function listImportableProviderSessions(
     candidates.push(session);
   }
 
-  const entries = candidates
-    .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime())
-    .slice(0, limit)
-    .map((descriptor) =>
-      toRecentProviderSessionDescriptorPayload(descriptor, {
-        providerLabel: providerSnapshotManager.getProviderLabel(descriptor.provider),
-      }),
-    );
+  const entries = await Promise.all(
+    candidates
+      .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime())
+      .slice(0, limit)
+      .map(async (descriptor) =>
+        toRecentProviderSessionDescriptorPayload(descriptor, {
+          providerLabel: providerSnapshotManager.getProviderLabel(descriptor.provider),
+          // Import resumes the session in its directory, so a session whose directory was
+          // deleted or renamed can be listed but never imported.
+          cwdMissing: !(await isDirectory(descriptor.cwd)),
+        }),
+      ),
+  );
 
   return {
     entries,
