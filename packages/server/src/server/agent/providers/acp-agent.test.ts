@@ -20,6 +20,7 @@ import {
   SessionConfigOption,
   SessionUpdate,
 } from "@agentclientprotocol/sdk";
+import { zSessionNotification } from "@agentclientprotocol/sdk/dist/schema/zod.gen.js";
 
 import {
   ACPAgentClient,
@@ -488,6 +489,21 @@ test("ACP setModel only uses config-option fallback when the matching select cho
   expect(setSessionConfigOption).not.toHaveBeenCalled();
 });
 
+// The filter is schema-gated per variant. These flags let the tests assert forwarding or dropping
+// from the installed SDK's answer instead of pinning today's rejection.
+function sdkAcceptsSessionUpdate(update: Record<string, unknown>): boolean {
+  return zSessionNotification.safeParse({ sessionId: "s", update }).success;
+}
+const sdkAcceptsSubagentSpawned = sdkAcceptsSessionUpdate({
+  sessionUpdate: "subagent_spawned",
+  subagentSessionId: "child",
+});
+const sdkAcceptsSubagentState = sdkAcceptsSessionUpdate({
+  sessionUpdate: "subagent_state_update",
+  subagentSessionId: "child",
+  state: "completed",
+});
+
 describe("createLoggedNdJsonStream", () => {
   test("routes malformed ACP stdout through the provider logger instead of console.error", async () => {
     const input = new TransformStream<Uint8Array, Uint8Array>();
@@ -557,6 +573,136 @@ describe("createLoggedNdJsonStream", () => {
     await writer.close();
     reader.releaseLock();
   });
+
+  test("filters each Cursor subagent variant only while the installed SDK rejects it", async () => {
+    const input = new TransformStream<Uint8Array, Uint8Array>();
+    const output = new TransformStream<Uint8Array, Uint8Array>();
+    const logger = { warn: vi.fn() };
+
+    const stream = createLoggedNdJsonStream(output.writable, input.readable, {
+      logger: asInternals<ReturnType<typeof createTestLogger>>(logger),
+      provider: "acp",
+      ignoreUnsupportedSubagentUpdates: true,
+    });
+    const reader = stream.readable.getReader();
+    const writer = input.writable.getWriter();
+
+    const spawned = {
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "s",
+        update: { sessionUpdate: "subagent_spawned", subagentSessionId: "child" },
+      },
+    };
+    const state = {
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "s",
+        update: {
+          sessionUpdate: "subagent_state_update",
+          subagentSessionId: "child",
+          state: "completed",
+        },
+      },
+    };
+    const futureVariant = {
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "s",
+        update: { sessionUpdate: "subagent_future_update", subagentSessionId: "child" },
+      },
+    };
+    const standardUpdate = {
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "s",
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "hi" } },
+      },
+    };
+
+    await writer.write(
+      new TextEncoder().encode(
+        [spawned, state, futureVariant, standardUpdate].map((n) => JSON.stringify(n)).join("\n") +
+          "\n",
+      ),
+    );
+
+    // Each variant is forwarded exactly when the installed schema accepts it; an unknown third
+    // variant is never the filter's business.
+    const expected = [
+      ...(sdkAcceptsSubagentSpawned ? [spawned] : []),
+      ...(sdkAcceptsSubagentState ? [state] : []),
+      futureVariant,
+      standardUpdate,
+    ];
+    const received = [];
+    for (let index = 0; index < expected.length; index += 1) {
+      received.push((await reader.read()).value);
+    }
+
+    expect(received).toEqual(expected);
+    expect(logger.warn).not.toHaveBeenCalled();
+
+    await writer.close();
+    reader.releaseLock();
+  });
+
+  test.each([undefined, false] as const)(
+    "leaves both variants untouched when filtering is %s",
+    async (ignoreUnsupportedSubagentUpdates) => {
+      const input = new TransformStream<Uint8Array, Uint8Array>();
+      const output = new TransformStream<Uint8Array, Uint8Array>();
+      const logger = { warn: vi.fn() };
+
+      const stream = createLoggedNdJsonStream(output.writable, input.readable, {
+        logger: asInternals<ReturnType<typeof createTestLogger>>(logger),
+        provider: "acp",
+        ...(ignoreUnsupportedSubagentUpdates === undefined
+          ? {}
+          : { ignoreUnsupportedSubagentUpdates }),
+      });
+      const reader = stream.readable.getReader();
+      const writer = input.writable.getWriter();
+
+      const notifications = [
+        {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "s",
+            update: { sessionUpdate: "subagent_spawned", subagentSessionId: "child" },
+          },
+        },
+        {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "s",
+            update: {
+              sessionUpdate: "subagent_state_update",
+              subagentSessionId: "child",
+              state: "completed",
+            },
+          },
+        },
+      ];
+      await writer.write(
+        new TextEncoder().encode(notifications.map((n) => JSON.stringify(n)).join("\n") + "\n"),
+      );
+
+      const parsed = [await reader.read(), await reader.read()];
+
+      expect(parsed.map((chunk) => chunk.value)).toEqual(notifications);
+      expect(logger.warn).not.toHaveBeenCalled();
+
+      await writer.close();
+      reader.releaseLock();
+    },
+  );
 
   test("does not log terminal control sequences from malformed ACP stdout", async () => {
     const input = new TransformStream<Uint8Array, Uint8Array>();
