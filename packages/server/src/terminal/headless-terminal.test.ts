@@ -35,14 +35,14 @@ describe("createHeadlessTerminal", () => {
   // before the module loads. Zero bytes in front of the table make the
   // misread header deterministic.
   it("decodes widths correctly when Node's buffer pool offset is non-zero", () => {
-    const modulePath = fileURLToPath(new URL("./headless-terminal.ts", import.meta.url));
+    const moduleUrl = new URL("./headless-terminal.ts", import.meta.url).href;
     const script = `
       Buffer.poolSize = 8 * 1024 * 1024;
       const occupied = Buffer.from(new Uint8Array(3 * 1024 * 1024));
       if (occupied.byteOffset !== 0 || occupied.buffer.byteLength !== Buffer.poolSize) {
         throw new Error("expected a fresh shared pool");
       }
-      const { createHeadlessTerminal } = await import(${JSON.stringify(modulePath)});
+      const { createHeadlessTerminal } = await import(${JSON.stringify(moduleUrl)});
       const terminal = createHeadlessTerminal({ rows: 2, cols: 40 });
       await new Promise((resolve) => terminal.write(${JSON.stringify(EMOJI_ROW)}, resolve));
       process.stdout.write(String(terminal.buffer.active.cursorX));
@@ -54,7 +54,7 @@ describe("createHeadlessTerminal", () => {
       { cwd: fileURLToPath(new URL(".", import.meta.url)), encoding: "utf8" },
     );
 
-    expect(result.stderr).toBe("");
+    expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toBe(String(EMOJI_ROW_END_COL));
   });
 });
