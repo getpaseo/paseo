@@ -290,6 +290,13 @@ export const ptBR: TranslationResources = {
     tooManyMatches: "Muitos resultados — refine a busca",
     hostLoadFailed: "{{host}}: Não foi possível carregar o histórico",
     searchPlaceholder: "Buscar no histórico",
+    projectFilter: {
+      label: "Projeto",
+      all: "Todos os projetos",
+      title: "Filtrar por projeto",
+      empty: "Nenhum projeto no histórico carregado",
+      emptyFiltered: "Nenhuma sessão de {{project}} nas páginas carregadas",
+    },
     actions: {
       loadMore: "Carregar mais",
       clearSearch: "Limpar busca",
@@ -297,6 +304,7 @@ export const ptBR: TranslationResources = {
   },
   agentList: {
     fallbackTitle: "Nova sessão",
+    filterByProject: "Filtrar histórico por {{project}}",
     dateSections: {
       recent: "Recentes",
       today: "Hoje",
