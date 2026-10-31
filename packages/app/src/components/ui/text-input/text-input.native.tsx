@@ -13,6 +13,7 @@ import PasteInput, {
   type PasteTextInputInstance,
 } from "@mattermost/react-native-paste-input";
 import { useIsInsideBottomSheet } from "@/components/ui/bottom-sheet-scope";
+import { reportNativeUserActivity } from "@/hooks/native-user-activity";
 import type { EditingTextInputHandle, EditingTextInputProps } from "./types";
 
 type NativeInput = (TextInput | PasteTextInputInstance) & {
@@ -130,6 +131,8 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
     const handleChangeText = useCallback(
       (nextText: string) => {
         textRef.current = nextText;
+        // Soft and hardware keyboards type without touching the app's root view.
+        reportNativeUserActivity();
         onChangeText?.(nextText);
         bumpTextRevision();
       },
