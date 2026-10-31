@@ -1,4 +1,5 @@
 import { findMountedWindowStart } from "@/agent-stream/history-window";
+import { startsNewTurn } from "@/agent-stream/turn-membership";
 import { z } from "zod";
 import {
   AgentStatusSchema,
@@ -752,50 +753,99 @@ function serializeProject(project: ProjectDescriptor): StoredProject {
   };
 }
 
-function isTimelineItemStoredLosslessly(item: StreamItem): boolean {
-  switch (item.kind) {
-    case "user_message":
-      return (item.images?.length ?? 0) === 0 && (item.attachments?.length ?? 0) === 0;
-    case "tool_call":
-      return item.payload.source === "agent";
-    default:
-      return true;
+// Whether the stored row renders the same as refetching it. User message images and attachments
+// are local presentation the daemon never returns, so dropping them matches a refetch.
+function isTimelineItemStoredAsRefetched(item: StreamItem): boolean {
+  return item.kind !== "tool_call" || item.payload.source === "agent";
+}
+
+interface CertifiedTimelineWindow {
+  start: number;
+  startSeq: number;
+  hasOlder: boolean;
+}
+
+// Finds a complete-turn suffix near MAX_TIMELINE_ITEMS whose coverage the cache can certify.
+// An item's cursor is its projected seqEnd, not the seqStart anchor that `before startSeq`
+// paginates on, so a trimmed window may only start at a canonical user message: it is one source
+// row, so its cursor is its anchor. `before startSeq` then returns exactly the entries anchored
+// before it, and the reducer accepts that page as adjacent because it ends at startSeq - 1. Every
+// trimmed item must also end before that row, as a tail page certifies: a trimmed tool call that
+// updated later would leave a kept source row with no kept item.
+function selectCertifiedTimelineWindow(
+  items: StreamItem[],
+  range: AgentTimelineCursorState,
+  hasOlder: boolean,
+): CertifiedTimelineWindow | null {
+  if (range.retainedRanges !== undefined) return null;
+  const seqs: number[] = [];
+  for (const item of items) {
+    const cursor = item.timelineCursor;
+    if (cursor?.epoch !== range.epoch || cursor.seq < range.startSeq || cursor.seq > range.endSeq) {
+      return null;
+    }
+    seqs.push(cursor.seq);
   }
+  const lastEndIndex = seqs.lastIndexOf(range.endSeq);
+  const firstStart = Math.max(
+    findMountedWindowStart({ items, minMountedCount: MAX_TIMELINE_ITEMS }),
+    items.findLastIndex((item) => !isTimelineItemStoredAsRefetched(item)) + 1,
+  );
+  if (lastEndIndex < firstStart) return null;
+  if (firstStart === 0) return { start: 0, startSeq: range.startSeq, hasOlder };
+
+  const minSeqFrom = [...seqs];
+  for (let index = minSeqFrom.length - 2; index >= 0; index -= 1) {
+    minSeqFrom[index] = Math.min(minSeqFrom[index]!, minSeqFrom[index + 1]!);
+  }
+  let trimmedEndSeq = Math.max(...seqs.slice(0, firstStart));
+  for (let start = firstStart; start <= lastEndIndex; start += 1) {
+    const startSeq = seqs[start]!;
+    if (
+      items[start]?.kind === "user_message" &&
+      startsNewTurn(items[start]!, items[start - 1] ?? null) &&
+      trimmedEndSeq < startSeq &&
+      minSeqFrom[start] === startSeq
+    ) {
+      return { start, startSeq, hasOlder: true };
+    }
+    trimmedEndSeq = Math.max(trimmedEndSeq, startSeq);
+  }
+  return null;
 }
 
 function serializeTimeline(timeline: CachedTimeline): StoredTimeline | null {
   const canonicalItems = timeline.items.filter(
     (item) => item.kind !== "user_message" || !isUnreconciledLocalUserMessage(item),
   );
+  const range = timeline.range;
+  const certified = range
+    ? selectCertifiedTimelineWindow(canonicalItems, range, timeline.hasOlder)
+    : null;
+  if (range && certified) {
+    return {
+      agentId: timeline.agentId,
+      items: canonicalItems
+        .slice(certified.start)
+        .map(serializeTimelineItem)
+        .filter((item) => item !== null),
+      range: { epoch: range.epoch, startSeq: certified.startSeq, endSeq: range.endSeq },
+      hasOlder: certified.hasOlder,
+    };
+  }
+  // Display-only: these rows paint without granting synchronization authority.
   const start = findMountedWindowStart({
     items: canonicalItems,
     minMountedCount: MAX_TIMELINE_ITEMS,
   });
-  const items = canonicalItems
-    .slice(start)
-    .map(serializeTimelineItem)
-    .filter((item) => item !== null);
-  const range = timeline.range;
-  const canPersistCoverage =
-    range !== null &&
-    range.retainedRanges === undefined &&
-    canonicalItems.length <= MAX_TIMELINE_ITEMS &&
-    items.length === canonicalItems.length &&
-    canonicalItems.every(
-      (item) =>
-        isTimelineItemStoredLosslessly(item) &&
-        item.timelineCursor?.epoch === range.epoch &&
-        item.timelineCursor.seq >= range.startSeq &&
-        item.timelineCursor.seq <= range.endSeq,
-    ) &&
-    canonicalItems.some((item) => item.timelineCursor?.seq === range.endSeq);
   return {
     agentId: timeline.agentId,
-    items,
-    range: canPersistCoverage
-      ? { epoch: range.epoch, startSeq: range.startSeq, endSeq: range.endSeq }
-      : null,
-    hasOlder: canPersistCoverage ? timeline.hasOlder : false,
+    items: canonicalItems
+      .slice(start)
+      .map(serializeTimelineItem)
+      .filter((item) => item !== null),
+    range: null,
+    hasOlder: false,
   };
 }
 
