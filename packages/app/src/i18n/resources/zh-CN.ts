@@ -373,8 +373,7 @@ export const zhCN: TranslationResources = {
       failedRetry: "听写失败。点按重试。",
       empty: {
         noAudio: "未录到音频。是否有其他应用正在使用麦克风？",
-        silentAudio: "只录到了静音。请检查麦克风。",
-        noSpeech: "未识别到语音。点按重试再试一次。",
+        noTranscript: "未返回转写文本。点按重试。",
       },
     },
     question: {

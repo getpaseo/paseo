@@ -378,8 +378,7 @@ export const ja: TranslationResources = {
       failedRetry: "音声入力に失敗しました。再試行をタップしてください。",
       empty: {
         noAudio: "音声が録音されませんでした。別のアプリがマイクを使用していませんか？",
-        silentAudio: "無音しか録音されませんでした。マイクを確認してください。",
-        noSpeech: "音声を認識できませんでした。再試行をタップしてください。",
+        noTranscript: "文字起こしが返されませんでした。再試行をタップしてください。",
       },
     },
     question: {

@@ -374,8 +374,7 @@ export const ko: TranslationResources = {
       failedRetry: "받아쓰기에 실패했습니다. 다시 시도하려면 누르세요.",
       empty: {
         noAudio: "녹음된 오디오가 없습니다. 다른 앱이 마이크를 사용 중인가요?",
-        silentAudio: "무음만 녹음되었습니다. 마이크를 확인하세요.",
-        noSpeech: "음성이 인식되지 않았습니다. 다시 시도하려면 누르세요.",
+        noTranscript: "전사 결과가 없습니다. 다시 시도하려면 누르세요.",
       },
     },
     question: {

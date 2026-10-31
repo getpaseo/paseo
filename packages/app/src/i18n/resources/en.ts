@@ -370,8 +370,7 @@ export const en = {
       failedRetry: "Dictation failed. Tap retry.",
       empty: {
         noAudio: "No audio was recorded. Is another app using the microphone?",
-        silentAudio: "Only silence was recorded. Check your microphone.",
-        noSpeech: "No speech was recognized. Tap retry to try again.",
+        noTranscript: "No transcription was returned. Tap retry to try again.",
       },
     },
     question: {

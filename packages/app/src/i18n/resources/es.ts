@@ -378,8 +378,7 @@ export const es: TranslationResources = {
       failedRetry: "El dictado falló. Toca reintentar.",
       empty: {
         noAudio: "No se grabó audio. ¿Otra app está usando el micrófono?",
-        silentAudio: "Solo se grabó silencio. Revisa tu micrófono.",
-        noSpeech: "No se reconoció ninguna voz. Toca reintentar para volver a intentarlo.",
+        noTranscript: "No se devolvió ninguna transcripción. Toca reintentar.",
       },
     },
     question: {

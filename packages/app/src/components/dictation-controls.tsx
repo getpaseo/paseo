@@ -28,8 +28,7 @@ interface DictationControlsProps {
 
 const EMPTY_REASON_MESSAGE_KEYS = {
   "no-audio": "message.dictation.empty.noAudio",
-  "silent-audio": "message.dictation.empty.silentAudio",
-  "no-speech": "message.dictation.empty.noSpeech",
+  "no-transcript": "message.dictation.empty.noTranscript",
 } as const satisfies Record<DictationEmptyReason, string>;
 
 // The line under the meter once an attempt has finished without text.
@@ -41,7 +40,7 @@ function resolveResultText(input: {
 }): string | null {
   const { t, status, errorText, emptyReason } = input;
   if (status === "empty") {
-    return t(EMPTY_REASON_MESSAGE_KEYS[emptyReason ?? "no-speech"]);
+    return t(EMPTY_REASON_MESSAGE_KEYS[emptyReason ?? "no-transcript"]);
   }
   if (status !== "failed") {
     return null;
@@ -237,16 +236,18 @@ export function DictationOverlay({
       </Pressable>
 
       <View style={overlayStyles.centerContainer}>
-        <View style={overlayStyles.meterRow}>
-          <VolumeMeter
-            volume={volume}
-            isMuted={false}
-            isSpeaking={false}
-            orientation="horizontal"
-            color={theme.colors.accentForeground}
-          />
-          <Text style={overlayTimerTextStyle}>{formatDuration(duration)}</Text>
-        </View>
+        {!resultText ? (
+          <View style={overlayStyles.meterRow}>
+            <VolumeMeter
+              volume={volume}
+              isMuted={false}
+              isSpeaking={false}
+              orientation="horizontal"
+              color={theme.colors.accentForeground}
+            />
+            <Text style={overlayTimerTextStyle}>{formatDuration(duration)}</Text>
+          </View>
+        ) : null}
         {status === "paused" ? (
           <Text numberOfLines={2} style={overlayTranscriptTextStyle}>
             {t("message.dictation.paused")}

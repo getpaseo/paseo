@@ -377,8 +377,7 @@ export const ptBR: TranslationResources = {
       failedRetry: "Falha no ditado. Toque para tentar novamente.",
       empty: {
         noAudio: "Nenhum áudio foi gravado. Outro app está usando o microfone?",
-        silentAudio: "Só foi gravado silêncio. Verifique seu microfone.",
-        noSpeech: "Nenhuma fala foi reconhecida. Toque para tentar novamente.",
+        noTranscript: "Nenhuma transcrição foi retornada. Toque para tentar novamente.",
       },
     },
     question: {

@@ -1,4 +1,4 @@
-import type { Page } from "../fixtures";
+import { expect, type Page } from "../fixtures";
 import { daemonWsRoutePattern } from "./daemon-port";
 
 type WebSocketMessage = string | Buffer;
@@ -78,8 +78,14 @@ export async function installSyntheticMicrophone(
  * Answers dictation stream requests in place of the daemon. Each finish is
  * answered with the next queued transcript; everything else reaches the daemon.
  */
-export async function installDictationTranscriptHarness(page: Page, transcripts: string[]) {
+export async function installDictationTranscriptHarness(
+  page: Page,
+  transcripts: string[],
+  options: { partialTranscript?: string } = {},
+) {
   const queue = [...transcripts];
+  const streams = new Map<string, Map<number, string>>();
+  const recordings: string[][] = [];
   let resolveAudioChunk!: () => void;
   const audioChunk = new Promise<void>((resolve) => {
     resolveAudioChunk = resolve;
@@ -90,10 +96,15 @@ export async function installDictationTranscriptHarness(page: Page, transcripts:
 
     ws.onMessage((message) => {
       const request = sessionMessage(message);
-      const type = request?.type;
-      const dictationId = typeof request?.dictationId === "string" ? request.dictationId : null;
+      if (!request) {
+        server.send(message);
+        return;
+      }
+      const type = request.type;
+      const dictationId = typeof request.dictationId === "string" ? request.dictationId : null;
 
       if (type === "dictation_stream_start" && dictationId) {
+        streams.set(dictationId, new Map());
         sendSessionMessage(ws, {
           type: "dictation_stream_ack",
           payload: { dictationId, ackSeq: -1 },
@@ -106,10 +117,22 @@ export async function installDictationTranscriptHarness(page: Page, transcripts:
           type: "dictation_stream_ack",
           payload: { dictationId, ackSeq: seq },
         });
+        streams.get(dictationId)?.set(seq, String(request.audio));
+        if (options.partialTranscript) {
+          sendSessionMessage(ws, {
+            type: "dictation_stream_partial",
+            payload: { dictationId, text: options.partialTranscript },
+          });
+        }
         resolveAudioChunk();
         return;
       }
       if (type === "dictation_stream_finish" && dictationId) {
+        recordings.push(
+          [...(streams.get(dictationId)?.entries() ?? [])]
+            .sort(([a], [b]) => a - b)
+            .map(([, audio]) => audio),
+        );
         sendSessionMessage(ws, {
           type: "dictation_stream_finish_accepted",
           payload: { dictationId, timeoutMs: 5_000 },
@@ -127,5 +150,34 @@ export async function installDictationTranscriptHarness(page: Page, transcripts:
     server.onMessage((message) => ws.send(enableDictationCapability(message)));
   });
 
-  return { waitForAudio: () => audioChunk };
+  return { waitForAudio: () => audioChunk, recordings };
+}
+
+export async function recordDictation(page: Page, harness: { waitForAudio(): Promise<void> }) {
+  await page.getByRole("button", { name: "Start dictation", exact: true }).click();
+  await harness.waitForAudio();
+  await page.getByRole("button", { name: "Insert transcription", exact: true }).click();
+}
+
+export async function expectEmptyDictation(page: Page) {
+  const message = page.getByText("No transcription was returned. Tap retry to try again.", {
+    exact: true,
+  });
+  await expect(message).toBeVisible();
+  const bounds = await message.boundingBox();
+  const cancel = await page
+    .getByRole("button", { name: "Cancel dictation", exact: true })
+    .boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(cancel).not.toBeNull();
+  expect(bounds!.y).toBeGreaterThanOrEqual(cancel!.y);
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(cancel!.y + cancel!.height);
+}
+
+export async function retryDictation(page: Page) {
+  await page.getByRole("button", { name: "Retry dictation", exact: true }).click();
+}
+
+export async function discardDictation(page: Page) {
+  await page.getByRole("button", { name: "Cancel dictation", exact: true }).click();
 }

@@ -378,8 +378,7 @@ export const fr: TranslationResources = {
       failedRetry: "La dictée a échoué. Appuyez sur Réessayer.",
       empty: {
         noAudio: "Aucun son n'a été enregistré. Une autre app utilise-t-elle le micro ?",
-        silentAudio: "Seul du silence a été enregistré. Vérifiez votre micro.",
-        noSpeech: "Aucune parole reconnue. Appuyez sur Réessayer pour recommencer.",
+        noTranscript: "Aucune transcription reçue. Appuyez sur Réessayer.",
       },
     },
     question: {

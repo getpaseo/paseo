@@ -6,7 +6,6 @@ import {
   resolveDictationEmptyReason,
   type DictationEmptyReason,
 } from "@/dictation/empty-transcript-reason";
-import { pcm16PeakFromBase64 } from "@/dictation/pcm-level";
 import { useDictationAudioSource } from "@/hooks/use-dictation-audio-source";
 import { generateMessageId } from "@/types/stream";
 import { AttemptGuard } from "@/utils/attempt-guard";
@@ -40,8 +39,6 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   const [status, setStatus] = useState<DictationStatus>("idle");
   const [emptyReason, setEmptyReason] = useState<DictationEmptyReason | null>(null);
   const latestPartialTranscriptRef = useRef("");
-  // Loudest sample captured in the current recording; explains an empty transcript.
-  const recordingPeakRef = useRef(0);
 
   const onTranscriptRef = useRef(onTranscript);
   useEffect(() => {
@@ -141,7 +138,6 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
 
   const clearStreamingState = useCallback(() => {
     senderRef.current?.clearAll();
-    recordingPeakRef.current = 0;
     latestPartialTranscriptRef.current = "";
     setPartialTranscript("");
     setEmptyReason(null);
@@ -206,12 +202,11 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
         text.trim().length > 0 ? text.trim() : latestPartialTranscriptRef.current.trim();
 
       if (!transcriptText) {
-        // Keep the audio so the user can retry, and say why nothing came back.
+        // Keep the audio until the user retries or discards this empty result.
         setStatus("empty");
         setEmptyReason(
           resolveDictationEmptyReason({
             segmentCount: senderRef.current?.getSegmentCount() ?? 0,
-            peak: recordingPeakRef.current,
           }),
         );
         return;
@@ -246,7 +241,6 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
 
   const audio = useDictationAudioSource({
     onPcmSegment: (audioData) => {
-      recordingPeakRef.current = Math.max(recordingPeakRef.current, pcm16PeakFromBase64(audioData));
       senderRef.current?.enqueueSegment(audioData);
     },
     onError: (err) => {

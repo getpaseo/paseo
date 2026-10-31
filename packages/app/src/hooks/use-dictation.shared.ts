@@ -7,7 +7,7 @@ export type DictationStatus =
   | "paused"
   | "uploading"
   | "failed"
-  // Finished, but produced no text. `emptyReason` says why; the audio is kept for retry.
+  // Finished without text; captured audio remains available for retry.
   | "empty";
 
 export interface UseDictationOptions {
