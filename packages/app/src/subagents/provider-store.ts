@@ -377,6 +377,7 @@ export async function loadOlderProviderSubagentTimeline({
     direction: "before",
     cursor: { epoch: timeline.epoch, seq },
     limit,
+    timeout: 10_000,
   });
   if (payload.error) return false;
   useProviderSubagentStore.getState().replaceTimeline(serverId, payload);
