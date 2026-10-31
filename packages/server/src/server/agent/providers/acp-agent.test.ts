@@ -99,11 +99,19 @@ describe("buildACPClientCapabilities", () => {
 
 interface ACPSessionInternals {
   sessionId: string | null;
-  connection: { prompt: (...args: unknown[]) => Promise<PromptResponse> };
+  connection: {
+    prompt: (...args: unknown[]) => Promise<PromptResponse>;
+    cancel?: (...args: unknown[]) => Promise<void>;
+  };
   activeForegroundTurnId: string | null;
   configOptions: SessionConfigOption[];
   translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[];
   acpMcpServers(): unknown[];
+  handleProviderExit(
+    code: number | null,
+    signal: NodeJS.Signals | null,
+    stderrChunks: string[],
+  ): void;
 }
 
 interface ACPModelSelectionInternals {
@@ -4724,5 +4732,160 @@ describe("custom ACP provider with configured models", () => {
     const created = await createSessionOnModel(registry, "stale/removed-model");
 
     expect((await created.getRuntimeInfo()).model).toBe("advertised-default");
+  });
+});
+
+describe("ACP interruption contract — interruption waits for the provider to release the session", () => {
+  test("interrupt() does not resolve while the provider still owns the foreground turn", async () => {
+    const session = createSession();
+    let resolvePrompt!: (value: PromptResponse) => void;
+    const prompt = vi.fn(
+      () =>
+        new Promise<PromptResponse>((resolve) => {
+          resolvePrompt = resolve;
+        }),
+    );
+    const cancel = vi.fn().mockResolvedValue(undefined);
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt, cancel };
+
+    await session.startTurn("hello");
+
+    let interruptResolved = false;
+    const interrupt = session.interrupt().then(() => {
+      interruptResolved = true;
+      return;
+    });
+
+    // Let the cancellation notification and every pending microtask settle, so
+    // an implementation that resolves the interruption too early is observable.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(cancel).toHaveBeenCalledWith({ sessionId: "session-1" });
+
+    // The provider still owns the turn, so the interruption must not resolve
+    // yet: a caller that replaces the turn would otherwise send its prompt
+    // into a busy session.
+    expect(interruptResolved).toBe(false);
+
+    resolvePrompt({ stopReason: "cancelled", usage: { outputTokens: 0 } });
+    await interrupt;
+
+    expect(interruptResolved).toBe(true);
+  });
+
+  test("interrupt() rejects when the provider keeps the turn past the release timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const session = createSession();
+      const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
+      const cancel = vi.fn().mockResolvedValue(undefined);
+
+      asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+      asInternals<ACPSessionInternals>(session).connection = { prompt, cancel };
+
+      await session.startTurn("hello");
+
+      const assertion = expect(session.interrupt()).rejects.toThrow(
+        /still owns the foreground turn/,
+      );
+      await vi.advanceTimersByTimeAsync(2_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("interrupt() waits for the cancelled turn and not for a turn that starts later", async () => {
+    const session = createSession();
+    let resolvePrompt!: (value: PromptResponse) => void;
+    const prompt = vi.fn(
+      () =>
+        new Promise<PromptResponse>((resolve) => {
+          resolvePrompt = resolve;
+        }),
+    );
+    // The provider answers the cancelled turn and starts another one while
+    // the cancellation notification is still in flight. The interruption must
+    // follow the turn it cancelled, not the newer one.
+    const cancel = vi.fn(async () => {
+      resolvePrompt({ stopReason: "cancelled", usage: { outputTokens: 0 } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await session.startTurn("second");
+    });
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt, cancel };
+
+    await session.startTurn("hello");
+
+    const interrupt = session.interrupt();
+    const outcome = await Promise.race([
+      interrupt.then(
+        () => "resolved",
+        (error: Error) => `rejected: ${error.message}`,
+      ),
+      new Promise<string>((resolve) => setTimeout(() => resolve("timeout"), 500)),
+    ]);
+
+    expect(outcome).toBe("resolved");
+  });
+
+  test("interrupt() rejects when the provider never confirms the end of the turn", async () => {
+    const session = createSession();
+    let rejectPrompt!: (error: Error) => void;
+    const prompt = vi.fn(
+      () =>
+        new Promise<PromptResponse>((_resolve, reject) => {
+          rejectPrompt = reject;
+        }),
+    );
+    const cancel = vi.fn().mockResolvedValue(undefined);
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt, cancel };
+
+    await session.startTurn("hello");
+
+    const interrupt = session.interrupt();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // A rejected prompt never confirms that the provider released the session,
+    // so the interruption has to fail instead of reporting a free session.
+    rejectPrompt(new Error("provider rejected the prompt"));
+
+    await expect(interrupt).rejects.toThrow(/did not confirm the end of the foreground turn/);
+  });
+
+  test("interrupt() resolves when the provider process exits before it answers", async () => {
+    const session = createSession();
+    const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
+    const cancel = vi.fn().mockResolvedValue(undefined);
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt, cancel };
+
+    await session.startTurn("hello");
+
+    const interrupt = session.interrupt();
+
+    // A confirmed process exit ends the turn: the provider can no longer own
+    // the session, so waiting for its answer would hang forever.
+    asInternals<ACPSessionInternals>(session).handleProviderExit(1, null, []);
+
+    await expect(interrupt).resolves.toBeUndefined();
+  });
+
+  test("interrupt() resolves immediately when no foreground turn is running", async () => {
+    const session = createSession();
+    const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
+    const cancel = vi.fn().mockResolvedValue(undefined);
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt, cancel };
+
+    await expect(session.interrupt()).resolves.toBeUndefined();
+    expect(cancel).not.toHaveBeenCalled();
   });
 });
