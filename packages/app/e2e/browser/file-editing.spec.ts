@@ -17,6 +17,24 @@ import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
 const APP_SETTINGS_KEY = "@paseo:app-settings";
 
+async function delayNextClipboardWrite(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const released = new Promise<void>((resolve) => {
+      document.addEventListener("release-clipboard-write", () => resolve(), { once: true });
+    });
+    const write = navigator.clipboard.writeText.bind(navigator.clipboard);
+    navigator.clipboard.writeText = async (value) => {
+      navigator.clipboard.writeText = write;
+      await released;
+      await write(value);
+    };
+  });
+}
+
+function readClipboard(page: Page): Promise<string> {
+  return page.evaluate(() => navigator.clipboard.readText());
+}
+
 const RED_PIXEL = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=",
   "base64",
@@ -123,6 +141,105 @@ async function seedAgentWithFileLink(input: LinkedFile) {
 }
 
 test.describe("CodeMirror workspace file editing", () => {
+  for (const width of [390, 1280]) {
+    test(`copies linked file paths from the viewer at ${width}px`, async ({ page, context }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+      const session = await seedAgentWithFileLink({
+        target: "report%20draft.md:2",
+        fileName: "report%20draft.md",
+        content: "# Report\n\nA draft report.",
+      });
+      try {
+        await openAgentRoute(page, session);
+        await page.getByText("report%20draft.md:2", { exact: true }).click();
+        await expect(page.getByTestId("file-source-editor")).toBeVisible();
+        const trigger = page.getByTestId("file-path-actions-trigger").filter({ visible: true });
+        await trigger.click();
+        await page.getByTestId("file-path-actions-copy-path").click();
+        await expect
+          .poll(() => readClipboard(page))
+          .toBe(path.join(session.cwd, "report%20draft.md"));
+        await expect(page.getByText("Copied File path", { exact: true })).toBeVisible();
+
+        await selectFileView(page, "Preview");
+        await trigger.click();
+        await page.getByTestId("file-path-actions-copy-relative-path").click();
+        await expect.poll(() => readClipboard(page)).toBe("report%20draft.md");
+        await expect(page.getByTestId("markdown-preview-frame")).toBeVisible();
+      } finally {
+        await session.cleanup();
+      }
+    });
+  }
+
+  test("copies an outside-workspace link without offering a misleading relative path", async ({
+    page,
+    context,
+    withWorkspace,
+  }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    const outside = await withWorkspace({ prefix: "outside-file-path-" });
+    const absolutePath = path.join(outside.repoPath, "external.md");
+    await writeFile(absolutePath, "# External report", "utf8");
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "linked-external-file-",
+      title: "External file link",
+      initialPrompt: "Show the external report",
+      featureValues: { mockAssistantResponse: `[External report](${absolutePath})` },
+    });
+    try {
+      await openAgentRoute(page, session);
+      await openAssistantMarkdownLink(page, "External report");
+      const trigger = page.getByTestId("file-path-actions-trigger").filter({ visible: true });
+      await trigger.click();
+      await expect(page.getByTestId("file-path-actions-copy-relative-path")).toHaveCount(0);
+      await page.getByTestId("file-path-actions-copy-path").click();
+      await expect.poll(() => readClipboard(page)).toBe(absolutePath);
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("keeps a failed clipboard write visible and lets the reader retry", async ({
+    page,
+    context,
+    withWorkspace,
+  }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    const workspace = await withWorkspace({ prefix: "file-path-copy-failure-" });
+    await writeFile(path.join(workspace.repoPath, "report.md"), "# Report", "utf8");
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "report.md");
+    await page.evaluate(() => {
+      const write = navigator.clipboard.writeText.bind(navigator.clipboard);
+      const exec = document.execCommand.bind(document);
+      document.execCommand = (command, ...args) => {
+        if (command !== "copy") return exec(command, ...args);
+        document.execCommand = exec;
+        throw new DOMException("Clipboard access denied", "NotAllowedError");
+      };
+      navigator.clipboard.writeText = async () => {
+        navigator.clipboard.writeText = write;
+        throw new DOMException("Clipboard access denied", "NotAllowedError");
+      };
+    });
+    const trigger = page.getByTestId("file-path-actions-trigger").filter({ visible: true });
+    await trigger.click();
+    await page.getByTestId("file-path-actions-copy-path").click();
+    await expect(page.getByText("Copy failed", { exact: true })).toBeVisible();
+    await expect(trigger).toBeEnabled();
+    await delayNextClipboardWrite(page);
+    await trigger.click();
+    await page.getByTestId("file-path-actions-copy-path").click();
+    await expect(trigger).toBeDisabled();
+    await page.evaluate(() => document.dispatchEvent(new Event("release-clipboard-write")));
+    await expect(trigger).toBeEnabled();
+    await expect.poll(() => readClipboard(page)).toBe(path.join(workspace.repoPath, "report.md"));
+    await expect(page.getByText("Copy failed", { exact: true })).toBeHidden();
+    await expect(page.getByText("Copied File path", { exact: true })).toBeVisible();
+  });
+
   test("opens explicit screenshot links and explains missing files", async ({ page }) => {
     const session = await seedMockAgentWorkspace({
       repoPrefix: "screenshot-markdown-link-",
