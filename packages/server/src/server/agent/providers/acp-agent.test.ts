@@ -1,6 +1,6 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -2635,74 +2635,70 @@ describe("ACPAgentSession slash commands", () => {
     ]);
   });
 
-  test("keeps waiting after the first batch so a later batch is not lost", async () => {
-    // MiniMax publishes its built-in commands twice, then a third batch roughly
-    // 350ms later that merges in every discovered skill. Returning after the
-    // first batch hands the user an inventory without the skills.
-    const session = new ACPAgentSession(
-      {
-        provider: "minimax-code",
-        cwd: "/tmp/paseo-acp-test",
-      },
-      {
-        provider: "minimax-code",
-        logger: createTestLogger(),
-        defaultCommand: ["mcode", "acp"],
-        defaultModes: [],
-        capabilities: {
-          supportsStreaming: true,
-          supportsSessionPersistence: true,
-          supportsDynamicModes: true,
-          supportsMcpServers: true,
-          supportsReasoningStream: true,
-          supportsToolInvocations: true,
-        },
-        waitForInitialCommands: true,
-        initialCommandsWaitTimeoutMs: 1500,
-      },
+  test("lists late command batches through the public ACP client", async () => {
+    const artifacts = path.resolve(".artifacts");
+    await mkdir(artifacts, { recursive: true });
+    const directory = await mkdtemp(path.join(artifacts, "acp-command-inventory-"));
+    const script = path.join(directory, "agent.mjs");
+    await writeFile(
+      script,
+      `
+import { createInterface } from "node:readline";
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+const help = { name: "help", description: "Show available commands" };
+const skill = { name: "xlsx", description: "Work with spreadsheets", input: { hint: "[instructions]" } };
+const publish = (commands) => send({
+  jsonrpc: "2.0", method: "session/update", params: {
+    sessionId: "inventory-session", update: {
+      sessionUpdate: "available_commands_update", availableCommands: commands,
+    },
+  },
+});
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.method === "initialize") {
+    send({ jsonrpc: "2.0", id: request.id, result: { protocolVersion: 1, agentCapabilities: {} } });
+  } else if (request.method === "session/new") {
+    // The first batch is already cached when createSession returns.
+    publish([help]);
+    send({ jsonrpc: "2.0", id: request.id, result: { sessionId: "inventory-session" } });
+    setTimeout(() => publish([help]), 100);
+    setTimeout(() => publish([help, skill]), 350);
+  } else if (request.id !== undefined) {
+    send({ jsonrpc: "2.0", id: request.id, error: { code: -32601, message: "Method not found" } });
+  }
+});
+`,
     );
-
-    const listCommandsPromise = session.listCommands();
-
-    asInternals<ACPSessionInternals>(session).translateSessionUpdate({
-      sessionUpdate: "available_commands_update",
-      availableCommands: [{ name: "help", description: "Show available commands" }],
+    const client = new GenericACPAgentClient({
+      logger: createTestLogger(),
+      command: [process.execPath, script],
     });
-
-    // The provider is still publishing, so the first batch must not settle the
-    // waiter. The late batch arrives while listCommands() is still pending.
-    await new Promise((resolve) => setTimeout(resolve, 20));
-
-    asInternals<ACPSessionInternals>(session).translateSessionUpdate({
-      sessionUpdate: "available_commands_update",
-      availableCommands: [{ name: "help", description: "Show available commands" }],
-    });
-
-    asInternals<ACPSessionInternals>(session).translateSessionUpdate({
-      sessionUpdate: "available_commands_update",
-      availableCommands: [
-        { name: "help", description: "Show available commands" },
-        { name: "xlsx", description: "Work with spreadsheets", input: { hint: "[instructions]" } },
-      ],
-    });
-
-    expect(await listCommandsPromise).toEqual([
-      {
-        name: "help",
-        description: "Show available commands",
-        argumentHint: "",
-        kind: "command",
-      },
-      {
-        name: "xlsx",
-        description: "Work with spreadsheets",
-        argumentHint: "[instructions]",
-        kind: "command",
-      },
-    ]);
-
-    // A later read returns the same complete inventory instead of re-waiting.
-    expect((await session.listCommands()).map((command) => command.name)).toEqual(["help", "xlsx"]);
+    try {
+      const session = await client.createSession({ provider: "acp", cwd: directory });
+      try {
+        const commands = await session.listCommands!();
+        expect(commands).toEqual([
+          {
+            name: "help",
+            description: "Show available commands",
+            argumentHint: "",
+            kind: "command",
+          },
+          {
+            name: "xlsx",
+            description: "Work with spreadsheets",
+            argumentHint: "[instructions]",
+            kind: "command",
+          },
+        ]);
+        expect(await session.listCommands!()).toEqual(commands);
+      } finally {
+        await session.close();
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
 
