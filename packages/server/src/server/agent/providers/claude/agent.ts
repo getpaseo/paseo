@@ -1557,7 +1557,7 @@ function readTranscriptUuid(message: SDKMessage): string | null {
   return firstTrimmedString([root.uuid]);
 }
 
-export function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
+export function readEventIdentifiers(message: unknown): EventIdentifiers {
   const root = toObjectRecord(message) ?? {};
   const messageType = readTrimmedString(root.type);
   const streamEvent = toObjectRecord(root.event);
@@ -2370,6 +2370,8 @@ class ClaudeAgentSession implements AgentSession {
   private historySessionId: string | null = null;
   private replayingHistory = false;
   private turnState: TurnState = "idle";
+  // Timing outlives this runtime, including resumes of the same Claude session.
+  private readonly turnIdNamespace = randomUUID();
   private nextTurnOrdinal = 1;
   private cancelCurrentTurn: (() => void) | null = null;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
@@ -3920,7 +3922,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private createTurnId(owner: "foreground" | "autonomous"): string {
-    return `${owner}-turn-${this.nextTurnOrdinal++}`;
+    return `${owner}-turn-${this.nextTurnOrdinal++}-${this.turnIdNamespace}`;
   }
 
   private isTerminalTurnEvent(event: AgentStreamEvent): boolean {
@@ -6390,8 +6392,8 @@ async function mapAssistantHistoryBlocksWithMessageId(
   ) => AgentTimelineItem[] | Promise<AgentTimelineItem[]>,
 ): Promise<AgentTimelineItem[]> {
   const items = await mapBlocks(content);
-  const assistantMessageId =
-    typeof entry.uuid === "string" && entry.uuid.length > 0 ? entry.uuid : null;
+  // Match live assistant IDs; transcript UUIDs remain separate rewind anchors.
+  const assistantMessageId = readEventIdentifiers(entry).messageId;
   if (!assistantMessageId) {
     return items;
   }
@@ -6500,6 +6502,10 @@ export async function convertClaudeHistoryEntry(
     }
   }
 
+  if (entry.type === "assistant" && contentValue) {
+    return mapAssistantHistoryBlocksWithMessageId(entry, contentValue, mapBlocks);
+  }
+
   if (hasToolBlock && normalizedBlocks) {
     const mapped = await mapBlocks(normalizedBlocks);
     if (entry.type === "user") {
@@ -6512,10 +6518,6 @@ export async function convertClaudeHistoryEntry(
       return timeline.length ? [...timeline, ...toolItems] : toolItems;
     }
     return mapped;
-  }
-
-  if (entry.type === "assistant" && contentValue) {
-    return await mapAssistantHistoryBlocksWithMessageId(entry, contentValue, mapBlocks);
   }
 
   return timeline;
