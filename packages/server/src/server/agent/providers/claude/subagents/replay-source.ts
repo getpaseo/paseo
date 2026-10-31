@@ -138,7 +138,7 @@ export interface ClaudeReplaySubagentInput {
 
 export interface ClaudeReplayParentFacts {
   /** Task `tool_use` id -> identity declared in the parent's tool input. */
-  toolCalls: ReadonlyMap<string, { title?: string; description?: string }>;
+  toolCalls: ReadonlyMap<string, { title?: string; description?: string; prompt?: string }>;
   /** agentId -> tool call, recovered by scraping tool-result text. Legacy fallback only. */
   linksByAgentId: ReadonlyMap<string, { toolCallId: string }>;
   /**
