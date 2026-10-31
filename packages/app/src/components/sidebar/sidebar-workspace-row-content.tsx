@@ -9,6 +9,8 @@ import {
   type WorkspaceServiceSummary,
 } from "@/components/sidebar/workspace-meta-row";
 import { WorkspaceHoverCard } from "@/components/workspace-hover-card";
+import { WorkspaceAgentIcon } from "@/components/sidebar/workspace-agent-icon";
+import { DEFAULT_SIDEBAR_ROW_ITEMS } from "@/components/sidebar/display-preferences/row-items";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import {
@@ -118,8 +120,9 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   children?: ReactNode;
 }) {
   const {
-    settings: { workspaceTitleSource },
+    settings: { workspaceTitleSource, sidebarRowItems },
   } = useAppSettings();
+  const showAgentIcon = (sidebarRowItems ?? DEFAULT_SIDEBAR_ROW_ITEMS).agent;
   const workspaceLabel = resolveSidebarWorkspacePrimaryLabel({ workspace, workspaceTitleSource });
   // The workspace carries label names; their colors live in its host's catalog, so the row is
   // where the two meet — the meta line is handed finished definitions.
@@ -159,7 +162,16 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             <Text style={workspaceBranchTextStyle} numberOfLines={1}>
               {workspaceLabel}
             </Text>
-            <View style={sidebarWorkspaceRowStyles.rowRight}>{children}</View>
+            <View style={sidebarWorkspaceRowStyles.rowRight}>
+              {showAgentIcon && workspace.agentProvider ? (
+                <WorkspaceAgentIcon
+                  provider={workspace.agentProvider}
+                  model={workspace.agentModel ?? null}
+                  serverId={workspace.serverId}
+                />
+              ) : null}
+              {children}
+            </View>
           </View>
           <WorkspaceMetaRow
             currentBranch={workspace.currentBranch}

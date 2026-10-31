@@ -1219,6 +1219,7 @@ export const fr: TranslationResources = {
       },
       show: {
         label: "Afficher",
+        agent: "Agent",
         branch: "Branche",
         project: "Projet",
         host: "Hôte",

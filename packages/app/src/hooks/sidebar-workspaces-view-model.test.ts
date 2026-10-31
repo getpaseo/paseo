@@ -92,6 +92,42 @@ describe("createSidebarWorkspaceEntry workspace directory label", () => {
   });
 });
 
+describe("createSidebarWorkspaceEntry agent provider", () => {
+  it("carries the provider of the agent behind the status dot", () => {
+    const descriptor = workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42");
+    const workspaceAgentActivity = new Map([
+      [
+        descriptor.id,
+        {
+          agentId: "a1",
+          provider: "codex",
+          model: "gpt-6-luna",
+          status: "done" as const,
+          enteredAt: null,
+        },
+      ],
+    ]);
+
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: descriptor,
+      workspaceAgentActivity,
+    });
+
+    expect(entry.agentProvider).toBe("codex");
+    expect(entry.agentModel).toBe("gpt-6-luna");
+  });
+
+  it("has no provider before any agent has run in the workspace", () => {
+    const descriptor = workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42");
+
+    const entry = createSidebarWorkspaceEntry({ serverId: "srv", workspace: descriptor });
+
+    expect(entry.agentProvider).toBeNull();
+    expect(entry.agentModel).toBeNull();
+  });
+});
+
 interface OrderedItem {
   key: string;
 }

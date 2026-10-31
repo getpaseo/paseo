@@ -142,6 +142,21 @@ describe("loadAppSettingsFromStorage", () => {
     expect((await loadAppSettingsFromStorage(deps)).sidebarRowItems.services).toBe(true);
   });
 
+  it("shows the agent item on rows saved before it existed", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          sidebarRowItems: { branch: true, host: false },
+        }),
+      }),
+    });
+
+    const { sidebarRowItems } = await loadAppSettingsFromStorage(deps);
+    expect(sidebarRowItems.agent).toBe(DEFAULT_SIDEBAR_ROW_ITEMS.agent);
+    expect(sidebarRowItems.branch).toBe(true);
+    expect(sidebarRowItems.host).toBe(false);
+  });
+
   it("keeps an interrupt the user picked after the migration ran", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
