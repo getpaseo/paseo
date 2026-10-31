@@ -888,10 +888,13 @@ it.each([false, true])(
     // Require the original process to be gone, not the numeric PID to remain unused.
     await expect
       .poll(
-        async () => classifyTerminalProgramProcess(original, await inspector.inspect(remainingPid)),
+        async () =>
+          !isProcessAlive(remainingPid) ||
+          classifyTerminalProgramProcess(original, await inspector.inspect(remainingPid)).status ===
+            "unrelated",
         { timeout: 10000 },
       )
-      .toMatchObject({ status: expect.stringMatching(/^(gone|unrelated)$/) });
+      .toBe(true);
   },
 );
 
