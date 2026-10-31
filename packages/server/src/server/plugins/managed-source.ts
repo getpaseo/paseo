@@ -26,6 +26,8 @@ import { acquireNpm, isNpmSource, readNpmArtifact, resolveNpm } from "./managed-
 
 const GIT_TIMEOUT_MS = 120_000;
 const GIT_ENV = { GIT_TERMINAL_PROMPT: "0" } as const;
+/** A retired installation root keeps its version id and gains a timestamp: `<uuid>.old-<ms>`. */
+const RETIRED_VERSION_SUFFIX = ".old-";
 // COMPAT(plugin-source-record): v0.8.0; accept and strip pre-correction selector/revision/root copies until daemon floor supports artifact-derived metadata.
 const ManagedPluginRecordSchema = z.union([
   z.object({
@@ -381,10 +383,17 @@ export class ManagedPluginSources {
   async discard(candidate: ManagedPluginCandidate): Promise<void> {
     await rm(candidate.versionRoot, { recursive: true, force: true });
   }
-  async removeVersion(pluginId: string, configuredPath: string): Promise<void> {
+  /**
+   * Keeps the outgoing installation root instead of deleting it, so a Git checkout's uncommitted
+   * files and unpushed commits survive later updates too. Only explicit removal deletes them.
+   */
+  async retireVersion(pluginId: string, configuredPath: string): Promise<string> {
     const location = this.locate(pluginId, configuredPath);
-    await assertRealContainment(this.root, path.dirname(location.versionRoot));
-    await rm(location.versionRoot, { recursive: true, force: true });
+    const pluginRoot = path.dirname(location.versionRoot);
+    await assertRealContainment(this.root, pluginRoot);
+    const retired = `${location.versionRoot}${RETIRED_VERSION_SUFFIX}${Date.now()}`;
+    await rename(location.versionRoot, retired);
+    return retired;
   }
   async remove(pluginId: string): Promise<void> {
     if (!this.records[pluginId]) return;

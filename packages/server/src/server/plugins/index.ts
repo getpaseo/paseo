@@ -808,9 +808,10 @@ export class PluginService {
     this.notify(pluginId);
     let warning: string | undefined;
     try {
-      await managedSources.removeVersion(pluginId, source.path);
+      const retired = await managedSources.retireVersion(pluginId, source.path);
+      this.logger.info({ pluginId, directory: retired }, "Kept the previous plugin installation");
     } catch (error) {
-      warning = `Plugin updated, but previous installation cleanup failed: ${error instanceof Error ? error.message : String(error)}`;
+      warning = `Plugin updated, but the previous installation could not be kept: ${error instanceof Error ? error.message : String(error)}`;
     }
     return {
       id: pluginId,

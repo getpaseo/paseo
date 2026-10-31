@@ -2500,7 +2500,11 @@ JSON and noninteractive ordinary updates require `--yes`.
 
 Approval acquires exactly the reviewed commit or npm artifact. If it is unavailable or the installed
 plugin changed while reviewing, the update fails and asks you to check again. Failed preparation or
-activation retains the previous installation. Manual app update review is not available yet.
+activation retains the previous installation. Successful updates keep each previous installation in
+an adjacent `<install-id>.old-<timestamp>` directory, including its local files and Git commits.
+Later updates do not delete these copies, so disk use grows until you remove them manually or
+uninstall the plugin with `paseo plugin remove <id>`. Copy out any work you need before uninstalling.
+Manual app update review is not available yet.
 
 Put `--host <url>` before a management command when the target is not the CLI's default daemon. `remove`
 never deletes a directory source; it deletes managed files for Git and npm sources. The install-time
