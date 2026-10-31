@@ -66,6 +66,7 @@ async function setup(provider: AgentClient, agentId?: string) {
   const clients = [0, 1].map(() => new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` }));
   resources.push({ daemon, clients, cwd });
   await Promise.all(clients.map((client) => client.connect()));
+  await Promise.all(clients.map((client) => client.fetchAgents({ subscribe: {} })));
   const agent = await daemon.daemon.agentManager.createAgent({ provider: "claude", cwd }, agentId, {
     workspaceId: undefined,
   });
