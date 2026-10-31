@@ -1067,3 +1067,57 @@ test("session-open MCP configs are validated before a provider launches", async 
     await h.close();
   }
 }, 60_000);
+
+test("diagnostic: unchanged observer reload keeps a slow-closing provider usable", async () => {
+  let closes = 0;
+  const h = await setup(
+    false,
+    `
+export default function contribute(server) {
+  return server.addHook("agent.open.before", async () => {});
+}
+`,
+    undefined,
+    {
+      closeSession: async () => {
+        closes++;
+        await new Promise((resolve) => setTimeout(resolve, 3700));
+      },
+    },
+  );
+  try {
+    const agent = await h.create();
+    await sendAndFinish(h, agent.id, "first");
+    await h.client.reloadPlugin("tools-test");
+    await sendAndFinish(h, agent.id, "after reload");
+    expect(closes).toBe(0);
+    expect(h.launches).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+test("diagnostic: a changed session-open hook runs once for the replacement process", async () => {
+  const source = (value: string) => `
+let calls = 0;
+export default function contribute(server) {
+  return server.addHook("agent.open.before", async ({ request }) => ({
+    ...request,
+    env: { ...request.env, STABLE: ${JSON.stringify(value)}, HOOK_CALL: String(++calls) },
+  }));
+}
+`;
+  const h = await setup(false, source("1"));
+  try {
+    const agent = await h.create();
+    expect(h.launches.at(-1)!.context!.env!.HOOK_CALL).toBe("1");
+    await writeFile(path.join(h.directory, "tools-test", "index.server.ts"), source("2"));
+    await h.client.reloadPlugin("tools-test");
+    await sendAndFinish(h, agent.id, "after changed hook");
+    expect(h.launches).toHaveLength(2);
+    expect(h.launches.at(-1)!.context!.env!.STABLE).toBe("2");
+    expect(h.launches.at(-1)!.context!.env!.HOOK_CALL).toBe("1");
+  } finally {
+    await h.close();
+  }
+}, 60_000);
