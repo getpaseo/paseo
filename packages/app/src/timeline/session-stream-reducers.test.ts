@@ -4536,3 +4536,61 @@ describe("createAgentStreamReducerQueue", () => {
     expect(scheduler.size).toBe(0);
   });
 });
+
+it("reconciles a live suffix before replaying earlier reasoning on reconnect", () => {
+  const currentHead: StreamItem[] = [
+    {
+      kind: "assistant_message",
+      id: "reply",
+      messageId: "reply",
+      text: "middle",
+      timestamp: new Date(70),
+      timelineCursor: { epoch: "epoch-1", seq: 70 },
+    },
+  ];
+  const result = processTimelineResponse({
+    currentTail: [],
+    currentHead,
+    currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 4 },
+    isInitializing: false,
+    hasActiveInitDeferred: false,
+    initRequestDirection: "after",
+    sendingClientMessageIds: [],
+    payload: {
+      agentId: "agent-1",
+      direction: "after",
+      projection: "projected",
+      reset: false,
+      epoch: "epoch-1",
+      window: { minSeq: 1, maxSeq: 70, nextSeq: 71 },
+      startCursor: { seq: 5 },
+      endCursor: { seq: 70 },
+      hasOlder: false,
+      hasNewer: false,
+      error: null,
+      entries: [
+        makeTimelineEntry(5, "thinking", "reasoning", 6),
+        {
+          ...makeTimelineEntry(7, "beginning middle", "assistant_message", 70),
+          item: { type: "assistant_message", text: "beginning middle", messageId: "reply" },
+        },
+      ],
+    },
+  });
+  const complete = processAgentStreamEvent({
+    event: { type: "turn_completed", provider: "claude" },
+    seq: undefined,
+    epoch: undefined,
+    currentTail: result.tail,
+    currentHead: result.head,
+    currentCursor: result.cursor ?? undefined,
+    timestamp: new Date(71),
+  });
+  expect(
+    [...complete.tail, ...complete.head].filter((item) => item.kind === "assistant_message"),
+  ).toMatchObject([{ id: "reply", text: "beginning middle" }]);
+  expect([...complete.tail, ...complete.head].map((item) => item.kind)).toEqual([
+    "thought",
+    "assistant_message",
+  ]);
+});
