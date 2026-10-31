@@ -16,6 +16,13 @@ test("plugin header and composer buttons share actions, menus, content, and upda
   });
 });
 
+test("a plugin popover opens once after History opens a plugin screen", async ({ page }, info) => {
+  test.setTimeout(180_000);
+  await withButtonShowcase(page, info, async (buttons) => {
+    await buttons.openPopoverAfterAppWideHop();
+  });
+});
+
 test("plugin tooltips and menu labels follow app language with a panel draft open", async ({
   page,
 }, info) => {
