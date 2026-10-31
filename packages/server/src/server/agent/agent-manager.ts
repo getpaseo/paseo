@@ -2286,6 +2286,34 @@ export class AgentManager {
     this.emitState(agent, { persist: false });
   }
 
+  async getTitle(agentId: string): Promise<string | null> {
+    const record = await this.registry?.get(agentId);
+    return record?.title ?? this.getAgent(agentId)?.config.title ?? null;
+  }
+
+  /** Apply a background title only while the original provisional title is unchanged. */
+  async setGeneratedTitle(
+    agentId: string,
+    title: string,
+    expectedTitle: string | null,
+  ): Promise<boolean> {
+    return this.runLifecycleMutation(agentId, async () => {
+      const agent = this.getAgent(agentId);
+      const record = await this.registry?.get(agentId);
+      if (
+        (!agent && !record) ||
+        agent?.internal ||
+        record?.internal ||
+        (await this.getTitle(agentId)) !== expectedTitle
+      ) {
+        return false;
+      }
+      if (!title.trim()) return false;
+      await this.updateAgentMetadataUnlocked(agentId, { title });
+      return true;
+    });
+  }
+
   async setLabels(agentId: string, labels: Record<string, string>): Promise<void> {
     await this.runLifecycleMutation(agentId, async () => {
       const agent = this.requireAgent(agentId);
