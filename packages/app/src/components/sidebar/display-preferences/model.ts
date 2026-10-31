@@ -19,6 +19,8 @@ export type SidebarTrailingChoice = Exclude<SidebarWorkspaceTrailing, "none">;
 export interface SidebarDisplayPreferences {
   showBackground: boolean;
   toggleBackground: () => void;
+  showEmptyProjects: boolean;
+  toggleEmptyProjects: () => void;
   grouping: SidebarGroupMode;
   workspaceSort: WorkspaceSort;
   setWorkspaceSort: (sort: WorkspaceSort) => void;
@@ -55,6 +57,8 @@ export interface SidebarDisplayPreferences {
 export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
   const showBackground = useSidebarViewStore((state) => state.showBackground);
   const toggleBackground = useSidebarViewStore((state) => state.toggleBackground);
+  const showEmptyProjects = useSidebarViewStore((state) => state.showEmptyProjects);
+  const toggleEmptyProjects = useSidebarViewStore((state) => state.toggleEmptyProjects);
   const workspaceSort = useSidebarViewStore((state) => state.workspaceSort);
   const setWorkspaceSort = useSidebarViewStore((state) => state.setWorkspaceSort);
   const grouping = useSidebarViewStore((state) => state.groupMode);
@@ -115,6 +119,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
     () => ({
       showBackground,
       toggleBackground,
+      showEmptyProjects,
+      toggleEmptyProjects,
       grouping,
       workspaceSort,
       setWorkspaceSort,
@@ -140,6 +146,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
     [
       showBackground,
       toggleBackground,
+      showEmptyProjects,
+      toggleEmptyProjects,
       grouping,
       workspaceSort,
       setWorkspaceSort,

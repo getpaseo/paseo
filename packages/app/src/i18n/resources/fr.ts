@@ -1196,6 +1196,7 @@ export const fr: TranslationResources = {
     },
     display: {
       showBackground: "Afficher les espaces en arrière-plan",
+      showEmptyProjects: "Afficher les projets vides",
       trigger: "Préférences d’affichage",
       heading: "Affichage",
       sort: {

@@ -1174,6 +1174,7 @@ export const ko: TranslationResources = {
     },
     display: {
       showBackground: "백그라운드 표시",
+      showEmptyProjects: "빈 프로젝트 표시",
       trigger: "표시 설정",
       heading: "표시",
       sort: {

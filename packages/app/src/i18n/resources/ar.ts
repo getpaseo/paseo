@@ -1167,6 +1167,7 @@ export const ar: TranslationResources = {
     },
     display: {
       showBackground: "إظهار مساحات العمل في الخلفية",
+      showEmptyProjects: "إظهار المشاريع الفارغة",
       trigger: "تفضيلات العرض",
       heading: "العرض",
       sort: {

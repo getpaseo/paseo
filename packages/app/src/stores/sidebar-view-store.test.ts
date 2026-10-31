@@ -34,6 +34,7 @@ describe("sidebar view store", () => {
     useSidebarViewStore.setState({
       workspaceSort: "created",
       showBackground: false,
+      showEmptyProjects: true,
       groupMode: "project",
       hostFilters: [],
       projectFilters: [],
@@ -88,6 +89,7 @@ describe("sidebar view store", () => {
     ).toEqual({
       workspaceSort: "created",
       showBackground: false,
+      showEmptyProjects: true,
       groupMode: "status",
       hostFilters: [],
       projectFilters: [],
@@ -104,6 +106,7 @@ describe("sidebar view store", () => {
     ).toEqual({
       workspaceSort: "created",
       showBackground: false,
+      showEmptyProjects: true,
       groupMode: "status",
       hostFilters: ["host-a"],
       projectFilters: [],
@@ -120,11 +123,20 @@ describe("sidebar view store", () => {
     ).toEqual({
       workspaceSort: "created",
       showBackground: false,
+      showEmptyProjects: true,
       groupMode: "status",
       hostFilters: ["host-a", "host-b"],
       projectFilters: [],
       labelFilter: { labels: [] },
     });
+  });
+
+  it("shows empty projects until toggled off, and keeps the choice through migration", () => {
+    expect(useSidebarViewStore.getState().showEmptyProjects).toBe(true);
+    useSidebarViewStore.getState().toggleEmptyProjects();
+    expect(useSidebarViewStore.getState().showEmptyProjects).toBe(false);
+
+    expect(migrateSidebarViewState({ showEmptyProjects: false }).showEmptyProjects).toBe(false);
   });
 
   it("clears only the label facet", () => {
@@ -232,6 +244,7 @@ describe("sidebar view store", () => {
     ).toEqual({
       workspaceSort: "created",
       showBackground: false,
+      showEmptyProjects: true,
       groupMode: "project",
       hostFilters: ["host-a"],
       projectFilters: ["project-a", "project-b"],
@@ -243,6 +256,7 @@ describe("sidebar view store", () => {
     expect(migrateSidebarViewState({ projectFilters: "project-a" })).toEqual({
       workspaceSort: "created",
       showBackground: false,
+      showEmptyProjects: true,
       groupMode: "project",
       hostFilters: [],
       projectFilters: [],
