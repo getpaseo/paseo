@@ -295,4 +295,90 @@ describe("TTSManager", () => {
 
     expect(warnSpy).not.toHaveBeenCalled();
   });
+
+  it("reports playback counts on success", async () => {
+    const manager = new TTSManager("s1", pino({ level: "silent" }), new FakeTts());
+    const abort = new AbortController();
+
+    const result = await manager.generateAndWaitForPlayback(
+      "hello",
+      (msg) => {
+        if (msg.type === "audio_output") {
+          manager.confirmAudioPlayed(msg.payload.id);
+        }
+      },
+      abort.signal,
+      true,
+    );
+
+    expect(result).toEqual({ segmentsEmitted: 1, segmentsConfirmed: 1, aborted: false });
+  });
+
+  it("fails loudly when the signal is already aborted instead of reporting success", async () => {
+    const manager = new TTSManager("s1", pino({ level: "silent" }), new FakeTts());
+    const abort = new AbortController();
+    abort.abort();
+    const emitted: SessionOutboundMessage[] = [];
+
+    await expect(
+      manager.generateAndWaitForPlayback("hello", (msg) => emitted.push(msg), abort.signal, true),
+    ).rejects.toThrow(/produced no audio.*aborted/i);
+
+    expect(emitted.filter((msg) => msg.type === "audio_output")).toHaveLength(0);
+  });
+
+  it("fails loudly when synthesis produces zero bytes", async () => {
+    const emptyTts: TextToSpeechProvider = {
+      async synthesizeSpeech(): Promise<{ stream: Readable; format: string }> {
+        return { stream: Readable.from([]), format: "pcm;rate=24000" };
+      },
+    };
+    const manager = new TTSManager("s1", pino({ level: "silent" }), emptyTts);
+    const abort = new AbortController();
+    const emitted: SessionOutboundMessage[] = [];
+
+    await expect(
+      manager.generateAndWaitForPlayback("hello", (msg) => emitted.push(msg), abort.signal, true),
+    ).rejects.toThrow(/produced no audio.*0 bytes/i);
+
+    expect(emitted.filter((msg) => msg.type === "audio_output")).toHaveLength(0);
+  });
+
+  it("fails loudly when the client never confirms playback (no audible sink)", async () => {
+    const manager = new TTSManager("s1", pino({ level: "silent" }), new FakeTts(), {
+      playbackConfirmTimeoutMs: 50,
+    });
+    const abort = new AbortController();
+    const emitted: SessionOutboundMessage[] = [];
+
+    await expect(
+      manager.generateAndWaitForPlayback(
+        "hello",
+        (msg) => emitted.push(msg),
+        abort.signal,
+        true,
+      ),
+    ).rejects.toThrow(/not confirmed.*no audio sink/i);
+
+    expect(emitted.filter((msg) => msg.type === "audio_output")).toHaveLength(1);
+  });
+
+  it("resolves with emitted counts when aborted mid-playback after audio went out", async () => {
+    const manager = new TTSManager("s1", pino({ level: "silent" }), new FakeTts());
+    const abort = new AbortController();
+
+    const task = manager.generateAndWaitForPlayback(
+      "hello",
+      () => {
+        // Client received audio but the user barged in before confirming.
+        abort.abort();
+      },
+      abort.signal,
+      true,
+    );
+
+    const result = await task;
+    expect(result.segmentsEmitted).toBe(1);
+    expect(result.aborted).toBe(true);
+  });
 });
