@@ -2,6 +2,7 @@ import { realpathSync } from "node:fs";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { parseSync } from "@babel/core";
 import { afterEach, describe, expect, it } from "vitest";
 import * as zod from "zod";
 import { ZodError } from "zod";
@@ -138,6 +139,42 @@ async function createRootAlias(directory: string): Promise<string> {
   const rootAlias = path.join(aliases, "plugin");
   await symlink(directory, rootAlias, process.platform === "win32" ? "junction" : "dir");
   return rootAlias;
+}
+
+// Counts class declarations and expressions in the parsed output. A text search would
+// also match the strings Babel's class helpers carry.
+function classSyntaxCount(code: string): number {
+  let count = 0;
+  const visit = (node: unknown): void => {
+    if (Array.isArray(node)) return node.forEach(visit);
+    if (node === null || typeof node !== "object") return;
+    const { type } = node as { type?: string };
+    if (type === "ClassDeclaration" || type === "ClassExpression") count += 1;
+    Object.values(node).forEach(visit);
+  };
+  visit(parseSync(code, { babelrc: false, configFile: false, sourceType: "script" }));
+  return count;
+}
+
+function largeClassSource(widgetCount: number): string {
+  const declarations: string[] = [];
+  const reads: string[] = [];
+  for (let index = 0; index < widgetCount; index += 1) {
+    declarations.push(
+      `class Widget${index} extends Base { static kind = ${index}; #state = ${index}; read() { return this.#state; } }`,
+    );
+    reads.push(`new Widget${index}().read()`);
+  }
+  return `class Base { value = 1; }
+${declarations.join("\n")}
+export default function contribute() { return [${reads.join(",")}].length; }`;
+}
+
+function runClientDefault(clientBundle: string): unknown {
+  const factory = new Function(`return ${clientBundle}`)() as (require: unknown) => {
+    default: () => unknown;
+  };
+  return factory(() => ({})).default();
 }
 
 describe("plugin runtime entries", () => {
@@ -568,6 +605,119 @@ export default function contribute(client) {
     const { clientBundle } = await compilePlugin(entries);
     expect(clientBundle).not.toContain("async function contribute");
     expect(clientBundle).toContain("__async");
+  });
+
+  describe("Hermes class lowering", () => {
+    it.each(["client", "server"] as const)(
+      "captures distinct host exports eagerly in the %s bundle",
+      async (target) => {
+        const entries = await createSplitPlugin();
+        await writeFile(
+          entries[target],
+          `import * as host from "zod";
+class Probe { read() { return [host.first, host.second]; } }
+export default function contribute() { return new Probe().read(); }`,
+        );
+        const result = await compilePlugin({
+          client: target === "client" ? entries.client : null,
+          server: target === "server" ? entries.server : null,
+        });
+        const bundle = result[`${target}Bundle`]!;
+        const host = { first: "first export", second: "second export" };
+        const factory = new Function(`return ${bundle}`)() as (
+          require: (specifier: string) => typeof host,
+        ) => { default: () => unknown };
+        function requireHost(specifier: string): typeof host {
+          expect(specifier).toBe("zod");
+          return host;
+        }
+        const exports = factory(requireHost);
+
+        host.first = "changed first export";
+        host.second = "changed second export";
+
+        expect(exports.default()).toEqual(["first export", "second export"]);
+        expect(classSyntaxCount(bundle)).toBe(target === "client" ? 0 : 1);
+      },
+    );
+
+    const classSource = `class Base {
+  static registry = new Set(["a"]);
+  static #count = 0;
+  #secret = 1;
+  label = "base";
+  static { Base.#count = 10; }
+  static total() { return Base.#count; }
+  #bump() { return this.#secret + 1; }
+  static isBase(value) { return #secret in value; }
+  get doubled() { return this.#bump() * 2; }
+}
+class Child extends Base {
+  label = "child";
+}
+export default function contribute() {
+  const child = new Child();
+  return { label: child.label, doubled: child.doubled, total: Base.total(), isBase: Base.isBase(child), registry: Base.registry.size };
+}`;
+
+    it("emits no class syntax for a client bundle and keeps its behavior", async () => {
+      const entries = await createSplitPlugin();
+      await writeFile(entries.client, classSource);
+      const { clientBundle, serverBundle } = await compilePlugin(entries);
+      expect(classSyntaxCount(clientBundle!)).toBe(0);
+      expect(runClientDefault(clientBundle!)).toEqual({
+        label: "child",
+        doubled: 4,
+        total: 10,
+        isBase: true,
+        registry: 1,
+      });
+      expect(classSyntaxCount(serverBundle!)).toBe(0);
+    });
+
+    it("lowers classes in bundled dependencies", async () => {
+      const entries = await createSplitPlugin();
+      const dependency = path.join(entries.directory, "node_modules", "class-dep");
+      await mkdir(dependency, { recursive: true });
+      await Promise.all([
+        writeFile(
+          path.join(dependency, "package.json"),
+          JSON.stringify({ name: "class-dep", version: "1.0.0", module: "index.js" }),
+        ),
+        writeFile(
+          path.join(dependency, "index.js"),
+          `export const Hooks = class { static passThrough = new Set(["x"]); };
+export class Lexer { static lex() { return "lexed"; } }`,
+        ),
+      ]);
+      await writeFile(
+        entries.client,
+        `import { Hooks, Lexer } from "class-dep";
+export default function contribute() { return [Lexer.lex(), Hooks.passThrough.size]; }`,
+      );
+      const { clientBundle } = await compilePlugin(entries);
+      expect(classSyntaxCount(clientBundle!)).toBe(0);
+      expect(runClientDefault(clientBundle!)).toEqual(["lexed", 1]);
+    });
+
+    it("keeps classes in server bundles", async () => {
+      const entries = await createSplitPlugin();
+      await writeFile(
+        entries.server,
+        `class Handler { run() { return 1; } }
+export default function contribute() { return new Handler().run(); }`,
+      );
+      const { serverBundle } = await compilePlugin(entries);
+      expect(classSyntaxCount(serverBundle!)).toBe(1);
+    });
+
+    it("lowers classes and evaluates a large client bundle", async () => {
+      const entries = await createSplitPlugin();
+      await writeFile(entries.client, largeClassSource(400));
+      const { clientBundle } = await compilePlugin(entries);
+      expect(classSyntaxCount(clientBundle!)).toBe(0);
+      expect(runClientDefault(clientBundle!)).toBe(400);
+    });
   });
 
   it("reduces client bytes while preserving registration and leaving server output readable", async () => {
