@@ -603,6 +603,7 @@ class ProviderRuntimeSession {
   >();
   private readonly activeTurnIds = new Set<string>();
   private terminal = false;
+  private closePromise: Promise<void> | null = null;
   config: ProviderConfigState = { models: [], modes: [], thinkingOptions: [], settings: [] };
   commands: Array<{ name: string; description: string; argumentHint?: string }> = [];
   persistence: ProviderPersistence | null = null;
@@ -724,6 +725,14 @@ class ProviderRuntimeSession {
       this.runtime.removeSession(this.id, this.providerSessionId);
       return;
     }
+    this.closePromise ??= this.closeNativeSession().catch((error) => {
+      this.closePromise = null;
+      throw error;
+    });
+    await this.closePromise;
+  }
+
+  private async closeNativeSession(): Promise<void> {
     try {
       await this.runtime.complete({
         type: "session.close",
@@ -732,9 +741,9 @@ class ProviderRuntimeSession {
       });
     } catch (error) {
       if (!this.runtime.isClosed) throw error;
-    } finally {
-      this.runtime.removeSession(this.id, this.providerSessionId);
     }
+    // A failed close still needs its routing for a subsequent session.closed ack.
+    this.runtime.removeSession(this.id, this.providerSessionId);
   }
 
   beginOpen(requestId: string): Promise<void> {

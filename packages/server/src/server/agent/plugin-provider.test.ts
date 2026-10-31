@@ -53,6 +53,7 @@ const CAPABILITIES = [
 interface ProviderHarnessOptions {
   capabilities?: ProviderConnection["capabilities"];
   completeTurn?: boolean;
+  closeAcknowledgementOnly?: boolean;
   openChildren?: (rootSessionId: string, emit: (event: ProviderEvent) => void) => void;
   handleInput?: (input: ProviderInput, emit: (event: ProviderEvent) => void) => Promise<boolean>;
 }
@@ -208,6 +209,7 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
       }
       if (input.type === "session.close") {
         emit({ type: "session.closed", sessionId: input.sessionId });
+        if (options.closeAcknowledgementOnly) return;
       }
       if ("requestId" in input) {
         emit({ type: "request.completed", requestId: input.requestId });
@@ -249,11 +251,14 @@ function eventsOfType(events: AgentStreamEvent[], type: AgentStreamEvent["type"]
 function createRewindProviderHarness(
   options: {
     reuseAnswerId?: boolean;
+    forkOnRevert?: boolean;
     handleInput?: ProviderHarnessOptions["handleInput"];
   } = {},
 ) {
   const nativeMessages: string[] = [];
+  let originalMessages: string[] | null = null;
   const harness = createProviderHarness({
+    closeAcknowledgementOnly: true,
     capabilities: [
       ...CAPABILITIES,
       "session.revert.conversation",
@@ -274,10 +279,16 @@ function createRewindProviderHarness(
             "session.revert.both",
           ],
           restoration: "core",
-          persistence: { version: 1, data: { token: "root" } },
+          persistence: input.persistence ?? { version: 1, data: { token: "root" } },
           cwd: input.config.cwd,
         });
-        for (const [index, text] of nativeMessages.entries()) {
+        const messages =
+          options.forkOnRevert &&
+          (input.persistence?.data as { token?: string })?.token === "root" &&
+          originalMessages
+            ? originalMessages
+            : nativeMessages;
+        for (const [index, text] of messages.entries()) {
           emit({
             type: "timeline.item",
             sessionId: input.sessionId,
@@ -334,6 +345,14 @@ function createRewindProviderHarness(
         return true;
       }
       if (input.type === "session.revert") {
+        if (options.forkOnRevert && input.scope !== "files") {
+          originalMessages = [...nativeMessages];
+          emit({
+            type: "session.persistence",
+            sessionId: input.sessionId,
+            persistence: { version: 1, data: { token: "fork" } },
+          });
+        }
         if (input.scope !== "files")
           nativeMessages.splice(nativeMessages.indexOf(String(input.token)));
         emit({ type: "request.completed", requestId: input.requestId });
@@ -576,6 +595,38 @@ test("retrying a failed plugin rewind replay replaces the manager timeline befor
     },
     {
       handleInput: async (input, emit) => {
+        if (input.type !== "session.open" || input.history !== "replay" || !failReplay)
+          return false;
+        failReplay = false;
+        emit({
+          type: "request.failed",
+          requestId: input.requestId,
+          error: { message: "replay failed" },
+        });
+        return true;
+      },
+    },
+  );
+});
+
+test("reload after failed plugin rewind replay resumes the committed fork", async () => {
+  let failReplay = true;
+  await withRewindAgent(
+    async ({ manager, agentId, messages }) => {
+      await expect(manager.rewind(agentId, "user-B", "conversation")).rejects.toThrow(
+        "replay failed",
+      );
+      await manager.reloadAgentSession(agentId, undefined, { rehydrateFromDisk: true });
+      await manager.hydrateTimelineFromProvider(agentId, { force: true });
+      expect(messages()).toEqual(["A", "Reply A"]);
+    },
+    {
+      forkOnRevert: true,
+      handleInput: async (input, emit) => {
+        if (input.type === "session.close") {
+          emit({ type: "request.completed", requestId: input.requestId });
+          return true;
+        }
         if (input.type !== "session.open" || input.history !== "replay" || !failReplay)
           return false;
         failReplay = false;
