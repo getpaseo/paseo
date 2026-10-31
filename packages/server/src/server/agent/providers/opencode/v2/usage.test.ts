@@ -37,6 +37,22 @@ function stepEnded(harness: V2Harness, id: string, tokens: TokenUsageInfo) {
   });
 }
 
+// OpenCode 2.1+ reports per-step usage through session.usage.updated instead of
+// session.step.ended, with the same token shape.
+function usageUpdated(harness: V2Harness, id: string, tokens: TokenUsageInfo) {
+  harness.push({
+    id,
+    created: 2,
+    type: "session.usage.updated",
+    durable: { aggregateID: "session", seq: 1, version: 1 },
+    data: {
+      sessionID: "session",
+      cost: 0.1,
+      tokens,
+    },
+  });
+}
+
 describe("OpenCode v2 context usage", () => {
   test("reports each step's context against the model limit, in step order", async () => {
     const harness = new V2Harness();
@@ -92,6 +108,53 @@ describe("OpenCode v2 context usage", () => {
         totalCostUsd: 0.5,
         contextWindowUsedTokens: 1_335,
         contextWindowMaxTokens: 200_000,
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("reports context from session.usage.updated (OpenCode 2.1+)", async () => {
+    const harness = new V2Harness();
+    harness.info.model = { providerID: "test", id: "model" };
+    harness.info.tokens = {
+      input: 900,
+      output: 90,
+      reasoning: 0,
+      cache: { read: 40, write: 0 },
+    };
+    harness.info.cost = 0.5;
+    harness.api.model.list = async (input) => ({
+      location: { directory: input.location.directory },
+      data: [model(1_000_000)],
+    });
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+    });
+    const usage: AgentUsage[] = [];
+    session.subscribe((event) => {
+      if (event.type === "usage_updated") usage.push(event.usage);
+    });
+    try {
+      usageUpdated(harness, "usage-1", {
+        input: 100,
+        output: 10,
+        reasoning: 5,
+        cache: { read: 1_000, write: 20 },
+      });
+      await expect.poll(() => usage.length).toBe(1);
+      expect(usage[0]).toEqual({
+        inputTokens: 900,
+        outputTokens: 90,
+        cachedInputTokens: 40,
+        totalCostUsd: 0.5,
+        contextWindowUsedTokens: 1_135,
+        contextWindowMaxTokens: 1_000_000,
       });
     } finally {
       await session.close();
