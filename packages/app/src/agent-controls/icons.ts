@@ -11,6 +11,7 @@ import {
   ShieldOff,
   ShieldPlus,
   ShieldQuestionMark,
+  Workflow,
   Zap,
 } from "lucide-react-native";
 import { getModeVisuals, type AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
@@ -39,6 +40,7 @@ const MODE_ICONS: Record<string, AgentControlIcon> = {
 const FEATURE_ICONS: Record<string, AgentControlIcon> = {
   "list-todo": ListTodo,
   "shield-check": ShieldCheck,
+  workflow: Workflow,
   zap: Zap,
 };
 

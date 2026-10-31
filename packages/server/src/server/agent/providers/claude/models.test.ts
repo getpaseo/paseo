@@ -7,7 +7,6 @@ import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { ClaudeAgentClient } from "./agent.js";
 import {
   CLAUDE_DISABLED_THINKING_OPTION_ID,
-  CLAUDE_ULTRACODE_THINKING_OPTION_ID,
   claudeManifestModelSupportsFastMode,
   normalizeClaudeManifestModelId,
   parseClaudeCodeVersion,
@@ -173,7 +172,6 @@ describe("getClaudeModels", () => {
       "high",
       "xhigh",
       "max",
-      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
     ]);
     expect(models.get("claude-sonnet-5")?.thinkingOptions?.map((option) => option.id)).toEqual([
       CLAUDE_DISABLED_THINKING_OPTION_ID,
@@ -182,14 +180,7 @@ describe("getClaudeModels", () => {
       "high",
       "xhigh",
       "max",
-      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
     ]);
-    expect(
-      models
-        .get("claude-sonnet-5")
-        ?.thinkingOptions?.find((option) => option.id === CLAUDE_ULTRACODE_THINKING_OPTION_ID)
-        ?.label,
-    ).toBe("Ultra Code");
     expect(models.get("claude-sonnet-5")?.defaultThinkingOptionId).toBe("high");
     expect(models.get("claude-sonnet-5[1m]")?.thinkingOptions).toEqual(
       models.get("claude-sonnet-5")?.thinkingOptions,
@@ -202,7 +193,6 @@ describe("getClaudeModels", () => {
       "high",
       "xhigh",
       "max",
-      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
     ]);
     expect(models.get("claude-sonnet-4-6")?.thinkingOptions?.map((option) => option.id)).toEqual([
       CLAUDE_DISABLED_THINKING_OPTION_ID,
@@ -784,7 +774,6 @@ describe("Claude Opus 5.5 catalog", () => {
       "high",
       "xhigh",
       "max",
-      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
     ]);
     expect(opus55?.defaultThinkingOptionId).toBe("medium");
     expect(
@@ -819,7 +808,6 @@ describe("Claude Sonnet 5.5 catalog", () => {
       "high",
       "xhigh",
       "max",
-      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
     ]);
     expect(sonnet55?.defaultThinkingOptionId).toBe("medium");
     expect(
@@ -856,7 +844,6 @@ describe("Claude Haiku 5.5 catalog", () => {
       "high",
       "xhigh",
       "max",
-      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
     ]);
     expect(haiku55?.defaultThinkingOptionId).toBe("medium");
     expect(
@@ -913,7 +900,6 @@ describe("Claude Mythos 5.1 catalog", () => {
       "high",
       "xhigh",
       "max",
-      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
     ]);
     expect(
       models[0].thinkingOptions?.filter((option) => option.isDefault).map((option) => option.id),
