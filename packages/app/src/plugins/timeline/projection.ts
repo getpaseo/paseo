@@ -112,6 +112,9 @@ function transformSourceItem(
       version: pluginItem.version,
       data: pluginItem.data,
     };
+    if (item.kind === "assistant_message" && phase === "complete") {
+      projected.sourceAssistant = item.messageId ? { messageId: item.messageId } : {};
+    }
     if (item.timelineCursor) projected.timelineCursor = item.timelineCursor;
     if (item.turnId) projected.turnId = item.turnId;
     return projected;
