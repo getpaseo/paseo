@@ -24,7 +24,7 @@ export async function hasManagedBridge(configDirectory: string): Promise<boolean
     readFile(path.join(directory, "package.json"), "utf8").catch(() => ""),
     readFile(path.join(directory, "server.js")).catch(() => undefined),
   ]);
-  return manifest === PACKAGE && Boolean(artifact?.length);
+  return isManagedPackage(manifest) && Boolean(artifact?.length);
 }
 
 export async function provisionLocalBridge(input: {
@@ -42,7 +42,7 @@ export async function provisionLocalBridge(input: {
   }
   const manifest = path.join(directory, "package.json");
   if (created) await writeFileAtomic(manifest, PACKAGE);
-  else if ((await readManagedManifest(manifest)) !== PACKAGE)
+  else if (!isManagedPackage(await readManagedManifest(manifest)))
     throw new Error(`Cannot install OpenCode bridge: ${directory} is not managed by Paseo`);
   const artifact = await readFile(input.artifact);
   const state = await readFile(path.join(path.dirname(input.artifact), "state.mjs"));
@@ -54,6 +54,26 @@ export async function provisionLocalBridge(input: {
   const target = path.join(directory, "server.js");
   const existing = await readFile(target).catch(() => undefined);
   if (!existing?.equals(artifact)) await writeFileAtomic(target, artifact);
+}
+
+function isManagedPackage(content: string): boolean {
+  let value: unknown;
+  try {
+    value = JSON.parse(content);
+  } catch {
+    return false;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const manifest = value as Record<string, unknown>;
+  if (!manifest.exports || typeof manifest.exports !== "object" || Array.isArray(manifest.exports))
+    return false;
+  const exports = manifest.exports as Record<string, unknown>;
+  return (
+    manifest.name === "paseo-managed-bridge" &&
+    manifest.private === true &&
+    manifest.type === "module" &&
+    exports["./server"] === "./server.js"
+  );
 }
 
 async function readManagedManifest(file: string): Promise<string> {
