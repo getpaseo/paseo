@@ -292,7 +292,10 @@ const CATALOG_DATA = [
     version: "0.6.13",
     iconId: "minimax-code",
     installLink: "https://agent.minimax.io",
-    command: ["npx", "-y", "@minimax-ai/code@0.6.13", "acp"],
+    // `-p <pkg>` names the package and `mcode` names its binary. Without the
+    // explicit binary, npx resolves the executable from the unscoped package
+    // name (`code`), which this package does not publish.
+    command: ["npx", "-y", "-p", "@minimax-ai/code@0.6.13", "mcode", "acp"],
   },
   {
     id: "minion-code",

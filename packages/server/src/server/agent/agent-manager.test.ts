@@ -21,6 +21,7 @@ import {
 } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
+import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
@@ -1213,6 +1214,74 @@ test("orders buffered pre-steer output before an immediately accepted steer", as
       },
       { item: { type: "user_message", text: "hello" }, turnId: "active-turn-1" },
     ]);
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a steer the provider names without echoing it can be rewound to", async () => {
+  // Claude takes a steered message into the running turn without echoing it back as a user
+  // message, so the id it minted for the message reaches the manager only through the admission.
+  class SilentSteeringSession extends SteeringTestSession {
+    override readonly capabilities = {
+      ...TEST_CAPABILITIES,
+      supportsRewindFiles: true,
+    };
+    rewindMessageIds: string[] = [];
+
+    override async steerActiveTurn(
+      _prompt: AgentPromptInput,
+      options: import("./agent-sdk-types.js").SteerActiveTurnOptions,
+    ): Promise<import("./agent-sdk-types.js").SteerResult> {
+      if (options.expectedTurnId !== `active-turn-${this.startCount}`) {
+        return { status: "unavailable" };
+      }
+      return { status: "accepted", providerMessageId: `provider-${options.clientMessageId}` };
+    }
+
+    override async revertFiles({ messageId }: { messageId: string }): Promise<void> {
+      this.rewindMessageIds.push(messageId);
+    }
+  }
+  const session = new SilentSteeringSession({ provider: "codex", cwd: process.cwd() });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-steer-rewind-"));
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const run = manager.streamAgent(agent.id, "initial");
+    void (async () => {
+      for await (const _event of run) {
+      }
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+
+    await expect(
+      manager.steerAgentRun(agent.id, "steered", { clientMessageId: "steer-client" }),
+    ).resolves.toMatchObject({ status: "accepted" });
+    const row = manager
+      .fetchTimeline(agent.id, { limit: 0 })
+      .rows.find((candidate) => candidate.item.type === "user_message");
+    expect(row).toMatchObject({
+      providerMessageId: "provider-steer-client",
+      item: { text: "steered", clientMessageId: "steer-client" },
+    });
+
+    await manager.rewind(agent.id, "steer-client", "files");
+    expect(session.rewindMessageIds).toEqual(["provider-steer-client"]);
   } finally {
     if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
@@ -4592,7 +4661,7 @@ test("importProviderSession imports the selected session without listing and pub
   expect(manager.getTimeline(imported.id)).toEqual([
     { type: "user_message", text: "Trace provider imports" },
     { type: "assistant_message", text: "Done" },
-    {
+    limitAgentTimelineItemContent({
       type: "tool_call",
       callId: "large-shell-result",
       name: "shell",
@@ -4601,10 +4670,10 @@ test("importProviderSession imports the selected session without listing and pub
       detail: {
         type: "shell",
         command: "print output",
-        output: "x".repeat(64 * 1024),
+        output: "x".repeat(1024 * 1024),
         exitCode: 0,
       },
-    },
+    }),
   ]);
   expect(manager.listProviderSubagents(imported.id)).toEqual([
     expect.objectContaining({ id: "thread-child", title: "Imported child", status: "completed" }),
@@ -8057,6 +8126,60 @@ test("global subscribers receive internal agent events only when they opt in", a
   expect(optedIn.length).toBeGreaterThan(1);
   unsubscribeHidden();
   unsubscribeOptedIn();
+});
+
+test("agent removal notifications respect scoped subscriptions and internal visibility", () => {
+  const manager = new AgentManager({ clients: {}, logger });
+  const removedId = "00000000-0000-4000-8000-000000000901";
+  const internalId = "00000000-0000-4000-8000-000000000902";
+  const otherId = "00000000-0000-4000-8000-000000000903";
+  const publicEvents: AgentManagerEvent[] = [];
+  const allEvents: AgentManagerEvent[] = [];
+  const scopedEvents: AgentManagerEvent[] = [];
+  const internalEvents: AgentManagerEvent[] = [];
+  const unrelatedEvents: AgentManagerEvent[] = [];
+  const releases = [
+    manager.subscribe((event) => publicEvents.push(event), { replayState: false }),
+    manager.subscribe((event) => allEvents.push(event), {
+      replayState: false,
+      includeInternal: true,
+    }),
+    manager.subscribe((event) => scopedEvents.push(event), {
+      replayState: false,
+      agentId: removedId,
+    }),
+    manager.subscribe((event) => internalEvents.push(event), {
+      replayState: false,
+      agentId: internalId,
+    }),
+    manager.subscribe((event) => unrelatedEvents.push(event), {
+      replayState: false,
+      agentId: otherId,
+    }),
+  ];
+  try {
+    manager.notifyAgentRemoved({ id: removedId, workspaceId: "workspace" });
+    manager.notifyAgentRemoved({ id: internalId, workspaceId: "workspace", internal: true });
+    const publicRemoval = {
+      type: "agent_removed",
+      agentId: removedId,
+      workspaceId: "workspace",
+      internal: false,
+    };
+    const internalRemoval = {
+      type: "agent_removed",
+      agentId: internalId,
+      workspaceId: "workspace",
+      internal: true,
+    };
+    expect(publicEvents).toEqual([publicRemoval]);
+    expect(allEvents).toEqual([publicRemoval, internalRemoval]);
+    expect(scopedEvents).toEqual([publicRemoval]);
+    expect(internalEvents).toEqual([internalRemoval]);
+    expect(unrelatedEvents).toEqual([]);
+  } finally {
+    for (const release of releases) release();
+  }
 });
 
 test("getAgent returns internal agents by ID", async () => {
@@ -11903,10 +12026,7 @@ test("commits startup notices once on create and after restored history", async 
       exitCode: 0,
     },
   };
-  const limitedToolOutput: AgentTimelineItem = {
-    ...toolOutput,
-    detail: { type: "shell", command: "print output", output: "x".repeat(64 * 1024), exitCode: 0 },
-  };
+  const limitedToolOutput = limitAgentTimelineItemContent(toolOutput);
   class NotifyingSession extends TestAgentSession {
     readonly initialTimeline = [{ item: notice, timestamp: "2026-09-22T00:00:00.000Z" }];
     override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {

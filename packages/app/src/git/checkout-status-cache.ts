@@ -8,7 +8,7 @@ import {
   invalidatePrPaneTimelineForCheckout,
 } from "@/git/query-keys";
 import { type CheckoutPrStatusPayload, normalizeCheckoutPrStatusPayload } from "@/git/pr-status";
-import { resetDraftAgentCommandsForCheckout } from "@/hooks/agent-commands-query";
+import { resetDraftAgentCommandsForCheckout } from "@/agent-commands/cache";
 
 export type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
 export type { CheckoutPrStatusPayload } from "@/git/pr-status";

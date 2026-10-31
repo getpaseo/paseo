@@ -405,3 +405,15 @@ it("available and retained usage show the same successful completion time", () =
   );
   expect(upsertReport([failure], success)).toEqual([failure]);
 });
+
+it("disabled host shows off even with cached reports", () => {
+  expect(
+    resolveUsageView({
+      hostLabel: "Laptop",
+      isConnected: true,
+      supportsUsage: true,
+      enabled: false,
+      query: { data: [], error: null, isFetching: false },
+    }),
+  ).toMatchObject({ kind: "off" });
+});

@@ -1,3 +1,4 @@
+import { Modal } from "@/components/ui/modal";
 import { usePanelStore } from "@/stores/panel-store";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { router } from "expo-router";
@@ -23,7 +24,6 @@ import {
   type RefObject,
 } from "react";
 import {
-  Modal,
   Platform,
   Pressable,
   ScrollView,
