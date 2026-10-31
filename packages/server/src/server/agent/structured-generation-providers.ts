@@ -5,9 +5,10 @@ import type {
 } from "./agent-sdk-types.js";
 import type { StructuredGenerationProvider } from "./agent-response-loop.js";
 import type { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
+import type { PaseoMetadataGenerationInstructions } from "@getpaseo/protocol/paseo-config-schema";
 
 export interface StructuredGenerationDaemonConfig {
-  metadataGeneration?: {
+  metadataGeneration?: PaseoMetadataGenerationInstructions & {
     providers?: Array<{
       provider: string;
       model?: string;
