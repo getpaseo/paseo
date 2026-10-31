@@ -1,4 +1,5 @@
 import type { ScheduleCadence } from "@getpaseo/protocol/schedule/types";
+import type { TFunction } from "i18next";
 import { everyMsToParts } from "@/utils/schedule-format";
 
 type CronCadence = Extract<ScheduleCadence, { type: "cron" }>;
@@ -11,27 +12,34 @@ export interface CadencePresetOption {
 
 export const CUSTOM_CRON_PRESET_ID = "custom";
 
-export const CADENCE_PRESET_OPTIONS: CadencePresetOption[] = [
-  { id: "every-minute", label: "Every minute", expression: "* * * * *" },
-  { id: "every-hour", label: "Every hour", expression: "0 * * * *" },
-  { id: "daily-9", label: "Daily 9:00", expression: "0 9 * * *" },
-  { id: "weekdays-9", label: "Weekdays 9:00", expression: "0 9 * * 1-5" },
-  { id: "mondays-9", label: "Mondays 9:00", expression: "0 9 * * 1" },
-];
+const CADENCE_PRESETS = [
+  { id: "every-minute", labelKey: "everyMinute", expression: "* * * * *" },
+  { id: "every-hour", labelKey: "everyHour", expression: "0 * * * *" },
+  { id: "daily-9", labelKey: "daily9", expression: "0 9 * * *" },
+  { id: "weekdays-9", labelKey: "weekdays9", expression: "0 9 * * 1-5" },
+  { id: "mondays-9", labelKey: "mondays9", expression: "0 9 * * 1" },
+] as const;
+
+export function getCadencePresetOptions(t: TFunction): CadencePresetOption[] {
+  return CADENCE_PRESETS.map(({ id, labelKey, expression }) => ({
+    id,
+    label: t(`schedules.cadence.presets.${labelKey}`),
+    expression,
+  }));
+}
 
 export function resolveCronPresetId(cadence: CronCadence): string {
   const expression = cadence.expression.trim();
   return (
-    CADENCE_PRESET_OPTIONS.find((option) => option.expression === expression)?.id ??
-    CUSTOM_CRON_PRESET_ID
+    CADENCE_PRESETS.find((option) => option.expression === expression)?.id ?? CUSTOM_CRON_PRESET_ID
   );
 }
 
-export function resolveCronPresetDisplay(cadence: CronCadence): { label: string } {
+export function resolveCronPresetDisplay(cadence: CronCadence, t: TFunction): { label: string } {
   return {
     label:
-      CADENCE_PRESET_OPTIONS.find((option) => option.id === resolveCronPresetId(cadence))?.label ??
-      "Custom cron",
+      getCadencePresetOptions(t).find((option) => option.id === resolveCronPresetId(cadence))
+        ?.label ?? t("schedules.cadence.custom"),
   };
 }
 
