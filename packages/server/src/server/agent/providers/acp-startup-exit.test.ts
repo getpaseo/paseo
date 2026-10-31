@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { describe, expect, test } from "vitest";
 
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
@@ -44,6 +46,38 @@ describe("ACP catalog startup failures", () => {
     );
     expect(diagnostic).toContain("launcher failed: fixture startup error");
     expect(diagnostic).not.toContain("initialize timed out");
+  });
+
+  test("invalid provider options reject without crashing the host process", async () => {
+    const clientModule = new URL("./generic-acp-agent.ts", import.meta.url).href;
+    const loggerModule = new URL("../../../test-utils/test-logger.ts", import.meta.url).href;
+    const script = `
+      import { GenericACPAgentClient } from ${JSON.stringify(clientModule)};
+      import { createTestLogger } from ${JSON.stringify(loggerModule)};
+      const client = new GenericACPAgentClient({
+        logger: createTestLogger(),
+        command: [process.execPath, '-e', 'setInterval(() => {}, 1000)'],
+      });
+      try {
+        await client.fetchCatalog({
+          scope: 'workspace', cwd: process.cwd(), force: true,
+          providerOptions: { clientCapabilities: { fs: 'invalid' } },
+        });
+        throw new Error('Expected invalid options to reject');
+      } catch (error) {
+        if (error.name !== 'ZodError') throw error;
+      }
+      // Let child cleanup and Node's unhandled-rejection check complete.
+      await new Promise(resolve => setTimeout(resolve, 100));
+      console.log('host stayed alive');
+    `;
+    const result = await promisify(execFile)(
+      process.execPath,
+      ["--import", "tsx", "--input-type=module", "-e", script],
+      { timeout: 10_000 },
+    );
+    expect(result.stdout).toContain("host stayed alive");
+    expect(result.stderr).toBe("");
   });
 
   test("a successful catalog probe still returns its models and closes cleanly", async () => {

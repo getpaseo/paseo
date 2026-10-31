@@ -1392,6 +1392,7 @@ export class ACPAgentClient implements AgentClient {
       client?: ACPClient;
     },
   ): Promise<SpawnedACPProcess> {
+    const configuredOptions = ACPProviderOptionsSchema.parse(options?.providerOptions ?? {});
     const transport = await this.spawnTransport(launchEnv, options?.client);
     const probe: UninitializedACPProcess = {
       child: transport.child,
@@ -1403,7 +1404,7 @@ export class ACPAgentClient implements AgentClient {
       const initialize = await this.initializeTransport(
         transport,
         options?.initializeTimeoutMs,
-        options?.providerOptions,
+        configuredOptions.clientCapabilities,
       );
       const initializedProbe: SpawnedACPProcess = {
         ...probe,
@@ -1463,9 +1464,8 @@ export class ACPAgentClient implements AgentClient {
   protected async initializeTransport(
     transport: ACPProcessTransport,
     initializeTimeoutMs?: number,
-    providerOptions?: Record<string, unknown>,
+    clientCapabilities?: ACPClientCapabilities,
   ): Promise<InitializeResponse> {
-    const configuredOptions = ACPProviderOptionsSchema.parse(providerOptions ?? {});
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const initializeTimeoutPromise = initializeTimeoutMs
       ? new Promise<never>((_, reject) => {
@@ -1482,7 +1482,7 @@ export class ACPAgentClient implements AgentClient {
             protocolVersion: PROTOCOL_VERSION,
             clientCapabilities: buildACPClientCapabilities(
               this.clientCapabilityMeta,
-              configuredOptions.clientCapabilities ?? this.clientCapabilities,
+              clientCapabilities ?? this.clientCapabilities,
             ),
             clientInfo: { name: "Paseo", version: "dev" },
           }),
