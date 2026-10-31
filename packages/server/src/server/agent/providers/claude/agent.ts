@@ -262,7 +262,12 @@ export function normalizeClaudeAskUserQuestionUpdatedInput(
   // AskUserQuestion tool expects answer keys to match the full question text. Merge
   // the original request payload back in so provider callbacks that only return
   // `{ answers }` still satisfy Claude's full tool input schema.
-  const merged = stripClaudeAskUserQuestionUiMetadata({ ...fallback, ...base });
+  // selectedOptionIndexes is Paseo-only answer metadata; Claude's tool schema has no such field.
+  const { selectedOptionIndexes: _selectedOptionIndexes, ...claudeInput } = {
+    ...fallback,
+    ...base,
+  };
+  const merged = stripClaudeAskUserQuestionUiMetadata(claudeInput);
   const normalizedAnswers = resolveClaudeAskUserQuestionAnswers(updatedInput, fallbackInput);
 
   if (!normalizedAnswers || Object.keys(normalizedAnswers).length === 0) {

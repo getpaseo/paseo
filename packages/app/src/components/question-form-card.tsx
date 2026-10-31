@@ -22,6 +22,7 @@ import { MarkdownRenderer } from "@/components/markdown/renderer";
 import {
   areQuestionsAnswered,
   buildQuestionFormAnswers,
+  buildQuestionFormSelectedOptionIndexes,
   isQuestionAnswered,
   parseQuestionFormQuestions,
   questionShowsTextInput,
@@ -453,6 +454,7 @@ export function QuestionFormCard({
       updatedInput: {
         ...permission.request.input,
         answers: buildQuestionFormAnswers(questions, selections, otherTexts),
+        selectedOptionIndexes: buildQuestionFormSelectedOptionIndexes(questions, selections),
       },
     });
   }, [
@@ -474,6 +476,7 @@ export function QuestionFormCard({
         updatedInput: {
           ...permission.request.input,
           answers: buildQuestionFormAnswers(questions, selections, otherTexts),
+          selectedOptionIndexes: buildQuestionFormSelectedOptionIndexes(questions, selections),
         },
       });
       return;
