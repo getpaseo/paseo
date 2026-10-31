@@ -563,6 +563,71 @@ describe("createTerminal", () => {
     expect(state.grid[0][1].char).toBe("");
   });
 
+  it("reports the cursor column after an emoji cluster in DSR replies", async () => {
+    // Programs that measure the cursor (prompts, TUIs) must see the same
+    // column the client renders: an emoji occupies two cells.
+    const program = `
+      process.stdin.setRawMode(true);
+      process.stdin.once("data", (reply) => {
+        process.stdout.write("\\r\\nREPLY " + JSON.stringify(reply.toString()).slice(2, -1));
+      });
+      process.stdout.write("A😀\\x1b[6n");
+      setInterval(() => {}, 100000);
+    `;
+    const session = trackSession(
+      await createTerminal({
+        workspaceId: "ws-test",
+        cwd: realpathSync(tmpdir()),
+        cols: 40,
+        rows: 5,
+        command: process.execPath,
+        args: ["-e", program],
+      }),
+    );
+
+    const state = await waitForState(session, (current) =>
+      getRowText(current, 1).startsWith("REPLY"),
+    );
+
+    expect(getRowText(state, 1)).toBe("REPLY u001b[1;4R");
+  });
+
+  it("replays emoji clusters at their columns with the cursor after them", async () => {
+    const text = "A😀B❤️C👋🏽D👨‍👩‍👧E";
+    const session = trackSession(
+      await createTerminal({
+        workspaceId: "ws-test",
+        cwd: realpathSync(tmpdir()),
+        cols: 40,
+        rows: 5,
+        command: process.execPath,
+        args: [
+          "-e",
+          `process.stdout.write(${JSON.stringify(text)}); setInterval(() => {}, 100000);`,
+        ],
+      }),
+    );
+
+    const state = await waitForState(session, (current) => rowHasChar(current.grid[0], "E"));
+
+    expect(state.grid[0].slice(0, 13).map((cell) => cell.char)).toEqual([
+      "A",
+      "😀",
+      "",
+      "B",
+      "❤️",
+      "",
+      "C",
+      "👋🏽",
+      "",
+      "D",
+      "👨‍👩‍👧",
+      "",
+      "E",
+    ]);
+    expect(state.cursor).toEqual({ row: 0, col: 13 });
+  });
+
   it("captures exit diagnostics from the terminal buffer", async () => {
     const session = trackSession(
       await createTerminal({
