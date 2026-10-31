@@ -18,9 +18,34 @@ export interface QuestionFormQuestion {
 export type QuestionSelections = Record<number, ReadonlySet<number>>;
 export type QuestionOtherTexts = Record<number, string>;
 
+/**
+ * Folds soft line breaks into spaces, the way Markdown renders a wrapped
+ * paragraph.
+ *
+ * Agents sometimes hand this card text that is hard-wrapped at some column, one
+ * break per word. The app-wide markdown flags render a soft break as a hard
+ * break, which stacks every token on its own line inside the option rows.
+ * Form labels read as prose, so a lone break is a wrap, not a break; a blank
+ * line still starts a new paragraph.
+ */
+export function normalizeQuestionText(text: string): string {
+  // A blank line separates paragraphs and keeps its breaks; a lone break (not
+  // adjacent to another break) is a wrap and folds into a space. Trailing space
+  // from a folded final break goes.
+  return text
+    .replace(/(?<!\r?\n)\r?\n(?!\r?\n)/g, " ")
+    .replace(/[ \t]{2,}/g, " ")
+    .trimEnd();
+}
+
 function readOptionalString(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];
   return typeof value === "string" ? value : undefined;
+}
+
+function readNormalizedString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = readOptionalString(record, key);
+  return value === undefined ? undefined : normalizeQuestionText(value);
 }
 
 export function parseQuestionFormQuestions(input: unknown): QuestionFormQuestion[] | null {
@@ -45,13 +70,13 @@ export function parseQuestionFormQuestions(input: unknown): QuestionFormQuestion
       const o = opt as Record<string, unknown>;
       if (typeof o.label !== "string") return null;
       options.push({
-        label: o.label,
-        description: typeof o.description === "string" ? o.description : undefined,
+        label: normalizeQuestionText(o.label),
+        description: readNormalizedString(o, "description"),
         preview: readOptionalString(o, "preview"),
       });
     }
     questions.push({
-      question: q.question,
+      question: normalizeQuestionText(q.question),
       header: q.header,
       options,
       multiSelect: q.multiSelect === true,

@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   areQuestionsAnswered,
   buildQuestionFormAnswers,
+  normalizeQuestionText,
   parseQuestionFormQuestions,
   questionShowsTextInput,
   resolveDismissLabel,
@@ -171,5 +172,39 @@ describe("question form card core", () => {
       { label: "Tabs", description: "One tab per section", preview: "<Tabs>\n  <Tab />\n</Tabs>" },
       { label: "Single page", description: undefined, preview: undefined },
     ]);
+  });
+
+  test("folds wrapped question text back into flowing sentences", () => {
+    const questions = parseQuestionFormQuestions({
+      questions: [
+        {
+          question: "新分支怎么办\n？",
+          header: "branch",
+          options: [
+            {
+              label: "基于 #8343\n分支（推荐\n）",
+              description: "包含 zcode\n-credentials\n.ts，合并顺序\n",
+            },
+            { label: "plain" },
+          ],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    expect(questions?.[0]?.question).toBe("新分支怎么办 ？");
+    expect(questions?.[0]?.options[0]?.label).toBe("基于 #8343 分支（推荐 ）");
+    expect(questions?.[0]?.options[0]?.description).toBe("包含 zcode -credentials .ts，合并顺序");
+  });
+
+  test("keeps a blank line as a paragraph break while folding lone breaks", () => {
+    expect(normalizeQuestionText("First paragraph\n\nSecond paragraph")).toBe(
+      "First paragraph\n\nSecond paragraph",
+    );
+    expect(normalizeQuestionText("只存在于\nPR\n#8343\n（feat\n/zai）里")).toBe(
+      "只存在于 PR #8343 （feat /zai）里",
+    );
+    expect(normalizeQuestionText("one\r\ntwo")).toBe("one two");
+    expect(normalizeQuestionText("plain text")).toBe("plain text");
   });
 });
