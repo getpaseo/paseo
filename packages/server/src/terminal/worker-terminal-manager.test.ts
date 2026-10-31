@@ -1710,6 +1710,7 @@ it.skipIf(isPlatform("win32"))(
 
 it("replays bounded ANSI chunks independently of live output and reconstructs the revision cut", async () => {
   const cwd = createTemporaryHome();
+  const finishBefore = join(cwd, "finish-before");
   manager = await startRealWorkerManager();
   const session = trackTerminal(
     await manager.createTerminal({
@@ -1719,7 +1720,15 @@ it("replays bounded ANSI chunks independently of live output and reconstructs th
       cols: 120,
       ...nodeTerminalCommand(`
       for (let i = 0; i < 800; i++) process.stdout.write("\\x1b[31m" + String(i).padStart(4, "0") + ":" + "x".repeat(100) + "\\x1b[0m\\r\\n");
-      require("node:readline").createInterface({ input: process.stdin }).on("line", line => process.stdout.write(line === "before" ? "PRE-CUT\\r\\n" : "LIVE-AFTER-REPLAY\\r\\n"));
+      require("node:readline").createInterface({ input: process.stdin }).on("line", line => {
+        if (line !== "before") { process.stdout.write("LIVE-AFTER-REPLAY\\r\\n"); return; }
+        process.stdout.write("PRE-CUT");
+        const finish = setInterval(() => {
+          if (!require("node:fs").existsSync(${JSON.stringify(finishBefore)})) return;
+          clearInterval(finish);
+          process.stdout.write("\\r\\n");
+        }, 5);
+      });
       setInterval(() => {}, 1000);
     `),
     }),
@@ -1743,6 +1752,13 @@ it("replays bounded ANSI chunks independently of live output and reconstructs th
   });
   session.send({ type: "input", data: "before\r" });
   await waitForCondition(() => live.includes("PRE-CUT"), 10000);
+  // A PTY may deliver the marker and its trailing newline separately. Finish
+  // that output before replay, so the two captures must describe the same cut.
+  writeFileSync(finishBefore, "");
+  await waitForCondition(async () => {
+    const { lines } = await manager!.captureTerminal(session.id);
+    return lines.at(-2) === "PRE-CUT" && lines.at(-1) === "";
+  }, 10000);
   const expected = await manager.captureTerminal(session.id);
   const metadata = await manager.replayTerminal(session.id, undefined, (event) => {
     events.push(event.type);
