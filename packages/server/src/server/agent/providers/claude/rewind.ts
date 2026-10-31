@@ -39,10 +39,44 @@ function projectFolderSessionStore(projectFolder: string): SessionStore {
       return parseTranscriptEntries(text);
     },
     async append({ sessionId }, entries) {
-      const lines = entries.map((entry) => `${JSON.stringify(entry)}\n`).join("");
+      const lines = remapCompactionReferences(entries)
+        .map((entry) => `${JSON.stringify(entry)}\n`)
+        .join("");
       await appendFile(transcriptPath(sessionId), lines, "utf8");
     },
   };
+}
+
+// forkSession copies every entry under a new uuid and remaps parentUuid and logicalParentUuid,
+// but a compact boundary's compactMetadata keeps naming the source entries.
+// Claude Code re-attaches the messages a compaction preserved through those UUIDs; when it can't
+// find them, a conversation that continues from the preserved tail sends the compacted-away
+// history again (#3837). forkSession hands the whole fork to a single append, so every entry a
+// boundary names is in this batch.
+function remapCompactionReferences(entries: SessionStoreEntry[]): SessionStoreEntry[] {
+  const forkedUuids = new Map<string, string>();
+  for (const entry of entries) {
+    const forkedFrom = entry.forkedFrom;
+    const sourceUuid = isRecord(forkedFrom) ? forkedFrom.messageUuid : undefined;
+    if (typeof sourceUuid === "string" && entry.uuid !== undefined) {
+      forkedUuids.set(sourceUuid, entry.uuid);
+    }
+  }
+  function remap(value: unknown): unknown {
+    if (typeof value === "string") return forkedUuids.get(value) ?? value;
+    if (Array.isArray(value)) return value.map(remap);
+    if (!isRecord(value)) return value;
+    const remapped = Object.entries(value).map(([key, item]) => [key, remap(item)]);
+    return Object.fromEntries(remapped);
+  }
+  return entries.map((entry) => {
+    if (entry.subtype !== "compact_boundary") return entry;
+    return { ...entry, compactMetadata: remap(entry.compactMetadata) };
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function parseTranscriptEntries(text: string): SessionStoreEntry[] {
