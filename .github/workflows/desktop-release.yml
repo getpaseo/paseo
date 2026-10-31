@@ -100,10 +100,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14
+          - runner: macos-latest
             electron_arch: arm64
             node_heap_mb: 4096
-          - runner: macos-15-intel
+          - runner: macos-26-intel
             electron_arch: x64
             node_heap_mb: 8192
     permissions:

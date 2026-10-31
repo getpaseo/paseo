@@ -166,7 +166,6 @@ function createTerminalHost(input: CreateTerminalHostInput): MountedTerminal {
   runtime.mount({
     root,
     host,
-    initialSnapshot: null,
     scrollback: input.scrollback ?? 10_000,
     theme: {
       background: "#0b0b0b",
@@ -750,30 +749,11 @@ describe("terminal emulator runtime in a real browser", () => {
     const reset = vi.fn(originalReset);
     terminal.reset = reset;
 
-    mounted.runtime.renderSnapshot({
-      state: {
-        rows: terminal.rows,
-        cols: terminal.cols,
-        scrollback: [],
-        grid: [
-          [
-            { char: "p" },
-            { char: "r" },
-            { char: "o" },
-            { char: "m" },
-            { char: "p" },
-            { char: "t" },
-          ],
-        ],
-        cursor: {
-          row: 0,
-          col: 6,
-        },
-      },
-    });
-    await nextFrame();
-
+    mounted.runtime.replay({ type: "begin", rows: terminal.rows, cols: terminal.cols });
+    mounted.runtime.replay({ type: "data", data: terminalOutput("prompt") });
+    mounted.runtime.replay({ type: "end" });
     expect(reset).not.toHaveBeenCalled();
+    await nextFrame();
   });
 
   it("opens OSC 8 hyperlinks the same way as plain-text URLs", async () => {
@@ -794,4 +774,96 @@ describe("terminal emulator runtime in a real browser", () => {
     expect(mounted.openedUrls).toEqual(["https://example.com/plain", "https://example.com/osc8"]);
     expect(confirm).not.toHaveBeenCalled();
   });
+});
+
+describe("incremental replay lifecycle", () => {
+  it.each(["clear", "remount"] as const)(
+    "recovers live input after interrupted replay and %s",
+    async (cleanup) => {
+      const mounted = createTerminalHost({ width: 720, height: 360 });
+      mounted.runtime.replay({ type: "begin", rows: 30, cols: 120 });
+      mounted.root.style.width = "360px";
+      mounted.runtime.resize({ shouldClaim: false });
+      mounted.runtime.replay({ type: "data", data: terminalOutput("interrupted") });
+      if (cleanup === "clear")
+        await new Promise<void>((resolve) => mounted.runtime.clear({ onCommitted: resolve }));
+      else {
+        mounted.runtime.unmount();
+        mounted.runtime.mount({
+          root: mounted.root,
+          host: mounted.host,
+          scrollback: 1000,
+          theme: {},
+        });
+      }
+      await new Promise<void>((resolve) =>
+        mounted.runtime.write({ data: terminalOutput("live"), onCommitted: resolve }),
+      );
+      getBrowserTerminal().input("user-input", true);
+      expect(mounted.inputs).toContain("user-input");
+      expect(getBrowserTerminal().cols).toBeLessThan(60);
+    },
+  );
+
+  it("suppresses generated replies until queued replay chunks commit after end", async () => {
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    mounted.runtime.replay({ type: "begin" });
+    mounted.runtime.replay({ type: "data", data: terminalOutput("\x1b]4;1;?\x07") });
+    mounted.runtime.replay({ type: "data", data: terminalOutput("\x1b]4;1;?\x07") });
+    mounted.runtime.replay({ type: "end" });
+    await new Promise<void>((resolve) =>
+      mounted.runtime.write({ data: terminalOutput("committed"), onCommitted: resolve }),
+    );
+    expect(mounted.inputs).toEqual([]);
+    await new Promise<void>((resolve) =>
+      mounted.runtime.write({ data: terminalOutput("\x1b]4;1;?\x07"), onCommitted: resolve }),
+    );
+    expect(mounted.inputs).toHaveLength(1);
+    expect(mounted.inputs[0]?.startsWith("\x1b]4;1;rgb:")).toBe(true);
+  });
+});
+
+it("restores fitted web geometry after replay before live output", async () => {
+  const mounted = createTerminalHost({ width: 720, height: 360 });
+  await settleMountRefits();
+  const local = latestSize(mounted.sizes);
+  mounted.runtime.replay({ type: "begin", rows: 30, cols: 120 });
+  mounted.runtime.replay({ type: "data", data: terminalOutput("x".repeat(100)) });
+  mounted.runtime.replay({ type: "end" });
+  await new Promise<void>((resolve) =>
+    mounted.runtime.write({ data: terminalOutput("LIVE"), onCommitted: resolve }),
+  );
+  expect(getBrowserTerminal().cols).toBe(latestSize(mounted.sizes).cols);
+  expect(getBrowserTerminal().cols).toBeLessThan(120);
+  expect(getBrowserTerminal().rows).toBe(local.rows);
+  mounted.runtime.resize({ forceClaim: true, shouldClaim: true });
+  expect(getBrowserTerminal().cols).toBe(latestSize(mounted.sizes).cols);
+});
+
+it("defers layout fit until all replay chunks commit", async () => {
+  const mounted = createTerminalHost({ width: 720, height: 360 });
+  await settleMountRefits();
+  mounted.runtime.replay({ type: "begin", rows: 30, cols: 120 });
+  await new Promise<void>((resolve) =>
+    mounted.runtime.write({
+      data: terminalOutput("first"),
+      suppressInput: true,
+      onCommitted: resolve,
+    }),
+  );
+  expect(getBrowserTerminal().cols).toBe(120);
+  mounted.root.style.width = "360px";
+  mounted.runtime.resize({ shouldClaim: true, forceClaim: true, forceRefresh: true });
+  await nextFrame();
+  expect(getBrowserTerminal().cols).toBe(120);
+  mounted.runtime.replay({ type: "data", data: terminalOutput("\x1b[2;110Hsecond") });
+  mounted.runtime.replay({ type: "end" });
+  await new Promise<void>((resolve) =>
+    mounted.runtime.write({ data: terminalOutput("LIVE"), onCommitted: resolve }),
+  );
+  expect(getBrowserTerminal().cols).toBe(latestSize(mounted.sizes).cols);
+  expect(getBrowserTerminal().cols).toBeLessThan(60);
+  expect(latestSize(mounted.sizes)).toMatchObject({ shouldClaim: true, forceClaim: true });
+  mounted.runtime.resize({ shouldClaim: true, forceClaim: true });
+  expect(getBrowserTerminal().cols).toBe(latestSize(mounted.sizes).cols);
 });

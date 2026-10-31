@@ -622,6 +622,7 @@ export const ptBR: TranslationResources = {
     terminal: {
       hostDisconnected: "Host não está conectado",
       updateHost: "Atualize o host para usar o renderizador de terminal nativo.",
+      restoreRequiresUpdate: "Atualize o host para visualizar os terminais.",
       unableToSubscribe: "Não foi possível assinar o terminal",
       fileUploaded: "Arquivo enviado",
       pasteFileFailed: "Falha ao colar o arquivo: {{reason}}",
@@ -2046,7 +2047,6 @@ export const ptBR: TranslationResources = {
   toolCallDetails: {
     error: "Erro",
     empty: "Nenhum detalhe adicional disponível",
-    subAgentActivity: "Atividade do subagente",
     input: "Entrada",
     output: "Saída",
   },

@@ -623,6 +623,7 @@ export const ja: TranslationResources = {
     terminal: {
       hostDisconnected: "ホストが接続されていません",
       updateHost: "ネイティブターミナルを使用するにはホストを更新してください。",
+      restoreRequiresUpdate: "ターミナルを表示するにはホストを更新してください。",
       unableToSubscribe: "ターミナルに接続できません",
       fileUploaded: "ファイルをアップロードしました",
       pasteFileFailed: "ファイルを貼り付けられませんでした: {{reason}}",
@@ -2033,7 +2034,6 @@ export const ja: TranslationResources = {
   toolCallDetails: {
     error: "エラー",
     empty: "追加の詳細はありません",
-    subAgentActivity: "サブエージェントアクティビティ",
     input: "入力",
     output: "出力",
   },

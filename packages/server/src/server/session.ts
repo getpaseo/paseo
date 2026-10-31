@@ -1130,11 +1130,11 @@ export class Session {
       terminalManager,
       emit: (msg) => this.emit(msg),
       hasBinaryChannel: () => this.onBinaryMessage !== null,
+      supportsChunkedReplay: (source) =>
+        this.supportsForSource(CLIENT_CAPS.terminalChunkedReplay, source),
       isPathWithinRoot: (rootPath, candidatePath) => this.isPathWithinRoot(rootPath, candidatePath),
       sessionLogger: this.sessionLogger,
       listTerminalWorkspaceRefs: () => this.listActiveWorkspaceRefs(),
-      clientSupportsWrapReflow: (source) =>
-        this.supportsForSource(CLIENT_CAPS.terminalReflowableSnapshot, source),
       getClientBufferedAmount: (source) => this.getTransportBufferedAmount(source),
     });
     this.agentDirectory = new AgentDirectory({

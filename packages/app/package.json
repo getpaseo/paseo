@@ -154,6 +154,7 @@
     "@types/ws": "^8.18.1",
     "@vitest/browser": "^4.1.7",
     "@vitest/browser-playwright": "^4.1.7",
+    "@xterm/addon-serialize": "0.14.0",
     "@xterm/headless": "^6.1.0-beta.213",
     "babel-preset-expo": "~57.0.16",
     "dotenv": "^17.2.3",

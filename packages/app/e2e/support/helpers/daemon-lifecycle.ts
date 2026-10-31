@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { writeFile, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { expect, type Page } from "@playwright/test";
@@ -153,4 +153,43 @@ export async function plantUnclosableTerminalProgram(
     release();
     throw error;
   }
+}
+
+/** Fault injection and liveness checks for the isolated daemon cleanup journey. */
+export function suspendDaemonProcess(pid: number): void {
+  process.kill(pid, "SIGSTOP");
+}
+
+export function resumeDaemonProcess(pid: number): void {
+  try {
+    process.kill(pid, "SIGCONT");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
+}
+
+export async function daemonProcessCanWrite(pid: number): Promise<boolean> {
+  try {
+    const state = await psField(pid, "stat");
+    return state.length > 0 && !state.startsWith("Z");
+  } catch (error) {
+    if ((error as { code?: unknown }).code === 1) return false;
+    throw error;
+  }
+}
+
+export async function readTerminalProcessIds(daemon: IsolatedHostDaemon): Promise<number[]> {
+  const directory = path.join(daemon.paseoHome, "terminal-worker");
+  const records = await Promise.all(
+    (await readdir(directory))
+      .filter((name) => name.endsWith(".json"))
+      .map(async (name) => {
+        const record = JSON.parse(await readFile(path.join(directory, name), "utf8")) as {
+          pid: number;
+          terminals: Array<{ pid: number }>;
+        };
+        return [record.pid].concat(record.terminals.map((terminal) => terminal.pid));
+      }),
+  );
+  return records.flat();
 }

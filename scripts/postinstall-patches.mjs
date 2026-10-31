@@ -26,6 +26,8 @@ const patchedPackages = [
   // https://github.com/jpudysz/react-native-unistyles/pull/1203.
   // Adaptive themes: keep until colorScheme reads no longer consume listener-owned media changes.
   // withUnistyles: also keep the uniProps filter until upstream consumes its control prop.
+  // Android configuration: backport 3.5.3; remove the two NativePlatform hunks at >= 3.5.3.
+  // https://github.com/jpudysz/react-native-unistyles/compare/v3.5.2...v3.5.3
   {
     nodeModulesPath: "node_modules/react-native-unistyles",
     patchPrefix: "react-native-unistyles+",
@@ -57,6 +59,8 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/@gorhom/bottom-sheet",
     patchPrefix: "@gorhom+bottom-sheet+",
   },
+  // Android resize: retain until upstream clears descendant geometry when the SVG canvas resizes.
+  // The native pixel regression is included in the patch; preserve the separate transform hunks.
   {
     nodeModulesPath: "packages/app/node_modules/react-native-svg",
     patchPrefix: "react-native-svg+",

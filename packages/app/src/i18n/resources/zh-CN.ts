@@ -617,6 +617,7 @@ export const zhCN: TranslationResources = {
     terminal: {
       hostDisconnected: "Host 未连接",
       updateHost: "请更新主机以使用原生终端渲染器。",
+      restoreRequiresUpdate: "更新主机以查看终端。",
       unableToSubscribe: "无法订阅 Terminal",
       fileUploaded: "文件已上传",
       pasteFileFailed: "无法粘贴文件：{{reason}}",
@@ -1991,7 +1992,6 @@ export const zhCN: TranslationResources = {
   toolCallDetails: {
     error: "错误",
     empty: "没有可用的更多详情",
-    subAgentActivity: "Sub-agent 活动",
     input: "输入",
     output: "输出",
   },

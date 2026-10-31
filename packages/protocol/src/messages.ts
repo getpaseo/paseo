@@ -641,7 +641,9 @@ const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail, unknown> = z.discri
       subAgentType: z.string().optional(),
       description: z.string().optional(),
       childSessionId: z.string().optional(),
-      log: z.string(),
+      // COMPAT(subagent-log): added in v0.14.1, remove after 2027-04-30. A sub-agent card is a
+      // launch marker; apps before v0.14.1 required `log`, so daemons still send it empty.
+      log: z.string().optional(),
       // Compat cruft for clients <= 0.1.65-beta.3 that required this field. Producers still
       // emit `[]`; nothing reads it. Drop the field (and the `[]` emissions) once those
       // clients are no longer in the field.
@@ -3832,6 +3834,7 @@ export const ServerInfoStatusPayloadSchema = z
         selectiveAgentTimeline: z.boolean().optional(),
         explicitEventSubscriptions: z.boolean().optional(),
         ownedSubscriptions: z.boolean().optional(),
+        binaryChunkingV1: z.boolean().optional(),
         workspaceSetupObservation: z.boolean().optional(),
         workspaceSortTimes: z.boolean().optional(),
         // COMPAT(canonicalSubmittedPrompts): added in v0.2.6, remove gate after 2027-01-30.
