@@ -8318,7 +8318,7 @@ export class Session {
             },
             activeTurnBehavior: msg.activeTurnBehavior ?? "steer",
             sessionMode: msg.sessionMode,
-            clearPendingPermissions: true,
+            clearPendingPermissions: false,
           });
           deliveryStatus = "queued";
           queued();
