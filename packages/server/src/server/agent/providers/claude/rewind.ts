@@ -82,8 +82,9 @@ export async function findSteeredMessageParent(
   transcriptPath: string,
   messageId: string,
 ): Promise<string | null> {
+  const input = createReadStream(transcriptPath, { encoding: "utf8" });
   const lines = createInterface({
-    input: createReadStream(transcriptPath, { encoding: "utf8" }),
+    input,
     crlfDelay: Infinity,
   });
   try {
@@ -114,6 +115,7 @@ export async function findSteeredMessageParent(
     throw error;
   } finally {
     lines.close();
+    input.destroy();
   }
   return null;
 }

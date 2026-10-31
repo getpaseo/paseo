@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -271,3 +279,43 @@ describe("Claude rewind against the Claude SDK", () => {
     ]);
   });
 });
+
+test.runIf(process.platform === "linux")(
+  "releases the transcript descriptor after an early steer match",
+  async () => {
+    const artifacts = path.resolve(".artifacts");
+    mkdirSync(artifacts, { recursive: true });
+    const root = mkdtempSync(path.join(artifacts, "claude-rewind-descriptor-"));
+    const transcriptPath = path.join(root, "session.jsonl");
+    const matchingEntry = {
+      type: "attachment",
+      parentUuid: "before-steer",
+      attachment: { type: "queued_command", source_uuid: "steered-message" },
+    };
+    const unreadEntry = JSON.stringify({ type: "assistant", message: "x".repeat(1024) });
+    writeFileSync(
+      transcriptPath,
+      JSON.stringify(matchingEntry) + "\n" + (unreadEntry + "\n").repeat(1200),
+    );
+    const openDescriptors = () =>
+      readdirSync("/proc/self/fd").filter((descriptor) => {
+        try {
+          return readlinkSync(path.join("/proc/self/fd", descriptor)) === transcriptPath;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+          throw error;
+        }
+      }).length;
+    try {
+      expect(openDescriptors()).toBe(0);
+      for (let attempt = 0; attempt < 5; attempt++) {
+        await expect(findSteeredMessageParent(transcriptPath, "steered-message")).resolves.toBe(
+          "before-steer",
+        );
+      }
+      await expect.poll(openDescriptors, { timeout: 1000 }).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
