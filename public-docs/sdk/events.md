@@ -42,6 +42,25 @@ await directory.subscription.release();
 
 `client.agents.subscribe()` and agent-handle `subscribe()` add local listeners to observations owned by that API instance. They do not request data. Use the returned subscription's callbacks when multiple filtered views need separate updates.
 
+## Follow an agent's background work
+
+Background work is what an agent left running after its tool call returned: a Claude shell started with `run_in_background`, a `Monitor` watch, or another task that is not a subagent. Subagents and workflows stay in the agent's subagents.
+
+```ts
+const agent = client.agents.ref(agentId);
+
+const unsubscribe = agent.backgroundWork.subscribe((items) => render(items));
+
+// When this view closes:
+unsubscribe();
+```
+
+`subscribe()` calls the listener with the current list once the subscription is established, again after each reconnect, then with the whole list on every change. Use `list()` for a one-shot read, such as automation that waits for the list to empty. Each item has `id`, `kind` (`"shell"` for shells and Claude `Monitor` watches, `"other"` otherwise; treat any unknown value as `"other"`), `description` (or `null`) and `startedAt`. The list empties when the provider process restarts or the agent closes. Nothing survives a daemon restart.
+
+Pass `subscribe(listener, { onError })` to receive the error when reading the current list fails; the listener is not called and the list is read again on the next reconnect. Without `onError`, the error is logged.
+
+`list()` rejects and `subscribe()` throws when the host does not advertise `features.agentBackgroundWork`; ask the user to update the host.
+
 ## Follow timeline events
 
 ```ts
