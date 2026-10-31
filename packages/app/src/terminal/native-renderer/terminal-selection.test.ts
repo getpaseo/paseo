@@ -483,3 +483,23 @@ describe("native terminal selection", () => {
     expect(copied).toEqual([]);
   });
 });
+
+describe("endpoint dragging", () => {
+  it.each(["start", "end"] as const)(
+    "keeps the opposite endpoint fixed as %s crosses it",
+    (endpoint) => {
+      const selection = createTerminalSelectionModel();
+      const bounds = { oldestRow: 0, newestRow: 10, coordinateEpoch: 1 };
+      selection.begin({ coordinate: { row: 2, col: 2 }, bounds });
+      selection.update({ coordinate: { row: 3, col: 4 }, bounds });
+      selection.beginEndpointDrag(endpoint);
+      const coordinate = endpoint === "start" ? { row: 4, col: 5 } : { row: 1, col: 1 };
+      selection.update({ coordinate, bounds });
+      expect(selection.getSnapshot().range).toEqual(
+        endpoint === "start"
+          ? { start: { row: 3, col: 4 }, end: coordinate, coordinateEpoch: 1 }
+          : { start: coordinate, end: { row: 2, col: 2 }, coordinateEpoch: 1 },
+      );
+    },
+  );
+});

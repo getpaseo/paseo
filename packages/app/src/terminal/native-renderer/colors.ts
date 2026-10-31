@@ -48,8 +48,7 @@ export interface TerminalCellStyleResolver {
 export const DEFAULT_TERMINAL_THEME = toXtermTheme(darkTheme.colors.terminal);
 
 export const NATIVE_TERMINAL_SELECTION_COLORS = {
-  background: 0xffffff00,
-  foreground: 0xff000000,
+  background: 0x472684ff,
 } as const;
 
 function build256Palette(theme: ITheme): number[] {

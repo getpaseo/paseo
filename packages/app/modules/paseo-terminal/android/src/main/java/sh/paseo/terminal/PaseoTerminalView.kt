@@ -63,7 +63,6 @@ class PaseoTerminalView(context: Context, appContext: AppContext) : ExpoView(con
     backgroundColor = argb(value.background)
     cursorColor = argb(value.cursor)
     paints.selectionBackground = argb(value.selectionBackground)
-    paints.selectionForeground = argb(value.selectionForeground)
     invalidate()
   }
 

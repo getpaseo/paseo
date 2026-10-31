@@ -24,8 +24,7 @@ final class PaseoTerminalView: ExpoView {
   private var background = TerminalColor(Double(0xff00_0000))
   private var cursorColor = TerminalColor(Double(0xffff_ffff))
   private var rowPaint = TerminalRowPaint(
-    selectionBackground: TerminalColor(Double(0xffff_ff00)),
-    selectionForeground: TerminalColor(Double(0xff00_0000)))
+    selectionBackground: TerminalColor(Double(0x4726_84ff)))
   private var rowCache: [String: TerminalRowLayout] = [:]
 
   required init(appContext: AppContext? = nil) {
@@ -44,8 +43,7 @@ final class PaseoTerminalView: ExpoView {
     background = TerminalColor(record.background)
     cursorColor = TerminalColor(record.cursor)
     rowPaint = TerminalRowPaint(
-      selectionBackground: TerminalColor(record.selectionBackground),
-      selectionForeground: TerminalColor(record.selectionForeground))
+      selectionBackground: TerminalColor(record.selectionBackground))
     backgroundColor = UIColor(cgColor: background.cgColor())
     setNeedsDisplay()
   }

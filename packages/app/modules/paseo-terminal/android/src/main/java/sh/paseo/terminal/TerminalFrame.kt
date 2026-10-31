@@ -27,7 +27,6 @@ class TerminalThemeRecord : Record {
   @Field val background: Double = 0.0
   @Field val cursor: Double = 0.0
   @Field val selectionBackground: Double = 0.0
-  @Field val selectionForeground: Double = 0.0
 }
 
 class TerminalCustomGlyphRecord : Record {

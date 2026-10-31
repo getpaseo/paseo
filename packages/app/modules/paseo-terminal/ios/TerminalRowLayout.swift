@@ -27,7 +27,6 @@ private let leftToRightAttributes: [NSAttributedString.Key: Any] = {
 /// Colors a row is painted with besides its own styles.
 struct TerminalRowPaint {
   let selectionBackground: TerminalColor
-  let selectionForeground: TerminalColor
 }
 
 /// One row shaped once and placed on the terminal grid.
@@ -267,31 +266,33 @@ final class TerminalRowLayout {
     selection?.contains(row: row, col: cellCol[cell], span: cellSpan[cell]) ?? false
   }
 
-  private func foreground(_ cell: Int, row: Int, selection: TerminalSelection?, paint: TerminalRowPaint) -> TerminalColor {
-    isSelected(cell, row: row, selection: selection) ? paint.selectionForeground : cellForeground[cell]
-  }
-
-  /// Draws the row with its top edge at `top`, selected cells in selection colors.
+  /// Draws cell backgrounds, the selection overlay, then text with its original colors.
   func draw(in context: CGContext, row: Int, top: CGFloat, selection: TerminalSelection?, paint: TerminalRowPaint) {
     let cellWidth = font.cellWidth
     let cellHeight = font.cellHeight
     for cell in 0..<cellCount {
-      let background = isSelected(cell, row: row, selection: selection) ? paint.selectionBackground : cellBackground[cell]
-      guard background.isPainted else { continue }
-      context.setFillColor(background.cgColor())
-      context.fill(CGRect(x: CGFloat(cellCol[cell]) * cellWidth, y: top, width: CGFloat(cellSpan[cell]) * cellWidth, height: cellHeight))
+      let rect = CGRect(x: CGFloat(cellCol[cell]) * cellWidth, y: top, width: CGFloat(cellSpan[cell]) * cellWidth, height: cellHeight)
+      let background = cellBackground[cell]
+      if background.isPainted {
+        context.setFillColor(background.cgColor())
+        context.fill(rect)
+      }
+      if isSelected(cell, row: row, selection: selection) {
+        context.setFillColor(paint.selectionBackground.cgColor())
+        context.fill(rect)
+      }
     }
 
     let centerY = top + cellHeight / 2
     let baselineInTextSpace = cellHeight / 2 - font.baseline
-    // A group whose cells differ in color or selection is drawn once per color, clipped to those
+    // A group whose cells differ in color is drawn once per color, clipped to those
     // cells' columns. Only edges between differently colored cells clip; outer edges may overhang.
     for group in groups {
       var first = group.firstCell
       while first <= group.lastCell {
-        let color = foreground(first, row: row, selection: selection, paint: paint)
+        let color = cellForeground[first]
         var last = first
-        while last < group.lastCell && foreground(last + 1, row: row, selection: selection, paint: paint) == color {
+        while last < group.lastCell && cellForeground[last + 1] == color {
           last += 1
         }
         context.saveGState()
@@ -315,7 +316,7 @@ final class TerminalRowLayout {
 
     let baseline = top + font.baseline
     for cell in 0..<cellCount {
-      let color = foreground(cell, row: row, selection: selection, paint: paint)
+      let color = cellForeground[cell]
       let left = CGFloat(cellCol[cell]) * cellWidth
       let width = CGFloat(cellSpan[cell]) * cellWidth
       if let glyph = cellGlyph[cell] {

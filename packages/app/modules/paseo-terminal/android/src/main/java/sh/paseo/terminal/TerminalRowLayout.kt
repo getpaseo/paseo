@@ -23,7 +23,7 @@ private const val CLIP_UNBOUNDED_PX = 100_000f
  * either half alone would show an explicit virama. Each resulting group is drawn from the shaped
  * run (in context) at its first cell's column, centred in the columns it owns, and scaled down only when
  * its glyphs are wider than those columns. Colors never split groups or reshape the row: a group
- * whose cells differ in color or selection is drawn once per color, clipped to those cells' columns.
+ * whose cells differ in color is drawn once per color, clipped to those cells' columns.
  */
 internal class TerminalRowLayout(
   val source: TerminalRowSource,
@@ -195,7 +195,7 @@ internal class TerminalRowLayout(
     canvas.drawRenderNode(recorded)
   }
 
-  /** Draws the row with selected cells in selection colors. Selection never reshapes the row. */
+  /** Draws backgrounds, the selection overlay, then text with its original colors. */
   fun drawSelected(canvas: Canvas, row: Int, selection: TerminalSelection, paints: TerminalPaints) {
     drawContent(canvas, row, selection, paints)
   }
@@ -213,17 +213,17 @@ internal class TerminalRowLayout(
     val cellHeight = font.cellHeightPx.toFloat()
     val fill = paints.fill
     for (cell in 0 until cellCount) {
-      val background =
-        if (selected(row, selection, cell)) paints.selectionBackground else cellBackground[cell]
-      if (background ushr 24 == 0) continue
-      fill.color = background
-      canvas.drawRect(
-        cellCol[cell] * cellWidth,
-        0f,
-        (cellCol[cell] + cellSpan[cell]) * cellWidth,
-        cellHeight,
-        fill,
-      )
+      val left = cellCol[cell] * cellWidth
+      val right = (cellCol[cell] + cellSpan[cell]) * cellWidth
+      val background = cellBackground[cell]
+      if (background ushr 24 != 0) {
+        fill.color = background
+        canvas.drawRect(left, 0f, right, cellHeight, fill)
+      }
+      if (selected(row, selection, cell)) {
+        fill.color = paints.selectionBackground
+        canvas.drawRect(left, 0f, right, cellHeight, fill)
+      }
     }
 
     val baseline = font.baselinePx.toFloat()
@@ -234,9 +234,9 @@ internal class TerminalRowLayout(
         val paint = font.paint(cellFlags[group.firstCell])
         var first = group.firstCell
         while (first <= group.lastCell) {
-          val color = foreground(row, selection, first, paints)
+          val color = cellForeground[first]
           var last = first
-          while (last < group.lastCell && foreground(row, selection, last + 1, paints) == color) last += 1
+          while (last < group.lastCell && cellForeground[last + 1] == color) last += 1
           // Only edges between differently colored cells clip; the group's outer edges may overhang.
           val clipped = first > group.firstCell || last < group.lastCell
           canvas.save()
@@ -257,7 +257,7 @@ internal class TerminalRowLayout(
     for (cell in 0 until cellCount) {
       val glyph = cellGlyph[cell]
       val flags = cellFlags[cell]
-      val foreground = foreground(row, selection, cell, paints)
+      val foreground = cellForeground[cell]
       if (glyph != null) {
         fill.color = foreground
         glyph.draw(canvas, cellCol[cell] * cellWidth, cellSpan[cell] * cellWidth, cellHeight, font.density, fill)
@@ -291,9 +291,6 @@ internal class TerminalRowLayout(
     canvas.drawTextRun(text, group.start, group.end, group.contextStart, group.contextEnd, x, baseline, false, paint)
   }
 
-  private fun foreground(row: Int, selection: TerminalSelection?, cell: Int, paints: TerminalPaints): Int =
-    if (selected(row, selection, cell)) paints.selectionForeground else cellForeground[cell]
-
   /** The row's text as accessibility reads it. */
   fun describe(): String = source.text.trimEnd()
 }
@@ -301,6 +298,5 @@ internal class TerminalRowLayout(
 /** Paint state shared by every row of one view. */
 internal class TerminalPaints {
   val fill = Paint(Paint.ANTI_ALIAS_FLAG)
-  var selectionBackground: Int = 0xFFFFFF00.toInt()
-  var selectionForeground: Int = 0xFF000000.toInt()
+  var selectionBackground: Int = 0x472684FF
 }

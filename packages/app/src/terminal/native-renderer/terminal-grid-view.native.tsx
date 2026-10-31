@@ -77,7 +77,6 @@ export function TerminalGridView({
       background: resolver.backgroundColor,
       cursor: resolver.cursorColor,
       selectionBackground: NATIVE_TERMINAL_SELECTION_COLORS.background,
-      selectionForeground: NATIVE_TERMINAL_SELECTION_COLORS.foreground,
     }),
     [resolver],
   );

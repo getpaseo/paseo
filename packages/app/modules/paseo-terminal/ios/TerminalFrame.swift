@@ -25,7 +25,6 @@ struct TerminalThemeRecord: Record {
   @Field var background: Double = 0
   @Field var cursor: Double = 0
   @Field var selectionBackground: Double = 0
-  @Field var selectionForeground: Double = 0
 }
 
 struct TerminalCustomGlyphRecord: Record {

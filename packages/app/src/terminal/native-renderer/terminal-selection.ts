@@ -25,6 +25,7 @@ export interface TerminalSelectionBounds {
 export interface TerminalSelectionModel {
   begin(input: TerminalSelectionUpdateInput): TerminalSelectionSnapshot;
   update(input: TerminalSelectionUpdateInput): TerminalSelectionSnapshot;
+  beginEndpointDrag(endpoint: "start" | "end"): void;
   clear(): TerminalSelectionSnapshot;
   sync(input: TerminalSelectionSyncInput): TerminalSelectionSnapshot;
   getSnapshot(): TerminalSelectionSnapshot;
@@ -284,6 +285,10 @@ export function createTerminalSelectionModel(): TerminalSelectionModel {
     },
     update(input: TerminalSelectionUpdateInput): TerminalSelectionSnapshot {
       return setSelection(input);
+    },
+    beginEndpointDrag(endpoint) {
+      if (state.range)
+        state = { ...state, anchor: state.range[endpoint === "start" ? "end" : "start"] };
     },
     clear(): TerminalSelectionSnapshot {
       state = { anchor: null, range: null };

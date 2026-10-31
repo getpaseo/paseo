@@ -43,7 +43,6 @@ export interface PaseoTerminalTheme {
   background: number;
   cursor: number;
   selectionBackground: number;
-  selectionForeground: number;
 }
 
 export interface PaseoTerminalCellMetrics {
