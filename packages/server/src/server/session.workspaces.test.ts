@@ -1263,7 +1263,7 @@ test("create_agent_request launches from an exact subdirectory in a created work
   }
 });
 
-test("create_agent_request does not title an existing workspace from the agent prompt", async () => {
+test("create_agent_request generates a conversation title in an existing workspace", async () => {
   vi.useFakeTimers();
   const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-existing-title-"));
   try {
@@ -1361,10 +1361,21 @@ test("create_agent_request does not title an existing workspace from the agent p
         mcpBaseUrl: null,
         stt: null,
         tts: null,
-        generateWorkspaceName: async () => {
-          generateCalls += 1;
-          return { title: "Generated title that must not be written", branch: null };
-        },
+        workspaceAutoName: new WorkspaceAutoName({
+          agentManager,
+          workspaceRegistry,
+          workspaceGitService: createNoopWorkspaceGitService(),
+          providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+          readDaemonConfig: () => ({}),
+          gitMutation: { notifyGitMutation: async () => {} },
+          emitWorkspaceUpdateForCwd: async () => {},
+          emitWorkspaceUpdateForWorkspaceId: async () => {},
+          logger: asSessionLogger(logger),
+          generateWorkspaceName: async () => {
+            generateCalls += 1;
+            return { title: "Fix login validation", branch: null };
+          },
+        }),
         providerSnapshotManager: createProviderSnapshotManagerStub().manager,
         terminalManager: null,
       }),
@@ -1382,7 +1393,12 @@ test("create_agent_request does not title an existing workspace from the agent p
 
     const [createdAgent] = agentManager.listAgents();
     expect(createdAgent?.workspaceId).toBe("ws-existing");
-    expect(generateCalls).toBe(0);
+    expect(generateCalls).toBe(1);
+    await vi.waitFor(async () => {
+      await expect(agentStorage.get(createdAgent!.id)).resolves.toMatchObject({
+        title: "Fix login validation",
+      });
+    });
     await expect(workspaceRegistry.get("ws-existing")).resolves.toMatchObject({
       title: null,
       updatedAt: "2026-05-07T00:00:00.000Z",
