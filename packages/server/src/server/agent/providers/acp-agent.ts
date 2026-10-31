@@ -322,6 +322,10 @@ const ACP_PROBE_CLOSE_TIMEOUT_MS = 2_000;
 // request when the provider never answers, so these calls must be bounded
 // or the provider process is never terminated.
 const ACP_CLOSE_REQUEST_TIMEOUT_MS = 2_000;
+// Bounded wait after session/cancel for the provider to answer the original
+// session/prompt with its terminal stop reason. Matches the daemon's
+// INTERRUPT_SESSION_TIMEOUT_MS so cancel's settlement budget covers this wait.
+const ACP_INTERRUPT_RELEASE_TIMEOUT_MS = 2_000;
 const ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS = 30_000;
 const ACP_IMPORT_HISTORY_BUDGET_MS = 60_000;
 
@@ -2551,7 +2555,24 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.cancelPendingPermissions();
 
     if (this.activeForegroundTurnId) {
+      // session/cancel is only a notification: the provider must still answer
+      // the original session/prompt with stopReason "cancelled" before the turn
+      // is actually released. Waiting for that answer here (bounded) closes the
+      // window where a replacement prompt races the provider's own release and
+      // is rejected with "already has an active turn".
+      const cancelledTurnId = this.activeForegroundTurnId;
+      const released = new Promise<void>((resolve) => {
+        const check = () => {
+          if (this.activeForegroundTurnId !== cancelledTurnId) resolve();
+        };
+        this.subscribe(check);
+      });
       await this.connection.cancel({ sessionId: this.sessionId });
+      await withTimeout(
+        released,
+        ACP_INTERRUPT_RELEASE_TIMEOUT_MS,
+        `ACP interrupt timed out after ${ACP_INTERRUPT_RELEASE_TIMEOUT_MS}ms`,
+      ).catch(() => undefined);
     }
   }
 
