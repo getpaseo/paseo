@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/icon-button-chrome";
 import { composerPillStyles } from "@/composer/pill-styles";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { isNative, isWeb } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
@@ -65,12 +66,22 @@ const errorIconMapping = (theme: Theme) => ({ color: theme.colors.statusDanger }
 const ThemedMoreIcon = withUnistyles(MoreHorizontal);
 const ThemedErrorIcon = withUnistyles(AlertCircle);
 
-function headerButtonStyle(compact: boolean, state: IconButtonChromeState, disabled = false) {
-  if (compact) return iconButtonChromeStyle({ size: "large", state, disabled });
+function headerButtonStyle(
+  compact: boolean,
+  state: IconButtonChromeState,
+  disabled = false,
+  selected = false,
+) {
+  if (compact)
+    return iconButtonChromeStyle({
+      size: "large",
+      state: { ...state, active: selected || state.active },
+      disabled,
+    });
   return [
     styles.headerButton,
     styles.button,
-    (state.hovered || state.pressed || state.open) && styles.active,
+    (selected || state.hovered || state.pressed || state.open) && styles.active,
     disabled && styles.disabled,
   ];
 }
@@ -81,8 +92,18 @@ function ButtonEnvironment({ view, children }: { view: ButtonView; children: Rea
   );
 }
 
-function ButtonIcon({ view, icon }: { view: ButtonView; icon: PluginButtonIcon }) {
-  const color = view.props.theme.colors.foregroundMuted;
+function ButtonIcon({
+  view,
+  icon,
+  selected = false,
+}: {
+  view: ButtonView;
+  icon: PluginButtonIcon;
+  selected?: boolean;
+}) {
+  const color = selected
+    ? view.props.theme.colors.foreground
+    : view.props.theme.colors.foregroundMuted;
   const size = view.entry.placement === "composer" ? 14 : 16;
   const Icon = pluginIconComponent(icon);
   return (
@@ -124,6 +145,7 @@ function ButtonMenuItem({
   icon,
   behavior,
   disabled,
+  selected,
   path,
   pageId,
 }: {
@@ -132,13 +154,14 @@ function ButtonMenuItem({
   icon?: PluginButtonIcon;
   behavior: PluginButtonBehavior;
   disabled: boolean;
+  selected?: boolean;
   path: readonly string[];
   pageId: string;
 }) {
   const select = useCallback(() => pressButton(view, path), [view, path]);
   const leading = useMemo(
-    () => (icon ? <ButtonIcon view={view} icon={icon} /> : null),
-    [icon, view],
+    () => (icon ? <ButtonIcon view={view} icon={icon} selected={selected} /> : null),
+    [icon, selected, view],
   );
   if (behavior.kind !== "action") {
     return (
@@ -148,7 +171,7 @@ function ButtonMenuItem({
     );
   }
   return (
-    <MenuItem onSelect={select} leading={leading} disabled={disabled}>
+    <MenuItem onSelect={select} leading={leading} disabled={disabled} selected={selected}>
       {title}
     </MenuItem>
   );
@@ -262,11 +285,16 @@ function ButtonControl({ view }: { view: ButtonView }) {
         ? [
             composerPillStyles.body,
             styles.button,
-            (hovered || pressed || entry.open) && styles.active,
+            (button.selected || hovered || pressed || entry.open) && styles.active,
             disabled && styles.disabled,
           ]
-        : headerButtonStyle(props.layout.compact, { hovered, pressed, open: entry.open }, disabled),
-    [composer, disabled, entry.open, props.layout.compact],
+        : headerButtonStyle(
+            props.layout.compact,
+            { hovered, pressed, open: entry.open },
+            disabled,
+            button.selected,
+          ),
+    [button.selected, composer, disabled, entry.open, props.layout.compact],
   );
   const contents = (
     <>
@@ -275,10 +303,16 @@ function ButtonControl({ view }: { view: ButtonView }) {
           <LoadingSpinner size={14} color={props.theme.colors.foregroundMuted} />
         </View>
       ) : (
-        <ButtonIcon view={view} icon={button.icon} />
+        <ButtonIcon view={view} icon={button.icon} selected={button.selected} />
       )}
       {label ? (
-        <Text numberOfLines={1} style={composer ? styles.composerLabel : styles.label}>
+        <Text
+          numberOfLines={1}
+          style={[
+            composer ? styles.composerLabel : styles.label,
+            button.selected && styles.labelSelected,
+          ]}
+        >
           {label}
         </Text>
       ) : null}
@@ -290,14 +324,19 @@ function ButtonControl({ view }: { view: ButtonView }) {
     </>
   );
   const accessibilityState = useMemo(
-    () => ({ busy: entry.pending, disabled }),
-    [entry.pending, disabled],
+    () => ({
+      busy: entry.pending,
+      disabled,
+      ...(isNative && button.selected !== undefined ? { selected: button.selected } : {}),
+    }),
+    [button.selected, entry.pending, disabled],
   );
   const trigger = expanded ? (
     <MenuTrigger
       accessibilityRole="button"
       accessibilityLabel={button.title}
       accessibilityState={accessibilityState}
+      aria-pressed={isWeb ? button.selected : undefined}
       disabled={disabled}
       style={buttonStyle}
     >
@@ -308,6 +347,7 @@ function ButtonControl({ view }: { view: ButtonView }) {
       accessibilityRole="button"
       accessibilityLabel={button.title}
       accessibilityState={accessibilityState}
+      aria-pressed={isWeb ? button.selected : undefined}
       disabled={disabled}
       onPress={press}
       style={buttonStyle}
@@ -471,6 +511,7 @@ function MenuButtonRow({ entry, theme }: { entry: RegisteredPluginButton; theme:
           icon={button.icon}
           behavior={button.behavior}
           disabled={button.disabled || entry.pending}
+          selected={button.selected}
           path={ROOT_PATH}
           pageId={buttonPageId(entry.key, ROOT_PATH)}
         />
@@ -681,6 +722,7 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
   },
   label: { fontSize: theme.fontSize.sm, color: theme.colors.foregroundMuted, flexShrink: 1 },
+  labelSelected: { color: theme.colors.foreground },
   icon: {
     width: 16,
     height: 16,

@@ -71,12 +71,13 @@ describe("plugin buttons", () => {
       false,
     );
     buttons.setOpen(first.key, true);
-    header.update({ visible: false, label: "3 reviews" });
+    header.update({ visible: false, label: "3 reviews", selected: true });
     expect(buttonMatches(buttons.getSnapshot()[0], "host-a", "workspace", null)).toBe(false);
     expect(buttons.getSnapshot()[0].open).toBe(false);
     header.update({ visible: true });
     expect(buttons.getSnapshot().map((entry) => entry.key)).toEqual([first.key, first.key + 1]);
     expect(buttons.getSnapshot()[0].button.label).toBe("3 reviews");
+    expect(buttons.getSnapshot()[0].button.selected).toBe(true);
     header.remove();
     header.remove();
     header.update({ visible: true });
@@ -97,6 +98,10 @@ describe("plugin buttons", () => {
     ).not.toThrow();
     expect(() => header.update({ title: "Changed", icon: "Invalid" })).toThrow("Unknown icon");
     expect(buttons.getSnapshot()[0].button.title).toBe("Review");
+    expect(() => header.update({ selected: "yes" as never })).toThrow(
+      "Plugin button selected state must be a boolean",
+    );
+    expect(buttons.getSnapshot()[0].button.selected).toBeUndefined();
   });
 
   it("prevents repeated presses and cannot resurrect a removed pending button", async () => {

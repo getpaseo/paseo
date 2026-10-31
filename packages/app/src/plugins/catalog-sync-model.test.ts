@@ -141,6 +141,11 @@ function harness() {
         ),
         paseo: installation.paseo,
         i18n: installation.i18n,
+        workspaceList: {
+          getGrouping: () => "project",
+          setGrouping() {},
+          subscribeGrouping: () => () => {},
+        },
         rpc: async () => {
           throw new Error("Unexpected runtime RPC");
         },

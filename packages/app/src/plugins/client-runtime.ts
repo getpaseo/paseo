@@ -12,6 +12,7 @@ import type { PluginClientRuntime } from "./evaluate";
 import { createPluginNavigation } from "./navigation";
 import { pluginButtonStore } from "./buttons";
 import type { InstalledPlugin } from "./types";
+import { createPluginWorkspaceList, pluginWorkspaceListSource } from "./workspace-list";
 
 export function createPluginClientRuntime(
   installation: InstalledPlugin,
@@ -25,6 +26,10 @@ export function createPluginClientRuntime(
   return {
     ...capabilities,
     i18n: installation.i18n,
+    workspaceList: createPluginWorkspaceList(
+      pluginWorkspaceListSource,
+      installation.lifetime.signal,
+    ),
     playAudio: createPlayAudio(audio, installation.lifetime.signal),
     hosts: createPluginHosts(getHostRuntimeStore(), installation.lifetime.signal),
     addComposerPill(contribution) {
