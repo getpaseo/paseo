@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createReadingAnchor } from "./reading-anchor";
+import { createReadingAnchor, resolveInvertedReadingRow } from "./reading-anchor";
 
 describe("reading anchor", () => {
   it("pins the folded turn host when a prepend replaces the row being read", () => {
@@ -136,5 +136,75 @@ describe("reading anchor", () => {
         rows.map((row) => ({ id: row.id, height: row.height, top: row.top + 2000 })),
       ),
     ).toBe(0);
+  });
+});
+
+describe("inverted reading row", () => {
+  // Content runs from the visual bottom: the live head fills 0-100, then newer to older cells.
+  const frames = new Map([
+    ["newest", { y: 100, height: 200 }],
+    ["middle", { y: 300, height: 400 }],
+    ["oldest", { y: 700, height: 300 }],
+  ]);
+
+  function readAt(offsetY: number, topInset = 0) {
+    return resolveInvertedReadingRow({ frames, offsetY, viewportHeight: 500, topInset });
+  }
+
+  it("reads the cell under the visual top of the viewport", () => {
+    expect(readAt(0)).toEqual({ kind: "row", id: "middle" });
+    expect(readAt(300)).toEqual({ kind: "row", id: "oldest" });
+  });
+
+  it("moves the reading line below an overlay floating over the top", () => {
+    expect(readAt(300, 0)).toEqual({ kind: "row", id: "oldest" });
+    expect(readAt(300, 120)).toEqual({ kind: "row", id: "middle" });
+  });
+
+  it("hands ownership to the next row only once the reading row clears the line", () => {
+    // The visual top sits at content 708: "oldest" shows 8 points, which is not enough.
+    expect(readAt(208)).toEqual({ kind: "row", id: "middle" });
+    expect(readAt(210)).toEqual({ kind: "row", id: "oldest" });
+  });
+
+  it("reads a row whose top landed on the reading line despite sub-point rounding", () => {
+    // "middle" ends at 700; the reading line sits at 700.4.
+    expect(readAt(208.4)).toEqual({ kind: "row", id: "middle" });
+    expect(readAt(209.5)).toEqual({ kind: "row", id: "oldest" });
+  });
+
+  it("reads the live head when every history cell is above the viewport", () => {
+    expect(
+      resolveInvertedReadingRow({ frames, offsetY: 0, viewportHeight: 90, topInset: 0 }),
+    ).toEqual({ kind: "live-head" });
+  });
+
+  it("reads the nearest newer rendered cell over an unrendered gap", () => {
+    const sparse = new Map([
+      ["newest", { y: 100, height: 200 }],
+      ["old", { y: 2000, height: 200 }],
+    ]);
+    expect(
+      resolveInvertedReadingRow({ frames: sparse, offsetY: 500, viewportHeight: 500, topInset: 0 }),
+    ).toEqual({ kind: "row", id: "newest" });
+    expect(
+      resolveInvertedReadingRow({
+        frames: sparse,
+        offsetY: 4000,
+        viewportHeight: 500,
+        topInset: 0,
+      }),
+    ).toEqual({ kind: "row", id: "old" });
+  });
+
+  it("reads nothing before any cell has laid out", () => {
+    expect(
+      resolveInvertedReadingRow({
+        frames: new Map(),
+        offsetY: 0,
+        viewportHeight: 500,
+        topInset: 0,
+      }),
+    ).toBeNull();
   });
 });
