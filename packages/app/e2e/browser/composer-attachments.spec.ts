@@ -18,6 +18,7 @@ import {
   expectAttachButtonDisabled,
   fillComposerDraft,
   dropFileOnComposer,
+  pasteClipboardIntoComposer,
   sendDraftToQueue,
   expectQueuedMessageButton,
   startRunningMockAgent,
@@ -53,6 +54,43 @@ const TEST_JSON = {
 };
 
 test.describe("Composer attachments", () => {
+  test("pasting copied document text keeps the text and attaches its image", async ({
+    page,
+    context,
+    withWorkspace,
+  }) => {
+    const workspace = await withWorkspace({ prefix: "paste-document-" });
+    await workspace.navigateTo();
+    await clickNewChat(page);
+    await expectComposerVisible(page);
+    const text = "Copied paragraph with 한글.\nSecond line.";
+
+    await pasteClipboardIntoComposer(page, context, {
+      text,
+      html: "<p>Copied paragraph with 한글.</p><p>Second line.</p>",
+      png: MINIMAL_PNG,
+    });
+
+    await expectComposerDraft(page, text);
+    await expectAttachmentPill(page, "composer-image-attachment-pill");
+  });
+
+  test("pasting an image without text attaches it and leaves the draft empty", async ({
+    page,
+    context,
+    withWorkspace,
+  }) => {
+    const workspace = await withWorkspace({ prefix: "paste-image-" });
+    await workspace.navigateTo();
+    await clickNewChat(page);
+    await expectComposerVisible(page);
+
+    await pasteClipboardIntoComposer(page, context, { png: MINIMAL_PNG });
+
+    await expectAttachmentPill(page, "composer-image-attachment-pill");
+    await expectComposerDraft(page, "");
+  });
+
   test("selected file shows a loading attachment until upload is acknowledged", async ({
     page,
     withWorkspace,
