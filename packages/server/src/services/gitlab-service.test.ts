@@ -376,6 +376,27 @@ describe("createGitLabService", () => {
     expect(calls).toEqual([currentMrListArgs("dev")]);
   });
 
+  it("does not attach an abandoned merge request that was closed without merging", async () => {
+    const branch = "feature/retry";
+    const checkoutSha = "2222222222222222222222222222222222222222";
+    const closedAbandoned = {
+      ...OPEN_MR,
+      iid: 272,
+      state: "closed",
+      source_branch: branch,
+      sha: checkoutSha,
+    };
+    const { service } = makeService(() => ok(JSON.stringify([closedAbandoned])));
+
+    await expect(
+      service.getCurrentPullRequestStatus({
+        cwd: "/repo",
+        headRef: branch,
+        headSha: checkoutSha,
+      }),
+    ).resolves.toBeNull();
+  });
+
   it("looks up a numeric current branch through the source-branch list filter", async () => {
     const numericBranchMr = {
       ...OPEN_MR,
