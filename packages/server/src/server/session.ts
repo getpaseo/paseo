@@ -682,8 +682,8 @@ interface ClientActivity {
   appVisibilityChangedAt: Date;
 }
 
-// The agent refreshes in flight on this daemon, by agent id; see handleRefreshAgentRequest.
-const pendingAgentRefreshes = new Map<string, Promise<ManagedAgent>>();
+// Connections on one daemon share refreshes; independent managers own independent agents.
+const pendingAgentRefreshes = new WeakMap<AgentManager, Map<string, Promise<ManagedAgent>>>();
 
 export class Session {
   private readonly connectedHostSession: ConnectedHostSession | null;
@@ -4761,20 +4761,21 @@ export class Session {
     this.sessionLogger.info({ agentId }, `Refreshing agent ${agentId} from persistence`);
 
     try {
-      // A refresh takes the agent out of the manager while it resumes the provider session, so a
-      // second refresh arriving meanwhile, from any connection, found no agent and failed with
-      // "Unknown agent". A client that gives up waiting and retries makes exactly that second
-      // request. It waits for the refresh in flight and answers with its outcome instead.
-      let refresh = pendingAgentRefreshes.get(agentId);
+      // Runtime replacement is serialized, but the reply also needs provider history.
+      // Another replacement during hydration can remove the agent before that reply.
+      // Share the whole reload and hydration across connections, including failures.
+      const refreshes =
+        pendingAgentRefreshes.get(this.agentManager) ?? new Map<string, Promise<ManagedAgent>>();
+      pendingAgentRefreshes.set(this.agentManager, refreshes);
+      let refresh = refreshes.get(agentId);
       if (!refresh) {
         const started = this.refreshAgentFromPersistence(agentId);
         refresh = started;
-        pendingAgentRefreshes.set(agentId, started);
+        refreshes.set(agentId, started);
         void started
           .catch(() => undefined)
           .finally(() => {
-            if (pendingAgentRefreshes.get(agentId) === started)
-              pendingAgentRefreshes.delete(agentId);
+            if (refreshes.get(agentId) === started) refreshes.delete(agentId);
           });
       }
       const snapshot = await refresh;
