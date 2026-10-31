@@ -239,7 +239,7 @@ function toACPRequestError(error: unknown): Error {
 function resolveTerminalCommand(
   command: string,
   args?: string[],
-): { command: string; args: string[]; shell?: boolean } {
+): { command: string; args: string[]; shell?: boolean; windowsVerbatimArguments?: boolean } {
   if (args && args.length > 0) {
     return { command, args };
   }
@@ -249,7 +249,16 @@ function resolveTerminalCommand(
   }
 
   const shell = buildStringCommandShellInvocation({ command, windowsShell: "cmd" });
-  return { command: shell.shell, args: shell.args, shell: false };
+  // A single-string request is already a command line for that shell, so it has
+  // to reach it unquoted: cmd.exe re-parses the line with its own tokenizer, and
+  // Node's CommandLineToArgvW-style quoting would turn the quotes in
+  // `node -e "console.log(1)"` into literal `\"` text (#5947, #4482).
+  return {
+    command: shell.shell,
+    args: shell.args,
+    shell: false,
+    windowsVerbatimArguments: shell.shell === "cmd.exe",
+  };
 }
 
 function formatDurationMs(startedAt: number): string {
@@ -2796,6 +2805,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         overlays: commandEnvOverlays,
       }),
       shell: terminalCommand.shell,
+      windowsVerbatimArguments: terminalCommand.windowsVerbatimArguments,
       stdio: ["ignore", "pipe", "pipe"],
     });
 
