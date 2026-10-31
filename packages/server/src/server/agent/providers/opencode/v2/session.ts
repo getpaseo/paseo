@@ -146,6 +146,7 @@ export class OpenCodeV2Session implements AgentSession {
   }
   private async configureConnection() {
     const location = { directory: this.config.cwd };
+    await this.connection.bindSession(this.id, this.config.cwd);
     await waitForLocationReady({ client: this.client, location, signal: this.abort.signal });
     if (this.requiresPaseoPlugin)
       await awaitPaseoPlugin({ client: this.client, location, signal: this.abort.signal });
@@ -207,6 +208,11 @@ export class OpenCodeV2Session implements AgentSession {
     if (!this.acquire) throw new Error("OpenCode helper server exited");
     await this.stream;
     await this.sync.catch(() => undefined);
+    await this.connection
+      .unbindSession(this.id, this.config.cwd)
+      .catch((error: unknown) =>
+        this.logger.warn({ error }, "Could not unbind the OpenCode Paseo bridge"),
+      );
     const next = await this.acquire();
     if (this.closed) {
       await next.release();
@@ -386,6 +392,7 @@ export class OpenCodeV2Session implements AgentSession {
   }
   async startTurn(prompt: AgentPromptInput, options?: AgentRunOptions) {
     await this.reconnectIfExited();
+    await this.connection.bindSession(this.id, this.config.cwd);
     return this.turns.startTurn(prompt, options);
   }
   steerActiveTurn(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult> {
@@ -436,6 +443,7 @@ export class OpenCodeV2Session implements AgentSession {
     }
   }
   private async reconcileConnection() {
+    await this.connection.bindSession(this.id, this.config.cwd);
     // Session environments are process-local. Reapply this agent's snapshot before
     // reconciling a new connection, including event-stream reconnections.
     if (this.launchEnv)
@@ -560,6 +568,11 @@ export class OpenCodeV2Session implements AgentSession {
     await this.stream;
     await this.reconnecting?.catch(() => undefined);
     await this.sync.catch(() => undefined);
+    await this.connection
+      .unbindSession(this.id, this.config.cwd)
+      .catch((error: unknown) =>
+        this.logger.warn({ error }, "Could not unbind the OpenCode Paseo bridge"),
+      );
     this.unbind?.();
     try {
       if (!this.persist) await this.client.session.remove({ sessionID: this.id });
