@@ -70,6 +70,28 @@ async function boxOf(locator: Locator) {
   return result!;
 }
 
+/** On the title's row, after the title, above the screen body. */
+async function expectInHeader(page: Page, button: Locator) {
+  await expect(button).toBeVisible();
+  const title = await boxOf(screenTitle(page));
+  const box = await boxOf(button);
+  const body = await boxOf(page.getByText("Deploys screen body", { exact: true }));
+  expect(Math.abs(box.y + box.height / 2 - (title.y + title.height / 2))).toBeLessThan(6);
+  expect(box.x).toBeGreaterThan(title.x + title.width);
+  expect(box.y + box.height).toBeLessThanOrEqual(body.y);
+}
+
+/** The header's button sets the screen's state, and redraws with it. */
+async function expectHeaderActionDrivesScreen(page: Page, button: Locator) {
+  await expect(page.getByText("All deploys", { exact: true })).toBeVisible();
+  await button.click();
+  await expect(page.getByText("Deploys filtered", { exact: true })).toBeVisible();
+  await button.click();
+  await expect(page.getByText("All deploys", { exact: true })).toBeVisible();
+  await button.click();
+  await expect(page.getByText("Deploys filtered", { exact: true })).toBeVisible();
+}
+
 /** The open screen's header title; a pushed screen keeps the one below it mounted. */
 function screenTitle(page: Page): Locator {
   return page.locator('[data-testid="plugin-surface-title"]:visible').last();
@@ -186,6 +208,17 @@ test.describe("Plugin sidebar items", () => {
       await expectRowActive(row, false);
     });
 
+    await test.step("the screen's header actions sit in its header, before Close", async () => {
+      await row.click();
+      const filter = page.getByRole("button", { name: "Filter deploys", exact: true });
+      await expectInHeader(page, filter);
+      const close = await boxOf(visibleTestId(page, "plugin-surface-close"));
+      expect((await boxOf(filter)).x).toBeLessThan(close.x);
+      await expectHeaderActionDrivesScreen(page, filter);
+      await qaScreenshot(page, "header-actions-wide");
+      await closeScreen(page);
+    });
+
     await test.step("the trailing button presses on its own", async () => {
       await page.getByRole("button", { name: "Refresh deploys", exact: true }).click();
       await expect(row).toHaveAccessibleName("Deploys (refreshed 1)");
@@ -238,6 +271,15 @@ test.describe("Plugin sidebar items", () => {
       await qaScreenshot(page, "phase2-compact-sheet");
       await page.getByRole("button", { name: "Close sync details", exact: true }).click();
       await expect(page.getByText("Sync details", { exact: true })).toHaveCount(0);
+    });
+
+    await test.step("on a compact layout the header actions take the header's actions island", async () => {
+      // The drawer is still open from the footer's sheet.
+      await headerRow(page, SHOWCASE_PLUGIN_ID, "deploys").click();
+      const filter = page.getByRole("button", { name: "Filter deploys", exact: true });
+      await expectInHeader(page, filter);
+      await expectHeaderActionDrivesScreen(page, filter);
+      await qaScreenshot(page, "header-actions-compact");
     });
   });
 
