@@ -270,11 +270,7 @@ function writeLines(mounted: MountedTerminal, lines: string[]): Promise<void> {
   });
 }
 
-async function clickTerminalLink(input: {
-  host: HTMLElement;
-  row: number;
-  col: number;
-}): Promise<void> {
+async function hoverTerminalCell(input: { host: HTMLElement; row: number; col: number }) {
   const terminal = getBrowserTerminal();
   const screen = input.host.querySelector<HTMLElement>(".xterm-screen");
   if (!screen) {
@@ -285,6 +281,15 @@ async function clickTerminalLink(input: {
     y: (input.row + 0.5) * (screen.clientHeight / terminal.rows),
   };
   await userEvent.hover(screen, { position });
+  return { screen, position };
+}
+
+async function clickTerminalLink(input: {
+  host: HTMLElement;
+  row: number;
+  col: number;
+}): Promise<void> {
+  const { screen, position } = await hoverTerminalCell(input);
   await waitFor({
     predicate: () => input.host.querySelector(".xterm-cursor-pointer") !== null,
   });
@@ -754,6 +759,101 @@ describe("terminal emulator runtime in a real browser", () => {
     mounted.runtime.replay({ type: "end" });
     expect(reset).not.toHaveBeenCalled();
     await nextFrame();
+  });
+
+  it.each([
+    {
+      name: "a styled file path without adjacent Korean prose",
+      output: "\x1b[35m~/.codex/config.toml\x1b[39m의 개인 설정",
+      existingPaths: ["~/.codex/config.toml"],
+      expectedPath: "~/.codex/config.toml",
+      attempts: ["~/.codex/config.toml의", "~/.codex/config.toml"],
+    },
+    {
+      name: "a real Korean filename even across a style boundary",
+      output: "\x1b[35m~/.codex/config.toml\x1b[39m의 개인 설정",
+      existingPaths: ["~/.codex/config.toml", "~/.codex/config.toml의"],
+      expectedPath: "~/.codex/config.toml의",
+      attempts: ["~/.codex/config.toml의"],
+    },
+    {
+      name: "an unstyled Korean filename without truncation",
+      output: "~/.codex/config.toml의 개인 설정",
+      existingPaths: ["~/.codex/config.toml", "~/.codex/config.toml의"],
+      expectedPath: "~/.codex/config.toml의",
+      attempts: ["~/.codex/config.toml의"],
+    },
+    {
+      name: "a complete path with internal color changes",
+      output: "\x1b[35m~/.codex/config\x1b[36m.toml\x1b[0m",
+      existingPaths: ["~/.codex/config", "~/.codex/config.toml"],
+      expectedPath: "~/.codex/config.toml",
+      attempts: ["~/.codex/config.toml"],
+    },
+    {
+      name: "the longest verified styled prefix",
+      output: "\x1b[35m~/.codex/config\x1b[36m.toml\x1b[0m의 설정",
+      existingPaths: ["~/.codex/config", "~/.codex/config.toml"],
+      expectedPath: "~/.codex/config.toml",
+      attempts: ["~/.codex/config.toml의", "~/.codex/config.toml"],
+    },
+    {
+      name: "a bold path without adjacent Japanese prose",
+      output: "\x1b[1m~/.codex/config.toml\x1b[22mの設定",
+      existingPaths: ["~/.codex/config.toml"],
+      expectedPath: "~/.codex/config.toml",
+      attempts: ["~/.codex/config.tomlの設定", "~/.codex/config.toml"],
+    },
+  ])("opens $name", async ({ output, existingPaths, expectedPath, attempts }) => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+
+    const openedPaths: string[] = [];
+    const resolvedPaths: string[] = [];
+    mounted.runtime.setCallbacks({
+      callbacks: {
+        onResolveLocalFileLink: (source) => {
+          resolvedPaths.push(source.path);
+          return existingPaths.includes(source.path) ? { path: source.path } : null;
+        },
+        onOpenLocalFileLink: (target) => {
+          openedPaths.push(target.path);
+        },
+      },
+    });
+    await writeLines(mounted, [output]);
+
+    await clickTerminalLink({ host: mounted.host, row: 0, col: 4 });
+
+    expect(openedPaths).toEqual([expectedPath]);
+    expect([...new Set(resolvedPaths)]).toEqual(attempts);
+  });
+
+  it("keeps the suffix outside a wrapped link with wide Korean characters", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    const terminal = getBrowserTerminal();
+    const path = `~/${"a".repeat(terminal.cols - 12)}/설정.toml`;
+    const openedPaths: string[] = [];
+    mounted.runtime.setCallbacks({
+      callbacks: {
+        onResolveLocalFileLink: (source) => (source.path === path ? { path } : null),
+        onOpenLocalFileLink: (target) => {
+          openedPaths.push(target.path);
+        },
+      },
+    });
+    await writeLines(mounted, [`한글  \x1b[35m${path}\x1b[39m의 설정`]);
+
+    await clickTerminalLink({ host: mounted.host, row: 1, col: 4 });
+    expect(openedPaths).toEqual([path]);
+
+    await hoverTerminalCell({ host: mounted.host, row: 1, col: 7 });
+    await waitFor({
+      predicate: () => mounted.host.querySelector(".xterm-cursor-pointer") === null,
+    });
   });
 
   it("opens OSC 8 hyperlinks the same way as plain-text URLs", async () => {

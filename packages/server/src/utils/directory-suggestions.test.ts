@@ -1066,6 +1066,142 @@ describe("relative typed-entry configuration", () => {
   });
 });
 
+describe("exact-only lookup", () => {
+  let tempRoot: string;
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    tempRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "workspace-exact-only-")));
+    workspaceDir = path.join(tempRoot, "workspace");
+    mkdirSync(path.join(workspaceDir, "src"), { recursive: true });
+    mkdirSync(path.join(workspaceDir, "packages", "app", "src"), { recursive: true });
+    writeFileSync(path.join(workspaceDir, "README.md"), "# paseo\n");
+    writeFileSync(path.join(workspaceDir, "src", "file.ts"), "");
+    writeFileSync(path.join(workspaceDir, "packages", "app", "src", "file.ts"), "");
+  });
+
+  afterEach(() => {
+    rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  function lookup(
+    query: string,
+    options: {
+      exactOnly?: boolean;
+      matchMode?: "fuzzy" | "suffix";
+      includeDirectories?: boolean;
+      respectGitIgnore?: boolean;
+    } = {},
+  ) {
+    return searchDirectoryEntries({
+      root: workspaceDir,
+      query,
+      pathFormat: "relative",
+      includeFiles: true,
+      includeDirectories: options.includeDirectories ?? false,
+      matchMode: options.matchMode ?? "suffix",
+      pathQueryPolicy: "slashes",
+      blankQueryBehavior: "children",
+      traversableHiddenDirectoryNames: WORKSPACE_SEARCH_HIDDEN_DIRECTORIES,
+      limit: 20,
+      respectGitIgnore: options.respectGitIgnore,
+      exactOnly: options.exactOnly,
+    });
+  }
+
+  it("never returns nested, suffix, or fuzzy alternatives while the default search still does", async () => {
+    const results = {
+      bareSuffix: await lookup("file.ts"),
+      bareSuffixExact: await lookup("file.ts", { exactOnly: true }),
+      nestedSuffix: await lookup("app/src/file.ts"),
+      nestedSuffixExact: await lookup("app/src/file.ts", { exactOnly: true }),
+      fuzzy: await lookup("READ", { matchMode: "fuzzy" }),
+      fuzzyExact: await lookup("READ", { matchMode: "fuzzy", exactOnly: true }),
+      explicitFalse: await lookup("file.ts", { exactOnly: false }),
+    };
+
+    expect(results).toEqual({
+      bareSuffix: [
+        { path: "src/file.ts", kind: "file" },
+        { path: "packages/app/src/file.ts", kind: "file" },
+      ],
+      bareSuffixExact: [],
+      nestedSuffix: [{ path: "packages/app/src/file.ts", kind: "file" }],
+      nestedSuffixExact: [],
+      fuzzy: [{ path: "README.md", kind: "file" }],
+      fuzzyExact: [],
+      explicitFalse: [
+        { path: "src/file.ts", kind: "file" },
+        { path: "packages/app/src/file.ts", kind: "file" },
+      ],
+    });
+  });
+
+  it("returns only the named file or directory and honors entry kinds", async () => {
+    await expect(
+      Promise.all([
+        lookup("README.md", { exactOnly: true }),
+        lookup("packages/app/src/file.ts", { exactOnly: true, matchMode: "fuzzy" }),
+        lookup("src/missing.ts", { exactOnly: true }),
+        lookup("packages/app", { exactOnly: true }),
+        lookup("packages/app", { exactOnly: true, includeDirectories: true }),
+      ]),
+    ).resolves.toEqual([
+      [{ path: "README.md", kind: "file" }],
+      [{ path: "packages/app/src/file.ts", kind: "file" }],
+      [],
+      [],
+      [{ path: "packages/app", kind: "directory" }],
+    ]);
+  });
+
+  it.skipIf(isWindows)("resolves symlinks with realpath and keeps root containment", async () => {
+    const outsideDir = path.join(tempRoot, "outside");
+    mkdirSync(outsideDir, { recursive: true });
+    writeFileSync(path.join(outsideDir, "secret.md"), "outside\n");
+    symlinkSync(path.join(workspaceDir, "src"), path.join(workspaceDir, "inside-link"));
+    symlinkSync(outsideDir, path.join(workspaceDir, "escape-link"));
+    symlinkSync(path.join(workspaceDir, "gone"), path.join(workspaceDir, "broken-link"));
+
+    await expect(
+      Promise.all([
+        lookup("inside-link/file.ts", { exactOnly: true }),
+        lookup("inside-link", { exactOnly: true, includeDirectories: true }),
+        lookup("escape-link/secret.md", { exactOnly: true }),
+        lookup("broken-link", { exactOnly: true, includeDirectories: true }),
+      ]),
+    ).resolves.toEqual([
+      [{ path: "inside-link/file.ts", kind: "file" }],
+      [{ path: "inside-link", kind: "directory" }],
+      [],
+      [],
+    ]);
+  });
+
+  it("retrieves hidden and gitignored files without running Git ignore discovery", async () => {
+    initGitRepo(workspaceDir, "generated/\n");
+    mkdirSync(path.join(workspaceDir, "generated"), { recursive: true });
+    mkdirSync(path.join(workspaceDir, ".dev"), { recursive: true });
+    writeFileSync(path.join(workspaceDir, "generated", "out.md"), "");
+    writeFileSync(path.join(workspaceDir, ".dev", "daemon.log"), "");
+
+    startGitCommandMetrics();
+    const results = await Promise.all([
+      lookup("generated/out.md", { exactOnly: true, respectGitIgnore: true }),
+      lookup(".dev/daemon.log", { exactOnly: true, respectGitIgnore: true }),
+      lookup("out.md", { exactOnly: true, respectGitIgnore: true }),
+    ]);
+    const gitMetrics = stopGitCommandMetrics();
+
+    expect(results).toEqual([
+      [{ path: "generated/out.md", kind: "file" }],
+      [{ path: ".dev/daemon.log", kind: "file" }],
+      [],
+    ]);
+    expect(gitMetrics.submitted).toBe(0);
+  });
+});
+
 interface SearchProcessExit {
   code: number | null;
   signal: string | null;

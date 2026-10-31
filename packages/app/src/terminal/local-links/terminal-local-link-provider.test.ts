@@ -50,6 +50,36 @@ describe("createTerminalLocalFileLinkProvider", () => {
     expect(openLink).toHaveBeenCalledWith(target, "side", expect.anything());
   });
 
+  it("does not guess an unstyled path boundary from Korean characters", async () => {
+    const terminal = createTerminal(["~/.codex/config.toml의 설정"]);
+    const resolveLink = vi.fn(async (source: { path: string }) =>
+      source.path === "~/.codex/config.toml" ? { path: source.path } : null,
+    );
+    const provider = createTerminalLocalFileLinkProvider(terminal, {
+      resolveLink,
+      openLink: vi.fn(),
+    });
+
+    await expect(provideLinks(provider, 1)).resolves.toBeUndefined();
+    expect(resolveLink).toHaveBeenCalledExactlyOnceWith({
+      text: "~/.codex/config.toml의",
+      path: "~/.codex/config.toml의",
+    });
+  });
+
+  it("bounds filesystem resolution attempts even when every candidate is missing", async () => {
+    const paths = Array.from({ length: 15 }, (_, index) => `src/file${index}.ts`);
+    const terminal = createTerminal([paths.join(" ")]);
+    const resolveLink = vi.fn(async () => null);
+    const provider = createTerminalLocalFileLinkProvider(terminal, {
+      resolveLink,
+      openLink: vi.fn(),
+    });
+
+    await expect(provideLinks(provider, 1)).resolves.toBeUndefined();
+    expect(resolveLink).toHaveBeenCalledTimes(10);
+  });
+
   it("does not expose unresolved candidates as links", async () => {
     const terminal = createTerminal(["missing.ts:42"]);
     const provider = createTerminalLocalFileLinkProvider(terminal, {

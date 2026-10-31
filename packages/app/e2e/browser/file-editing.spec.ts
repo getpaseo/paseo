@@ -14,6 +14,8 @@ import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
+import { TerminalE2EHarness } from "../support/helpers/terminal-dsl";
+import { getTerminalBufferText } from "../support/helpers/terminal-perf";
 
 const APP_SETTINGS_KEY = "@paseo:app-settings";
 
@@ -123,6 +125,51 @@ async function seedAgentWithFileLink(input: LinkedFile) {
 }
 
 test.describe("CodeMirror workspace file editing", () => {
+  for (const filename of ["config.toml", "config.toml의"]) {
+    test(`opens the existing terminal file link ${filename}`, async ({ page }) => {
+      const harness = await TerminalE2EHarness.create({ tempPrefix: "terminal-file-link-" });
+      try {
+        const prefixPath = path.join(harness.tempRepo.path, "config.toml");
+        const filePath = path.join(harness.tempRepo.path, filename);
+        await writeFile(
+          prefixPath,
+          'message = "Do not prefer this shorter name over an existing full path"\n',
+        );
+        await writeFile(filePath, 'message = "Terminal link opened the correct file"\n');
+        const output = `\x1b[35m${prefixPath}\x1b[39m의 개인 설정\r\n`;
+        const terminal = await harness.createTerminal({
+          name: "File link boundary",
+          command: process.execPath,
+          args: ["-e", `process.stdout.write(${JSON.stringify(output)}); process.stdin.resume();`],
+        });
+        await harness.openTerminal(page, { terminalId: terminal.id });
+        await expect
+          .poll(async () => (await getTerminalBufferText(page)).replaceAll("\n", ""))
+          .toContain(`${prefixPath}의`);
+
+        const screen = page.locator(".xterm-screen").filter({ visible: true });
+        const position = await page.evaluate(() => {
+          const term = window.__paseoTerminal;
+          const element = document.querySelector<HTMLElement>(".xterm-screen");
+          if (!term || !element) throw new Error("Terminal did not mount");
+          return {
+            x: (4.5 * element.clientWidth) / term.cols,
+            y: (0.5 * element.clientHeight) / term.rows,
+          };
+        });
+        await screen.hover({ position });
+        await expect(page.locator(".xterm-cursor-pointer")).toBeVisible();
+        await page.screenshot({ path: test.info().outputPath("terminal-file-link-hover.png") });
+        await screen.click({ position });
+        await expectFileTabOpen(page, filePath);
+        await expect(editor(page)).toContainText("Terminal link opened the correct file");
+        await page.screenshot({ path: test.info().outputPath("terminal-file-link-opened.png") });
+      } finally {
+        await harness.cleanup();
+      }
+    });
+  }
+
   test("opens explicit screenshot links and explains missing files", async ({ page }) => {
     const session = await seedMockAgentWorkspace({
       repoPrefix: "screenshot-markdown-link-",

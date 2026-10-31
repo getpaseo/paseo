@@ -2556,6 +2556,7 @@ export const DirectorySuggestionsRequestSchema = z.object({
   includeFiles: z.boolean().optional(),
   includeDirectories: z.boolean().optional(),
   matchMode: z.enum(["fuzzy", "suffix"]).optional(),
+  exactOnly: z.boolean().optional(),
   limit: z.number().int().min(1).max(100).optional(),
   requestId: z.string(),
 });
@@ -3751,6 +3752,9 @@ export const ServerInfoStatusPayloadSchema = z
         "terminal-input-mode-replay": z.boolean().optional(),
         // COMPAT(terminalSizeOwnership): added in v0.2.6, remove gate after 2027-02-02.
         "terminal-size-ownership": z.boolean().optional(),
+        // COMPAT(exactDirectorySuggestions): added after v0.13.2; remove after 2027-04-27
+        // once the daemon floor supports exactOnly.
+        exactDirectorySuggestions: z.boolean().optional(),
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
         rewind: z.boolean().optional(),
         // COMPAT(agentTimelinePromptIndex): added in v0.2.X, drop the gate when floor >= v0.2.X.

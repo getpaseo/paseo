@@ -2077,6 +2077,9 @@ export class VoiceAssistantWebSocketServer {
         "terminal-input-mode-replay": true,
         // COMPAT(terminalSizeOwnership): added in v0.2.6, remove gate after 2027-02-02.
         "terminal-size-ownership": true,
+        // COMPAT(exactDirectorySuggestions): added after v0.13.2; remove after 2027-04-27
+        // once the daemon floor supports exactOnly.
+        exactDirectorySuggestions: true,
         workspaceTerminals: true,
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
         rewind: true,
