@@ -1666,6 +1666,69 @@ export const en = {
     },
   },
   onboarding: {
+    setup: {
+      title: "Set up Paseo",
+      footnote: "Everything here is also in Settings",
+      stepCounter: "Step {{current}} of {{total}}",
+      skip: "Skip setup",
+      continue: "Continue",
+      finish: "Finish",
+      steps: {
+        appearance: {
+          label: "Appearance",
+          title: "Welcome to Paseo",
+          description:
+            "Run Claude Code, Codex and other agents on this computer, from your desk or your phone. First, pick a look.",
+        },
+        providers: {
+          label: "Providers",
+          title: "Your agents",
+          description:
+            "Paseo runs the agent CLIs already on this computer. Turn off any you don't want in the agent picker.",
+        },
+        projects: {
+          label: "Projects",
+          title: "Add your projects",
+          description:
+            "Add the folders you want agents to work in. You can add more later from the sidebar.",
+          addProject: "Add project",
+          added: "Added",
+        },
+        orchestration: {
+          label: "Orchestration",
+          title: "Let agents use Paseo",
+          description:
+            "With Paseo tools, an agent can hand work to other agents and set up its own workspaces and schedules.",
+          capabilities: {
+            agents: {
+              title: "Start and steer other agents",
+              description:
+                "Launch Codex, Claude Code or OpenCode agents, send them prompts and wait for their results.",
+            },
+            workspaces: {
+              title: "Create workspaces",
+              description: "Open a worktree for each task so parallel agents don't collide.",
+            },
+            schedules: {
+              title: "Schedules and heartbeats",
+              description: "Check CI every 10 minutes and fix failures.",
+            },
+            terminals: {
+              title: "Terminals and scripts",
+              description: "Run your workspace's dev server and read its output.",
+            },
+          },
+        },
+        phone: {
+          label: "Phone",
+          title: "Take your agents with you",
+          description:
+            "Paseo for iOS and Android connects to this computer. Agents keep running here; your phone watches them, approves permissions and sends prompts.",
+          appStore: "App Store",
+          googlePlay: "Google Play",
+        },
+      },
+    },
     title: "Welcome to Paseo",
     subtitle: "Connect your computer to get started",
     actions: {
@@ -1884,6 +1947,8 @@ export const en = {
       notNow: "Not now",
       directConnectionHint:
         "Without relay, connect directly over TCP, Tailscale, or another VPN. No QR code is created.",
+      tailscaleDocs: "Set up Tailscale",
+      tailscaleDocsAccessibility: "Read how to connect over Tailscale",
       updateRequired: "Update the host to enable relay from Paseo Desktop.",
       unavailable: "Pairing offer unavailable.",
       hint: "Scan this QR code with Paseo on your phone, or copy the link below.",
@@ -2447,6 +2512,11 @@ export const en = {
     general: {
       title: "General",
       sending: "Sending",
+      setup: {
+        label: "First-run setup",
+        description: "Walk through appearance, providers, projects and phone pairing again",
+        action: "Show setup again",
+      },
       browserData: {
         title: "Browser data",
         siteData: "Cookies and site data",

@@ -72,6 +72,11 @@ export async function verifyAttachedDaemonControls({ repo, root, env, home, port
     page = await desktop.firstWindow();
     page.on("pageerror", (error) => console.log("Renderer error:", error.message));
     await page.route(/:(6767|6768)\b/, (route) => route.abort());
+    // The attached daemon has no projects, so first-run setup would open over Settings.
+    await page.evaluate(() =>
+      localStorage.setItem("@paseo:onboarding", JSON.stringify({ completedAt: "1970-01-01" })),
+    );
+    await page.reload();
     await page.getByRole("button", { name: "Settings", exact: true }).click({ timeout: 90_000 });
     await page.getByRole("button", { name: "Enable built-in daemon", exact: true }).click();
     await expect(page.getByText("Attached to an existing daemon", { exact: true })).toBeVisible();

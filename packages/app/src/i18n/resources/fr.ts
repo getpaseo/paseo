@@ -1685,6 +1685,71 @@ export const fr: TranslationResources = {
     },
   },
   onboarding: {
+    setup: {
+      title: "Configurer Paseo",
+      footnote: "Tout ceci se trouve aussi dans les Réglages",
+      stepCounter: "Étape {{current}} sur {{total}}",
+      skip: "Passer la configuration",
+      continue: "Continuer",
+      finish: "Terminer",
+      steps: {
+        appearance: {
+          label: "Apparence",
+          title: "Bienvenue dans Paseo",
+          description:
+            "Lancez Claude Code, Codex et d'autres agents sur cet ordinateur, depuis votre bureau ou votre téléphone. Choisissez d'abord un style.",
+        },
+        providers: {
+          label: "Fournisseurs",
+          title: "Vos agents",
+          description:
+            "Paseo utilise les CLI d'agents déjà installées sur cet ordinateur. Désactivez celles que vous ne voulez pas dans le sélecteur d'agents.",
+        },
+        projects: {
+          label: "Projets",
+          title: "Ajoutez vos projets",
+          description:
+            "Ajoutez les dossiers dans lesquels les agents doivent travailler. Vous pourrez en ajouter d'autres depuis la barre latérale.",
+          addProject: "Ajouter un projet",
+          added: "Ajouté",
+        },
+        orchestration: {
+          label: "Orchestration",
+          title: "Laissez les agents utiliser Paseo",
+          description:
+            "Avec les outils Paseo, un agent peut confier du travail à d'autres agents et créer ses propres espaces de travail et planifications.",
+          capabilities: {
+            agents: {
+              title: "Lancer et piloter d'autres agents",
+              description:
+                "Lancez des agents Codex, Claude Code ou OpenCode, envoyez-leur des instructions et attendez leurs résultats.",
+            },
+            workspaces: {
+              title: "Créer des espaces de travail",
+              description:
+                "Ouvrez un worktree par tâche pour que les agents en parallèle ne se gênent pas.",
+            },
+            schedules: {
+              title: "Planifications et heartbeats",
+              description: "Vérifier la CI toutes les 10 minutes et corriger les échecs.",
+            },
+            terminals: {
+              title: "Terminaux et scripts",
+              description:
+                "Lancez le serveur de développement de votre espace de travail et lisez sa sortie.",
+            },
+          },
+        },
+        phone: {
+          label: "Téléphone",
+          title: "Emportez vos agents partout",
+          description:
+            "Paseo pour iOS et Android se connecte à cet ordinateur. Les agents continuent de tourner ici ; votre téléphone les suit, approuve les permissions et envoie des instructions.",
+          appStore: "App Store",
+          googlePlay: "Google Play",
+        },
+      },
+    },
     title: "Bienvenue dans Paseo",
     subtitle: "Connectez votre ordinateur pour commencer",
     actions: {
@@ -1905,6 +1970,8 @@ export const fr: TranslationResources = {
       notNow: "Pas maintenant",
       directConnectionHint:
         "Sans relais, connectez-vous directement via TCP, Tailscale ou un autre VPN. Aucun code QR n’est créé.",
+      tailscaleDocs: "Configurer Tailscale",
+      tailscaleDocsAccessibility: "Lire comment se connecter via Tailscale",
       updateRequired: "Mettez à jour l’hôte pour activer le relais depuis Paseo Desktop.",
       unavailable: "Offre d’association indisponible.",
       hint: "Scannez ce code QR avec Paseo sur votre téléphone, ou copiez le lien ci-dessous.",
@@ -2370,6 +2437,12 @@ export const fr: TranslationResources = {
     general: {
       title: "Général",
       sending: "Envoi",
+      setup: {
+        label: "Configuration initiale",
+        description:
+          "Reprendre l'apparence, les fournisseurs, les projets et l'appairage du téléphone",
+        action: "Afficher la configuration",
+      },
       browserData: {
         title: "Données du navigateur",
         siteData: "Cookies et données des sites",

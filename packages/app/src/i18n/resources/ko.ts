@@ -1651,6 +1651,69 @@ export const ko: TranslationResources = {
     },
   },
   onboarding: {
+    setup: {
+      title: "Paseo 설정",
+      footnote: "여기의 모든 항목은 설정에서도 변경할 수 있습니다",
+      stepCounter: "{{total}}단계 중 {{current}}단계",
+      skip: "설정 건너뛰기",
+      continue: "계속",
+      finish: "완료",
+      steps: {
+        appearance: {
+          label: "모양",
+          title: "Paseo에 오신 것을 환영합니다",
+          description:
+            "이 컴퓨터에서 Claude Code, Codex 등 여러 에이전트를 책상에서도, 휴대폰에서도 실행하세요. 먼저 모양을 고르세요.",
+        },
+        providers: {
+          label: "제공자",
+          title: "에이전트",
+          description:
+            "Paseo는 이 컴퓨터에 이미 설치된 에이전트 CLI를 사용합니다. 에이전트 선택기에 표시하고 싶지 않은 항목은 끄세요.",
+        },
+        projects: {
+          label: "프로젝트",
+          title: "프로젝트 추가",
+          description:
+            "에이전트가 작업할 폴더를 추가하세요. 나중에 사이드바에서 더 추가할 수 있습니다.",
+          addProject: "프로젝트 추가",
+          added: "추가됨",
+        },
+        orchestration: {
+          label: "오케스트레이션",
+          title: "에이전트가 Paseo를 사용하도록 허용",
+          description:
+            "Paseo 도구를 사용하면 에이전트가 다른 에이전트에게 작업을 넘기고 직접 워크스페이스와 일정을 만들 수 있습니다.",
+          capabilities: {
+            agents: {
+              title: "다른 에이전트 시작 및 조정",
+              description:
+                "Codex, Claude Code, OpenCode 에이전트를 시작하고 프롬프트를 보낸 뒤 결과를 기다립니다.",
+            },
+            workspaces: {
+              title: "워크스페이스 만들기",
+              description: "작업마다 worktree를 열어 병렬 에이전트끼리 충돌하지 않게 합니다.",
+            },
+            schedules: {
+              title: "일정과 하트비트",
+              description: "10분마다 CI를 확인하고 실패를 수정합니다.",
+            },
+            terminals: {
+              title: "터미널과 스크립트",
+              description: "워크스페이스의 개발 서버를 실행하고 출력을 읽습니다.",
+            },
+          },
+        },
+        phone: {
+          label: "휴대폰",
+          title: "어디서나 에이전트와 함께",
+          description:
+            "iOS 및 Android용 Paseo가 이 컴퓨터에 연결됩니다. 에이전트는 여기서 계속 실행되고, 휴대폰으로 상태를 보고 권한을 승인하며 프롬프트를 보냅니다.",
+          appStore: "App Store",
+          googlePlay: "Google Play",
+        },
+      },
+    },
     title: "Paseo에 오신 것을 환영합니다",
     subtitle: "시작하려면 컴퓨터를 연결하세요",
     actions: {
@@ -1869,6 +1932,8 @@ export const ko: TranslationResources = {
       notNow: "지금은 아님",
       directConnectionHint:
         "릴레이 없이 TCP, Tailscale 또는 다른 VPN을 통해 직접 연결하세요. QR 코드가 생성되지 않습니다.",
+      tailscaleDocs: "Tailscale 설정",
+      tailscaleDocsAccessibility: "Tailscale로 연결하는 방법 읽기",
       updateRequired: "Paseo 데스크톱에서 릴레이를 활성화하려면 호스트를 업데이트하세요.",
       unavailable: "페어링 정보를 사용할 수 없습니다.",
       hint: "휴대폰의 Paseo로 이 QR 코드를 스캔하거나 아래 링크를 복사하세요.",
@@ -2332,6 +2397,11 @@ export const ko: TranslationResources = {
     general: {
       title: "일반",
       sending: "전송",
+      setup: {
+        label: "초기 설정",
+        description: "모양, 제공자, 프로젝트, 휴대폰 페어링을 다시 진행합니다",
+        action: "설정 다시 보기",
+      },
       browserData: {
         title: "브라우저 데이터",
         siteData: "쿠키 및 사이트 데이터",
