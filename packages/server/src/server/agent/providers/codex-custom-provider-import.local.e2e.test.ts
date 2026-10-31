@@ -1,6 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { once } from "node:events";
-import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -8,6 +7,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
+import { spawnProcess } from "../../../utils/spawn.js";
 import { CodexAppServerAgentClient, CodexAppServerAgentSession } from "./codex-app-server-agent.js";
 
 // Runs the real `codex` binary against a local Responses endpoint standing in
@@ -117,7 +117,8 @@ describe("Codex custom provider import list", () => {
           { provider: "codex", cwd, model: "mock-model" },
           null,
           logger,
-          async () => spawn("codex", ["app-server"], { cwd, env: environment, stdio: "pipe" }),
+          async () =>
+            spawnProcess("codex", ["app-server"], { cwd, env: environment, stdio: "pipe" }),
           {
             environment,
             customCodexConfig: {
