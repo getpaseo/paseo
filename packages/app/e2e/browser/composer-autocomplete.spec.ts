@@ -402,6 +402,13 @@ test.describe("Composer autocomplete", () => {
       ).toHaveCount(0);
       await expect(composerLocator(page)).toBeFocused();
       await expect(page.getByTestId("composer-file-attachment-pill")).toContainText("note.txt");
+      await composerLocator(page).fill("draft");
+      await composerLocator(page).evaluate((element: HTMLTextAreaElement) =>
+        element.setSelectionRange(0, 0),
+      );
+      await message.getByRole("link", { name: "/mock", exact: true }).click();
+      await composerLocator(page).pressSequentially("argument");
+      await expect(composerLocator(page)).toHaveValue("draft /mock argument");
       await composerLocator(page).fill("/");
       await expect(
         page.getByTestId("composer-autocomplete-popover").filter({ visible: true }),

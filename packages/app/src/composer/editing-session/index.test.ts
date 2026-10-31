@@ -6,19 +6,23 @@ describe("composer editing session", () => {
     const session = new ComposerEditingSession();
     let text = "draft typed since publication";
     let focuses = 0;
+    let selection = { start: 0, end: 0 };
     const detach = session.attachEditor({
       getText: () => text,
-      replaceText: (next) => {
+      replaceText: (next, nextSelection) => {
         text = next;
+        selection = nextSelection;
       },
       focus: () => {
         focuses += 1;
       },
     });
     session.insertCommand("/review");
+    expect(selection).toEqual({ start: text.length, end: text.length });
     session.insertCommand("/test");
     expect(text).toBe("draft typed since publication /review /test ");
     expect(focuses).toBe(2);
+    expect(selection).toEqual({ start: text.length, end: text.length });
     detach();
     session.insertCommand("/ignored");
     expect(text).toBe("draft typed since publication /review /test ");
