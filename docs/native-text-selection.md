@@ -2,6 +2,12 @@
 
 Keep completed assistant prose in one native text view so selection crosses paragraphs, headings and lists. The shared [Markdown renderer](markdown-renderer.md) owns that view.
 
+## iOS double tap
+
+Double tap prose to start with its logical paragraph or list item selected, then drag the system handles to adjust either end. Wrapped lines and authored hard breaks stay inside that initial block; neighbouring list items stay separate. The native text view remains intact, so the handles can extend beyond the initial block.
+
+The Markdown package patch expands UIKit's initial word selection. Links, images, code blocks and task checkboxes retain their own taps. This requires a rebuilt iOS client; a plugin or JavaScript update cannot add the native behavior. Plugin renderers must leave native text selection enabled.
+
 ## Android inverted chat
 
 Keep selection visibility handling in `modules/paseo-scroll`. Android's visibility
