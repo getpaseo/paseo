@@ -152,15 +152,18 @@ const HostRuntimeBootstrapContext = createContext<HostRuntimeBootstrapState>({
 function ManagedDaemonSession({ daemon }: { daemon: HostProfile }) {
   const client = useHostRuntimeClient(daemon.serverId);
 
-  if (!client) {
-    return null;
-  }
-
+  // Catalog sync stays mounted across a missing client. Unmounting it dropped
+  // timeline plugins, and the open chat fell back to native rows until the
+  // bundle was evaluated again.
   return (
-    <SessionProvider key={daemon.serverId} serverId={daemon.serverId} client={client}>
-      <LegacyFavoriteProfileMigrationBootstrap serverId={daemon.serverId} client={client} />
+    <>
+      {client ? (
+        <SessionProvider key={daemon.serverId} serverId={daemon.serverId} client={client}>
+          <LegacyFavoriteProfileMigrationBootstrap serverId={daemon.serverId} client={client} />
+        </SessionProvider>
+      ) : null}
       <PluginCatalogSync serverId={daemon.serverId} client={client} />
-    </SessionProvider>
+    </>
   );
 }
 
