@@ -1,5 +1,6 @@
+import { createHistoryStartPagination } from "@/agent-stream/history-start-pagination";
 import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type { ProviderSubagentDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   loadOlderProviderSubagentTimeline,
@@ -592,6 +593,68 @@ describe("projected child history", () => {
     deliver({ ...response("A", 1, 1), direction: "before" });
     expect(await request).toBe(true);
     expect(current().cursor?.startSeq).toBe(1);
+  });
+  test("bounds an older child request so a timeout permits another attempt", async () => {
+    vi.useFakeTimers();
+    try {
+      useProviderSubagentStore
+        .getState()
+        .replaceTimeline(SERVER_ID, { ...response("B", 2, 2), hasOlder: true });
+      const timeouts: Array<number | undefined> = [];
+      const client = {
+        fetchProviderSubagentTimeline: (
+          _parent: string,
+          _child: string,
+          options: { timeout?: number },
+        ) => {
+          timeouts.push(options.timeout);
+          return new Promise<Payload>((_resolve, reject) =>
+            setTimeout(() => reject(new Error("timeout")), options.timeout ?? 60_000),
+          );
+        },
+      };
+      let loading = false;
+      const pagination = createHistoryStartPagination({
+        initiallyVisible: true,
+        read: () => ({
+          distanceFromHistoryStart: 0,
+          isUnderfilled: true,
+          hasOlderHistory: true,
+          isLoadingOlderHistory: loading,
+          isReady: true,
+          progressKey: "e:2",
+        }),
+        load: async () => {
+          loading = true;
+          try {
+            return await loadOlderProviderSubagentTimeline({
+              client,
+              serverId: SERVER_ID,
+              parentAgentId: PARENT_ID,
+              subagentId: SUBAGENT_ID,
+              limit: 100,
+            });
+          } catch {
+            return false;
+          } finally {
+            loading = false;
+          }
+        },
+        changed: () => {},
+        scheduleSettle: () => {},
+      });
+      pagination.update();
+      expect(timeouts).toEqual([10_000]);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(pagination.state.status).toBe("failed");
+      pagination.rearm();
+      expect(timeouts).toEqual([10_000, 10_000]);
+      expect(pagination.state.status).toBe("loading");
+      pagination.dispose();
+      await vi.advanceTimersByTimeAsync(10_000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
   test("replaces overlapping fetched text and continues live streaming", () => {
     page("AB", 1, 2);

@@ -1,3 +1,4 @@
+import { nativeHistoryStartGeometry } from "./native-history-start-geometry";
 import { describe, expect, it, vi } from "vitest";
 import {
   createHistoryStartPagination,
@@ -202,3 +203,36 @@ it("keeps cached history visible after synchronization and subsequent pagination
   expect(h.requests).toHaveLength(2);
   h.pagination.dispose();
 });
+
+it.each([
+  [true, 123, 0],
+  [false, 123, 0],
+  [true, 0, 123],
+  [false, 0, 123],
+])(
+  "handles native padding when short history has older=%s",
+  (hasOlderHistory, topOverlayInset, bottomPadding) => {
+    const geometry = nativeHistoryStartGeometry({
+      contentHeight: 825,
+      viewportHeight: 700,
+      offsetY: 0,
+      topOverlayInset,
+      bottomPadding,
+    });
+    let requests = 0;
+    const pagination = createHistoryStartPagination({
+      initiallyVisible: false,
+      read: () => ({ ...initial, ...geometry, hasOlderHistory }),
+      load: () => {
+        requests++;
+        return new Promise<boolean>(() => {});
+      },
+      changed: () => {},
+      scheduleSettle: () => {},
+    });
+    pagination.update();
+    expect(requests).toBe(hasOlderHistory ? 1 : 0);
+    expect(pagination.state.visible).toBe(!hasOlderHistory);
+    pagination.dispose();
+  },
+);

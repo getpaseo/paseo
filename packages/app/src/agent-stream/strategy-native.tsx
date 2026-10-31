@@ -33,6 +33,7 @@ import {
   type HistoryStartPaginationInput,
 } from "./history-start-pagination";
 import { useHistoryStartPagination } from "./use-history-start-pagination";
+import { nativeHistoryStartGeometry } from "./native-history-start-geometry";
 import { useStreamTopOverlayInset } from "./top-overlay";
 import {
   createHistoryStartSettleScheduler,
@@ -132,13 +133,13 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
       metrics.viewportMeasuredForKey === metrics.containerKey &&
       metrics.contentMeasuredForKey === metrics.containerKey;
     return {
-      distanceFromHistoryStart: metrics.contentHeight - metrics.viewportHeight - metrics.offsetY,
-      isUnderfilled:
-        metrics.contentHeight -
-          32 -
-          topOverlayInset -
-          streamKeyboardInset.contentContainerPaddingBottom <
-        metrics.viewportHeight,
+      ...nativeHistoryStartGeometry({
+        contentHeight: metrics.contentHeight,
+        viewportHeight: metrics.viewportHeight,
+        offsetY: metrics.offsetY,
+        topOverlayInset,
+        bottomPadding: streamKeyboardInset.contentContainerPaddingBottom,
+      }),
       hasOlderHistory,
       isLoadingOlderHistory,
       isReady:
