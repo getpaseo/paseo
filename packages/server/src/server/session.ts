@@ -4779,8 +4779,8 @@ export class Session {
           });
       }
       const snapshot = await refresh;
-      await this.agentUpdates.forwardLiveAgent(snapshot);
       const timelineSize = this.agentManager.getTimeline(agentId).length;
+      await this.agentUpdates.forwardLiveAgent(snapshot);
       if (requestId) {
         this.emit({
           type: "status",
