@@ -57,12 +57,24 @@ Create a new client after `close()`.
 
 `list({ subscribe: {} })` also returns a `subscriptionId` and an owned `subscription`. Its `subscribe({ snapshot, update, error? })` callbacks receive the snapshot before scoped wire updates; `release()` ends that observation. Capable daemons assign the ID and keep observations independent. Older daemons use local IDs and their established shared delivery behavior. Plain lists create no observation. The same contract applies to workspace lists. See [events](./events.md).
 
-Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `outputSchema`, `images`, `attachments`, `git`, `worktree`, `autoArchive`, `background`, and `labels`.
+Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `outputSchema`, `images`, `attachments`, `git`, `worktree`, `autoArchive`, `internal`, `background`, and `labels`.
 
 `parent` accepts a host-local agent ID, an `AgentAddress` (`{ serverId, agentId }`), or an agent handle. A handle’s `address` keeps its host identity after disconnect. When creating through `hosts.client(serverId)`, pass the parent handle or complete address; the SDK carries parent metadata to the destination.
 
 `background` is workspace creation intent. It cannot accompany an existing `workspaceId`.
 See [background workspaces](./workspaces.md) for caller inheritance and inclusive discovery.
+
+`internal: true` creates a disposable helper through `workspace.agents.create()` or an existing
+`parent`. The host must advertise `features.internalAgentCreation`; otherwise creation rejects
+with an update-host error before sending. Internal agents are excluded from public discovery,
+attention notifications, and plugin lifecycle hooks. Their agent state, timelines, and creation
+and message receipts are not persisted by Paseo. Provider-native session persistence is disabled
+where supported. The helper still uses the selected provider's normal permissions and tools.
+
+Internal creation cannot provision a workspace or worktree and does not support `background`,
+`idempotencyKey`, caller-selected `agentId`, or `onEvent` creation observation. It is not replayed
+after a connection loss. The caller owns the runtime: archive it in `finally`, including on error
+or timeout. See [generate a title with an internal helper](./agents.md#generate-a-title-with-an-internal-helper).
 
 `config` accepts:
 

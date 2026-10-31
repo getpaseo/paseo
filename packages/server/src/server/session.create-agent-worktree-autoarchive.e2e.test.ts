@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
+import { createPaseoApi } from "@getpaseo/client";
 
 import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
 import { getFullAccessConfig } from "./daemon-e2e/agent-configs.js";
@@ -446,6 +447,110 @@ function storedAgentIds(): string[] {
     .filter((entry) => entry.endsWith(".json"))
     .map((entry) => path.basename(entry, ".json"));
 }
+
+test("SDK internal helper updates a title without entering discovery or durable creation storage", async () => {
+  const cwd = createGitRepo();
+  const original = await ctx.client.createAgent({
+    config: { ...getFullAccessConfig("codex"), cwd },
+  });
+  const api = createPaseoApi(ctx.client);
+  const creations = readdirSync(path.join(ctx.daemon.paseoHome, "creations")).sort();
+  const workspaceIds = (await ctx.client.fetchWorkspaces()).entries.map((entry) => entry.id);
+  const updates: unknown[] = [];
+  const attention: unknown[] = [];
+  const stopUpdates = ctx.client.on("agent_update", (message) => updates.push(message.payload));
+  const stopAttention = ctx.client.on("agent_attention_required", (message) =>
+    attention.push(message.payload),
+  );
+  try {
+    const helper = await api.agents.create({
+      config: { provider: "codex/gpt-5.4", modeId: "full-access" },
+      cwd,
+      parent: original.id,
+      internal: true,
+      title: "Title helper",
+    });
+    expect(helper.current()).toMatchObject({ internal: true, workspaceId: original.workspaceId });
+    expect((await ctx.client.fetchAgents()).entries.map((entry) => entry.agent.id)).toEqual([
+      original.id,
+    ]);
+    const result = await helper.run("Respond with exactly: Improve warning diagnostics", {
+      timeoutMs: 10000,
+    });
+    expect(result).toMatchObject({ status: "idle", lastMessage: "Improve warning diagnostics" });
+    await ctx.client.updateAgent(original.id, { name: result.lastMessage! });
+    expect((await ctx.client.fetchAgent(original.id))?.agent.title).toBe(
+      "Improve warning diagnostics",
+    );
+    await helper.archive();
+    expect(ctx.daemon.daemon.agentManager.getAgent(helper.id)).toBeNull();
+    expect(await helper.waitForFinish(10000)).toMatchObject({
+      status: "idle",
+      lastMessage: "Improve warning diagnostics",
+    });
+    expect(storedAgentIds()).not.toContain(helper.id);
+    expect(existsSync(path.join(ctx.daemon.paseoHome, "agent-requests"))).toBe(false);
+    expect(readdirSync(path.join(ctx.daemon.paseoHome, "creations")).sort()).toEqual(creations);
+    expect(
+      (await ctx.client.fetchAgents({ filter: { includeArchived: true } })).entries.map(
+        (entry) => entry.agent.id,
+      ),
+    ).toEqual([original.id]);
+    expect((await ctx.client.fetchWorkspaces()).entries.map((entry) => entry.id)).toEqual(
+      workspaceIds,
+    );
+    expect(updates).not.toContainEqual(
+      expect.objectContaining({ agent: expect.objectContaining({ id: helper.id }) }),
+    );
+    expect(attention).toEqual([]);
+  } finally {
+    stopUpdates();
+    stopAttention();
+    await api.dispose();
+  }
+});
+
+test("internal creation rejects durable placement and receipts before creating resources", async () => {
+  const cwd = createGitRepo();
+  const config = { ...getFullAccessConfig("codex"), cwd };
+  await expect(ctx.client.createAgent({ config, internal: true })).rejects.toThrow(
+    "existing workspace",
+  );
+  expect(storedAgentIds()).toEqual([]);
+  expect((await ctx.client.fetchWorkspaces()).entries).toEqual([]);
+  expect(existsSync(path.join(ctx.daemon.paseoHome, "creations"))).toBe(false);
+
+  const original = await ctx.client.createAgent({ config });
+  const creations = readdirSync(path.join(ctx.daemon.paseoHome, "creations")).sort();
+  await expect(
+    ctx.client.createAgent({
+      config,
+      internal: true,
+      workspaceId: original.workspaceId,
+      idempotencyKey: "not-durable",
+    }),
+  ).rejects.toThrow("durable idempotency");
+  await expect(
+    ctx.client.createAgent({
+      config,
+      internal: true,
+      workspaceId: original.workspaceId,
+      worktree: { mode: "branch-off", newBranch: "helper", base: "main" },
+    }),
+  ).rejects.toThrow("cannot create workspaces");
+  await expect(
+    ctx.client.createWorkspace({
+      source: { kind: "directory", path: cwd },
+      agent: { config, internal: true },
+    }),
+  ).resolves.toMatchObject({
+    workspace: null,
+    error: "Create the workspace first, then create its internal agent separately.",
+  });
+  expect(readdirSync(path.join(ctx.daemon.paseoHome, "creations")).sort()).toEqual(creations);
+  expect(storedAgentIds()).toEqual([original.id]);
+  await expectWorktreeListEmpty(cwd);
+});
 
 test("background workspaces keep durable agents addressable through restart and archive", async () => {
   const cwd = createGitRepo();

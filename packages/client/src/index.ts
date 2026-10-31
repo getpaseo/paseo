@@ -264,6 +264,8 @@ export interface PaseoAgentCreateOptions {
   git?: CreateAgentRequestMessage["git"];
   worktree?: CreateAgentRequestMessage["worktree"];
   autoArchive?: CreateAgentRequestMessage["autoArchive"];
+  /** Disposable helper in an existing workspace; hidden from discovery and never persisted. */
+  internal?: CreateAgentRequestMessage["internal"];
   /** Visibility intent for a NEW workspace. Existing targets reject this option. */
   background?: CreateAgentRequestMessage["background"];
   requestId?: string;

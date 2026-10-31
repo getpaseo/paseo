@@ -692,7 +692,7 @@ test("plugin-shaped PR workspace create and agent create use the existing daemon
   await client.close();
 });
 
-test("agents.create forwards internal on the request, outside the agent config", async () => {
+test("agents.create forwards background workspace intent outside the agent config", async () => {
   const { client, ws } = await connectClient({
     providerUsageList: true,
     providersSnapshotCwd: true,
@@ -732,7 +732,7 @@ test("agents.create forwards internal on the request, outside the agent config",
   await client.close();
 });
 
-test("agents.create with internal fails before sending on a host without internal agents", async () => {
+test("agents.create with background fails before sending on an unsupported host", async () => {
   const { client, ws } = await connectClient();
   const sentBefore = ws.sent.length;
 
@@ -743,6 +743,69 @@ test("agents.create with internal fails before sending on a host without interna
       background: true,
     }),
   ).rejects.toThrow("Update the host to use background workspaces.");
+  expect(ws.sent).toHaveLength(sentBefore);
+  await client.close();
+});
+
+test("workspace agents.create sends an internal helper without durable creation intent", async () => {
+  const { client, ws } = await connectClient({
+    internalAgentCreation: true,
+    creationLifecycle: true,
+  });
+  const workspace = client.workspaces.ref(createWorkspace({ id: "workspace_helper" }));
+  const creation = workspace.agents.create({
+    config: { provider: "codex/gpt-5.4" },
+    title: "Title helper",
+    internal: true,
+  });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "agent.create.request",
+    workspaceId: "workspace_helper",
+    internal: true,
+    config: { provider: "codex", model: "gpt-5.4", cwd: "/repo/sdk", title: "Title helper" },
+  });
+  expect(request).not.toHaveProperty("idempotencyKey");
+  expect(request.config).not.toHaveProperty("internal");
+  ws.message(
+    sessionMessage({
+      type: "agent.create.response",
+      payload: {
+        requestId: request.requestId,
+        agent: createAgent({ id: "helper", internal: true }),
+        error: null,
+      },
+    }),
+  );
+  expect((await creation).id).toBe("helper");
+  await client.close();
+});
+
+test("internal creation fails before sending even on a host advertising the retired internalAgents flag", async () => {
+  const { client, ws } = await connectClient({ internalAgents: true });
+  const sentBefore = ws.sent.length;
+  await expect(
+    client.agents.create({
+      config: { provider: "codex/gpt-5.4" },
+      cwd: "/repo/sdk",
+      internal: true,
+    }),
+  ).rejects.toThrow("Update the host to create internal agents.");
+  expect(ws.sent).toHaveLength(sentBefore);
+  await client.close();
+});
+
+test("internal creation rejects durable observation without sending a request", async () => {
+  const { client, ws } = await connectClient({ internalAgentCreation: true });
+  const sentBefore = ws.sent.length;
+  await expect(
+    client.agents.create({
+      config: { provider: "codex/gpt-5.4" },
+      cwd: "/repo/sdk",
+      internal: true,
+      onEvent: () => {},
+    }),
+  ).rejects.toThrow("do not support durable creation observation");
   expect(ws.sent).toHaveLength(sentBefore);
   await client.close();
 });

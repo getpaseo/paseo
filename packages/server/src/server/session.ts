@@ -4196,6 +4196,25 @@ export class Session {
         )
       : undefined;
     try {
+      if (request.internal) {
+        if (request.agentId !== undefined || request.subscribe) {
+          throw new Error(
+            "Internal agents do not support caller-selected IDs or creation observation.",
+          );
+        }
+        const { agent } = await this.createSessionAgent({
+          ...request,
+          type: "create_agent_request",
+        });
+        this.emitForSource(
+          {
+            type: "agent.create.response",
+            payload: { requestId, agent, error: null },
+          },
+          source,
+        );
+        return;
+      }
       const creation = await this.createRequestedAgent(
         request,
         progress ? (snapshot) => progress.emit(this.creationUpdate(snapshot)) : undefined,
@@ -4245,6 +4264,9 @@ export class Session {
         throw new Error("Session is not authorized to create an agent");
       }
       const agentInput = request.agent;
+      if (agentInput?.internal) {
+        throw new Error("Create the workspace first, then create its internal agent separately.");
+      }
       const creation = await this.creationService.create(
         {
           kind: "workspace",
@@ -4347,6 +4369,7 @@ export class Session {
 
   private async handleCreateAgentRequest(msg: CreateAgentRequestMessage): Promise<void> {
     try {
+      this.validatePublicAgentWorkspaceIntent(msg);
       let agent: AgentSnapshotPayload;
       if (msg.idempotencyKey !== undefined) {
         if (msg.initialPrompt !== undefined) {
@@ -4403,10 +4426,17 @@ export class Session {
         "Legacy git/worktreeName agent placement was removed. Use createWorkspace({ source, agent, idempotencyKey }) to create a workspace with an agent, or create the workspace first and pass workspaceId.",
       );
     }
-    if (request.internal)
-      throw new Error(
-        "Public internal agents were removed; create a background workspace instead.",
-      );
+    if (request.internal) {
+      if (!request.workspaceId && !request.callerAgentId) {
+        throw new Error("Internal agents require an existing workspace or caller agent.");
+      }
+      if (request.worktree !== undefined || request.background !== undefined) {
+        throw new Error("Internal agents cannot create workspaces or worktrees.");
+      }
+      if (request.idempotencyKey !== undefined) {
+        throw new Error("Internal agents do not support durable idempotency keys.");
+      }
+    }
     if (
       request.background !== undefined &&
       (request.workspaceId || (request.callerAgentId && !request.worktree))
@@ -4555,7 +4585,7 @@ export class Session {
       throw new Error(`Caller agent ${request.callerAgentId} not found`);
     }
 
-    let config = request.config;
+    const config = request.config;
 
     const intent = await resolveCreateAgentIntent({
       explicitWorkspaceId: createdWorktree?.workspace.workspaceId ?? request.workspaceId,
@@ -4584,10 +4614,8 @@ export class Session {
         cwd: config.cwd,
       }),
     });
-    config = { ...config, cwd: intent.cwd };
-
     return {
-      config,
+      config: { ...config, cwd: intent.cwd, internal: request.internal },
       intent,
       createdDirectoryWorkspace: !createdWorktree && !request.workspaceId && !callerAgent,
     };
@@ -8341,10 +8369,13 @@ export class Session {
           );
         }
       };
-      const sent = msg.messageId
+      const durableMessageId = this.agentManager.getAgent(agentId)?.internal
+        ? undefined
+        : msg.messageId;
+      const sent = durableMessageId
         ? this.messageReceipts.send({
             agentId,
-            messageId: msg.messageId,
+            messageId: durableMessageId,
             request: {
               prompt,
               sourceAgentId: msg.sourceAgentId,
