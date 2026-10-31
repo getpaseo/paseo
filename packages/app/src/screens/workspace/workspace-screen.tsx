@@ -3363,6 +3363,10 @@ function WorkspaceScreenContent({
     () =>
       isMobile ? (
         <CompactWorkspaceHeader
+          active={isRouteFocused}
+          tabs={tabs}
+          activeTabKey={activeTabKey}
+          onSelectTab={handleSelectSwitcherTab}
           isLoading={isWorkspaceHeaderLoading}
           title={workspaceHeaderTitle}
           subtitle={workspaceHeaderSubtitle}
@@ -3441,6 +3445,7 @@ function WorkspaceScreenContent({
       isMobile,
       isWorkspaceHeaderLoading,
       isWorkspaceHeaderSubtitleDistinct,
+      isRouteFocused,
       normalizedServerId,
       normalizedWorkspaceId,
       openImportSheet,
