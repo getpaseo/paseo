@@ -56,10 +56,18 @@ function createLegacyWorktreeForTest(
   });
 }
 
+function allowConnectionReset(error: NodeJS.ErrnoException): void {
+  if (error.code !== "ECONNRESET") throw error;
+}
+
 // A remote that accepts connections and never answers, like a VPN-only host while off the VPN.
 async function startSilentRemote(): Promise<{ url: string; close: () => Promise<void> }> {
   const connections = new Set<Socket>();
-  const server = createServer((socket) => connections.add(socket));
+  const server = createServer((socket) => {
+    connections.add(socket);
+    // Timeout cleanup force-kills the peer, which can reset its connection on Windows.
+    socket.on("error", allowConnectionReset);
+  });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
   return {
