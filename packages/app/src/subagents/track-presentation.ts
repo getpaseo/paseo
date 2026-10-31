@@ -14,6 +14,15 @@ function presentationStatus(row: SubagentRow) {
   return providerSubagentLifecycleStatus(row.status);
 }
 
+/** Keep the children counted as working visible before the selectors' chronological history. */
+export function sortSubagentRows(rows: readonly SubagentRow[]): SubagentRow[] {
+  return [...rows].sort((left, right) => {
+    const leftRunning = presentationStatus(left) === "running";
+    const rightRunning = presentationStatus(right) === "running";
+    return Number(rightRunning) - Number(leftRunning);
+  });
+}
+
 export interface SubagentRowPresentationData {
   key: string;
   kind: "agent";

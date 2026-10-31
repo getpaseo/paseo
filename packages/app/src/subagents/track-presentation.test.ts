@@ -6,6 +6,7 @@ import {
   buildSubagentRowPresentationData,
   countFinishedSubagents,
   resolveRowLabel,
+  sortSubagentRows,
 } from "./track-presentation";
 
 function row(
@@ -29,6 +30,65 @@ function row(
     createdAt: overrides.createdAt ?? new Date("2026-04-20T00:00:00.000Z"),
   };
 }
+
+describe("sortSubagentRows", () => {
+  it("puts the children counted as working ahead of a long finished history without mutating it", () => {
+    const history = Array.from({ length: 29 }, (_, index) => row({ id: `finished-${index}` }));
+    const provider: ProviderSubagentRow = {
+      kind: "provider",
+      id: "native-running",
+      parentAgentId: "parent",
+      provider: "claude",
+      title: "general-purpose",
+      description: "Running provider child",
+      subtitle: null,
+      status: "running",
+      requiresAttention: false,
+      createdAt: new Date("2026-04-20T00:00:01.000Z"),
+    };
+    const rows = [...history, row({ id: "managed-running", status: "running" }), provider];
+    const original = [...rows];
+
+    expect(sortSubagentRows(rows).map((child) => child.id)).toEqual([
+      "managed-running",
+      "native-running",
+      ...history.map((child) => child.id),
+    ]);
+    expect(rows).toEqual(original);
+  });
+
+  it("uses the pill's open-turn semantics rather than a managed agent's lifecycle alone", () => {
+    const rows = [
+      row({
+        id: "background-only",
+        status: "running",
+        turn: { phase: "idle", cancellationRequestId: null },
+      }),
+      row({ id: "finished", status: "idle" }),
+      row({
+        id: "open-turn",
+        status: "idle",
+        turn: { phase: "open", turnId: null, startedAt: null, cancellationRequestId: null },
+      }),
+    ];
+
+    expect(sortSubagentRows(rows).map((child) => child.id)).toEqual([
+      "open-turn",
+      "background-only",
+      "finished",
+    ]);
+  });
+
+  it("retains chronological order when all children are finished", () => {
+    const rows = [
+      row({ id: "first" }),
+      row({ id: "failed", status: "error" }),
+      row({ id: "last" }),
+    ];
+    expect(sortSubagentRows(rows)).toEqual(rows);
+    expect(sortSubagentRows([])).toEqual([]);
+  });
+});
 
 describe("buildSubagentPillPresentation", () => {
   // The real instance, so a label that names a key nobody added renders as that key and fails.
