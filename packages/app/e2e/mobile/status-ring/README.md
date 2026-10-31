@@ -1,8 +1,8 @@
 # Native retained status-ring regression
 
-This runs the production native ring and clock inside real retained panels with
-Reanimated on Android. A probe consumes the same public rotation hook and counts
-UI-runtime value changes. No Reanimated mocks or provider processes are used.
+This runs the production native ring and clock inside real retained panels on
+Android. A probe consumes the same public progress hook and counts native-driver
+value updates through a listener. No mocks or provider processes are used.
 
 Use an Android development client compatible with the checkout's native dependencies.
 In a disposable checkout, temporarily replace `packages/app/index.ts` with:
@@ -35,7 +35,7 @@ node packages/app/e2e/mobile/status-ring/android.mjs status-ring http://127.0.0.
 
 The test checks visible rotation, hidden-panel inactivity while another ring is
 visible, inactivity with both panels hidden, and synchronized resumption. Each
-sample reads counters on the UI runtime; elapsed time includes device-command
+sample reads the probe's listener counters; elapsed time includes device-command
 latency. The baseline fails at the first hidden-panel assertion.
 
 Restore the original `packages/app/index.ts`, close the agent-device session,
