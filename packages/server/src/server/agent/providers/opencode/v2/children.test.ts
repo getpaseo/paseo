@@ -145,51 +145,59 @@ describe("OpenCode v2 child presentation", () => {
     expect(ids()).toEqual(["first", "grandchild", "second"]);
   });
 
-  test("retains a live child and descendants when an update moves it ahead of the reconnect cursor", async () => {
-    const { harness, sessions, children, ids, store } = setupTree();
-    for (let i = 3; i <= 101; i++) {
-      sessions.set(`child-${i}`, {
-        ...harness.info,
-        id: `child-${i}`,
-        parentID: "session",
-        time: { created: i, updated: i },
-      });
-    }
-    sessions.get("second")!.time = { created: 2, updated: 2 };
-    await children.reconcile("session");
-    const expected = ids();
-    expect(expected).toHaveLength(102);
-    const list = harness.api.session.list;
-    harness.api.session.list = async (input) => {
-      if (input?.parentID !== "session" && !input?.cursor) return list(input);
-      const page = [...sessions.values()]
-        .filter((info) => info.parentID === "session")
-        .filter((info) => !input.cursor || info.time.updated < Number(input.cursor))
-        .sort((a, b) => b.time.updated - a.time.updated)
-        .slice(0, input.limit);
-      const next = page.length === input.limit ? String(page.at(-1)!.time.updated) : undefined;
-      if (!input.cursor) {
-        // The oldest child was not on page one. Updating it moves it ahead of that page's cursor.
-        const first = sessions.get("first")!;
-        first.time = { ...first.time, updated: 200 };
-        first.title = "Updated during reconnect";
+  test.each(["present", "deleted"])(
+    "reconciles a live child skipped by the reconnect cursor when its grandchild is %s",
+    async (grandchild) => {
+      const { harness, sessions, children, ids, store } = setupTree();
+      for (let i = 3; i <= 101; i++) {
+        sessions.set(`child-${i}`, {
+          ...harness.info,
+          id: `child-${i}`,
+          parentID: "session",
+          time: { created: i, updated: i },
+        });
       }
-      return { data: page, cursor: { next } };
-    };
-    await children.reconcile("session");
-    expect(ids()).toEqual(expected);
-    await children.observe({
-      id: "queued-update",
-      created: 200,
-      type: "session.execution.started",
-      durable: { aggregateID: "first", seq: 1, version: 1 },
-      data: { sessionID: "first" },
-    });
-    expect(ids()).toEqual(expected);
-    expect(store.list("parent").find((child) => child.id === "first")).toMatchObject({
-      title: "Updated during reconnect",
-    });
-  });
+      sessions.get("second")!.time = { created: 2, updated: 2 };
+      await children.reconcile("session");
+      const expected = ids();
+      expect(expected).toHaveLength(102);
+      if (grandchild === "deleted") sessions.delete("grandchild");
+      const remaining = expected.filter((id) => grandchild === "present" || id !== "grandchild");
+      const list = harness.api.session.list;
+      harness.api.session.list = async (input) => {
+        if (input?.parentID !== "session" && !input?.cursor) return list(input);
+        const page = [...sessions.values()]
+          .filter((info) => info.parentID === "session")
+          .filter((info) => !input.cursor || info.time.updated < Number(input.cursor))
+          .sort((a, b) => b.time.updated - a.time.updated)
+          .slice(0, input.limit);
+        const next = page.length === input.limit ? String(page.at(-1)!.time.updated) : undefined;
+        if (!input.cursor) {
+          // The oldest child was not on page one. Updating it moves it ahead of that page's cursor.
+          const first = sessions.get("first")!;
+          first.time = { ...first.time, updated: 200 };
+          first.title = "Updated during reconnect";
+        }
+        return { data: page, cursor: { next } };
+      };
+      await children.reconcile("session");
+      expect(ids()).toEqual(remaining);
+      expect(store.list("parent").find((child) => child.id === "first")).toMatchObject({
+        title: "Updated during reconnect",
+      });
+      await children.observe({
+        id: "queued-update",
+        created: 200,
+        type: "session.execution.started",
+        durable: { aggregateID: "first", seq: 1, version: 1 },
+        data: { sessionID: "first" },
+      });
+      expect(ids()).toEqual(remaining);
+      expect(store.list("parent").find((child) => child.id === "first")).toMatchObject({
+        title: "Updated during reconnect",
+      });
+    },
+  );
 
   test("retains an absent child's subtree when its existence cannot be confirmed", async () => {
     const { harness, sessions, children, ids } = setupTree();

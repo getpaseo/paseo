@@ -65,11 +65,15 @@ export class SessionChildren {
     // Updates can move a live child ahead of the cursor. Confirm deletion before pruning.
     for (const [id] of previous) {
       if (seen.has(id)) continue;
+      let info: SessionInfo;
       try {
-        await this.options.client().session.get({ sessionID: id });
+        info = await this.options.client().session.get({ sessionID: id });
       } catch (error) {
         if (isSessionNotFoundError(error)) this.remove(id);
+        continue;
       }
+      await this.reconcileChild(info, parentID);
+      await this.reconcile(id);
     }
   }
   private remove(id: string) {
