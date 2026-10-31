@@ -24,7 +24,10 @@ const gatedCiJobs = new Map([
     "server-integration-windows",
     { name: "server-integration (windows-latest)", contract: "server" },
   ],
-  ["server-tests-macos", { name: "server-tests (macos-15, file observation)", contract: "server" }],
+  [
+    "server-tests-macos",
+    { name: "server-tests (macos-latest, file observation)", contract: "server" },
+  ],
   ["desktop-tests-ubuntu", { name: "desktop-tests (ubuntu-latest)", contract: "desktop" }],
   ["desktop-tests-windows", { name: "desktop-tests (windows-latest)", contract: "desktop" }],
   ["app-tests", { name: "app-tests", contract: "app" }],
@@ -659,4 +662,20 @@ test("workflows avoid retired macOS 14 runners", () => {
       path,
     );
   }
+});
+
+test("macOS jobs use latest runners while preserving release architectures", () => {
+  for (const [workflow, jobId] of [
+    [ciWorkflowPath, "server-tests-macos"],
+    [nixWorkflowPath, "build-desktop-darwin"],
+  ]) {
+    assert.match(
+      jobBlocks(readFileSync(workflow, "utf8")).get(jobId).join("\n"),
+      /^    runs-on: macos-latest$/m,
+    );
+  }
+  const release = readFileSync(new URL(".github/workflows/desktop-release.yml", repoRoot), "utf8");
+  assert.match(release, /runner: macos-latest\n\s+electron_arch: arm64/);
+  // GitHub has no standard macos-latest-intel alias; use the newest Intel image.
+  assert.match(release, /runner: macos-26-intel\n\s+electron_arch: x64/);
 });
