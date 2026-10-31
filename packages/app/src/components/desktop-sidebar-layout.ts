@@ -20,6 +20,25 @@ export function resolveDesktopSidebarVisibility(input: {
   );
 }
 
+export function resolveSidebarPresentation(input: {
+  chromeEnabled: boolean;
+  isCompactLayout: boolean;
+  isFocusModeEnabled: boolean;
+  desktopSidebarVisible: boolean;
+}) {
+  const desktopOverlay =
+    input.chromeEnabled &&
+    !input.isCompactLayout &&
+    !input.isFocusModeEnabled &&
+    !input.desktopSidebarVisible;
+  const usesOverlay = input.isCompactLayout || desktopOverlay;
+  return {
+    desktopOverlay,
+    visible: input.chromeEnabled && (usesOverlay || input.desktopSidebarVisible),
+    openGesturesEnabled: input.chromeEnabled && usesOverlay,
+  };
+}
+
 export function resolveDesktopAppChromeLayout(input: {
   desktopSidebarRendered: boolean;
   hasTopLeftWindowControls: boolean;

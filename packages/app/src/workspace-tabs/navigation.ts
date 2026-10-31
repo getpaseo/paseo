@@ -10,10 +10,11 @@ export function revealWorkspaceTab(workspaceKey: string, tabId: string | null): 
   if (!destination) return null;
   if (destination.kind === "sheet") return tabId;
   store.focusTab(workspaceKey, tabId);
-  if (store.layoutMode === "compact") {
-    const panels = usePanelStore.getState();
-    if (destination.host === "explorer") panels.showMobileFileExplorer();
-    else panels.showMobileAgent();
+  const panels = usePanelStore.getState();
+  if (store.layoutMode === "compact" && destination.host === "explorer") {
+    panels.showMobileFileExplorer();
+  } else {
+    panels.showMobileAgent();
   }
   return tabId;
 }

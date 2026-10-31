@@ -5,6 +5,7 @@ import {
   resolveDesktopAppContentMinimum,
   resolveDesktopSidebarVisibility,
   resolveDesktopSidebarWidth,
+  resolveSidebarPresentation,
 } from "@/components/desktop-sidebar-layout";
 
 describe("desktop sidebar layout", () => {
@@ -18,6 +19,47 @@ describe("desktop sidebar layout", () => {
         canShare: true,
       }),
     ).toBe(false);
+  });
+
+  it("offers an overlay only after wide navigation yields its dock", () => {
+    const input = {
+      chromeEnabled: true,
+      isCompactLayout: false,
+      isFocusModeEnabled: false,
+    };
+    expect(resolveSidebarPresentation({ ...input, desktopSidebarVisible: true })).toEqual({
+      desktopOverlay: false,
+      visible: true,
+      openGesturesEnabled: false,
+    });
+    expect(resolveSidebarPresentation({ ...input, desktopSidebarVisible: false })).toEqual({
+      desktopOverlay: true,
+      visible: true,
+      openGesturesEnabled: true,
+    });
+  });
+
+  it("does not reveal navigation over a focused workspace or suppressed chrome", () => {
+    const input = {
+      chromeEnabled: true,
+      isCompactLayout: false,
+      isFocusModeEnabled: false,
+      desktopSidebarVisible: false,
+    };
+    const hidden = { desktopOverlay: false, visible: false, openGesturesEnabled: false };
+    expect(resolveSidebarPresentation({ ...input, isFocusModeEnabled: true })).toEqual(hidden);
+    expect(resolveSidebarPresentation({ ...input, chromeEnabled: false })).toEqual(hidden);
+  });
+
+  it("keeps phone navigation available independently of saved wide focus mode", () => {
+    expect(
+      resolveSidebarPresentation({
+        chromeEnabled: true,
+        isCompactLayout: true,
+        isFocusModeEnabled: true,
+        desktopSidebarVisible: false,
+      }),
+    ).toEqual({ desktopOverlay: false, visible: true, openGesturesEnabled: true });
   });
 
   it("keeps the sidebar toggle window-owned beside left window controls", () => {
