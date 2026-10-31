@@ -22,7 +22,7 @@ export function useWorkspaceTabLayout(
 ): UseWorkspaceTabLayoutResult {
   const { width: viewportWidth } = useWindowDimensions();
   const resolvedViewportWidth =
-    typeof input.viewportWidthOverride === "number" && input.viewportWidthOverride > 0
+    typeof input.viewportWidthOverride === "number" && input.viewportWidthOverride >= 0
       ? input.viewportWidthOverride
       : viewportWidth;
 

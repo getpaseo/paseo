@@ -13,6 +13,32 @@ export function resolveActiveSendBehavior(
   return sendBehavior === "queue" && hasPendingPermission ? "interrupt" : sendBehavior;
 }
 
+export function resolveComposerToolbarControlWidth(input: {
+  surfaceWidth: number;
+  surfaceHorizontalInset: number;
+  toolbarHorizontalMargin: number;
+  leadingWidth: number;
+  trailingWidths: readonly number[];
+  trailingGap: number;
+}): number {
+  let trailingWidth = 0;
+  let trailingCount = 0;
+  for (const width of input.trailingWidths) {
+    if (width <= 0) continue;
+    trailingWidth += width;
+    trailingCount += 1;
+  }
+  return Math.max(
+    0,
+    input.surfaceWidth -
+      input.surfaceHorizontalInset -
+      input.toolbarHorizontalMargin -
+      input.leadingWidth -
+      trailingWidth -
+      Math.max(0, trailingCount - 1) * input.trailingGap,
+  );
+}
+
 interface ComposerSurfaceState {
   opacity: 0 | 1;
   pointerEvents: "auto" | "none";

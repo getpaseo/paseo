@@ -1,6 +1,7 @@
 import { useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { CompactHeader } from "@/components/headers/compact-header";
+import { supportsModernWindowLayout } from "@/constants/modern-window-layout";
 import {
   EXPLORER_TOGGLE_KEYS,
   WorkspaceExplorerToggle,
@@ -20,6 +21,7 @@ interface CompactWorkspaceHeaderProps {
   explorerToggleAccessibilityState: { expanded: boolean };
   /** Tab switcher and workspace menu, before the explorer toggle. */
   children: ReactNode;
+  safeAreaManaged?: boolean;
 }
 
 /** The compact header with the workspace's project row and controls. */
@@ -33,6 +35,7 @@ export function CompactWorkspaceHeader({
   explorerToggleAccessibilityState,
   children,
   serverId,
+  safeAreaManaged,
 }: CompactWorkspaceHeaderProps) {
   const { t } = useTranslation();
   const projectRow = useMemo(
@@ -62,6 +65,7 @@ export function CompactWorkspaceHeader({
   return (
     <CompactHeader
       navigation="menu"
+      safeAreaManaged={supportsModernWindowLayout && safeAreaManaged}
       title={title}
       titleTestID="workspace-header-title"
       subtitle={projectRow}

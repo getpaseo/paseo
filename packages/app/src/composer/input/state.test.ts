@@ -6,6 +6,7 @@ import {
   resolveActiveSendBehavior,
   resolveComposerSurfacePresentation,
   resolveComposerSurfaceText,
+  resolveComposerToolbarControlWidth,
   resolveGlyphRailOffset,
   resolveMessageInputEnterAction,
   resolveRetainedSelection,
@@ -59,6 +60,56 @@ describe("composer surface presentation", () => {
       input: { opacity: 0, pointerEvents: "none" },
       overlay: { opacity: 1, pointerEvents: "auto" },
     });
+  });
+});
+
+describe("composer toolbar allocation", () => {
+  const geometry = {
+    surfaceHorizontalInset: 34,
+    toolbarHorizontalMargin: -12,
+    leadingWidth: 28,
+    trailingGap: 4,
+  };
+
+  it("reserves only visible trailing controls and their actual gaps", () => {
+    expect(
+      resolveComposerToolbarControlWidth({
+        ...geometry,
+        surfaceWidth: 600,
+        trailingWidths: [28, 28, 28, 0],
+      }),
+    ).toBe(458);
+    expect(
+      resolveComposerToolbarControlWidth({
+        ...geometry,
+        surfaceWidth: 600,
+        trailingWidths: [28, 28, 0, 32],
+      }),
+    ).toBe(454);
+    expect(
+      resolveComposerToolbarControlWidth({
+        ...geometry,
+        surfaceWidth: 600,
+        trailingWidths: [0, 28, 0, 0],
+      }),
+    ).toBe(522);
+  });
+
+  it("does not invent a gap for an empty trailing rail or allocate negative space", () => {
+    expect(
+      resolveComposerToolbarControlWidth({
+        ...geometry,
+        surfaceWidth: 600,
+        trailingWidths: [0, 0, 0, 0],
+      }),
+    ).toBe(550);
+    expect(
+      resolveComposerToolbarControlWidth({
+        ...geometry,
+        surfaceWidth: 100,
+        trailingWidths: [28, 28, 28, 32],
+      }),
+    ).toBe(0);
   });
 });
 

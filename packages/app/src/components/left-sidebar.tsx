@@ -8,21 +8,49 @@ import {
   type LucideIcon,
 } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import {
   Pressable,
   StyleSheet as RNStyleSheet,
+  type LayoutChangeEvent,
   Text,
   useWindowDimensions,
   View,
 } from "react-native";
 import { Gesture } from "react-native-gesture-handler";
+import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { SidebarCloseButton } from "@/components/headers/sidebar-close-button";
+import { TopBarSafeArea } from "@/components/headers/top-bar-safe-area";
+import {
+  resolveSidebarFooterLayout,
+  resolveSidebarFooterBarLayout,
+  resolveSidebarFooterKeyboardSpacing,
+  SIDEBAR_FOOTER_GROUP_GAP,
+  SIDEBAR_FOOTER_MIN_BUTTON_WIDTH,
+  SIDEBAR_FOOTER_ROW_PADDING,
+} from "@/components/sidebar-footer-layout";
+import { ContentBandGeometryProbe } from "@/components/headers/content-band-geometry";
+import {
+  resolveContentBandPlacement,
+  type ContentBandGeometry,
+  type ContentBandInsets,
+  type ContentBandRect,
+} from "@/components/headers/content-band-geometry.shared";
+import { COMPACT_LARGE_ICON_BUTTON_SIZE } from "@/components/ui/icon-button-chrome";
 import { resolveDesktopSidebarWidth } from "@/components/desktop-sidebar-layout";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
@@ -40,6 +68,14 @@ import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-heade
 import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { HEADER_INNER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
+import { supportsModernWindowLayout } from "@/constants/modern-window-layout";
+import {
+  BottomBarGeometryProbe,
+  type BottomBarGeometry,
+} from "@/components/headers/bottom-bar-geometry";
+import { MIN_SIDEBAR_WIDTH } from "@/stores/panel-store/state";
+import { useKeyboardShift } from "@/keyboard/shift";
+import { DesktopSidebarDivisionContext } from "@/contexts/app-content-width-context";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useImportSession } from "@/hooks/use-import-session";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
@@ -48,6 +84,7 @@ import {
   type SidebarWorkspaceEntry,
 } from "@/hooks/use-sidebar-workspaces-list";
 import { density } from "@/styles/density";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { useSidebarModel } from "@/components/sidebar/sidebar-model";
 import type { PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 import { RetainedPanelActivity } from "@/components/retained-panel";
@@ -287,6 +324,7 @@ function FooterIconButton({
   icon,
   iconSizeAdjustment = 0,
   shortcutKeys,
+  buttonWidth,
 }: {
   onPress: () => void;
   testID: string;
@@ -296,13 +334,18 @@ function FooterIconButton({
   iconSizeAdjustment?: number;
   shortcutKeys?: ReturnType<typeof useShortcutKeys>;
   buttonRef?: RefObject<View | null>;
+  buttonWidth?: number;
 }) {
   return (
     <Tooltip delayDuration={300}>
       <TooltipTrigger asChild>
         <Pressable
           ref={buttonRef}
-          style={styles.footerIconButton}
+          style={
+            buttonWidth === undefined
+              ? styles.footerIconButton
+              : [styles.footerIconButton, inlineUnistylesStyle({ width: buttonWidth })]
+          }
           testID={testID}
           nativeID={testID}
           collapsable={false}
@@ -335,10 +378,12 @@ function SidebarHostPicker({
   label,
   onAddHost,
   onOpenHostSettings,
+  buttonWidth,
 }: {
   label: string;
   onAddHost: () => void;
   onOpenHostSettings: (serverId: string) => void;
+  buttonWidth?: number;
 }) {
   const hosts = useHosts();
   const triggerRef = useRef<View | null>(null);
@@ -372,6 +417,7 @@ function SidebarHostPicker({
       hostOptionTestID={sidebarHostOptionTestID}
     >
       <FooterIconButton
+        buttonWidth={buttonWidth}
         buttonRef={triggerRef}
         onPress={handleOpen}
         testID="sidebar-hosts-trigger"
@@ -399,14 +445,7 @@ function IconTooltipContent({
   );
 }
 
-function SidebarFooter({
-  handleOpenProject,
-  handleSettings,
-  labels,
-  handleAddHost,
-  handleOpenHostSettings,
-  onBeforeNavigate,
-}: {
+interface SidebarFooterProps {
   handleOpenProject: () => void;
   handleSettings: () => void;
   labels: {
@@ -419,48 +458,177 @@ function SidebarFooter({
   handleAddHost: () => void;
   handleOpenHostSettings: (serverId: string) => void;
   onBeforeNavigate?: () => void;
-}) {
-  const newAgentKeys = useShortcutKeys("new-agent");
-  const settingsKeys = useShortcutKeys("toggle-settings");
+  onMinimumWidthChange?: (width: number) => void;
+  onBarHeightChange?: (height: number) => void;
+  edgeInsets?: ContentBandInsets;
+  requiredMinimumWidth?: number;
+  available?: boolean;
+}
 
-  // One line of icons: Add project, Usage, Hosts, then Help and Settings at the end.
+function SidebarFooter({ onBeforeNavigate, ...props }: SidebarFooterProps) {
   return (
     <UsageSidebarRoot>
       <View style={styles.footerContainer} testID="sidebar-footer">
         <SidebarFooterRows onBeforeNavigate={onBeforeNavigate} />
-        <View style={styles.sidebarFooter} testID="sidebar-footer-bottom-line">
-          <FooterIconButton
-            onPress={handleOpenProject}
-            testID="sidebar-add-project"
-            label={labels.addProject}
-            icon={FolderPlus}
-            shortcutKeys={newAgentKeys}
-          />
-          <SidebarUsageIcon label={labels.usage} />
-          <SidebarHostPicker
-            label={labels.hosts}
-            onAddHost={handleAddHost}
-            onOpenHostSettings={handleOpenHostSettings}
-          />
-          <View style={styles.footerSpacer} />
-          <SidebarHelpMenu />
-          <FooterIconButton
-            onPress={handleSettings}
-            testID="sidebar-settings"
-            label={labels.settings}
-            icon={Settings}
-            shortcutKeys={settingsKeys}
-          />
-        </View>
+        {supportsModernWindowLayout ? (
+          <ModernSidebarFooterLine {...props} />
+        ) : (
+          <View style={styles.sidebarFooter} testID="sidebar-footer-bottom-line">
+            <SidebarFooterActions {...props} />
+          </View>
+        )}
       </View>
     </UsageSidebarRoot>
   );
 }
 
-function SidebarUsageIcon({ label }: { label: string }) {
+function SidebarFooterActions({
+  handleOpenProject,
+  handleSettings,
+  labels,
+  handleAddHost,
+  handleOpenHostSettings,
+  buttonWidth,
+}: Omit<
+  SidebarFooterProps,
+  | "onBeforeNavigate"
+  | "onMinimumWidthChange"
+  | "onBarHeightChange"
+  | "edgeInsets"
+  | "requiredMinimumWidth"
+  | "available"
+> & {
+  buttonWidth?: number;
+}) {
+  const newAgentKeys = useShortcutKeys("new-agent");
+  const settingsKeys = useShortcutKeys("toggle-settings");
+  const leadingButtons = (
+    <>
+      <FooterIconButton
+        buttonWidth={buttonWidth}
+        onPress={handleOpenProject}
+        testID="sidebar-add-project"
+        label={labels.addProject}
+        icon={FolderPlus}
+        shortcutKeys={newAgentKeys}
+      />
+      <SidebarUsageIcon label={labels.usage} buttonWidth={buttonWidth} />
+      <SidebarHostPicker
+        buttonWidth={buttonWidth}
+        label={labels.hosts}
+        onAddHost={handleAddHost}
+        onOpenHostSettings={handleOpenHostSettings}
+      />
+    </>
+  );
+  const trailingButtons = (
+    <>
+      <SidebarHelpMenu buttonWidth={buttonWidth} />
+      <FooterIconButton
+        buttonWidth={buttonWidth}
+        onPress={handleSettings}
+        testID="sidebar-settings"
+        label={labels.settings}
+        icon={Settings}
+        shortcutKeys={settingsKeys}
+      />
+    </>
+  );
+
+  return (
+    <>
+      {supportsModernWindowLayout ? (
+        <View style={styles.footerGroup} testID="sidebar-footer-leading-group" collapsable={false}>
+          {leadingButtons}
+        </View>
+      ) : (
+        leadingButtons
+      )}
+      <View
+        style={
+          supportsModernWindowLayout
+            ? [styles.footerSpacer, styles.modernFooterSpacer]
+            : styles.footerSpacer
+        }
+        testID={supportsModernWindowLayout ? "sidebar-footer-group-gap" : undefined}
+      />
+      {supportsModernWindowLayout ? (
+        <View style={styles.footerGroup} testID="sidebar-footer-trailing-group" collapsable={false}>
+          {trailingButtons}
+        </View>
+      ) : (
+        trailingButtons
+      )}
+    </>
+  );
+}
+
+function ModernSidebarFooterLine({
+  onMinimumWidthChange,
+  onBarHeightChange,
+  edgeInsets,
+  requiredMinimumWidth,
+  available = true,
+  ...props
+}: Omit<SidebarFooterProps, "onBeforeNavigate">) {
+  const [rowSize, setRowSize] = useState(() => ({ width: 0, height: 0 }));
+  const handleRowLayout = useCallback(
+    ({ nativeEvent }: LayoutChangeEvent) => {
+      const { width, height } = nativeEvent.layout;
+      if (width <= 0 || height <= 0) return;
+      onBarHeightChange?.(height);
+      setRowSize((previous) =>
+        previous.width === width && previous.height === height ? previous : { width, height },
+      );
+    },
+    [onBarHeightChange],
+  );
+  const layout = useMemo(
+    () =>
+      resolveSidebarFooterLayout({
+        width: rowSize.width,
+        buttonSize: Math.max(
+          SIDEBAR_FOOTER_MIN_BUTTON_WIDTH,
+          rowSize.height - 2 * SIDEBAR_FOOTER_ROW_PADDING,
+        ),
+        edgeInsets: edgeInsets ?? { left: 0, right: 0 },
+      }),
+    [rowSize.width, rowSize.height, edgeInsets],
+  );
+  useEffect(() => {
+    onMinimumWidthChange?.(Math.max(layout.minimumWidth, requiredMinimumWidth ?? 0));
+  }, [layout.minimumWidth, requiredMinimumWidth, onMinimumWidthChange]);
+
+  return (
+    <View
+      style={[
+        styles.sidebarFooter,
+        styles.modernSidebarFooter,
+        !available && inlineUnistylesStyle({ opacity: 0 }),
+        inlineUnistylesStyle({
+          paddingLeft: layout.paddingLeft,
+          paddingRight: layout.paddingRight,
+        }),
+      ]}
+      testID="sidebar-footer-bottom-line"
+      onLayout={handleRowLayout}
+      collapsable={false}
+      pointerEvents={available ? "auto" : "none"}
+      accessibilityElementsHidden={!available}
+      importantForAccessibility={available ? "auto" : "no-hide-descendants"}
+    >
+      <RetainedPanelActivity active={available}>
+        <SidebarFooterActions {...props} buttonWidth={layout.buttonWidth} />
+      </RetainedPanelActivity>
+    </View>
+  );
+}
+
+function SidebarUsageIcon({ label, buttonWidth }: { label: string; buttonWidth?: number }) {
   const openUsage = useOpenSidebarUsage();
   return (
     <FooterIconButton
+      buttonWidth={buttonWidth}
       onPress={openUsage}
       testID="sidebar-usage-icon"
       label={label}
@@ -503,6 +671,92 @@ function SidebarFooterRows({ onBeforeNavigate }: { onBeforeNavigate?: () => void
   );
 }
 
+function useSidebarFooterBar() {
+  const [extent, setExtent] = useState(0);
+  const [geometry, setGeometry] = useState<BottomBarGeometry | null>(null);
+  const insets = useSafeAreaInsets();
+  const layout = useMemo(
+    () => resolveSidebarFooterBarLayout({ geometry, safeAreaBottom: insets.bottom }),
+    [geometry, insets.bottom],
+  );
+  const probe =
+    supportsModernWindowLayout && extent > 0 ? (
+      <BottomBarGeometryProbe adaptHorizontalEdges extent={extent} onGeometryChange={setGeometry} />
+    ) : null;
+  return {
+    ...layout,
+    probe,
+    onBarHeightChange: supportsModernWindowLayout ? setExtent : undefined,
+  };
+}
+
+function useSidebarFirstRowGeometry(topInset: number, gutter: number) {
+  const [frame, setFrame] = useState<ContentBandRect | null>(null);
+  const [geometry, setGeometry] = useState<ContentBandGeometry | null>(null);
+  const placement = useMemo(
+    () =>
+      geometry
+        ? resolveContentBandPlacement({
+            width: geometry.bounds.width,
+            height: geometry.bounds.height,
+            placementBounds: geometry.placementBounds,
+            margins: geometry.margins,
+            exclusions: geometry.exclusions,
+            minimumInsets: { left: gutter, right: gutter },
+            minimumContentWidth: 2 * COMPACT_LARGE_ICON_BUTTON_SIZE,
+            direction: "down",
+          })
+        : null,
+    [geometry, gutter],
+  );
+  const handleLayout = useCallback(({ nativeEvent }: LayoutChangeEvent) => {
+    const next = nativeEvent.layout;
+    if (next.width <= 0 || next.height <= 0) return;
+    setFrame((previous) =>
+      previous?.x === next.x &&
+      previous.y === next.y &&
+      previous.width === next.width &&
+      previous.height === next.height
+        ? previous
+        : next,
+    );
+  }, []);
+  const style = useMemo(() => {
+    if (placement?.kind !== "placed") return undefined;
+    const required = placement.insets;
+    // The navigation item's container and close button already own their gutters.
+    return inlineUnistylesStyle({
+      paddingLeft: Math.max(0, required.left - gutter),
+      paddingRight: Math.max(0, required.right - gutter),
+      transform: [{ translateY: placement.offsetY }],
+      marginBottom: placement.offsetY,
+    });
+  }, [placement, gutter]);
+  const probeStyle = useMemo(
+    () =>
+      frame
+        ? {
+            position: "absolute" as const,
+            left: frame.x,
+            top: topInset + frame.y,
+            width: frame.width,
+            height: frame.height,
+          }
+        : undefined,
+    [frame, topInset],
+  );
+  const probe =
+    supportsModernWindowLayout && frame ? (
+      <ContentBandGeometryProbe style={probeStyle} onGeometryChange={setGeometry} />
+    ) : null;
+  return {
+    probe,
+    style,
+    available: placement?.kind !== "unavailable",
+    onLayout: supportsModernWindowLayout ? handleLayout : undefined,
+  };
+}
+
 function MobileSidebar({
   active,
   theme,
@@ -533,6 +787,8 @@ function MobileSidebar({
 }: MobileSidebarProps) {
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const { gesture: closeGesture, gestureRef: closeGestureRef } = useCloseAgentListGesture();
+  const footerBar = useSidebarFooterBar();
+  const firstRow = useSidebarFirstRowGeometry(insetsTop, theme.spacing[2]);
 
   const handleWorkspacePress = useCallback(() => {
     closeSidebar();
@@ -554,7 +810,7 @@ function MobileSidebar({
   const mobileSidebarInsetStyle = useMemo(
     () => ({
       paddingTop: insetsTop,
-      paddingBottom: insetsBottom,
+      paddingBottom: supportsModernWindowLayout ? 0 : insetsBottom,
       backgroundColor: theme.colors.surfaceSidebar,
     }),
     [insetsTop, insetsBottom, theme.colors.surfaceSidebar],
@@ -565,13 +821,31 @@ function MobileSidebar({
       panel="agent-list"
       closeGesture={closeGesture}
       panelStyle={mobileSidebarInsetStyle}
+      probe={
+        supportsModernWindowLayout ? (
+          <>
+            {footerBar.probe}
+            {firstRow.probe}
+          </>
+        ) : undefined
+      }
     >
-      <View style={styles.sidebarContent} pointerEvents="auto">
+      <View
+        style={[
+          styles.sidebarContent,
+          supportsModernWindowLayout &&
+            inlineUnistylesStyle({ paddingBottom: footerBar.bottomPadding }),
+        ]}
+        pointerEvents="auto"
+      >
         <WindowChromeSafeArea placement="below" />
         <SidebarNavRows
           style={styles.sidebarHeaderGroup}
           onBeforeNavigate={closeSidebar}
           firstRowTrailing={closeButton}
+          firstRowStyle={firstRow.style}
+          onFirstRowLayout={firstRow.onLayout}
+          firstRowAvailable={firstRow.available}
         />
 
         {isInitialLoad && !hasActiveHostFilter ? (
@@ -601,6 +875,9 @@ function MobileSidebar({
         )}
 
         <SidebarFooter
+          edgeInsets={footerBar.edgeInsets}
+          onBarHeightChange={footerBar.onBarHeightChange}
+          available={footerBar.available}
           handleOpenProject={handleOpenProject}
           handleSettings={handleSettings}
           labels={labels}
@@ -640,30 +917,56 @@ function DesktopSidebar({
   active,
 }: DesktopSidebarProps) {
   const ownsTopLeft = useOwnsWindowChromeCorner("top-left");
+  const divisionLayout = useContext(DesktopSidebarDivisionContext);
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
+  const sidebarMinimumWidth = usePanelStore((state) =>
+    supportsModernWindowLayout ? state.sidebarMinimumWidth : MIN_SIDEBAR_WIDTH,
+  );
+  const setSidebarMinimumWidth = usePanelStore((state) => state.setSidebarMinimumWidth);
+  const handleFooterMinimumWidthChange = useCallback(
+    (width: number) => setSidebarMinimumWidth(Math.ceil(width + theme.borderWidth[1])),
+    [setSidebarMinimumWidth, theme.borderWidth],
+  );
+  const footerBar = useSidebarFooterBar();
+  const { layoutShift: keyboardLayoutShift } = useKeyboardShift();
+  const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
+  const footerKeyboardStyle = useAnimatedStyle(
+    () => ({
+      height: resolveSidebarFooterKeyboardSpacing({
+        keyboardHeight: keyboardHeight.value,
+        layoutShift: keyboardLayoutShift.value,
+        restingBottom: footerBar.bottomPadding,
+      }),
+      flexShrink: 0,
+    }),
+    [footerBar.bottomPadding],
+  );
   const { width: windowWidth } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const viewportWidth = windowWidth - insets.left - insets.right;
   const visibleSidebarWidth = resolveDesktopSidebarWidth({
     requestedWidth: sidebarWidth,
     viewportWidth,
+    minimumWidth: sidebarMinimumWidth,
   });
 
-  const startWidthRef = useRef(visibleSidebarWidth);
+  const startWidth = useSharedValue(visibleSidebarWidth);
   const resizeWidth = useSharedValue(visibleSidebarWidth);
   const [resizePressed, setResizePressed] = useState(false);
   const showResizeGrip = useCallback(() => setResizePressed(true), []);
   const hideResizeGrip = useCallback(() => setResizePressed(false), []);
 
   useEffect(() => {
+    // A fold can interrupt a drag; do not restore its uncommitted width on unfold.
     resizeWidth.value = visibleSidebarWidth;
-  }, [resizeWidth, visibleSidebarWidth]);
+  }, [divisionLayout, resizeWidth, visibleSidebarWidth]);
 
   const resizeGesture = useMemo(
     () =>
       Gesture.Pan()
+        .enabled(divisionLayout === null)
         .hitSlop({ left: 8, right: 8, top: 0, bottom: 0 })
         .onBegin(() => {
           scheduleOnRN(showResizeGrip);
@@ -674,55 +977,119 @@ function DesktopSidebar({
         .activeOffsetX([-SIDEBAR_RESIZE_ACTIVATION_OFFSET, SIDEBAR_RESIZE_ACTIVATION_OFFSET])
         .failOffsetY([-SIDEBAR_RESIZE_FAIL_OFFSET, SIDEBAR_RESIZE_FAIL_OFFSET])
         .onStart((event) => {
-          startWidthRef.current = visibleSidebarWidth - event.translationX;
+          startWidth.value = visibleSidebarWidth - event.translationX;
           resizeWidth.value = visibleSidebarWidth;
         })
         .onUpdate((event) => {
           // Dragging right (positive translationX) increases width
-          const newWidth = startWidthRef.current + event.translationX;
+          const newWidth = startWidth.value + event.translationX;
           resizeWidth.value = resolveDesktopSidebarWidth({
             requestedWidth: newWidth,
             viewportWidth,
+            minimumWidth: sidebarMinimumWidth,
           });
         })
-        .onEnd(() => {
-          runOnJS(setSidebarWidth)(resizeWidth.value);
+        .onEnd((_event, success) => {
+          if (success) runOnJS(setSidebarWidth)(resizeWidth.value);
         })
         .onFinalize(() => {
           scheduleOnRN(hideResizeGrip);
         }),
     [
+      divisionLayout,
       hideResizeGrip,
       resizeWidth,
+      startWidth,
+      sidebarMinimumWidth,
       setSidebarWidth,
       showResizeGrip,
       viewportWidth,
       visibleSidebarWidth,
     ],
   );
+  const columnWidth = divisionLayout?.sidebarWidth ?? visibleSidebarWidth;
 
-  const resizeAnimatedStyle = useAnimatedStyle(() => ({
-    width: resizeWidth.value,
-  }));
+  // Keep one UI-thread width writer; a React width can be overwritten by the
+  // previously attached drag style when fold ownership changes.
+  const resizeAnimatedStyle = useAnimatedStyle(
+    () => ({
+      width: divisionLayout ? divisionLayout.sidebarWidth : resizeWidth.value,
+    }),
+    [divisionLayout],
+  );
 
   const desktopSidebarStyle = useMemo(
     () => [
       staticStyles.desktopSidebar,
-      !active && staticStyles.desktopSidebarHidden,
+      !active &&
+        (supportsModernWindowLayout
+          ? staticStyles.desktopSidebarRetainedHidden
+          : staticStyles.desktopSidebarHidden),
       resizeAnimatedStyle,
+      { marginRight: divisionLayout && active ? divisionLayout.gap : 0 },
+      // Match the shell allocation immediately; an actual resize gesture
+      // releases these bounds for the UI-thread drag width.
+      supportsModernWindowLayout &&
+        (divisionLayout !== null || !resizePressed) && {
+          minWidth: columnWidth,
+          maxWidth: columnWidth,
+        },
     ],
-    [active, resizeAnimatedStyle],
+    [active, columnWidth, divisionLayout, resizeAnimatedStyle, resizePressed],
   );
   const desktopSidebarBorderStyle = useMemo(
     () => [
       styles.desktopSidebarBorder,
-      { flex: 1, paddingTop: insetsTop, paddingBottom: insets.bottom },
+      supportsModernWindowLayout
+        ? { flex: 1 }
+        : { flex: 1, paddingTop: insetsTop, paddingBottom: insets.bottom },
+      supportsModernWindowLayout && {
+        paddingBottom: footerBar.bottomPadding,
+      },
     ],
-    [insetsTop, insets.bottom],
+    [insetsTop, insets.bottom, footerBar.bottomPadding],
   );
   const sidebarHeaderGroupStyle = useMemo(
-    () => [styles.sidebarHeaderGroup, ownsTopLeft && styles.sidebarHeaderGroupBelowChrome],
+    () => [
+      styles.sidebarHeaderGroup,
+      (supportsModernWindowLayout || ownsTopLeft) && styles.sidebarHeaderGroupBelowChrome,
+    ],
     [ownsTopLeft],
+  );
+  const [navigationHeight, setNavigationHeight] = useState(HEADER_INNER_HEIGHT);
+  const handleNavigationLayout = useCallback((event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+    if (width > 0 && height > 0) {
+      setNavigationHeight(height);
+    }
+  }, []);
+  const sidebarNavigation = (
+    <View
+      style={styles.sidebarDragArea}
+      onLayout={supportsModernWindowLayout ? handleNavigationLayout : undefined}
+    >
+      {ownsTopLeft || DEV_BUILD_LABEL ? (
+        <View style={styles.desktopChromeRow}>
+          <TitlebarDragRegion />
+          {DEV_BUILD_LABEL ? (
+            <View
+              pointerEvents="none"
+              style={styles.devBuildBadge}
+              testID="dev-build-label"
+              accessibilityLabel={`Development build: ${DEV_BUILD_LABEL}`}
+            >
+              <GitBranch size={12} color={theme.colors.accentForeground} />
+              <Text numberOfLines={1} ellipsizeMode="tail" style={styles.devBuildBadgeText}>
+                {DEV_BUILD_LABEL}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+      ) : (
+        <TitlebarDragRegion />
+      )}
+      <SidebarNavRows style={sidebarHeaderGroupStyle} />
+    </View>
   );
   return (
     <Animated.View
@@ -732,29 +1099,19 @@ function DesktopSidebar({
       style={desktopSidebarStyle}
     >
       <View style={desktopSidebarBorderStyle}>
-        <View style={styles.sidebarDragArea}>
-          {ownsTopLeft || DEV_BUILD_LABEL ? (
-            <View style={styles.desktopChromeRow}>
-              <TitlebarDragRegion />
-              {DEV_BUILD_LABEL ? (
-                <View
-                  pointerEvents="none"
-                  style={styles.devBuildBadge}
-                  testID="dev-build-label"
-                  accessibilityLabel={`Development build: ${DEV_BUILD_LABEL}`}
-                >
-                  <GitBranch size={12} color={theme.colors.accentForeground} />
-                  <Text numberOfLines={1} ellipsizeMode="tail" style={styles.devBuildBadgeText}>
-                    {DEV_BUILD_LABEL}
-                  </Text>
-                </View>
-              ) : null}
-            </View>
-          ) : (
-            <TitlebarDragRegion />
-          )}
-          <SidebarNavRows style={sidebarHeaderGroupStyle} />
-        </View>
+        {footerBar.probe}
+        {supportsModernWindowLayout ? (
+          <TopBarSafeArea
+            contentHeight={navigationHeight}
+            primaryRowHeight={HEADER_INNER_HEIGHT}
+            horizontalContentPadding={theme.spacing[2]}
+            navigationGroup
+          >
+            {sidebarNavigation}
+          </TopBarSafeArea>
+        ) : (
+          sidebarNavigation
+        )}
 
         {isInitialLoad && !hasActiveHostFilter ? (
           <SidebarAgentListSkeleton />
@@ -782,19 +1139,29 @@ function DesktopSidebar({
         <SidebarCalloutSlot />
 
         <SidebarFooter
+          edgeInsets={footerBar.edgeInsets}
+          requiredMinimumWidth={footerBar.requiredMinimumWidth}
+          onMinimumWidthChange={
+            supportsModernWindowLayout ? handleFooterMinimumWidthChange : undefined
+          }
+          onBarHeightChange={footerBar.onBarHeightChange}
           handleOpenProject={handleOpenProject}
           handleSettings={handleSettings}
+          available={footerBar.available}
           labels={labels}
           handleAddHost={handleAddHost}
           handleOpenHostSettings={handleOpenHostSettings}
         />
+        {supportsModernWindowLayout ? <Animated.View style={footerKeyboardStyle} /> : null}
 
-        <SidebarResizeHandle
-          edge="right"
-          gesture={resizeGesture}
-          pressed={resizePressed}
-          testID="left-sidebar-resize-handle"
-        />
+        {divisionLayout === null ? (
+          <SidebarResizeHandle
+            edge="right"
+            gesture={resizeGesture}
+            pressed={resizePressed}
+            testID="left-sidebar-resize-handle"
+          />
+        ) : null}
       </View>
     </Animated.View>
   );
@@ -830,6 +1197,15 @@ const staticStyles = RNStyleSheet.create({
   },
   desktopSidebarHidden: {
     display: "none",
+  },
+  // Native bar guides must resolve corners before the retained sidebar is opened.
+  // Keep its real width and window position, but remove it from the content row.
+  desktopSidebarRetainedHidden: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    left: 0,
+    opacity: 0,
   },
 });
 
@@ -897,9 +1273,18 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[1.5],
   },
-  // Pushes Help and Settings to the end of the icon line.
+  modernSidebarFooter: {
+    position: "relative",
+  },
+  footerGroup: {
+    flexDirection: "row",
+    flexShrink: 0,
+  },
   footerSpacer: {
     flex: 1,
+  },
+  modernFooterSpacer: {
+    minWidth: SIDEBAR_FOOTER_GROUP_GAP,
   },
   // Usage and plugin rows sit above the footer's icon line, spaced like the header nav rows.
   footerRows: {

@@ -6,6 +6,84 @@ import {
   resolveComposerCapacity,
   updateComposerCapacity,
 } from "./capacity";
+import { resolveComposerBottomPadding } from "./bar-layout";
+
+describe("composer bottom placement", () => {
+  const placement = {
+    restingClearance: 24,
+    safeAreaBottom: 34,
+    contentSpacing: 16,
+    keyboardHeight: 264,
+  };
+
+  it("preserves native resting placement without stacking a second gutter", () => {
+    expect(resolveComposerBottomPadding({ ...placement, keyboardProgress: 0 })).toBe(24);
+  });
+
+  it.each([0, 20, 34])(
+    "uses the current local safe inset %s before native geometry arrives",
+    (safeAreaBottom) => {
+      expect(
+        resolveComposerBottomPadding({
+          restingClearance: null,
+          safeAreaBottom,
+          contentSpacing: 16,
+          keyboardHeight: 0,
+          keyboardProgress: 0,
+        }),
+      ).toBe(Math.max(safeAreaBottom, 16));
+    },
+  );
+
+  it("refines the Duo fallback to native clearance without changing the keyboard gap", () => {
+    const initial = { ...placement, restingClearance: null };
+    expect(resolveComposerBottomPadding({ ...initial, keyboardProgress: 0 })).toBe(34);
+    expect(resolveComposerBottomPadding({ ...placement, keyboardProgress: 0 })).toBe(24);
+
+    for (const geometry of [initial, placement]) {
+      const padding = resolveComposerBottomPadding({ ...geometry, keyboardProgress: 1 });
+      const keyboardTop = 669 - 264;
+      const composerBottom = 669 + Math.min(0, -264 + geometry.safeAreaBottom) - padding;
+      expect(keyboardTop - composerBottom).toBe(16);
+    }
+  });
+
+  it("keeps the design content distance above the keyboard when bar and safe insets differ", () => {
+    const padding = resolveComposerBottomPadding({ ...placement, keyboardProgress: 1 });
+    expect(669 + Math.min(0, -264 + 34) - padding).toBe(389);
+  });
+
+  it("keeps a measured zero clearance instead of falling back to the safe inset", () => {
+    expect(
+      resolveComposerBottomPadding({
+        restingClearance: 0,
+        safeAreaBottom: 34,
+        contentSpacing: 16,
+        keyboardHeight: 0,
+        keyboardProgress: 0,
+      }),
+    ).toBe(16);
+  });
+
+  it("moves continuously from the existing resting frame as keyboard motion starts", () => {
+    const padding = resolveComposerBottomPadding({
+      ...placement,
+      keyboardHeight: 2.64,
+      keyboardProgress: 0.01,
+    });
+    expect(669 + Math.min(0, -2.64 + 0.34) - padding).toBeCloseTo(642.44);
+  });
+
+  it("keeps resting clearance during a zero-height rotation keyboard report", () => {
+    const padding = resolveComposerBottomPadding({
+      ...placement,
+      keyboardHeight: 0,
+      keyboardProgress: 1,
+    });
+    expect(padding).toBe(24);
+    expect(669 - padding).toBe(645);
+  });
+});
 
 describe("composer viewport", () => {
   it("caps the complete compact composer at sixty percent of keyboard-reserved space", () => {

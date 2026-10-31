@@ -8,16 +8,20 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   View,
   Text,
+  Platform,
   useWindowDimensions,
   NativeSyntheticEvent,
   TextInputKeyPressEventData,
   TextInputSelectionChangeEventData,
   type LayoutChangeEvent,
+  type ViewStyle,
+  StyleSheet as NativeStyleSheet,
 } from "react-native";
 import {
   useState,
   useRef,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useImperativeHandle,
@@ -62,6 +66,8 @@ import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { isNative, isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
+import { ComposerBarLayoutContext } from "@/composer/dock/internal/bar-layout";
+import { ComposerControlWidthContext } from "@/composer/agent-controls/layout-context";
 import { RenderProfile } from "@/utils/render-profiler";
 import { useComposerHeight } from "./height";
 import { ComposerInputPresentation } from "./presentation";
@@ -89,6 +95,7 @@ import {
   resolveAlternateSendAction,
   resolveComposerSurfacePresentation,
   resolveComposerSurfaceText,
+  resolveComposerToolbarControlWidth,
   resolveMessageInputEnterAction,
   resolveRetainedSelection,
   runAlternateSendAction,
@@ -162,8 +169,12 @@ export interface MessageInputProps {
   leftContent?: React.ReactNode;
   /** Content to render on the right side before the voice button (e.g., context window meter) */
   beforeVoiceContent?: React.ReactNode;
+  /** Actual outer width of the before-voice slot, including any horizontal margins. */
+  beforeVoiceContentWidth?: number;
   /** Auxiliary content to render on the right side after the voice button. */
   rightContent?: React.ReactNode;
+  /** Actual outer width of the auxiliary slot, including any horizontal margins. */
+  rightContentWidth?: number;
   /** Primary action to render when the agent is active and the composer has no sendable content. */
   activeActionContent?: React.ReactNode;
   voiceServerId?: string;
@@ -1126,7 +1137,9 @@ interface ResolvedMessageInputProps {
   disabled: boolean;
   leftContent: React.ReactNode;
   beforeVoiceContent: React.ReactNode;
+  beforeVoiceContentWidth: number | undefined;
   rightContent: React.ReactNode;
+  rightContentWidth: number | undefined;
   activeActionContent: React.ReactNode;
   voiceServerId: string | undefined;
   voiceAgentId: string | undefined;
@@ -1174,7 +1187,9 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     disabled: props.disabled ?? false,
     leftContent: props.leftContent,
     beforeVoiceContent: props.beforeVoiceContent,
+    beforeVoiceContentWidth: props.beforeVoiceContentWidth,
     rightContent: props.rightContent,
+    rightContentWidth: props.rightContentWidth,
     activeActionContent: props.activeActionContent,
     voiceServerId: props.voiceServerId,
     voiceAgentId: props.voiceAgentId,
@@ -1224,6 +1239,22 @@ function shouldShowFullscreenControl(
   return compact && !readOnly && !overlayVisible && renderedLines > 2;
 }
 
+function readHorizontalSpacing(style: ViewStyle, kind: "padding" | "margin"): number | undefined {
+  const left = style[`${kind}Left`] ?? style[`${kind}Horizontal`] ?? style[kind] ?? 0;
+  const right = style[`${kind}Right`] ?? style[`${kind}Horizontal`] ?? style[kind] ?? 0;
+  return typeof left === "number" && typeof right === "number" ? left + right : undefined;
+}
+
+function readSurfaceHorizontalInset(style: ViewStyle): number | undefined {
+  const padding = readHorizontalSpacing(style, "padding");
+  if (padding === undefined) return undefined;
+  return (
+    padding +
+    (style.borderLeftWidth ?? style.borderWidth ?? 0) +
+    (style.borderRightWidth ?? style.borderWidth ?? 0)
+  );
+}
+
 export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
   function MessageInput(props, ref) {
     const {
@@ -1252,7 +1283,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       disabled,
       leftContent,
       beforeVoiceContent,
+      beforeVoiceContentWidth,
       rightContent,
+      rightContentWidth,
       activeActionContent,
       voiceServerId,
       voiceAgentId,
@@ -1276,6 +1309,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const mode = resolveComposerInputMode(inputMode);
     const { t } = useTranslation();
     const isCompact = useIsCompactFormFactor();
+    const surfaceWidth = useContext(ComposerBarLayoutContext)?.surfaceWidth;
     const { height: windowHeight } = useWindowDimensions();
     const editingSession = useComposerEditingSession(inputMode, props.editingSession);
     const isFullscreen = useComposerFullscreen(editingSession);
@@ -1918,7 +1952,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const inputWrapperCombinedStyle = useMemo(
       () => [
         styles.inputWrapper,
-        isCompact && !isFullscreen && styles.inputWrapperCompact,
+        Platform.OS !== "ios" && isCompact && !isFullscreen && styles.inputWrapperCompact,
         readOnly && styles.inputWrapperReadOnly,
         inputWrapperStyle,
         { opacity: surfacePresentation.input.opacity },
@@ -1962,6 +1996,65 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       ],
       [isPresentedSendDisabled, submitLabel],
     );
+    const controlsWidth = useMemo(() => {
+      if (
+        surfaceWidth === undefined ||
+        beforeVoiceContentWidth === undefined ||
+        rightContentWidth === undefined
+      ) {
+        return undefined;
+      }
+      const surface = NativeStyleSheet.flatten(inputWrapperCombinedStyle) as ViewStyle;
+      const row = NativeStyleSheet.flatten(styles.buttonRow) as ViewStyle;
+      const leading = NativeStyleSheet.flatten(styles.leftButtonGroup) as ViewStyle;
+      const trailing = NativeStyleSheet.flatten(styles.rightButtonGroup) as ViewStyle;
+      const attachment = NativeStyleSheet.flatten(styles.attachButton) as ViewStyle;
+      const voiceButton = NativeStyleSheet.flatten(styles.voiceButton) as ViewStyle;
+      const primary = NativeStyleSheet.flatten(
+        primaryActionKind === "send" ? sendButtonCombinedStyle : styles.sendButton,
+      ) as ViewStyle;
+      const primaryWidth =
+        primaryActionKind === "none" || (primaryActionKind === "active" && !activeActionContent)
+          ? 0
+          : primary.width;
+      // A labeled terminal action is intrinsic; it has no agent controls to allocate.
+      if (typeof primaryWidth !== "number") return undefined;
+      const surfaceHorizontalInset = readSurfaceHorizontalInset(surface);
+      const toolbarHorizontalMargin = readHorizontalSpacing(row, "margin");
+      const primaryMargin = readHorizontalSpacing(primary, "margin");
+      if (
+        surfaceHorizontalInset === undefined ||
+        toolbarHorizontalMargin === undefined ||
+        primaryMargin === undefined
+      )
+        return undefined;
+      const primaryOuterWidth = primaryWidth > 0 ? primaryWidth + primaryMargin : 0;
+      return resolveComposerToolbarControlWidth({
+        surfaceWidth,
+        surfaceHorizontalInset,
+        toolbarHorizontalMargin,
+        leadingWidth: mode.showAttachments
+          ? (attachment.width as number) + ((leading.columnGap ?? leading.gap ?? 0) as number)
+          : 0,
+        trailingWidths: [
+          beforeVoiceContentWidth,
+          mode.showVoice ? (voiceButton.width as number) : 0,
+          rightContentWidth,
+          primaryOuterWidth,
+        ],
+        trailingGap: (trailing.columnGap ?? trailing.gap ?? 0) as number,
+      });
+    }, [
+      activeActionContent,
+      beforeVoiceContentWidth,
+      inputWrapperCombinedStyle,
+      mode.showAttachments,
+      mode.showVoice,
+      primaryActionKind,
+      rightContentWidth,
+      sendButtonCombinedStyle,
+      surfaceWidth,
+    ]);
     const overlayContainerStyle = useMemo(
       () => [styles.overlayContainer, { opacity: surfacePresentation.overlay.opacity }],
       [surfacePresentation.overlay.opacity],
@@ -2117,7 +2210,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
               attachmentMenuItems={attachmentMenuItems}
               addAttachmentLabel={t("composer.input.addAttachment")}
             />
-            {leftContent}
+            <ComposerControlWidthContext.Provider value={controlsWidth}>
+              {leftContent}
+            </ComposerControlWidthContext.Provider>
           </View>
 
           {/* Right: voice button, contextual button (realtime/send/cancel) */}
@@ -2149,6 +2244,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         attachmentMenuItems,
         t,
         leftContent,
+        controlsWidth,
         beforeVoiceContent,
         mode.showVoice,
         handleVoicePress,
@@ -2212,7 +2308,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     return (
       <View
         ref={rootRef}
-        style={isFullscreen ? styles.fullscreenContainer : styles.container}
+        style={
+          isFullscreen
+            ? styles.fullscreenContainer
+            : [styles.container, Platform.OS === "ios" && isCompact && styles.inputWrapperCompact]
+        }
         testID="message-input-root"
         onLayout={handleComposerLayout}
       >
@@ -2259,6 +2359,9 @@ const styles = StyleSheet.create((theme: Theme) => ({
   inputWrapper: {
     flexShrink: 1,
     flexDirection: "column",
+    // Native clipping selects RN's animatable CALayer border/background path;
+    // its separate CSS-style layers jump to target bounds during rotation.
+    ...(Platform.OS === "ios" ? { overflow: "hidden" } : {}),
     gap: theme.spacing[3],
     backgroundColor: theme.colors.surface1,
     borderWidth: theme.borderWidth[1],

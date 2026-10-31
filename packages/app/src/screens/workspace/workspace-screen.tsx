@@ -10,6 +10,11 @@ import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
 import type { LayoutChangeEvent } from "react-native";
 import { ExplorerSidebarDock } from "@/screens/workspace/explorer-sidebar";
 import { ExplorerFrame } from "./explorer-sidebar/frame";
+import {
+  AppContentWidthContext,
+  reconcileAppContentWidthHandoff,
+} from "@/contexts/app-content-width-context";
+import { resolveExplorerSidebarWidth } from "@/components/explorer-sidebar-layout";
 import { WorkspaceTabDragScope } from "@/components/workspace-tab-drag-scope";
 import {
   WorkspaceComposerEditingSessionsProvider,
@@ -22,6 +27,7 @@ import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
 import {
   memo,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -37,9 +43,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, type Href } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import type { Theme } from "@/styles/theme";
+import { SPACING, type Theme } from "@/styles/theme";
 import invariant from "tiny-invariant";
 import { SidebarMenuToggle } from "@/components/headers/sidebar-menu-toggle";
 import { ScreenHeader } from "@/components/headers/screen-header";
@@ -56,8 +61,9 @@ import {
   FloatingPanelPortalHost,
   FloatingPanelPortalHostNameProvider,
 } from "@/components/ui/floating-panel-portal";
+import { TopBarSafeArea } from "@/components/headers/top-bar-safe-area";
 import { SplitContainer } from "@/components/split-container";
-import { RetainedPanel } from "@/components/retained-panel";
+import { RetainedPanel, RetainedPanelActivity } from "@/components/retained-panel";
 import { WorkspaceActions } from "@/git/workspace-actions";
 import { WorkspaceOpenInEditorButton } from "@/workspace/open-in-editor/button";
 import { WorkspaceScriptsButton } from "@/screens/workspace/scripts";
@@ -146,6 +152,7 @@ import {
 } from "@/screens/workspace/use-workspace-tab-rename";
 import {
   WorkspaceDesktopTabsRow,
+  WorkspaceDesktopTabsRowWidthContext,
   type WorkspaceDesktopTabRowItem,
 } from "@/screens/workspace/workspace-desktop-tabs-row";
 import { useDesktopBrowserNewTabRequests } from "@/desktop/browser/new-tab-requests";
@@ -205,8 +212,16 @@ import {
   useModifiedPanelTabIds,
 } from "@/panels/panel-instance-attributes";
 import { findAdjacentPane } from "@/utils/split-navigation";
-import { supportsDesktopPaneSplits, useIsCompactFormFactor } from "@/constants/layout";
+import {
+  supportsDesktopPaneSplits,
+  useIsCompactFormFactor,
+  COMPACT_CONTENT_WIDTH,
+  HEADER_INNER_HEIGHT,
+  HEADER_INNER_HEIGHT_MOBILE,
+  WORKSPACE_SECONDARY_HEADER_HEIGHT,
+} from "@/constants/layout";
 import { getIsElectron, isNative, isWeb } from "@/constants/platform";
+import { supportsModernWindowLayout } from "@/constants/modern-window-layout";
 import { buildHostRootRoute, buildSettingsHostRoute } from "@/utils/host-routes";
 import { useWorkspaceTerminals } from "@/screens/workspace/terminals/use-workspace-terminals";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
@@ -790,22 +805,34 @@ function WorkspacePanelSurface({
   children,
   tabIds,
   workspaceKey,
-  onLayout,
+  parentWidth,
 }: {
-  onLayout: (event: LayoutChangeEvent) => void;
+  parentWidth: number;
   workspaceKey: string;
   launcher: NewTabLauncher;
   children: ReactNode;
   tabIds: readonly string[];
 }) {
   const isCompact = useIsCompactFormFactor();
+  const allocatedWidth = useContext(AppContentWidthContext);
+  const [widthHandoff, setWidthHandoff] = useState(() =>
+    reconcileAppContentWidthHandoff(undefined, allocatedWidth, parentWidth),
+  );
+  const handoff = reconcileAppContentWidthHandoff(widthHandoff, allocatedWidth, parentWidth);
+  if (handoff !== widthHandoff) setWidthHandoff(handoff);
+  const pendingWidth = handoff.pendingWidth;
+  const surfaceStyle = useMemo(
+    () => [
+      styles.threePaneRow,
+      pendingWidth !== null && { width: pendingWidth, alignSelf: "flex-start" as const },
+    ],
+    [pendingWidth],
+  );
   return (
     <WorkspaceComposerEditingSessionsProvider workspaceKey={workspaceKey} tabIds={tabIds}>
       <NewTabLauncherProvider value={launcher}>
         <SheetHostScope enabled={!isCompact}>
-          <View style={styles.threePaneRow} onLayout={onLayout}>
-            {children}
-          </View>
+          <View style={surfaceStyle}>{children}</View>
         </SheetHostScope>
       </NewTabLauncherProvider>
     </WorkspaceComposerEditingSessionsProvider>
@@ -1021,13 +1048,156 @@ function useLastMainPane(input: {
   return lastMainPaneRef;
 }
 
+interface DesktopWorkspaceTopChromeProps {
+  compactHeader: ReactNode;
+  fullHeader: ReactNode;
+  children: ReactNode;
+}
+
+function DesktopWorkspaceTopChrome(props: DesktopWorkspaceTopChromeProps): ReactNode {
+  if (!supportsModernWindowLayout) {
+    return (
+      <>
+        {props.fullHeader}
+        {props.children}
+      </>
+    );
+  }
+
+  return <ModernDesktopWorkspaceTopChrome {...props} />;
+}
+
+const inactiveChromeVariantStyle = {
+  position: "absolute",
+  top: 0,
+  left: 0,
+  right: 0,
+  opacity: 0,
+} as const;
+
+function ModernDesktopWorkspaceTopChrome({
+  compactHeader,
+  fullHeader,
+  children,
+}: DesktopWorkspaceTopChromeProps): ReactNode {
+  const allocatedWidth = useContext(AppContentWidthContext);
+  const [measuredAvailableWidth, setMeasuredAvailableWidth] = useState(0);
+  const [horizontalInsets, setHorizontalInsets] = useState({ left: 0, right: 0 });
+  const handleHorizontalInsetsChange = useCallback((left: number, right: number) => {
+    setHorizontalInsets((previous) =>
+      previous.left === left && previous.right === right ? previous : { left, right },
+    );
+  }, []);
+  // Native margins are local to this bar; apply them to this render's center
+  // allocation, including sidebar toggles before the native host resizes.
+  const availableWidth =
+    allocatedWidth === null
+      ? measuredAvailableWidth
+      : Math.max(0, allocatedWidth - horizontalInsets.left - horizontalInsets.right);
+  const compact = fullHeader !== null && availableWidth < COMPACT_CONTENT_WIDTH;
+  const fullHeight = HEADER_INNER_HEIGHT + (children ? WORKSPACE_SECONDARY_HEADER_HEIGHT : 0);
+  const contentHeight = compact ? HEADER_INNER_HEIGHT_MOBILE : fullHeight;
+
+  return (
+    <View testID="workspace-top-chrome">
+      <TopBarSafeArea
+        contentHeight={contentHeight}
+        primaryRowHeight={compact ? HEADER_INNER_HEIGHT_MOBILE : HEADER_INNER_HEIGHT}
+        horizontalContentPadding={SPACING[3]}
+        allocatedWidth={allocatedWidth}
+        onAvailableWidth={setMeasuredAvailableWidth}
+        onHorizontalInsetsChange={handleHorizontalInsetsChange}
+      >
+        <RetainedPanelActivity active={compact}>
+          <View
+            collapsable={false}
+            style={compact ? undefined : inactiveChromeVariantStyle}
+            pointerEvents={compact ? "auto" : "none"}
+            accessibilityElementsHidden={!compact}
+            importantForAccessibility={compact ? "auto" : "no-hide-descendants"}
+          >
+            {compactHeader}
+          </View>
+        </RetainedPanelActivity>
+        <RetainedPanelActivity active={!compact}>
+          <View
+            collapsable={false}
+            style={compact ? inactiveChromeVariantStyle : undefined}
+            pointerEvents={compact ? "none" : "auto"}
+            accessibilityElementsHidden={compact}
+            importantForAccessibility={compact ? "no-hide-descendants" : "auto"}
+          >
+            {fullHeader}
+            <WorkspaceDesktopTabsRowWidthContext value={availableWidth}>
+              {children}
+            </WorkspaceDesktopTabsRowWidthContext>
+          </View>
+        </RetainedPanelActivity>
+      </TopBarSafeArea>
+    </View>
+  );
+}
+
+function useWorkspaceColumnAllocation({
+  persistenceKey,
+  workspaceLayout,
+  explorerSidebarPaneId,
+  isMobile,
+  isExplorerSidebarShowing,
+  desktopFocusModeEnabled,
+}: {
+  persistenceKey: string | null;
+  workspaceLayout: WorkspaceLayout | null;
+  explorerSidebarPaneId: string | null;
+  isMobile: boolean;
+  isExplorerSidebarShowing: boolean;
+  desktopFocusModeEnabled: boolean;
+}) {
+  // Measure the unpinned route parent, not the row carrying the pending allocation.
+  const [workspaceViewportWidth, setWorkspaceViewportWidth] = useState(0);
+  const measureWorkspaceWidth = useCallback(
+    (event: LayoutChangeEvent) => setWorkspaceViewportWidth(event.nativeEvent.layout.width),
+    [],
+  );
+  const appContentWidth = useContext(AppContentWidthContext);
+  const allocatedWorkspaceWidth = supportsModernWindowLayout && !isWeb ? appContentWidth : null;
+  const explorerContainerWidth = allocatedWorkspaceWidth ?? workspaceViewportWidth;
+  const explorerStoredWidth = useWorkspaceLayoutStore((state) =>
+    persistenceKey ? state.explorerSidebarWidthByWorkspace[persistenceKey] : undefined,
+  );
+  const explorerPaneExists = Boolean(
+    persistenceKey &&
+    workspaceLayout &&
+    explorerSidebarPaneId &&
+    findPaneById(workspaceLayout.root, explorerSidebarPaneId),
+  );
+  // Compact Explorers are overlays; hidden and focus-mode docks consume no width.
+  const hasDockedExplorer =
+    explorerPaneExists && !isMobile && isExplorerSidebarShowing && !desktopFocusModeEnabled;
+  const dockedExplorerWidth = hasDockedExplorer
+    ? resolveExplorerSidebarWidth({
+        requestedWidth: explorerStoredWidth,
+        containerWidth: explorerContainerWidth,
+      })
+    : 0;
+  const centerColumnWidth =
+    allocatedWorkspaceWidth === null
+      ? null
+      : Math.max(0, allocatedWorkspaceWidth - dockedExplorerWidth);
+  return {
+    measureWorkspaceWidth,
+    workspaceViewportWidth,
+    explorerContainerWidth,
+    centerColumnWidth,
+  };
+}
+
 function WorkspaceScreenContent({
   serverId,
   workspaceId,
   isRouteFocused,
 }: WorkspaceScreenContentProps) {
   const { t } = useTranslation();
-  const _insets = useSafeAreaInsets();
   const toast = useToast();
   const isMobile = useIsCompactFormFactor();
   const canRenderDesktopPaneSplits = supportsDesktopPaneSplits();
@@ -3311,9 +3481,10 @@ function WorkspaceScreenContent({
     [normalizedServerId, normalizedWorkspaceId],
   );
   const renderWorkspaceScreenHeader = useCallback(
-    () =>
+    ({ safeAreaManaged = false }: { safeAreaManaged?: boolean } = {}) =>
       showScreenHeader ? (
         <ScreenHeader
+          safeAreaManaged={safeAreaManaged}
           left={
             <>
               <SidebarMenuToggle />
@@ -3375,99 +3546,101 @@ function WorkspaceScreenContent({
       handleOpenUrlInBrowserTab,
     ],
   );
-  const compactWorkspaceHeader = useMemo(
-    () =>
-      isMobile ? (
-        <CompactWorkspaceHeader
-          isLoading={isWorkspaceHeaderLoading}
-          title={workspaceHeaderTitle}
-          subtitle={workspaceHeaderSubtitle}
-          isSubtitleDistinct={isWorkspaceHeaderSubtitleDistinct}
-          serverId={normalizedServerId}
-          onToggleExplorer={handleToggleExplorerSidebar}
-          explorerToggleLabel={explorerSidebarToggleLabel}
-          explorerToggleAccessibilityState={explorerSidebarToggleAccessibilityState}
-        >
-          <MobileWorkspaceTabSwitcher
-            tabs={tabs}
-            activeTabKey={activeTabKey}
-            normalizedServerId={normalizedServerId}
-            normalizedWorkspaceId={normalizedWorkspaceId}
-            onSelectSwitcherTab={handleSelectSwitcherTab}
-            createTerminalDisabled={createTerminalDisabled}
-            onCreateDraftTab={handleCreateDraftTab}
-            onCreateTerminal={handleCreateTerminal}
-            onCopyResumeCommand={handleCopyResumeCommand}
-            onCopyAgentId={handleCopyAgentId}
-            onCopyTerminalId={handleCopyTerminalId}
-            onCopyFilePath={handleCopyFilePath}
-            onReloadAgent={handleReloadAgent}
-            onRenameTab={handleRenameTab}
-            onCloseTab={handleCloseTabById}
-            onCloseTabsAbove={handleCloseTabsToLeft}
-            onCloseTabsBelow={handleCloseTabsToRight}
-            onCloseOtherTabs={handleCloseOtherTabs}
-          />
-          <WorkspaceHeaderMenuMobile
-            normalizedServerId={normalizedServerId}
-            normalizedWorkspaceId={normalizedWorkspaceId}
-            scripts={compactHeaderScripts}
-            currentBranchName={currentBranchName}
-            showWorkspaceSetup={showWorkspaceSetup}
-            showCreateBrowserTab={showCreateBrowserTab}
-            createTerminalDisabled={createTerminalDisabled}
-            importAgentDisabled={!canOpenImportSheet}
-            copyPathDisabled={!workspaceDirectory}
-            onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
-            onCreateBrowser={handleCreateBrowserTab}
-            onOpenImportSheet={openImportSheet}
-            onCopyWorkspacePath={handleCopyWorkspacePath}
-            onCopyBranchName={handleCopyBranchName}
-            onOpenSetupTab={handleOpenSetupTab}
-          />
-        </CompactWorkspaceHeader>
-      ) : null,
-    [
-      activeTabKey,
-      canOpenImportSheet,
-      compactHeaderScripts,
-      createTerminalDisabled,
-      currentBranchName,
-      explorerSidebarToggleAccessibilityState,
-      explorerSidebarToggleLabel,
-      handleCloseOtherTabs,
-      handleCloseTabById,
-      handleCloseTabsToLeft,
-      handleCloseTabsToRight,
-      handleCopyAgentId,
-      handleCopyBranchName,
-      handleCopyFilePath,
-      handleCopyResumeCommand,
-      handleCopyTerminalId,
-      handleCopyWorkspacePath,
-      handleCreateBrowserTab,
-      handleCreateDraftTab,
-      handleCreateTerminal,
-      handleCreateTerminalWithProfile,
-      handleOpenSetupTab,
-      handleReloadAgent,
-      handleRenameTab,
-      handleSelectSwitcherTab,
-      handleToggleExplorerSidebar,
-      isMobile,
-      isWorkspaceHeaderLoading,
-      isWorkspaceHeaderSubtitleDistinct,
-      normalizedServerId,
-      normalizedWorkspaceId,
-      openImportSheet,
-      showCreateBrowserTab,
-      showWorkspaceSetup,
-      tabs,
-      workspaceDirectory,
-      workspaceHeaderSubtitle,
-      workspaceHeaderTitle,
-    ],
-  );
+  const compactWorkspaceHeader = useMemo(() => {
+    if (!isMobile && !supportsModernWindowLayout) {
+      return null;
+    }
+    return (
+      <CompactWorkspaceHeader
+        safeAreaManaged={supportsModernWindowLayout && !isMobile}
+        isLoading={isWorkspaceHeaderLoading}
+        title={workspaceHeaderTitle}
+        subtitle={workspaceHeaderSubtitle}
+        isSubtitleDistinct={isWorkspaceHeaderSubtitleDistinct}
+        serverId={normalizedServerId}
+        onToggleExplorer={handleToggleExplorerSidebar}
+        explorerToggleLabel={explorerSidebarToggleLabel}
+        explorerToggleAccessibilityState={explorerSidebarToggleAccessibilityState}
+      >
+        <MobileWorkspaceTabSwitcher
+          tabs={tabs}
+          activeTabKey={activeTabKey}
+          normalizedServerId={normalizedServerId}
+          normalizedWorkspaceId={normalizedWorkspaceId}
+          onSelectSwitcherTab={handleSelectSwitcherTab}
+          createTerminalDisabled={createTerminalDisabled}
+          onCreateDraftTab={handleCreateDraftTab}
+          onCreateTerminal={handleCreateTerminal}
+          onCopyResumeCommand={handleCopyResumeCommand}
+          onCopyAgentId={handleCopyAgentId}
+          onCopyTerminalId={handleCopyTerminalId}
+          onCopyFilePath={handleCopyFilePath}
+          onReloadAgent={handleReloadAgent}
+          onRenameTab={handleRenameTab}
+          onCloseTab={handleCloseTabById}
+          onCloseTabsAbove={handleCloseTabsToLeft}
+          onCloseTabsBelow={handleCloseTabsToRight}
+          onCloseOtherTabs={handleCloseOtherTabs}
+        />
+        <WorkspaceHeaderMenuMobile
+          normalizedServerId={normalizedServerId}
+          normalizedWorkspaceId={normalizedWorkspaceId}
+          scripts={compactHeaderScripts}
+          currentBranchName={currentBranchName}
+          showWorkspaceSetup={showWorkspaceSetup}
+          showCreateBrowserTab={showCreateBrowserTab}
+          createTerminalDisabled={createTerminalDisabled}
+          importAgentDisabled={!canOpenImportSheet}
+          copyPathDisabled={!workspaceDirectory}
+          onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
+          onCreateBrowser={handleCreateBrowserTab}
+          onOpenImportSheet={openImportSheet}
+          onCopyWorkspacePath={handleCopyWorkspacePath}
+          onCopyBranchName={handleCopyBranchName}
+          onOpenSetupTab={handleOpenSetupTab}
+        />
+      </CompactWorkspaceHeader>
+    );
+  }, [
+    activeTabKey,
+    canOpenImportSheet,
+    compactHeaderScripts,
+    createTerminalDisabled,
+    currentBranchName,
+    explorerSidebarToggleAccessibilityState,
+    explorerSidebarToggleLabel,
+    handleCloseOtherTabs,
+    handleCloseTabById,
+    handleCloseTabsToLeft,
+    handleCloseTabsToRight,
+    handleCopyAgentId,
+    handleCopyBranchName,
+    handleCopyFilePath,
+    handleCopyResumeCommand,
+    handleCopyTerminalId,
+    handleCopyWorkspacePath,
+    handleCreateBrowserTab,
+    handleCreateDraftTab,
+    handleCreateTerminal,
+    handleCreateTerminalWithProfile,
+    handleOpenSetupTab,
+    handleReloadAgent,
+    handleRenameTab,
+    handleSelectSwitcherTab,
+    handleToggleExplorerSidebar,
+    isMobile,
+    isWorkspaceHeaderLoading,
+    isWorkspaceHeaderSubtitleDistinct,
+    normalizedServerId,
+    normalizedWorkspaceId,
+    openImportSheet,
+    showCreateBrowserTab,
+    showWorkspaceSetup,
+    tabs,
+    workspaceDirectory,
+    workspaceHeaderSubtitle,
+    workspaceHeaderTitle,
+  ]);
   const desktopSplitContent = useMemo(() => {
     if (!canRenderDesktopPaneSplits || !workspaceLayout || !persistenceKey) {
       return null;
@@ -3544,6 +3717,43 @@ function WorkspaceScreenContent({
   ]);
   const desktopContent = desktopSplitContent ?? content;
   const rendersDesktopSplitContent = !isMobile && desktopSplitContent !== null;
+  const desktopTabsRow = shouldRenderDesktopPaneFallback ? (
+    <NewTabLauncherProvider value={newTabLauncher}>
+      <WorkspaceDesktopTabsRow
+        paneId={focusedPaneIdOrUndefined}
+        isFocused={isRouteFocused}
+        tabs={desktopTabRowItems}
+        normalizedServerId={normalizedServerId}
+        normalizedWorkspaceId={normalizedWorkspaceId}
+        setHoveredCloseTabKey={setHoveredCloseTabKey}
+        onNavigateTab={navigateToTabId}
+        onCloseTab={handleCloseTabById}
+        onCopyResumeCommand={handleCopyResumeCommand}
+        onCopyAgentId={handleCopyAgentId}
+        onCopyTerminalId={handleCopyTerminalId}
+        onCopyFilePath={handleCopyFilePath}
+        onReloadAgent={handleReloadAgent}
+        onRenameTab={handleRenameTab}
+        onCloseTabsToLeft={handleCloseTabsToLeft}
+        onCloseTabsToRight={handleCloseTabsToRight}
+        onCloseOtherTabs={handleCloseOtherTabs}
+        onCreateNewTab={handleCreateNewTab}
+        onReorderTabs={handleReorderTabsInFocusedPane}
+        focusModeEnabled={desktopFocusModeEnabled}
+        onExitFocusMode={toggleFocusMode}
+      />
+    </NewTabLauncherProvider>
+  ) : null;
+  const desktopTopChrome = rendersDesktopSplitContent ? (
+    desktopTabsRow
+  ) : (
+    <DesktopWorkspaceTopChrome
+      compactHeader={compactWorkspaceHeader}
+      fullHeader={renderWorkspaceScreenHeader({ safeAreaManaged: true })}
+    >
+      {desktopTabsRow}
+    </DesktopWorkspaceTopChrome>
+  );
 
   const workspacePanelTabIds = useMemo(
     () => [...uiTabs.map((tab) => tab.tabId), ...sheets.map((sheet) => sheet.tab.tabId)],
@@ -3573,47 +3783,27 @@ function WorkspaceScreenContent({
     </View>
   ) : (
     <View style={styles.centerColumn}>
-      {rendersDesktopSplitContent ? null : renderWorkspaceScreenHeader()}
-
-      {shouldRenderDesktopPaneFallback ? (
-        <NewTabLauncherProvider value={newTabLauncher}>
-          <WorkspaceDesktopTabsRow
-            paneId={focusedPaneIdOrUndefined}
-            isFocused={isRouteFocused}
-            tabs={desktopTabRowItems}
-            normalizedServerId={normalizedServerId}
-            normalizedWorkspaceId={normalizedWorkspaceId}
-            setHoveredCloseTabKey={setHoveredCloseTabKey}
-            onNavigateTab={navigateToTabId}
-            onCloseTab={handleCloseTabById}
-            onCopyResumeCommand={handleCopyResumeCommand}
-            onCopyAgentId={handleCopyAgentId}
-            onCopyTerminalId={handleCopyTerminalId}
-            onCopyFilePath={handleCopyFilePath}
-            onReloadAgent={handleReloadAgent}
-            onRenameTab={handleRenameTab}
-            onCloseTabsToLeft={handleCloseTabsToLeft}
-            onCloseTabsToRight={handleCloseTabsToRight}
-            onCloseOtherTabs={handleCloseOtherTabs}
-            onCreateNewTab={handleCreateNewTab}
-            onReorderTabs={handleReorderTabsInFocusedPane}
-            focusModeEnabled={desktopFocusModeEnabled}
-            onExitFocusMode={toggleFocusMode}
-          />
-        </NewTabLauncherProvider>
-      ) : null}
+      {desktopTopChrome}
 
       <View style={styles.centerContent}>
         <View style={styles.content}>{desktopContent}</View>
       </View>
     </View>
   );
+  const {
+    measureWorkspaceWidth,
+    workspaceViewportWidth,
+    explorerContainerWidth,
+    centerColumnWidth,
+  } = useWorkspaceColumnAllocation({
+    persistenceKey,
+    workspaceLayout,
+    explorerSidebarPaneId,
+    isMobile,
+    isExplorerSidebarShowing,
+    desktopFocusModeEnabled,
+  });
 
-  const [workspaceViewportWidth, setWorkspaceViewportWidth] = useState(0);
-  const measureWorkspaceWidth = useCallback(
-    (event: LayoutChangeEvent) => setWorkspaceViewportWidth(event.nativeEvent.layout.width),
-    [],
-  );
   const sharedExplorer = useMemo(() => {
     if (!workspaceLayout || !explorerSidebarPaneId || !persistenceKey) return null;
     const explorerPane = findPaneById(workspaceLayout.root, explorerSidebarPaneId);
@@ -3651,7 +3841,7 @@ function WorkspaceScreenContent({
         presentation={isMobile ? "overlay" : "dock"}
         isWorkspaceActive={isRouteFocused}
         persistenceKey={persistenceKey}
-        containerWidth={workspaceViewportWidth}
+        containerWidth={explorerContainerWidth}
         isOpen={isExplorerSidebarShowing && !desktopFocusModeEnabled}
       >
         {dock}
@@ -3685,7 +3875,7 @@ function WorkspaceScreenContent({
     handleReorderTabsInPane,
     buildDesktopPaneContentModel,
     renderExplorerSidebarHeaderAction,
-    workspaceViewportWidth,
+    explorerContainerWidth,
     desktopFocusModeEnabled,
   ]);
 
@@ -3733,9 +3923,15 @@ function WorkspaceScreenContent({
     },
   );
 
+  const allocatedCenterColumn = (
+    <AppContentWidthContext value={centerColumnWidth}>
+      {workspaceCenterColumn}
+    </AppContentWidthContext>
+  );
+
   const renderedWorkspaceScreen = (
     <RenderProfile id="WorkspaceScreenContent">
-      <View style={containerStyle}>
+      <View style={containerStyle} onLayout={measureWorkspaceWidth}>
         <WorkspaceDocumentTitleEffectSlot
           tab={activeTabDescriptor}
           serverId={normalizedServerId}
@@ -3743,7 +3939,7 @@ function WorkspaceScreenContent({
           isRouteFocused={isRouteFocused}
         />
         <WorkspacePanelSurface
-          onLayout={measureWorkspaceWidth}
+          parentWidth={workspaceViewportWidth}
           launcher={newTabLauncher}
           workspaceKey={workspacePanelKey}
           tabIds={workspacePanelTabIds}
@@ -3760,7 +3956,7 @@ function WorkspaceScreenContent({
               onReorderTabsInPane={handleReorderTabsInPane}
               onSplitPane={handleSplitPane}
             >
-              {workspaceCenterColumn}
+              {allocatedCenterColumn}
               {sharedExplorer}
             </WorkspaceTabDragScope>
           </FloatingPanelPortalHostNameProvider>

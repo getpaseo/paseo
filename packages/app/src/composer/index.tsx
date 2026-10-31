@@ -4,6 +4,7 @@ import {
   type ComposerEditingSession,
 } from "./editing-session";
 import type { ComposerTextSource } from "./text-source";
+import { ComposerBarLayoutContext } from "./dock/internal/bar-layout";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { useStore } from "zustand";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
@@ -18,6 +19,7 @@ import {
 import type { TFunction } from "i18next";
 import {
   useState,
+  useContext,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -30,7 +32,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { useIsCompactFormFactor } from "@/constants/layout";
+import { COMPACT_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { usePanelStore } from "@/stores/panel-store";
 import { useHasFinePointer } from "@/hooks/use-fine-pointer";
 import { useShallow } from "zustand/shallow";
@@ -70,7 +72,8 @@ import {
   type MessageInputRef,
 } from "./input/input";
 import type { ImageAttachment, MessagePayload, TextReplacement } from "./types";
-import { ICON_SIZE, type Theme } from "@/styles/theme";
+import { ICON_SIZE, SPACING, type Theme } from "@/styles/theme";
+import { COMPOSER_TOOLBAR_GEOMETRY } from "./agent-controls/layout";
 import type { DraftCommandTarget } from "@/hooks/use-agent-commands-query";
 import { encodeImages } from "@/utils/encode-images";
 import { focusWithRetries } from "@/utils/web-focus";
@@ -1140,35 +1143,6 @@ interface ComposerVoiceModeButtonProps {
   t: TFunction;
 }
 
-interface ComposerRightControlsSlotProps extends ComposerVoiceModeButtonProps {
-  isVoiceModeForAgent: boolean;
-  hasAgent: boolean;
-  isAgentRunning: boolean;
-  hasSendableContent: boolean;
-  isCompact: boolean;
-  showVoice: boolean;
-}
-
-function ComposerRightControlsSlot({
-  isVoiceModeForAgent,
-  hasAgent,
-  isAgentRunning,
-  hasSendableContent,
-  isCompact,
-  showVoice,
-  ...voiceProps
-}: ComposerRightControlsSlotProps) {
-  const hideVoiceForCompactInput = isCompact && hasSendableContent;
-  const showVoiceModeButton =
-    showVoice && !isVoiceModeForAgent && hasAgent && !isAgentRunning && !hideVoiceForCompactInput;
-  if (!showVoiceModeButton) return null;
-  return (
-    <View style={styles.rightControls}>
-      <ComposerVoiceModeButton {...voiceProps} />
-    </View>
-  );
-}
-
 function ComposerVoiceModeButton({
   buttonIconSize,
   handleToggleRealtimeVoice,
@@ -1309,7 +1283,11 @@ function ComposerContentImpl({
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
 
   const isCompactFormFactor = useIsCompactFormFactor();
-  const isCompactLayout = resolveCompactLayout(isCompactLayoutOverride, isCompactFormFactor);
+  const barLayout = useContext(ComposerBarLayoutContext);
+  const isCompactLayout =
+    barLayout?.containerWidth === undefined
+      ? resolveCompactLayout(isCompactLayoutOverride, isCompactFormFactor)
+      : barLayout.containerWidth < COMPACT_CONTENT_WIDTH;
   const isDesktopWebBreakpoint = resolveIsDesktopWebBreakpoint(isCompactFormFactor);
   const hasFinePointer = useHasFinePointer();
   const isDesktopLayout = resolveIsDesktopWebBreakpoint(isCompactLayout);
@@ -2046,41 +2024,44 @@ function ComposerContentImpl({
     ],
   );
 
+  const showVoiceModeButton =
+    mode.showVoice &&
+    !isVoiceModeForAgent &&
+    hasAgent &&
+    !isAgentRunning &&
+    !(isCompactLayout && hasSendableContent);
   const rightContent = useMemo(
-    () => (
-      <ComposerRightControlsSlot
-        isVoiceModeForAgent={isVoiceModeForAgent}
-        hasAgent={hasAgent}
-        isAgentRunning={isAgentRunning}
-        hasSendableContent={hasSendableContent}
-        isCompact={isCompactLayout}
-        showVoice={mode.showVoice}
-        buttonIconSize={buttonIconSize}
-        handleToggleRealtimeVoice={handleToggleRealtimeVoice}
-        isConnected={isConnected}
-        isVoiceSwitching={isVoiceSwitching}
-        realtimeVoiceButtonStyle={realtimeVoiceButtonStyle}
-        voiceToggleKeys={voiceToggleKeys}
-        t={t}
-      />
-    ),
+    () =>
+      showVoiceModeButton ? (
+        <View style={styles.rightControls}>
+          <ComposerVoiceModeButton
+            buttonIconSize={buttonIconSize}
+            handleToggleRealtimeVoice={handleToggleRealtimeVoice}
+            isConnected={isConnected}
+            isVoiceSwitching={isVoiceSwitching}
+            realtimeVoiceButtonStyle={realtimeVoiceButtonStyle}
+            voiceToggleKeys={voiceToggleKeys}
+            t={t}
+          />
+        </View>
+      ) : null,
     [
       buttonIconSize,
       handleToggleRealtimeVoice,
-      hasAgent,
-      hasSendableContent,
-      isAgentRunning,
       isConnected,
-      isCompactLayout,
-      isVoiceModeForAgent,
       isVoiceSwitching,
-      mode.showVoice,
       realtimeVoiceButtonStyle,
       t,
       voiceToggleKeys,
+      showVoiceModeButton,
     ],
   );
 
+  const beforeVoiceSlotWidth = hasAgent ? COMPOSER_TOOLBAR_GEOMETRY.controlSize : 0;
+  const voiceLeadingSpace = isCompactLayout ? SPACING[1] : 0;
+  const rightSlotWidth = showVoiceModeButton
+    ? COMPOSER_TOOLBAR_GEOMETRY.controlSize + voiceLeadingSpace
+    : 0;
   const contextWindowMeterGlyphSize = isCompactLayout ? ICON_SIZE.md : buttonIconSize;
   const beforeVoiceContent = useMemo(
     () =>
@@ -2301,6 +2282,13 @@ function ComposerContentImpl({
     [githubSearchItems, selectedAttachments, handleToggleGithubItem],
   );
 
+  const handleSurfaceHeightChange = useCallback(
+    (height: number) => {
+      barLayout?.onSurfaceHeightChange(height);
+      onComposerHeightChange?.(height);
+    },
+    [barLayout, onComposerHeightChange],
+  );
   // Fullscreen fills the dock slot: the chain down to the input stretches and drops
   // the inline padding, which the fullscreen presentation supplies itself.
   const inputAreaContainerStyle = useMemo(
@@ -2308,8 +2296,9 @@ function ComposerContentImpl({
       styles.inputAreaContainer,
       isComposerLocked && styles.inputAreaLocked,
       isFullscreen && styles.inputAreaFullscreen,
+      barLayout?.ownsBottomGutter && { paddingBottom: 0 },
     ],
-    [isComposerLocked, isFullscreen],
+    [isComposerLocked, isFullscreen, barLayout?.ownsBottomGutter],
   );
   const inputAreaContentStyle = useMemo(
     () => [styles.inputAreaContent, isFullscreen && styles.fullscreenFill],
@@ -2489,7 +2478,13 @@ function ComposerContentImpl({
                   disabled={isSubmitLoading}
                   leftContent={leftContent}
                   beforeVoiceContent={beforeVoiceContent}
+                  beforeVoiceContentWidth={
+                    barLayout?.surfaceWidth === undefined ? undefined : beforeVoiceSlotWidth
+                  }
                   rightContent={rightContent}
+                  rightContentWidth={
+                    barLayout?.surfaceWidth === undefined ? undefined : rightSlotWidth
+                  }
                   activeActionContent={activeActionContent}
                   voiceServerId={serverId}
                   voiceAgentId={agentId}
@@ -2501,7 +2496,7 @@ function ComposerContentImpl({
                   onKeyPress={handleCommandKeyPress}
                   onSelectionChange={handleSelectionChange}
                   onFocusChange={handleFocusChange}
-                  onHeightChange={onComposerHeightChange}
+                  onHeightChange={barLayout ? handleSurfaceHeightChange : onComposerHeightChange}
                   inputWrapperStyle={inputWrapperStyle}
                   attachmentSlot={attachmentTray}
                   inputMode={inputMode}

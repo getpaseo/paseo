@@ -18,6 +18,9 @@ const DEFAULT_LAYOUT: ComposerControlLayoutValue = {
 
 const ComposerControlLayoutContext = createContext(DEFAULT_LAYOUT);
 
+/** Exact toolbar allocation supplied by the modern native composer input. */
+export const ComposerControlWidthContext = createContext<number | undefined>(undefined);
+
 export function ComposerControlLayoutProvider({
   value,
   children,

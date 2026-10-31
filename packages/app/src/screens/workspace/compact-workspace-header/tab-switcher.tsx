@@ -6,6 +6,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { useIconButtonChromeStyle } from "@/components/ui/icon-button-chrome";
+import { supportsModernWindowLayout } from "@/constants/modern-window-layout";
 import {
   WorkspaceTabPresentationResolver,
   WorkspaceTabOptionRow,
@@ -465,6 +466,7 @@ export const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitch
         open={isOpen}
         onOpenChange={setIsOpen}
         anchorRef={anchorRef}
+        desktopMinWidth={supportsModernWindowLayout ? 360 : undefined}
         renderOption={renderTabOption}
         footer={footer}
       />

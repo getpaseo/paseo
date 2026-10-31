@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useContext, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -13,6 +13,8 @@ import {
   iconButtonChromeGlyphSize,
   mutedIconColorMapping,
 } from "@/components/ui/icon-button-chrome";
+import { TopBarLeadingControlInsetContext } from "./top-bar-safe-area.shared";
+import { SPACING } from "@/styles/theme";
 
 const ThemedPanelLeft = withUnistyles(PanelLeft);
 
@@ -98,12 +100,18 @@ function SidebarMenuToggleButton({
 
 export function SidebarMenuToggle({ style, ...props }: SidebarMenuToggleProps = {}) {
   const isMobile = useIsCompactFormFactor();
+  const leadingControlInset = useContext(TopBarLeadingControlInsetContext);
   const ownsTopLeft = useOwnsWindowChromeCorner("top-left");
   const hasTopLeftWindowControls = useHasWindowChromeObstruction("top-left");
   const resolvedStyle = useMemo(() => [styles.leadingToggle, style], [style]);
   const placeholderStyle = useMemo(
     () => [headerIconSlotStyle.slot, resolvedStyle],
     [resolvedStyle],
+  );
+  // Cancel the wide-layout negative icon margin before applying the local corner inset.
+  const cornerStyle = useMemo(
+    () => ({ paddingLeft: leadingControlInset + (isMobile ? 0 : SPACING[2]) }),
+    [leadingControlInset, isMobile],
   );
 
   if (!isMobile && !ownsTopLeft) {
@@ -118,7 +126,11 @@ export function SidebarMenuToggle({ style, ...props }: SidebarMenuToggleProps = 
     );
   }
 
-  return <SidebarMenuToggleButton {...props} isMobile={isMobile} resolvedStyle={resolvedStyle} />;
+  const button = (
+    <SidebarMenuToggleButton {...props} isMobile={isMobile} resolvedStyle={resolvedStyle} />
+  );
+  if (leadingControlInset <= 0) return button;
+  return <View style={cornerStyle}>{button}</View>;
 }
 
 export function WindowSidebarMenuToggle({ style, ...props }: SidebarMenuToggleProps = {}) {
