@@ -34,6 +34,8 @@ export type OnboardingState =
       serverId: string;
       steps: readonly OnboardingStepId[];
       stepIndex: number;
+      /** Identifies this stay on the current step; it changes on every move, close or reopen. */
+      visit: number;
     };
 
 export interface OnboardingModel {
@@ -43,8 +45,11 @@ export interface OnboardingModel {
   subscribe(listener: () => void): () => void;
   applySetupHost(host: OnboardingSetupHost | null, options: OnboardingStepOptions): void;
   reopen(serverId: string, options: OnboardingStepOptions): void;
-  /** Leaves `from` for the following step. A no-op once the user is on another step or closed setup. */
-  next(from: OnboardingStepId): void;
+  /**
+   * Moves on from the step visit the caller saw. A no-op once that visit ended, so an action that
+   * finishes late never moves a step the user left or a setup they closed and reopened.
+   */
+  next(visit: number): void;
   back(): void;
   goTo(step: OnboardingStepId): void;
   /** Closes setup, whether the user finished or skipped it, and remembers that on this client. */
@@ -62,15 +67,6 @@ function isReadyForSetup(host: OnboardingSetupHost | null): host is OnboardingSe
   return host !== null && host.isConnected && host.hasHydratedWorkspaces;
 }
 
-function openState(serverId: string, options: OnboardingStepOptions): OnboardingState {
-  return {
-    status: "open",
-    serverId,
-    steps: options.includePhoneStep ? STEPS_WITH_PHONE : STEPS_WITHOUT_PHONE,
-    stepIndex: 0,
-  };
-}
-
 export function createOnboardingModel(input: {
   storage: OnboardingCompletionStorage;
 }): OnboardingModel {
@@ -78,6 +74,18 @@ export function createOnboardingModel(input: {
   let state: OnboardingState = { status: "deciding" };
   let completion: Completion = "loading";
   let pendingHost: PendingHost | null = null;
+  let visits = 0;
+
+  function openState(serverId: string, options: OnboardingStepOptions): OnboardingState {
+    visits += 1;
+    return {
+      status: "open",
+      serverId,
+      steps: options.includePhoneStep ? STEPS_WITH_PHONE : STEPS_WITHOUT_PHONE,
+      stepIndex: 0,
+      visit: visits,
+    };
+  }
 
   function setState(next: OnboardingState) {
     state = next;
@@ -105,7 +113,8 @@ export function createOnboardingModel(input: {
     if (state.status !== "open") return;
     const clamped = Math.max(0, Math.min(stepIndex, state.steps.length - 1));
     if (clamped === state.stepIndex) return;
-    setState({ ...state, stepIndex: clamped });
+    visits += 1;
+    setState({ ...state, stepIndex: clamped, visit: visits });
   }
 
   async function loadCompletion(): Promise<void> {
@@ -136,10 +145,8 @@ export function createOnboardingModel(input: {
     reopen(serverId, options) {
       setState(openState(serverId, options));
     },
-    next(from) {
-      if (state.status === "open" && state.steps[state.stepIndex] === from) {
-        moveTo(state.stepIndex + 1);
-      }
+    next(visit) {
+      if (state.status === "open" && state.visit === visit) moveTo(state.stepIndex + 1);
     },
     back() {
       if (state.status === "open") moveTo(state.stepIndex - 1);

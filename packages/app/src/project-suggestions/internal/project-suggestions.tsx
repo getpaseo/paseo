@@ -47,6 +47,7 @@ export function ProjectSuggestionList({
               row={row}
               first={index === 0}
               providerLabels={list.providerLabels}
+              disabled={list.isAdding}
               onToggle={list.toggle}
             />
           ))}
@@ -69,17 +70,19 @@ function SuggestionRow({
   row,
   first,
   providerLabels,
+  disabled,
   onToggle,
 }: {
   row: SuggestionRowModel;
   first: boolean;
   providerLabels: ReadonlyMap<string, string>;
+  disabled: boolean;
   onToggle: (suggestion: ProjectSuggestion) => void;
 }) {
   const { t } = useTranslation();
   const { suggestion, checked, addFailure } = row;
   const handlePress = useCallback(() => onToggle(suggestion), [onToggle, suggestion]);
-  const accessibilityState = useMemo(() => ({ checked }), [checked]);
+  const accessibilityState = useMemo(() => ({ checked, disabled }), [checked, disabled]);
   const lastActivity = useTimeAgo(useMemo(() => new Date(suggestion.lastActivityAt), [suggestion]));
   const providers = suggestion.providerIds.map((id) => providerLabels.get(id) ?? id).join(" · ");
   const rowStyle = useCallback(
@@ -95,6 +98,7 @@ function SuggestionRow({
     <PressHighlight
       style={rowStyle}
       onPress={handlePress}
+      disabled={disabled}
       accessibilityRole="checkbox"
       accessibilityLabel={suggestion.displayName}
       accessibilityState={accessibilityState}

@@ -29,6 +29,8 @@ export type SuggestionList =
       providerLabels: ReadonlyMap<string, string>;
       reading: ProviderSuggestions[];
       failed: ProviderSuggestions[];
+      /** True while checked rows are being added; the selection is frozen until it settles. */
+      isAdding: boolean;
       toggle: (suggestion: ProjectSuggestion) => void;
       retry: (provider: string) => void;
     };
@@ -100,10 +102,11 @@ export function useProjectSuggestions(serverId: string): ProjectSuggestionsContr
       ),
       reading: state.providers.filter((provider) => provider.status === "loading"),
       failed: state.providers.filter((provider) => provider.status === "failed"),
+      isAdding: isPending,
       toggle,
       retry: state.retry,
     };
-  }, [state, suggestions, checkedRootPaths, addFailures, toggle]);
+  }, [state, suggestions, checkedRootPaths, addFailures, isPending, toggle]);
 
   return { list, checkedCount: checkedRootPaths.length, isAdding: isPending, addChecked };
 }

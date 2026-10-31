@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createOnboardingModel,
   type OnboardingCompletionStorage,
+  type OnboardingModel,
   type OnboardingSetupHost,
 } from "./model";
 
@@ -28,6 +29,19 @@ const FRESH_HOST: OnboardingSetupHost = {
   hasProjects: false,
 };
 
+/** Presses Continue on whatever step is showing. */
+function advance(model: OnboardingModel) {
+  const state = model.getState();
+  if (state.status !== "open") throw new Error("setup is not open");
+  model.next(state.visit);
+}
+
+function currentVisit(model: OnboardingModel): number {
+  const state = model.getState();
+  if (state.status !== "open") throw new Error("setup is not open");
+  return state.visit;
+}
+
 async function openModel(storage = new MemoryCompletionStorage()) {
   const model = createOnboardingModel({ storage });
   await model.ready;
@@ -40,7 +54,7 @@ describe("onboarding model", () => {
 
     model.applySetupHost(FRESH_HOST, { includePhoneStep: true });
 
-    expect(model.getState()).toEqual({
+    expect(model.getState()).toMatchObject({
       status: "open",
       serverId: "local",
       steps: ["appearance", "providers", "projects", "orchestration", "phone"],
@@ -93,8 +107,8 @@ describe("onboarding model", () => {
   it("keeps the modal open when the host gains its first project during setup", async () => {
     const model = await openModel();
     model.applySetupHost(FRESH_HOST, { includePhoneStep: true });
-    model.next("appearance");
-    model.next("providers");
+    advance(model);
+    advance(model);
 
     model.applySetupHost({ ...FRESH_HOST, hasProjects: true }, { includePhoneStep: true });
 
@@ -117,10 +131,10 @@ describe("onboarding model", () => {
 
     model.back();
     expect(model.getState()).toMatchObject({ stepIndex: 0 });
-    model.next("appearance");
-    model.next("providers");
-    model.next("projects");
-    model.next("orchestration");
+    advance(model);
+    advance(model);
+    advance(model);
+    advance(model);
     expect(model.getState()).toMatchObject({ stepIndex: 3 });
     model.goTo("providers");
     expect(model.getState()).toMatchObject({ stepIndex: 1 });
@@ -128,21 +142,24 @@ describe("onboarding model", () => {
     expect(model.getState()).toMatchObject({ stepIndex: 0 });
   });
 
-  it("ignores a late advance from a step the user already left", async () => {
+  it("ignores a late advance from a step visit the user already left", async () => {
     const model = await openModel(new MemoryCompletionStorage(true));
     model.reopen("local", { includePhoneStep: true });
     model.goTo("projects");
 
-    // Projects are still being added when the user picks Appearance in the step rail.
+    // Projects are still being added when the user leaves Projects and comes back.
+    const addingFrom = currentVisit(model);
     model.goTo("appearance");
-    model.next("projects");
-    expect(model.getState()).toMatchObject({ stepIndex: 0 });
+    model.goTo("projects");
+    model.next(addingFrom);
+    expect(model.getState()).toMatchObject({ stepIndex: 2 });
 
-    // Or closes setup and opens it again before the add finishes.
+    // Or closes setup, opens it again and returns to Projects before the add finishes.
     await model.complete();
     model.reopen("local", { includePhoneStep: true });
-    model.next("projects");
-    expect(model.getState()).toMatchObject({ status: "open", stepIndex: 0 });
+    model.goTo("projects");
+    model.next(addingFrom);
+    expect(model.getState()).toMatchObject({ status: "open", stepIndex: 2 });
   });
 
   it("records completion when setup closes, so it does not open again", async () => {
@@ -177,7 +194,7 @@ describe("onboarding model", () => {
     });
 
     model.applySetupHost(FRESH_HOST, { includePhoneStep: true });
-    model.next("appearance");
+    advance(model);
     await model.complete();
 
     expect(seen).toEqual(["open:0", "open:1", "hidden"]);
