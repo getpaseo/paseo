@@ -61,6 +61,7 @@ describe("OMP slash command mapper", () => {
 
   test("adds OMP-only out-of-band commands to handled built-ins", () => {
     expect(mapOmpSlashCommands([]).map((command) => command.name)).toEqual([
+      "goal",
       "compact",
       "autocompact",
       "handoff",

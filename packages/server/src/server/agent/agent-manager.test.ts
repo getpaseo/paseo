@@ -1408,6 +1408,40 @@ test("steers a tracked autonomous turn without creating a replacement run", asyn
   }
 });
 
+test("tracks successive autonomous turn IDs without leaking the previous run", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-autonomous-turn-ids-"));
+  const client = new SessionRecordingAgentClient("codex");
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const session = client.sessions[0]!;
+
+    session.pushEvent({ type: "turn_started", provider: "codex", turnId: "goal-turn-1" });
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.activeTurnId).toBe("goal-turn-1"));
+
+    session.pushEvent({ type: "turn_started", provider: "codex", turnId: "goal-turn-2" });
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.activeTurnId).toBe("goal-turn-2"));
+
+    session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "goal-turn-1" });
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.activeTurnId).toBe("goal-turn-2"));
+
+    session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "goal-turn-2" });
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle"));
+
+    const nextRun = await startAgentRun(manager, agent.id, "ordinary follow-up", logger);
+    expect(nextRun.disposition).toBe("turn_started");
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle"));
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("isolated rewind falls back from steering to the normal replacement path", async () => {
   const session = new SteeringTestSession({ provider: "claude", cwd: process.cwd() });
   session.steerResult = "unavailable";

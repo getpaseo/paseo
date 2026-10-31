@@ -63,6 +63,270 @@ test("OMP ready timeout defaults to 20 seconds and RPC timeout overrides both", 
   });
 });
 
+test("creates native OMP Goals out of band without sending a normal prompt", async () => {
+  const omp = new OmpHarness();
+  await omp.start();
+  const goal = {
+    id: "goal-1",
+    objective: "complete the task",
+    status: "active",
+    tokenBudget: 500,
+    tokensUsed: 0,
+    timeUsedSeconds: 0,
+  };
+  omp.runtime().goalResult = {
+    goal,
+    state: { enabled: true, mode: "active", goal },
+  };
+  const emitted: AgentStreamEvent[] = [];
+  const handler = omp
+    .requireSession()
+    .tryHandleOutOfBand("/goal --token-budget 500 complete the task");
+
+  expect(handler).not.toBeNull();
+  await handler?.run({ emit: (event) => emitted.push(event) });
+
+  expect(omp.runtime().goalRequests).toEqual([
+    { op: "create", objective: "complete the task", tokenBudget: 500 },
+  ]);
+  expect(omp.runtime().prompts).toEqual([]);
+  expect(emitted).toEqual([
+    {
+      type: "timeline",
+      provider: "omp",
+      item: { type: "assistant_message", text: "Goal created: complete the task" },
+    },
+  ]);
+});
+
+test("runs OMP Goal status, pause, resume, and clear through native RPC", async () => {
+  const omp = new OmpHarness();
+  await omp.start();
+  const goal = {
+    id: "goal-1",
+    objective: "finish safely",
+    status: "active",
+    tokenBudget: 500,
+    tokensUsed: 42,
+    timeUsedSeconds: 7,
+  };
+  omp.runtime().goalResult = { goal, state: { enabled: true, mode: "active", goal } };
+  omp.runtime().goalResults.push(
+    { goal, state: { enabled: true, mode: "active", goal } },
+    {
+      goal: { ...goal, status: "paused" },
+      state: { enabled: true, mode: "active", goal: { ...goal, status: "paused" } },
+    },
+    { goal, state: { enabled: true, mode: "active", goal } },
+    { goal: null, state: null },
+  );
+  const emitted: AgentStreamEvent[] = [];
+
+  for (const command of ["/goal status", "/goal pause", "/goal resume", "/goal clear"]) {
+    const handler = omp.requireSession().tryHandleOutOfBand(command);
+    expect(handler).not.toBeNull();
+    await handler?.run({ emit: (event) => emitted.push(event) });
+  }
+
+  expect(omp.runtime().goalRequests.map(({ op }) => op)).toEqual([
+    "get",
+    "pause",
+    "resume",
+    "drop",
+  ]);
+  expect(omp.runtime().prompts).toEqual([]);
+  expect(emitted.flatMap((event) => (event.type === "timeline" ? [event.item] : []))).toEqual([
+    {
+      type: "assistant_message",
+      text: "Goal active: finish safely; tokens 42/500; elapsed 7s",
+    },
+    { type: "assistant_message", text: "Goal paused" },
+    { type: "assistant_message", text: "Goal resumed" },
+    { type: "assistant_message", text: "Goal cleared" },
+  ]);
+});
+
+test("shows Goal command usage and RPC errors without falling through to a prompt", async () => {
+  const omp = new OmpHarness();
+  await omp.start();
+  const emitted: AgentStreamEvent[] = [];
+
+  for (const command of ["/goal", "/goal --token-budget 0 objective"]) {
+    const handler = omp.requireSession().tryHandleOutOfBand(command);
+    expect(handler).not.toBeNull();
+    await handler?.run({ emit: (event) => emitted.push(event) });
+  }
+  expect(omp.runtime().goalRequests).toEqual([]);
+
+  omp.runtime().goalError = new Error("Unknown command: goal");
+  const unsupported = omp.requireSession().tryHandleOutOfBand("/goal status");
+  await unsupported?.run({ emit: (event) => emitted.push(event) });
+
+  omp.runtime().goalError = new Error("Goal already exists");
+  const duplicate = omp.requireSession().tryHandleOutOfBand("/goal another objective");
+  await duplicate?.run({ emit: (event) => emitted.push(event) });
+
+  omp.runtime().goalError = null;
+  omp.runtime().goalResult = { goal: null, state: null };
+  const missingResult = omp.requireSession().tryHandleOutOfBand("/goal objective");
+  await missingResult?.run({ emit: (event) => emitted.push(event) });
+
+  expect(omp.runtime().prompts).toEqual([]);
+  expect(omp.runtime().goalRequests.map(({ op }) => op)).toEqual(["get", "create", "create"]);
+  expect(emitted.flatMap((event) => (event.type === "timeline" ? [event.item] : []))).toEqual([
+    { type: "assistant_message", text: expect.stringContaining("Usage: /goal") },
+    { type: "assistant_message", text: expect.stringContaining("positive integer") },
+    {
+      type: "assistant_message",
+      text: "[Error] This OMP version does not support native Goal RPC.",
+    },
+    {
+      type: "assistant_message",
+      text: "[Error] OMP Goal command failed: Goal already exists",
+    },
+    {
+      type: "assistant_message",
+      text: "[Error] OMP Goal command failed: OMP reported success without returning the created Goal state",
+    },
+  ]);
+});
+
+test("keeps a native Goal session active across automatic turns until it settles", async () => {
+  const scheduler = new ManualIdleScheduler();
+  const omp = new OmpHarness({ providerIdleScheduler: scheduler });
+  await omp.start();
+  const runtime = omp.runtime();
+  runtime.state = {
+    ...runtime.state,
+    isSettled: false,
+    hasPendingAsyncWork: false,
+    goal: {
+      enabled: true,
+      mode: "active",
+      goal: { id: "goal-1", objective: "two stages", status: "active" },
+    },
+  };
+
+  runtime.emit({ type: "agent_start" });
+  runtime.beginTurn();
+  runtime.streamAssistantText("stage one");
+  runtime.finishTurn();
+  await scheduler.waitForWaits(1);
+  expect(omp.completedTurnCount()).toBe(0);
+
+  runtime.emit({ type: "agent_start" });
+  runtime.beginTurn();
+  expect(omp.turnStartedIds()).toHaveLength(2);
+  expect(new Set(omp.turnStartedIds()).size).toBe(2);
+  expect(omp.completedTurnCount()).toBe(0);
+
+  runtime.state = {
+    ...runtime.state,
+    isSettled: true,
+    hasPendingAsyncWork: false,
+    goal: { enabled: true, mode: "completed", goal: { status: "completed" } },
+  };
+  runtime.streamAssistantText("stage two");
+  runtime.finishTurn();
+  runtime.emit({ type: "session_settled" });
+  await runtime.waitForStateRequests(3);
+  await waitForImmediate();
+  await waitForImmediate();
+
+  expect(omp.completedTurnCount()).toBe(1);
+  expect(omp.eventTypes().filter((type) => type === "turn_failed")).toHaveLength(0);
+});
+
+test("waits for pending asynchronous OMP work and recovers from get_state errors", async () => {
+  const scheduler = new ManualIdleScheduler();
+  const omp = new OmpHarness({ providerIdleScheduler: scheduler });
+  await omp.start();
+  const runtime = omp.runtime();
+  runtime.state = {
+    ...runtime.state,
+    isSettled: true,
+    hasPendingAsyncWork: true,
+  };
+  runtime.getStateError = new Error("temporary state RPC failure");
+  runtime.beginTurn();
+  runtime.streamAssistantText("finished turn, pending subagent");
+  runtime.finishTurn();
+  await scheduler.waitForWaits(1);
+  expect(omp.completedTurnCount()).toBe(0);
+
+  runtime.getStateError = null;
+  runtime.state = { ...runtime.state, hasPendingAsyncWork: false };
+  runtime.emit({ type: "session_settled" });
+  await runtime.waitForStateRequests(3);
+  await waitForImmediate();
+  await waitForImmediate();
+
+  expect(omp.completedTurnCount()).toBe(1);
+});
+
+test("honors OMP settlement signals when a Goal record remains active", async () => {
+  const omp = new OmpHarness();
+  await omp.start();
+  const runtime = omp.runtime();
+  runtime.state = {
+    ...runtime.state,
+    isSettled: true,
+    hasPendingAsyncWork: false,
+    goal: {
+      enabled: true,
+      mode: "active",
+      goal: { id: "goal-1", objective: "resume when OMP schedules it", status: "active" },
+    },
+  };
+
+  runtime.beginTurn();
+  runtime.streamAssistantText("settled by OMP");
+  runtime.finishTurn();
+  await runtime.waitForStateRequests(2);
+  await waitForImmediate();
+
+  expect(omp.completedTurnCount()).toBe(1);
+});
+
+test("does not claim pause or clear succeeded unless OMP returns the matching Goal state", async () => {
+  const omp = new OmpHarness();
+  await omp.start();
+  const goal = { id: "goal-1", objective: "stay active", status: "active" };
+  omp
+    .runtime()
+    .goalResults.push(
+      { goal: null, state: null },
+      { goal, state: { enabled: true, mode: "active", goal } },
+    );
+  const emitted: AgentStreamEvent[] = [];
+
+  for (const command of ["/goal pause", "/goal clear"]) {
+    const handler = omp.requireSession().tryHandleOutOfBand(command);
+    await handler?.run({ emit: (event) => emitted.push(event) });
+  }
+
+  expect(omp.runtime().prompts).toEqual([]);
+  expect(emitted.flatMap((event) => (event.type === "timeline" ? [event.item] : []))).toEqual([
+    { type: "assistant_message", text: "No active OMP Goal to pause." },
+    {
+      type: "assistant_message",
+      text: "[Error] OMP Goal clear did not remove the Goal (status: active).",
+    },
+  ]);
+});
+
+test("interrupts an autonomous OMP turn and reports it as canceled", async () => {
+  const omp = new OmpHarness();
+  await omp.start();
+  omp.runtime().beginTurn();
+
+  await omp.requireSession().interrupt();
+
+  expect(omp.wasAborted()).toBe(true);
+  expect(omp.eventTypes()).toContain("turn_canceled");
+  expect(omp.completedTurnCount()).toBe(0);
+});
+
 test("OMP import uses the runtime's custom agent directory without a configured sessionDir", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-omp-import-dir-"));
   const agentDir = path.join(root, "agent");
