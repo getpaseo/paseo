@@ -111,6 +111,17 @@ import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
 import { PluginTimelineItemView, useInstalledTimelineTransform } from "@/plugins/timeline";
+import { usePluginTimelinePaint } from "@/plugins/timeline-paint";
+
+function isStreamScrollEnabled(
+  strategy: { shouldDisableParentScrollOnInlineDetailsExpansion: () => boolean },
+  expandedInlineToolCallCount: number,
+): boolean {
+  return (
+    !strategy.shouldDisableParentScrollOnInlineDetailsExpansion() ||
+    expandedInlineToolCallCount === 0
+  );
+}
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -375,6 +386,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     // Get serverId (fallback to agent's serverId if not provided)
     const resolvedServerId = serverId ?? context.serverId ?? "";
+    const pluginTimelinePaint = usePluginTimelinePaint(resolvedServerId);
     const transformTimelineItem = useInstalledTimelineTransform(resolvedServerId);
 
     const client = useSessionStore((state) => state.sessions[resolvedServerId]?.client ?? null);
@@ -1161,9 +1173,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       ],
     );
 
-    const streamScrollEnabled =
-      !streamRenderStrategy.shouldDisableParentScrollOnInlineDetailsExpansion() ||
-      expandedInlineToolCallIds.size === 0;
+    const streamScrollEnabled = isStreamScrollEnabled(
+      streamRenderStrategy,
+      expandedInlineToolCallIds.size,
+    );
     const { nestedItemIds } = presentation.turns;
     const historyRowRevision = useMemo(
       () => ({
@@ -1192,6 +1205,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       () => [...effectiveStreamItems, ...(effectiveStreamHead ?? [])],
       [effectiveStreamItems, effectiveStreamHead],
     );
+    if (pluginTimelinePaint === "wait") {
+      return (
+        <View style={stylesheet.container} testID="agent-stream-plugin-timeline-wait">
+          <View style={emptyStateStyle}>
+            <ThemedLoadingSpinner size="small" uniProps={pluginTimelineSpinnerColor} />
+          </View>
+        </View>
+      );
+    }
     return (
       <ChatFind
         agentId={agentId}
@@ -1449,6 +1471,10 @@ function ToolCallSlot({
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedCheckIcon = withUnistyles(Check);
 const ThemedXIcon = withUnistyles(X);
+
+const pluginTimelineSpinnerColor = (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+});
 
 const primaryColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,
