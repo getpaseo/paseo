@@ -159,6 +159,7 @@ const CODEX_BUILTIN_MODEL_PROVIDER_IDS = new Set([
   "lmstudio",
   "amazon-bedrock",
   "amazon-bedrock-runtime",
+  "gcp",
 ]);
 // Codex treats most app-server client names as the model-request originator.
 // This reserved Codex name is non-originating, so requests keep Codex's default

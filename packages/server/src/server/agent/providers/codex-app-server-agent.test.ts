@@ -7397,7 +7397,7 @@ describe("Codex importable sessions", () => {
     appServer.assertNoErrors();
   });
 
-  test.each(["openai", "ollama", "lmstudio", "amazon-bedrock", "amazon-bedrock-runtime"])(
+  test.each(["openai", "ollama", "lmstudio", "amazon-bedrock", "amazon-bedrock-runtime", "gcp"])(
     "a custom provider named %s excludes native built-in sessions",
     async (providerId) => {
       const appServer = createFakeCodexAppServer({
