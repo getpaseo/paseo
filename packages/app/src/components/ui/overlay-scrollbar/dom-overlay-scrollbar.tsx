@@ -4,10 +4,13 @@ import { OverlayScrollbar, type OverlayScrollbarMetrics } from "./overlay-scroll
 export function DomOverlayScrollbar({
   scrollContainerRef,
   onUserScrollUp,
+  autoHide = false,
 }: {
   scrollContainerRef: RefObject<HTMLElement | null>;
   onUserScrollUp: () => void;
+  autoHide?: boolean;
 }) {
+  const [isScrolling, setIsScrolling] = useState(false);
   const [metrics, setMetrics] = useState<OverlayScrollbarMetrics>({
     offset: 0,
     viewportSize: 0,
@@ -27,16 +30,25 @@ export function DomOverlayScrollbar({
     const scrollContainer = scrollContainerRef.current;
     if (!scrollContainer) return;
     syncMetrics();
-    scrollContainer.addEventListener("scroll", syncMetrics, { passive: true });
+    let hideTimeout: ReturnType<typeof setTimeout> | undefined;
+    const onScroll = () => {
+      syncMetrics();
+      if (!autoHide) return;
+      setIsScrolling(true);
+      clearTimeout(hideTimeout);
+      hideTimeout = setTimeout(() => setIsScrolling(false), 800);
+    };
+    scrollContainer.addEventListener("scroll", onScroll, { passive: true });
     const observer = new ResizeObserver(syncMetrics);
     observer.observe(scrollContainer);
     const content = scrollContainer.firstElementChild;
     if (content) observer.observe(content);
     return () => {
-      scrollContainer.removeEventListener("scroll", syncMetrics);
+      scrollContainer.removeEventListener("scroll", onScroll);
+      clearTimeout(hideTimeout);
       observer.disconnect();
     };
-  }, [scrollContainerRef, syncMetrics]);
+  }, [autoHide, scrollContainerRef, syncMetrics]);
 
   const scrollToOffset = useCallback(
     (offset: number) => {
@@ -51,6 +63,7 @@ export function DomOverlayScrollbar({
       metrics={metrics}
       onScrollToOffset={scrollToOffset}
       onUserScrollUp={onUserScrollUp}
+      visible={!autoHide || isScrolling}
     />
   );
 }
