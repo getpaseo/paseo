@@ -1,6 +1,6 @@
 import { describe, expect, onTestFinished, test } from "vitest";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -14,7 +14,233 @@ import { OmpRuntimeEventSchema, OmpSessionStateSchema } from "./rpc-types.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
 import { OmpAgentClient } from "./agent.js";
 import { FakeOmp } from "./test-utils/fake-omp.js";
+import { AgentManager } from "../../agent-manager.js";
+import { AgentStorage } from "../../agent-storage.js";
+import { imageHistory } from "./fixtures/image-history.js";
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
+
+test.each(["", "Describe this image"])(
+  "cross-client live events preserve images with text %j",
+  async (text) => {
+    const omp = new OmpHarness();
+    await omp.start();
+    onTestFinished(() => omp.close());
+    const message: Extract<OmpAgentMessage, { role: "user" }> & { id: string } = {
+      role: "user",
+      id: "user-image",
+      content: [
+        { type: "text", text },
+        { type: "image", data: "AA==", mimeType: "image/png" },
+      ],
+    };
+    omp.emit({ type: "message_end", message });
+    omp.emit({ type: "message_end", message });
+    expect(omp.timeline()).toEqual([
+      {
+        type: "user_message",
+        text,
+        messageId: "user-image",
+        images: [{ data: "AA==", mimeType: "image/png" }],
+      },
+    ]);
+  },
+);
+
+test.each(["message ID", "branch lookup"])(
+  "captured OMP image normalization survives disk restart and refresh via %s",
+  async (identitySource) => {
+    const root = await mkdtemp(path.join(tmpdir(), "omp-image-persistence-"));
+    const sessionFile = path.join(root, "session.jsonl");
+    const entry = imageHistory.nativeEntry;
+    await writeFile(sessionFile, JSON.stringify(entry) + "\n");
+    const text =
+      "Describe the dominant colors and shapes in the attached test image in one short sentence. Do not use tools.";
+    const logger = createTestLogger();
+    const storagePath = path.join(root, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const runtime = new FakeOmp();
+    const setupRuntime = (native: ReturnType<FakeOmp["latestSession"]>) => {
+      native.state = {
+        ...native.state,
+        sessionFile,
+        model: { provider: "fixture", id: "vision", input: ["text", "image"] },
+      };
+      native.branchMessages = [{ entryId: entry.id, text }];
+    };
+    runtime.queueSessionSetup(setupRuntime);
+    const client = new OmpAgentClient({ logger, runtime });
+    let manager = new AgentManager({
+      clients: { omp: client },
+      registry: storage,
+      paseoToolsEnabled: false,
+      logger,
+    });
+    let agentId: string | undefined;
+    let run: Promise<unknown> | undefined;
+    try {
+      const agent = await manager.createAgent(
+        { provider: "omp", cwd: root, model: "fixture/vision", modeId: "full" },
+        undefined,
+        {},
+      );
+      agentId = agent.id;
+      expect(runtime.allSessions().map((session) => session.state.sessionFile)).toEqual([
+        sessionFile,
+      ]);
+      expect(agent.persistence?.nativeHandle).toBe(sessionFile);
+      const promptStarted = runtime.latestSession().nextPrompt();
+      run = manager.runAgent(
+        agent.id,
+        [
+          { type: "text", text },
+          { type: "image", ...imageHistory.originalImage },
+        ],
+        { clientMessageId: imageHistory.clientMessageId },
+      );
+      await promptStarted;
+      await manager.waitForAgentRunStart(agent.id);
+      const native = runtime.latestSession();
+      native.beginTurn();
+      native.emit({
+        type: "message_end",
+        message: {
+          ...entry.message,
+          ...(identitySource === "message ID" ? { id: entry.id } : {}),
+        },
+      });
+      await waitForImmediate();
+      await manager.flush();
+      await storage.flush();
+      expect(manager.fetchTimeline(agent.id, { limit: 0 }).rows[0].providerMessageId).toBe(
+        entry.id,
+      );
+      // Confirmation must reach disk before turn completion, not only on graceful close.
+      const confirmed = await new AgentStorage(storagePath, logger).get(agent.id);
+      expect(confirmed?.persistence?.metadata?.submittedUserMessages).toEqual({
+        [entry.id]: {
+          clientMessageId: imageHistory.clientMessageId,
+          images: [imageHistory.originalImage],
+        },
+      });
+      native.finishTurn();
+      await run;
+      run = undefined;
+      const canonical = manager
+        .getTimeline(agent.id)
+        .filter((item) => item.type === "user_message");
+      expect(canonical).toEqual([
+        {
+          type: "user_message",
+          text,
+          clientMessageId: imageHistory.clientMessageId,
+          messageId: imageHistory.clientMessageId,
+          images: [imageHistory.originalImage],
+        },
+      ]);
+      await manager.closeAgent(agent.id);
+      await manager.flush();
+      await storage.flush();
+
+      for (const purpose of ["interactive", "history"] as const) {
+        const reloadedStorage = new AgentStorage(storagePath, logger);
+        const record = await reloadedStorage.get(agent.id);
+        if (!record?.persistence) throw new Error("Expected disk-persisted OMP handle");
+        expect(record.persistence.nativeHandle, `purpose=${purpose}`).toBe(sessionFile);
+        if (purpose === "history") {
+          await reloadedStorage.upsert({ ...record, archivedAt: "2026-10-27T06:07:00.000Z" });
+        }
+        const restoredRuntime = new FakeOmp();
+        restoredRuntime.queueSessionSetup(setupRuntime);
+        manager = new AgentManager({
+          clients: { omp: new OmpAgentClient({ logger, runtime: restoredRuntime }) },
+          registry: reloadedStorage,
+          paseoToolsEnabled: false,
+          logger,
+        });
+        await manager.resumeAgentFromPersistence(
+          record.persistence,
+          { cwd: root },
+          agent.id,
+          undefined,
+          { purpose },
+        );
+        expect(restoredRuntime.allSessions()).toHaveLength(purpose === "history" ? 0 : 1);
+        for (const force of [false, true]) {
+          await manager.hydrateTimelineFromProvider(agent.id, { force });
+          expect(
+            manager.getTimeline(agent.id).filter((item) => item.type === "user_message"),
+            `purpose=${purpose} force=${force}`,
+          ).toEqual(canonical);
+          expect(manager.fetchTimeline(agent.id, { limit: 0 }).rows).toMatchObject([
+            {
+              providerMessageId: entry.id,
+              item: canonical[0],
+            },
+          ]);
+        }
+        if (purpose === "interactive") {
+          restoredRuntime.queueSessionSetup(setupRuntime);
+          await manager.reloadAgentSession(agent.id, undefined, { rehydrateFromDisk: true });
+          await manager.hydrateTimelineFromProvider(agent.id);
+          expect(
+            manager.getTimeline(agent.id).filter((item) => item.type === "user_message"),
+          ).toEqual(canonical);
+          await manager.rewind(agent.id, imageHistory.clientMessageId, "conversation");
+          expect(restoredRuntime.latestSession().branchRequests).toEqual([entry.id]);
+        }
+        expect(restoredRuntime.allSessions().flatMap((session) => session.prompts)).toEqual([]);
+        await manager.closeAgent(agent.id);
+        await manager.flush();
+        await reloadedStorage.flush();
+      }
+    } finally {
+      runtime.latestSession().finishTurn();
+      await run?.catch(() => undefined);
+      if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+      await manager.flush();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test("old OMP handles replay the native normalized image without inventing a client identity", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "omp-native-image-history-"));
+  const sessionFile = path.join(root, "session.jsonl");
+  await writeFile(sessionFile, JSON.stringify(imageHistory.nativeEntry) + "\n");
+  const runtime = new FakeOmp();
+  const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+  const session = await client.resumeSession(
+    {
+      provider: "omp",
+      sessionId: "captured",
+      nativeHandle: sessionFile,
+    },
+    undefined,
+    undefined,
+    { purpose: "history" },
+  );
+  try {
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) history.push(event);
+    expect(history).toMatchObject([
+      {
+        type: "timeline",
+        item: {
+          type: "user_message",
+          messageId: imageHistory.nativeEntry.id,
+          images: imageHistory.nativeEntry.message.content
+            .filter((block) => block.type === "image")
+            .map((block) => ({ data: block.data, mimeType: block.mimeType })),
+        },
+      },
+    ]);
+    expect(history[0].type === "timeline" && history[0].item).not.toHaveProperty("clientMessageId");
+    expect(runtime.allSessions()).toEqual([]);
+  } finally {
+    await session.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 const TURN_LIFECYCLE_EVENTS = new Set<AgentStreamEvent["type"]>([
   "turn_started",
@@ -1670,7 +1896,6 @@ test.each([false, true])(
     else {
       const imagePath = prompt.message.match(/\[Image available at: (.+)\]/)?.[1];
       expect(imagePath).toBeTruthy();
-      const { readFile, rm } = await import("node:fs/promises");
       expect(await readFile(imagePath!)).toEqual(bytes);
       await rm(imagePath!);
     }
