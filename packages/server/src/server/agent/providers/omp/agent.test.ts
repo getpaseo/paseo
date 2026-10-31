@@ -1557,6 +1557,39 @@ describe("OMP agent client and session", () => {
   });
 });
 
+test("emits structured question metadata for live OMP asks", async () => {
+  const omp = new OmpHarness();
+  await omp.start();
+  onTestFinished(() => omp.close());
+  const questions = [
+    { question: "Which colors?", multi: true, options: [{ label: "Red" }, { label: "Blue" }] },
+  ];
+  omp.emit({
+    type: "tool_execution_start",
+    toolCallId: "question-live",
+    toolName: "ask",
+    args: { questions },
+  });
+  expect(omp.timeline().at(-1)).toMatchObject({
+    type: "tool_call",
+    status: "running",
+    metadata: { questions },
+  });
+  const details = { question: "Which colors?", selectedOptions: ["Red", "Blue"] };
+  omp.emit({
+    type: "tool_execution_end",
+    toolCallId: "question-live",
+    toolName: "ask",
+    result: { content: [{ type: "text", text: "Answered" }], details },
+    isError: false,
+  });
+  expect(omp.timeline().at(-1)).toMatchObject({
+    type: "tool_call",
+    status: "completed",
+    metadata: { questions, questionResult: details },
+  });
+});
+
 test("omp runtime safety protects queued replies and runtime-owned activity", async () => {
   const runtime = new FakeOmp();
   const session = await new OmpAgentClient({ logger: createTestLogger(), runtime }).createSession({
