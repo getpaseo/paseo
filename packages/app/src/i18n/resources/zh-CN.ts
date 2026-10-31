@@ -1191,6 +1191,8 @@ export const zhCN: TranslationResources = {
         labels: "标签",
         diff: "差异统计",
         timestamp: "最近活动",
+        agentStatus: "Agent 状态",
+        agentStatusCounts: "未读 {{unread}} 个，运行中 {{running}} 个，已读 {{read}} 个",
       },
       checks: {
         iconAndText: "图标和文字",

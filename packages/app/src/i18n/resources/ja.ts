@@ -1212,6 +1212,8 @@ export const ja: TranslationResources = {
         labels: "ラベル",
         diff: "差分統計",
         timestamp: "最終アクティビティ",
+        agentStatus: "エージェントの状態",
+        agentStatusCounts: "未読 {{unread}}、実行中 {{running}}、既読 {{read}}",
       },
       checks: {
         iconAndText: "アイコンとテキスト",

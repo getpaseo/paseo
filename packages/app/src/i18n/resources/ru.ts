@@ -1216,6 +1216,8 @@ export const ru: TranslationResources = {
         labels: "Метки",
         diff: "Статистика изменений",
         timestamp: "Последняя активность",
+        agentStatus: "Состояние агента",
+        agentStatusCounts: "Непрочитано: {{unread}}, выполняется: {{running}}, прочитано: {{read}}",
       },
       checks: {
         iconAndText: "Значок и текст",
