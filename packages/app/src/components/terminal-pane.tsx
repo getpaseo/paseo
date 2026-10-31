@@ -90,7 +90,7 @@ import {
   type TerminalRendererReadyChange,
 } from "@/utils/terminal-renderer-readiness";
 import { useAppSettings } from "@/hooks/use-settings";
-import { classifyForResolution, fetchDaemonResolution } from "@/assistant-file-links/resolver";
+import { resolveTerminalLocalFileLink } from "@/terminal/local-links/terminal-local-link-resolver";
 import type {
   TerminalLocalFileLinkSource,
   TerminalLocalFileLinkTarget,
@@ -294,6 +294,9 @@ export function TerminalPane({
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const isTerminalPresented = retainedPanelActive && isWorkspaceFocused;
+  const canValidateExactPaths = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.exactDirectorySuggestions === true,
+  );
   const supportsTerminalRestoreModes = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.["terminal-restore-modes"] === true,
   );
@@ -1007,30 +1010,16 @@ export function TerminalPane({
     inputModeRef.current = state;
   }, []);
   const handleResolveLocalFileLink = useCallback(
-    async (source: TerminalLocalFileLinkSource): Promise<TerminalLocalFileLinkTarget | null> => {
-      const resolution = classifyForResolution(
-        { href: source.text, text: source.text, sourceType: "inline-code" },
-        { workspaceRoot: cwd },
-      );
-      if (resolution.kind === "resolved") {
-        return resolution.value.kind === "file" ? resolution.value.target : null;
-      }
-      if (!client) {
-        return null;
-      }
-      try {
-        return await fetchDaemonResolution({
-          ambiguousQuery: resolution.ambiguousQuery,
-          token: resolution.token,
-          target: resolution.target,
-          workspaceRoot: cwd,
-          getDirectorySuggestions: (input) => client.getDirectorySuggestions(input),
-        });
-      } catch {
-        return null;
-      }
+    (source: TerminalLocalFileLinkSource): Promise<TerminalLocalFileLinkTarget | null> => {
+      const getDirectorySuggestions = client ? client.getDirectorySuggestions.bind(client) : null;
+      return resolveTerminalLocalFileLink({
+        source,
+        workspaceRoot: cwd,
+        canValidateExactPaths,
+        getDirectorySuggestions,
+      });
     },
-    [client, cwd],
+    [client, cwd, canValidateExactPaths],
   );
   const handleOpenLocalFileLink = useCallback(
     (target: TerminalLocalFileLinkTarget, disposition: OpenFileDisposition) => {

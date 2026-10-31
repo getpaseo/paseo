@@ -4954,6 +4954,7 @@ test("requests directory suggestions via RPC", async () => {
   expect(request.includeFiles).toBe(true);
   expect(request.includeDirectories).toBe(true);
   expect(request.matchMode).toBe("suffix");
+  expect(request).not.toHaveProperty("exactOnly");
   expect(request.limit).toBe(10);
   expect(request.requestId).toBe("req-directories");
 
@@ -4977,6 +4978,54 @@ test("requests directory suggestions via RPC", async () => {
     entries: [{ path: "README.md", kind: "file" }],
     error: null,
     requestId: "req-directories",
+  });
+});
+
+test("forwards exactOnly directory lookups via RPC", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const promise = client.getDirectorySuggestions(
+    { query: "src/file.ts", cwd: "/tmp/project", includeFiles: true, exactOnly: true, limit: 1 },
+    "req-exact",
+  );
+
+  expect(mock.sent).toHaveLength(1);
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request.type).toBe("directory_suggestions_request");
+  expect(request.exactOnly).toBe(true);
+  expect(request.requestId).toBe("req-exact");
+
+  mock.triggerMessage(
+    JSON.stringify({
+      type: "session",
+      message: {
+        type: "directory_suggestions_response",
+        payload: {
+          directories: [],
+          entries: [{ path: "src/file.ts", kind: "file" }],
+          error: null,
+          requestId: "req-exact",
+        },
+      },
+    }),
+  );
+
+  await expect(promise).resolves.toMatchObject({
+    entries: [{ path: "src/file.ts", kind: "file" }],
   });
 });
 

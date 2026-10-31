@@ -36,6 +36,8 @@ export interface SearchDirectoryEntriesOptions {
   // Absolute paths that discovery never walks into. A path the caller types explicitly still
   // resolves, and browsing inside one lists a single level at a time.
   excludedDiscoveryPaths?: readonly string[];
+  // Retrieval only: return the entry at the named path or nothing, with no discovery at all.
+  exactOnly?: boolean;
 }
 
 interface QueryPlan {
@@ -186,6 +188,12 @@ export async function searchDirectoryEntries(
 ): Promise<DirectorySuggestionEntry[]> {
   const root = await resolveDirectory(options.root);
   if (!root) return [];
+
+  if (options.exactOnly) {
+    const input = buildSearchInput(options, root, new Set<string>(), new Set<string>());
+    const exact = input ? await findExactEntry(input) : null;
+    return exact ? [exact] : [];
+  }
 
   const gitIgnoredPaths = options.respectGitIgnore
     ? await loadGitIgnoredPaths(root)

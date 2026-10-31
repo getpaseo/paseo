@@ -1155,6 +1155,50 @@ test("returns home-scoped directory suggestions", async () => {
   }
 }, 30000);
 
+test("honors exact-only file lookup over the daemon RPC", async () => {
+  const cwd = tmpCwd();
+  try {
+    mkdirSync(path.join(cwd, "src"));
+    writeFileSync(path.join(cwd, "src", "file.ts"), "fixture\n");
+    expect(ctx.client.getLastServerInfoMessage()?.features?.exactDirectorySuggestions).toBe(true);
+
+    const absent = await ctx.client.getDirectorySuggestions({
+      cwd,
+      query: "file.ts",
+      includeFiles: true,
+      includeDirectories: false,
+      matchMode: "suffix",
+      exactOnly: true,
+      limit: 1,
+    });
+    const exact = await ctx.client.getDirectorySuggestions({
+      cwd,
+      query: "./src/file.ts",
+      includeFiles: true,
+      includeDirectories: false,
+      exactOnly: true,
+      limit: 1,
+    });
+    const suggestions = await ctx.client.getDirectorySuggestions({
+      cwd,
+      query: "file.ts",
+      includeFiles: true,
+      includeDirectories: false,
+      matchMode: "suffix",
+      limit: 1,
+    });
+
+    expect(absent).toMatchObject({ error: null, entries: [] });
+    expect(exact).toMatchObject({ error: null, entries: [{ path: "src/file.ts", kind: "file" }] });
+    expect(suggestions).toMatchObject({
+      error: null,
+      entries: [{ path: "src/file.ts", kind: "file" }],
+    });
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 30000);
+
 test("returns typed relative suggestions within a requested directory", async () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "paseo-workspace-suggestion-"));
   const target = path.join(cwd, "src", "components", "message-renderer.tsx");

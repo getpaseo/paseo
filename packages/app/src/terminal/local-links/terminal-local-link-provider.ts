@@ -34,7 +34,7 @@ export interface TerminalLocalFileLinkProviderOptions {
 
 const MAX_LINE_LENGTH = 2_000;
 const MAX_LINK_LENGTH = 500;
-const MAX_RESOLVED_LINKS_IN_LINE = 10;
+const MAX_RESOLVE_ATTEMPTS_IN_LINE = 10;
 
 export function createTerminalLocalFileLinkProvider(
   terminal: Terminal,
@@ -76,41 +76,133 @@ class TerminalLocalFileLinkProvider implements ILinkProvider {
 
     const parsedLinks = detectTerminalLocalLinks(windowed.text);
     const links: ILink[] = [];
-    let resolvedLinkCount = 0;
+    let resolveAttempts = 0;
     for (const parsedLink of parsedLinks) {
       if (parsedLink.path.text.length > MAX_LINK_LENGTH) {
         continue;
       }
 
-      const source = toLinkSource(windowed.text, parsedLink);
-      if (!source) {
-        continue;
-      }
-
-      const target = await this.options.resolveLink(source);
-      if (!target) {
-        continue;
-      }
-
-      const range = toBufferRange({
+      const candidates = getLinkCandidates({
         terminal: this.terminal,
         startLine: windowed.startLine,
-        startIndex: parsedLink.prefix?.index ?? parsedLink.path.index,
-        endIndex: getParsedLinkEndIndex(parsedLink),
+        parsedLink,
       });
-      if (!range) {
-        continue;
-      }
+      for (const candidate of candidates) {
+        const source = toLinkSource(windowed.text, candidate);
+        if (!source) {
+          continue;
+        }
+        if (resolveAttempts >= MAX_RESOLVE_ATTEMPTS_IN_LINE) {
+          return links;
+        }
+        resolveAttempts += 1;
+        const target = await this.options.resolveLink(source);
+        if (!target) {
+          continue;
+        }
 
-      links.push(createLocalFileLink({ range, source, target, options: this.options }));
-      resolvedLinkCount += 1;
-      if (resolvedLinkCount >= MAX_RESOLVED_LINKS_IN_LINE) {
+        const range = toBufferRange({
+          terminal: this.terminal,
+          startLine: windowed.startLine,
+          startIndex: candidate.prefix?.index ?? candidate.path.index,
+          endIndex: getParsedLinkEndIndex(candidate),
+        });
+        if (range) {
+          links.push(createLocalFileLink({ range, source, target, options: this.options }));
+        }
         break;
       }
     }
 
     return links;
   }
+}
+
+function* getLinkCandidates(input: {
+  terminal: Terminal;
+  startLine: number;
+  parsedLink: TerminalParsedLink;
+}): Generator<TerminalParsedLink> {
+  const { terminal, startLine, parsedLink } = input;
+  yield parsedLink;
+
+  // Formatting is only a boundary hint after the complete path fails validation.
+  // Prefer the longest prefix so an internal color change cannot win over a real file.
+  const boundaries = getPathStyleBoundaries({ terminal, startLine, path: parsedLink.path });
+  for (const length of boundaries.toReversed()) {
+    yield {
+      path: { index: parsedLink.path.index, text: parsedLink.path.text.slice(0, length) },
+    };
+  }
+}
+
+function getPathStyleBoundaries(input: {
+  terminal: Terminal;
+  startLine: number;
+  path: TerminalParsedLink["path"];
+}): number[] {
+  const { terminal, startLine, path } = input;
+  const start = mapStringOffsetToBuffer(terminal, startLine, path.index);
+  if (!start) {
+    return [];
+  }
+
+  const boundaries: number[] = [];
+  const scratchCell = terminal.buffer.active.getNullCell();
+  let offset = 0;
+  let previousStyle: string | undefined;
+  for (let row = start.y; offset < path.text.length; row += 1) {
+    const line = terminal.buffer.active.getLine(row);
+    if (!line) {
+      break;
+    }
+    const firstColumn = row === start.y ? start.x : 0;
+    for (
+      let column = firstColumn;
+      column < terminal.cols && offset < path.text.length;
+      column += 1
+    ) {
+      const cell = line.getCell(column);
+      if (!cell || cell.getWidth() === 0) {
+        continue;
+      }
+      const chars = cell.getChars();
+      if (
+        isWrappedWideCharacterContinuation({
+          buffer: terminal.buffer.active,
+          cell: scratchCell,
+          lineLength: line.length,
+          column,
+          y: row,
+          chars,
+        })
+      ) {
+        continue;
+      }
+      const style = getCellStyle(cell);
+      if (previousStyle !== undefined && style !== previousStyle) {
+        boundaries.push(offset);
+      }
+      previousStyle = style;
+      offset += chars.length || 1;
+    }
+  }
+  return boundaries;
+}
+
+function getCellStyle(cell: IBufferCell): string {
+  return [
+    cell.getFgColorMode(),
+    cell.getFgColor(),
+    cell.getBgColorMode(),
+    cell.getBgColor(),
+    cell.isBold(),
+    cell.isDim(),
+    cell.isItalic(),
+    cell.isUnderline(),
+    cell.isInverse(),
+    cell.isStrikethrough(),
+  ].join(":");
 }
 
 function createLocalFileLink(input: {
