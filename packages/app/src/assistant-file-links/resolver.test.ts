@@ -526,6 +526,59 @@ describe("resolveMissingNestedRelativeFile", () => {
     expect(result).toEqual(target);
   });
 
+  it.each([
+    ["/Users/test/project/schema/x.md", "/Users/test/project"],
+    ["file:///Users/test/project/schema/x.md", "/Users/test/project"],
+    ["C:/repo/schema/x.md", "C:/repo"],
+  ])("keeps absolute destination %s", async (raw, workspaceRoot) => {
+    const { getDirectorySuggestions, searches } = suggestionsFromMap({
+      "schema/x.md": [{ path: "repo-a/schema/x.md", kind: "file" }],
+    });
+    const absoluteTarget = { raw, path: `${workspaceRoot}/schema/x.md` };
+    await expect(
+      resolveMissingNestedRelativeFile({
+        target: absoluteTarget,
+        workspaceRoot,
+        getDirectorySuggestions,
+      }),
+    ).resolves.toEqual(absoluteTarget);
+    expect(searches).toEqual([]);
+  });
+
+  it("keeps document-relative Markdown preview links on their authored destination", async () => {
+    const { getDirectorySuggestions, searches } = suggestionsFromMap({
+      "schema/x.md": [{ path: "repo-a/schema/x.md", kind: "file" }],
+    });
+    const previewTarget = { ...target, raw: "../schema/x.md" };
+    await expect(
+      resolveMissingNestedRelativeFile({
+        target: previewTarget,
+        workspaceRoot: "/Users/test/project",
+        relativePathBase: "/Users/test/project/docs",
+        getDirectorySuggestions,
+      }),
+    ).resolves.toEqual(previewTarget);
+    expect(searches).toEqual([]);
+  });
+
+  it.each(["docs/guides", "./docs/guides", "docs/guides/"])(
+    "keeps folder href %s direct",
+    async (raw) => {
+      const { getDirectorySuggestions, searches } = suggestionsFromMap({
+        "docs/guides": [{ path: "repo-a/docs/guides", kind: "file" }],
+      });
+      const folderTarget = { raw, path: "/Users/test/project/docs/guides" };
+      await expect(
+        resolveMissingNestedRelativeFile({
+          target: folderTarget,
+          workspaceRoot: "/Users/test/project",
+          getDirectorySuggestions,
+        }),
+      ).resolves.toEqual(folderTarget);
+      expect(searches).toEqual([]);
+    },
+  );
+
   it("normalizes a Windows workspace root before the suffix lookup", async () => {
     const windowsTarget = {
       raw: "schema/x.md",

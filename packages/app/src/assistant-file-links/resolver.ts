@@ -105,11 +105,8 @@ export async function fetchDaemonResolution({
   };
 }
 
-/** Workspace-relative path that contains a directory segment.
- * Bare names, absolute paths, `~/` paths, and paths outside the workspace
- * return null so the click keeps today's direct open.
- */
-export function nestedRelativeLookupQuery(
+/** Only file-looking paths nested inside the workspace need suffix search. */
+function nestedRelativeLookupQuery(
   targetPath: string,
   workspaceRoot: string | undefined,
 ): string | null {
@@ -124,7 +121,7 @@ export function nestedRelativeLookupQuery(
     return null;
   }
   const relative = normalizedPath.slice(prefix.length);
-  if (!relative.includes("/")) {
+  if (!relative.includes("/") || !isFileLookingAssistantToken(encodeURI(relative))) {
     return null;
   }
   return relative;
@@ -138,8 +135,16 @@ export function nestedRelativeLookupQuery(
 export async function resolveMissingNestedRelativeFile(input: {
   target: InlinePathTarget;
   workspaceRoot?: string;
+  relativePathBase?: string;
   getDirectorySuggestions: GetDirectorySuggestions;
 }): Promise<InlinePathTarget> {
+  if (
+    input.relativePathBase ||
+    isAbsoluteInlineCodeToken(input.target.raw) ||
+    input.target.raw.startsWith("~/")
+  ) {
+    return input.target;
+  }
   const query = nestedRelativeLookupQuery(input.target.path, input.workspaceRoot);
   if (!query) {
     return input.target;

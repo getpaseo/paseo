@@ -189,6 +189,7 @@ function openAssistantFileLink(input: {
       disposition: input.disposition,
       capturedServerId: capturedConfig.serverId,
       capturedWorkspaceRoot: capturedConfig.workspaceRoot,
+      capturedRelativePathBase: capturedConfig.relativePathBase,
       context: input.context,
     });
     return;
@@ -283,6 +284,7 @@ async function dispatchResolvedLink(input: {
   disposition: OpenFileDisposition;
   capturedServerId?: string;
   capturedWorkspaceRoot?: string;
+  capturedRelativePathBase?: string;
   context: AssistantFileLinkResolverContextValue;
 }) {
   const { value } = input.resolution;
@@ -290,6 +292,7 @@ async function dispatchResolvedLink(input: {
     const target = await resolveMissingNestedRelativeFile({
       target: value.target,
       workspaceRoot: input.capturedWorkspaceRoot,
+      relativePathBase: input.capturedRelativePathBase,
       getDirectorySuggestions: input.context.getDirectorySuggestions,
     });
     await dispatchFileTarget({
