@@ -1634,7 +1634,9 @@ function applyTimelineTurnId(
 
   if (!event.turnId || items === previous) return items;
   // Assign membership only to rows written by this event, before finalizing
-  // unrelated reasoning rows. Late lifecycle updates can replace an earlier row.
+  // unrelated reasoning rows. A late update to an earlier row must not relabel
+  // the newest row: its identity would change under its id, and its next update
+  // would append a second row with the same id.
   return items.map((item, index) =>
     item === previous[index] || item.turnId === event.turnId
       ? item
