@@ -134,6 +134,67 @@ function normalizeVersion(raw: string): string {
 }
 
 /**
+ * The releases the installed app has reached. CHANGELOG.md on main lists betas
+ * ahead of the latest stable, and a stable install should not read notes for a
+ * version it does not have. A heading that is not a version is kept, and so is
+ * everything when the installed version is unknown.
+ */
+export function releasesUpTo(
+  releases: ChangelogRelease[],
+  installedVersion: string | null,
+): ChangelogRelease[] {
+  const installed = installedVersion ? parseVersion(installedVersion) : null;
+  if (!installed) return releases;
+  return releases.filter((release) => {
+    const version = parseVersion(release.version);
+    return !version || compareVersions(version, installed) <= 0;
+  });
+}
+
+const SEMVER = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
+const NUMERIC_IDENTIFIER = /^\d+$/;
+
+interface ParsedVersion {
+  core: number[];
+  prerelease: string[];
+}
+
+function parseVersion(raw: string): ParsedVersion | null {
+  const match = raw.trim().match(SEMVER);
+  if (!match) return null;
+  return {
+    core: [Number(match[1]), Number(match[2]), Number(match[3])],
+    prerelease: match[4] ? match[4].split(".") : [],
+  };
+}
+
+/** Semver precedence: a prerelease sorts before its stable core. */
+function compareVersions(a: ParsedVersion, b: ParsedVersion): number {
+  for (let index = 0; index < 3; index += 1) {
+    const diff = a.core[index] - b.core[index];
+    if (diff !== 0) return diff;
+  }
+  if (a.prerelease.length === 0 || b.prerelease.length === 0) {
+    return b.prerelease.length - a.prerelease.length;
+  }
+  const length = Math.max(a.prerelease.length, b.prerelease.length);
+  for (let index = 0; index < length; index += 1) {
+    const left = a.prerelease[index];
+    const right = b.prerelease[index];
+    if (left === undefined) return -1;
+    if (right === undefined) return 1;
+    if (left === right) continue;
+    const leftNumeric = NUMERIC_IDENTIFIER.test(left);
+    const rightNumeric = NUMERIC_IDENTIFIER.test(right);
+    if (leftNumeric && rightNumeric) return Number(left) - Number(right);
+    if (leftNumeric) return -1;
+    if (rightNumeric) return 1;
+    return left < right ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
  * ISO dates become the reader's locale; anything else the author wrote is shown
  * as authored rather than guessed at.
  */
