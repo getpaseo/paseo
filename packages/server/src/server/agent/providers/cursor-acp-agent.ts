@@ -2,7 +2,7 @@ import { zSessionConfigOption } from "@agentclientprotocol/sdk/dist/schema/zod.g
 import type { Logger } from "pino";
 import { z } from "zod";
 
-import type { AgentModelDefinition } from "../agent-sdk-types.js";
+import type { AgentModelDefinition, FetchCatalogOptions } from "../agent-sdk-types.js";
 import {
   deriveSelectorOptions,
   type ACPCatalogModelResolverContext,
@@ -85,6 +85,12 @@ async function fetchCursorModelCatalog(connection: ACPCatalogModelResolverContex
 }
 
 export class CursorACPAgentClient extends GenericACPAgentClient {
+  async getCatalogCacheKey(_options: FetchCatalogOptions): Promise<string> {
+    // Cursor's model selection and Agent/Plan/Ask modes are host-level metadata.
+    // Project permission rules do not change the catalog; configured clients stay isolated.
+    return "host";
+  }
+
   constructor(options: CursorACPAgentClientOptions) {
     super({
       logger: options.logger,
