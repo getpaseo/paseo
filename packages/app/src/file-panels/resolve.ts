@@ -37,7 +37,7 @@ export function filePanelExtension(path: string): string {
   return dot < 0 ? "" : name.slice(dot + 1).toLowerCase();
 }
 
-function filePanelBasename(path: string): string {
+export function filePanelBasename(path: string): string {
   return path.trim().split(/[\\/]/).pop() ?? "";
 }
 
