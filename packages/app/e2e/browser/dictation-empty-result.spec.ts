@@ -15,6 +15,7 @@ import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-
 test.use({
   e2eDaemonEnvironment: {
     PASEO_DICTATION_ENABLED: "1",
+    PASEO_DICTATION_SILENCE_PEAK_THRESHOLD: "300",
     OPENAI_API_KEY: "unused-for-silent-recordings",
     OPENAI_BASE_URL: "http://127.0.0.1:9/v1",
   },
