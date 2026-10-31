@@ -1,5 +1,9 @@
 import { expect, test, type Page } from "../support/fixtures";
-import { composerLocator, expectComposerVisible } from "../support/helpers/composer";
+import {
+  attachFileFromMenu,
+  composerLocator,
+  expectComposerVisible,
+} from "../support/helpers/composer";
 import {
   openAgentRoute,
   seedMockAgentWorkspace,
@@ -365,6 +369,44 @@ function expectPopoverDoesNotDisappearAfterFirstVisible(frames: PopoverFrame[]):
 }
 
 test.describe("Composer autocomplete", () => {
+  test("inserts suggested commands from assistant messages without sending", async ({ page }) => {
+    const requests = recordCommandRequestsByAgentId(page);
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "suggested-command-",
+      title: "Suggested commands",
+      initialPrompt: "Suggest `/mock` without running it",
+      featureValues: { mockAssistantResponse: "Try `/mock` or [Run mock](/mock)." },
+    });
+    try {
+      await openAgentRoute(page, session);
+      const message = page.getByTestId("assistant-message").filter({ hasText: "Run mock" });
+      await expect(message).toBeVisible();
+      await expect(page.getByTestId("user-message").getByRole("link")).toHaveCount(0);
+      await expect.poll(() => requests.length).toBe(1);
+      await attachFileFromMenu(page, {
+        name: "note.txt",
+        mimeType: "text/plain",
+        buffer: Buffer.from("attachment"),
+      });
+      await expect(page.getByTestId("composer-file-attachment-pill")).toContainText("note.txt");
+      await composerLocator(page).fill("draft");
+      await message.getByRole("link", { name: "/mock", exact: true }).click();
+      await expect(composerLocator(page)).toHaveValue("draft /mock");
+      await expect(composerLocator(page)).toBeFocused();
+      await message.getByRole("link", { name: "Run mock" }).click();
+      await expect(composerLocator(page)).toHaveValue("draft /mock /mock");
+      await expect(composerLocator(page)).toBeFocused();
+      await expect(page.getByTestId("composer-file-attachment-pill")).toContainText("note.txt");
+      await composerLocator(page).fill("/");
+      await expect(
+        page.getByTestId("composer-autocomplete-popover").filter({ visible: true }),
+      ).toContainText("/mock");
+      expect(requests).toHaveLength(1);
+    } finally {
+      await session.cleanup();
+    }
+  });
+
   test("keeps New workspace off the running-agent command list before a project is chosen", async ({
     page,
   }) => {

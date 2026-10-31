@@ -30,10 +30,25 @@ export interface ComposerRetainedEditor {
  */
 export class ComposerEditingSession {
   private fullscreen = false;
+  private editor: { getText(): string; replaceText(text: string): void; focus(): void } | null =
+    null;
   private retained: ComposerRetainedEditor | null = null;
   private listeners = new Set<() => void>();
   constructor(private readonly onChange?: () => void) {}
   getFullscreen = () => this.fullscreen;
+  attachEditor(editor: NonNullable<ComposerEditingSession["editor"]>) {
+    this.editor = editor;
+    return () => {
+      if (this.editor === editor) this.editor = null;
+    };
+  }
+  insertCommand(command: string) {
+    const editor = this.editor;
+    if (!editor) return;
+    const text = editor.getText();
+    editor.replaceText(`${text}${text && !/\s$/.test(text) ? " " : ""}${command}`);
+    editor.focus();
+  }
   /** Called by the unmounting editor; the next mount of this session takes it. */
   retainEditor(retained: ComposerRetainedEditor) {
     this.retained = retained;
