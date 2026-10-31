@@ -5762,99 +5762,151 @@ test("fetches scoped recent provider sessions", async () => {
   });
 });
 
-test("imports an agent by provider handle id", async () => {
-  const logger = createMockLogger();
-  const mock = createMockTransport();
+test.each([undefined, false])(
+  "rejects explicit import modes on hosts without support (%s)",
+  async (supported) => {
+    const transport = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_import_mode_compat",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      transportFactory: () => transport.transport,
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    transport.triggerOpen({ features: { importSessionMode: supported } });
+    await connecting;
 
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger,
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
+    const importing = client.importAgent({
+      provider: "claude",
+      sessionId: "native-session",
+      modeId: "auto",
+    });
+    void importing.catch(() => undefined);
+    expect(transport.sent).toHaveLength(0);
+    await expect(importing).rejects.toThrow(
+      "Update the host to select a mode when importing an agent.",
+    );
+  },
+);
 
-  const connectPromise = client.connect();
-  mock.triggerOpen();
-  await connectPromise;
+test.each([
+  ["full-access", true, true],
+  [undefined, undefined, true],
+  ["full-access", true, false],
+] as const)(
+  "imports an agent by provider handle id with mode %s",
+  async (modeId, supported, connectedBeforeImport) => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
 
-  const promise = client.importAgent({
-    providerId: "custom-codex",
-    providerHandleId: "thread-1",
-    cwd: "/tmp/repo",
-  });
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
 
-  expect(mock.sent).toHaveLength(1);
-  const request = JSON.parse(String(mock.sent[0])) as {
-    type: "session";
-    message: {
-      type: "import_agent_request";
-      requestId: string;
-      providerId?: string;
-      providerHandleId?: string;
-      sessionId?: string;
-      cwd?: string;
+    const connectPromise = client.connect();
+    if (connectedBeforeImport) {
+      mock.triggerOpen({ features: { importSessionMode: supported } });
+      await connectPromise;
+    }
+
+    const promise = client.importAgent({
+      providerId: "custom-codex",
+      providerHandleId: "thread-1",
+      cwd: "/tmp/repo",
+      modeId,
+    });
+
+    let importError: unknown;
+    void promise.catch((error) => {
+      importError = error;
+    });
+    if (!connectedBeforeImport) {
+      await Promise.resolve();
+      expect(importError).toBeUndefined();
+      expect(mock.sent).toHaveLength(0);
+      mock.triggerOpen({ features: { importSessionMode: supported } });
+      await connectPromise;
+    }
+    await vi.waitFor(() => expect(mock.sent).toHaveLength(1));
+    const request = JSON.parse(String(mock.sent[0])) as {
+      type: "session";
+      message: {
+        type: "import_agent_request";
+        requestId: string;
+        providerId?: string;
+        providerHandleId?: string;
+        sessionId?: string;
+        cwd?: string;
+        modeId?: string;
+      };
     };
-  };
-  expect(request.message).toMatchObject({
-    type: "import_agent_request",
-    providerId: "custom-codex",
-    providerHandleId: "thread-1",
-    cwd: "/tmp/repo",
-  });
-  expect(request.message).not.toHaveProperty("sessionId");
+    expect(request.message).toMatchObject({
+      type: "import_agent_request",
+      providerId: "custom-codex",
+      providerHandleId: "thread-1",
+      cwd: "/tmp/repo",
+    });
+    expect(request.message.modeId).toBe(modeId);
+    expect(request.message).not.toHaveProperty("sessionId");
 
-  mock.triggerMessage(
-    wrapSessionMessage({
-      type: "status",
-      payload: {
-        status: "agent_resumed",
-        requestId: request.message.requestId,
-        agentId: "agent-1",
-        timelineSize: 0,
-        agent: {
-          id: "agent-1",
-          provider: "custom-codex",
-          cwd: "/tmp/repo",
-          model: null,
-          features: [],
-          thinkingOptionId: null,
-          effectiveThinkingOptionId: null,
-          createdAt: "2026-04-30T00:00:00.000Z",
-          updatedAt: "2026-04-30T00:00:00.000Z",
-          lastUserMessageAt: null,
-          status: "idle",
-          capabilities: {
-            supportsStreaming: false,
-            supportsSessionPersistence: false,
-            supportsDynamicModes: false,
-            supportsMcpServers: false,
-            supportsReasoningStream: false,
-            supportsToolInvocations: false,
-          },
-          currentModeId: null,
-          availableModes: [],
-          pendingPermissions: [],
-          persistence: {
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "status",
+        payload: {
+          status: "agent_resumed",
+          requestId: request.message.requestId,
+          agentId: "agent-1",
+          timelineSize: 0,
+          agent: {
+            id: "agent-1",
             provider: "custom-codex",
-            sessionId: "thread-1",
-            nativeHandle: "thread-1",
+            cwd: "/tmp/repo",
+            model: null,
+            features: [],
+            thinkingOptionId: null,
+            effectiveThinkingOptionId: null,
+            createdAt: "2026-04-30T00:00:00.000Z",
+            updatedAt: "2026-04-30T00:00:00.000Z",
+            lastUserMessageAt: null,
+            status: "idle",
+            capabilities: {
+              supportsStreaming: false,
+              supportsSessionPersistence: false,
+              supportsDynamicModes: false,
+              supportsMcpServers: false,
+              supportsReasoningStream: false,
+              supportsToolInvocations: false,
+            },
+            currentModeId: null,
+            availableModes: [],
+            pendingPermissions: [],
+            persistence: {
+              provider: "custom-codex",
+              sessionId: "thread-1",
+              nativeHandle: "thread-1",
+            },
+            title: null,
+            labels: {},
+            requiresAttention: false,
+            attentionReason: null,
           },
-          title: null,
-          labels: {},
-          requiresAttention: false,
-          attentionReason: null,
         },
-      },
-    }),
-  );
+      }),
+    );
 
-  await expect(promise).resolves.toMatchObject({
-    id: "agent-1",
-    provider: "custom-codex",
-  });
-});
+    await expect(promise).resolves.toMatchObject({
+      id: "agent-1",
+      provider: "custom-codex",
+    });
+  },
+);
 
 test("uses server-provided dictation finish timeout budget", async () => {
   useHeartbeatClock();
