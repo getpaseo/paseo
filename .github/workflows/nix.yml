@@ -101,7 +101,7 @@ jobs:
         run: nix build .#desktop -o result-desktop
 
   build-desktop-darwin:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 

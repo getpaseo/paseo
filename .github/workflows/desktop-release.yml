@@ -100,7 +100,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14
+          - runner: macos-15
             electron_arch: arm64
             node_heap_mb: 4096
           - runner: macos-15-intel
