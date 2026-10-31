@@ -71,7 +71,7 @@ import {
   type OmpRuntimeOptions,
 } from "./provider-config.js";
 export { formatOmpVersionSupport, resolveOmpDiagnosticPaths } from "./provider-config.js";
-import { OmpSubagentCardTracker, type OmpSubagentCardScheduler } from "./subagent-card-tracker.js";
+import { OmpSubagentCardTracker } from "./subagent-card-tracker.js";
 import { ompSkillPromptUserText, shouldDisplayOmpCustomMessage } from "./custom-message.js";
 import { getUserMessageImages, getUserMessageText } from "./message-history.js";
 import { mapOmpSystemNoticeToNotification } from "./system-notice.js";
@@ -132,7 +132,6 @@ export interface OmpAgentClientOptions {
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
   runtime?: OmpRuntime;
-  subagentCardScheduler?: OmpSubagentCardScheduler;
   providerIdleScheduler?: OmpProviderIdleScheduler;
   noTurnScheduler?: OmpNoTurnScheduler;
   usagePollScheduler?: OmpUsagePollScheduler;
@@ -214,7 +213,6 @@ interface OmpAgentSessionOptions {
   initialState: OmpSessionState;
   currentModeId?: string | null;
   logger: Logger;
-  subagentCardScheduler?: OmpSubagentCardScheduler;
   providerIdleScheduler?: OmpProviderIdleScheduler;
   noTurnScheduler?: OmpNoTurnScheduler;
   usagePollScheduler?: OmpUsagePollScheduler;
@@ -793,9 +791,7 @@ export class OmpAgentSession implements AgentSession {
         this.logger.debug({ err: error }, "OMP context usage poll failed");
       },
     });
-    this.subagentCardTracker = new OmpSubagentCardTracker({
-      scheduler: options.subagentCardScheduler,
-    });
+    this.subagentCardTracker = new OmpSubagentCardTracker();
     this.lastKnownThinkingOptionId =
       normalizeOmpThinkingOption(options.config.thinkingOptionId) ??
       this.state.thinkingLevel ??
@@ -2209,8 +2205,7 @@ export class OmpAgentSession implements AgentSession {
     return mapOmpToolDetail(toolCall, result, {
       toolCallId,
       bridgedTool: this.hostTools?.bridge?.tool(toolCall.toolName),
-      mapSubagentDetail: (detail) =>
-        this.subagentCardTracker.detailFor(toolCallId, detail) ?? detail,
+      mapSubagentDetail: (detail) => this.subagentCardTracker.detailFor(toolCallId, detail),
     });
   }
 
@@ -2300,7 +2295,6 @@ export class OmpAgentClient implements AgentClient {
 
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
-  private readonly subagentCardScheduler?: OmpSubagentCardScheduler;
   private readonly providerIdleScheduler?: OmpProviderIdleScheduler;
   private readonly noTurnScheduler?: OmpNoTurnScheduler;
   private readonly usagePollScheduler?: OmpUsagePollScheduler;
@@ -2319,7 +2313,6 @@ export class OmpAgentClient implements AgentClient {
     );
     this.logger = options.logger;
     this.runtimeSettings = runtimeSettings;
-    this.subagentCardScheduler = options.subagentCardScheduler;
     this.providerIdleScheduler = options.providerIdleScheduler;
     this.noTurnScheduler = options.noTurnScheduler;
     this.usagePollScheduler = options.usagePollScheduler;
@@ -2403,7 +2396,6 @@ export class OmpAgentClient implements AgentClient {
         initialState,
         currentModeId: launchMode.modeId,
         logger: this.logger,
-        subagentCardScheduler: this.subagentCardScheduler,
         providerIdleScheduler: this.providerIdleScheduler,
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,
@@ -2476,7 +2468,6 @@ export class OmpAgentClient implements AgentClient {
         initialState,
         currentModeId: launchMode.modeId,
         logger: this.logger,
-        subagentCardScheduler: this.subagentCardScheduler,
         providerIdleScheduler: this.providerIdleScheduler,
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,

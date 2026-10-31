@@ -35,6 +35,8 @@ With a custom root, Paseo keeps the same hashed layout under that directory:
 }
 ```
 
+Plugins can choose a location anywhere on disk with [`worktree.create.before`](/docs/plugins/hooks#worktreecreatebefore). The [worktree-placement example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/worktree-placement) places worktrees next to the source checkout. Paseo validates the path, refuses an existing destination, and manages listing, archive, and deletion there. Recovery uses the recorded path without running creation hooks.
+
 1. Create a workspace with worktree isolation, Paseo creates the worktree and runs your setup hooks
 2. Launch one or more agents in that workspace
 3. Review the diff against the base branch
@@ -80,6 +82,19 @@ paseo workspace create \
 
 Add `--forge <name>` when Paseo cannot infer the forge from the source checkout.
 
+## Copy local files with .worktreeinclude
+
+Create `.worktreeinclude` at the root of your source checkout to copy selected gitignored files into new worktrees:
+
+```gitignore
+.env
+config/*.local.json
+```
+
+Patterns use gitignore syntax. A file must match `.worktreeinclude` and be gitignored to be copied. Tracked files are never copied, and existing destination files are never overwritten. Without `.worktreeinclude`, no local files are copied. Symlinked directories and nested repositories inside an included path cause the copy to fail and abort worktree creation.
+
+The built-in `worktree-include` plugin copies from the checkout you create the worktree from, including when that checkout is another worktree. Copying finishes before setup, terminals, and the first agent. A copy failure aborts creation and removes the new worktree. Copies use copy-on-write clones on APFS and btrfs when supported, with a regular copy elsewhere.
+
 ## paseo.json
 
 Drop a `paseo.json` in your repo root. Paseo reads it from the committed version of the base branch you picked, so uncommitted changes in other branches don't apply.
@@ -99,12 +114,14 @@ Drop a `paseo.json` in your repo root. Paseo reads it from the committed version
 
 ## Setup and teardown
 
-`setup` runs once after the worktree is created. A fresh worktree has no installed dependencies and no ignored files (like `.env`), so use setup to install and copy what you need. `teardown` runs during archive, before the directory is removed.
+Plugins can use [`worktree.create.after`](/docs/plugins/hooks#worktreecreateafter) to write files before setup, terminals, and the first agent.
+
+`setup` runs once after the worktree is created. Use setup to install dependencies and run project initialization. Use [`.worktreeinclude`](#copy-local-files-with-worktreeinclude) to copy ignored files such as `.env`. `teardown` runs during archive, before the directory is removed.
 
 ```json
 {
   "worktree": {
-    "setup": "npm ci\ncp \"$PASEO_SOURCE_CHECKOUT_PATH/.env\" .env\nnpm run db:migrate",
+    "setup": "npm ci\nnpm run db:migrate",
     "teardown": "npm run db:drop || true"
   }
 }

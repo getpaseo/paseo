@@ -486,3 +486,222 @@ diff --git a/node_modules/react-native-unistyles/lib/commonjs/core/withUnistyles
        ...(narrowedProps.style ? {
          style: styleSecrets.styles
        } : {}),
+diff --git a/node_modules/react-native-unistyles/lib/commonjs/web/runtime.js b/node_modules/react-native-unistyles/lib/commonjs/web/runtime.js
+index 305fa49..5957aa5 100644
+--- a/node_modules/react-native-unistyles/lib/commonjs/web/runtime.js
++++ b/node_modules/react-native-unistyles/lib/commonjs/web/runtime.js
+@@ -35,10 +35,17 @@ class UnistylesRuntime {
+     return this.darkMedia;
+   }
+   get colorScheme() {
++    // Read the scheme through fresh lists, never through lightMedia/darkMedia. Chromium defers
++    // MediaQueryList change events while the document is hidden and drops the pending event
++    // of any list whose `matches` was read before the document became visible again, which
++    // would silence the adaptive-theme listeners registered on those two lists.
++    if ((0, _utils.isServer)()) {
++      return _types.ColorScheme.Unspecified;
++    }
+     switch (true) {
+-      case this.getLightMedia()?.matches:
++      case window.matchMedia('(prefers-color-scheme: light)').matches:
+         return _types.ColorScheme.Light;
+-      case this.getDarkMedia()?.matches:
++      case window.matchMedia('(prefers-color-scheme: dark)').matches:
+         return _types.ColorScheme.Dark;
+       default:
+         return _types.ColorScheme.Unspecified;
+diff --git a/node_modules/react-native-unistyles/lib/module/web/runtime.js b/node_modules/react-native-unistyles/lib/module/web/runtime.js
+index 7f13a06..c487bee 100644
+--- a/node_modules/react-native-unistyles/lib/module/web/runtime.js
++++ b/node_modules/react-native-unistyles/lib/module/web/runtime.js
+@@ -31,10 +31,17 @@ export class UnistylesRuntime {
+     return this.darkMedia;
+   }
+   get colorScheme() {
++    // Read the scheme through fresh lists, never through lightMedia/darkMedia. Chromium defers
++    // MediaQueryList change events while the document is hidden and drops the pending event
++    // of any list whose `matches` was read before the document became visible again, which
++    // would silence the adaptive-theme listeners registered on those two lists.
++    if (isServer()) {
++      return ColorScheme.Unspecified;
++    }
+     switch (true) {
+-      case this.getLightMedia()?.matches:
++      case window.matchMedia('(prefers-color-scheme: light)').matches:
+         return ColorScheme.Light;
+-      case this.getDarkMedia()?.matches:
++      case window.matchMedia('(prefers-color-scheme: dark)').matches:
+         return ColorScheme.Dark;
+       default:
+         return ColorScheme.Unspecified;
+diff --git a/node_modules/react-native-unistyles/src/web/runtime.ts b/node_modules/react-native-unistyles/src/web/runtime.ts
+index a16dac0..6519858 100644
+--- a/node_modules/react-native-unistyles/src/web/runtime.ts
++++ b/node_modules/react-native-unistyles/src/web/runtime.ts
+@@ -41,8 +41,16 @@ export class UnistylesRuntime {
+     get colorScheme() {
++        // Read the scheme through fresh lists, never through lightMedia/darkMedia. Chromium defers
++        // MediaQueryList change events while the document is hidden and drops the pending event
++        // of any list whose `matches` was read before the document became visible again, which
++        // would silence the adaptive-theme listeners registered on those two lists.
++        if (isServer()) {
++            return ColorScheme.Unspecified
++        }
++
+         switch (true) {
+-            case this.getLightMedia()?.matches:
++            case window.matchMedia('(prefers-color-scheme: light)').matches:
+                 return ColorScheme.Light
+-            case this.getDarkMedia()?.matches:
++            case window.matchMedia('(prefers-color-scheme: dark)').matches:
+                 return ColorScheme.Dark
+             default:
+                 return ColorScheme.Unspecified
+diff --git a/node_modules/react-native-unistyles/android/src/main/java/com/unistyles/NativePlatform+android.kt b/node_modules/react-native-unistyles/android/src/main/java/com/unistyles/NativePlatform+android.kt
+index 0f8d1f0..154a12a 100644
+--- a/node_modules/react-native-unistyles/android/src/main/java/com/unistyles/NativePlatform+android.kt
++++ b/node_modules/react-native-unistyles/android/src/main/java/com/unistyles/NativePlatform+android.kt
+@@ -3,11 +3,16 @@ package com.unistyles
+ import android.os.Build
+ import android.content.Context
+ import android.content.res.Configuration
++import android.content.res.Resources
++import android.os.Handler
++import android.os.Looper
+ import android.util.DisplayMetrics
+ import android.view.View
+ import android.view.WindowManager
+ import androidx.annotation.Keep
++import androidx.core.content.OnConfigurationChangedProvider
+ import androidx.core.text.TextUtilsCompat
++import androidx.core.util.Consumer
+ import androidx.core.view.ViewCompat
+ import androidx.core.view.WindowCompat
+ import androidx.core.view.WindowInsetsCompat
+@@ -22,6 +27,7 @@ import com.margelo.nitro.unistyles.Insets
+ import com.margelo.nitro.unistyles.Orientation
+ import com.margelo.nitro.unistyles.UnistyleDependency
+ import com.margelo.nitro.unistyles.UnistylesNativeMiniRuntime
++import java.lang.ref.WeakReference
+ import java.util.Locale
+ 
+ @Keep
+@@ -30,6 +36,14 @@ class NativePlatformAndroid(private val reactContext: ReactApplicationContext):
+     private val _insets = NativePlatformInsets(reactContext, this::getMiniRuntime) { this.onConfigChange() }
+     private var _miniRuntime: UnistylesNativeMiniRuntime = buildMiniRuntime()
+     private val _listener = NativePlatformListener(reactContext, this::getMiniRuntime) { this.diffMiniRuntime() }
++    private var _configurationProvider: WeakReference<OnConfigurationChangedProvider>? = null
++    private val _activityConfigurationListener = Consumer<Configuration> {
++        Handler(Looper.getMainLooper()).post { this.onConfigChange() }
++    }
++
++    // Application resources can lag behind configuration changes
++    private val configurationResources: Resources
++        get() = reactContext.currentActivity?.resources ?: reactContext.resources
+ 
+     init {
+         checkEdgeToEdge()
+@@ -37,12 +51,16 @@ class NativePlatformAndroid(private val reactContext: ReactApplicationContext):
+     }
+ 
+     fun onDestroy() {
++        stopObservingActivityConfiguration()
+         _listener.onDestroy()
+         _insets.onDestroy()
+         reactContext.removeLifecycleEventListener(this)
+     }
+ 
+     override fun onHostResume() {
++        observeActivityConfiguration()
++        // catch configuration changes missed while no Activity was attached
++        onConfigChange()
+         _insets.getInitialInsets(false)
+         _insets.startInsetsListener()
+     }
+@@ -51,7 +69,26 @@ class NativePlatformAndroid(private val reactContext: ReactApplicationContext):
+         _insets.stopInsetsListener()
+     }
+ 
+-    override fun onHostDestroy() {}
++    override fun onHostDestroy() {
++        stopObservingActivityConfiguration()
++    }
++
++    private fun observeActivityConfiguration() {
++        val provider = reactContext.currentActivity as? OnConfigurationChangedProvider
++
++        if (_configurationProvider?.get() === provider) {
++            return
++        }
++
++        stopObservingActivityConfiguration()
++        provider?.addOnConfigurationChangedListener(_activityConfigurationListener)
++        _configurationProvider = provider?.let { WeakReference(it) }
++    }
++
++    private fun stopObservingActivityConfiguration() {
++        _configurationProvider?.get()?.removeOnConfigurationChangedListener(_activityConfigurationListener)
++        _configurationProvider = null
++    }
+ 
+     override val memorySize: Long
+         get() = 0
+@@ -61,7 +98,7 @@ class NativePlatformAndroid(private val reactContext: ReactApplicationContext):
+     }
+ 
+     override fun getColorScheme(): ColorScheme {
+-        val uiMode = reactContext.resources.configuration.uiMode
++        val uiMode = configurationResources.configuration.uiMode
+ 
+         val colorScheme = when (uiMode.and(Configuration.UI_MODE_NIGHT_MASK)) {
+             Configuration.UI_MODE_NIGHT_YES -> ColorScheme.DARK
+@@ -73,15 +110,15 @@ class NativePlatformAndroid(private val reactContext: ReactApplicationContext):
+     }
+ 
+     override fun getFontScale(): Double {
+-        return reactContext.resources.configuration.fontScale.toDouble()
++        return configurationResources.configuration.fontScale.toDouble()
+     }
+ 
+     override fun getPixelRatio(): Double {
+-        return reactContext.resources.displayMetrics.density.toDouble()
++        return configurationResources.displayMetrics.density.toDouble()
+     }
+ 
+     override fun getOrientation(): Orientation {
+-        val orientation = when (reactContext.resources.configuration.orientation) {
++        val orientation = when (configurationResources.configuration.orientation) {
+             Configuration.ORIENTATION_PORTRAIT -> Orientation.PORTRAIT
+             Configuration.ORIENTATION_LANDSCAPE -> Orientation.LANDSCAPE
+             else -> Orientation.PORTRAIT
+@@ -122,7 +159,7 @@ class NativePlatformAndroid(private val reactContext: ReactApplicationContext):
+                 return Dimensions(screenWidth, screenHeight)
+             }
+             else -> {
+-                val displayMetrics = reactContext.resources.displayMetrics
++                val displayMetrics = configurationResources.displayMetrics
+ 
+                 reactContext.currentActivity?.windowManager?.currentWindowMetrics?.bounds?.let {
+                     val boundsWidth = (it.width() / displayMetrics.density).toDouble()
+@@ -157,7 +194,7 @@ class NativePlatformAndroid(private val reactContext: ReactApplicationContext):
+             "com.facebook.react.modules.i18nmanager.I18nUtil",
+             Context.MODE_PRIVATE
+         )
+-        val resourcesLocale = reactContext.resources.configuration.locales[0]
++        val resourcesLocale = configurationResources.configuration.locales[0]
+         val hasForcedRtl = sharedPrefs.getBoolean("RCTI18nUtil_forceRTL", false)
+         // user preferences
+         val isRtl = TextUtilsCompat.getLayoutDirectionFromLocale(Locale.getDefault()) == ViewCompat.LAYOUT_DIRECTION_RTL
+diff --git a/node_modules/react-native-unistyles/android/src/main/java/com/unistyles/NativePlatform+insets.kt b/node_modules/react-native-unistyles/android/src/main/java/com/unistyles/NativePlatform+insets.kt
+index a9c1804..f5a3c20 100644
+--- a/node_modules/react-native-unistyles/android/src/main/java/com/unistyles/NativePlatform+insets.kt
++++ b/node_modules/react-native-unistyles/android/src/main/java/com/unistyles/NativePlatform+insets.kt
+@@ -38,7 +38,7 @@ class NativePlatformInsets(
+     }
+ 
+     fun getInsets(): Insets {
+-        val density = reactContext.resources.displayMetrics.density
++        val density = (reactContext.currentActivity?.resources ?: reactContext.resources).displayMetrics.density
+ 
+         return Insets(
+             this._insets.top / density,

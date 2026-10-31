@@ -22,7 +22,12 @@
     "declarationMap": true,
     "sourceMap": true
   },
-  "include": ["src/server/**/*", "src/services/**/*", "src/terminal/**/*"],
+  "include": [
+    "src/server/**/*",
+    "src/services/**/*",
+    "src/terminal/**/*",
+    "src/executable-resolution/which.d.ts"
+  ],
   "exclude": [
     "node_modules",
     "dist",

@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentStreamEvent } from "../agent/agent-sdk-types.js";
 import { PluginAgentClientRegistry } from "../agent/plugin-provider.js";
 import { PluginRuntime } from "./runtime.js";
+import { resolveDaemonVersion } from "../daemon-version.js";
 import type { PluginSessionSocket } from "./session-socket.js";
 
 const temporaryDirectories: string[] = [];
@@ -2078,7 +2079,11 @@ const examples = (await readdir(examplesDirectory, { withFileTypes: true }))
 it.each(examples)("builds and loads the %s plugin example", async (example) => {
   const settingsDirectory = await mkdtemp(path.join(tmpdir(), "paseo-example-settings-"));
   temporaryDirectories.push(settingsDirectory);
-  const runtime = createTestRuntime({ settingsDirectory }, undefined, "0.13.2");
+  const runtime = createTestRuntime(
+    { settingsDirectory },
+    undefined,
+    resolveDaemonVersion(import.meta.url),
+  );
   try {
     await runtime.startPlugin(example, path.join(examplesDirectory, example));
     expect(runtime.catalog()).toMatchObject([{ id: example }]);

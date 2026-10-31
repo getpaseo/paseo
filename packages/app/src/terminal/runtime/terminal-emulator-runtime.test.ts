@@ -302,25 +302,14 @@ describe("terminal-emulator-runtime", () => {
     expect(committed).toEqual(["first", "second", "clear", "third"]);
   });
 
-  it("falls back to timeout commit for a barrier op when the gate sentinel never fires", () => {
+  it("unblocks queued replay writes if a begin barrier never commits", () => {
     vi.useFakeTimers();
-    const { runtime, terminal } = createRuntimeWithTerminal();
-    const onCommitted = vi.fn();
-
-    // restoreOutput is a barrier; if xterm never commits the gate sentinel, the barrier still
-    // applies (and commits) after the 5s safety timeout instead of stalling forever.
-    runtime.restoreOutput({
-      data: terminalOutput("stuck"),
-      onCommitted,
-    });
-
-    expect(onCommitted).not.toHaveBeenCalled();
-    expect(terminal.resetCalls).toBe(0);
-    vi.advanceTimersByTime(5_000);
-    // The barrier now runs (write submitted) but its own commit still waits on xterm; advance
-    // again to fire the barrier's own write timeout.
-    vi.advanceTimersByTime(5_000);
-    expect(onCommitted).toHaveBeenCalledTimes(1);
+    const { runtime, writeTexts } = createRuntimeWithTerminal();
+    runtime.replay({ type: "begin" });
+    runtime.replay({ type: "data", data: terminalOutput("stuck") });
+    expect(writeTexts).toEqual(["\x1bc"]);
+    vi.advanceTimersByTime(5000);
+    expect(writeTexts).toEqual(["\x1bc", "stuck"]);
   });
 
   it("reports input mode changes from terminal output and resets them on snapshots", () => {
@@ -343,18 +332,7 @@ describe("terminal-emulator-runtime", () => {
     });
 
     runtime.write({ data: terminalOutput("\x1b[>7u") });
-    runtime.renderSnapshot({
-      state: {
-        rows: 2,
-        cols: 8,
-        scrollback: [],
-        grid: [[{ char: "$" }, { char: " " }]],
-        cursor: {
-          row: 0,
-          col: 2,
-        },
-      },
-    });
+    runtime.replay({ type: "begin", rows: 2, cols: 8 });
     // The plain write reports kitty flags synchronously during drain; the snapshot resets
     // them only after its barrier gate (the sentinel write callback) resolves.
     expect(inputModeChanges).toEqual([
@@ -410,40 +388,18 @@ describe("terminal-emulator-runtime", () => {
     expect(committed).toEqual(["second", "first"]);
   });
 
-  it("applies a snapshot after the writes ahead of it, never interleaving the reset", () => {
+  it("keeps replay reset and data after preceding writes, without interleaving", () => {
     const { runtime, terminal, writeTexts, writeCallbacks } = createRuntimeWithTerminal();
-    const committed: string[] = [];
-
-    runtime.write({
-      data: terminalOutput("before-a"),
-      onCommitted: () => {
-        committed.push("before-a");
-      },
-    });
-    runtime.write({
-      data: terminalOutput("before-b"),
-      onCommitted: () => {
-        committed.push("before-b");
-      },
-    });
-    runtime.restoreOutput({
-      data: terminalOutput("snap"),
-      onCommitted: () => {
-        committed.push("snap");
-      },
-    });
-
-    // Plain writes are submitted up front; the snapshot's reset+write has not run yet.
+    runtime.write({ data: terminalOutput("before-a") });
+    runtime.write({ data: terminalOutput("before-b") });
+    runtime.replay({ type: "begin" });
+    runtime.replay({ type: "data", data: terminalOutput("snap") });
+    runtime.replay({ type: "end" });
     expect(writeTexts).toEqual(["before-a", "before-b"]);
-
-    // writeCallbacks: [0]=before-a, [1]=before-b, [2]=barrier gate sentinel.
-    // The snapshot is gated behind the prior writes; resolving the gate runs it after them.
     writeCallbacks[2]?.();
-    expect(writeTexts).toEqual(["before-a", "before-b", "csnap"]);
-
-    // Snapshot commit fires only after its own write callback, strictly after the writes.
+    expect(writeTexts).toEqual(["before-a", "before-b", "\x1bc"]);
     writeCallbacks[3]?.();
-    expect(committed).toEqual(["snap"]);
+    expect(writeTexts).toEqual(["before-a", "before-b", "\x1bc", "snap"]);
     expect(terminal.resetCalls).toBe(0);
   });
 
@@ -456,7 +412,7 @@ describe("terminal-emulator-runtime", () => {
 
     // No plain writes precede this barrier (mount), so there is nothing to gate: it starts
     // at once with no sentinel, flipping suppressInput synchronously.
-    runtime.restoreOutput({ data: terminalOutput("snapshot") });
+    runtime.replay({ type: "begin" });
     expect(readSuppressInput()).toBe(true);
 
     // writeCallbacks[0] is the barrier's own snapshot write; committing it restores input.
@@ -471,7 +427,7 @@ describe("terminal-emulator-runtime", () => {
 
     // A plain write is now ungated, so the following barrier must wait on the sentinel.
     runtime.write({ data: terminalOutput("output") });
-    runtime.restoreOutput({ data: terminalOutput("snapshot") });
+    runtime.replay({ type: "begin" });
 
     // The plain write commits first. Only the following sentinel opens the barrier.
     expect(readSuppressInput()).toBe(false);
@@ -505,57 +461,40 @@ describe("terminal-emulator-runtime", () => {
     expect(onCommittedB).toHaveBeenCalledTimes(1);
   });
 
-  it("clears ungated writes on unmount so remount barriers apply immediately", () => {
+  it("clears ungated writes on unmount so remount replay begins immediately", () => {
     const { runtime } = createRuntimeWithTerminal();
-
     runtime.write({ data: terminalOutput("before unmount") });
     runtime.unmount();
-
     const remounted = attachStubTerminal(runtime);
-    runtime.restoreOutput({ data: terminalOutput("restored screen") });
-
-    expect(remounted.writeTexts).toEqual(["\u001bcrestored screen"]);
-    expect(remounted.writeCallbacks).toHaveLength(1);
+    runtime.replay({ type: "begin" });
+    runtime.replay({ type: "data", data: terminalOutput("restored screen") });
+    expect(remounted.writeTexts).toEqual(["\x1bc"]);
+    remounted.writeCallbacks[0]?.();
+    expect(remounted.writeTexts).toEqual(["\x1bc", "restored screen"]);
   });
 
-  it("replays snapshots through a single write without first painting a reset terminal", () => {
+  it("parses replay chunks serially without synchronously resetting the terminal", () => {
     const { runtime, terminal, writeTexts, writeCallbacks } = createRuntimeWithTerminal();
-
-    runtime.renderSnapshot({
-      state: {
-        rows: 2,
-        cols: 8,
-        scrollback: [],
-        grid: [
-          [{ char: "h" }, { char: "i" }],
-          [{ char: "$" }, { char: " " }],
-        ],
-        cursor: {
-          row: 1,
-          col: 2,
-        },
-      },
-    });
-
-    // The snapshot is a barrier; its write applies after the gate sentinel (writeCallbacks[0]).
-    writeCallbacks[0]?.();
-
+    runtime.replay({ type: "begin", rows: 2, cols: 8 });
+    runtime.replay({ type: "data", data: terminalOutput("hi") });
+    runtime.replay({ type: "data", data: terminalOutput("\r\n$") });
+    runtime.replay({ type: "end" });
     expect(terminal.resetCalls).toBe(0);
-    expect(writeTexts).toHaveLength(1);
-    expect(writeTexts[0]?.startsWith("\u001bc")).toBe(true);
-    expect(writeTexts[0]).toContain("hi");
+    expect(writeTexts).toEqual(["\x1bc"]);
+    writeCallbacks[0]?.();
+    expect(writeTexts).toEqual(["\x1bc", "hi"]);
+    writeCallbacks[1]?.();
+    expect(writeTexts).toEqual(["\x1bc", "hi", "\r\n$"]);
   });
 
-  it("restores server-rendered ANSI snapshots through the snapshot write path", () => {
+  it("restores worker-rendered ANSI through the replay lifecycle", () => {
     const { runtime, terminal, writeTexts, writeCallbacks } = createRuntimeWithTerminal();
-
-    runtime.restoreOutput({ data: terminalOutput("restored screen") });
-
-    // restoreOutput is a barrier (suppressInput); it applies after the gate sentinel.
+    runtime.replay({ type: "begin" });
+    runtime.replay({ type: "data", data: terminalOutput("restored screen") });
+    runtime.replay({ type: "end" });
     writeCallbacks[0]?.();
-
     expect(terminal.resetCalls).toBe(0);
-    expect(writeTexts).toEqual(["\u001bcrestored screen"]);
+    expect(writeTexts).toEqual(["\x1bc", "restored screen"]);
   });
 
   it("forces a refit when resize is requested", () => {

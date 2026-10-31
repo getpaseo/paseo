@@ -623,6 +623,7 @@ export const es: TranslationResources = {
     terminal: {
       hostDisconnected: "Hostno está conectado",
       updateHost: "Actualiza el host para usar el renderizador de terminal nativo.",
+      restoreRequiresUpdate: "Actualiza el host para ver las terminales.",
       unableToSubscribe: "No se puede suscribir al terminal",
       fileUploaded: "Archivo subido",
       pasteFileFailed: "No se pudo pegar el archivo: {{reason}}",
@@ -2061,7 +2062,6 @@ export const es: TranslationResources = {
   toolCallDetails: {
     error: "Error",
     empty: "No hay detalles adicionales disponibles",
-    subAgentActivity: "Actividad de subagente",
     input: "Aporte",
     output: "Producción",
   },
@@ -2140,6 +2140,11 @@ export const es: TranslationResources = {
     },
   },
   providerUsage: {
+    checkUsage: "Consultar uso",
+    checkUsageHint: "Se aplica a {{host}} en todos los dispositivos",
+    off: "El uso está desactivado en {{host}}.",
+    turnOn: "Activar",
+
     options: "Configuración",
     refreshFailed: "No se pudo actualizar el uso",
     noHosts: "No hay hosts conectados",
@@ -2187,6 +2192,7 @@ export const es: TranslationResources = {
       days: "{{value}} d",
       hours: "{{value}} h",
       minutes: "{{value}} min",
+      pair: "{{first}} {{second}}",
     },
     timing: {
       lastUpdated: "Última actualización {{relativeTime}}",
@@ -2194,6 +2200,8 @@ export const es: TranslationResources = {
       resetTimePassed: "Pasó la hora de restablecimiento",
       resettingNow: "se restablece ahora",
       resetsIn: "se restablece en {{duration}}",
+      resetsAtWeekday: "{{weekday}} {{time}}",
+      resetsAtDate: "{{date}}, {{time}}",
       runsOutNow: "se agota ahora",
       runsOutIn: "se agota en {{duration}}",
       justNow: "ahora mismo",
@@ -2800,6 +2808,14 @@ export const es: TranslationResources = {
       },
       agents: {
         unavailable: "Connect to this host to manage agents",
+        resumeOnStartup: {
+          title: "Reanudar agentes tras reiniciar",
+          info: "Vuelve a abrir los agentes que estaban trabajando cuando se detuvo el host y envía el mensaje de reanudación. Se aplica tras reinicios normales y fallos.",
+          hint: "Continuar automáticamente el trabajo interrumpido.",
+          prompt: "Mensaje de reanudación",
+          edit: "Editar",
+          editAccessibilityLabel: "Editar mensaje",
+        },
         idleRuntimeCleanup: {
           title: "Liberar agentes inactivos",
           hint: "Libera memoria tras una hora de inactividad.",
@@ -2897,6 +2913,11 @@ export const es: TranslationResources = {
           requestFailedTitle: "Error",
           requestFailedMessage:
             "No se pudo enviar la solicitud de reinicio.Paseose vuelve a conectar automáticamente; inténtelo nuevamente una vez que el host se muestre en línea.",
+          closeTerminals: "Reiniciar y cerrar terminales",
+          closeTerminalsHint:
+            "Reinicia y además cierra todas las terminales abiertas en este host.",
+          closeTerminalsConfirmMessage:
+            "Esto reiniciará el daemon y cerrará todas sus terminales, terminando los programas que se ejecutan en ellas. La app se reconectará automáticamente.",
           dialogFailedMessage:
             "No se puede abrir el cuadro de diálogo de confirmación de reinicio.",
         },

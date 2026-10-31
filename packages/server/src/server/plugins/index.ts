@@ -45,6 +45,7 @@ interface PluginRuntimePort {
   emit?: PluginLifecycle["emit"];
   drainEvents?: PluginRuntime["drainEvents"];
   before?: PluginLifecycle["before"];
+  wait?: PluginLifecycle["wait"];
   catalog: PluginRuntime["catalog"];
   invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
   getLogs(pluginId: string): PluginLogEntry[];
@@ -166,6 +167,10 @@ export class PluginService {
     if (!this.isToolPluginAvailable(pluginId, pluginInstanceId) || !this.runtime.callTool)
       return { isError: true, text: `Plugin is not available: ${pluginId}` };
     return this.runtime.callTool(pluginId, pluginInstanceId, agent, name, input, signal);
+  };
+
+  readonly wait: PluginLifecycle["wait"] = async (name, payload) => {
+    await this.runtime.wait?.(name, payload);
   };
 
   async drainEvents(): Promise<void> {

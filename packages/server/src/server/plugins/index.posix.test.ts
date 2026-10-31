@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import pino from "pino";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DaemonConfigStore } from "../daemon-config-store.js";
 import { PluginService } from "./index.js";
 import { BuiltinPluginLoader } from "./builtin/index.js";
@@ -730,7 +730,7 @@ export default function contribute(server: PluginServerContext) {
         await service.stopAllPlugins();
       }
     },
-    30_000,
+    60_000,
   );
 
   it("keeps the running commit when a Git update build command fails", async () => {
@@ -1075,23 +1075,29 @@ export default function contribute(plugin: unknown) {
     const service = bindTestSessionHost(
       new PluginService(pino({ level: "silent" }), store, "0.4.0"),
     );
-    await service.start();
-    await service.installDirectory({ path: first });
-    await service.installDirectory({ path: second });
+    try {
+      await service.start();
+      await service.installDirectory({ path: first });
+      await service.installDirectory({ path: second });
+      expect(catalogIds(service)).toEqual(["first", "second"]);
+      await store.patch({ pluginsEnabled: false });
 
-    await store.patch({ pluginsEnabled: false });
-
-    expect(service.catalog()).toEqual([]);
-    await expect(service.invokePluginRpc("second", "anything", {})).rejects.toThrow(
-      "Plugin is not available",
-    );
-    await store.patch({ pluginsEnabled: true });
-    await service.reloadPlugin("first");
-    expect((await service.listPlugins()).map(({ id, status }) => ({ id, status }))).toEqual([
-      { id: "first", status: "running" },
-      { id: "second", status: "running" },
-    ]);
-    await service.stopAllPlugins();
+      expect(service.catalog()).toEqual([]);
+      await expect(service.invokePluginRpc("second", "anything", {})).rejects.toThrow(
+        "Plugin is not available",
+      );
+      await store.patch({ pluginsEnabled: true });
+      // Observe recovery itself. Reloading here restarts a healthy plugin and
+      // would also conceal a failure to restart it after the global enable.
+      await expect
+        .poll(() => service.listPlugins(), { timeout: 10_000 })
+        .toMatchObject([
+          { id: "first", status: "running" },
+          { id: "second", status: "running" },
+        ]);
+    } finally {
+      await service.stopAllPlugins();
+    }
   }, 20_000);
 
   it("does not publish an in-flight start after a later global disable", async () => {
@@ -1321,7 +1327,11 @@ export default function contribute(plugin: unknown) {
 });
 
 describe("npm plugin installation", () => {
-  it("preserves dependencies and metadata, and reloads without npm", async () => {
+  let registry: Awaited<ReturnType<typeof startNpmRegistry>>;
+
+  // Give real npm fixture construction its own setup budget so it does not consume
+  // the installation journey on Windows.
+  beforeAll(async () => {
     const packages = npmPluginPackages();
     const fixture = packages[1];
     packages.push({ ...fixture, version: "2.0.0", tags: ["future"] });
@@ -1356,7 +1366,7 @@ describe("npm plugin installation", () => {
     for (const [name, overrides] of failures) {
       failedPackages.push({ ...fixture, name, files: { ...fixture.files, ...overrides } });
     }
-    const registry = await startNpmRegistry([
+    registry = await startNpmRegistry([
       ...packages,
       {
         name: "paseo-prepared-plugin",
@@ -1386,6 +1396,9 @@ export default function contribute() {
       },
       ...failedPackages,
     ]);
+  }, 120_000);
+
+  it("preserves dependencies and metadata, and reloads without npm", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-npm-service-"));
     roots.push(home);
     const previousConfig = process.env.npm_config_userconfig;

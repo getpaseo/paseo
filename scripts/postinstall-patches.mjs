@@ -24,7 +24,10 @@ const patchedPackages = [
   },
   // Registry cleanup: remove after react-native-unistyles ships
   // https://github.com/jpudysz/react-native-unistyles/pull/1203.
+  // Adaptive themes: keep until colorScheme reads no longer consume listener-owned media changes.
   // withUnistyles: also keep the uniProps filter until upstream consumes its control prop.
+  // Android configuration: backport 3.5.3; remove the two NativePlatform hunks at >= 3.5.3.
+  // https://github.com/jpudysz/react-native-unistyles/compare/v3.5.2...v3.5.3
   {
     nodeModulesPath: "node_modules/react-native-unistyles",
     patchPrefix: "react-native-unistyles+",

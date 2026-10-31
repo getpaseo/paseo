@@ -1,6 +1,6 @@
 {
   "id": "agent-configuration",
   "requirements": {
-    "paseo": ">=0.13.2"
+    "paseo": ">=0.14.0-beta.1"
   }
 }

@@ -13,6 +13,7 @@ const entries = {
   "./server/provider": "server",
   "./server/usage": "server",
   "./server/acp": "server",
+  "./internal/lifecycle": "server",
   "./client": "client",
   "./client/host": "client",
   "./client/ui": "client",
@@ -134,12 +135,8 @@ describe("plugin SDK import boundaries", () => {
   it.each(Object.entries(entries))(
     "%s respects its %s boundary, including type dependencies",
     (specifier, runtime) => {
-      const name =
-        specifier === "."
-          ? "index"
-          : specifier.slice(2) +
-            (specifier === "./client" || specifier === "./server" ? "/index" : "");
-      expect(boundaryViolations(path.join(sourceDirectory, `${name}.ts`), runtime)).toEqual([]);
+      const file = path.resolve(sourceDirectory, "..", manifest.exports[specifier].source);
+      expect(boundaryViolations(file, runtime)).toEqual([]);
     },
   );
 });
@@ -170,6 +167,7 @@ describe("plugin example import boundaries", () => {
         const entry = specifier.replace("@getpaseo/plugin", ".") as keyof typeof entries;
         if (
           entry === "./client/host" ||
+          entry.startsWith("./internal/") ||
           !(entry in entries) ||
           (entries[entry] !== "shared" && entries[entry] !== runtime)
         )
@@ -233,7 +231,7 @@ describe("plugin agent tools SDK boundary", () => {
         },
       });
       export default function contribute(server: PluginServerContext) {
-        server.before("agent.session_open", ({ request }) => {
+        server.addHook("agent.open.before", async ({ request }) => {
           const title: string | null = request.title;
           // @ts-expect-error labels are read-only
           request.labels.x = "changed";
@@ -244,6 +242,62 @@ describe("plugin agent tools SDK boundary", () => {
             ...request.mcpServers, company: { type: "http", url: "https://tools.example.com/mcp" },
           } };
         });
+        return () => {};
+      }
+    `),
+    ).toEqual([]);
+  });
+});
+
+describe("lifecycle hook SDK types", () => {
+  it("infers payloads and replacement requests and requires async handlers and new names", () => {
+    expect(
+      typeErrors(`
+      import type { PluginServerContext, PluginHooks, PluginHookPayload, PluginHookResult } from "@getpaseo/plugin/server";
+      export default function contribute(server: PluginServerContext) {
+        server.addHook("worktree.create.before", async ({ request }) => {
+          if (request.kind === "checkout-branch") {
+            // @ts-expect-error Branch checkout has no branch-off base.
+            request.baseRef;
+          } else {
+            const base: string = request.baseRef;
+          }
+          const branch: string = request.branch;
+          // @ts-expect-error Repository identity is read-only.
+          request.repoRoot = "/other";
+          // @ts-expect-error Source checkout identity is read-only.
+          request.sourceCheckout = "/other";
+          if (request.kind === "checkout-change-request") {
+            const number: number = request.changeRequestNumber;
+          }
+          return { ...request, branch: "feature", baseRef: "main", slug: "feature", path: "/work/feature" };
+        });
+        server.addHook("worktree.create.before", async () => {});
+        server.addHook("worktree.create.after", async ({ worktree }) => {
+          const path: string = worktree.path;
+          const branch: string = worktree.branch;
+          const source: string = worktree.sourceCheckout;
+          // @ts-expect-error Worktree facts have no workspace identity.
+          worktree.workspaceId;
+        });
+        server.addHook("workspace.create.before", async ({ request }) => ({ ...request, title: "Changed" }));
+        server.addHook("workspace.create.before", async () => {});
+        server.addHook("agent.open.before", async () => {});
+        server.addHook("agent.turn.after", async ({ agent, outcome, timeline }, { paseo, signal }) => {
+          const kind: "completed" | "failed" | "canceled" = outcome.kind;
+          // @ts-expect-error Notification payloads have no creation request.
+          outcome.request;
+        });
+        // @ts-expect-error Async handlers are required even for notifications.
+        server.addHook("agent.turn.before", () => {});
+        // @ts-expect-error Legacy names are only accepted by deprecated registration methods.
+        server.addHook("agent.session_open", async () => {});
+        // @ts-expect-error Unknown names fail typechecking.
+        server.addHook("nonsense", async () => {});
+        // @ts-expect-error A prepare handler must return the whole request or undefined.
+        server.addHook("agent.create.before", async () => ({ invalid: true }));
+        server.before("agent.session_open", ({ request }) => request);
+        server.on("agent.turn_ended", () => {});
         return () => {};
       }
     `),
