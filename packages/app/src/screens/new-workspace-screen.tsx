@@ -25,6 +25,7 @@ import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { MenuHeader } from "@/components/headers/menu-header";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useToast } from "@/contexts/toast-context";
+import { workspaceLabelErrorMessage, workspaceLabels } from "@/workspace-labels";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
@@ -171,6 +172,8 @@ interface NewWorkspaceScreenProps {
   projectId?: string;
   displayName?: string;
   draftId?: string;
+  /** Labels the created workspace starts with. */
+  labels?: readonly string[];
 }
 
 // A terminal launch sends argv, not a message: there is nothing to attach and
@@ -178,6 +181,20 @@ interface NewWorkspaceScreenProps {
 const NO_TERMINAL_ATTACHMENTS: UserComposerAttachment[] = [];
 function noopChangeAttachments() {}
 function noopClearDraft() {}
+
+// The workspace exists whether or not its labels land, so a failure is reported and the first
+// agent carries on.
+function assignInitialWorkspaceLabels(input: {
+  serverId: string;
+  workspaceId: string;
+  names: readonly string[] | undefined;
+  onError: (message: string) => void;
+}): void {
+  if (!input.names?.length) return;
+  workspaceLabels
+    .assignByName({ serverId: input.serverId, workspaceId: input.workspaceId, names: input.names })
+    .catch((cause) => input.onError(workspaceLabelErrorMessage(cause)));
+}
 
 // Stable reference so the keyboard-action handler doesn't re-register each render.
 const PROJECT_PICK_ACTIONS: readonly KeyboardActionId[] = ["workspace.project.pick"];
@@ -852,6 +869,7 @@ export function NewWorkspaceScreen({
   projectId,
   displayName: displayNameProp,
   draftId,
+  labels: initialLabels,
 }: NewWorkspaceScreenProps) {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
@@ -1268,12 +1286,19 @@ export function NewWorkspaceScreen({
         createFailedMessage: t("newWorkspace.errors.createWorktreeFailed"),
       });
       setCreationResult(normalizedWorkspace);
+      assignInitialWorkspaceLabels({
+        serverId: selectedServerId,
+        workspaceId: normalizedWorkspace.workspace.id,
+        names: initialLabels,
+        onError: toast.error,
+      });
       return normalizedWorkspace;
     },
     [
       creationIdentity,
       creationResult,
       effectiveIsolation,
+      initialLabels,
       mergeWorkspaces,
       queryClient,
       selectedItem,
@@ -1282,6 +1307,7 @@ export function NewWorkspaceScreen({
       selectedSourceDirectory,
       supportsWorkspaceMultiplicity,
       t,
+      toast,
       withConnectedClient,
     ],
   );

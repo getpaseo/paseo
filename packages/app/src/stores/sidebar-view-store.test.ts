@@ -127,6 +127,10 @@ describe("sidebar view store", () => {
     });
   });
 
+  it("keeps a persisted label grouping", () => {
+    expect(migrateSidebarViewState({ groupMode: "label" }).groupMode).toBe("label");
+  });
+
   it("clears only the label facet", () => {
     useSidebarViewStore.setState({
       groupMode: "status",
