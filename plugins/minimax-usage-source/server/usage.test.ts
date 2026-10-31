@@ -23,60 +23,6 @@ function writeMiniMaxCredentials(
   writeFileSync(join(dir, ".mmx", "credentials.json"), JSON.stringify(payload));
 }
 
-/**
- * Writes the OAuth login the `mcode` CLI keeps under
- * `~/.minimax/auth/<buildEnv>/<region>/<clientId>/`.
- */
-function writeMiniMaxOAuthLogin(
-  dir: string,
-  options: {
-    buildEnv?: string;
-    region?: string;
-    clientId?: string;
-    accessToken?: string;
-    expiresAtMs?: number;
-  } = {},
-): string {
-  const buildEnv = options.buildEnv ?? "prod";
-  const region = options.region ?? "cn";
-  const clientId = options.clientId ?? "mcode-public";
-  const clientDir = join(dir, ".minimax", "auth", buildEnv, region, clientId);
-  mkdirSync(clientDir, { recursive: true });
-  writeFileSync(
-    join(clientDir, "auth.json"),
-    JSON.stringify({
-      schemaVersion: 1,
-      records: {
-        "com.minimax.mcode.oauth.prod.cn": {
-          schemaVersion: 1,
-          accessToken: options.accessToken ?? "mmoat_fixture_token",
-          refreshToken: "mmort_fixture_token",
-          tokenType: "Bearer",
-          clientId,
-          scopes: ["agent.default"],
-          audience: "agent-backend",
-          ...(options.expiresAtMs === undefined ? {} : { expiresAtMs: options.expiresAtMs }),
-        },
-      },
-    }),
-  );
-  writeFileSync(
-    join(clientDir, "auth-state.json"),
-    JSON.stringify({
-      schemaVersion: 2,
-      status: "authenticated",
-      storeKind: "file",
-      clientId,
-      scopes: ["agent.default"],
-      audience: "agent-backend",
-      buildEnv,
-      region,
-      ...(options.expiresAtMs === undefined ? {} : { expiresAtMs: options.expiresAtMs }),
-    }),
-  );
-  return join(clientDir, "auth.json");
-}
-
 function mockFetch(handlers: Map<string, () => Response>): typeof fetch {
   return vi.fn(async (url: RequestInfo | URL) => {
     const key = url.toString();
@@ -185,7 +131,7 @@ describe("minimax usage source", () => {
 
     const miniMax = findProvider(await service().listUsage(), "minimax");
 
-    expect(requestedUrl).toBe("https://api.minimax.io/v1/api/openplatform/coding_plan/remains");
+    expect(requestedUrl).toBe("https://api.minimax.io/v1/token_plan/remains");
     expect(authorization).toBe("Bearer minimax_test_token");
     expect(miniMax).toMatchObject({
       status: "available",
@@ -212,88 +158,6 @@ describe("minimax usage source", () => {
     expect(await discover()).toEqual([]);
   });
 
-  it("discovers the OAuth login the mcode CLI stores under ~/.minimax/auth", async () => {
-    const authPath = writeMiniMaxOAuthLogin(homeDir, {
-      accessToken: "mmoat_fixture_token",
-    });
-
-    const accounts = await discover();
-
-    expect(accounts).toHaveLength(1);
-    expect(accounts[0]?.input).toEqual({
-      store: "oauth",
-      locator: authPath,
-      baseUrl: "https://api.minimaxi.com",
-    });
-  });
-
-  it("uses the region host the CLI logged in against", async () => {
-    writeMiniMaxOAuthLogin(homeDir, { region: "en" });
-
-    const accounts = await discover();
-
-    expect(accounts[0]?.input).toMatchObject({ baseUrl: "https://api.minimax.io" });
-  });
-
-  it("fetches MiniMax usage from the CLI OAuth login", async () => {
-    writeMiniMaxOAuthLogin(homeDir, { accessToken: "mmoat_fixture_token" });
-    let requestedUrl: string | null = null;
-    let authorization: string | null = null;
-    fetchApi = (async (url: RequestInfo | URL, init?: RequestInit) => {
-      requestedUrl = url.toString();
-      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
-      return jsonResponse({
-        model_remains: [
-          {
-            model_name: "general",
-            end_time: Date.parse("2026-06-19T05:00:00.000Z"),
-            weekly_end_time: Date.parse("2026-06-26T00:00:00.000Z"),
-            current_interval_remaining_percent: 87,
-            current_weekly_remaining_percent: 78,
-          },
-        ],
-      });
-    }) as unknown as typeof fetch;
-
-    const miniMax = findProvider(await service().listUsage(), "minimax");
-
-    expect(requestedUrl).toBe("https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains");
-    expect(authorization).toBe("Bearer mmoat_fixture_token");
-    expect(miniMax).toMatchObject({
-      status: "available",
-      windows: expect.arrayContaining([
-        expect.objectContaining({ id: "interval_general", usedPct: 13, remainingPct: 87 }),
-        expect.objectContaining({ id: "weekly_general", usedPct: 22, remainingPct: 78 }),
-      ]),
-    });
-  });
-
-  it("reports an expired CLI OAuth login as expired", async () => {
-    writeMiniMaxOAuthLogin(homeDir, {
-      accessToken: "mmoat_fixture_token",
-      expiresAtMs: Date.now() - 60_000,
-    });
-    let requested = false;
-    fetchApi = (async () => {
-      requested = true;
-      return jsonResponse({ model_remains: [] });
-    }) as unknown as typeof fetch;
-
-    const miniMax = findProvider(await service().listUsage(), "minimax");
-
-    expect(requested).toBe(false);
-    expect(miniMax).toMatchObject({
-      status: "unavailable",
-      problem: { kind: "expired" },
-    });
-  });
-
-  it("ignores a CLI auth directory that has no access token", async () => {
-    writeMiniMaxOAuthLogin(homeDir, { accessToken: "" });
-
-    expect(await discover()).toEqual([]);
-  });
-
   it("reads MiniMax OAuth credentials from the CLI credentials file", async () => {
     writeMiniMaxCredentials(
       homeDir,
@@ -309,9 +173,7 @@ describe("minimax usage source", () => {
 
     await service().listUsage();
 
-    expect(requestedUrl).toBe(
-      "https://account.example.com/v1/api/openplatform/coding_plan/remains",
-    );
+    expect(requestedUrl).toBe("https://account.example.com/v1/token_plan/remains");
   });
 
   it("falls back to MiniMax api_key in the CLI config file", async () => {
@@ -327,7 +189,7 @@ describe("minimax usage source", () => {
 
     const miniMax = findProvider(await service().listUsage(), "minimax");
 
-    expect(requestedUrl).toBe("https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains");
+    expect(requestedUrl).toBe("https://api.minimaxi.com/v1/token_plan/remains");
     expect(miniMax.status).toBe("unavailable");
   });
 
@@ -336,7 +198,7 @@ describe("minimax usage source", () => {
     fetchApi = mockFetch(
       new Map([
         [
-          "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+          "https://api.minimaxi.com/v1/token_plan/remains",
           () =>
             jsonResponse({
               model_remains: null,
@@ -360,7 +222,7 @@ describe("minimax usage source", () => {
     fetchApi = mockFetch(
       new Map([
         [
-          "https://api.minimax.io/v1/api/openplatform/coding_plan/remains",
+          "https://api.minimax.io/v1/token_plan/remains",
           () => jsonResponse({ model_remains: null }),
         ],
       ]),
@@ -380,7 +242,7 @@ describe("minimax usage source", () => {
     fetchApi = mockFetch(
       new Map([
         [
-          "https://api.minimax.io/v1/api/openplatform/coding_plan/remains",
+          "https://api.minimax.io/v1/token_plan/remains",
           () =>
             jsonResponse({
               base_resp: { status_code: 0, status_msg: "success" },
@@ -413,7 +275,7 @@ describe("minimax usage source", () => {
     fetchApi = mockFetch(
       new Map([
         [
-          "https://api.minimax.io/v1/api/openplatform/coding_plan/remains",
+          "https://api.minimax.io/v1/token_plan/remains",
           () =>
             jsonResponse({
               model_remains: [

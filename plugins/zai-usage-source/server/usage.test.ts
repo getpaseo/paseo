@@ -32,6 +32,7 @@ describe("zai usage source", () => {
     process.env["USERPROFILE"] = homeDir;
     for (const key of [
       "APPDATA",
+      "XDG_CONFIG_HOME",
       "COPILOT_TOKEN",
       "GITHUB_TOKEN",
       "GITHUB_PAT",
