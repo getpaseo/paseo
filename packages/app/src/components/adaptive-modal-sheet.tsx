@@ -76,12 +76,19 @@ export interface SheetHeader {
 const SCROLL_CONTENT_GROW = { flexGrow: 1 };
 const ABSOLUTE_FILL_STYLE = { ...StyleSheet.absoluteFill };
 const NATIVE_DIALOG_SNAP_POINTS = ["100%"];
+/** The same dim as the web dialog's overlay. */
+const NATIVE_DIALOG_BACKDROP_OPACITY = 0.55;
 
 const styles = StyleSheet.create((theme) => ({
   nativeDialogSurface: {
     flex: 1,
   },
   nativeDialogBackground: {
+    backgroundColor: "transparent",
+  },
+  // The native dialog slides in as a full-height sheet; its dim is Gorhom's backdrop, which
+  // fades with the sheet's position, so it is not painted on the sliding content.
+  nativeDialogOverlay: {
     backgroundColor: "transparent",
   },
   desktopOverlay: {
@@ -647,6 +654,7 @@ export function AdaptiveModalSheet({
   const desktopOverlayStyle = useMemo(
     () => [
       styles.desktopOverlay,
+      !isWeb && styles.nativeDialogOverlay,
       isWeb && {
         zIndex: modalLayer,
         opacity: isWebClosing ? 0 : 1,
@@ -788,6 +796,7 @@ export function AdaptiveModalSheet({
       onDismiss={handleDismiss}
       handleComponent={null}
       backgroundStyle={styles.nativeDialogBackground}
+      backdropOpacity={NATIVE_DIALOG_BACKDROP_OPACITY}
       enablePanDownToClose={false}
       enableHandlePanningGesture={false}
       enableContentPanningGesture={false}
