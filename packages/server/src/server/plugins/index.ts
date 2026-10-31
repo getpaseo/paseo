@@ -57,6 +57,7 @@ interface PluginRuntimePort {
   connectProvider: PluginRuntime["connectProvider"];
   getProviderCatalogCacheKey?: PluginRuntime["getProviderCatalogCacheKey"];
   getProviderStatus?: PluginRuntime["getProviderStatus"];
+  resolveProviderCommand?: PluginRuntime["resolveProviderCommand"];
   validatePlugin?(path: string): Promise<void>;
   startPlugin(pluginId: string, path: string, canPublish: () => boolean): Promise<void>;
   startBuiltinPlugin?(plugin: BuiltinPlugin): Promise<void>;
@@ -698,6 +699,13 @@ export class PluginService {
                 if (!this.runtime.getProviderCatalogCacheKey)
                   throw new Error("Plugin runtime cannot resolve catalogue keys");
                 return this.runtime.getProviderCatalogCacheKey(pluginId, provider.id, options);
+              }
+            : undefined,
+          resolveCommand: provider.hasResolveCommand
+            ? () => {
+                if (!this.runtime.resolveProviderCommand)
+                  throw new Error("Plugin runtime cannot resolve provider commands");
+                return this.runtime.resolveProviderCommand(pluginId, provider.id);
               }
             : undefined,
           icon: provider.iconPath

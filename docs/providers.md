@@ -22,6 +22,10 @@ provider icon map. You do not need a core manifest entry or provider factory.
 | Antigravity | Installed `agy` CLI                        | [Antigravity](../public-docs/supported-providers.md#antigravity) |
 | Muse Code   | MSP over one `muse serve` host per session | [Muse Code](../public-docs/muse-code.md)                         |
 
+The ZCode provider is a worked example of a plugin that owns a custom JSON-RPC process protocol, its own
+binary discovery, and a transport interface that absorbs a protocol migration. See its
+[design spec](superpowers/specs/2026-10-30-zcode-provider-design.md).
+
 ## Provider-native session options
 
 The provider owns validation and application of the opaque record in

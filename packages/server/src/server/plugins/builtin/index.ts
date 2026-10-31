@@ -16,6 +16,7 @@ export const builtinPlugins = [
   "opencode-go-usage-source",
   "worktree-include",
   "zai-usage-source",
+  "zcode-provider",
 ] as const;
 
 export function resolveBuiltinPluginsRoot(moduleUrl: string | URL = import.meta.url): string {

@@ -18,11 +18,25 @@ export interface PluginProviderMetadata {
   requiresConfiguration?: boolean;
   hasCatalogCacheKey?: boolean;
   hasStatus?: boolean;
+  hasResolveCommand?: boolean;
   command?: readonly [string, ...string[]];
   id: string;
   label: string;
   description?: string;
   iconPath?: string;
+}
+
+/**
+ * A resolved command is an executable plus its arguments. Both sides of the
+ * plugin bridge validate with this so the daemon never trusts a shape the
+ * plugin invented.
+ */
+export function isResolvedCommand(value: unknown): value is readonly [string, ...string[]] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((part) => typeof part === "string" && part.trim().length > 0)
+  );
 }
 
 export interface PluginUsageSourceMetadata {
@@ -40,6 +54,11 @@ export type PluginProcessRequest =
       requestId: string;
       providerId: string;
       request: ProviderStatusRequest;
+    }
+  | {
+      type: "provider.resolve_command";
+      requestId: string;
+      providerId: string;
     }
   | {
       type: "initialize";
@@ -120,6 +139,7 @@ const providerMetadataSchema = z
     requiresConfiguration: z.boolean().optional(),
     hasCatalogCacheKey: z.boolean().optional(),
     hasStatus: z.boolean().optional(),
+    hasResolveCommand: z.boolean().optional(),
     command: z.tuple([z.string().min(1)], z.string()).optional(),
   })
   .strict();
@@ -171,6 +191,13 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
         requestId: z.string().min(1),
         providerId: z.string().min(1),
         request: z.object({ launch: ProviderLaunchSchema.optional() }).strict(),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("provider.resolve_command"),
+        requestId: z.string().min(1),
+        providerId: z.string().min(1),
       })
       .strict(),
     z

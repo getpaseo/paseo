@@ -1,6 +1,6 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { AgentStorage } from "./agent-storage.js";
 import { createIdleRuntimeCleanup } from "./idle-runtime-cleanup/index.js";
 import { relative } from "node:path";
@@ -14,7 +14,7 @@ import type {
   ProviderRegistration,
 } from "@getpaseo/plugin/server/provider";
 import { setImmediate as nextTurn } from "node:timers/promises";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { AgentClient, AgentStreamEvent } from "./agent-sdk-types.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
@@ -1586,4 +1586,178 @@ test("plugin provider import launches with runtime MCP servers and returns only 
   } finally {
     await registry.shutdown();
   }
+});
+
+describe("plugin launch resolution", () => {
+  const logger = createTestLogger();
+  const dirs: string[] = [];
+
+  afterEach(async () => {
+    for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
+  });
+
+  /**
+   * The launch path is resolved on disk, so a command that does not exist
+   * fails before the provider reports anything. Every path here is a real
+   * executable.
+   */
+  async function executable(name: string): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), "paseo-launch-"));
+    dirs.push(dir);
+    const file = join(dir, name);
+    await writeFile(file, "#!/bin/sh\n");
+    await chmod(file, 0o755);
+    return file;
+  }
+
+  function probeRegistration(
+    resolveCommand: () => Promise<readonly [string, ...string[]] | undefined>,
+    launches: (ProviderLaunch | undefined)[],
+    command?: readonly [string, ...string[]],
+  ): ProviderRegistration {
+    return {
+      id: "launch-resolution-probe",
+      label: "Launch Resolution Probe",
+      ...(command ? { command } : {}),
+      async resolveCommand() {
+        return resolveCommand();
+      },
+      async status({ launch }) {
+        launches.push(launch);
+        return { available: true, diagnostic: launch?.command ?? "no-launch" };
+      },
+      async connect() {
+        throw new Error("not used");
+      },
+    };
+  }
+
+  function clientFor(
+    registration: ProviderRegistration,
+    options?: {
+      command?: string[];
+      appendArgs?: string[];
+    },
+  ): AgentClient {
+    const plugins = new PluginAgentClientRegistry(logger);
+    plugins.replace([registration]);
+    const registry = buildProviderRegistry(logger, {
+      pluginProviders: plugins.definitions(),
+      ...(options?.command
+        ? {
+            providerOverrides: {
+              "launch-resolution-probe": { command: options.command },
+            },
+          }
+        : {}),
+      ...(options?.appendArgs
+        ? {
+            runtimeSettings: {
+              "launch-resolution-probe": {
+                command: { mode: "append", args: options.appendArgs },
+              },
+            },
+          }
+        : {}),
+    });
+    return registry["launch-resolution-probe" as AgentClient["provider"]].createClient(logger);
+  }
+
+  test("a user command override wins over the plugin's own resolution", async () => {
+    const launches: (ProviderLaunch | undefined)[] = [];
+    const pluginCommand = await executable("plugin-zcode");
+    const userCommand = await executable("user-zcode");
+    const client = clientFor(
+      probeRegistration(async () => [pluginCommand], launches),
+      { command: [userCommand] },
+    );
+    await expect(client.isAvailable()).resolves.toBe(true);
+    // Assert which command was resolved. isAvailable() returning true passes
+    // whether or not the override won.
+    expect(launches.at(-1)?.command).toBe(userCommand);
+  });
+
+  test("the plugin's own resolution supplies the command when the user set none", async () => {
+    const launches: (ProviderLaunch | undefined)[] = [];
+    const pluginCommand = await executable("plugin-zcode");
+    const client = clientFor(probeRegistration(async () => [pluginCommand], launches));
+    await expect(client.isAvailable()).resolves.toBe(true);
+    expect(launches.at(-1)?.command).toBe(pluginCommand);
+  });
+
+  test("an append override keeps the plugin's own command", async () => {
+    const launches: (ProviderLaunch | undefined)[] = [];
+    const pluginCommand = await executable("plugin-zcode");
+    const client = clientFor(
+      probeRegistration(async () => [pluginCommand, "--plugin-arg"], launches),
+      {
+        appendArgs: ["--extra"],
+      },
+    );
+    await expect(client.isAvailable()).resolves.toBe(true);
+    expect(launches.at(-1)?.command).toBe(pluginCommand);
+    expect(launches.at(-1)?.args).toEqual(["--plugin-arg", "--extra"]);
+  });
+
+  test("a declared command wins over the plugin's own resolution", async () => {
+    const launches: (ProviderLaunch | undefined)[] = [];
+    const declaredCommand = await executable("declared-zcode");
+    const hookCommand = await executable("hook-zcode");
+    let hookCalls = 0;
+    const client = clientFor(
+      probeRegistration(
+        async () => {
+          hookCalls += 1;
+          return [hookCommand];
+        },
+        launches,
+        [declaredCommand],
+      ),
+    );
+    await expect(client.isAvailable()).resolves.toBe(true);
+    expect(launches.at(-1)?.command).toBe(declaredCommand);
+    expect(hookCalls).toBe(0);
+  });
+
+  test("a plugin that resolves its own command is probed without connecting", async () => {
+    const pluginCommand = await executable("plugin-zcode");
+    let resolveCalls = 0;
+    let connectCalls = 0;
+    const registration: ProviderRegistration = {
+      id: "launch-resolution-probe",
+      label: "Launch Resolution Probe",
+      async resolveCommand() {
+        resolveCalls += 1;
+        return [pluginCommand];
+      },
+      async connect() {
+        connectCalls += 1;
+        return {
+          version: 1,
+          capabilities: [],
+          async send() {},
+          onEvent() {
+            return () => undefined;
+          },
+          async close() {},
+        };
+      },
+    };
+    const client = clientFor(registration);
+    await expect(client.isAvailable()).resolves.toBe(true);
+    expect(connectCalls).toBe(0);
+    expect(resolveCalls).toBe(1);
+  });
+
+  test("a missing user override target fails hard", async () => {
+    const launches: (ProviderLaunch | undefined)[] = [];
+    const pluginCommand = await executable("plugin-zcode");
+    const client = clientFor(
+      probeRegistration(async () => [pluginCommand], launches),
+      {
+        command: [join(dirname(pluginCommand), "definitely-missing-zcode")],
+      },
+    );
+    await expect(client.isAvailable()).resolves.toBe(false);
+  });
 });
