@@ -91,7 +91,7 @@ export function createTerminalSelectionController(ports: Ports) {
     const { viewport, metrics } = geometry;
     const x = press.point.x - press.offset.x;
     const y = press.point.y - press.offset.y;
-    const row =
+    let row =
       viewport.firstRow +
       Math.max(0, Math.min(viewport.rows - 1, Math.floor(y / metrics.cellHeight)));
     let col = Math.floor(x / metrics.cellWidth);
@@ -100,6 +100,13 @@ export function createTerminalSelectionController(ports: Ports) {
       const isEnd =
         row > press.fixed.row || (row === press.fixed.row && boundary > press.fixed.col);
       col = boundary - (isEnd ? 1 : 0);
+      if (col < 0 && isEnd) {
+        row -= 1;
+        col = viewport.cols - 1;
+      } else if (col >= viewport.cols && !isEnd) {
+        row += 1;
+        col = 0;
+      }
     }
     col = Math.max(0, Math.min(viewport.cols - 1, col));
     ports.onMoveHandle({ row, col });

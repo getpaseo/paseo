@@ -240,6 +240,68 @@ it.each([
   }
 });
 
+it.each([
+  {
+    endpoint: "end" as const,
+    initialRow: 0,
+    targetRow: 1,
+    targetX: 0,
+    expectedRow: 0,
+    expectedCol: 9,
+    text: "cdefghij",
+  },
+  {
+    endpoint: "start" as const,
+    initialRow: 1,
+    targetRow: 0,
+    targetX: 100,
+    expectedRow: 1,
+    expectedCol: 0,
+    text: "KLMNOP",
+  },
+])("preserves a $endpoint boundary at a row edge", async (scenario) => {
+  const terminal = createNativeHeadlessTerminal({ rows: 4, cols: 10 });
+  try {
+    await terminal.write("abcdefghij\r\nKLMNOPQRST");
+    const bounds = terminal.getBufferBounds();
+    const model = createTerminalSelectionModel();
+    model.begin({ coordinate: { row: scenario.initialRow, col: 2 }, bounds });
+    model.update({ coordinate: { row: scenario.initialRow, col: 5 }, bounds });
+    const viewport = { firstRow: 0, rows: 4, cols: 10 };
+    const metrics = { cellWidth: 10, cellHeight: 10 };
+    const geometry = () => ({ range: model.getSnapshot().range, viewport, metrics });
+    const controller = createTerminalSelectionController({
+      getGeometry: geometry,
+      onBeginHandle: (endpoint) => model.beginEndpointDrag(endpoint),
+      onMoveHandle: (coordinate) => {
+        model.update({ coordinate, bounds });
+      },
+      onLongPress: () => {},
+      onTap: () => {},
+      onScroll: () => {},
+      schedule: () => 1,
+      cancel: () => {},
+    });
+    controller.press({ x: scenario.endpoint === "end" ? 60 : 20, y: scenario.initialRow * 10 + 5 });
+    controller.move({ x: scenario.targetX, y: scenario.targetRow * 10 + 5 });
+    const range = model.getSnapshot().range;
+    expect(range?.[scenario.endpoint]).toEqual({
+      row: scenario.expectedRow,
+      col: scenario.expectedCol,
+    });
+    expect(extractTerminalSelectedText({ terminal, selection: range })).toBe(scenario.text);
+    expect(
+      terminalSelectionHandles(geometry()).find((handle) => handle.endpoint === scenario.endpoint),
+    ).toMatchObject({
+      x: scenario.endpoint === "end" ? 100 : 0,
+      y: scenario.expectedRow * 10 + 5,
+    });
+    controller.release();
+  } finally {
+    terminal.dispose();
+  }
+});
+
 it("cancels a drag when buffer coordinates are invalidated", () => {
   const model = createTerminalSelectionModel();
   const bounds = { oldestRow: 0, newestRow: 9, coordinateEpoch: 0 };
