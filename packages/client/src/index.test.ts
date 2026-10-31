@@ -981,6 +981,63 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
   await client.close();
 });
 
+test("agent deletion waits for daemon acknowledgement before clearing its snapshot", async () => {
+  const { client, ws } = await connectClient();
+  try {
+    const snapshot = createAgent({ archivedAt: "2026-05-16T01:00:00.000Z" });
+    const agent = client.agents.ref(snapshot);
+    const deleting = agent.delete();
+    const request = parseSentSessionMessage(ws.sent.at(-1));
+    expect(request).toEqual({
+      type: "delete_agent_request",
+      agentId: snapshot.id,
+      requestId: expect.any(String),
+    });
+    expect(agent.current()).toEqual(snapshot);
+
+    ws.message(
+      sessionMessage({
+        type: "agent_deleted",
+        payload: { requestId: request.requestId, agentId: snapshot.id },
+      }),
+    );
+
+    await expect(deleting).resolves.toBeUndefined();
+    expect(agent.current()).toBeNull();
+    expect(agent.status).toBeNull();
+    expect(agent.archivedAt).toBeNull();
+    expect(agent.id).toBe(snapshot.id);
+  } finally {
+    await client.close();
+  }
+});
+
+test("agent deletion propagates RPC errors and retains the observed snapshot", async () => {
+  const { client, ws } = await connectClient();
+  try {
+    const snapshot = createAgent();
+    const agent = client.agents.ref(snapshot);
+    const deleting = agent.delete();
+    const rejected = expect(deleting).rejects.toMatchObject({
+      message: expect.stringContaining("Deletion denied"),
+      code: "access_denied",
+    });
+    const request = parseSentSessionMessage(ws.sent.at(-1));
+    ws.message(
+      sessionMessage({
+        type: "rpc_error",
+        payload: { requestId: request.requestId, error: "Deletion denied", code: "access_denied" },
+      }),
+    );
+
+    await rejected;
+    expect(agent.current()).toEqual(snapshot);
+    expect(agent.status).toBe(snapshot.status);
+  } finally {
+    await client.close();
+  }
+});
+
 test("agent handles list the session's own commands through the existing daemon RPC", async () => {
   const { client, ws } = await connectClient();
   const agent = client.agents.ref("agent_sdk");
