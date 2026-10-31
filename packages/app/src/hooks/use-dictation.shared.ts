@@ -1,4 +1,4 @@
-import type { DictationEmptyReason } from "@/dictation/empty-transcript-reason";
+import type { DictationEmptyReason } from "@/dictation/result";
 import { i18n } from "@/i18n/i18next";
 
 export type DictationStatus =

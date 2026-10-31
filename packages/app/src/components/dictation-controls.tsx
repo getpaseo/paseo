@@ -8,7 +8,7 @@ import type { TFunction } from "i18next";
 import { VolumeMeter } from "./volume-meter";
 import { FOOTER_HEIGHT } from "@/constants/layout";
 import type { DictationStatus } from "@/hooks/use-dictation";
-import type { DictationEmptyReason } from "@/dictation/empty-transcript-reason";
+import type { DictationEmptyReason } from "@/dictation/result";
 
 interface DictationControlsProps {
   volume: number;

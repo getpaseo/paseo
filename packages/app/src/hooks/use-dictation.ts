@@ -2,10 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { DictationStreamSender } from "@/dictation/dictation-stream-sender";
-import {
-  resolveDictationEmptyReason,
-  type DictationEmptyReason,
-} from "@/dictation/empty-transcript-reason";
+import { completeDictation, type DictationEmptyReason } from "@/dictation/result";
 import { useDictationAudioSource } from "@/hooks/use-dictation-audio-source";
 import { generateMessageId } from "@/types/stream";
 import { AttemptGuard } from "@/utils/attempt-guard";
@@ -136,12 +133,16 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     [setError],
   );
 
-  const clearStreamingState = useCallback(() => {
-    senderRef.current?.clearAll();
+  const clearTranscriptState = useCallback(() => {
     latestPartialTranscriptRef.current = "";
     setPartialTranscript("");
     setEmptyReason(null);
   }, []);
+
+  const clearStreamingState = useCallback(() => {
+    senderRef.current?.clearAll();
+    clearTranscriptState();
+  }, [clearTranscriptState]);
 
   const startNewStream = useCallback(async (reason: string) => {
     await senderRef.current?.restartStream(reason);
@@ -198,23 +199,20 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       setDuration(0);
       setStatus("idle");
 
-      const transcriptText =
-        text.trim().length > 0 ? text.trim() : latestPartialTranscriptRef.current.trim();
-
-      if (!transcriptText) {
-        // Keep the audio until the user retries or discards this empty result.
+      const result = completeDictation({
+        finalText: text,
+        partialText: latestPartialTranscriptRef.current,
+        recording: senderRef.current!,
+      });
+      if (result.status === "empty") {
         setStatus("empty");
-        setEmptyReason(
-          resolveDictationEmptyReason({
-            segmentCount: senderRef.current?.getSegmentCount() ?? 0,
-          }),
-        );
+        setEmptyReason(result.reason);
         return;
       }
-      clearStreamingState();
-      onTranscriptRef.current?.(transcriptText, { requestId });
+      clearTranscriptState();
+      onTranscriptRef.current?.(result.text, { requestId });
     },
-    [clearStreamingState],
+    [clearTranscriptState],
   );
 
   const handleDictationFailure = useCallback(

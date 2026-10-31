@@ -16,15 +16,73 @@ import {
   expectComposerFullscreenControls,
 } from "../support/helpers/composer";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
-import {
-  enableDictationCapability,
-  installSyntheticMicrophone,
-  sendSessionMessage,
-  sessionMessage,
-} from "../support/helpers/dictation";
+
+type WebSocketMessage = string | Buffer;
 
 const TRANSCRIPT = "Keep this spoken prompt visible while creating the workspace";
 const CREATE_FAILURE = "Synthetic workspace creation failure";
+
+function parseEnvelope(message: WebSocketMessage): {
+  type?: unknown;
+  message?: Record<string, unknown>;
+} | null {
+  const raw = typeof message === "string" ? message : message.toString("utf8");
+  try {
+    return JSON.parse(raw) as { type?: unknown; message?: Record<string, unknown> };
+  } catch {
+    return null;
+  }
+}
+
+function sessionMessage(message: WebSocketMessage): Record<string, unknown> | null {
+  const envelope = parseEnvelope(message);
+  return envelope?.type === "session" && envelope.message ? envelope.message : null;
+}
+
+function sendSessionMessage(
+  ws: { send(message: string): void },
+  message: Record<string, unknown>,
+): void {
+  ws.send(JSON.stringify({ type: "session", message }));
+}
+
+function enableDictationCapability(message: WebSocketMessage): WebSocketMessage {
+  const envelope = parseEnvelope(message);
+  const payload = envelope?.message?.payload;
+  if (
+    envelope?.message?.type !== "status" ||
+    !payload ||
+    typeof payload !== "object" ||
+    (payload as { status?: unknown }).status !== "server_info"
+  ) {
+    return message;
+  }
+
+  (payload as Record<string, unknown>).capabilities = {
+    voice: {
+      dictation: { enabled: true, reason: "" },
+      voice: { enabled: false, reason: "Realtime voice is disabled in this test." },
+    },
+  };
+  return JSON.stringify(envelope);
+}
+
+async function installSyntheticMicrophone(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const mediaDevices = navigator.mediaDevices;
+    Object.defineProperty(mediaDevices, "getUserMedia", {
+      configurable: true,
+      value: async () => {
+        const context = new AudioContext();
+        const oscillator = context.createOscillator();
+        const destination = context.createMediaStreamDestination();
+        oscillator.connect(destination);
+        oscillator.start();
+        return destination.stream;
+      },
+    });
+  });
+}
 
 async function installDictationFailureHarness(page: Page) {
   let resolveAudioChunk!: () => void;
