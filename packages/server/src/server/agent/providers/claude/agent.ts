@@ -5442,6 +5442,7 @@ class ClaudeAgentSession implements AgentSession {
         convertEntry: (entry) => this.convertHistoryEntry(entry),
       })),
     ];
+    this.taskProtocolSource.restore(subagentReplay.restored);
     const restoredProviderSubagentIds = new Set(
       observations
         .filter((observation) => observation.kind === "declared")
