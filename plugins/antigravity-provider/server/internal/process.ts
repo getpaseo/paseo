@@ -58,6 +58,7 @@ export function startDriver(options: DriverOptions): Driver {
   });
   const lines = createInterface({ input: child.stdout });
   let cleanup = Promise.resolve();
+  let stopResult: Promise<void> | undefined;
   let stderr = "";
   let state: "starting" | "ready" | "stopping" | "exited" = "starting";
   let resolveReady: (init: Init) => void;
@@ -70,6 +71,7 @@ export function startDriver(options: DriverOptions): Driver {
   const exited = new Promise<void>((resolve) => {
     resolveExit = resolve;
   });
+  let leaderExited = false;
   const startupDeadline = setTimeout(
     () =>
       fail(
@@ -85,6 +87,7 @@ export function startDriver(options: DriverOptions): Driver {
   );
   child.on("error", (error: Error) => fail(new AntigravityError(error.message, "SPAWN_ERROR")));
   child.on("close", (code, signal) => {
+    leaderExited = true;
     clearTimeout(startupDeadline);
     lines.close();
     const error = new AntigravityError(
@@ -125,9 +128,77 @@ export function startDriver(options: DriverOptions): Driver {
     if (state === "ready") options.onExit(failure);
     if (state === "exited" || state === "stopping") return;
     state = "stopping";
-    cleanup = Promise.resolve(signalGroup(child, "SIGKILL"));
+    cleanup = Promise.resolve().then(() => signalGroup(child, "SIGKILL"));
     // The stop operation awaits cleanup and owns reporting its failure.
     void cleanup.catch(() => undefined);
+  }
+
+  async function stopDriver(reason: "interrupt" | "close"): Promise<void> {
+    if (state === "stopping") {
+      await cleanup;
+      await exited;
+      return;
+    }
+    if (process.platform === "win32") await cleanup;
+    if (state === "exited") return;
+    if (state === "starting") rejectReady(new AntigravityError("Antigravity startup canceled"));
+    clearTimeout(startupDeadline);
+    state = "stopping";
+    if (process.platform === "win32") {
+      // Node signal emulation kills only the leader; taskkill must see the live tree.
+      cleanup = Promise.resolve().then(() => signalGroup(child, "SIGKILL"));
+      await cleanup;
+      await exited;
+      return;
+    }
+    let escalationError: unknown;
+    if (reason === "close") child.stdin.end();
+    else {
+      try {
+        signalGroup(child, "SIGINT");
+      } catch (error) {
+        escalationError = error;
+      }
+    }
+    let finishKillAttempt: () => void;
+    const killAttempted = new Promise<void>((resolve) => {
+      finishKillAttempt = resolve;
+    });
+    async function escalate(signal: NodeJS.Signals): Promise<void> {
+      try {
+        await signalGroup(child, signal);
+      } catch (error) {
+        escalationError ??= error;
+      } finally {
+        if (signal === "SIGKILL") finishKillAttempt();
+      }
+    }
+    const terminate = setTimeout(() => void escalate("SIGTERM"), 1000);
+    const kill = setTimeout(() => void escalate("SIGKILL"), 2000);
+    try {
+      await Promise.race([exited, killAttempted]);
+      if (escalationError && !leaderExited)
+        await Promise.race([
+          exited,
+          new Promise<void>((resolve) => {
+            const timeout = setTimeout(resolve, 250);
+            void exited.then(() => clearTimeout(timeout));
+          }),
+        ]);
+      if (escalationError && !leaderExited) throw escalationError;
+      if (escalationError)
+        console.error("Antigravity driver signal failed after exit", escalationError);
+      if (!leaderExited) await exited;
+    } finally {
+      clearTimeout(terminate);
+      clearTimeout(kill);
+    }
+    // A tool can keep running after its CLI leader exits.
+    try {
+      signalGroup(child, "SIGKILL");
+    } catch (error) {
+      console.error("Antigravity driver straggler cleanup failed after exit", error);
+    }
   }
 
   return {
@@ -143,28 +214,9 @@ export function startDriver(options: DriverOptions): Driver {
         });
       });
     },
-    async stop(reason) {
-      if (process.platform === "win32") await cleanup;
-      if (state === "exited") return;
-      if (state === "starting") rejectReady(new AntigravityError("Antigravity startup canceled"));
-      clearTimeout(startupDeadline);
-      state = "stopping";
-      if (process.platform === "win32") {
-        // Node signal emulation kills only the leader; taskkill must see the live tree.
-        cleanup = Promise.resolve(signalGroup(child, "SIGKILL"));
-        await cleanup;
-        await exited;
-        return;
-      }
-      if (reason === "close") child.stdin.end();
-      else signalGroup(child, "SIGINT");
-      const terminate = setTimeout(() => signalGroup(child, "SIGTERM"), 1000);
-      const kill = setTimeout(() => signalGroup(child, "SIGKILL"), 2000);
-      await exited;
-      clearTimeout(terminate);
-      clearTimeout(kill);
-      // A tool can keep running after its CLI leader exits.
-      signalGroup(child, "SIGKILL");
+    stop(reason) {
+      stopResult ??= stopDriver(reason);
+      return stopResult;
     },
   };
 }
@@ -193,11 +245,15 @@ export function probe(options: ProbeOptions): Promise<string> {
     let stdout = "";
     let stderr = "";
     const deadline = setTimeout(() => {
-      const termination = Promise.resolve(signalGroup(child, "SIGKILL"));
-      void termination.then(() => {
-        reject(new AntigravityError("Antigravity discovery timed out", "PROBE_TIMEOUT"));
-        return undefined;
-      }, reject);
+      const termination = Promise.resolve().then(() => signalGroup(child, "SIGKILL"));
+      void termination.then(
+        () => reject(new AntigravityError("Antigravity discovery timed out", "PROBE_TIMEOUT")),
+        (error) => {
+          console.error("Antigravity discovery cleanup failed", error);
+          reject(new AntigravityError("Antigravity discovery timed out", "PROBE_TIMEOUT"));
+          return undefined;
+        },
+      );
     }, 10_000);
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
