@@ -4300,6 +4300,7 @@ export async function createPullRequest(
     cwd,
     title: options.title,
     body: options.body,
+    draft: options.draft,
     head,
     base: normalizedBase,
   });

@@ -1230,6 +1230,9 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
         input.base,
         "--yes",
       ];
+      if (input.draft) {
+        args.push("--draft");
+      }
       const stdout = await run(args, { cwd: input.cwd });
       const url = extractMergeRequestUrl(stdout);
       if (!url) {

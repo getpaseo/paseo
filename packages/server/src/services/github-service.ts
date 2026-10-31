@@ -2497,6 +2497,9 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       const args = ["api", "-X", "POST", `repos/${slug}/pulls`, "-f", `title=${input.title}`];
       args.push("-f", `head=${input.head}`);
       args.push("-f", `base=${input.base}`);
+      if (input.draft) {
+        args.push("-F", "draft=true");
+      }
       if (input.body) {
         args.push("-f", `body=${input.body}`);
       }

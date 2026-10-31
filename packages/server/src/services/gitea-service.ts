@@ -2085,6 +2085,9 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
         "--base",
         input.base,
       ];
+      if (input.draft) {
+        args.push("--draft");
+      }
       const stdout = await run(args, { cwd: input.cwd });
       const url = extractPullRequestUrl(stdout);
       if (!url) {
