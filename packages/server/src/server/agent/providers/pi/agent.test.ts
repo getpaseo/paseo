@@ -23,6 +23,10 @@ import {
   PiRpcAgentSession,
   transformPiModels,
 } from "./agent.js";
+import { AgentManager } from "../../agent-manager.js";
+import { AgentStorage } from "../../agent-storage.js";
+import { imageHistory } from "./fixtures/image-history.js";
+import { getUserMessageText } from "./history-mapper.js";
 import { FakePi } from "./test-utils/fake-pi.js";
 import { createPiExtensionHost } from "./extensions/index.js";
 import { PiExtensionHost } from "./extensions/host.js";
@@ -3562,6 +3566,160 @@ describe("transformPiModels", () => {
       },
     ]);
   });
+});
+
+test("captured Pi image history keeps canonical identities across disk reload and refresh", async () => {
+  const entries = imageHistory.entries;
+  const users = entries.filter((entry) => entry.message.role === "user");
+  const workdir = mkdtempSync(path.join(tmpdir(), "pi-image-history-storage-"));
+  const logger = pino({ level: "silent" });
+  const storage = new AgentStorage(path.join(workdir, "agents"), logger);
+  const pi = new FakePi();
+  const visionModel: PiModel = {
+    provider: "google-cloud",
+    id: "gemini-3.8-flash",
+    input: ["text", "image"],
+  };
+  pi.queueSessionSetup((session) => {
+    session.state.model = visionModel;
+  });
+  let manager = new AgentManager({
+    clients: { pi: createClient(pi) },
+    registry: storage,
+    paseoToolsEnabled: false,
+    logger,
+  });
+  let agentId: string | undefined;
+  try {
+    const agent = await manager.createAgent(
+      { provider: "pi", cwd: workdir, model: "google-cloud/gemini-3.8-flash" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    agentId = agent.id;
+    for (const [index, entry] of users.entries()) {
+      if (entry.message.role !== "user") throw new Error("Expected captured user entry");
+      const run = manager.runAgent(agent.id, entry.message.content, {
+        clientMessageId: "client-image-" + index,
+      });
+      await manager.waitForAgentRunStart(agent.id);
+      const native = pi.latestSession();
+      native.finishSubmittedUserMessage({
+        id: entry.id,
+        parentId: entry.parentId,
+        text: getUserMessageText(entry.message.content),
+      });
+      native.finishTurn(entries[entries.indexOf(entry) + 1].message);
+      await run;
+    }
+    const canonical = manager.getTimeline(agent.id).filter((item) => item.type === "user_message");
+    expect(canonical).toHaveLength(2);
+    expect(canonical.map((item) => item.images)).toEqual(
+      users.map((entry) =>
+        entry.message.role === "user" && Array.isArray(entry.message.content)
+          ? entry.message.content.flatMap((part) =>
+              part.type === "image" ? [{ data: part.data, mimeType: part.mimeType }] : [],
+            )
+          : [],
+      ),
+    );
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    await storage.flush();
+
+    // A new storage instance must load the actual serialized Pi handle, not a memory-only map.
+    const reloadedStorage = new AgentStorage(path.join(workdir, "agents"), logger);
+    const record = await reloadedStorage.get(agent.id);
+    expect(record?.persistence?.metadata?.submittedUserMessageIds).toEqual(
+      Object.fromEntries(users.map((entry, index) => [entry.id, "client-image-" + index])),
+    );
+    if (!record?.persistence) throw new Error("Expected persisted Pi handle");
+    const resumedPi = new FakePi();
+    const setupReplay = (session: ReturnType<FakePi["latestSession"]>) => {
+      session.state.model = visionModel;
+      session.messages = entries.map((entry) => entry.message);
+      session.treeUserEntries = users.map((entry) => ({
+        id: entry.id,
+        parentId: entry.parentId,
+        text: entry.message.role === "user" ? getUserMessageText(entry.message.content) : "",
+      }));
+      session.contextUserEntries = session.treeUserEntries;
+    };
+    resumedPi.queueSessionSetup(setupReplay);
+    manager = new AgentManager({
+      clients: { pi: createClient(resumedPi) },
+      registry: reloadedStorage,
+      paseoToolsEnabled: false,
+      logger,
+    });
+    await manager.resumeAgentFromPersistence(record.persistence, { cwd: workdir }, agent.id);
+    expect(resumedPi.latestSession().messages).toEqual(entries.map((entry) => entry.message));
+    for (const force of [false, true]) {
+      await manager.hydrateTimelineFromProvider(agent.id, { force });
+      expect(manager.getTimeline(agent.id).filter((item) => item.type === "user_message")).toEqual(
+        canonical,
+      );
+      expect(
+        manager
+          .fetchTimeline(agent.id, { limit: 0 })
+          .rows.filter((row) => row.item.type === "user_message")
+          .map((row) => row.providerMessageId),
+      ).toEqual(users.map((entry) => entry.id));
+    }
+    resumedPi.queueSessionSetup(setupReplay);
+    await manager.reloadAgentSession(agent.id, undefined, { rehydrateFromDisk: true });
+    await manager.hydrateTimelineFromProvider(agent.id);
+    expect(manager.getTimeline(agent.id).filter((item) => item.type === "user_message")).toEqual(
+      canonical,
+    );
+    await manager.rewind(agent.id, "client-image-1", "conversation");
+    expect(resumedPi.latestSession().treeNavigationRequests).toEqual([users[1].id]);
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("old Pi handles replay native identities without inventing client mappings", async () => {
+  const pi = new FakePi();
+  const entries = imageHistory.entries;
+  pi.queueSessionSetup((session) => {
+    session.messages = entries.map((entry) => entry.message);
+    session.treeUserEntries = entries.flatMap((entry) =>
+      entry.message.role === "user"
+        ? [
+            {
+              id: entry.id,
+              parentId: entry.parentId,
+              text: getUserMessageText(entry.message.content),
+            },
+          ]
+        : [],
+    );
+    session.contextUserEntries = session.treeUserEntries;
+  });
+  const session = await createClient(pi).resumeSession({
+    provider: "pi",
+    sessionId: "old-pi",
+    nativeHandle: "/tmp/old-synthetic-pi",
+    metadata: { cwd: "/tmp/synthetic" },
+  });
+  onTestFinished(() => session.close());
+  const items = [];
+  for await (const event of session.streamHistory())
+    if (event.type === "timeline" && event.item.type === "user_message") items.push(event.item);
+  expect(
+    items.map((item) => ({
+      messageId: item.messageId,
+      clientMessageId: item.clientMessageId,
+      imageCount: item.images?.length,
+    })),
+  ).toEqual([
+    { messageId: "57061f34", clientMessageId: undefined, imageCount: 1 },
+    { messageId: "8417b730", clientMessageId: undefined, imageCount: 1 },
+  ]);
+  expect(session.describePersistence()?.metadata?.submittedUserMessageIds).toBeUndefined();
 });
 
 test("pi runtime safety protects queued replies and runtime-owned activity", async () => {

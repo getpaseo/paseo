@@ -118,6 +118,13 @@ const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
 
 type TimeoutResult = "completed" | "timed_out";
 
+function submittedPromptImages(prompt: AgentPromptInput) {
+  if (typeof prompt === "string") return [];
+  return prompt.flatMap((block) =>
+    block.type === "image" ? [{ data: block.data, mimeType: block.mimeType }] : [],
+  );
+}
+
 function submittedPromptText(prompt: AgentPromptInput): string {
   if (typeof prompt === "string") {
     return prompt;
@@ -255,6 +262,11 @@ export interface SubscribeOptions {
   replayState?: boolean;
   /** Receive events for internal agents too. Off by default for global subscribers. */
   includeInternal?: boolean;
+}
+
+interface RecordHistoryTimelineEventInput {
+  agentId: string;
+  event: Extract<AgentStreamEvent, { type: "timeline" }>;
 }
 
 interface HydrateTimelineOptions {
@@ -4347,6 +4359,23 @@ export class AgentManager {
     await this.primeTimelineFromLegacyProviderHistory(agent, broadcast);
   }
 
+  private recordHistoryTimelineEvent({
+    agentId,
+    event,
+  }: RecordHistoryTimelineEventInput): AgentTimelineRow {
+    const item = event.item;
+    const providerMessageId =
+      item.type === "user_message" && item.clientMessageId ? item.messageId : undefined;
+    if (item.type === "user_message" && item.clientMessageId) {
+      // Replay carries native identity; the manager owns the submitted wire identity.
+      event.item = { ...item, messageId: item.clientMessageId };
+    }
+    return this.recordTimeline(agentId, event.item, {
+      ...(event.timestamp ? { timestamp: event.timestamp } : {}),
+      ...(providerMessageId ? { providerMessageId } : {}),
+    });
+  }
+
   private async forceHydrateTimelineFromLegacyProviderHistory(
     agent: ActiveManagedAgent,
     broadcast: boolean,
@@ -4383,11 +4412,7 @@ export class AgentManager {
       }
     }
     for (const event of historyEvents) {
-      const row = this.recordTimeline(
-        agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
-      );
+      const row = this.recordHistoryTimelineEvent({ agentId: agent.id, event });
       if (broadcastTimeline) {
         this.dispatchStream(agent.id, event, {
           seq: row.seq,
@@ -4452,11 +4477,7 @@ export class AgentManager {
       }
     }
     for (const event of historyEvents) {
-      const row = this.recordTimeline(
-        agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
-      );
+      const row = this.recordHistoryTimelineEvent({ agentId: agent.id, event });
       if (deferredBroadcast) {
         timelineEvents.push({ event, row });
       } else if (broadcast) {
@@ -5029,9 +5050,11 @@ export class AgentManager {
     outcome: "accepted" | "rejected",
     options?: { messageId?: string; providerMessageId?: string; turnId?: string },
   ): void {
+    const images = submittedPromptImages(prompt);
     const items = projectAgentMessages({
       type: "user_message",
       text: submittedPromptText(prompt),
+      ...(images.length > 0 ? { images } : {}),
       clientMessageId,
       ...(options?.messageId ? { messageId: options.messageId } : {}),
     });
@@ -5085,6 +5108,10 @@ export class AgentManager {
         messageId,
       );
       if (enriched) this.enqueueDurableTimelineUpdate(agent.id, enriched);
+      // A confirmed echo can add native identity and original attachment data to the handle.
+      // Persist it now even if this turn has not completed yet.
+      this.refreshSessionPersistence(agent);
+      this.enqueueBackgroundPersist(agent);
     }
     return existing;
   }

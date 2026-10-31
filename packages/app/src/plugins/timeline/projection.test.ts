@@ -13,6 +13,23 @@ function thought(text: string, status: "loading" | "ready" = "loading"): StreamI
   };
 }
 
+it("cross-client images reach plugin transformers intact", () => {
+  const images = [{ data: "AA==", mimeType: "image/png" }];
+  const source: StreamItem = {
+    kind: "user_message",
+    id: "user-image",
+    text: "",
+    timestamp: new Date(1),
+    inlineImages: images,
+  };
+  let received: unknown;
+  projectPluginTimelineItems([source], ({ item }) => {
+    received = item;
+    return undefined;
+  });
+  expect(received).toMatchObject({ type: "user_message", text: "", images });
+});
+
 describe("plugin timeline projection", () => {
   it("does not expose mutable tool detail from stream state", () => {
     const detail = { type: "read" as const, filePath: "/repo/original.ts" };
@@ -151,4 +168,29 @@ describe("plugin timeline projection", () => {
     ]);
     expect(filtered).toEqual([]);
   });
+});
+
+it("keeps local-only image previews native until portable images arrive", () => {
+  const source: StreamItem = {
+    kind: "user_message",
+    id: "local-image",
+    text: "",
+    timestamp: new Date(1),
+    images: [
+      {
+        id: "attachment",
+        mimeType: "image/png",
+        storageType: "native-file",
+        storageKey: "/device/image.png",
+        createdAt: 1,
+      },
+    ],
+  };
+  let calls = 0;
+  const result = projectPluginTimelineItems([source], () => {
+    calls += 1;
+    return [];
+  });
+  expect(result).toEqual([source]);
+  expect(calls).toBe(0);
 });

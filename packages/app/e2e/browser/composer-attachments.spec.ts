@@ -1,4 +1,7 @@
 import { expect, test } from "../support/fixtures";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
+import { seedMockAgentWorkspace, openAgentRoute } from "../support/helpers/mock-agent";
 import { clickNewChat } from "../support/helpers/launcher";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { expectAgentIdle } from "../support/helpers/agent-stream";
@@ -310,3 +313,88 @@ test.describe("Composer attachments", () => {
     }
   });
 });
+
+for (const width of [390, 1280]) {
+  for (const text of ["", "Describe this image"]) {
+    test(`cross-client image previews and lightbox survive reload at width ${width} with text ${JSON.stringify(text)}`, async ({
+      page,
+    }, testInfo) => {
+      test.setTimeout(120_000);
+      await page.setViewportSize({ width, height: 900 });
+      const workspace = await seedMockAgentWorkspace({
+        repoPrefix: "cross-client-images-",
+        title: "Cross-client image",
+        model: "e2e-fast-stream",
+      });
+      const sender = await connectDaemonClient<
+        Pick<DaemonClient, "connect" | "close" | "sendAgentMessage" | "fetchAgentTimeline">
+      >({ clientIdPrefix: "image-sender" });
+      try {
+        await openAgentRoute(page, workspace);
+        await expectComposerVisible(page);
+        await sender.sendAgentMessage(workspace.agentId, text, {
+          images: [{ data: MINIMAL_PNG.toString("base64"), mimeType: "image/png" }],
+        });
+        const preview = page.getByTestId("user-message-image");
+        await expect(preview).toHaveCount(1);
+        await expect
+          .poll(() =>
+            preview.locator("img").evaluate((image: HTMLImageElement) => ({
+              width: image.naturalWidth,
+              height: image.naturalHeight,
+            })),
+          )
+          .toEqual({ width: 1, height: 1 });
+        await preview.click();
+        await expect(page.getByTestId("attachment-lightbox-close")).toBeVisible();
+        await expect
+          .poll(() =>
+            page
+              .getByTestId("attachment-lightbox")
+              .locator("img")
+              .evaluate((image: HTMLImageElement) => ({
+                width: image.naturalWidth,
+                height: image.naturalHeight,
+              })),
+          )
+          .toEqual({ width: 1, height: 1 });
+        await page.keyboard.press("Escape");
+        await expect(page.getByTestId("attachment-lightbox-close")).toHaveCount(0);
+        await workspace.client.waitForFinish(workspace.agentId, 30_000);
+        const beforeReload = await sender.fetchAgentTimeline(workspace.agentId);
+        expect(
+          beforeReload.entries.flatMap((entry) =>
+            entry.item.type === "user_message" ? (entry.item.images ?? []) : [],
+          ),
+        ).toEqual([{ data: MINIMAL_PNG.toString("base64"), mimeType: "image/png" }]);
+        await page.reload();
+        const afterReload = await sender.fetchAgentTimeline(workspace.agentId);
+        expect(
+          afterReload.entries.flatMap((entry) =>
+            entry.item.type === "user_message" ? (entry.item.images ?? []) : [],
+          ),
+        ).toEqual([{ data: MINIMAL_PNG.toString("base64"), mimeType: "image/png" }]);
+        await expect(preview).toHaveCount(1);
+        await expect
+          .poll(() =>
+            preview.locator("img").evaluate((image: HTMLImageElement) => ({
+              width: image.naturalWidth,
+              height: image.naturalHeight,
+            })),
+          )
+          .toEqual({ width: 1, height: 1 });
+        await preview.scrollIntoViewIfNeeded();
+        await expect(preview).toBeVisible();
+        const screenshot = testInfo.outputPath("cross-client-image-after-reload.png");
+        await page.screenshot({ path: screenshot });
+        await testInfo.attach("cross-client-image-after-reload", {
+          path: screenshot,
+          contentType: "image/png",
+        });
+      } finally {
+        await sender.close();
+        await workspace.cleanup();
+      }
+    });
+  }
+}

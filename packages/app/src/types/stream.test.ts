@@ -21,6 +21,71 @@ import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
 import { timelineItemIdentity } from "@getpaseo/protocol/timeline-identity";
 
+it.each(["", "Describe this image"])(
+  "cross-client image messages survive live and history reducers with text %j",
+  (text) => {
+    const images = [{ data: "AA==", mimeType: "image/png" }];
+    const event = {
+      type: "timeline" as const,
+      provider: "omp",
+      item: {
+        type: "user_message" as const,
+        text,
+        messageId: "user-image",
+        images,
+      },
+    };
+    const timestamp = new Date(1);
+    expect(hydrateStreamState([{ event, timestamp }])).toMatchObject([
+      { kind: "user_message", messageId: "user-image", text, inlineImages: images },
+    ]);
+    for (const unmatchedUserMessageInsert of ["tail", "head"] as const) {
+      const result = applyStreamEvent({
+        tail: [],
+        head: [],
+        event,
+        timestamp,
+        unmatchedUserMessageInsert,
+      });
+      expect([...result.tail, ...result.head]).toMatchObject([
+        { kind: "user_message", messageId: "user-image", text, inlineImages: images },
+      ]);
+    }
+  },
+);
+
+it("cross-client canonical images reconcile into a locally submitted row without duplicating it", () => {
+  const local = createUserMessage({
+    clientMessageId: "client-image",
+    text: "",
+    timestamp: new Date(1),
+  });
+  const images = [{ data: "AA==", mimeType: "image/png" }];
+  const result = applyStreamEvent({
+    tail: [local],
+    head: [],
+    timestamp: new Date(2),
+    event: {
+      type: "timeline",
+      provider: "omp",
+      item: {
+        type: "user_message",
+        text: "",
+        messageId: "user-image",
+        clientMessageId: "client-image",
+        images,
+      },
+    },
+  });
+  expect(result.tail).toHaveLength(1);
+  expect(result.tail[0]).toMatchObject({
+    id: local.id,
+    messageId: "user-image",
+    inlineImages: images,
+  });
+  expect(result.acknowledgedClientMessageIds).toEqual(["client-image"]);
+});
+
 type CanonicalToolStatus = "running" | "completed" | "failed" | "canceled";
 
 it("updates a resolved Claude plan at its proposal position across a follow-up", () => {

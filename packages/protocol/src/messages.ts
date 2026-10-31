@@ -712,12 +712,18 @@ const ToolCallTimelineItemPayloadSchema: z.ZodType<ToolCallTimelineItem, unknown
     ToolCallCanceledPayloadSchema,
   ]);
 
+const ImageAttachmentSchema = z.object({
+  data: z.string(), // base64 encoded image
+  mimeType: z.string(), // e.g., "image/jpeg", "image/png"
+});
+
 // zod-aot 0.20.4 miscompiles this as a nested discriminated union by omitting
 // the inner tool_call branch from the generated outer dispatch.
 export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknown> = z.union([
   z.object({
     type: z.literal("user_message"),
     text: z.string(),
+    images: z.array(ImageAttachmentSchema).optional(),
     messageId: z.string().optional(),
     clientMessageId: z.string().optional(),
   }),
@@ -1244,11 +1250,6 @@ export const ChangeRequestCheckoutSourceSchema = z.object({
   forge: z.string().optional(),
   number: z.number().int().positive(),
   projectPath: z.string().optional(),
-});
-
-const ImageAttachmentSchema = z.object({
-  data: z.string(), // base64 encoded image
-  mimeType: z.string(), // e.g., "image/jpeg", "image/png"
 });
 
 export const ActiveTurnBehaviorSchema = z.enum(["interrupt", "steer"]);

@@ -1,3 +1,4 @@
+import { createTimelineResponse } from "./session/timeline/response.js";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
 import { AgentDirectory } from "./agent/directory.js";
@@ -7843,76 +7844,26 @@ export class Session {
       });
       const agentPayload = await this.buildAgentPayload(snapshot);
 
-      const fetchedControlTimeline = this.agentManager.fetchTimeline(msg.agentId, {
+      const response = createTimelineResponse({
+        requestId: msg.requestId,
+        agentId: msg.agentId,
+        agent: agentPayload,
         direction,
-        cursor,
         limit: msg.limit,
-        wholeTurns: msg.wholeTurns,
-      });
-      const selectedTimeline = {
-        timeline: fetchedControlTimeline,
-        entries: fetchedControlTimeline.rows,
-        startSeq: fetchedControlTimeline.startSeq,
-        endSeq: fetchedControlTimeline.endSeq,
-        hasOlder: fetchedControlTimeline.hasOlder,
-        hasNewer: fetchedControlTimeline.hasNewer,
-      };
-      const startCursor =
-        selectedTimeline.startSeq !== null
-          ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.startSeq }
-          : null;
-      const endCursor =
-        selectedTimeline.endSeq !== null
-          ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.endSeq }
-          : null;
-      const entries = selectedTimeline.entries.filter((entry) =>
-        this.supportsTimelineItem(entry.item, source),
-      );
-
-      this.emitForSource(
-        {
-          type: "fetch_agent_timeline_response",
-          payload: {
-            requestId: msg.requestId,
-            agentId: msg.agentId,
-            agent: agentPayload,
+        mergeWindow: msg.mergeWindow === true,
+        fetchPage: (limit) =>
+          this.agentManager.fetchTimeline(msg.agentId, {
             direction,
-            projection,
-            epoch: selectedTimeline.timeline.epoch,
-            reset: fetchedControlTimeline.reset,
-            staleCursor: fetchedControlTimeline.staleCursor,
-            gap: fetchedControlTimeline.gap,
-            window: selectedTimeline.timeline.window,
-            startCursor,
-            endCursor,
-            hasOlder: selectedTimeline.hasOlder,
-            hasNewer: selectedTimeline.hasNewer,
-            ...(msg.mergeWindow === true ? { mergeWindow: true } : {}),
-            entries: entries.map((entry) => {
-              const payloadEntry = {
-                provider: snapshot.provider,
-                item: entry.item,
-                timestamp: entry.timestamp,
-                seqStart: entry.seqStart,
-                seqEnd: entry.seqEnd,
-                sourceSeqRanges: entry.sourceSeqRanges,
-                turnId: undefined as string | undefined,
-                collapsed: (
-                  source
-                    ? this.supportsForSource(CLIENT_CAPS.reasoningMergeEnum, source)
-                    : this.supports(CLIENT_CAPS.reasoningMergeEnum)
-                )
-                  ? entry.collapsed
-                  : entry.collapsed.filter((value) => value !== "reasoning_merge"),
-              };
-              payloadEntry.turnId = entry.turnId;
-              return payloadEntry;
-            }),
-            error: null,
-          },
-        },
-        source,
-      );
+            cursor,
+            limit,
+            wholeTurns: msg.wholeTurns,
+          }),
+        supportsItem: (item) => this.supportsTimelineItem(item, source),
+        supportsReasoningMerge: source
+          ? this.supportsForSource(CLIENT_CAPS.reasoningMergeEnum, source)
+          : this.supports(CLIENT_CAPS.reasoningMergeEnum),
+      });
+      this.emitForSource(response, source);
     } catch (error) {
       this.sessionLogger.error(
         { err: error, agentId: msg.agentId },
