@@ -17,6 +17,7 @@ import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import { isWeb } from "@/constants/platform";
 import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import type { EditingTextInputHandle } from "@/components/ui/text-input/types";
+import { FILLED_FOCUS_RING_DATASET } from "@/styles/focus-ring";
 import { ScrollableCodeSurface } from "@/components/ui/scrollable-code-surface";
 import { MarkdownRenderer } from "@/components/markdown/renderer";
 import {
@@ -657,6 +658,7 @@ export function QuestionFormCard({
           accessibilityRole="button"
           accessibilityLabel={primaryActionLabel}
           testID="question-form-primary-action"
+          dataSet={FILLED_FOCUS_RING_DATASET}
         >
           {pendingAction === "submit" ? (
             <LoadingSpinner size="small" color={theme.colors.accentForeground} />
