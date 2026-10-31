@@ -19,6 +19,21 @@ function expectedBenchmarkLine(index: number): string {
 }
 
 describe("native headless terminal state", () => {
+  test("measures emoji as two cells like the xterm.js web renderer", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: 2, cols: COLS });
+
+    // U+1F916 and U+1F4CA are wide under Unicode 11 but narrow under xterm's default Unicode 6 table.
+    await terminal.write("\u{1F916}A\u{1F4CA}B");
+
+    const row = terminal.getState().grid[0];
+    expect(row[0]).toMatchObject({ char: "\u{1F916}", width: 2 });
+    expect(row[1]).toMatchObject({ char: " ", width: 0 });
+    expect(row[2]).toMatchObject({ char: "A", width: 1 });
+    expect(row[3]).toMatchObject({ char: "\u{1F4CA}", width: 2 });
+    expect(row[5]).toMatchObject({ char: "B", width: 1 });
+    expect(terminal.getState().cursor.col).toBe(6);
+  });
+
   test("exposes application cursor key mode from headless xterm", async () => {
     const terminal = createNativeHeadlessTerminal({ rows: 5, cols: COLS });
 
