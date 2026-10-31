@@ -1,7 +1,7 @@
 import { z } from "zod";
 export const inputSchema = z
   .object({
-    store: z.literal("env"),
+    store: z.enum(["env", "file", "zcode"]),
     locator: z.string().min(1),
   })
   .strict();
