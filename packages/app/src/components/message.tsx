@@ -418,12 +418,19 @@ export const UserMessage = memo(function UserMessage({
   const hasText = message.trim().length > 0;
   const hasImages = images.length > 0;
   const hasAttachments = attachments.length > 0;
-  const showTrailingRow = !isPending && hasText && (isCompact || isNative || isHovered);
+  const showTrailingRow = !isPending && (isCompact || isNative || isHovered);
   const formattedTimestamp = useMemo(
     () => formatMessageTimestamp(new Date(timestamp)),
     [timestamp],
   );
-  const rewindMutation = useRewindAgentMutation({ serverId, agentId, client, messageId });
+  const rewindMutation = useRewindAgentMutation({
+    serverId,
+    agentId,
+    client,
+    messageId,
+    images,
+    attachments,
+  });
 
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
   const handlePointerLeave = useCallback(() => setIsHovered(false), []);
@@ -517,30 +524,30 @@ export const UserMessage = memo(function UserMessage({
             ) : null}
           </MessagePreview>
         </View>
-        {hasText ? (
-          <View
-            style={trailingRowStyle}
-            pointerEvents={showTrailingRow ? "auto" : "none"}
-            testID="user-message-trailing-row"
-          >
-            <Text style={userMessageStylesheet.timestampText} testID="user-message-timestamp">
-              {formattedTimestamp}
-            </Text>
-            {capabilities && messageId ? (
-              <RewindMenu
-                capabilities={capabilities}
-                isPending={rewindMutation.isPending}
-                rewoundText={message}
-                onRewind={handleRewind}
-              />
-            ) : null}
+        <View
+          style={trailingRowStyle}
+          pointerEvents={showTrailingRow ? "auto" : "none"}
+          testID="user-message-trailing-row"
+        >
+          <Text style={userMessageStylesheet.timestampText} testID="user-message-timestamp">
+            {formattedTimestamp}
+          </Text>
+          {capabilities && messageId ? (
+            <RewindMenu
+              capabilities={capabilities}
+              isPending={rewindMutation.isPending}
+              rewoundText={message}
+              onRewind={handleRewind}
+            />
+          ) : null}
+          {hasText ? (
             <TurnCopyButton
               getContent={getMessageContent}
               containerStyle={userMessageStylesheet.copyButton}
               accessibilityLabel={t("message.actions.copyMessage")}
             />
-          </View>
-        ) : null}
+          ) : null}
+        </View>
       </View>
       <AttachmentLightbox source={lightboxSource} onClose={handleLightboxClose} />
     </View>
