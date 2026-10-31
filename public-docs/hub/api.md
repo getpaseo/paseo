@@ -37,13 +37,17 @@ organization is not accessible through the key.
 
 Each key has one or more selectable scopes:
 
-| Scope                    | Operation                                                             |
-| ------------------------ | --------------------------------------------------------------------- |
-| `projects:read`          | List active projects in the organization.                             |
-| `configuration:validate` | Validate triggers or legacy configuration without changing Hub state. |
-| `configuration:install`  | Install triggers or replace a legacy project's configuration.         |
-| `runs:dispatch`          | Dispatch a configured manual trigger for a project.                   |
-| `daemons:enroll`         | Issue a short-lived daemon enrollment token.                          |
+| Scope                    | Operation                                                                  |
+| ------------------------ | -------------------------------------------------------------------------- |
+| `projects:read`          | List active projects in the organization.                                  |
+| `configuration:validate` | Validate triggers or legacy configuration without changing Hub state.      |
+| `configuration:install`  | Install triggers or replace a legacy project's configuration.              |
+| `runs:dispatch`          | Dispatch a configured manual trigger for a project.                        |
+| `daemons:enroll`         | Issue a short-lived daemon enrollment token.                               |
+| `agents:read`            | Discover daemons, workspaces, providers, and agent activity through MCP.   |
+| `agents:control`         | Create, message, interrupt, and archive agents and workspaces through MCP. |
+
+Connect an assistant through [Hub MCP](/docs/hub/mcp) to run ordinary daemon agents or dispatch existing manual workflows.
 
 API keys do not grant dashboard access. They cannot manage connections,
 projects, or organization members.
