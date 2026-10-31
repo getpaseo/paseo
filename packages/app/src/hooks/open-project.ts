@@ -73,6 +73,7 @@ export function registerProjectDescriptor(input: RegisterProjectDescriptorInput)
 export interface CloneGithubProjectDirectlyInput extends ProjectRegistrationCallbacks {
   repo: string;
   targetDirectory: string;
+  folderName?: string;
   cloneProtocol?: ProjectGithubCloneProtocol;
   client: Pick<DaemonClient, "cloneGithubProject"> | null;
 }
@@ -133,6 +134,7 @@ export async function cloneGithubProjectDirectly(
   const payload = await input.client.cloneGithubProject({
     repo: trimmedRepo,
     targetDirectory: trimmedTargetDirectory,
+    ...(input.folderName !== undefined ? { folderName: input.folderName } : {}),
     ...(input.cloneProtocol ? { cloneProtocol: input.cloneProtocol } : {}),
   });
   if (payload.error || !payload.project) {
