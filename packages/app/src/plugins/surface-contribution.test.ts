@@ -43,6 +43,7 @@ function installation(
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    workspaceRowAccessories: [],
   };
 }
 

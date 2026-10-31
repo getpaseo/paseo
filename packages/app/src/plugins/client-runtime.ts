@@ -11,6 +11,7 @@ import { createPluginClientStateSource } from "./client-state/source";
 import type { PluginClientRuntime } from "./evaluate";
 import { createPluginNavigation } from "./navigation";
 import { pluginButtonStore } from "./buttons";
+import { startRowTakeover } from "./workspace-row-takeover";
 import type { InstalledPlugin } from "./types";
 
 export function createPluginClientRuntime(
@@ -32,6 +33,9 @@ export function createPluginClientRuntime(
     },
     addHeaderButton(contribution) {
       return pluginButtonStore.addHeaderButton(installation, contribution);
+    },
+    requestRowTakeover(workspaceId, options, accessories) {
+      return startRowTakeover(installation, accessories, workspaceId, options);
     },
     openPanel(panelId, options) {
       openClientPanel({ installation, state, panelId, options });

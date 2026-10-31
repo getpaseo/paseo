@@ -20,6 +20,7 @@ import type {
   PluginTimelineTransformerContribution,
   PluginPanelLocation,
   PluginWorkspacePanelContribution as SDKPluginWorkspacePanelContribution,
+  PluginWorkspaceRowAccessoryContribution,
 } from "@getpaseo/plugin/client";
 
 type PluginFilePanelContribution = SDKPluginFilePanelContribution<PluginText>;
@@ -43,6 +44,12 @@ export type EvaluatedPluginWorkspacePanelContribution = PluginWorkspacePanelCont
   locations: readonly PluginPanelLocation[];
 };
 
+/** `sequence` is the registration order across every plugin and host; the highest renders. */
+export type EvaluatedWorkspaceRowAccessory = PluginWorkspaceRowAccessoryContribution & {
+  size: "status" | "large";
+  sequence: number;
+};
+
 export interface EvaluatedPlugin {
   id: string;
   cleanup: PluginCleanup;
@@ -60,6 +67,7 @@ export interface EvaluatedPlugin {
   themes: PluginThemeContribution[];
   timelineTransformers: PluginTimelineTransformerContribution[];
   timelineRenderers: PluginTimelineRendererContribution[];
+  workspaceRowAccessories: EvaluatedWorkspaceRowAccessory[];
 }
 
 export interface InstalledPlugin extends EvaluatedPlugin {
