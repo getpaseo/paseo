@@ -1933,6 +1933,10 @@ export const ru: TranslationResources = {
     dontAskAgain: "Больше не спрашивать",
   },
   downloads: {
+    saveFailed: "Не удалось сохранить файл. Проверьте место сохранения и повторите попытку.",
+    saveToDevice: "Сохранить на устройство",
+    finishing: "Завершение загрузки…",
+    sharingUnavailable: "Обмен файлами недоступен на этом устройстве.",
     requestTokenFailed: "Не удалось запросить токен загрузки.",
     hostUnavailable: "Хост загрузки недоступен.",
     cancelled: "Загрузка отменена.",
