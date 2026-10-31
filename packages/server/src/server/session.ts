@@ -682,6 +682,9 @@ interface ClientActivity {
   appVisibilityChangedAt: Date;
 }
 
+// Connections on one daemon share refreshes; independent managers own independent agents.
+const pendingAgentRefreshes = new WeakMap<AgentManager, Map<string, Promise<ManagedAgent>>>();
+
 export class Session {
   private readonly connectedHostSession: ConnectedHostSession | null;
   private routed = false;
@@ -4759,39 +4762,26 @@ export class Session {
 
     try {
       await this.restoreOwningWorkspaceForLegacyAgentRefresh(agentId);
-      await unarchiveAgentState(this.agentStorage, this.agentManager, agentId);
-      let snapshot: ManagedAgent;
-      const existing = this.agentManager.getAgent(agentId);
-      if (existing) {
-        await this.interruptAgentIfRunning(agentId);
-        snapshot = await this.agentManager.reloadAgentSession(agentId, undefined, {
-          rehydrateFromDisk: true,
-        });
-      } else {
-        const record = await this.agentStorage.get(agentId);
-        if (!record) {
-          throw new Error(`Agent not found: ${agentId}`);
-        }
-        const registeredProviderIds = this.providerSnapshotManager.listRegisteredProviderIds();
-        if (!isStoredAgentProviderAvailable(record, registeredProviderIds)) {
-          throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
-        }
-        if (!toAgentPersistenceHandle(registeredProviderIds, record.persistence)) {
-          throw new Error(`Agent ${agentId} cannot be refreshed because it lacks persistence`);
-        }
-        // Share the loader's per-agent in-flight operation with timeline fetches.
-        // Unarchiving publishes the record before provider resume finishes, so
-        // the agent pane can otherwise race this request and resume it twice.
-        snapshot = await ensureAgentLoaded(agentId, {
-          agentManager: this.agentManager,
-          agentStorage: this.agentStorage,
-          broadcastTimeline: true,
-          logger: this.sessionLogger,
-        });
+      // Runtime replacement is serialized, but the reply also needs provider history.
+      // Another replacement during hydration can remove the agent before that reply.
+      // Share the whole reload and hydration across connections, including failures.
+      const refreshes =
+        pendingAgentRefreshes.get(this.agentManager) ?? new Map<string, Promise<ManagedAgent>>();
+      pendingAgentRefreshes.set(this.agentManager, refreshes);
+      let refresh = refreshes.get(agentId);
+      if (!refresh) {
+        const started = this.refreshAgentFromPersistence(agentId);
+        refresh = started;
+        refreshes.set(agentId, started);
+        void started
+          .catch(() => undefined)
+          .finally(() => {
+            if (refreshes.get(agentId) === started) refreshes.delete(agentId);
+          });
       }
-      await this.agentManager.hydrateTimelineFromProvider(agentId, { broadcast: true });
-      await this.agentUpdates.forwardLiveAgent(snapshot);
+      const snapshot = await refresh;
       const timelineSize = this.agentManager.getTimeline(agentId).length;
+      await this.agentUpdates.forwardLiveAgent(snapshot);
       if (requestId) {
         this.emit({
           type: "status",
@@ -4827,6 +4817,41 @@ export class Session {
         },
       });
     }
+  }
+
+  private async refreshAgentFromPersistence(agentId: string): Promise<ManagedAgent> {
+    await unarchiveAgentState(this.agentStorage, this.agentManager, agentId);
+    let snapshot: ManagedAgent;
+    const existing = this.agentManager.getAgent(agentId);
+    if (existing) {
+      await this.interruptAgentIfRunning(agentId);
+      snapshot = await this.agentManager.reloadAgentSession(agentId, undefined, {
+        rehydrateFromDisk: true,
+      });
+    } else {
+      const record = await this.agentStorage.get(agentId);
+      if (!record) {
+        throw new Error(`Agent not found: ${agentId}`);
+      }
+      const registeredProviderIds = this.providerSnapshotManager.listRegisteredProviderIds();
+      if (!isStoredAgentProviderAvailable(record, registeredProviderIds)) {
+        throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
+      }
+      if (!toAgentPersistenceHandle(registeredProviderIds, record.persistence)) {
+        throw new Error(`Agent ${agentId} cannot be refreshed because it lacks persistence`);
+      }
+      // Share the loader's per-agent in-flight operation with timeline fetches.
+      // Unarchiving publishes the record before provider resume finishes, so
+      // the agent pane can otherwise race this request and resume it twice.
+      snapshot = await ensureAgentLoaded(agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        broadcastTimeline: true,
+        logger: this.sessionLogger,
+      });
+    }
+    await this.agentManager.hydrateTimelineFromProvider(agentId, { broadcast: true });
+    return snapshot;
   }
 
   private async handleCancelAgentRequest(agentId: string, requestId?: string): Promise<void> {
