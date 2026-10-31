@@ -45,6 +45,44 @@ describe("TerminalActivityTracker — set", () => {
   });
 });
 
+describe("TerminalActivityTracker — setAtRest", () => {
+  it("records no finished attention after working", () => {
+    const tracker = new TerminalActivityTracker();
+
+    tracker.set("working");
+    tracker.setAtRest();
+
+    expect(tracker.getSnapshot()).toMatchObject({
+      state: "idle",
+      attentionReason: null,
+    });
+  });
+
+  it("replaces needs_input attention", () => {
+    const tracker = new TerminalActivityTracker();
+
+    tracker.set("attention");
+    tracker.setAtRest();
+
+    expect(tracker.getSnapshot()).toMatchObject({
+      state: "idle",
+      attentionReason: null,
+    });
+  });
+
+  it("keeps finished attention the user has not seen", () => {
+    const tracker = new TerminalActivityTracker();
+
+    tracker.finish();
+    tracker.setAtRest();
+
+    expect(tracker.getSnapshot()).toMatchObject({
+      state: "idle",
+      attentionReason: "finished",
+    });
+  });
+});
+
 describe("TerminalActivityTracker — clearAttention", () => {
   it("moves attention back to idle", () => {
     const tracker = new TerminalActivityTracker();
