@@ -82,7 +82,7 @@ export function installCommand(plugin: Plugin): string {
 export function pluginVersion(plugin: Plugin): string {
   return plugin.artifact.kind === "npm"
     ? plugin.artifact.version
-    : plugin.artifact.commit.slice(0, 12);
+    : (plugin.artifact.tag ?? plugin.artifact.commit.slice(0, 12));
 }
 export function npmUrl(plugin: Plugin): string | undefined {
   return plugin.artifact.kind === "npm"
