@@ -246,8 +246,10 @@ not own selection or release the explicit open.
 
 Persisted resume, native restore, and both live and stored-only archive enter the same per-agent
 lifecycle queue. Resume chooses its history or interactive purpose from the durable record after
-entering that queue. Shutdown must finish before the manager releases runtime ownership; a failed
-close retains the runtime for cleanup and blocks replacement through that close operation.
+entering that queue. A load replays provider history in the same queue step as its resume, so an
+unarchive or archive queued behind it cannot close the runtime mid-replay. Shutdown must finish
+before the manager releases runtime ownership; a failed close retains the runtime for cleanup and
+blocks replacement through that close operation.
 
 Authoritative timeline catch-up can use a runtime-only `history` resume purpose. The retained
 history session contains only the read results and must release its provider process once replay
