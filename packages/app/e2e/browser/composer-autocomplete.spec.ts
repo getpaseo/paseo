@@ -389,12 +389,17 @@ test.describe("Composer autocomplete", () => {
         buffer: Buffer.from("attachment"),
       });
       await expect(page.getByTestId("composer-file-attachment-pill")).toContainText("note.txt");
-      await composerLocator(page).fill("draft");
       await message.getByRole("link", { name: "/mock", exact: true }).click();
-      await expect(composerLocator(page)).toHaveValue("draft /mock");
+      await expect(composerLocator(page)).toHaveValue("/mock ");
+      await expect(
+        page.getByTestId("composer-autocomplete-popover").filter({ visible: true }),
+      ).toHaveCount(0);
       await expect(composerLocator(page)).toBeFocused();
       await message.getByRole("link", { name: "Run mock" }).click();
-      await expect(composerLocator(page)).toHaveValue("draft /mock /mock");
+      await expect(composerLocator(page)).toHaveValue("/mock /mock ");
+      await expect(
+        page.getByTestId("composer-autocomplete-popover").filter({ visible: true }),
+      ).toHaveCount(0);
       await expect(composerLocator(page)).toBeFocused();
       await expect(page.getByTestId("composer-file-attachment-pill")).toContainText("note.txt");
       await composerLocator(page).fill("/");

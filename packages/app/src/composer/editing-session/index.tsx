@@ -46,7 +46,7 @@ export class ComposerEditingSession {
     const editor = this.editor;
     if (!editor) return;
     const text = editor.getText();
-    editor.replaceText(`${text}${text && !/\s$/.test(text) ? " " : ""}${command}`);
+    editor.replaceText(`${text}${text && !/\s$/.test(text) ? " " : ""}${command} `);
     editor.focus();
   }
   /** Called by the unmounting editor; the next mount of this session takes it. */

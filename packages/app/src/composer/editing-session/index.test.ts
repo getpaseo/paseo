@@ -17,11 +17,11 @@ describe("composer editing session", () => {
     });
     session.insertCommand("/review");
     session.insertCommand("/test");
-    expect(text).toBe("draft typed since publication /review /test");
+    expect(text).toBe("draft typed since publication /review /test ");
     expect(focuses).toBe(2);
     detach();
     session.insertCommand("/ignored");
-    expect(text).toBe("draft typed since publication /review /test");
+    expect(text).toBe("draft typed since publication /review /test ");
   });
   it("publishes fullscreen changes once per transition", () => {
     const session = new ComposerEditingSession();
