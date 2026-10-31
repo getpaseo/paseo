@@ -59,6 +59,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { FileActionsContextMenuContent } from "@/components/file-actions-menu";
 import { ContextMenu, ContextMenuTrigger, useContextMenu } from "@/components/ui/context-menu";
 import { useFileDownload } from "@/hooks/use-file-download";
+import type { FileDelivery } from "@/downloads/cached-download";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
@@ -119,7 +120,7 @@ interface TreeRowItemProps {
   editorTargetName?: string;
   onRevealEntry?: (entry: ExplorerEntry) => void;
   revealTargetName?: string;
-  onDownloadEntry: (entry: ExplorerEntry) => void;
+  onDownloadEntry: (entry: ExplorerEntry, delivery: FileDelivery) => void;
   onAddToChat?: (path: string) => void;
   onOpenFileToSide?: (path: string) => void;
   onNewEntry?: (parentPath: string, kind: "file" | "directory") => void;
@@ -304,9 +305,12 @@ function TreeRowItem({
     onRevealEntry?.(entry);
   }, [onRevealEntry, entry]);
 
-  const handleDownload = useCallback(() => {
-    onDownloadEntry(entry);
-  }, [onDownloadEntry, entry]);
+  const handleDownload = useCallback(
+    (delivery: FileDelivery) => {
+      onDownloadEntry(entry, delivery);
+    },
+    [onDownloadEntry, entry],
+  );
 
   const handleAddToChat = useCallback(() => {
     onAddToChat?.(entry.path);
@@ -636,11 +640,11 @@ export function FileExplorerPane({
   );
 
   const handleDownloadEntry = useCallback(
-    (entry: ExplorerEntry) => {
+    (entry: ExplorerEntry, delivery: FileDelivery) => {
       if (entry.kind !== "file") {
         return;
       }
-      downloadFile({ fileName: entry.name, path: entry.path });
+      downloadFile({ fileName: entry.name, path: entry.path, delivery });
     },
     [downloadFile],
   );
@@ -1486,7 +1490,7 @@ function TreeRowDispatcher({
   editorTargetName?: string;
   onRevealEntry?: (entry: ExplorerEntry) => void;
   revealTargetName?: string;
-  onDownloadEntry: (entry: ExplorerEntry) => void;
+  onDownloadEntry: (entry: ExplorerEntry, delivery: FileDelivery) => void;
   onAddToChat?: (path: string) => void;
   onOpenFileToSide?: (path: string) => void;
   onNewEntry?: (parentPath: string, kind: "file" | "directory") => void;
