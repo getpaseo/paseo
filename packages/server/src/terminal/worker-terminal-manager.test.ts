@@ -60,6 +60,7 @@ import {
   listTerminalWorkerRecords,
   readTerminalWorkerRecord,
   terminalWorkerDirectory,
+  terminalWorkerLogPath,
   terminalWorkerRecordPath,
   type TerminalWorkerRecord,
 } from "./terminal-worker-record.js";
@@ -810,7 +811,7 @@ async function recordedTerminalPids(paseoHome: string): Promise<Map<string, numb
   return pids;
 }
 
-it.each([false, true])(
+it.each([false, true, true, true, true, true])(
   "never adopts a live worker's terminals after a kill cleanup it could not finish, even once the worker rewrites its record (held reader: %s)",
   async (holdReader) => {
     const paseoHome = createTemporaryHome();
@@ -870,10 +871,24 @@ it.each([false, true])(
     } finally {
       if (recordFd !== null) closeSync(recordFd);
     }
-    await waitForCondition(
-      async () => !(await recordedTerminalPids(paseoHome)).has(ending.id),
-      10000,
-    );
+    try {
+      await waitForCondition(
+        async () => !(await recordedTerminalPids(paseoHome)).has(ending.id),
+        10000,
+      );
+    } catch (error) {
+      const log = readFileSync(terminalWorkerLogPath(paseoHome), "utf8");
+      console.error("Worker publication diagnostics", {
+        workerAlive: isProcessAlive(record!.pid),
+        endingAlive: isProcessAlive(endingPid),
+        remainingAlive: isProcessAlive(remainingPid),
+        publicationFailures: log.match(/Cannot publish terminal exit/g)?.length ?? 0,
+        uncaughtExceptions: log.match(/uncaught exception/g)?.length ?? 0,
+        codes: log.match(/code: '[A-Z_]+'/g),
+        syscalls: log.match(/syscall: '[a-z]+'/g),
+      });
+      throw error;
+    }
     expect((await readUnconfirmedTerminalCleanup(paseoHome)).length).toBeGreaterThan(0);
 
     await first.detach();
