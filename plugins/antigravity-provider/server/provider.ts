@@ -12,6 +12,7 @@ import {
 import { getCatalog, getStatus } from "./internal/catalog.js";
 import { Session } from "./internal/session.js";
 import { AntigravityError } from "./internal/wire.js";
+import type { Usage } from "./usage.js";
 
 const capabilities = [
   "prompt.message",
@@ -20,7 +21,7 @@ const capabilities = [
   "session.persistence",
 ] as const;
 
-export function createAntigravityProvider(): ProviderRegistration {
+export function createAntigravityProvider(usage?: Usage): ProviderRegistration {
   return {
     id: "antigravity",
     label: "Antigravity",
@@ -33,6 +34,7 @@ export function createAntigravityProvider(): ProviderRegistration {
           available: false,
           diagnostic: "agy not found on PATH. Install Antigravity, then run `agy` and sign in.",
         };
+      usage?.remember(launch);
       return getStatus(launch);
     },
     async getCatalogCacheKey({ launch }) {
@@ -47,6 +49,7 @@ export function createAntigravityProvider(): ProviderRegistration {
         throw new AntigravityError("Provider protocol version 1 is required");
       if (!request.launch)
         throw new AntigravityError("The daemon must supply the Antigravity launch");
+      usage?.remember(request.launch);
       const negotiated = negotiateProviderCapabilities(request.capabilities, capabilities);
       return createConnection(request.launch, negotiated);
     },
