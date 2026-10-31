@@ -46,9 +46,52 @@ function directoryLabel(directory: string): string {
   return parts.at(-1) ?? directory;
 }
 
+function DirectoryEntryItem({
+  name,
+  selected,
+  onEnter,
+}: {
+  name: string;
+  selected: boolean;
+  onEnter: (name: string) => void;
+}) {
+  const onSelect = useCallback(() => {
+    onEnter(name);
+  }, [name, onEnter]);
+  return (
+    <DropdownMenuItem closeOnSelect={false} selected={selected} onSelect={onSelect}>
+      {`${name}/`}
+    </DropdownMenuItem>
+  );
+}
+
+function FileEntryItem({
+  name,
+  selected,
+  absolutePath,
+  workspaceRoot,
+  onOpenFile,
+}: {
+  name: string;
+  selected: boolean;
+  absolutePath: string;
+  workspaceRoot: string;
+  onOpenFile: (openPath: string) => void;
+}) {
+  const onSelect = useCallback(() => {
+    onOpenFile(toWorkspaceFileOpenPath(absolutePath, workspaceRoot));
+  }, [absolutePath, onOpenFile, workspaceRoot]);
+  return (
+    <DropdownMenuItem selected={selected} onSelect={onSelect}>
+      {name}
+    </DropdownMenuItem>
+  );
+}
+
 function DirectoryMenu({
   open,
   directory,
+  selectedPath,
   currentAbsolutePath,
   serverId,
   workspaceRoot,
@@ -56,6 +99,7 @@ function DirectoryMenu({
 }: {
   open: boolean;
   directory: string;
+  selectedPath: string;
   currentAbsolutePath: string;
   serverId: string;
   workspaceRoot: string;
@@ -136,27 +180,30 @@ function DirectoryMenu({
     );
   } else {
     for (const entry of state.entries) {
+      const absolutePath = joinAbsolutePath(browseDirectory, entry.name);
+      const selected =
+        pathsEqual(absolutePath, selectedPath) ||
+        (entry.kind !== "directory" && pathsEqual(absolutePath, currentAbsolutePath));
       if (entry.kind === "directory") {
         items.push(
-          <DropdownMenuItem
+          <DirectoryEntryItem
             key={`dir:${entry.path || entry.name}`}
-            closeOnSelect={false}
-            onSelect={() => enterDirectory(entry.name)}
-          >
-            {`${entry.name}/`}
-          </DropdownMenuItem>,
+            name={entry.name}
+            selected={selected}
+            onEnter={enterDirectory}
+          />,
         );
         continue;
       }
-      const absolutePath = joinAbsolutePath(browseDirectory, entry.name);
       items.push(
-        <DropdownMenuItem
+        <FileEntryItem
           key={`file:${entry.path || entry.name}`}
-          selected={pathsEqual(absolutePath, currentAbsolutePath)}
-          onSelect={() => onOpenFile(toWorkspaceFileOpenPath(absolutePath, workspaceRoot))}
-        >
-          {entry.name}
-        </DropdownMenuItem>,
+          name={entry.name}
+          selected={selected}
+          absolutePath={absolutePath}
+          workspaceRoot={workspaceRoot}
+          onOpenFile={onOpenFile}
+        />,
       );
     }
   }
@@ -192,20 +239,22 @@ function BreadcrumbSegment({
   onOpenFile: (openPath: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const triggerStyle = useCallback(
+    ({ hovered }: { hovered: boolean }) => [
+      styles.trigger,
+      hovered ? styles.triggerHovered : null,
+      open ? styles.triggerOpen : null,
+    ],
+    [open],
+  );
   return (
     <View style={styles.segment}>
       {showSeparator ? <Text style={styles.separator}>›</Text> : null}
       <DropdownMenu onOpenChange={setOpen}>
         <DropdownMenuTrigger
           accessibilityRole="button"
-          accessibilityLabel={
-            isLast ? `Show siblings of ${segment.label}` : `Show files in ${segment.directory}`
-          }
-          style={({ hovered }) => [
-            styles.trigger,
-            hovered ? styles.triggerHovered : null,
-            open ? styles.triggerOpen : null,
-          ]}
+          accessibilityLabel={`Show siblings of ${segment.label}`}
+          style={triggerStyle}
         >
           <Text style={isLast ? styles.fileLabel : styles.directoryLabel} numberOfLines={1}>
             {segment.label}
@@ -214,6 +263,7 @@ function BreadcrumbSegment({
         <DirectoryMenu
           open={open}
           directory={segment.directory}
+          selectedPath={segment.selectedPath}
           currentAbsolutePath={currentAbsolutePath}
           serverId={serverId}
           workspaceRoot={workspaceRoot}
@@ -225,9 +275,9 @@ function BreadcrumbSegment({
 }
 
 /**
- * Path strip above the file body. Every segment opens a dropdown of its own
- * directory, so sibling files are one click away (the file segment lists the
- * current file's siblings; parent segments list their own children).
+ * Path strip above the file body. Every segment opens a dropdown of its
+ * siblings, so the clicked directory is checked in its parent and a click
+ * still drills into that directory.
  */
 export function FilePathBreadcrumb({
   serverId,

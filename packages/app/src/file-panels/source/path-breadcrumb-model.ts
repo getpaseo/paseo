@@ -2,15 +2,17 @@
  * Pure path math for the file-pane breadcrumb.
  *
  * The breadcrumb shows the file path relative to the workspace root (or the
- * absolute path when the file lives outside it). Every segment knows which
- * directory its dropdown should list, so clicking the file name lists its
- * siblings and clicking a parent segment lists that parent's entries.
+ * absolute path when the file lives outside it). Every segment opens its
+ * parent directory, so the dropdown lists that segment's siblings. `selectedPath`
+ * is the segment itself and is the row the menu checks.
  */
 
 export interface FileBreadcrumbSegment {
   label: string;
-  /** Absolute directory this segment's dropdown lists. */
+  /** Absolute directory whose entries are this segment's siblings. */
   directory: string;
+  /** Absolute path of this segment. The menu checks the matching row. */
+  selectedPath: string;
 }
 
 export interface FileBreadcrumb {
@@ -57,9 +59,15 @@ function isInsidePath(child: string, parent: string): boolean {
     : child.startsWith(prefix);
 }
 
-/** Absolute parent directory. `/a` -> `/`, `C:/a` -> `C:/`, `/a/b` -> `/a`. */
+/**
+ * Absolute parent directory. `/a` -> `/`, `C:/a` -> `C:/`, `/a/b` -> `/a`.
+ * A UNC server root (`//server`) and a drive root (`C:/`) have no parent.
+ */
 export function dirnamePath(value: string): string {
   const path = normalizeSlashes(value);
+  if (path.startsWith("//") && !path.slice(2).includes("/")) {
+    return path;
+  }
   const separator = path.lastIndexOf("/");
   if (separator < 0) {
     return ".";
@@ -129,10 +137,15 @@ export function resolveFileBreadcrumb(input: {
 
   const directory = dirnamePath(absolutePath);
   const lastIndex = labels.length - 1;
-  const segments = labels.map((label, index) => ({
-    label,
-    directory: index === lastIndex ? directory : climb(directory, lastIndex - index - 1),
-  }));
+  const segments = labels.map((label, index) => {
+    const selectedPath =
+      index === lastIndex ? absolutePath : climb(directory, lastIndex - index - 1);
+    return {
+      label,
+      directory: index === lastIndex ? directory : climb(directory, lastIndex - index),
+      selectedPath,
+    };
+  });
 
   return {
     displayPath,
