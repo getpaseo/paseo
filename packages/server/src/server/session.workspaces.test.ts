@@ -1396,20 +1396,20 @@ test("create_agent_request does not title an existing workspace from the agent p
 test("create_agent_request does not publish the pre-prompt snapshot after the prompt starts", async () => {
   vi.useFakeTimers();
   const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-live-state-"));
+  const logger = createTestLogger();
+  const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
+  // The test session's turn starts and then reports nothing, like a provider
+  // that stays quiet until its turn ends.
+  const agentManager = new AgentManager({
+    clients: { codex: new CreateAgentTestClient() },
+    registry: agentStorage,
+    logger: asSessionLogger(logger),
+    idFactory: () => "00000000-0000-4000-8000-000000000553",
+  });
   try {
     const cwd = path.join(workdir, "repo");
     mkdirSync(cwd, { recursive: true });
 
-    const logger = createTestLogger();
-    const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
-    // The test session's turn starts and then reports nothing, like a provider
-    // that stays quiet until its turn ends.
-    const agentManager = new AgentManager({
-      clients: { codex: new CreateAgentTestClient() },
-      registry: agentStorage,
-      logger: asSessionLogger(logger),
-      idFactory: () => "00000000-0000-4000-8000-000000000553",
-    });
     const projectRegistry = new FileBackedProjectRegistry(
       path.join(workdir, "projects.json"),
       asSessionLogger(logger),
@@ -1516,6 +1516,8 @@ test("create_agent_request does not publish the pre-prompt snapshot after the pr
     const updatedAt = upserts.map((agent) => Date.parse(agent.updatedAt));
     expect(updatedAt).toEqual([...updatedAt].sort((left, right) => left - right));
   } finally {
+    // Drain snapshot writes before removing their storage directory.
+    await agentManager.flush();
     vi.useRealTimers();
     rmSync(workdir, { recursive: true, force: true });
   }
