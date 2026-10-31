@@ -88,7 +88,8 @@ describe("listProjectSuggestions", () => {
   let gitService: WorkspaceGitServiceImpl;
 
   beforeEach(() => {
-    root = realpathSync(mkdtempSync(path.join(tmpdir(), "project-suggestions-")));
+    // The native realpath expands Windows short names (RUNNER~1), which git reports in full.
+    root = realpathSync.native(mkdtempSync(path.join(tmpdir(), "project-suggestions-")));
     gitService = new WorkspaceGitServiceImpl({
       logger: createTestLogger(),
       paseoHome: path.join(root, ".paseo"),

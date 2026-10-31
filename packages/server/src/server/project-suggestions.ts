@@ -118,7 +118,8 @@ async function resolveProjectRoot(
     return null;
   }
   const checkout = await workspaceGitService.getCheckout(cwd);
-  const rootPath = checkout.mainRepoRoot ?? checkout.worktreeRoot ?? cwd;
+  // Git reports Windows roots with forward slashes; resolve to the form project.add keys by.
+  const rootPath = resolve(checkout.mainRepoRoot ?? checkout.worktreeRoot ?? cwd);
   if (rootPath !== cwd && !(await isDirectory(rootPath))) {
     return null;
   }
