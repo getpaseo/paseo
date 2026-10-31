@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 import { readPluginManifest } from "./manifest.js";
 import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { isBuiltin } from "node:module";
+import { createRequire, isBuiltin } from "node:module";
 import path from "node:path";
 import { createPluginImportReader, type PluginImportKind } from "./compiler-imports.js";
 import type { Metafile, OnResolveResult, Plugin } from "esbuild";
@@ -13,6 +13,8 @@ import {
 } from "./plugin-sdk-specifiers.js";
 
 import { loadEsbuild, SERVER_HOST_MODULES } from "./compiler-esbuild.js";
+
+const nodeRequire = createRequire(import.meta.url);
 
 type PluginBuildTarget = "client" | "server";
 
@@ -257,10 +259,47 @@ function makeHermesInteropEager(code: string): string {
   return code.replaceAll("get: () => from[key]", "value: from[key]");
 }
 
+type BabelCore = typeof import("@babel/core");
+
+let babelCore: BabelCore | null = null;
+
+// Babel is only needed for client bundles, and loading it costs more than the rest of
+// the compiler's imports combined. Load it the first time a client bundle is compiled.
+function loadBabel(): BabelCore {
+  babelCore ??= nodeRequire("@babel/core") as BabelCore;
+  return babelCore;
+}
+
+// Older clients on React Native 0.81.5 cannot evaluate unlowered classes in plugin
+// bundles. Hosts and clients update independently, so preserve lowering for those
+// clients even when the host uses a newer Hermes compiler. Plugin bundles bypass
+// Metro and esbuild cannot lower classes; everything else stays as esbuild emitted it.
+export function lowerClassesForHermes(code: string): string {
+  const result = loadBabel().transformSync(code, {
+    babelrc: false,
+    configFile: false,
+    sourceType: "script",
+    // Keep comments through class lowering. Client minify runs next and inlines
+    // legal notices; dropping them here fails the license-comment check.
+    comments: true,
+    compact: false,
+    sourceMaps: false,
+    plugins: [
+      nodeRequire("@babel/plugin-transform-class-static-block"),
+      nodeRequire("@babel/plugin-transform-class-properties"),
+      nodeRequire("@babel/plugin-transform-private-methods"),
+      nodeRequire("@babel/plugin-transform-private-property-in-object"),
+      nodeRequire("@babel/plugin-transform-classes"),
+    ],
+  });
+  if (result?.code == null) throw new Error("Plugin client class lowering produced no output");
+  return result.code;
+}
+
 async function minifyClientBundle(code: string): Promise<string> {
   const { transform } = loadEsbuild();
-  // Minify after the eager replace. Whitespace minify rewrites the getter this
-  // replace matches, and identifier minify can delete the helper entirely.
+  // Minify after the eager replace and class lowering. Whitespace minify rewrites
+  // the getter the eager replace matches, and identifier minify can delete the helper.
   const result = await transform(code, {
     minifyWhitespace: true,
     minifySyntax: true,
@@ -386,7 +425,10 @@ async function compileTarget(entryPath: string, target: PluginBuildTarget): Prom
   if (!output) throw new Error(`Plugin ${target} compilation produced no output`);
   const eager = makeHermesInteropEager(output);
   let prepared = eager;
-  if (target === "client") prepared = await minifyClientBundle(eager);
+  if (target === "client") {
+    prepared = lowerClassesForHermes(prepared);
+    prepared = await minifyClientBundle(prepared);
+  }
   return wrapCommonJsBundle(prepared);
 }
 
