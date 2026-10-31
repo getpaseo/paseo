@@ -1,4 +1,7 @@
-import { parseCronExpression } from "@getpaseo/protocol/schedule/cron-expression";
+import {
+  parseCronExpression,
+  validateCronExpression,
+} from "@getpaseo/protocol/schedule/cron-expression";
 import type { ScheduleCadence } from "@getpaseo/protocol/schedule/types";
 
 interface CronDateParts {
@@ -78,7 +81,10 @@ function createCronDatePartsReader(timeZone: string | undefined): (date: Date) =
 
 export function validateScheduleCadence(cadence: ScheduleCadence): void {
   if (cadence.type === "cron") {
-    parseCronExpression(cadence.expression);
+    const error = validateCronExpression(cadence.expression);
+    if (error) {
+      throw new Error(error);
+    }
     if (cadence.timezone !== undefined) {
       assertValidTimeZone(cadence.timezone);
     }
