@@ -15,7 +15,9 @@
  *   add-provider --name N --api-key K   Register a Coding Plan API key as a manual
  *       [--models a,b] [--base-url U]   provider in ~/.zcode/v2/provider_config.json
  *       [--protocol openai|anthropic]   so it shows up for Paseo sessions.
- *       [--config-file PATH]
+ *       [--api-key-env VAR]              Read the key from an environment variable
+ *       [--config-file PATH]             instead of the command line, so it stays
+ *                                       out of shell history and process listings.
  *   list-providers                      Print the manual providers ZCode will load.
  *       [--config-file PATH]
  *
@@ -65,7 +67,8 @@ function isExecutable(path) {
 }
 
 function firstOnPath(names) {
-  for (const entry of (process.env.PATH ?? "").split(":").filter(Boolean)) {
+  const delimiter = process.platform === "win32" ? ";" : ":";
+  for (const entry of (process.env.PATH ?? "").split(delimiter).filter(Boolean)) {
     for (const name of names) {
       const candidate = join(entry, name);
       if (isExecutable(candidate)) return candidate;
@@ -82,6 +85,11 @@ function desktopBundleCandidates() {
   } else if (process.platform === "win32") {
     const local = process.env.LOCALAPPDATA ?? join(home, "AppData", "Local");
     roots.push(join(local, "Programs", "ZCode"));
+    // The app is also installable outside %LOCALAPPDATA%\Programs, so the
+    // drives applications are installed to are searched too.
+    for (const drive of ["C:", "D:", "E:", "F:"]) {
+      roots.push(join(`${drive}\\`, "Programs", "ZCode"));
+    }
   } else {
     roots.push("/opt/ZCode", join(home, ".local", "share", "ZCode"));
   }
@@ -91,17 +99,38 @@ function desktopBundleCandidates() {
   ]);
 }
 
-/** Returns { command, args } for `zcode app-server --stdio`, or null. */
+/**
+ * The desktop app's bundled runtime needs the built-in provider config. The
+ * CLI only looks for it next to its own entrypoint, and the app keeps it under
+ * `resources/config/`, so it has to be passed through the environment.
+ */
+function bundledProviderConfigEnv(bundlePath) {
+  const bundleDir = dirname(bundlePath);
+  const candidates = [
+    join(bundleDir, "..", "config", "provider", "zcode-builtin.json"),
+    join(bundleDir, "provider", "zcode-builtin.json"),
+  ];
+  const found = candidates.find((candidate) => existsSync(candidate));
+  return found ? { ZCODE_BUILTIN_PROVIDER_CONFIG_FILE: found } : {};
+}
+
+/** Returns { command, args, env } for `zcode app-server --stdio`, or null. */
 function resolveZCodeLaunch() {
   const onPath = firstOnPath(["zcode"]);
-  if (onPath) return { command: onPath, args: ["app-server", "--stdio"] };
+  if (onPath) return { command: onPath, args: ["app-server", "--stdio"], env: {} };
 
   const bundle = desktopBundleCandidates().find((candidate) => existsSync(candidate));
-  if (bundle) return { command: process.execPath, args: [bundle, "app-server", "--stdio"] };
+  if (bundle) {
+    return {
+      command: process.execPath,
+      args: [bundle, "app-server", "--stdio"],
+      env: { ELECTRON_RUN_AS_NODE: "1", ...bundledProviderConfigEnv(bundle) },
+    };
+  }
 
   const fromEnv = process.env.GLM_BINARY_PATH?.trim();
   if (fromEnv && isExecutable(fromEnv)) {
-    return { command: fromEnv, args: ["app-server", "--stdio"] };
+    return { command: fromEnv, args: ["app-server", "--stdio"], env: {} };
   }
   return null;
 }
@@ -153,13 +182,105 @@ function cmdDoctor() {
     process.exit(1);
   }
   console.log(`✓ ZCode runtime: ${launch.command} ${launch.args.join(" ")}`);
-  const child = spawn(launch.command, ["version"], { stdio: ["ignore", "pipe", "pipe"] });
+  // The version check runs the same runtime the app-server would, so the
+  // bundle path and the environment have to be passed the same way.
+  const versionArgs = launch.args.slice(0, -2).concat(["--version"]);
+  const child = spawn(launch.command, versionArgs, {
+    env: { ...process.env, ...launch.env },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   let out = "";
+  let err = "";
   child.stdout.on("data", (chunk) => (out += chunk));
+  child.stderr.on("data", (chunk) => (err += chunk));
   child.on("exit", (code) => {
-    console.log(`✓ zcode version: ${out.trim() || `(exit ${code})`}`);
+    const detail = out.trim() || err.trim() || `(exit ${code})`;
+    console.log(`✓ zcode version: ${detail}`);
     console.log("Next: node scripts/zcode-setup.js probe");
   });
+}
+
+/**
+ * The app-server asks the client questions mid-turn. The probe answers the one
+ * the create path needs and declines anything else, so the server falls back
+ * instead of hanging on a silent client.
+ */
+function answerReverseRequest(frame, write) {
+  const result =
+    frame.method === "session/requestRuntimePreferences"
+      ? {
+          nativeSearchEnhancementsEnabled: false,
+          toolSearchMode: "off",
+          memoryEnabled: false,
+          askUserQuestionAutoResolutionEnabled: true,
+        }
+      : undefined;
+  const response = result
+    ? { id: frame.id, result }
+    : {
+        id: frame.id,
+        error: { code: -32601, message: `setup probe does not support ${frame.method}` },
+      };
+  write(`${JSON.stringify(response)}\n`);
+}
+
+/**
+ * Routes one line of app-server output: a reverse request is answered, a
+ * response settles the pending request it belongs to.
+ */
+function handleFrame(line, pending, write) {
+  let frame;
+  try {
+    frame = JSON.parse(line);
+  } catch {
+    return; // tolerant: ignore non-JSON noise
+  }
+  if (frame.method !== undefined && frame.id !== undefined) {
+    answerReverseRequest(frame, write);
+    return;
+  }
+  const entry = pending.get(frame.id);
+  if (!entry) return;
+  pending.delete(frame.id);
+  clearTimeout(entry.timer);
+  if (frame.error) entry.reject(new Error(`${frame.error.message} (code ${frame.error.code})`));
+  else entry.resolve(frame.result);
+}
+
+/**
+ * Prints what a probe session can see: every model the registry exposes, the
+ * current default, and whether a Team Coding Plan provider is among them.
+ */
+function reportProbeModels(snapshot, session) {
+  const settings = snapshot.settings ?? {};
+  const available = settings.model?.available ?? [];
+  console.log(`\nModels visible to Paseo sessions (${available.length}):`);
+  for (const model of available) {
+    console.log(
+      `  - ${model.ref.providerId}/${model.ref.modelId}` +
+        `  [${model.providerLabel}]` +
+        `  context=${model.contextWindow ?? "?"}` +
+        `  reasoning=${(model.reasoning?.levels ?? []).map((level) => level.value).join("/") || "-"}`,
+    );
+  }
+  const current = settings.model?.current ?? session?.model;
+  if (current) {
+    console.log(
+      `Current default: ${
+        typeof current === "string" ? current : `${current.providerId}/${current.modelId}`
+      }`,
+    );
+  }
+  const hasTeam = available.some((model) =>
+    String(model.providerLabel ?? "")
+      .toLowerCase()
+      .includes("team"),
+  );
+  console.log(
+    hasTeam
+      ? "\n✓ A Team Coding Plan provider is visible."
+      : '\nℹ No Team Coding Plan provider visible. Register one:\n  node scripts/zcode-setup.js add-provider --name "BigModel Team CodingPlan" --api-key <TEAM_KEY> --kind team',
+  );
 }
 
 async function cmdProbe() {
@@ -171,8 +292,8 @@ async function cmdProbe() {
   console.log(`Probing ${launch.command} ${launch.args.join(" ")} ...`);
 
   const child = spawn(launch.command, [...launch.args], {
-    cwd: "/tmp",
-    env: { ...process.env },
+    cwd: process.platform === "win32" ? homedir() : "/tmp",
+    env: { ...process.env, ...launch.env },
     stdio: ["pipe", "pipe", "pipe"],
   });
   let stderr = "";
@@ -183,40 +304,7 @@ async function cmdProbe() {
   let nextId = 1;
   const readline = createInterface({ input: child.stdout });
   readline.on("line", (line) => {
-    let frame;
-    try {
-      frame = JSON.parse(line);
-    } catch {
-      return; // tolerant: ignore non-JSON noise
-    }
-    // Reverse requests: the app-server asks the client questions mid-turn.
-    // Answer the one the create path needs; decline anything else so the
-    // server falls back instead of hanging on a silent client.
-    if (frame.method !== undefined && frame.id !== undefined) {
-      const result =
-        frame.method === "session/requestRuntimePreferences"
-          ? {
-              nativeSearchEnhancementsEnabled: false,
-              toolSearchMode: "off",
-              memoryEnabled: false,
-              askUserQuestionAutoResolutionEnabled: true,
-            }
-          : undefined;
-      const response = result
-        ? { id: frame.id, result }
-        : {
-            id: frame.id,
-            error: { code: -32601, message: `setup probe does not support ${frame.method}` },
-          };
-      child.stdin.write(`${JSON.stringify(response)}\n`);
-      return;
-    }
-    const entry = pending.get(frame.id);
-    if (!entry) return;
-    pending.delete(frame.id);
-    clearTimeout(entry.timer);
-    if (frame.error) entry.reject(new Error(`${frame.error.message} (code ${frame.error.code})`));
-    else entry.resolve(frame.result);
+    handleFrame(line, pending, (payload) => child.stdin.write(payload));
   });
   child.on("exit", () => {
     for (const entry of pending.values()) {
@@ -226,8 +314,8 @@ async function cmdProbe() {
     pending.clear();
   });
 
-  function request(method, params) {
-    return new Promise((resolve, reject) => {
+  const request = (method, params) =>
+    new Promise((resolve, reject) => {
       const id = nextId++;
       const timer = setTimeout(
         () => reject(new Error(`timeout waiting for ${method}`)),
@@ -236,7 +324,6 @@ async function cmdProbe() {
       pending.set(id, { resolve, reject, timer });
       child.stdin.write(`${JSON.stringify({ id, method, params })}\n`);
     });
-  }
 
   try {
     const created = await request("session/create", {
@@ -246,34 +333,7 @@ async function cmdProbe() {
     const sessionId = session.sessionId ?? session.id;
     if (!sessionId) throw new Error("session/create returned no session id");
     const snapshot = await request("session/read", { sessionId });
-    const settings = snapshot.settings ?? {};
-    const available = settings.model?.available ?? [];
-    console.log(`\nModels visible to Paseo sessions (${available.length}):`);
-    for (const model of available) {
-      console.log(
-        `  - ${model.ref.providerId}/${model.ref.modelId}` +
-          `  [${model.providerLabel}]` +
-          `  context=${model.contextWindow ?? "?"}` +
-          `  reasoning=${(model.reasoning?.levels ?? []).map((level) => level.value).join("/") || "-"}`,
-      );
-    }
-    const current = settings.model?.current ?? snapshot.session?.model;
-    if (current) {
-      console.log(
-        `Current default: ${
-          typeof current === "string" ? current : `${current.providerId}/${current.modelId}`
-        }`,
-      );
-    }
-    console.log(
-      available.some((model) =>
-        String(model.providerLabel ?? "")
-          .toLowerCase()
-          .includes("team"),
-      )
-        ? "\n✓ A Team Coding Plan provider is visible."
-        : '\nℹ No Team Coding Plan provider visible. Register one:\n  node scripts/zcode-setup.js add-provider --name "BigModel Team CodingPlan" --api-key <TEAM_KEY> --kind team',
-    );
+    reportProbeModels(snapshot, created.session);
     await request("session/close", { sessionId }).catch(() => {});
     console.log("\nProbe OK.");
   } finally {
@@ -290,7 +350,10 @@ function cmdAddProvider(args) {
     return index >= 0 ? args[index + 1] : undefined;
   };
   const name = option("--name");
-  const apiKey = option("--api-key");
+  const apiKeyEnv = option("--api-key-env");
+  // A key passed on the command line ends up in shell history and in the
+  // process listing, so the environment is the safer source.
+  const apiKey = apiKeyEnv ? process.env[apiKeyEnv]?.trim() : option("--api-key");
   const kind = option("--kind") ?? "personal";
   const protocol = option("--protocol") ?? "openai";
   const baseUrl =

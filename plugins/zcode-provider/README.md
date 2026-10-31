@@ -26,6 +26,9 @@ node scripts/build-desktop-agent-cli.mjs && pnpm --filter @zcode/tui build
 ln -s "$PWD/apps/zcode-cli/packages/cli/dist/zcode.cjs" ~/.local/bin/zcode  # on PATH
 ```
 
+Installing the desktop app is enough on its own: it ships the same CLI bundle
+under `resources/glm/`, and the provider starts it without any extra setup.
+
 ## Quick start
 
 The setup script is dependency-free (plain Node ≥ 20) and read-only until you
@@ -75,6 +78,18 @@ node scripts/zcode-setup.js add-provider \
 node scripts/zcode-setup.js probe
 ```
 
+A key passed with `--api-key` ends up in your shell history and in the
+process listing. `--api-key-env VAR` reads it from an environment variable
+instead, so it stays out of both:
+
+```bash
+export ZCODE_SETUP_API_KEY=...
+node scripts/zcode-setup.js add-provider \
+  --name "BigModel Team CodingPlan" \
+  --api-key-env ZCODE_SETUP_API_KEY \
+  --kind team
+```
+
 Notes:
 
 - `add-provider` is idempotent per `--name` (re-running updates the key/models)
@@ -95,6 +110,15 @@ Notes:
   override → `zcode` on `PATH` → the desktop app's bundled runtime under
   `resources/glm/` → `GLM_BINARY_PATH`. The bundled JavaScript runtime runs as
   `{node} zcode.cjs app-server --stdio` with `ELECTRON_RUN_AS_NODE=1`.
+- **Built-in provider config**: the bundled runtime also needs the path of the
+  desktop app's built-in provider config, which lives under `resources/config/`
+  rather than next to the bundle. The provider passes it as
+  `ZCODE_BUILTIN_PROVIDER_CONFIG_FILE`; without it the app-server exits before
+  it answers anything.
+- **Desktop app discovery**: macOS looks in `ZCode.app/Contents/Resources/glm`,
+  Windows and Linux in `<app>/resources/glm`. On Windows the app is also
+  searched on the drives applications are installed to, because it does not
+  have to live under `%LOCALAPPDATA%\Programs`.
 - **Protocol**: newline-delimited JSON frames. Requests are
   `{id, method, params}`, responses `{id, result}` / `{id, error}`. The app
   also sends _reverse requests_ (e.g. `session/requestRuntimePreferences`,

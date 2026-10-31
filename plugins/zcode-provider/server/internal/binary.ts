@@ -1,5 +1,5 @@
 import { access, constants, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 export const ZCODE_NOT_FOUND_DIAGNOSTIC = [
   "ZCode was not found.",
@@ -17,6 +17,17 @@ export interface ZCodeDiscoveryOptions {
   desktopRoots: readonly string[];
   /** Runtime used to execute a bundled JavaScript entry. Defaults to this process. */
   execPath?: string;
+}
+
+/**
+ * A resolved ZCode launch: the command, its arguments, and the environment the
+ * child needs.
+ */
+export interface ZCodeLaunch {
+  command: string;
+  args: readonly string[];
+  /** Extra environment for the child, beyond the inherited one. */
+  env: Readonly<Record<string, string>>;
 }
 
 async function isExecutable(path: string): Promise<boolean> {
@@ -48,15 +59,53 @@ async function findOnPath(
   return undefined;
 }
 
+/**
+ * The desktop app ships the CLI as a Node bundle under `resources/glm/`. The
+ * bundle needs the built-in provider config, which the app passes through the
+ * environment; the CLI only finds it next to its own entrypoint, and the
+ * desktop app keeps it under `resources/config/`, not next to the bundle.
+ * Without it the app-server exits before it answers anything.
+ */
+async function providerConfigEnv(
+  bundlePath: string,
+  configExists: (path: string) => Promise<boolean>,
+): Promise<Record<string, string>> {
+  const bundleDir = dirname(bundlePath);
+  const candidates = [
+    // The desktop app keeps the built-in provider config under
+    // `resources/config/`, next to but outside the `glm/` runtime directory.
+    join(bundleDir, "..", "config", "provider", "zcode-builtin.json"),
+    // A standalone build may keep it next to the bundle.
+    join(bundleDir, "provider", "zcode-builtin.json"),
+  ];
+  for (const candidate of candidates) {
+    if (await configExists(candidate)) {
+      return { ZCODE_BUILTIN_PROVIDER_CONFIG_FILE: candidate };
+    }
+  }
+  return {};
+}
+interface DesktopBundle {
+  /** Path of the runtime to spawn. */
+  bundle: string;
+  /** True when the runtime is a native executable rather than a Node bundle. */
+  native: boolean;
+}
+
 async function findDesktopBundle(
   desktopRoots: readonly string[],
-): Promise<{ bundle: string; native: boolean } | undefined> {
+): Promise<DesktopBundle | undefined> {
   for (const root of desktopRoots) {
-    const glmDir = join(root, "Contents", "Resources", "glm");
-    const native = join(glmDir, "zcode-agent");
-    if (await isExecutable(native)) return { bundle: native, native: true };
-    const script = join(glmDir, "zcode.cjs");
-    if (await isFile(script)) return { bundle: script, native: false };
+    // macOS: ZCode.app/Contents/Resources/glm. Windows and Linux: <app>/resources/glm.
+    for (const glmDir of [
+      join(root, "Contents", "Resources", "glm"),
+      join(root, "resources", "glm"),
+    ]) {
+      const native = join(glmDir, "zcode-agent");
+      if (await isExecutable(native)) return { bundle: native, native: true };
+      const script = join(glmDir, "zcode.cjs");
+      if (await isFile(script)) return { bundle: script, native: false };
+    }
   }
   return undefined;
 }
@@ -64,17 +113,37 @@ async function findDesktopBundle(
 export async function resolveZCodeCommand(
   options: ZCodeDiscoveryOptions,
 ): Promise<readonly [string, ...string[]] | undefined> {
+  const launch = await resolveZCodeLaunch(options);
+  return launch ? ([launch.command, ...launch.args] as const) : undefined;
+}
+
+export async function resolveZCodeLaunch(
+  options: ZCodeDiscoveryOptions,
+): Promise<ZCodeLaunch | undefined> {
   const onPath = await findOnPath("zcode", options.pathEntries);
-  if (onPath) return [onPath, "app-server", "--stdio"];
+  if (onPath) {
+    return { command: onPath, args: ["app-server", "--stdio"], env: {} };
+  }
 
   const bundled = await findDesktopBundle(options.desktopRoots);
   if (bundled) {
-    if (bundled.native) return [bundled.bundle, "app-server", "--stdio"];
-    return [options.execPath ?? process.execPath, bundled.bundle, "app-server", "--stdio"];
+    if (bundled.native) {
+      return { command: bundled.bundle, args: ["app-server", "--stdio"], env: {} };
+    }
+    return {
+      command: options.execPath ?? process.execPath,
+      args: [bundled.bundle, "app-server", "--stdio"],
+      env: {
+        ELECTRON_RUN_AS_NODE: "1",
+        ...(await providerConfigEnv(bundled.bundle, isFile)),
+      },
+    };
   }
 
   const fromEnv = options.env.GLM_BINARY_PATH?.trim();
-  if (fromEnv && (await isExecutable(fromEnv))) return [fromEnv, "app-server", "--stdio"];
+  if (fromEnv && (await isExecutable(fromEnv))) {
+    return { command: fromEnv, args: ["app-server", "--stdio"], env: {} };
+  }
 
   return undefined;
 }
@@ -85,7 +154,13 @@ export function defaultDesktopRoots(): readonly string[] {
   }
   if (process.platform === "win32") {
     const localAppData = process.env.LOCALAPPDATA;
-    return localAppData ? [join(localAppData, "Programs")] : [];
+    const roots = localAppData ? [join(localAppData, "Programs")] : [];
+    // The desktop app is also installable outside %LOCALAPPDATA%\Programs, so
+    // the drives the user installs applications to are searched too.
+    for (const drive of ["C:", "D:", "E:", "F:"]) {
+      roots.push(join(`${drive}\\`, "Programs"));
+    }
+    return roots;
   }
   return ["/opt", "/usr/share"];
 }
