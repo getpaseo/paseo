@@ -164,8 +164,8 @@ it.each([
     endpoint: "start" as const,
     startX: 20,
     crossedX: 80,
-    crossedText: "fgh",
-    crossedStart: 5,
+    crossedText: "gh",
+    crossedStart: 6,
     crossedEnd: 7,
     backX: 10,
     backText: "bcdef",
@@ -176,9 +176,9 @@ it.each([
     endpoint: "end" as const,
     startX: 60,
     crossedX: 10,
-    crossedText: "bc",
+    crossedText: "b",
     crossedStart: 1,
-    crossedEnd: 2,
+    crossedEnd: 1,
     backX: 80,
     backText: "cdefgh",
     backStart: 2,
@@ -197,7 +197,7 @@ it.each([
     const geometry = () => ({ range: model.getSnapshot().range, viewport, metrics });
     const controller = createTerminalSelectionController({
       getGeometry: geometry,
-      onBeginHandle: (endpoint) => model.beginEndpointDrag(endpoint),
+      onBeginHandle: (endpoint, cols) => model.beginEndpointDrag(endpoint, cols),
       onMoveHandle: (coordinate) => {
         model.update({ coordinate, bounds });
       },
@@ -272,7 +272,7 @@ it.each([
     const geometry = () => ({ range: model.getSnapshot().range, viewport, metrics });
     const controller = createTerminalSelectionController({
       getGeometry: geometry,
-      onBeginHandle: (endpoint) => model.beginEndpointDrag(endpoint),
+      onBeginHandle: (endpoint, cols) => model.beginEndpointDrag(endpoint, cols),
       onMoveHandle: (coordinate) => {
         model.update({ coordinate, bounds });
       },
@@ -311,7 +311,7 @@ it("cancels a drag when buffer coordinates are invalidated", () => {
   const metrics = { cellWidth: 10, cellHeight: 10 };
   const controller = createTerminalSelectionController({
     getGeometry: () => ({ range: model.getSnapshot().range, viewport, metrics }),
-    onBeginHandle: (endpoint) => model.beginEndpointDrag(endpoint),
+    onBeginHandle: (endpoint, cols) => model.beginEndpointDrag(endpoint, cols),
     onMoveHandle: (coordinate) => {
       model.update({ coordinate, bounds });
     },
@@ -340,7 +340,7 @@ it("preserves a newly selected word through small movement at the viewport edge"
       viewport: { firstRow: 0, rows: 10, cols: 20 },
       metrics: { cellWidth: 10, cellHeight: 10 },
     }),
-    onBeginHandle: (endpoint) => model.beginEndpointDrag(endpoint),
+    onBeginHandle: (endpoint, cols) => model.beginEndpointDrag(endpoint, cols),
     onMoveHandle: (coordinate) => {
       model.update({ coordinate, bounds });
     },

@@ -17,7 +17,7 @@ interface Geometry {
 }
 interface Ports {
   getGeometry(): Geometry | null;
-  onBeginHandle(endpoint: Endpoint): void;
+  onBeginHandle(endpoint: Endpoint, cols: number): void;
   onMoveHandle(coordinate: TerminalBufferCoordinate): void;
   onLongPress(point: TerminalSelectionPoint): void;
   onTap(): void;
@@ -154,8 +154,8 @@ export function createTerminalSelectionController(ports: Ports) {
         scrolling: false,
         remainder: 0,
       };
-      if (handle) {
-        ports.onBeginHandle(handle.endpoint);
+      if (handle && geometry) {
+        ports.onBeginHandle(handle.endpoint, geometry.viewport.cols);
         return;
       }
       timer = ports.schedule(() => {

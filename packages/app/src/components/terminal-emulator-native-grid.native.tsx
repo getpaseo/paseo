@@ -641,7 +641,8 @@ function NativeTerminalEmulator({
             ? { range: selectionRangeRef.current, viewport, metrics }
             : null;
         },
-        onBeginHandle: (endpoint) => selectionModelRef.current.beginEndpointDrag(endpoint),
+        onBeginHandle: (endpoint, cols) =>
+          selectionModelRef.current.beginEndpointDrag(endpoint, cols),
         onMoveHandle: (coordinate) => {
           const terminal = terminalRef.current;
           if (!terminal) return;
