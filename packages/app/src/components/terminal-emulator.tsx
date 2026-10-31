@@ -27,6 +27,7 @@ import {
 } from "../terminal/runtime/terminal-emulator-runtime";
 import { encodeTerminalPaste } from "../terminal/runtime/terminal-paste";
 import type { TerminalFile } from "../terminal/file-paste";
+import type { TerminalCharacterWidths } from "../terminal/character-widths";
 import type {
   TerminalLocalFileLinkSource,
   TerminalLocalFileLinkTarget,
@@ -96,6 +97,7 @@ interface TerminalEmulatorProps {
   ref: Ref<TerminalEmulatorHandle>;
   streamKey: string;
   supportsTerminalInputModeReplay: boolean;
+  characterWidths: TerminalCharacterWidths;
   testId?: string;
   xtermTheme?: ITheme;
   scrollbackLines: number;
@@ -154,6 +156,7 @@ export default function TerminalEmulator({
     cursor: "#e6e6e6",
   },
   scrollbackLines,
+  characterWidths,
   fontFamily,
   fontSize,
   swipeGesturesEnabled = false,
@@ -183,6 +186,8 @@ export default function TerminalEmulator({
   const fontSizeRef = useRef(fontSize);
   const scrollbackLinesRef = useRef(scrollbackLines);
   scrollbackLinesRef.current = scrollbackLines;
+  const characterWidthsRef = useRef(characterWidths);
+  characterWidthsRef.current = characterWidths;
   fontFamilyRef.current = fontFamily;
   fontSizeRef.current = fontSize;
   const themeKey = useMemo(() => buildXtermThemeKey(xtermTheme), [xtermTheme]);
@@ -316,6 +321,10 @@ export default function TerminalEmulator({
   }, [scrollbackLines]);
 
   useEffect(() => {
+    runtimeRef.current?.setCharacterWidths({ widths: characterWidths });
+  }, [characterWidths]);
+
+  useEffect(() => {
     const root = rootRef.current;
     if (!root || !swipeGesturesEnabled) {
       return () => {};
@@ -447,6 +456,7 @@ export default function TerminalEmulator({
       },
     });
     runtime.setPendingModifiers({ pendingModifiers: pendingModifiersRef.current });
+    runtime.setCharacterWidths({ widths: characterWidthsRef.current });
     runtime.mount({
       root,
       host,

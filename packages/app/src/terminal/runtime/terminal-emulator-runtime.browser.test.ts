@@ -821,6 +821,67 @@ describe("incremental replay lifecycle", () => {
     expect(mounted.inputs).toHaveLength(1);
     expect(mounted.inputs[0]?.startsWith("\x1b]4;1;rgb:")).toBe(true);
   });
+
+  it("measures emoji clusters with the daemon's grapheme widths and copies them intact", async () => {
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    const text = "A😀B❤️C👋🏽D👨‍👩‍👧E";
+    await new Promise<void>((resolve) =>
+      mounted.runtime.write({ data: terminalOutput(text), onCommitted: resolve }),
+    );
+
+    const terminal = window.__paseoTerminal;
+    if (!terminal) {
+      throw new Error("Expected the browser terminal to be mounted");
+    }
+    const line = terminal.buffer.active.getLine(terminal.buffer.active.cursorY);
+    const cells = Array.from({ length: 13 }, (_, col) => {
+      const cell = line?.getCell(col);
+      return { chars: cell?.getChars(), width: cell?.getWidth() };
+    });
+
+    expect(cells).toEqual([
+      { chars: "A", width: 1 },
+      { chars: "😀", width: 2 },
+      { chars: "", width: 0 },
+      { chars: "B", width: 1 },
+      { chars: "❤️", width: 2 },
+      { chars: "", width: 0 },
+      { chars: "C", width: 1 },
+      { chars: "👋🏽", width: 2 },
+      { chars: "", width: 0 },
+      { chars: "D", width: 1 },
+      { chars: "👨‍👩‍👧", width: 2 },
+      { chars: "", width: 0 },
+      { chars: "E", width: 1 },
+    ]);
+    expect(terminal.buffer.active.cursorX).toBe(13);
+
+    terminal.select(0, terminal.buffer.active.cursorY, 13);
+    expect(terminal.getSelection()).toBe(text);
+  });
+
+  // A host without grapheme widths answers cursor reports and replays with its
+  // own table. The web client keeps the Unicode 11 table it used before.
+  it("measures with the legacy table for hosts without grapheme widths", async () => {
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    const terminal = window.__paseoTerminal;
+    if (!terminal) {
+      throw new Error("Expected the browser terminal to be mounted");
+    }
+    const buffer = terminal.buffer;
+    async function cursorAfter(text: string): Promise<number> {
+      await new Promise<void>((resolve) =>
+        mounted.runtime.write({ data: terminalOutput(`\r\n${text}`), onCommitted: resolve }),
+      );
+      return buffer.active.cursorX;
+    }
+
+    mounted.runtime.setCharacterWidths({ widths: "legacy" });
+    expect([await cursorAfter("A😀B"), await cursorAfter("A❤️B")]).toEqual([4, 3]);
+
+    mounted.runtime.setCharacterWidths({ widths: "graphemes" });
+    expect([await cursorAfter("A😀B"), await cursorAfter("A❤️B")]).toEqual([4, 4]);
+  });
 });
 
 it("restores fitted web geometry after replay before live output", async () => {
