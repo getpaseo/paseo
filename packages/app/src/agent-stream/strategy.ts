@@ -101,6 +101,8 @@ export interface StreamRenderInput {
   forwardListContentContainerStyle: StyleProp<ViewStyle>;
   // The chat column's max width. The web viewport estimates unmeasured row heights with it.
   contentMaxWidth: number;
+  /** Web only: copy chat text to the clipboard as soon as the user selects it. */
+  copyOnSelect?: boolean;
 }
 
 export interface ResolveStreamRenderStrategyInput {
