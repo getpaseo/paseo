@@ -572,3 +572,48 @@ it("shows one thought as itself until another groupable item arrives", () => {
   expect(grouped.tail.map((item) => item.id)).toEqual([thought.id]);
   expect(grouped.groupsByHostId.get(thought.id)?.run.calls).toHaveLength(2);
 });
+
+describe("prepared history identity", () => {
+  const read = { type: "read", filePath: "a.ts" } as ToolCallDetail;
+
+  it("reuses unchanged group hosts and groups when the tail grows", () => {
+    const tail: StreamItem[] = [toolCall("1", read), toolCall("2", read), assistant("a")];
+    const before = prepareToolCallHistory("overview", tail)!;
+    const after = prepareToolCallHistory(
+      "overview",
+      [...tail, toolCall("3", read)],
+      false,
+      before,
+    )!;
+
+    expect(after.grouped.tail[0]).toBe(before.grouped.tail[0]);
+    expect(after.grouped.groupsByHostId.get("1")).toBe(before.grouped.groupsByHostId.get("1"));
+  });
+
+  it("rebuilds a group when one of its calls changes", () => {
+    const first = toolCall("1", read);
+    const before = prepareToolCallHistory("overview", [
+      first,
+      toolCall("2", read, { status: "running" }),
+    ])!;
+    const after = prepareToolCallHistory("overview", [first, toolCall("2", read)], false, before)!;
+
+    expect(after.grouped.tail[0]).not.toBe(before.grouped.tail[0]);
+    expect(after.grouped.groupsByHostId.get("1")).not.toBe(before.grouped.groupsByHostId.get("1"));
+  });
+
+  it("keeps only the runs of the latest pass when older history is prepended", () => {
+    const [a, b, c, d] = ["1", "2", "3", "4"].map((id) => toolCall(id, read));
+    const first = prepareToolCallHistory("overview", [c!, d!, assistant("x")])!;
+    const second = prepareToolCallHistory("overview", [b!, c!, d!, assistant("x")], false, first)!;
+    const third = prepareToolCallHistory(
+      "overview",
+      [a!, b!, c!, d!, assistant("x")],
+      false,
+      second,
+    )!;
+
+    expect([...third.grouped.runs.keys()]).toEqual([a]);
+    expect(third.grouped.groupsByHostId.get("1")?.run.calls).toEqual([a, b, c, d]);
+  });
+});
