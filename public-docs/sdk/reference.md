@@ -120,28 +120,32 @@ See [background workspaces](./workspaces.md) for caller inheritance and inclusiv
 
 ## `client.projects`
 
-| Method               | Result                   | Behavior                                                                                       |
-| -------------------- | ------------------------ | ---------------------------------------------------------------------------------------------- |
-| `list(options?)`     | `PaseoProjectListResult` | Lists every registered project, including projects with no active workspaces.                  |
-| `subscribe(handler)` | Unsubscribe function     | Requests future project updates; unsubscribe releases demand. `list()` supplies initial state. |
+| Method               | Result                   | Behavior                                                                                                        |
+| -------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `list(options?)`     | `PaseoProjectListResult` | Lists every registered project, including projects with no active workspaces.                                   |
+| `icon(projectId)`    | `PaseoProjectIconResult` | Reads the project's custom or detected icon as base64 `data` and `mimeType`; `icon` is null when there is none. |
+| `subscribe(handler)` | Unsubscribe function     | Requests future project updates; unsubscribe releases demand. `list()` supplies initial state.                  |
 
 See [events](./events.md#follow-provider-catalog-changes) for explicit event observation and cleanup.
 
 ## `client.workspaces`
 
-| Method                   | Result                        | Behavior                                                                                                                 |
-| ------------------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `list(options?)`         | `PaseoWorkspaceListResult`    | Lists, filters, pages, or subscribes to the workspace directory.                                                         |
-| `open(cwd)`              | `PaseoWorkspaceHandle`        | Reuses the active workspace for a directory or creates one.                                                              |
-| `create(options)`        | `PaseoWorkspaceHandle`        | Always creates a fresh directory-backed or Paseo-worktree workspace. `background: true` hides it from default discovery. |
-| `ref(workspaceOrId)`     | `PaseoWorkspaceHandle`        | Creates a local handle.                                                                                                  |
-| `archive(workspaceOrId)` | `PaseoWorkspaceArchiveResult` | Archives without first creating a handle.                                                                                |
-| `subscribe(handler)`     | Unsubscribe function          | Local listener for this API instance. Requires an owned `list({ subscribe: {} })` observation.                           |
+| Method                   | Result                          | Behavior                                                                                                                                      |
+| ------------------------ | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list(options?)`         | `PaseoWorkspaceListResult`      | Lists, filters, pages, or subscribes to the workspace directory.                                                                              |
+| `open(cwd)`              | `PaseoWorkspaceHandle`          | Reuses the active workspace for a directory or creates one.                                                                                   |
+| `create(options)`        | `PaseoWorkspaceHandle`          | Always creates a fresh directory-backed or Paseo-worktree workspace. `background: true` hides it from default discovery.                      |
+| `ref(workspaceOrId)`     | `PaseoWorkspaceHandle`          | Creates a local handle.                                                                                                                       |
+| `archive(workspaceOrId)` | `PaseoWorkspaceArchiveResult`   | Archives without first creating a handle.                                                                                                     |
+| `listLabels(options?)`   | `PaseoWorkspaceLabelListResult` | Lists the host's label definitions (`name`, `color`). With `subscribe: {}`, observe the returned `subscription` for `workspace.label.update`. |
+| `subscribe(handler)`     | Unsubscribe function            | Local listener for this API instance. Requires an owned `list({ subscribe: {} })` observation.                                                |
 
 `create({ source, agent, background })` creates a workspace and its initial agent together.
 `agent` accepts agent creation options except `worktree`, `git`, `onEvent`, `idempotencyKey`,
 and `requestId`. Set `background` on the workspace options; `agent.background` is rejected.
 See the [combined creation example](./agents.md#run-work-in-a-background-workspace).
+
+A workspace descriptor lists its assigned label names in `labels`; match them against `listLabels()` for their colors. Cache project icons by the project's `projectIconRevision`.
 
 A workspace handle exposes `id`, `projectId`, `directory`, `name`, `status`, `current()`, `refresh()`, `setTitle(title)`, `archive()`, and `subscribe()`. Pass `null` to `setTitle` to restore the derived workspace name. Use `workspace.agents.create(options)` to create an agent without repeating the workspace ID or directory.
 
