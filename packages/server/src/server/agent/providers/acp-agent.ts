@@ -504,7 +504,11 @@ interface ACPAgentClientOptions {
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
   now?: () => number;
-  skillRoots?: readonly string[];
+  /**
+   * The user home the skill roots resolve against. Production leaves this
+   * unset and gets the process's own home; tests point it at a fixture.
+   */
+  homeDir?: string;
 }
 
 interface ACPAgentSessionOptions {
@@ -541,13 +545,8 @@ interface ACPAgentSessionOptions {
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
-  /**
-   * Roots Paseo scans for skills to offer in the `/` menu and expand into the
-   * prompt. Agents only expand the commands they discovered themselves, so
-   * skills the agent cannot see (e.g. skills reached through a symlink) need
-   * this client-side expansion.
-   */
-  skillRoots?: readonly string[];
+  /** The user home the skill roots resolve against; unset means the real one. */
+  homeDir?: string;
 }
 
 export interface SpawnedACPProcess {
@@ -978,7 +977,7 @@ export class ACPAgentClient implements AgentClient {
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private readonly importPromptCache = new Map<string, ACPImportPromptCacheEntry>();
   private readonly now: () => number;
-  private readonly skillRoots: readonly string[];
+  private readonly homeDir?: string;
   protected readonly terminateProcess: ProcessTerminator;
 
   constructor(options: ACPAgentClientOptions) {
@@ -1008,8 +1007,8 @@ export class ACPAgentClient implements AgentClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
-    this.skillRoots = options.skillRoots ?? [];
     this.now = options.now ?? Date.now;
+    this.homeDir = options.homeDir;
   }
 
   async createSession(
@@ -1050,7 +1049,7 @@ export class ACPAgentClient implements AgentClient {
         extensionCommandsParser: this.extensionCommandsParser,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
-        skillRoots: this.skillRoots,
+        homeDir: this.homeDir,
       },
     );
     await session.initializeNewSession();
@@ -1111,7 +1110,7 @@ export class ACPAgentClient implements AgentClient {
       extensionCommandsParser: this.extensionCommandsParser,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
-      skillRoots: this.skillRoots,
+      homeDir: this.homeDir,
     });
     await session.initializeResumedSession();
     return session;
@@ -1784,7 +1783,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   /** When the last command batch arrived; null while nothing has been published. */
   private commandsUpdatedAt: number | null = null;
   private discoveredSkills: DiscoveredACPSkill[] = [];
-  private readonly skillRoots: readonly string[];
   private commandsReadySettled = false;
   private waitForInitialCommands: boolean;
   private initialCommandsWaitTimeoutMs: number;
@@ -1798,10 +1796,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private replayingHistory = false;
   private bootstrapThreadEventPending = false;
   private readonly terminateProcess: ProcessTerminator;
+  private readonly homeDir?: string;
 
   constructor(config: AgentSessionConfig, options: ACPAgentSessionOptions) {
     this.provider = options.provider;
     this.terminateProcess = options.terminateProcess ?? terminateWithTreeKill;
+    this.homeDir = options.homeDir;
     this.capabilities = options.capabilities;
     this.logger = options.logger.child({ module: "agent", provider: options.provider });
     this.runtimeSettings = options.runtimeSettings;
@@ -1837,7 +1837,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
-    this.skillRoots = options.skillRoots ?? [];
   }
 
   get id(): string | null {
@@ -2047,10 +2046,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
    * reaches the agent unchanged and it decides what to do with it.
    */
   private async expandSkillPrompt(prompt: AgentPromptInput): Promise<AgentPromptInput> {
-    if (this.skillRoots.length === 0) {
-      return prompt;
-    }
-
     await this.ensureSkillsDiscovered();
     const advertisedNames = new Set(this.cachedCommands.map((command) => command.name));
     const skills = this.discoveredSkills.filter((skill) => !advertisedNames.has(skill.name));
@@ -2166,18 +2161,41 @@ export class ACPAgentSession implements AgentSession, ACPClient {
    * Scan the configured roots once and cache the result. Discovery failures are
    * swallowed: a missing or unreadable skill directory is the common case, and
    * it must never block listing commands or starting a turn.
+   *
+   * The roots are the ones the ACP agents themselves read. Claude Code and its
+   * emulators look in `<cwd>/.claude/skills` and `~/.claude/skills`, while the
+   * AGENTS.md convention (which ZCode, opencode and Paseo all follow) keeps
+   * skills in `<cwd>/.agents/skills` and `~/.agents/skills`. An agent that
+   * only advertises a subset leaves the rest invisible to Paseo, so both
+   * conventions are scanned. Project roots win over user roots.
    */
   private async ensureSkillsDiscovered(): Promise<readonly DiscoveredACPSkill[]> {
-    if (this.skillRoots.length === 0 || this.discoveredSkills.length > 0) {
+    if (this.discoveredSkills.length > 0) {
       return this.discoveredSkills;
     }
     try {
-      this.discoveredSkills = await discoverACPSkills({ roots: this.skillRoots });
+      this.discoveredSkills = await discoverACPSkills({ roots: this.resolveSkillRoots() });
     } catch (error) {
       this.logger.warn({ err: error }, "Failed to discover ACP skills");
       this.discoveredSkills = [];
     }
     return this.discoveredSkills;
+  }
+
+  /**
+   * The skill directories for this session's workspace and the user's home.
+   *
+   * Earlier roots win, so the project's own skills shadow the user's.
+   */
+  private resolveSkillRoots(): readonly string[] {
+    const cwd = this.config.cwd;
+    const home = this.homeDir ?? homedir();
+    return [
+      path.join(cwd, ".agents", "skills"),
+      path.join(cwd, ".claude", "skills"),
+      path.join(home, ".agents", "skills"),
+      path.join(home, ".claude", "skills"),
+    ];
   }
 
   /**
