@@ -149,13 +149,15 @@ function useDiffLines(detail: ToolCallDetail | undefined): DiffLine[] | undefine
 
 interface ShellDetailProps {
   command: string;
+  cwd?: string;
   output: string | null | undefined;
   ds: DetailStyles;
 }
 
-function ShellDetailSection({ command, output, ds }: ShellDetailProps) {
+function ShellDetailSection({ command, cwd, output, ds }: ShellDetailProps) {
   const normalizedCommand = command.replace(/\n+$/, "");
   const commandOutput = (output ?? "").replace(/^\n+/, "");
+  const visibleCwd = typeof cwd === "string" && cwd.trim().length > 0 ? cwd : null;
   const hasOutput = commandOutput.length > 0;
   return (
     <View style={ds.sectionFillStyle}>
@@ -170,9 +172,16 @@ function ShellDetailSection({ command, output, ds }: ShellDetailProps) {
             horizontal
             nestedScrollEnabled
             showsHorizontalScrollIndicator
+            testID={visibleCwd !== null ? "shell-detail-working-directory" : undefined}
             contentContainerStyle={styles.codeHorizontalContent}
           >
             <View style={styles.codeLine} dataSet={CODE_SURFACE_DATASET}>
+              {visibleCwd !== null ? (
+                <Text selectable style={styles.scrollText}>
+                  <Text style={styles.shellPrompt}>cwd: </Text>
+                  {visibleCwd}
+                </Text>
+              ) : null}
               <Text selectable style={styles.scrollText}>
                 <Text style={styles.shellPrompt}>$ </Text>
                 {normalizedCommand}
@@ -455,7 +464,13 @@ function buildDetailSections(
   if (!detail) return [];
   if (detail.type === "shell") {
     return [
-      <ShellDetailSection key="shell" command={detail.command} output={detail.output} ds={ds} />,
+      <ShellDetailSection
+        key="shell"
+        command={detail.command}
+        cwd={detail.cwd}
+        output={detail.output}
+        ds={ds}
+      />,
     ];
   }
   if (detail.type === "worktree_setup" || detail.type === "sub_agent") return [];
