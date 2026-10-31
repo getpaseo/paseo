@@ -504,15 +504,21 @@ test.describe("Mobile sidebar panelState transition", () => {
     await expectMobileAgentSidebarHidden(page);
   });
 
-  test("places the close button beside the first nav row instead of over it", async ({ page }) => {
+  test("places the close button in the nav group header instead of over the first row", async ({
+    page,
+  }) => {
     await gotoAppShell(page);
     await openMobileAgentSidebar(page);
     await expectMobileAgentSidebarVisible(page);
 
+    const header = await page.getByTestId("sidebar-nav-group-header").boundingBox();
     const firstRow = await page.getByTestId("sidebar-global-new-workspace").boundingBox();
     const closeButton = await page.getByTestId("sidebar-close").boundingBox();
-    if (!firstRow || !closeButton) throw new Error("first nav row and close button must render");
-    expect(closeButton.x).toBeGreaterThanOrEqual(firstRow.x + firstRow.width);
+    if (!header || !firstRow || !closeButton) {
+      throw new Error("nav header, first nav row and close button must render");
+    }
+    expect(closeButton.x).toBeGreaterThanOrEqual(header.x + header.width);
+    expect(closeButton.y + closeButton.height).toBeLessThanOrEqual(firstRow.y);
   });
 
   test("keeps a pinned workspace rendered while the retained sidebar is closed", async ({
