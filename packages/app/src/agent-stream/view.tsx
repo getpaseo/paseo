@@ -281,6 +281,8 @@ export interface AgentStreamViewProps {
   turnPresentation: TurnPresentation;
   routeBottomAnchorRequest?: BottomAnchorRouteRequest | null;
   isAuthoritativeHistoryReady?: boolean;
+  isInitialHistoryLoading?: boolean;
+  revealInitialHistory?: boolean;
   /** Tail space required by a transparent overlay rendered at the bottom edge. */
   bottomOverlayTailClearance?: number;
   /** Bottom offset required for controls floating above that overlay. */
@@ -337,6 +339,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       turnPresentation,
       routeBottomAnchorRequest = null,
       isAuthoritativeHistoryReady = true,
+      isInitialHistoryLoading,
+      revealInitialHistory,
       bottomOverlayTailClearance = 0,
       bottomOverlayControlClearance,
       toast,
@@ -1218,6 +1222,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                   viewportRef,
                   routeBottomAnchorRequest,
                   isAuthoritativeHistoryReady,
+                  isInitialHistoryLoading,
+                  revealInitialHistory,
                   onNearBottomChange: setIsNearBottom,
                   onReadingPositionChange: handleReadingPositionChange,
                   onNearHistoryStart: loadOlder,
@@ -1368,6 +1374,12 @@ function agentStreamViewPropsEqual(
   }
   if (left.isAuthoritativeHistoryReady !== right.isAuthoritativeHistoryReady) {
     reasons.push("isAuthoritativeHistoryReady");
+  }
+  if (left.isInitialHistoryLoading !== right.isInitialHistoryLoading) {
+    reasons.push("isInitialHistoryLoading");
+  }
+  if (left.revealInitialHistory !== right.revealInitialHistory) {
+    reasons.push("revealInitialHistory");
   }
   if (left.bottomOverlayTailClearance !== right.bottomOverlayTailClearance) {
     reasons.push("bottomOverlayTailClearance");

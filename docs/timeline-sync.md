@@ -69,8 +69,8 @@ Source coverage still includes interleaved tool updates.
 
 Canonical IDs define runs. With missing IDs, human prompts, heartbeats and typed received
 agent messages each start a fallback turn. This deterministic fallback is shared by paging
-and presentation; it cannot recover historical batching or steering. Older history remains
-user-driven by scrolling upward.
+and presentation; it cannot recover historical batching or steering. An underfilled viewport
+loads older history until it fills or history is exhausted. Further history is user-driven.
 
 A failed catch-up or subscription reconcile retries on its own, doubling from 1s to a 30s ceiling.
 A fixed 1s retry turned a persistent daemon-side refusal — a Codex thread that already has an active

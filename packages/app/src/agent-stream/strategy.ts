@@ -87,11 +87,13 @@ export interface StreamRenderInput {
   viewportRef: RefObject<StreamViewportHandle | null>;
   routeBottomAnchorRequest: BottomAnchorRouteRequest | null;
   isAuthoritativeHistoryReady: boolean;
+  isInitialHistoryLoading?: boolean;
+  revealInitialHistory?: boolean;
   onNearBottomChange: (value: boolean) => void;
   // The history row under the top of the viewport, for surfaces that mark where the reader
   // is in the transcript. Only the web viewport measures it today.
   onReadingPositionChange?: (rowId: string | null) => void;
-  onNearHistoryStart: () => boolean | Promise<boolean>;
+  onNearHistoryStart: () => Promise<boolean>;
   isLoadingOlderHistory: boolean;
   hasOlderHistory: boolean;
   olderHistoryProgressKey: string | null;
