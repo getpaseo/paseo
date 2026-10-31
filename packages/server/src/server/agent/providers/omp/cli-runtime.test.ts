@@ -121,6 +121,38 @@ function withoutRequestId(command: Record<string, unknown>): Record<string, unkn
 }
 
 describe("OMP CLI runtime", () => {
+  test("passes configured runtime controls to the spawned RPC process", async () => {
+    const source = `
+      const readline = require("node:readline");
+      console.log(JSON.stringify({ type: "ready" }));
+      readline.createInterface({ input: process.stdin }).on("line", (line) => {
+        const command = JSON.parse(line);
+        const env = {
+          ELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE ?? null,
+          PASEO_NODE_ENV: process.env.PASEO_NODE_ENV ?? null,
+        };
+        console.log(JSON.stringify({ type: "response", id: command.id, success: true,
+          data: { commands: [{ name: "env", description: JSON.stringify(env) }] } }));
+      });
+    `;
+    const runtime = new OmpCliRuntime({
+      logger: pino({ level: "silent" }),
+      command: [process.execPath, "-e", source, "--"],
+      runtimeSettings: { env: { ELECTRON_RUN_AS_NODE: "1" } },
+    });
+    const session = await runtime.startSession({
+      cwd: process.cwd(),
+      env: { ELECTRON_RUN_AS_NODE: "session", PASEO_NODE_ENV: "development" },
+    });
+    try {
+      expect(await session.getCommands()).toEqual([
+        { name: "env", description: '{"ELECTRON_RUN_AS_NODE":"1","PASEO_NODE_ENV":null}' },
+      ]);
+    } finally {
+      await session.close();
+    }
+  });
+
   test("steer waits for OMP's response and surfaces rejection", async () => {
     const child = createOmpChild();
     let pending: Record<string, unknown> | null = null;
