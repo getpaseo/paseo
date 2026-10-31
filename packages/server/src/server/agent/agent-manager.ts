@@ -768,6 +768,9 @@ export class AgentManager {
   private readonly registry?: AgentStorage;
   private readonly durableTimelineStore?: AgentTimelineStore;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
+  // Agents whose latest live turn ended canceled: the user stopped it, so its settle to idle is
+  // no "finished" attention, no unread mark and no push.
+  private readonly canceledTurnEnds = new Set<string>();
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
@@ -3375,6 +3378,7 @@ export class AgentManager {
       );
       this.runs.settleForegroundRun(agentId, run.token);
       if (!agent.pendingReplacement) {
+        this.rememberTurnEnd(agentId, true);
         agent.lifecycle = "idle";
         this.touchUpdatedAt(agent);
         this.emitState(agent);
@@ -4038,6 +4042,7 @@ export class AgentManager {
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
+    this.canceledTurnEnds.delete(agent.id);
     if (agent.unsubscribeSession) {
       agent.unsubscribeSession();
       agent.unsubscribeSession = null;
@@ -4544,6 +4549,9 @@ export class AgentManager {
         eventTurnId,
         options?.fromHistory === true,
       );
+      if (!options?.fromHistory) {
+        this.rememberTurnEnd(agent.id, event.type === "turn_canceled");
+      }
     }
 
     const flags: StreamEventFlags = { shouldDispatchEvent: true, shouldNotifyWaiters: true };
@@ -5199,6 +5207,11 @@ export class AgentManager {
 
     // Track the new status
     this.previousStatuses.set(agent.id, currentStatus);
+    if (previousStatus !== "running" && currentStatus === "running") {
+      this.canceledTurnEnds.delete(agent.id);
+    }
+    const settledFromRun = previousStatus === "running" && currentStatus === "idle";
+    const settledFromCancel = settledFromRun && this.canceledTurnEnds.delete(agent.id);
 
     // Skip attention tracking for internal agents
     if (agent.internal) {
@@ -5210,8 +5223,8 @@ export class AgentManager {
       return;
     }
 
-    // Check if agent transitioned from running to idle (finished)
-    if (previousStatus === "running" && currentStatus === "idle") {
+    // Check if agent transitioned from running to idle (finished); a canceled turn did not finish
+    if (settledFromRun && !settledFromCancel) {
       agent.attention = {
         requiresAttention: true,
         attentionReason: "finished",
@@ -5230,6 +5243,14 @@ export class AgentManager {
       };
       this.broadcastAgentAttention(agent, "error");
       return;
+    }
+  }
+
+  private rememberTurnEnd(agentId: string, canceled: boolean): void {
+    if (canceled) {
+      this.canceledTurnEnds.add(agentId);
+    } else {
+      this.canceledTurnEnds.delete(agentId);
     }
   }
 
