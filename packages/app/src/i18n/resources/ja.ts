@@ -1684,7 +1684,20 @@ export const ja: TranslationResources = {
           description:
             "エージェントに作業させるフォルダーを追加します。後からサイドバーで追加することもできます。",
           addProject: "プロジェクトを追加",
+          addAnotherProject: "別のプロジェクトを追加…",
           added: "追加済み",
+          suggestions: {
+            loading: "作業したフォルダーを探しています",
+            stillReading: "{{providers}} の履歴を読み込んでいます…",
+            readFailed: "{{provider}} の履歴を読み込めませんでした",
+            empty: "最近のプロジェクトは見つかりませんでした",
+            sessions_one: "{{count}} セッション",
+            sessions_other: "{{count}} セッション",
+            addSelected_one: "{{count}} 件のプロジェクトを追加",
+            addSelected_other: "{{count}} 件のプロジェクトを追加",
+            adding: "追加しています…",
+            addFailed: "このフォルダーを追加できませんでした",
+          },
         },
         orchestration: {
           label: "オーケストレーション",

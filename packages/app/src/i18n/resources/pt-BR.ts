@@ -1698,7 +1698,20 @@ export const ptBR: TranslationResources = {
           description:
             "Adicione as pastas em que os agentes devem trabalhar. Você pode adicionar mais depois pela barra lateral.",
           addProject: "Adicionar projeto",
+          addAnotherProject: "Adicionar outro projeto…",
           added: "Adicionado",
+          suggestions: {
+            loading: "Procurando pastas em que você trabalhou",
+            stillReading: "Ainda lendo o histórico de {{providers}}…",
+            readFailed: "Não foi possível ler o histórico de {{provider}}",
+            empty: "Nenhum projeto recente encontrado",
+            sessions_one: "{{count}} sessão",
+            sessions_other: "{{count}} sessões",
+            addSelected_one: "Adicionar {{count}} projeto",
+            addSelected_other: "Adicionar {{count}} projetos",
+            adding: "Adicionando…",
+            addFailed: "Não foi possível adicionar esta pasta",
+          },
         },
         orchestration: {
           label: "Orquestração",

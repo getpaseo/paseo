@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { PressHighlight } from "@/components/ui/press-highlight";
 import { ScrollView } from "@/components/ui/scroll-view";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useProjectSuggestions, type ProjectSuggestionsController } from "@/project-suggestions";
 import type { Theme } from "@/styles/theme";
 import type { OnboardingModel, OnboardingState, OnboardingStepId } from "./model";
 import { OnboardingStepContent } from "./steps";
@@ -24,12 +25,29 @@ export function OnboardingModal({ model, state }: { model: OnboardingModel; stat
   const step = state.steps[state.stepIndex];
   const isFirst = state.stepIndex === 0;
   const isLast = state.stepIndex === state.steps.length - 1;
+  // Held here so Continue can add the checked folders; reading history from the first step means
+  // the Projects step rarely waits.
+  const projectSuggestions = useProjectSuggestions(state.serverId);
+  const { addChecked } = projectSuggestions;
 
   const handleComplete = useCallback(() => {
     void model.complete();
   }, [model]);
   const handleBack = useCallback(() => model.back(), [model]);
   const handleNext = useCallback(() => model.next(), [model]);
+  const handleAddSuggestions = useCallback(() => {
+    void (async () => {
+      if (await addChecked()) model.next();
+    })();
+  }, [addChecked, model]);
+  const primary = usePrimaryAction({
+    step,
+    isLast,
+    projectSuggestions,
+    onFinish: handleComplete,
+    onNext: handleNext,
+    onAddSuggestions: handleAddSuggestions,
+  });
 
   const header = useMemo(
     () => ({
@@ -62,8 +80,8 @@ export function OnboardingModal({ model, state }: { model: OnboardingModel; stat
             {t("common.actions.back")}
           </Button>
         )}
-        <Button variant="default" onPress={isLast ? handleComplete : handleNext}>
-          {isLast ? t("onboarding.setup.finish") : t("onboarding.setup.continue")}
+        <Button variant="default" onPress={primary.onPress} loading={primary.busy}>
+          {primary.label}
         </Button>
       </View>
     </>
@@ -98,6 +116,7 @@ export function OnboardingModal({ model, state }: { model: OnboardingModel; stat
             <OnboardingStepContent
               step={step}
               serverId={state.serverId}
+              projectSuggestions={projectSuggestions}
               onFinish={handleComplete}
             />
           </View>
@@ -105,6 +124,37 @@ export function OnboardingModal({ model, state }: { model: OnboardingModel; stat
       </View>
     </AdaptiveModalSheet>
   );
+}
+
+/**
+ * The footer's main button. On Projects, with folders checked, it adds them and moves on only once
+ * every one was added; otherwise it continues, or finishes on the last step.
+ */
+function usePrimaryAction(input: {
+  step: OnboardingStepId;
+  isLast: boolean;
+  projectSuggestions: ProjectSuggestionsController;
+  onFinish: () => void;
+  onNext: () => void;
+  onAddSuggestions: () => void;
+}): { label: string; busy: boolean; onPress: () => void } {
+  const { t } = useTranslation();
+  const { step, isLast, projectSuggestions, onFinish, onNext, onAddSuggestions } = input;
+  const { checkedCount, isAdding } = projectSuggestions;
+  if (isLast) {
+    return { label: t("onboarding.setup.finish"), busy: false, onPress: onFinish };
+  }
+  // Rows leave the list as they are added, so the count can reach zero while adding.
+  if (step === "projects" && (isAdding || checkedCount > 0)) {
+    return {
+      label: isAdding
+        ? t("onboarding.setup.steps.projects.suggestions.adding")
+        : t("onboarding.setup.steps.projects.suggestions.addSelected", { count: checkedCount }),
+      busy: isAdding,
+      onPress: onAddSuggestions,
+    };
+  }
+  return { label: t("onboarding.setup.continue"), busy: false, onPress: onNext };
 }
 
 function StepRail({

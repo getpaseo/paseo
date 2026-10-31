@@ -1667,7 +1667,20 @@ export const ar: TranslationResources = {
           description:
             "أضف المجلدات التي تريد أن يعمل فيها الوكلاء. يمكنك إضافة المزيد لاحقًا من الشريط الجانبي.",
           addProject: "إضافة مشروع",
+          addAnotherProject: "إضافة مشروع آخر…",
           added: "تمت الإضافة",
+          suggestions: {
+            loading: "جارٍ البحث عن المجلدات التي عملت فيها",
+            stillReading: "ما زلنا نقرأ سجل {{providers}}…",
+            readFailed: "تعذّرت قراءة سجل {{provider}}",
+            empty: "لم يتم العثور على مشاريع حديثة",
+            sessions_one: "جلسة واحدة ({{count}})",
+            sessions_other: "{{count}} جلسات",
+            addSelected_one: "إضافة مشروع واحد ({{count}})",
+            addSelected_other: "إضافة {{count}} مشاريع",
+            adding: "جارٍ الإضافة…",
+            addFailed: "تعذّرت إضافة هذا المجلد",
+          },
         },
         orchestration: {
           label: "التنسيق",

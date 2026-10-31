@@ -5,6 +5,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Check, FolderPlus } from "lucide-react-native";
 import { Button } from "@/components/ui/button";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
+import { ProjectSuggestionList, type ProjectSuggestionsController } from "@/project-suggestions";
 import { useProjectRootPaths } from "@/stores/session-store-hooks";
 import { settingsStyles } from "@/styles/settings";
 import type { Theme } from "@/styles/theme";
@@ -17,7 +18,14 @@ function basename(path: string): string {
   return segments.at(-1) ?? path;
 }
 
-export function ProjectsStep({ serverId }: { serverId: string }) {
+/** Adding the checked suggestions is the setup's primary action; see the modal footer. */
+export function ProjectsStep({
+  serverId,
+  suggestions,
+}: {
+  serverId: string;
+  suggestions: ProjectSuggestionsController;
+}) {
   const { t } = useTranslation();
   const openAddProject = useOpenAddProject();
   const projectRootPaths = useProjectRootPaths(serverId);
@@ -25,6 +33,7 @@ export function ProjectsStep({ serverId }: { serverId: string }) {
 
   return (
     <View style={styles.container}>
+      <ProjectSuggestionList suggestions={suggestions} />
       {projectRootPaths.length > 0 ? (
         <View style={settingsStyles.card}>
           {projectRootPaths.map((rootPath, index) => (
@@ -50,7 +59,9 @@ export function ProjectsStep({ serverId }: { serverId: string }) {
       ) : null}
       <View style={styles.actions}>
         <Button variant="outline" leftIcon={FolderPlus} onPress={handleAddProject}>
-          {t("onboarding.setup.steps.projects.addProject")}
+          {suggestions.list.status === "ready" && suggestions.list.rows.length > 0
+            ? t("onboarding.setup.steps.projects.addAnotherProject")
+            : t("onboarding.setup.steps.projects.addProject")}
         </Button>
       </View>
     </View>

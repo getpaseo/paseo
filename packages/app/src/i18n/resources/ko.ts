@@ -1677,7 +1677,20 @@ export const ko: TranslationResources = {
           description:
             "에이전트가 작업할 폴더를 추가하세요. 나중에 사이드바에서 더 추가할 수 있습니다.",
           addProject: "프로젝트 추가",
+          addAnotherProject: "다른 프로젝트 추가…",
           added: "추가됨",
+          suggestions: {
+            loading: "작업했던 폴더를 찾는 중",
+            stillReading: "{{providers}} 기록을 아직 읽는 중…",
+            readFailed: "{{provider}} 기록을 읽지 못했습니다",
+            empty: "최근 프로젝트를 찾지 못했습니다",
+            sessions_one: "세션 {{count}}개",
+            sessions_other: "세션 {{count}}개",
+            addSelected_one: "프로젝트 {{count}}개 추가",
+            addSelected_other: "프로젝트 {{count}}개 추가",
+            adding: "추가하는 중…",
+            addFailed: "이 폴더를 추가하지 못했습니다",
+          },
         },
         orchestration: {
           label: "오케스트레이션",

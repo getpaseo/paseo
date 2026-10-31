@@ -1692,7 +1692,20 @@ export const en = {
           description:
             "Add the folders you want agents to work in. You can add more later from the sidebar.",
           addProject: "Add project",
+          addAnotherProject: "Add another project…",
           added: "Added",
+          suggestions: {
+            loading: "Looking for folders you've worked in",
+            stillReading: "Still reading {{providers}} history…",
+            readFailed: "Couldn't read {{provider}} history",
+            empty: "No recent projects found",
+            sessions_one: "{{count}} session",
+            sessions_other: "{{count}} sessions",
+            addSelected_one: "Add {{count}} project",
+            addSelected_other: "Add {{count}} projects",
+            adding: "Adding…",
+            addFailed: "Couldn't add this folder",
+          },
         },
         orchestration: {
           label: "Orchestration",

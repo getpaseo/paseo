@@ -1711,7 +1711,20 @@ export const fr: TranslationResources = {
           description:
             "Ajoutez les dossiers dans lesquels les agents doivent travailler. Vous pourrez en ajouter d'autres depuis la barre latérale.",
           addProject: "Ajouter un projet",
+          addAnotherProject: "Ajouter un autre projet…",
           added: "Ajouté",
+          suggestions: {
+            loading: "Recherche des dossiers dans lesquels vous avez travaillé",
+            stillReading: "Lecture de l'historique {{providers}} en cours…",
+            readFailed: "Impossible de lire l'historique {{provider}}",
+            empty: "Aucun projet récent trouvé",
+            sessions_one: "{{count}} session",
+            sessions_other: "{{count}} sessions",
+            addSelected_one: "Ajouter {{count}} projet",
+            addSelected_other: "Ajouter {{count}} projets",
+            adding: "Ajout…",
+            addFailed: "Impossible d'ajouter ce dossier",
+          },
         },
         orchestration: {
           label: "Orchestration",

@@ -1713,7 +1713,20 @@ export const es: TranslationResources = {
           description:
             "Añade las carpetas en las que quieres que trabajen los agentes. Puedes añadir más después desde la barra lateral.",
           addProject: "Añadir proyecto",
+          addAnotherProject: "Añadir otro proyecto…",
           added: "Añadido",
+          suggestions: {
+            loading: "Buscando carpetas en las que has trabajado",
+            stillReading: "Todavía leyendo el historial de {{providers}}…",
+            readFailed: "No se pudo leer el historial de {{provider}}",
+            empty: "No se encontraron proyectos recientes",
+            sessions_one: "{{count}} sesión",
+            sessions_other: "{{count}} sesiones",
+            addSelected_one: "Añadir {{count}} proyecto",
+            addSelected_other: "Añadir {{count}} proyectos",
+            adding: "Añadiendo…",
+            addFailed: "No se pudo añadir esta carpeta",
+          },
         },
         orchestration: {
           label: "Orquestación",

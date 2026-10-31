@@ -1,6 +1,11 @@
+import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { expect, type Locator, type Page } from "@playwright/test";
 import { addProjectFlow, addProjectFlowInput, chooseAddProjectMethod } from "./add-project-flow";
 import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
+import { startIsolatedHostDaemon, type IsolatedHostDaemonOptions } from "./isolated-host-daemon";
 
 /** Points a fresh browser profile at one host, with no first-run record and no app settings. */
 export async function openAppAsNewUser(
@@ -94,4 +99,94 @@ export async function openTailscaleDocsFromSetup(page: Page): Promise<string> {
   const url = docs.url();
   await docs.close();
   return url;
+}
+
+export interface SetupHost {
+  serverId: string;
+  port: number;
+  close(): Promise<void>;
+}
+
+/**
+ * An isolated host whose only agent history is the Claude sessions given here, so suggestions
+ * never depend on the machine running the test. `withBrokenProvider` adds a provider that cannot
+ * start.
+ */
+export async function startSetupHost(
+  label: string,
+  options: {
+    claudeSessionsIn?: readonly string[];
+    withBrokenProvider?: boolean;
+    mutableRelay?: IsolatedHostDaemonOptions["mutableRelay"];
+  } = {},
+): Promise<SetupHost> {
+  const serverId = `srv_onboarding_${label}_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+  const claudeConfigDir = await seedClaudeHistory(options.claudeSessionsIn ?? []);
+  const daemon = await startIsolatedHostDaemon(serverId, {
+    config: claudeOnlyConfig({ withBrokenProvider: options.withBrokenProvider ?? false }),
+    environment: { ...process.env, CLAUDE_CONFIG_DIR: claudeConfigDir },
+    mutableRelay: options.mutableRelay,
+  });
+  return {
+    serverId,
+    port: daemon.port,
+    close: async () => {
+      await daemon.close();
+      await rm(claudeConfigDir, { recursive: true, force: true });
+    },
+  };
+}
+
+/** Writes one recent Claude session per folder into a fresh CLAUDE_CONFIG_DIR. */
+async function seedClaudeHistory(cwds: readonly string[]): Promise<string> {
+  const configDir = await mkdtemp(path.join(tmpdir(), "paseo-onboarding-claude-"));
+  const newest = Date.now() - 60_000;
+  for (const [index, cwd] of cwds.entries()) {
+    const sessionId = `onboarding-session-${index + 1}`;
+    const projectDir = path.join(configDir, "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"));
+    await mkdir(projectDir, { recursive: true });
+    const sessionPath = path.join(projectDir, `${sessionId}.jsonl`);
+    const record = {
+      type: "user",
+      uuid: `${sessionId}-user`,
+      message: { role: "user", content: `Work on session ${index + 1}` },
+      cwd,
+      sessionId,
+    };
+    await writeFile(sessionPath, `${JSON.stringify(record)}\n`);
+    const timestamp = new Date(newest - index * 60_000);
+    await utimes(sessionPath, timestamp, timestamp);
+  }
+  return configDir;
+}
+
+function claudeOnlyConfig(options: { withBrokenProvider: boolean }) {
+  const brokenProvider = {
+    "broken-acp": {
+      extends: "acp",
+      label: "Broken ACP",
+      command: ["missing-agent-command", "acp"],
+    },
+  };
+  return {
+    agents: {
+      providers: {
+        codex: { enabled: false },
+        copilot: { enabled: false },
+        omp: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+        ...(options.withBrokenProvider ? brokenProvider : {}),
+      },
+    },
+  };
+}
+
+export function projectSuggestion(page: Page, name: string): Locator {
+  return setupModal(page).getByRole("checkbox", { name, exact: true });
+}
+
+/** The footer's main button, which adds the checked suggestions when there are any. */
+export function setupPrimaryButton(page: Page, label: string): Locator {
+  return setupModal(page).getByRole("button", { name: label, exact: true });
 }

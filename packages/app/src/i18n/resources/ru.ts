@@ -1696,7 +1696,20 @@ export const ru: TranslationResources = {
           description:
             "Добавьте папки, в которых будут работать агенты. Позже можно добавить ещё из боковой панели.",
           addProject: "Добавить проект",
+          addAnotherProject: "Добавить другой проект…",
           added: "Добавлено",
+          suggestions: {
+            loading: "Ищем папки, в которых вы работали",
+            stillReading: "Ещё читаем историю {{providers}}…",
+            readFailed: "Не удалось прочитать историю {{provider}}",
+            empty: "Недавних проектов не найдено",
+            sessions_one: "{{count}} сессия",
+            sessions_other: "Сессий: {{count}}",
+            addSelected_one: "Добавить {{count}} проект",
+            addSelected_other: "Добавить проекты: {{count}}",
+            adding: "Добавляем…",
+            addFailed: "Не удалось добавить эту папку",
+          },
         },
         orchestration: {
           label: "Оркестрация",
