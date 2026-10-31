@@ -1658,6 +1658,83 @@ export const ja: TranslationResources = {
     },
   },
   onboarding: {
+    setup: {
+      title: "Paseo のセットアップ",
+      footnote: "ここでの設定はすべて設定画面でも変更できます",
+      stepCounter: "ステップ {{current}}/{{total}}",
+      skip: "セットアップをスキップ",
+      continue: "続ける",
+      finish: "完了",
+      steps: {
+        appearance: {
+          label: "外観",
+          title: "Paseo へようこそ",
+          description:
+            "このコンピューターで Claude Code、Codex などのエージェントを、デスクからでもスマートフォンからでも実行できます。まずは見た目を選びましょう。",
+        },
+        providers: {
+          label: "プロバイダー",
+          title: "エージェント",
+          description:
+            "Paseo はこのコンピューターにインストール済みのエージェント CLI を使います。エージェント選択に表示したくないものはオフにしてください。",
+        },
+        projects: {
+          label: "プロジェクト",
+          title: "プロジェクトを追加",
+          description:
+            "エージェントに作業させるフォルダーを追加します。後からサイドバーで追加することもできます。",
+          addProject: "プロジェクトを追加",
+          addAnotherProject: "別のプロジェクトを追加…",
+          added: "追加済み",
+          suggestions: {
+            loading: "作業したフォルダーを探しています",
+            stillReading: "{{providers}} の履歴を読み込んでいます…",
+            readFailed: "{{provider}} の履歴を読み込めませんでした",
+            empty: "最近のプロジェクトは見つかりませんでした",
+            sessions_one: "{{count}} セッション",
+            sessions_other: "{{count}} セッション",
+            addSelected_one: "{{count}} 件のプロジェクトを追加",
+            addSelected_other: "{{count}} 件のプロジェクトを追加",
+            adding: "追加しています…",
+            addFailed: "このフォルダーを追加できませんでした",
+          },
+        },
+        orchestration: {
+          label: "オーケストレーション",
+          title: "エージェントに Paseo を使わせる",
+          description:
+            "Paseo ツールを使うと、エージェントは他のエージェントに作業を任せたり、自分でワークスペースやスケジュールを作成したりできます。",
+          capabilities: {
+            agents: {
+              title: "他のエージェントを起動・操作",
+              description:
+                "Codex、Claude Code、OpenCode のエージェントを起動し、プロンプトを送って結果を待ちます。",
+            },
+            workspaces: {
+              title: "ワークスペースを作成",
+              description:
+                "タスクごとに worktree を作成し、並行するエージェント同士の衝突を防ぎます。",
+            },
+            schedules: {
+              title: "スケジュールとハートビート",
+              description: "10 分ごとに CI を確認して失敗を修正する。",
+            },
+            terminals: {
+              title: "ターミナルとスクリプト",
+              description: "ワークスペースの開発サーバーを起動し、その出力を読み取ります。",
+            },
+          },
+        },
+        phone: {
+          label: "スマートフォン",
+          title: "エージェントを持ち歩く",
+          description:
+            "iOS と Android 版 Paseo はこのコンピューターに接続します。エージェントはここで動き続け、スマートフォンで状況を確認し、権限を承認し、プロンプトを送れます。",
+          appStore: "App Store",
+          googlePlay: "Google Play",
+        },
+      },
+    },
     title: "Paseoへようこそ",
     subtitle: "始めるにはコンピューターに接続してください",
     actions: {
@@ -1878,6 +1955,8 @@ export const ja: TranslationResources = {
       notNow: "今はしない",
       directConnectionHint:
         "リレーを使わない場合は、TCP、Tailscale、または別の VPN で直接接続してください。QR コードは作成されません。",
+      tailscaleDocs: "Tailscale を設定",
+      tailscaleDocsAccessibility: "Tailscale で接続する方法を読む",
       updateRequired: "Paseo Desktop からリレーを有効にするにはホストを更新してください。",
       unavailable: "ペアリングオファーが利用できません。",
       hint: "スマートフォンのPaseoでこのQRコードをスキャンするか、以下のリンクをコピーしてください。",
@@ -2343,6 +2422,12 @@ export const ja: TranslationResources = {
     general: {
       title: "一般",
       sending: "送信",
+      setup: {
+        label: "初回セットアップ",
+        description:
+          "外観、プロバイダー、プロジェクト、スマートフォンのペアリングをもう一度設定します",
+        action: "セットアップを再表示",
+      },
       browserData: {
         title: "ブラウザーデータ",
         siteData: "Cookie とサイトデータ",

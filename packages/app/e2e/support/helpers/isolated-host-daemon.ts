@@ -25,6 +25,8 @@ export interface IsolatedHostDaemon {
 }
 
 export interface IsolatedHostDaemonOptions {
+  /** Written to the daemon's config.json; `mutableRelay` adds `daemon.relay` to it. */
+  config?: { daemon?: Record<string, unknown>; [key: string]: unknown };
   environment?: NodeJS.ProcessEnv;
   mutableRelay?: {
     enabled: boolean;
@@ -93,6 +95,28 @@ async function waitForServer(port: number, child: ChildProcess): Promise<void> {
   );
 }
 
+function withMutableRelay(
+  config: NonNullable<IsolatedHostDaemonOptions["config"]>,
+  relay: NonNullable<IsolatedHostDaemonOptions["mutableRelay"]>,
+): NonNullable<IsolatedHostDaemonOptions["config"]> {
+  const endpoint =
+    relay.endpoint ??
+    (process.env.E2E_RELAY_PORT ? `127.0.0.1:${process.env.E2E_RELAY_PORT}` : "127.0.0.1:9");
+  return {
+    ...config,
+    daemon: {
+      ...config.daemon,
+      relay: {
+        enabled: relay.enabled,
+        endpoint,
+        publicEndpoint: endpoint,
+        useTls: false,
+        publicUseTls: false,
+      },
+    },
+  };
+}
+
 export async function startIsolatedHostDaemon(
   serverId: string,
   options: IsolatedHostDaemonOptions = {},
@@ -138,24 +162,13 @@ export async function startIsolatedHostDaemon(
       throw error;
     }
   }
-  if (options.mutableRelay) {
-    const endpoint =
-      options.mutableRelay.endpoint ??
-      (process.env.E2E_RELAY_PORT ? `127.0.0.1:${process.env.E2E_RELAY_PORT}` : "127.0.0.1:9");
+  const config = options.mutableRelay
+    ? withMutableRelay(options.config ?? {}, options.mutableRelay)
+    : options.config;
+  if (config) {
     await writeFile(
       path.join(paseoHome, "config.json"),
-      `${JSON.stringify({
-        version: 1,
-        daemon: {
-          relay: {
-            enabled: options.mutableRelay.enabled,
-            endpoint,
-            publicEndpoint: endpoint,
-            useTls: false,
-            publicUseTls: false,
-          },
-        },
-      })}\n`,
+      `${JSON.stringify({ version: 1, ...config })}\n`,
     );
   }
   const serverDir = publishedPackageRoot

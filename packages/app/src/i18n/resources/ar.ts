@@ -1641,6 +1641,82 @@ export const ar: TranslationResources = {
     },
   },
   onboarding: {
+    setup: {
+      title: "إعداد Paseo",
+      footnote: "كل ما هنا موجود أيضًا في الإعدادات",
+      stepCounter: "الخطوة {{current}} من {{total}}",
+      skip: "تخطي الإعداد",
+      continue: "متابعة",
+      finish: "إنهاء",
+      steps: {
+        appearance: {
+          label: "المظهر",
+          title: "مرحبًا بك في Paseo",
+          description:
+            "شغّل Claude Code وCodex ووكلاء آخرين على هذا الكمبيوتر، من مكتبك أو من هاتفك. اختر مظهرًا أولًا.",
+        },
+        providers: {
+          label: "المزوّدون",
+          title: "وكلاؤك",
+          description:
+            "يشغّل Paseo أدوات CLI للوكلاء المثبتة على هذا الكمبيوتر. أوقف ما لا تريده في منتقي الوكلاء.",
+        },
+        projects: {
+          label: "المشاريع",
+          title: "أضف مشاريعك",
+          description:
+            "أضف المجلدات التي تريد أن يعمل فيها الوكلاء. يمكنك إضافة المزيد لاحقًا من الشريط الجانبي.",
+          addProject: "إضافة مشروع",
+          addAnotherProject: "إضافة مشروع آخر…",
+          added: "تمت الإضافة",
+          suggestions: {
+            loading: "جارٍ البحث عن المجلدات التي عملت فيها",
+            stillReading: "ما زلنا نقرأ سجل {{providers}}…",
+            readFailed: "تعذّرت قراءة سجل {{provider}}",
+            empty: "لم يتم العثور على مشاريع حديثة",
+            sessions_one: "جلسة واحدة ({{count}})",
+            sessions_other: "{{count}} جلسات",
+            addSelected_one: "إضافة مشروع واحد ({{count}})",
+            addSelected_other: "إضافة {{count}} مشاريع",
+            adding: "جارٍ الإضافة…",
+            addFailed: "تعذّرت إضافة هذا المجلد",
+          },
+        },
+        orchestration: {
+          label: "التنسيق",
+          title: "اسمح للوكلاء باستخدام Paseo",
+          description:
+            "باستخدام أدوات Paseo، يمكن للوكيل تسليم العمل لوكلاء آخرين وإنشاء مساحات العمل والجداول بنفسه.",
+          capabilities: {
+            agents: {
+              title: "تشغيل وكلاء آخرين وتوجيههم",
+              description:
+                "شغّل وكلاء Codex أو Claude Code أو OpenCode وأرسل لهم الطلبات وانتظر نتائجهم.",
+            },
+            workspaces: {
+              title: "إنشاء مساحات عمل",
+              description: "افتح worktree لكل مهمة حتى لا يتعارض الوكلاء العاملون بالتوازي.",
+            },
+            schedules: {
+              title: "الجداول ونبضات المتابعة",
+              description: "تحقق من CI كل 10 دقائق وأصلح الإخفاقات.",
+            },
+            terminals: {
+              title: "الطرفيات والسكربتات",
+              description: "شغّل خادم التطوير لمساحة العمل واقرأ مخرجاته.",
+            },
+          },
+        },
+        phone: {
+          label: "الهاتف",
+          title: "خذ وكلاءك معك",
+          description:
+            "يتصل Paseo لنظامي iOS وAndroid بهذا الكمبيوتر. يواصل الوكلاء العمل هنا، ويتابعهم هاتفك ويوافق على الأذونات ويرسل الطلبات.",
+          appStore: "App Store",
+          googlePlay: "Google Play",
+        },
+      },
+    },
     title: "مرحبا بكم في Paseo",
     subtitle: "قم بتوصيل جهاز الكمبيوتر الخاص بك للبدء",
     actions: {
@@ -1859,6 +1935,8 @@ export const ar: TranslationResources = {
       notNow: "ليس الآن",
       directConnectionHint:
         "بدون التتابع، اتصل مباشرة عبر TCP أو Tailscale أو شبكة VPN أخرى. لن يتم إنشاء رمز QR.",
+      tailscaleDocs: "إعداد Tailscale",
+      tailscaleDocsAccessibility: "اقرأ كيفية الاتصال عبر Tailscale",
       updateRequired: "حدّث المضيف لتمكين التتابع من Paseo Desktop.",
       unavailable: "عرض الاقتران غير متاح.",
       hint: "قم بمسح رمز QR هذا باستخدام Paseo على هاتفك، أو انسخ الرابط أدناه.",
@@ -2358,6 +2436,11 @@ export const ar: TranslationResources = {
     general: {
       title: "عام",
       sending: "الإرسال",
+      setup: {
+        label: "الإعداد الأولي",
+        description: "أعد المرور على المظهر والمزوّدين والمشاريع وإقران الهاتف",
+        action: "إظهار الإعداد مجددًا",
+      },
       browserData: {
         title: "بيانات المتصفح",
         siteData: "ملفات تعريف الارتباط وبيانات المواقع",

@@ -1687,6 +1687,84 @@ export const es: TranslationResources = {
     },
   },
   onboarding: {
+    setup: {
+      title: "Configurar Paseo",
+      footnote: "Todo lo de aquí también está en Ajustes",
+      stepCounter: "Paso {{current}} de {{total}}",
+      skip: "Omitir configuración",
+      continue: "Continuar",
+      finish: "Finalizar",
+      steps: {
+        appearance: {
+          label: "Apariencia",
+          title: "Te damos la bienvenida a Paseo",
+          description:
+            "Ejecuta Claude Code, Codex y otros agentes en este ordenador, desde tu escritorio o tu teléfono. Primero, elige un aspecto.",
+        },
+        providers: {
+          label: "Proveedores",
+          title: "Tus agentes",
+          description:
+            "Paseo usa las CLI de agentes que ya están en este ordenador. Desactiva las que no quieras ver en el selector de agentes.",
+        },
+        projects: {
+          label: "Proyectos",
+          title: "Añade tus proyectos",
+          description:
+            "Añade las carpetas en las que quieres que trabajen los agentes. Puedes añadir más después desde la barra lateral.",
+          addProject: "Añadir proyecto",
+          addAnotherProject: "Añadir otro proyecto…",
+          added: "Añadido",
+          suggestions: {
+            loading: "Buscando carpetas en las que has trabajado",
+            stillReading: "Todavía leyendo el historial de {{providers}}…",
+            readFailed: "No se pudo leer el historial de {{provider}}",
+            empty: "No se encontraron proyectos recientes",
+            sessions_one: "{{count}} sesión",
+            sessions_other: "{{count}} sesiones",
+            addSelected_one: "Añadir {{count}} proyecto",
+            addSelected_other: "Añadir {{count}} proyectos",
+            adding: "Añadiendo…",
+            addFailed: "No se pudo añadir esta carpeta",
+          },
+        },
+        orchestration: {
+          label: "Orquestación",
+          title: "Deja que los agentes usen Paseo",
+          description:
+            "Con las herramientas de Paseo, un agente puede pasar trabajo a otros agentes y crear sus propios espacios de trabajo y programaciones.",
+          capabilities: {
+            agents: {
+              title: "Iniciar y dirigir otros agentes",
+              description:
+                "Lanza agentes de Codex, Claude Code u OpenCode, envíales instrucciones y espera sus resultados.",
+            },
+            workspaces: {
+              title: "Crear espacios de trabajo",
+              description:
+                "Abre un worktree por tarea para que los agentes en paralelo no choquen.",
+            },
+            schedules: {
+              title: "Programaciones y heartbeats",
+              description: "Revisa la CI cada 10 minutos y corrige los fallos.",
+            },
+            terminals: {
+              title: "Terminales y scripts",
+              description:
+                "Ejecuta el servidor de desarrollo de tu espacio de trabajo y lee su salida.",
+            },
+          },
+        },
+        phone: {
+          label: "Teléfono",
+          title: "Lleva tus agentes contigo",
+          description:
+            "Paseo para iOS y Android se conecta a este ordenador. Los agentes siguen ejecutándose aquí; tu teléfono los supervisa, aprueba permisos y envía instrucciones.",
+          appStore: "App Store",
+          googlePlay: "Google Play",
+        },
+      },
+    },
     title: "Bienvenido aPaseo",
     subtitle: "Conecte su computadora para comenzar",
     actions: {
@@ -1907,6 +1985,8 @@ export const es: TranslationResources = {
       notNow: "Ahora no",
       directConnectionHint:
         "Sin relé, conéctese directamente por TCP, Tailscale u otra VPN. No se crea ningún código QR.",
+      tailscaleDocs: "Configurar Tailscale",
+      tailscaleDocsAccessibility: "Leer cómo conectarse con Tailscale",
       updateRequired: "Actualice el host para habilitar el relé desde Paseo Desktop.",
       unavailable: "Oferta de maridaje no disponible.",
       hint: "Escanee este códigoQRconPaseoen su teléfono o copie el enlace a continuación.",
@@ -2370,6 +2450,12 @@ export const es: TranslationResources = {
     general: {
       title: "General",
       sending: "Envío",
+      setup: {
+        label: "Configuración inicial",
+        description:
+          "Vuelve a recorrer apariencia, proveedores, proyectos y emparejamiento del teléfono",
+        action: "Mostrar configuración de nuevo",
+      },
       browserData: {
         title: "Datos del navegador",
         siteData: "Cookies y datos de sitios",

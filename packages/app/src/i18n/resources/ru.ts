@@ -1670,6 +1670,83 @@ export const ru: TranslationResources = {
     },
   },
   onboarding: {
+    setup: {
+      title: "Настройка Paseo",
+      footnote: "Всё это также есть в настройках",
+      stepCounter: "Шаг {{current}} из {{total}}",
+      skip: "Пропустить настройку",
+      continue: "Продолжить",
+      finish: "Готово",
+      steps: {
+        appearance: {
+          label: "Оформление",
+          title: "Добро пожаловать в Paseo",
+          description:
+            "Запускайте Claude Code, Codex и других агентов на этом компьютере — за столом или с телефона. Сначала выберите оформление.",
+        },
+        providers: {
+          label: "Провайдеры",
+          title: "Ваши агенты",
+          description:
+            "Paseo использует CLI агентов, уже установленные на этом компьютере. Отключите те, которые не нужны в списке агентов.",
+        },
+        projects: {
+          label: "Проекты",
+          title: "Добавьте проекты",
+          description:
+            "Добавьте папки, в которых будут работать агенты. Позже можно добавить ещё из боковой панели.",
+          addProject: "Добавить проект",
+          addAnotherProject: "Добавить другой проект…",
+          added: "Добавлено",
+          suggestions: {
+            loading: "Ищем папки, в которых вы работали",
+            stillReading: "Ещё читаем историю {{providers}}…",
+            readFailed: "Не удалось прочитать историю {{provider}}",
+            empty: "Недавних проектов не найдено",
+            sessions_one: "{{count}} сессия",
+            sessions_other: "Сессий: {{count}}",
+            addSelected_one: "Добавить {{count}} проект",
+            addSelected_other: "Добавить проекты: {{count}}",
+            adding: "Добавляем…",
+            addFailed: "Не удалось добавить эту папку",
+          },
+        },
+        orchestration: {
+          label: "Оркестрация",
+          title: "Дайте агентам доступ к Paseo",
+          description:
+            "С инструментами Paseo агент может передавать работу другим агентам и сам создавать рабочие пространства и расписания.",
+          capabilities: {
+            agents: {
+              title: "Запуск других агентов и управление ими",
+              description:
+                "Запускайте агентов Codex, Claude Code или OpenCode, отправляйте им запросы и ждите результатов.",
+            },
+            workspaces: {
+              title: "Создание рабочих пространств",
+              description:
+                "Отдельный worktree для каждой задачи, чтобы параллельные агенты не мешали друг другу.",
+            },
+            schedules: {
+              title: "Расписания и heartbeat",
+              description: "Проверять CI каждые 10 минут и исправлять сбои.",
+            },
+            terminals: {
+              title: "Терминалы и скрипты",
+              description: "Запускайте dev-сервер рабочего пространства и читайте его вывод.",
+            },
+          },
+        },
+        phone: {
+          label: "Телефон",
+          title: "Агенты всегда под рукой",
+          description:
+            "Paseo для iOS и Android подключается к этому компьютеру. Агенты продолжают работать здесь, а телефон следит за ними, одобряет разрешения и отправляет запросы.",
+          appStore: "App Store",
+          googlePlay: "Google Play",
+        },
+      },
+    },
     title: "Добро пожаловать в Paseo",
     subtitle: "Подключите компьютер, чтобы начать",
     actions: {
@@ -1891,6 +1968,8 @@ export const ru: TranslationResources = {
       notNow: "Не сейчас",
       directConnectionHint:
         "Без ретранслятора подключайтесь напрямую через TCP, Tailscale или другую VPN. QR-код создаваться не будет.",
+      tailscaleDocs: "Настроить Tailscale",
+      tailscaleDocsAccessibility: "Узнать, как подключиться через Tailscale",
       updateRequired: "Обновите хост, чтобы включить ретранслятор из Paseo Desktop.",
       unavailable: "Данные для сопряжения недоступны.",
       hint: "Отсканируйте этот QR-код с помощью Paseo на телефоне или скопируйте ссылку ниже.",
@@ -2357,6 +2436,11 @@ export const ru: TranslationResources = {
     general: {
       title: "Основные",
       sending: "Отправка",
+      setup: {
+        label: "Первоначальная настройка",
+        description: "Снова пройти оформление, провайдеры, проекты и привязку телефона",
+        action: "Показать настройку снова",
+      },
       browserData: {
         title: "Данные браузера",
         siteData: "Файлы cookie и данные сайтов",
