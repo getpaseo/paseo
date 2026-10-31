@@ -355,6 +355,34 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
 }));
 
 /** Owns child history bootstrap and recovery while a pane observes the child. */
+export async function loadOlderProviderSubagentTimeline({
+  client,
+  serverId,
+  parentAgentId,
+  subagentId,
+  limit,
+}: {
+  client: Pick<DaemonClient, "fetchProviderSubagentTimeline">;
+  serverId: string;
+  parentAgentId: string;
+  subagentId: string;
+  limit: number;
+}): Promise<boolean> {
+  const timeline = useProviderSubagentStore
+    .getState()
+    .timelines.get(providerSubagentKey(serverId, parentAgentId, subagentId));
+  const seq = timeline?.cursor?.startSeq;
+  if (!timeline?.hasOlder || !timeline.epoch || seq == null) return false;
+  const payload = await client.fetchProviderSubagentTimeline(parentAgentId, subagentId, {
+    direction: "before",
+    cursor: { epoch: timeline.epoch, seq },
+    limit,
+  });
+  if (payload.error) return false;
+  useProviderSubagentStore.getState().replaceTimeline(serverId, payload);
+  return true;
+}
+
 export function observeProviderSubagentTimeline({
   client,
   serverId,

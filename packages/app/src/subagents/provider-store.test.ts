@@ -2,6 +2,7 @@ import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
 import { afterEach, describe, expect, test } from "vitest";
 import type { ProviderSubagentDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
+  loadOlderProviderSubagentTimeline,
   observeProviderSubagentTimeline,
   providerSubagentKey,
   refreshProviderSubagents,
@@ -565,6 +566,33 @@ describe("projected child history", () => {
       .getState()
       .replaceTimeline(SERVER_ID, response(value, seqStart, seqEnd, direction));
   }
+  test("older child history completes only after the delayed page is applied", async () => {
+    const tail = { ...response("B", 2, 2), hasOlder: true };
+    useProviderSubagentStore.getState().replaceTimeline(SERVER_ID, tail);
+    let deliver!: (payload: Payload) => void;
+    const client = {
+      fetchProviderSubagentTimeline: () =>
+        new Promise<Payload>((resolve) => {
+          deliver = resolve;
+        }),
+    };
+    let completed = false;
+    const request = loadOlderProviderSubagentTimeline({
+      client,
+      serverId: SERVER_ID,
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      limit: 100,
+    }).then((result) => {
+      completed = true;
+      return result;
+    });
+    await Promise.resolve();
+    expect(completed).toBe(false);
+    deliver({ ...response("A", 1, 1), direction: "before" });
+    expect(await request).toBe(true);
+    expect(current().cursor?.startSeq).toBe(1);
+  });
   test("replaces overlapping fetched text and continues live streaming", () => {
     page("AB", 1, 2);
     stream(3, "C");
