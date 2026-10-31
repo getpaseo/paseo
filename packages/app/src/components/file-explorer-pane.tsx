@@ -63,7 +63,7 @@ import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
 import { usePanelStore, type ExpandedPathsUpdate, type SortOption } from "@/stores/panel-store";
-import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
+import { buildAbsoluteExplorerPath, parentExplorerPath } from "@/utils/explorer-paths";
 import { isHiddenExplorerPath } from "@/file-explorer/visibility";
 import {
   flattenExplorerTree,
@@ -493,6 +493,16 @@ export function FileExplorerPane({
   const explorerDerived = useMemo(() => deriveExplorerFields(explorerState), [explorerState]);
   const { directories, pendingRequest, isExplorerLoading, error, selectedEntryPath } =
     explorerDerived;
+  const newEntryParentPath = useMemo(() => {
+    if (!selectedEntryPath) {
+      return ".";
+    }
+    const parentPath = parentExplorerPath(selectedEntryPath);
+    const selectedEntry = directories
+      .get(parentPath)
+      ?.entries.find((entry) => entry.path === selectedEntryPath);
+    return selectedEntry?.kind === "directory" ? selectedEntryPath : parentPath;
+  }, [directories, selectedEntryPath]);
 
   const isDirectoryLoading = useCallback(
     (path: string) => isPendingListForPath({ isExplorerLoading, pendingRequest, path }),
@@ -942,6 +952,51 @@ export function FileExplorerPane({
     return rows;
   }, [pendingEdit, treeRows]);
 
+  const revealEntryRequest = explorerState?.revealEntryRequest;
+  const completedRevealRequestRef = useRef<typeof revealEntryRequest>(undefined);
+  const revealEntryIndex = listRows.findIndex(
+    (row) =>
+      row.type === "entry" &&
+      row.row.entry.path === revealEntryRequest?.path &&
+      row.row.entry.path === selectedEntryPath,
+  );
+  const scrollToRevealedEntry = useCallback(() => {
+    if (
+      revealEntryIndex < 0 ||
+      pendingEdit ||
+      !revealEntryRequest ||
+      completedRevealRequestRef.current === revealEntryRequest ||
+      !treeListRef.current
+    )
+      return;
+    completedRevealRequestRef.current = revealEntryRequest;
+    treeListRef.current.scrollToIndex({
+      index: revealEntryIndex,
+      animated: false,
+      viewPosition: 0.5,
+    });
+  }, [pendingEdit, revealEntryIndex, revealEntryRequest]);
+  useEffect(scrollToRevealedEntry, [scrollToRevealedEntry]);
+  const handleScrollToIndexFailed = useCallback(
+    ({ index, averageItemLength }: { index: number; averageItemLength: number }) => {
+      // Retry after the virtualized list measures the newly revealed rows.
+      completedRevealRequestRef.current = undefined;
+      treeListRef.current?.scrollToOffset({
+        offset: index * averageItemLength,
+        animated: false,
+      });
+    },
+    [],
+  );
+  const { onContentSizeChange: updateScrollbarContentSize } = scrollbar;
+  const handleTreeContentSizeChange = useCallback(
+    (width: number, height: number) => {
+      updateScrollbarContentSize(width, height);
+      scrollToRevealedEntry();
+    },
+    [updateScrollbarContentSize, scrollToRevealedEntry],
+  );
+
   const showInitialLoading = resolveShowInitialLoading({
     directories,
     isExplorerLoading,
@@ -1070,10 +1125,13 @@ export function FileExplorerPane({
         showInitialLoading={showInitialLoading}
         showBackFromError={showBackFromError}
         listRows={listRows}
-        onNewEntryAtRoot={fsEntryOpsEnabled ? handleNewEntry : undefined}
+        onNewEntry={fsEntryOpsEnabled ? handleNewEntry : undefined}
+        newEntryParentPath={newEntryParentPath}
         currentSortLabel={currentSortLabel}
         isRefreshFetching={isRefreshFetching}
         treeListRef={treeListRef}
+        onTreeContentSizeChange={handleTreeContentSizeChange}
+        onScrollToIndexFailed={handleScrollToIndexFailed}
         scrollbar={scrollbar}
         renderTreeRow={renderTreeRow}
         handleSortCycle={handleSortCycle}
@@ -1144,10 +1202,13 @@ interface FileExplorerPaneContentProps {
   showInitialLoading: boolean;
   showBackFromError: boolean;
   listRows: ExplorerListRow[];
-  onNewEntryAtRoot?: (parentPath: string, kind: "file" | "directory") => void;
+  onNewEntry?: (parentPath: string, kind: "file" | "directory") => void;
+  newEntryParentPath: string;
   currentSortLabel: string;
   isRefreshFetching: boolean;
   treeListRef: RefObject<FlatList<ExplorerListRow> | null>;
+  onTreeContentSizeChange: (width: number, height: number) => void;
+  onScrollToIndexFailed: (info: { index: number; averageItemLength: number }) => void;
   scrollbar: OverlayFlatListScrollbar;
   renderTreeRow: (info: ListRenderItemInfo<ExplorerListRow>) => ReactElement;
   handleSortCycle: () => void;
@@ -1167,10 +1228,13 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
     showInitialLoading,
     showBackFromError,
     listRows,
-    onNewEntryAtRoot,
+    onNewEntry,
+    newEntryParentPath,
     currentSortLabel,
     isRefreshFetching,
     treeListRef,
+    onTreeContentSizeChange,
+    onScrollToIndexFailed,
     scrollbar,
     renderTreeRow,
     handleSortCycle,
@@ -1183,12 +1247,18 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
 
   const showHiddenFiles = usePanelStore((state) => state.explorerShowHiddenFiles);
 
+  const handleNewFile = useCallback(() => {
+    onNewEntry?.(newEntryParentPath, "file");
+  }, [onNewEntry, newEntryParentPath]);
+  const handleNewFolder = useCallback(() => {
+    onNewEntry?.(newEntryParentPath, "directory");
+  }, [onNewEntry, newEntryParentPath]);
   const handleNewFileAtRoot = useCallback(() => {
-    onNewEntryAtRoot?.(".", "file");
-  }, [onNewEntryAtRoot]);
+    onNewEntry?.(".", "file");
+  }, [onNewEntry]);
   const handleNewFolderAtRoot = useCallback(() => {
-    onNewEntryAtRoot?.(".", "directory");
-  }, [onNewEntryAtRoot]);
+    onNewEntry?.(".", "directory");
+  }, [onNewEntry]);
 
   const hiddenFilesToggleAccessibilityLabel = showHiddenFiles
     ? t("workspace.fileExplorer.actions.hideHiddenFiles")
@@ -1244,14 +1314,14 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
           <ChevronDown size={12} color={theme.colors.foregroundMuted} />
         </Pressable>
         <ToolbarControls style={styles.headerActions}>
-          {onNewEntryAtRoot ? (
+          {onNewEntry ? (
             <>
               <ToolbarButton
                 label={t("workspace.fileActions.newFile")}
                 compact={isCompact}
                 hitSlop={8}
                 testID="files-new-file"
-                onPress={handleNewFileAtRoot}
+                onPress={handleNewFile}
               >
                 <FilePlus
                   size={paneContentToolbarIconSize(isCompact)}
@@ -1263,7 +1333,7 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
                 compact={isCompact}
                 hitSlop={8}
                 testID="files-new-folder"
-                onPress={handleNewFolderAtRoot}
+                onPress={handleNewFolder}
               >
                 <FolderPlus
                   size={paneContentToolbarIconSize(isCompact)}
@@ -1321,7 +1391,7 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
         </ToolbarControls>
       </PaneContentToolbar>
       <ContextMenu>
-        <RootCreationContextTarget enabled={Boolean(onNewEntryAtRoot)}>
+        <RootCreationContextTarget enabled={Boolean(onNewEntry)}>
           {listRows.length === 0 ? (
             <View style={styles.centerState}>
               <Text style={styles.emptyText}>{emptyLabel}</Text>
@@ -1337,17 +1407,18 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
               contentContainerStyle={styles.entriesContent}
               onLayout={scrollbar.onLayout}
               onScroll={scrollbar.onScroll}
-              onContentSizeChange={scrollbar.onContentSizeChange}
+              onContentSizeChange={onTreeContentSizeChange}
               scrollEventThrottle={16}
               showsVerticalScrollIndicator={!scrollbar.enabled}
               initialNumToRender={24}
               maxToRenderPerBatch={40}
               windowSize={12}
+              onScrollToIndexFailed={onScrollToIndexFailed}
             />
           )}
           {listRows.length > 0 ? scrollbar.overlay : null}
         </RootCreationContextTarget>
-        {onNewEntryAtRoot ? (
+        {onNewEntry ? (
           <FileActionsContextMenuContent
             fileKind="directory"
             onNewFile={handleNewFileAtRoot}

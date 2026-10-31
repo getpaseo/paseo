@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { test } from "../support/fixtures";
@@ -184,7 +184,11 @@ test("creates, renames, copies, and deletes entries through the file explorer", 
   await entry("nested").click();
   await expect(entry("deep")).toBeVisible();
 
-  await page.getByTestId("files-new-file").click();
+  await emptyArea.click({
+    button: "right",
+    position: { x: emptyAreaBounds!.width / 2, y: emptyAreaBounds!.height - 24 },
+  });
+  await page.getByTestId("files-empty-area-new-file").click();
   await nameInput.fill("created.txt");
   await nameInput.press("Enter");
   await expect(entry("created.txt")).toBeVisible();
@@ -333,6 +337,70 @@ test("creates, renames, copies, and deletes entries through the file explorer", 
   expect(await folderConfirmation).toContain("renamed-folder");
   await expect(entry("renamed-folder")).toBeHidden();
   await expect(entry("child.txt")).toBeHidden();
+});
+
+for (const kind of ["file", "folder"]) {
+  test(`creates a ${kind} inside the selected collapsed folder from the toolbar`, async ({
+    page,
+  }, testInfo) => {
+    const parentPath = path.join(workspace.repoPath, "src", "components");
+    await mkdir(parentPath, { recursive: true });
+    await writeFile(path.join(parentPath, "existing.txt"), "existing contents", "utf8");
+    await gotoWorkspace(page, workspace.workspaceId);
+    await openFileExplorer(page);
+
+    const tree = page.getByTestId("file-explorer-tree-scroll");
+    await tree.getByText("src", { exact: true }).click();
+    const folder = tree.getByText("components", { exact: true });
+    await folder.click();
+    await expect(tree.getByText("existing.txt", { exact: true })).toBeVisible();
+    await folder.click();
+    await expect(tree.getByText("existing.txt", { exact: true })).toBeHidden();
+
+    await page.getByTestId(`files-new-${kind}`).click();
+    const nameInput = page.getByTestId("file-explorer-name-input");
+    const name = `created-${kind}`;
+    await nameInput.fill(name);
+    await testInfo.attach("creation-draft", {
+      body: await page.screenshot(),
+      contentType: "image/png",
+    });
+    await nameInput.press("Enter");
+
+    await expect(tree.getByText("existing.txt", { exact: true })).toBeVisible();
+    await expect(tree.getByText(name, { exact: true })).toBeVisible();
+    await expect.poll(() => readdir(parentPath)).toContain(name);
+    expect(await readdir(workspace.repoPath)).not.toContain(name);
+  });
+}
+
+test("creates entries beside the selected file from the toolbar", async ({ page }) => {
+  const parentPath = path.join(workspace.repoPath, "src", "components");
+  await mkdir(parentPath, { recursive: true });
+  await writeFile(path.join(parentPath, "existing.txt"), "existing contents", "utf8");
+  await gotoWorkspace(page, workspace.workspaceId);
+  await openFileExplorer(page);
+
+  const tree = page.getByTestId("file-explorer-tree-scroll");
+  await tree.getByText("src", { exact: true }).click();
+  await tree.getByText("components", { exact: true }).click();
+  await tree.getByText("existing.txt", { exact: true }).click();
+
+  const nameInput = page.getByTestId("file-explorer-name-input");
+  await page.getByTestId("files-new-file").click();
+  await nameInput.fill("sibling.txt");
+  await nameInput.press("Enter");
+  await expect(tree.getByText("sibling.txt", { exact: true })).toBeVisible();
+  expect(await readFile(path.join(parentPath, "sibling.txt"), "utf8")).toBe("");
+
+  await page.getByTestId("files-new-folder").click();
+  await nameInput.fill("sibling-folder");
+  await nameInput.press("Enter");
+  await expect(tree.getByText("sibling-folder", { exact: true })).toBeVisible();
+  expect(await readdir(path.join(parentPath, "sibling-folder"))).toEqual([]);
+  const rootEntries = await readdir(workspace.repoPath);
+  expect(rootEntries).not.toContain("sibling.txt");
+  expect(rootEntries).not.toContain("sibling-folder");
 });
 
 test("duplicates files and folders with collision-free names", async ({ page }) => {

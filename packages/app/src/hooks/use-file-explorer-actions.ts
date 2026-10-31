@@ -8,6 +8,13 @@ import {
 import { usePanelStore } from "@/stores/panel-store";
 import { revealExplorerDirectory } from "@/file-explorer/tree";
 import { parentExplorerPath } from "@/utils/explorer-paths";
+import { isHiddenExplorerPath } from "@/file-explorer/visibility";
+import { resolveWorkspaceFilePaths } from "@/workspace/file-open";
+
+function showHiddenExplorerFiles() {
+  const panel = usePanelStore.getState();
+  if (!panel.explorerShowHiddenFiles) panel.toggleExplorerShowHiddenFiles();
+}
 
 function createExplorerState(): AgentFileExplorerState {
   return {
@@ -177,10 +184,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       await revealExplorerDirectory({
         directoryPath,
         requestDirectoryListing,
-        showHiddenFiles: () => {
-          const panel = usePanelStore.getState();
-          if (!panel.explorerShowHiddenFiles) panel.toggleExplorerShowHiddenFiles();
-        },
+        showHiddenFiles: showHiddenExplorerFiles,
         expandPaths: (paths) =>
           usePanelStore
             .getState()
@@ -308,9 +312,31 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
     [updateExplorerState],
   );
 
+  const revealFile = useCallback(
+    (filePath: string): boolean => {
+      if (!normalizedWorkspaceRoot || !workspaceStateKey) return false;
+      const paths = resolveWorkspaceFilePaths({
+        path: filePath,
+        workspaceRoot: normalizedWorkspaceRoot,
+      });
+      const relativePath = paths?.relativePath;
+      if (!relativePath || relativePath === ".") return false;
+      if (isHiddenExplorerPath(relativePath)) showHiddenExplorerFiles();
+      updateExplorerState((state) => ({
+        ...state,
+        selectedEntryPath: relativePath,
+        revealEntryRequest: { path: relativePath },
+      }));
+      void revealDirectory(parentExplorerPath(relativePath));
+      return true;
+    },
+    [normalizedWorkspaceRoot, revealDirectory, updateExplorerState, workspaceStateKey],
+  );
+
   return {
     workspaceStateKey,
     revealDirectory,
+    revealFile,
     requestDirectoryListing,
     requestFileDownloadToken,
     requestFileBytes,
