@@ -25,6 +25,7 @@ import type {
 import {
   resolvePaseoCliBinDir,
   resolvePaseoCliExecutablePath,
+  type TerminalExitInfo,
   type TerminalSession,
 } from "./terminal.js";
 import type { TerminalState } from "@getpaseo/protocol/messages";
@@ -45,7 +46,10 @@ import {
   terminalWorkerDirectory,
   type TerminalWorkerRecord,
 } from "./terminal-worker-record.js";
-import { TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV } from "./terminal-worker-protocol.js";
+import {
+  TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV,
+  TERMINAL_WORKER_PROTOCOL_VERSION,
+} from "./terminal-worker-protocol.js";
 import {
   NoTerminalWorkerAvailableError,
   TerminalWorkerIncompatibleError,
@@ -203,6 +207,25 @@ afterEach(async () => {
   }
 });
 
+it("keeps a completed retained terminal in the detached worker until it is dismissed", async () => {
+  const paseoHome = createTemporaryHome();
+  manager = await startRealWorkerManager({ paseoHome });
+  const terminal = await manager.createTerminal({
+    workspaceId: "ws-retained",
+    cwd: paseoHome,
+    retainOnExit: true,
+    ...nodeTerminalCommand("process.stdout.write('launch failed'); process.exit(17)"),
+  });
+  const exitInfo = await new Promise<TerminalExitInfo>((resolve) => terminal.onExit(resolve));
+
+  expect(exitInfo.exitCode).toBe(17);
+  expect(manager.getTerminal(terminal.id)).toBe(terminal);
+  expect(getRenderedTextFromState(terminal.getState())).toContain("launch failed");
+
+  manager.killTerminal(terminal.id);
+  expect(manager.getTerminal(terminal.id)).toBeUndefined();
+}, 30000);
+
 it("retires a killed worker's sessions and shares one replacement across concurrent creates", async () => {
   const paseoHome = createTemporaryHome();
   manager = await startRealWorkerManager({ paseoHome });
@@ -343,7 +366,7 @@ it.each(["current", "draining"] as const)(
   "keeps the peer usable when the %s worker dies",
   async (target) => {
     const paseoHome = createTemporaryHome();
-    const old = await leaveWorkerWithTerminal(paseoHome, 0);
+    const old = await leaveWorkerWithTerminal(paseoHome, TERMINAL_WORKER_PROTOCOL_VERSION - 1);
     manager = await startRealWorkerManager({ paseoHome });
     const added = await manager.createTerminal({
       workspaceId: "ws-peer",
@@ -1348,6 +1371,90 @@ it("removes a killed worker terminal from terminalExit without duplicate snapsho
   ]);
 });
 
+it("keeps a retained worker terminal available after it exits", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 50,
+    worker,
+  });
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-a",
+      name: "Launch",
+      cwd: "/workspace",
+      workspaceId: "ws-test",
+      activity: null,
+      retainOnExit: true,
+    },
+    state: createTerminalState(),
+  });
+  const session = manager.getTerminal("terminal-a");
+  if (!session) {
+    throw new Error("Expected retained terminal");
+  }
+  const exitInfo = { exitCode: 17, signal: null, lastOutputLines: ["launch failed"] };
+
+  worker.emitWorkerMessage({
+    type: "terminalExit",
+    terminalId: "terminal-a",
+    info: exitInfo,
+  });
+
+  expect(manager.getTerminal("terminal-a")).toBe(session);
+  expect(session.getExitInfo()).toEqual(exitInfo);
+  expect(await manager.getTerminals("/workspace")).toEqual([session]);
+
+  manager.killTerminal("terminal-a");
+  expect(manager.getTerminal("terminal-a")).toBeUndefined();
+});
+
+it("removes a running retained worker terminal when explicitly killed", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 50,
+    worker,
+  });
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal: {
+      id: "terminal-a",
+      name: "Launch",
+      cwd: "/workspace",
+      workspaceId: "ws-test",
+      activity: null,
+      retainOnExit: true,
+    },
+    state: createTerminalState(),
+  });
+  const session = manager.getTerminal("terminal-a");
+  if (!session) {
+    throw new Error("Expected retained terminal");
+  }
+  const exits: TerminalExitInfo[] = [];
+  session.onExit((info) => exits.push(info));
+
+  manager.killTerminal("terminal-a");
+
+  expect(manager.getTerminal("terminal-a")).toBeUndefined();
+  expect(await manager.getTerminals("/workspace")).toEqual([]);
+  expect(worker.sentMessages).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ type: "killTerminal", terminalId: "terminal-a" }),
+    ]),
+  );
+
+  const exitInfo = { exitCode: null, signal: "SIGTERM" as const, lastOutputLines: [] };
+  worker.emitWorkerMessage({
+    type: "terminalExit",
+    terminalId: "terminal-a",
+    info: exitInfo,
+  });
+
+  expect(exits).toEqual([exitInfo]);
+  expect(manager.getTerminal("terminal-a")).toBeUndefined();
+});
+
 it("does not resurrect a terminal that exited before its create response was handled", async () => {
   const worker = new FakeTerminalWorker();
   manager = createWorkerTerminalManager({
@@ -1533,7 +1640,7 @@ async function leaveWorkerWithTerminal(
 
 it("drains a worker one protocol older: it keeps its terminal, new ones open in a second worker, and it exits after its last", async () => {
   const paseoHome = createTemporaryHome();
-  const old = await leaveWorkerWithTerminal(paseoHome, 0);
+  const old = await leaveWorkerWithTerminal(paseoHome, TERMINAL_WORKER_PROTOCOL_VERSION - 1);
 
   manager = await startRealWorkerManager({ paseoHome });
 
@@ -1541,7 +1648,7 @@ it("drains a worker one protocol older: it keeps its terminal, new ones open in 
   const workers = await workerRecords(paseoHome);
   expect(workers).toHaveLength(2);
   const current = workers.find((record) => record.pid !== old.workerPid)!;
-  expect(current.protocolVersion).toBe(1);
+  expect(current.protocolVersion).toBe(TERMINAL_WORKER_PROTOCOL_VERSION);
   const added = await manager.createTerminal({
     workspaceId: "ws-protocol",
     cwd: old.cwd,
@@ -1565,7 +1672,7 @@ it("drains a worker one protocol older: it keeps its terminal, new ones open in 
 
 it("shuts down a worker two protocol versions old, closing its terminals", async () => {
   const paseoHome = createTemporaryHome();
-  const old = await leaveWorkerWithTerminal(paseoHome, -1);
+  const old = await leaveWorkerWithTerminal(paseoHome, TERMINAL_WORKER_PROTOCOL_VERSION - 2);
 
   manager = await startRealWorkerManager({ paseoHome });
 
@@ -1576,18 +1683,18 @@ it("shuts down a worker two protocol versions old, closing its terminals", async
   expect(manager.getTerminal(old.terminalId)).toBeUndefined();
   const workers = await workerRecords(paseoHome);
   expect(workers).toHaveLength(1);
-  expect(workers[0]!.protocolVersion).toBe(1);
+  expect(workers[0]!.protocolVersion).toBe(TERMINAL_WORKER_PROTOCOL_VERSION);
 });
 
 it("leaves a worker from a newer Paseo running, reports it incompatible, and closes it on a kill stop", async () => {
   const paseoHome = createTemporaryHome();
-  const newer = await leaveWorkerWithTerminal(paseoHome, 2);
+  const newer = await leaveWorkerWithTerminal(paseoHome, TERMINAL_WORKER_PROTOCOL_VERSION + 1);
 
   manager = await startRealWorkerManager({ paseoHome });
 
   const unavailable = manager.getUnavailableError?.();
   expect(unavailable).toBeInstanceOf(TerminalWorkerIncompatibleError);
-  expect(unavailable?.message).toContain("worker protocol 2");
+  expect(unavailable?.message).toContain(`worker protocol ${TERMINAL_WORKER_PROTOCOL_VERSION + 1}`);
   await expect(manager.getTerminals(newer.cwd)).rejects.toBeInstanceOf(
     TerminalWorkerIncompatibleError,
   );
@@ -1696,8 +1803,14 @@ it.skipIf(isPlatform("win32"))(
 
 it("opens new terminals in a new worker once one of two draining workers exits", async () => {
   const paseoHome = createTemporaryHome();
-  const first = await launchDetachedWorkerWithTerminal(paseoHome, 0);
-  const second = await launchDetachedWorkerWithTerminal(paseoHome, 0);
+  const first = await launchDetachedWorkerWithTerminal(
+    paseoHome,
+    TERMINAL_WORKER_PROTOCOL_VERSION - 1,
+  );
+  const second = await launchDetachedWorkerWithTerminal(
+    paseoHome,
+    TERMINAL_WORKER_PROTOCOL_VERSION - 1,
+  );
 
   manager = await startRealWorkerManager({ paseoHome });
 
@@ -1724,7 +1837,7 @@ it("opens new terminals in a new worker once one of two draining workers exits",
   expect(workers.map((record) => record.pid).sort()).toEqual(await liveWorkerPids(paseoHome));
   expect(workers).toHaveLength(2);
   const started = workers.find((record) => record.pid !== second.workerPid)!;
-  expect(started.protocolVersion).toBe(1);
+  expect(started.protocolVersion).toBe(TERMINAL_WORKER_PROTOCOL_VERSION);
   expect(
     (
       await readTerminalWorkerRecord(

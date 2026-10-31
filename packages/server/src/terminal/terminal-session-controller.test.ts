@@ -182,6 +182,51 @@ describe("terminal-session-controller restore", () => {
       "\x1b[?1h\x1b[?2004hrestore-after\n",
     );
   });
+
+  test("serves the final snapshot of a retained completed terminal", async () => {
+    const subscribe = vi.fn(() => vi.fn());
+    const onExit = vi.fn(() => vi.fn());
+    const terminal: TerminalSession = {
+      ...listSession({ id: "term-completed", name: "Launch", cwd: "/tmp" }),
+      subscribe,
+      onExit,
+      getExitInfo: () => ({ exitCode: 17, signal: null, lastOutputLines: ["launch failed"] }),
+    };
+    const binaryFrames: TerminalStreamFrame[] = [];
+    const outboundMessages: SessionOutboundMessage[] = [];
+    const terminalManager = {
+      getTerminal: vi.fn(() => terminal),
+      getTerminalState: vi.fn(async () => ({
+        state: terminalState("launch failed"),
+        revision: 4,
+      })),
+    } as unknown as TerminalManager;
+    const controller = createController({
+      terminalManager,
+      emit: (message) => outboundMessages.push(message),
+      emitBinary: (bytes) => {
+        const frame = decodeTerminalStreamFrame(bytes);
+        if (frame) binaryFrames.push(frame);
+      },
+      hasBinaryChannel: () => true,
+      isPathWithinRoot: () => false,
+      sessionLogger: createLogger(),
+    });
+
+    await controller.dispatch({
+      type: "subscribe_terminal_request",
+      terminalId: terminal.id,
+      requestId: "req-completed",
+      restore: { mode: "visible-snapshot", scrollbackLines: 200 },
+    });
+    await flushMicrotasks();
+
+    expect(subscribe).not.toHaveBeenCalled();
+    expect(onExit).not.toHaveBeenCalled();
+    expect(binaryFrames.map((frame) => frame.opcode)).toEqual([TerminalStreamOpcode.Restore]);
+    expect(new TextDecoder().decode(binaryFrames[0]?.payload)).toContain("launch failed");
+    expect(outboundMessages.some((message) => message.type === "terminal_stream_exit")).toBe(false);
+  });
 });
 
 function listSession(input: {

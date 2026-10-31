@@ -178,6 +178,7 @@ function runWorker(argv: string[]): void {
   const manager = createTerminalManager();
   const inspector = createTerminalWorkerProcessInspector();
   const sessionsById = new Map<string, TerminalSession>();
+  const retainedTerminalIds = new Set<string>();
   const unsubscribeByTerminalId = new Map<string, Array<() => void>>();
   const outputCoalescerByTerminalId = new Map<string, TerminalOutputCoalescer>();
   // A terminal is published (terminalCreated) only once its program is recorded. An exit that
@@ -222,6 +223,15 @@ function runWorker(argv: string[]): void {
     record = {
       ...record,
       terminals: record.terminals.filter((entry) => sessionsById.has(entry.id)),
+    };
+    writeTerminalWorkerRecord(args.paseoHome, record);
+  }
+
+  function removeTerminalProgramRecord(terminalId: string): void {
+    if (!record || exiting) return;
+    record = {
+      ...record,
+      terminals: record.terminals.filter((entry) => entry.id !== terminalId),
     };
     writeTerminalWorkerRecord(args.paseoHome, record);
   }
@@ -277,6 +287,7 @@ function runWorker(argv: string[]): void {
       workspaceId: session.workspaceId,
       ...(session.getTitle() ? { title: session.getTitle() } : {}),
       activity: session.getActivity(),
+      ...(retainedTerminalIds.has(session.id) ? { retainOnExit: true } : {}),
     };
   }
 
@@ -363,8 +374,10 @@ function runWorker(argv: string[]): void {
     const unsubscribeExit = session.onExit((info) => {
       outputCoalescer.flush();
       clearTerminalSubscriptions(session.id);
-      sessionsById.delete(session.id);
-      persistRecord();
+      removeTerminalProgramRecord(session.id);
+      if (!retainedTerminalIds.has(session.id)) {
+        sessionsById.delete(session.id);
+      }
       if (exitsHeldDuringCreation.has(session.id)) {
         exitsHeldDuringCreation.set(session.id, info);
         return;
@@ -461,10 +474,13 @@ function runWorker(argv: string[]): void {
       }
       const session = await manager.createTerminal({ ...message.options, workspaceId });
       if (request.errorReported) {
-        session.kill();
+        manager.killTerminal(session.id);
         return;
       }
       sessionsById.set(session.id, session);
+      if (message.options.retainOnExit === true) {
+        retainedTerminalIds.add(session.id);
+      }
       exitsHeldDuringCreation.set(session.id, null);
       watchTerminal(session);
       try {
@@ -473,7 +489,8 @@ function runWorker(argv: string[]): void {
         exitsHeldDuringCreation.delete(session.id);
         clearTerminalSubscriptions(session.id);
         sessionsById.delete(session.id);
-        await session.killAndWait().catch(() => undefined);
+        retainedTerminalIds.delete(session.id);
+        await manager.killTerminalAndWait(session.id).catch(() => undefined);
         throw error;
       }
       const initialSnapshot = session.getStateSnapshot();
@@ -520,6 +537,49 @@ function runWorker(argv: string[]): void {
     });
   }
 
+  function handleKillTerminalRequest(
+    message: Extract<TerminalWorkerRequest, { type: "killTerminal" }>,
+  ): void {
+    const session = sessionsById.get(message.terminalId);
+    const exitInfo = session?.getExitInfo() ?? null;
+    retainedTerminalIds.delete(message.terminalId);
+    manager.killTerminal(message.terminalId);
+    if (exitInfo) {
+      clearTerminalSubscriptions(message.terminalId);
+      sessionsById.delete(message.terminalId);
+      removeTerminalProgramRecord(message.terminalId);
+      sendToController({
+        type: "terminalExit",
+        terminalId: message.terminalId,
+        info: exitInfo,
+      });
+      exitIfIdle();
+    }
+    // Removal is owned by session.onExit -> terminalExit; the parent mirror
+    // clears contribution and emits terminalsChanged from that single path.
+    sendToController({ type: "response", requestId: message.requestId, ok: true });
+  }
+
+  async function handleKillTerminalAndWaitRequest(
+    message: Extract<TerminalWorkerRequest, { type: "killTerminalAndWait" }>,
+  ): Promise<void> {
+    const exitInfo = sessionsById.get(message.terminalId)?.getExitInfo() ?? null;
+    retainedTerminalIds.delete(message.terminalId);
+    await manager.killTerminalAndWait(message.terminalId, message.options);
+    clearTerminalSubscriptions(message.terminalId);
+    sessionsById.delete(message.terminalId);
+    removeTerminalProgramRecord(message.terminalId);
+    if (exitInfo) {
+      sendToController({
+        type: "terminalExit",
+        terminalId: message.terminalId,
+        info: exitInfo,
+      });
+    }
+    exitIfIdle();
+    sendToController({ type: "response", requestId: message.requestId, ok: true });
+  }
+
   async function handleRequest(message: TerminalWorkerRequest): Promise<void> {
     switch (message.type) {
       case "createTerminal": {
@@ -546,16 +606,12 @@ function runWorker(argv: string[]): void {
       }
 
       case "killTerminal": {
-        manager.killTerminal(message.terminalId);
-        // Removal is owned by session.onExit -> terminalExit; the parent mirror
-        // clears contribution and emits terminalsChanged from that single path.
-        sendToController({ type: "response", requestId: message.requestId, ok: true });
+        handleKillTerminalRequest(message);
         return;
       }
 
       case "killTerminalAndWait": {
-        await manager.killTerminalAndWait(message.terminalId, message.options);
-        sendToController({ type: "response", requestId: message.requestId, ok: true });
+        await handleKillTerminalAndWaitRequest(message);
         return;
       }
 
@@ -607,6 +663,7 @@ function runWorker(argv: string[]): void {
 
       case "shutdown": {
         const sessions = Array.from(sessionsById.values());
+        retainedTerminalIds.clear();
         await Promise.all(sessions.map((session) => session.killAndWait().catch(() => undefined)));
         // Exit once the response frame is flushed, so the requester sees the confirmation.
         const requester = controller;

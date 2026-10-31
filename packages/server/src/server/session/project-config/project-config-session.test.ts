@@ -2,7 +2,7 @@ import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import pino from "pino";
 import { ProjectConfigSession, type ProjectConfigSessionHost } from "./project-config-session.js";
 import { statPaseoConfigPath } from "../../../utils/paseo-config-file.js";
@@ -35,12 +35,16 @@ function projectRecord(rootPath: string, archivedAt: string | null = null): Pers
   };
 }
 
-function makeSubsystem(records: PersistedProjectRecord[]) {
+function makeSubsystem(
+  records: PersistedProjectRecord[],
+  options: { onProjectConfigWritten?: (projectId: string) => Promise<void> } = {},
+) {
   const emitted: SessionOutboundMessage[] = [];
   const host: ProjectConfigSessionHost = { emit: (msg) => emitted.push(msg) };
   const subsystem = new ProjectConfigSession({
     host,
     projectRegistry: { list: async () => records },
+    onProjectConfigWritten: options.onProjectConfigWritten,
     logger: pino({ level: "silent" }),
   });
   return { subsystem, emitted };
@@ -211,6 +215,23 @@ describe("ProjectConfigSession", () => {
         },
       },
     ]);
+  });
+
+  test("refreshes the affected project after a successful write", async () => {
+    const repoRoot = makeRoot();
+    const project = projectRecord(repoRoot);
+    const onProjectConfigWritten = vi.fn(async () => undefined);
+    const { subsystem } = makeSubsystem([project], { onProjectConfigWritten });
+
+    await subsystem.handleWriteProjectConfigRequest({
+      type: "write_project_config_request",
+      requestId: "write-refresh-project",
+      repoRoot,
+      config: { launches: { dev: { command: "npm run dev" } } },
+      expectedRevision: null,
+    });
+
+    expect(onProjectConfigWritten).toHaveBeenCalledExactlyOnceWith(project.projectId);
   });
 
   test("write recomputes the worktree setup commit status", async () => {
