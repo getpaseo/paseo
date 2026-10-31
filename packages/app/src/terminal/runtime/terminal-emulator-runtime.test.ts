@@ -82,6 +82,7 @@ import {
   createTerminalResizeEvent,
   encodeTerminalOutput,
   TerminalEmulatorRuntime,
+  type TerminalClipboard,
 } from "./terminal-emulator-runtime";
 
 interface StubTerminal {
@@ -636,5 +637,99 @@ describe("terminal-emulator-runtime", () => {
     ).handleVisibilityRestore();
 
     expect(fitAndEmitResize).not.toHaveBeenCalled();
+  });
+});
+
+describe("terminal-emulator-runtime clipboard shortcuts", () => {
+  type KeyHandler = (event: KeyboardEvent) => boolean;
+
+  function createClipboard(available: boolean) {
+    return {
+      isAvailable: () => available,
+      readText: vi.fn(async () => "clipboard text"),
+      read: vi.fn(async () => []),
+      writeText: vi.fn(async (_text: string) => undefined),
+    } satisfies TerminalClipboard;
+  }
+
+  function attachKeyHandler(input: { clipboard: TerminalClipboard; selection: string }) {
+    const runtime = new TerminalEmulatorRuntime({ isMac: false }, input.clipboard);
+    let handler: KeyHandler | null = null;
+    const paste = vi.fn();
+    runtime.attachKeyEventHandler({
+      attachCustomKeyEventHandler: (next: KeyHandler) => {
+        handler = next;
+      },
+      hasSelection: () => input.selection.length > 0,
+      getSelection: () => input.selection,
+      paste,
+      input: vi.fn(),
+      scrollToBottom: vi.fn(),
+    });
+    if (!handler) throw new Error("key handler was not attached");
+    return { handler: handler as KeyHandler, paste };
+  }
+
+  function ctrlKey(key: string) {
+    const preventDefault = vi.fn();
+    const event = {
+      type: "keydown",
+      key,
+      isComposing: false,
+      ctrlKey: true,
+      shiftKey: false,
+      altKey: false,
+      metaKey: false,
+      preventDefault,
+      stopPropagation: vi.fn(),
+    } as unknown as KeyboardEvent;
+    return { event, preventDefault };
+  }
+
+  it("leaves Ctrl+C with a selection to the native copy event without the Clipboard API", () => {
+    const clipboard = createClipboard(false);
+    const { handler } = attachKeyHandler({ clipboard, selection: "selected text" });
+    const { event, preventDefault } = ctrlKey("c");
+
+    expect(handler(event)).toBe(false);
+    expect(clipboard.writeText).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("leaves Ctrl+V to the native paste event without the Clipboard API", () => {
+    const clipboard = createClipboard(false);
+    const { handler, paste } = attachKeyHandler({ clipboard, selection: "" });
+    const { event, preventDefault } = ctrlKey("v");
+
+    expect(handler(event)).toBe(false);
+    expect(clipboard.readText).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(paste).not.toHaveBeenCalled();
+  });
+
+  it("lets xterm send ^C for Ctrl+C without a selection when the Clipboard API is missing", () => {
+    const clipboard = createClipboard(false);
+    const { handler } = attachKeyHandler({ clipboard, selection: "" });
+    const { event, preventDefault } = ctrlKey("c");
+
+    expect(handler(event)).toBe(true);
+    expect(clipboard.writeText).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("copies and pastes through the Clipboard API when it is available", async () => {
+    const clipboard = createClipboard(true);
+    const { handler, paste } = attachKeyHandler({ clipboard, selection: "selected text" });
+
+    const copy = ctrlKey("c");
+    expect(handler(copy.event)).toBe(false);
+    expect(clipboard.writeText).toHaveBeenCalledWith("selected text");
+    expect(copy.preventDefault).not.toHaveBeenCalled();
+
+    const pasteKey = ctrlKey("v");
+    expect(handler(pasteKey.event)).toBe(false);
+    expect(pasteKey.preventDefault).toHaveBeenCalledTimes(1);
+    expect(clipboard.readText).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(paste).toHaveBeenCalledWith("clipboard text"));
   });
 });

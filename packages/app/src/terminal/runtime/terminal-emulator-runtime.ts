@@ -182,15 +182,26 @@ function withOverviewRulerBorderHidden(theme: ITheme): ITheme {
 }
 
 export interface TerminalClipboard {
+  /** Whether the async Clipboard API is usable. Browsers omit it outside secure contexts. */
+  isAvailable?(): boolean;
   readText(): Promise<string>;
   read(): Promise<readonly Pick<ClipboardItem, "types" | "getType">[]>;
   writeText(text: string): Promise<void>;
 }
 
+function getBrowserClipboard(): Clipboard | undefined {
+  return typeof navigator !== "undefined" ? navigator.clipboard : undefined;
+}
+
+function rejectUnavailableClipboard(): Promise<never> {
+  return Promise.reject(new Error("Clipboard API is unavailable"));
+}
+
 const browserClipboard: TerminalClipboard = {
-  readText: () => navigator.clipboard.readText(),
-  read: () => navigator.clipboard.read(),
-  writeText: (text) => navigator.clipboard.writeText(text),
+  isAvailable: () => !!getBrowserClipboard(),
+  readText: () => getBrowserClipboard()?.readText() ?? rejectUnavailableClipboard(),
+  read: () => getBrowserClipboard()?.read() ?? rejectUnavailableClipboard(),
+  writeText: (text) => getBrowserClipboard()?.writeText(text) ?? rejectUnavailableClipboard(),
 };
 
 async function readClipboardImage(clipboard: TerminalClipboard): Promise<TerminalFile | null> {
@@ -368,22 +379,7 @@ export class TerminalEmulatorRuntime {
         !event.altKey &&
         !event.metaKey
       ) {
-        const key = event.key.toLowerCase();
-
-        // Ctrl+C: copy selection to clipboard if text is selected, otherwise let xterm send SIGINT
-        if (key === "c" && terminal.hasSelection()) {
-          void this.clipboard.writeText(terminal.getSelection());
-          return false;
-        }
-
-        // Ctrl+V: paste clipboard text, or the clipboard image when there is no text
-        if (key === "v") {
-          event.preventDefault();
-          this.pasteClipboard(terminal);
-          return false;
-        }
-
-        return true;
+        return !this.handleCtrlClipboardShortcut(terminal, event);
       }
 
       if (this.maybeSendMacEditingShortcut(terminal, event)) {
@@ -430,6 +426,36 @@ export class TerminalEmulatorRuntime {
       event.stopPropagation();
       return false;
     });
+  }
+
+  /** Returns true when a non-Mac Ctrl+C / Ctrl+V clipboard shortcut was handled. */
+  private handleCtrlClipboardShortcut(
+    terminal: Pick<Terminal, "hasSelection" | "getSelection" | "paste">,
+    event: KeyboardEvent,
+  ): boolean {
+    const key = event.key.toLowerCase();
+    // Without the Clipboard API (e.g. plain http on a LAN address), the browser's native
+    // copy/paste events still fire and xterm handles them, so leave the default action.
+    const clipboardAvailable = this.clipboard.isAvailable?.() ?? true;
+
+    // Ctrl+C: copy selection to clipboard if text is selected, otherwise let xterm send SIGINT
+    if (key === "c" && terminal.hasSelection()) {
+      if (clipboardAvailable) {
+        void this.clipboard.writeText(terminal.getSelection());
+      }
+      return true;
+    }
+
+    // Ctrl+V: paste clipboard text, or the clipboard image when there is no text
+    if (key === "v") {
+      if (clipboardAvailable) {
+        event.preventDefault();
+        this.pasteClipboard(terminal);
+      }
+      return true;
+    }
+
+    return false;
   }
 
   private handleFindShortcut(event: KeyboardEvent): boolean {
