@@ -112,6 +112,23 @@ async function harness(env: Record<string, string> = {}) {
     );
     return clientMessageId;
   }
+  async function command(name: string, args = "", sessionId = "s") {
+    const clientMessageId = `cmd-${events.length}`;
+    await connection.send({
+      type: "session.prompt",
+      sessionId,
+      prompt: {
+        clientMessageId,
+        delivery: "auto",
+        input: { type: "command", name, arguments: args },
+      },
+    });
+    await wait(
+      (event) =>
+        event.type === "session.prompt_result" && event.clientMessageId === clientMessageId,
+    );
+    return clientMessageId;
+  }
   function prompt(text: string) {
     return message([{ type: "text", text }]);
   }
@@ -150,6 +167,7 @@ async function harness(env: Record<string, string> = {}) {
     open,
     prompt,
     message,
+    command,
     completed,
     records,
     persistence,
@@ -160,6 +178,7 @@ it("streams complete text snapshots, prefixes the system prompt only once and pr
   const h = await harness();
   expect(h.connection.capabilities).toEqual([
     "prompt.message",
+    "prompt.command",
     "prompt.image",
     "session.configure",
     "session.persistence",
@@ -186,7 +205,6 @@ it("streams complete text snapshots, prefixes the system prompt only once and pr
     "stream-json",
     "--add-dir",
     h.cwd,
-    "--disable-slash-commands",
     "--dangerously-skip-permissions",
   ]);
   expect(records.find((entry) => entry.args.includes("--input-format")).env).toBe(
@@ -195,6 +213,141 @@ it("streams complete text snapshots, prefixes the system prompt only once and pr
   expect(
     records.filter((entry) => entry.input).map((entry) => entry.input.message.content),
   ).toEqual(["SYSTEM PREFIX\n\nHELLO", "HELLO AGAIN"]);
+});
+
+describe("skills and slash commands", () => {
+  it("discovers workspace and built-in skills on open and normalizes multiline descriptions", async () => {
+    const h = await harness();
+    await h.open();
+    const commandsEvent = h.events.find((event) => event.type === "session.commands");
+    expect(commandsEvent).toEqual({
+      type: "session.commands",
+      sessionId: "s",
+      commands: [
+        {
+          name: "phase0-marker",
+          description: "Return the Phase 0 marker when requested",
+          argumentHint: "[instructions]",
+        },
+        {
+          name: "agy-customizations",
+          description: "Guide and reference for the Antigravity Customization System",
+          argumentHint: "[instructions]",
+        },
+        {
+          name: "plan",
+          description: "Create a step-by-step plan before executing complex tasks",
+          argumentHint: "[task]",
+        },
+        {
+          name: "grill-me",
+          description:
+            "Align on a plan through an interactive interview to resolve design decisions",
+          argumentHint: "[topic]",
+        },
+        {
+          name: "goal",
+          description: "Run a thorough, long-running task until the goal is fully achieved",
+          argumentHint: "[goal]",
+        },
+        {
+          name: "schedule",
+          description: "Run an instruction on a recurring schedule or set a one-time timer",
+          argumentHint: "[schedule]",
+        },
+        {
+          name: "browser",
+          description: "Browse the web, search, or interact with web applications",
+          argumentHint: "[task]",
+        },
+        {
+          name: "teamwork",
+          description: "Coordinate a team of autonomous subagents for a large project",
+          argumentHint: "[project]",
+        },
+        {
+          name: "learn",
+          description: "Persist a correction or setup pattern for future tasks",
+          argumentHint: "[lesson]",
+        },
+      ],
+    });
+    const skillProbe = (await h.records()).find((entry) => entry.args?.includes("/skills"));
+    expect(skillProbe).toMatchObject({
+      args: [
+        "--launch-prefix",
+        "--add-dir",
+        h.cwd,
+        "--output-format",
+        "json",
+        "--print",
+        "/skills",
+      ],
+      env: "session-overlay",
+    });
+  });
+
+  it("keeps leading skill command at index 0 on the first turn so agy expands it alongside systemPrompt", async () => {
+    const h = await harness();
+    await h.open();
+    const cmdId = await h.command("phase0-marker", "check workspace");
+    expect(await h.completed(cmdId)).toMatchObject({ state: "completed" });
+    expect(h.events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline.item",
+        item: expect.objectContaining({
+          type: "user_message",
+          clientMessageId: cmdId,
+          text: "/phase0-marker check workspace",
+        }),
+      }),
+    );
+    expect(h.events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline.item",
+        item: expect.objectContaining({
+          type: "assistant_message",
+          text: "PHASE0_SKILL_MARKER\n",
+        }),
+      }),
+    );
+    const inputs = (await h.records())
+      .filter((entry) => entry.input)
+      .map((entry) => entry.input.message.content);
+    expect(inputs).toEqual(["/phase0-marker check workspace\n\nSYSTEM PREFIX"]);
+  });
+
+  it("rejects unknown command prompts before writing to native stdin", async () => {
+    const h = await harness();
+    await h.open();
+    const id = await h.command("nonexistent-skill", "do something");
+    expect(
+      h.events.find(
+        (event) => event.type === "session.prompt_result" && event.clientMessageId === id,
+      ),
+    ).toMatchObject({
+      result: {
+        type: "failed",
+        error: {
+          code: "UNKNOWN_COMMAND",
+          message: "Unknown Antigravity command: nonexistent-skill",
+        },
+      },
+    });
+    expect((await h.records()).filter((entry) => entry.input)).toHaveLength(0);
+  });
+
+  it("escapes non-skill leading slash messages such as /help so stream-json does not exit with code 2", async () => {
+    const h = await harness();
+    await h.open();
+    await h.completed(await h.prompt("HELLO"));
+    const helpTurn = await h.completed(await h.prompt("/help"));
+    expect(helpTurn).toMatchObject({ state: "completed" });
+    const inputs = (await h.records())
+      .filter((entry) => entry.input)
+      .map((entry) => entry.input.message.content);
+    expect(inputs).toEqual(["SYSTEM PREFIX\n\nHELLO", "\u200b/help"]);
+  });
 });
 
 it("maps tools and emits one denial notice for a SUCCESS result", async () => {
