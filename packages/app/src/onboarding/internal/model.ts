@@ -43,7 +43,8 @@ export interface OnboardingModel {
   subscribe(listener: () => void): () => void;
   applySetupHost(host: OnboardingSetupHost | null, options: OnboardingStepOptions): void;
   reopen(serverId: string, options: OnboardingStepOptions): void;
-  next(): void;
+  /** Leaves `from` for the following step. A no-op once the user is on another step or closed setup. */
+  next(from: OnboardingStepId): void;
   back(): void;
   goTo(step: OnboardingStepId): void;
   /** Closes setup, whether the user finished or skipped it, and remembers that on this client. */
@@ -135,8 +136,10 @@ export function createOnboardingModel(input: {
     reopen(serverId, options) {
       setState(openState(serverId, options));
     },
-    next() {
-      if (state.status === "open") moveTo(state.stepIndex + 1);
+    next(from) {
+      if (state.status === "open" && state.steps[state.stepIndex] === from) {
+        moveTo(state.stepIndex + 1);
+      }
     },
     back() {
       if (state.status === "open") moveTo(state.stepIndex - 1);

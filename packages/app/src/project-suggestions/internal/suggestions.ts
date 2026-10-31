@@ -48,6 +48,14 @@ function combineSuggestions(a: ProjectSuggestion, b: ProjectSuggestion): Project
   };
 }
 
+/**
+ * True until the first provider answers. After that the list shows what it has, including a failed
+ * provider's Retry, while the slower providers keep reading.
+ */
+export function isAwaitingFirstAnswer(providers: readonly ProviderSuggestions[]): boolean {
+  return providers.length > 0 && providers.every((provider) => provider.status === "loading");
+}
+
 /** Folders the user worked in often and recently start checked. */
 export function isPreselected(suggestion: ProjectSuggestion, now: Date): boolean {
   return (

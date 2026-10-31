@@ -34,10 +34,10 @@ export function OnboardingModal({ model, state }: { model: OnboardingModel; stat
     void model.complete();
   }, [model]);
   const handleBack = useCallback(() => model.back(), [model]);
-  const handleNext = useCallback(() => model.next(), [model]);
+  const handleNext = useCallback(() => model.next(step), [model, step]);
   const handleAddSuggestions = useCallback(() => {
     void (async () => {
-      if (await addChecked()) model.next();
+      if (await addChecked()) model.next("projects");
     })();
   }, [addChecked, model]);
   const primary = usePrimaryAction({

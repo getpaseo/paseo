@@ -51,11 +51,12 @@ export function ProjectSuggestionList({
             />
           ))}
         </View>
-      ) : (
+      ) : null}
+      {list.rows.length === 0 && list.reading.length === 0 ? (
         <Text style={styles.statusText}>
           {t("onboarding.setup.steps.projects.suggestions.empty")}
         </Text>
-      )}
+      ) : null}
       {list.reading.length > 0 ? <StillReading providers={list.reading} /> : null}
       {list.failed.map((provider) => (
         <ProviderFailure key={provider.provider} provider={provider} onRetry={list.retry} />

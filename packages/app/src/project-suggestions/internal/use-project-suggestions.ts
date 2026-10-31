@@ -4,6 +4,7 @@ import { useOpenProject } from "@/hooks/use-open-project";
 import { useProjectRootPaths } from "@/stores/session-store-hooks";
 import {
   addSuggestedProjects,
+  isAwaitingFirstAnswer,
   isSuggestionChecked,
   mergeProviderSuggestions,
   type ProjectSuggestion,
@@ -20,7 +21,7 @@ export interface SuggestionRow {
 
 export type SuggestionList =
   | { status: "unsupported" }
-  /** Nothing to show yet: the provider list or every provider's first answer is pending. */
+  /** Nothing to show yet: the provider list or the first provider's answer is pending. */
   | { status: "loading" }
   | {
       status: "ready";
@@ -86,8 +87,7 @@ export function useProjectSuggestions(serverId: string): ProjectSuggestionsContr
 
   const list = useMemo((): SuggestionList => {
     if (state.status !== "ready") return state;
-    const reading = state.providers.filter((provider) => provider.status === "loading");
-    if (suggestions.length === 0 && reading.length > 0) return { status: "loading" };
+    if (isAwaitingFirstAnswer(state.providers)) return { status: "loading" };
     return {
       status: "ready",
       rows: suggestions.map((suggestion) => ({
@@ -98,7 +98,7 @@ export function useProjectSuggestions(serverId: string): ProjectSuggestionsContr
       providerLabels: new Map(
         state.providers.map((provider) => [provider.provider, provider.label]),
       ),
-      reading,
+      reading: state.providers.filter((provider) => provider.status === "loading"),
       failed: state.providers.filter((provider) => provider.status === "failed"),
       toggle,
       retry: state.retry,

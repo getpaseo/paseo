@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   addSuggestedProjects,
+  isAwaitingFirstAnswer,
   isSuggestionChecked,
   mergeProviderSuggestions,
   type ProjectSuggestion,
+  type ProviderSuggestions,
 } from "./suggestions";
 
 const NOW = new Date("2026-10-31T12:00:00.000Z");
@@ -126,5 +128,22 @@ describe("addSuggestedProjects", () => {
     });
 
     expect(failures).toEqual(new Map([["/dev/app", "Host disconnected"]]));
+  });
+});
+
+describe("isAwaitingFirstAnswer", () => {
+  it("stops waiting once any provider answers, so a failure shows while others still read", () => {
+    const reading: ProviderSuggestions = { provider: "codex", label: "Codex", status: "loading" };
+    const failed: ProviderSuggestions = {
+      provider: "opencode",
+      label: "OpenCode",
+      status: "failed",
+      message: "Timed out",
+      suggestions: [],
+    };
+
+    expect(isAwaitingFirstAnswer([reading, { ...reading, provider: "pi" }])).toBe(true);
+    expect(isAwaitingFirstAnswer([reading, failed])).toBe(false);
+    expect(isAwaitingFirstAnswer([])).toBe(false);
   });
 });

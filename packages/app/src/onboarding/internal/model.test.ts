@@ -93,8 +93,8 @@ describe("onboarding model", () => {
   it("keeps the modal open when the host gains its first project during setup", async () => {
     const model = await openModel();
     model.applySetupHost(FRESH_HOST, { includePhoneStep: true });
-    model.next();
-    model.next();
+    model.next("appearance");
+    model.next("providers");
 
     model.applySetupHost({ ...FRESH_HOST, hasProjects: true }, { includePhoneStep: true });
 
@@ -117,15 +117,32 @@ describe("onboarding model", () => {
 
     model.back();
     expect(model.getState()).toMatchObject({ stepIndex: 0 });
-    model.next();
-    model.next();
-    model.next();
-    model.next();
+    model.next("appearance");
+    model.next("providers");
+    model.next("projects");
+    model.next("orchestration");
     expect(model.getState()).toMatchObject({ stepIndex: 3 });
     model.goTo("providers");
     expect(model.getState()).toMatchObject({ stepIndex: 1 });
     model.back();
     expect(model.getState()).toMatchObject({ stepIndex: 0 });
+  });
+
+  it("ignores a late advance from a step the user already left", async () => {
+    const model = await openModel(new MemoryCompletionStorage(true));
+    model.reopen("local", { includePhoneStep: true });
+    model.goTo("projects");
+
+    // Projects are still being added when the user picks Appearance in the step rail.
+    model.goTo("appearance");
+    model.next("projects");
+    expect(model.getState()).toMatchObject({ stepIndex: 0 });
+
+    // Or closes setup and opens it again before the add finishes.
+    await model.complete();
+    model.reopen("local", { includePhoneStep: true });
+    model.next("projects");
+    expect(model.getState()).toMatchObject({ status: "open", stepIndex: 0 });
   });
 
   it("records completion when setup closes, so it does not open again", async () => {
@@ -160,7 +177,7 @@ describe("onboarding model", () => {
     });
 
     model.applySetupHost(FRESH_HOST, { includePhoneStep: true });
-    model.next();
+    model.next("appearance");
     await model.complete();
 
     expect(seen).toEqual(["open:0", "open:1", "hidden"]);
