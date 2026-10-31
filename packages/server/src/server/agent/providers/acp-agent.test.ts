@@ -1,11 +1,12 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { mkdtempSync, rmSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   AgentSideConnection,
   ClientSideConnection,
@@ -63,6 +64,18 @@ import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { buildStringCommandShellInvocation } from "../../../utils/string-command-shell.js";
 import { asInternals } from "../../test-utils/class-mocks.js";
 import * as spawnUtils from "../../../utils/spawn.js";
+
+const previousPaseoHome = process.env.PASEO_HOME;
+const testPaseoHome = mkdtempSync(path.join(tmpdir(), "paseo-acp-home-"));
+process.env.PASEO_HOME = testPaseoHome;
+afterAll(() => {
+  if (previousPaseoHome === undefined) {
+    delete process.env.PASEO_HOME;
+  } else {
+    process.env.PASEO_HOME = previousPaseoHome;
+  }
+  rmSync(testPaseoHome, { recursive: true, force: true });
+});
 
 describe("buildACPClientCapabilities", () => {
   test("enables terminal execution on the host while keeping filesystem operations with the agent by default", () => {
@@ -3329,7 +3342,10 @@ describe("ACPAgentSession", () => {
       {
         type: "timeline",
         provider: session.provider,
-        item: { type: "user_message", text: "[image]" },
+        item: {
+          type: "user_message",
+          text: expect.stringMatching(/^!\[[^\]]*\]\(file:\/\/.+\.png\)$/),
+        },
         turnId: expect.any(String),
       },
     ]);
@@ -3404,7 +3420,10 @@ describe("ACPAgentSession", () => {
       {
         type: "timeline",
         provider: session.provider,
-        item: { type: "user_message", text: "[image]" },
+        item: {
+          type: "user_message",
+          text: expect.stringMatching(/^!\[[^\]]*\]\(file:\/\/.+\.png\)$/),
+        },
         turnId,
       },
       expect.objectContaining({ type: "turn_failed", turnId, error: "prompt failed" }),
@@ -3536,7 +3555,10 @@ describe("ACPAgentSession close() tree-kill", () => {
       {
         type: "timeline",
         provider: session.provider,
-        item: { type: "user_message", text: "[image]" },
+        item: {
+          type: "user_message",
+          text: expect.stringMatching(/^!\[[^\]]*\]\(file:\/\/.+\.png\)$/),
+        },
       },
     ]);
   });
@@ -4210,7 +4232,10 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
       {
         type: "timeline",
         provider: session.provider,
-        item: { type: "user_message", text: "hey[image]" },
+        item: {
+          type: "user_message",
+          text: expect.stringMatching(/^hey!\[[^\]]*\]\(file:\/\/.+\.png\)$/),
+        },
       },
       {
         type: "timeline",

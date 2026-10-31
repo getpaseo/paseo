@@ -729,6 +729,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             timestamp={item.timestamp.getTime()}
             capabilities={context.capabilities}
             client={client}
+            workspaceRoot={workspaceRoot}
             isFirstInGroup={layoutItem.isFirstInUserGroup}
             isLastInGroup={layoutItem.isLastInUserGroup}
             isPending={
@@ -755,6 +756,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         pendingClientMessageIds,
         resolvedServerId,
         setTurnExpanded,
+        workspaceRoot,
       ],
     );
 

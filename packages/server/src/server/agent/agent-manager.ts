@@ -100,6 +100,7 @@ import {
 } from "./provider-subagents/store.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import { extractAttention } from "../persistence-hooks.js";
+import { renderContentImageAsMarkdown } from "./providers/provider-image-output.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -123,7 +124,15 @@ function submittedPromptText(prompt: AgentPromptInput): string {
     return prompt;
   }
   return prompt
-    .flatMap((block) => (block.type === "text" && !("mimeType" in block) ? [block.text] : []))
+    .flatMap((block) => {
+      if (block.type === "text" && !("mimeType" in block)) {
+        return [block.text];
+      }
+      if (block.type === "image") {
+        return [renderContentImageAsMarkdown(block)];
+      }
+      return [];
+    })
     .join("\n")
     .trim();
 }

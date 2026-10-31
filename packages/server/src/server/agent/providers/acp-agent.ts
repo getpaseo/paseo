@@ -119,6 +119,7 @@ import {
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
+import { renderContentImageAsMarkdown } from "./provider-image-output.js";
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "./provider-runner.js";
 import {
   buildStringCommandShellInvocation,
@@ -3717,7 +3718,7 @@ function contentBlockToText(content: ContentBlock): string {
         ? content.resource.text
         : `[resource:${content.resource.mimeType ?? "binary"}]`;
     case "image":
-      return "[image]";
+      return renderContentImageAsMarkdown(content);
     case "audio":
       return "[audio]";
     default:

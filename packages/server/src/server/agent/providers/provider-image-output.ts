@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import * as fsSync from "node:fs";
 import * as fs from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 import os from "node:os";
@@ -225,6 +226,85 @@ function markdownImageSource(value: string): string {
 
 function escapeMarkdownImageSource(value: string): string {
   return markdownImageSource(value).replace(/\\/g, "\\\\").replace(/\)/g, "\\)");
+}
+
+export function persistentImageAttachmentDir(): string {
+  const home = process.env.PASEO_HOME?.trim() || path.join(os.homedir(), ".paseo");
+  return path.join(home, "attachments");
+}
+
+function ensurePersistentImageAttachmentDir(): string {
+  const dir = persistentImageAttachmentDir();
+  fsSync.mkdirSync(dir, { recursive: true, mode: PRIVATE_ATTACHMENT_DIR_MODE });
+  try {
+    fsSync.chmodSync(dir, PRIVATE_ATTACHMENT_DIR_MODE);
+  } catch {
+    /* Directory is still usable if chmod is unsupported. */
+  }
+  return dir;
+}
+
+function decodeImagePayload(image: { data: string; mimeType: string | null }): {
+  bytes: Buffer;
+  mimeType: string;
+} {
+  const maxEncodedCharacters = Math.ceil(MAX_PROVIDER_IMAGE_BYTES / 3) * 4;
+  if (image.data.length > maxEncodedCharacters + 256) {
+    throw new Error(`Image attachment exceeds ${MAX_PROVIDER_IMAGE_BYTES} bytes`);
+  }
+  let data = image.data;
+  let mimeType = image.mimeType ?? "image/png";
+  if (data.startsWith("data:")) {
+    const separator = data.indexOf(";base64,");
+    if (separator >= 0 && separator < 256) {
+      mimeType = data.slice(5, separator);
+      data = data.slice(separator + 8);
+    }
+  }
+  if (data.length > maxEncodedCharacters) {
+    throw new Error(`Image attachment exceeds ${MAX_PROVIDER_IMAGE_BYTES} bytes`);
+  }
+  const bytes = Buffer.from(data.replace(/[^A-Za-z0-9+/_=-]/g, ""), "base64");
+  if (bytes.length > MAX_PROVIDER_IMAGE_BYTES) {
+    throw new Error("Image attachment exceeds size limit");
+  }
+  return { bytes, mimeType };
+}
+
+export function materializePersistentImage(image: {
+  data: string;
+  mimeType: string | null;
+}): MaterializedProviderImage {
+  const { bytes, mimeType } = decodeImagePayload(image);
+  const dir = ensurePersistentImageAttachmentDir();
+  const filePath = path.join(
+    dir,
+    `${createHash("sha256").update(bytes).digest("hex")}.${getImageExtension(mimeType)}`,
+  );
+  if (!fsSync.existsSync(filePath)) {
+    fsSync.writeFileSync(filePath, bytes, { mode: MATERIALIZED_IMAGE_FILE_MODE });
+    fsSync.chmodSync(filePath, MATERIALIZED_IMAGE_FILE_MODE);
+  }
+  return { path: filePath };
+}
+
+export function renderContentImageAsMarkdown(image: {
+  data?: string | null;
+  mimeType?: string | null;
+}): string {
+  if (!image.data) {
+    return "[image]";
+  }
+  try {
+    const materialized = materializePersistentImage({
+      data: image.data,
+      mimeType: image.mimeType ?? null,
+    });
+    return `![Image](${escapeMarkdownImageSource(materialized.path)})`;
+  } catch {
+    // Recording the timeline must not fail the turn when the payload is invalid or disk is full.
+    return "[image]";
+  }
 }
 
 export async function renderProviderImageOutputAsAssistantMarkdown(

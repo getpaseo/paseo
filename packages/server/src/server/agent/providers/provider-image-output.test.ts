@@ -1,13 +1,18 @@
-import { existsSync, rmSync, statSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync, readFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import MarkdownIt from "markdown-it";
 import { projectTimelineRows } from "../timeline-projection.js";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 
+import { splitUserMessageImageMarkdown } from "../../../../../app/src/utils/user-message-image-markdown.ts";
 import {
   MAX_PROVIDER_IMAGE_BYTES,
   isProviderImageMarkdown,
+  materializePersistentImage,
   materializeProviderImage,
+  persistentImageAttachmentDir,
+  renderContentImageAsMarkdown,
   renderProviderImageOutputAsAssistantMarkdown,
 } from "./provider-image-output.js";
 
@@ -246,4 +251,69 @@ test("simultaneous requests for the same content share the published file", asyn
   ]);
   expect(results[0]).toEqual(results[1]);
   expect(readFileSync(results[0].path).toString()).toBe("concurrent dedupe fixture");
+});
+
+describe("persistent user image markdown", () => {
+  const previousHome = process.env.PASEO_HOME;
+  let home = "";
+
+  afterEach(() => {
+    if (previousHome === undefined) {
+      delete process.env.PASEO_HOME;
+    } else {
+      process.env.PASEO_HOME = previousHome;
+    }
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  test("writes hashed files under PASEO_HOME/attachments and reuses them", () => {
+    home = mkdtempSync(path.join(os.tmpdir(), "paseo-user-image-"));
+    process.env.PASEO_HOME = home;
+    const image = {
+      data: Buffer.from("user screenshot").toString("base64"),
+      mimeType: "image/png",
+    };
+    const first = materializePersistentImage(image);
+    const second = materializePersistentImage(image);
+    expect(first.path).toBe(second.path);
+    expect(first.path.startsWith(path.join(home, "attachments") + path.sep)).toBe(true);
+    expect(readFileSync(first.path).toString()).toBe("user screenshot");
+    expect(isProviderImageMarkdown(`![Image](${first.path})`)).toBe(false);
+  });
+
+  test("renders a file URI and falls back when the payload is missing", () => {
+    home = mkdtempSync(path.join(os.tmpdir(), "paseo-user-image-"));
+    process.env.PASEO_HOME = home;
+    const markdown = renderContentImageAsMarkdown({
+      data: Buffer.from("preview").toString("base64"),
+      mimeType: "image/png",
+    });
+    const match = /^!\[Image\]\((file:\/\/[^)]+)\)$/.exec(markdown);
+    expect(match).not.toBeNull();
+    const fileUrl = new URL(match![1]!);
+    expect(fileUrl.protocol).toBe("file:");
+    expect(fileUrl.pathname.startsWith(`${persistentImageAttachmentDir()}/`)).toBe(true);
+    expect(existsSync(fileUrl.pathname)).toBe(true);
+    expect(renderContentImageAsMarkdown({})).toBe("[image]");
+  });
+
+  test("feeds writer markdown to the client splitter", () => {
+    home = mkdtempSync(path.join(os.tmpdir(), "paseo-user-image-"));
+    process.env.PASEO_HOME = home;
+    const markdown = renderContentImageAsMarkdown({
+      data: Buffer.from("preview").toString("base64"),
+      mimeType: "image/png",
+    });
+    const imageOnly = splitUserMessageImageMarkdown(markdown);
+    expect(imageOnly.visibleText).toBe("");
+    expect(imageOnly.imageSources).toHaveLength(1);
+    expect(imageOnly.imageSources[0]).toMatch(/^file:\/\/.+\.png$/);
+    expect(isProviderImageMarkdown(markdown)).toBe(false);
+
+    const withText = splitUserMessageImageMarkdown(`see this${markdown}please`);
+    expect(withText.visibleText).toBe("see this\nplease");
+    expect(withText.imageSources).toEqual(imageOnly.imageSources);
+    const fileUrl = new URL(imageOnly.imageSources[0]!);
+    expect(existsSync(fileUrl.pathname)).toBe(true);
+  });
 });

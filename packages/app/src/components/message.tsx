@@ -26,6 +26,7 @@ import { isRenderProfileEnabled } from "@/utils/render-profiler";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
+import { splitUserMessageImageMarkdown } from "@/utils/user-message-image-markdown";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
 import { useToolCallExpanded } from "@/tool-calls/expansion-context";
 import { useTargetAgentTitle } from "@/tool-calls/use-target-agent-title";
@@ -101,6 +102,7 @@ interface UserMessageProps {
   timestamp: number;
   capabilities?: AgentCapabilityFlags;
   client?: DaemonClient | null;
+  workspaceRoot?: string;
   isFirstInGroup?: boolean;
   isLastInGroup?: boolean;
   isPending?: boolean;
@@ -400,6 +402,7 @@ export const UserMessage = memo(function UserMessage({
   timestamp,
   capabilities,
   client,
+  workspaceRoot,
   isFirstInGroup = true,
   isLastInGroup = true,
   isPending = false,
@@ -415,8 +418,11 @@ export const UserMessage = memo(function UserMessage({
     [lightboxMetadata],
   );
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
-  const hasText = message.trim().length > 0;
-  const hasImages = images.length > 0;
+  const parsedMessage = useMemo(() => splitUserMessageImageMarkdown(message), [message]);
+  const markdownImages = images.length > 0 ? [] : parsedMessage.imageSources;
+  const visibleText = parsedMessage.visibleText;
+  const hasText = visibleText.length > 0;
+  const hasImages = images.length > 0 || markdownImages.length > 0;
   const hasAttachments = attachments.length > 0;
   const showTrailingRow = !isPending && hasText && (isCompact || isNative || isHovered);
   const formattedTimestamp = useMemo(
@@ -490,6 +496,15 @@ export const UserMessage = memo(function UserMessage({
                     accessibilityLabel={t("composer.attachments.openImage")}
                   />
                 ))}
+                {markdownImages.map((source) => (
+                  <MarkdownRenderer
+                    key={source}
+                    text={`![Image](${source})`}
+                    client={client}
+                    serverId={serverId}
+                    workspaceRoot={workspaceRoot}
+                  />
+                ))}
               </View>
             ) : null}
             {hasAttachments ? (
@@ -512,7 +527,7 @@ export const UserMessage = memo(function UserMessage({
             ) : null}
             {hasText ? (
               <Text selectable style={userMessageStylesheet.text} dataSet={MESSAGE_TEXT_DATASET}>
-                {message}
+                {visibleText}
               </Text>
             ) : null}
           </MessagePreview>
