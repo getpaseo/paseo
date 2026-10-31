@@ -290,5 +290,218 @@ describe("resolveAgentModelSelection", () => {
     expect(selection.activeModelId).toBe("gpt-6.1-sol");
     expect(selection.displayModel).toBe("gpt-6.1-sol");
     expect(selection.displayThinking).toBe("Max");
+    expect(selection.thinkingOptions).toEqual([
+      { id: "medium", label: "medium" },
+      { id: "max", label: "max" },
+    ]);
+    expect(selection.selectedThinkingId).toBe("max");
+  });
+
+  it("offers the catalog default's thinking options when the agent's model is not listed", () => {
+    const selection = resolveAgentModelSelection({
+      models: [
+        {
+          id: "claude-opus-5",
+          provider: "claude",
+          label: "Opus 5",
+          isDefault: true,
+          thinkingOptions: [
+            { id: "low", label: "Low" },
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High" },
+          ],
+          defaultThinkingOptionId: "medium",
+        },
+      ],
+      runtimeModelId: "grok-4.6",
+      configuredModelId: "grok-4.6",
+      runtimeThinkingOptionId: null,
+      explicitThinkingOptionId: null,
+    });
+
+    expect(selection.selectedModel).toBeNull();
+    expect(selection.displayModel).toBe("grok-4.6");
+    expect(selection.thinkingOptions).toEqual([
+      { id: "low", label: "Low" },
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High" },
+    ]);
+    expect(selection.selectedThinkingId).toBe("medium");
+    expect(selection.displayThinking).toBe("Medium");
+  });
+
+  it("does not offer Off for an unknown model even when the catalog default supports it", () => {
+    const selection = resolveAgentModelSelection({
+      models: [
+        {
+          id: "claude-opus-5",
+          provider: "claude",
+          label: "Opus 5",
+          isDefault: true,
+          thinkingOptions: [
+            { id: "off", label: "Off" },
+            { id: "low", label: "Low" },
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High" },
+          ],
+          defaultThinkingOptionId: "high",
+        },
+      ],
+      runtimeModelId: "grok-4.6",
+      configuredModelId: "grok-4.6",
+      runtimeThinkingOptionId: null,
+      explicitThinkingOptionId: null,
+    });
+
+    expect(selection.selectedModel).toBeNull();
+    expect(selection.thinkingOptions).toEqual([
+      { id: "low", label: "Low" },
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High" },
+    ]);
+    expect(selection.selectedThinkingId).toBe("high");
+    expect(selection.displayThinking).toBe("High");
+  });
+
+  it("filters Off for a Claude profile whose provider id is not claude", () => {
+    const selection = resolveAgentModelSelection({
+      models: [
+        {
+          id: "claude-opus-5",
+          provider: "claude-work",
+          label: "Opus 5",
+          isDefault: true,
+          metadata: { underlyingProvider: "claude" },
+          thinkingOptions: [
+            { id: "off", label: "Off" },
+            { id: "low", label: "Low" },
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High" },
+          ],
+          defaultThinkingOptionId: "high",
+        },
+      ],
+      runtimeModelId: "gateway-model-x",
+      configuredModelId: "gateway-model-x",
+      runtimeThinkingOptionId: null,
+      explicitThinkingOptionId: null,
+    });
+
+    expect(selection.selectedModel).toBeNull();
+    expect(selection.thinkingOptions).toEqual([
+      { id: "low", label: "Low" },
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High" },
+    ]);
+    expect(selection.selectedThinkingId).toBe("high");
+    expect(selection.displayThinking).toBe("High");
+  });
+
+  it("keeps Off in borrowed options for a non-Claude provider without the daemon gate", () => {
+    const selection = resolveAgentModelSelection({
+      models: [
+        {
+          id: "pi-model-a",
+          provider: "pi",
+          label: "Pi Model A",
+          isDefault: true,
+          thinkingOptions: [
+            { id: "off", label: "Off" },
+            { id: "low", label: "Low" },
+            { id: "high", label: "High" },
+          ],
+          defaultThinkingOptionId: "low",
+        },
+      ],
+      runtimeModelId: "pi-custom-model",
+      configuredModelId: "pi-custom-model",
+      runtimeThinkingOptionId: null,
+      explicitThinkingOptionId: null,
+    });
+
+    expect(selection.selectedModel).toBeNull();
+    expect(selection.thinkingOptions).toEqual([
+      { id: "off", label: "Off" },
+      { id: "low", label: "Low" },
+      { id: "high", label: "High" },
+    ]);
+    expect(selection.selectedThinkingId).toBe("low");
+    expect(selection.displayThinking).toBe("Low");
+  });
+
+  it("keeps showing a persisted effort that the borrowed options do not include", () => {
+    const selection = resolveAgentModelSelection({
+      models: [
+        {
+          id: "claude-opus-5-5",
+          provider: "claude",
+          label: "Opus 5.5",
+          isDefault: true,
+          thinkingOptions: [
+            { id: "medium", label: "Medium" },
+            { id: "max", label: "Max" },
+          ],
+          defaultThinkingOptionId: "medium",
+        },
+      ],
+      runtimeModelId: "glm-5.3-flash",
+      configuredModelId: "glm-5.3-flash",
+      runtimeThinkingOptionId: null,
+      explicitThinkingOptionId: "high",
+    });
+
+    expect(selection.selectedModel).toBeNull();
+    expect(selection.thinkingOptions).toEqual([
+      { id: "medium", label: "Medium" },
+      { id: "max", label: "Max" },
+    ]);
+    expect(selection.selectedThinkingId).toBe("high");
+    expect(selection.displayThinking).toBe("High");
+  });
+
+  it("keeps showing the runtime effort even when the borrowed options do not include it", () => {
+    const selection = resolveAgentModelSelection({
+      models: [
+        {
+          id: "claude-opus-5-5",
+          provider: "claude",
+          label: "Opus 5.5",
+          isDefault: true,
+          thinkingOptions: [
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High" },
+          ],
+          defaultThinkingOptionId: "medium",
+        },
+      ],
+      runtimeModelId: "glm-5.3-flash",
+      configuredModelId: "glm-5.3-flash",
+      runtimeThinkingOptionId: "xhigh",
+      explicitThinkingOptionId: null,
+    });
+
+    expect(selection.selectedModel).toBeNull();
+    expect(selection.selectedThinkingId).toBe("xhigh");
+    expect(selection.displayThinking).toBe("Extra high");
+  });
+
+  it("keeps thinking hidden for a cataloged model that has no thinking options", () => {
+    const selection = resolveAgentModelSelection({
+      models: [
+        {
+          id: "claude-haiku-4-5",
+          provider: "claude",
+          label: "Haiku 4.5",
+          isDefault: true,
+        },
+      ],
+      runtimeModelId: "claude-haiku-4-5",
+      configuredModelId: "claude-haiku-4-5",
+      runtimeThinkingOptionId: null,
+      explicitThinkingOptionId: null,
+    });
+
+    expect(selection.selectedModel).not.toBeNull();
+    expect(selection.thinkingOptions).toBeNull();
   });
 });

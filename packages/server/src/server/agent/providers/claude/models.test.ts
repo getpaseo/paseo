@@ -9,6 +9,7 @@ import {
   CLAUDE_DISABLED_THINKING_OPTION_ID,
   CLAUDE_ULTRACODE_THINKING_OPTION_ID,
   claudeManifestModelSupportsFastMode,
+  getClaudeCustomModelThinkingOptions,
   normalizeClaudeManifestModelId,
   parseClaudeCodeVersion,
   resolveClaudeDisabledThinkingForModel,
@@ -393,42 +394,50 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
         id: "us.anthropic.claude-opus-4-7[1m]",
         label: "us.anthropic.claude-opus-4-7[1m]",
         description: "From Claude settings.json model",
+        thinkingOptions: getClaudeCustomModelThinkingOptions(),
       },
       {
         provider: "claude",
         id: "openrouter/anthropic/claude-sonnet-4.5",
         label: "openrouter/anthropic/claude-sonnet-4.5",
         description: "From Claude settings.json env.ANTHROPIC_MODEL",
+        thinkingOptions: getClaudeCustomModelThinkingOptions(),
       },
       {
         provider: "claude",
         id: "ollama/qwen3-coder",
         label: "ollama/qwen3-coder",
         description: "From Claude settings.json env.ANTHROPIC_SMALL_FAST_MODEL",
+        thinkingOptions: getClaudeCustomModelThinkingOptions(),
       },
       {
         provider: "claude",
         id: "claude-fable-5-1[1M]",
         label: "claude-fable-5-1[1M]",
         description: "From Claude settings.json env.ANTHROPIC_DEFAULT_FABLE_MODEL",
+        thinkingOptions: getClaudeModels().find((model) => model.id === "claude-fable-5-1")
+          ?.thinkingOptions,
       },
       {
         provider: "claude",
         id: "bedrock-opus-from-env",
         label: "bedrock-opus-from-env",
         description: "From Claude settings.json env.ANTHROPIC_DEFAULT_OPUS_MODEL",
+        thinkingOptions: getClaudeCustomModelThinkingOptions(),
       },
       {
         provider: "claude",
         id: "glm-5.1",
         label: "glm-5.1",
         description: "From Claude settings.json env.ANTHROPIC_DEFAULT_SONNET_MODEL",
+        thinkingOptions: getClaudeCustomModelThinkingOptions(),
       },
       {
         provider: "claude",
         id: "glm-5",
         label: "glm-5",
         description: "From Claude settings.json env.ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        thinkingOptions: getClaudeCustomModelThinkingOptions(),
       },
     ]);
     expect(models.filter((model) => model.id === "claude-fable-5-1[1M]")).toHaveLength(1);
