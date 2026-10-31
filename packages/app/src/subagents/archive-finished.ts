@@ -19,10 +19,15 @@ export interface ArchiveFinishedOutcome {
   failures: Array<{ id: string; error: unknown }>;
 }
 
-export type ManagedSubagentSnapshot = Pick<Agent, "id" | "status" | "parentAgentId" | "archivedAt">;
+export type ManagedSubagentSnapshot = Pick<
+  Agent,
+  "id" | "status" | "turn" | "parentAgentId" | "archivedAt"
+> &
+  Pick<SubagentRow, "hasActiveDescendants">;
 
 export interface ArchiveFinishedSubagentsDeps {
   parentAgentId: string;
+  hydrateActivity: () => Promise<void>;
   getManagedSubagent: (address: AgentAddress) => ManagedSubagentSnapshot | undefined;
   archiveManagedSubagent: (address: AgentAddress) => Promise<void>;
   dismissProviderSubagents: (ids: string[]) => void;
@@ -36,7 +41,9 @@ export interface ArchiveFinishedSubagents {
 }
 
 export function isFinishedSubagent(row: SubagentRow): boolean {
-  if (row.kind === "paseo") return row.status === "idle" || row.status === "error";
+  if (row.hasActiveDescendants) return false;
+  if (row.kind === "paseo")
+    return row.turn.phase !== "open" && (row.status === "idle" || row.status === "error");
   return row.status === "completed" || row.status === "failed" || row.status === "canceled";
 }
 
@@ -47,6 +54,8 @@ function canArchiveManagedSubagent(
   return Boolean(
     agent &&
     !agent.archivedAt &&
+    !agent.hasActiveDescendants &&
+    agent.turn.phase !== "open" &&
     agent.parentAgentId === parentAgentId &&
     (agent.status === "idle" || agent.status === "error"),
   );
@@ -130,12 +139,21 @@ export function createArchiveFinishedSubagents(
       eligibleCount: eligibleRows.length,
       status: { kind: "archiving", completedCount: 0, totalCount },
     });
-    return runArchiveFinished(snapshot, deps, (completedCount) => {
-      setState({
-        eligibleCount: eligibleRows.length,
-        status: { kind: "archiving", completedCount, totalCount },
-      });
-    }).then(({ outcome, retryableFailureIds }) => {
+    // Managed rows can arrive before unopened descendants' native lists.
+    const hydrated = deps.hydrateActivity().then(
+      () =>
+        runArchiveFinished(snapshot, deps, (completedCount) => {
+          setState({
+            eligibleCount: eligibleRows.length,
+            status: { kind: "archiving", completedCount, totalCount },
+          });
+        }),
+      (error: unknown) => ({
+        outcome: { ...emptyOutcome(), failures: snapshot.map((row) => ({ id: row.id, error })) },
+        retryableFailureIds: rowIdentities(snapshot),
+      }),
+    );
+    return hydrated.then(({ outcome, retryableFailureIds }) => {
       failedSignature =
         retryableFailureIds.size > 0 ? identitySignature(retryableFailureIds) : null;
       setState({

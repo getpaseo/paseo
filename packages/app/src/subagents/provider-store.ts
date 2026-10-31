@@ -14,6 +14,8 @@ import {
 import type { StreamItem } from "@/types/stream";
 import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
 
+import { providerRunningDescendants, providerSubagentKey } from "./activity";
+
 export interface ProviderSubagentTimelineState {
   tail: StreamItem[];
   head: StreamItem[];
@@ -53,13 +55,7 @@ interface ProviderSubagentState {
   ): void;
 }
 
-export function providerSubagentKey(
-  serverId: string,
-  parentAgentId: string,
-  subagentId: string,
-): string {
-  return `${serverId}\0${parentAgentId}\0${subagentId}`;
-}
+export { providerSubagentKey } from "./activity";
 
 export function providerSubagentLifecycleStatus(
   status: ProviderSubagentDescriptorPayload["status"],
@@ -71,7 +67,30 @@ export function providerSubagentLifecycleStatus(
 
 type ProviderSubagentListClient = Pick<DaemonClient, "listProviderSubagents">;
 
+const hydratedParents = new WeakMap<ProviderSubagentListClient, Map<string, Promise<void>>>();
 const pendingListRequests = new WeakMap<ProviderSubagentListClient, Map<string, Promise<void>>>();
+
+/** Cold-load each observed managed subtree once per connection; reconnect uses trackedParents. */
+export async function hydrateProviderSubagents(
+  client: ProviderSubagentListClient,
+  serverId: string,
+  parentAgentIds: readonly string[],
+): Promise<void> {
+  let hydrated = hydratedParents.get(client);
+  if (!hydrated) {
+    hydrated = new Map();
+    hydratedParents.set(client, hydrated);
+  }
+  const requests = parentAgentIds.map((parentAgentId) => {
+    const key = `${serverId}\0${parentAgentId}`;
+    const existing = pendingListRequests.get(client)?.get(key) ?? hydrated.get(key);
+    if (existing) return existing;
+    const request = refreshProviderSubagents(client, serverId, parentAgentId);
+    hydrated.set(key, request);
+    return request;
+  });
+  await Promise.all(requests);
+}
 
 export function refreshProviderSubagents(
   client: ProviderSubagentListClient,
@@ -93,6 +112,11 @@ export function refreshProviderSubagents(
     .then((payload) => {
       useProviderSubagentStore.getState().replaceList(serverId, parentAgentId, payload.subagents);
       return undefined;
+    })
+    .catch((error: unknown) => {
+      // A failed reconnect snapshot makes the earlier successful list unsafe for bulk archive.
+      hydratedParents.get(client)?.delete(requestKey);
+      throw error;
     })
     .finally(() => {
       clientRequests?.delete(requestKey);
@@ -183,9 +207,11 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
   hideFromTrack(serverId, parentAgentId, subagentIds) {
     set((state) => {
       const hiddenFromTrack = new Set(state.hiddenFromTrack);
+      const runningDescendants = providerRunningDescendants(state.descriptors);
       for (const subagentId of subagentIds) {
         const key = providerSubagentKey(serverId, parentAgentId, subagentId);
-        if (state.descriptors.get(key)?.status !== "running") hiddenFromTrack.add(key);
+        if (state.descriptors.get(key)?.status !== "running" && !runningDescendants.has(key))
+          hiddenFromTrack.add(key);
       }
       return { hiddenFromTrack };
     });
@@ -204,6 +230,7 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
           hiddenFromTrack.delete(key);
         }
       }
+      for (const key of providerRunningDescendants(descriptors)) hiddenFromTrack.delete(key);
       const retainedKeys = new Set(descriptors.keys());
       const timelines = new Map(
         [...state.timelines].filter(([key]) => !key.startsWith(prefix) || retainedKeys.has(key)),
@@ -234,6 +261,8 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
         if (payload.subagent.status === "running") {
           hiddenFromTrack.delete(key);
         }
+        for (const ancestorKey of providerRunningDescendants(descriptors))
+          hiddenFromTrack.delete(ancestorKey);
         let timelines = state.timelines;
         const current = state.timelines.get(key);
         if (current && previous?.status !== payload.subagent.status) {
