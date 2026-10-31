@@ -2634,6 +2634,76 @@ describe("ACPAgentSession slash commands", () => {
       },
     ]);
   });
+
+  test("keeps waiting after the first batch so a later batch is not lost", async () => {
+    // MiniMax publishes its built-in commands twice, then a third batch roughly
+    // 350ms later that merges in every discovered skill. Returning after the
+    // first batch hands the user an inventory without the skills.
+    const session = new ACPAgentSession(
+      {
+        provider: "minimax-code",
+        cwd: "/tmp/paseo-acp-test",
+      },
+      {
+        provider: "minimax-code",
+        logger: createTestLogger(),
+        defaultCommand: ["mcode", "acp"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+        waitForInitialCommands: true,
+        initialCommandsWaitTimeoutMs: 1500,
+      },
+    );
+
+    const listCommandsPromise = session.listCommands();
+
+    asInternals<ACPSessionInternals>(session).translateSessionUpdate({
+      sessionUpdate: "available_commands_update",
+      availableCommands: [{ name: "help", description: "Show available commands" }],
+    });
+
+    // The provider is still publishing, so the first batch must not settle the
+    // waiter. The late batch arrives while listCommands() is still pending.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    asInternals<ACPSessionInternals>(session).translateSessionUpdate({
+      sessionUpdate: "available_commands_update",
+      availableCommands: [{ name: "help", description: "Show available commands" }],
+    });
+
+    asInternals<ACPSessionInternals>(session).translateSessionUpdate({
+      sessionUpdate: "available_commands_update",
+      availableCommands: [
+        { name: "help", description: "Show available commands" },
+        { name: "xlsx", description: "Work with spreadsheets", input: { hint: "[instructions]" } },
+      ],
+    });
+
+    expect(await listCommandsPromise).toEqual([
+      {
+        name: "help",
+        description: "Show available commands",
+        argumentHint: "",
+        kind: "command",
+      },
+      {
+        name: "xlsx",
+        description: "Work with spreadsheets",
+        argumentHint: "[instructions]",
+        kind: "command",
+      },
+    ]);
+
+    // A later read returns the same complete inventory instead of re-waiting.
+    expect((await session.listCommands()).map((command) => command.name)).toEqual(["help", "xlsx"]);
+  });
 });
 
 describe("ACPAgentSession", () => {
