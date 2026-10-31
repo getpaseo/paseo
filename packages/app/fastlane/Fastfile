@@ -26,6 +26,22 @@ def stage_app_store_screenshots
   root
 end
 
+# Google Play only has en-US screenshots, and some F-Droid locales in
+# ANDROID_METADATA are not Play languages (Play rejects "ja"). supply uploads
+# every locale folder in one edit, so give it only the en-US images.
+def stage_google_play_screenshots
+  root = Dir.mktmpdir("google-play-screenshots")
+  images = File.join(ANDROID_METADATA, "en-US/images")
+  %w[phoneScreenshots tenInchScreenshots].each do |kind|
+    target = File.join(root, "en-US/images", kind)
+    FileUtils.mkdir_p(target)
+    Dir.glob(File.join(images, kind, "*.png")).sort.each do |file|
+      FileUtils.cp(File.realpath(file), File.join(target, File.basename(file)))
+    end
+  end
+  root
+end
+
 platform :ios do
   desc "Submit the latest TestFlight build to App Store Review"
   lane :submit_review do
@@ -132,7 +148,7 @@ platform :android do
     supply(
       package_name: APP_IDENTIFIER,
       json_key: ENV.fetch("GOOGLE_PLAY_JSON_KEY"),
-      metadata_path: ANDROID_METADATA,
+      metadata_path: stage_google_play_screenshots,
       version_code: version_code.empty? ? nil : version_code.to_i,
       skip_upload_apk: true,
       skip_upload_aab: true,

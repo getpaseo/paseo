@@ -1400,14 +1400,7 @@ test("create_agent_request does not publish the pre-prompt snapshot after the pr
     const cwd = path.join(workdir, "repo");
     mkdirSync(cwd, { recursive: true });
 
-    const logger = {
-      child: () => logger,
-      trace: vi.fn(),
-      debug: vi.fn(),
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-    };
+    const logger = createTestLogger();
     const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
     // The test session's turn starts and then reports nothing, like a provider
     // that stays quiet until its turn ends.

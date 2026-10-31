@@ -21,7 +21,6 @@ export interface NativeHeadlessTerminalOptions {
 
 export interface NativeHeadlessTerminal {
   write(data: NativeTerminalWriteData): Promise<void>;
-  getState(): TerminalState;
   getViewportState(input?: TerminalViewportStateInput): TerminalViewportState;
   getInputModeState(): NativeHeadlessTerminalInputModeState;
   getBufferBounds(): TerminalBufferBounds;
@@ -165,35 +164,6 @@ function extractRow(
   return rowCells;
 }
 
-function extractGrid(terminal: HeadlessTerminalInstance): TerminalCellRow[] {
-  const grid: TerminalCellRow[] = [];
-  const baseY = terminal.buffer.active.baseY;
-  const reusableCell = terminal.buffer.active.getNullCell();
-  for (let row = 0; row < terminal.rows; row += 1) {
-    grid.push(extractRow(terminal, baseY + row, reusableCell));
-  }
-  return grid;
-}
-
-function extractScrollback(
-  terminal: HeadlessTerminalInstance,
-  options: { scrollbackLines?: number },
-): TerminalCellRow[] {
-  const scrollback: TerminalCellRow[] = [];
-  const scrollbackLines = terminal.buffer.active.baseY;
-  const startRow =
-    typeof options.scrollbackLines === "number"
-      ? Math.max(0, scrollbackLines - options.scrollbackLines)
-      : 0;
-  const reusableCell = terminal.buffer.active.getNullCell();
-
-  for (let row = startRow; row < scrollbackLines; row += 1) {
-    scrollback.push(extractRow(terminal, row, reusableCell));
-  }
-
-  return scrollback;
-}
-
 function extractBufferWindow(
   terminal: HeadlessTerminalInstance,
   oldestRow: number,
@@ -290,19 +260,6 @@ function extractInputModeState(
   };
 }
 
-function extractState(
-  terminal: HeadlessTerminalInstance,
-  options: { scrollbackLines?: number },
-): TerminalState {
-  return {
-    rows: terminal.rows,
-    cols: terminal.cols,
-    grid: extractGrid(terminal),
-    scrollback: extractScrollback(terminal, options),
-    cursor: extractCursorState(terminal),
-  };
-}
-
 function extractViewportState(
   terminal: HeadlessTerminalInstance,
   coordinateEpoch: number,
@@ -379,9 +336,6 @@ export function createNativeHeadlessTerminal(
           resolve();
         });
       });
-    },
-    getState(): TerminalState {
-      return extractState(terminal, { scrollbackLines: options.scrollbackLines });
     },
     getViewportState(input?: TerminalViewportStateInput): TerminalViewportState {
       return extractViewportState(

@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { writeFile, truncate, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { build } from "esbuild";
 import { isPlatform } from "../test-utils/platform.js";
 import {
   readPaseoConfig,
@@ -20,21 +21,40 @@ import {
   writePaseoConfigForEdit,
 } from "./paseo-config-file.js";
 
+let probeDirectory: string;
+let probePath: string;
+
+beforeAll(async () => {
+  probeDirectory = mkdtempSync(join(tmpdir(), "paseo-config-probe-"));
+  probePath = join(probeDirectory, "config-responsiveness.mjs");
+  // Compile before starting the measured process. A runtime TypeScript loader
+  // owns MessagePorts that the responsiveness probe otherwise charges as work.
+  await build({
+    entryPoints: [
+      fileURLToPath(new URL("./test-fixtures/config-responsiveness.ts", import.meta.url)),
+    ],
+    outfile: probePath,
+    bundle: true,
+    platform: "node",
+    format: "esm",
+  });
+});
+
+afterAll(() => {
+  rmSync(probeDirectory, { recursive: true, force: true });
+});
+
 async function measureConfigRead(directory: string) {
-  const fixture = fileURLToPath(
-    new URL("./test-fixtures/config-responsiveness.ts", import.meta.url),
-  );
-  const { stdout, stderr } = await promisify(execFile)(
-    process.execPath,
-    ["--import", "tsx", fixture, directory],
-    { timeout: 15_000 },
-  );
+  const { stdout, stderr } = await promisify(execFile)(process.execPath, [probePath, directory], {
+    timeout: 15_000,
+  });
   process.stderr.write(stderr);
   return JSON.parse(stdout) as {
     result: Awaited<ReturnType<typeof readPaseoConfigForEdit>>;
     blockingMs: number;
     filesystemRequests: number;
     yields: number;
+    workerMessages: number;
   };
 }
 
@@ -84,7 +104,7 @@ describe("paseo config file substrate", () => {
     );
   });
 
-  it("excludes unrelated test-runner CPU from the config read budget", async () => {
+  it("excludes test-runner and loader activity from the config read budget", async () => {
     await writeFile(join(tempDir, "paseo.json"), JSON.stringify({ worktree: { setup: "npm ci" } }));
     const unrelatedWork = new Promise<void>((resolve) => {
       setImmediate(() => {
@@ -100,8 +120,10 @@ describe("paseo config file substrate", () => {
         resolve();
       });
     });
-    const { result, blockingMs, filesystemRequests } = await measureConfigRead(tempDir);
+    const { result, blockingMs, filesystemRequests, workerMessages } =
+      await measureConfigRead(tempDir);
     await unrelatedWork;
+    expect(workerMessages).toBe(0);
     expect(result).toEqual({
       ok: true,
       config: { worktree: { setup: "npm ci" } },
@@ -119,11 +141,13 @@ describe("paseo config file substrate", () => {
       worktree: { setup: "npm ci" },
     };
     await writeFile(join(tempDir, "paseo.json"), JSON.stringify(config));
-    const { result, blockingMs, filesystemRequests, yields } = await measureConfigRead(tempDir);
+    const { result, blockingMs, filesystemRequests, yields, workerMessages } =
+      await measureConfigRead(tempDir);
     expect(result).toEqual({ ok: true, config, revision: await statPaseoConfigPath(tempDir) });
     expect(blockingMs).toBeLessThan(20);
     expect(filesystemRequests).toBeGreaterThan(0);
     expect(yields).toBeGreaterThan(0);
+    expect(workerMessages).toBe(0);
   });
 
   it("rejects a 32MiB config with main-thread work below 20ms", async () => {
@@ -131,9 +155,11 @@ describe("paseo config file substrate", () => {
       join(tempDir, "paseo.json"),
       JSON.stringify({ extra: "x".repeat(32 * 1024 * 1024) }),
     );
-    const { result, blockingMs, filesystemRequests } = await measureConfigRead(tempDir);
+    const { result, blockingMs, filesystemRequests, workerMessages } =
+      await measureConfigRead(tempDir);
     expect(blockingMs).toBeLessThan(20);
     expect(filesystemRequests).toBeGreaterThan(0);
+    expect(workerMessages).toBe(0);
     expect(result).toEqual({ ok: false, error: { code: "invalid_project_config" } });
   });
 

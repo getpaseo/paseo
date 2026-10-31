@@ -536,7 +536,6 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
   const repositoryRoot = fileURLToPath(new URL("../../../../", import.meta.url));
   const source = `
     import assert from 'node:assert/strict';
-    import { measureMainThreadWork } from './packages/server/src/test-utils/main-thread-work.ts';
     import { write } from 'node:fs';
     import { mkdtemp, mkdir, writeFile, symlink, rm } from 'node:fs/promises';
     import { tmpdir } from 'node:os';
@@ -580,17 +579,36 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
       const events = Array.from({ length: process.env.GIT_IO_TRACE ? 2 : 10000 }, (_, i) => ({ type: 'update', path: join(i % 2 ? alias : worktree, 'ignored', 'noise') }));
       let fsCalls = 0;
       const hook = createHook({ init(_id, type) { if (type.startsWith('FSREQ')) fsCalls++; } });
+      // Collect repository setup and event-fixture garbage before measuring
+      // the cold filter. Allocations made by the filter still count.
+      global.gc();
       await tick();
-      const { blockingMs } = await measureMainThreadWork('Git filter main-thread work', async () => {
-        await marker('FILTER_START');
-        hook.enable();
-        try {
-          callback(null, events);
-        } finally {
-          hook.disable();
-          await marker('FILTER_END');
+      // Unrelated callbacks must not consume the synchronous filter's budget.
+      const threadCpuUsage = Reflect.get(process, 'threadCpuUsage');
+      const unrelatedWork = tick().then(() => {
+        const started = threadCpuUsage();
+        while (true) {
+          const cpu = threadCpuUsage(started);
+          if (cpu.user + cpu.system >= 80000) break;
         }
       });
+      await marker('FILTER_START');
+      hook.enable();
+      let blockingMs;
+      try {
+        // This callback is synchronous: measure its own span, without waiting
+        // for marker IO, loader messages or other event-loop callbacks.
+        const startedAt = performance.now();
+        const startedCpu = threadCpuUsage();
+        callback(null, events);
+        const cpu = threadCpuUsage(startedCpu);
+        // Cap coarse Windows CPU accounting by elapsed time; exclude descheduling.
+        blockingMs = Math.min(performance.now() - startedAt, (cpu.user + cpu.system) / 1000);
+      } finally {
+        hook.disable();
+        await marker('FILTER_END');
+      }
+      await unrelatedWork;
       assert.equal(fsCalls, 0, "filesystem calls");
       assert.equal(notifications, 0, "ignored event notification");
       assert.ok(blockingMs < 20, 'blocking filter work: ' + blockingMs);
@@ -614,6 +632,7 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
     const { stdout, stderr } = await promisify(execFile)(
       process.execPath,
       [
+        "--expose-gc",
         "--import",
         "tsx",
         ...(tracing ? ["--trace-sync-io"] : []),
@@ -634,7 +653,9 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
       const output = stderr.split(`${phase}_START\n`)[1]?.split(`${phase}_END\n`)[0];
       expect(output, `${phase}: synchronous filesystem IO`).toBe("");
     }
-    expect(JSON.parse(stdout.trim().split("\n")[0])).toMatchObject({ fsCalls: 0 });
+    const measurement = JSON.parse(stdout.trim().split("\n")[0]);
+    console.info("Git filter budget", { tracing, ...measurement });
+    expect(measurement).toMatchObject({ fsCalls: 0 });
   }
 }, 60_000);
 
