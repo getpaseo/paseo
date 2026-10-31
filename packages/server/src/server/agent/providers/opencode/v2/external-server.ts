@@ -25,8 +25,12 @@ export function resolveExternalOpenCodeServer(
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(`${EXTERNAL_SERVER_URL_ENV} must use http or https, received "${rawUrl}"`);
   }
+  if (url.username || url.password)
+    throw new Error(
+      `${EXTERNAL_SERVER_URL_ENV} must not contain credentials; use ${EXTERNAL_SERVER_PASSWORD_ENV}`,
+    );
 
-  const password = env?.[EXTERNAL_SERVER_PASSWORD_ENV]?.trim();
+  const password = env?.[EXTERNAL_SERVER_PASSWORD_ENV];
   return {
     url: url.toString().replace(/\/$/, ""),
     ...(password ? { password } : {}),

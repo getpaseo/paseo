@@ -8,7 +8,7 @@ import {
 } from "./configuration.js";
 import { commands } from "./commands.js";
 
-import { waitForLocationReady, awaitPaseoPlugin } from "./readiness.js";
+import { waitForLocationReady } from "./readiness.js";
 
 import type { SessionInfo } from "@opencode/client";
 
@@ -40,7 +40,7 @@ import { importSessionFromPersistence } from "../../../provider-session-import.j
 import type { OpenCodeBridge } from "../bridge.js";
 import { resolveOpenCodeHomeDir } from "../paths.js";
 import { V2Runtime, type V2Connection } from "./runtime.js";
-import { resolveExternalOpenCodeServer } from "./external-server.js";
+import type { OpenCodeServiceSelection } from "./service-selection.js";
 import { modelRef, modesFromV2, modelsFromV2 } from "./mapping.js";
 
 interface V2AgentOptions {
@@ -49,6 +49,7 @@ interface V2AgentOptions {
   managedProcesses?: ManagedProcessRegistry;
   bridge?: OpenCodeBridge;
   runtime?: Pick<V2Runtime, "acquire" | "shutdown">;
+  selection?: OpenCodeServiceSelection;
 }
 
 export class OpenCodeV2AgentClient implements AgentClient {
@@ -56,21 +57,13 @@ export class OpenCodeV2AgentClient implements AgentClient {
   readonly capabilities: AgentCapabilityFlags;
   private readonly runtime: Pick<V2Runtime, "acquire" | "shutdown">;
   private readonly connections = new Map<string, V2Connection>();
-  private readonly usesExternalServer: boolean;
   constructor(private readonly options: V2AgentOptions) {
-    this.usesExternalServer = Boolean(
-      resolveExternalOpenCodeServer({
-        ...globalThis.process.env,
-        ...options.settings?.env,
-      }),
-    );
-    const bridge = this.usesExternalServer ? undefined : options.bridge;
+    const bridge = options.bridge;
     this.capabilities = { ...V2_CAPABILITIES, supportsNativePaseoTools: Boolean(bridge) };
     this.runtime =
       options.runtime ??
       new V2Runtime({
         ...options,
-        decorateEnv: bridge ? (env) => bridge.decorateV2ServerEnv(env) : undefined,
       });
   }
   async isAvailable() {
@@ -94,6 +87,10 @@ export class OpenCodeV2AgentClient implements AgentClient {
       await activity("plugin.list", () =>
         waitForLocationReady({ client: connection.client, location, signal: request.signal }),
       );
+      if (options.force)
+        await activity("paseo.bridge.refresh", () =>
+          connection.refreshLocation(location.directory, request.signal),
+        );
       const [models, agents, providers] = await Promise.all([
         activity("model.list", () => connection.client.model.list({ location }, request)),
         activity("agent.list", () => connection.client.agent.list({ location }, request)),
@@ -172,7 +169,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
         requiresDedicatedV2Server(config, launch) ? { env: launch?.env, dedicated: true } : {},
       );
     let ownedConnection = connection;
-    const bridge = this.usesExternalServer ? undefined : this.options.bridge;
+    const bridge = this.options.bridge;
     const unbind = bridge?.bindSession({
       sessionId: info.id,
       env: launch?.env ?? {},
@@ -214,10 +211,6 @@ export class OpenCodeV2AgentClient implements AgentClient {
       moved,
     );
     try {
-      if (bridge) {
-        const location = { directory: config.cwd };
-        await awaitPaseoPlugin({ client: connection.client, location });
-      }
       await session.initialize(
         launch?.env
           ? createProviderEnv({ runtimeSettings: this.options.settings, overlays: [launch.env] })

@@ -25,9 +25,18 @@ describe("resolveExternalOpenCodeServer", () => {
     expect(
       resolveExternalOpenCodeServer({
         [EXTERNAL_SERVER_URL_ENV]: "https://opencode.example.com",
-        [EXTERNAL_SERVER_PASSWORD_ENV]: "   ",
+        [EXTERNAL_SERVER_PASSWORD_ENV]: "",
       }),
     ).toEqual({ url: "https://opencode.example.com" });
+  });
+
+  test("preserves spaces in the password", () => {
+    expect(
+      resolveExternalOpenCodeServer({
+        [EXTERNAL_SERVER_URL_ENV]: "https://opencode.example.com",
+        [EXTERNAL_SERVER_PASSWORD_ENV]: " secret ",
+      }),
+    ).toEqual({ url: "https://opencode.example.com", password: " secret " });
   });
 
   test("rejects relative and non-HTTP URLs", () => {
@@ -39,5 +48,13 @@ describe("resolveExternalOpenCodeServer", () => {
     ).toThrow(
       `${EXTERNAL_SERVER_URL_ENV} must use http or https, received "unix:/tmp/opencode.sock"`,
     );
+  });
+
+  test("rejects credentials embedded in URLs", () => {
+    expect(() =>
+      resolveExternalOpenCodeServer({
+        [EXTERNAL_SERVER_URL_ENV]: "https://user:password@opencode.example.com",
+      }),
+    ).toThrow("must not contain credentials");
   });
 });
