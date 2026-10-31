@@ -1,3 +1,4 @@
+import { createElement, type ComponentType } from "react";
 import { lightHighlightColors } from "@getpaseo/highlight";
 
 const testTheme = {
@@ -93,7 +94,19 @@ export const StyleSheet = {
     isStyleFactory(styles) ? styles(testTheme) : styles,
 };
 
-export const withUnistyles = <T>(Component: T): T => Component;
+/**
+ * Like the real HOC, the theme-derived props go under the caller's own props, so a themed
+ * control (the switch track, for one) gets real colors in a browser test.
+ */
+export function withUnistyles<P extends object>(
+  Component: ComponentType<P>,
+  mappings?: (theme: typeof testTheme, runtime: typeof UnistylesRuntime) => Partial<P>,
+): ComponentType<P> {
+  if (!mappings) return Component;
+  return function WithTestTheme(props: P) {
+    return createElement(Component, { ...mappings(testTheme, UnistylesRuntime), ...props });
+  };
+}
 
 export const useUnistyles = () => ({
   theme: testTheme,

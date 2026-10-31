@@ -189,3 +189,18 @@ describe("normalizeBrowserIndexState", () => {
     ).toEqual({ mode: "responsive" });
   });
 });
+
+it("rejects an unknown persisted browser field instead of preserving the tabs", () => {
+  const record = createBrowserRecord({
+    browserId: "profile-compat",
+    initialUrl: "http://intranet",
+    now: 0,
+  });
+  expect(
+    normalizeBrowserIndexState({
+      browsersById: {
+        [record.browserId]: { ...record, partition: "persist:paseo-browser-via-host" },
+      },
+    }),
+  ).toEqual({ browsersById: {} });
+});
