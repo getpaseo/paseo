@@ -2430,6 +2430,11 @@ export const zhCN: TranslationResources = {
       },
     },
     appearance: {
+      tabTitles: {
+        title: "页签标题",
+        hint: "Workspace 页签列表中标题的最大行数。",
+        options: { 0: "不限", 2: "2 行", 3: "3 行" },
+      },
       theme: {
         title: "主题",
         accessibilityLabel: "主题：{{value}}",

@@ -1,10 +1,16 @@
-import { memo, useCallback, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Keyboard, Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { SquarePen, SquareTerminal } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { DraggableList, type DraggableRenderItemInfo } from "@/components/draggable-list";
+import { useAppSettings } from "@/hooks/use-settings";
+import { useSessionStore } from "@/stores/session-store";
+import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { buildWorkspaceTabAgentDetails } from "../workspace-tab-agent-details";
+import { isNative } from "@/constants/platform";
 import { Button } from "@/components/ui/button";
-import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
+import { Combobox } from "@/components/ui/combobox";
 import { useIconButtonChromeStyle } from "@/components/ui/icon-button-chrome";
 import {
   WorkspaceTabPresentationResolver,
@@ -69,65 +75,13 @@ function getFallbackTabOptionLabel(
   return labels.agent;
 }
 
-function getFallbackTabOptionDescription(
-  tab: WorkspaceTabDescriptor,
-  labels: {
-    newTab: string;
-    newAgent: string;
-    workspaceSetup: string;
-    agent: string;
-    terminal: string;
-    browser: string;
-    changes: string;
-    files: string;
-    pullRequest: string;
-  },
-): string {
-  if (tab.target.kind === "new_tab") {
-    return labels.newTab;
-  }
-  if (tab.target.kind === "draft") {
-    return labels.newAgent;
-  }
-  if (tab.target.kind === "setup") {
-    return labels.workspaceSetup;
-  }
-  if (tab.target.kind === "agent") {
-    return labels.agent;
-  }
-  if (tab.target.kind === "terminal") {
-    return labels.terminal;
-  }
-  if (tab.target.kind === "browser") {
-    return labels.browser;
-  }
-  if (tab.target.kind === "provider_subagent") {
-    return labels.agent;
-  }
-  if (tab.target.kind === "commit_diff") {
-    return tab.target.sha.slice(0, 7);
-  }
-  if (tab.target.kind === "working_diff" || tab.target.kind === "changes_tree") {
-    return labels.changes;
-  }
-  if (tab.target.kind === "files") {
-    return labels.files;
-  }
-  if (tab.target.kind === "pull_request") {
-    return labels.pullRequest;
-  }
-  if (tab.target.kind === "plugin") {
-    return tab.target.panelId;
-  }
-  return tab.target.path;
-}
-
 interface MobileWorkspaceTabSwitcherProps {
   tabs: WorkspaceTabDescriptor[];
   activeTabKey: string;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
   onSelectSwitcherTab: (key: string) => void;
+  onReorderTabs: (tabs: WorkspaceTabDescriptor[]) => void;
   createTerminalDisabled: boolean;
   onCreateDraftTab: () => void;
   onCreateTerminal: () => void;
@@ -152,6 +106,10 @@ function MobileWorkspaceTabOption({
   selected,
   active,
   onPress,
+  onLongPress,
+  titleNumberOfLines,
+  details,
+  dragging,
   onCopyResumeCommand,
   onCopyAgentId,
   onCopyTerminalId,
@@ -170,7 +128,11 @@ function MobileWorkspaceTabOption({
   normalizedWorkspaceId: string;
   selected: boolean;
   active: boolean;
-  onPress: () => void;
+  onPress: (key: string) => void;
+  onLongPress: () => void;
+  titleNumberOfLines: number;
+  details: string | undefined;
+  dragging: boolean;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
@@ -183,6 +145,7 @@ function MobileWorkspaceTabOption({
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
 }) {
   const { t } = useTranslation();
+  const handlePress = useCallback(() => onPress(tab.key), [onPress, tab.key]);
   const tabMenuLabels = useMemo<WorkspaceTabMenuLabels>(
     () => ({
       copyResumeCommand: t("workspace.tabs.menu.copyResumeCommand"),
@@ -258,11 +221,27 @@ function MobileWorkspaceTabOption({
         presentation={presentation}
         selected={selected}
         active={active}
-        onPress={onPress}
+        onPress={handlePress}
+        onLongPress={onLongPress}
+        titleNumberOfLines={titleNumberOfLines}
+        details={details}
+        // Disabled DOM buttons swallow mouseup before dnd-kit's document listener receives it.
+        disabled={dragging && isNative}
+        testID={`workspace-tab-option-${tab.tabId}`}
         trailingAccessory={trailingAccessory}
       />
     ),
-    [selected, active, onPress, trailingAccessory],
+    [
+      selected,
+      active,
+      handlePress,
+      onLongPress,
+      titleNumberOfLines,
+      details,
+      dragging,
+      tab.tabId,
+      trailingAccessory,
+    ],
   );
 
   return (
@@ -282,6 +261,7 @@ export const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitch
   normalizedServerId,
   normalizedWorkspaceId,
   onSelectSwitcherTab,
+  onReorderTabs,
   createTerminalDisabled,
   onCreateDraftTab,
   onCreateTerminal,
@@ -297,43 +277,44 @@ export const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitch
   onCloseOtherTabs,
 }: MobileWorkspaceTabSwitcherProps) {
   const { t } = useTranslation();
-  const tabFallbackLabels = useMemo(
-    () => ({
-      newTab: t("workspace.tabs.actions.newTab"),
-      newAgent: t("workspace.tabs.fallback.newAgent"),
-      setup: t("workspace.tabs.fallback.setup"),
-      workspaceSetup: t("workspace.tabs.fallback.workspaceSetup"),
-      terminal: t("workspace.tabs.fallback.terminal"),
-      browser: t("workspace.tabs.fallback.browser"),
-      agent: t("workspace.tabs.fallback.agent"),
-      changes: t("panels.diff.changesLabel"),
-      files: t("panels.files.label"),
-      pullRequest: t("panels.pullRequest.label"),
-    }),
-    [t],
-  );
-
-  const tabSwitcherOptions = useMemo(
-    () =>
-      tabs.map((tab) => ({
-        id: tab.key,
-        label: getFallbackTabOptionLabel(tab, tabFallbackLabels),
-        description: getFallbackTabOptionDescription(tab, tabFallbackLabels),
-      })),
-    [tabFallbackLabels, tabs],
-  );
-
-  const tabByKey = useMemo(() => new Map(tabs.map((tab) => [tab.key, tab])), [tabs]);
+  const { settings } = useAppSettings();
+  const agents = useSessionStore((state) => state.sessions[normalizedServerId]?.agents);
+  const cwd = useMemo(() => {
+    for (const tab of tabs) {
+      if (tab.target.kind === "agent") return agents?.get(tab.target.agentId)?.cwd;
+    }
+    return undefined;
+  }, [agents, tabs]);
   const triggerStyle = useIconButtonChromeStyle({ size: "large" });
   const [isOpen, setIsOpen] = useState(false);
+  const { entries } = useProvidersSnapshot(normalizedServerId, { cwd, enabled: isOpen });
   const anchorRef = useRef<View>(null);
-  const tabIndexByKey = useMemo(() => {
-    const map = new Map<string, number>();
-    tabs.forEach((tab, index) => {
-      map.set(tab.key, index);
-    });
-    return map;
-  }, [tabs]);
+  const [now, setNow] = useState(Date.now);
+  const hasRunningTabs = tabs.some(
+    (tab) => tab.target.kind === "agent" && agents?.get(tab.target.agentId)?.turn.phase === "open",
+  );
+  useEffect(() => {
+    if (!isOpen || !hasRunningTabs) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [isOpen, hasRunningTabs]);
+  const detailsByKey = useMemo(() => {
+    const details = new Map<string, string>();
+    for (const tab of tabs) {
+      if (tab.target.kind !== "agent") continue;
+      const agent = agents?.get(tab.target.agentId);
+      if (agent) details.set(tab.key, buildWorkspaceTabAgentDetails({ agent, entries, now }));
+    }
+    return details;
+  }, [agents, entries, now, tabs]);
+  const handleSelectTab = useCallback(
+    (key: string) => {
+      setIsOpen(false);
+      onSelectSwitcherTab(key);
+    },
+    [onSelectSwitcherTab],
+  );
 
   const handleOpenSwitcher = useCallback(() => {
     Keyboard.dismiss();
@@ -378,54 +359,40 @@ export const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitch
   );
 
   const renderTabOption = useCallback(
-    ({
-      option,
-      selected,
-      active,
-      onPress,
-    }: {
-      option: ComboboxOption;
-      selected: boolean;
-      active: boolean;
-      onPress: () => void;
-    }) => {
-      const tab = tabByKey.get(option.id);
-      if (!tab) {
-        return <View />;
-      }
-      const tabIndex = tabIndexByKey.get(tab.key) ?? -1;
-      if (tabIndex < 0) {
-        return <View />;
-      }
-      return (
-        <MobileWorkspaceTabOption
-          tab={tab}
-          tabIndex={tabIndex}
-          tabCount={tabs.length}
-          normalizedServerId={normalizedServerId}
-          normalizedWorkspaceId={normalizedWorkspaceId}
-          selected={selected}
-          active={active}
-          onPress={onPress}
-          onCopyResumeCommand={onCopyResumeCommand}
-          onCopyAgentId={onCopyAgentId}
-          onCopyTerminalId={onCopyTerminalId}
-          onCopyFilePath={onCopyFilePath}
-          onReloadAgent={onReloadAgent}
-          onRenameTab={onRenameTab}
-          onCloseTab={onCloseTab}
-          onCloseTabsAbove={onCloseTabsAbove}
-          onCloseTabsBelow={onCloseTabsBelow}
-          onCloseOtherTabs={onCloseOtherTabs}
-        />
-      );
-    },
+    ({ item: tab, index, drag, isActive }: DraggableRenderItemInfo<WorkspaceTabDescriptor>) => (
+      <MobileWorkspaceTabOption
+        tab={tab}
+        tabIndex={index}
+        tabCount={tabs.length}
+        normalizedServerId={normalizedServerId}
+        normalizedWorkspaceId={normalizedWorkspaceId}
+        selected={tab.key === activeTabKey}
+        active={isActive}
+        dragging={isActive}
+        onPress={handleSelectTab}
+        onLongPress={drag}
+        titleNumberOfLines={settings.workspaceTabTitleLines}
+        details={detailsByKey.get(tab.key)}
+        onCopyResumeCommand={onCopyResumeCommand}
+        onCopyAgentId={onCopyAgentId}
+        onCopyTerminalId={onCopyTerminalId}
+        onCopyFilePath={onCopyFilePath}
+        onReloadAgent={onReloadAgent}
+        onRenameTab={onRenameTab}
+        onCloseTab={onCloseTab}
+        onCloseTabsAbove={onCloseTabsAbove}
+        onCloseTabsBelow={onCloseTabsBelow}
+        onCloseOtherTabs={onCloseOtherTabs}
+      />
+    ),
     [
-      tabByKey,
-      tabIndexByKey,
       tabs.length,
       normalizedServerId,
       normalizedWorkspaceId,
+      activeTabKey,
+      handleSelectTab,
+      settings.workspaceTabTitleLines,
+      detailsByKey,
       onCopyResumeCommand,
       onCopyAgentId,
       onCopyTerminalId,
@@ -456,23 +423,43 @@ export const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitch
       </Pressable>
 
       <Combobox
-        options={tabSwitcherOptions}
+        options={[]}
         value={activeTabKey}
-        onSelect={onSelectSwitcherTab}
+        onSelect={handleSelectTab}
         searchable={false}
         title={t("workspace.tabs.switcher.title")}
         searchPlaceholder={t("workspace.tabs.switcher.searchPlaceholder")}
         open={isOpen}
         onOpenChange={setIsOpen}
         anchorRef={anchorRef}
-        renderOption={renderTabOption}
+        forceSheet={isNative}
+        mobileChildrenScrollEnabled={false}
+        desktopChildrenScrollEnabled={false}
         footer={footer}
-      />
+      >
+        <DraggableList
+          testID="workspace-tab-switcher-list"
+          data={tabs}
+          keyExtractor={tabKeyExtractor}
+          renderItem={renderTabOption}
+          onDragEnd={onReorderTabs}
+          extraData={renderTabOption}
+          gestureHostPresented={isOpen}
+          contentContainerStyle={styles.tabListContent}
+        />
+      </Combobox>
     </>
   );
 });
 
+function tabKeyExtractor(tab: WorkspaceTabDescriptor): string {
+  return tab.key;
+}
+
 const styles = StyleSheet.create((theme) => ({
+  tabListContent: {
+    paddingHorizontal: theme.spacing[2],
+  },
   tabSwitcherFooter: {
     flexDirection: "row",
     gap: theme.spacing[3],

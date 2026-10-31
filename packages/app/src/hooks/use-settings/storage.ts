@@ -93,6 +93,8 @@ export interface AppSettings {
   contentMaxWidth: number | null;
   syntaxTheme: SyntaxThemeId; // default "one"
   workspaceTitleSource: WorkspaceTitleSource;
+  /** Maximum title lines in the tab switcher; 0 shows the full title. */
+  workspaceTabTitleLines: 0 | 2 | 3;
   sidebarWorkspaceTrailing: SidebarWorkspaceTrailing;
   sidebarRowItems: SidebarRowItems;
   sidebarChecksDisplay: SidebarChecksDisplay;
@@ -153,6 +155,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   contentMaxWidth: null,
   syntaxTheme: "one",
   workspaceTitleSource: "title",
+  workspaceTabTitleLines: 3,
   sidebarWorkspaceTrailing: "timestamp",
   sidebarRowItems: DEFAULT_SIDEBAR_ROW_ITEMS,
   sidebarChecksDisplay: DEFAULT_SIDEBAR_CHECKS_DISPLAY,
@@ -247,6 +250,7 @@ const StoredAppSettingsSchema = z
       .catch(null),
     syntaxTheme: z.string().refine(isSyntaxThemeId).catch("one"),
     workspaceTitleSource: z.enum(["title", "branch"]).catch("title"),
+    workspaceTabTitleLines: z.union([z.literal(0), z.literal(2), z.literal(3)]).catch(3),
     sidebarWorkspaceTrailing: z.enum(["diff", "timestamp", "none"]).catch("timestamp"),
     sidebarRowItems: SidebarRowItemsSchema,
     sidebarChecksDisplay: z

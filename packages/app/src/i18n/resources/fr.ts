@@ -2510,6 +2510,11 @@ export const fr: TranslationResources = {
       },
     },
     appearance: {
+      tabTitles: {
+        title: "Titres des onglets",
+        hint: "Nombre maximal de lignes du titre dans la liste des onglets de l’espace de travail.",
+        options: { 0: "Illimité", 2: "2 lignes", 3: "3 lignes" },
+      },
       theme: {
         title: "Thème",
         accessibilityLabel: "Thème : {{value}}",

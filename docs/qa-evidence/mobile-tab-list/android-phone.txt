@@ -1,0 +1,3 @@
+BEFORE [('workspace-tab-option-agent_443cb2b1-9cff-4662-9224-14e09dc867c5', '[43,1119][945,1366]'), ('workspace-tab-option-agent_c87a1dfd-eabe-4616-ad78-ca8344d0a644', '[43,1398][882,1645]'), ('workspace-tab-option-agent_7d3841c6-7e98-4908-b0ad-27fb978d06ba', '[43,1677][945,1924]')]
+AFTER [('workspace-tab-option-agent_c87a1dfd-eabe-4616-ad78-ca8344d0a644', '[43,1119][882,1366]'), ('workspace-tab-option-agent_443cb2b1-9cff-4662-9224-14e09dc867c5', '[43,1398][945,1645]'), ('workspace-tab-option-agent_7d3841c6-7e98-4908-b0ad-27fb978d06ba', '[43,1677][945,1924]')]
+PASS phone-final native drag and reopen order

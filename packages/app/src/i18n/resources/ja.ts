@@ -2476,6 +2476,11 @@ export const ja: TranslationResources = {
       },
     },
     appearance: {
+      tabTitles: {
+        title: "タブのタイトル",
+        hint: "ワークスペースのタブ一覧で表示するタイトルの最大行数。",
+        options: { 0: "制限なし", 2: "2 行", 3: "3 行" },
+      },
       theme: {
         title: "テーマ",
         accessibilityLabel: "テーマ: {{value}}",

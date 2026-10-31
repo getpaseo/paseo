@@ -2510,6 +2510,11 @@ export const es: TranslationResources = {
       },
     },
     appearance: {
+      tabTitles: {
+        title: "Títulos de pestañas",
+        hint: "Número máximo de líneas del título en la lista de pestañas del espacio de trabajo.",
+        options: { 0: "Sin límite", 2: "2 líneas", 3: "3 líneas" },
+      },
       theme: {
         title: "Tema",
         accessibilityLabel: "Tema:{{value}}",

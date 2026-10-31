@@ -2469,6 +2469,11 @@ export const ko: TranslationResources = {
       },
     },
     appearance: {
+      tabTitles: {
+        title: "탭 제목",
+        hint: "워크스페이스 탭 목록에서 제목의 최대 줄 수입니다.",
+        options: { 0: "제한 없음", 2: "2줄", 3: "3줄" },
+      },
       theme: {
         title: "테마",
         accessibilityLabel: "테마: {{value}}",
