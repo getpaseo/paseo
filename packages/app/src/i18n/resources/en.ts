@@ -368,6 +368,11 @@ export const en = {
       insertAndSend: "Insert transcription and send",
       failed: "Dictation failed: {{error}}",
       failedRetry: "Dictation failed. Tap retry.",
+      empty: {
+        noAudio: "No audio was recorded. Is another app using the microphone?",
+        silentAudio: "Only silence was recorded. Check your microphone.",
+        noSpeech: "No speech was recognized. Tap retry to try again.",
+      },
     },
     question: {
       responseFailed: "Could not send your response. Try again.",
