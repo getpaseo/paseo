@@ -31,7 +31,7 @@ import {
 import { HostPicker } from "@/components/hosts/host-picker";
 import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/display-preferences/menu";
 import { SidebarSeparator } from "@/components/sidebar/sidebar-separator";
-import { SidebarNavRows } from "@/components/sidebar/sidebar-nav-rows";
+import { ResizableSidebarNav } from "@/components/sidebar/resizable-sidebar-nav";
 import { SidebarFooterIconHighlight } from "@/components/sidebar/sidebar-footer-icon-highlight";
 import { SidebarHelpMenu } from "@/components/sidebar/sidebar-help-menu";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
@@ -533,7 +533,6 @@ function MobileSidebar({
 }: MobileSidebarProps) {
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const { gesture: closeGesture, gestureRef: closeGestureRef } = useCloseAgentListGesture();
-
   const handleWorkspacePress = useCallback(() => {
     closeSidebar();
   }, [closeSidebar]);
@@ -568,7 +567,7 @@ function MobileSidebar({
     >
       <View style={styles.sidebarContent} pointerEvents="auto">
         <WindowChromeSafeArea placement="below" />
-        <SidebarNavRows
+        <ResizableSidebarNav
           style={styles.sidebarHeaderGroup}
           onBeforeNavigate={closeSidebar}
           firstRowTrailing={closeButton}
@@ -753,7 +752,7 @@ function DesktopSidebar({
           ) : (
             <TitlebarDragRegion />
           )}
-          <SidebarNavRows style={sidebarHeaderGroupStyle} />
+          <ResizableSidebarNav style={sidebarHeaderGroupStyle} />
         </View>
 
         {isInitialLoad && !hasActiveHostFilter ? (
