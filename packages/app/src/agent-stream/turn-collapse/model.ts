@@ -42,16 +42,42 @@ const EMPTY_TURNS: ReadonlyMap<string, CollapsedTurn> = new Map();
 const EMPTY_IDS: ReadonlySet<string> = new Set();
 const EMPTY_HOSTS: ReadonlyMap<string, string> = new Map();
 
+interface SummarizedTurn {
+  sources: readonly (StreamItem | readonly StreamItem[] | undefined)[];
+  summary: TurnSummary;
+}
+
+// Every tail change re-folds the whole history; closed turns keep their rows and grouped
+// call arrays, so their summaries are reused instead of recounted.
+const summarizedTurnsByHost = new WeakMap<StreamItem, SummarizedTurn>();
+
 function summarizeTurn(
+  host: StreamItem,
   items: readonly StreamItem[],
   getGroupedCalls: CollapseTurnsInput["getGroupedCalls"],
 ): TurnSummary {
+  const sources: (StreamItem | readonly StreamItem[] | undefined)[] = [];
+  for (const item of items) {
+    sources.push(item);
+    if (item.kind === "tool_call" || item.kind === "thought")
+      sources.push(getGroupedCalls(item.id));
+  }
+  const cached = summarizedTurnsByHost.get(host);
+  if (
+    cached &&
+    cached.sources.length === sources.length &&
+    cached.sources.every((source, index) => source === sources[index])
+  ) {
+    return cached.summary;
+  }
   const calls: (ToolCallItem | ThoughtItem)[] = [];
   for (const item of items) {
     if ((item.kind === "tool_call" || item.kind === "thought") && !isTurnTrigger(item))
       calls.push(...(getGroupedCalls(item.id) ?? [item]));
   }
-  return { tools: summarizeToolCalls(calls) };
+  const summary = { tools: summarizeToolCalls(calls) };
+  summarizedTurnsByHost.set(host, { sources, summary });
+  return summary;
 }
 
 function hasWork(summary: TurnSummary): boolean {
@@ -99,7 +125,7 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
       return;
     }
     const folded = tail.slice(runStart, replyIndex);
-    const summary = summarizeTurn(folded, input.getGroupedCalls);
+    const summary = summarizeTurn(host, folded, input.getGroupedCalls);
     if (!hasWork(summary) && !folded.some((item) => item.kind === "assistant_message")) {
       output.push(...tail.slice(runStart, runEnd));
       return;
