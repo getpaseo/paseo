@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { splitStreamingMarkdown } from "./streaming";
+import { createStreamingMarkdownSplitter, splitStreamingMarkdown } from "./streaming";
 
 describe("native streaming Markdown", () => {
   it("keeps completed messages together for selection", () => {
@@ -68,4 +68,37 @@ describe("native streaming Markdown", () => {
     }
     expect(previous).toBeGreaterThan(1000);
   }, 15000);
+  it("finds the same boundary incrementally as a full parse of every prefix", () => {
+    const fixture = readFileSync(new URL("./streaming.fixture.md", import.meta.url), "utf8");
+    const sources = [
+      fixture,
+      "Intro.\n\n[label]\n\nNext.\n\n[label]: /target\n\nEnd.\n",
+      "Intro.\n\n- one\n\n  continued\n\nAfter.\n\n<div>\nbody\n</div>\n\nTail.\n",
+    ];
+    for (const source of sources) {
+      const split = createStreamingMarkdownSplitter();
+      for (let end = 0; end <= source.length; end++) {
+        const text = source.slice(0, end);
+        const completeLines = text.slice(0, text.lastIndexOf("\n") + 1);
+        expect(split(completeLines), `prefix ${end}`).toBe(
+          splitStreamingMarkdown(completeLines, true).head.length,
+        );
+      }
+    }
+  }, 15000);
+  it("parses only the source after the settled head", () => {
+    const split = createStreamingMarkdownSplitter();
+    const blocks = Array.from({ length: 200 }, (_, index) => `Paragraph ${index}.\n\n`);
+    split(blocks.join(""));
+    const settled = split(`${blocks.join("")}Next.\n\n`);
+    expect(settled).toBe(blocks.join("").length);
+    expect(splitStreamingMarkdown(`${blocks.join("")}Next.\n\n`, true, settled).head.length).toBe(
+      settled,
+    );
+  });
+  it("starts over when the source no longer extends the settled head", () => {
+    const split = createStreamingMarkdownSplitter();
+    expect(split("First.\n\nSecond.\n")).toBe("First.\n\n".length);
+    expect(split("Other.\n\nText.\n")).toBe("Other.\n\n".length);
+  });
 });
