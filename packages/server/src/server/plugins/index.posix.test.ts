@@ -288,6 +288,35 @@ describe("PluginService", () => {
     expect(await provider.getCatalogCacheKey!({ scope: "global" })).toBeUndefined();
   });
 
+  it("carries a provider's resolved command across the plugin process", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const directory = await createPlugin(
+      "provider-resolve-command",
+      `export default function contribute(server) {
+      server.registerProvider({ id: "plugin-agent", label: "Plugin agent",
+        async resolveCommand() { return ["/plugin/owned/zcode", "app-server", "--stdio"]; },
+        async connect() { throw new Error("not opened by this test"); },
+      });
+      return () => {};
+    }`,
+    );
+    const service = createService(home);
+    await service.start();
+    try {
+      await service.installDirectory({ path: directory });
+      const [registration] = service.getProviderRegistrations();
+      expect(registration).toMatchObject({ id: "plugin-agent" });
+      await expect(registration!.resolveCommand!()).resolves.toEqual([
+        "/plugin/owned/zcode",
+        "app-server",
+        "--stdio",
+      ]);
+    } finally {
+      await service.stopAllPlugins();
+    }
+  });
+
   it("publishes provider registrations only while their plugin is running", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
     roots.push(home);

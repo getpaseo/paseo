@@ -2,6 +2,7 @@ import { PluginAgentTools } from "./agent-tools.js";
 import { PluginHookHandlers } from "./lifecycle/index.js";
 import { evaluateBundle } from "./bundle-evaluator.js";
 import {
+  isResolvedCommand,
   PluginProcessRequestSchema,
   type PluginProcessMessage,
   type PluginProcessRequest,
@@ -129,6 +130,8 @@ export function createPluginWorker(options: {
     }
     if (provider.status !== undefined && typeof provider.status !== "function")
       throw new Error(`Invalid status callback for plugin provider ${id}`);
+    if (provider.resolveCommand !== undefined && typeof provider.resolveCommand !== "function")
+      throw new Error(`Invalid command resolution callback for plugin provider ${id}`);
     if (
       provider.command !== undefined &&
       (provider.command.length === 0 ||
@@ -164,6 +167,7 @@ export function createPluginWorker(options: {
       requiresConfiguration: provider.requiresConfiguration,
       hasCatalogCacheKey: provider.getCatalogCacheKey !== undefined,
       hasStatus: provider.status !== undefined,
+      hasResolveCommand: provider.resolveCommand !== undefined,
       command: provider.command,
     };
   }
@@ -364,6 +368,7 @@ export function createPluginWorker(options: {
     if (
       message.type === "provider.status" ||
       message.type === "provider.catalog_key" ||
+      message.type === "provider.resolve_command" ||
       message.type === "usage.fetch" ||
       message.type === "usage.discover"
     ) {
@@ -422,6 +427,55 @@ export function createPluginWorker(options: {
     return false;
   }
 
+  function handleProviderRequest(
+    message: PluginProcessRequest,
+  ): message is Extract<
+    PluginProcessRequest,
+    { type: "provider.status" | "provider.catalog_key" | "provider.resolve_command" }
+  > {
+    if (message.type === "provider.status") {
+      void (async () => {
+        const provider = providers.get(message.providerId);
+        if (!provider || !provider.status)
+          throw new Error(`Provider has no status capability: ${message.providerId}`);
+        const output = ProviderStatusSchema.parse(await provider.status(message.request));
+        send({ type: "result", requestId: message.requestId, output });
+      })().catch((error) =>
+        send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+      );
+      return true;
+    }
+    if (message.type === "provider.catalog_key") {
+      void (async () => {
+        const provider = providers.get(message.providerId);
+        if (!provider) throw new Error(`Unknown provider: ${message.providerId}`);
+        const output = await provider.getCatalogCacheKey?.(message.options);
+        if (output !== undefined && typeof output !== "string")
+          throw new Error("Invalid catalogue key");
+        send({ type: "result", requestId: message.requestId, output });
+      })().catch((error) =>
+        send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+      );
+      return true;
+    }
+    if (message.type === "provider.resolve_command") {
+      void (async () => {
+        const provider = providers.get(message.providerId);
+        if (!provider) throw new Error(`Unknown provider: ${message.providerId}`);
+        if (!provider.resolveCommand)
+          throw new Error(`Provider cannot resolve a command: ${message.providerId}`);
+        const output = await provider.resolveCommand();
+        if (output !== undefined && !isResolvedCommand(output))
+          throw new Error("Invalid resolved command");
+        send({ type: "result", requestId: message.requestId, output });
+      })().catch((error) =>
+        send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+      );
+      return true;
+    }
+    return false;
+  }
+
   function handleMessage(rawMessage: unknown): void {
     const parsed = PluginProcessRequestSchema.safeParse(rawMessage);
     if (!parsed.success) {
@@ -464,31 +518,7 @@ export function createPluginWorker(options: {
       return;
     }
     if (handleToolMessage(message)) return;
-    if (message.type === "provider.status") {
-      void (async () => {
-        const provider = providers.get(message.providerId);
-        if (!provider || !provider.status)
-          throw new Error(`Provider has no status capability: ${message.providerId}`);
-        const output = ProviderStatusSchema.parse(await provider.status(message.request));
-        send({ type: "result", requestId: message.requestId, output });
-      })().catch((error) =>
-        send({ type: "error", requestId: message.requestId, error: describeError(error) }),
-      );
-      return;
-    }
-    if (message.type === "provider.catalog_key") {
-      void (async () => {
-        const provider = providers.get(message.providerId);
-        if (!provider) throw new Error(`Unknown provider: ${message.providerId}`);
-        const output = await provider.getCatalogCacheKey?.(message.options);
-        if (output !== undefined && typeof output !== "string")
-          throw new Error("Invalid catalogue key");
-        send({ type: "result", requestId: message.requestId, output });
-      })().catch((error) =>
-        send({ type: "error", requestId: message.requestId, error: describeError(error) }),
-      );
-      return;
-    }
+    if (handleProviderRequest(message)) return;
     if (message.type === "usage.fetch" || message.type === "usage.discover") {
       handleUsageRequest(message);
       return;
