@@ -12,7 +12,6 @@ import { type PromptDispatchDisposition } from "./agent-prompt.js";
 import { parseAgentMessage, parseAgentMessages } from "./agent-messages/index.js";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { terminalWorkerLogPath } from "../../terminal/terminal-worker-record.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -1391,18 +1390,12 @@ describe("terminal MCP tools", () => {
       "worker",
       async () => {
         const home = await mkdtemp(join(tmpdir(), "mcp-terminal-keys-home-"));
-        const startedAt = Date.now();
-        try {
-          const manager = await startWorkerTerminalManager({
-            paseoHome: home,
-            paseoVersion: "0.0.0-test",
-            logger,
-          });
-          return { manager, home };
-        } finally {
-          console.error(`[startup] MCP worker launch ${startedAt}..${Date.now()}`);
-          console.error(await readFile(terminalWorkerLogPath(home), "utf8").catch(String));
-        }
+        const manager = await startWorkerTerminalManager({
+          paseoHome: home,
+          paseoVersion: "0.0.0-test",
+          logger,
+        });
+        return { manager, home };
       },
     ],
   ] as const)(
