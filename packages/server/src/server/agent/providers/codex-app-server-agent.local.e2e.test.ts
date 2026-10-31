@@ -265,6 +265,43 @@ describe("Codex app-server provider (local e2e)", () => {
   );
 
   test.runIf(isCodexInstalled())(
+    "reopens a promptless agent repeatedly before its first model request",
+    async () => {
+      const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-promptless-cwd-"));
+      const logger = createTestLogger();
+      const storage = new AgentStorage(path.join(cwd, "agents"), logger);
+      const manager = new AgentManager({
+        clients: { codex: new CodexAppServerAgentClient(logger) },
+        registry: storage,
+        logger,
+      });
+      let agentId: string | undefined;
+      try {
+        const created = await manager.createAgent(
+          { provider: "codex", cwd, modeId: "auto", model: "mock-model" },
+          undefined,
+          { workspaceId: undefined },
+        );
+        agentId = created.id;
+        // A real app-server rejects an unsaved thread on resume. No model request is
+        // needed to prove that reopening the agent remains safe before its first turn.
+        for (let i = 0; i < 2; i++) {
+          const reopened = await manager.reloadAgentSession(agentId);
+          expect(reopened.lifecycle).toBe("idle");
+          expect(reopened.persistence).toBeNull();
+        }
+        await storage.flush();
+        expect((await storage.get(agentId))?.persistence).toBeNull();
+      } finally {
+        if (agentId && manager.getAgent(agentId)) await manager.closeAgent(agentId);
+        await storage.flush();
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
+  test.runIf(isCodexInstalled())(
     "reopens an agent that was never prompted without resuming its unsaved thread",
     async () => {
       const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-unprompted-cwd-"));
