@@ -32,6 +32,7 @@ import { density, densityIconBox, densityIconProps } from "@/styles/density";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import { withUnistyles } from "react-native-unistyles";
 import {
+  CalendarDays,
   ChevronDown,
   ChevronRight,
   CircleAlert,
@@ -106,6 +107,7 @@ const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedCircleDot = withUnistyles(CircleDot);
 const ThemedCircleX = withUnistyles(CircleX);
+const ThemedCalendarDays = withUnistyles(CalendarDays);
 const EMPTY_SHORTCUT_INDEX = new Map<string, number>();
 
 function statusWorkspaceKeyExtractor(workspace: SidebarWorkspaceEntry): string {
@@ -478,7 +480,11 @@ function StatusGroupLeadingVisual({
   showChevron: boolean;
 }) {
   if (!showChevron) {
-    return <StatusGroupIcon bucket={leading.bucket} />;
+    return leading.kind === "day" ? (
+      <ThemedCalendarDays uniProps={mutedGroupIconProps} />
+    ) : (
+      <StatusGroupIcon bucket={leading.bucket} />
+    );
   }
   if (collapsed) {
     return <ThemedChevronRight uniProps={mutedGroupIconProps} />;
