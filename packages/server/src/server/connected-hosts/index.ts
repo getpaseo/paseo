@@ -510,10 +510,13 @@ export class ConnectedHosts {
           return;
         }
         if (!verified) throw new HostError("host_offline", "Host identity has not been verified");
-        try {
-          transport.send(data);
-        } catch {
+        const rejectWrite = () =>
           route.close("resource_limit", "Host buffer limit reached or transport unavailable");
+        try {
+          const write = transport.send(data);
+          if (write) void write.catch(rejectWrite);
+        } catch {
+          rejectWrite();
         }
       },
     };

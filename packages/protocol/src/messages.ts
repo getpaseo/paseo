@@ -3834,6 +3834,7 @@ export const ServerInfoStatusPayloadSchema = z
         selectiveAgentTimeline: z.boolean().optional(),
         explicitEventSubscriptions: z.boolean().optional(),
         ownedSubscriptions: z.boolean().optional(),
+        binaryChunkingV1: z.boolean().optional(),
         workspaceSetupObservation: z.boolean().optional(),
         workspaceSortTimes: z.boolean().optional(),
         // COMPAT(canonicalSubmittedPrompts): added in v0.2.6, remove gate after 2027-01-30.

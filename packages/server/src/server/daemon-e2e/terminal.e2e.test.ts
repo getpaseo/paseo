@@ -196,7 +196,7 @@ function toWsBuffer(raw: WebSocket.RawData): Buffer | null {
   return null;
 }
 
-async function connectRawWebSocket(port: number): Promise<WebSocket> {
+async function connectRawWebSocket(port: number, chunkedReplay = false): Promise<WebSocket> {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise<void>((resolve, reject) => {
     ws.once("open", () => resolve());
@@ -216,6 +216,7 @@ async function connectRawWebSocket(port: number): Promise<WebSocket> {
       clientId: `terminal-raw-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       clientType: "cli",
       protocolVersion: 1,
+      capabilities: { terminal_chunked_replay: chunkedReplay },
     }),
   );
 
@@ -489,7 +490,10 @@ function startTerminalOutputCapture(ws: WebSocket, slot: number): TerminalOutput
     if (!frame || frame.slot !== slot) {
       return;
     }
-    if (frame.opcode === TerminalStreamOpcode.Restore) {
+    if (
+      frame.opcode === TerminalStreamOpcode.Restore ||
+      frame.opcode === TerminalStreamOpcode.ReplayEnd
+    ) {
       snapshotCount += 1;
       return;
     }
@@ -1994,4 +1998,66 @@ test.each([false, true])(
     }
   },
   30000,
+);
+
+test.each([false, true])(
+  "a paused terminal consumer catches up through ANSI replay instead of retaining every output frame (chunked=%s)",
+  async (chunked) => {
+    const { existsSync } = await import("node:fs");
+    const cwd = tmpCwd();
+    tempDirs.push(cwd);
+    const marker = path.join(cwd, "output-complete");
+    const created = await createTerminalInWorkspace(ctx.client, {
+      cwd,
+      options: {
+        command: process.execPath,
+        args: [
+          "-e",
+          `
+      const fs = require('node:fs');
+      process.stdin.setRawMode?.(true);
+      process.stdin.resume();
+      process.stdin.once('data', () => {
+        const chunk = Buffer.alloc(256 * 1024, 120);
+        let remaining = 128;
+        const write = () => {
+          if (remaining-- === 0) { fs.writeFileSync(${JSON.stringify(marker)}, 'done'); return; }
+          process.stdout.write(chunk, write);
+        };
+        write();
+      });
+    `,
+        ],
+      },
+    });
+    const ws = await connectRawWebSocket(ctx.daemon.port, chunked);
+    try {
+      const slot = await subscribeRawTerminal(ws, created.terminal!.id, "slow-terminal");
+      await waitForRawBinaryFrame(
+        ws,
+        (frame) =>
+          frame.slot === slot &&
+          frame.opcode ===
+            (chunked ? TerminalStreamOpcode.ReplayEnd : TerminalStreamOpcode.Restore),
+      );
+      const capture = startTerminalOutputCapture(ws, slot);
+      try {
+        ws.pause();
+        sendRawTerminalInput(ws, slot, "go\n");
+        await waitForCondition(() => existsSync(marker), 20000);
+        ws.resume();
+        await waitForCondition(() => capture.snapshotCount > 0, 10000);
+        expect(ws.readyState).toBe(WebSocket.OPEN);
+        expect(capture.frames.reduce((total, frame) => total + frame.payloadBytes, 0)).toBeLessThan(
+          32 * 1024 * 1024,
+        );
+      } finally {
+        ws.resume();
+        capture.stop();
+      }
+    } finally {
+      await closeWebSocket(ws);
+    }
+  },
+  40000,
 );
