@@ -28,6 +28,7 @@ function observeState(
     buffer.push({ status: "idle", final: null, lastMessage: null, error: null });
     return;
   }
+  if (snapshot.status === "running") buffer.started();
   if (event?.type === "permission_resolved") {
     buffer.resolved(event.requestId);
     return;
@@ -60,7 +61,10 @@ export async function openFinishObservation(
   signal.throwIfAborted();
   const controller = new AbortController();
   const lifetime = AbortSignal.any([signal, controller.signal]);
-  const buffer = createObservationBuffer(lifetime);
+  const buffer = createObservationBuffer(lifetime, {
+    standing: record.standing,
+    reported: record.reported,
+  });
   let opened!: () => void;
   let failed!: (error: unknown) => void;
   const ready = new Promise<void>((resolve, reject) => {

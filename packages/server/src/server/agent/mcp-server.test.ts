@@ -3023,6 +3023,135 @@ describe("create_agent MCP tool", () => {
     );
   });
 
+  it.each([
+    { notifyOnFinish: true, reported: 1 },
+    { notifyOnFinish: "every", reported: 2 },
+  ] as const)(
+    "with notifyOnFinish $notifyOnFinish the caller hears $reported of two runs when someone else starts the second",
+    async ({ notifyOnFinish, reported }) => {
+      const workdir = await mkdtemp(join(tmpdir(), "mcp-create-every-"));
+      const storage = new AgentStorage(join(workdir, "agents"), logger);
+      const parentClient = new HeldTurnAgentClient("claude", false);
+      const childClient = new HeldTurnAgentClient("codex", false);
+      const agentManager = new AgentManager({
+        clients: { claude: parentClient, codex: childClient },
+        registry: storage,
+        logger,
+      });
+
+      try {
+        const parent = await agentManager.createAgent(
+          { provider: "claude", cwd: existingCwd },
+          undefined,
+          { workspaceId: "wks_parent" },
+        );
+        const server = await createAgentMcpServer({
+          agentManager,
+          agentStorage: storage,
+          callerAgentId: parent.id,
+          providerSnapshotManager: createOpenCodeManager().manager,
+          logger,
+        });
+        const response = await invokeToolWithParsedInput(registeredTool(server, "create_agent"), {
+          ...subagentCurrentWorkspace(),
+          title: "Child",
+          provider: "codex/gpt-5.4",
+          initialPrompt: "First run",
+          notifyOnFinish,
+        });
+        const childId = z.object({ agentId: z.string() }).parse(response.structuredContent).agentId;
+        const parentPrompts = () => parentClient.sessions[0]!.prompts;
+        await vi.waitFor(() => expect(parentPrompts()).toHaveLength(1));
+        const records = serverSubscriptionRecords.get(server)!;
+        // The outcome spends one-shot intent. Standing intent stays and records that it was heard.
+        await vi.waitFor(() =>
+          expect([...records.values()]).toEqual(
+            notifyOnFinish === "every"
+              ? [expect.objectContaining({ standing: true, reported: true })]
+              : [],
+          ),
+        );
+
+        // A top-level caller starts the second run, as the app or the CLI does.
+        const topLevel = await createAgentMcpServer({
+          agentManager,
+          agentStorage: storage,
+          providerSnapshotManager: createOpenCodeManager().manager,
+          logger,
+        });
+        await invokeToolWithParsedInput(registeredTool(topLevel, "send_agent_prompt"), {
+          agentId: childId,
+          prompt: "Second run",
+        });
+        await vi.waitFor(() => {
+          expect(childClient.sessions[0]!.prompts).toHaveLength(2);
+          expect(agentManager.getAgent(childId)!.lifecycle).toBe("idle");
+        });
+        await vi.waitFor(() => expect(parentPrompts()).toHaveLength(reported));
+        expect(parseAgentMessage(parentPrompts().at(-1)!)).toMatchObject({
+          source: { kind: "agent-notification", agentId: childId, event: "finished" },
+        });
+
+        // Archiving the idle child ends standing intent without reporting a run.
+        await agentManager.archiveAgent(childId);
+        await vi.waitFor(() => expect(records.size).toBe(0));
+        expect(parentPrompts()).toHaveLength(reported);
+      } finally {
+        await removeAgentStateDir(agentManager, storage, workdir);
+      }
+    },
+  );
+
+  it.each([
+    {
+      target: "a detached agent",
+      placement: () => detachedCurrentWorkspace(),
+      message: "a detached agent has none",
+    },
+    {
+      target: "another host",
+      placement: () => ({ ...subagentCurrentWorkspace(), serverId: "remote" }),
+      message: "only available for agents on this host",
+    },
+  ])(
+    'rejects notifyOnFinish "every" for $target before creating it',
+    async ({ placement, message }) => {
+      const { agentManager, agentStorage, spies } = createTestDeps();
+      spies.agentManager.getAgent.mockReturnValue({
+        id: "parent-agent",
+        config: {},
+        cwd: existingCwd,
+        workspaceId: "wks_parent",
+        provider: "codex",
+        currentModeId: "full-access",
+      } as ManagedAgent);
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        callerAgentId: "parent-agent",
+        serverId: "self",
+        logger,
+      });
+
+      const tool = registeredTool(server, "create_agent");
+      const parsed = await tool.inputSchema.safeParseAsync({
+        ...placement(),
+        title: "Child",
+        provider: "codex/gpt-5.4",
+        initialPrompt: "Do work",
+        notifyOnFinish: "every",
+      });
+      expect(parsed.success).toBe(true);
+      expect(await tool.handler(parsed.success ? parsed.data : {})).toMatchObject({
+        isError: true,
+        structuredContent: { error: expect.stringContaining(message) },
+      });
+      expect(spies.agentManager.createAgent).not.toHaveBeenCalled();
+      expect(serverSubscriptionRecords.get(server)!.size).toBe(0);
+    },
+  );
+
   it("accepts provider features from caller agents and passes them through createAgent", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
