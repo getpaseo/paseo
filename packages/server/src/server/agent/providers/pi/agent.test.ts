@@ -3443,6 +3443,128 @@ describe("PiRpcAgentClient", () => {
     expect(existsSync(extensionPath)).toBe(false);
   });
 
+  test("exposes only exact granted Hub tools directly without changing unrelated MCP servers", async () => {
+    const pi = new FakePi();
+    pi.queueCommands([{ name: "mcp", source: "extension", sourceInfo: { path: "builtin:mcp" } }]);
+    const session = await createClient(pi).createSession(
+      createConfig({
+        mcpServers: {
+          hub: {
+            type: "http",
+            url: "http://127.0.0.1/hub",
+            headers: { Authorization: "Bearer token" },
+          },
+          other: { type: "stdio", command: "node", args: ["server.js"] },
+        },
+        toolPolicy: {
+          preapproved: [
+            { kind: "mcp", server: "hub", tool: "reply" },
+            { kind: "mcp", server: "hub", tool: "finish_execution" },
+          ],
+        },
+      }),
+    );
+    onTestFinished(() => session.close());
+    expect(await readRegisteredMcpServers(pi.recordedLaunches[1]!.extensionPaths[0]!)).toEqual({
+      hub: {
+        url: "http://127.0.0.1/hub",
+        headers: { Authorization: "Bearer token" },
+        exposure: "hidden",
+        toolExposure: { reply: "direct", finish_execution: "direct" },
+      },
+      other: { command: "node", args: ["server.js"] },
+    });
+  });
+
+  test.each([
+    { server: "hub", tool: "*" },
+    { server: "*", tool: "finish_execution" },
+    { server: "missing", tool: "finish_execution" },
+    { server: "toString", tool: "finish_execution" },
+  ])(
+    "rejects a non-exact or missing injected MCP grant $server.$tool",
+    async ({ server, tool }) => {
+      const pi = new FakePi();
+      pi.queueCommands([{ name: "mcp", source: "extension", sourceInfo: { path: "builtin:mcp" } }]);
+      await expect(
+        createClient(pi).createSession(
+          createConfig({
+            mcpServers: { hub: { type: "http", url: "http://127.0.0.1/hub" } },
+            toolPolicy: { preapproved: [{ kind: "mcp", server, tool }] },
+          }),
+        ),
+      ).rejects.toThrow("Pi requires exact MCP grants for an injected server");
+    },
+  );
+
+  test.each([
+    { name: "missing MCP", commands: [] },
+    {
+      name: "pi-mcp-adapter",
+      commands: [
+        { name: "mcp", source: "extension" as const, sourceInfo: { source: "npm:pi-mcp-adapter" } },
+      ],
+    },
+  ])(
+    "refuses exact preapproval with $name rather than silently dropping the policy",
+    async ({ commands }) => {
+      const pi = new FakePi();
+      pi.queueCommands(commands);
+      await expect(
+        createClient(pi).createSession(
+          createConfig({
+            mcpServers: { hub: { type: "http", url: "http://127.0.0.1/hub" } },
+            toolPolicy: { preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }] },
+          }),
+        ),
+      ).rejects.toMatchObject({
+        name: "ToolPolicyUnsupportedError",
+        code: "tool_policy_unsupported",
+        provider: "pi",
+        message: "Pi exact MCP preapproval requires built-in MCP support",
+      });
+    },
+  );
+
+  test.each([
+    { layer: "global", injected: "hub", configured: "hub" },
+    { layer: "project", injected: "hub", configured: "hub" },
+    { layer: "global", injected: "hub-execution", configured: "hub_execution" },
+    { layer: "project", injected: "hub-execution", configured: "hub_execution" },
+    { layer: "global", injected: "hub_execution", configured: "hub-execution" },
+    { layer: "project", injected: "hub_execution", configured: "hub-execution" },
+  ])(
+    "rejects a $layer MCP config whose $configured server overrides the granted $injected server",
+    async ({ layer, injected, configured }) => {
+      const cwd = mkdtempSync(path.join(tmpdir(), "paseo-pi-collision-"));
+      onTestFinished(() => rmSync(cwd, { recursive: true, force: true }));
+      const agentDir = layer === "global" ? cwd : path.join(cwd, ".pi");
+      mkdirSync(agentDir, { recursive: true });
+      writeFileSync(
+        path.join(agentDir, "mcp.json"),
+        JSON.stringify({
+          mcpServers: { [configured]: { url: "http://127.0.0.1/wrong-server" } },
+        }),
+      );
+      const pi = new FakePi();
+      pi.queueCommands([{ name: "mcp", source: "extension", sourceInfo: { path: "builtin:mcp" } }]);
+      await expect(
+        createClient(pi).createSession(
+          createConfig({
+            cwd,
+            mcpServers: { [injected]: { type: "http", url: "http://127.0.0.1/hub" } },
+            toolPolicy: {
+              preapproved: [{ kind: "mcp", server: injected, tool: "finish_execution" }],
+            },
+          }),
+          {
+            env: { PI_CODING_AGENT_DIR: layer === "global" ? agentDir : path.join(cwd, "unused") },
+          },
+        ),
+      ).rejects.toThrow(`Pi MCP config overrides injected server "${injected}"`);
+    },
+  );
+
   test("registers the resumed session's MCP servers through Pi's built-in MCP", async () => {
     const pi = new FakePi();
     const client = createClient(pi);
@@ -3455,6 +3577,7 @@ describe("PiRpcAgentClient", () => {
       mcpServers: {
         paseo: { type: "http", url: "http://127.0.0.1:7777/mcp/agents?callerAgentId=agent-2" },
       },
+      toolPolicy: { preapproved: [{ kind: "mcp", server: "paseo", tool: "finish_execution" }] },
     });
     onTestFinished(() => session.close());
 
@@ -3463,7 +3586,11 @@ describe("PiRpcAgentClient", () => {
     expect(actualLaunch.session).toBe(persistence.nativeHandle);
     expect(actualLaunch.argv).not.toContain("--mcp-config");
     expect(await readRegisteredMcpServers(actualLaunch.extensionPaths[0]!)).toEqual({
-      paseo: { url: "http://127.0.0.1:7777/mcp/agents?callerAgentId=agent-2" },
+      paseo: {
+        url: "http://127.0.0.1:7777/mcp/agents?callerAgentId=agent-2",
+        exposure: "hidden",
+        toolExposure: { finish_execution: "direct" },
+      },
     });
   });
 
