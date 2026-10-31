@@ -227,6 +227,20 @@ describe("keyboard-shortcuts", () => {
       payload: { delta: 1 },
     },
     {
+      name: "matches tab relative navigation on macOS desktop via Cmd+Shift+[",
+      event: { key: "{", code: "BracketLeft", metaKey: true, shiftKey: true },
+      context: { isMac: true, isDesktop: true },
+      action: "workspace.tab.navigate.relative",
+      payload: { delta: -1 },
+    },
+    {
+      name: "matches tab relative navigation on macOS desktop via Cmd+Shift+]",
+      event: { key: "}", code: "BracketRight", metaKey: true, shiftKey: true },
+      context: { isMac: true, isDesktop: true },
+      action: "workspace.tab.navigate.relative",
+      payload: { delta: 1 },
+    },
+    {
       name: "matches Mod+T to open new tab",
       event: { key: "t", code: "KeyT", metaKey: true },
       context: { isMac: true },
@@ -459,6 +473,11 @@ describe("keyboard-shortcuts", () => {
       name: "does not close tab with Ctrl+W on non-mac desktop when terminal is focused",
       event: { key: "w", code: "KeyW", ctrlKey: true },
       context: { isMac: false, isDesktop: true, focusScope: "terminal" },
+    },
+    {
+      name: "does not switch tabs with Alt+Shift+] on mac desktop (Cmd+Shift+] only)",
+      event: { key: "’", code: "BracketRight", altKey: true, shiftKey: true },
+      context: { isMac: true, isDesktop: true },
     },
     {
       name: "does not match Ctrl+T on mac (Cmd only)",
@@ -1264,6 +1283,17 @@ describe("unassigned shortcuts", () => {
 
       expect(findRow(sections, "workspace-tab-new")).not.toBeNull();
       expect(getBindingIdForAction("workspace-tab-new", desktopNonMac)).toBe(TAB_NEW_BINDING);
+    });
+
+    it("advertises Cmd+Shift+brackets for tab navigation on macOS desktop", () => {
+      const desktopMac = { isMac: true, isDesktop: true };
+
+      expect(getDefaultKeysForAction("workspace-tab-prev", desktopMac)).toEqual([
+        ["mod", "shift", "["],
+      ]);
+      expect(getDefaultKeysForAction("workspace-tab-next", desktopMac)).toEqual([
+        ["mod", "shift", "]"],
+      ]);
     });
 
     it("still lists the default keys when nothing is overridden", () => {
