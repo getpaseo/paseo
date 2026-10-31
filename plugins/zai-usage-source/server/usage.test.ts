@@ -171,11 +171,8 @@ describe("zai usage source", () => {
     expect(authorization).toBe("Bearer zai_xdg_token");
     expect(zai).toMatchObject({ status: "available" });
   });
-});
 
-it("discovery returns a locator when fetch finds zai credentials", async () => {
-  const previous = process.env["ZAI_API_KEY"];
-  try {
+  it("discovery returns a locator when fetch finds zai credentials", async () => {
     process.env["ZAI_API_KEY"] = "fixture-token";
     let requested = false;
     await fetchFirst(async () => {
@@ -186,10 +183,7 @@ it("discovery returns a locator when fetch finds zai credentials", async () => {
     expect(await discover()).toEqual([
       { key: "default", input: { store: "env", locator: "ZAI_API_KEY" } },
     ]);
-  } finally {
-    if (previous === undefined) delete process.env["ZAI_API_KEY"];
-    else process.env["ZAI_API_KEY"] = previous;
-  }
+  });
 });
 
 describe("account discovery", () => {
