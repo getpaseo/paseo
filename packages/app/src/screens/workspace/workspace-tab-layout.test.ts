@@ -17,12 +17,14 @@ const metrics = {
   rowPaddingHorizontal: 8,
   tabGap: 4,
   minTabWidth: 64,
-  maxTabWidth: 160,
   tabIconWidth: 14,
   tabContentGap: 4,
   tabHorizontalPadding: 8,
   closeButtonWidth: 0,
 };
+
+/** Chip chrome: icon + content gap + both paddings. A tab needs this plus its label. */
+const TAB_CHROME_WIDTH = 34;
 
 describe("computeWorkspaceTabLayout", () => {
   it("keeps each tab at its natural content width when space is available", () => {
@@ -54,7 +56,7 @@ describe("computeWorkspaceTabLayout", () => {
     expect(result.requiresHorizontalScrollFallback).toBe(false);
   });
 
-  it("sizes a single tab between the minimum and maximum from its content", () => {
+  it("sizes a single tab to the width its label needs", () => {
     const result = computeWorkspaceTabLayout({
       viewportWidth: 1200,
       tabLabelWidths: [105],
@@ -66,7 +68,7 @@ describe("computeWorkspaceTabLayout", () => {
     expect(result.items.map((item) => item.width)).toEqual([139]);
   });
 
-  it("shrinks natural widths proportionally without crossing the clickable minimum", () => {
+  it("shares what the rail can afford equally once no label fits whole", () => {
     const result = computeWorkspaceTabLayout({
       viewportWidth: 460,
       tabLabelWidths: [168, 84, 56],
@@ -76,11 +78,11 @@ describe("computeWorkspaceTabLayout", () => {
 
     expect(result.closeButtonPolicy).toBe("all");
     expect(result.requiresHorizontalScrollFallback).toBe(false);
-    expect(result.items.map((item) => item.width)).toEqual([132, 102, 82]);
+    expect(result.items.map((item) => item.width)).toEqual([113, 113, 90]);
     expect(result.items.every((item) => item.showLabel)).toBe(true);
   });
 
-  it("caps long tabs at the maximum width", () => {
+  it("spreads a crowded rail evenly instead of dropping every tab to one cap", () => {
     const result = computeWorkspaceTabLayout({
       viewportWidth: 1004,
       tabLabelWidths: [280, 280, 280, 280],
@@ -95,7 +97,7 @@ describe("computeWorkspaceTabLayout", () => {
 
     expect(result.closeButtonPolicy).toBe("all");
     expect(result.requiresHorizontalScrollFallback).toBe(false);
-    expect(result.items.map((item) => item.width)).toEqual([160, 160, 160, 160]);
+    expect(result.items.map((item) => item.width)).toEqual([240, 240, 240, 240]);
   });
 
   it("keeps every tab at the clickable minimum at the exact fit boundary", () => {
@@ -148,8 +150,58 @@ describe("computeWorkspaceTabLayout", () => {
     });
 
     expect(result.requiresHorizontalScrollFallback).toBe(true);
-    expect(result.items.map((item) => item.width)).toEqual([160, 118, 90]);
+    expect(result.items.map((item) => item.width)).toEqual([202, 118, 90]);
     expect(result.items.every((item) => item.showLabel)).toBe(true);
+  });
+
+  it("widens tabs past the old cap when the rail has room for both labels", () => {
+    // An unfolded foldable's pane: a wide rail, two long labels, and no other tab to spend it on.
+    const result = computeWorkspaceTabLayout({
+      viewportWidth: 698,
+      tabLabelWidths: [300, 180],
+      metrics: { ...metrics, actionsReservedWidth: 36, rowPaddingHorizontal: 4 },
+      compact: false,
+    });
+
+    expect(result.requiresHorizontalScrollFallback).toBe(false);
+    expect(result.items.map((item) => item.width)).toEqual([334, 214]);
+    // Both labels are shown whole: nothing is truncated while the rail has width to spare.
+    expect(result.items.map((item) => item.width - TAB_CHROME_WIDTH)).toEqual([300, 180]);
+  });
+
+  it("spends the rail on the label that still does not fit instead of capping every tab", () => {
+    const result = computeWorkspaceTabLayout({
+      viewportWidth: 698,
+      tabLabelWidths: [500, 120],
+      metrics: { ...metrics, actionsReservedWidth: 36, rowPaddingHorizontal: 4 },
+      compact: false,
+    });
+
+    const availableTabsWidth = 698 - 36 - 4 * 2 - 4;
+    const widths = result.items.map((item) => item.width);
+    expect(widths).toEqual([496, 154]);
+    expect(widths[0]).toBeGreaterThan(160);
+    expect(widths.reduce((total, width) => total + width, 0)).toBe(availableTabsWidth);
+  });
+
+  it("never shrinks a tab as a non-scrolling rail widens", () => {
+    const tabLabelWidths = [300, 80, 220, 140];
+    const widthsAt = (viewportWidth: number) =>
+      computeWorkspaceTabLayout({
+        viewportWidth,
+        tabLabelWidths,
+        metrics,
+        compact: false,
+      }).items.map((item) => item.width);
+
+    let previous = widthsAt(404);
+    for (let viewportWidth = 420; viewportWidth <= 1400; viewportWidth += 20) {
+      const current = widthsAt(viewportWidth);
+      current.forEach((width, index) => {
+        expect(width).toBeGreaterThanOrEqual(previous[index]);
+      });
+      previous = current;
+    }
   });
 
   it("returns empty layout details when there are no tabs", () => {
@@ -163,6 +215,22 @@ describe("computeWorkspaceTabLayout", () => {
     expect(result.closeButtonPolicy).toBe("all");
     expect(result.requiresHorizontalScrollFallback).toBe(false);
     expect(result.items).toEqual([]);
+  });
+
+  it("keeps rounded widths inside the rail when shares are fractional", () => {
+    const result = computeWorkspaceTabLayout({
+      viewportWidth: 437,
+      tabLabelWidths: [500, 500, 500],
+      metrics,
+      compact: false,
+    });
+
+    const availableTabsWidth =
+      437 - metrics.actionsReservedWidth - metrics.rowPaddingHorizontal * 2 - metrics.tabGap * 2;
+    const widths = result.items.map((item) => item.width);
+    expect(result.requiresHorizontalScrollFallback).toBe(false);
+    expect(widths).toEqual([97, 98, 98]);
+    expect(widths.reduce((total, width) => total + width, 0)).toBe(availableTabsWidth);
   });
 
   it("uses rendered label width rather than character count", () => {
