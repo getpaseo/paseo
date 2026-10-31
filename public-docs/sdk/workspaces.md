@@ -58,7 +58,8 @@ You can pass `projectId` in either source when you already have one. Most integr
 
 Pass `background: true` to hide a workspace from default discovery. Its agents and terminals
 remain durable, with ordinary history, lifecycle hooks, archive, and exact-ID access. The app's
-sidebar offers **Show background** without dropping replicated state.
+sidebar offers **Show background** without dropping replicated state. Completion pushes for its
+agents are suppressed; permission and error notifications keep their existing behavior.
 
 `background` is creation-only. Omission defaults to false; when `callerAgentId` identifies an agent
 creating a new workspace, omission inherits its workspace's value. Explicit false or true overrides

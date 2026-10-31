@@ -127,8 +127,9 @@ The call returns a workspace handle and starts its first agent with the supplied
 
 Background agents keep their history and survive daemon restarts. Default discovery hides them;
 use `client.agents.list({ filter: { includeBackground: true } })` to include them.
-Exact-ID handles work normally. See [workspace creation](./workspaces.md#create-a-fresh-workspace)
-for defaults and caller inheritance.
+Completion pushes are suppressed for agents in background workspaces. Permission and error
+notifications keep their existing behavior. Exact-ID handles work normally. See
+[workspace creation](./workspaces.md#create-a-fresh-workspace) for defaults and caller inheritance.
 
 ## Request structured output
 
