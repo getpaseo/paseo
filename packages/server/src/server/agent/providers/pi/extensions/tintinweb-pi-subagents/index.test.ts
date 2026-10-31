@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { createPiExtensionHost } from "../index.js";
 import { readSubagentFixture, verifySubagentFixture } from "../subagent-fixture-test.js";
 import type { PiAgentMessage } from "../../rpc-types.js";
+import { streamPiHistory } from "../../history-mapper.js";
 
 describe("@tintinweb/pi-subagents adapter", () => {
   test("exposes the background output file while the child is running", () => {
@@ -168,6 +169,92 @@ describe("@tintinweb/pi-subagents adapter", () => {
       });
     },
   );
+  // get_subagent_result returns text only (no `details`) and suppresses the completion
+  // notification, so its header is the only completion record for a collected child.
+  test.each([
+    ["completed", "", "completed"],
+    ["steered", " (wrapped up at the turn limit — output may be partial)", "completed"],
+    ["error", "", "failed"],
+    ["running", "", "running"],
+  ])("maps a text-only get_subagent_result with status %s", (raw, note, expected) => {
+    const host = createPiExtensionHost();
+    host.mapToolCall({
+      callId: "call-1",
+      toolName: "Agent",
+      args: { subagent_type: "Explore", prompt: "Inspect" },
+      status: "completed",
+      result: { details: { agentId: "e4537d05-d56f-411", status: "background" } },
+    });
+    const mapping = host.mapToolCall({
+      callId: "followup-1",
+      toolName: "get_subagent_result",
+      // The tool also accepts a handle such as the agent's name.
+      args: { agent_id: "explore", wait: true },
+      status: "completed",
+      result: {
+        content: [
+          {
+            type: "text",
+            text:
+              "Agent: e4537d05-d56f-411\n" +
+              `Type: Explore | Status: ${raw}${note} | Tool uses: 3 | Duration: 12s\n` +
+              "Description: Inspect\n\nDone.",
+          },
+        ],
+      },
+    });
+    expect(mapping?.subagents).toEqual([{ type: "upsert", id: "call-1", status: expected }]);
+  });
+  test("replays a background child collected through get_subagent_result as completed", async () => {
+    const messages: PiAgentMessage[] = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "call-1",
+            name: "Agent",
+            arguments: { subagent_type: "Explore", prompt: "Inspect", run_in_background: true },
+          },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-1",
+        toolName: "Agent",
+        content: [{ type: "text", text: "Agent started in background.\nAgent ID: native-1\n" }],
+        details: { agentId: "native-1", status: "background" },
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "followup-1",
+            name: "get_subagent_result",
+            arguments: { agent_id: "native-1", wait: true },
+          },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "followup-1",
+        toolName: "get_subagent_result",
+        content: [
+          {
+            type: "text",
+            text: "Agent: native-1\nType: Explore | Status: completed | Duration: 1s\nDescription: Inspect\n\nDone.",
+          },
+        ],
+      },
+    ];
+    const statuses: string[] = [];
+    for await (const event of streamPiHistory("pi", messages)) {
+      if (event.type === "provider_subagent" && event.event.type === "upsert" && event.event.status)
+        statuses.push(event.event.status);
+    }
+    expect(statuses.at(-1)).toBe("completed");
+  });
   test.each([
     ["background", "running"],
     ["queued", "running"],
@@ -231,6 +318,87 @@ describe("@tintinweb/pi-subagents adapter", () => {
         .map((event) => (event.event.type === "upsert" ? event.event.status : null)),
     ).toEqual(["running", "running", "completed"]);
     expect(events.filter((event) => event.event.type === "timeline").length).toBeGreaterThan(0);
+  });
+  const spawn = (host: ReturnType<typeof createPiExtensionHost>, callId: string, agentId: string) =>
+    host.mapToolCall({
+      callId,
+      toolName: "Agent",
+      args: { subagent_type: "Explore", prompt: "Inspect" },
+      status: "completed",
+      result: { details: { agentId, status: "background" } },
+    });
+  const taskNotification = (id: string, toolUseId: string, label: string) =>
+    [
+      "<task-notification>",
+      `<task-id>${id}</task-id>`,
+      `<tool-use-id>${toolUseId}</tool-use-id>`,
+      `<output-file>/tmp/${id}.output</output-file>`,
+      `<status>${label}</status>`,
+      `<summary>Agent "Inspect" completed</summary>`,
+      "<result>Done &lt;ok&gt;</result>",
+      "<usage><total_tokens>1</total_tokens><tool_uses>0</tool_uses><duration_ms>1</duration_ms></usage>",
+      "</task-notification>",
+    ].join("\n");
+  test("completes children from a notification that carries no details", () => {
+    const host = createPiExtensionHost();
+    spawn(host, "call-1", "native-1");
+    spawn(host, "call-2", "native-2");
+    const mapping = host.mapCustomMessage({
+      role: "custom",
+      customType: "subagent-notification",
+      content: [
+        "Background agent group completed: 2 agent(s) finished",
+        taskNotification("native-1", "call-1", "Done"),
+        taskNotification("native-2", "call-2", "Error: boom"),
+      ].join("\n\n"),
+      display: true,
+      timestamp: 0,
+    });
+    expect(mapping?.subagents).toEqual([
+      expect.objectContaining({ id: "call-1", status: "completed" }),
+      expect.objectContaining({ id: "call-2", status: "failed" }),
+    ]);
+    expect(mapping?.childSessions).toEqual([
+      { id: "call-1", file: "/tmp/native-1.output" },
+      { id: "call-2", file: "/tmp/native-2.output" },
+    ]);
+  });
+  test("keeps a resumed run running when the previous run's notification arrives late", () => {
+    const host = createPiExtensionHost();
+    spawn(host, "call-1", "native-1");
+    spawn(host, "call-2", "native-1");
+    const mapping = host.mapCustomMessage({
+      role: "custom",
+      customType: "subagent-notification",
+      content: taskNotification("native-1", "call-1", "Done"),
+      display: true,
+      timestamp: 0,
+      details: { id: "native-1", status: "completed" },
+    });
+    expect(mapping?.subagents).toEqual([
+      expect.objectContaining({ id: "call-1", status: "completed" }),
+    ]);
+  });
+  test("applies a follow-up result to the run that was latest when it started", () => {
+    const host = createPiExtensionHost();
+    spawn(host, "call-1", "native-1");
+    const followup = {
+      callId: "followup-1",
+      toolName: "get_subagent_result",
+      args: { agent_id: "native-1", wait: true },
+    };
+    host.mapToolCall({ ...followup, status: "running", result: null });
+    spawn(host, "call-2", "native-1");
+    const mapping = host.mapToolCall({
+      ...followup,
+      status: "completed",
+      result: {
+        content: [
+          { type: "text", text: "Agent: native-1\nType: Explore | Status: completed\n\nDone." },
+        ],
+      },
+    });
+    expect(mapping?.subagents).toEqual([{ type: "upsert", id: "call-1", status: "completed" }]);
   });
   test("declines foreign Agent results", () => {
     expect(
