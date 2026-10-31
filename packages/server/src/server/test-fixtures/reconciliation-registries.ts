@@ -1,10 +1,10 @@
 import type pino from "pino";
-import {
-  createPersistedProjectRecord,
-  type PersistedProjectRecord,
-  type PersistedWorkspaceRecord,
-  type ProjectRegistry,
-  type WorkspaceRegistry,
+import { createPersistedProjectRecord } from "../workspace-registry.js";
+import type {
+  PersistedProjectRecord,
+  PersistedWorkspaceRecord,
+  ProjectRegistry,
+  WorkspaceRegistry,
 } from "../workspace-registry.js";
 
 export function createTestRegistries() {
@@ -108,7 +108,7 @@ export function createTestLogger() {
   return logger as unknown as pino.Logger;
 }
 
-function deferred(): { promise: Promise<void>; resolve(): void } {
+export function deferred(): { promise: Promise<void>; resolve(): void } {
   let resolve!: () => void;
   const promise = new Promise<void>((accept) => {
     resolve = accept;

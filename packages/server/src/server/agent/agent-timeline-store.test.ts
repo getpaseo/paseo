@@ -181,6 +181,20 @@ describe("projected timeline retention", () => {
       },
     ]);
   });
+
+  it("serves a merged assistant message within the item budget", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("agent", { epoch: "e" });
+    const chunk = "a".repeat(200 * 1024);
+    for (let index = 0; index < 10; index++) {
+      store.append("agent", { type: "assistant_message", messageId: "m", text: chunk });
+    }
+    const [row] = store.fetch("agent", { limit: 1 }).rows;
+    expect(row).toMatchObject({ seqStart: 1, seqEnd: 10 });
+    expect(row.item).toMatchObject({ type: "assistant_message", messageId: "m" });
+    expect(Buffer.byteLength(JSON.stringify(row.item))).toBeLessThanOrEqual(256 * 1024);
+    expect(store.getLastAssistantMessage("agent")).toHaveLength(10 * chunk.length);
+  });
 });
 
 describe("projected sequence ownership", () => {

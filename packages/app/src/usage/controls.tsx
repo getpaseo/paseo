@@ -21,10 +21,12 @@ export interface UsageHostSelection {
  */
 export function UsageControls({
   view,
+  serverId,
   onRefresh,
   hostSelection,
 }: {
   view: UsageView;
+  serverId: string;
   onRefresh: () => void;
   hostSelection?: UsageHostSelection;
 }) {
@@ -43,8 +45,8 @@ export function UsageControls({
       ) : null}
       {view.kind === "unavailable" ? null : (
         <>
-          <UsageRefreshButton busy={busy} onRefresh={onRefresh} />
-          <UsageOptions />
+          {view.kind === "off" ? null : <UsageRefreshButton busy={busy} onRefresh={onRefresh} />}
+          <UsageOptions serverId={serverId} />
         </>
       )}
     </View>
@@ -84,7 +86,12 @@ export function useHostUsageWithControls(hostSelection: UsageHostSelection): {
   const controls = useMemo(
     () =>
       hasControls ? (
-        <UsageControls view={view} onRefresh={refresh} hostSelection={hostSelection} />
+        <UsageControls
+          serverId={hostSelection.serverId}
+          view={view}
+          onRefresh={refresh}
+          hostSelection={hostSelection}
+        />
       ) : null,
     [hasControls, hostSelection, refresh, view],
   );

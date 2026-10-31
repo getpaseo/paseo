@@ -21,6 +21,7 @@ import {
   type HostUpdate,
 } from "@getpaseo/protocol/hosts";
 import type { DaemonPermission, WSHelloMessage } from "@getpaseo/protocol/messages";
+import { webSocketProxyAgent } from "../network/index.js";
 
 export class HostError extends Error {
   constructor(
@@ -242,6 +243,7 @@ export class ConnectedHosts {
       {
         clientId: `host-link-${this.self.serverId}-${row.registrationId}`,
         connectTimeoutMs: 10000,
+        webSocketAgent: webSocketProxyAgent,
       },
       this.budget,
     );

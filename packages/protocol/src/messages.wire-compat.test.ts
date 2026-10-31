@@ -200,8 +200,8 @@ describe("wire schema compatibility", () => {
     });
   });
 
-  test("sub_agent tool-call payload still parses against the v0.1.65-beta.3 schema", () => {
-    const parsed = LegacySubAgentToolCallSchema.parse({
+  test("a sub-agent launch marker still parses against the v0.1.65-beta.3 schema", () => {
+    const card = {
       type: "tool_call",
       callId: "call-sub-agent-1",
       name: "Task",
@@ -212,12 +212,26 @@ describe("wire schema compatibility", () => {
         subAgentType: "Explore",
         description: "Inspect repository structure",
         childSessionId: "child-session-1",
-        log: "[Read] README.md",
+        log: "",
         actions: [],
       },
-    });
+    } as const;
 
-    expect(parsed.detail.actions).toEqual([]);
+    const parsed = LegacySubAgentToolCallSchema.parse(JSON.parse(JSON.stringify(card)));
+    expect(parsed.detail).toMatchObject({ log: "", actions: [] });
+    const { log: _log, ...withoutLog } = card.detail;
+    expect(LegacySubAgentToolCallSchema.safeParse({ ...card, detail: withoutLog }).success).toBe(
+      false,
+    );
+    expect(AgentTimelineItemPayloadSchema.parse({ ...card, detail: withoutLog })).toMatchObject({
+      detail: { type: "sub_agent", description: "Inspect repository structure" },
+    });
+    expect(
+      AgentTimelineItemPayloadSchema.parse({
+        ...card,
+        detail: { ...card.detail, log: "[Read] README.md" },
+      }),
+    ).toMatchObject({ detail: { log: "[Read] README.md" } });
   });
 
   test("old clients parse agent snapshots with rewind capabilities", () => {

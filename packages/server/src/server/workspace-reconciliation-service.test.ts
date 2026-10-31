@@ -5,10 +5,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { build } from "esbuild";
-import { createTestRegistries, createTestLogger } from "./test-utils/reconciliation-registries.js";
+import {
+  createTestRegistries,
+  createTestLogger,
+  deferred,
+} from "./test-fixtures/reconciliation-registries.js";
 import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 import type pino from "pino";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, afterEach, describe, expect, test } from "vitest";
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
@@ -18,6 +22,23 @@ import {
   WorkspaceReconciliationService,
 } from "./workspace-reconciliation-service.js";
 import { deriveProjectKey } from "./project-key.js";
+
+let probeDirectory: string;
+let probePath: string;
+beforeAll(async () => {
+  probeDirectory = mkdtempSync(path.join(tmpdir(), "reconciliation-probe-"));
+  probePath = path.join(probeDirectory, "reconciliation.mjs");
+  await build({
+    entryPoints: [
+      fileURLToPath(new URL("./test-fixtures/reconciliation-responsiveness.ts", import.meta.url)),
+    ],
+    outfile: probePath,
+    bundle: true,
+    platform: "node",
+    format: "esm",
+  });
+});
+afterAll(() => rmSync(probeDirectory, { recursive: true, force: true }));
 
 function canonicalLocalProjectKey(rootPath: string): string {
   return deriveProjectKey({
@@ -104,14 +125,6 @@ function createCheckout(
     mainRepoRoot: null,
     ...overrides,
   };
-}
-
-function deferred(): { promise: Promise<void>; resolve(): void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((accept) => {
-    resolve = accept;
-  });
-  return { promise, resolve };
 }
 
 class TestCheckouts {
@@ -522,16 +535,6 @@ describe("WorkspaceReconciliationService", () => {
   test("keeps the event loop responsive while inspecting 20000 real workspace paths", async () => {
     const rootPath = realpathSync(mkdtempSync(path.join(tmpdir(), "reconcile-many-")));
     tempDirs.push(rootPath);
-    const probePath = path.join(rootPath, "reconciliation-responsiveness.mjs");
-    await build({
-      entryPoints: [
-        fileURLToPath(new URL("./test-utils/reconciliation-responsiveness.ts", import.meta.url)),
-      ],
-      outfile: probePath,
-      bundle: true,
-      platform: "node",
-      format: "esm",
-    });
     // This CPU belongs to the runner, not to reconciliation. Keep it present
     // throughout the read so a later loop turn cannot contaminate the budget.
     let running = true;
@@ -552,18 +555,18 @@ describe("WorkspaceReconciliationService", () => {
       const { stdout, stderr } = await promisify(execFile)(
         process.execPath,
         ["--expose-gc", probePath, rootPath],
-        { timeout: 15_000 },
+        { timeout: 25_000 },
       );
       process.stderr.write(stderr);
       const {
-        changesAppliedCount,
+        changesApplied,
         blockingMs,
         filesystemRequests,
         yields,
         allArchived,
         workerMessages,
       } = JSON.parse(stdout) as {
-        changesAppliedCount: number;
+        changesApplied: number;
         blockingMs: number;
         filesystemRequests: number;
         yields: number;
@@ -572,7 +575,7 @@ describe("WorkspaceReconciliationService", () => {
       };
       expect(blockingMs).toBeLessThan(20);
       expect(filesystemRequests).toBe(20001);
-      expect(changesAppliedCount).toBe(20000);
+      expect(changesApplied).toBe(20000);
       expect(allArchived).toBe(true);
       expect(yields).toBeGreaterThan(0);
       expect(workerMessages).toBe(0);

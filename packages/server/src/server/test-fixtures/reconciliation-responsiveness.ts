@@ -1,22 +1,20 @@
 import assert from "node:assert/strict";
 import { createHook, executionAsyncResource } from "node:async_hooks";
-import path from "node:path";
-import { setImmediate as nextTurn } from "node:timers/promises";
 import { MessagePort } from "node:worker_threads";
+import path from "node:path";
+import { stat } from "node:fs/promises";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { measureMainThreadWork } from "../../test-utils/main-thread-work.js";
-import { deriveProjectKey } from "../project-key.js";
-import { WorkspaceReconciliationService } from "../workspace-reconciliation-service.js";
+import { createTestRegistries, createTestLogger } from "./reconciliation-registries.js";
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
 } from "../workspace-registry.js";
-import { createTestRegistries, createTestLogger } from "./reconciliation-registries.js";
+import { WorkspaceReconciliationService } from "../workspace-reconciliation-service.js";
+import { deriveProjectKey } from "../project-key.js";
 
-// Bundle before launch: neither the runner nor a TypeScript loader belongs to
-// the measured thread. Keep fixture construction and its garbage outside the
-// cold run; GC caused by reconciliation itself remains in the budget.
 const rootPath = process.argv[2];
-assert.ok(rootPath, "Project root is required");
+if (!rootPath) throw new Error("Project root is required");
 const timestamp = "2025-01-01T00:00:00.000Z";
 const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
 projects.set(
@@ -56,6 +54,14 @@ const service = new WorkspaceReconciliationService({
   workspaceRegistry,
   logger: createTestLogger(),
 });
+
+// Compile before launch and measure in plain Node, outside the test runner's
+// thread and TypeScript loader. Keep the first real reconciliation cold.
+// Initialize async filesystem support using the bundle, leaving every project
+// and workspace path untouched until the first reconciliation.
+await stat(process.argv[1]);
+// Collect fixture allocations before the measured run; allocations made by
+// reconciliation itself remain part of its budget.
 assert.ok(global.gc, "Launch the probe with --expose-gc");
 global.gc();
 await nextTurn();
@@ -75,9 +81,9 @@ try {
       blockingMs: measured.blockingMs,
       filesystemRequests: measured.filesystemRequests,
       yields: measured.yields,
-      changesAppliedCount: measured.result.changesApplied.length,
-      allArchived: [...workspaces.values()].every((workspace) => workspace.archivedAt !== null),
       workerMessages,
+      changesApplied: measured.result.changesApplied.length,
+      allArchived: [...workspaces.values()].every((workspace) => workspace.archivedAt !== null),
     }),
   );
 } finally {
