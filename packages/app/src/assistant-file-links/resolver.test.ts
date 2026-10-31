@@ -530,6 +530,7 @@ describe("resolveMissingNestedRelativeFile", () => {
     ["/Users/test/project/schema/x.md", "/Users/test/project"],
     ["file:///Users/test/project/schema/x.md", "/Users/test/project"],
     ["C:/repo/schema/x.md", "C:/repo"],
+    ["\\\\server\\share\\schema\\x.md", "//server/share"],
   ])("keeps absolute destination %s", async (raw, workspaceRoot) => {
     const { getDirectorySuggestions, searches } = suggestionsFromMap({
       "schema/x.md": [{ path: "repo-a/schema/x.md", kind: "file" }],

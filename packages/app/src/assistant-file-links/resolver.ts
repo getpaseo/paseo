@@ -5,6 +5,7 @@ import {
   type InlinePathTarget,
 } from "./parse";
 import { i18n } from "@/i18n/i18next";
+import { isAbsolutePath } from "@/utils/path";
 
 export interface AssistantFileLinkSource {
   href: string;
@@ -272,11 +273,7 @@ export function shouldResolveDirectFileThroughSuggestions(input: {
 }
 
 function isAbsoluteInlineCodeToken(token: string): boolean {
-  return (
-    token.startsWith("/") ||
-    token.toLowerCase().startsWith("file://") ||
-    /^[A-Za-z]:[\\/]/.test(token)
-  );
+  return isAbsolutePath(token) || token.toLowerCase().startsWith("file://");
 }
 
 function isLinkifiedSource(source: AssistantFileLinkSource): boolean {
