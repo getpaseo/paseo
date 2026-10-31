@@ -1510,6 +1510,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const ignore = this.workingTreeIgnoreList(target);
     let watcherErrored = false;
     let subscribeSettled = false;
+    let abandoned = false;
     const markSubscribeSettled = () => {
       subscribeSettled = true;
       if (watcherErrored) {
@@ -1520,6 +1521,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       const subscription = await this.subscribeWithDeadline(
         target.watchPath,
         (error, events) => {
+          if (abandoned) {
+            return;
+          }
           if (error) {
             if (watcherErrored) {
               return;
@@ -1561,6 +1565,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         (target.fallbackPolling && !options?.replaceFallback) ||
         target.subscription
       ) {
+        abandoned = true;
         await this.unsubscribeWatcherSubscription(subscription, target.watchPath);
         return false;
       }
@@ -1581,6 +1586,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       }
       return true;
     } catch (error) {
+      abandoned = true;
       if (watcherErrored) {
         return false;
       }

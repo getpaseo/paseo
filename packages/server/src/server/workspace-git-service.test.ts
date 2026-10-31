@@ -1488,6 +1488,102 @@ describe("WorkspaceGitServiceImpl", () => {
     service.dispose();
   });
 
+  test("a watcher attempt that expired cannot tear down the recovered watcher", async () => {
+    const watchCallbacks: Array<
+      (error: Error | null, events: Array<{ path: string; type: "update" }>) => void
+    > = [];
+    const recoveredSubscription = createAsyncSubscription();
+    const subscribe = vi
+      .fn((_path: string, callback: (typeof watchCallbacks)[number]) => {
+        watchCallbacks.push(callback);
+        return Promise.resolve(recoveredSubscription);
+      })
+      .mockImplementationOnce((_path: string, callback: (typeof watchCallbacks)[number]) => {
+        watchCallbacks.push(callback);
+        return new Promise<ReturnType<typeof createAsyncSubscription>>(() => {});
+      });
+    const service = createService({ subscribe });
+    const listener = vi.fn();
+    const subscriptionPromise = service.requestWorkingTreeWatch(REPO_CWD, listener);
+    await vi.waitFor(() => {
+      expect(subscribe).toHaveBeenCalledTimes(1);
+    });
+    await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS);
+    const subscription = await subscriptionPromise;
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(() => {
+      expect(subscribe).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+    const notificationsAfterRecovery = listener.mock.calls.length;
+
+    watchCallbacks[0]?.(new Error("expired watcher stopped"), []);
+    watchCallbacks[0]?.(null, [{ path: join(REPO_CWD, "stale.ts"), type: "update" }]);
+    expect(recoveredSubscription.unsubscribe).not.toHaveBeenCalled();
+    expect(service.getMetrics().watcherErrorCallbackCount).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(listener).toHaveBeenCalledTimes(notificationsAfterRecovery);
+
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(listener).toHaveBeenCalledTimes(notificationsAfterRecovery);
+    watchCallbacks[1]?.(null, [{ path: join(REPO_CWD, "file.ts"), type: "update" }]);
+    expect(listener).toHaveBeenCalledTimes(notificationsAfterRecovery + 1);
+
+    subscription.unsubscribe();
+    expect(recoveredSubscription.unsubscribe).toHaveBeenCalledTimes(1);
+    service.dispose();
+  });
+
+  test("a watcher attempt that resolves after recovery is closed without touching the recovered watcher", async () => {
+    const watchCallbacks: Array<
+      (error: Error | null, events: Array<{ path: string; type: "update" }>) => void
+    > = [];
+    const lateAttempt = createDeferred<ReturnType<typeof createAsyncSubscription>>();
+    const lateSubscription = createAsyncSubscription();
+    const recoveredSubscription = createAsyncSubscription();
+    const subscribe = vi
+      .fn((_path: string, callback: (typeof watchCallbacks)[number]) => {
+        watchCallbacks.push(callback);
+        return Promise.resolve(recoveredSubscription);
+      })
+      .mockImplementationOnce((_path: string, callback: (typeof watchCallbacks)[number]) => {
+        watchCallbacks.push(callback);
+        return lateAttempt.promise;
+      });
+    const service = createService({ subscribe });
+    const listener = vi.fn();
+    const subscriptionPromise = service.requestWorkingTreeWatch(REPO_CWD, listener);
+    await vi.waitFor(() => {
+      expect(subscribe).toHaveBeenCalledTimes(1);
+    });
+    await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS);
+    const subscription = await subscriptionPromise;
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(() => {
+      expect(subscribe).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+    const notificationsAfterRecovery = listener.mock.calls.length;
+
+    lateAttempt.resolve(lateSubscription);
+    await vi.waitFor(() => {
+      expect(lateSubscription.unsubscribe).toHaveBeenCalledTimes(1);
+    });
+    watchCallbacks[0]?.(new Error("late watcher stopped"), []);
+    expect(recoveredSubscription.unsubscribe).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(listener).toHaveBeenCalledTimes(notificationsAfterRecovery);
+
+    watchCallbacks[1]?.(null, [{ path: join(REPO_CWD, "file.ts"), type: "update" }]);
+    expect(listener).toHaveBeenCalledTimes(notificationsAfterRecovery + 1);
+
+    subscription.unsubscribe();
+    expect(recoveredSubscription.unsubscribe).toHaveBeenCalledTimes(1);
+    service.dispose();
+  });
+
   test("non-git directories fall back to watching cwd with polling", async () => {
     const subscribe = vi.fn(async () => createAsyncSubscription());
     const runGitCommand = vi.fn(async () => {
