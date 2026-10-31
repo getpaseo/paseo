@@ -59,6 +59,8 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/@gorhom/bottom-sheet",
     patchPrefix: "@gorhom+bottom-sheet+",
   },
+  // Android resize: retain until upstream clears descendant geometry when the SVG canvas resizes.
+  // The native pixel regression is included in the patch; preserve the separate transform hunks.
   {
     nodeModulesPath: "packages/app/node_modules/react-native-svg",
     patchPrefix: "react-native-svg+",
