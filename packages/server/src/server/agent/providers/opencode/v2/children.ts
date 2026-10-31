@@ -1,6 +1,6 @@
 import { V2Timeline } from "./timeline.js";
 
-import type { SessionInfo } from "@opencode/client";
+import { isSessionNotFoundError, type SessionInfo } from "@opencode/client";
 
 import type { AgentStreamEvent } from "../../../agent-sdk-types.js";
 
@@ -62,9 +62,14 @@ export class SessionChildren {
       }
       cursor = page.cursor.next ?? undefined;
     } while (cursor);
-    // A complete parent listing is authoritative. Do not prune on a partial or failed page.
+    // Updates can move a live child ahead of the cursor. Confirm deletion before pruning.
     for (const [id] of previous) {
-      if (!seen.has(id)) this.remove(id);
+      if (seen.has(id)) continue;
+      try {
+        await this.options.client().session.get({ sessionID: id });
+      } catch (error) {
+        if (isSessionNotFoundError(error)) this.remove(id);
+      }
     }
   }
   private remove(id: string) {
