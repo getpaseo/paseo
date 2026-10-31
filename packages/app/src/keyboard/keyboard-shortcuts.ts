@@ -111,6 +111,11 @@ interface ShortcutBinding {
   preventDefault?: boolean;
   stopPropagation?: boolean;
   help?: ShortcutHelp;
+  /**
+   * Also dispatched on compact web, where every other shortcut is off. Only for a key a
+   * hardware keyboard user at a narrow width has no other way to reach.
+   */
+  compact?: true;
 }
 
 export interface ParsedShortcutBinding extends ShortcutBinding {
@@ -199,6 +204,7 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
     "cycle-agent-mode",
     "voice-toggle",
     "dictation-toggle",
+    "terminal-dictation-toggle",
     "agent-interrupt",
     "voice-mute-toggle",
   ],
@@ -246,6 +252,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "cycle-agent-mode": "settings.shortcuts.help.cycleAgentMode",
   "voice-toggle": "settings.shortcuts.help.toggleVoiceMode",
   "dictation-toggle": "settings.shortcuts.help.startStopDictation",
+  "terminal-dictation-toggle": "settings.shortcuts.help.startStopTerminalDictation",
   "agent-interrupt": "settings.shortcuts.help.interruptAgent",
   "voice-mute-toggle": "settings.shortcuts.help.muteUnmuteVoiceMode",
 };
@@ -1134,6 +1141,20 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "dictation-toggle",
       section: "agent-input",
       label: "Start/stop dictation",
+    },
+  },
+  // Terminals take Cmd+D on macOS only: elsewhere Ctrl+D is the PTY's EOF and passes through.
+  {
+    id: "terminal-dictation-toggle-cmd-d-mac",
+    action: "terminal.dictation-toggle",
+    combo: "Cmd+D",
+    when: { mac: true, commandCenter: false, focusScope: "terminal" },
+    // A narrow browser window has no tab bar mic, only the key bar's.
+    compact: true,
+    help: {
+      id: "terminal-dictation-toggle",
+      section: "agent-input",
+      label: "Start/stop dictation in terminal",
     },
   },
   {

@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { VolumeMeter } from "./volume-meter";
 import { FOOTER_HEIGHT } from "@/constants/layout";
 import type { DictationStatus } from "@/hooks/use-dictation";
+import { formatDictationDuration } from "@/utils/format-dictation-duration";
 
 interface DictationControlsProps {
   volume: number;
@@ -22,12 +23,6 @@ interface DictationControlsProps {
   onRetry?: () => void;
   onDiscard?: () => void;
   disabled?: boolean;
-}
-
-function formatDuration(seconds: number): string {
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
 }
 
 export function DictationControls({
@@ -88,7 +83,7 @@ export function DictationControls({
         <VolumeMeter volume={volume} isMuted={false} isSpeaking={false} orientation="horizontal" />
       </View>
       <Text style={timerTextStyle}>
-        {status === "paused" ? t("message.dictation.paused") : formatDuration(duration)}
+        {status === "paused" ? t("message.dictation.paused") : formatDictationDuration(duration)}
       </Text>
       <View style={styles.actionGroup}>
         <Pressable
@@ -152,7 +147,13 @@ export function DictationOverlay({
   onAcceptAndSend,
   onRetry,
   onDiscard,
-}: Omit<DictationControlsProps, "onStart" | "disabled" | "transcript"> & { errorText?: string }) {
+  testID,
+}: Omit<DictationControlsProps, "onStart" | "disabled" | "transcript" | "onAcceptAndSend"> & {
+  errorText?: string;
+  /** Omit to show insert as the only confirm action (terminals never send). */
+  onAcceptAndSend?: () => void;
+  testID?: string;
+}) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const isFailed = status === "failed";
@@ -190,7 +191,7 @@ export function DictationOverlay({
   }
 
   return (
-    <View style={containerStyle}>
+    <View style={containerStyle} testID={testID}>
       <Pressable
         onPress={handleCancel}
         disabled={actionsDisabled && !isFailed}
@@ -210,7 +211,7 @@ export function DictationOverlay({
             orientation="horizontal"
             color={theme.colors.accentForeground}
           />
-          <Text style={overlayTimerTextStyle}>{formatDuration(duration)}</Text>
+          <Text style={overlayTimerTextStyle}>{formatDictationDuration(duration)}</Text>
         </View>
         {status === "paused" ? (
           <Text numberOfLines={2} style={overlayTranscriptTextStyle}>
@@ -242,7 +243,7 @@ export function DictationOverlay({
             <RefreshCcw size={theme.iconSize.lg} color={theme.colors.accent} strokeWidth={2.5} />
           </Pressable>
         ) : null}
-        {!actionsDisabled && !isFailed ? (
+        {!actionsDisabled && !isFailed && onAcceptAndSend ? (
           <>
             <Pressable
               onPress={onAccept}
@@ -265,6 +266,16 @@ export function DictationOverlay({
               <ArrowUp size={theme.iconSize.lg} color={theme.colors.accent} strokeWidth={2.5} />
             </Pressable>
           </>
+        ) : null}
+        {!actionsDisabled && !isFailed && !onAcceptAndSend ? (
+          <Pressable
+            onPress={onAccept}
+            accessibilityRole="button"
+            accessibilityLabel={t("message.dictation.insert")}
+            style={overlayConfirmButtonStyle}
+          >
+            <Check size={theme.iconSize.lg} color={theme.colors.accent} strokeWidth={2.5} />
+          </Pressable>
         ) : null}
       </View>
     </View>

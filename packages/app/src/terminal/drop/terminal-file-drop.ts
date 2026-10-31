@@ -1,5 +1,5 @@
 import { getMimeTypeFromPath } from "@/attachments/file-types";
-import { readDesktopFileBytes } from "@/attachments/selected-file";
+import { readDesktopFileBytes, type SelectedFile } from "@/attachments/selected-file";
 import type { DroppedItem } from "@/components/file-drop/types";
 import type { DesktopHostBridge } from "@/desktop/host";
 import { readTerminalFile, type TerminalFile } from "../file-paste";
@@ -60,4 +60,26 @@ export function routeTerminalDrop(
   return clientPath
     ? { kind: "path", path: clientPath }
     : { kind: "upload", read: () => readTerminalFile(item.file) };
+}
+
+/**
+ * A picked file follows the same rule as a dropped one: its own path when the
+ * host is this machine and the picker knows where the file is (the desktop app's
+ * dialog), otherwise its bytes are uploaded.
+ */
+export function routeTerminalPickedFile(
+  file: SelectedFile,
+  input: { hostIsLocal: boolean },
+): TerminalDropDelivery {
+  if (input.hostIsLocal && file.desktopPath) {
+    return { kind: "path", path: file.desktopPath };
+  }
+  return {
+    kind: "upload",
+    read: async () => ({
+      fileName: file.fileName,
+      mimeType: file.mimeType,
+      bytes: await file.readBytes(),
+    }),
+  };
 }

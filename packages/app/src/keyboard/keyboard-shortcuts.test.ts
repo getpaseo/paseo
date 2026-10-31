@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { formatShortcut } from "@/utils/format-shortcut";
 import { keyboardEventToComboString } from "./shortcut-string";
+import { dispatchableShortcutBindings } from "./availability";
 import {
   buildKeyboardShortcutHelpSections,
   buildEffectiveBindings,
@@ -324,6 +325,12 @@ describe("keyboard-shortcuts", () => {
       payload: { kind: "dictation-toggle" },
     },
     {
+      name: "routes Cmd+D to terminal dictation, not the message input, when terminal is focused on macOS",
+      event: { key: "d", code: "KeyD", metaKey: true },
+      context: { isMac: true, focusScope: "terminal" },
+      action: "terminal.dictation-toggle",
+    },
+    {
       name: "routes Shift+Tab to cycle agent mode from the message input",
       event: { key: "Tab", code: "Tab", shiftKey: true },
       context: { focusScope: "message-input" },
@@ -481,9 +488,14 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: false, focusScope: "terminal" },
     },
     {
-      name: "does not route message-input actions when terminal is focused",
+      name: "leaves Ctrl+D to the PTY as EOF when terminal is focused on non-mac",
+      event: { key: "d", code: "KeyD", ctrlKey: true },
+      context: { isMac: false, focusScope: "terminal" },
+    },
+    {
+      name: "does not bind Cmd+D to terminal dictation on non-mac",
       event: { key: "d", code: "KeyD", metaKey: true },
-      context: { isMac: true, focusScope: "terminal" },
+      context: { isMac: false, focusScope: "terminal" },
     },
     {
       name: "does not cycle agent mode outside the message input",
@@ -1409,5 +1421,63 @@ describe("shortcut capture completion", () => {
     expect(isShortcutCaptureComplete("show-shortcuts", [])).toBe(false);
     expect(isShortcutCaptureComplete("show-shortcuts", ["Ctrl+K"])).toBe(true);
     expect(isShortcutCaptureComplete("show-shortcuts", ["Ctrl+0"])).toBe(true);
+  });
+});
+
+describe("compact web shortcuts", () => {
+  const compactBindings = dispatchableShortcutBindings(buildEffectiveBindings({}), {
+    isNative: false,
+    isCompact: true,
+  });
+
+  it("keeps only terminal dictation's Cmd+D", () => {
+    expect(compactBindings.map((binding) => binding.id)).toEqual([
+      "terminal-dictation-toggle-cmd-d-mac",
+    ]);
+  });
+
+  it("routes Cmd+D in a focused terminal on macOS", () => {
+    const result = resolveShortcut({
+      event: { key: "d", code: "KeyD", metaKey: true },
+      context: { isMac: true, focusScope: "terminal" },
+      bindings: compactBindings,
+    });
+    expect(result.match?.action).toBe("terminal.dictation-toggle");
+  });
+
+  it("leaves Ctrl+D off macOS to the PTY", () => {
+    const result = resolveShortcut({
+      event: { key: "d", code: "KeyD", ctrlKey: true },
+      context: { isMac: false, focusScope: "terminal" },
+      bindings: compactBindings,
+    });
+    expect(result.match).toBeNull();
+    expect(result.preventDefault).toBe(false);
+  });
+
+  it.each([
+    {
+      name: "the composer's Cmd+D",
+      event: { key: "d", code: "KeyD", metaKey: true },
+      focusScope: "message-input" as const,
+    },
+    {
+      name: "the command center",
+      event: { key: "k", code: "KeyK", metaKey: true },
+      focusScope: "other" as const,
+    },
+    {
+      name: "agent interrupt",
+      event: { key: "Escape", code: "Escape" },
+      focusScope: "message-input" as const,
+    },
+  ])("keeps $name off", ({ event, focusScope }) => {
+    const result = resolveShortcut({
+      event,
+      context: { isMac: true, focusScope },
+      bindings: compactBindings,
+    });
+    expect(result.match).toBeNull();
+    expect(result.preventDefault).toBe(false);
   });
 });

@@ -48,6 +48,7 @@ export type KeyboardActionId =
   | "command-center.files"
   | "shortcuts.dialog.toggle"
   | "workspace.terminal.new"
+  | "terminal.dictation-toggle"
   | "workspace.new"
   | "workspace.project.pick"
   | "worktree.new"

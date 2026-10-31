@@ -8,6 +8,7 @@ import React, {
   useRef,
   useState,
   type Dispatch,
+  type ReactNode,
   type SetStateAction,
 } from "react";
 import { Pressable, Text, View, type LayoutChangeEvent, type ScrollView } from "react-native";
@@ -73,6 +74,7 @@ import {
   type WorkspaceTabRailSurface,
 } from "@/screens/workspace/workspace-tab-chip-backdrop";
 import type { Theme } from "@/styles/theme";
+import { TerminalToolbarSlot } from "@/terminal/toolbar/terminal-toolbar-slot";
 import { RenderProfile } from "@/utils/render-profiler";
 import { TrailingActionScrim } from "@/components/ui/trailing-action-scrim";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
@@ -103,6 +105,12 @@ const PANE_SPLIT_ACTIONS_RESERVED_WIDTH =
   PANE_SPLIT_ACTIONS_HORIZONTAL_PADDING * 2 +
   PANE_SPLIT_ACTIONS_OUTER_MARGIN;
 const PANE_MAXIMIZE_ACTION_RESERVED_WIDTH = smallIconButtonChromeFrameSize(false) + 1;
+// The toolbar's gap between controls (ToolbarControls).
+const TOOLBAR_CONTROL_GAP = 1;
+// The terminal slot's width before its first layout: two icon buttons (upload, mic). The slot
+// is measured afterwards, because the mic grows into a pill while the terminal dictates and the
+// row itself keeps its width when that happens.
+const TERMINAL_SLOT_IDLE_WIDTH = 2 * smallIconButtonChromeFrameSize(false) + TOOLBAR_CONTROL_GAP;
 // Chip geometry. `layoutMetrics` measures tabs from these same numbers, so a chip that changes
 // shape without changing them mis-measures and drops the row into the overflow-scroll fallback at
 // the wrong width. Keep them together.
@@ -278,6 +286,7 @@ function WorkspacePaneToolbarActions({
   onSplitRight,
   onSplitDown,
   onTogglePaneMaximized,
+  terminalSlot,
 }: {
   panePanelKinds: PanePanelKinds;
   host: PaneHost;
@@ -292,6 +301,8 @@ function WorkspacePaneToolbarActions({
   onSplitRight?: () => void;
   onSplitDown?: () => void;
   onTogglePaneMaximized?: () => void;
+  /** The active terminal tab's controls, rendered immediately before "...". */
+  terminalSlot?: ReactNode;
 }) {
   const { t } = useTranslation();
   const splitRightKeys = useShortcutKeys("workspace-pane-split-right");
@@ -314,7 +325,9 @@ function WorkspacePaneToolbarActions({
     [splitDownKeys],
   );
   const maximizeActionVisible = showMaximizeAction && Boolean(onTogglePaneMaximized);
-  if (!showNewTabButton && !splitActionsVisible && !maximizeActionVisible) return null;
+  if (!showNewTabButton && !splitActionsVisible && !maximizeActionVisible && !terminalSlot) {
+    return null;
+  }
 
   return (
     <ToolbarControls style={styles.paneSplitActions}>
@@ -347,6 +360,7 @@ function WorkspacePaneToolbarActions({
           )}
         </ToolbarButton>
       ) : null}
+      {terminalSlot}
       {splitActionsVisible && onSplitRight && onSplitDown ? (
         <DropdownMenu>
           <ToolbarButton
@@ -1017,6 +1031,16 @@ export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
   );
 }
 
+/** The terminal whose controls the tab-bar slot shows: the active tab's, on web and Electron. */
+function resolveSlotTerminalId(tabs: readonly WorkspaceDesktopTabRowItem[]): string | null {
+  // Native tablets use the terminal's key bar instead.
+  if (isNative) {
+    return null;
+  }
+  const activeTab = tabs.find((item) => item.isActive)?.tab;
+  return activeTab?.target.kind === "terminal" ? activeTab.target.terminalId : null;
+}
+
 function ResolvedWorkspaceDesktopTabsRow({
   host = "main",
   launchPurpose = "primary",
@@ -1072,6 +1096,26 @@ function ResolvedWorkspaceDesktopTabsRow({
     updateMeasuredWidth(setExitFocusModeWidth, event);
   }, []);
 
+  const [terminalSlotWidth, setTerminalSlotWidth] = useState(TERMINAL_SLOT_IDLE_WIDTH);
+  const handleTerminalSlotLayout = useCallback((event: LayoutChangeEvent) => {
+    updateMeasuredWidth(setTerminalSlotWidth, event);
+  }, []);
+
+  const activeTerminalId = resolveSlotTerminalId(tabs);
+  const terminalSlot = useMemo(
+    () =>
+      activeTerminalId ? (
+        <View
+          key={`${normalizedServerId}:${activeTerminalId}`}
+          style={styles.terminalSlot}
+          onLayout={handleTerminalSlotLayout}
+        >
+          <TerminalToolbarSlot serverId={normalizedServerId} terminalId={activeTerminalId} />
+        </View>
+      ) : null,
+    [activeTerminalId, handleTerminalSlotLayout, normalizedServerId],
+  );
+
   const layoutMetrics = useMemo(
     () => ({
       rowHorizontalInset: 0,
@@ -1080,7 +1124,8 @@ function ResolvedWorkspaceDesktopTabsRow({
         DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH +
           (focusModeEnabled ? exitFocusModeWidth : 0) +
           (showPaneSplitActions ? PANE_SPLIT_ACTIONS_RESERVED_WIDTH : 0) +
-          (showPaneMaximizeAction ? PANE_MAXIMIZE_ACTION_RESERVED_WIDTH : 0),
+          (showPaneMaximizeAction ? PANE_MAXIMIZE_ACTION_RESERVED_WIDTH : 0) +
+          (activeTerminalId ? terminalSlotWidth + TOOLBAR_CONTROL_GAP : 0),
       ),
       rowPaddingHorizontal: TAB_ROW_PADDING_HORIZONTAL,
       tabGap: TAB_CHIP_GAP,
@@ -1091,7 +1136,14 @@ function ResolvedWorkspaceDesktopTabsRow({
       tabHorizontalPadding: TAB_CHIP_HORIZONTAL_PADDING,
       closeButtonWidth: TAB_CLOSE_BUTTON_RESERVED_WIDTH,
     }),
-    [exitFocusModeWidth, focusModeEnabled, showPaneMaximizeAction, showPaneSplitActions],
+    [
+      activeTerminalId,
+      exitFocusModeWidth,
+      focusModeEnabled,
+      showPaneMaximizeAction,
+      showPaneSplitActions,
+      terminalSlotWidth,
+    ],
   );
 
   const panePanelKinds = useMemo(() => tabs.map(({ tab }) => tab.kind), [tabs]);
@@ -1446,6 +1498,7 @@ function ResolvedWorkspaceDesktopTabsRow({
         onSplitRight={onSplitRight}
         onSplitDown={onSplitDown}
         onTogglePaneMaximized={onTogglePaneMaximized}
+        terminalSlot={terminalSlot}
       />
     </View>
   );
@@ -1645,6 +1698,11 @@ const styles = StyleSheet.create((theme) => ({
   paneSplitActions: {
     paddingHorizontal: PANE_SPLIT_ACTIONS_HORIZONTAL_PADDING,
     marginRight: PANE_SPLIT_ACTIONS_OUTER_MARGIN,
+  },
+  terminalSlot: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: TOOLBAR_CONTROL_GAP,
   },
   tab: {
     height: buttonControlHeight.xs,
