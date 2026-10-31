@@ -317,6 +317,17 @@ export function buildACPClientCapabilities(
 // NO_BROWSER is honored by Gemini CLI; other ACP agents ignore it.
 const PROBE_ENV: Record<string, string> = { NO_BROWSER: "true" };
 const ACP_DIAGNOSTIC_PHASE_TIMEOUT_MS = 20_000;
+// `devin acp` answers a manual `/compact` with an immediate `end_turn` and runs the
+// summarization in the background, reporting progress through the
+// `_cognition.ai/compaction` extension notification. Hold the turn open across that
+// window, otherwise the next prompt reaches the agent while it is still summarizing
+// and the agent cancels the summary (`Compaction canceled.`).
+const ACP_COMPACTION_METHOD = "_cognition.ai/compaction";
+// How long an `end_turn` from a `/compact` turn waits for the matching
+// `started` notification before the turn is allowed to finish.
+const ACP_COMPACTION_START_GRACE_MS = 2_000;
+// Backstop for a notification that never arrives (agent crash, transport loss).
+const ACP_COMPACTION_WAIT_TIMEOUT_MS = 12 * 60 * 1_000;
 const ACP_PROBE_CLOSE_TIMEOUT_MS = 2_000;
 // Archive and delete await close(). The ACP SDK does not reject a pending
 // request when the provider never answers, so these calls must be bounded
@@ -1761,6 +1772,15 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
   private fallbackAssistantMessageId: string | null = null;
+  // Set while the provider reports a background compaction for the active turn.
+  private compactionInFlight = false;
+  // Prompt already answered by the provider but not yet turned into a
+  // `turn_completed` event, because a compaction is still running.
+  private pendingPromptResponse: { response: PromptResponse; turnId: string } | null = null;
+  private pendingPromptResponseTimer: ReturnType<typeof setTimeout> | null = null;
+  // Whether this turn was started by a manual `/compact`, i.e. an `end_turn`
+  // should wait briefly for the compaction notification.
+  private turnWaitsForCompaction = false;
   private closed = false;
   private historyPending = false;
   private historyRuntimeReleased = false;
@@ -1977,6 +1997,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.activeForegroundTurnId = turnId;
     this.fallbackAssistantMessageId = null;
     this.submittedUserMessageTurnId = null;
+    this.pendingPromptResponse = null;
+    this.compactionInFlight = false;
+    this.turnWaitsForCompaction = /^\/compact\b/i.test(extractPromptText(prompt).trim());
     this.emitBootstrapThreadEvent();
     this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
     this.emitSubmittedUserMessage(prompt, messageId, turnId, options?.clientMessageId);
@@ -2731,6 +2754,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         sessionId: typeof params.sessionId === "string" ? params.sessionId : undefined,
       });
     }
+
+    if (method === ACP_COMPACTION_METHOD) {
+      this.applyCompactionNotice(params);
+    }
   }
 
   // Cache an asynchronously-delivered slash-command batch and unblock any
@@ -3322,31 +3349,118 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
+    if (this.activeForegroundTurnId !== turnId) {
+      return;
+    }
     this.currentTurnUsage = mapACPUsage(response.usage) ?? this.currentTurnUsage;
 
-    switch (response.stopReason) {
-      case "cancelled":
-        this.synthesizeCanceledToolCalls();
-        this.finishTurn({
-          type: "turn_canceled",
-          provider: this.provider,
-          reason: "Interrupted",
-          turnId,
-        });
-        break;
-      case "end_turn":
-      case "max_tokens":
-      case "max_turn_requests":
-      case "refusal":
-      default:
-        this.finishTurn({
-          type: "turn_completed",
-          provider: this.provider,
-          usage: this.currentTurnUsage,
-          turnId,
-        });
-        break;
+    if (response.stopReason === "cancelled") {
+      this.synthesizeCanceledToolCalls();
+      this.finishTurn({
+        type: "turn_canceled",
+        provider: this.provider,
+        reason: "Interrupted",
+        turnId,
+      });
+      return;
     }
+
+    // Every other stop reason completes the turn, but a compaction that the
+    // provider is still running keeps the turn open until it reports a terminal
+    // status. The pending response is settled by `finishPendingPromptResponse`.
+    this.pendingPromptResponse = { response, turnId };
+    if (!this.compactionInFlight) {
+      this.pendingPromptResponseTimer = setTimeout(
+        () => this.finishPendingPromptResponse(),
+        this.turnWaitsForCompaction ? ACP_COMPACTION_START_GRACE_MS : 0,
+      );
+    }
+  }
+
+  /**
+   * Turn the prompt response that the provider already returned into a
+   * `turn_completed` event. Does nothing while a compaction is still running or
+   * when the turn was already settled by a cancel. */
+  private finishPendingPromptResponse(): void {
+    const pending = this.pendingPromptResponse;
+    if (!pending || this.compactionInFlight) {
+      return;
+    }
+    this.pendingPromptResponse = null;
+    this.clearPendingPromptResponseTimer();
+    if (this.activeForegroundTurnId !== pending.turnId) {
+      return;
+    }
+    this.finishTurn({
+      type: "turn_completed",
+      provider: this.provider,
+      usage: this.currentTurnUsage,
+      turnId: pending.turnId,
+    });
+  }
+
+  private clearPendingPromptResponseTimer(): void {
+    if (this.pendingPromptResponseTimer) {
+      clearTimeout(this.pendingPromptResponseTimer);
+      this.pendingPromptResponseTimer = null;
+    }
+  }
+
+  /**
+   * Track a provider-reported compaction (`_cognition.ai/compaction`): keep the
+   * turn open from `started` until `completed`/`failed`/`cancelled`, and surface
+   * it on the timeline so the composer shows a compaction marker instead of
+   * appearing idle.
+   */
+  private applyCompactionNotice(params: Record<string, unknown>): void {
+    const status = typeof params.status === "string" ? params.status : undefined;
+    const turnId = this.activeForegroundTurnId ?? undefined;
+
+    if (status === "started") {
+      if (!turnId && !this.pendingPromptResponse) {
+        return;
+      }
+      this.compactionInFlight = true;
+      this.clearPendingPromptResponseTimer();
+      this.pendingPromptResponseTimer = setTimeout(() => {
+        this.pendingPromptResponseTimer = null;
+        this.compactionInFlight = false;
+        this.finishPendingPromptResponse();
+      }, ACP_COMPACTION_WAIT_TIMEOUT_MS);
+      if (turnId) {
+        this.pushEvent({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: {
+            type: "compaction",
+            status: "loading",
+            trigger: this.turnWaitsForCompaction ? "manual" : "auto",
+          },
+        });
+      }
+      return;
+    }
+
+    if (status !== "completed" && status !== "failed" && status !== "cancelled") {
+      return;
+    }
+    const wasInFlight = this.compactionInFlight;
+    this.compactionInFlight = false;
+    this.clearPendingPromptResponseTimer();
+    if (wasInFlight && turnId) {
+      this.pushEvent({
+        type: "timeline",
+        provider: this.provider,
+        turnId,
+        item: {
+          type: "compaction",
+          status: "completed",
+          trigger: this.turnWaitsForCompaction ? "manual" : "auto",
+        },
+      });
+    }
+    this.finishPendingPromptResponse();
   }
 
   private wrapTimeline(item: AgentTimelineItem): AgentStreamEvent {
@@ -3423,6 +3537,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     this.activeForegroundTurnId = null;
     this.fallbackAssistantMessageId = null;
+    this.compactionInFlight = false;
+    this.pendingPromptResponse = null;
+    this.clearPendingPromptResponseTimer();
     if (this.submittedUserMessageTurnId === event.turnId) {
       this.submittedUserMessageTurnId = null;
     }
