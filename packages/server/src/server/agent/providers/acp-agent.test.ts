@@ -65,13 +65,14 @@ import { asInternals } from "../../test-utils/class-mocks.js";
 import * as spawnUtils from "../../../utils/spawn.js";
 
 describe("buildACPClientCapabilities", () => {
-  test("enables terminal execution on the host while keeping filesystem operations with the agent by default", () => {
+  test("enables terminal execution and form elicitation on the host while keeping filesystem operations with the agent by default", () => {
     expect(buildACPClientCapabilities()).toEqual({
       fs: {
         readTextFile: false,
         writeTextFile: false,
       },
       terminal: true,
+      elicitation: { form: {} },
     });
   });
 
@@ -92,6 +93,7 @@ describe("buildACPClientCapabilities", () => {
         writeTextFile: false,
       },
       terminal: false,
+      elicitation: { form: {} },
       _meta: { source: "provider" },
     });
   });
@@ -1858,6 +1860,248 @@ describe("ACPAgentSession Zed parity", () => {
   });
 });
 
+// Built the way Factory Droid 0.249.0 builds the form for its AskUser tool.
+const DROID_ASK_USER_ELICITATION = {
+  mode: "form",
+  sessionId: "session-1",
+  toolCallId: "call-ask-user",
+  message: "Droid needs your answers to continue.",
+  requestedSchema: {
+    type: "object",
+    properties: {
+      question_0: {
+        type: "string",
+        title: "Approach",
+        description: "How should the theme be added?",
+        oneOf: [
+          { const: "option_0", title: "Extend the palette" },
+          { const: "option_1", title: "New theme file" },
+          { const: "other", title: "Other answer" },
+        ],
+      },
+      question_0_other: {
+        type: "string",
+        title: "Approach: Other answer",
+        description: "Enter your answer here if you select Other answer.",
+      },
+      question_1: {
+        type: "array",
+        title: "Platforms",
+        description: "Which platforms should get it?",
+        items: {
+          anyOf: [
+            { const: "option_0", title: "Web" },
+            { const: "option_1", title: "iOS" },
+            { const: "other", title: "Other answer" },
+          ],
+        },
+        minItems: 1,
+        uniqueItems: true,
+      },
+      question_1_other: {
+        type: "string",
+        title: "Platforms: Other answer",
+        description: "Enter your answer here if you select Other answer.",
+      },
+      question_2: {
+        type: "string",
+        title: "Name",
+        description: "What should the theme be called?",
+        minLength: 1,
+      },
+    },
+    required: ["question_0", "question_1", "question_2"],
+  },
+};
+
+function connectElicitingAgent(session: ACPAgentSession): {
+  agent: AgentSideConnection;
+  client: ClientSideConnection;
+} {
+  const clientToAgent = new TransformStream();
+  const agentToClient = new TransformStream();
+  const agent: Agent = {
+    async initialize() {
+      return { protocolVersion: PROTOCOL_VERSION, agentCapabilities: {} };
+    },
+    async newSession() {
+      return { sessionId: "session-1" };
+    },
+    async prompt() {
+      return { stopReason: "end_turn" };
+    },
+    async authenticate() {},
+    async cancel() {},
+  };
+  const client = new ClientSideConnection(
+    () => session,
+    ndJsonStream(clientToAgent.writable, agentToClient.readable),
+  );
+  return {
+    agent: new AgentSideConnection(
+      () => agent,
+      ndJsonStream(agentToClient.writable, clientToAgent.readable),
+    ),
+    client,
+  };
+}
+
+function nextPermissionRequest(session: ACPAgentSession) {
+  return new Promise<Extract<AgentStreamEvent, { type: "permission_requested" }>>((resolve) => {
+    const unsubscribe = session.subscribe((event) => {
+      if (event.type === "permission_requested") {
+        unsubscribe();
+        resolve(event);
+      }
+    });
+  });
+}
+
+describe("ACPAgentSession form elicitation", () => {
+  test("answers Factory Droid AskUser forms with the options the user picked", async () => {
+    const session = createSessionWithConfig({ provider: "factory-droid" });
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const { agent } = connectElicitingAgent(session);
+
+    const requested = nextPermissionRequest(session);
+    const result = agent.extMethod("elicitation/create", DROID_ASK_USER_ELICITATION);
+    const { request } = await requested;
+
+    expect(request).toMatchObject({
+      kind: "question",
+      title: "Droid needs your answers to continue.",
+      input: {
+        questions: [
+          {
+            question: "How should the theme be added?",
+            header: "Approach",
+            options: [{ label: "Extend the palette" }, { label: "New theme file" }],
+            multiSelect: false,
+            allowOther: true,
+            allowEmpty: false,
+          },
+          {
+            question: "Which platforms should get it?",
+            header: "Platforms",
+            options: [{ label: "Web" }, { label: "iOS" }],
+            multiSelect: true,
+            allowOther: true,
+            allowEmpty: false,
+          },
+          {
+            question: "What should the theme be called?",
+            header: "Name",
+            options: [],
+            multiSelect: false,
+            allowEmpty: false,
+          },
+        ],
+      },
+    });
+
+    await session.respondToPermission(request.id, {
+      behavior: "allow",
+      updatedInput: {
+        answers: {
+          Approach: "New theme file",
+          Platforms: "Web, iOS, Android",
+          Name: "Dusk",
+        },
+      },
+    });
+
+    await expect(result).resolves.toEqual({
+      action: "accept",
+      content: {
+        question_0: "option_1",
+        question_1: ["option_0", "option_1", "other"],
+        question_1_other: "Android",
+        question_2: "Dusk",
+      },
+    });
+    expect(session.getPendingPermissions()).toEqual([]);
+  });
+
+  test("sends a typed single-select answer as the paired other field", async () => {
+    const session = createSessionWithConfig({ provider: "factory-droid" });
+    const { agent } = connectElicitingAgent(session);
+
+    const requested = nextPermissionRequest(session);
+    const result = agent.extMethod("elicitation/create", DROID_ASK_USER_ELICITATION);
+    const { request } = await requested;
+    await session.respondToPermission(request.id, {
+      behavior: "allow",
+      updatedInput: {
+        answers: { Approach: "Reuse the dark theme", Platforms: "Web", Name: "Dusk" },
+      },
+    });
+
+    await expect(result).resolves.toMatchObject({
+      action: "accept",
+      content: {
+        question_0: "other",
+        question_0_other: "Reuse the dark theme",
+        question_1: ["option_0"],
+      },
+    });
+  });
+
+  test("keeps the question pending when a required answer is missing, even with auto-accept on", async () => {
+    const session = createSessionWithConfig({
+      provider: "factory-droid",
+      featureValues: { auto_accept: true },
+    });
+    const { agent } = connectElicitingAgent(session);
+
+    const requested = nextPermissionRequest(session);
+    const result = agent.extMethod("elicitation/create", DROID_ASK_USER_ELICITATION);
+    const { request } = await requested;
+
+    await expect(
+      session.respondToPermission(request.id, {
+        behavior: "allow",
+        updatedInput: { answers: { Approach: "New theme file", Platforms: "Web" } },
+      }),
+    ).rejects.toThrow('"Name" needs an answer');
+    expect(session.getPendingPermissions()).toEqual([request]);
+
+    await session.respondToPermission(request.id, { behavior: "deny" });
+    await expect(result).resolves.toEqual({ action: "decline" });
+  });
+
+  test("cancels a pending elicitation when the session closes", async () => {
+    const session = createSessionWithConfig({ provider: "factory-droid" });
+    const { agent } = connectElicitingAgent(session);
+
+    const requested = nextPermissionRequest(session);
+    const result = agent.extMethod("session/elicitation", DROID_ASK_USER_ELICITATION);
+    await requested;
+    await session.close();
+
+    await expect(result).resolves.toEqual({ action: "cancel" });
+  });
+
+  test("declines URL elicitation and rejects unknown extension methods", async () => {
+    const session = createSessionWithConfig({ provider: "factory-droid" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const { agent } = connectElicitingAgent(session);
+
+    await expect(
+      agent.extMethod("elicitation/create", {
+        mode: "url",
+        sessionId: "session-1",
+        elicitationId: "sign-in",
+        message: "Sign in to continue.",
+        url: "https://example.com/device",
+      }),
+    ).resolves.toEqual({ action: "decline" });
+    await expect(agent.extMethod("vendor/unknown", {})).rejects.toMatchObject({
+      code: -32601,
+    });
+    expect(events).not.toContainEqual(expect.objectContaining({ type: "permission_requested" }));
+  });
+});
 describe("deriveModelDefinitionsFromACP", () => {
   test("attaches shared thinking options to ACP model state", () => {
     const result = deriveModelDefinitionsFromACP(

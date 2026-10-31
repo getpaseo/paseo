@@ -15,6 +15,7 @@ import type {
 import {
   ClientSideConnection,
   PROTOCOL_VERSION,
+  RequestError,
   type AgentCapabilities as ACPAgentCapabilities,
   type Error as ACPError,
   type AnyMessage,
@@ -111,6 +112,14 @@ import {
   resolveDefaultAgentCreateConfig,
 } from "../create-agent-mode.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
+import {
+  ACP_ELICITATION_METHODS,
+  buildACPElicitationResponse,
+  mapACPElicitationRequest,
+  parseACPFormElicitation,
+  type ACPElicitationResponse,
+  type ACPFormElicitation,
+} from "./acp-elicitation.js";
 import {
   checkProviderLaunchAvailable,
   createProviderEnv,
@@ -293,6 +302,7 @@ const BASE_ACP_CLIENT_CAPABILITIES: ACPClientCapabilities = {
     writeTextFile: false,
   },
   terminal: true,
+  elicitation: { form: {} },
 };
 
 export type ACPClientCapabilityMeta = Record<string, unknown>;
@@ -628,13 +638,21 @@ export interface ACPToolSnapshot {
   rawOutput?: unknown;
 }
 
-interface PendingPermission {
-  request: AgentPermissionRequest;
-  options: PermissionOption[];
-  resolve: (response: RequestPermissionResponse) => void;
-  reject: (error: Error) => void;
-  turnId: string | null;
-}
+type PendingPermission =
+  | {
+      kind: "permission";
+      request: AgentPermissionRequest;
+      options: PermissionOption[];
+      resolve: (response: RequestPermissionResponse) => void;
+      turnId: string | null;
+    }
+  | {
+      kind: "elicitation";
+      request: AgentPermissionRequest;
+      form: ACPFormElicitation;
+      resolve: (response: ACPElicitationResponse) => void;
+      turnId: string | null;
+    };
 
 interface PendingUserMessage {
   text: string;
@@ -2495,24 +2513,30 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       throw new Error(`No pending permission request with id '${requestId}'`);
     }
 
-    const selectedOption = selectPermissionOption(pending.options, response);
-    if (response.selectedActionId !== undefined && !selectedOption) {
-      throw new Error(
-        `ACP permission action '${response.selectedActionId}' does not exist or does not match '${response.behavior}' behavior`,
+    if (pending.kind === "elicitation") {
+      const elicitationResponse = buildACPElicitationResponse(pending.form, response);
+      this.pendingPermissions.delete(requestId);
+      pending.resolve(elicitationResponse);
+    } else {
+      const selectedOption = selectPermissionOption(pending.options, response);
+      if (response.selectedActionId !== undefined && !selectedOption) {
+        throw new Error(
+          `ACP permission action '${response.selectedActionId}' does not exist or does not match '${response.behavior}' behavior`,
+        );
+      }
+
+      this.pendingPermissions.delete(requestId);
+      pending.resolve(
+        selectedOption
+          ? {
+              outcome: {
+                outcome: "selected",
+                optionId: selectedOption.optionId,
+              },
+            }
+          : { outcome: { outcome: "cancelled" } },
       );
     }
-
-    this.pendingPermissions.delete(requestId);
-    pending.resolve(
-      selectedOption
-        ? {
-            outcome: {
-              outcome: "selected",
-              optionId: selectedOption.optionId,
-            },
-          }
-        : { outcome: { outcome: "cancelled" } },
-    );
 
     this.pushEvent({
       type: "permission_resolved",
@@ -2646,12 +2670,56 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     const request = mapPermissionRequest(this.provider, requestId, params, toolSnapshot);
 
-    const promise = new Promise<RequestPermissionResponse>((resolve, reject) => {
+    const promise = new Promise<RequestPermissionResponse>((resolve) => {
       this.pendingPermissions.set(requestId, {
+        kind: "permission",
         request,
         options: params.options,
         resolve,
-        reject,
+        turnId: this.activeForegroundTurnId,
+      });
+    });
+
+    this.pushEvent({
+      type: "permission_requested",
+      provider: this.provider,
+      request,
+      turnId: this.activeForegroundTurnId ?? undefined,
+    });
+    return promise;
+  }
+
+  async extMethod(
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    if (!ACP_ELICITATION_METHODS.has(method)) {
+      throw RequestError.methodNotFound(method);
+    }
+    return this.requestElicitation(params);
+  }
+
+  // Elicitations are questions for the user, so auto-accept never answers them.
+  private requestElicitation(params: Record<string, unknown>): Promise<ACPElicitationResponse> {
+    const parsed = parseACPFormElicitation(params);
+    if (!parsed.ok) {
+      this.logger.warn({ reason: parsed.reason }, "Declining unsupported ACP elicitation request");
+      return Promise.resolve({ action: "decline" });
+    }
+
+    const requestId = randomUUID();
+    const request = mapACPElicitationRequest({
+      provider: this.provider,
+      requestId,
+      form: parsed.form,
+      params,
+    });
+    const promise = new Promise<ACPElicitationResponse>((resolve) => {
+      this.pendingPermissions.set(requestId, {
+        kind: "elicitation",
+        request,
+        form: parsed.form,
+        resolve,
         turnId: this.activeForegroundTurnId,
       });
     });
@@ -3431,7 +3499,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   private cancelPendingPermissions(): void {
     for (const pending of this.pendingPermissions.values()) {
-      pending.resolve({ outcome: { outcome: "cancelled" } });
+      if (pending.kind === "elicitation") {
+        pending.resolve({ action: "cancel" });
+      } else {
+        pending.resolve({ outcome: { outcome: "cancelled" } });
+      }
     }
     this.pendingPermissions.clear();
   }

@@ -46,6 +46,8 @@ Copilot custom agents are exposed through ACP session config, not the slash-comm
 
 ACP permission options are rendered as ordered actions and Paseo returns the selected option's exact `optionId`. Agents can therefore encode a single-choice question as multiple options of the same allow kind. Auto-accept does not resolve those chooser requests; they always wait for the user.
 
+Paseo advertises `clientCapabilities.elicitation.form` to every ACP agent and renders form elicitation as a question permission. Factory Droid asks AskUser questions only through form elicitation and cancels them when the client lacks the capability. Paseo accepts both `elicitation/create` and the 0.17 SDK draft name `session/elicitation`, and answers with the spec's flat `{ action, content }` result. An `other` option paired with a `<field>_other` text field becomes the question's free-text input. URL elicitation is declined, and auto-accept never answers an elicitation.
+
 ACP shims can own model discovery through `catalogModelResolver`; the shared client owns the probe
 process and refresh deadline. Keep vendor RPCs in the shim. Cursor uses
 `cursor/list_available_models` because switching models during discovery writes its saved CLI
