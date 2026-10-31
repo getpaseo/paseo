@@ -142,23 +142,15 @@ function assertChildWithPipes(
   }
 }
 
-// Node reports a failed spawn (missing binary or missing cwd) as a child
-// `error` event; without a listener it becomes an uncaught exception.
-function rejectOnSpawnError(child: ChildProcess, stderrChunks: string[]): Promise<never> {
+// Watch process failures as well as spawn errors: the SDK leaves initialize
+// pending when the child exits without replying. `close` waits for stderr to
+// drain, so the failure includes the launcher's diagnostic.
+function rejectOnProcessFailure(child: ChildProcess, stderrChunks: string[]): Promise<never> {
   return new Promise<never>((_, reject) => {
     child.once("error", (error) => {
       const stderr = stderrChunks.join("").trim();
       reject(new Error(stderr ? `${String(error)}\n${stderr}` : String(error)));
     });
-  });
-}
-
-// An ACP agent that exits during the handshake (a broken npx command, a stale
-// wrapper, an auth failure) never rejects the SDK's initialize request. Without
-// this promise the provider refresh waits out its full deadline and reports a
-// misleading timeout instead of the child's stderr.
-function rejectOnEarlyExit(child: ChildProcess, stderrChunks: string[]): Promise<never> {
-  return new Promise<never>((_, reject) => {
     child.once("close", (code, signal) => {
       const stderr = stderrChunks.join("").trim();
       const status = signal ? `signal ${signal}` : `exit code ${code ?? "unknown"}`;
@@ -562,8 +554,7 @@ interface ACPProcessTransport {
   connection: ClientSideConnection;
   stderrChunks: string[];
   spawnReady: Promise<void>;
-  spawnError: Promise<never>;
-  exitError: Promise<never>;
+  processError: Promise<never>;
 }
 
 interface ACPImportPromptPreviews {
@@ -1446,8 +1437,7 @@ export class ACPAgentClient implements AgentClient {
       stderrChunks.push(chunk.toString());
     });
 
-    const spawnErrorPromise = rejectOnSpawnError(child, stderrChunks);
-    const exitErrorPromise = rejectOnEarlyExit(child, stderrChunks);
+    const processErrorPromise = rejectOnProcessFailure(child, stderrChunks);
     const spawnReadyPromise = new Promise<void>((resolve) => {
       child.once("spawn", () => {
         resolve();
@@ -1466,8 +1456,7 @@ export class ACPAgentClient implements AgentClient {
       connection,
       stderrChunks,
       spawnReady: spawnReadyPromise,
-      spawnError: spawnErrorPromise,
-      exitError: exitErrorPromise,
+      processError: processErrorPromise,
     };
   }
 
@@ -1497,8 +1486,7 @@ export class ACPAgentClient implements AgentClient {
             ),
             clientInfo: { name: "Paseo", version: "dev" },
           }),
-          transport.spawnError,
-          transport.exitError,
+          transport.processError,
           ...(initializeTimeoutPromise ? [initializeTimeoutPromise] : []),
         ]),
       );
@@ -1579,7 +1567,7 @@ export class ACPAgentClient implements AgentClient {
       try {
         transport = await this.spawnTransport(PROBE_ENV);
         await withTimeout(
-          Promise.race([transport.spawnReady, transport.spawnError]),
+          Promise.race([transport.spawnReady, transport.processError]),
           phaseTimeoutMs,
           `ACP spawn timed out after ${phaseTimeoutMs}ms`,
         );
@@ -1690,10 +1678,7 @@ export class ACPAgentClient implements AgentClient {
       throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
     }
     return {
-      // Use the path the resolver actually verified. PATH lookup may find a
-      // Windows install outside the daemon's inherited PATH (for example a
-      // Winget package or a directory added after the daemon started).
-      command: availability.resolvedPath ?? prefix.command,
+      command: prefix.command,
       args: [...prefix.args, ...this.defaultCommand.slice(1)],
     };
   }
@@ -2937,7 +2922,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     child.stderr.on("data", (chunk: Buffer | string) => {
       stderrChunks.push(chunk.toString());
     });
-    const spawnError = rejectOnSpawnError(child, stderrChunks);
+    const processError = rejectOnProcessFailure(child, stderrChunks);
     child.once("exit", (code, signal) => {
       if (this.closed || this.historyRuntimeReleased) {
         return;
@@ -2974,7 +2959,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           ),
           clientInfo: { name: "Paseo", version: "dev" },
         }),
-        spawnError,
+        processError,
       ]),
     );
 

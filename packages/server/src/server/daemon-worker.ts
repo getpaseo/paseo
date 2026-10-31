@@ -7,7 +7,6 @@ import { resolvePaseoHome } from "./paseo-home.js";
 import { createRootLogger } from "./logger.js";
 import type { DaemonLifecycleIntent } from "./bootstrap.js";
 import { getProcessDiagnostics } from "./process-diagnostics.js";
-import { refreshWindowsProcessPath } from "../executable-resolution/windows.js";
 
 process.title = "Paseo Daemon";
 
@@ -134,13 +133,6 @@ function applyCliFlagOverrides(config: ReturnType<typeof loadConfig>): void {
 
 async function main() {
   const { paseoHome, logger, config } = bootstrapFromEnvironment();
-  const windowsPathRefresh = await refreshWindowsProcessPath();
-  if (windowsPathRefresh.added.length > 0) {
-    logger.info(
-      { added: windowsPathRefresh.added },
-      "Added PATH entries from the Windows user environment",
-    );
-  }
   for (const variable of initializeEnvironmentProxy()) {
     writeWorkerLifecycleLog(paseoHome, "Ignoring invalid or unsupported HTTP proxy variable", {
       variable,
