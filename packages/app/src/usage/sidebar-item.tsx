@@ -175,37 +175,64 @@ function PinnedUsageLine({
   layout: PinnedUsageLayout;
   measuring?: boolean;
 }) {
+  if (layout === "meters") {
+    return sources.map((source, sourceIndex) => (
+      <Fragment key={source.key}>
+        <View
+          style={sourceIndex === 0 ? null : styles.sourceGap}
+          testID={measuring ? undefined : "sidebar-usage-source"}
+        >
+          <UsageSourceIcon svg={source.icon} size={14} />
+        </View>
+        {source.windows.map((window, windowIndex) => {
+          const leadStyle = windowIndex === 0 ? styles.iconGap : styles.windowGap;
+          return (
+            <Fragment key={window.key}>
+              <View style={[styles.meterSlot, leadStyle]}>
+                <UsageMeter percent={window.percent} tone={window.tone} quiet />
+              </View>
+              <Text
+                style={styles.percent}
+                numberOfLines={1}
+                testID={measuring ? undefined : "sidebar-usage-pinned-window"}
+              >
+                {window.percentText}
+                {window.shortLabel === "" ? null : (
+                  <Text style={styles.windowLabel}>{` ${window.shortLabel}`}</Text>
+                )}
+              </Text>
+            </Fragment>
+          );
+        })}
+      </Fragment>
+    ));
+  }
+
   return sources.map((source, sourceIndex) => (
-    <Fragment key={source.key}>
-      <View
-        style={sourceIndex === 0 ? null : styles.sourceGap}
-        testID={measuring ? undefined : "sidebar-usage-source"}
-      >
+    <View
+      key={source.key}
+      style={[styles.accountCapsule, sourceIndex === 0 ? null : styles.sourceGap]}
+    >
+      <View testID={measuring ? undefined : "sidebar-usage-source"}>
         <UsageSourceIcon svg={source.icon} size={14} />
       </View>
       {source.windows.map((window, windowIndex) => {
         const leadStyle = windowIndex === 0 ? styles.iconGap : styles.windowGap;
         return (
-          <Fragment key={window.key}>
-            {layout === "meters" ? (
-              <View style={[styles.meterSlot, leadStyle]}>
-                <UsageMeter percent={window.percent} tone={window.tone} quiet />
-              </View>
-            ) : null}
-            <Text
-              style={[styles.percent, layout === "meters" ? null : leadStyle]}
-              numberOfLines={1}
-              testID={measuring ? undefined : "sidebar-usage-pinned-window"}
-            >
-              {window.percentText}
-              {layout === "percents" || window.shortLabel === "" ? null : (
-                <Text style={styles.windowLabel}>{` ${window.shortLabel}`}</Text>
-              )}
-            </Text>
-          </Fragment>
+          <Text
+            key={window.key}
+            style={[styles.percent, leadStyle]}
+            numberOfLines={1}
+            testID={measuring ? undefined : "sidebar-usage-pinned-window"}
+          >
+            {window.percentText}
+            {layout === "percents" || window.shortLabel === "" ? null : (
+              <Text style={styles.windowLabel}>{` ${window.shortLabel}`}</Text>
+            )}
+          </Text>
         );
       })}
-    </Fragment>
+    </View>
   ));
 }
 
@@ -228,8 +255,15 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
+    rowGap: theme.spacing[0.5],
+    maxHeight: 52,
     overflow: "hidden",
+  },
+  accountCapsule: {
+    flexDirection: "row",
+    alignItems: "center",
   },
   // Wide enough that nothing inside wraps or shrinks; each child reports its natural width.
   measure: {
