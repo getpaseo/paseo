@@ -63,6 +63,33 @@ import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { buildStringCommandShellInvocation } from "../../../utils/string-command-shell.js";
 import { asInternals } from "../../test-utils/class-mocks.js";
 import * as spawnUtils from "../../../utils/spawn.js";
+import { AgentPermissionResponseSchema } from "@getpaseo/protocol/messages";
+import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
+import {
+  buildQuestionFormAnswerInput,
+  parseQuestionFormQuestions,
+  type QuestionSelections,
+  type QuestionOtherTexts,
+} from "../../../../../app/src/components/question-form-card-core.js";
+
+function questionFormResponse(
+  request: AgentPermissionRequest,
+  selections: QuestionSelections,
+  otherTexts: QuestionOtherTexts = {},
+) {
+  const questions = parseQuestionFormQuestions(request.input);
+  if (!questions) throw new Error("Question form did not parse");
+  const response = {
+    behavior: "allow",
+    updatedInput: buildQuestionFormAnswerInput({
+      input: request.input,
+      questions,
+      selections,
+      otherTexts,
+    }),
+  };
+  return AgentPermissionResponseSchema.parse(JSON.parse(JSON.stringify(response)));
+}
 
 describe("buildACPClientCapabilities", () => {
   test("enables terminal execution on the host while keeping filesystem operations with the agent by default", () => {
@@ -1326,6 +1353,609 @@ describe("ACPAgentSession Zed parity", () => {
       provider: "claude-acp",
       thinkingOptionId: "high",
     });
+  });
+
+  test("bridges Grok's native question extension over a real ACP connection", async () => {
+    const session = createSessionWithConfig({
+      provider: "grok",
+      featureValues: { auto_accept: true },
+    });
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const clientToAgent = new TransformStream();
+    const agentToClient = new TransformStream();
+    const agentConnection = new AgentSideConnection(
+      () => ({
+        async initialize() {
+          return { protocolVersion: PROTOCOL_VERSION };
+        },
+        async newSession() {
+          return { sessionId: "session-1" };
+        },
+        async prompt() {
+          return { stopReason: "end_turn" };
+        },
+        async authenticate() {},
+        async cancel() {},
+      }),
+      ndJsonStream(agentToClient.writable, clientToAgent.readable),
+    );
+    const connection = new ClientSideConnection(
+      () => session,
+      ndJsonStream(clientToAgent.writable, agentToClient.readable),
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => {
+      events.push(event);
+      if (event.type === "permission_requested") {
+        void session.respondToPermission(
+          event.request.id,
+          questionFormResponse(event.request, { 0: new Set([0]) }),
+        );
+      }
+    });
+    await expect(
+      agentConnection.extMethod("_x.ai/ask_user_question", {
+        sessionId: "session-1",
+        toolCallId: "question-1",
+        mode: "default",
+        questions: [
+          {
+            question: "Which platform?",
+            options: [{ label: "Web", description: "Browser" }],
+            multiSelect: false,
+          },
+        ],
+      }),
+    ).resolves.toEqual({ outcome: "accepted", answers: { "Which platform?": ["Web"] } });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "permission_requested",
+        request: expect.objectContaining({
+          kind: "question",
+          name: "ask_user_question",
+          input: {
+            answerFormat: "structured",
+            questions: [
+              expect.objectContaining({
+                question: "Which platform?",
+                options: [{ id: "0", label: "Web", description: "Browser" }],
+                allowOther: true,
+              }),
+            ],
+          },
+        }),
+      }),
+    );
+    expect(session.getPendingPermissions()).toEqual([]);
+    expect(connection.signal.aborted).toBe(false);
+  });
+
+  test("Grok questions preserve multi-select labels, previews and custom notes", async () => {
+    const session = createSessionWithConfig({
+      provider: "grok",
+      featureValues: { auto_accept: true },
+    });
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const result = session.extMethod("_x.ai/ask_user_question", {
+      sessionId: "session-1",
+      toolCallId: "q-1",
+      questions: [
+        {
+          question: "Platforms?",
+          multiSelect: true,
+          options: [{ label: "Red, Blue" }, { label: "Web" }],
+        },
+        { question: "Comments?", options: [] },
+        { question: "Preview?", options: [{ label: "A", preview: "<p>A</p>" }] },
+      ],
+    });
+    const request = session.getPendingPermissions()[0]!;
+    expect(request.input).toMatchObject({
+      questions: [{ multiSelect: true }, { allowOther: true }, {}],
+    });
+    await session.respondToPermission(
+      request.id,
+      questionFormResponse(
+        request,
+        { 0: new Set([1, 0]), 2: new Set([0]) },
+        {
+          0: "custom note",
+          1: "用户自定义回答",
+        },
+      ),
+    );
+    await expect(result).resolves.toEqual({
+      outcome: "accepted",
+      answers: {
+        "Platforms?": ["Web", "Red, Blue"],
+        "Comments?": ["Other"],
+        "Preview?": ["A"],
+      },
+      annotations: {
+        "Platforms?": { notes: "custom note" },
+        "Comments?": { notes: "用户自定义回答" },
+        "Preview?": { preview: "<p>A</p>" },
+      },
+    });
+    expect(session.getPendingPermissions()).toEqual([]);
+  });
+
+  test.each(["deny", "close"])(
+    "Grok question %s returns the native cancellation response",
+    async (action) => {
+      const session = createSessionWithConfig({ provider: "grok" });
+      asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+      const result = session.extMethod("_x.ai/ask_user_question", {
+        sessionId: "session-1",
+        toolCallId: "q-1",
+        questions: [{ question: "Continue?" }],
+      });
+      if (action === "deny")
+        await session.respondToPermission(session.getPendingPermissions()[0]!.id, {
+          behavior: "deny",
+        });
+      else await session.close();
+      await expect(result).resolves.toEqual({ outcome: "cancelled" });
+      expect(session.getPendingPermissions()).toEqual([]);
+    },
+  );
+
+  test("Grok questions remain pending after an invalid answer and accept a corrected submission", async () => {
+    const session = createSessionWithConfig({ provider: "grok" });
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const result = session.extMethod("_x.ai/ask_user_question", {
+      sessionId: "session-1",
+      toolCallId: "q-1",
+      questions: [{ question: "Continue?" }],
+    });
+    const request = session.getPendingPermissions()[0]!;
+    await expect(
+      session.respondToPermission(request.id, {
+        behavior: "allow",
+        updatedInput: { questionAnswers: {} },
+      }),
+    ).rejects.toThrow("Answer Question 1");
+    expect(session.getPendingPermissions()).toHaveLength(1);
+    await session.respondToPermission(request.id, questionFormResponse(request, {}, { 0: "Yes" }));
+    await expect(result).resolves.toMatchObject({
+      outcome: "accepted",
+      annotations: { "Continue?": { notes: "Yes" } },
+    });
+  });
+
+  test.each([
+    {
+      multiSelect: true,
+      selected: [1, 2],
+      text: "Red, Blue",
+      labels: ["Red", "Blue"],
+      annotations: { notes: "Red, Blue" },
+    },
+    { multiSelect: true, selected: [0], text: "", labels: ["Red, Blue"], annotations: undefined },
+    {
+      multiSelect: true,
+      selected: [1, 3],
+      text: "Red",
+      labels: ["Red", "Red"],
+      annotations: { notes: "Red" },
+    },
+    {
+      multiSelect: false,
+      selected: [3],
+      text: "",
+      labels: ["Red"],
+      annotations: { preview: "second red" },
+    },
+    {
+      multiSelect: false,
+      selected: [],
+      text: "Red",
+      labels: ["Other"],
+      annotations: { notes: "Red" },
+    },
+    {
+      multiSelect: false,
+      selected: [],
+      text: "Red, Blue",
+      labels: ["Other"],
+      annotations: { notes: "Red, Blue" },
+    },
+  ])(
+    "Grok round-trips colliding identities and independent notes: %j",
+    async ({ multiSelect, selected, text, labels, annotations }) => {
+      const session = createSessionWithConfig({ provider: "grok" });
+      asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+      const result = session.extMethod("_x.ai/ask_user_question", {
+        sessionId: "session-1",
+        toolCallId: "q-collision",
+        questions: [
+          {
+            question: "Colors?",
+            multiSelect,
+            options: [
+              { label: "Red, Blue" },
+              { label: "Red", preview: "first red" },
+              { label: "Blue" },
+              { label: "Red", preview: "second red" },
+            ],
+          },
+        ],
+      });
+      const request = session.getPendingPermissions()[0]!;
+      await session.respondToPermission(
+        request.id,
+        questionFormResponse(request, { 0: new Set(selected) }, { 0: text }),
+      );
+      await expect(result).resolves.toEqual({
+        outcome: "accepted",
+        answers: { "Colors?": labels },
+        ...(annotations ? { annotations: { "Colors?": annotations } } : {}),
+      });
+    },
+  );
+
+  test.each([
+    { selectedOptionIds: ["unknown"] },
+    { selectedOptionIds: ["0", "0"] },
+    { selectedOptionIds: ["0", "1"] },
+  ])(
+    "Grok rejects invalid single-select identities without losing the question: %j",
+    async (answer) => {
+      const session = createSessionWithConfig({ provider: "grok" });
+      asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+      const result = session.extMethod("_x.ai/ask_user_question", {
+        sessionId: "session-1",
+        toolCallId: "q-1",
+        questions: [{ question: "Colors?", options: [{ label: "Red" }, { label: "Blue" }] }],
+      });
+      const request = session.getPendingPermissions()[0]!;
+      await expect(
+        session.respondToPermission(request.id, {
+          behavior: "allow",
+          updatedInput: { questionAnswers: { "Question 1": answer } },
+        }),
+      ).rejects.toThrow("Select valid options");
+      expect(session.getPendingPermissions()).toEqual([request]);
+      await session.respondToPermission(
+        request.id,
+        questionFormResponse(request, { 0: new Set([1]) }),
+      );
+      await expect(result).resolves.toEqual({
+        outcome: "accepted",
+        answers: { "Colors?": ["Blue"] },
+      });
+    },
+  );
+
+  test("Grok question extensions reject unknown methods, malformed input and other sessions", async () => {
+    const session = createSessionWithConfig({ provider: "grok" });
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    await expect(session.extMethod("_other/method", {})).rejects.toMatchObject({ code: -32601 });
+    await expect(session.extMethod("_x.ai/ask_user_question", {})).rejects.toMatchObject({
+      code: -32602,
+    });
+    await expect(
+      session.extMethod("_x.ai/ask_user_question", {
+        sessionId: "different-session",
+        toolCallId: "q-1",
+        questions: [{ question: "Continue?" }],
+      }),
+    ).rejects.toMatchObject({ code: -32602 });
+    expect(session.getPendingPermissions()).toEqual([]);
+  });
+
+  test("bridges Cursor's documented question extension over a real ACP connection", async () => {
+    const session = createSessionWithConfig({
+      provider: "cursor",
+      featureValues: { auto_accept: true },
+    });
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const clientToAgent = new TransformStream();
+    const agentToClient = new TransformStream();
+    const agentConnection = new AgentSideConnection(
+      () => ({
+        async initialize() {
+          return { protocolVersion: PROTOCOL_VERSION };
+        },
+        async newSession() {
+          return { sessionId: "session-1" };
+        },
+        async prompt() {
+          return { stopReason: "end_turn" };
+        },
+        async authenticate() {},
+        async cancel() {},
+      }),
+      ndJsonStream(agentToClient.writable, clientToAgent.readable),
+    );
+    const connection = new ClientSideConnection(
+      () => session,
+      ndJsonStream(clientToAgent.writable, agentToClient.readable),
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => {
+      events.push(event);
+      if (event.type === "permission_requested")
+        void session.respondToPermission(
+          event.request.id,
+          questionFormResponse(event.request, { 0: new Set([0]) }),
+        );
+    });
+    await expect(
+      agentConnection.extMethod("cursor/ask_question", {
+        toolCallId: "question-1",
+        title: "Need input",
+        questions: [
+          {
+            id: "platform",
+            prompt: "Which platform?",
+            options: [{ id: "web-option", label: "Web" }],
+            allowMultiple: false,
+          },
+        ],
+      }),
+    ).resolves.toEqual({
+      outcome: {
+        outcome: "answered",
+        answers: [{ questionId: "platform", selectedOptionIds: ["web-option"] }],
+      },
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "permission_requested",
+        request: expect.objectContaining({
+          kind: "question",
+          name: "AskQuestion",
+          input: {
+            answerFormat: "structured",
+            questions: [
+              expect.objectContaining({
+                question: "Which platform?",
+                allowOther: false,
+              }),
+            ],
+          },
+        }),
+      }),
+    );
+    expect(session.getPendingPermissions()).toEqual([]);
+    expect(connection.signal.aborted).toBe(false);
+  });
+
+  test("Cursor keeps distinct IDs when combined labels collide with separate choices", async () => {
+    const session = createSessionWithConfig({ provider: "cursor" });
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const result = session.extMethod("cursor/ask_question", {
+      toolCallId: "q-collision",
+      questions: [
+        {
+          id: "colors",
+          prompt: "Colors?",
+          allowMultiple: true,
+          options: [
+            { id: "combined", label: "Red, Blue" },
+            { id: "red", label: "Red" },
+            { id: "blue", label: "Blue" },
+          ],
+        },
+      ],
+    });
+    await session.respondToPermission(session.getPendingPermissions()[0]!.id, {
+      behavior: "allow",
+      updatedInput: {
+        answers: { "Question 1": "Red, Blue" },
+        questionAnswers: { "Question 1": { selectedOptionIds: ["red", "blue"] } },
+      },
+    });
+    await expect(result).resolves.toEqual({
+      outcome: {
+        outcome: "answered",
+        answers: [{ questionId: "colors", selectedOptionIds: ["red", "blue"] }],
+      },
+    });
+  });
+
+  test.each([
+    { allowMultiple: true, selected: [1, 2, 3], expected: ["red", "blue", "red-duplicate"] },
+    { allowMultiple: true, selected: [0], expected: ["combined"] },
+    { allowMultiple: false, selected: [3], expected: ["red-duplicate"] },
+  ])(
+    "Cursor round-trips colliding and repeated labels: %j",
+    async ({ allowMultiple, selected, expected }) => {
+      const session = createSessionWithConfig({ provider: "cursor" });
+      asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+      const result = session.extMethod("cursor/ask_question", {
+        toolCallId: "q-collision",
+        questions: [
+          {
+            id: "colors",
+            prompt: "Colors?",
+            allowMultiple,
+            options: [
+              { id: "combined", label: "Red, Blue" },
+              { id: "red", label: "Red" },
+              { id: "blue", label: "Blue" },
+              { id: "red-duplicate", label: "Red" },
+            ],
+          },
+        ],
+      });
+      const request = session.getPendingPermissions()[0]!;
+      await session.respondToPermission(
+        request.id,
+        questionFormResponse(request, { 0: new Set(selected) }),
+      );
+      await expect(result).resolves.toEqual({
+        outcome: {
+          outcome: "answered",
+          answers: [{ questionId: "colors", selectedOptionIds: expected }],
+        },
+      });
+    },
+  );
+
+  test.each(["cursor", "grok"])(
+    "%s refuses label-only answers without consuming the pending question",
+    async (provider) => {
+      const session = createSessionWithConfig({ provider });
+      asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+      const method = provider === "cursor" ? "cursor/ask_question" : "_x.ai/ask_user_question";
+      const question =
+        provider === "cursor"
+          ? { id: "colors", prompt: "Colors?", options: [{ id: "red", label: "Red" }] }
+          : { question: "Colors?", options: [{ label: "Red" }] };
+      const result = session.extMethod(method, {
+        sessionId: "session-1",
+        toolCallId: "q-1",
+        questions: [question],
+      });
+      const request = session.getPendingPermissions()[0]!;
+      await expect(
+        session.respondToPermission(request.id, {
+          behavior: "allow",
+          updatedInput: { answers: { "Question 1": "Red" } },
+        }),
+      ).rejects.toThrow("Update the app");
+      expect(session.getPendingPermissions()).toEqual([request]);
+      await session.respondToPermission(request.id, { behavior: "deny" });
+      await expect(result).resolves.toEqual(
+        provider === "cursor" ? { outcome: { outcome: "cancelled" } } : { outcome: "cancelled" },
+      );
+    },
+  );
+
+  test.each([
+    { selectedOptionIds: ["unknown"] },
+    { selectedOptionIds: ["red", "red"] },
+    { selectedOptionIds: ["red", "blue"] },
+  ])(
+    "Cursor rejects invalid single-select identities and accepts a corrected answer: %j",
+    async (answer) => {
+      const session = createSessionWithConfig({ provider: "cursor" });
+      asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+      const result = session.extMethod("cursor/ask_question", {
+        toolCallId: "q-1",
+        questions: [
+          {
+            id: "colors",
+            prompt: "Colors?",
+            options: [
+              { id: "red", label: "Red" },
+              { id: "blue", label: "Blue" },
+            ],
+          },
+        ],
+      });
+      const request = session.getPendingPermissions()[0]!;
+      await expect(
+        session.respondToPermission(request.id, {
+          behavior: "allow",
+          updatedInput: { questionAnswers: { "Question 1": answer } },
+        }),
+      ).rejects.toThrow("Select an option");
+      expect(session.getPendingPermissions()).toEqual([request]);
+      await session.respondToPermission(
+        request.id,
+        questionFormResponse(request, { 0: new Set([1]) }),
+      );
+      await expect(result).resolves.toEqual({
+        outcome: {
+          outcome: "answered",
+          answers: [{ questionId: "colors", selectedOptionIds: ["blue"] }],
+        },
+      });
+    },
+  );
+
+  test("Cursor questions map multiple pages and comma-containing labels to native IDs", async () => {
+    const session = createSessionWithConfig({ provider: "cursor" });
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const result = session.extMethod("cursor/ask_question", {
+      toolCallId: "q-1",
+      questions: [
+        {
+          id: "platform",
+          prompt: "Platforms?",
+          allowMultiple: true,
+          options: [
+            { id: "combined", label: "Red, Blue" },
+            { id: "web", label: "Web" },
+          ],
+        },
+        { id: "scope", prompt: "Scope?", options: [{ id: "ui", label: "UI" }] },
+      ],
+    });
+    const request = session.getPendingPermissions()[0]!;
+    expect(request.input).toMatchObject({
+      questions: [
+        { multiSelect: true, allowOther: false },
+        { multiSelect: false, allowOther: false },
+      ],
+    });
+    await session.respondToPermission(
+      request.id,
+      questionFormResponse(request, { 0: new Set([1, 0]), 1: new Set([0]) }),
+    );
+    await expect(result).resolves.toEqual({
+      outcome: {
+        outcome: "answered",
+        answers: [
+          { questionId: "platform", selectedOptionIds: ["web", "combined"] },
+          { questionId: "scope", selectedOptionIds: ["ui"] },
+        ],
+      },
+    });
+  });
+
+  test.each(["deny", "close"])(
+    "Cursor question %s returns the native cancellation envelope",
+    async (action) => {
+      const session = createSessionWithConfig({ provider: "cursor" });
+      asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+      const result = session.extMethod("cursor/ask_question", {
+        toolCallId: "q-1",
+        questions: [{ id: "scope", prompt: "Scope?", options: [{ id: "ui", label: "UI" }] }],
+      });
+      if (action === "deny")
+        await session.respondToPermission(session.getPendingPermissions()[0]!.id, {
+          behavior: "deny",
+        });
+      else await session.close();
+      await expect(result).resolves.toEqual({ outcome: { outcome: "cancelled" } });
+      expect(session.getPendingPermissions()).toEqual([]);
+    },
+  );
+
+  test("Cursor questions reject unsupported free text without losing the pending question", async () => {
+    const session = createSessionWithConfig({ provider: "cursor" });
+    await expect(session.extMethod("cursor/ask_question", {})).rejects.toMatchObject({
+      code: -32602,
+    });
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    await expect(
+      session.extMethod("cursor/ask_question", { toolCallId: "q-1", questions: [] }),
+    ).rejects.toMatchObject({ code: -32602 });
+    const result = session.extMethod("cursor/ask_question", {
+      toolCallId: "q-1",
+      questions: [{ id: "scope", prompt: "Scope?", options: [{ id: "ui", label: "UI" }] }],
+    });
+    const request = session.getPendingPermissions()[0]!;
+    await expect(
+      session.respondToPermission(request.id, {
+        behavior: "allow",
+        updatedInput: {
+          questionAnswers: {
+            "Question 1": { selectedOptionIds: [], otherText: "Other custom input" },
+          },
+        },
+      }),
+    ).rejects.toThrow("Select an option");
+    expect(session.getPendingPermissions()).toHaveLength(1);
+    await session.respondToPermission(
+      request.id,
+      questionFormResponse(request, { 0: new Set([0]) }),
+    );
+    await expect(result).resolves.toMatchObject({ outcome: { outcome: "answered" } });
   });
 
   test("passes generic ACP permission requests through to the user", async () => {
@@ -4466,6 +5096,47 @@ new AgentSideConnection(
 `;
 
 describe("ACP idle runtime cleanup", () => {
+  test.each([
+    {
+      provider: "grok",
+      method: "_x.ai/ask_user_question",
+      question: { question: "Continue?", options: [{ label: "Yes" }] },
+    },
+    {
+      provider: "cursor",
+      method: "cursor/ask_question",
+      question: {
+        id: "continue",
+        prompt: "Continue?",
+        options: [{ id: "yes", label: "Yes" }],
+      },
+    },
+  ])(
+    "pending $provider questions veto cleanup until answered",
+    async ({ provider, method, question }) => {
+      const session = createSessionWithConfig({ provider });
+      asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+      try {
+        expect(await session.canStopRuntime()).toBe(true);
+        const answer = session.extMethod(method, {
+          sessionId: "session-1",
+          toolCallId: "question-1",
+          questions: [question],
+        });
+        expect(await session.canStopRuntime()).toBe(false);
+        const request = session.getPendingPermissions()[0]!;
+        await session.respondToPermission(
+          request.id,
+          questionFormResponse(request, { 0: new Set([0]) }),
+        );
+        await answer;
+        expect(await session.canStopRuntime()).toBe(true);
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
   test("pending permissions veto cleanup until answered", async () => {
     const session = createSession();
     try {
