@@ -168,6 +168,7 @@ function runLauncher(argv: string[]): void {
 type TerminalCreateRequest = Extract<TerminalWorkerRequest, { type: "createTerminal" }>;
 
 function runWorker(argv: string[]): void {
+  console.error(`[startup] worker entered ${Date.now()}`);
   const args = parseWorkerArgs(argv, TERMINAL_WORKER_MARKER_ARG);
   const protocolVersion = reportedProtocolVersion();
   const manager = createTerminalManager();
@@ -703,7 +704,9 @@ function runWorker(argv: string[]): void {
       chmodSync(socketPath, PRIVATE_FILE_MODE);
     }
 
+    console.error(`[startup] socket listening; inspecting identity ${Date.now()}`);
     const self = await inspector.inspect(process.pid);
+    console.error(`[startup] identity inspected ${Date.now()}: ${self.status}`);
     if (
       self.status !== "alive" ||
       !self.snapshot.startedAt ||
@@ -726,6 +729,7 @@ function runWorker(argv: string[]): void {
       terminals: [],
     };
     writeTerminalWorkerRecord(args.paseoHome, record);
+    console.error(`[startup] reporting ready ${Date.now()}`);
     reportReady(`ready ${socketPath}`);
 
     setTimeout(() => {
