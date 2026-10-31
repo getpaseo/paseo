@@ -112,6 +112,9 @@ function transformSourceItem(
       version: pluginItem.version,
       data: pluginItem.data,
     };
+    if (item.kind === "tool_call" && item.latestTimestamp) {
+      projected.latestTimestamp = item.latestTimestamp;
+    }
     if (item.timelineCursor) projected.timelineCursor = item.timelineCursor;
     if (item.turnId) projected.turnId = item.turnId;
     return projected;
