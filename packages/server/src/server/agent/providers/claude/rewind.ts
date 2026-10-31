@@ -1,5 +1,7 @@
+import { createReadStream } from "node:fs";
 import { appendFile, readFile } from "node:fs/promises";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import {
   forkSession as claudeForkSession,
   type Query,
@@ -68,6 +70,57 @@ function isSessionStoreEntry(value: unknown): value is SessionStoreEntry {
     !Array.isArray(value) &&
     typeof (value as { type?: unknown }).type === "string"
   );
+}
+
+/**
+ * The entry a user message follows in the transcript, for a message the session did not replay
+ * as a turn. Forking at that entry drops the message and everything after it.
+ *
+ * - A message from before the compaction the replay started at is a user entry under its uuid.
+ * - A message steered into a running turn has no entry of its own: Claude Code records a
+ *   queued_command attachment, under the uuid Paseo minted for the message, hung off the entry it
+ *   was read after.
+ *
+ * Null when the transcript holds neither.
+ */
+export async function findUserMessageParent(
+  transcriptPath: string,
+  messageId: string,
+): Promise<string | null> {
+  const lines = createInterface({
+    input: createReadStream(transcriptPath, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+  try {
+    for await (const line of lines) {
+      if (!line.includes(messageId)) continue;
+      let entry: unknown;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const record = entry as {
+        type?: unknown;
+        uuid?: unknown;
+        parentUuid?: unknown;
+        attachment?: { type?: unknown; source_uuid?: unknown };
+      };
+      if (typeof record.parentUuid !== "string") continue;
+      const isUserEntry = record.type === "user" && record.uuid === messageId;
+      const isSteer =
+        record.type === "attachment" &&
+        record.attachment?.type === "queued_command" &&
+        record.attachment.source_uuid === messageId;
+      if (isUserEntry || isSteer) return record.parentUuid;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  } finally {
+    lines.close();
+  }
+  return null;
 }
 
 export async function revertClaudeConversation(input: {

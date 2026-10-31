@@ -82,6 +82,7 @@ import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { discoverClaudeModels } from "./model-discovery.js";
 import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
 import {
+  findUserMessageParent,
   realClaudeRewindSdk,
   revertClaudeConversation,
   revertClaudeFiles,
@@ -2392,6 +2393,7 @@ class ClaudeAgentSession implements AgentSession {
   private userMessageIds: string[] = [];
   private readonly emittedUserMessageIds = new Set<string>();
   private readonly rewindTurnAnchors: ClaudeRewindTurnAnchor[] = [];
+  private historyStartsAtCompaction = false;
   private readonly rewindSdk: ClaudeRewindSdk;
   private pendingFreshSessionId: string | null = null;
   private recentStderr = "";
@@ -2627,7 +2629,7 @@ class ClaudeAgentSession implements AgentSession {
       return { status: "unavailable" };
     }
     this.enqueueSteer(input, message, options.clearPendingPermissions === true);
-    return { status: "accepted" };
+    return { status: "accepted", ...(message.uuid ? { providerMessageId: message.uuid } : {}) };
   }
 
   private enqueueSteer(
@@ -3094,7 +3096,7 @@ class ClaudeAgentSession implements AgentSession {
 
   async revertConversation(input: { messageId: string }): Promise<void> {
     await this.ensureHistoryReady();
-    const target = this.resolveConversationRewindTarget(input.messageId);
+    const target = await this.resolveConversationRewindTarget(input.messageId);
     if (target.kind === "fresh-session") {
       this.startFreshConversationSession();
       return;
@@ -3344,6 +3346,7 @@ class ClaudeAgentSession implements AgentSession {
     this.userMessageIds = [];
     this.emittedUserMessageIds.clear();
     this.rewindTurnAnchors.length = 0;
+    this.historyStartsAtCompaction = false;
     this.taskState.reset();
   }
 
@@ -3429,12 +3432,20 @@ class ClaudeAgentSession implements AgentSession {
     return messageId;
   }
 
-  private resolveConversationRewindTarget(messageId: string): ClaudeConversationRewindTarget {
+  private async resolveConversationRewindTarget(
+    messageId: string,
+  ): Promise<ClaudeConversationRewindTarget> {
     const targetUserMessageId = this.resolveClaudeMessageId(messageId);
     const index = this.rewindTurnAnchors.findIndex(
       (anchor) => anchor.userMessageId === targetUserMessageId,
     );
     if (index < 0) {
+      // Not a turn the replay saw: a message steered into a running turn, which opens no turn of
+      // its own, or one from before the compaction the replay started at.
+      const parent = await this.findUserMessageParentInTranscript(targetUserMessageId);
+      if (parent) {
+        return { kind: "fork", messageId: parent };
+      }
       throw new Error(`Claude rewind target ${messageId} is not in the tracked conversation`);
     }
 
@@ -3449,7 +3460,21 @@ class ClaudeAgentSession implements AgentSession {
         return { kind: "fork", messageId: assistantMessageId };
       }
     }
+    // The replay began at a compaction, so the conversation goes on before the first turn it saw.
+    if (this.historyStartsAtCompaction) {
+      const parent = await this.findUserMessageParentInTranscript(targetUserMessageId);
+      if (parent) {
+        return { kind: "fork", messageId: parent };
+      }
+    }
     return { kind: "fresh-session" };
+  }
+
+  private async findUserMessageParentInTranscript(messageId: string): Promise<string | null> {
+    const transcriptPath = this.claudeSessionId
+      ? await this.resolveHistoryPath(this.claudeSessionId)
+      : null;
+    return transcriptPath ? await findUserMessageParent(transcriptPath, messageId) : null;
   }
 
   private async retireQuery(): Promise<void> {
@@ -5375,6 +5400,7 @@ class ClaudeAgentSession implements AgentSession {
   private async loadPersistedHistory(sessionId: string): Promise<void> {
     let historyPath: string | null = null;
     this.replayingHistory = true;
+    this.historyStartsAtCompaction = false;
     try {
       this.taskState.reset();
       historyPath = await this.resolveHistoryPath(sessionId);
@@ -5386,6 +5412,7 @@ class ClaudeAgentSession implements AgentSession {
         return;
       }
       await withClaudeReplayHistory(historyPath, async (history) => {
+        this.historyStartsAtCompaction = history.startsAtCompaction;
         const replay = await this.ingestPersistedSidechains(history);
         await this.ingestPersistedHistory(history.parentEntries, replay);
       });
@@ -6431,6 +6458,10 @@ function convertClaudeHistoryEntryPreamble(
   if (entry.type === "user" && isSyntheticHistoryUserEntry(entry)) {
     return { shortCircuit: [] };
   }
+  const steeredPrompt = readSteeredPromptHistoryItem(entry);
+  if (steeredPrompt) {
+    return { shortCircuit: [steeredPrompt] };
+  }
   // Only user and assistant records are conversation turns. Claude Code 2.1.x also journals each
   // API request as `api-request-blob` records whose message replays the system context.
   if (entry.type !== "user" && entry.type !== "assistant") {
@@ -6455,6 +6486,21 @@ function convertClaudeHistoryEntryPreamble(
 
 function isProviderImageMessage(item: AgentTimelineItem): boolean {
   return item.type === "assistant_message" && isProviderImageMarkdown(item.text);
+}
+
+/**
+ * A message steered into a running turn. Claude Code gives it no user entry: it records a
+ * queued_command attachment in prompt mode, under the uuid Paseo minted for the message, which is
+ * also what a rewind to it resolves. The other modes carry task notifications, not user messages.
+ */
+function readSteeredPromptHistoryItem(entry: ClaudeHistoryEntry): AgentTimelineItem | null {
+  if (entry.type !== "attachment") return null;
+  const attachment = toObjectRecord(entry.attachment);
+  if (attachment?.type !== "queued_command" || attachment.commandMode !== "prompt") return null;
+  const text = extractUserMessageText(attachment.prompt);
+  if (!text) return null;
+  const messageId = readTrimmedString(attachment.source_uuid);
+  return { type: "user_message", text, ...(messageId ? { messageId } : {}) };
 }
 
 export async function convertClaudeHistoryEntry(
