@@ -820,7 +820,14 @@ export interface PluginTimelineStreamItem {
   itemKind: string;
   version: number;
   data: JsonValue;
+  /**
+   * Kind of the agent stream item this plugin item was projected from. Absent for
+   * plugin items that do not replace a native item.
+   */
+  sourceKind?: PluginTimelineSourceKind;
 }
+
+export type PluginTimelineSourceKind = Exclude<StreamItem["kind"], "plugin">;
 
 export interface TodoEntry {
   text: string;

@@ -64,6 +64,23 @@ describe("plugin timeline projection", () => {
     ]);
   });
 
+  it("keeps the source row kind on projected plugin items", () => {
+    const transform: TimelineItemTransform = ({ sourceId }) => [
+      {
+        type: "plugin" as const,
+        id: `${sourceId}/0`,
+        pluginId: "p",
+        kind: "row",
+        version: 1,
+        data: null,
+      },
+    ];
+
+    expect(projectPluginTimelineItems([thought("Plan")], transform)).toMatchObject([
+      { kind: "plugin", sourceKind: "thought" },
+    ]);
+  });
+
   it("memoizes projection on the source row reference", () => {
     const source = thought("Stable");
     const transform: TimelineItemTransform = vi.fn(() => undefined);
