@@ -1,6 +1,6 @@
 import type { ITheme } from "@xterm/xterm";
-import type { TextStyle } from "react-native";
 import type { TerminalCell } from "@getpaseo/protocol/messages";
+import { PASEO_TERMINAL_STYLE_FLAGS } from "../../../modules/paseo-terminal/contract";
 
 import { darkTheme } from "@/styles/theme";
 import { toXtermTheme } from "@/utils/to-xterm-theme";
@@ -29,77 +29,115 @@ const DEFAULT_COLOR_MODE = 0;
 const ANSI_COLOR_MODE = 1;
 const INDEXED_COLOR_MODE = 2;
 const RGB_COLOR_MODE = 3;
-const FLAG_BOLD = 1 << 0;
-const FLAG_ITALIC = 1 << 1;
-const FLAG_UNDERLINE = 1 << 2;
-const FLAG_DIM = 1 << 3;
-const FLAG_INVERSE = 1 << 4;
-const FLAG_STRIKETHROUGH = 1 << 5;
+const OPAQUE_BLACK = 0xff000000;
+const DIM_ALPHA = 0.65;
 
-interface ResolvedCellStyle {
-  key: string;
-  style: TextStyle;
-  foregroundColor: string;
-}
-
-interface ResolvedCellColors {
-  foreground: string;
-  background: string;
-  paintsBackground: boolean;
+/** Colors are unsigned ARGB. A background of 0 is the terminal background. */
+export interface ResolvedCellStyle {
+  foreground: number;
+  background: number;
+  flags: number;
 }
 
 export interface TerminalCellStyleResolver {
-  readonly themeKey: string;
-  readonly backgroundColor: string;
-  readonly cursorColor: string;
+  readonly backgroundColor: number;
+  readonly cursorColor: number;
   resolve(cell: TerminalCell): ResolvedCellStyle;
 }
 
 export const DEFAULT_TERMINAL_THEME = toXtermTheme(darkTheme.colors.terminal);
 
 export const NATIVE_TERMINAL_SELECTION_COLORS = {
-  background: "#ffff00",
-  foreground: "#000000",
+  background: 0xffffff00,
+  foreground: 0xff000000,
 } as const;
 
-function build256Palette(theme: ITheme): string[] {
-  const palette = Array.from({ length: 256 }, () => "");
+function build256Palette(theme: ITheme): number[] {
+  const palette = Array.from({ length: 256 }, () => OPAQUE_BLACK);
 
   for (let index = 0; index < ANSI_THEME_KEYS.length; index += 1) {
     const key = ANSI_THEME_KEYS[index];
-    palette[index] = theme[key] ?? DEFAULT_TERMINAL_THEME[key] ?? "#000000";
+    palette[index] = parseTerminalColor(theme[key] ?? DEFAULT_TERMINAL_THEME[key], OPAQUE_BLACK);
   }
 
   for (let red = 0; red < CUBE_LEVELS.length; red += 1) {
     for (let green = 0; green < CUBE_LEVELS.length; green += 1) {
       for (let blue = 0; blue < CUBE_LEVELS.length; blue += 1) {
         const index = 16 + red * 36 + green * 6 + blue;
-        palette[index] = `rgb(${CUBE_LEVELS[red]}, ${CUBE_LEVELS[green]}, ${CUBE_LEVELS[blue]})`;
+        palette[index] = rgbColor(
+          (CUBE_LEVELS[red] << 16) | (CUBE_LEVELS[green] << 8) | CUBE_LEVELS[blue],
+        );
       }
     }
   }
 
   for (let index = 0; index < 24; index += 1) {
     const value = 8 + index * 10;
-    palette[232 + index] = `rgb(${value}, ${value}, ${value})`;
+    palette[232 + index] = rgbColor((value << 16) | (value << 8) | value);
   }
 
   return palette;
 }
 
-function rgbColor(value: number): string {
-  const red = (value >> 16) & 0xff;
-  const green = (value >> 8) & 0xff;
-  const blue = value & 0xff;
-  return `rgb(${red}, ${green}, ${blue})`;
+function rgbColor(value: number): number {
+  return (OPAQUE_BLACK | (value & 0xffffff)) >>> 0;
+}
+
+function argb(input: { alpha: number; red: number; green: number; blue: number }): number {
+  const channel = (value: number) => Math.max(0, Math.min(255, Math.round(value)));
+  return (
+    ((channel(input.alpha) << 24) |
+      (channel(input.red) << 16) |
+      (channel(input.green) << 8) |
+      channel(input.blue)) >>>
+    0
+  );
+}
+
+/** Parses the CSS color forms terminal themes use: `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb()`, `rgba()`. */
+export function parseTerminalColor(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const color = value.trim().toLowerCase();
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/.exec(color)?.[1];
+  if (hex) {
+    const digits = hex.length === 3 ? [...hex].map((digit) => digit + digit).join("") : hex;
+    const channel = (offset: number) => Number.parseInt(digits.slice(offset, offset + 2), 16);
+    return argb({
+      alpha: digits.length === 8 ? channel(6) : 255,
+      red: channel(0),
+      green: channel(2),
+      blue: channel(4),
+    });
+  }
+  const functional = /^rgba?\(([^)]*)\)$/.exec(color)?.[1];
+  if (functional) {
+    const parts = functional
+      .split(/[\s,/]+/)
+      .filter(Boolean)
+      .map(Number);
+    if (parts.length >= 3 && parts.every((part) => Number.isFinite(part))) {
+      return argb({
+        alpha: parts.length >= 4 ? parts[3] * 255 : 255,
+        red: parts[0],
+        green: parts[1],
+        blue: parts[2],
+      });
+    }
+  }
+  return fallback;
+}
+
+function withDimAlpha(color: number): number {
+  const alpha = (color >>> 24) & 0xff;
+  return (((Math.round(alpha * DIM_ALPHA) & 0xff) << 24) | (color & 0xffffff)) >>> 0;
 }
 
 function resolveColor(input: {
   value: number | undefined;
   mode: number | undefined;
-  fallback: string;
-  palette: string[];
-}): string {
+  fallback: number;
+  palette: number[];
+}): number {
   const mode = input.mode ?? DEFAULT_COLOR_MODE;
   const value = input.value ?? 0;
 
@@ -114,131 +152,50 @@ function resolveColor(input: {
 
 function cellFlags(cell: TerminalCell): number {
   let flags = 0;
-  if (cell.bold) flags |= FLAG_BOLD;
-  if (cell.italic) flags |= FLAG_ITALIC;
-  if (cell.underline) flags |= FLAG_UNDERLINE;
-  if (cell.dim) flags |= FLAG_DIM;
-  if (cell.inverse) flags |= FLAG_INVERSE;
-  if (cell.strikethrough) flags |= FLAG_STRIKETHROUGH;
+  if (cell.bold) flags |= PASEO_TERMINAL_STYLE_FLAGS.bold;
+  if (cell.italic) flags |= PASEO_TERMINAL_STYLE_FLAGS.italic;
+  if (cell.underline) flags |= PASEO_TERMINAL_STYLE_FLAGS.underline;
+  if (cell.strikethrough) flags |= PASEO_TERMINAL_STYLE_FLAGS.strikethrough;
+  if (cell.dim) flags |= PASEO_TERMINAL_STYLE_FLAGS.dim;
   return flags;
-}
-
-function resolveCellColors(input: {
-  cell: TerminalCell;
-  palette: string[];
-  foregroundColor: string;
-  backgroundColor: string;
-}): ResolvedCellColors {
-  const foreground = resolveColor({
-    value: input.cell.fg,
-    mode: input.cell.fgMode,
-    fallback: input.foregroundColor,
-    palette: input.palette,
-  });
-  const background = resolveColor({
-    value: input.cell.bg,
-    mode: input.cell.bgMode,
-    fallback: input.backgroundColor,
-    palette: input.palette,
-  });
-
-  const resolvedForeground = input.cell.inverse ? background : foreground;
-  const resolvedBackground = input.cell.inverse ? foreground : background;
-  return {
-    foreground: resolvedForeground,
-    background: resolvedBackground,
-    paintsBackground: resolvedBackground !== input.backgroundColor,
-  };
-}
-
-function textDecorationLine(flags: number): TextStyle["textDecorationLine"] | undefined {
-  const underline = (flags & FLAG_UNDERLINE) !== 0;
-  const strikethrough = (flags & FLAG_STRIKETHROUGH) !== 0;
-  if (underline && strikethrough) return "underline line-through";
-  if (underline) return "underline";
-  if (strikethrough) return "line-through";
-  return undefined;
-}
-
-function createTextStyle(input: {
-  foreground: string;
-  background: string;
-  paintsBackground: boolean;
-  flags: number;
-}): TextStyle {
-  const style: TextStyle = {
-    color: input.foreground,
-  };
-
-  if (input.paintsBackground) {
-    style.backgroundColor = input.background;
-  }
-  if ((input.flags & FLAG_BOLD) !== 0) {
-    style.fontWeight = "700";
-  }
-  if ((input.flags & FLAG_ITALIC) !== 0) {
-    style.fontStyle = "italic";
-  }
-  if ((input.flags & FLAG_DIM) !== 0) {
-    style.opacity = 0.65;
-  }
-
-  const decorationLine = textDecorationLine(input.flags);
-  if (decorationLine) {
-    style.textDecorationLine = decorationLine;
-    style.textDecorationColor = input.foreground;
-  }
-
-  return style;
-}
-
-function buildStyleKey(input: {
-  foreground: string;
-  background: string;
-  paintsBackground: boolean;
-  flags: number;
-}): string {
-  const background = input.paintsBackground ? input.background : "default";
-  return `${input.foreground}|${background}|${input.flags}`;
-}
-
-function buildThemeKey(theme: ITheme): string {
-  return JSON.stringify(theme);
 }
 
 export function createTerminalCellStyleResolver(theme: ITheme): TerminalCellStyleResolver {
   const palette = build256Palette(theme);
-  const foregroundColor = theme.foreground ?? DEFAULT_TERMINAL_THEME.foreground ?? "#fafafa";
-  const backgroundColor = theme.background ?? DEFAULT_TERMINAL_THEME.background ?? "#181B1A";
-  const cursorColor = theme.cursor ?? foregroundColor;
-  const styleCache = new Map<string, TextStyle>();
+  const foregroundColor = parseTerminalColor(
+    theme.foreground ?? DEFAULT_TERMINAL_THEME.foreground,
+    0xfffafafa,
+  );
+  const backgroundColor = parseTerminalColor(
+    theme.background ?? DEFAULT_TERMINAL_THEME.background,
+    0xff181b1a,
+  );
+  const cursorColor = parseTerminalColor(theme.cursor, foregroundColor);
 
   return {
-    themeKey: buildThemeKey(theme),
     backgroundColor,
     cursorColor,
     resolve(cell: TerminalCell): ResolvedCellStyle {
+      const foreground = resolveColor({
+        value: cell.fg,
+        mode: cell.fgMode,
+        fallback: foregroundColor,
+        palette,
+      });
+      const background = resolveColor({
+        value: cell.bg,
+        mode: cell.bgMode,
+        fallback: backgroundColor,
+        palette,
+      });
+      const resolvedForeground = cell.inverse ? background : foreground;
+      const resolvedBackground = cell.inverse ? foreground : background;
       const flags = cellFlags(cell);
-      const colors = resolveCellColors({ cell, palette, foregroundColor, backgroundColor });
-      const key = buildStyleKey({
-        foreground: colors.foreground,
-        background: colors.background,
-        paintsBackground: colors.paintsBackground,
+      return {
+        foreground: cell.dim ? withDimAlpha(resolvedForeground) : resolvedForeground,
+        background: resolvedBackground === backgroundColor ? 0 : resolvedBackground,
         flags,
-      });
-      const cachedStyle = styleCache.get(key);
-      if (cachedStyle) {
-        return { key, style: cachedStyle, foregroundColor: colors.foreground };
-      }
-
-      const style = createTextStyle({
-        foreground: colors.foreground,
-        background: colors.background,
-        paintsBackground: colors.paintsBackground,
-        flags,
-      });
-      styleCache.set(key, style);
-      return { key, style, foregroundColor: colors.foreground };
+      };
     },
   };
 }

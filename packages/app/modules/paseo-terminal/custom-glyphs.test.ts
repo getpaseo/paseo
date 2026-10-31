@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveTerminalCustomGlyph } from "./terminal-custom-glyph";
+import { encodeTerminalCustomGlyphs, resolveTerminalCustomGlyph } from "./custom-glyphs";
 
 describe("native terminal custom glyphs", () => {
   it("fills the complete cell for the full block used by the Claude mascot", () => {
@@ -84,5 +84,23 @@ describe("native terminal custom glyphs", () => {
     for (const char of frames.join("").replaceAll(" ", "")) {
       expect(resolveTerminalCustomGlyph(char), `missing custom glyph ${char}`).not.toBeNull();
     }
+  });
+
+  it("encodes every glyph for the native renderer in cell fractions", () => {
+    const encoded = new Map(encodeTerminalCustomGlyphs().map((glyph) => [glyph.char, glyph]));
+
+    expect(encoded.get("▛")).toEqual({
+      char: "▛",
+      rects: [0, 0, 0.5, 0.5, 0.5, 0, 0.5, 0.5, 0, 0.5, 0.5, 0.5],
+      path: [],
+      strokeWidth: 0,
+    });
+    expect(encoded.get("╭")).toEqual({
+      char: "╭",
+      rects: [],
+      path: [0, 0.5, 1, 1, 0.5, 0.75, 2, 0.5, 0.5, 0.75, 0.5, 1, 1, 0.5],
+      strokeWidth: 1,
+    });
+    expect(encoded.get("┣")?.strokeWidth).toBe(3);
   });
 });

@@ -415,6 +415,7 @@ function NativeTerminalEmulator({
         return;
       }
 
+      const isFirstMeasuredSize = !hasNotifiedMeasuredSizeRef.current;
       hasNotifiedMeasuredSizeRef.current = true;
       terminalSizeRef.current = policyResult.measuredSize;
       if (policyResult.measuredSizeChanged) {
@@ -427,6 +428,14 @@ function NativeTerminalEmulator({
         shouldClaim: policyResult.resizeClaim !== null,
         forceClaim: policyResult.resizeClaim?.force,
       });
+      // Ready waits for the grid size, so the pane attaches with it and the daemon replays the
+      // terminal at that size instead of the PTY's.
+      if (isFirstMeasuredSize) {
+        callbacksRef.current.onRendererReadyChange?.({
+          streamKey: mountInputRef.current.streamKey,
+          isReady: true,
+        });
+      }
     },
     [schedulePaint],
   );
@@ -590,7 +599,7 @@ function NativeTerminalEmulator({
   useEffect(() => {
     hasNotifiedMeasuredSizeRef.current = false;
     resetTerminal(mountInputRef.current.initialSnapshot);
-    callbacksRef.current.onRendererReadyChange?.({ streamKey, isReady: true });
+    emitMeasuredSize({ source: "measure" });
     return () => {
       callbacksRef.current.onRendererReadyChange?.({ streamKey, isReady: false });
       clearSelectionLongPressTimeout();
@@ -604,7 +613,7 @@ function NativeTerminalEmulator({
       terminalRef.current?.dispose();
       terminalRef.current = null;
     };
-  }, [clearSelectionLongPressTimeout, resetTerminal, streamKey]);
+  }, [clearSelectionLongPressTimeout, emitMeasuredSize, resetTerminal, streamKey]);
 
   useEffect(() => {
     if (focusRequestToken <= 0) return;
