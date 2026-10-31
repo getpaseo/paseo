@@ -60,7 +60,6 @@ import {
   listTerminalWorkerRecords,
   readTerminalWorkerRecord,
   terminalWorkerDirectory,
-  terminalWorkerLogPath,
   terminalWorkerRecordPath,
   type TerminalWorkerRecord,
 } from "./terminal-worker-record.js";
@@ -871,24 +870,10 @@ it.each([false, true, true, true, true, true])(
     } finally {
       if (recordFd !== null) closeSync(recordFd);
     }
-    try {
-      await waitForCondition(
-        async () => !(await recordedTerminalPids(paseoHome)).has(ending.id),
-        10000,
-      );
-    } catch (error) {
-      const log = readFileSync(terminalWorkerLogPath(paseoHome), "utf8");
-      console.error("Worker publication diagnostics", {
-        workerAlive: isProcessAlive(record!.pid),
-        endingAlive: isProcessAlive(endingPid),
-        remainingAlive: isProcessAlive(remainingPid),
-        publicationFailures: log.match(/Cannot publish terminal exit/g)?.length ?? 0,
-        uncaughtExceptions: log.match(/uncaught exception/g)?.length ?? 0,
-        codes: log.match(/code: '[A-Z_]+'/g),
-        syscalls: log.match(/syscall: '[a-z]+'/g),
-      });
-      throw error;
-    }
+    await waitForCondition(
+      async () => !(await recordedTerminalPids(paseoHome)).has(ending.id),
+      10000,
+    );
     expect((await readUnconfirmedTerminalCleanup(paseoHome)).length).toBeGreaterThan(0);
 
     await first.detach();
@@ -896,7 +881,23 @@ it.each([false, true, true, true, true, true])(
 
     expect(manager.getTerminal(remaining.id)).toBeUndefined();
     expect(await manager.getTerminals(cwd)).toEqual([]);
-    await waitForCondition(() => !isProcessAlive(remainingPid), 10000);
+    try {
+      await waitForCondition(() => !isProcessAlive(remainingPid), 10000);
+    } catch (error) {
+      const inspection = await inspector.inspect(remainingPid);
+      const original = record!.terminals.find((entry) => entry.id === remaining.id)!;
+      const unresolved = await readUnconfirmedTerminalCleanup(paseoHome);
+      console.error("Worker cleanup diagnostics", {
+        inspectionStatus: inspection.status,
+        sameBirthTime:
+          inspection.status === "alive"
+            ? inspection.snapshot.startedAt === original.startedAt
+            : null,
+        hasBirthTime: inspection.status === "alive" && !!inspection.snapshot.startedAt,
+        unresolved: unresolved.map(({ role, reason }) => ({ role, reason })),
+      });
+      throw error;
+    }
     expect(await readUnconfirmedTerminalCleanup(paseoHome)).toEqual([]);
   },
 );
