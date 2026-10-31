@@ -198,6 +198,10 @@ export class OpenCodeV2AgentClient implements AgentClient {
         if (owner === ownedConnection) this.connections.set(id, next);
       ownedConnection = next;
     };
+    const harnessEnvironment = createProviderEnv({
+      runtimeSettings: this.options.settings,
+      overlays: [launch?.env],
+    });
     const session = new OpenCodeV2Session(
       connection,
       info,
@@ -205,17 +209,16 @@ export class OpenCodeV2AgentClient implements AgentClient {
       this.options.logger,
       persist,
       Boolean(this.options.bridge),
+      harnessEnvironment,
       releaseBindings,
       bindChild,
       acquire,
       moved,
     );
     try {
-      await session.initialize(
-        launch?.env
-          ? createProviderEnv({ runtimeSettings: this.options.settings, overlays: [launch.env] })
-          : undefined,
-      );
+      // OpenCode replaces the whole local shell environment, so only a launch env is applied
+      // per session; the full snapshot is kept for usage-source discovery.
+      await session.initialize(launch?.env ? harnessEnvironment : undefined);
       return session;
     } catch (error) {
       await session.close();

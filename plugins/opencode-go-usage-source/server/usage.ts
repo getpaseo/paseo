@@ -6,6 +6,7 @@ import {
   hashAccountKey,
   unavailable,
   type UsageAccount,
+  type UsageScope,
   toneFromUsedPct,
   windowFromUsedPct,
   type UsageReport,
@@ -48,6 +49,14 @@ export async function readDefaultKey(path = authPath()): Promise<string | null> 
 
 export async function discover(path = authPath()): Promise<UsageAccount[]> {
   return (await readDefaultKey(path)) ? [{ key: hashAccountKey(path), input: { path } }] : [];
+}
+
+/** The agent's launch environment names the same auth.json the global scan reads. */
+export async function discoverSession(
+  scope: Extract<UsageScope, { kind: "session" }>,
+): Promise<UsageAccount[]> {
+  if (scope.provider !== "opencode-go") return [];
+  return discover(authPath(scope.env));
 }
 
 export async function fetchUsage(

@@ -5,6 +5,7 @@ import { waitForLocationReady, awaitPaseoPlugin } from "./readiness.js";
 
 import type { SessionInfo, SessionMessageInfo } from "@opencode/client";
 
+import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "pino";
 import type {
@@ -16,6 +17,7 @@ import type {
   AgentSession,
   AgentSessionConfig,
   AgentStreamEvent,
+  AgentUsageSession,
   SteerActiveTurnOptions,
   SteerResult,
 } from "../../../agent-sdk-types.js";
@@ -28,7 +30,7 @@ import { composeSystemPromptParts } from "../../../system-prompt.js";
 import { raceProviderRefreshAbort } from "../../../provider-refresh-deadline.js";
 
 import { type V2Connection } from "./runtime.js";
-import { modelRef, modesFromV2 } from "./mapping.js";
+import { modelRef, modesFromV2, usageProvider } from "./mapping.js";
 
 import { V2_CAPABILITIES } from "./capabilities.js";
 import { features } from "./configuration.js";
@@ -58,6 +60,7 @@ export class OpenCodeV2Session implements AgentSession {
   private closed = false;
   private history: SessionMessageInfo[] = [];
   private modes: AgentMode[] = [];
+  private readonly usageSessionKey = randomUUID();
   constructor(
     private connection: V2Connection,
     private info: SessionInfo,
@@ -65,6 +68,7 @@ export class OpenCodeV2Session implements AgentSession {
     private readonly logger: Logger,
     private readonly persist: boolean,
     private readonly requiresPaseoPlugin: boolean,
+    private readonly harnessEnvironment: Record<string, string>,
     private readonly unbind?: () => void,
     bindChild?: (id: string) => void,
     private readonly acquire?: () => Promise<V2Connection>,
@@ -120,6 +124,18 @@ export class OpenCodeV2Session implements AgentSession {
   }
   get features() {
     return features(this.config);
+  }
+  usageSession(): AgentUsageSession | null {
+    if (this.closed) return null;
+    const model = this.info.model;
+    const provider = model ? usageProvider(model) : null;
+    if (!model || !provider) return null;
+    return {
+      provider,
+      model: `${model.providerID}/${model.id}`,
+      env: this.harnessEnvironment,
+      sessionKey: this.usageSessionKey,
+    };
   }
   private get client() {
     return this.connection.client;

@@ -12,6 +12,17 @@ export function modelRef(id: string, variant?: string | null): ModelRef {
   };
 }
 
+// A model ref already names the provider that bills it, which is the id a usage source
+// subscribes to. Aliases between the two namespaces would live in this table; a provider
+// absent here has no login store Paseo can read, so its sessions report no plan.
+const usageProviders: Record<string, string> = {
+  "opencode-go": "opencode-go",
+};
+
+export function usageProvider(model: ModelRef): string | null {
+  return usageProviders[model.providerID] ?? null;
+}
+
 export function modelsFromV2(models: ModelInfo[]): AgentModelDefinition[] {
   return models
     .filter((model) => model.enabled)

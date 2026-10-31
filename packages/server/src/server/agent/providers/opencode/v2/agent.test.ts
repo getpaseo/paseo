@@ -1008,6 +1008,50 @@ describe("OpenCode v2 session lifecycle", () => {
     }
   });
 
+  test("reports the usage session for a model the OpenCode Go source serves", async () => {
+    const harness = new V2Harness();
+    harness.info.model = { providerID: "opencode-go", id: "deepseek-v4.1-flash" };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession(
+      { provider: "opencode", cwd: "/tmp/project", model: "opencode-go/deepseek-v4.1-flash" },
+      { agentId: "agent", env: { HOME: "/tmp/agent-home" } },
+    );
+    try {
+      const descriptor = session.usageSession?.();
+      expect(descriptor).toMatchObject({
+        provider: "opencode-go",
+        model: "opencode-go/deepseek-v4.1-flash",
+        env: expect.objectContaining({ HOME: "/tmp/agent-home" }),
+      });
+      expect(session.usageSession?.()?.sessionKey).toBe(descriptor?.sessionKey);
+    } finally {
+      await session.close();
+    }
+    expect(session.usageSession?.()).toBeNull();
+  });
+
+  test("reports no usage session for a model no usage source serves", async () => {
+    const harness = new V2Harness();
+    harness.info.model = { providerID: "anthropic", id: "claude-sonnet" };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      model: "anthropic/claude-sonnet",
+    });
+    try {
+      expect(session.usageSession?.()).toBeNull();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("reuses the shared helper for sessions whose env is only agent identity", async () => {
     const harness = new V2Harness();
     const acquires: Array<{ env?: Record<string, string>; dedicated?: boolean }> = [];

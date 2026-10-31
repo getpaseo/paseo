@@ -1,8 +1,8 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { discover, fetchUsage } from "./usage.js";
+import { discover, discoverSession, fetchUsage } from "./usage.js";
 
 import { inputSchema } from "../shared/input.js";
 
@@ -67,6 +67,29 @@ test("discovers and fetches the default key from read-only auth.json", async () 
     expect(await readFile(path, "utf8")).toBe(content);
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("discovers the session login through the launch environment", async () => {
+  const dataHome = await mkdtemp(join(tmpdir(), "go-session-"));
+  const path = join(dataHome, "opencode", "auth.json");
+  try {
+    await mkdir(join(dataHome, "opencode"), { recursive: true });
+    await writeFile(path, JSON.stringify({ "opencode-go": { type: "api", key: "fixture-key" } }));
+    const scope = {
+      kind: "session" as const,
+      provider: "opencode-go",
+      model: "opencode-go/deepseek-v4.1-flash",
+      env: { XDG_DATA_HOME: dataHome },
+    };
+    expect(await discoverSession(scope)).toEqual([
+      { key: expect.stringMatching(/^[a-f0-9]{64}$/), input: { path } },
+    ]);
+    // Same account identity as the global scan, so an agent report joins the host card.
+    expect(await discoverSession(scope)).toEqual(await discover(path));
+    expect(await discoverSession({ ...scope, provider: "opencode" })).toEqual([]);
+  } finally {
+    await rm(dataHome, { recursive: true, force: true });
   }
 });
 
