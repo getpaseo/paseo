@@ -617,6 +617,7 @@ export const zhCN: TranslationResources = {
     terminal: {
       hostDisconnected: "Host 未连接",
       updateHost: "请更新主机以使用原生终端渲染器。",
+      restoreRequiresUpdate: "更新主机以查看终端。",
       unableToSubscribe: "无法订阅 Terminal",
       fileUploaded: "文件已上传",
       pasteFileFailed: "无法粘贴文件：{{reason}}",
@@ -2019,7 +2020,6 @@ export const zhCN: TranslationResources = {
   toolCallDetails: {
     error: "错误",
     empty: "没有可用的更多详情",
-    subAgentActivity: "Sub-agent 活动",
     input: "输入",
     output: "输出",
   },
@@ -2098,6 +2098,11 @@ export const zhCN: TranslationResources = {
     },
   },
   providerUsage: {
+    checkUsage: "检查用量",
+    checkUsageHint: "在所有设备上应用于 {{host}}",
+    off: "{{host}} 的用量检查已关闭。",
+    turnOn: "开启",
+
     options: "设置",
     refreshFailed: "无法刷新用量",
     noHosts: "没有已连接的主机",
@@ -2145,6 +2150,7 @@ export const zhCN: TranslationResources = {
       days: "{{value}}天",
       hours: "{{value}}小时",
       minutes: "{{value}}分钟",
+      pair: "{{first}}{{second}}",
     },
     timing: {
       lastUpdated: "上次更新于 {{relativeTime}}",
@@ -2152,6 +2158,8 @@ export const zhCN: TranslationResources = {
       resetTimePassed: "重置时间已过",
       resettingNow: "正在重置",
       resetsIn: "将在 {{duration}}后重置",
+      resetsAtWeekday: "{{weekday}} {{time}}",
+      resetsAtDate: "{{date}} {{time}}",
       runsOutNow: "即将用尽",
       runsOutIn: "将在 {{duration}}后用尽",
       justNow: "刚刚",

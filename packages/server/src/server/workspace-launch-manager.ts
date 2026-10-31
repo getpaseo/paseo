@@ -50,7 +50,7 @@ export interface WorkspaceLaunchContext {
 }
 
 export interface WorkspaceLaunchService {
-  buildSnapshot(context: WorkspaceLaunchContext): WorkspaceLaunchPayload[];
+  buildSnapshot(context: WorkspaceLaunchContext): Promise<WorkspaceLaunchPayload[]>;
   start(context: WorkspaceLaunchContext, launchName: string): Promise<WorkspaceLaunchPayload>;
   stop(context: WorkspaceLaunchContext, launchName: string): Promise<WorkspaceLaunchPayload>;
   disposeWorkspace(workspaceId: string): Promise<void>;
@@ -125,8 +125,10 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     this.now = deps.now ?? Date.now;
   }
 
-  buildSnapshot(context: WorkspaceLaunchContext): WorkspaceLaunchPayload[] {
-    const configuredNames = new Set(this.readLaunchConfigNames(this.getConfigDirectory(context)));
+  async buildSnapshot(context: WorkspaceLaunchContext): Promise<WorkspaceLaunchPayload[]> {
+    const configuredNames = new Set(
+      await this.readLaunchConfigNames(this.getConfigDirectory(context)),
+    );
     const workspaceRuntimes = this.runtimes.get(context.workspaceId);
     for (const [name, runtime] of workspaceRuntimes ?? []) {
       if (runtime.lifecycle === "running" || configuredNames.has(name)) {
@@ -162,7 +164,7 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     context: WorkspaceLaunchContext,
     launchName: string,
   ): Promise<WorkspaceLaunchPayload> {
-    const configResult = readPaseoConfig(this.getConfigDirectory(context));
+    const configResult = await readPaseoConfig(this.getConfigDirectory(context));
     if (!configResult.ok) {
       throw paseoConfigParseError(configResult);
     }
@@ -183,12 +185,22 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     }
     await this.stopSupersededScript(context, launchName);
 
+    const configuredServicePorts = await this.getConfiguredServicePorts(
+      context,
+      configResult.config,
+    );
     const environment = await this.deps.workspaceRuntimeEnvironment.ensure({
       workspaceId: context.workspaceId,
       cwd: context.workspaceDirectory,
       branchName: context.branchName,
       allocation: configResult.config?.worktree?.servicePorts ?? this.deps.globalServicePorts,
-      excludedPorts: () => this.getExcludedServicePorts(context, configResult.config),
+      excludedPorts: () => {
+        const ports = new Set(configuredServicePorts);
+        for (const port of getAllReservedWorkspaceServicePorts()) {
+          ports.add(port);
+        }
+        return ports;
+      },
     });
     const preparedLaunch: PreparedWorkspaceLaunch = {
       launchName,
@@ -598,19 +610,16 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     return context.projectConfigDirectory ?? context.workspaceDirectory;
   }
 
-  private getExcludedServicePorts(
+  private async getConfiguredServicePorts(
     context: WorkspaceLaunchContext,
     projectConfig: PaseoConfig | null,
-  ): Set<number> {
+  ): Promise<Set<number>> {
     const ports = getExplicitWorkspaceServicePorts(projectConfig);
-    for (const port of getAllReservedWorkspaceServicePorts()) {
-      ports.add(port);
-    }
     if (this.getConfigDirectory(context) === context.workspaceDirectory) {
       return ports;
     }
 
-    const workspaceConfig = readPaseoConfig(context.workspaceDirectory);
+    const workspaceConfig = await readPaseoConfig(context.workspaceDirectory);
     if (!workspaceConfig.ok) {
       return ports;
     }
@@ -709,8 +718,8 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     };
   }
 
-  private readLaunchConfigNames(workspaceDirectory: string): string[] {
-    const configResult = readPaseoConfig(workspaceDirectory);
+  private async readLaunchConfigNames(workspaceDirectory: string): Promise<string[]> {
+    const configResult = await readPaseoConfig(workspaceDirectory);
     if (!configResult.ok) {
       this.deps.logger.warn(
         { err: configResult.error, configPath: configResult.configPath },

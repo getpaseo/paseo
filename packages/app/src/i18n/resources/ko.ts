@@ -618,6 +618,7 @@ export const ko: TranslationResources = {
     terminal: {
       hostDisconnected: "호스트가 연결되어 있지 않습니다",
       updateHost: "기본 터미널 렌더러를 사용하도록 호스트를 업데이트합니다.",
+      restoreRequiresUpdate: "터미널을 보려면 호스트를 업데이트하세요.",
       unableToSubscribe: "터미널을 구독할 수 없습니다",
       fileUploaded: "파일을 업로드했습니다",
       pasteFileFailed: "파일을 붙여넣지 못했습니다: {{reason}}",
@@ -2051,7 +2052,6 @@ export const ko: TranslationResources = {
   toolCallDetails: {
     error: "오류",
     empty: "추가 세부 정보가 없습니다",
-    subAgentActivity: "서브에이전트 활동",
     input: "입력",
     output: "출력",
   },
@@ -2130,6 +2130,11 @@ export const ko: TranslationResources = {
     },
   },
   providerUsage: {
+    checkUsage: "사용량 확인",
+    checkUsageHint: "모든 기기에서 {{host}}에 적용",
+    off: "{{host}}의 사용량 확인이 꺼져 있습니다.",
+    turnOn: "켜기",
+
     options: "설정",
     refreshFailed: "사용량을 새로 고칠 수 없습니다",
     noHosts: "연결된 호스트가 없습니다",
@@ -2177,6 +2182,7 @@ export const ko: TranslationResources = {
       days: "{{value}}일",
       hours: "{{value}}시간",
       minutes: "{{value}}분",
+      pair: "{{first}} {{second}}",
     },
     timing: {
       lastUpdated: "마지막 업데이트: {{relativeTime}}",
@@ -2184,6 +2190,8 @@ export const ko: TranslationResources = {
       resetTimePassed: "초기화 시간이 지났습니다",
       resettingNow: "지금 재설정 중",
       resetsIn: "{{duration}} 후 재설정",
+      resetsAtWeekday: "{{weekday}} {{time}}",
+      resetsAtDate: "{{date}} {{time}}",
       runsOutNow: "지금 한도에 도달",
       runsOutIn: "{{duration}} 후 한도에 도달",
       justNow: "방금",

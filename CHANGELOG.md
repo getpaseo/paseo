@@ -1,6 +1,6 @@
 # Changelog
 
-Not released yet. These changes are on `main` but not in 0.14.0-beta.2; the next release entry includes them.
+Not released yet. These changes are on `main` but not in 0.14.0; the next release entry includes them.
 
 Added:
 
@@ -11,7 +11,7 @@ Improved:
 
 - Added `server.addHook` with `subject.operation.position` names and the awaited `worktree.create.after` hook before setup and agents; deprecated the previous plugin hook registration methods without changing their behavior ([#8081](https://github.com/getpaseo/paseo/pull/8081))
 
-## 0.14.0-beta.2 - 2026-10-28
+## 0.14.0 - 2026-10-29
 
 Plugins can now add tools to individual agents and configure their MCP servers when sessions open.
 
@@ -43,7 +43,6 @@ Voice settings now let you configure speech providers and download local models 
 - Reduced daemon stalls when opening and paging large Claude and OMP histories ([#7789](https://github.com/getpaseo/paseo/pull/7789), [#7940](https://github.com/getpaseo/paseo/pull/7940), [#7948](https://github.com/getpaseo/paseo/pull/7948), [#7958](https://github.com/getpaseo/paseo/pull/7958) by [@ragokan](https://github.com/ragokan))
 - Reduced daemon stalls during plugin builds, image processing and config reloads ([#7967](https://github.com/getpaseo/paseo/pull/7967), [#7954](https://github.com/getpaseo/paseo/pull/7954), [#7959](https://github.com/getpaseo/paseo/pull/7959))
 - Reduced blocking filesystem work during workspace and project refreshes ([#7941](https://github.com/getpaseo/paseo/pull/7941), [#7943](https://github.com/getpaseo/paseo/pull/7943), [#7944](https://github.com/getpaseo/paseo/pull/7944))
-- Added a workaround for Claude Code sessions consuming subscription limits faster in Paseo ([#7976](https://github.com/getpaseo/paseo/pull/7976) by [@david828019-oss](https://github.com/david828019-oss))
 
 ### Fixed
 
@@ -72,7 +71,8 @@ Voice settings now let you configure speech providers and download local models 
 
 - Voice mode now defaults to off; enable it in Voice settings
 - If environment variables select OpenAI speech, move keys and endpoints stored only in legacy `providers.openai` into Voice settings
-- Before downgrading to 0.13.2, restore a backed-up `config.json` or convert speech credentials and idle-cleanup settings saved by the beta
+- Before downgrading to 0.13.2, restore a backed-up `config.json` or convert speech credentials and idle-cleanup settings saved by 0.14.0
+- Install the optional [Claude Code entrypoint plugin](https://paseo.sh/plugins/getpaseo/claude-code-entrypoint-env) to launch Claude sessions with `CLAUDE_CODE_ENTRYPOINT=Paseo`, a community workaround for subscription limits draining faster ([#7976](https://github.com/getpaseo/paseo/pull/7976), [#8164](https://github.com/getpaseo/paseo/pull/8164) by [@david828019-oss](https://github.com/david828019-oss))
 
 ## 0.13.2 - 2026-10-26
 

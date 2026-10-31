@@ -83,15 +83,15 @@ describe("WorkspaceLaunchManager", () => {
     terminalManager.failNextCreate();
     await expect(manager.start(context, "full")).rejects.toThrow("Failed to create terminal");
     expect(terminalManager.killed).toEqual([dev.terminalId]);
-    expect(manager.buildSnapshot(context)).toEqual(
+    expect(await manager.buildSnapshot(context)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ launchName: "dev", lifecycle: "running", active: true }),
         expect.objectContaining({ launchName: "full", lifecycle: "stopped", active: false }),
       ]),
     );
-    const restoredDev = manager
-      .buildSnapshot(context)
-      .find((launch) => launch.launchName === "dev");
+    const restoredDev = (await manager.buildSnapshot(context)).find(
+      (launch) => launch.launchName === "dev",
+    );
     expect(restoredDev?.terminalId).not.toBe(dev.terminalId);
 
     const full = await manager.start(context, "full");
@@ -103,7 +103,7 @@ describe("WorkspaceLaunchManager", () => {
       portBase: port,
       composeProjectName: dev.composeProjectName,
     });
-    expect(manager.buildSnapshot(context)).toEqual(
+    expect(await manager.buildSnapshot(context)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ launchName: "dev", lifecycle: "stopped", active: false }),
         expect.objectContaining({ launchName: "full", lifecycle: "running", active: true }),
@@ -111,12 +111,12 @@ describe("WorkspaceLaunchManager", () => {
     );
 
     await Promise.all([manager.start(context, "dev"), manager.start(context, "full")]);
-    expect(manager.buildSnapshot(context).filter((launch) => launch.active)).toEqual([
+    expect((await manager.buildSnapshot(context)).filter((launch) => launch.active)).toEqual([
       expect.objectContaining({ launchName: "full", lifecycle: "running" }),
     ]);
 
     await manager.stop(context, "full");
-    expect(manager.buildSnapshot(context)).toEqual(
+    expect(await manager.buildSnapshot(context)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ launchName: "full", lifecycle: "stopped", active: false }),
       ]),
@@ -165,7 +165,7 @@ describe("WorkspaceLaunchManager", () => {
 
       await manager.start(context, "full");
       await expect.poll(() => readTcpMessage(port), { timeout: 10_000 }).toBe("full");
-      expect(manager.buildSnapshot(context)).toEqual(
+      expect(await manager.buildSnapshot(context)).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ launchName: "dev", lifecycle: "stopped", active: false }),
           expect.objectContaining({ launchName: "full", lifecycle: "running", active: true }),
@@ -230,7 +230,7 @@ describe("WorkspaceLaunchManager", () => {
     };
 
     try {
-      expect(manager.buildSnapshot(context)).toEqual([
+      expect(await manager.buildSnapshot(context)).toEqual([
         expect.objectContaining({ launchName: "dev", lifecycle: "stopped" }),
       ]);
 
@@ -305,8 +305,8 @@ describe("WorkspaceLaunchManager", () => {
 
     try {
       await manager.start(context, "dev");
-      await vi.waitFor(() => {
-        expect(manager.buildSnapshot(context)[0]?.endpoints).toEqual([
+      await vi.waitFor(async () => {
+        expect((await manager.buildSnapshot(context))[0]?.endpoints).toEqual([
           expect.objectContaining({
             id: "dev:p0",
             port,
@@ -375,8 +375,8 @@ describe("WorkspaceLaunchManager", () => {
     try {
       await listen(server, port, "::1");
       await manager.start(context, "dev");
-      await vi.waitFor(() => {
-        expect(manager.buildSnapshot(context)[0]?.endpoints).toEqual([
+      await vi.waitFor(async () => {
+        expect((await manager.buildSnapshot(context))[0]?.endpoints).toEqual([
           expect.objectContaining({ port, protocol: "http", proxyUrl: expect.any(String) }),
         ]);
       });
@@ -441,7 +441,7 @@ describe("WorkspaceLaunchManager", () => {
         );
       });
 
-      expect(manager.buildSnapshot(context)[0]?.endpoints).toEqual([
+      expect((await manager.buildSnapshot(context))[0]?.endpoints).toEqual([
         expect.objectContaining({
           hostname: expect.stringContaining("paseo-launch"),
           port: launchPort,
@@ -490,12 +490,12 @@ describe("WorkspaceLaunchManager", () => {
       await manager.start(context, "dev");
       writeFileSync(join(directory, "paseo.json"), JSON.stringify({ launches: {} }));
 
-      expect(manager.buildSnapshot(context)).toEqual([
+      expect(await manager.buildSnapshot(context)).toEqual([
         expect.objectContaining({ launchName: "dev", lifecycle: "running" }),
       ]);
 
       await manager.stop(context, "dev");
-      expect(manager.buildSnapshot(context)).toEqual([]);
+      expect(await manager.buildSnapshot(context)).toEqual([]);
     } finally {
       await manager.disposeWorkspace(context.workspaceId);
     }
@@ -656,8 +656,8 @@ describe("WorkspaceLaunchManager", () => {
       try {
         const launch = await manager.start(context, "dev");
         await vi.waitFor(
-          () => {
-            expect(manager.buildSnapshot(context)).toEqual([
+          async () => {
+            expect(await manager.buildSnapshot(context)).toEqual([
               expect.objectContaining({
                 lifecycle: "stopped",
                 active: false,
@@ -718,7 +718,7 @@ describe("WorkspaceLaunchManager", () => {
       expect(terminalManager.created[0]?.retainOnExit).toBe(true);
       terminalManager.created[0]?.triggerExit(17);
 
-      expect(manager.buildSnapshot(context)).toEqual([
+      expect(await manager.buildSnapshot(context)).toEqual([
         expect.objectContaining({
           launchName: "dev",
           lifecycle: "stopped",
@@ -778,7 +778,7 @@ describe("WorkspaceLaunchManager", () => {
       continueProbe.resolve();
       await flushAsyncWork();
 
-      expect(manager.buildSnapshot(context)[0]?.endpoints).toEqual([]);
+      expect((await manager.buildSnapshot(context))[0]?.endpoints).toEqual([]);
       expect(serviceProxy.getWorkspaceHealthTargets(context.workspaceId)).toEqual([]);
     } finally {
       continueProbe.resolve();
@@ -849,8 +849,8 @@ describe("WorkspaceLaunchManager", () => {
       expect(probeHttp).toHaveBeenCalledTimes(2000);
       expect(peak).toBe(16);
       expect(active).toBe(0);
-      expect(manager.buildSnapshot(first)[0]?.endpoints).toHaveLength(1000);
-      expect(manager.buildSnapshot(second)[0]?.endpoints).toHaveLength(1000);
+      expect((await manager.buildSnapshot(first))[0]?.endpoints).toHaveLength(1000);
+      expect((await manager.buildSnapshot(second))[0]?.endpoints).toHaveLength(1000);
     } finally {
       allowTcp.resolve();
       allowHttp.resolve();
@@ -894,7 +894,7 @@ describe("WorkspaceLaunchManager", () => {
       await manager.start(context, "dev");
       await flushAsyncWork();
       expect(probeHttp).toHaveBeenCalledExactlyOnceWith(port);
-      expect(manager.buildSnapshot(context)[0]?.endpoints).toEqual([
+      expect((await manager.buildSnapshot(context))[0]?.endpoints).toEqual([
         expect.objectContaining({ port, protocol: "tcp" }),
       ]);
       manager.updateWorkspaceBranch(context.workspaceId, context.branchName);
@@ -919,27 +919,27 @@ describe("WorkspaceLaunchManager", () => {
       manager.updateWorkspaceBranch(context.workspaceId, context.branchName);
       await flushAsyncWork();
       expect(probeHttp).toHaveBeenCalledTimes(7);
-      expect(manager.buildSnapshot(context)[0]?.endpoints).toEqual([
+      expect((await manager.buildSnapshot(context))[0]?.endpoints).toEqual([
         expect.objectContaining({ port, protocol: "http", proxyUrl: expect.any(String) }),
       ]);
 
-      const httpEndpoints = manager.buildSnapshot(context)[0]?.endpoints;
+      const httpEndpoints = (await manager.buildSnapshot(context))[0]?.endpoints;
       probeHttp.mockResolvedValue(false);
       manager.updateWorkspaceBranch(context.workspaceId, context.branchName);
       await flushAsyncWork();
-      expect(manager.buildSnapshot(context)[0]?.endpoints).toEqual(httpEndpoints);
+      expect((await manager.buildSnapshot(context))[0]?.endpoints).toEqual(httpEndpoints);
       expect(probeHttp).toHaveBeenCalledTimes(7);
 
       listening = false;
       manager.updateWorkspaceBranch(context.workspaceId, context.branchName);
       await flushAsyncWork();
-      expect(manager.buildSnapshot(context)[0]?.endpoints).toEqual([]);
+      expect((await manager.buildSnapshot(context))[0]?.endpoints).toEqual([]);
       listening = true;
       probeHttp.mockResolvedValue(true);
       manager.updateWorkspaceBranch(context.workspaceId, context.branchName);
       await flushAsyncWork();
       expect(probeHttp).toHaveBeenCalledTimes(8);
-      expect(manager.buildSnapshot(context)[0]?.endpoints).toEqual([
+      expect((await manager.buildSnapshot(context))[0]?.endpoints).toEqual([
         expect.objectContaining({ port, protocol: "http", proxyUrl: expect.any(String) }),
       ]);
     } finally {
@@ -988,7 +988,7 @@ describe("WorkspaceLaunchManager", () => {
       manager.updateWorkspaceBranch(context.workspaceId, "feature/renamed");
       await flushAsyncWork();
 
-      expect(manager.buildSnapshot(context)[0]?.endpoints).toEqual([
+      expect((await manager.buildSnapshot(context))[0]?.endpoints).toEqual([
         expect.objectContaining({
           port,
           hostname: "paseo-launch-ws-dev-p0--feature-renamed--app.localhost",

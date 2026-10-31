@@ -5068,7 +5068,7 @@ describe("session workspace launch handling", () => {
     };
     const starts: Array<{ context: WorkspaceLaunchContext; launchName: string }> = [];
     const workspaceLaunchManager: WorkspaceLaunchService = {
-      buildSnapshot: () => [],
+      buildSnapshot: async () => [],
       async start(context, launchName) {
         starts.push({ context, launchName });
         return launch;
@@ -5137,7 +5137,7 @@ describe("session workspace launch handling", () => {
     };
     const start = vi.fn(async () => launch);
     const workspaceLaunchManager: WorkspaceLaunchService = {
-      buildSnapshot: () => [],
+      buildSnapshot: async () => [],
       start,
       async stop() {
         return launch;

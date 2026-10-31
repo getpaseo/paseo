@@ -28,6 +28,7 @@ import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { RetainedChatContent } from "./retained-chat-content";
 import { Composer } from "@/composer";
+import { AgentCommandsProvider } from "@/agent-commands";
 import {
   useComposerEditingSession,
   useComposerFullscreen,
@@ -1255,7 +1256,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     </ChatSurface>
   );
 
-  return (
+  const content = (
     <RewindComposerRestoreProvider
       textSource={agentInputDraft.textSource}
       setText={agentInputDraft.replaceText}
@@ -1274,7 +1275,39 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       </View>
     </RewindComposerRestoreProvider>
   );
+  return wrapAgentCommandProvider({
+    enabled: showsComposer && hasActiveComposer,
+    serverId,
+    agentId,
+    editingSession: composerEditingSession,
+    children: content,
+  });
 });
+
+function wrapAgentCommandProvider({
+  enabled,
+  serverId,
+  agentId,
+  editingSession,
+  children,
+}: {
+  enabled: boolean;
+  serverId: string;
+  agentId: string;
+  editingSession: ComposerEditingSession;
+  children: ReactNode;
+}) {
+  return (
+    <AgentCommandsProvider
+      serverId={serverId}
+      agentId={agentId}
+      editingSession={editingSession}
+      enabled={enabled}
+    >
+      {children}
+    </AgentCommandsProvider>
+  );
+}
 
 function ChatSurface({
   children,

@@ -617,6 +617,7 @@ export const ar: TranslationResources = {
     terminal: {
       hostDisconnected: "Host غير متصل",
       updateHost: "حدّث المضيف لاستخدام عارض الطرفية الأصلي.",
+      restoreRequiresUpdate: "حدّث المضيف لعرض الطرفيات.",
       unableToSubscribe: "غير قادر على الاشتراك في المحطة",
       fileUploaded: "تم رفع الملف",
       pasteFileFailed: "تعذر لصق الملف: {{reason}}",
@@ -2041,7 +2042,6 @@ export const ar: TranslationResources = {
   toolCallDetails: {
     error: "خطأ",
     empty: "لا توجد تفاصيل إضافية متاحة",
-    subAgentActivity: "نشاط الوكيل الفرعي",
     input: "مدخل",
     output: "الإخراج",
   },
@@ -2120,6 +2120,11 @@ export const ar: TranslationResources = {
     },
   },
   providerUsage: {
+    checkUsage: "التحقق من الاستخدام",
+    checkUsageHint: "ينطبق على {{host}} على جميع الأجهزة",
+    off: "التحقق من الاستخدام متوقف على {{host}}.",
+    turnOn: "تشغيل",
+
     options: "الإعدادات",
     refreshFailed: "تعذّر تحديث الاستخدام",
     noHosts: "لا توجد مضيفات متصلة",
@@ -2185,6 +2190,7 @@ export const ar: TranslationResources = {
       minutes_few: "{{value}} دقائق",
       minutes_many: "{{value}} دقيقة",
       minutes_other: "{{value}} دقيقة",
+      pair: "{{first}} و{{second}}",
     },
     timing: {
       lastUpdated: "آخر تحديث {{relativeTime}}",
@@ -2192,6 +2198,8 @@ export const ar: TranslationResources = {
       resetTimePassed: "مضى وقت إعادة التعيين",
       resettingNow: "تتم إعادة التعيين الآن",
       resetsIn: "تتم إعادة التعيين خلال {{duration}}",
+      resetsAtWeekday: "{{weekday}} {{time}}",
+      resetsAtDate: "{{date}}، {{time}}",
       runsOutNow: "ينفد الآن",
       runsOutIn: "ينفد خلال {{duration}}",
       justNow: "الآن",

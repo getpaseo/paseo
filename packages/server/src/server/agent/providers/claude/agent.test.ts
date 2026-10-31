@@ -887,6 +887,68 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
+  test("keeps an extraArgs settings file when Paseo sets Claude flag settings", async () => {
+    const settingsDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-settings-"));
+    const settingsPath = path.join(settingsDir, "settings.json");
+    await fs.writeFile(
+      settingsPath,
+      JSON.stringify({ env: { ENABLE_TOOL_SEARCH: "false" }, permissions: { deny: ["Monitor"] } }),
+    );
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-5-5",
+      providerOptions: {
+        extraArgs: { chrome: null, settings: settingsPath },
+      },
+    });
+
+    await session.startTurn("hello");
+
+    const options = queryFactory.mock.calls[0]?.[0].options;
+    expect(options?.extraArgs).toEqual({ chrome: null });
+    expect(options?.settings).toEqual({
+      env: { ENABLE_TOOL_SEARCH: "false" },
+      permissions: { deny: ["Monitor"] },
+      fastMode: false,
+    });
+    await session.close();
+    await fs.rm(settingsDir, { recursive: true, force: true });
+  });
+
+  test("keeps inline extraArgs settings JSON for internal agents", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      internal: true,
+      providerOptions: {
+        extraArgs: { settings: '{"env":{"ENABLE_TOOL_SEARCH":"false"}}' },
+      },
+    });
+
+    await session.startTurn("hello");
+
+    const options = queryFactory.mock.calls[0]?.[0].options;
+    expect(options?.extraArgs).toEqual({});
+    expect(options?.settings).toEqual({
+      env: { ENABLE_TOOL_SEARCH: "false" },
+      disableAllHooks: true,
+    });
+    await session.close();
+  });
+
   test("lists fast mode only for supported Opus models", async () => {
     const client = new ClaudeAgentClient({ logger, resolveBinary: async () => "/test/claude/bin" });
 
@@ -1162,16 +1224,17 @@ describe("ClaudeAgentSession features", () => {
       const iterator = input[Symbol.asyncIterator]();
       await expect(iterator.next()).resolves.toMatchObject({ value: { type: "user" } });
 
-      await expect(
-        session.steerActiveTurn?.("same turn follow-up", {
-          expectedTurnId: turnId,
-          clientMessageId: "steer-client-id",
-        }),
-      ).resolves.toEqual({ status: "accepted" });
+      const admission = await session.steerActiveTurn?.("same turn follow-up", {
+        expectedTurnId: turnId,
+        clientMessageId: "steer-client-id",
+      });
+      expect(admission).toEqual({ status: "accepted", providerMessageId: expect.any(String) });
+      if (admission?.status !== "accepted") throw new Error("Expected steer admission");
       await expect(iterator.next()).resolves.toMatchObject({
         value: {
           type: "user",
           priority: "next",
+          uuid: admission.providerMessageId,
           message: { content: [{ type: "text", text: "same turn follow-up" }] },
         },
       });
@@ -1229,7 +1292,7 @@ describe("ClaudeAgentSession features", () => {
           expectedTurnId: turnId,
           clearPendingPermissions: true,
         }),
-      ).resolves.toEqual({ status: "accepted" });
+      ).resolves.toEqual({ status: "accepted", providerMessageId: expect.any(String) });
       await expect(firstPermission).resolves.toMatchObject({
         behavior: "deny",
         interrupt: undefined,
@@ -1288,7 +1351,7 @@ describe("ClaudeAgentSession features", () => {
       const permission = internal.handlePermissionRequest("Write", {}, { toolUseID: "tool-1" });
       await expect(
         session.steerActiveTurn?.("system notification", { expectedTurnId: turnId }),
-      ).resolves.toEqual({ status: "accepted" });
+      ).resolves.toEqual({ status: "accepted", providerMessageId: expect.any(String) });
       expect(session.getPendingPermissions()).toHaveLength(1);
       const requestId = session.getPendingPermissions()[0]!.id;
       await session.respondToPermission(requestId, { behavior: "deny", message: "test cleanup" });

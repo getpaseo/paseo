@@ -623,6 +623,7 @@ export const fr: TranslationResources = {
     terminal: {
       hostDisconnected: "L’hôte n’est pas connecté",
       updateHost: "Mettez à jour l’hôte pour utiliser le rendu natif du terminal.",
+      restoreRequiresUpdate: "Mettez à jour l’hôte pour afficher les terminaux.",
       unableToSubscribe: "Impossible de s’abonner au terminal",
       fileUploaded: "Fichier envoyé",
       pasteFileFailed: "Impossible de coller le fichier : {{reason}}",
@@ -2088,7 +2089,6 @@ export const fr: TranslationResources = {
   toolCallDetails: {
     error: "Erreur",
     empty: "Aucun détail supplémentaire disponible",
-    subAgentActivity: "Activité du sous-agent",
     input: "Entrée",
     output: "Sortie",
   },
@@ -2168,6 +2168,11 @@ export const fr: TranslationResources = {
     },
   },
   providerUsage: {
+    checkUsage: "Vérifier l’utilisation",
+    checkUsageHint: "S’applique à {{host}} sur tous les appareils",
+    off: "L’utilisation est désactivée sur {{host}}.",
+    turnOn: "Activer",
+
     options: "Paramètres",
     refreshFailed: "Impossible d’actualiser l’utilisation",
     noHosts: "Aucun hôte connecté",
@@ -2215,6 +2220,7 @@ export const fr: TranslationResources = {
       days: "{{value}} j",
       hours: "{{value}} h",
       minutes: "{{value}} min",
+      pair: "{{first}} {{second}}",
     },
     timing: {
       lastUpdated: "Dernière mise à jour {{relativeTime}}",
@@ -2222,6 +2228,8 @@ export const fr: TranslationResources = {
       resetTimePassed: "Heure de réinitialisation dépassée",
       resettingNow: "réinitialisation en cours",
       resetsIn: "se réinitialise dans {{duration}}",
+      resetsAtWeekday: "{{weekday}} {{time}}",
+      resetsAtDate: "{{date}}, {{time}}",
       runsOutNow: "s’épuise maintenant",
       runsOutIn: "s’épuise dans {{duration}}",
       justNow: "à l’instant",

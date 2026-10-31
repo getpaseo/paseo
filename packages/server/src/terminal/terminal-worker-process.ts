@@ -1,3 +1,4 @@
+import { createTerminalReplayController } from "./terminal-replay.js";
 import { spawn } from "node:child_process";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, closeSync, existsSync, openSync, rmSync, writeSync } from "node:fs";
@@ -6,13 +7,8 @@ import { fileURLToPath } from "node:url";
 import { currentBootId } from "../server/pid-lock.js";
 import { PRIVATE_FILE_MODE } from "../server/private-files.js";
 import { createTerminalManager } from "./terminal-manager.js";
-import { captureTerminalLines } from "./terminal-capture.js";
 import { TerminalOutputCoalescer } from "./terminal-output-coalescer.js";
-import type {
-  TerminalExitInfo,
-  TerminalSession,
-  TerminalStateSnapshotOptions,
-} from "./terminal.js";
+import type { TerminalExitInfo, LocalTerminalSession } from "./terminal.js";
 import { attachFramedSocket, type FramedSocket } from "./terminal-worker-frames.js";
 import { createTerminalWorkerProcessInspector } from "./terminal-worker-processes.js";
 import {
@@ -22,6 +18,7 @@ import {
   writeTerminalWorkerRecord,
   type TerminalWorkerRecord,
 } from "./terminal-worker-record.js";
+import { createTerminalWorkerRecordPublisher } from "./terminal-worker-record-publisher.js";
 import { resolveTerminalWorkerSocketPath } from "./terminal-worker-socket-path.js";
 import {
   TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV,
@@ -30,7 +27,6 @@ import {
   type TerminalWorkerHelloAck,
   type TerminalWorkerListResult,
   type TerminalWorkerRequest,
-  type TerminalWorkerStateResult,
   type TerminalWorkerToParentMessage,
   type WorkerTerminalInfo,
 } from "./terminal-worker-protocol.js";
@@ -177,7 +173,7 @@ function runWorker(argv: string[]): void {
   const protocolVersion = reportedProtocolVersion();
   const manager = createTerminalManager();
   const inspector = createTerminalWorkerProcessInspector();
-  const sessionsById = new Map<string, TerminalSession>();
+  const sessionsById = new Map<string, LocalTerminalSession>();
   const retainedTerminalIds = new Set<string>();
   const unsubscribeByTerminalId = new Map<string, Array<() => void>>();
   const outputCoalescerByTerminalId = new Map<string, TerminalOutputCoalescer>();
@@ -212,28 +208,34 @@ function runWorker(argv: string[]): void {
     reportInFlightTerminalCreateFailure(error);
   });
 
+  const replayController = createTerminalReplayController({
+    getSession: (id) => sessionsById.get(id),
+    flushOutput: (id) => outputCoalescerByTerminalId.get(id)?.flush(),
+  });
   function sendToController(message: TerminalWorkerToParentMessage): void {
-    // With no controller the event is dropped; the headless terminal keeps the screen, and the
-    // next daemon reads it through listTerminals.
-    controller?.send(message);
+    replayController.send(message);
   }
 
-  function persistRecord(): void {
+  const recordPublisher = createTerminalWorkerRecordPublisher((state) => {
+    writeTerminalWorkerRecord(args.paseoHome, state);
+  });
+
+  async function persistRecord(): Promise<void> {
     if (!record || exiting) return;
     record = {
       ...record,
       terminals: record.terminals.filter((entry) => sessionsById.has(entry.id)),
     };
-    writeTerminalWorkerRecord(args.paseoHome, record);
+    await recordPublisher.publish(record);
   }
 
-  function removeTerminalProgramRecord(terminalId: string): void {
+  async function removeTerminalProgramRecord(terminalId: string): Promise<void> {
     if (!record || exiting) return;
     record = {
       ...record,
       terminals: record.terminals.filter((entry) => entry.id !== terminalId),
     };
-    writeTerminalWorkerRecord(args.paseoHome, record);
+    await recordPublisher.publish(record);
   }
 
   function removeOwnFiles(): void {
@@ -246,6 +248,7 @@ function runWorker(argv: string[]): void {
   function exitWorker(code: number): void {
     if (exiting) return;
     exiting = true;
+    recordPublisher.stop();
     removeOwnFiles();
     server?.close();
     process.exit(code);
@@ -269,17 +272,11 @@ function runWorker(argv: string[]): void {
     }
   }
 
-  function buildTerminalStateResult(
-    session: TerminalSession | undefined,
-    options?: TerminalStateSnapshotOptions,
-  ): TerminalWorkerStateResult {
-    if (!session) {
-      return null;
-    }
-    return { ...session.getStateSnapshot(options), replayPreamble: session.getReplayPreamble() };
+  function terminalMetadata(session: LocalTerminalSession) {
+    return { ...session.getSize(), hasOutput: session.hasOutput(), title: session.getTitle() };
   }
 
-  function toTerminalInfo(session: TerminalSession): WorkerTerminalInfo {
+  function toTerminalInfo(session: LocalTerminalSession): WorkerTerminalInfo {
     return {
       id: session.id,
       name: session.name,
@@ -327,7 +324,7 @@ function runWorker(argv: string[]): void {
     }
   }
 
-  function watchTerminal(session: TerminalSession): void {
+  function watchTerminal(session: LocalTerminalSession): void {
     clearTerminalSubscriptions(session.id);
 
     // Coalesce pty output chunks into a single frame per ~5ms window so a burst of small
@@ -349,35 +346,31 @@ function runWorker(argv: string[]): void {
     });
     outputCoalescerByTerminalId.set(session.id, outputCoalescer);
 
-    const unsubscribeMessage = session.subscribe(
-      (message) => {
-        if (message.type === "output") {
-          pendingOutputRevision = message.revision;
-          outputCoalescer.handle(message.data);
-          return;
-        }
-        // Non-output messages (snapshot/snapshotReady/titleChange) must not jump
-        // ahead of buffered output: flush the coalescer first, then forward.
-        outputCoalescer.flush();
-        sendToController({
-          type: "terminalMessage",
-          terminalId: session.id,
-          message,
-          replayPreamble: session.getReplayPreamble(),
-        });
-      },
-      // Creation already sends an authoritative state in terminalCreated. A second
-      // asynchronous state snapshot can arrive after the create response and
-      // overwrite a resize issued immediately by the caller.
-      { initialSnapshot: "ready" },
-    );
+    const unsubscribeMessage = session.subscribe((message) => {
+      if (message.type === "output") {
+        pendingOutputRevision = message.revision;
+        outputCoalescer.handle(message.data);
+        return;
+      }
+      // Non-output messages (snapshotReady/titleChange) must not jump
+      // ahead of buffered output: flush the coalescer first, then forward.
+      outputCoalescer.flush();
+      sendToController({
+        type: "terminalMessage",
+        terminalId: session.id,
+        message,
+        replayPreamble: session.getReplayPreamble(),
+      });
+    });
     const unsubscribeExit = session.onExit((info) => {
       outputCoalescer.flush();
       clearTerminalSubscriptions(session.id);
-      removeTerminalProgramRecord(session.id);
       if (!retainedTerminalIds.has(session.id)) {
         sessionsById.delete(session.id);
       }
+      void removeTerminalProgramRecord(session.id).catch((error) => {
+        if (!exiting) console.error("Cannot publish terminal exit:", error);
+      });
       if (exitsHeldDuringCreation.has(session.id)) {
         exitsHeldDuringCreation.set(session.id, info);
         return;
@@ -426,7 +419,7 @@ function runWorker(argv: string[]): void {
   // A terminal enters the record only with its program's birth time, so cleanup can always
   // tell the program from a later process that reuses its pid. A program that already exited
   // needs no entry; one whose birth time cannot be read is killed and the create fails.
-  async function recordTerminalProgram(session: TerminalSession): Promise<void> {
+  async function recordTerminalProgram(session: LocalTerminalSession): Promise<void> {
     if (session.getExitInfo()) return;
     // The manager drops a session as soon as its program exits, so only a live one has a pid.
     const pid = manager.getTerminalProcessId(session.id);
@@ -452,7 +445,7 @@ function runWorker(argv: string[]): void {
         { id: session.id, pid, startedAt: inspection.snapshot.startedAt },
       ],
     };
-    persistRecord();
+    await persistRecord();
   }
 
   function enqueueCreateTerminalRequest(message: TerminalCreateRequest): Promise<void> {
@@ -493,11 +486,19 @@ function runWorker(argv: string[]): void {
         await manager.killTerminalAndWait(session.id).catch(() => undefined);
         throw error;
       }
-      const initialSnapshot = session.getStateSnapshot();
+      const state = terminalMetadata(session);
       sendToController({
         type: "terminalCreated",
         terminal: toTerminalInfo(session),
-        state: initialSnapshot.state,
+        state,
+      });
+      // Startup output/readiness may have arrived while recording the program,
+      // before the daemon knew this terminal. Publish its current modes after creation.
+      sendToController({
+        type: "terminalMessage",
+        terminalId: session.id,
+        message: { type: "snapshotReady" },
+        replayPreamble: session.getReplayPreamble(),
       });
       sendToController({
         type: "response",
@@ -505,7 +506,7 @@ function runWorker(argv: string[]): void {
         ok: true,
         result: {
           terminal: toTerminalInfo(session),
-          state: initialSnapshot.state,
+          state,
         },
       });
       const heldExit = exitsHeldDuringCreation.get(session.id);
@@ -530,7 +531,7 @@ function runWorker(argv: string[]): void {
       outputCoalescerByTerminalId.get(session.id)?.flush();
       return {
         terminal: toTerminalInfo(session),
-        state: session.getStateSnapshot().state,
+        state: terminalMetadata(session),
         activityToken: manager.getTerminalActivityToken(session.id),
         replayPreamble: session.getReplayPreamble(),
       };
@@ -547,7 +548,9 @@ function runWorker(argv: string[]): void {
     if (exitInfo) {
       clearTerminalSubscriptions(message.terminalId);
       sessionsById.delete(message.terminalId);
-      removeTerminalProgramRecord(message.terminalId);
+      void removeTerminalProgramRecord(message.terminalId).catch((error) => {
+        if (!exiting) console.error("Cannot publish terminal dismissal:", error);
+      });
       sendToController({
         type: "terminalExit",
         terminalId: message.terminalId,
@@ -568,7 +571,7 @@ function runWorker(argv: string[]): void {
     await manager.killTerminalAndWait(message.terminalId, message.options);
     clearTerminalSubscriptions(message.terminalId);
     sessionsById.delete(message.terminalId);
-    removeTerminalProgramRecord(message.terminalId);
+    await removeTerminalProgramRecord(message.terminalId);
     if (exitInfo) {
       sendToController({
         type: "terminalExit",
@@ -615,28 +618,15 @@ function runWorker(argv: string[]): void {
         return;
       }
 
-      case "getTerminalState": {
-        // Flush buffered output before snapshotting: the headless state already includes it,
-        // so if the coalescer emitted it afterward (in a batch carrying a revision past the
-        // snapshot's) the controller's revision dedup wouldn't drop it and the client would
-        // see the bytes twice. Flushing first sends them with a revision <= the snapshot's.
-        outputCoalescerByTerminalId.get(message.terminalId)?.flush();
-        sendToController({
-          type: "response",
-          requestId: message.requestId,
-          ok: true,
-          result: buildTerminalStateResult(
-            manager.getTerminal(message.terminalId),
-            message.options,
-          ),
-        });
+      case "replayTerminal": {
+        await replayController.replay(message);
         return;
       }
 
       case "captureTerminal": {
         const session = manager.getTerminal(message.terminalId);
         const result = session
-          ? captureTerminalLines(session, {
+          ? session.captureLines({
               start: message.start,
               end: message.end,
               stripAnsi: message.stripAnsi,
@@ -716,10 +706,9 @@ function runWorker(argv: string[]): void {
         }
         authenticated = true;
         // One controller at a time: a new authenticated connection replaces the old one.
-        const previous = controller;
         controller = framed;
+        replayController.setConnection(framed);
         everControlled = true;
-        previous?.socket.destroy();
         const ack: TerminalWorkerHelloAck = {
           type: "helloAck",
           pid: process.pid,
@@ -745,6 +734,7 @@ function runWorker(argv: string[]): void {
       clearTimeout(helloTimer);
       if (controller === framed) {
         controller = null;
+        replayController.setConnection(null);
         exitIfIdle();
       }
     });
