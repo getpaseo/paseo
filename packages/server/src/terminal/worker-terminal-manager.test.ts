@@ -50,6 +50,7 @@ import type {
   WorkerTerminalState,
   TerminalWorkerToParentMessage,
 } from "./terminal-worker-protocol.js";
+import { classifyTerminalProgramProcess } from "./terminal-worker-ownership.js";
 import { createTerminalWorkerProcessInspector } from "./terminal-worker-processes.js";
 import {
   readUnconfirmedTerminalCleanup,
@@ -810,7 +811,7 @@ async function recordedTerminalPids(paseoHome: string): Promise<Map<string, numb
   return pids;
 }
 
-it.each([false, true, true, true, true, true])(
+it.each([false, true])(
   "never adopts a live worker's terminals after a kill cleanup it could not finish, even once the worker rewrites its record (held reader: %s)",
   async (holdReader) => {
     const paseoHome = createTemporaryHome();
@@ -881,24 +882,16 @@ it.each([false, true, true, true, true, true])(
 
     expect(manager.getTerminal(remaining.id)).toBeUndefined();
     expect(await manager.getTerminals(cwd)).toEqual([]);
-    try {
-      await waitForCondition(() => !isProcessAlive(remainingPid), 10000);
-    } catch (error) {
-      const inspection = await inspector.inspect(remainingPid);
-      const original = record!.terminals.find((entry) => entry.id === remaining.id)!;
-      const unresolved = await readUnconfirmedTerminalCleanup(paseoHome);
-      console.error("Worker cleanup diagnostics", {
-        inspectionStatus: inspection.status,
-        sameBirthTime:
-          inspection.status === "alive"
-            ? inspection.snapshot.startedAt === original.startedAt
-            : null,
-        hasBirthTime: inspection.status === "alive" && !!inspection.snapshot.startedAt,
-        unresolved: unresolved.map(({ role, reason }) => ({ role, reason })),
-      });
-      throw error;
-    }
     expect(await readUnconfirmedTerminalCleanup(paseoHome)).toEqual([]);
+    const original = record!.terminals.find((entry) => entry.id === remaining.id)!;
+    // Startup can launch a new worker after cleanup and Windows can reuse the old PID.
+    // Require the original process to be gone, not the numeric PID to remain unused.
+    await expect
+      .poll(
+        async () => classifyTerminalProgramProcess(original, await inspector.inspect(remainingPid)),
+        { timeout: 10000 },
+      )
+      .toMatchObject({ status: expect.stringMatching(/^(gone|unrelated)$/) });
   },
 );
 
