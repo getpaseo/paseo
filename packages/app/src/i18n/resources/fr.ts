@@ -376,6 +376,10 @@ export const fr: TranslationResources = {
       insertAndSend: "Insérer la transcription et envoyer",
       failed: "Échec de la dictée : {{error}}",
       failedRetry: "La dictée a échoué. Appuyez sur Réessayer.",
+      empty: {
+        noAudio: "Aucun son n'a été enregistré. Une autre app utilise-t-elle le micro ?",
+        noTranscript: "Aucune transcription reçue. Appuyez sur Réessayer.",
+      },
     },
     question: {
       responseFailed: "Impossible d’envoyer votre réponse. Réessayez.",

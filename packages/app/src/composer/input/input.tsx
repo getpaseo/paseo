@@ -562,6 +562,7 @@ function MessageInputOverlay({
   isDictationProcessing,
   dictationStatus,
   dictationError,
+  dictationEmptyReason,
   onCancelRecording,
   onAcceptRecording,
   onAcceptAndSendRecording,
@@ -585,6 +586,7 @@ function MessageInputOverlay({
   isDictationProcessing: boolean;
   dictationStatus: React.ComponentProps<typeof DictationOverlay>["status"];
   dictationError: string | null;
+  dictationEmptyReason: React.ComponentProps<typeof DictationOverlay>["emptyReason"];
   onCancelRecording: () => Promise<void>;
   onAcceptRecording: () => Promise<void>;
   onAcceptAndSendRecording: () => Promise<void>;
@@ -593,6 +595,7 @@ function MessageInputOverlay({
   onRealtimeVoiceStop: () => void;
 }) {
   if (showDictationOverlay) {
+    const awaitsAcknowledgement = dictationStatus === "failed" || dictationStatus === "empty";
     return (
       <DictationOverlay
         volume={dictationVolume}
@@ -601,11 +604,12 @@ function MessageInputOverlay({
         isProcessing={isDictationProcessing}
         status={dictationStatus}
         errorText={dictationStatus === "failed" ? (dictationError ?? undefined) : undefined}
+        emptyReason={dictationEmptyReason}
         onCancel={onCancelRecording}
         onAccept={onAcceptRecording}
         onAcceptAndSend={onAcceptAndSendRecording}
-        onRetry={dictationStatus === "failed" ? onRetryFailedRecording : undefined}
-        onDiscard={dictationStatus === "failed" ? onDiscardFailedRecording : undefined}
+        onRetry={awaitsAcknowledgement ? onRetryFailedRecording : undefined}
+        onDiscard={awaitsAcknowledgement ? onDiscardFailedRecording : undefined}
       />
     );
   }
@@ -1032,7 +1036,12 @@ function computeShouldShowDictationOverlay(
   isDictationProcessing: boolean,
   dictationStatus: string,
 ): boolean {
-  return isDictating || isDictationProcessing || dictationStatus === "failed";
+  return (
+    isDictating ||
+    isDictationProcessing ||
+    dictationStatus === "failed" ||
+    dictationStatus === "empty"
+  );
 }
 
 function computeIsDictationStartEnabled(
@@ -1533,6 +1542,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       duration: dictationDuration,
       error: dictationError,
       status: dictationStatus,
+      emptyReason: dictationEmptyReason,
       startDictation,
       cancelDictation,
       confirmDictation,
@@ -2180,6 +2190,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             isDictationProcessing={isDictationProcessing}
             dictationStatus={dictationStatus}
             dictationError={dictationError}
+            dictationEmptyReason={dictationEmptyReason}
             onCancelRecording={handleCancelRecording}
             onAcceptRecording={handleAcceptRecording}
             onAcceptAndSendRecording={handleAcceptAndSendRecording}
@@ -2201,6 +2212,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         isDictationProcessing,
         dictationStatus,
         dictationError,
+        dictationEmptyReason,
         handleCancelRecording,
         handleAcceptRecording,
         handleAcceptAndSendRecording,
