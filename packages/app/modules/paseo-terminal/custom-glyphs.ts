@@ -82,12 +82,60 @@ const BLOCK_GLYPHS: Readonly<Record<string, TerminalRectGlyph>> = {
   "▟": rects(upperRight(), lowerLeft(), lowerRight()),
 };
 
+/**
+ * One custom glyph as the native view consumes it. Coordinates are fractions of one cell.
+ * `rects` is flattened `[x, y, width, height]`. `path` is flattened commands:
+ * `0 x y` moves, `1 x y` draws a line, `2 cx cy x y` draws a quadratic curve. Paths are
+ * stroked with `strokeWidth` points regardless of cell size.
+ */
+export interface PaseoTerminalCustomGlyph {
+  char: string;
+  rects: number[];
+  path: number[];
+  strokeWidth: number;
+}
+
+const PATH_COMMAND_CODES: Readonly<Record<string, { code: number; coordinates: number }>> = {
+  M: { code: 0, coordinates: 2 },
+  L: { code: 1, coordinates: 2 },
+  Q: { code: 2, coordinates: 4 },
+};
+
 export function resolveTerminalCustomGlyph(char: string): TerminalCustomGlyph | null {
   return LIGHT_BOX_GLYPHS[char] ?? HEAVY_BOX_GLYPHS[char] ?? BLOCK_GLYPHS[char] ?? null;
 }
 
-export function isTerminalCustomGlyph(char: string): boolean {
-  return resolveTerminalCustomGlyph(char) !== null;
+export function encodeTerminalCustomGlyphs(): PaseoTerminalCustomGlyph[] {
+  const table = { ...LIGHT_BOX_GLYPHS, ...HEAVY_BOX_GLYPHS, ...BLOCK_GLYPHS };
+  return Object.entries(table).map(([char, glyph]) =>
+    glyph.kind === "rects"
+      ? {
+          char,
+          rects: glyph.rects.flatMap((value) => [value.x, value.y, value.width, value.height]),
+          path: [],
+          strokeWidth: 0,
+        }
+      : { char, rects: [], path: encodePath(glyph.path), strokeWidth: glyph.strokeWidth },
+  );
+}
+
+function encodePath(pathData: string): number[] {
+  const tokens = pathData.match(/[MLQ]|-?\d*\.?\d+/g) ?? [];
+  const encoded: number[] = [];
+  let index = 0;
+  while (index < tokens.length) {
+    const command = PATH_COMMAND_CODES[tokens[index]];
+    if (!command) {
+      throw new Error(`Unsupported terminal glyph path command in ${pathData}`);
+    }
+    const coordinates = tokens.slice(index + 1, index + 1 + command.coordinates).map(Number);
+    if (coordinates.length !== command.coordinates || coordinates.some(Number.isNaN)) {
+      throw new Error(`Malformed terminal glyph path ${pathData}`);
+    }
+    encoded.push(command.code, ...coordinates);
+    index += 1 + command.coordinates;
+  }
+  return encoded;
 }
 
 function path(pathData: string, strokeWidth = 1): TerminalPathGlyph {
