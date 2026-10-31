@@ -13,7 +13,6 @@ import {
 import {
   classifyForResolution,
   fetchDaemonResolution,
-  resolveMissingNestedRelativeFile,
   type AssistantFileLinkResolution,
   type AssistantFileLinkSource,
   type AssistantFileLinkContext,
@@ -189,7 +188,6 @@ function openAssistantFileLink(input: {
       disposition: input.disposition,
       capturedServerId: capturedConfig.serverId,
       capturedWorkspaceRoot: capturedConfig.workspaceRoot,
-      capturedRelativePathBase: capturedConfig.relativePathBase,
       context: input.context,
     });
     return;
@@ -284,19 +282,12 @@ async function dispatchResolvedLink(input: {
   disposition: OpenFileDisposition;
   capturedServerId?: string;
   capturedWorkspaceRoot?: string;
-  capturedRelativePathBase?: string;
   context: AssistantFileLinkResolverContextValue;
 }) {
   const { value } = input.resolution;
   if (value.kind === "file") {
-    const target = await resolveMissingNestedRelativeFile({
-      target: value.target,
-      workspaceRoot: input.capturedWorkspaceRoot,
-      relativePathBase: input.capturedRelativePathBase,
-      getDirectorySuggestions: input.context.getDirectorySuggestions,
-    });
     await dispatchFileTarget({
-      target,
+      target: value.target,
       disposition: input.disposition,
       capturedServerId: input.capturedServerId,
       capturedWorkspaceRoot: input.capturedWorkspaceRoot,

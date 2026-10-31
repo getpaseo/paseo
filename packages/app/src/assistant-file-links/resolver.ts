@@ -136,13 +136,12 @@ function nestedRelativeLookupQuery(
 export async function resolveMissingNestedRelativeFile(input: {
   target: InlinePathTarget;
   workspaceRoot?: string;
-  relativePathBase?: string;
   getDirectorySuggestions: GetDirectorySuggestions;
 }): Promise<InlinePathTarget> {
   if (
-    input.relativePathBase ||
     isAbsoluteInlineCodeToken(input.target.raw) ||
-    input.target.raw.startsWith("~/")
+    input.target.raw.startsWith("~/") ||
+    input.target.raw.endsWith("/")
   ) {
     return input.target;
   }

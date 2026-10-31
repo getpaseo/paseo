@@ -546,22 +546,6 @@ describe("resolveMissingNestedRelativeFile", () => {
     expect(searches).toEqual([]);
   });
 
-  it("keeps document-relative Markdown preview links on their authored destination", async () => {
-    const { getDirectorySuggestions, searches } = suggestionsFromMap({
-      "schema/x.md": [{ path: "repo-a/schema/x.md", kind: "file" }],
-    });
-    const previewTarget = { ...target, raw: "../schema/x.md" };
-    await expect(
-      resolveMissingNestedRelativeFile({
-        target: previewTarget,
-        workspaceRoot: "/Users/test/project",
-        relativePathBase: "/Users/test/project/docs",
-        getDirectorySuggestions,
-      }),
-    ).resolves.toEqual(previewTarget);
-    expect(searches).toEqual([]);
-  });
-
   it.each(["docs/guides", "./docs/guides", "docs/guides/"])(
     "keeps folder href %s direct",
     async (raw) => {
