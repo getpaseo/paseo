@@ -2354,6 +2354,14 @@ export const ptBR: TranslationResources = {
     general: {
       title: "Geral",
       sending: "Envio",
+      addProject: {
+        title: "Adicionar projeto",
+        browseStart: "O seletor de pastas abre em",
+        browseStartLastUsed: "A última pasta em que você navegou",
+        choose: "Escolher...",
+        reset: "Redefinir",
+        chooseFailed: "Não foi possível abrir o seletor de pastas.",
+      },
       browserData: {
         title: "Dados do navegador",
         siteData: "Cookies e dados de sites",

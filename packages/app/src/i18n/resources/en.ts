@@ -2446,6 +2446,14 @@ export const en = {
     general: {
       title: "General",
       sending: "Sending",
+      addProject: {
+        title: "Add project",
+        browseStart: "Browse opens in",
+        browseStartLastUsed: "The folder you last browsed from",
+        choose: "Choose...",
+        reset: "Reset",
+        chooseFailed: "Couldn't open the folder picker.",
+      },
       browserData: {
         title: "Browser data",
         siteData: "Cookies and site data",

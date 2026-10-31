@@ -2331,6 +2331,14 @@ export const ko: TranslationResources = {
     general: {
       title: "일반",
       sending: "전송",
+      addProject: {
+        title: "프로젝트 추가",
+        browseStart: "폴더 선택기 시작 위치",
+        browseStartLastUsed: "마지막으로 찾아본 폴더",
+        choose: "선택...",
+        reset: "재설정",
+        chooseFailed: "폴더 선택기를 열 수 없습니다.",
+      },
       browserData: {
         title: "브라우저 데이터",
         siteData: "쿠키 및 사이트 데이터",

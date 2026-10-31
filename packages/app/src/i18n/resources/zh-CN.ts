@@ -2298,6 +2298,14 @@ export const zhCN: TranslationResources = {
     general: {
       title: "通用",
       sending: "发送",
+      addProject: {
+        title: "添加 project",
+        browseStart: "文件夹选择器打开位置",
+        browseStartLastUsed: "上次浏览的文件夹",
+        choose: "选择...",
+        reset: "重置",
+        chooseFailed: "无法打开文件夹选择器。",
+      },
       browserData: {
         title: "浏览器数据",
         siteData: "Cookie 和网站数据",

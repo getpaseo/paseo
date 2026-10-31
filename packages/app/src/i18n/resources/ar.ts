@@ -2357,6 +2357,14 @@ export const ar: TranslationResources = {
     general: {
       title: "عام",
       sending: "الإرسال",
+      addProject: {
+        title: "إضافة مشروع",
+        browseStart: "يفتح منتقي المجلدات في",
+        browseStartLastUsed: "آخر مجلد تصفحت منه",
+        choose: "اختيار...",
+        reset: "إعادة تعيين",
+        chooseFailed: "تعذر فتح منتقي المجلدات.",
+      },
       browserData: {
         title: "بيانات المتصفح",
         siteData: "ملفات تعريف الارتباط وبيانات المواقع",
