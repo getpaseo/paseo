@@ -1851,7 +1851,8 @@ it("completes a replay larger than the socket budget while a sibling stays usabl
       ...nodeTerminalCommand(`
       const row = Array.from({length: 1000}, (_, i) => "\\x1b[" + (31 + i % 2) + "mX").join("");
       for (let i = 0; i < 900; i++) process.stdout.write(row + "\\r\\n");
-      process.stdout.write("READY-WIDE\\r\\n");
+      // Seeing the marker must mean no trailing newline can still add history.
+      process.stdout.write("READY-WIDE");
       process.stdin.on("data", data => { if (data.toString().includes("small")) { process.stdout.write("SAME-TERMINAL-LIVE\\r\\n"); return; } process.stdout.write("q".repeat(8 * 1024 * 1024) + "\\r\\nRECOVERED-LIVE\\r\\n", () => require("node:fs").writeFileSync(${JSON.stringify(overflowProgress)}, "done")); });
       setInterval(() => {}, 1000);
     `),
