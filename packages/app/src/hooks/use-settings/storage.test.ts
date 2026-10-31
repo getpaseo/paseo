@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { PlatformOSType } from "react-native";
+import { SETTINGS_MIGRATIONS_KEY } from "./keys";
 import { QueryClient } from "@tanstack/react-query";
 import {
   APP_SETTINGS_KEY,
@@ -8,8 +10,6 @@ import {
   DEFAULT_CODE_FONT_SIZE,
   DEFAULT_CONTENT_FONT_SIZE,
   DEFAULT_UI_BASE_FONT_SIZE,
-  defaultUiBaseFontSize,
-  defaultContentFontSize,
   loadAppSettingsFromStorage,
   loadSettingsFromStorage,
   parseClampedFontSize,
@@ -25,6 +25,13 @@ import {
   SIDEBAR_ROW_ITEMS,
 } from "@/components/sidebar/display-preferences/row-items";
 import { DEFAULT_CONTENT_MAX_WIDTH, THEME_OPTIONS } from "@/styles/theme";
+
+interface PlatformFontDefaults {
+  platform: PlatformOSType;
+  ui: number;
+  content: number;
+  code: number;
+}
 
 const LEGACY_SETTINGS_KEY = "@paseo:settings";
 
@@ -889,16 +896,78 @@ describe("appearance settings", () => {
     expect((await loadAppSettingsFromStorage(deps)).sidebarChecksDisplay).toBe("icon");
   });
 
-  it("uses a 15px mobile base and a 14px web base", () => {
-    expect(defaultUiBaseFontSize(true)).toBe(15);
-    expect(defaultUiBaseFontSize(false)).toBe(14);
-  });
+  // Reload the settings module under each platform so the exported defaults and storage
+  // path are exercised together. React Native's OS flag is the only simulated boundary.
+  it.each([
+    { platform: "android", ui: 13, content: 13, code: 13 },
+    { platform: "ios", ui: 15, content: 16, code: 12 },
+    { platform: "web", ui: 14, content: 15, code: 12 },
+  ] satisfies PlatformFontDefaults[])(
+    "persists $platform font defaults and preserves chosen sizes on reload",
+    async ({ platform, ui, content, code }) => {
+      vi.resetModules();
+      vi.doMock("react-native", async (importOriginal) => {
+        const actual = await importOriginal<typeof import("react-native")>();
+        return { ...actual, Platform: { ...actual.Platform, OS: platform } };
+      });
+      try {
+        const settingsModule = await import("./storage");
+        const deps = makeDeps();
+        const expected = {
+          uiBaseFontSize: ui,
+          contentFontSize: content,
+          codeFontSize: code,
+          sendShortcut: "enter",
+        };
+        expect(await settingsModule.loadAppSettingsFromStorage(deps)).toMatchObject(expected);
+        expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null")).toMatchObject(
+          expected,
+        );
+        expect(await settingsModule.loadAppSettingsFromStorage(deps)).toMatchObject(expected);
 
-  it("uses a 16px content default on mobile and a 15px default on web", () => {
-    expect(defaultContentFontSize(true)).toBe(16);
-    expect(defaultContentFontSize(false)).toBe(15);
-    expect(DEFAULT_CONTENT_FONT_SIZE).toBe(defaultContentFontSize(false));
-  });
+        await settingsModule.saveAppSettings({
+          queryClient: new QueryClient(),
+          updates: { sendShortcut: "mod-enter" },
+          deps,
+        });
+        const chosen = { uiBaseFontSize: 17, contentFontSize: 18, codeFontSize: 19 };
+        await settingsModule.saveAppSettings({
+          queryClient: new QueryClient(),
+          updates: chosen,
+          deps,
+        });
+        expect(await settingsModule.loadAppSettingsFromStorage(deps)).toMatchObject({
+          ...chosen,
+          sendShortcut: "mod-enter",
+        });
+        expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null")).toMatchObject({
+          ...chosen,
+          sendShortcut: "mod-enter",
+        });
+
+        const existing = makeDeps({
+          storage: createInMemoryKeyValueStorage({
+            [APP_SETTINGS_KEY]: JSON.stringify({
+              uiBaseFontSize: 15,
+              contentFontSize: 16,
+              codeFontSize: 12,
+            }),
+            [SETTINGS_MIGRATIONS_KEY]: JSON.stringify({
+              applied: ["steer-default", "mobile-content-16"],
+            }),
+          }),
+        });
+        expect(await settingsModule.loadAppSettingsFromStorage(existing)).toMatchObject({
+          uiBaseFontSize: 15,
+          contentFontSize: 16,
+          codeFontSize: 12,
+        });
+      } finally {
+        vi.doUnmock("react-native");
+        vi.resetModules();
+      }
+    },
+  );
 
   it("derives and persists content size from an existing interface-size preference", async () => {
     const deps = makeDeps({
