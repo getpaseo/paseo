@@ -118,6 +118,48 @@ afterEach(() => {
 });
 
 describe("PluginTimelineItemView", () => {
+  it("passes pane-bound file opening to the renderer and leaves it absent when unavailable", async () => {
+    const fileBundle = bundle.replace(
+      'return React.createElement("span", null, props.item.data.label);',
+      'return React.createElement("button", { disabled: !props.openFile, onClick: () => props.openFile({ path: "src/a.ts", lineStart: 10, lineEnd: 20 }) }, "Open file");',
+    );
+    pluginRegistry.installCatalog(
+      "host-1",
+      [
+        {
+          id: "reports",
+          requirements: { paseo: `>=${appPackage.version}` },
+          clientBundle: fileBundle,
+        },
+      ],
+      { client: daemonClient, audio },
+    );
+    const container = document.createElement("div");
+    containers.push(container);
+    const root = createRoot(container);
+    roots.push(root);
+    const firstPane = vi.fn();
+    const secondPane = vi.fn();
+    for (const openFile of [firstPane, secondPane, undefined]) {
+      await act(async () =>
+        root.render(
+          <PluginTimelineItemView
+            serverId="host-1"
+            agentId="provider:parent:sub"
+            item={timelineItem}
+            openFile={openFile}
+          />,
+        ),
+      );
+      const button = container.querySelector("button");
+      expect(button?.disabled).toBe(!openFile);
+      await act(async () => button?.click());
+    }
+    const location = { path: "src/a.ts", lineStart: 10, lineEnd: 20 };
+    expect(firstPane).toHaveBeenCalledExactlyOnceWith(location);
+    expect(secondPane).toHaveBeenCalledExactlyOnceWith(location);
+  });
+
   it("validates and renders the matching plugin component", async () => {
     pluginRegistry.installCatalog(
       "host-1",
