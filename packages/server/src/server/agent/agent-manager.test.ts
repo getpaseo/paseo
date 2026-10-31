@@ -8683,6 +8683,92 @@ test("clearAgentAttention on errored agent stays cleared until a new error trans
   expect(persistedAfterSecondFailure?.attentionReason).toBe("error");
 });
 
+test("each finish or error re-stamps and broadcasts attention while an older flag is unread", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-attention-unread-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class ScriptedSession extends TestAgentSession {
+    private attempt = 0;
+
+    override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+      this.attempt += 1;
+      const turnId = `scripted-turn-${this.attempt}`;
+      const fail = prompt === "fail";
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        this.pushEvent(
+          fail
+            ? { type: "turn_failed", provider: this.provider, error: "provider error", turnId }
+            : { type: "turn_completed", provider: this.provider, turnId },
+        );
+      }, 0);
+      return { turnId };
+    }
+  }
+
+  class ScriptedClient implements AgentClient {
+    readonly provider = "codex" as const;
+    readonly capabilities = TEST_CAPABILITIES;
+
+    async isAvailable(): Promise<boolean> {
+      return true;
+    }
+
+    async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new ScriptedSession(config);
+    }
+
+    async resumeSession(config?: Partial<AgentSessionConfig>): Promise<AgentSession> {
+      return new ScriptedSession({ provider: "codex", cwd: config?.cwd ?? process.cwd() });
+    }
+  }
+
+  const attentionReasons: Array<"finished" | "error" | "permission"> = [];
+  const manager = new AgentManager({
+    clients: { codex: new ScriptedClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000132",
+    onAgentAttention: ({ reason }) => {
+      attentionReasons.push(reason);
+    },
+  });
+  const agent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Unread attention test" },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const readAttention = () => {
+    const attention = manager.getAgent(agent.id)!.attention;
+    if (!attention.requiresAttention) throw new Error("Expected unread attention");
+    return attention;
+  };
+
+  await manager.runAgent(agent.id, "plan");
+  await manager.flush();
+  const first = readAttention();
+  expect(first.attentionReason).toBe("finished");
+
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await expect(manager.runAgent(agent.id, "fail")).rejects.toThrow("provider error");
+  await manager.flush();
+  const second = readAttention();
+  expect(second.attentionReason).toBe("error");
+  expect(second.attentionTimestamp.getTime()).toBeGreaterThan(first.attentionTimestamp.getTime());
+
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await manager.runAgent(agent.id, "finish");
+  await manager.flush();
+  const third = readAttention();
+  expect(third.attentionReason).toBe("finished");
+  expect(third.attentionTimestamp.getTime()).toBeGreaterThan(second.attentionTimestamp.getTime());
+
+  expect(attentionReasons).toEqual(["finished", "error", "finished"]);
+  const persisted = await storage.get(agent.id);
+  expect(persisted?.attentionReason).toBe("finished");
+  expect(persisted?.attentionTimestamp).toBe(third.attentionTimestamp.toISOString());
+});
+
 test("streamAgent clears pending run when startTurn fails before a turn id exists", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-start-turn-failure-"));
   const storagePath = join(workdir, "agents");
