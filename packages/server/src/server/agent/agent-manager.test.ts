@@ -2065,6 +2065,90 @@ test("normalizeConfig injects the provider default model while leaving mode omit
   expect(snapshot.config.modeId).toBeUndefined();
 });
 
+test("normalizeConfig records only the provider's explicit default model when the selection is implicit", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: {
+      codex: new TestAgentClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000102",
+  });
+
+  const snapshot = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      // The composer did not explicitly pick a model: the provider's own
+      // configured default (flagged isDefault in its catalog) applies, but a
+      // Paseo-side first-model fallback must not.
+      selectionSource: "implicit",
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  expect(snapshot.config.model).toBe("gpt-5.4");
+  expect(snapshot.config.selectionSource).toBe("implicit");
+});
+
+test("normalizeConfig leaves the model unset when an implicit selection has no explicit provider default", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const fallbackCatalogClient = new TestAgentClient();
+  fallbackCatalogClient.fetchCatalog = async () => ({
+    models: [{ id: "first-model", label: "First model" }],
+  }) as never;
+  const manager = new AgentManager({
+    clients: {
+      codex: fallbackCatalogClient,
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000103",
+  });
+
+  const snapshot = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      selectionSource: "implicit",
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  expect(snapshot.config.model).toBeUndefined();
+  expect(snapshot.config.selectionSource).toBe("implicit");
+});
+
+test("normalizeConfig still injects the default model when the selection is explicit", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const manager = new AgentManager({
+    clients: {
+      codex: new TestAgentClient(),
+    },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000103",
+  });
+
+  const snapshot = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      selectionSource: "explicit",
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  expect(snapshot.config.model).toBe("gpt-5.4");
+});
+
 test("normalizeConfig leaves Claude mode omitted", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-claude-default-test-"));
   const manager = new AgentManager({
