@@ -2,6 +2,7 @@ import { deriveEffectiveWorkspaceStatus } from "@/workspace-status";
 import equal from "fast-deep-equal";
 import type { PrHint } from "@/git/pr-hint";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
+import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import { type HostProjectListItem } from "@/projects/host-project-model";
 import type { PendingCreateAttempt } from "@/stores/create-flow-store";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
@@ -48,6 +49,9 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   labels?: string[];
   // Checkout branch (null when not a git checkout or detached HEAD).
   currentBranch: string | null;
+  // Normalized remote path (`owner/repo`, nested namespaces kept). Null when the
+  // workspace reports no usable git remote — never inferred from names or paths.
+  repositoryName: string | null;
   archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
   prHint: PrHint | null;
@@ -141,6 +145,19 @@ function normalizeCurrentBranch(currentBranch: string | null | undefined): strin
   return trimmed.length === 0 || trimmed === "HEAD" ? null : trimmed;
 }
 
+/**
+ * The repository a workspace was cloned from, as `owner/repo` (nested
+ * namespaces kept). Parsed from the daemon-reported remote only: the project
+ * name is user-editable and the worktree directory is a local path, so neither
+ * can identify the remote. Unparseable, missing, and non-git remotes are null.
+ */
+export function selectSidebarRepositoryName(remoteUrl: string | null | undefined): string | null {
+  if (!remoteUrl) {
+    return null;
+  }
+  return parseGitRemoteLocation(remoteUrl)?.path ?? null;
+}
+
 export function createSidebarWorkspaceEntry(input: {
   serverId: string;
   workspace: WorkspaceDescriptor;
@@ -168,6 +185,7 @@ export function createSidebarWorkspaceEntry(input: {
     pinnedAt: input.workspace.pinnedAt,
     labels: input.workspace.labels ?? EMPTY_WORKSPACE_LABELS,
     currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
+    repositoryName: selectSidebarRepositoryName(input.workspace.gitRuntime?.remoteUrl),
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
     archivingAt: input.workspace.archivingAt,

@@ -25,6 +25,7 @@ function ws(
     name: input.name ?? "main",
     title: input.title ?? null,
     currentBranch: input.currentBranch ?? null,
+    repositoryName: input.repositoryName ?? null,
     statusBucket: input.statusBucket ?? "done",
     statusEnteredAt: input.statusEnteredAt ?? null,
     archivingAt: null,

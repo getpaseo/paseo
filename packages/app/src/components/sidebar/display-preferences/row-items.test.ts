@@ -10,6 +10,7 @@ describe("parseSidebarRowItems", () => {
     expect(DEFAULT_SIDEBAR_ROW_ITEMS).toEqual({
       branch: false,
       project: false,
+      repository: false,
       host: true,
       changeRequest: true,
       services: true,
@@ -22,6 +23,17 @@ describe("parseSidebarRowItems", () => {
       ...DEFAULT_SIDEBAR_ROW_ITEMS,
       services: false,
     });
+  });
+
+  it("keeps an opted-in repository visible", () => {
+    expect(parseSidebarRowItems({ repository: true })).toEqual({
+      ...DEFAULT_SIDEBAR_ROW_ITEMS,
+      repository: true,
+    });
+  });
+
+  it("hides the repository when an old stored blob omits it", () => {
+    expect(parseSidebarRowItems({ host: false }).repository).toBe(false);
   });
 
   it("leaves items absent from storage at their default", () => {
