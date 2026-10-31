@@ -93,6 +93,7 @@ export interface SidebarWorkspaceMenuProps {
   archiveStatus?: "idle" | "pending" | "success";
   archivePendingLabel?: string;
   archiveShortcutKeys?: ShortcutKey[][] | null;
+  renameShortcutKeys?: ShortcutKey[][] | null;
   isPinned?: boolean;
   onTogglePin?: () => void;
   openInFileManagerPath?: string | null;
@@ -141,6 +142,7 @@ function SidebarWorkspaceMenuItems({
   archiveStatus,
   archivePendingLabel,
   archiveShortcutKeys,
+  renameShortcutKeys,
   isPinned,
   onTogglePin,
   openInFileManagerPath,
@@ -149,6 +151,10 @@ function SidebarWorkspaceMenuItems({
   const archiveTrailing = useMemo(
     () => (archiveShortcutKeys ? <Shortcut chord={archiveShortcutKeys} /> : null),
     [archiveShortcutKeys],
+  );
+  const renameTrailing = useMemo(
+    () => (renameShortcutKeys ? <Shortcut chord={renameShortcutKeys} /> : null),
+    [renameShortcutKeys],
   );
   const labelLeading = useMemo(
     () => <ThemedTag size={14} uniProps={foregroundMutedColorMapping} />,
@@ -182,6 +188,7 @@ function SidebarWorkspaceMenuItems({
           surface={surface}
           testID={`sidebar-workspace-menu-rename-${workspaceKey}`}
           leading={renameLeadingIcon}
+          trailing={renameTrailing}
           onSelect={onRename}
         >
           {t("sidebar.workspace.actions.rename")}
@@ -263,6 +270,7 @@ export function SidebarWorkspaceMenu({
   archiveStatus,
   archivePendingLabel,
   archiveShortcutKeys,
+  renameShortcutKeys,
   isPinned,
   onTogglePin,
   openInFileManagerPath,
@@ -309,6 +317,7 @@ export function SidebarWorkspaceMenu({
           archiveStatus={archiveStatus}
           archivePendingLabel={archivePendingLabel}
           archiveShortcutKeys={archiveShortcutKeys}
+          renameShortcutKeys={renameShortcutKeys}
           isPinned={isPinned}
           onTogglePin={onTogglePin}
           openInFileManagerPath={openInFileManagerPath}
@@ -342,6 +351,7 @@ export function SidebarWorkspaceContextMenu({
   archiveStatus,
   archivePendingLabel,
   archiveShortcutKeys,
+  renameShortcutKeys,
   isPinned,
   onTogglePin,
   openInFileManagerPath,
@@ -423,6 +433,7 @@ export function SidebarWorkspaceContextMenu({
           archiveStatus={archiveStatus}
           archivePendingLabel={archivePendingLabel}
           archiveShortcutKeys={archiveShortcutKeys}
+          renameShortcutKeys={renameShortcutKeys}
           isPinned={isPinned}
           onTogglePin={onTogglePin}
           openInFileManagerPath={openInFileManagerPath}

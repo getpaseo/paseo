@@ -652,6 +652,7 @@ function StatusWorkspaceRowWithMenu({
   const onTogglePin = canPin ? handleTogglePin : undefined;
 
   const archiveShortcutKeys = useShortcutKeys("archive-workspace");
+  const renameShortcutKeys = useShortcutKeys("rename-workspace");
   const { hasClearableAttention, canMarkUnread, clearAttention, markUnread } =
     useWorkspaceReadState({
       serverId: workspace.serverId,
@@ -701,6 +702,7 @@ function StatusWorkspaceRowWithMenu({
         onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
         onMarkAsUnread={canMarkUnread ? handleMarkAsUnread : undefined}
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
+        renameShortcutKeys={selected ? renameShortcutKeys : null}
         isPinned={isPinned}
         onTogglePin={onTogglePin}
         reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
@@ -739,6 +741,7 @@ interface StatusWorkspaceRowInnerProps {
   onMarkAsRead?: () => void;
   onMarkAsUnread?: () => void;
   archiveShortcutKeys?: ShortcutKey[][] | null;
+  renameShortcutKeys?: ShortcutKey[][] | null;
   isPinned?: boolean;
   onTogglePin?: () => void;
   reserveIdleStatusIndicatorSpace?: boolean;
@@ -786,6 +789,7 @@ function StatusWorkspaceRowInnerContent({
   onMarkAsRead,
   onMarkAsUnread,
   archiveShortcutKeys,
+  renameShortcutKeys,
   isPinned,
   onTogglePin,
   reserveIdleStatusIndicatorSpace = true,
@@ -886,6 +890,7 @@ function StatusWorkspaceRowInnerContent({
               archiveStatus={archiveStatus}
               archivePendingLabel={archivePendingLabel}
               archiveShortcutKeys={archiveShortcutKeys}
+              renameShortcutKeys={renameShortcutKeys}
               isPinned={isPinned}
               onTogglePin={onTogglePin}
               openInFileManagerPath={workspace.workspaceDirectory}
@@ -934,6 +939,7 @@ function StatusWorkspaceRowInnerContent({
                     archiveStatus={archiveStatus}
                     archivePendingLabel={archivePendingLabel}
                     archiveShortcutKeys={archiveShortcutKeys}
+                    renameShortcutKeys={renameShortcutKeys}
                   />
                 ) : null}
               </SidebarWorkspaceRowContent>
@@ -965,6 +971,7 @@ function StatusWorkspaceActionSlot({
   archiveStatus,
   archivePendingLabel,
   archiveShortcutKeys,
+  renameShortcutKeys,
 }: {
   workspace: SidebarWorkspaceEntry;
   backdrop: SidebarSurfaceBackdrop;
@@ -985,6 +992,7 @@ function StatusWorkspaceActionSlot({
   archiveStatus?: "idle" | "pending" | "success";
   archivePendingLabel?: string;
   archiveShortcutKeys?: ShortcutKey[][] | null;
+  renameShortcutKeys?: ShortcutKey[][] | null;
 }) {
   const kebab = useOpenKebabMenuVisibility(showKebab);
   return (
@@ -1013,6 +1021,7 @@ function StatusWorkspaceActionSlot({
             archiveStatus={archiveStatus}
             archivePendingLabel={archivePendingLabel}
             archiveShortcutKeys={archiveShortcutKeys}
+            renameShortcutKeys={renameShortcutKeys}
             isPinned={isPinned}
             onTogglePin={onTogglePin}
           />

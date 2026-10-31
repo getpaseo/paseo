@@ -122,6 +122,7 @@ export function SidebarWorkspaceRow({
   }, []);
 
   const archiveShortcutKeys = useShortcutKeys("archive-workspace");
+  const renameShortcutKeys = useShortcutKeys("rename-workspace");
   const { hasClearableAttention, canMarkUnread, clearAttention, markUnread } =
     useWorkspaceReadState({
       serverId: workspace.serverId,
@@ -173,6 +174,7 @@ export function SidebarWorkspaceRow({
         onMarkAsRead={hasClearableAttention ? handleMarkAsRead : undefined}
         onMarkAsUnread={canMarkUnread ? handleMarkAsUnread : undefined}
         archiveShortcutKeys={selected ? archiveShortcutKeys : null}
+        renameShortcutKeys={selected ? renameShortcutKeys : null}
       />
       <WorkspaceRenameModal
         visible={isRenameOpen}
@@ -206,6 +208,7 @@ interface WorkspaceRowBodyProps {
   onMarkAsRead?: () => void;
   onMarkAsUnread?: () => void;
   archiveShortcutKeys?: ShortcutKey[][] | null;
+  renameShortcutKeys?: ShortcutKey[][] | null;
 }
 
 function WorkspaceRowBody({
@@ -230,6 +233,7 @@ function WorkspaceRowBody({
   onMarkAsRead,
   onMarkAsUnread,
   archiveShortcutKeys,
+  renameShortcutKeys,
 }: WorkspaceRowBodyProps) {
   const isCompact = useIsCompactFormFactor();
   const isTouchPlatform = platformIsNative || isCompact;
@@ -307,6 +311,7 @@ function WorkspaceRowBody({
               archiveStatus={archiveStatus}
               archivePendingLabel={archivePendingLabel}
               archiveShortcutKeys={archiveShortcutKeys}
+              renameShortcutKeys={renameShortcutKeys}
               openInFileManagerPath={workspace.workspaceDirectory}
               disabled={isArchiving}
               aria-selected={selected}
@@ -344,6 +349,7 @@ function WorkspaceRowBody({
                   archiveStatus={archiveStatus}
                   archivePendingLabel={archivePendingLabel}
                   archiveShortcutKeys={archiveShortcutKeys}
+                  renameShortcutKeys={renameShortcutKeys}
                   onArchive={onArchive}
                   onCopyBranchName={onCopyBranchName}
                   onCopyPath={onCopyPath}
@@ -373,6 +379,7 @@ function WorkspaceRowTrailingActions({
   archiveStatus,
   archivePendingLabel,
   archiveShortcutKeys,
+  renameShortcutKeys,
   onArchive,
   onMarkAsRead,
   onMarkAsUnread,
@@ -392,6 +399,7 @@ function WorkspaceRowTrailingActions({
   archiveStatus?: "idle" | "pending" | "success";
   archivePendingLabel?: string;
   archiveShortcutKeys?: ShortcutKey[][] | null;
+  renameShortcutKeys?: ShortcutKey[][] | null;
   onArchive?: () => void;
   onMarkAsRead?: () => void;
   onMarkAsUnread?: () => void;
@@ -448,6 +456,7 @@ function WorkspaceRowTrailingActions({
                 archiveStatus={archiveStatus}
                 archivePendingLabel={archivePendingLabel}
                 archiveShortcutKeys={archiveShortcutKeys}
+                renameShortcutKeys={renameShortcutKeys}
               />
             ) : null}
           </SidebarWorkspaceTrailingActionOverlay>
