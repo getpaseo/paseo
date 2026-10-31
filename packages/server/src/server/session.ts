@@ -2203,9 +2203,30 @@ export class Session {
     const workspace = await this.workspaceRegistry.get(workspaceId);
     if (!workspace) return null;
 
-    const project = await this.projectRegistry.get(workspace.projectId);
-    if (!project) return null;
+    const project =
+      (await this.projectRegistry.get(workspace.projectId)) ??
+      this.orphanedProjectRecord(workspace);
     return this.buildProjectPlacementForWorkspace(workspace, project);
+  }
+
+  /**
+   * Deleting a project leaves its workspaces and sessions behind. Synthesize a
+   * project record from the workspace so history and search keep listing those
+   * sessions instead of dropping every entry whose project record is gone.
+   */
+  private orphanedProjectRecord(workspace: PersistedWorkspaceRecord): PersistedProjectRecord {
+    return {
+      projectId: workspace.projectId,
+      rootPath: workspace.cwd,
+      kind: workspace.kind === "directory" ? "non_git" : "git",
+      displayName: workspace.title ?? workspace.displayName,
+      projectKey: null,
+      customName: null,
+      customIconRevision: null,
+      createdAt: workspace.createdAt,
+      updatedAt: workspace.updatedAt,
+      archivedAt: null,
+    };
   }
 
   /**

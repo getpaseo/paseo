@@ -1103,6 +1103,34 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
   }
 });
 
+test("workspace placement survives a deleted project record", async () => {
+  const session = createSessionForWorkspaceTests();
+  const orphaned = createPersistedWorkspaceRecord({
+    workspaceId: "ws-orphaned",
+    projectId: "proj-deleted",
+    cwd: "/tmp/deleted-project",
+    kind: "local_checkout",
+    displayName: "Reverse",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  session.workspaceRegistry.get = async (workspaceId: string) =>
+    workspaceId === orphaned.workspaceId ? orphaned : null;
+  // Removing a project drops its record while its workspaces stay behind; a
+  // re-added path gets a fresh projectId. History must keep listing those
+  // sessions instead of dropping every entry whose placement is null.
+  session.projectRegistry.get = async () => null;
+  session.workspaceRuntimeStore.get = () => null;
+
+  await expect(
+    session.buildProjectPlacementForWorkspaceId(orphaned.workspaceId),
+  ).resolves.toMatchObject({
+    projectKey: orphaned.projectId,
+    projectName: "Reverse",
+    checkout: { cwd: orphaned.cwd },
+  });
+});
+
 test("create_agent_request launches from an exact subdirectory in a created worktree", async () => {
   const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-worktree-cwd-"));
   try {
@@ -3141,7 +3169,7 @@ test("fetch_agent_history_request rejects a malformed search cursor", async () =
   ]);
 });
 
-test("fetch_agent_history_request skips rows whose workspace project record is missing", async () => {
+test("fetch_agent_history_request keeps rows whose workspace project record is missing", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests();
   const stableCwd = path.resolve("/tmp/stable-history");
@@ -3210,6 +3238,17 @@ test("fetch_agent_history_request skips rows whose workspace project record is m
       payload: expect.objectContaining({
         requestId: "req-history-orphan",
         entries: [
+          expect.objectContaining({
+            agent: expect.objectContaining({ id: "history-orphan" }),
+            // A removed project leaves its workspaces behind. The row keeps its
+            // placement (derived from the workspace record) so its sessions stay
+            // reachable instead of disappearing from History.
+            project: expect.objectContaining({
+              projectKey: orphanWorkspace.projectId,
+              projectName: "main",
+              workspaceName: "main",
+            }),
+          }),
           expect.objectContaining({
             agent: expect.objectContaining({ id: "history-stable" }),
             project: expect.objectContaining({
