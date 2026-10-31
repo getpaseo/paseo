@@ -2523,6 +2523,18 @@ export const fr: TranslationResources = {
           pureBlack: "Noir pur",
           auto: "Système",
         },
+        system: {
+          light: {
+            title: "En mode clair",
+            hint: "Thème utilisé par Système quand l’appareil est en mode clair",
+            accessibilityLabel: "En mode clair: {{value}}",
+          },
+          dark: {
+            title: "En mode sombre",
+            hint: "Thème utilisé par Système quand l’appareil est en mode sombre",
+            accessibilityLabel: "En mode sombre: {{value}}",
+          },
+        },
       },
       detailLevel: {
         title: "Niveau de détail",
