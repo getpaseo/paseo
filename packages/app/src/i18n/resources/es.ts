@@ -2,6 +2,16 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const es: TranslationResources = {
+  sharedOrdering: {
+    permissionLost:
+      "Este host ahora es de solo lectura. Se cancelaron los cambios de orden pendientes.",
+    removed: "Se quitaron los elementos no disponibles del orden pendiente.",
+    unsupported:
+      "Actualiza este host para sincronizar el orden de espacios de trabajo y pestañas entre dispositivos.",
+    failed: "El orden sigue pendiente. Vuelve a conectar o mueve un elemento para reintentar.",
+    conflict:
+      "El orden sigue pendiente tras cambios en conflicto. Vuelve a conectar o mueve un elemento para reintentar.",
+  },
   paneFind: {
     connectionFailure:
       "No se pudo buscar en este chat. Comprueba la conexión con el host y vuelve a intentarlo.",

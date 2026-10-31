@@ -127,7 +127,7 @@ export function SortableInlineList<T>({
   data: T[];
   keyExtractor: (item: T, index: number) => string;
   renderItem: (info: DraggableRenderItemInfo<T>) => ReactElement;
-  onDragEnd?: (data: T[]) => void;
+  onDragEnd?: (data: T[], movedKey: string) => void;
   useDragHandle?: boolean;
   disabled?: boolean;
   activationDistance?: number;

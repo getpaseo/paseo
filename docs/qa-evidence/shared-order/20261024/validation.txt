@@ -1,0 +1,621 @@
+
+===== npm-ci =====
+npm warn ERESOLVE overriding peer dependency
+npm warn While resolving: @getpaseo/expo-two-way-audio@0.13.0
+npm warn Found: react@19.3.1
+npm warn packages/expo-two-way-audio/node_modules/react
+npm warn
+npm warn Could not resolve dependency:
+npm warn peer overridden react@"19.2.3" (was "*") from @getpaseo/expo-two-way-audio@0.13.0
+npm warn packages/expo-two-way-audio
+npm warn   @getpaseo/expo-two-way-audio@0.13.0
+npm warn   node_modules/@getpaseo/expo-two-way-audio
+npm warn deprecated inflight@1.0.6: This module is not supported, and leaks memory. Do not use it. Check out lru-cache if you want a good and tested way to coalesce async requests by a key value, which is much more comprehensive and powerful.
+npm warn deprecated lodash.get@4.4.2: This package is deprecated. Use the optional chaining (?.) operator instead.
+npm warn deprecated rimraf@2.4.5: Rimraf versions prior to v4 are no longer supported
+npm warn deprecated lodash.isequal@4.5.0: This package is deprecated. Use require('node:util').isDeepStrictEqual instead.
+npm warn deprecated @oclif/screen@3.0.8: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
+npm warn deprecated abab@2.0.6: Use your platform's native atob() and btoa() methods instead
+npm warn deprecated glob@7.2.3: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+npm warn deprecated glob@6.0.4: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+npm warn deprecated glob@7.2.3: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+npm warn deprecated glob@7.2.3: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+npm warn deprecated glob@7.2.3: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+npm warn deprecated whatwg-encoding@2.0.0: Use @exodus/bytes instead for a more spec-conformant and faster implementation
+npm warn deprecated whatwg-encoding@2.0.0: Use @exodus/bytes instead for a more spec-conformant and faster implementation
+npm warn deprecated domexception@4.0.0: Use your platform's native DOMException instead
+npm warn deprecated @xmldom/xmldom@0.7.13: this version is no longer supported, please update to at least 0.8.*
+npm warn deprecated boolean@3.2.0: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
+npm warn deprecated tar@6.2.1: Old versions of tar are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+npm warn deprecated glob@10.5.0: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+
+> paseo@0.13.0 postinstall
+> node scripts/postinstall-patches.mjs
+
+patch-package 8.0.1
+Applying patches...
+expo-modules-core@57.0.23 ✔
+patch-package 8.0.1
+Applying patches...
+react-native-enriched-markdown@1.2.0-nightly-20261014-766fc0e67 ✔
+patch-package 8.0.1
+Applying patches...
+react-native-unistyles@3.2.4 ✔
+patch-package 8.0.1
+Applying patches...
+react-native-draggable-flatlist@4.0.3 ✔
+patch-package 8.0.1
+Applying patches...
+react-native-gesture-handler@2.32.0 ✔
+patch-package 8.0.1
+Applying patches...
+@gorhom/bottom-sheet@5.2.14 ✔
+patch-package 8.0.1
+Applying patches...
+react-native-svg@15.15.4 ✔
+patch-package 8.0.1
+Applying patches...
+@mattermost/react-native-paste-input@2.0.1 ✔
+patch-package 8.0.1
+Applying patches...
+@opencode-ai/sdk@1.14.46 ✔
+
+> paseo@0.13.0 prepare
+> lefthook install --force
+
+sync hooks: ✔️ (pre-commit)
+
+added 2849 packages, and audited 2862 packages in 54s
+
+508 packages are looking for funding
+  run `npm fund` for details
+
+137 vulnerabilities (8 low, 28 moderate, 85 high, 16 critical)
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+npm warn allow-scripts 17 packages have install scripts not yet covered by allowScripts:
+npm warn allow-scripts   dtrace-provider@0.8.8 (install: node-gyp rebuild || node suppress-error.js)
+npm warn allow-scripts   esbuild@0.27.3 (postinstall: node install.js)
+npm warn allow-scripts   fsevents@2.3.3 (install: (install scripts present))
+npm warn allow-scripts   lefthook@2.1.6 (postinstall: node postinstall.js)
+npm warn allow-scripts   msgpackr-extract@3.0.4 (install: node-gyp-build-optional-packages)
+npm warn allow-scripts   fsevents@2.3.2 (install: (install scripts present))
+npm warn allow-scripts   sharp@0.34.5 (install: node install/check.js || npm run build)
+npm warn allow-scripts   unrs-resolver@1.11.1 (postinstall: napi-postinstall unrs-resolver 1.11.1 check)
+npm warn allow-scripts   workerd@1.20260507.1 (postinstall: node install.js)
+npm warn allow-scripts   @shopify/react-native-skia@2.6.2 (postinstall: node scripts/install-libs.js)
+npm warn allow-scripts   esbuild@0.28.1 (postinstall: node install.js)
+npm warn allow-scripts   react-native-enriched-markdown@1.2.0-nightly-20261014-766fc0e67 (postinstall: node postinstall.mjs)
+npm warn allow-scripts   workerd@1.20260625.1 (postinstall: node install.js)
+npm warn allow-scripts   esbuild@0.25.12 (postinstall: node install.js)
+npm warn allow-scripts   node-pty@1.2.0-beta.15 (install: node scripts/prebuild.js || node-gyp rebuild; postinstall: node scripts/post-install.js)
+npm warn allow-scripts   esbuild@0.28.1 (postinstall: node install.js)
+npm warn allow-scripts   workerd@1.20260625.1 (postinstall: node install.js)
+npm warn allow-scripts
+npm warn allow-scripts Run `npm approve-scripts --allow-scripts-pending` to review, or `npm approve-scripts <pkg>` to allow.
+
+===== build-server =====
+
+> paseo@0.13.0 build:server
+> npm run build:server-deps && npm run build --workspace=@getpaseo/server && npm run build --workspace=@getpaseo/cli
+
+
+> paseo@0.13.0 build:server-deps
+> npm run build:client && concurrently --kill-others-on-fail --names highlight,plugin,relay --prefix-colors yellow,green,blue "npm run build:highlight" "npm run build:plugin" "npm run build:relay"
+
+
+> paseo@0.13.0 build:client
+> npm run build --workspace=@getpaseo/client
+
+
+> @getpaseo/client@0.13.0 build
+> npm run build --workspace=@getpaseo/protocol && npm run build --workspace=@getpaseo/relay && tsc -p tsconfig.json --incremental false
+
+
+> @getpaseo/protocol@0.13.0 prebuild
+> npm run generate:validators
+
+
+> @getpaseo/protocol@0.13.0 generate:validators
+> node scripts/generate-validation-aot.mjs
+
+generated src/generated/validation/ws-outbound.aot.ts: envelope + 239 session message validators
+
+> @getpaseo/protocol@0.13.0 build
+> tsc -p tsconfig.json --incremental false
+
+
+> @getpaseo/relay@0.13.0 build
+> tsc -p tsconfig.json --incremental false
+
+[plugin]
+[plugin] > paseo@0.13.0 build:plugin
+[plugin] > npm run build --workspace=@getpaseo/plugin
+[plugin]
+[highlight]
+[highlight] > paseo@0.13.0 build:highlight
+[highlight] > npm run build --workspace=@getpaseo/highlight
+[highlight]
+[relay]
+[relay] > paseo@0.13.0 build:relay
+[relay] > npm run build --workspace=@getpaseo/relay
+[relay]
+[relay]
+[relay] > @getpaseo/relay@0.13.0 build
+[relay] > tsc -p tsconfig.json --incremental false
+[relay]
+[highlight]
+[highlight] > @getpaseo/highlight@0.13.0 build
+[highlight] > tsc -p tsconfig.json --incremental false
+[highlight]
+[plugin]
+[plugin] > @getpaseo/plugin@0.13.0 build
+[plugin] > tsc -p tsconfig.json --incremental false
+[plugin]
+[highlight] npm run build:highlight exited with code 0
+[relay] npm run build:relay exited with code 0
+[plugin] npm run build:plugin exited with code 0
+
+> @getpaseo/server@0.13.0 build
+> npm run build:lib && npm run build:scripts
+
+
+> @getpaseo/server@0.13.0 build:lib
+> tsc -p tsconfig.server.json --incremental false && node scripts/build-opencode-bridge-plugin.mjs && node -e "const fs=require('node:fs'); fs.mkdirSync('dist/server/server/speech/providers/local/sherpa/assets',{recursive:true}); fs.copyFileSync('src/server/speech/providers/local/sherpa/assets/silero_vad.onnx','dist/server/server/speech/providers/local/sherpa/assets/silero_vad.onnx'); fs.cpSync('src/terminal/shell-integration','dist/server/terminal/shell-integration',{recursive:true}); fs.cpSync('src/terminal/shell-integration','dist/src/terminal/shell-integration',{recursive:true}); fs.copyFileSync('src/terminal/terminal-ts-loader.mjs','dist/server/terminal/terminal-ts-loader.mjs'); fs.rmSync('dist/server/skills',{recursive:true,force:true}); fs.cpSync('../../skills','dist/server/skills',{recursive:true}); fs.rmSync('dist/server/builtin-plugins',{recursive:true,force:true}); fs.cpSync('../../plugins','dist/server/builtin-plugins',{recursive:true,filter:(source)=>!source.split(require('node:path').sep).some((segment)=>segment==='node_modules'||segment==='test')&&!/\.(test|spec)\.[cm]?[jt]sx?$/.test(source)&&!source.endsWith('.tsbuildinfo')});"
+
+
+> @getpaseo/server@0.13.0 build:scripts
+> tsc -p tsconfig.scripts.json --incremental false && node -e "const fs=require('node:fs'); fs.mkdirSync('dist/scripts',{recursive:true}); fs.copyFileSync('scripts/mcp-stdio-socket-bridge-cli.mjs','dist/scripts/mcp-stdio-socket-bridge-cli.mjs');"
+
+
+> @getpaseo/cli@0.13.0 build
+> tsc -p tsconfig.json --incremental false
+
+
+===== build-audio =====
+
+> @getpaseo/expo-two-way-audio@0.13.0 build
+> tsc
+
+
+===== app-index.test-ordering-attempt1 =====
+
+ RUN  v4.1.7 /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/app
+
+(node:94818) [DEP0151] DeprecationWarning: Package /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/node_modules/react-native-worklets/ has a "main" field set to "./lib/module/index", excluding the full filename and extension to the resolved file at "lib/module/index.js", imported from /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/node_modules/react-native-reanimated/lib/module/initializers.js.
+ Automatic extension resolution of the "main" field is deprecated for ES modules.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+stderr | src/ordering/index.test.ts
+[DraftStore] Attachment garbage collection failed Error: IndexedDB is unavailable in this runtime.
+    at ensureIndexedDb (/Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/app/src/attachments/web/indexeddb-attachment-store.ts:27:11)
+    at /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/app/src/attachments/web/indexeddb-attachment-store.ts:34:21
+    at new Promise (<anonymous>)
+    at openAttachmentDb (/Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/app/src/attachments/web/indexeddb-attachment-store.ts:33:10)
+    at Object.garbageCollect (/Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/app/src/attachments/web/indexeddb-attachment-store.ts:192:24)
+    at /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/app/src/attachments/service.ts:188:17
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+
+ ❯ |unit| src/ordering/index.test.ts (20 tests | 1 failed) 223ms
+   × an unsupported host receives no new ordering RPC 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |unit| src/ordering/index.test.ts > an unsupported host receives no new ordering RPC
+AssertionError: expected [] to deeply equal [ { kind: 'unsupported' } ]
+
+- Expected
++ Received
+
+- [
+-   {
+-     "kind": "unsupported",
+-   },
+- ]
++ []
+
+ ❯ src/ordering/index.test.ts:447:18
+    445|   });
+    446|   expect(client.calls).toEqual([]);
+    447|   expect(errors).toEqual([{ kind: "unsupported" }]);
+       |                  ^
+    448|   release();
+    449| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 7 passed (20)
+   Start at  18:40:46
+   Duration  5.83s (transform 4.48s, setup 32ms, import 5.47s, tests 223ms, environment 0ms)
+
+
+===== app-directory-sync-attempt1 =====
+
+ RUN  v4.1.7 /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/app
+
+(node:44911) [DEP0151] DeprecationWarning: Package /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/node_modules/react-native-worklets/ has a "main" field set to "./lib/module/index", excluding the full filename and extension to the resolved file at "lib/module/index.js", imported from /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/node_modules/react-native-reanimated/lib/module/initializers.js.
+ Automatic extension resolution of the "main" field is deprecated for ES modules.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+stderr | src/runtime/directory-sync/index.test.ts
+[DraftStore] Attachment garbage collection failed Error: IndexedDB is unavailable in this runtime.
+    at ensureIndexedDb (/Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/app/src/attachments/web/indexeddb-attachment-store.ts:27:11)
+    at /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/app/src/attachments/web/indexeddb-attachment-store.ts:34:21
+    at new Promise (<anonymous>)
+    at openAttachmentDb (/Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/app/src/attachments/web/indexeddb-attachment-store.ts:33:10)
+    at Object.garbageCollect (/Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/app/src/attachments/web/indexeddb-attachment-store.ts:192:24)
+    at /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/app/src/attachments/service.ts:188:17
+    at processTicksAndRejections (node:internal/process/task_queues:104:5)
+
+ ❯ |unit| src/runtime/directory-sync/index.test.ts (33 tests | 1 failed) 712ms
+   × ordering failure still connects workspace labels independently 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |unit| src/runtime/directory-sync/index.test.ts > ordering failure still connects workspace labels independently
+AssertionError: expected [Function] to throw error including 'ordering unavailable' but got 'input.client.subscribe is not a funct…'
+
+Expected: "ordering unavailable"
+Received: "input.client.subscribe is not a function"
+
+ ❯ src/runtime/directory-sync/index.test.ts:1917:52
+    1915|   client.orderingFailure = true;
+    1916|   try {
+    1917|     await expect(directory.connectWorkspaceLabels()).rejects.toThrow("…
+       |                                                    ^
+    1918|     expect(client.listWorkspaceLabelsCalls).toBeGreaterThan(0);
+    1919|   } finally {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯
+
+Vitest caught 1 unhandled error during the test run.
+This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+Error: ordering unavailable
+ ❯ FakeDirectoryClient.observeOrders src/runtime/directory-sync/index.test.ts:50:24
+ ❯ SharedOrderingController.connect src/ordering/index.ts:113:39
+ ❯ DirectorySync.connectWorkspaceLabels src/runtime/directory-sync/index.ts:668:22
+ ❯ src/runtime/directory-sync/index.test.ts:1917:28
+ ❯ ../../node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+ ❯ ../../node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+ ❯ ../../node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+ ❯ runWithCancel ../../node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10
+ ❯ ../../node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+
+This error originated in "src/runtime/directory-sync/index.test.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "ordering failure still connects workspace labels independently". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 31 passed (33)
+     Errors  1 error
+   Start at  18:53:29
+   Duration  8.23s (transform 5.92s, setup 26ms, import 7.40s, tests 712ms, environment 0ms)
+
+
+===== typecheck-attempt1 =====
+
+> paseo@0.13.0 typecheck
+> npm run typecheck --workspaces --if-present
+
+
+> @getpaseo/builtin-plugins@0.13.0 typecheck
+> tsgo -p tsconfig.json --noEmit
+
+
+> @getpaseo/expo-two-way-audio@0.13.0 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/highlight@0.13.0 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/plugin@0.13.0 typecheck
+> tsgo --noEmit && npm run typecheck:examples
+
+
+> @getpaseo/plugin@0.13.0 typecheck:examples
+> npm --prefix ../../plugin-examples/markdown-panel install --ignore-scripts --no-audit --no-fund && tsgo -p tsconfig.examples.json --noEmit
+
+
+added 22 packages in 256ms
+
+> @getpaseo/protocol@0.13.0 pretypecheck
+> npm run generate:validators
+
+
+> @getpaseo/protocol@0.13.0 generate:validators
+> node scripts/generate-validation-aot.mjs
+
+generated src/generated/validation/ws-outbound.aot.ts: envelope + 239 session message validators
+
+> @getpaseo/protocol@0.13.0 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/client@0.13.0 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/server@0.13.0 typecheck
+> tsgo -p tsconfig.server.typecheck.json --noEmit
+
+
+> @getpaseo/app@0.13.0 typecheck
+> tsgo --noEmit
+
+src/ordering/index.test.ts(268,9): error TS2783: 'serverId' is specified more than once, so this usage will be overwritten.
+npm error Lifecycle script `typecheck` failed with error:
+npm error code 2
+npm error path /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/app
+npm error workspace @getpaseo/app@0.13.0
+npm error location /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/app
+npm error command failed
+npm error command sh -c tsgo --noEmit
+
+
+> @getpaseo/relay@0.13.0 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/website@0.13.0 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/desktop@0.13.0 typecheck
+> tsgo --noEmit -p tsconfig.json
+
+
+> @getpaseo/cli@0.13.0 typecheck
+> tsgo --noEmit
+
+
+===== lint-attempt1 =====
+
+> paseo@0.13.0 lint
+> oxlint
+
+
+  x eslint(no-shadow): 'project' is already declared in the upper scope.
+     ,-[packages/app/src/ordering/index.ts:249:15]
+ 248 |         });
+ 249 |         const project = workspaceProjects.find((project) =>
+     :               ^^^|^^^                           ^^^|^^^
+     :                  |                                 `-- 'project' is declared here
+     :                  `-- shadowed declaration is here
+ 250 |           project.hosts.some(
+     `----
+  help: Consider renaming 'project' to avoid shadowing the variable from the outer scope.
+
+Found 0 warnings and 1 error.
+Finished in 2.4s on 4931 files with 177 rules using 15 threads.
+
+===== app-index.test-ordering =====
+
+ RUN  v4.1.7 /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/app
+
+(node:55958) [DEP0151] DeprecationWarning: Package /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/node_modules/react-native-worklets/ has a "main" field set to "./lib/module/index", excluding the full filename and extension to the resolved file at "lib/module/index.js", imported from /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/node_modules/react-native-reanimated/lib/module/initializers.js.
+ Automatic extension resolution of the "main" field is deprecated for ES modules.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+
+ Test Files  1 passed (1)
+      Tests  21 passed (21)
+   Start at  19:00:59
+   Duration  9.90s (transform 7.39s, setup 38ms, import 9.19s, tests 556ms, environment 0ms)
+
+
+===== app-replica.test-ordering =====
+
+ RUN  v4.1.7 /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/app
+
+
+ Test Files  1 passed (1)
+      Tests  15 passed (15)
+   Start at  18:53:05
+   Duration  215ms (transform 52ms, setup 32ms, import 71ms, tests 6ms, environment 0ms)
+
+
+===== app-layout.test-ordering =====
+
+ RUN  v4.1.7 /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/app
+
+(node:42434) [DEP0151] DeprecationWarning: Package /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/node_modules/react-native-worklets/ has a "main" field set to "./lib/module/index", excluding the full filename and extension to the resolved file at "lib/module/index.js", imported from /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/node_modules/react-native-reanimated/lib/module/initializers.js.
+ Automatic extension resolution of the "main" field is deprecated for ES modules.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  18:53:06
+   Duration  11.47s (transform 9.18s, setup 41ms, import 11.30s, tests 7ms, environment 0ms)
+
+
+===== app-sidebar-order-store.test-stores =====
+
+ RUN  v4.1.7 /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/app
+
+
+ Test Files  1 passed (1)
+      Tests  10 passed (10)
+   Start at  18:53:18
+   Duration  345ms (transform 192ms, setup 25ms, import 238ms, tests 5ms, environment 0ms)
+
+
+===== app-selectors.test-session-store-hooks =====
+
+ RUN  v4.1.7 /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/app
+
+
+ Test Files  1 passed (1)
+      Tests  21 passed (21)
+   Start at  18:53:19
+   Duration  294ms (transform 142ms, setup 27ms, import 169ms, tests 15ms, environment 0ms)
+
+
+===== app-sidebar-workspaces-view-model.test-hooks =====
+
+ RUN  v4.1.7 /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/app
+
+
+ Test Files  1 passed (1)
+      Tests  42 passed (42)
+   Start at  18:53:20
+   Duration  328ms (transform 176ms, setup 26ms, import 215ms, tests 8ms, environment 0ms)
+
+
+===== app-layout-reorder =====
+
+ RUN  v4.1.7 /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/app
+
+(node:44262) [DEP0151] DeprecationWarning: Package /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/node_modules/react-native-worklets/ has a "main" field set to "./lib/module/index", excluding the full filename and extension to the resolved file at "lib/module/index.js", imported from /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/node_modules/react-native-reanimated/lib/module/initializers.js.
+ Automatic extension resolution of the "main" field is deprecated for ES modules.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+
+ Test Files  1 passed (1)
+      Tests  3 passed | 160 skipped (163)
+   Start at  18:53:21
+   Duration  7.36s (transform 5.85s, setup 25ms, import 7.24s, tests 10ms, environment 0ms)
+
+
+===== app-directory-sync =====
+
+ RUN  v4.1.7 /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/app
+
+(node:56987) [DEP0151] DeprecationWarning: Package /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/node_modules/react-native-worklets/ has a "main" field set to "./lib/module/index", excluding the full filename and extension to the resolved file at "lib/module/index.js", imported from /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/node_modules/react-native-reanimated/lib/module/initializers.js.
+ Automatic extension resolution of the "main" field is deprecated for ES modules.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+
+ Test Files  1 passed (1)
+      Tests  33 passed (33)
+   Start at  18:55:34
+   Duration  11.24s (transform 8.30s, setup 82ms, import 10.31s, tests 717ms, environment 0ms)
+
+
+===== server-ordering-unit =====
+
+ RUN  v4.1.6 /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/server
+
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  18:55:46
+   Duration  257ms (transform 52ms, setup 32ms, import 73ms, tests 36ms, environment 0ms)
+
+
+===== server-ordering-e2e =====
+
+ RUN  v4.1.6 /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/server
+
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  18:55:47
+   Duration  9.40s (transform 5.70s, setup 31ms, import 7.59s, tests 1.67s, environment 0ms)
+
+
+===== server-session-ordering =====
+
+ RUN  v4.1.6 /Users/luopeihuan/workspace/rrd/paseo/.worktrees/pr-parallel-20261024-ordering/packages/server
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 149 skipped (150)
+   Start at  18:55:58
+   Duration  7.58s (transform 5.86s, setup 31ms, import 7.40s, tests 24ms, environment 0ms)
+
+
+===== format =====
+
+> paseo@0.13.0 format
+> oxfmt .
+
+Finished in 5486ms on 5377 files using 15 threads.
+
+===== typecheck =====
+
+> paseo@0.13.0 typecheck
+> npm run typecheck --workspaces --if-present
+
+
+> @getpaseo/builtin-plugins@0.13.0 typecheck
+> tsgo -p tsconfig.json --noEmit
+
+
+> @getpaseo/expo-two-way-audio@0.13.0 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/highlight@0.13.0 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/plugin@0.13.0 typecheck
+> tsgo --noEmit && npm run typecheck:examples
+
+
+> @getpaseo/plugin@0.13.0 typecheck:examples
+> npm --prefix ../../plugin-examples/markdown-panel install --ignore-scripts --no-audit --no-fund && tsgo -p tsconfig.examples.json --noEmit
+
+
+up to date in 318ms
+
+> @getpaseo/protocol@0.13.0 pretypecheck
+> npm run generate:validators
+
+
+> @getpaseo/protocol@0.13.0 generate:validators
+> node scripts/generate-validation-aot.mjs
+
+generated src/generated/validation/ws-outbound.aot.ts: envelope + 239 session message validators
+
+> @getpaseo/protocol@0.13.0 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/client@0.13.0 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/server@0.13.0 typecheck
+> tsgo -p tsconfig.server.typecheck.json --noEmit
+
+
+> @getpaseo/app@0.13.0 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/relay@0.13.0 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/website@0.13.0 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/desktop@0.13.0 typecheck
+> tsgo --noEmit -p tsconfig.json
+
+
+> @getpaseo/cli@0.13.0 typecheck
+> tsgo --noEmit
+
+
+===== lint =====
+
+> paseo@0.13.0 lint
+> oxlint
+
+Found 0 warnings and 0 errors.
+Finished in 3.6s on 4931 files with 177 rules using 15 threads.
