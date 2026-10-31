@@ -94,7 +94,10 @@ export class OpenCodeV2AgentClient implements AgentClient {
         throw new Error(
           "OpenCode has no connected providers. Authenticate using opencode auth login.",
         );
-      return { models: modelsFromV2(models.data), modes: modesFromV2(agents.data) };
+      return {
+        models: modelsFromV2(models.data, providers.data),
+        modes: modesFromV2(agents.data),
+      };
     } finally {
       await connection.release();
     }
