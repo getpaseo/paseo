@@ -121,6 +121,8 @@ paseo run --output-schema '{"type":"object","properties":{"summary":{"type":"str
 
 使用 `--output-schema` 只返回符合 schema 的 JSON 输出。你可以传入 schema 文件路径，或内联的 JSON schema 对象。此模式不能与 `--no-wait` 一起使用。
 
+回答不符合 schema 时，Paseo 会再向 Agent 提问，最多两次。`--max-retries <n>` 可以修改次数，`--max-retries 0` 表示第一次不符合就失败。失败时退出状态为 1，并输出 `OUTPUT_SCHEMA_FAILED`；其 `details` 包含 `validationErrors` 和 Agent 的 `lastResponse`。
+
 `paseo run` 默认等待完成。使用 `--no-wait` 可以立即返回，同时让 Agent 继续运行，`paseo send` 也使用同一个参数。
 
 旧的 `run --background` 和 `-d` 别名仍然表示 `--no-wait`。它们已被弃用，不会出现在帮助中，并会向 stderr 输出警告。请在脚本中使用 `--no-wait`。工作区的可见性通过 `workspace create --background` 单独选择；本版本不会改变 `run --background` 的含义。
@@ -297,9 +299,15 @@ paseo send <id> "now run the tests"
 paseo send <id> --image screenshot.png "what's wrong here?"
 paseo send <id> --no-wait "run this task"
 paseo send <id> --behavior interrupt "stop and do this instead"
+paseo send <id> --output-schema schema.json "list the open questions"
+paseo send <id> --wait-timeout 30m "run the full suite"
 ```
 
 由 Agent 发起的发送（设置了 `PASEO_AGENT_ID`）默认引导正在进行的轮次。其他发送默认中断它。使用 `--behavior steer` 或 `--behavior interrupt` 覆盖默认行为。引导使用与客户端相同的后备方式：如果无法引导，正在进行的轮次会被中断并替换。
+
+`send` 最多等待 Agent 完成 10 分钟。使用 `--wait-timeout <duration>`（例如 `30s`、`5m`、`1h`）可以修改。
+
+使用 `--output-schema` 向已有的 Agent 要求 JSON 输出，并且只打印该 JSON。它的行为与 [`paseo run`](#running-agents) 一致：schema 会附加到你的消息中，Agent 的最后一条回复会按它校验，不符合时会把问题发回同一个 Agent，最多重试 `--max-retries` 次（默认 2）。此模式不能与 `--no-wait` 一起使用。
 
 ## 查看日志 {#viewing-logs}
 
