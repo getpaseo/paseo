@@ -2467,12 +2467,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return values;
   }
 
-  /** The selects whose value is not what `expected` says; selects it does not name are skipped. */
+  /** The selects whose value is not what `expected` says, including ones it does not name. */
   private featureDifferences(expected: Record<string, unknown>): Record<string, string> {
     return Object.fromEntries(
-      Object.entries(this.featureValues()).filter(
-        ([id, value]) => id in expected && expected[id] !== value,
-      ),
+      Object.entries(this.featureValues()).filter(([id, value]) => expected[id] !== value),
     );
   }
 
@@ -3130,11 +3128,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     // The options are the state, so every select the session opened with is reported, including
     // ones nobody set (a native default is stored like any other value).
-    this.openOptionsPatch = Object.fromEntries(
-      Object.entries(this.featureValues()).filter(
-        ([id, value]) => configuredFeatureValues[id] !== value,
-      ),
-    );
+    this.openOptionsPatch = this.featureDifferences(configuredFeatureValues);
   }
 
   /**

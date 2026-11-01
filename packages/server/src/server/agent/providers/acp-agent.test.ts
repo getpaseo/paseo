@@ -1956,6 +1956,24 @@ describe("ACPAgentSession options against an ACP agent", () => {
       ]),
     );
   });
+
+  test("a select that appears after startup is reported with its native value", async () => {
+    const { session, optionEvents } = await openSession({
+      scenario: {
+        options: [thoughtOption("low")],
+        adds: { thought: [copilotAgentConfigOption("Probe Agent")] },
+      },
+    });
+    expect(session.openOptionsPatch).toEqual({});
+
+    await session.setThinkingOption("high");
+
+    await vi.waitFor(() =>
+      expect(optionEvents).toEqual([
+        { type: "options_changed", provider: "copilot", patch: { agent: "Probe Agent" } },
+      ]),
+    );
+  });
 });
 
 describe("deriveModelDefinitionsFromACP", () => {
