@@ -206,14 +206,14 @@ Receives `{ request: { config, env? } }`. Config changes are saved and remain af
 
 **`agent.create.before.config`** uses `AgentSessionConfig`:
 
-| Fields                                        | Constraint                                                                 |
-| --------------------------------------------- | -------------------------------------------------------------------------- |
-| `provider`, `model`                           | Separate fields; changing provider may require changing model/mode/options |
-| `modeId`, `thinkingOptionId`, `featureValues` | Provider-specific selections                                               |
-| `title`, `systemPrompt`                       | Agent configuration                                                        |
-| `providerOptions`                             | Opaque provider-specific options                                           |
-| `mcpServers`, `toolPolicy`                    | MCP configuration and exact-tool preapprovals                              |
-| `cwd`                                         | Cannot change                                                              |
+| Fields                       | Constraint                                                                 |
+| ---------------------------- | -------------------------------------------------------------------------- |
+| `provider`, `model`          | Separate fields; changing provider may require changing model/mode/options |
+| `modeId`, `thinkingOptionId` | Provider-specific selections                                               |
+| `title`, `systemPrompt`      | Agent configuration                                                        |
+| `providerOptions`            | Provider options, including speed and auto-accept selections               |
+| `mcpServers`, `toolPolicy`   | MCP configuration and exact-tool preapprovals                              |
+| `cwd`                        | Cannot change                                                              |
 
 ### Change saved configuration
 

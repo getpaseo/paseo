@@ -152,6 +152,22 @@ pill.remove();
 
 对于逐步显示的时间线文本，把 `useRevealedText(text, phase)` 及其外层的 `Text` 换成 `/client/ui` 中的 `<StreamedText text={text} phase={phase} style={style} />`。插件设置的标题使用 `SettingsSection`；`SettingsGroup` 已弃用。
 
+### v0.15 中的 Provider 选项 {#provider-options-in-v015}
+
+Provider 插件只有一个配置记录 `providerOptions`，并用控件描述哪些键显示在 Composer 中。仍然报告 `settings` 的 Provider 在 v0.15 中继续可用：Paseo 把每个 setting 的 `id` 当作选项键，把 `value` 当作该选项的值，并同时在 `changes.providerOptions` 和 `changes.settings` 中发送修改。请在 2027-05-01 之后兼容层被删除之前移除 `settings`。
+
+| 之前的 API                                        | 替代方式                                                        |
+| ------------------------------------------------- | --------------------------------------------------------------- |
+| `session.config` 的 `settings: ProviderSetting[]` | `controls: ProviderOptionControl[]` 加 `providerOptions`        |
+| Setting 的 `id`                                   | 控件的 `key`                                                    |
+| Setting 的 `value`                                | `providerOptions[key]`；控件本身不保存值                        |
+| 选择类 setting 的 `options: { label, value }[]`   | 选择类控件的 `choices: { value, label, description? }[]`        |
+| 没有图标或默认值的 setting                        | 控件的 `icon`（Lucide 名称）和 `defaultValue`                   |
+| `session.configure` 的 `changes.settings`         | `changes.providerOptions`；`null` 表示恢复该键的默认值          |
+| `session.open` 的 `config.settings`               | `config.providerOptions`                                        |
+| `ProviderSetting` 类型                            | `ProviderOptionControl`                                         |
+| `agent.create.before` 的 `config.featureValues`   | `config.providerOptions`；返回的 `featureValues` 修改仍会被应用 |
+
 ## 5. 识别只迁移了一半的错误 {#5-recognize-half-migration-errors}
 
 | 编译器或加载错误                                                                                                           | 含义与修复方法                                                                                     |

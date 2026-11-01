@@ -511,12 +511,20 @@ need no change. See [catalogue ownership](providers.md#provider-snapshot-refresh
 `send()` resolves after acceptance. Publish operation completion, prompt disposition, turn state,
 configuration, permissions, persistence, and complete timeline snapshots through `onEvent()`.
 Route messages, structured commands, steering, and command side effects through `session.prompt`.
-Provider settings are toggle/select data that Paseo renders in the composer. Keep private options in
-the opaque `ProviderSessionConfig.providerOptions` object on `session.open`.
-It contains the provider defaults and per-agent overrides merged by the daemon.
+A provider's configuration is the opaque `ProviderSessionConfig.providerOptions` object on
+`session.open`. It contains the provider defaults and per-agent overrides merged by the daemon.
 Validate and apply it inside the provider; core does not know your option shape.
 See [provider options](custom-providers.md#provider-options) for configuration and
 merge semantics.
+
+The provider draws some of those keys in the composer by reporting `controls` and the values it runs
+(`providerOptions`) in `session.config`. A running-agent change arrives as
+`session.configure` with `changes.providerOptions` and follows the same apply-or-throw contract as
+built-in providers ([options flow](providers.md#options-flow)). `PluginAgentSession` in
+`packages/server/src/server/agent/plugin-provider.ts` is that adapter. A provider still reporting
+`settings` is read through `plugin-provider-options.ts`, which turns each setting into a control and
+its value into an option and is sent both shapes in `session.configure`; delete it with
+`COMPAT(plugin-provider-settings)`. The ACP shim still reports `settings`.
 
 Providers add an optional veto to daemon baseline cleanup through the per-session
 [runtime safety query](../public-docs/plugins/providers.md#permit-idle-runtime-cleanup).
