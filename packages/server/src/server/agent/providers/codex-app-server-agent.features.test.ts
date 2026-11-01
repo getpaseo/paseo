@@ -44,7 +44,7 @@ const TEST_SPEED_MODELS = [
   serviceTiers: [{ id: "priority", name: "Fast", description: "Faster processing" }],
 }));
 
-function speedControl() {
+function speedControl(defaultValue = "default") {
   return {
     type: "select",
     key: "service_tier",
@@ -53,7 +53,7 @@ function speedControl() {
     tooltip: "Select speed",
     icon: "zap",
     desktopTrigger: "icon",
-    defaultValue: "default",
+    defaultValue,
     choices: [
       { value: "default", label: "Normal" },
       { value: "priority", label: "Fast", aliases: ["fast"] },
@@ -501,7 +501,7 @@ describe("Codex app-server provider controls", () => {
       providerOptions: { fast_mode: true, plan_mode: true },
     });
 
-    expect(session.controls).toEqual([speedControl(), PLAN_CONTROL]);
+    expect(session.controls).toEqual([speedControl("priority"), PLAN_CONTROL]);
 
     await session.startTurn("hello");
     await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
@@ -552,86 +552,172 @@ describe("Codex app-server provider controls", () => {
     await expect(appServer.waitForTurnStart()).resolves.toMatchObject({ serviceTier: "priority" });
   });
 
-  test("a pre-v0.10 fast_mode record shows Fast, is stored as service_tier, and can be turned off and on", async () => {
-    const appServer = createFakeCodexAppServer({
-      "collaborationMode/list": () => ({ data: TEST_COLLABORATION_MODES }),
-      "model/list": () => ({ data: TEST_SPEED_MODELS }),
-    });
-    const logger = createTestLogger();
-    const client: AgentClient = {
-      provider: CODEX_PROVIDER,
-      capabilities: {
-        supportsStreaming: true,
-        supportsSessionPersistence: true,
-        supportsDynamicModes: false,
-        supportsMcpServers: false,
-        supportsReasoningStream: false,
-        supportsToolInvocations: false,
-      },
-      isAvailable: async () => true,
-      fetchCatalog: async () => ({ models: [], modes: [] }),
-      resumeSession: async () => {
-        throw new Error("not used");
-      },
-      createSession: async (config) => {
+  describe("a pre-v0.10 fast_mode: true option", () => {
+    function createLegacyFastHarness(configDefaults: Record<string, unknown> = {}) {
+      const appServer = createFakeCodexAppServer({
+        "collaborationMode/list": () => ({ data: TEST_COLLABORATION_MODES }),
+        "model/list": () => ({ data: TEST_SPEED_MODELS }),
+      });
+      const logger = createTestLogger();
+      const openSession = async (
+        config: AgentSessionConfig,
+        resumeSessionId: string | null,
+      ): Promise<AgentSession> => {
         const session = new CodexAppServerAgentSession(
-          { ...config, provider: CODEX_PROVIDER },
-          null,
+          // The provider registry hands sessions the `config.json` defaults merged into the agent's own options.
+          {
+            ...config,
+            provider: CODEX_PROVIDER,
+            providerOptions: { ...configDefaults, ...config.providerOptions },
+          },
+          resumeSessionId ? { sessionId: resumeSessionId } : null,
           logger,
           async () => appServer.child,
         );
         await session.connect();
         return session;
-      },
-    };
-    const turnStarts = () =>
-      appServer
-        .requests()
-        .filter((message) => message.method === "turn/start")
-        .map((message) => message.params);
-    const workdir = mkdtempSync(join(tmpdir(), "codex-legacy-fast-"));
-    const storage = new AgentStorage(join(workdir, "agents"), logger);
-    const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
-
-    const created = await manager.createAgent(
-      {
+      };
+      const client: AgentClient = {
         provider: CODEX_PROVIDER,
-        cwd: workdir,
-        model: "gpt-5.4",
-        providerOptions: { fast_mode: true },
-      },
-      undefined,
-      { workspaceId: undefined },
-    );
-    const agent = manager.getAgent(created.id)!;
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: false,
+          supportsMcpServers: false,
+          supportsReasoningStream: false,
+          supportsToolInvocations: false,
+        },
+        isAvailable: async () => true,
+        fetchCatalog: async () => ({ models: [], modes: [] }),
+        // Stands in for the `config.json` provider defaults the registry wrapper merges in.
+        effectiveOptions: (own) => ({ ...configDefaults, ...own }),
+        createSession: (config) => openSession(config, null),
+        resumeSession: (handle, config) =>
+          openSession(
+            { ...config, provider: CODEX_PROVIDER } as AgentSessionConfig,
+            handle.sessionId,
+          ),
+      };
+      const workdir = mkdtempSync(join(tmpdir(), "codex-legacy-fast-"));
+      const storage = new AgentStorage(join(workdir, "agents"), logger);
+      const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+      const turnStarts = () =>
+        appServer
+          .requests()
+          .filter((message) => message.method === "turn/start")
+          .map((message) => message.params);
 
-    // The old boolean is stored in the new shape, and the control shows Fast.
-    expect(agent.config.providerOptions).toEqual({ service_tier: "fast" });
-    const payload = toAgentPayload(agent);
-    expect(payload.options).toMatchObject({ service_tier: "fast" });
-    expect(payload.options).not.toHaveProperty("fast_mode");
-    expect(payload.features?.find((feature) => feature.id === "service_tier")).toMatchObject({
-      value: "priority",
-    });
-    await manager.flush();
-    expect((await storage.get(created.id))?.config?.providerOptions).toEqual({
-      service_tier: "fast",
+      async function create(providerOptions?: Record<string, unknown>) {
+        const agent = await manager.createAgent(
+          {
+            provider: CODEX_PROVIDER,
+            cwd: workdir,
+            model: "gpt-5.4",
+            ...(providerOptions ? { providerOptions } : {}),
+          },
+          undefined,
+          { workspaceId: undefined },
+        );
+        return agent.id;
+      }
+      async function resume(providerOptions: Record<string, unknown>) {
+        const agent = await manager.resumeAgentFromPersistence({
+          provider: CODEX_PROVIDER,
+          sessionId: "thread-1",
+          metadata: { cwd: workdir, model: "gpt-5.4", providerOptions },
+        });
+        return agent.id;
+      }
+      function shownSpeed(agentId: string) {
+        const payload = toAgentPayload(manager.getAgent(agentId)!);
+        const control = payload.controls?.find((candidate) => candidate.key === "service_tier");
+        const choice =
+          control?.type === "select"
+            ? control.choices.find((candidate) => candidate.value === payload.options?.service_tier)
+            : undefined;
+        return {
+          options: payload.options,
+          own: manager.getAgent(agentId)?.config.providerOptions,
+          // What a client reading `options` + `controls` selects, and what the legacy `features` show.
+          selected:
+            payload.options?.service_tier === undefined && control?.type === "select"
+              ? control.defaultValue
+              : choice?.value,
+          feature: payload.features?.find((feature) => feature.id === "service_tier")?.value,
+        };
+      }
+      async function runTurn(agentId: string, expectedTier: string) {
+        const before = turnStarts().length;
+        await manager.getAgent(agentId)!.session!.startTurn("hello");
+        await vi.waitFor(() => expect(turnStarts()).toHaveLength(before + 1));
+        const turn = turnStarts()[before]!;
+        expect(turn).toMatchObject({ serviceTier: expectedTier });
+        appServer.completeTurn({ threadId: String(turn.threadId) });
+        await vi.waitFor(() => expect(manager.getAgent(agentId)?.lifecycle).toBe("idle"));
+      }
+      return { manager, create, resume, shownSpeed, runTurn };
+    }
+
+    test("is stored as set, shows Fast, and sends the Fast tier", async () => {
+      const { create, shownSpeed, runTurn } = createLegacyFastHarness();
+      const agentId = await create({ fast_mode: true });
+
+      expect(shownSpeed(agentId)).toEqual({
+        options: { fast_mode: true },
+        own: { fast_mode: true },
+        selected: "priority",
+        feature: "priority",
+      });
+      await runTurn(agentId, "priority");
     });
 
-    await manager.setAgentOptions(created.id, { service_tier: "default" });
-    expect(manager.getAgent(created.id)?.config.providerOptions).toEqual({
-      service_tier: "default",
-    });
-    await manager.getAgent(created.id)!.session!.startTurn("hello");
-    const normalTurn = await appServer.waitForTurnStart();
-    expect(normalTurn).toMatchObject({ serviceTier: "default" });
-    appServer.completeTurn({ threadId: String(normalTurn.threadId) });
-    await vi.waitFor(() => expect(manager.getAgent(created.id)?.lifecycle).toBe("idle"));
+    test("shows Fast after a stored record is resumed", async () => {
+      const { resume, shownSpeed, runTurn } = createLegacyFastHarness();
+      const agentId = await resume({ fast_mode: true });
 
-    await manager.setAgentOptions(created.id, { service_tier: "priority" });
-    await manager.getAgent(created.id)!.session!.startTurn("hello again");
-    await vi.waitFor(() => expect(turnStarts()).toHaveLength(2));
-    expect(turnStarts()[1]).toMatchObject({ serviceTier: "priority" });
+      expect(shownSpeed(agentId)).toEqual({
+        options: { fast_mode: true },
+        own: { fast_mode: true },
+        selected: "priority",
+        feature: "priority",
+      });
+      await runTurn(agentId, "priority");
+    });
+
+    test("from config.json defaults shows Fast and leaves the agent's own options empty", async () => {
+      const { create, shownSpeed, runTurn } = createLegacyFastHarness({ fast_mode: true });
+      const agentId = await create();
+
+      expect(shownSpeed(agentId)).toEqual({
+        options: { fast_mode: true },
+        own: undefined,
+        selected: "priority",
+        feature: "priority",
+      });
+      await runTurn(agentId, "priority");
+    });
+
+    test("set live shows Fast at once, and an explicit service_tier then wins", async () => {
+      const { manager, create, shownSpeed, runTurn } = createLegacyFastHarness();
+      const agentId = await create();
+      expect(shownSpeed(agentId).selected).toBe("default");
+
+      await manager.setAgentOptions(agentId, { fast_mode: true });
+      expect(shownSpeed(agentId)).toMatchObject({ selected: "priority", feature: "priority" });
+      await runTurn(agentId, "priority");
+
+      await manager.setAgentOptions(agentId, { service_tier: "default" });
+      expect(shownSpeed(agentId)).toMatchObject({
+        own: { fast_mode: true, service_tier: "default" },
+        selected: "default",
+        feature: "default",
+      });
+      await runTurn(agentId, "default");
+
+      await manager.setAgentOptions(agentId, { service_tier: "priority" });
+      expect(shownSpeed(agentId)).toMatchObject({ selected: "priority" });
+      await runTurn(agentId, "priority");
+    });
   });
 
   test("startTurn logs a sanitized turn/start summary for fast mode observability", async () => {
