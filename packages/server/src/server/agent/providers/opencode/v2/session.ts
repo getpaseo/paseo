@@ -1,3 +1,4 @@
+import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { SessionChildren } from "./children.js";
 import { SessionTurns } from "./turns.js";
 import { V2Timeline } from "./timeline.js";
@@ -31,7 +32,7 @@ import { type V2Connection } from "./runtime.js";
 import { modelRef, modesFromV2 } from "./mapping.js";
 
 import { V2_CAPABILITIES } from "./capabilities.js";
-import { features } from "./configuration.js";
+import { controls } from "./configuration.js";
 import { commands } from "./commands.js";
 import { messages } from "./history.js";
 import { SessionPermissions } from "./permissions.js";
@@ -118,8 +119,8 @@ export class OpenCodeV2Session implements AgentSession {
   get id() {
     return this.info.id;
   }
-  get features() {
-    return features(this.config);
+  get controls() {
+    return controls;
   }
   private get client() {
     return this.connection.client;
@@ -358,10 +359,11 @@ export class OpenCodeV2Session implements AgentSession {
     this.info = await this.client.session.get({ sessionID: this.id });
     this.emit({ type: "thinking_option_changed", provider: "opencode", thinkingOptionId: variant });
   }
-  async setFeature(id: string, value: unknown) {
-    if (id !== "auto_accept" || typeof value !== "boolean")
-      throw new Error("Unknown OpenCode feature");
-    this.config.featureValues = { ...this.config.featureValues, [id]: value };
+  async applyOptions(options: ProviderOptions) {
+    const value = options["auto_accept"];
+    if (value === undefined) return;
+    if (typeof value !== "boolean") throw new Error("OpenCode auto_accept requires a boolean");
+    this.config.providerOptions = { ...this.config.providerOptions, auto_accept: value };
     if (value && !this.config.toolPolicy)
       for (const request of this.permissions.list())
         if (request.kind !== "question")

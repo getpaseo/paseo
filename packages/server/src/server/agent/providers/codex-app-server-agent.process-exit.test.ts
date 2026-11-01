@@ -38,7 +38,7 @@ async function withPendingPlan(
     cwd: workdir,
     modeId: "auto",
     model: "gpt-5.4",
-    featureValues: { plan_mode: true },
+    providerOptions: { plan_mode: true },
   });
   const events: AgentStreamEvent[] = [];
   session.subscribe((event) => events.push(event));
@@ -526,7 +526,7 @@ test("idle provider exit preserves a synthetic plan approval across reconnect", 
         cwd: workdir,
         modeId: "auto",
         model: "gpt-5.4",
-        featureValues: { plan_mode: true },
+        providerOptions: { plan_mode: true },
       },
       undefined,
       { workspaceId: undefined },

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { PluginSessionHistory } from "./plugin-session-history.js";
 import { resolve as resolvePath } from "node:path";
 import type { Logger } from "pino";
-import type { JsonValue } from "@getpaseo/protocol/agent-types";
+import type { JsonValue, ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { z } from "zod";
 import {
   PROVIDER_CAPABILITIES,
@@ -31,10 +31,10 @@ import type {
   AgentCapabilityFlags,
   AgentClient,
   AgentCreateSessionOptions,
-  AgentFeature,
   AgentLaunchContext,
   AgentMode,
   AgentModelDefinition,
+  AgentOptionControl,
   AgentPermissionRequest,
   AgentPermissionResponse,
   AgentPersistenceHandle,
@@ -1246,14 +1246,29 @@ class PluginAgentSession implements AgentSession {
     };
   }
 
-  get features(): AgentFeature[] {
-    return this.bridge.config.settings.map((setting) =>
-      setting.type === "toggle"
-        ? { ...setting }
-        : {
-            ...setting,
-            options: setting.options.map((option) => ({ ...option, id: option.value })),
-          },
+  /** The plugin's `settings` are its option controls; each setting id is an option key. */
+  get controls(): AgentOptionControl[] {
+    return this.bridge.config.settings.map(
+      (setting): AgentOptionControl =>
+        setting.type === "toggle"
+          ? {
+              type: "toggle",
+              key: setting.id,
+              label: setting.label,
+              ...(setting.description ? { description: setting.description } : {}),
+              defaultValue: setting.value,
+            }
+          : {
+              type: "select",
+              key: setting.id,
+              label: setting.label,
+              ...(setting.description ? { description: setting.description } : {}),
+              ...(setting.value !== null ? { defaultValue: setting.value } : {}),
+              choices: setting.options.map((option) => ({
+                value: option.value,
+                label: option.label,
+              })),
+            },
     );
   }
 
@@ -1410,11 +1425,18 @@ class PluginAgentSession implements AgentSession {
     await this.bridge.configure({ thinkingOption: thinkingOptionId });
   }
 
-  async setFeature(featureId: string, value: unknown): Promise<void> {
+  async applyOptions(options: ProviderOptions): Promise<void> {
     this.assertReplayComplete();
-    await this.bridge.configure({
-      settings: { [featureId]: toJsonValue(value, `setting '${featureId}'`) },
-    });
+    const settings: Record<string, JsonValue> = {};
+    for (const setting of this.bridge.config.settings) {
+      const value = options[setting.id];
+      if (value !== undefined && value !== setting.value) {
+        settings[setting.id] = toJsonValue(value, `setting '${setting.id}'`);
+      }
+    }
+    if (Object.keys(settings).length > 0) {
+      await this.bridge.configure({ settings });
+    }
   }
 
   async revertConversation(input: { messageId: string }): Promise<void> {
@@ -1852,7 +1874,8 @@ function mapSessionConfig(
     model: config.model,
     mode: config.modeId,
     thinkingOption: config.thinkingOptionId,
-    settings: toJsonObject(config.featureValues ?? {}, "provider settings"),
+    // The plugin SDK reads composer values from `settings`; they are options here.
+    settings: toJsonObject(config.providerOptions ?? {}, "provider settings"),
     providerOptions: config.providerOptions,
     title: config.title ?? undefined,
     persist,

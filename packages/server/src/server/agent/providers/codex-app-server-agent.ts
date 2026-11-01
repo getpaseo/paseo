@@ -1,3 +1,4 @@
+import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { validateProviderOptions } from "../provider-options.js";
 import {
   getAgentStreamEventTurnId,
@@ -5,7 +6,7 @@ import {
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentCreateSessionOptions,
-  type AgentFeature,
+  type AgentOptionControl,
   type AgentLaunchContext,
   type AgentResumeSessionOptions,
   type AgentMode,
@@ -75,7 +76,7 @@ import { createPathEquivalenceMatcher } from "../../../utils/path.js";
 import { spawnProcess } from "../../../utils/spawn.js";
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
 import {
-  buildCodexFeatures,
+  buildCodexControls,
   CodexServiceTierSchema,
   readCodexServiceTier,
   type CodexServiceTier,
@@ -3429,7 +3430,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private readonly codexHome: string;
   private currentMode: string;
   private hasWorkflowModeOverride: boolean;
-  private readonly providerOptions: CodexProviderOptions;
+  private providerOptions: CodexProviderOptions;
   private resolvedWorkspaceWrite: NonNullable<
     CodexProviderOptions["sandbox_workspace_write"]
   > | null = null;
@@ -3457,7 +3458,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   private activeForegroundTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
-  private serviceTier: string | null = null;
+  /** The tier the options ask for; `serviceTier` is what the current model can honor. */
+  private requestedServiceTier: string | null = null;
   private speedModels: CodexModel[] = [];
   private planModeEnabled = false;
   // History read by rewind or an archived resume, held until streamHistory consumes it.
@@ -3568,10 +3570,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.asyncQuestions = new CodexAsyncQuestions(resumeHandle?.metadata?.asyncQuestions);
     this.codexHome = deps.codexHome ?? resolveCodexHomeDir(process.env);
     this.config.thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
-    this.serviceTier = readCodexServiceTier(this.config.featureValues);
-    if (this.config.featureValues?.plan_mode) {
-      this.planModeEnabled = true;
-    }
+    this.requestedServiceTier = readCodexServiceTier(this.providerOptions);
+    this.planModeEnabled = this.providerOptions.plan_mode === true;
 
     if (this.resumeHandle?.sessionId) {
       this.currentThreadId = this.resumeHandle.sessionId;
@@ -3586,11 +3586,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     return this.currentThreadId;
   }
 
-  get features(): AgentFeature[] {
-    return buildCodexFeatures({
+  get controls(): AgentOptionControl[] {
+    return buildCodexControls({
       serviceTiers: this.currentServiceTiers(),
-      serviceTier: this.serviceTier ?? "default",
-      planModeEnabled: this.planModeEnabled,
       planModeAvailable: this.hasPlanCollaborationMode(),
     });
   }
@@ -3650,7 +3648,6 @@ export class CodexAppServerAgentSession implements AgentSession {
 
       this.speedModels =
         CodexModelListResponseSchema.parse(await client.request("model/list", {})).data ?? [];
-      this.reconcileServiceTier();
       await this.loadResolvedWorkspaceWrite();
       await this.loadCollaborationModes();
       await this.loadSkills();
@@ -3863,24 +3860,16 @@ export class CodexAppServerAgentSession implements AgentSession {
     return selectedModel?.serviceTiers ?? [];
   }
 
-  private reconcileServiceTier(): void {
+  private get serviceTier(): string | null {
+    const requested = this.requestedServiceTier;
+    // Until the model list arrives there is nothing to check the request against.
+    if (this.speedModels.length === 0 || requested === "default") return requested;
     const tiers = this.currentServiceTiers();
     // COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once saved Fast preferences have migrated.
-    if (this.serviceTier === "fast" && !tiers.some((tier) => tier.id === "fast")) {
-      this.serviceTier = tiers.find((tier) => tier.name.toLowerCase() === "fast")?.id ?? null;
+    if (requested === "fast" && !tiers.some((tier) => tier.id === "fast")) {
+      return tiers.find((tier) => tier.name.toLowerCase() === "fast")?.id ?? null;
     }
-    if (this.serviceTier !== "default" && !tiers.some((tier) => tier.id === this.serviceTier)) {
-      this.serviceTier = null;
-    }
-    const { fast_mode: _legacyFast, ...values } = this.config.featureValues ?? {};
-    this.config.featureValues = { ...values, service_tier: this.serviceTier ?? "default" };
-  }
-
-  private applyFeatureValue(featureId: "plan_mode", value: boolean): void {
-    this.config.featureValues = { ...this.config.featureValues, [featureId]: value };
-    this.planModeEnabled = value;
-    this.refreshResolvedCollaborationMode();
-    this.cachedRuntimeInfo = null;
+    return tiers.some((tier) => tier.id === requested) ? requested : null;
   }
 
   private rememberPlanResult(item: ToolCallTimelineItem): void {
@@ -3945,7 +3934,13 @@ export class CodexAppServerAgentSession implements AgentSession {
     const planText =
       typeof params.planText === "string" ? normalizePlanMarkdown(params.planText) : "";
 
-    this.applyFeatureValue("plan_mode", false);
+    this.setPlanMode(false);
+    // The user left plan mode; their options follow so controls and reopened sessions agree.
+    this.emitEvent({
+      type: "options_changed",
+      provider: CODEX_PROVIDER,
+      patch: { plan_mode: false },
+    });
 
     return buildCodexPlanImplementationPrompt(planText);
   }
@@ -4645,7 +4640,6 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   async setModel(modelId: string | null): Promise<void> {
     this.config.model = modelId ?? undefined;
-    this.reconcileServiceTier();
     this.refreshResolvedCollaborationMode();
     this.cachedRuntimeInfo = null;
   }
@@ -4659,35 +4653,37 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
-  async setFeature(featureId: string, value: unknown): Promise<void> {
-    // COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once clients use service_tier.
-    if (featureId === "fast_mode") {
-      const fast = this.currentServiceTiers().find((tier) => tier.name.toLowerCase() === "fast");
-      if (value && !fast)
-        throw new Error(
-          `Codex fast mode is not available for model '${this.config.model ?? "default"}'`,
-        );
-      return this.setFeature("service_tier", value ? fast!.id : "default");
+  async applyOptions(options: ProviderOptions): Promise<void> {
+    const next = validateProviderOptions("codex", CodexProviderOptionsSchema, options) ?? {};
+    const requestedTier = readCodexServiceTier(next);
+    if (
+      requestedTier !== this.requestedServiceTier &&
+      !this.isServiceTierAvailable(requestedTier)
+    ) {
+      throw new Error(
+        `Codex speed '${String(requestedTier)}' is not available for model '${this.config.model ?? "default"}'`,
+      );
     }
-    if (featureId === "service_tier") {
-      if (
-        typeof value !== "string" ||
-        (value !== "default" && !this.currentServiceTiers().some((tier) => tier.id === value))
-      ) {
-        throw new Error(
-          `Codex speed '${String(value)}' is not available for model '${this.config.model ?? "default"}'`,
-        );
-      }
-      this.serviceTier = value;
-      this.reconcileServiceTier();
-      this.cachedRuntimeInfo = null;
-      return;
-    }
-    if (featureId === "plan_mode") {
-      this.applyFeatureValue("plan_mode", Boolean(value));
-      return;
-    }
-    throw new Error(`Unknown Codex feature: ${featureId}`);
+    this.providerOptions = next;
+    this.requestedServiceTier = requestedTier;
+    this.setPlanMode(next.plan_mode === true);
+    this.cachedRuntimeInfo = null;
+  }
+
+  private isServiceTierAvailable(tier: string | null): boolean {
+    if (tier === null || tier === "default") return true;
+    const tiers = this.currentServiceTiers();
+    // COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once saved Fast preferences have migrated.
+    const legacyFast =
+      tier === "fast" && tiers.some((entry) => entry.name.toLowerCase() === "fast");
+    return legacyFast || tiers.some((entry) => entry.id === tier);
+  }
+
+  private setPlanMode(enabled: boolean): void {
+    if (this.planModeEnabled === enabled) return;
+    this.planModeEnabled = enabled;
+    this.refreshResolvedCollaborationMode();
+    this.cachedRuntimeInfo = null;
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {
@@ -5340,7 +5336,6 @@ export class CodexAppServerAgentSession implements AgentSession {
   private async applyDefaultModelAndThinking(): Promise<string> {
     const { model, thinkingOptionId } = await this.resolveModelAndThinking();
     this.config.model = model;
-    this.reconcileServiceTier();
     this.config.thinkingOptionId = thinkingOptionId;
     return model;
   }
@@ -5407,7 +5402,13 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private buildCodexInnerConfig(): Record<string, unknown> | null {
     const innerConfig: Record<string, unknown> = {};
-    Object.assign(innerConfig, this.providerOptions);
+    const {
+      service_tier: _tier,
+      plan_mode: _plan,
+      fast_mode: _fast,
+      ...codexConfig
+    } = this.providerOptions;
+    Object.assign(innerConfig, codexConfig);
     if (this.deps.customCodexConfig) {
       Object.assign(innerConfig, this.deps.customCodexConfig);
     }

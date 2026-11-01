@@ -953,39 +953,39 @@ describe("ClaudeAgentSession features", () => {
     const client = new ClaudeAgentClient({ logger, resolveBinary: async () => "/test/claude/bin" });
 
     await expect(
-      client.listFeatures({
+      client.listControls({
         provider: "claude",
         cwd: process.cwd(),
         model: "claude-opus-4-8",
       }),
-    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
+    ).resolves.toEqual([expect.objectContaining({ key: "fast_mode", type: "toggle" })]);
 
     await expect(
-      client.listFeatures({
+      client.listControls({
         provider: "claude",
         cwd: process.cwd(),
         model: "claude-opus-4-8[1m]",
       }),
-    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
+    ).resolves.toEqual([expect.objectContaining({ key: "fast_mode", type: "toggle" })]);
 
     await expect(
-      client.listFeatures({
+      client.listControls({
         provider: "claude",
         cwd: process.cwd(),
         model: "claude-opus-4-8-20260101",
       }),
-    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
+    ).resolves.toEqual([expect.objectContaining({ key: "fast_mode", type: "toggle" })]);
 
     await expect(
-      client.listFeatures({
+      client.listControls({
         provider: "claude",
         cwd: process.cwd(),
         model: "claude-opus-5",
       }),
-    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
+    ).resolves.toEqual([expect.objectContaining({ key: "fast_mode", type: "toggle" })]);
 
     await expect(
-      client.listFeatures({
+      client.listControls({
         provider: "claude",
         cwd: process.cwd(),
         model: "openrouter/anthropic/claude-opus-4-8",
@@ -993,7 +993,7 @@ describe("ClaudeAgentSession features", () => {
     ).resolves.toEqual([]);
 
     await expect(
-      client.listFeatures({
+      client.listControls({
         provider: "claude",
         cwd: process.cwd(),
         model: "claude-sonnet-5",
@@ -1001,7 +1001,7 @@ describe("ClaudeAgentSession features", () => {
     ).resolves.toEqual([]);
 
     await expect(
-      client.listFeatures({
+      client.listControls({
         provider: "claude",
         cwd: process.cwd(),
         model: "claude-sonnet-4-6",
@@ -1020,7 +1020,7 @@ describe("ClaudeAgentSession features", () => {
       provider: "claude",
       cwd: process.cwd(),
       model: "claude-opus-4-8",
-      featureValues: { fast_mode: true },
+      providerOptions: { fast_mode: true },
     });
 
     await expect(
@@ -1492,7 +1492,7 @@ describe("ClaudeAgentSession features", () => {
         ensureQuery(): Promise<unknown>;
       }
     ).ensureQuery();
-    await session.setFeature?.("fast_mode", true);
+    await session.applyOptions?.({ fast_mode: true });
 
     expect(queryFactory).toHaveBeenCalledTimes(1);
     expect(queryMock.applyFlagSettings).toHaveBeenLastCalledWith({ fastMode: true });

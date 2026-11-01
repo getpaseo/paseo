@@ -1036,7 +1036,7 @@ export class Session {
         supportsProviderSnapshotReferences: () =>
           this.supports(CLIENT_CAPS.providerSnapshotReferences),
         listProviderAvailability: () => this.agentManager.listProviderAvailability(),
-        listDraftFeatures: (config) => this.agentManager.listDraftFeatures(config),
+        listDraftControls: (config) => this.agentManager.listDraftControls(config),
       },
       providerSnapshotManager,
       logger: this.sessionLogger,
@@ -1066,8 +1066,7 @@ export class Session {
         setMode: async (agentId, modeId) =>
           (await setAgentModeCommand({ agentManager }, { agentId, modeId })).notice,
         setModel: (agentId, modelId) => agentManager.setAgentModel(agentId, modelId),
-        setFeature: (agentId, featureId, value) =>
-          agentManager.setAgentFeature(agentId, featureId, value),
+        setOptions: (agentId, patch) => agentManager.setAgentOptions(agentId, patch),
         setThinking: (agentId, thinkingOptionId) =>
           agentManager.setAgentThinkingOption(agentId, thinkingOptionId),
       },
@@ -3181,6 +3180,8 @@ export class Session {
         return this.providerCatalogSession.handleListProviderModesRequest(msg);
       case "list_provider_features_request":
         return this.providerCatalogSession.handleListProviderFeaturesRequest(msg);
+      case "provider.controls.list.request":
+        return this.providerCatalogSession.handleProviderControlsListRequest(msg);
       case "list_available_providers_request":
         return this.providerCatalogSession.handleListAvailableProvidersRequest(msg);
       case "get_providers_snapshot_request":

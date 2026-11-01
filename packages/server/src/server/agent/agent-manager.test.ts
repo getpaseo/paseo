@@ -23,6 +23,7 @@ import { AgentStorage } from "./agent-storage.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import { toAgentPayload } from "./agent-projections.js";
+import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { startAgentRun } from "./agent-prompt.js";
@@ -38,7 +39,7 @@ import type {
 import type {
   AgentClient,
   AgentCreateSessionOptions,
-  AgentFeature,
+  AgentOptionControl,
   AgentLaunchContext,
   AgentPromptInput,
   AgentProvider,
@@ -182,13 +183,8 @@ class RecordingTimelineStore implements AgentTimelineStore {
   }
 }
 
-function createFeature(args: { id: string; label: string; value: boolean }): AgentFeature {
-  return {
-    type: "toggle",
-    id: args.id,
-    label: args.label,
-    value: args.value,
-  };
+function createControl(args: { key: string; label: string }): AgentOptionControl {
+  return { type: "toggle", key: args.key, label: args.label };
 }
 
 function expectArchivedAgentRecord(
@@ -2332,7 +2328,7 @@ test("listDraftCommands uses explicit model config without default model fetchin
   ]);
 });
 
-test("listDraftFeatures does not start a fallback session without a model", async () => {
+test("listDraftControls does not start a fallback session without a model", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-draft-features-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -2365,18 +2361,21 @@ test("listDraftFeatures does not start a fallback session without a model", asyn
     logger,
   });
 
-  await expect(manager.listDraftFeatures({ provider: "codex", cwd: workdir })).resolves.toEqual([]);
+  await expect(manager.listDraftControls({ provider: "codex", cwd: workdir })).resolves.toEqual({
+    controls: [],
+    options: {},
+  });
 
   expect(client.fetchCatalogCalls).toBe(0);
   expect(client.createSessionCalls).toBe(0);
   expect(client.availabilityCalls).toBe(0);
 });
 
-test("listDraftFeatures uses client feature listing without a model", async () => {
+test("listDraftControls uses client feature listing without a model", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-draft-features-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
-  const draftFeature = createFeature({ id: "auto_accept", label: "Auto Accept", value: false });
+  const draftControl = createControl({ key: "auto_accept", label: "Auto Accept" });
   class DraftFeatureClient extends TestAgentClient {
     fetchCatalogCalls = 0;
     createSessionCalls = 0;
@@ -2398,9 +2397,9 @@ test("listDraftFeatures uses client feature listing without a model", async () =
       return await super.createSession(config);
     }
 
-    async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+    async listControls(config: AgentSessionConfig): Promise<AgentOptionControl[]> {
       this.featureConfigs.push(config);
-      return [draftFeature];
+      return [draftControl];
     }
   }
   const client = new DraftFeatureClient();
@@ -2412,9 +2411,13 @@ test("listDraftFeatures uses client feature listing without a model", async () =
     logger,
   });
 
-  await expect(manager.listDraftFeatures({ provider: "codex", cwd: workdir })).resolves.toEqual([
-    draftFeature,
-  ]);
+  await expect(
+    manager.listDraftControls({
+      provider: "codex",
+      cwd: workdir,
+      providerOptions: { auto_accept: true },
+    }),
+  ).resolves.toEqual({ controls: [draftControl], options: { auto_accept: true } });
 
   expect(client.fetchCatalogCalls).toBe(0);
   expect(client.createSessionCalls).toBe(0);
@@ -2423,15 +2426,16 @@ test("listDraftFeatures uses client feature listing without a model", async () =
     {
       provider: "codex",
       cwd: workdir,
+      providerOptions: { auto_accept: true },
     },
   ]);
 });
 
-test("listDraftFeatures uses explicit model config without default model fetching", async () => {
+test("listDraftControls uses explicit model config without default model fetching", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-draft-features-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
-  const draftFeature = createFeature({ id: "fast_mode", label: "Fast mode", value: false });
+  const draftControl = createControl({ key: "fast_mode", label: "Fast mode" });
   class DraftFeatureClient extends TestAgentClient {
     fetchCatalogCalls = 0;
     createSessionCalls = 0;
@@ -2447,9 +2451,9 @@ test("listDraftFeatures uses explicit model config without default model fetchin
       return await super.createSession(config);
     }
 
-    async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+    async listControls(config: AgentSessionConfig): Promise<AgentOptionControl[]> {
       this.featureConfigs.push(config);
-      return [draftFeature];
+      return [draftControl];
     }
   }
   const client = new DraftFeatureClient();
@@ -2461,13 +2465,13 @@ test("listDraftFeatures uses explicit model config without default model fetchin
     logger,
   });
 
-  const features = await manager.listDraftFeatures({
+  const draft = await manager.listDraftControls({
     provider: "codex",
     cwd: workdir,
     model: "gpt-5.4",
   });
 
-  expect(features).toEqual([draftFeature]);
+  expect(draft).toEqual({ controls: [draftControl], options: {} });
   expect(client.fetchCatalogCalls).toBe(0);
   expect(client.createSessionCalls).toBe(0);
   expect(client.featureConfigs).toEqual([
@@ -9984,16 +9988,13 @@ test("respondToPermission updates currentModeId after plan approval", async () =
   expect(client.resumedModeId).toBe("acceptEdits");
 });
 
-test("respondToPermission refreshes features and runtime info after provider-managed plan approval", async () => {
+test("respondToPermission applies provider option changes and refreshes runtime info after provider-managed plan approval", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
 
   class RefreshingPermissionSession extends TestAgentSession {
-    private featureState: AgentFeature[] = [
-      createFeature({ id: "fast_mode", label: "Fast", value: true }),
-      createFeature({ id: "plan_mode", label: "Plan", value: true }),
-    ];
+    private planMode = true;
     private modeId = "auto";
     private pending = [
       {
@@ -10005,8 +10006,11 @@ test("respondToPermission refreshes features and runtime info after provider-man
       },
     ];
 
-    get features(): AgentFeature[] {
-      return this.featureState;
+    get controls(): AgentOptionControl[] {
+      return [
+        createControl({ key: "fast_mode", label: "Fast" }),
+        createControl({ key: "plan_mode", label: "Plan" }),
+      ];
     }
 
     override async getRuntimeInfo() {
@@ -10015,7 +10019,7 @@ test("respondToPermission refreshes features and runtime info after provider-man
         sessionId: this.id,
         model: "gpt-5.4",
         modeId: this.modeId,
-        extra: { collaborationMode: this.features[1]?.value ? "Plan" : "Code" },
+        extra: { collaborationMode: this.planMode ? "Plan" : "Code" },
       };
     }
 
@@ -10030,10 +10034,12 @@ test("respondToPermission refreshes features and runtime info after provider-man
     override async respondToPermission(): Promise<void> {
       this.modeId = "auto";
       this.pending = [];
-      this.featureState = [
-        createFeature({ id: "fast_mode", label: "Fast", value: true }),
-        createFeature({ id: "plan_mode", label: "Plan", value: false }),
-      ];
+      this.planMode = false;
+      this.pushEvent({
+        type: "options_changed",
+        provider: this.provider,
+        patch: { plan_mode: false },
+      });
     }
   }
 
@@ -10056,6 +10062,7 @@ test("respondToPermission refreshes features and runtime info after provider-man
     {
       provider: "codex",
       cwd: workdir,
+      providerOptions: { fast_mode: true, plan_mode: true },
     },
     undefined,
     { workspaceId: undefined },
@@ -10080,20 +10087,14 @@ test("respondToPermission refreshes features and runtime info after provider-man
 
   const updated = manager.getAgent(snapshot.id);
   expect(updated?.pendingPermissions.size).toBe(0);
-  expect(updated?.features).toEqual([
-    createFeature({ id: "fast_mode", label: "Fast", value: true }),
-    createFeature({ id: "plan_mode", label: "Plan", value: false }),
-  ]);
+  expect(updated?.effectiveOptions).toEqual({ fast_mode: true, plan_mode: false });
   expect(updated?.runtimeInfo).toMatchObject({
     model: "gpt-5.4",
     extra: { collaborationMode: "Code" },
   });
 
   const persisted = await storage.get(snapshot.id);
-  expect(persisted?.features).toEqual([
-    createFeature({ id: "fast_mode", label: "Fast", value: true }),
-    createFeature({ id: "plan_mode", label: "Plan", value: false }),
-  ]);
+  expect(persisted?.config?.providerOptions).toEqual({ fast_mode: true, plan_mode: false });
 });
 
 test("respondToPermission emits refreshed state before permission_resolved", async () => {
@@ -10102,9 +10103,6 @@ test("respondToPermission emits refreshed state before permission_resolved", asy
   const storage = new AgentStorage(storagePath, logger);
 
   class OrderedPermissionSession extends TestAgentSession {
-    private featureState: AgentFeature[] = [
-      createFeature({ id: "fast_mode", label: "Fast", value: true }),
-    ];
     private modeId = "plan";
     private pending = [
       {
@@ -10116,8 +10114,8 @@ test("respondToPermission emits refreshed state before permission_resolved", asy
       },
     ];
 
-    get features(): AgentFeature[] {
-      return this.featureState;
+    get controls(): AgentOptionControl[] {
+      return [createControl({ key: "fast_mode", label: "Fast" })];
     }
 
     override async getRuntimeInfo() {
@@ -10139,13 +10137,17 @@ test("respondToPermission emits refreshed state before permission_resolved", asy
 
     override async respondToPermission(): Promise<void> {
       this.pushEvent({
+        type: "options_changed",
+        provider: this.provider,
+        patch: { fast_mode: false },
+      });
+      this.pushEvent({
         type: "permission_resolved",
         provider: this.provider,
         requestId: "perm-order-1",
         resolution: { behavior: "allow" },
       });
       this.modeId = "acceptEdits";
-      this.featureState = [createFeature({ id: "fast_mode", label: "Fast", value: false })];
       this.pending = [];
     }
   }
@@ -10169,6 +10171,7 @@ test("respondToPermission emits refreshed state before permission_resolved", asy
     {
       provider: "codex",
       cwd: workdir,
+      providerOptions: { fast_mode: true },
     },
     undefined,
     { workspaceId: undefined },
@@ -10180,9 +10183,8 @@ test("respondToPermission emits refreshed state before permission_resolved", asy
       return;
     }
     if (event.type === "agent_state" && event.agent.id === snapshot.id) {
-      const fastMode = event.agent.features?.find((feature) => feature.id === "fast_mode");
       seen.push(
-        `state:${event.agent.currentModeId}:${String(fastMode?.type === "toggle" ? fastMode.value : null)}`,
+        `state:${event.agent.currentModeId}:${String(event.agent.effectiveOptions?.fast_mode)}`,
       );
       return;
     }
@@ -12694,4 +12696,115 @@ test("an out-of-band command racing idle cleanup waits for the resumed runtime",
   expect(await command).toEqual({ disposition: "out_of_band" });
   expect(h.commands).toEqual(["/maintenance"]);
   expect(h.prompts).toEqual([]);
+});
+
+describe("agent options", () => {
+  class OptionsSession extends TestAgentSession {
+    readonly applied: ProviderOptions[] = [];
+    rejectWith: Error | null = null;
+
+    async applyOptions(options: ProviderOptions): Promise<void> {
+      if (this.rejectWith) throw this.rejectWith;
+      this.applied.push(options);
+    }
+  }
+
+  class OptionsClient extends TestAgentClient {
+    session: OptionsSession | null = null;
+
+    // Stands in for the `config.json` provider defaults the registry wrapper merges in.
+    effectiveOptions(own: ProviderOptions | undefined): ProviderOptions {
+      return { service_tier: "default", ...own };
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.session = new OptionsSession(config);
+      return this.session;
+    }
+  }
+
+  async function createOptionsAgent(providerOptions?: ProviderOptions) {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-options-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new OptionsClient();
+    const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, ...(providerOptions ? { providerOptions } : {}) },
+      undefined,
+      { workspaceId: undefined },
+    );
+    return { manager, client, storage, agentId: agent.id };
+  }
+
+  test("config.json defaults show as effective options without entering the agent's own options", async () => {
+    const { manager, agentId } = await createOptionsAgent({ fast_mode: true });
+
+    const agent = manager.getAgent(agentId);
+    expect(agent?.config.providerOptions).toEqual({ fast_mode: true });
+    const payload = toAgentPayload(agent!);
+    expect(payload.options).toEqual({ service_tier: "default", fast_mode: true });
+  });
+
+  test("setAgentOptions on a running agent replaces top-level keys and applies the effective options", async () => {
+    const { manager, client, storage, agentId } = await createOptionsAgent({ fast_mode: true });
+
+    await manager.setAgentOptions(agentId, { service_tier: "fast" });
+
+    expect(client.session?.applied).toEqual([{ service_tier: "fast", fast_mode: true }]);
+    const agent = manager.getAgent(agentId);
+    expect(agent?.config.providerOptions).toEqual({ fast_mode: true, service_tier: "fast" });
+    expect(agent?.effectiveOptions).toEqual({ service_tier: "fast", fast_mode: true });
+    await manager.flush();
+    expect((await storage.get(agentId))?.config?.providerOptions).toEqual({
+      fast_mode: true,
+      service_tier: "fast",
+    });
+  });
+
+  test("setAgentOptions removes a key with null so the config.json default applies again", async () => {
+    const { manager, client, agentId } = await createOptionsAgent({ service_tier: "fast" });
+
+    await manager.setAgentOptions(agentId, { service_tier: null });
+
+    expect(client.session?.applied).toEqual([{ service_tier: "default" }]);
+    const agent = manager.getAgent(agentId);
+    expect(agent?.config.providerOptions).toBeUndefined();
+    expect(agent?.effectiveOptions).toEqual({ service_tier: "default" });
+  });
+
+  test("a provider that rejects an option leaves the stored options unchanged", async () => {
+    const { manager, client, agentId } = await createOptionsAgent({ fast_mode: false });
+    client.session!.rejectWith = new Error("fast mode unavailable");
+
+    await expect(manager.setAgentOptions(agentId, { fast_mode: true })).rejects.toThrow(
+      "fast mode unavailable",
+    );
+
+    expect(manager.getAgent(agentId)?.config.providerOptions).toEqual({ fast_mode: false });
+  });
+
+  test("agent.create.before hook featureValues fold into providerOptions", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hook-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new OptionsClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      pluginLifecycle: {
+        emit: () => {},
+        before: async (_name, request) => ({
+          ...request,
+          config: { ...request.config, featureValues: { fast_mode: true } },
+        }),
+      },
+    });
+
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    expect(manager.getAgent(created.id)?.config.providerOptions).toEqual({ fast_mode: true });
+    expect(manager.getAgent(created.id)?.config).not.toHaveProperty("featureValues");
+  });
 });

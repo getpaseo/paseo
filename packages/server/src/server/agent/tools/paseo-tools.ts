@@ -18,6 +18,7 @@ import type { AgentMode, AgentProvider, AgentSessionConfig } from "../agent-sdk-
 import type { AgentManager } from "../agent-manager.js";
 import { ActiveTurnBehaviorSchema, AgentProfileSchema } from "@getpaseo/protocol/messages";
 import type { DaemonConfigStore } from "../../daemon-config-store.js";
+import { featuresFromControls, foldProfileFeatureValues } from "../option-controls.js";
 import {
   AgentFeatureSchema,
   AgentPermissionRequestPayloadSchema,
@@ -939,9 +940,6 @@ function createToolCatalog(
       ...(callerAgent.provider === resolvedProvider && callerAgent.config.providerOptions
         ? { providerOptions: callerAgent.config.providerOptions }
         : {}),
-      ...(callerAgent.config.featureValues
-        ? { featureValues: callerAgent.config.featureValues }
-        : {}),
       ...(callerAgent.config.systemPrompt ? { systemPrompt: callerAgent.config.systemPrompt } : {}),
       ...(callerAgent.config.mcpServers ? { mcpServers: callerAgent.config.mcpServers } : {}),
     };
@@ -1638,7 +1636,7 @@ function createToolCatalog(
           cwd: resolvedArgs.cwd,
           workspaceId: resolvedArgs.workspaceId,
           thinking: parsedArgs.settings?.thinkingOptionId,
-          features: parsedArgs.settings?.features,
+          providerOptions: parsedArgs.settings?.features,
           labels: {
             ...parsedArgs.labels,
             ...(callerAgentId && !resolvedArgs.detached && options.serverId
@@ -2290,9 +2288,7 @@ function createToolCatalog(
         await agentManager.setAgentThinkingOption(agentId, settings.thinkingOptionId);
       }
       if (settings?.features) {
-        for (const [featureId, value] of Object.entries(settings.features)) {
-          await agentManager.setAgentFeature(agentId, featureId, value);
-        }
+        await agentManager.setAgentOptions(agentId, settings.features);
       }
 
       await updateAgentCommand({ agentManager }, { agentId, name, labels });
@@ -3070,15 +3066,17 @@ function createToolCatalog(
         "List agent profiles: named provider/model/mode bundles a human configured for specific " +
         "kinds of work. Read each profile's `notes` to pick the one that fits the task you're " +
         "delegating, then copy its `provider`, `model`, `modeId`, `thinkingOptionId`, and " +
-        "`featureValues` into create_agent (there is no `profile` parameter). Returns an empty " +
-        "list if none are configured.",
+        "`options` into create_agent as `settings.features` (there is no `profile` parameter). " +
+        "Returns an empty list if none are configured.",
       inputSchema: {},
       outputSchema: {
         profiles: z.array(AgentProfileSchema),
       },
     },
     async () => {
-      const profiles = daemonConfigStore?.get().agentProfiles ?? [];
+      // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. Stored profiles may
+      // still carry `featureValues`.
+      const profiles = (daemonConfigStore?.get().agentProfiles ?? []).map(foldProfileFeatureValues);
       return {
         content: [],
         structuredContent: ensureValidJson({ profiles }),
@@ -3124,13 +3122,13 @@ function createToolCatalog(
         throw new PaseoToolInputError(entry.error ?? `Provider '${providerId}' is unavailable`);
       }
       const selectedModel = settings?.model ?? resolvedProviderModel.model;
-      const features = await agentManager.listDraftFeatures({
+      const { controls, options: effectiveOptions } = await agentManager.listDraftControls({
         provider: providerId,
         cwd: resolvedCwd,
         ...(settings?.modeId ? { modeId: settings.modeId } : {}),
         ...(selectedModel ? { model: selectedModel } : {}),
         ...(settings?.thinkingOptionId ? { thinkingOptionId: settings.thinkingOptionId } : {}),
-        ...(settings?.features ? { featureValues: settings.features } : {}),
+        ...(settings?.features ? { providerOptions: settings.features } : {}),
       });
       return {
         content: [],
@@ -3142,7 +3140,7 @@ function createToolCatalog(
           status: summary.status,
           modes: summary.modes,
           selectedModel: selectedModel ?? null,
-          features,
+          features: featuresFromControls(controls, effectiveOptions),
         }),
       };
     },

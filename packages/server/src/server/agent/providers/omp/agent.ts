@@ -1,3 +1,4 @@
+import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { mapCustomMessageToToolCall } from "../custom-message.js";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -9,7 +10,7 @@ import stripAnsi from "strip-ansi";
 import {
   type AgentCapabilityFlags,
   type AgentClient,
-  type AgentFeature,
+  type AgentOptionControl,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -804,15 +805,16 @@ export class OmpAgentSession implements AgentSession {
     return this.state.sessionId;
   }
 
-  get features(): AgentFeature[] {
+  get controls(): AgentOptionControl[] {
     if (!hasOmpFastMode(this.state)) return [];
     return [
       {
         type: "toggle",
-        id: "fast_mode",
+        key: "fast_mode",
         label: "Fast",
         icon: "zap",
-        value: this.state.fastModeEnabled === true,
+        // OMP owns fast mode; an unset option stands for what the runtime reports.
+        defaultValue: this.state.fastModeEnabled === true,
         ...(this.state.fastModeEnabled && !this.state.fastModeActive
           ? { description: OMP_FAST_INACTIVE_MESSAGE, tooltip: OMP_FAST_INACTIVE_MESSAGE }
           : {}),
@@ -820,9 +822,11 @@ export class OmpAgentSession implements AgentSession {
     ];
   }
 
-  async setFeature(featureId: string, value: unknown): Promise<void> {
-    if (featureId !== "fast_mode") throw new Error(`Unknown OMP feature: ${featureId}`);
+  async applyOptions(options: ProviderOptions): Promise<void> {
+    const value = options.fast_mode;
+    if (value === undefined) return;
     if (typeof value !== "boolean") throw new Error("OMP fast mode requires a boolean");
+    if (value === this.config.providerOptions?.fast_mode) return;
     if (!hasOmpFastMode(this.state)) throw new Error("OMP fast mode is unavailable");
     const result = await this.runtimeSession.setFastMode(value);
     this.state = {
@@ -830,7 +834,7 @@ export class OmpAgentSession implements AgentSession {
       fastModeEnabled: result.enabled,
       fastModeActive: result.active,
     };
-    this.config.featureValues = { ...this.config.featureValues, fast_mode: result.enabled };
+    this.config.providerOptions = { ...this.config.providerOptions, fast_mode: result.enabled };
   }
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
@@ -2295,7 +2299,7 @@ export class OmpAgentClient implements AgentClient {
     config: AgentSessionConfig,
     state: OmpSessionState,
   ): Promise<OmpSessionState> {
-    const value = config.featureValues?.fast_mode;
+    const value = config.providerOptions?.fast_mode;
     if (typeof value !== "boolean" || !hasOmpFastMode(state) || value === state.fastModeEnabled)
       return state;
     const result = await runtimeSession.setFastMode(value);
@@ -2530,7 +2534,7 @@ export class OmpAgentClient implements AgentClient {
     }
   }
 
-  async listFeatures(_config: AgentSessionConfig): Promise<AgentFeature[]> {
+  async listControls(_config: AgentSessionConfig): Promise<AgentOptionControl[]> {
     return [];
   }
 

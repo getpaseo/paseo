@@ -1,7 +1,7 @@
 import type {
-  AgentFeature,
-  AgentFeatureSelect,
-  AgentFeatureToggle,
+  AgentOptionControl,
+  AgentOptionSelectControl,
+  AgentOptionToggleControl,
   AgentProviderNotice,
   AgentTaskItem,
   JsonValue,
@@ -13,9 +13,9 @@ import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PaseoToolCatalog } from "./tools/types.js";
 
 export type {
-  AgentFeature,
-  AgentFeatureSelect,
-  AgentFeatureToggle,
+  AgentOptionControl,
+  AgentOptionSelectControl,
+  AgentOptionToggleControl,
   AgentProviderNotice,
   AgentTaskItem,
 };
@@ -148,7 +148,7 @@ export interface AgentCreateConfigParent {
 export interface ResolveAgentCreateConfigInput {
   provider: AgentProvider;
   requestedMode: string | undefined;
-  featureValues: Record<string, unknown> | undefined;
+  providerOptions: ProviderOptions | undefined;
   parent: AgentCreateConfigParent | null;
   unattended: boolean;
   availableModes: AgentMode[] | undefined;
@@ -156,13 +156,13 @@ export interface ResolveAgentCreateConfigInput {
 
 export interface ResolveAgentCreateConfigResult {
   modeId: string | undefined;
-  featureValues: Record<string, unknown> | undefined;
+  providerOptions: ProviderOptions | undefined;
 }
 
 export interface AgentCreateConfigUnattendedInput {
   modeId: string | null;
   config: AgentSessionConfig;
-  features?: AgentFeature[];
+  controls?: AgentOptionControl[];
   availableModes: AgentMode[];
 }
 
@@ -429,6 +429,8 @@ export type AgentStreamEvent =
       provider: AgentProvider;
       thinkingOptionId: string | null;
     }
+  /** The provider changed options on its own; `null` removes the agent's own value. */
+  | { type: "options_changed"; provider: AgentProvider; patch: Record<string, unknown> }
   | {
       type: "turn_failed";
       provider: AgentProvider;
@@ -610,7 +612,6 @@ export interface AgentSessionConfig {
   modeId?: string;
   model?: string;
   thinkingOptionId?: string;
-  featureValues?: Record<string, unknown>;
   title?: string | null;
   providerOptions?: ProviderOptions;
   toolPolicy?: ToolPolicy;
@@ -679,7 +680,8 @@ export interface AgentSession {
   readonly provider: AgentProvider;
   readonly id: string | null;
   readonly capabilities: AgentCapabilityFlags;
-  readonly features?: AgentFeature[];
+  /** Composer controls over top-level option keys. Values come from the agent's effective options. */
+  readonly controls?: AgentOptionControl[];
   /** New provider-owned rows to commit on registration. streamHistory must also
    * replay them at their original timestamps; restored sessions omit old rows. */
   readonly initialTimeline?: ImportedTimelineEntry[];
@@ -714,7 +716,12 @@ export interface AgentSession {
   listCommands?(): Promise<AgentSlashCommand[]>;
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
-  setFeature?(featureId: string, value: unknown): Promise<void>;
+  /**
+   * The agent's effective options changed (defaults merged with the agent's own, after the
+   * patch). Apply what can change live and read the rest at next open. Throw to reject a value;
+   * the daemon stores the patch only when this resolves.
+   */
+  applyOptions?(options: ProviderOptions): Promise<void>;
   revertConversation?(input: { messageId: string }): Promise<void>;
   revertFiles?(input: { messageId: string }): Promise<void>;
   revertBoth?(input: { messageId: string }): Promise<void>;
@@ -797,7 +804,9 @@ export interface AgentClient {
   resolveCreateConfig?(input: ResolveAgentCreateConfigInput): ResolveAgentCreateConfigResult;
   isCreateConfigUnattended?(input: AgentCreateConfigUnattendedInput): boolean;
   listCommands?(config: AgentSessionConfig): Promise<AgentSlashCommand[]>;
-  listFeatures?(config: AgentSessionConfig): Promise<AgentFeature[]>;
+  listControls?(config: AgentSessionConfig): Promise<AgentOptionControl[]>;
+  /** Effective options: provider defaults from `config.json` deep-merged with the agent's own. */
+  effectiveOptions?(own: ProviderOptions | undefined): ProviderOptions;
   listImportableSessions?(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]>;

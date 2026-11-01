@@ -447,8 +447,8 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     get initialTimeline() {
       return inner.initialTimeline;
     },
-    get features() {
-      return inner.features;
+    get controls() {
+      return inner.controls;
     },
     usageSession: inner.usageSession?.bind(inner),
     run: (prompt, options) => inner.run(prompt, options),
@@ -473,7 +473,7 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     listCommands: inner.listCommands?.bind(inner),
     setModel: inner.setModel?.bind(inner),
     setThinkingOption: inner.setThinkingOption?.bind(inner),
-    setFeature: inner.setFeature?.bind(inner),
+    applyOptions: inner.applyOptions?.bind(inner),
     revertConversation: inner.revertConversation?.bind(inner),
     revertFiles: inner.revertFiles?.bind(inner),
     revertBoth: inner.revertBoth?.bind(inner),
@@ -491,7 +491,7 @@ function wrapClientProvider(
 ): AgentClient {
   const listImportableSessions = inner.listImportableSessions?.bind(inner);
   const importSession = inner.importSession?.bind(inner);
-  const listFeatures = inner.listFeatures?.bind(inner);
+  const listControls = inner.listControls?.bind(inner);
   const archiveNativeSession = inner.archiveNativeSession?.bind(inner);
   const unarchiveNativeSession = inner.unarchiveNativeSession?.bind(inner);
   const configuredModelIds = [...profileModels, ...additionalModels].map((model) => model.id);
@@ -557,9 +557,10 @@ function wrapClientProvider(
     resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
     resolveConfiguredModel: inner.resolveConfiguredModel?.bind(inner),
     isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
-    listFeatures: listFeatures
+    effectiveOptions: (own) => mergeProviderOptions(providerOptions, own) ?? {},
+    listControls: listControls
       ? async (config) =>
-          await listFeatures({
+          await listControls({
             ...config,
             provider: inner.provider,
             providerOptions: mergeProviderOptions(providerOptions, config.providerOptions),

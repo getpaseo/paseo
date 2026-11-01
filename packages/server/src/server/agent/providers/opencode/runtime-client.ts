@@ -160,8 +160,8 @@ export class OpenCodeRuntimeClient implements AgentClient {
   async listCommands(config: AgentSessionConfig) {
     return (await this.client()).listCommands(config);
   }
-  async listFeatures(config: AgentSessionConfig) {
-    return (await this.client()).listFeatures(config);
+  async listControls(config: AgentSessionConfig) {
+    return (await this.client()).listControls(config);
   }
   async listImportableSessions(options?: ListImportableSessionsOptions) {
     return (await this.client()).listImportableSessions(options);

@@ -15,6 +15,8 @@ export { OMP_MODES };
 
 export const OmpProviderOptionsSchema = z
   .object({
+    // Composer control, not a runtime option: the session reads it and asks OMP to match.
+    fast_mode: z.boolean().optional(),
     sessionDir: z.string().min(1).optional(),
     rpcTimeoutMs: z.number().int().positive().optional(),
     smolModel: z.string().min(1).optional(),

@@ -33,7 +33,7 @@ import {
   type AgentCreateSessionOptions,
   type AgentResumePurpose,
   type AgentResumeSessionOptions,
-  type AgentFeature,
+  type AgentOptionControl,
   type AgentLaunchContext,
   type AgentSlashCommand,
   type AgentMode,
@@ -59,7 +59,13 @@ import {
   type ListImportableSessionsOptions,
 } from "./agent-sdk-types.js";
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
+import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { toStoredAgentRecord } from "./agent-projections.js";
+import {
+  applyProviderOptionsPatch,
+  foldFeatureValues,
+  type ProviderOptionsPatch,
+} from "./option-controls.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
 import type { AgentOwner } from "./agent-owner.js";
 import {
@@ -209,9 +215,6 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
   if (record.config.model != null) config.model = record.config.model;
   if (record.config.thinkingOptionId != null) {
     config.thinkingOptionId = record.config.thinkingOptionId;
-  }
-  if (record.config.featureValues != null) {
-    config.featureValues = record.config.featureValues;
   }
   if (record.config.providerOptions != null) {
     config.providerOptions = record.config.providerOptions;
@@ -428,7 +431,9 @@ interface ManagedAgentBase {
   createdAt: Date;
   updatedAt: Date;
   availableModes: AgentMode[];
-  features?: AgentFeature[];
+  controls?: AgentOptionControl[];
+  /** `config.json` defaults deep-merged with `config.providerOptions`; refreshed on every state emit. */
+  effectiveOptions?: ProviderOptions;
   currentModeId: string | null;
   pendingPermissions: Map<string, AgentPermissionRequest>;
   bufferedPermissionResolutions: Map<
@@ -1243,11 +1248,14 @@ export class AgentManager {
     }
   }
 
-  async listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+  async listDraftControls(
+    config: AgentSessionConfig,
+  ): Promise<{ controls: AgentOptionControl[]; options: ProviderOptions }> {
     const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
     const client = this.requireClient(normalizedConfig.provider);
-    if (!normalizedConfig.model && !client.listFeatures) {
-      return [];
+    const options = this.effectiveOptionsFor(normalizedConfig.provider, config.providerOptions);
+    if (!normalizedConfig.model && !client.listControls) {
+      return { controls: [], options };
     }
     const available = await client.isAvailable();
     if (!available) {
@@ -1256,13 +1264,13 @@ export class AgentManager {
       );
     }
 
-    if (client.listFeatures) {
-      return await client.listFeatures(normalizedConfig);
+    if (client.listControls) {
+      return { controls: await client.listControls(normalizedConfig), options };
     }
 
     const session = await client.createSession(normalizedConfig);
     try {
-      return session.features ?? [];
+      return { controls: session.controls ?? [], options };
     } finally {
       try {
         await session.close();
@@ -1365,7 +1373,9 @@ export class AgentManager {
         config,
         env: options.env,
       });
-      config = { ...request.config, internal: config.internal };
+      // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. A plugin written
+      // against the previous SDK edits `config.featureValues`.
+      config = { ...foldFeatureValues(request.config), internal: config.internal };
       options = { ...options, env: request.env };
     }
     await this.deleteAgentState(resolvedAgentId);
@@ -2161,7 +2171,7 @@ export class AgentManager {
         createdAt: new Date(record.createdAt),
         updatedAt,
         availableModes: [],
-        features: record.features,
+        controls: record.controls,
         currentModeId: record.lastModeId ?? null,
         pendingPermissions: new Map(),
         bufferedPermissionResolutions: new Map(),
@@ -2254,18 +2264,29 @@ export class AgentManager {
     return notice;
   }
 
-  async setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void> {
+  /**
+   * Patches the agent's own options and hands the provider the resulting effective options. The
+   * provider applies what it can live and reads the rest at next open; a provider that rejects a
+   * value leaves the stored options unchanged.
+   */
+  async setAgentOptions(agentId: string, patch: ProviderOptionsPatch): Promise<void> {
     const agent = this.requireAgent(agentId);
+    const ownOptions = applyProviderOptionsPatch(agent.config.providerOptions, patch);
 
-    if (!agent.session.setFeature) {
-      throw new Error("Agent session does not support setting features");
+    if (agent.session.applyOptions) {
+      await agent.session.applyOptions(this.effectiveOptionsFor(agent.provider, ownOptions));
+      await this.drainSessionEvents(agentId);
     }
-
-    await agent.session.setFeature(featureId, value);
-    await this.drainSessionEvents(agentId);
-    agent.config.featureValues = { ...agent.config.featureValues, [featureId]: value };
+    agent.config.providerOptions = Object.keys(ownOptions).length > 0 ? ownOptions : undefined;
     this.touchUpdatedAt(agent);
     this.emitState(agent);
+  }
+
+  private effectiveOptionsFor(
+    provider: AgentProvider,
+    own: ProviderOptions | undefined,
+  ): ProviderOptions {
+    return this.clients.get(provider)?.effectiveOptions?.(own) ?? own ?? {};
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {
@@ -4311,7 +4332,7 @@ export class AgentManager {
       agent.pendingPermissions.clear();
     }
 
-    this.syncFeaturesFromSession(agent);
+    this.syncControls(agent);
     await this.refreshRuntimeInfo(agent, options);
   }
 
@@ -4657,6 +4678,18 @@ export class AgentManager {
     );
   }
 
+  private onStreamOptionsChanged(params: {
+    agent: ActiveManagedAgent;
+    patch: ProviderOptionsPatch;
+    flags: StreamEventFlags;
+  }): void {
+    const { agent, patch, flags } = params;
+    const ownOptions = applyProviderOptionsPatch(agent.config.providerOptions, patch);
+    agent.config.providerOptions = Object.keys(ownOptions).length > 0 ? ownOptions : undefined;
+    flags.shouldDispatchEvent = false;
+    this.emitState(agent);
+  }
+
   private dispatchStreamEventByType(params: {
     agent: ActiveManagedAgent;
     event: AgentStreamEvent;
@@ -4707,6 +4740,9 @@ export class AgentManager {
         }
         flags.shouldDispatchEvent = false;
         this.emitState(agent);
+        return undefined;
+      case "options_changed":
+        this.onStreamOptionsChanged({ agent, patch: event.patch, flags });
         return undefined;
       case "timeline":
         return this.onStreamTimelineEvent({ agent, event, options, flags });
@@ -5183,7 +5219,7 @@ export class AgentManager {
       this.enqueueBackgroundPersist(agent);
     }
 
-    this.syncFeaturesFromSession(agent);
+    this.syncControls(agent);
 
     this.logger.trace(
       {
@@ -5205,10 +5241,11 @@ export class AgentManager {
     });
   }
 
-  private syncFeaturesFromSession(agent: ManagedAgent): void {
-    if ("session" in agent && agent.session?.features) {
-      agent.features = agent.session.features;
+  private syncControls(agent: ManagedAgent): void {
+    if ("session" in agent && agent.session?.controls) {
+      agent.controls = agent.session.controls;
     }
+    agent.effectiveOptions = this.effectiveOptionsFor(agent.provider, agent.config.providerOptions);
   }
 
   private checkAndSetAttention(agent: ManagedAgent): void {

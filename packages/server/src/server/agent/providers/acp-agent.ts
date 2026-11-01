@@ -1,3 +1,4 @@
+import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { ACPProviderOptionsSchema } from "./acp-options.js";
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -65,7 +66,7 @@ import {
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentCreateConfigUnattendedInput,
-  type AgentFeature,
+  type AgentOptionControl,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -848,10 +849,10 @@ export function deriveModelDefinitionsFromACP(
   }));
 }
 
-export function deriveFeaturesFromACP(
+export function deriveControlsFromACP(
   configOptions: SessionConfigOption[] | null | undefined,
   featureOptions: ACPConfigFeatureOption[],
-): AgentFeature[] {
+): AgentOptionControl[] {
   return featureOptions.flatMap((featureOption) => {
     const option = findSelectConfigFeatureOption(configOptions, featureOption);
     if (!option) {
@@ -861,42 +862,44 @@ export function deriveFeaturesFromACP(
     return [
       {
         type: "select",
-        id: featureOption.id,
+        key: featureOption.id,
         label: featureOption.label,
         description: featureOption.description,
         tooltip: featureOption.tooltip,
         icon: featureOption.icon,
-        value: option.currentValue ?? null,
-        options: deriveConfigFeatureSelectOptions(option, featureOption),
+        // The agent reports its own current value; an unset option stands for it.
+        ...(option.currentValue != null ? { defaultValue: option.currentValue } : {}),
+        choices: deriveConfigFeatureSelectOptions(option, featureOption).map((choice) => ({
+          value: choice.id,
+          label: choice.label,
+          description: choice.description,
+        })),
       },
     ];
   });
 }
 
 function isACPAutoAcceptEnabled(config: AgentSessionConfig): boolean {
-  return config.featureValues?.[ACP_AUTO_ACCEPT_FEATURE_ID] === true;
+  return config.providerOptions?.[ACP_AUTO_ACCEPT_FEATURE_ID] === true;
 }
 
-function buildACPAutoAcceptFeature(config: AgentSessionConfig): AgentFeature {
-  return {
-    type: "toggle",
-    id: ACP_AUTO_ACCEPT_FEATURE_ID,
-    label: "Auto Accept",
-    description: "Automatically approves ACP permission prompts.",
-    tooltip: "Auto accept permission prompts",
-    icon: "shield-check",
-    value: isACPAutoAcceptEnabled(config),
-  };
-}
+const ACP_AUTO_ACCEPT_CONTROL: AgentOptionControl = {
+  type: "toggle",
+  key: ACP_AUTO_ACCEPT_FEATURE_ID,
+  label: "Auto Accept",
+  description: "Automatically approves ACP permission prompts.",
+  tooltip: "Auto accept permission prompts",
+  icon: "shield-check",
+};
 
 function resolveACPCreateConfig(
   input: ResolveAgentCreateConfigInput,
 ): ResolveAgentCreateConfigResult {
   const isUnattendedCreate = input.unattended || input.parent?.isUnattended === true;
-  const featureValues =
-    isUnattendedCreate && input.featureValues?.[ACP_AUTO_ACCEPT_FEATURE_ID] === undefined
-      ? { ...input.featureValues, [ACP_AUTO_ACCEPT_FEATURE_ID]: true }
-      : input.featureValues;
+  const providerOptions =
+    isUnattendedCreate && input.providerOptions?.[ACP_AUTO_ACCEPT_FEATURE_ID] === undefined
+      ? { ...input.providerOptions, [ACP_AUTO_ACCEPT_FEATURE_ID]: true }
+      : input.providerOptions;
 
   if (
     input.requestedMode === undefined &&
@@ -904,22 +907,16 @@ function resolveACPCreateConfig(
     input.parent !== null &&
     input.parent.provider !== input.provider
   ) {
-    return { modeId: undefined, featureValues };
+    return { modeId: undefined, providerOptions };
   }
 
-  return resolveDefaultAgentCreateConfig({ ...input, featureValues });
+  return resolveDefaultAgentCreateConfig({ ...input, providerOptions });
 }
 
 function isACPCreateConfigUnattended(input: AgentCreateConfigUnattendedInput): boolean {
   return (
     isDefaultAgentCreateConfigUnattended(input) ||
-    input.config.featureValues?.[ACP_AUTO_ACCEPT_FEATURE_ID] === true ||
-    input.features?.some(
-      (feature) =>
-        feature.id === ACP_AUTO_ACCEPT_FEATURE_ID &&
-        feature.type === "toggle" &&
-        feature.value === true,
-    ) === true
+    input.config.providerOptions?.[ACP_AUTO_ACCEPT_FEATURE_ID] === true
   );
 }
 
@@ -1198,10 +1195,9 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
-  async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
-    const autoAcceptFeature = buildACPAutoAcceptFeature(config);
+  async listControls(config: AgentSessionConfig): Promise<AgentOptionControl[]> {
     if (this.configFeatureOptions.length === 0) {
-      return [autoAcceptFeature];
+      return [ACP_AUTO_ACCEPT_CONTROL];
     }
 
     this.assertProvider(config);
@@ -1217,8 +1213,8 @@ export class ACPAgentClient implements AgentClient {
       probeSessionId = response.sessionId;
       const transformed = this.transformSessionResponse(response);
       return [
-        autoAcceptFeature,
-        ...deriveFeaturesFromACP(transformed.configOptions, this.configFeatureOptions),
+        ACP_AUTO_ACCEPT_CONTROL,
+        ...deriveControlsFromACP(transformed.configOptions, this.configFeatureOptions),
       ];
     } finally {
       await this.closeProbe(probe, probeSessionId);
@@ -2054,10 +2050,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return this.currentMode;
   }
 
-  get features(): AgentFeature[] {
+  get controls(): AgentOptionControl[] {
     return [
-      buildACPAutoAcceptFeature(this.config),
-      ...deriveFeaturesFromACP(this.configOptions, this.configFeatureOptions),
+      ACP_AUTO_ACCEPT_CONTROL,
+      ...deriveControlsFromACP(this.configOptions, this.configFeatureOptions),
     ];
   }
 
@@ -2395,14 +2391,26 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     });
   }
 
-  async setFeature(featureId: string, value: unknown): Promise<void> {
+  async applyOptions(options: ProviderOptions): Promise<void> {
+    if (ACP_AUTO_ACCEPT_FEATURE_ID in options) {
+      await this.setConfigFeature(ACP_AUTO_ACCEPT_FEATURE_ID, options[ACP_AUTO_ACCEPT_FEATURE_ID]);
+    }
+    for (const featureOption of this.configFeatureOptions) {
+      if (!(featureOption.id in options)) continue;
+      const value = options[featureOption.id];
+      if (value === this.config.providerOptions?.[featureOption.id]) continue;
+      await this.setConfigFeature(featureOption.id, value);
+    }
+  }
+
+  private async setConfigFeature(featureId: string, value: unknown): Promise<void> {
     if (!this.connection || !this.sessionId) {
       throw new Error("ACP session not initialized");
     }
 
     if (featureId === ACP_AUTO_ACCEPT_FEATURE_ID) {
-      this.config.featureValues = {
-        ...this.config.featureValues,
+      this.config.providerOptions = {
+        ...this.config.providerOptions,
         [ACP_AUTO_ACCEPT_FEATURE_ID]: value === true,
       };
       return;
@@ -2441,7 +2449,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       requestedValue,
       label: featureOption.label,
     });
-    this.config.featureValues = { ...this.config.featureValues, [featureId]: currentValue };
+    this.config.providerOptions = { ...this.config.providerOptions, [featureId]: currentValue };
   }
 
   private applyConfigOptionResponse({
@@ -3018,13 +3026,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (this.config.thinkingOptionId && this.config.thinkingOptionId !== this.thinkingOptionId) {
       await this.setThinkingOption(this.config.thinkingOptionId);
     }
-    const configuredFeatureValues = this.config.featureValues ?? {};
+    const configuredFeatureValues = this.config.providerOptions ?? {};
     for (const featureOption of this.configFeatureOptions) {
       if (!Object.prototype.hasOwnProperty.call(configuredFeatureValues, featureOption.id)) {
         continue;
       }
       try {
-        await this.setFeature(featureOption.id, configuredFeatureValues[featureOption.id]);
+        await this.setConfigFeature(featureOption.id, configuredFeatureValues[featureOption.id]);
       } catch (error) {
         if (!this.isStaleFeatureValueError(error, featureOption.id, switchedModel)) {
           throw error;

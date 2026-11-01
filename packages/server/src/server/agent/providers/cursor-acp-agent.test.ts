@@ -155,7 +155,7 @@ describe("CursorACPAgentClient model discovery", () => {
     });
   });
 
-  test("exposes Cursor fast mode through provider features", async () => {
+  test("exposes Cursor fast mode through provider controls", async () => {
     const client = new TestCursorACPAgentClient({
       sessionId: "session-1",
       models: null,
@@ -163,43 +163,30 @@ describe("CursorACPAgentClient model discovery", () => {
     });
 
     await expect(
-      client.listFeatures({
+      client.listControls({
         provider: "acp",
         cwd: "/tmp/cursor",
       }),
     ).resolves.toEqual([
       {
         type: "toggle",
-        id: "auto_accept",
+        key: "auto_accept",
         label: "Auto Accept",
         description: "Automatically approves ACP permission prompts.",
         tooltip: "Auto accept permission prompts",
         icon: "shield-check",
-        value: false,
       },
       {
         type: "select",
-        id: CURSOR_FAST_FEATURE_OPTION.id,
+        key: CURSOR_FAST_FEATURE_OPTION.id,
         label: "Fast",
         description: "Cursor fast mode",
         tooltip: "Select Cursor fast mode",
         icon: "zap",
-        value: "false",
-        options: [
-          {
-            id: "false",
-            label: "Off",
-            isDefault: true,
-            description: undefined,
-            metadata: undefined,
-          },
-          {
-            id: "true",
-            label: "Fast",
-            isDefault: false,
-            description: undefined,
-            metadata: undefined,
-          },
+        defaultValue: "false",
+        choices: [
+          { value: "false", label: "Off" },
+          { value: "true", label: "Fast" },
         ],
       },
     ]);
@@ -277,7 +264,7 @@ describe("CursorACPAgentClient session start", () => {
     // still stored after the draft moved to a model that has no fast variant.
     const warn = captureWarnings();
     const session = createCursorSession(
-      { model: "kimi-k3", featureValues: { [CURSOR_FAST_FEATURE_OPTION.id]: "true" } },
+      { model: "kimi-k3", providerOptions: { [CURSOR_FAST_FEATURE_OPTION.id]: "true" } },
       { currentModelId: "kimi-k3", configOptions: KIMI_K3_CONFIG_OPTIONS },
       warn.logger,
     );
@@ -295,7 +282,7 @@ describe("CursorACPAgentClient session start", () => {
     // still listed after the model moves to one that has no fast variant.
     const warn = captureWarnings();
     const session = createCursorSession(
-      { model: "kimi-k3", featureValues: { [CURSOR_FAST_FEATURE_OPTION.id]: "true" } },
+      { model: "kimi-k3", providerOptions: { [CURSOR_FAST_FEATURE_OPTION.id]: "true" } },
       {
         currentModelId: "composer-2.5",
         configOptions: [fastConfigOption("false"), ...KIMI_K3_CONFIG_OPTIONS],
@@ -319,7 +306,7 @@ describe("CursorACPAgentClient session start", () => {
 
   test("still fails session start when a stored feature write fails for another reason", async () => {
     const session = createCursorSession(
-      { model: "kimi-k3", featureValues: { [CURSOR_FAST_FEATURE_OPTION.id]: "true" } },
+      { model: "kimi-k3", providerOptions: { [CURSOR_FAST_FEATURE_OPTION.id]: "true" } },
       {
         currentModelId: "composer-2.5",
         configOptions: [fastConfigOption("false"), ...KIMI_K3_CONFIG_OPTIONS],
@@ -334,7 +321,7 @@ describe("CursorACPAgentClient session start", () => {
     const session = createCursorSession({ model: "kimi-k3" });
     await session.initializeNewSession();
 
-    await expect(session.setFeature(CURSOR_FAST_FEATURE_OPTION.id, "true")).rejects.toThrow(
+    await expect(session.applyOptions({ [CURSOR_FAST_FEATURE_OPTION.id]: "true" })).rejects.toThrow(
       "acp does not expose ACP feature 'fast'",
     );
   });
@@ -343,7 +330,7 @@ describe("CursorACPAgentClient session start", () => {
     // No model switch, so the session's options came straight from session/new and the
     // provider disagreeing about a feature it just advertised is a real failure.
     const session = createCursorSession(
-      { model: "composer-2.5", featureValues: { [CURSOR_FAST_FEATURE_OPTION.id]: "true" } },
+      { model: "composer-2.5", providerOptions: { [CURSOR_FAST_FEATURE_OPTION.id]: "true" } },
       {
         currentModelId: "composer-2.5",
         configOptions: [fastConfigOption("false")],
