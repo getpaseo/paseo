@@ -17,6 +17,7 @@ import {
   buildMetadataPrompt,
   type MetadataConfigKey,
 } from "../../../utils/build-metadata-prompt.js";
+import type { PaseoMetadataGenerationInstructions } from "@getpaseo/protocol/paseo-config-schema";
 
 export interface PullRequestText {
   title: string;
@@ -96,8 +97,10 @@ export function createGitMetadataGenerator(deps: {
   workspaceGitService: GitMetadataDiffSource;
   generation: StructuredTextGeneration;
   logger: GitMetadataLogger;
+  /** Host-wide wording defaults; a project's paseo.json still wins per metadata type. */
+  readMetadataGenerationInstructions?: () => PaseoMetadataGenerationInstructions | undefined;
 }): GitMetadataGenerator {
-  const { workspaceGitService, generation, logger } = deps;
+  const { workspaceGitService, generation, logger, readMetadataGenerationInstructions } = deps;
 
   async function generateOrFallback<T>(
     request: StructuredTextGenerationRequest<T>,
@@ -129,6 +132,7 @@ export function createGitMetadataGenerator(deps: {
     return buildMetadataPrompt({
       cwd: input.cwd,
       workspaceGitService,
+      globalInstructions: readMetadataGenerationInstructions?.(),
       contract: input.contract,
       styles: [{ configKey: input.styleConfigKey, default: input.styleDefault }],
       after: [

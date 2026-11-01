@@ -77,6 +77,29 @@ describe("server config", () => {
     expect(config.providerCatalogRefreshTimeoutMs).toBe(180_000);
   });
 
+  test("loads host-wide metadata generation instructions from config.json", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-metadata-instructions-"));
+    roots.push(paseoHome);
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({
+        agents: {
+          metadataGeneration: {
+            providers: [{ provider: "claude", model: "haiku" }],
+            title: { instructions: "Titles in Simplified Chinese." },
+          },
+        },
+      }),
+    );
+
+    const config = loadConfig(paseoHome, { env: {} });
+
+    expect(config.metadataGeneration).toEqual({
+      providers: [{ provider: "claude", model: "haiku" }],
+      title: { instructions: "Titles in Simplified Chinese." },
+    });
+  });
+
   test("resolves reload state from the supplied validated snapshot", async () => {
     const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-snapshot-"));
     roots.push(paseoHome);

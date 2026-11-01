@@ -94,6 +94,32 @@ describe("createGitMetadataGenerator", () => {
     expect(generateCalls[0].prompt).toContain("diff --git a/src/foo.ts");
   });
 
+  it("generateCommitMessage and generatePullRequestText use the host-wide instructions", async () => {
+    const { diffSource } = createDiffSource(DIFF_WITH_ONE_FILE);
+    const { generation, generateCalls } = createGeneration((request) =>
+      request.schemaName === "CommitMessage"
+        ? { message: "修正重试用例" }
+        : { title: "修正重试用例", body: "说明" },
+    );
+    const generator = createGitMetadataGenerator({
+      workspaceGitService: diffSource,
+      generation,
+      logger: createLogger().logger,
+      readMetadataGenerationInstructions: () => ({
+        commitMessage: { instructions: "用简体中文写提交信息。" },
+        pullRequest: { instructions: "用简体中文写 PR 标题和正文。" },
+      }),
+    });
+
+    await generator.generateCommitMessage("/repo");
+    await generator.generatePullRequestText("/repo");
+
+    expect(generateCalls[0].prompt).toContain("用简体中文写提交信息。");
+    expect(generateCalls[0].prompt).not.toContain("Concise, imperative mood");
+    expect(generateCalls[1].prompt).toContain("用简体中文写 PR 标题和正文。");
+    expect(generateCalls[1].prompt).not.toContain("Clear, descriptive title");
+  });
+
   it("generateCommitMessage falls back to a default message when generation exhausts its providers", async () => {
     const { diffSource } = createDiffSource(DIFF_WITH_ONE_FILE);
     const { generation } = createGeneration(() => {
