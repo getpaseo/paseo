@@ -14,6 +14,7 @@ import {
   type ProviderPersistence,
 } from "@getpaseo/plugin/server/provider";
 import { signalPlan } from "./internal/signals.js";
+import { isBenignStreamError } from "./internal/wire.js";
 import { createAntigravityProvider } from "./provider.js";
 
 const temporary: string[] = [];
@@ -771,6 +772,74 @@ describe("image prompts", () => {
       result: { type: "failed", error: { message: expect.stringContaining("image MIME type") } },
     });
     expect((await h.records()).filter((entry) => entry.input)).toHaveLength(0);
+  });
+});
+
+describe("stream error degradation", () => {
+  it("identifies benign stream error strings", () => {
+    expect(isBenignStreamError("EOF")).toBe(true);
+    expect(isBenignStreamError("unexpected EOF")).toBe(true);
+    expect(isBenignStreamError("stream idle timeout")).toBe(true);
+    expect(isBenignStreamError("context deadline exceeded")).toBe(true);
+    expect(isBenignStreamError("broken pipe")).toBe(true);
+    expect(isBenignStreamError("connection reset by peer")).toBe(true);
+    expect(isBenignStreamError("transport is closing")).toBe(true);
+    expect(isBenignStreamError("server closed the stream")).toBe(true);
+    expect(isBenignStreamError("use of closed network connection")).toBe(true);
+    expect(isBenignStreamError("received GOAWAY frame")).toBe(true);
+    expect(isBenignStreamError("Fatal error: invalid json")).toBe(false);
+    expect(isBenignStreamError("")).toBe(false);
+    expect(isBenignStreamError(null)).toBe(false);
+    expect(isBenignStreamError(undefined)).toBe(false);
+  });
+
+  it("degrades benign EOF / timeout errors to completed turn and seamlessly respawns driver", async () => {
+    const h = await harness();
+    await h.open();
+    const firstPrompt = await h.prompt("BENIGN_EOF");
+    const firstTurn = await h.completed(firstPrompt);
+    expect(firstTurn).toMatchObject({
+      type: "session.turn",
+      state: "completed",
+    });
+    expect(firstTurn).not.toHaveProperty("error");
+
+    const message = h.events.find(
+      (event) => event.type === "timeline.item" && event.item.type === "assistant_message",
+    );
+    expect(message).toBeDefined();
+    if (message?.type === "timeline.item" && message.item.type === "assistant_message") {
+      expect(message.item.text).toBe("Partial content before timeout");
+    }
+
+    const secondPrompt = await h.prompt("CONTINUE");
+    const secondTurn = await h.completed(secondPrompt);
+    expect(secondTurn).toMatchObject({
+      type: "session.turn",
+      state: "completed",
+    });
+
+    const records = await h.records();
+    const launches = records.filter((entry) => entry.args && entry.args.includes("--input-format"));
+    expect(launches).toHaveLength(2);
+    expect(launches[1].args.slice(-2)).toEqual([
+      "--conversation",
+      "e5cf1e2d-c715-4328-8e67-4a85c8dc3cda",
+    ]);
+  });
+
+  it("fails turn when receiving EOF with empty content", async () => {
+    const h = await harness();
+    await h.open();
+    const prompt = await h.prompt("EMPTY_EOF");
+    const turn = await h.completed(prompt);
+    expect(turn).toMatchObject({
+      type: "session.turn",
+      state: "failed",
+      error: {
+        message: expect.stringMatching(/EOF/),
+      },
+    });
   });
 });
 
