@@ -1307,7 +1307,7 @@ describe("ProviderSnapshotManager public surface", () => {
             resolverInputs.push(input);
             return {
               modeId: input.parent?.isUnattended ? "child-unattended" : undefined,
-              featureValues: undefined,
+              providerOptions: undefined,
             };
           },
         }),
@@ -1338,17 +1338,17 @@ describe("ProviderSnapshotManager public surface", () => {
         cwd: "/tmp/project",
         provider: "codex",
         requestedMode: undefined,
-        featureValues: undefined,
+        providerOptions: undefined,
         parent,
         unattended: false,
       });
 
-      expect(resolved).toEqual({ modeId: "child-unattended", featureValues: undefined });
+      expect(resolved).toEqual({ modeId: "child-unattended", providerOptions: undefined });
       expect(resolverInputs).toEqual([
         {
           provider: "codex",
           requestedMode: undefined,
-          featureValues: undefined,
+          providerOptions: undefined,
           parent: {
             provider: "claude",
             modeId: "parent-unattended",
@@ -1386,7 +1386,7 @@ describe("ProviderSnapshotManager public surface", () => {
             resolverInputs.push(input);
             return {
               modeId: input.unattended ? "worker" : undefined,
-              featureValues: undefined,
+              providerOptions: undefined,
             };
           },
         }),
@@ -1397,17 +1397,17 @@ describe("ProviderSnapshotManager public surface", () => {
         cwd: "/tmp/project",
         provider: "codex",
         requestedMode: undefined,
-        featureValues: { fast_mode: true },
+        providerOptions: { fast_mode: true },
         parent: null,
         unattended: true,
       });
 
-      expect(resolved).toEqual({ modeId: "worker", featureValues: undefined });
+      expect(resolved).toEqual({ modeId: "worker", providerOptions: undefined });
       expect(resolverInputs).toEqual([
         {
           provider: "codex",
           requestedMode: undefined,
-          featureValues: { fast_mode: true },
+          providerOptions: { fast_mode: true },
           parent: null,
           unattended: true,
           availableModes: modes,
@@ -1456,7 +1456,7 @@ describe("ProviderSnapshotManager public surface", () => {
         config: {
           provider: "opencode",
           cwd: "/tmp/project",
-          featureValues: { auto_accept: true },
+          providerOptions: { auto_accept: true },
         },
       };
 
@@ -1464,12 +1464,12 @@ describe("ProviderSnapshotManager public surface", () => {
         cwd: "/tmp/project",
         provider: "opencode",
         requestedMode: "base",
-        featureValues: undefined,
+        providerOptions: undefined,
         parent,
         unattended: false,
       });
 
-      expect(resolved).toEqual({ modeId: "base", featureValues: { auto_accept: true } });
+      expect(resolved).toEqual({ modeId: "base", providerOptions: { auto_accept: true } });
     } finally {
       manager.destroy();
     }

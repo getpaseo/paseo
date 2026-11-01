@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { features, permissionRules, requiresDedicatedV2Server } from "./configuration.js";
+import { controls, permissionRules, requiresDedicatedV2Server } from "./configuration.js";
 
 describe("OpenCode v2 permission rules", () => {
   test("maps authored native permissions and exact injected MCP grants", () => {
@@ -49,17 +49,8 @@ describe("OpenCode v2 helper isolation", () => {
   });
 });
 
-describe("OpenCode v2 features", () => {
-  test("reports the auto-accept toggle from the session value", () => {
-    expect(features({ provider: "opencode", cwd: "/tmp/project" })).toEqual([
-      { type: "toggle", id: "auto_accept", label: "Auto-accept", value: false },
-    ]);
-    expect(
-      features({
-        provider: "opencode",
-        cwd: "/tmp/project",
-        featureValues: { auto_accept: true },
-      }),
-    ).toEqual([{ type: "toggle", id: "auto_accept", label: "Auto-accept", value: true }]);
+describe("OpenCode v2 controls", () => {
+  test("describes the auto-accept toggle over the auto_accept option", () => {
+    expect(controls).toEqual([{ type: "toggle", key: "auto_accept", label: "Auto-accept" }]);
   });
 });

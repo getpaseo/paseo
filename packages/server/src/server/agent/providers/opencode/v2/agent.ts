@@ -1,7 +1,7 @@
 import { OpenCodeV2Session } from "./session.js";
 import { V2_CAPABILITIES } from "./capabilities.js";
 import {
-  features,
+  controls,
   permissionRules,
   applyResumeOverrides,
   requiresDedicatedV2Server,
@@ -17,7 +17,7 @@ import type {
   AgentCapabilityFlags,
   AgentClient,
   AgentCreateSessionOptions,
-  AgentFeature,
+  AgentOptionControl,
   AgentLaunchContext,
   AgentPersistenceHandle,
   AgentSession,
@@ -222,8 +222,8 @@ export class OpenCodeV2AgentClient implements AgentClient {
       throw error;
     }
   }
-  async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
-    return features(config);
+  async listControls(): Promise<AgentOptionControl[]> {
+    return controls;
   }
   async listCommands(config: AgentSessionConfig) {
     const connection = await this.runtime.acquire();

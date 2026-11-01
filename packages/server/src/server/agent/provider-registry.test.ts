@@ -4,7 +4,7 @@ import type { ToolPolicy } from "@getpaseo/protocol/agent-types";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type {
   AgentClient,
-  AgentFeature,
+  AgentOptionControl,
   AgentModelDefinition,
   AgentMode,
   AgentSessionConfig,
@@ -392,15 +392,15 @@ vi.mock("./providers/cursor-acp-agent.js", () => ({
       return true;
     }
 
-    async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+    async listControls(config: AgentSessionConfig): Promise<AgentOptionControl[]> {
       mockState.cursorListFeaturesConfigs.push(config);
       return [
         {
           type: "select",
-          id: "fast",
+          key: "fast",
           label: "Fast",
-          value: "false",
-          options: [{ id: "false", label: "Off" }],
+          defaultValue: "false",
+          choices: [{ value: "false", label: "Off" }],
         },
       ];
     }
@@ -823,7 +823,7 @@ test("cursor provider extending acp uses CursorACPAgentClient", () => {
   expect(mockState.constructorArgs.genericAcp).toEqual([]);
 });
 
-test("wrapped cursor client lists ACP features through the inner provider", async () => {
+test("wrapped cursor client lists ACP controls through the inner provider", async () => {
   const registry = buildProviderRegistry(logger, {
     providerOverrides: {
       cursor: {
@@ -837,17 +837,17 @@ test("wrapped cursor client lists ACP features through the inner provider", asyn
   const client = registry.cursor.createClient(logger);
 
   await expect(
-    client.listFeatures?.({
+    client.listControls?.({
       provider: "cursor",
       cwd: "/tmp/cursor",
     }),
   ).resolves.toEqual([
     {
       type: "select",
-      id: "fast",
+      key: "fast",
       label: "Fast",
-      value: "false",
-      options: [{ id: "false", label: "Off" }],
+      defaultValue: "false",
+      choices: [{ value: "false", label: "Off" }],
     },
   ]);
   expect(mockState.cursorListFeaturesConfigs).toEqual([

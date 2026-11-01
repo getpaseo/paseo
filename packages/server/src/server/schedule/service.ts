@@ -15,6 +15,7 @@ import type { PersistedWorkspaceRecord } from "../workspace-registry.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../worktree-session.js";
 import { ScheduleStore } from "./store.js";
 import { computeNextRunAt, validateScheduleCadence } from "./cron.js";
+import { foldFeatureValues } from "../agent/option-controls.js";
 import type {
   CreateScheduleInput,
   ScheduleExecutionResult,
@@ -998,7 +999,6 @@ export class ScheduleService {
         },
         mode: config.modeId,
         thinking: config.thinkingOptionId,
-        features: config.featureValues,
         unattended: true,
         promptFailure: "return-error",
         notifyOnFinish: false,
@@ -1098,8 +1098,8 @@ function buildScheduleAgentConfig(
     model: config.model,
     thinkingOptionId: config.thinkingOptionId,
     title: config.title,
-    providerOptions: config.providerOptions,
-    featureValues: config.featureValues,
+    // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
+    providerOptions: foldFeatureValues(config).providerOptions,
     systemPrompt: config.systemPrompt,
     mcpServers: config.mcpServers as AgentSessionConfig["mcpServers"],
   };

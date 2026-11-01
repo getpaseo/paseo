@@ -1511,12 +1511,14 @@ describe("PluginAgentClientRegistry", () => {
     });
 
     const session = await client!.createSession({ provider: "plugin-direct", cwd: "/workspace" });
-    expect(session.features).toEqual([
-      expect.objectContaining({
+    expect(session.controls).toEqual([
+      {
         type: "select",
-        id: "voice",
-        options: [{ id: "direct", label: "Direct", value: "direct" }],
-      }),
+        key: "voice",
+        label: "Voice",
+        defaultValue: "direct",
+        choices: [{ value: "direct", label: "Direct" }],
+      },
     ]);
     expect(session.describePersistence()).toMatchObject({
       provider: "plugin-direct",

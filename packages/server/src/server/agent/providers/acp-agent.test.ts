@@ -219,7 +219,7 @@ function createSessionWithConfig(
     provider?: string;
     modeId?: string | null;
     model?: string | null;
-    featureValues?: Record<string, unknown>;
+    providerOptions?: Record<string, unknown>;
   } = {},
   logger: ReturnType<typeof createTestLogger> = createTestLogger(),
 ): ACPAgentSession {
@@ -229,7 +229,7 @@ function createSessionWithConfig(
       cwd: "/tmp/paseo-acp-test",
       modeId: config.modeId ?? undefined,
       model: config.model ?? undefined,
-      featureValues: config.featureValues,
+      providerOptions: config.providerOptions,
     },
     {
       provider: config.provider ?? "claude-acp",
@@ -321,14 +321,14 @@ function selectConfigOption(
 
 function createCopilotSessionWithConfig(
   modeId?: string | null,
-  featureValues?: Record<string, unknown>,
+  providerOptions?: Record<string, unknown>,
 ): ACPAgentSession {
   return new ACPAgentSession(
     {
       provider: "copilot",
       cwd: "/tmp/paseo-acp-test",
       modeId: modeId ?? undefined,
-      ...(featureValues ? { featureValues } : {}),
+      ...(providerOptions ? { providerOptions } : {}),
     },
     {
       provider: "copilot",
@@ -1519,7 +1519,7 @@ describe("ACPAgentSession Zed parity", () => {
   test("auto-accepts ACP permission requests when the shared feature is enabled", async () => {
     const session = createSessionWithConfig({
       provider: "cursor-acp",
-      featureValues: { auto_accept: true },
+      providerOptions: { auto_accept: true },
     });
     const events: Array<{ type: string }> = [];
 
@@ -1551,7 +1551,7 @@ describe("ACPAgentSession Zed parity", () => {
   test("does not auto-accept ACP chooser requests", async () => {
     const session = createSessionWithConfig({
       provider: "kimi-acp",
-      featureValues: { auto_accept: true },
+      providerOptions: { auto_accept: true },
     });
     const events: AgentStreamEvent[] = [];
 
@@ -1604,11 +1604,8 @@ describe("ACPAgentSession Zed parity", () => {
     internals.sessionId = "session-1";
     internals.connection = {};
 
-    await session.setFeature("auto_accept", true);
+    await session.applyOptions({ auto_accept: true });
 
-    expect(session.features).toContainEqual(
-      expect.objectContaining({ type: "toggle", id: "auto_accept", value: true }),
-    );
     await expect(
       session.requestPermission({
         sessionId: "session-1",
@@ -1626,7 +1623,7 @@ describe("ACPAgentSession Zed parity", () => {
   });
 
   test("surfaces an ACP permission when auto-accept has no allow option", async () => {
-    const session = createSessionWithConfig({ featureValues: { auto_accept: true } });
+    const session = createSessionWithConfig({ providerOptions: { auto_accept: true } });
     const events: Array<{ type: string; request?: { id: string } }> = [];
     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
     session.subscribe((event) => events.push(event as { type: string; request?: { id: string } }));
@@ -1786,35 +1783,19 @@ describe("ACPAgentSession Zed parity", () => {
     const internals = asInternals<ACPSessionInternals>(session);
     internals.configOptions = [copilotAgentConfigOption("")];
 
-    expect(session.features).toEqual([
-      expect.objectContaining({
-        type: "toggle",
-        id: "auto_accept",
-        value: false,
-      }),
+    expect(session.controls).toEqual([
+      expect.objectContaining({ type: "toggle", key: "auto_accept" }),
       {
         type: "select",
-        id: "agent",
+        key: "agent",
         label: "Agent",
         description: "Use a Copilot custom agent profile",
         tooltip: "Select Copilot agent",
         icon: undefined,
-        value: "",
-        options: [
-          {
-            id: "",
-            label: "Default",
-            description: undefined,
-            isDefault: true,
-            metadata: undefined,
-          },
-          {
-            id: "Probe Agent",
-            label: "Probe Agent",
-            description: "Temporary probe agent",
-            isDefault: false,
-            metadata: undefined,
-          },
+        defaultValue: "",
+        choices: [
+          { value: "", label: "Default", description: undefined },
+          { value: "Probe Agent", label: "Probe Agent", description: "Temporary probe agent" },
         ],
       },
     ]);
@@ -1837,15 +1818,9 @@ describe("ACPAgentSession Zed parity", () => {
       configId: "agent",
       value: "Probe Agent",
     });
-    expect(session.features).toEqual([
-      expect.objectContaining({
-        id: "auto_accept",
-        value: false,
-      }),
-      expect.objectContaining({
-        id: "agent",
-        value: "Probe Agent",
-      }),
+    expect(session.controls).toEqual([
+      expect.objectContaining({ key: "auto_accept" }),
+      expect.objectContaining({ key: "agent", defaultValue: "Probe Agent" }),
     ]);
   });
 
@@ -1859,22 +1834,16 @@ describe("ACPAgentSession Zed parity", () => {
       connection: { setSessionConfigOption },
     });
 
-    await session.setFeature("agent", "Probe Agent");
+    await session.applyOptions({ agent: "Probe Agent" });
 
     expect(setSessionConfigOption).toHaveBeenCalledWith({
       sessionId: "session-1",
       configId: "agent",
       value: "Probe Agent",
     });
-    expect(session.features).toEqual([
-      expect.objectContaining({
-        id: "auto_accept",
-        value: false,
-      }),
-      expect.objectContaining({
-        id: "agent",
-        value: "Probe Agent",
-      }),
+    expect(session.controls).toEqual([
+      expect.objectContaining({ key: "auto_accept" }),
+      expect.objectContaining({ key: "agent", defaultValue: "Probe Agent" }),
     ]);
   });
 });
@@ -2105,14 +2074,14 @@ describe("ACPAgentClient config features", () => {
       client.resolveCreateConfig({
         provider: "generic-acp",
         requestedMode: undefined,
-        featureValues: { provider_feature: "kept" },
+        providerOptions: { provider_feature: "kept" },
         parent: null,
         unattended: true,
         availableModes: [],
       }),
     ).toEqual({
       modeId: undefined,
-      featureValues: { provider_feature: "kept", auto_accept: true },
+      providerOptions: { provider_feature: "kept", auto_accept: true },
     });
   });
 
@@ -2127,12 +2096,12 @@ describe("ACPAgentClient config features", () => {
       client.resolveCreateConfig({
         provider: "generic-acp",
         requestedMode: undefined,
-        featureValues: { auto_accept: false },
+        providerOptions: { auto_accept: false },
         parent: null,
         unattended: true,
         availableModes: [],
       }),
-    ).toEqual({ modeId: undefined, featureValues: { auto_accept: false } });
+    ).toEqual({ modeId: undefined, providerOptions: { auto_accept: false } });
   });
 
   test("maps an unattended cross-provider parent to ACP Auto Accept", () => {
@@ -2146,7 +2115,7 @@ describe("ACPAgentClient config features", () => {
       client.resolveCreateConfig({
         provider: "generic-acp",
         requestedMode: undefined,
-        featureValues: undefined,
+        providerOptions: undefined,
         parent: {
           provider: "claude",
           modeId: "bypassPermissions",
@@ -2155,7 +2124,7 @@ describe("ACPAgentClient config features", () => {
         unattended: false,
         availableModes: [{ id: "agent", label: "Agent" }],
       }),
-    ).toEqual({ modeId: undefined, featureValues: { auto_accept: true } });
+    ).toEqual({ modeId: undefined, providerOptions: { auto_accept: true } });
   });
 
   test("treats Auto Accept as an unattended ACP configuration", () => {
@@ -2171,7 +2140,7 @@ describe("ACPAgentClient config features", () => {
         config: {
           provider: "generic-acp",
           cwd: "/tmp/acp-features",
-          featureValues: { auto_accept: true },
+          providerOptions: { auto_accept: true },
         },
         availableModes: [],
       }),
@@ -2186,22 +2155,17 @@ describe("ACPAgentClient config features", () => {
     });
 
     await expect(
-      client.listFeatures({
+      client.listControls({
         provider: "generic-acp",
         cwd: "/tmp/acp-features",
-        featureValues: { auto_accept: true },
+        providerOptions: { auto_accept: true },
       }),
     ).resolves.toEqual([
-      expect.objectContaining({
-        type: "toggle",
-        id: "auto_accept",
-        label: "Auto Accept",
-        value: true,
-      }),
+      expect.objectContaining({ type: "toggle", key: "auto_accept", label: "Auto Accept" }),
     ]);
   });
 
-  test("derives features from configured ACP select options", async () => {
+  test("derives controls from configured ACP select options", async () => {
     class TestACPAgentClient extends ACPAgentClient {
       protected override async spawnProcess(): Promise<SpawnedACPProcess> {
         return {
@@ -2227,23 +2191,19 @@ describe("ACPAgentClient config features", () => {
     });
 
     await expect(
-      client.listFeatures({
+      client.listControls({
         provider: "copilot",
         cwd: "/tmp/acp-features",
       }),
     ).resolves.toEqual([
-      expect.objectContaining({
-        type: "toggle",
-        id: "auto_accept",
-        value: false,
-      }),
+      expect.objectContaining({ type: "toggle", key: "auto_accept" }),
       expect.objectContaining({
         type: "select",
-        id: "agent",
-        value: "Probe Agent",
-        options: [
-          expect.objectContaining({ id: "", label: "Default", isDefault: false }),
-          expect.objectContaining({ id: "Probe Agent", label: "Probe Agent", isDefault: true }),
+        key: "agent",
+        defaultValue: "Probe Agent",
+        choices: [
+          expect.objectContaining({ value: "", label: "Default" }),
+          expect.objectContaining({ value: "Probe Agent", label: "Probe Agent" }),
         ],
       }),
     ]);
@@ -4160,7 +4120,7 @@ describe("ACPAgentClient probe cleanup", () => {
       terminateProcess: terminator.terminate,
     });
 
-    await client.listFeatures({ provider: "copilot", cwd: "/tmp/acp-features" });
+    await client.listControls({ provider: "copilot", cwd: "/tmp/acp-features" });
 
     expect(closeSession).toHaveBeenCalledWith({ sessionId: "feature-probe-session" });
     expect(terminator.terminated).toContain(child);
