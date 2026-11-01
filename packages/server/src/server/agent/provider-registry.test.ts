@@ -626,6 +626,64 @@ test("new provider extending claude appears in registry", () => {
   expect(registry.zai.createClient(logger).provider).toBe("zai");
 });
 
+test("models of a derived provider carry the extended provider in metadata", async () => {
+  mockState.runtimeModels.set("claude", [
+    { provider: "claude", id: "claude-opus-5", label: "Opus 5", isDefault: true },
+  ]);
+
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      "claude-work": {
+        extends: "claude",
+        label: "Claude (Work)",
+      },
+    },
+  });
+
+  const { models } = await registry["claude-work"].fetchCatalog({
+    scope: "workspace",
+    cwd: "/tmp/registry-derived-models",
+    force: false,
+  });
+
+  expect(models.find((model) => model.id === "claude-opus-5")?.metadata).toEqual({
+    underlyingProvider: "claude",
+  });
+});
+
+test("derived provider additions keep runtime metadata when overlapping by id", async () => {
+  mockState.runtimeModels.set("codex", [
+    {
+      provider: "codex",
+      id: "discovered-model",
+      label: "Discovered Model",
+      metadata: { providerId: "upstream-x", modelId: "model-y" },
+    },
+  ]);
+
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      "my-codex": {
+        extends: "codex",
+        label: "My Codex",
+        additionalModels: [{ id: "discovered-model", label: "Relabeled Model" }],
+      },
+    },
+  });
+
+  const { models } = await registry["my-codex"].fetchCatalog({
+    scope: "workspace",
+    cwd: "/tmp/registry-derived-overlap",
+    force: false,
+  });
+
+  expect(models.find((model) => model.id === "discovered-model")?.metadata).toEqual({
+    providerId: "upstream-x",
+    modelId: "model-y",
+    underlyingProvider: "codex",
+  });
+});
+
 test("new provider extending codex archives and unarchives its native sessions", async () => {
   const registry = buildProviderRegistry(logger, {
     providerOverrides: { "my-codex": { extends: "codex", label: "My Codex" } },

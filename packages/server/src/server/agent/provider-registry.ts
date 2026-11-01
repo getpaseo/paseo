@@ -619,6 +619,17 @@ function createRegistryEntry(
   resolved: ResolvedProvider,
 ): ProviderDefinition {
   const modelClient = createResolvedProviderClient(logger, provider, resolved);
+  // A derived provider's id is an arbitrary alias, so models carry the provider they
+  // extend in metadata; clients cannot recover the base from the id alone. Annotate
+  // merged output: annotating the merge inputs would overwrite runtime metadata on
+  // id conflicts, because the merge replaces the metadata key wholesale.
+  const annotateWithDerivedProvider = (models: AgentModelDefinition[]): AgentModelDefinition[] =>
+    resolved.derivedFromProviderId === null
+      ? models
+      : models.map((model) => ({
+          ...model,
+          metadata: { ...model.metadata, underlyingProvider: resolved.derivedFromProviderId },
+        }));
   const profileModels = resolveConfiguredModels(provider, modelClient, resolved.profileModels);
   const additionalModels = resolveConfiguredModels(
     provider,
@@ -676,7 +687,9 @@ function createRegistryEntry(
         // Replacement models skip runtime model discovery, but additionalModels
         // must still be merged on top. If modes are dynamic, probe for modes via
         // the single catalog API; otherwise use static/empty modes with no runtime.
-        const models = mergeModelAdditions(provider, replacementModels, additionalModels);
+        const models = annotateWithDerivedProvider(
+          mergeModelAdditions(provider, replacementModels, additionalModels),
+        );
         if (hasStaticModes) {
           const defaultModeId = await runProviderRefreshActivity(
             context,
@@ -703,9 +716,11 @@ function createRegistryEntry(
       const catalog = await catalogClient.fetchCatalog(options, context);
       return {
         ...catalog,
-        models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
-          profileModelsAreAdditive: resolved.profileModelsAreAdditive,
-        }),
+        models: annotateWithDerivedProvider(
+          mergeModels(provider, profileModels, additionalModels, catalog.models, {
+            profileModelsAreAdditive: resolved.profileModelsAreAdditive,
+          }),
+        ),
         modes: decorateModes(catalog.modes),
       };
     },
