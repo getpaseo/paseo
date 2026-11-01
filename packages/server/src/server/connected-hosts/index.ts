@@ -7,10 +7,12 @@ import { z } from "zod";
 import {
   createHostClient,
   createHostChannelTransport,
+  createHostTransportFactory,
   parseHostTarget,
   HostTransportBudget,
 } from "@getpaseo/client/node";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { DaemonTransportFactory } from "@getpaseo/client/internal/daemon-client-transport-types";
 import {
   HostSummarySchema,
   HostAddSchema,
@@ -235,19 +237,24 @@ export class ConnectedHosts {
       if (route.registrationId === id)
         route.close(code, "Host access was disabled, replaced or removed");
   }
-  private start(row: Saved, failures = 0): void {
+  private start(
+    row: Saved,
+    resume?: { failures: number; transports: DaemonTransportFactory },
+  ): void {
     if (!row.enabled || this.closed) return;
-    let stopped = false;
-    let retry: ReturnType<typeof setTimeout> | undefined;
-    const client = createHostClient(
-      row.connection,
-      {
-        clientId: `host-link-${this.self.serverId}-${row.registrationId}`,
-        connectTimeoutMs: 10000,
+    const transports =
+      resume?.transports ??
+      createHostTransportFactory(row.connection, this.budget, {
         webSocketAgent: webSocketProxyAgent,
-      },
-      this.budget,
-    );
+      });
+    let stopped = false;
+    let attempts = resume?.failures ?? 0;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const client = createHostClient(row.connection, {
+      clientId: `host-link-${this.self.serverId}-${row.registrationId}`,
+      connectTimeoutMs: 10000,
+      transportFactory: transports,
+    });
     const live: Live = {
       client,
       accepted: false,
@@ -306,6 +313,7 @@ export class ConnectedHosts {
           if (stopped || client.getLastServerInfoMessage() !== info || !client.isConnected) return;
           Object.assign(row, next);
           live.accepted = true;
+          attempts = 0;
           this.changed();
         });
       } catch (error) {
@@ -318,13 +326,8 @@ export class ConnectedHosts {
           row.status = "error";
           row.nextRetryAt = null;
         } else {
-          // The client resets its backoff on every server_info, so acceptance failures back off here.
-          const delay = Math.min(1500 * 2 ** failures, 30000);
           stopped = true;
-          row.status = "offline";
-          row.nextRetryAt = new Date(Date.now() + delay).toISOString();
-          retry = setTimeout(() => this.start(row, failures + 1), delay);
-          retry.unref();
+          retry = this.scheduleAcceptanceRetry(row, attempts, transports);
         }
         this.changed();
         await client.close();
@@ -341,18 +344,17 @@ export class ConnectedHosts {
         if (route.registrationId === row.registrationId) route.close();
       row.status = state.status === "connecting" ? "connecting" : "offline";
       row.nextRetryAt = state.status === "disconnected" ? (state.nextRetryAt ?? null) : null;
-      row.error =
-        state.status === "disconnected"
-          ? (connectionFailure(
-              Object.assign(new Error("Check the SSH configuration and daemon credentials"), {
-                code: state.failureCode,
-              }),
-              client.authFailureReason !== null,
-            ) ?? {
-              code: "host_offline",
-              message: "Cannot reach host. Check the connection; retrying automatically.",
-            })
-          : null;
+      if (state.status === "disconnected")
+        row.error = connectionFailure(
+          Object.assign(new Error("Check the SSH configuration and daemon credentials"), {
+            code: state.failureCode,
+          }),
+          client.authFailureReason !== null,
+        ) ?? {
+          code: "host_offline",
+          message: "Cannot reach host. Check the connection; retrying automatically.",
+        };
+      else if (row.error?.code !== "unsupported_capability") row.error = null;
       if (row.error?.code === "authentication_failed") {
         row.status = "error";
         row.nextRetryAt = null;
@@ -362,6 +364,18 @@ export class ConnectedHosts {
       this.changed();
     });
     void client.connect().catch(() => {});
+  }
+  private scheduleAcceptanceRetry(
+    row: Saved,
+    failures: number,
+    transports: DaemonTransportFactory,
+  ): ReturnType<typeof setTimeout> {
+    const delay = acceptanceRetryDelayMs(failures);
+    row.status = "offline";
+    row.nextRetryAt = new Date(Date.now() + delay).toISOString();
+    const retry = setTimeout(() => this.start(row, { failures: failures + 1, transports }), delay);
+    retry.unref();
+    return retry;
   }
   async openRoute(input: {
     serverId: string;
@@ -541,6 +555,13 @@ export class ConnectedHosts {
     for (const route of this.routes) route.close();
     this.listeners.clear();
   }
+}
+
+const ACCEPTANCE_RETRY_BASE_MS = 1500;
+const ACCEPTANCE_RETRY_MAX_MS = 30_000;
+
+function acceptanceRetryDelayMs(failures: number): number {
+  return Math.min(ACCEPTANCE_RETRY_BASE_MS * 2 ** failures, ACCEPTANCE_RETRY_MAX_MS);
 }
 
 const terminalFailures = new Set([

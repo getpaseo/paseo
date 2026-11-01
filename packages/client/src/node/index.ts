@@ -204,15 +204,16 @@ export function createHostTransportFactory(
 }
 export function createHostClient(
   connection: string,
-  config: Omit<DaemonClientConfig, "url" | "transportFactory"> & HostTransportOptions,
+  config: Omit<DaemonClientConfig, "url"> & HostTransportOptions,
   budget?: HostTransportBudget,
 ): DaemonClient {
   const target = parseHostTarget(connection);
-  const { webSocketAgent, ...clientConfig } = config;
+  const { webSocketAgent, transportFactory, ...clientConfig } = config;
   return new DaemonClient({
     ...clientConfig,
     url: "ws://host-connector/ws",
     ...(target.password ? { password: target.password } : {}),
-    transportFactory: createHostTransportFactory(connection, budget, { webSocketAgent }),
+    transportFactory:
+      transportFactory ?? createHostTransportFactory(connection, budget, { webSocketAgent }),
   });
 }

@@ -76,7 +76,8 @@ Both daemons advertise `connectedHosts`; the shared link additionally requires `
 A completes capability and pinned-identity checks on each physical recovery before admitting channels. There is no local fallback. An older daemon continues to serve existing local
 operations; requesting this feature gives update guidance. The registry retries an older destination
 with capped backoff, so it comes online once updated. Self, duplicate, changed-identity, and
-authentication failures stay in `error` until the registration is updated or A restarts.
+authentication failures stay in `error` until an update changes the connection, `enabled`, or
+`replaceIdentity`, or A restarts.
 
 Disposing a routed API releases its observations and session. It does not remove the saved host or
 affect sibling API scopes. Disposing the origin cascades to its derived scopes. Observations restore

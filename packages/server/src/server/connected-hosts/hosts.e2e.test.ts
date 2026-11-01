@@ -784,15 +784,20 @@ test("old capabilities fail before execution and authentication errors recover t
   expect((await online(paseo)).hosts[0]!.serverId).toBe(b.daemon.getServerId());
 });
 
-test("a destination updated past unsupported_capability comes online on its scheduled retry while identity errors stay terminal", async () => {
+async function updatableDestination() {
   let features: { connectedHosts: boolean; hostMultiplexing: boolean } | undefined;
+  let holding = false;
+  const held: (() => void)[] = [];
+  let connections = 0;
   const http = createServer();
   const ws = new WebSocketServer({ server: http });
-  ws.on("connection", (socket) =>
+  ws.on("connection", (socket) => {
+    connections++;
     socket.on("message", (data) => {
       const frame = JSON.parse(data.toString());
       if (frame.type === "ping") socket.send(JSON.stringify({ type: "pong" }));
-      if (frame.type === "hello")
+      if (frame.type !== "hello") return;
+      const reply = () =>
         socket.send(
           JSON.stringify({
             type: "session",
@@ -808,8 +813,10 @@ test("a destination updated past unsupported_capability comes online on its sche
             },
           }),
         );
-    }),
-  );
+      if (holding) held.push(reply);
+      else reply();
+    });
+  });
   http.listen(0, "127.0.0.1");
   await once(http, "listening");
   cleanup.push(async () => {
@@ -819,27 +826,167 @@ test("a destination updated past unsupported_capability comes online on its sche
   });
   const address = http.address();
   if (!address || typeof address === "string") throw new Error("Missing destination port");
-  const a = await daemon();
-  const { paseo } = await api(a);
-  const host = await paseo.hosts.add({ connection: `127.0.0.1:${address.port}` });
+  return {
+    port: address.port,
+    connections: () => connections,
+    hold: () => {
+      holding = true;
+    },
+    update: () => {
+      features = { connectedHosts: true, hostMultiplexing: true };
+      holding = false;
+      for (const reply of held.splice(0)) reply();
+    },
+  };
+}
+async function capabilityRetry(paseo: ReturnType<typeof createPaseoApi>): Promise<number> {
+  let retryAt = "";
   await expect
-    .poll(async () => (await paseo.hosts.list()).hosts[0], { timeout: 5000 })
+    .poll(
+      async () => {
+        const row = (await paseo.hosts.list()).hosts[0];
+        retryAt = row?.nextRetryAt ?? "";
+        return row;
+      },
+      { timeout: 5000 },
+    )
     .toMatchObject({
       status: "offline",
       nextRetryAt: expect.any(String),
       error: { code: "unsupported_capability" },
     });
-  features = { connectedHosts: true, hostMultiplexing: true };
+  return Date.parse(retryAt);
+}
+
+test("a destination updated past unsupported_capability keeps its guidance while retrying and comes online, while duplicate_host stays terminal", async () => {
+  const destination = await updatableDestination();
+  const a = await daemon();
+  const { paseo } = await api(a);
+  const host = await paseo.hosts.add({ connection: `127.0.0.1:${destination.port}` });
+  await capabilityRetry(paseo);
+  destination.hold();
+  await expect
+    .poll(async () => (await paseo.hosts.list()).hosts[0], { timeout: 5000 })
+    .toMatchObject({ status: "connecting", error: { code: "unsupported_capability" } });
+  await expect(paseo.hosts.client("srv_updated")).rejects.toMatchObject({
+    code: "unsupported_capability",
+  });
+  destination.update();
   expect((await online(paseo)).hosts[0]).toMatchObject({
     registrationId: host.registrationId,
     serverId: "srv_updated",
     nextRetryAt: null,
     error: null,
   });
-  await paseo.hosts.add({ connection: `ws://127.0.0.1:${address.port}/ws` });
+  await paseo.hosts.add({ connection: `ws://127.0.0.1:${destination.port}/ws` });
   await expect
     .poll(async () => (await paseo.hosts.list()).hosts[1], { timeout: 5000 })
     .toMatchObject({ status: "error", nextRetryAt: null, error: { code: "duplicate_host" } });
+});
+
+test("disabling or removing a host cancels its pending capability retry", async () => {
+  const destination = await updatableDestination();
+  const a = await daemon();
+  const { paseo } = await api(a);
+  const host = await paseo.hosts.add({ connection: `127.0.0.1:${destination.port}` });
+  let retryAt = await capabilityRetry(paseo);
+  let connections = destination.connections();
+  await paseo.hosts.update(host.registrationId, { enabled: false });
+  await new Promise((resolve) => setTimeout(resolve, retryAt - Date.now() + 500));
+  expect(destination.connections()).toBe(connections);
+  await paseo.hosts.update(host.registrationId, { enabled: true });
+  retryAt = await capabilityRetry(paseo);
+  connections = destination.connections();
+  await paseo.hosts.remove(host.registrationId);
+  await new Promise((resolve) => setTimeout(resolve, retryAt - Date.now() + 500));
+  expect(destination.connections()).toBe(connections);
+});
+
+import {
+  createDaemonChannel,
+  exportPublicKey,
+  generateKeyPair,
+  openDaemonSecureChannel,
+  type Transport,
+} from "@getpaseo/relay/e2ee";
+test("a capability retry over a relay keeps the protected endpoint security it negotiated", async () => {
+  const keys = generateKeyPair();
+  const legacyReceived: unknown[] = [];
+  let connections = 0;
+  let retryClosed = false;
+  const http = createServer();
+  const ws = new WebSocketServer({ server: http });
+  ws.on("connection", (socket) => {
+    connections++;
+    const wire: Transport = {
+      send: (data) => socket.send(data),
+      close: (code, reason) => socket.close(code, reason),
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    socket.on("message", (data, isBinary) => {
+      const bytes = Buffer.from(data as Buffer);
+      wire.onmessage?.({
+        data: isBinary
+          ? bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+          : bytes.toString(),
+        isBinary,
+      });
+    });
+    socket.on("close", (code, reason) => wire.onclose?.(code, reason.toString()));
+    if (connections > 1) {
+      socket.on("close", () => {
+        retryClosed = true;
+      });
+      void createDaemonChannel(wire, keys, {
+        onmessage: (data) => legacyReceived.push(data),
+      }).catch(() => {});
+      return;
+    }
+    const channel = openDaemonSecureChannel(wire, {
+      daemonKeyPair: keys,
+      events: {
+        onmessage: (data) => {
+          if (typeof data !== "string" || JSON.parse(data).type !== "hello") return;
+          void channel.then((secure) =>
+            secure.send(
+              JSON.stringify({
+                type: "session",
+                message: {
+                  type: "status",
+                  payload: {
+                    status: "server_info",
+                    serverId: "srv_relayed",
+                    hostname: "relayed",
+                    version: "0.12.0",
+                  },
+                },
+              }),
+            ),
+          );
+        },
+      },
+    });
+    void channel.catch(() => {});
+  });
+  http.listen(0, "127.0.0.1");
+  await once(http, "listening");
+  cleanup.push(async () => {
+    for (const socket of ws.clients) socket.terminate();
+    await new Promise<void>((resolve) => ws.close(() => resolve()));
+    await new Promise<void>((resolve) => http.close(() => resolve()));
+  });
+  const address = http.address();
+  if (!address || typeof address === "string") throw new Error("Missing relay port");
+  const a = await daemon();
+  const { paseo } = await api(a);
+  await paseo.hosts.add({
+    connection: `relay://127.0.0.1:${address.port}/srv_relayed?key=${encodeURIComponent(exportPublicKey(keys.publicKey))}`,
+  });
+  await capabilityRetry(paseo);
+  await expect.poll(() => retryClosed, { timeout: 15000 }).toBe(true);
+  expect(legacyReceived).toEqual([]);
 });
 
 test("an unreachable saved target becomes online after its daemon starts without being added again", async () => {
