@@ -11,6 +11,7 @@ import type { DaemonClientConfig } from "./daemon-client.js";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import type {
   AgentSnapshotPayload,
+  UsageReportEntry,
   CreationSnapshot,
   CreateAgentRequestMessage,
   FetchWorkspacesRequestMessage,
@@ -345,6 +346,18 @@ export interface PaseoAgentTimelineHandle {
   subscribe(handler: (event: PaseoAgentTimelineEvent) => void): PaseoAgentTimelineSubscription;
 }
 
+export interface PaseoAgentUsageOptions {
+  requestId?: string;
+  forceRefresh?: boolean;
+}
+
+export interface PaseoAgentUsageResult {
+  requestId: string;
+  reports: UsageReportEntry[];
+  /** Compare with the agent snapshot before displaying reports. Null means no live usage session. */
+  usageRevision: string | null;
+}
+
 export interface PaseoAgentHandle {
   readonly id: string;
   readonly address: AgentAddress;
@@ -389,6 +402,10 @@ export interface PaseoAgentHandle {
    * rejecting.
    */
   commands(options?: PaseoAgentCommandsOptions): Promise<PaseoAgentCommandsResult>;
+  /** Account quotas attributed to this agent's current launch, not consumption by this agent alone.
+   * Rejects if attribution changes while fetching. Requires features.agentUsageRevision.
+   */
+  listUsageReports(options?: PaseoAgentUsageOptions): Promise<PaseoAgentUsageResult>;
   archive(): Promise<{ archivedAt: string }>;
   detach(): Promise<void>;
   subscribe(handler: (update: PaseoAgentUpdate) => void): () => void;
@@ -1022,6 +1039,17 @@ function createAgentHandleFactory(
         return result;
       },
       commands: (options) => daemonClient.listCommands({ agentId: id, ...options }),
+      listUsageReports: async (options) => {
+        daemonClient.ensureConnected();
+        if (daemonClient.getLastServerInfoMessage()?.features?.agentUsageRevision !== true) {
+          throw new Error("Update the host to read agent-scoped usage reports.");
+        }
+        const result = await daemonClient.listUsageReports({ ...options, agentId: id });
+        if (result.usageRevision === undefined) {
+          throw new Error("The host omitted the agent usage revision.");
+        }
+        return { ...result, usageRevision: result.usageRevision };
+      },
       archive: async () => {
         const result = await daemonClient.archiveAgent(id);
         if (current) {

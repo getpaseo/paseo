@@ -1703,6 +1703,8 @@ export class AgentManager {
       this.cancelRunningProviderSubagents(agentId);
       closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
       await this.persistSnapshot(closedExisting);
+      // Clear launch-scoped usage while the replacement provider session is opening.
+      this.emitState(closedExisting, { persist: false });
       this.assertAcceptingAgentRegistrations();
 
       this.paseoToolPolicies.set(agentId, paseoToolPolicy);

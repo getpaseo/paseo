@@ -2672,10 +2672,16 @@ test("setAgentMode persists the selected mode across session reload", async () =
 test("reload releases the original writer before resuming the same session", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-writer-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class UsageTestSession extends CloseRecordingTestAgentSession {
+    private readonly launchId = randomUUID();
+    usageSession() {
+      return { provider: "codex", sessionKey: this.launchId, env: {} };
+    }
+  }
   class ExclusiveWriterClient extends TestAgentClient {
     current: CloseRecordingTestAgentSession | undefined;
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      this.current = new CloseRecordingTestAgentSession(config);
+      this.current = new UsageTestSession(config);
       return this.current;
     }
     override async resumeSession(
@@ -2685,7 +2691,7 @@ test("reload releases the original writer before resuming the same session", asy
       if (this.current && !this.current.closed) {
         throw new Error("thread already has an active writer");
       }
-      this.current = new CloseRecordingTestAgentSession({
+      this.current = new UsageTestSession({
         provider: "codex",
         cwd: config?.cwd ?? workdir,
       });
@@ -2695,18 +2701,31 @@ test("reload releases the original writer before resuming the same session", asy
   }
   const client = new ExclusiveWriterClient();
   const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const revisions: Array<string | null | undefined> = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state") revisions.push(toAgentPayload(event.agent).usageRevision);
+    },
+    { replayState: false },
+  );
   try {
     const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
       workspaceId: undefined,
     });
     for (let i = 0; i < 3; i++) {
+      const previousRevision = revisions.at(-1);
+      revisions.length = 0;
       const reloaded = await manager.reloadAgentSession(created.id, undefined, {
         rehydrateFromDisk: true,
       });
       expect(reloaded.id).toBe(created.id);
       expect(reloaded.persistence?.sessionId).toBe(created.persistence?.sessionId);
+      expect(revisions[0]).toBeNull();
+      expect(revisions.at(-1)).toEqual(expect.any(String));
+      expect(revisions.at(-1)).not.toBe(previousRevision);
     }
     await manager.closeAgent(created.id);
+    expect(revisions.at(-1)).toBeNull();
   } finally {
     await client.current?.close();
     await storage.flush();
@@ -2814,6 +2833,13 @@ test("failed reload retains the closed agent for a later resume", async () => {
   }
   const client = new FailingResumeClient();
   const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const snapshots: ReturnType<typeof toAgentPayload>[] = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state") snapshots.push(toAgentPayload(event.agent));
+    },
+    { replayState: false },
+  );
   try {
     const created = await manager.createAgent(
       { provider: "codex", cwd: workdir, title: "Keep me" },
@@ -2821,6 +2847,11 @@ test("failed reload retains the closed agent for a later resume", async () => {
       { workspaceId: undefined },
     );
     await expect(manager.reloadAgentSession(created.id)).rejects.toThrow("resume unavailable");
+    expect(snapshots.at(-1)).toMatchObject({
+      id: created.id,
+      status: "closed",
+      usageRevision: null,
+    });
     expect(manager.getAgent(created.id)).toBeNull();
     expect(await storage.get(created.id)).toMatchObject({
       lastStatus: "closed",
