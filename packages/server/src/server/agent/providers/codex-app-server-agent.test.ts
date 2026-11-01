@@ -3385,6 +3385,87 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test.each([
+    ["patch_apply_begin", undefined, "running", null],
+    ["patch_apply_end", true, "completed", null],
+    ["patch_apply_end", false, "failed", { message: "Cannot apply patch" }],
+  ] as const)(
+    "maps both files from legacy %s notifications (success: %s)",
+    async (type, success, status, error) => {
+      const appServer = createFakeCodexAppServer();
+      const session = new CodexAppServerAgentSession(
+        createConfig({ cwd: "/tmp/repo" }),
+        null,
+        createTestLogger(),
+        async () => appServer.child,
+      );
+      try {
+        await session.connect();
+        const nextTimelineItem = waitForNextTimelineItem(session);
+        appServer.child.stdout.write(
+          `${JSON.stringify({
+            method: `codex/event/${type}`,
+            params: {
+              conversationId: "thread-1",
+              msg: {
+                type,
+                call_id: "patch-array-alias",
+                changes: [
+                  {
+                    path: "/tmp/repo/src/array-alias.ts",
+                    kind: "modify",
+                    unified_diff: "@@\n-old\n+new\n",
+                  },
+                  {
+                    path: "/tmp/repo/src/second.ts",
+                    kind: "modify",
+                    unified_diff: "@@\n-before\n+after\n",
+                  },
+                ],
+                success,
+                stderr: "Cannot apply patch",
+              },
+            },
+          })}\n`,
+        );
+
+        await expect(nextTimelineItem).resolves.toEqual({
+          type: "timeline",
+          provider: "codex",
+          item: {
+            type: "tool_call",
+            callId: "patch-array-alias",
+            name: "apply_patch",
+            status,
+            error,
+            detail: {
+              type: "edit",
+              filePath: "src/array-alias.ts",
+              unifiedDiff: [
+                "diff --git a/src/array-alias.ts b/src/array-alias.ts",
+                "--- a/src/array-alias.ts",
+                "+++ b/src/array-alias.ts",
+                "@@",
+                "-old",
+                "+new",
+                "",
+                "diff --git a/src/second.ts b/src/second.ts",
+                "--- a/src/second.ts",
+                "+++ b/src/second.ts",
+                "@@",
+                "-before",
+                "+after",
+              ].join("\n"),
+            },
+          },
+        });
+        appServer.assertNoErrors();
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
   test("maps Codex plan markdown to a synthetic plan tool call", () => {
     const item = mapCodexPlanToToolCall({
       callId: "plan-turn-1",

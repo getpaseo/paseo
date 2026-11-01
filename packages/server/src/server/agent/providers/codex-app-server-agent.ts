@@ -55,11 +55,13 @@ import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { composeSystemPromptParts } from "../system-prompt.js";
 import { CodexAsyncQuestions, codexAsyncQuestionToTimeline } from "./codex/async-questions.js";
 import {
+  fileChangeToUnifiedDiff,
   mapCodexToolCallEnvelope,
   mapCodexToolCallFromThreadItem,
   normalizeCommandExecutionCommand,
   splitCodexMcpToolResultImages,
 } from "./codex/tool-call-mapper.js";
+import { normalizeCodexFilePath } from "./codex/tool-call-detail-parser.js";
 import {
   checkProviderLaunchAvailable,
   createProviderEnv,
@@ -1685,7 +1687,18 @@ export function mapCodexPatchNotificationToToolCall(params: {
   const firstPatchText = files
     .map((file) => file.content?.trim())
     .find((value): value is string => typeof value === "string" && value.length > 0);
-  const patchText = firstPatchText;
+  const patchText =
+    files.length > 1
+      ? files
+          .map((file) =>
+            fileChangeToUnifiedDiff({
+              path: normalizeCodexFilePath(file.path, params.cwd) ?? file.path,
+              kind: file.kind,
+              diff: file.content,
+            }),
+          )
+          .join("\n\n")
+      : firstPatchText;
   const patchFields = codexPatchTextFields(patchText);
   const mapped = mapCodexToolCallEnvelope({
     callId: params.callId ?? null,
