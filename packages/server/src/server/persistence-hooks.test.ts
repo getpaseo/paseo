@@ -128,6 +128,29 @@ describe("persistence hooks", () => {
     });
   });
 
+  test("a saved voice mode block is not resumed as the system prompt", () => {
+    const record = createRecord({
+      config: {
+        systemPrompt:
+          "<paseo_voice_mode>\nPaseo voice mode is now off. Ignore any earlier Paseo voice mode instructions in this thread.\n</paseo_voice_mode>",
+      },
+    });
+
+    expect(buildConfigOverrides(record)).toHaveProperty("systemPrompt", undefined);
+    expect(buildSessionConfig(record)?.systemPrompt).toBeUndefined();
+  });
+
+  test("the agent's own system prompt is resumed without its saved voice mode block", () => {
+    const record = createRecord({
+      config: {
+        systemPrompt:
+          "Be terse.\n\n<paseo_voice_mode>\nPaseo voice mode is now on.\n</paseo_voice_mode>",
+      },
+    });
+
+    expect(buildConfigOverrides(record).systemPrompt).toBe("Be terse.");
+  });
+
   test("buildConfigOverrides drops persisted internal paseo MCP server", () => {
     const record = createRecord({
       config: {
