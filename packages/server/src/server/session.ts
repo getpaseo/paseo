@@ -3560,12 +3560,32 @@ export class Session {
     };
   }
 
+  private async markAgentUnreadFromLabel(agentId: string, requestId: string): Promise<void> {
+    const respond = (accepted: boolean, error: string | null) =>
+      this.emit({
+        type: "update_agent_response",
+        payload: { requestId, agentId, accepted, error },
+      });
+    try {
+      await this.agentManager.markAgentUnread(agentId);
+      respond(true, null);
+    } catch (error) {
+      this.sessionLogger.error({ err: error, agentId }, "session: mark agent unread failed");
+      respond(false, getErrorMessageOr(error, "Failed to mark agent unread"));
+    }
+  }
+
   private async handleUpdateAgentRequest(
     agentId: string,
     name: string | undefined,
     labels: Record<string, string> | undefined,
     requestId: string,
   ): Promise<void> {
+    if (name === undefined && labels?.["paseo.markUnread"] === "1") {
+      await this.markAgentUnreadFromLabel(agentId, requestId);
+      return;
+    }
+
     this.sessionLogger.info(
       {
         agentId,
