@@ -450,6 +450,9 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     get controls() {
       return inner.controls;
     },
+    get openOptionsPatch() {
+      return inner.openOptionsPatch;
+    },
     usageSession: inner.usageSession?.bind(inner),
     run: (prompt, options) => inner.run(prompt, options),
     startTurn: (prompt, options) => inner.startTurn(prompt, options),

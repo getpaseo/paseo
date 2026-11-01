@@ -506,17 +506,11 @@ describe("Codex app-server provider controls", () => {
     });
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
-    session.subscribe((event) => events.push(event));
 
     expect(session.controls).toEqual([speedControl(), PLAN_CONTROL]);
-    // A saved pre-v0.10 Fast preference opens as the model's Fast tier and says so once.
-    expect(events.filter((event) => event.type === "options_changed")).toEqual([
-      {
-        type: "options_changed",
-        provider: "codex",
-        patch: { service_tier: "priority", fast_mode: null },
-      },
-    ]);
+    // A saved pre-v0.10 Fast preference opens as the model's Fast tier, which the open patch says.
+    expect(session.openOptionsPatch).toEqual({ service_tier: "priority", fast_mode: null });
+    expect(events.filter((event) => event.type === "options_changed")).toEqual([]);
 
     await session.startTurn("hello");
     await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
@@ -544,7 +538,7 @@ describe("Codex app-server provider controls", () => {
   test("applyOptions accepts an option that has no control", async () => {
     const { session } = await createConnectedSession();
 
-    await expect(session.applyOptions?.({ sandbox_mode: "read-only" })).resolves.toBeUndefined();
+    await expect(session.applyOptions?.({ sandbox_mode: "read-only" })).resolves.toEqual({});
   });
 
   test("startTurn includes serviceTier when fast mode is enabled", async () => {
@@ -558,20 +552,12 @@ describe("Codex app-server provider controls", () => {
     });
   });
 
-  test("a saved service_tier: fast runs as the model's Fast tier and is reported as that tier", async () => {
+  test("a saved service_tier: fast runs as the model's Fast tier and the open patch names that tier", async () => {
     const { session, appServer } = await createConnectedSession({
       providerOptions: { service_tier: "fast" },
     });
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
 
-    expect(events.filter((event) => event.type === "options_changed")).toEqual([
-      {
-        type: "options_changed",
-        provider: "codex",
-        patch: { service_tier: "priority", fast_mode: null },
-      },
-    ]);
+    expect(session.openOptionsPatch).toEqual({ service_tier: "priority", fast_mode: null });
 
     await session.startTurn("hello");
     await expect(appServer.waitForTurnStart()).resolves.toMatchObject({ serviceTier: "priority" });
@@ -707,12 +693,11 @@ describe("Codex app-server provider controls", () => {
       await runTurn(agentId, "priority");
     });
 
-    test("from config.json defaults runs Fast and shows it through the agent's own tier", async () => {
-      const { manager, create, shownSpeed, runTurn } = createLegacyFastHarness({ fast_mode: true });
+    test("from config.json defaults runs Fast and is shown as Fast", async () => {
+      const { create, shownSpeed, runTurn } = createLegacyFastHarness({ fast_mode: true });
       const agentId = await create();
-      await manager.flush();
 
-      expect(shownSpeed(agentId)).toMatchObject({ own: { service_tier: "priority" }, ...FAST });
+      expect(shownSpeed(agentId)).toMatchObject(FAST);
       await runTurn(agentId, "priority");
     });
 
@@ -722,10 +707,7 @@ describe("Codex app-server provider controls", () => {
       expect(shownSpeed(agentId).selected).toBe("default");
 
       await manager.setAgentOptions(agentId, { fast_mode: true });
-      // The provider names the tier it resolved on the next tick, after the patch is stored.
-      await new Promise((resolve) => setImmediate(resolve));
-      await manager.flush();
-      expect(shownSpeed(agentId)).toMatchObject(FAST);
+      expect(shownSpeed(agentId)).toMatchObject({ own: { service_tier: "priority" }, ...FAST });
       await runTurn(agentId, "priority");
 
       await manager.setAgentOptions(agentId, { service_tier: "default" });
@@ -739,6 +721,16 @@ describe("Codex app-server provider controls", () => {
       await manager.setAgentOptions(agentId, { service_tier: "priority" });
       expect(shownSpeed(agentId)).toMatchObject({ selected: "priority" });
       await runTurn(agentId, "priority");
+    });
+
+    test("removing the speed returns the agent to Normal", async () => {
+      const { create, manager, shownSpeed } = createLegacyFastHarness();
+      const agentId = await create({ service_tier: "priority" });
+      expect(shownSpeed(agentId)).toMatchObject(FAST);
+
+      await manager.setAgentOptions(agentId, { service_tier: null });
+
+      expect(shownSpeed(agentId)).toMatchObject({ own: undefined, selected: "default" });
     });
   });
 

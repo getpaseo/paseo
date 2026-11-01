@@ -751,7 +751,7 @@ export class OmpAgentSession implements AgentSession {
     this.restartRuntime = options.restartRuntime;
     this.config = options.config;
     this.state = options.initialState;
-    this.openOptionReport = this.fastModeDifference(options.config.providerOptions?.fast_mode);
+    this.openOptionsPatch = this.fastModeDifference(options.config.providerOptions?.fast_mode);
     this.currentModeId = options.currentModeId ?? null;
     this.logger = options.logger;
     this.live = options.live ?? true;
@@ -821,9 +821,9 @@ export class OmpAgentSession implements AgentSession {
     ];
   }
 
-  async applyOptions(options: ProviderOptions): Promise<void> {
-    const requested = options.fast_mode;
-    if (requested === undefined) return;
+  async applyOptions(options: ProviderOptions): Promise<Record<string, unknown>> {
+    if (options.fast_mode === undefined) return {};
+    const requested = options.fast_mode ?? false;
     if (typeof requested !== "boolean") throw new Error("OMP fast mode requires a boolean");
     if (!hasOmpFastMode(this.state)) throw new Error("OMP fast mode is unavailable");
     if (requested !== this.state.fastModeEnabled) {
@@ -834,7 +834,7 @@ export class OmpAgentSession implements AgentSession {
         fastModeActive: result.active,
       };
     }
-    this.config.providerOptions = { ...this.config.providerOptions, fast_mode: requested };
+    return this.fastModeDifference(requested);
   }
 
   /** The option patch when the runtime's fast mode is not what `given` stands for; unset is off. */
@@ -844,8 +844,8 @@ export class OmpAgentSession implements AgentSession {
     return (given ?? false) === enabled ? {} : { fast_mode: enabled };
   }
 
-  /** How the opened session differs from the options it was given; reported at first subscribe. */
-  private openOptionReport: Record<string, unknown>;
+  /** How the opened session differs from the options it was given. */
+  readonly openOptionsPatch: Record<string, unknown>;
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
     return runProviderTurn({
@@ -1007,10 +1007,6 @@ export class OmpAgentSession implements AgentSession {
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
     this.subscribers.add(callback);
-    if (Object.keys(this.openOptionReport).length > 0) {
-      callback({ type: "options_changed", provider: this.provider, patch: this.openOptionReport });
-      this.openOptionReport = {};
-    }
     return () => {
       this.subscribers.delete(callback);
     };

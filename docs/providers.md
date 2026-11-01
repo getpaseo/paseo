@@ -36,18 +36,18 @@ for native keys and examples.
 option and read `options`; they hold no value of their own. Any option can be read and set with
 or without a control.
 
-- **Create and resume.** The provider opens with the options it is given and reports nothing
-  about them while opening. If the session ended up different, it says so once afterwards, as an
-  `options_changed` event. Events emitted before the daemon subscribes are dropped, so emit that
-  report from `subscribe`.
-- **Live apply.** `applyOptions` receives only the keys the patch set. The daemon stores the patch
-  after the call resolves, onto the agent's options as they are at that moment, so the last write
-  wins. Throwing rejects the whole patch. A result that differs from the request is reported
-  afterwards, not from inside the call.
+- **Create and resume.** The provider opens with the options it is given and emits nothing about
+  them while opening. If the session ended up different, it sets `openOptionsPatch` before
+  `createSession`/`resumeSession` resolves. The daemon stores it before the agent is published.
+- **Live apply.** `applyOptions` receives the keys the patch touches, resolved against the
+  `config.json` defaults. A removal arrives as the default the key falls back to, or `null` when
+  there is none; the provider returns the setting to its own default if it can, or throws to
+  reject. It returns the options it ended up with when they differ from the request. The daemon
+  stores the patch and that result in one step after the call resolves, onto the agent's options
+  as they are at that moment, so the last write wins. Throwing rejects the whole patch and
+  nothing is stored. Emit nothing from inside the call.
 - **Provider-initiated changes.** A setting the provider changes on its own is an
-  `options_changed`. The daemon stores and forwards it and does not push the old value back.
-- **Removal.** Removing an option drops the key and sends the provider nothing. The session
-  keeps its current setting until the next open.
+  `options_changed` event. The daemon stores and forwards it and does not push the old value back.
 
 Exact MCP preapproval is a separate daemon-owned contract. A new provider must fail
 closed for Hub unattended execution until it can approve one exact injected MCP

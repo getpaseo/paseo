@@ -646,9 +646,36 @@ describe("OMP agent client and session", () => {
     await session.applyOptions?.({ fast_mode: true });
     expect(omp.runtime().setFastModeRequests).toEqual([true]);
 
-    // Removing the option sends nothing: the patch carries no key, so the runtime keeps Fast.
+    // A patch without the key leaves the runtime alone.
     await session.applyOptions?.({});
     expect(omp.runtime().setFastModeRequests).toEqual([true]);
+  });
+
+  test("a removal turns Fast off, and a Fast the runtime keeps is returned", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const session = omp.requireSession();
+    omp.runtime().fastModeResult = { enabled: true, active: true };
+    await session.applyOptions?.({ fast_mode: true });
+
+    omp.runtime().fastModeResult = { enabled: false, active: false };
+    await expect(session.applyOptions?.({ fast_mode: null })).resolves.toEqual({});
+    expect(omp.runtime().setFastModeRequests).toEqual([true, false]);
+
+    omp.runtime().fastModeResult = { enabled: false, active: false };
+    await expect(session.applyOptions?.({ fast_mode: true })).resolves.toEqual({
+      fast_mode: false,
+    });
+    expect(omp.eventTypes()).not.toContain("options_changed");
+  });
+
+  test("a session opened without the Fast it was given says so in its open patch", async () => {
+    const omp = new OmpHarness();
+    // The fake runtime answers the open-time Fast request with Fast off.
+    await omp.start({ providerOptions: { fast_mode: true } });
+
+    expect(omp.requireSession().openOptionsPatch).toEqual({ fast_mode: false });
+    expect(omp.eventTypes()).not.toContain("options_changed");
   });
 
   test("reports a Fast change the runtime made on its own", async () => {
