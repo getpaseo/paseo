@@ -2,7 +2,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import type { PluginIcon, PluginScreenParams, PluginScreenProps } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import { X } from "lucide-react-native";
-import { useCallback, useMemo, type ComponentType } from "react";
+import { useCallback, useEffect, useMemo, useState, type ComponentType } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HeaderIconBadge } from "@/components/headers/header-icon-badge";
@@ -60,6 +60,7 @@ function SurfaceRenderer({
   host,
   params,
   theme,
+  setTitle,
 }: {
   Surface: ComponentType<PluginScreenProps>;
   plugin: NonNullable<ReturnType<typeof useInstalledPlugin>>;
@@ -67,11 +68,20 @@ function SurfaceRenderer({
   host: PluginScreenProps["host"];
   params: PluginScreenParams;
   theme: PluginTheme;
+  setTitle: PluginScreenProps["setTitle"];
 }) {
   const navigation = usePluginHostNavigation(host.id);
+  useEffect(() => () => setTitle(null), [setTitle]);
   return (
     <PluginInstallationProvider plugin={plugin}>
-      <Surface theme={theme} host={host} layout={layout} navigation={navigation} params={params} />
+      <Surface
+        theme={theme}
+        host={host}
+        layout={layout}
+        navigation={navigation}
+        params={params}
+        setTitle={setTitle}
+      />
     </PluginInstallationProvider>
   );
 }
@@ -149,7 +159,7 @@ export function PluginSurfaceScreen() {
     const serverIds = getPluginSurfaceContributionServerIds(installations, pluginId, identity);
     return hosts.filter((candidate) => serverIds.includes(candidate.serverId));
   }, [hosts, identity, installations, pluginId]);
-  const title = useMemo(() => {
+  const registeredTitle = useMemo(() => {
     if (surface && plugin)
       return resolvePluginScreenTitle(surface, sidebarItem, params, (text) =>
         plugin.i18n.resolve(text, plugin.locale),
@@ -157,6 +167,19 @@ export function PluginSurfaceScreen() {
     if (sidebarItem && plugin) return plugin.i18n.resolve(sidebarItem.title, plugin.locale);
     return pluginId || "Plugin";
   }, [params, plugin, pluginId, sidebarItem, surface]);
+  const titleKey = `${serverId}/${pluginId}/${contributionKind}/${contributionId}`;
+  const [override, setOverride] = useState<{ key: string; title: string } | null>(null);
+  const setTitle = useCallback(
+    (value: string | null) => {
+      setOverride((current) => {
+        if (value !== null) return { key: titleKey, title: value };
+        if (current?.key === titleKey) return null;
+        return current;
+      });
+    },
+    [titleKey],
+  );
+  const title = override?.key === titleKey ? override.title : registeredTitle;
   const icon = sidebarItem?.icon ?? null;
   const close = useCallback(() => {
     if (router.canGoBack()) router.back();
@@ -235,6 +258,7 @@ export function PluginSurfaceScreen() {
               host={host}
               layout={layout}
               params={params}
+              setTitle={setTitle}
               uniProps={pluginThemeMapping}
             />
           </SurfaceErrorBoundary>
