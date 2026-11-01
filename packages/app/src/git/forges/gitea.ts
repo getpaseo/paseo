@@ -16,6 +16,7 @@ const GiteaMergeFactsSchema = z
     mergeable: z.boolean().optional().default(false),
     hasMerged: z.boolean().optional().default(false),
     ciStatus: z.string().nullable().optional().default(null),
+    autoMergeScheduled: z.boolean().optional().default(false),
   })
   .passthrough();
 
@@ -24,11 +25,17 @@ type GiteaMergeFacts = z.infer<typeof GiteaMergeFactsSchema>;
 const GITEA_MERGE_METHODS: CheckoutPrMergeMethod[] = ["merge", "squash", "rebase"];
 
 function deriveGiteaMergeCapability(gitea: GiteaMergeFacts): MergeCapability {
+  const autoMergeEnabled = gitea.autoMergeScheduled;
+  // only offer auto-merge while checks are running
+  // once they settle, scheduling would just merge right away
+  const hasPendingCi = gitea.ciStatus !== null && mapGiteaCommitState(gitea.ciStatus) === "pending";
   return {
+    // direct merge readiness is just mergeability
+    // policy.ts is what also gates on not having auto-merge already enabled
     directMergeReady: gitea.mergeable && !gitea.hasMerged,
-    canEnableAutoMerge: false,
-    autoMergeEnabled: false,
-    canDisableAutoMerge: false,
+    canEnableAutoMerge: !autoMergeEnabled && hasPendingCi,
+    autoMergeEnabled,
+    canDisableAutoMerge: autoMergeEnabled,
     mergeBlockedByQueue: false,
     allowedMethods: GITEA_MERGE_METHODS,
     preferredMethod: null,
