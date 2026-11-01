@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { DaemonConfigStore, applyMutableProviderConfigToOverrides } from "./daemon-config-store.js";
+import {
+  DaemonConfigStore,
+  applyMutableProviderConfigToOverrides,
+  toWireDaemonConfig,
+} from "./daemon-config-store.js";
 import { loadConfig } from "./config.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 import { readSpeechSettings } from "./speech/speech-settings.js";
@@ -196,11 +200,81 @@ describe("DaemonConfigStore", () => {
         model: "claude-opus-5",
         modeId: "plan",
         thinkingOptionId: "think-hard",
-        featureValues: { webSearch: true },
+        options: { webSearch: true },
         notes: "Use for components, layout and design tokens.",
       },
     ]);
     expect(store.get().agentProfiles).toHaveLength(1);
+  });
+
+  test("a profile written with featureValues is stored as options, and the config API answers with both", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+    // The unchanged app sends back the `options` it read plus the `featureValues` it edited.
+    await store.patch({
+      agentProfiles: [
+        {
+          id: "p",
+          name: "P",
+          provider: "claude",
+          options: { fast_mode: false },
+          featureValues: { fast_mode: true },
+        },
+      ],
+    });
+
+    expect(loadPersistedConfig(paseoHome).daemon?.agentProfiles).toEqual([
+      { id: "p", name: "P", provider: "claude", options: { fast_mode: true } },
+    ]);
+    expect(store.get().agentProfiles).toEqual([
+      { id: "p", name: "P", provider: "claude", options: { fast_mode: true } },
+    ]);
+    expect(toWireDaemonConfig(store.get()).agentProfiles).toEqual([
+      {
+        id: "p",
+        name: "P",
+        provider: "claude",
+        options: { fast_mode: true },
+        featureValues: { fast_mode: true },
+      },
+    ]);
+  });
+
+  test("a profile stored with featureValues loads as options", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+      agentProfiles: [
+        {
+          id: "legacy",
+          name: "Legacy",
+          provider: "codex",
+          featureValues: { service_tier: "fast" },
+        },
+      ],
+    });
+
+    expect(store.get().agentProfiles).toEqual([
+      { id: "legacy", name: "Legacy", provider: "codex", options: { service_tier: "fast" } },
+    ]);
   });
 
   test("patch replaces the whole agent profile list rather than merging entries", async () => {

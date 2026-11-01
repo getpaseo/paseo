@@ -85,7 +85,7 @@ import {
   createWorkspaceScriptsService,
   type WorkspaceScriptsService,
 } from "./session/workspace-scripts/workspace-scripts-service.js";
-import type { DaemonConfigStore } from "./daemon-config-store.js";
+import { toWireDaemonConfig, type DaemonConfigStore } from "./daemon-config-store.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
@@ -3069,7 +3069,10 @@ export class Session {
       case "get_daemon_config_request":
         this.emit({
           type: "get_daemon_config_response",
-          payload: { requestId: msg.requestId, config: this.daemonConfigStore.get() },
+          payload: {
+            requestId: msg.requestId,
+            config: toWireDaemonConfig(this.daemonConfigStore.get()),
+          },
         });
         return undefined;
       case "daemon.get_status.request":
@@ -3093,7 +3096,7 @@ export class Session {
             type: "set_daemon_config_response",
             payload: {
               requestId: msg.requestId,
-              config,
+              config: toWireDaemonConfig(config),
             },
           });
         });

@@ -479,16 +479,16 @@ describe("toAgentPayload", () => {
       },
     ];
     // `config.json` supplies fast_mode; the agent itself sets nothing for service_tier.
-    // Options without a control (sandbox paths, tool lists) never reach the snapshot.
+    // Options without a control are part of the snapshot too.
     const agent = createManagedAgent({
       controls,
-      effectiveOptions: { fast_mode: true, sandbox_workspace_write: { writable_roots: ["/x"] } },
+      effectiveOptions: { fast_mode: true, sandbox_mode: "workspace-write" },
     });
 
     const payload = toAgentPayload(agent);
 
     expect(payload.controls).toEqual(controls);
-    expect(payload.options).toEqual({ fast_mode: true });
+    expect(payload.options).toEqual({ fast_mode: true, sandbox_mode: "workspace-write" });
     expect(payload.features).toEqual([
       { type: "toggle", id: "fast_mode", label: "Fast mode", value: true },
       {
