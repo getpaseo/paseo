@@ -1005,7 +1005,10 @@ describe("PluginAgentClientRegistry", () => {
 
   describe("settings", () => {
     // A plugin that keeps `voice` on "direct" whatever it is asked, and takes `loud` as given.
-    async function openStubbornVoiceSession(given: Record<string, boolean | string>) {
+    async function openStubbornVoiceSession(
+      given: Record<string, boolean | string>,
+      { refuseAfterChanging = false }: { refuseAfterChanging?: boolean } = {},
+    ) {
       const state = { voice: "direct", loud: false };
       let openedSessionId = "";
       const settings = () => [
@@ -1055,7 +1058,11 @@ describe("PluginAgentClientRegistry", () => {
             const loud = input.changes.settings?.loud;
             if (typeof loud === "boolean") state.loud = loud;
             emitConfig(emit, input.sessionId);
-            emit({ type: "request.completed", requestId: input.requestId });
+            emit(
+              refuseAfterChanging
+                ? { type: "request.failed", requestId: input.requestId, error: { message: "no" } }
+                : { type: "request.completed", requestId: input.requestId },
+            );
             return true;
           }
           return false;
@@ -1081,6 +1088,17 @@ describe("PluginAgentClientRegistry", () => {
       const { session, events, changeOnItsOwn } = await openStubbornVoiceSession({});
 
       changeOnItsOwn({ loud: true });
+
+      expect(eventsOfType(events, "options_changed")).toEqual([
+        { type: "options_changed", provider: "plugin-direct", patch: { loud: true } },
+      ]);
+      await session.close();
+    });
+
+    test("a rejected apply reports what the plugin moved before refusing, since nothing is stored", async () => {
+      const { session, events } = await openStubbornVoiceSession({}, { refuseAfterChanging: true });
+
+      await expect(session.applyOptions?.({ loud: true })).rejects.toThrow("no");
 
       expect(eventsOfType(events, "options_changed")).toEqual([
         { type: "options_changed", provider: "plugin-direct", patch: { loud: true } },
