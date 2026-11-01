@@ -535,10 +535,16 @@ describe("Codex app-server provider controls", () => {
     });
   });
 
-  test("applyOptions accepts an option that has no control", async () => {
-    const { session } = await createConnectedSession();
+  test("rejects a live change to the approval policy or sandbox, which the thread fixed when it started", async () => {
+    const { session } = await createConnectedSession({
+      providerOptions: { sandbox_mode: "workspace-write" },
+    });
 
-    await expect(session.applyOptions?.({ sandbox_mode: "read-only" })).resolves.toEqual({});
+    await expect(session.applyOptions?.({ sandbox_mode: "read-only" })).rejects.toThrow(
+      /sandbox_mode.*cannot change on a running session/,
+    );
+    // The same value is not a change.
+    await expect(session.applyOptions?.({ sandbox_mode: "workspace-write" })).resolves.toEqual({});
   });
 
   test("startTurn includes serviceTier when fast mode is enabled", async () => {
