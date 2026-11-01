@@ -183,7 +183,6 @@ describe("CursorACPAgentClient model discovery", () => {
         description: "Cursor fast mode",
         tooltip: "Select Cursor fast mode",
         icon: "zap",
-        defaultValue: "false",
         choices: [
           { value: "false", label: "Off" },
           { value: "true", label: "Fast" },
@@ -328,7 +327,7 @@ describe("CursorACPAgentClient session start", () => {
     );
   });
 
-  test("removing auto_accept stops answering permission requests on its own", async () => {
+  test("removing auto_accept sends nothing, so the session keeps answering permission requests", async () => {
     const session = createCursorSession({ model: "composer-2.5" });
     await session.initializeNewSession();
     const request = {
@@ -338,16 +337,31 @@ describe("CursorACPAgentClient session start", () => {
     } as const;
 
     await session.applyOptions({ auto_accept: true });
+    // The patch for a removal carries no key; the session stays as it was until next open.
+    await session.applyOptions({});
+
     await expect(session.requestPermission({ ...request })).resolves.toEqual({
       outcome: { outcome: "selected", optionId: "allow-always" },
     });
+  });
 
-    await session.applyOptions({});
-    void session.requestPermission({ ...request });
+  test("a rejected patch leaves auto_accept as it was", async () => {
+    const session = createCursorSession({ model: "kimi-k3" });
+    await session.initializeNewSession();
+
+    await expect(
+      session.applyOptions({ auto_accept: true, [CURSOR_FAST_FEATURE_OPTION.id]: "true" }),
+    ).rejects.toThrow("acp does not expose ACP feature 'fast'");
+
+    void session.requestPermission({
+      sessionId: "session-1",
+      toolCall: { toolCallId: "tool-1", title: "Run command", kind: "execute", status: "pending" },
+      options: [{ optionId: "allow-always", name: "Always allow", kind: "allow_always" }],
+    });
     await vi.waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
   });
 
-  test("removing the Fast option returns the session to the value it started with", async () => {
+  test("applies only the selects the patch sets", async () => {
     const setSessionConfigOption = vi.fn(async (request: { value: string }) => ({
       configOptions: [fastConfigOption(request.value === "true" ? "true" : "false")],
     }));
@@ -362,16 +376,9 @@ describe("CursorACPAgentClient session start", () => {
     await session.initializeNewSession();
 
     await session.applyOptions({ [CURSOR_FAST_FEATURE_OPTION.id]: "true" });
-    // `{ fast: null }` with no config.json default reaches the provider as no key at all.
     await session.applyOptions({});
 
-    expect(setSessionConfigOption.mock.calls.map(([request]) => request.value)).toEqual([
-      "true",
-      "false",
-    ]);
-    expect(session.controls).toContainEqual(
-      expect.objectContaining({ key: "fast", defaultValue: "false" }),
-    );
+    expect(setSessionConfigOption.mock.calls.map(([request]) => request.value)).toEqual(["true"]);
   });
 
   test("still fails session start when the provider rejects a write it should accept", async () => {

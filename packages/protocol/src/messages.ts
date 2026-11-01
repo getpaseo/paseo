@@ -365,7 +365,6 @@ export const AgentOptionChoiceSchema = z.object({
   value: z.string(),
   label: z.string(),
   description: z.string().optional(),
-  aliases: z.array(z.string()).optional(),
 });
 
 export const AgentOptionToggleControlSchema = z.object({

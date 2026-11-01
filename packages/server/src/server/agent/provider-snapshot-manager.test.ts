@@ -1470,6 +1470,22 @@ describe("ProviderSnapshotManager public surface", () => {
       });
 
       expect(resolved).toEqual({ modeId: "base", providerOptions: { auto_accept: true } });
+
+      // A parent whose Auto Accept comes from the provider's config.json default has no own
+      // option; it is classified on its effective options.
+      const inheriting = await manager.resolveCreateConfig({
+        cwd: "/tmp/project",
+        provider: "opencode",
+        requestedMode: "base",
+        providerOptions: undefined,
+        parent: {
+          ...parent,
+          config: { provider: "opencode", cwd: "/tmp/project" },
+          effectiveOptions: { auto_accept: true },
+        },
+        unattended: false,
+      });
+      expect(inheriting).toEqual({ modeId: "base", providerOptions: { auto_accept: true } });
     } finally {
       manager.destroy();
     }

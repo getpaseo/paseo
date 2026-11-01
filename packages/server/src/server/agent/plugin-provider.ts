@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { PluginSessionHistory } from "./plugin-session-history.js";
 import { resolve as resolvePath } from "node:path";
 import type { Logger } from "pino";
@@ -1133,6 +1134,7 @@ class PluginAgentClient implements AgentClient {
         });
       },
       bind,
+      config.settings,
     );
     bind(bridge);
     return session;
@@ -1201,6 +1203,9 @@ class PluginAgentSession implements AgentSession {
   >();
   private readonly childSnapshots = new Map<string, Map<string, TimelineTextSnapshot>>();
   private unsubscribe: (() => void) | null = null;
+  /** How the opened session differs from the settings it was given; reported at first subscribe. */
+  private openOptionReport: Record<string, JsonValue> = {};
+  private knownSettings: Record<string, JsonValue> = {};
   private currentTurnId: string | null = null;
   private closed = false;
   private replay: {
@@ -1221,8 +1226,13 @@ class PluginAgentSession implements AgentSession {
       state: ProviderConfigState,
     ) => Promise<ProviderRuntimeSession>,
     private readonly onBind: (bridge: ProviderRuntimeSession) => void,
+    givenSettings: Readonly<Record<string, JsonValue>>,
   ) {
     this.subagentIdsBySession.set(bridge.id, null);
+    this.openOptionReport = Object.fromEntries(
+      Object.entries(this.settingDifferences(givenSettings)).filter(([id]) => id in givenSettings),
+    );
+    this.knownSettings = this.currentSettings();
     for (const event of bridge.history) this.accept(event, false);
     // Opening notices arrive before the manager subscribes to the session.
     // Commit them on registration and replay the same timestamps from history.
@@ -1256,14 +1266,12 @@ class PluginAgentSession implements AgentSession {
               key: setting.id,
               label: setting.label,
               ...(setting.description ? { description: setting.description } : {}),
-              defaultValue: setting.value,
             }
           : {
               type: "select",
               key: setting.id,
               label: setting.label,
               ...(setting.description ? { description: setting.description } : {}),
-              ...(setting.value !== null ? { defaultValue: setting.value } : {}),
               choices: setting.options.map((option) => ({
                 value: option.value,
                 label: option.label,
@@ -1329,6 +1337,10 @@ class PluginAgentSession implements AgentSession {
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
     this.listeners.add(callback);
+    if (Object.keys(this.openOptionReport).length > 0) {
+      callback({ type: "options_changed", provider: this.provider, patch: this.openOptionReport });
+      this.openOptionReport = {};
+    }
     return () => this.listeners.delete(callback);
   }
 
@@ -1430,13 +1442,12 @@ class PluginAgentSession implements AgentSession {
     const settings: Record<string, JsonValue> = {};
     for (const setting of this.bridge.config.settings) {
       const value = options[setting.id];
-      if (value !== undefined && value !== setting.value) {
-        settings[setting.id] = toJsonValue(value, `setting '${setting.id}'`);
-      }
+      if (value === undefined) continue;
+      settings[setting.id] = toJsonValue(value, `setting '${setting.id}'`);
     }
-    if (Object.keys(settings).length > 0) {
-      await this.bridge.configure({ settings });
-    }
+    if (Object.keys(settings).length === 0) return;
+    Object.assign(this.knownSettings, settings);
+    await this.bridge.configure({ settings });
   }
 
   async revertConversation(input: { messageId: string }): Promise<void> {
@@ -1618,10 +1629,35 @@ class PluginAgentSession implements AgentSession {
     };
   }
 
+  private currentSettings(): Record<string, JsonValue> {
+    return Object.fromEntries(
+      this.bridge.config.settings.map((setting) => [setting.id, setting.value]),
+    );
+  }
+
+  /** Settings whose value differs from `known`: the plugin's own change or its opening state. */
+  private settingDifferences(
+    known: Readonly<Record<string, JsonValue>>,
+  ): Record<string, JsonValue> {
+    const patch: Record<string, JsonValue> = {};
+    for (const [id, value] of Object.entries(this.currentSettings())) {
+      if (!isDeepStrictEqual(known[id], value)) patch[id] = value;
+    }
+    return patch;
+  }
+
+  private reportSettingChanges(): AgentStreamEvent[] {
+    const patch = this.settingDifferences(this.knownSettings);
+    if (Object.keys(patch).length === 0) return [];
+    this.knownSettings = this.currentSettings();
+    return [{ type: "options_changed", provider: this.provider, patch }];
+  }
+
   private translateConfig(
     event: Extract<ProviderEvent, { type: "session.config" }>,
   ): AgentStreamEvent[] {
     return [
+      ...this.reportSettingChanges(),
       {
         type: "mode_changed",
         provider: this.provider,

@@ -290,7 +290,7 @@ describe("OpenCode auto_accept feature", () => {
     await session.close();
   });
 
-  test("stops auto-approving once auto_accept is removed from the options", async () => {
+  test("keeps auto-approving after auto_accept is removed from the options", async () => {
     const { openCodeClient, runtime } = mockOpenCodeClient({
       events: [toolPermissionEvent(), idleEvent()],
     });
@@ -305,14 +305,12 @@ describe("OpenCode auto_accept feature", () => {
       providerOptions: { auto_accept: true },
     });
 
-    // The daemon passes effective options; with the key removed and no config default it is absent.
+    // Removal sends the provider nothing: it keeps its current setting until next open.
     await session.applyOptions?.({});
     await session.run("Run verification");
 
-    expect(openCodeClient.calls.permissionReply).toEqual([]);
-    expect(session.getPendingPermissions()).toEqual([
-      expect.objectContaining({ id: "permission-1" }),
-    ]);
+    expect(openCodeClient.calls.permissionReply).toHaveLength(1);
+    expect(session.getPendingPermissions()).toEqual([]);
 
     await session.close();
   });

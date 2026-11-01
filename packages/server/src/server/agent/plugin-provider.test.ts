@@ -999,6 +999,78 @@ describe("PluginAgentClientRegistry", () => {
     await agent.session?.close();
   });
 
+  test("reports a setting the plugin opened differently once, and applies only the options it is given", async () => {
+    const settings = (voice: string) => [
+      {
+        type: "select" as const,
+        id: "voice",
+        label: "Voice",
+        value: voice,
+        options: [
+          { label: "Direct", value: "direct" },
+          { label: "Other", value: "other" },
+        ],
+      },
+      { type: "toggle" as const, id: "loud", label: "Loud", value: false },
+    ];
+    const state = { voice: "direct" };
+    const harness = createProviderHarness({
+      async handleInput(input, emit) {
+        if (input.type === "session.open") {
+          emit({
+            type: "session.opened",
+            requestId: input.requestId,
+            sessionId: input.sessionId,
+            capabilities: CAPABILITIES,
+            restoration: "core",
+            persistence: { version: 1, data: { token: "root" } },
+            cwd: input.config.cwd,
+          });
+          emit({
+            type: "session.config",
+            sessionId: input.sessionId,
+            config: {
+              model: "plugin-model",
+              mode: "build",
+              models: [{ id: "plugin-model", label: "Plugin model" }],
+              modes: [{ id: "build", label: "Build" }],
+              thinkingOptions: [],
+              settings: settings(state.voice),
+            },
+          });
+          emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+          return true;
+        }
+        return false;
+      },
+    });
+    const logger = createTestLogger();
+    const plugins = new PluginAgentClientRegistry(logger);
+    plugins.replace([harness.registration]);
+    const client = plugins.clients()["plugin-direct"]!;
+    const session = await client.createSession({
+      provider: "plugin-direct",
+      cwd: tmpdir(),
+      providerOptions: { voice: "other", loud: false },
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    session.subscribe((event) => events.push(event));
+
+    // The plugin opened on "direct" although "other" was asked for: said once, on subscribe.
+    expect(eventsOfType(events, "options_changed")).toEqual([
+      { type: "options_changed", provider: "plugin-direct", patch: { voice: "direct" } },
+    ]);
+
+    await session.applyOptions?.({ loud: true });
+    const configure = harness.inputs.findLast((input) => input.type === "session.configure");
+    expect(configure).toMatchObject({ changes: { settings: { loud: true } } });
+    expect(Object.keys((configure as { changes: { settings: object } }).changes.settings)).toEqual([
+      "loud",
+    ]);
+    await session.close();
+  });
+
   test.each([
     { options: { nested: { base: true, replace: "config" }, list: [1, 2], scalar: "config" } },
     { params: { nested: { base: true, replace: "config" }, list: [1, 2], scalar: "config" } },
@@ -1516,7 +1588,6 @@ describe("PluginAgentClientRegistry", () => {
         type: "select",
         key: "voice",
         label: "Voice",
-        defaultValue: "direct",
         choices: [{ value: "direct", label: "Direct" }],
       },
     ]);

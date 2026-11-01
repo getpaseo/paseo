@@ -158,11 +158,6 @@ export interface AgentOptionChoice {
   value: string;
   label: string;
   description?: string;
-  /**
-   * Other stored option values that select this choice. A saved value the provider has since
-   * renamed still reads back as this choice.
-   */
-  aliases?: string[];
 }
 
 interface AgentOptionControlBase {
