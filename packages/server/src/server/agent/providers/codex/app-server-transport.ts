@@ -8,7 +8,7 @@ import { ProviderLineReader, ProviderStreamLimitError } from "../jsonl-frame-dec
 
 // A measured long-thread resume was 19.75 MB; preserve the existing 32 MiB fixture
 // with 4x margin for longer threads. This is provider stdout, not the client protocol.
-export const CODEX_PROVIDER_LINE_BYTES = 512 * 1024 * 1024;
+export const CODEX_PROVIDER_LINE_BYTES = 128 * 1024 * 1024;
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 const APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;

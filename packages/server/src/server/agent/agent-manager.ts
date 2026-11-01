@@ -1324,10 +1324,23 @@ export class AgentManager {
       limit: Math.min(40, Math.max(1, options?.limit || 40)),
       wholeTurns: false,
     };
-    if (this.durableTimelineStore) {
-      return this.durableTimelineStore.fetchCommitted(id, boundedOptions);
+    for (;;) {
+      const page = this.timelineStore.fetch(id, boundedOptions);
+      // Projection may expand a page to preserve overlapping source coverage.
+      // Bound actual serialized bytes too, before the socket sees the response.
+      if (
+        page.rows.length <= 200 &&
+        Buffer.byteLength(JSON.stringify(page), "utf8") <= 8 * 1024 * 1024
+      ) {
+        return page;
+      }
+      if (boundedOptions.limit === 1) {
+        throw new Error(
+          "A timeline coverage span exceeds the 8 MiB page budget; history is preserved on disk.",
+        );
+      }
+      boundedOptions.limit = Math.max(1, Math.floor(boundedOptions.limit / 2));
     }
-    return this.timelineStore.fetch(id, boundedOptions);
   }
 
   listProviderSubagents(parentAgentId: string): ProviderSubagentDescriptor[] {
@@ -3980,12 +3993,7 @@ export class AgentManager {
     const durableTimelineHasRows =
       timelineAlreadyPrimed ||
       (durableTimelineSeed != null && (durableTimelineSeed.nextSeq ?? 1) > 1);
-    // Imported histories can contain tens of thousands of rows. Keep only the
-    // sequence metadata in memory; fetch bounded pages from the durable store.
-    const timelineSeed =
-      this.durableTimelineStore && options?.timelineRows?.length
-        ? { nextSeq: options.timelineNextSeq, timestamp: now.toISOString() }
-        : (explicitTimelineSeed ?? durableTimelineSeed);
+    const timelineSeed = explicitTimelineSeed ?? durableTimelineSeed;
     if (timelineSeed || !this.timelineStore.has(agentId)) {
       this.timelineStore.initialize(agentId, timelineSeed ?? { timestamp: now.toISOString() });
     }
