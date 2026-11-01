@@ -563,6 +563,39 @@ describe("Codex app-server provider controls", () => {
     await expect(appServer.waitForTurnStart()).resolves.toMatchObject({ serviceTier: "priority" });
   });
 
+  test("a live service_tier: fast is returned as the model's Fast tier", async () => {
+    const { session, appServer } = await createConnectedSession();
+
+    await expect(session.applyOptions?.({ service_tier: "fast" })).resolves.toEqual({
+      service_tier: "priority",
+    });
+
+    await session.startTurn("hello");
+    await expect(appServer.waitForTurnStart()).resolves.toMatchObject({ serviceTier: "priority" });
+  });
+
+  test("switching to a model without the speed tier says Normal and keeps it so on the way back", async () => {
+    const models = [
+      ...TEST_SPEED_MODELS,
+      { id: "plain", isDefault: false, defaultReasoningEffort: "medium", serviceTiers: [] },
+    ];
+    const { session, appServer } = await createConnectedSession(
+      { model: "gpt-5.4", providerOptions: { service_tier: "priority" } },
+      { models },
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.setModel?.("plain");
+    await session.setModel?.("gpt-5.4");
+
+    expect(events.filter((event) => event.type === "options_changed")).toEqual([
+      { type: "options_changed", provider: "codex", patch: { service_tier: "default" } },
+    ]);
+    await session.startTurn("hello");
+    await expect(appServer.waitForTurnStart()).resolves.toMatchObject({ serviceTier: "default" });
+  });
+
   describe("a pre-v0.10 fast_mode: true option", () => {
     function createLegacyFastHarness(configDefaults: Record<string, unknown> = {}) {
       const appServer = createFakeCodexAppServer({
