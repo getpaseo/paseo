@@ -12,12 +12,7 @@ import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 import type { FileChange, FileObserver, SubscribeToFileChanges } from "./file-observer/index.js";
 
 function createLogger(): pino.Logger {
-  const logger = {
-    child: () => logger,
-    debug: vi.fn(),
-    warn: vi.fn(),
-  };
-  return logger as unknown as pino.Logger;
+  return pino({ level: "warn" });
 }
 
 function createFacts(cwd: string): CheckoutSnapshotFacts {
@@ -232,7 +227,14 @@ test("recursive observation updates tracked state and prunes ignored storms", as
 
   await vi.waitFor(
     () => {
-      expect(activeWatcherCount).toBe(2);
+      expect(
+        activeWatcherCount,
+        JSON.stringify({
+          observer: observer.getDiagnostics(),
+          service: service.getMetrics(),
+          deliveredEvents,
+        }),
+      ).toBe(2);
       expect(workspaceRuntimeStore.get(repoDir)).not.toBeNull();
       expect(service.getMetrics()).toMatchObject({
         workspaceObservationSetupInFlightCount: 0,
@@ -575,29 +577,48 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
       await symlink(worktree, alias, process.platform === 'win32' ? 'junction' : 'dir');
       const subscription = await service.requestWorkingTreeWatch(alias, () => { notifications++; });
       const events = Array.from({ length: process.env.GIT_IO_TRACE ? 2 : 10000 }, (_, i) => ({ type: 'update', path: join(i % 2 ? alias : worktree, 'ignored', 'noise') }));
-      // A shared CI runner can deschedule the child during a wall-clock sample.
-      // Keep the 20ms gate, but take three independent batches and require one
-      // responsive callback/timer pair. All batches must remain filesystem-free.
-      const samples = [];
-      for (let trial = 0; trial < (process.env.GIT_IO_TRACE ? 1 : 3); trial++) {
-        await tick();
-        let fsCalls = 0;
-        const hook = createHook({ init(_id, type) { if (type.startsWith('FSREQ')) fsCalls++; } });
-        await marker('FILTER_START');
-        hook.enable();
-        const started = performance.now();
-        const pulse = new Promise((resolve) => setTimeout(() => resolve(performance.now() - started), 0));
+      let fsCalls = 0;
+      const hook = createHook({ init(_id, type) { if (type.startsWith('FSREQ')) fsCalls++; } });
+      // Collect repository setup and event-fixture garbage before measuring
+      // the cold filter. Allocations made by the filter still count.
+      global.gc();
+      await tick();
+      await marker('FILTER_START');
+      // Schedule the control only after marker IO settles, so it cannot run
+      // and allocate garbage before the cold filter starts. No await may
+      // separate this scheduling from the synchronous measurement.
+      const threadCpuUsage = Reflect.get(process, 'threadCpuUsage');
+      let unrelatedWorkStarted = false;
+      const unrelatedWork = tick().then(() => {
+        unrelatedWorkStarted = true;
+        const started = threadCpuUsage();
+        while (true) {
+          const cpu = threadCpuUsage(started);
+          if (cpu.user + cpu.system >= 80000) break;
+        }
+      });
+      assert.equal(unrelatedWorkStarted, false, 'control work must not contaminate the cold filter');
+      hook.enable();
+      let blockingMs;
+      try {
+        // This callback is synchronous: measure its own span, without waiting
+        // for marker IO, loader messages or other event-loop callbacks.
+        const startedAt = performance.now();
+        const startedCpu = threadCpuUsage();
         callback(null, events);
-        const filterMs = performance.now() - started;
+        const cpu = threadCpuUsage(startedCpu);
+        // Cap coarse Windows CPU accounting by elapsed time; exclude descheduling.
+        blockingMs = Math.min(performance.now() - startedAt, (cpu.user + cpu.system) / 1000);
+      } finally {
         hook.disable();
-        const loopGapMs = await pulse;
         await marker('FILTER_END');
-        assert.equal(fsCalls, 0, "filesystem calls");
-        assert.equal(notifications, 0, "ignored event notification");
-        samples.push({ filterMs, loopGapMs, fsCalls });
       }
-      console.log(JSON.stringify({ ...samples[0], samples }));
-      assert.ok(process.env.GIT_IO_TRACE || samples.some(({ filterMs, loopGapMs }) => filterMs < 20 && loopGapMs < 20), 'no responsive filter sample: ' + JSON.stringify(samples));
+      await unrelatedWork;
+      assert.equal(unrelatedWorkStarted, true, 'control work must run outside the filter span');
+      assert.equal(fsCalls, 0, "filesystem calls");
+      assert.equal(notifications, 0, "ignored event notification");
+      assert.ok(blockingMs < 20, 'blocking filter work: ' + blockingMs);
+      console.log(JSON.stringify({ blockingMs, fsCalls }));
       // Alias identity remains useful after deletion: no per-event realpath can recover this file.
       callback(null, [{ type: 'delete', path: join(worktree, 'tracked.txt') }]);
       assert.equal(notifications, 1);
@@ -617,6 +638,7 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
     const { stdout, stderr } = await promisify(execFile)(
       process.execPath,
       [
+        "--expose-gc",
         "--import",
         "tsx",
         ...(tracing ? ["--trace-sync-io"] : []),
@@ -637,7 +659,9 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
       const output = stderr.split(`${phase}_START\n`)[1]?.split(`${phase}_END\n`)[0];
       expect(output, `${phase}: synchronous filesystem IO`).toBe("");
     }
-    expect(JSON.parse(stdout.trim().split("\n")[0])).toMatchObject({ fsCalls: 0 });
+    const measurement = JSON.parse(stdout.trim().split("\n")[0]);
+    console.info("Git filter budget", { tracing, ...measurement });
+    expect(measurement).toMatchObject({ fsCalls: 0 });
   }
 }, 60_000);
 

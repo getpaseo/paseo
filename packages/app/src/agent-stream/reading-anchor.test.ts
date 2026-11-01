@@ -2,6 +2,24 @@ import { describe, expect, it } from "vitest";
 import { createReadingAnchor } from "./reading-anchor";
 
 describe("reading anchor", () => {
+  it("pins the folded turn host when a prepend replaces the row being read", () => {
+    const anchor = createReadingAnchor();
+    anchor.reconcile(0, [{ id: "tool", top: 48, height: 200 }]);
+    const replacements = new Map([["tool", "prompt"]]);
+    expect(anchor.getRowId(replacements)).toBe("prompt");
+    expect(anchor.project(0, { id: "prompt", top: 1048 }, replacements)).toBe(1000);
+    // Projection does not consume the correction; an unmounted host keeps the pin.
+    expect(anchor.reconcile(0, [], false, replacements)).toBe(0);
+    expect(anchor.getRowId()).toBe("tool");
+    expect(
+      anchor.reconcile(0, [{ id: "prompt", top: 1048, height: 100 }], false, replacements),
+    ).toBe(1000);
+    expect(anchor.getRowId()).toBe("prompt");
+    expect(
+      anchor.reconcile(1000, [{ id: "prompt", top: 1048, height: 100 }], false, replacements),
+    ).toBe(1000);
+  });
+
   const rows = [
     { id: "above", top: 0, height: 500 },
     { id: "reading", top: 500, height: 500 },

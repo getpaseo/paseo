@@ -1,4 +1,4 @@
 {
   "id": "agent-tools",
-  "requirements": { "paseo": ">=0.13.2" }
+  "requirements": { "paseo": ">=0.14.0-beta.1" }
 }

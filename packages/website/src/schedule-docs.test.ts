@@ -4,7 +4,7 @@ import { expect, it } from "vitest";
 
 const docsRoot = path.resolve(import.meta.dirname, "../../../public-docs");
 
-it.each(["schedules.md", "schedules-cli.md", "mcp.md", "worktrees.md"])(
+it.each(["schedules.md", "schedules-cli.md", "mcp.md", "worktrees/index.md"])(
   "%s makes schedule run retention discoverable",
   async (file) => {
     const markdown = await readFile(path.join(docsRoot, file), "utf8");

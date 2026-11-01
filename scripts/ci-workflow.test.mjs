@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { readFileSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,7 +24,10 @@ const gatedCiJobs = new Map([
     "server-integration-windows",
     { name: "server-integration (windows-latest)", contract: "server" },
   ],
-  ["server-tests-macos", { name: "server-tests (macos-14, file observation)", contract: "server" }],
+  [
+    "server-tests-macos",
+    { name: "server-tests (macos-latest, file observation)", contract: "server" },
+  ],
   ["desktop-tests-ubuntu", { name: "desktop-tests (ubuntu-latest)", contract: "desktop" }],
   ["desktop-tests-windows", { name: "desktop-tests (windows-latest)", contract: "desktop" }],
   ["app-tests", { name: "app-tests", contract: "app" }],
@@ -155,6 +158,14 @@ test("focused contracts stay inside existing required checks", () => {
   assert.match(desktop, /npm run test --workspace=@getpaseo\/desktop/);
   assert.ok(!jobs.has("desktop-browser-bridge"));
   assert.ok(!jobs.has("playwright-desktop"));
+});
+
+test("ordinary CI keeps app tests without prebuilding Android modules", () => {
+  const source = readFileSync(ciWorkflowPath, "utf8");
+  const app = jobBlocks(source).get("app-tests").join("\n");
+  assert.match(app, /npm run build:app-deps/);
+  assert.match(app, /npm run test --workspace=@getpaseo\/app/);
+  assert.doesNotMatch(source, /test:android|expo prebuild|gradlew|actions\/setup-java/);
 });
 
 test("server builds exclude test utilities at every domain depth", () => {
@@ -639,5 +650,77 @@ process.exit(code);
         rmSync(directory, { recursive: true, force: true });
       }
     });
+  }
+});
+
+// GitHub retires macOS 14 on 2026-11-02; brownouts already reject these jobs.
+test("workflows avoid retired macOS 14 runners", () => {
+  for (const path of filesUnder(".github/workflows", (candidate) => /\.ya?ml$/.test(candidate))) {
+    assert.doesNotMatch(
+      readFileSync(new URL(path, repoRoot), "utf8"),
+      /macos-14(?:-large|-xlarge)?\b/,
+      path,
+    );
+  }
+});
+
+test("macOS jobs use latest runners while preserving release architectures", () => {
+  for (const [workflow, jobId] of [
+    [ciWorkflowPath, "server-tests-macos"],
+    [nixWorkflowPath, "build-desktop-darwin"],
+  ]) {
+    assert.match(
+      jobBlocks(readFileSync(workflow, "utf8")).get(jobId).join("\n"),
+      /^    runs-on: macos-latest$/m,
+    );
+  }
+  const release = readFileSync(new URL(".github/workflows/desktop-release.yml", repoRoot), "utf8");
+  assert.match(release, /runner: macos-latest\n\s+electron_arch: arm64/);
+  // GitHub has no standard macos-latest-intel alias; use the newest Intel image.
+  assert.match(release, /runner: macos-26-intel\n\s+electron_arch: x64/);
+});
+
+test("Nix desktop packaging resolves the workspace-local builder", () => {
+  const source = readFileSync(new URL("nix/desktop-package.nix", repoRoot), "utf8");
+  const invocation = source.match(/^\s+([^\n]*electron-builder) \\\n/m)?.[1];
+  assert.ok(invocation, "Nix invokes the desktop packaging tool");
+  const directory = mkdtempSync(join(tmpdir(), "nix-builder-resolution-"));
+  try {
+    const desktop = join(directory, "packages/desktop");
+    mkdirSync(join(desktop, "node_modules/.bin"), { recursive: true });
+    mkdirSync(join(desktop, "node_modules/electron-builder"));
+    writeFileSync(
+      join(desktop, "node_modules/electron-builder/package.json"),
+      JSON.stringify({
+        name: "electron-builder",
+        version: "1.0.0",
+        bin: { "electron-builder": "../.bin/electron-builder" },
+      }),
+    );
+    writeFileSync(
+      join(directory, "package.json"),
+      JSON.stringify({ private: true, workspaces: ["packages/desktop"] }),
+    );
+    writeFileSync(
+      join(desktop, "package.json"),
+      JSON.stringify({
+        name: "desktop-fixture",
+        private: true,
+        devDependencies: { "electron-builder": "1.0.0" },
+      }),
+    );
+    writeFileSync(
+      join(desktop, "node_modules/.bin/electron-builder"),
+      '#!/bin/sh\nprintf "workspace-builder\\n"\n',
+      { mode: 0o755 },
+    );
+    const result = spawnSync("sh", ["-c", `${invocation} --version`], {
+      cwd: desktop,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), "workspace-builder");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });

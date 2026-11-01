@@ -67,6 +67,7 @@ export const zhCN: TranslationResources = {
       daemonClientUnavailable: "Daemon client 不可用",
       daemonClientDisconnected: "Daemon client 已断开连接",
       noFileFound: "未找到 {{token}} 对应的文件",
+      folderOutsideWorkspace: "{{path}} 不在此工作区内",
       unexpectedDictationError: "处理听写时发生意外错误。",
     },
     connectionStatus: {
@@ -616,6 +617,7 @@ export const zhCN: TranslationResources = {
     terminal: {
       hostDisconnected: "Host 未连接",
       updateHost: "请更新主机以使用原生终端渲染器。",
+      restoreRequiresUpdate: "更新主机以查看终端。",
       unableToSubscribe: "无法订阅 Terminal",
       fileUploaded: "文件已上传",
       pasteFileFailed: "无法粘贴文件：{{reason}}",
@@ -1891,7 +1893,6 @@ export const zhCN: TranslationResources = {
     parent: {
       backToParent: "返回父代理",
       backTo: "返回 {{label}}",
-      parent: "父代理",
       parentAgent: "父代理",
       openParent: "打开父代理",
     },
@@ -1991,17 +1992,17 @@ export const zhCN: TranslationResources = {
   toolCallDetails: {
     error: "错误",
     empty: "没有可用的更多详情",
-    subAgentActivity: "Sub-agent 活动",
     input: "输入",
     output: "输出",
   },
   turnSummary: {
-    messages: {
-      one: "写了 {{count}} 条消息",
-      other: "写了 {{count}} 条消息",
-    },
+    details: "查看轮次详情",
+    sentBy: "由 {{name}} 发送",
+    showMore: "展开",
+    showLess: "收起",
   },
   toolCallGroup: {
+    thought: "已思考",
     editedFiles: {
       one: "编辑了 {{count}} 个文件",
       other: "编辑了 {{count}} 个文件",
@@ -2069,6 +2070,11 @@ export const zhCN: TranslationResources = {
     },
   },
   providerUsage: {
+    checkUsage: "检查用量",
+    checkUsageHint: "在所有设备上应用于 {{host}}",
+    off: "{{host}} 的用量检查已关闭。",
+    turnOn: "开启",
+
     options: "设置",
     refreshFailed: "无法刷新用量",
     noHosts: "没有已连接的主机",
@@ -2116,6 +2122,7 @@ export const zhCN: TranslationResources = {
       days: "{{value}}天",
       hours: "{{value}}小时",
       minutes: "{{value}}分钟",
+      pair: "{{first}}{{second}}",
     },
     timing: {
       lastUpdated: "上次更新于 {{relativeTime}}",
@@ -2123,6 +2130,8 @@ export const zhCN: TranslationResources = {
       resetTimePassed: "重置时间已过",
       resettingNow: "正在重置",
       resetsIn: "将在 {{duration}}后重置",
+      resetsAtWeekday: "{{weekday}} {{time}}",
+      resetsAtDate: "{{date}} {{time}}",
       runsOutNow: "即将用尽",
       runsOutIn: "将在 {{duration}}后用尽",
       justNow: "刚刚",
@@ -2712,6 +2721,14 @@ export const zhCN: TranslationResources = {
       },
       agents: {
         unavailable: "连接到这个 Host 以管理 Agent",
+        resumeOnStartup: {
+          title: "重启后恢复智能体",
+          info: "重新打开主机停止时正在工作的智能体，并发送恢复提示。适用于正常重启和崩溃后的恢复。",
+          hint: "自动继续被中断的工作。",
+          prompt: "恢复提示",
+          edit: "编辑",
+          editAccessibilityLabel: "编辑提示",
+        },
         idleRuntimeCleanup: {
           title: "释放空闲 Agent",
           hint: "空闲一小时后释放内存。",
@@ -2803,6 +2820,10 @@ export const zhCN: TranslationResources = {
           offlineMessage: "这个 Host 已离线。Paseo 会自动重连，请等它恢复在线后再重启。",
           requestFailedTitle: "错误",
           requestFailedMessage: "发送重启请求失败。Paseo 会自动重连，请在 Host 显示在线后重试。",
+          closeTerminals: "重启并关闭终端",
+          closeTerminalsHint: "重启的同时关闭此主机上的所有终端。",
+          closeTerminalsConfirmMessage:
+            "这将重启守护进程并关闭其所有终端，终端中运行的程序会被结束。应用会自动重新连接。",
           dialogFailedMessage: "无法打开重启确认对话框。",
         },
         update: {

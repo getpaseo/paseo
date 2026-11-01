@@ -1,3 +1,9 @@
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import {
+  materializeProviderImage,
+  renderProviderImageOutputAsAssistantMarkdown,
+} from "../../provider-image-output.js";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, it } from "vitest";
 
@@ -30,7 +36,7 @@ function parentWithTaskCall(failed = false): ClaudeReplayParentFacts {
       ],
     ]),
     linksByAgentId: new Map(),
-    outcomesByToolCallId: new Map([[TOOL_USE_ID, { failed }]]),
+    outcomesByToolCallId: new Map([[TOOL_USE_ID, { status: failed ? "failed" : "completed" }]]),
   };
 }
 
@@ -79,6 +85,50 @@ describe("parseClaudeSubagentMeta", () => {
 });
 
 describe("observeReplaySubagents", () => {
+  it("restores a resumed child on its original row after consuming async history", async () => {
+    async function* entries(): AsyncGenerator<ClaudeReplayEntry> {
+      yield { type: "assistant", message: { model: "claude-opus-5" } };
+      yield {
+        type: "assistant",
+        effort: "high",
+        message: { model: "claude-sonnet-5", usage: { input_tokens: 10, output_tokens: 2 } },
+      };
+    }
+    const replay = await observeReplaySubagents({
+      subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries: entries() }],
+      parent: parentWithTaskCall(),
+      convertEntry: async () => [],
+    });
+    expect(replay.restored).toEqual([
+      {
+        taskId: AGENT_ID,
+        id: TOOL_USE_ID,
+        presentation: {
+          title: "general-purpose",
+          model: "claude-sonnet-5",
+          effort: "high",
+          usage: { totalTokens: 12 },
+        },
+      },
+    ]);
+    const live = new ClaudeTaskProtocolSource();
+    live.restore(replay.restored);
+    expect(
+      live.observe({
+        type: "system",
+        subtype: "task_started",
+        task_id: AGENT_ID,
+        tool_use_id: "resumed-tool",
+        description: "Resume the captured task",
+        task_type: "local_agent",
+        is_backgrounded: true,
+        uuid: "00000000-0000-0000-0000-000000000000",
+        session_id: "reopened-session",
+      }),
+    ).toEqual([{ kind: "status", id: TOOL_USE_ID, status: "running" }]);
+    expect(live.resolveSubagentId("resumed-tool")).toBe(TOOL_USE_ID);
+  });
+
   it("links a subagent to its Task call through meta.toolUseId", async () => {
     const observations = (
       await observeReplaySubagents({
@@ -111,7 +161,7 @@ describe("observeReplaySubagents", () => {
                 [nestedToolUseId, { title: "Explore", description: "Nested audit" }],
               ]),
               linksByAgentId: new Map(),
-              outcomesByToolCallId: new Map([[nestedToolUseId, { failed: false }]]),
+              outcomesByToolCallId: new Map([[nestedToolUseId, { status: "completed" }]]),
             },
           },
           {
@@ -167,8 +217,8 @@ describe("observeReplaySubagents", () => {
   it("falls back to the scraped link when there is no meta file", async () => {
     const parent: ClaudeReplayParentFacts = {
       toolCalls: new Map([[TOOL_USE_ID, { title: "Explore" }]]),
-      linksByAgentId: new Map([[AGENT_ID, { toolCallId: TOOL_USE_ID, failed: false }]]),
-      outcomesByToolCallId: new Map(),
+      linksByAgentId: new Map([[AGENT_ID, { toolCallId: TOOL_USE_ID }]]),
+      outcomesByToolCallId: new Map([[TOOL_USE_ID, { status: "completed" }]]),
     };
 
     const [declared, ...rest] = (
@@ -257,8 +307,8 @@ describe("observeReplaySubagents", () => {
           subagents: [{ agentId: AGENT_ID, meta: null, entries: [] }],
           parent: {
             toolCalls: new Map([[TOOL_USE_ID, { title: "Explore" }]]),
-            linksByAgentId: new Map([[AGENT_ID, { toolCallId: TOOL_USE_ID, failed: true }]]),
-            outcomesByToolCallId: new Map(),
+            linksByAgentId: new Map([[AGENT_ID, { toolCallId: TOOL_USE_ID }]]),
+            outcomesByToolCallId: new Map([[TOOL_USE_ID, { status: "failed" }]]),
           },
           convertEntry: () => [],
         })
@@ -659,4 +709,35 @@ describe("live and replay agree", () => {
       toolCallId: TOOL_USE_ID,
     });
   });
+});
+
+it("awaits image materialization before publishing replay observations", async () => {
+  const bytes = Buffer.from("async replay image fixture");
+  const convertEntry = async () => {
+    const item = await renderProviderImageOutputAsAssistantMarkdown(
+      { data: bytes.toString("base64"), mimeType: "image/png" },
+      { materialize: materializeProviderImage },
+    );
+    return item ? [item] : [];
+  };
+  const { observations } = await observeReplaySubagents({
+    parent: parentWithTaskCall(),
+    subagents: [
+      {
+        agentId: AGENT_ID,
+        meta: { toolUseId: TOOL_USE_ID },
+        entries: [{ type: "assistant", message: { content: [] } }],
+      },
+    ],
+    convertEntry,
+  });
+  const image = observations.find(
+    (observation) =>
+      observation.kind === "timeline" && observation.item.type === "assistant_message",
+  );
+  if (!image || image.kind !== "timeline" || image.item.type !== "assistant_message")
+    throw new Error("Expected replay image");
+  const source = image.item.text.match(/!\[Image\]\(([^)]+)\)/)?.[1];
+  expect(source).toBeTruthy();
+  expect(await readFile(fileURLToPath(source!))).toEqual(bytes);
 });

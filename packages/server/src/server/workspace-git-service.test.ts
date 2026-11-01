@@ -796,15 +796,21 @@ describe("WorkspaceGitServiceImpl", () => {
     const service = createService({ getCheckoutStatus, subscribe, runGitCommand });
 
     cwds.forEach((cwd) => service.registerWorkspace({ cwd }, vi.fn()));
-    await vi.waitFor(() => {
-      expect(service.getMetrics()).toMatchObject({
-        workspaceRefreshAdmissionActiveCount: WORKSPACE_GIT_REFRESH_CONCURRENCY,
-        workspaceRefreshAdmissionPendingCount: 1,
-        workspaceObservationSetupAdmissionActiveCount: WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
-        workspaceObservationSetupAdmissionPendingCount:
-          cwds.length - WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
-      });
-    });
+    await vi.waitFor(
+      () => {
+        expect(service.getMetrics()).toMatchObject({
+          workspaceRefreshAdmissionActiveCount: WORKSPACE_GIT_REFRESH_CONCURRENCY,
+          workspaceRefreshAdmissionPendingCount: 1,
+          workspaceObservationSetupAdmissionActiveCount:
+            WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
+          workspaceObservationSetupAdmissionPendingCount:
+            cwds.length - WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
+        });
+        // Admission precedes asynchronous path setup; dispose only once watchers are pending.
+        expect(subscribe).toHaveBeenCalledTimes(WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY);
+      },
+      { timeout: 10_000 },
+    );
     const queuedRefreshSettlement = service.getSnapshot(cwds.at(-1)!).then(
       () => ({ status: "fulfilled" as const, error: null }),
       (error: unknown) => ({ status: "rejected" as const, error }),
@@ -1105,12 +1111,23 @@ describe("WorkspaceGitServiceImpl", () => {
       { cwd: join(REPO_CWD, "packages", "server") },
       vi.fn(),
     );
-    await vi.waitFor(() => {
-      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
-    });
+    await vi.waitFor(
+      () => {
+        expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+        expect(service.getMetrics()).toMatchObject({
+          repositoryWorkspaceLinkCount: 2,
+          workspaceObservationSetupInFlightCount: 0,
+          workspaceRefreshInFlightCount: 0,
+          fetchInFlightCount: 1,
+        });
+      },
+      { timeout: 10_000 },
+    );
 
     releaseFetch.resolve();
-    await flushPromises();
+    await vi.waitFor(() => {
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => {
       expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(4);
@@ -1154,10 +1171,14 @@ describe("WorkspaceGitServiceImpl", () => {
     const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
     await vi.waitFor(() => {
       expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
+      expect(service.getMetrics().fetchInFlightCount).toBe(1);
     });
 
     releaseFetch.resolve();
-    await flushPromises();
+    // The refresh debounce starts when the fetch result is applied, not when it is released.
+    await vi.waitFor(() => {
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => {
       expect(getCheckoutRefDerivedState).toHaveBeenCalledTimes(1);
