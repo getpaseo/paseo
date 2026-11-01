@@ -1639,19 +1639,11 @@ class PluginAgentSession implements AgentSession {
     return readPluginOptionState(this.bridge.config).options;
   }
 
-  /**
-   * Options whose value differs from `known`: the plugin's own change or its opening state. A key
-   * with no value in `known` that the plugin reports at its control's declared default stays
-   * unset, so the agent follows the default instead of pinning it.
-   */
+  /** Options whose value differs from `known`: the plugin's own change or its opening state. */
   private optionDifferences(known: Readonly<Record<string, JsonValue>>): Record<string, JsonValue> {
-    const { controls, options } = readPluginOptionState(this.bridge.config);
     const patch: Record<string, JsonValue> = {};
-    for (const [id, value] of Object.entries(options)) {
-      if (isDeepStrictEqual(known[id], value)) continue;
-      const control = controls.find((candidate) => candidate.key === id);
-      if (known[id] == null && control?.defaultValue === value) continue;
-      patch[id] = value;
+    for (const [id, value] of Object.entries(this.currentOptions())) {
+      if (!isDeepStrictEqual(known[id], value)) patch[id] = value;
     }
     return patch;
   }

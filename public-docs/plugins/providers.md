@@ -269,9 +269,9 @@ emit({
 });
 ```
 
-`icon` is a Lucide icon name. `defaultValue` is what an unset key shows. A key you report at its
-`defaultValue` that nobody set stays unset, so the agent keeps following the default; report any
-other value and Paseo stores it. The same controls appear in the New workspace screen, in draft
+`icon` is a Lucide icon name. `defaultValue` is what a control shows for a key that has no value.
+Paseo stores every value you report when a session opens or a change is applied, including values
+at the default and values nobody set. The same controls appear in the New workspace screen, in draft
 tabs, and on running agents. Offer a control only for a key you can change on a running session.
 The provider may change its controls at runtime, including after a model change.
 

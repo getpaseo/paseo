@@ -1148,12 +1148,10 @@ describe("PluginAgentClientRegistry", () => {
       await session.close();
     });
 
-    test("options the plugin opened with that nobody set are in the open patch, unless they are the control's default", async () => {
+    test("options the plugin opened with that nobody set are in the open patch, defaults included", async () => {
       const { session, events } = await openStubbornVoiceSession({});
 
-      expect(session.openOptionsPatch).toEqual(
-        shape === "controls" ? {} : { voice: "direct", loud: false },
-      );
+      expect(session.openOptionsPatch).toEqual({ voice: "direct", loud: false });
       expect(eventsOfType(events, "options_changed")).toEqual([]);
       await session.close();
     });
@@ -1181,8 +1179,8 @@ describe("PluginAgentClientRegistry", () => {
       expect(lastConfigure(harness.inputs)).toMatchObject({
         changes: { providerOptions: { loud: null } },
       });
-      // It went back to its default; only a plugin without a declared default pins that value.
-      expect(ended).toEqual(shape === "controls" ? {} : { loud: false });
+      // It went back to its default, and what it ended up with is reported like any provider's.
+      expect(ended).toEqual({ loud: false });
       await session.close();
     });
 

@@ -242,7 +242,7 @@ emit({
 });
 ```
 
-`icon` 是 Lucide 图标名称。`defaultValue` 是键未设置时显示的值。如果你为一个无人设置过的键报告了它的 `defaultValue`，该键保持未设置，Agent 继续跟随默认值；报告其他任何值，Paseo 都会保存它。相同的控件会出现在“新建工作区”界面、草稿标签页和运行中的 Agent 上。只为你能在运行中的会话里修改的键提供控件。Provider 可以在运行时改变控件，包括在模型变化之后。
+`icon` 是 Lucide 图标名称。`defaultValue` 是控件在键没有值时显示的值。会话打开或应用修改时，你报告的每个值（包括处于默认值的值和无人设置过的值）Paseo 都会保存。相同的控件会出现在“新建工作区”界面、草稿标签页和运行中的 Agent 上。只为你能在运行中的会话里修改的键提供控件。Provider 可以在运行时改变控件，包括在模型变化之后。
 
 用户的修改会以 `session.configure` 的形式到达，`changes.providerOptions` 只包含发生变化的键。应用它，并在 `request.completed` 之前发布已确定的 `session.config`；或者用 `request.failed` 使请求失败，并让每个键保持原样。值为 `null` 表示把该键恢复为 Provider 的默认值。请发布会话最终实际使用的值，而不是请求的副本：Paseo 会保存你发布的值，使保存的选项与实际运行的一致。
 
