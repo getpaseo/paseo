@@ -6,6 +6,7 @@ import { describe, expect, test, vi } from "vitest";
 
 import { OmpCliRuntime } from "./cli-runtime.js";
 import type { OmpRuntimeLaunch } from "./runtime.js";
+import type { OmpRuntimeEvent } from "./rpc-types.js";
 
 type OmpChild = ChildProcessWithoutNullStreams & {
   stdin: PassThrough;
@@ -247,6 +248,38 @@ describe("OMP CLI runtime", () => {
     expect(eventTypes).toEqual(["notice"]);
   });
 
+  test("parses Goal updates with numeric timestamps and native session settlement signals", async () => {
+    const child = createOmpChild();
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    const events: OmpRuntimeEvent[] = [];
+    session.onEvent((event) => events.push(event));
+
+    child.stdout.write(
+      `${JSON.stringify({
+        type: "goal_updated",
+        goal: {
+          id: "goal-1",
+          objective: "finish safely",
+          status: "active",
+          createdAt: 1_792_655_970_091,
+        },
+        state: { enabled: true, mode: "active" },
+      })}\n`,
+    );
+    child.stdout.write(
+      `${JSON.stringify({ type: "prompt_result", id: "prompt-1", sessionSettled: false })}\n`,
+    );
+    child.stdout.write(`${JSON.stringify({ type: "session_settled" })}\n`);
+
+    expect(events.map((event) => event.type)).toEqual([
+      "goal_updated",
+      "prompt_result",
+      "session_settled",
+    ]);
+    expect(events[0]).toMatchObject({ goal: { createdAt: 1_792_655_970_091 } });
+    expect(events[1]).toMatchObject({ sessionSettled: false });
+  });
+
   test("emits agent_end for a run that contains an OMP developer message", async () => {
     const child = createOmpChild();
     const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
@@ -357,6 +390,75 @@ describe("OMP CLI runtime", () => {
       },
     ]);
     expect(commandTypes).toEqual(["get_available_commands"]);
+  });
+
+  test("sends every native Goal operation over the OMP RPC command", async () => {
+    const child = createOmpChild();
+    const commands: Record<string, unknown>[] = [];
+    const goal = {
+      id: "goal-1",
+      objective: "finish safely",
+      status: "active",
+      tokenBudget: 500,
+      tokensUsed: 10,
+      createdAt: 1_792_655_970_091,
+    };
+    replyToCommands(child, (command) => {
+      commands.push(withoutRequestId(command));
+      return { goal, state: { enabled: true, mode: "active", goal } };
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await session.getGoal();
+    await session.createGoal("finish safely", 500);
+    await session.pauseGoal();
+    await session.resumeGoal();
+    await session.dropGoal();
+
+    expect(commands).toEqual([
+      { type: "goal", op: "get" },
+      { type: "goal", op: "create", objective: "finish safely", token_budget: 500 },
+      { type: "goal", op: "pause" },
+      { type: "goal", op: "resume" },
+      { type: "goal", op: "drop" },
+    ]);
+  });
+
+  test("validates Goal objectives and token budgets before sending RPC", async () => {
+    const child = createOmpChild();
+    const commands: string[] = [];
+    onOmpCommand(child, (command) => commands.push(String(command.type)));
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await expect(session.createGoal("  ")).rejects.toThrow("objective cannot be empty");
+    await expect(session.createGoal("objective", 0)).rejects.toThrow(
+      "token budget must be a positive safe integer",
+    );
+    await expect(session.createGoal("objective", 1.5)).rejects.toThrow(
+      "token budget must be a positive safe integer",
+    );
+    await expect(session.createGoal("objective", Number.MAX_SAFE_INTEGER + 1)).rejects.toThrow(
+      "token budget must be a positive safe integer",
+    );
+    expect(commands).toEqual([]);
+  });
+
+  test("surfaces a native Goal RPC rejection from older OMP versions", async () => {
+    const child = createOmpChild();
+    onOmpCommand(child, (command) => {
+      child.stdout.write(
+        `${JSON.stringify({
+          id: command.id,
+          type: "response",
+          command: command.type,
+          success: false,
+          error: "Unknown command: goal",
+        })}\n`,
+      );
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await expect(session.getGoal()).rejects.toThrow("Unknown command: goal");
   });
 
   test("accepts model catalogs with null maxTokens from newer OMP binaries", async () => {
