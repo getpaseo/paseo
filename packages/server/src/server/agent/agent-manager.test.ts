@@ -699,6 +699,33 @@ test("uses an injected timeline store without making it a production requirement
   }
 });
 
+test("fetchTimelinePage reads bounded pages from the durable timeline store", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-page-"));
+  const store = new RecordingTimelineStore();
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    durableTimelineStore: store,
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    await store.appendCommitted(agent.id, { type: "assistant_message", text: "stored" });
+
+    await expect(
+      manager.fetchTimelinePage(agent.id, { direction: "tail", limit: 1 }),
+    ).resolves.toMatchObject({
+      rows: [expect.objectContaining({ item: { type: "assistant_message", text: "stored" } })],
+    });
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("refreshing an agent replaces the injected timeline store instead of appending a second copy", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-rehydrate-"));
   const store = new RecordingTimelineStore();

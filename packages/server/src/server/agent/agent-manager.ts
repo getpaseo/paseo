@@ -1312,6 +1312,17 @@ export class AgentManager {
     return this.timelineStore.fetch(id, options);
   }
 
+  async fetchTimelinePage(
+    id: string,
+    options?: AgentTimelineFetchOptions,
+  ): Promise<AgentTimelineFetchResult> {
+    this.requireAgent(id);
+    if (this.durableTimelineStore) {
+      return this.durableTimelineStore.fetchCommitted(id, options);
+    }
+    return this.timelineStore.fetch(id, options);
+  }
+
   listProviderSubagents(parentAgentId: string): ProviderSubagentDescriptor[] {
     this.requirePublicAgent(parentAgentId);
     return this.providerSubagents.list(parentAgentId);
@@ -3962,7 +3973,12 @@ export class AgentManager {
     const durableTimelineHasRows =
       timelineAlreadyPrimed ||
       (durableTimelineSeed != null && (durableTimelineSeed.nextSeq ?? 1) > 1);
-    const timelineSeed = explicitTimelineSeed ?? durableTimelineSeed;
+    // Imported histories can contain tens of thousands of rows. Keep only the
+    // sequence metadata in memory; fetch bounded pages from the durable store.
+    const timelineSeed =
+      this.durableTimelineStore && options?.timelineRows?.length
+        ? { nextSeq: options.timelineNextSeq, timestamp: now.toISOString() }
+        : (explicitTimelineSeed ?? durableTimelineSeed);
     if (timelineSeed || !this.timelineStore.has(agentId)) {
       this.timelineStore.initialize(agentId, timelineSeed ?? { timestamp: now.toISOString() });
     }
