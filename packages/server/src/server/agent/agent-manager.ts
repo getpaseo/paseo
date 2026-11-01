@@ -2284,7 +2284,7 @@ export class AgentManager {
   async setAgentOptions(agentId: string, patch: ProviderOptionsPatch): Promise<void> {
     const agent = this.requireAgent(agentId);
     let ended: ProviderOptionsPatch = {};
-    let resolvedForApply: ProviderOptions = {};
+    let sent: ProviderOptionsPatch = {};
     if (Object.keys(patch).length > 0) {
       // A provider that cannot apply options to a running agent must not store them either.
       if (!agent.session.applyOptions) {
@@ -2298,16 +2298,13 @@ export class AgentManager {
       }
       const set = Object.fromEntries(Object.entries(patch).filter(([, value]) => value != null));
       const resolved = this.effectiveOptionsFor(agent.provider, set);
-      resolvedForApply = resolved;
-      ended =
-        (await agent.session.applyOptions(
-          Object.fromEntries(Object.keys(patch).map((key) => [key, resolved[key] ?? null])),
-        )) ?? {};
+      sent = Object.fromEntries(Object.keys(patch).map((key) => [key, resolved[key] ?? null]));
+      ended = (await agent.session.applyOptions(sent)) ?? {};
       // Changes the provider made on its own while applying are older than its final answer.
       await this.drainSessionEvents(agentId);
     }
     this.storeOptionsPatch(agent, { ...patch, ...ended });
-    this.updateEffectiveOptions(agent, { ...patch, ...ended }, resolvedForApply);
+    this.updateEffectiveOptions({ agent, sent, reported: ended });
     this.touchUpdatedAt(agent);
     this.emitState(agent);
   }
@@ -2326,20 +2323,18 @@ export class AgentManager {
   }
 
   /**
-   * What the running session has: the options it opened with, moved only by an apply or a change
-   * the provider reports. A removal shows the default it fell back to, as the provider was told.
+   * What the running session has: the options it opened with, moved only by what an apply sent
+   * it (defaults merged in, `null` where a removal left nothing) and by what the provider reports
+   * back. The agent's own stored options keep only the raw patch.
    */
-  private updateEffectiveOptions(
-    agent: ManagedAgent,
-    patch: ProviderOptionsPatch,
-    fallbacks: ProviderOptions = {},
-  ): void {
-    const moved = Object.fromEntries(
-      Object.entries(patch).map(([key, value]) => [key, value ?? fallbacks[key] ?? null]),
-    );
-    agent.effectiveOptions = applyProviderOptionsPatch({
-      options: agent.effectiveOptions,
-      patch: moved,
+  private updateEffectiveOptions(input: {
+    agent: ManagedAgent;
+    sent: ProviderOptionsPatch;
+    reported: ProviderOptionsPatch;
+  }): void {
+    input.agent.effectiveOptions = applyProviderOptionsPatch({
+      options: input.agent.effectiveOptions,
+      patch: { ...input.sent, ...input.reported },
     });
   }
 
@@ -4749,7 +4744,7 @@ export class AgentManager {
   }): void {
     const { agent, patch, flags } = params;
     this.storeOptionsPatch(agent, patch);
-    this.updateEffectiveOptions(agent, patch);
+    this.updateEffectiveOptions({ agent, sent: {}, reported: patch });
     flags.shouldDispatchEvent = false;
     this.emitState(agent);
   }

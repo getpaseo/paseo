@@ -12816,6 +12816,15 @@ describe("agent options", () => {
     expect(manager.getAgent(agent.id)?.config.providerOptions).toEqual({
       sandbox: { network: { allowedDomains: ["a.test"] } },
     });
+    // The snapshot shows what the provider was given, defaults included, and keeps showing it.
+    await manager.markAgentUnread(agent.id);
+    expect(manager.getAgent(agent.id)?.effectiveOptions).toEqual({
+      sandbox: {
+        enabled: true,
+        failIfUnavailable: true,
+        network: { allowedDomains: ["a.test"] },
+      },
+    });
   });
 
   test("setAgentOptions sends a removal to the provider like any change, as the default it falls back to", async () => {
