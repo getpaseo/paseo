@@ -1,7 +1,7 @@
 /**
  * Forge-neutral web URL builders for "Open on <forge>" actions (a file blob or a
- * branch tree). The host comes from the workspace remote — not a hardcoded
- * cloud host — so self-hosted and Enterprise instances link correctly. Each
+ * branch tree). Prefer the daemon's canonical repository web URL; an SSH
+ * hostname need not serve the web UI. Otherwise derive it from the remote. Each
  * forge contributes a small URL grammar (the path infixes and line-anchor
  * format); an unknown forge has no grammar and yields null, so the action is
  * simply absent rather than wrong.
@@ -14,15 +14,14 @@ import { getForgeDefinition } from "@getpaseo/protocol/forge-manifest";
 import { normalizeHost, parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import { getClientForgeLogicModule } from "@/git/forges";
 
-export interface ForgeBlobUrlInput {
-  remoteUrl: string | null | undefined;
-  branch: string | null | undefined;
+export interface ForgeBlobUrlInput extends ForgeBranchTreeUrlInput {
   path: string | null | undefined;
   lineStart?: number;
   lineEnd?: number;
 }
 
 export interface ForgeBranchTreeUrlInput {
+  repositoryWebUrl?: string | null;
   remoteUrl: string | null | undefined;
   branch: string | null | undefined;
 }
@@ -90,6 +89,27 @@ function resolveForgeWebLocation(
   return { host: webHost, port, repo: location.path };
 }
 
+function resolveRepositoryWebUrl(forge: string, input: ForgeBranchTreeUrlInput): string | null {
+  if (input.repositoryWebUrl != null) {
+    try {
+      const url = new URL(input.repositoryWebUrl);
+      if (url.protocol !== "https:" && url.protocol !== "http:") {
+        return null;
+      }
+      if (url.username || url.password || !isValidRepoPath(url.pathname)) {
+        return null;
+      }
+      url.search = "";
+      url.hash = "";
+      return url.toString().replace(/\/$/, "");
+    } catch {
+      return null;
+    }
+  }
+  const location = resolveForgeWebLocation(forge, input.remoteUrl);
+  return location ? `https://${forgeAuthority(location)}/${location.repo}` : null;
+}
+
 function encodeBranch(branch: string): string {
   return branch.split("/").map(encodeURIComponent).join("/");
 }
@@ -126,24 +146,24 @@ export function buildForgeBranchTreeUrl(
   input: ForgeBranchTreeUrlInput,
 ): string | null {
   const grammar = getClientForgeLogicModule(forge)?.urlGrammar;
-  const location = resolveForgeWebLocation(forge, input.remoteUrl);
+  const repositoryUrl = resolveRepositoryWebUrl(forge, input);
   const branch = input.branch?.trim();
-  if (!grammar || !location || !branch || branch === "HEAD") {
+  if (!grammar || !repositoryUrl || !branch || branch === "HEAD") {
     return null;
   }
-  return `https://${forgeAuthority(location)}/${location.repo}${grammar.treeInfix}${encodeBranch(branch)}`;
+  return `${repositoryUrl}${grammar.treeInfix}${encodeBranch(branch)}`;
 }
 
 export function buildForgeBlobUrl(forge: string, input: ForgeBlobUrlInput): string | null {
   const grammar = getClientForgeLogicModule(forge)?.urlGrammar;
-  const location = resolveForgeWebLocation(forge, input.remoteUrl);
+  const repositoryUrl = resolveRepositoryWebUrl(forge, input);
   const branch = input.branch?.trim();
   const filePath = normalizeBlobPath(input.path);
-  if (!grammar || !location || !branch || branch === "HEAD" || !filePath) {
+  if (!grammar || !repositoryUrl || !branch || branch === "HEAD" || !filePath) {
     return null;
   }
   const encodedPath = filePath.split("/").map(encodeURIComponent).join("/");
-  let url = `https://${forgeAuthority(location)}/${location.repo}${grammar.blobInfix}${encodeBranch(branch)}/${encodedPath}`;
+  let url = `${repositoryUrl}${grammar.blobInfix}${encodeBranch(branch)}/${encodedPath}`;
   if (input.lineStart && input.lineStart > 0) {
     url += grammar.lineAnchor(input.lineStart, input.lineEnd);
   }

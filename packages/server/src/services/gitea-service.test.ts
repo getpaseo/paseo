@@ -32,6 +32,81 @@ function makeService(responder: Responder, overrides: Partial<CreateGiteaService
   return { service, calls };
 }
 
+describe("repository web URL", () => {
+  it.each([
+    ["http://projects.example:3000/gitea/", "http://projects.example:3000/gitea/Acme/main"],
+    [
+      "https://projects.example/forge?unused=1#fragment",
+      "https://projects.example/forge/Acme/main",
+    ],
+    ["https://user:secret@projects.example", "https://projects.example/Acme/main"],
+    ["not a URL", null],
+    ["javascript:alert(1)", null],
+    ["file:///tmp/forge", null],
+  ])("resolves a login URL of %s safely", async (url, expected) => {
+    const { service } = makeService(() =>
+      ok(JSON.stringify([{ name: "acme", url, ssh_host: "git.example.com" }])),
+    );
+    expect(
+      await service.getRepositoryWebUrl?.({
+        cwd: "/repo",
+        remoteUrl: "git@git.example.com:Acme/main.git",
+      }),
+    ).toBe(expected);
+  });
+
+  it("does not duplicate the deployment prefix already present in an HTTPS remote", async () => {
+    const { service } = makeService(() =>
+      ok(
+        JSON.stringify([
+          { name: "acme", url: "https://projects.example/gitea/", ssh_host: "git.example" },
+        ]),
+      ),
+    );
+    expect(
+      await service.getRepositoryWebUrl?.({
+        cwd: "/repo",
+        remoteUrl: "https://projects.example/gitea/Acme/main.git",
+      }),
+    ).toBe("https://projects.example/gitea/Acme/main");
+  });
+
+  it("does not use an unrelated login for an unmatched remote", async () => {
+    const { service } = makeService(() =>
+      ok(
+        JSON.stringify([
+          { name: "other", url: "https://projects.example", ssh_host: "other.example" },
+        ]),
+      ),
+    );
+    expect(
+      await service.getRepositoryWebUrl?.({
+        cwd: "/repo",
+        remoteUrl: "git@git.example.com:Acme/main.git",
+      }),
+    ).toBeNull();
+  });
+
+  it("uses the matching tea login URL, not the SSH hostname or default login", async () => {
+    const { service, calls } = makeService(() =>
+      ok(
+        JSON.stringify([
+          { name: "other", url: "https://other.example", ssh_host: "other.example" },
+          { name: "acme", url: "https://projects.example.com", ssh_host: "git.example.com" },
+        ]),
+      ),
+    );
+
+    expect(
+      await service.getRepositoryWebUrl?.({
+        cwd: "/repo",
+        remoteUrl: "ssh://git@git.example.com:7998/Acme/main.git",
+      }),
+    ).toBe("https://projects.example.com/Acme/main");
+    expect(calls).toEqual([["login", "list", "-o", "json"]]);
+  });
+});
+
 function argValue(args: string[], flag: string): string | undefined {
   const index = args.indexOf(flag);
   return index === -1 ? undefined : args[index + 1];
