@@ -221,6 +221,12 @@ describe("global routes", () => {
     expect(buildNewWorkspaceRoute({ serverId: "local" })).toBe("/new?serverId=local");
   });
 
+  it("buildNewWorkspaceRoute carries initial labels as repeated params", () => {
+    expect(buildNewWorkspaceRoute({ labels: ["Backend", "Needs review"] })).toBe(
+      "/new?label=Backend&label=Needs+review",
+    );
+  });
+
   it("buildNewWorkspaceRoute accepts initial project context", () => {
     expect(
       buildNewWorkspaceRoute({

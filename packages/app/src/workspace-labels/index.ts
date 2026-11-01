@@ -132,6 +132,28 @@ export function selectWorkspaceLabelDefinitions(input: {
 
 const EMPTY_LABEL_DEFINITIONS: readonly WorkspaceLabelDefinition[] = [];
 
+/**
+ * The definitions to give a new workspace, by name.
+ *
+ * Unlike a row, a sidebar label section spans hosts, so a name is resolved against the merged
+ * catalog with the target host first: the target's own color wins, and a label only another host
+ * defines is created on the target in that host's color. A name no catalog knows is dropped
+ * rather than created in an invented color.
+ */
+export function resolveWorkspaceLabelsToAssign(input: {
+  hostsById: Readonly<Record<string, WorkspaceLabelHostSnapshot>>;
+  serverId: string;
+  names: readonly string[];
+}): WorkspaceLabelDefinition[] {
+  const { labels } = projectWorkspaceLabels(input.hostsById, input.serverId);
+  const byKey = new Map(labels.map((label) => [workspaceLabelKey(label.name), label]));
+  const keys = new Set(input.names.map(workspaceLabelKey));
+  return [...keys].flatMap((key) => {
+    const definition = byKey.get(key);
+    return definition ? [definition] : [];
+  });
+}
+
 interface HostConnection {
   client: DaemonClient;
   replica: HostWorkspaceLabelReplica;
@@ -208,6 +230,23 @@ class WorkspaceLabelsController {
     assigned: boolean;
   }) {
     return this.mutate(input.serverId, (client) => client.setWorkspaceLabel(input));
+  }
+
+  /** Assigns labels by name to a workspace that was just created. See `resolveWorkspaceLabelsToAssign`. */
+  async assignByName(input: { serverId: string; workspaceId: string; names: readonly string[] }) {
+    const definitions = resolveWorkspaceLabelsToAssign({
+      hostsById: useWorkspaceLabels.getState().hosts,
+      serverId: input.serverId,
+      names: input.names,
+    });
+    for (const label of definitions) {
+      await this.setAssignment({
+        serverId: input.serverId,
+        workspaceId: input.workspaceId,
+        label,
+        assigned: true,
+      });
+    }
   }
 
   async update(input: {
