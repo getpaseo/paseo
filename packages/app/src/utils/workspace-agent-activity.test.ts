@@ -4,6 +4,8 @@ import { buildWorkspaceAgentActivityIndex } from "./workspace-agent-activity";
 
 function agent(input: {
   id: string;
+  provider?: string;
+  model?: string | null;
   workspaceId?: string;
   status?: Agent["status"];
   turn?: Agent["turn"];
@@ -18,7 +20,7 @@ function agent(input: {
   return {
     serverId: "host-a",
     id: input.id,
-    provider: "codex",
+    provider: input.provider ?? "codex",
     status: input.status ?? "idle",
     turn:
       input.turn ??
@@ -55,7 +57,7 @@ function agent(input: {
     title: null,
     cwd: "/repo",
     workspaceId: input.workspaceId,
-    model: null,
+    model: input.model ?? null,
     requiresAttention: input.requiresAttention,
     attentionReason: input.attentionReason,
     attentionTimestamp: input.attentionTimestamp ? new Date(input.attentionTimestamp) : null,
@@ -142,6 +144,8 @@ describe("workspace agent activity index", () => {
           "workspace-a",
           {
             agentId: "permission",
+            provider: "codex",
+            model: null,
             status: "needs_input",
             enteredAt: new Date("2026-06-01T10:01:00.000Z"),
           },
@@ -150,6 +154,8 @@ describe("workspace agent activity index", () => {
           "workspace-b",
           {
             agentId: "attention",
+            provider: "codex",
+            model: null,
             status: "attention",
             enteredAt: new Date("2026-06-01T10:02:00.000Z"),
           },
@@ -196,6 +202,8 @@ describe("workspace agent activity index", () => {
 
     expect(index.get("workspace-a")).toEqual({
       agentId: "root",
+      provider: "codex",
+      model: null,
       status: "running",
       enteredAt: new Date("2026-06-01T10:00:00.000Z"),
     });
@@ -231,6 +239,8 @@ describe("workspace agent activity index", () => {
           "workspace-a",
           {
             agentId: "parent",
+            provider: "codex",
+            model: null,
             status: "done",
             enteredAt: new Date("2026-06-01T10:00:00.000Z"),
           },
@@ -239,6 +249,8 @@ describe("workspace agent activity index", () => {
           "workspace-b",
           {
             agentId: "child",
+            provider: "codex",
+            model: null,
             status: "running",
             enteredAt: new Date("2026-06-01T10:03:00.000Z"),
           },
@@ -315,8 +327,72 @@ describe("workspace agent activity index", () => {
     expect(next).not.toBe(previous);
     expect(next.get("workspace-a")).toEqual({
       agentId: "root",
+      provider: "codex",
+      model: null,
       status: "needs_input",
       enteredAt: new Date("2026-06-01T10:05:00.000Z"),
     });
+  });
+
+  it("records the provider of the root agent it picked for the workspace", () => {
+    const result = buildWorkspaceAgentActivityIndex(
+      new Map([
+        [
+          "older",
+          agent({
+            id: "older",
+            provider: "codex",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-01-01T00:00:01.000Z",
+          }),
+        ],
+        [
+          "newer",
+          agent({
+            id: "newer",
+            provider: "claude",
+            workspaceId: "workspace-a",
+            updatedAt: "2026-01-01T00:00:02.000Z",
+          }),
+        ],
+        [
+          "child",
+          agent({
+            id: "child",
+            provider: "opencode",
+            workspaceId: "workspace-a",
+            parentAgentId: "newer",
+            updatedAt: "2026-01-01T00:00:03.000Z",
+          }),
+        ],
+      ]),
+    );
+
+    expect(result.get("workspace-a")).toMatchObject({ agentId: "newer", provider: "claude" });
+  });
+
+  it("refreshes the entry when the agent switches model", () => {
+    const build = (model: string, previous?: ReturnType<typeof buildWorkspaceAgentActivityIndex>) =>
+      buildWorkspaceAgentActivityIndex(
+        new Map([
+          [
+            "root",
+            agent({
+              id: "root",
+              model,
+              workspaceId: "workspace-a",
+              updatedAt: "2026-06-01T10:00:00.000Z",
+            }),
+          ],
+        ]),
+        previous,
+      );
+    const previous = build("gpt-6-luna");
+
+    const next = build("gpt-6-sol", previous);
+
+    expect(previous.get("workspace-a")?.model).toBe("gpt-6-luna");
+    expect(next).not.toBe(previous);
+    expect(next.get("workspace-a")?.model).toBe("gpt-6-sol");
   });
 });
