@@ -308,6 +308,53 @@ describe("DaemonConfigStore", () => {
       ]);
     });
 
+    test("starts from no options when it moves the profile to another provider", async () => {
+      const store = storeWithProfile();
+
+      await store.patch({
+        agentProfiles: [
+          { id: "p", name: "P", provider: "claude", featureValues: { fast_mode: true } },
+        ],
+      });
+
+      expect(store.get().agentProfiles).toEqual([
+        { id: "p", name: "P", provider: "claude", options: { fast_mode: true } },
+      ]);
+    });
+
+    test("drops the old provider's options when it moves the profile with no featureValues", async () => {
+      const store = storeWithProfile();
+
+      await store.patch({ agentProfiles: [{ id: "p", name: "P", provider: "claude" }] });
+
+      expect(store.get().agentProfiles).toEqual([{ id: "p", name: "P", provider: "claude" }]);
+    });
+
+    test("folds featureValues over the options a write carries, not over the stored ones", async () => {
+      const store = storeWithProfile();
+
+      await store.patch({
+        agentProfiles: [
+          {
+            id: "p",
+            name: "P",
+            provider: "codex",
+            options: { sandbox_mode: "workspace-write" },
+            featureValues: { fast_mode: true },
+          },
+        ],
+      });
+
+      expect(store.get().agentProfiles).toEqual([
+        {
+          id: "p",
+          name: "P",
+          provider: "codex",
+          options: { sandbox_mode: "workspace-write", fast_mode: true },
+        },
+      ]);
+    });
+
     test("removes an option whose featureValues entry is null", async () => {
       const store = storeWithProfile();
 

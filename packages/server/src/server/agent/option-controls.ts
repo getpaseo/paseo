@@ -87,6 +87,7 @@ export function foldHookFeatureValues<
 }
 
 interface ProfileOptionFields {
+  provider?: string;
   options?: Record<string, unknown>;
   featureValues?: Record<string, unknown>;
 }
@@ -96,26 +97,27 @@ interface ProfileOptionFields {
  * Profiles saved before options carry `featureValues`; when one comes from storage, `options`
  * wins over a stale `featureValues` key.
  *
- * A profile written by the unchanged app is a patch: its form only knows the controls, so its
- * `featureValues` are applied over the options already stored for that profile (`null`
- * deletes), and options the form never shows, such as `sandbox_mode`, survive an edit.
+ * A write that carries `options` is from a client that knows them: its `featureValues` fold
+ * over those. A write without `options` is from the unchanged app, whose form only knows the
+ * controls: its `featureValues` are a patch (`null` deletes) over the options stored for that
+ * profile, so options the form never shows, such as `sandbox_mode`, survive an edit. A profile
+ * moved to another provider starts from no options, because the old provider's keys mean
+ * nothing to the new one.
  */
 export function foldProfileFeatureValues<T extends ProfileOptionFields>(
   profile: T,
-  stored: Record<string, unknown> | undefined,
+  stored: ProfileOptionFields | undefined,
   source: "stored" | "client write" = "stored",
 ): Omit<T, "featureValues"> {
   const { featureValues, ...rest } = profile;
   if (source === "stored") {
     return featureValues ? { ...rest, options: { ...featureValues, ...rest.options } } : rest;
   }
+  const base = rest.options ?? (stored?.provider === rest.provider ? stored?.options : undefined);
   // The form sends no `featureValues` when no control is set, which is still an edit of a
   // profile that may hold other options.
-  if (!featureValues && (rest.options || !stored)) return rest;
-  return {
-    ...rest,
-    options: applyProviderOptionsPatch(stored ?? rest.options, featureValues ?? {}),
-  };
+  if (!featureValues && !base) return rest;
+  return { ...rest, options: applyProviderOptionsPatch(base, featureValues ?? {}) };
 }
 
 /**
