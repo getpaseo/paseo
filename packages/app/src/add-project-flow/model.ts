@@ -37,6 +37,16 @@ export type AddProjectPage =
       repository: GithubRepositoryChoice;
       isSubmitting: boolean;
     } & SearchPageState)
+  | {
+      kind: "github-name";
+      hostId: string;
+      repository: GithubRepositoryChoice;
+      parentPath: string;
+      name: string;
+      activeIndex: number;
+      error: string | null;
+      isSubmitting: boolean;
+    }
   | ({ kind: "new-directory-parent"; hostId: string } & SearchPageState)
   | {
       kind: "new-directory-name";
@@ -52,6 +62,7 @@ export interface AddProjectFlowState {
   hosts: AddProjectHost[];
   pages: AddProjectPage[];
   newDirectoryNameDrafts: Record<string, string>;
+  githubFolderNameDrafts: Record<string, string>;
   githubLocationDrafts: Record<string, { query: string; activeIndex: number }>;
 }
 
@@ -82,6 +93,7 @@ export function openAddProjectFlow(input: OpenAddProjectFlowInput): AddProjectFl
     pages: initialHost ? [methodPage(initialHost.serverId)] : [searchPage("host")],
     newDirectoryNameDrafts: {},
     githubLocationDrafts: {},
+    githubFolderNameDrafts: {},
   };
 }
 
@@ -181,6 +193,48 @@ export function openGithubLocationPage(
   });
 }
 
+export function getGithubFolderName(
+  state: AddProjectFlowState,
+  hostId: string,
+  repository: GithubRepositoryChoice,
+): string {
+  return (
+    state.githubFolderNameDrafts[githubLocationDraftKey(hostId, repository.id)] ??
+    repository.nameWithOwner.split("/").at(-1) ??
+    ""
+  );
+}
+
+export function openGithubNamePage(
+  state: AddProjectFlowState,
+  parentPath: string,
+): AddProjectFlowState {
+  const page = currentAddProjectPage(state);
+  if (page.kind !== "github-location") return state;
+  return pushAddProjectPage(state, {
+    kind: "github-name",
+    hostId: page.hostId,
+    repository: page.repository,
+    parentPath,
+    name: getGithubFolderName(state, page.hostId, page.repository),
+    activeIndex: 0,
+    error: null,
+    isSubmitting: false,
+  });
+}
+
+export function setGithubFolderName(state: AddProjectFlowState, name: string): AddProjectFlowState {
+  const page = currentAddProjectPage(state);
+  if (page.kind !== "github-name") return state;
+  const key = githubLocationDraftKey(page.hostId, page.repository.id);
+  return {
+    ...updateCurrentAddProjectPage(state, (current) =>
+      current.kind === "github-name" ? { ...current, name, error: null } : current,
+    ),
+    githubFolderNameDrafts: { ...state.githubFolderNameDrafts, [key]: name },
+  };
+}
+
 export function openNewDirectoryParentPage(
   state: AddProjectFlowState,
   hostId: string,
@@ -211,7 +265,7 @@ export function setAddProjectPageInput(
 ): AddProjectFlowState {
   const page = currentAddProjectPage(state);
   const updated = updateCurrentAddProjectPage(state, (current) => {
-    if (current.kind === "new-directory-name") {
+    if (current.kind === "new-directory-name" || current.kind === "github-name") {
       return { ...current, name: value, activeIndex: 0, error: null };
     }
     if (current.kind === "method") return current;
