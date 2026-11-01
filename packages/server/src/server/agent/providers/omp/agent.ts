@@ -203,8 +203,6 @@ interface OmpAgentSessionOptions {
   }>;
   config: AgentSessionConfig;
   initialState: OmpSessionState;
-  /** Fast mode as the runtime reported it before any option was applied; removal restores it. */
-  fastModeBaseline?: boolean;
   currentModeId?: string | null;
   logger: Logger;
   providerIdleScheduler?: OmpProviderIdleScheduler;
@@ -503,10 +501,6 @@ function isOmpSteerTransportFailure(error: unknown): boolean {
   );
 }
 
-function fastModeBaselineOf(state: OmpSessionState): boolean | undefined {
-  return typeof state.fastModeEnabled === "boolean" ? state.fastModeEnabled : undefined;
-}
-
 function hasOmpFastMode(state: OmpSessionState): boolean {
   return typeof state.fastModeEnabled === "boolean" && typeof state.fastModeActive === "boolean";
 }
@@ -757,7 +751,7 @@ export class OmpAgentSession implements AgentSession {
     this.restartRuntime = options.restartRuntime;
     this.config = options.config;
     this.state = options.initialState;
-    this.fastModeBaseline = options.fastModeBaseline;
+    this.openOptionReport = this.fastModeDifference(options.config.providerOptions?.fast_mode);
     this.currentModeId = options.currentModeId ?? null;
     this.logger = options.logger;
     this.live = options.live ?? true;
@@ -820,8 +814,6 @@ export class OmpAgentSession implements AgentSession {
         key: "fast_mode",
         label: "Fast",
         icon: "zap",
-        // OMP owns fast mode; an unset option stands for what the runtime reports.
-        defaultValue: this.state.fastModeEnabled === true,
         ...(this.state.fastModeEnabled && !this.state.fastModeActive
           ? { description: OMP_FAST_INACTIVE_MESSAGE, tooltip: OMP_FAST_INACTIVE_MESSAGE }
           : {}),
@@ -831,26 +823,29 @@ export class OmpAgentSession implements AgentSession {
 
   async applyOptions(options: ProviderOptions): Promise<void> {
     const requested = options.fast_mode;
-    if (requested !== undefined && typeof requested !== "boolean") {
-      throw new Error("OMP fast mode requires a boolean");
-    }
-    // An absent option means the runtime's own setting at session start.
-    const target = requested ?? this.fastModeBaseline;
-    if (target !== undefined && target !== this.state.fastModeEnabled) {
-      if (!hasOmpFastMode(this.state)) throw new Error("OMP fast mode is unavailable");
-      const result = await this.runtimeSession.setFastMode(target);
+    if (requested === undefined) return;
+    if (typeof requested !== "boolean") throw new Error("OMP fast mode requires a boolean");
+    if (!hasOmpFastMode(this.state)) throw new Error("OMP fast mode is unavailable");
+    if (requested !== this.state.fastModeEnabled) {
+      const result = await this.runtimeSession.setFastMode(requested);
       this.state = {
         ...this.state,
         fastModeEnabled: result.enabled,
         fastModeActive: result.active,
       };
     }
-    const { fast_mode: _previous, ...others } = this.config.providerOptions ?? {};
-    this.config.providerOptions =
-      requested === undefined ? others : { ...others, fast_mode: requested };
+    this.config.providerOptions = { ...this.config.providerOptions, fast_mode: requested };
   }
 
-  private readonly fastModeBaseline: boolean | undefined;
+  /** The option patch when the runtime's fast mode is not what `given` stands for; unset is off. */
+  private fastModeDifference(given: unknown): Record<string, unknown> {
+    if (!hasOmpFastMode(this.state)) return {};
+    const enabled = this.state.fastModeEnabled === true;
+    return (given ?? false) === enabled ? {} : { fast_mode: enabled };
+  }
+
+  /** How the opened session differs from the options it was given; reported at first subscribe. */
+  private openOptionReport: Record<string, unknown>;
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
     return runProviderTurn({
@@ -1012,6 +1007,10 @@ export class OmpAgentSession implements AgentSession {
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
     this.subscribers.add(callback);
+    if (Object.keys(this.openOptionReport).length > 0) {
+      callback({ type: "options_changed", provider: this.provider, patch: this.openOptionReport });
+      this.openOptionReport = {};
+    }
     return () => {
       this.subscribers.delete(callback);
     };
@@ -2246,7 +2245,15 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private async refreshState(): Promise<void> {
+    const before = this.state.fastModeEnabled;
     this.state = await this.runtimeSession.getState();
+    if (this.state.fastModeEnabled !== before && typeof this.state.fastModeEnabled === "boolean") {
+      this.emit({
+        type: "options_changed",
+        provider: this.provider,
+        patch: { fast_mode: this.state.fastModeEnabled },
+      });
+    }
   }
 
   private async refreshAfterTurn(finalUsage: Promise<void>): Promise<void> {
@@ -2348,10 +2355,12 @@ export class OmpAgentClient implements AgentClient {
         config,
         startInput.env,
       );
-      const startState = await runtimeSession.getState();
-      const initialState = await this.restoreFastMode(runtimeSession, config, startState);
+      const initialState = await this.restoreFastMode(
+        runtimeSession,
+        config,
+        await runtimeSession.getState(),
+      );
       return new OmpAgentSession({
-        fastModeBaseline: fastModeBaselineOf(startState),
         runtimeSession,
         hostTools,
         restartRuntime: this.buildRestartRuntime(startInput, config, launchContext),
@@ -2423,7 +2432,6 @@ export class OmpAgentClient implements AgentClient {
       };
       const initialState = await this.restoreFastMode(runtimeSession, config, resumedState);
       return new OmpAgentSession({
-        fastModeBaseline: fastModeBaselineOf(resumedState),
         runtimeSession,
         hostTools,
         restartRuntime: this.buildRestartRuntime(startInput, config, launchContext),

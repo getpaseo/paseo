@@ -2799,7 +2799,10 @@ class ClaudeAgentSession implements AgentSession {
 
   async applyOptions(options: ProviderOptions): Promise<void> {
     const providerOptions =
-      validateProviderOptions("claude", ClaudeProviderOptionsSchema, options) ?? {};
+      validateProviderOptions("claude", ClaudeProviderOptionsSchema, {
+        ...this.config.providerOptions,
+        ...options,
+      }) ?? {};
     if (providerOptions.fast_mode === true && !claudeModelSupportsFastMode(this.config.model)) {
       throw new Error(
         `Claude fast mode is not available for model '${this.config.model ?? "default"}'`,

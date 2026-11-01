@@ -4964,7 +4964,9 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   async applyOptions(options: ProviderOptions): Promise<void> {
-    this.setAutoAccept(options[OPENCODE_AUTO_ACCEPT_FEATURE_ID] === true);
+    if (OPENCODE_AUTO_ACCEPT_FEATURE_ID in options) {
+      this.setAutoAccept(options[OPENCODE_AUTO_ACCEPT_FEATURE_ID] === true);
+    }
   }
 
   private setAutoAccept(enabled: boolean): void {

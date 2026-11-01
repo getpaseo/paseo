@@ -12714,9 +12714,11 @@ describe("agent options", () => {
   class OptionsSession extends TestAgentSession {
     readonly applied: ProviderOptions[] = [];
     rejectWith: Error | null = null;
+    applyGate: Promise<void> | null = null;
 
     async applyOptions(options: ProviderOptions): Promise<void> {
       if (this.rejectWith) throw this.rejectWith;
+      await this.applyGate;
       this.applied.push(options);
     }
   }
@@ -12757,12 +12759,12 @@ describe("agent options", () => {
     expect(toAgentPayload(agent!).options).toEqual({ service_tier: "default", fast_mode: true });
   });
 
-  test("setAgentOptions on a running agent replaces top-level keys and applies the effective options", async () => {
+  test("setAgentOptions hands the provider only the keys the patch sets", async () => {
     const { manager, client, storage, agentId } = await createOptionsAgent({ fast_mode: true });
 
     await manager.setAgentOptions(agentId, { service_tier: "fast" });
 
-    expect(client.session?.applied).toEqual([{ service_tier: "fast", fast_mode: true }]);
+    expect(client.session?.applied).toEqual([{ service_tier: "fast" }]);
     const agent = manager.getAgent(agentId);
     expect(agent?.config.providerOptions).toEqual({ fast_mode: true, service_tier: "fast" });
     expect(agent?.effectiveOptions).toEqual({ service_tier: "fast", fast_mode: true });
@@ -12773,56 +12775,15 @@ describe("agent options", () => {
     });
   });
 
-  test("setAgentOptions removes a key with null so the config.json default applies again", async () => {
+  test("setAgentOptions removes a key with null and sends the provider nothing", async () => {
     const { manager, client, agentId } = await createOptionsAgent({ service_tier: "fast" });
 
     await manager.setAgentOptions(agentId, { service_tier: null });
 
-    expect(client.session?.applied).toEqual([{ service_tier: "default" }]);
+    expect(client.session?.applied).toEqual([]);
     const agent = manager.getAgent(agentId);
     expect(agent?.config.providerOptions).toBeUndefined();
     expect(agent?.effectiveOptions).toEqual({ service_tier: "default" });
-  });
-
-  test("the snapshot reports the configured options and resolves aliases through controls", async () => {
-    class AliasSession extends OptionsSession {
-      get controls(): AgentOptionControl[] {
-        return [
-          {
-            type: "select",
-            key: "service_tier",
-            label: "Speed",
-            defaultValue: "default",
-            choices: [
-              { value: "default", label: "Normal" },
-              { value: "priority", label: "Fast", aliases: ["fast"] },
-            ],
-          },
-        ];
-      }
-    }
-    class AliasClient extends OptionsClient {
-      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-        return new AliasSession(config);
-      }
-    }
-    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-options-"));
-    const manager = new AgentManager({
-      clients: { codex: new AliasClient() },
-      registry: new AgentStorage(join(workdir, "agents"), logger),
-      logger,
-    });
-    const created = await manager.createAgent(
-      { provider: "codex", cwd: workdir, providerOptions: { service_tier: "fast" } },
-      undefined,
-      { workspaceId: undefined },
-    );
-
-    const payload = toAgentPayload(manager.getAgent(created.id)!);
-    expect(payload.options).toEqual({ service_tier: "fast" });
-    expect(payload.features).toEqual([
-      expect.objectContaining({ id: "service_tier", value: "priority" }),
-    ]);
   });
 
   test("an option without a control is settable through the patch and readable in the snapshot", async () => {
@@ -12830,9 +12791,7 @@ describe("agent options", () => {
 
     await manager.setAgentOptions(agentId, { sandbox_mode: "read-only" });
 
-    expect(client.session?.applied).toEqual([
-      { service_tier: "default", sandbox_mode: "read-only" },
-    ]);
+    expect(client.session?.applied).toEqual([{ sandbox_mode: "read-only" }]);
     const agent = manager.getAgent(agentId);
     expect(agent?.config.providerOptions).toEqual({ sandbox_mode: "read-only" });
     expect(toAgentPayload(agent!).options).toEqual({
@@ -12843,6 +12802,41 @@ describe("agent options", () => {
     expect((await storage.get(agentId))?.config?.providerOptions).toEqual({
       sandbox_mode: "read-only",
     });
+  });
+
+  test("concurrent patches both land: each is applied to the options as they are when its provider call resolves", async () => {
+    const { manager, client, agentId } = await createOptionsAgent();
+    let release!: () => void;
+    client.session!.applyGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const slow = manager.setAgentOptions(agentId, { sandbox_mode: "read-only" });
+    client.session!.applyGate = null;
+    await manager.setAgentOptions(agentId, { fast_mode: true });
+    release();
+    await slow;
+
+    expect(manager.getAgent(agentId)?.config.providerOptions).toEqual({
+      sandbox_mode: "read-only",
+      fast_mode: true,
+    });
+  });
+
+  test("a stored agent that is not loaded still reports its effective options", async () => {
+    const { manager, agentId } = await createOptionsAgent({ fast_mode: true });
+    await manager.closeAgent(agentId);
+    const states: ManagedAgent[] = [];
+    manager.subscribe(
+      (event) => {
+        if (event.type === "agent_state" && event.agent.id === agentId) states.push(event.agent);
+      },
+      { replayState: false },
+    );
+
+    await manager.markAgentUnread(agentId);
+
+    expect(states.at(-1)?.effectiveOptions).toEqual({ service_tier: "default", fast_mode: true });
   });
 
   test("a provider that rejects an option leaves the stored options unchanged", async () => {
@@ -12949,6 +12943,54 @@ describe("agent options", () => {
     expect(manager.getAgent(created.id)?.config.providerOptions).toEqual({
       fast_mode: false,
       plan_mode: false,
+    });
+  });
+
+  describe.each([
+    {
+      name: "deletes a key",
+      edit: (values: Record<string, unknown> | undefined) => {
+        const { fast_mode: _removed, ...rest } = values ?? {};
+        return { featureValues: rest };
+      },
+      expected: { plan_mode: true },
+    },
+    {
+      name: "empties featureValues",
+      edit: () => ({ featureValues: {} }),
+      expected: {},
+    },
+    {
+      name: "drops featureValues",
+      edit: () => ({ featureValues: undefined }),
+      expected: {},
+    },
+  ])("agent.create.before hook that $name", ({ edit, expected }) => {
+    test("removes those options from the new agent", async () => {
+      const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hook-"));
+      const manager = new AgentManager({
+        clients: { codex: new OptionsClient() },
+        registry: new AgentStorage(join(workdir, "agents"), logger),
+        logger,
+        pluginLifecycle: {
+          emit: () => {},
+          before: async (name, request) =>
+            name === "agent.create.before"
+              ? {
+                  ...request,
+                  config: { ...request.config, ...edit(request.config.featureValues) },
+                }
+              : request,
+        },
+      });
+
+      const created = await manager.createAgent(
+        { provider: "codex", cwd: workdir, providerOptions: { fast_mode: true, plan_mode: true } },
+        undefined,
+        { workspaceId: undefined },
+      );
+
+      expect(manager.getAgent(created.id)?.config.providerOptions).toEqual(expected);
     });
   });
 });

@@ -30,6 +30,25 @@ at session startup. See [provider configuration](custom-providers.md#provider-op
 for defaults and merge rules, and the [SDK guide](../public-docs/sdk/provider-options.md)
 for native keys and examples.
 
+### Options flow
+
+`options` on the agent snapshot is the only option state. Controls describe how to draw an
+option and read `options`; they hold no value of their own. Any option can be read and set with
+or without a control.
+
+- **Create and resume.** The provider opens with the options it is given and reports nothing
+  about them while opening. If the session ended up different, it says so once afterwards, as an
+  `options_changed` event. Events emitted before the daemon subscribes are dropped, so emit that
+  report from `subscribe`.
+- **Live apply.** `applyOptions` receives only the keys the patch set. The daemon stores the patch
+  after the call resolves, onto the agent's options as they are at that moment, so the last write
+  wins. Throwing rejects the whole patch. A result that differs from the request is reported
+  afterwards, not from inside the call.
+- **Provider-initiated changes.** A setting the provider changes on its own is an
+  `options_changed`. The daemon stores and forwards it and does not push the old value back.
+- **Removal.** Removing an option drops the key and sends the provider nothing. The session
+  keeps its current setting until the next open.
+
 Exact MCP preapproval is a separate daemon-owned contract. A new provider must fail
 closed for Hub unattended execution until it can approve one exact injected MCP
 server and tool identity without approving native tools.
@@ -115,7 +134,7 @@ Submitted user-message wire items carry the same Paseo ID in `messageId` and `cl
 
 Provider adapters must terminalize every transient timeline row before emitting the turn's terminal event. Codex may omit the completed `contextCompaction` item when a turn ends during compaction, so its adapter closes any pending root compaction before forwarding `turn_completed`, `turn_failed`, or `turn_canceled`. A terminal turn must never leave the client showing an operation as still loading.
 
-Draft metadata lookups should avoid creating provider sessions when the upstream provider has top-level APIs for that metadata. Prefer `AgentClient.fetchCatalog`, `listCommands`, or `listFeatures` over creating a scratch `AgentSession`; scratch sessions can show up as empty native sessions in provider import/history UIs. `fetchCatalog` is the single discovery API for models and modes — provider implementations may use one process, separate upstream calls, or static data internally, but callers outside the provider do not get separate runtime model/mode probes. Draft command listing and scratch-session feature listing require an explicit draft model. Do not resolve a default model through catalog discovery. A client-level `listFeatures` implementation may return features from an incomplete, model-less draft and owns which features are valid in that state.
+Draft metadata lookups should avoid creating provider sessions when the upstream provider has top-level APIs for that metadata. Prefer `AgentClient.fetchCatalog`, `listCommands`, or `listControls` over creating a scratch `AgentSession`; scratch sessions can show up as empty native sessions in provider import/history UIs. `fetchCatalog` is the single discovery API for models and modes — provider implementations may use one process, separate upstream calls, or static data internally, but callers outside the provider do not get separate runtime model/mode probes. Draft command listing and scratch-session control listing require an explicit draft model. Do not resolve a default model through catalog discovery. A client-level `listControls` implementation may return controls from an incomplete, model-less draft and owns which features are valid in that state.
 
 Provider session import has its own contract. The picker calls `listImportableSessions` and receives rows only: provider handle, cwd, title, prompt previews, and last activity. Import calls `importSession({ providerHandleId, cwd })` for the selected row and must not call listing again. The provider returns the resumed session, storage config, persistence handle, and hydrated timeline for that one native session; `AgentManager.importProviderSession` seeds the daemon timeline and publishes the Paseo agent only after it is ready.
 
@@ -478,7 +497,7 @@ interface AgentSession {
   readonly provider: AgentProvider;
   readonly id: string | null;
   readonly capabilities: AgentCapabilityFlags;
-  readonly features?: AgentFeature[];
+  readonly controls?: AgentOptionControl[];
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
   steerActiveTurn?(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult>;
@@ -500,7 +519,7 @@ interface AgentSession {
   listCommands?(): Promise<AgentSlashCommand[]>;
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
-  setFeature?(featureId: string, value: unknown): Promise<void>;
+  applyOptions?(options: ProviderOptions): Promise<void>;
   tryHandleOutOfBand?(prompt: AgentPromptInput): {
     run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void>;
   } | null;

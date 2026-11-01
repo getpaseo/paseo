@@ -1771,7 +1771,6 @@ describe("ACPAgentSession Zed parity", () => {
         description: "Use a Copilot custom agent profile",
         tooltip: "Select Copilot agent",
         icon: undefined,
-        defaultValue: "",
         choices: [
           { value: "", label: "Default", description: undefined },
           { value: "Probe Agent", label: "Probe Agent", description: "Temporary probe agent" },
@@ -1799,7 +1798,57 @@ describe("ACPAgentSession Zed parity", () => {
     });
     expect(session.controls).toEqual([
       expect.objectContaining({ key: "auto_accept" }),
-      expect.objectContaining({ key: "agent", defaultValue: "Probe Agent" }),
+      expect.objectContaining({ key: "agent" }),
+    ]);
+  });
+
+  test("reports once, at subscribe, a select the provider opened differently from the options", async () => {
+    const setSessionConfigOption = vi.fn(async () => ({
+      configOptions: [copilotAgentConfigOption("")],
+    }));
+    const session = createCopilotSessionWithConfig(null, { agent: "Probe Agent" });
+    const { internals } = prepareConfiguredOverrideSession(session, {
+      configOptions: [copilotAgentConfigOption("")],
+      connection: { setSessionConfigOption },
+    });
+    const emitted: AgentStreamEvent[] = [];
+    session.subscribe((event) => emitted.push(event));
+    await internals.applyConfiguredOverrides();
+    expect(emitted.filter((event) => event.type === "options_changed")).toEqual([]);
+
+    const first: AgentStreamEvent[] = [];
+    session.subscribe((event) => first.push(event));
+    const second: AgentStreamEvent[] = [];
+    session.subscribe((event) => second.push(event));
+
+    expect(first.filter((event) => event.type === "options_changed")).toEqual([
+      { type: "options_changed", provider: "copilot", patch: { agent: "" } },
+    ]);
+    expect(second.filter((event) => event.type === "options_changed")).toEqual([]);
+  });
+
+  test("forwards a select the provider changes on its own, and applying a patch emits nothing", async () => {
+    const setSessionConfigOption = vi.fn(async () => ({
+      configOptions: [copilotAgentConfigOption("Probe Agent")],
+    }));
+    const session = createCopilotSessionWithConfig();
+    const { internals } = prepareConfiguredOverrideSession(session, {
+      configOptions: [copilotAgentConfigOption("")],
+      connection: { setSessionConfigOption },
+    });
+    await internals.applyConfiguredOverrides();
+    const emitted: AgentStreamEvent[] = [];
+    session.subscribe((event) => emitted.push(event));
+
+    await session.applyOptions({ agent: "Probe Agent" });
+    expect(emitted.filter((event) => event.type === "options_changed")).toEqual([]);
+
+    asInternals<ACPSessionInternals>(session).translateSessionUpdate({
+      sessionUpdate: "config_option_update",
+      configOptions: [copilotAgentConfigOption("")],
+    });
+    expect(emitted.filter((event) => event.type === "options_changed")).toEqual([
+      { type: "options_changed", provider: "copilot", patch: { agent: "" } },
     ]);
   });
 
@@ -1822,7 +1871,7 @@ describe("ACPAgentSession Zed parity", () => {
     });
     expect(session.controls).toEqual([
       expect.objectContaining({ key: "auto_accept" }),
-      expect.objectContaining({ key: "agent", defaultValue: "Probe Agent" }),
+      expect.objectContaining({ key: "agent" }),
     ]);
   });
 });
@@ -2179,7 +2228,6 @@ describe("ACPAgentClient config features", () => {
       expect.objectContaining({
         type: "select",
         key: "agent",
-        defaultValue: "Probe Agent",
         choices: [
           expect.objectContaining({ value: "", label: "Default" }),
           expect.objectContaining({ value: "Probe Agent", label: "Probe Agent" }),

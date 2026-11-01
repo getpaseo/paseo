@@ -3454,6 +3454,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   private threadRollbackAvailable = true;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private startupEvents: AgentStreamEvent[] | null = null;
+  /** How the opened session differs from the options it was given; reported at first subscribe. */
+  private openOptionReport: Record<string, unknown> = {};
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
@@ -3589,7 +3591,6 @@ export class CodexAppServerAgentSession implements AgentSession {
   get controls(): AgentOptionControl[] {
     return buildCodexControls({
       serviceTiers: this.currentServiceTiers(),
-      options: this.providerOptions,
       planModeAvailable: this.hasPlanCollaborationMode(),
     });
   }
@@ -3649,6 +3650,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
       this.speedModels =
         CodexModelListResponseSchema.parse(await client.request("model/list", {})).data ?? [];
+      this.normalizeLegacySpeed();
       await this.loadResolvedWorkspaceWrite();
       await this.loadCollaborationModes();
       await this.loadSkills();
@@ -3859,6 +3861,22 @@ export class CodexAppServerAgentSession implements AgentSession {
         )
       : (this.speedModels.find((model) => model.isDefault) ?? this.speedModels[0]);
     return selectedModel?.serviceTiers ?? [];
+  }
+
+  /**
+   * COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once saved Fast
+   * preferences have migrated. A saved `fast_mode: true` or `service_tier: "fast"` runs as the
+   * model's Fast tier; the session says so once, at subscribe, so the options and the control agree.
+   */
+  private normalizeLegacySpeed(): void {
+    const requested = this.requestedServiceTier;
+    const resolved = this.resolveServiceTier(requested);
+    const legacy = this.providerOptions.fast_mode !== undefined || requested !== resolved;
+    if (!legacy || resolved === null) return;
+    const { fast_mode: _legacy, ...rest } = this.providerOptions;
+    this.providerOptions = { ...rest, service_tier: resolved };
+    this.requestedServiceTier = resolved;
+    this.openOptionReport = { service_tier: resolved, fast_mode: null };
   }
 
   private get serviceTier(): string | null {
@@ -4577,6 +4595,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     const startupEvents = this.startupEvents;
     this.startupEvents = null;
     for (const event of startupEvents ?? []) this.notifySubscribers(event);
+    if (Object.keys(this.openOptionReport).length > 0) {
+      callback({ type: "options_changed", provider: CODEX_PROVIDER, patch: this.openOptionReport });
+      this.openOptionReport = {};
+    }
     return () => {
       this.subscribers.delete(callback);
     };
@@ -4657,21 +4679,50 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
+  /** Applies only the options the patch sets; the rest of the running options stay as they are. */
   async applyOptions(options: ProviderOptions): Promise<void> {
-    const next = validateProviderOptions("codex", CodexProviderOptionsSchema, options) ?? {};
-    const requestedTier = readCodexServiceTier(next);
-    if (
-      requestedTier !== this.requestedServiceTier &&
-      !this.isServiceTierAvailable(requestedTier)
-    ) {
-      throw new Error(
-        `Codex speed '${String(requestedTier)}' is not available for model '${this.config.model ?? "default"}'`,
-      );
+    const { fast_mode: _legacyFast, ...running } = this.providerOptions;
+    const next =
+      validateProviderOptions("codex", CodexProviderOptionsSchema, {
+        ...running,
+        ...options,
+      }) ?? {};
+    let requestedTier = this.requestedServiceTier;
+    if ("service_tier" in options || "fast_mode" in options) {
+      // COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once clients use service_tier.
+      requestedTier = this.requestedTierFrom(options);
+      if (
+        requestedTier !== this.requestedServiceTier &&
+        !this.isServiceTierAvailable(requestedTier)
+      ) {
+        throw new Error(
+          `Codex speed '${String(requestedTier)}' is not available for model '${this.config.model ?? "default"}'`,
+        );
+      }
     }
-    this.providerOptions = next;
+    this.providerOptions = { ...next, ...(requestedTier ? { service_tier: requestedTier } : {}) };
     this.requestedServiceTier = requestedTier;
-    this.setPlanMode(next.plan_mode === true);
+    if ("plan_mode" in options) this.setPlanMode(options.plan_mode === true);
     this.cachedRuntimeInfo = null;
+    // COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once clients use service_tier.
+    if ("fast_mode" in options && !("service_tier" in options)) {
+      setImmediate(() => this.reportSpeed({ fast_mode: null }));
+    }
+  }
+
+  private requestedTierFrom(options: ProviderOptions): string | null {
+    if ("service_tier" in options) return readCodexServiceTier(options);
+    return options.fast_mode ? "fast" : "default";
+  }
+
+  private reportSpeed(extra: Record<string, unknown>): void {
+    const tier = this.serviceTier;
+    if (tier === null) return;
+    this.emitEvent({
+      type: "options_changed",
+      provider: CODEX_PROVIDER,
+      patch: { service_tier: tier, ...extra },
+    });
   }
 
   private isServiceTierAvailable(tier: string | null): boolean {

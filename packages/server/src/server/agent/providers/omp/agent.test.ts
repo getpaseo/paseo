@@ -615,7 +615,7 @@ describe("OMP agent client and session", () => {
     );
     expect(omp.requireSession().controls).toEqual([
       expect.objectContaining({
-        defaultValue: true,
+        key: "fast_mode",
         description: expect.stringMatching(/does not apply/i),
       }),
     ]);
@@ -631,32 +631,46 @@ describe("OMP agent client and session", () => {
     expect(session.controls).toEqual([
       expect.objectContaining({
         key: "fast_mode",
-        defaultValue: true,
         description: expect.stringMatching(/does not apply to this model/i),
         tooltip: expect.stringMatching(/does not apply to this model/i),
       }),
     ]);
   });
 
-  test("removing the fast_mode option restores the runtime's own setting", async () => {
+  test("applies only the options it is given and leaves the runtime alone otherwise", async () => {
     const omp = new OmpHarness();
     await omp.start();
     const session = omp.requireSession();
-    expect(omp.runtime().state.fastModeEnabled).toBe(false);
 
     omp.runtime().fastModeResult = { enabled: true, active: true };
     await session.applyOptions?.({ fast_mode: true });
     expect(omp.runtime().setFastModeRequests).toEqual([true]);
 
-    // `{ fast_mode: null }` with no config.json default reaches the provider as no key at all.
-    omp.runtime().fastModeResult = { enabled: false, active: false };
+    // Removing the option sends nothing: the patch carries no key, so the runtime keeps Fast.
     await session.applyOptions?.({});
+    expect(omp.runtime().setFastModeRequests).toEqual([true]);
+  });
 
-    expect(omp.runtime().setFastModeRequests).toEqual([true, false]);
-    expect(session.controls).toEqual([expect.objectContaining({ defaultValue: false })]);
-    // A later change to an unrelated option leaves the runtime alone.
-    await session.applyOptions?.({});
-    expect(omp.runtime().setFastModeRequests).toEqual([true, false]);
+  test("reports a Fast change the runtime made on its own", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const session = omp.requireSession();
+    omp.runtime().fastModeResult = { enabled: true, active: true };
+    await session.applyOptions?.({ fast_mode: true });
+    expect(omp.eventTypes()).not.toContain("options_changed");
+
+    omp.runtime().setModelResult = { provider: "openrouter", id: "other/model" };
+    omp.runtime().queueStateReports([
+      {
+        ...omp.runtime().state,
+        model: omp.runtime().setModelResult,
+        fastModeEnabled: false,
+        fastModeActive: false,
+      },
+    ]);
+    await session.setModel?.("openrouter/other/model");
+
+    expect(omp.eventTypes().filter((type) => type === "options_changed")).toHaveLength(1);
   });
 
   test("shows Fast only when OMP reports its state fields", async () => {
@@ -683,7 +697,6 @@ describe("OMP agent client and session", () => {
     const session = omp.requireSession();
     omp.runtime().fastModeResult = { enabled: true, active: true };
     await session.applyOptions?.({ fast_mode: true });
-    expect(session.controls).toEqual([expect.objectContaining({ defaultValue: true })]);
 
     omp.runtime().setModelResult = { provider: "openrouter", id: "other/model" };
     omp.runtime().queueStateReports([
@@ -697,7 +710,7 @@ describe("OMP agent client and session", () => {
     await session.setModel?.("openrouter/other/model");
     expect(session.controls).toEqual([
       expect.objectContaining({
-        defaultValue: true,
+        key: "fast_mode",
         description: expect.stringMatching(/does not apply/i),
       }),
     ]);

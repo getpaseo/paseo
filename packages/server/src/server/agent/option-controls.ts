@@ -54,8 +54,9 @@ export function foldFeatureValues<
 /**
  * COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
  * A plugin written against the previous SDK reads and edits `config.featureValues`, so a
- * hook sees the config's options there. Keys the hook changed come back as options and
- * override what the config already held; keys it left alone do not.
+ * hook sees a copy of the config's options there. What the hook did to that copy (set,
+ * replaced or deleted a key, or dropped the field) is applied as a patch over the options it
+ * returned; keys it left alone change nothing.
  */
 export function exposeFeatureValuesToHook<
   T extends { providerOptions?: ProviderOptions | null; featureValues?: Record<string, unknown> },
@@ -68,13 +69,21 @@ export function foldHookFeatureValues<
   T extends { providerOptions?: ProviderOptions | null; featureValues?: Record<string, unknown> },
 >(returned: T, sent: T): Omit<T, "featureValues"> {
   const { featureValues, ...rest } = returned;
-  if (!featureValues) return rest;
-  const before = sent.featureValues ?? {};
-  const edits: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(featureValues)) {
-    if (!isDeepStrictEqual(value, before[key])) edits[key] = value;
+  const before = sent.featureValues;
+  if (!before) {
+    // No copy was sent, so everything the hook put in `featureValues` is new.
+    return { ...rest, providerOptions: { ...featureValues, ...rest.providerOptions } };
   }
-  return { ...rest, providerOptions: { ...featureValues, ...rest.providerOptions, ...edits } };
+  const after = featureValues ?? {};
+  const patch: ProviderOptionsPatch = {};
+  for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    if (isDeepStrictEqual(after[key], before[key])) continue;
+    patch[key] = key in after ? after[key] : null;
+  }
+  return {
+    ...rest,
+    providerOptions: applyProviderOptionsPatch(rest.providerOptions ?? undefined, patch),
+  };
 }
 
 interface ProfileOptionFields {
@@ -116,9 +125,7 @@ export function withLegacyProfileFeatureValues<T extends ProfileOptionFields>(pr
 function selectedChoice(control: AgentOptionSelectControl, options: ProviderOptions) {
   const value = options[control.key];
   if (typeof value === "string") {
-    const choice = control.choices.find(
-      (candidate) => candidate.value === value || candidate.aliases?.includes(value),
-    );
+    const choice = control.choices.find((candidate) => candidate.value === value);
     if (choice) return choice.value;
   }
   return control.defaultValue ?? null;
@@ -175,6 +182,10 @@ export function featuresFromControls(
   return (controls ?? []).map((control) => featureFromControl(control, effective));
 }
 
+/**
+ * A recorded feature's value is the control's unset value: it is what the agent showed before
+ * any option was stored, and an explicit effective option still wins over it.
+ */
 function controlFromFeature(feature: AgentFeature): AgentOptionControl {
   const descriptor = {
     key: feature.id,
@@ -182,14 +193,15 @@ function controlFromFeature(feature: AgentFeature): AgentOptionControl {
     ...describe(feature),
   };
   if (feature.type === "toggle") {
-    return { type: "toggle", ...descriptor };
+    return { type: "toggle", ...descriptor, defaultValue: feature.value };
   }
   const defaultChoice = feature.options.find((option) => option.isDefault);
+  const unsetValue = feature.value ?? defaultChoice?.id;
   return {
     type: "select",
     ...descriptor,
     ...(feature.desktopTrigger ? { desktopTrigger: feature.desktopTrigger } : {}),
-    ...(defaultChoice ? { defaultValue: defaultChoice.id } : {}),
+    ...(unsetValue != null ? { defaultValue: unsetValue } : {}),
     choices: feature.options.map((option) => ({
       value: option.id,
       label: option.label,

@@ -2174,6 +2174,10 @@ export class AgentManager {
         updatedAt,
         availableModes: [],
         controls: record.controls,
+        effectiveOptions: this.effectiveOptionsFor(
+          record.provider,
+          record.config?.providerOptions ?? undefined,
+        ),
         currentModeId: record.lastModeId ?? null,
         pendingPermissions: new Map(),
         bufferedPermissionResolutions: new Map(),
@@ -2267,21 +2271,33 @@ export class AgentManager {
   }
 
   /**
-   * Patches the agent's own options and hands the provider the resulting effective options. The
-   * provider applies what it can live and reads the rest at next open; a provider that rejects a
-   * value leaves the stored options unchanged.
+   * Applies an options patch to a running agent (see `AgentSession.applyOptions`). The provider
+   * gets only the keys the patch sets, each resolved against the `config.json` defaults; a
+   * removal sends it nothing and it keeps its current setting until the session is next opened.
+   * The patch is stored once the provider accepts it, over the options as they are at that
+   * moment, so concurrent writes to one agent resolve by arrival order.
    */
   async setAgentOptions(agentId: string, patch: ProviderOptionsPatch): Promise<void> {
     const agent = this.requireAgent(agentId);
-    const ownOptions = applyProviderOptionsPatch(agent.config.providerOptions, patch);
-
-    if (agent.session.applyOptions) {
-      await agent.session.applyOptions(this.effectiveOptionsFor(agent.provider, ownOptions));
-      await this.drainSessionEvents(agentId);
+    const set = Object.fromEntries(
+      Object.entries(patch).filter(([, value]) => value !== null && value !== undefined),
+    );
+    if (agent.session.applyOptions && Object.keys(set).length > 0) {
+      const resolved = this.effectiveOptionsFor(agent.provider, set);
+      await agent.session.applyOptions(
+        Object.fromEntries(Object.keys(set).map((key) => [key, resolved[key]])),
+      );
     }
-    agent.config.providerOptions = Object.keys(ownOptions).length > 0 ? ownOptions : undefined;
+    this.storeOptionsPatch(agent, patch);
+    // Differences the provider reports after applying arrive now and are stored as reported.
+    await this.drainSessionEvents(agentId);
     this.touchUpdatedAt(agent);
     this.emitState(agent);
+  }
+
+  private storeOptionsPatch(agent: ManagedAgent, patch: ProviderOptionsPatch): void {
+    const own = applyProviderOptionsPatch(agent.config.providerOptions, patch);
+    agent.config.providerOptions = Object.keys(own).length > 0 ? own : undefined;
   }
 
   private effectiveOptionsFor(
@@ -4686,8 +4702,7 @@ export class AgentManager {
     flags: StreamEventFlags;
   }): void {
     const { agent, patch, flags } = params;
-    const ownOptions = applyProviderOptionsPatch(agent.config.providerOptions, patch);
-    agent.config.providerOptions = Object.keys(ownOptions).length > 0 ? ownOptions : undefined;
+    this.storeOptionsPatch(agent, patch);
     flags.shouldDispatchEvent = false;
     this.emitState(agent);
   }

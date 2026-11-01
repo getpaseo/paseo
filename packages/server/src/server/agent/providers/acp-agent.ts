@@ -867,8 +867,6 @@ export function deriveControlsFromACP(
         description: featureOption.description,
         tooltip: featureOption.tooltip,
         icon: featureOption.icon,
-        // The agent reports its own current value; an unset option stands for it.
-        ...(option.currentValue != null ? { defaultValue: option.currentValue } : {}),
         choices: deriveConfigFeatureSelectOptions(option, featureOption).map((choice) => ({
           value: choice.id,
           label: choice.label,
@@ -1757,7 +1755,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private currentTitle: string | null = null;
   private lastActivityAt: string | null = null;
   private configOptions: SessionConfigOption[] = [];
-  private readonly configFeatureDefaults = new Map<string, string>();
+  /** The value of each select as Paseo last knew it; a different value is the provider's change. */
+  private readonly knownFeatureValues = new Map<string, string>();
+  /** How the opened session differs from the options it was given; reported at first subscribe. */
+  private openOptionReport: Record<string, unknown> = {};
   private cachedCommands: AgentSlashCommand[] = [];
   /** When the last command batch arrived; null while nothing has been published. */
   private commandsUpdatedAt: number | null = null;
@@ -2022,6 +2023,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         sessionId: this.sessionId,
       });
     }
+    if (Object.keys(this.openOptionReport).length > 0) {
+      callback({ type: "options_changed", provider: this.provider, patch: this.openOptionReport });
+      this.openOptionReport = {};
+    }
     return () => {
       this.subscribers.delete(callback);
     };
@@ -2209,6 +2214,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       requestedValue: modeId,
       label: "mode",
     });
+    this.reportOptionChanges();
     this.availableModes = deriveModesFromACP(this.defaultModes, null, this.configOptions).modes;
     this.pushEvent({
       type: "mode_changed",
@@ -2334,6 +2340,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       requestedValue: modelId,
       label: "model",
     });
+    this.reportOptionChanges();
     this.pushEvent({
       type: "model_changed",
       provider: this.provider,
@@ -2385,6 +2392,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       requestedValue: thinkingOptionId,
       label: "thought-level",
     });
+    this.reportOptionChanges();
     this.pushEvent({
       type: "thinking_option_changed",
       provider: this.provider,
@@ -2392,39 +2400,50 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     });
   }
 
-  /**
-   * The value a select reported before Paseo wrote to it. An option removed from the agent's
-   * options returns the select to this value.
-   */
-  private recordConfigFeatureDefaults(): void {
+  /** Applies only the options the patch sets. Differences are reported after this resolves. */
+  async applyOptions(options: ProviderOptions): Promise<void> {
+    for (const [id, value] of Object.entries(options)) {
+      const featureOption = this.configFeatureOptions.find((candidate) => candidate.id === id);
+      if (!featureOption) continue;
+      const option = findSelectConfigFeatureOption(this.configOptions, featureOption);
+      if (!option || value !== option.currentValue) {
+        await this.setConfigFeature(id, value);
+      }
+      this.knownFeatureValues.set(id, String(value));
+      this.config.providerOptions = { ...this.config.providerOptions, [id]: value };
+    }
+    // Auto Accept is Paseo's own setting, so it changes only once every write has been accepted.
+    if (ACP_AUTO_ACCEPT_FEATURE_ID in options) {
+      this.config.providerOptions = {
+        ...this.config.providerOptions,
+        [ACP_AUTO_ACCEPT_FEATURE_ID]: options[ACP_AUTO_ACCEPT_FEATURE_ID] === true,
+      };
+    }
+    setImmediate(() => this.reportOptionChanges());
+  }
+
+  /** Reports selects the provider changed on its own since Paseo last knew their values. */
+  private reportOptionChanges(): void {
+    const patch: Record<string, unknown> = {};
     for (const featureOption of this.configFeatureOptions) {
-      if (this.configFeatureDefaults.has(featureOption.id)) continue;
       const current = findSelectConfigFeatureOption(
         this.configOptions,
         featureOption,
       )?.currentValue;
-      if (current != null) this.configFeatureDefaults.set(featureOption.id, current);
-    }
-  }
-
-  async applyOptions(options: ProviderOptions): Promise<void> {
-    await this.setConfigFeature(
-      ACP_AUTO_ACCEPT_FEATURE_ID,
-      options[ACP_AUTO_ACCEPT_FEATURE_ID] === true,
-    );
-    for (const featureOption of this.configFeatureOptions) {
-      const explicit = Object.prototype.hasOwnProperty.call(options, featureOption.id);
-      const value = explicit
-        ? options[featureOption.id]
-        : this.configFeatureDefaults.get(featureOption.id);
-      if (value === undefined) continue;
-      const option = findSelectConfigFeatureOption(this.configOptions, featureOption);
-      if (option && value === option.currentValue) continue;
-      if (!explicit && (!option || !findSelectConfigChoice({ option, value: String(value) }))) {
-        // A default recorded under a previous model may not exist on the current one.
-        continue;
+      const known = this.knownFeatureValues.get(featureOption.id);
+      if (current == null || known === current) continue;
+      this.knownFeatureValues.set(featureOption.id, current);
+      if (known === undefined) continue;
+      patch[featureOption.id] = current;
+      if (this.config.providerOptions && featureOption.id in this.config.providerOptions) {
+        this.config.providerOptions = {
+          ...this.config.providerOptions,
+          [featureOption.id]: current,
+        };
       }
-      await this.setConfigFeature(featureOption.id, value);
+    }
+    if (Object.keys(patch).length > 0) {
+      this.pushEvent({ type: "options_changed", provider: this.provider, patch });
     }
   }
 
@@ -2467,14 +2486,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         value: requestedValue,
       }),
     );
-    const currentValue = this.applyConfigOptionResponse({
+    this.applyConfigOptionResponse({
       response,
       configId: option.id,
       category: featureOption.category,
       requestedValue,
       label: featureOption.label,
     });
-    this.config.providerOptions = { ...this.config.providerOptions, [featureId]: currentValue };
   }
 
   private applyConfigOptionResponse({
@@ -2997,7 +3015,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       : response;
 
     this.configOptions = this.transformConfigOptions(transformed.configOptions ?? []);
-    this.recordConfigFeatureDefaults();
 
     const modeInfo = deriveModesFromACP(this.defaultModes, transformed.modes, this.configOptions);
     this.availableModes = modeInfo.modes;
@@ -3067,6 +3084,26 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           { err: error, featureId: featureOption.id, model: this.currentModel },
           `${this.provider} cannot apply ACP feature '${featureOption.id}' to the current model; using the provider default`,
         );
+      }
+    }
+    this.recordOpenedFeatureValues(configuredFeatureValues);
+  }
+
+  /** Remembers what each select ended at, and what differs from the options the session was given. */
+  private recordOpenedFeatureValues(given: Record<string, unknown>): void {
+    for (const featureOption of this.configFeatureOptions) {
+      const current = findSelectConfigFeatureOption(
+        this.configOptions,
+        featureOption,
+      )?.currentValue;
+      if (current == null) continue;
+      this.knownFeatureValues.set(featureOption.id, current);
+      if (featureOption.id in given && given[featureOption.id] !== current) {
+        this.openOptionReport[featureOption.id] = current;
+        this.config.providerOptions = {
+          ...this.config.providerOptions,
+          [featureOption.id]: current,
+        };
       }
     }
   }
@@ -3292,6 +3329,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.currentMode = nextMode ?? this.currentMode;
     this.currentModel = nextModel ?? this.currentModel;
     this.thinkingOptionId = nextThinkingOptionId ?? this.thinkingOptionId;
+    this.reportOptionChanges();
 
     const events: AgentStreamEvent[] = [];
     if (nextMode !== null) {

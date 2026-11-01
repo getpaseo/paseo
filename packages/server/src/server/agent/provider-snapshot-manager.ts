@@ -744,7 +744,12 @@ export class ProviderSnapshotManager {
       modeId: parent.currentModeId,
       isUnattended: definition.isCreateConfigUnattended({
         modeId: parent.currentModeId,
-        config: parent.config,
+        // Provider defaults from `config.json` apply to the parent too, so classify on the
+        // effective options while the stored overrides stay as they are.
+        config: {
+          ...parent.config,
+          providerOptions: parent.effectiveOptions ?? parent.config.providerOptions,
+        },
         controls: parent.controls,
         availableModes: parent.availableModes ?? definition.modes ?? [],
       }),
