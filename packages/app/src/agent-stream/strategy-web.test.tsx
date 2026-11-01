@@ -10,6 +10,7 @@ import { RetainedPanelActivity } from "@/components/retained-panel";
 import { reduceStreamUpdate, type StreamItem } from "@/types/stream";
 import type { StreamRenderInput, StreamSegmentRenderers, StreamViewportHandle } from "./strategy";
 import { createWebStreamStrategy } from "./strategy-web";
+import { projectPluginTimelineItems } from "@/plugins/timeline/projection";
 
 vi.hoisted(() => {
   Object.defineProperty(window, "matchMedia", {
@@ -55,10 +56,11 @@ function createRenderers(onRowRender: () => void): StreamSegmentRenderers {
   };
 }
 
-function MeasuredTestRow({ item }: { item: StreamItem }) {
+function MeasuredTestRow({ item, measuredHeight }: { item: StreamItem; measuredHeight?: number }) {
   const [loaded, setLoaded] = React.useState(false);
   const load = React.useCallback(() => setLoaded(true), []);
-  const height = item.kind === "user_message" && item.text === "grown" ? 120 : 24;
+  const height =
+    measuredHeight ?? (item.kind === "user_message" && item.text === "grown" ? 120 : 24);
   const measure = React.useCallback(
     (node: HTMLDivElement | null) => {
       if (!node?.parentElement) return;
@@ -252,20 +254,33 @@ describe("createWebStreamStrategy", () => {
     expect(rowRenderCount.mock.calls.length).toBeLessThanOrEqual(historyVirtualized.length);
   });
 
-  it("settles row measurement when two history rows share an id", () => {
+  it("settles row measurement when a plugin reuses output IDs across source messages", () => {
     const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    const renderRow = (rowItem: StreamItem) => <MeasuredTestRow item={rowItem} />;
-    const duplicate = userMessage(2);
-    const historyVirtualized = [
-      userMessage(0),
-      userMessage(1),
-      { ...duplicate, text: "grown" },
-      duplicate,
-      userMessage(3),
-    ];
+    const renderRow = (rowItem: StreamItem) => (
+      <MeasuredTestRow
+        item={rowItem}
+        measuredHeight={rowItem.kind === "plugin" && rowItem.sourceId === "message-2" ? 120 : 24}
+      />
+    );
+    const historyVirtualized = projectPluginTimelineItems(
+      [userMessage(0), userMessage(1), userMessage(2), userMessage(3), userMessage(4)],
+      ({ sourceId }) =>
+        sourceId === "message-2" || sourceId === "message-3"
+          ? [
+              {
+                type: "plugin",
+                id: "part-0",
+                pluginId: "split",
+                kind: "part",
+                version: 1,
+                data: null,
+              },
+            ]
+          : undefined,
+    );
     const input: StreamRenderInput = {
       agentId: "agent",
       segments: { historyVirtualized, historyMounted: [], liveHead: [] },
@@ -296,13 +311,9 @@ describe("createWebStreamStrategy", () => {
     act(() => root?.render(strategy.render(input)));
 
     const rows = [...container.querySelectorAll<HTMLElement>("[data-history-row-id]")];
-    expect(rows.map((row) => row.dataset.historyRowId)).toEqual([
-      "message-0",
-      "message-1",
-      "message-2",
-      "message-2",
-      "message-3",
-    ]);
+    expect(rows.map((row) => row.dataset.historyRowId)).toEqual(
+      historyVirtualized.map((row) => row.id),
+    );
     expect(rows.map((row) => row.style.transform)).toEqual([
       "translateY(0px)",
       "translateY(24px)",
