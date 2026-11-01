@@ -4,9 +4,17 @@ import type { EditingTextInputHandle, EditingTextInputProps } from "./types";
 
 interface WebTextInputElement extends TextInput {
   value?: string;
+  selectionStart?: number | null;
+  selectionEnd?: number | null;
   setSelectionRange?: (start: number, end: number) => void;
-  addEventListener(type: "compositionstart" | "compositionend", listener: EventListener): void;
-  removeEventListener(type: "compositionstart" | "compositionend", listener: EventListener): void;
+  addEventListener(
+    type: "compositionstart" | "compositionend" | "drop",
+    listener: EventListener,
+  ): void;
+  removeEventListener(
+    type: "compositionstart" | "compositionend" | "drop",
+    listener: EventListener,
+  ): void;
 }
 
 export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextInputProps>(
@@ -43,11 +51,32 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
         onChangeTextRef.current?.(nextText);
       };
 
+      const handleTextDrop = (event: Event) => {
+        const dragEvent = event as DragEvent;
+        const transfer = dragEvent.dataTransfer;
+        if (!transfer || transfer.files.length > 0) return;
+        const droppedText = transfer.getData("text/plain");
+        if (!droppedText) return;
+
+        dragEvent.preventDefault();
+        dragEvent.stopPropagation();
+        const currentText = input.value ?? textRef.current;
+        const start = input.selectionStart ?? currentText.length;
+        const end = input.selectionEnd ?? start;
+        const nextText = `${currentText.slice(0, start)}${droppedText}${currentText.slice(end)}`;
+        textRef.current = nextText;
+        input.value = nextText;
+        input.setSelectionRange?.(start + droppedText.length, start + droppedText.length);
+        onChangeTextRef.current?.(nextText);
+      };
+
       input.addEventListener("compositionstart", startComposition);
       input.addEventListener("compositionend", endComposition);
+      input.addEventListener("drop", handleTextDrop);
       return () => {
         input.removeEventListener("compositionstart", startComposition);
         input.removeEventListener("compositionend", endComposition);
+        input.removeEventListener("drop", handleTextDrop);
       };
     }, []);
 
