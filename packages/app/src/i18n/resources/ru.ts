@@ -629,6 +629,16 @@ export const ru: TranslationResources = {
       fileUploaded: "Файл загружен",
       pasteFileFailed: "Не удалось вставить файл: {{reason}}",
       uploadingFile: "Загрузка файла…",
+      actions: {
+        uploadFile: "Загрузить файл",
+        startDictation: "Начать диктовку",
+        stopDictation: "Остановить и вставить расшифровку",
+      },
+      dictation: {
+        updateHost: "Обновите хост, чтобы использовать диктовку в терминалах.",
+        unavailable: "Диктовка недоступна на этом хосте.",
+        discard: "Удалить запись",
+      },
     },
     sheet: {
       openAsTab: "Открыть во вкладке",
@@ -2634,6 +2644,7 @@ export const ru: TranslationResources = {
         cycleAgentMode: "Переключить режим агента",
         toggleVoiceMode: "Переключить голосовой режим",
         startStopDictation: "Начать/остановить диктовку",
+        startStopTerminalDictation: "Начать/остановить диктовку в терминале",
         interruptAgent: "Прервать агента",
         sendMessage: "Отправить сообщение",
         queueMessage: "Поставить сообщение в очередь",

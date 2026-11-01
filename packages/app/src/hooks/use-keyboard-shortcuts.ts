@@ -30,7 +30,7 @@ import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import { isNative } from "@/constants/platform";
-import { keyboardShortcutsAvailable } from "@/keyboard/availability";
+import { dispatchableShortcutBindings, keyboardShortcutsAvailable } from "@/keyboard/availability";
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { buildOpenProjectRoute } from "@/utils/host-routes";
@@ -66,6 +66,10 @@ export function useKeyboardShortcuts({
   const { overrides } = useKeyboardShortcutOverrides();
   const bindings = useMemo(() => buildEffectiveBindings(overrides), [overrides]);
   const shortcutsAvailable = keyboardShortcutsAvailable({ isNative, isCompact: isMobile });
+  const dispatchBindings = useMemo(
+    () => dispatchableShortcutBindings(bindings, { isNative, isCompact: isMobile }),
+    [bindings, isMobile],
+  );
   const isDesktopApp = getIsElectronRuntime();
   const isMac = getShortcutOs() === "mac";
   const chordStateRef = useRef<ChordState>({
@@ -269,7 +273,7 @@ export function useKeyboardShortcuts({
         };
         publishBrowserShortcutPolicy();
       },
-      bindings,
+      bindings: dispatchBindings,
     });
     chordStateRef.current = result.nextChordState;
     if (
@@ -366,6 +370,26 @@ export function useKeyboardShortcuts({
     });
   });
 
+  // Compact web dispatches only its `compact` bindings, so it skips the badge and settings
+  // handling above, which belong to the full set. Overlays keep their own listener.
+  const handleCompactKeyDown = useStableEvent((event: KeyboardEvent) => {
+    if (!shouldHandle() || isImeComposingKeyboardEvent(event)) {
+      return;
+    }
+    const store = useKeyboardShortcutsStore.getState();
+    if (store.capturingShortcut) {
+      return;
+    }
+    resolveAndPerformShortcut({
+      event,
+      focusScope: resolveKeyboardFocusScope({
+        target: event.target,
+        commandCenterOpen: store.commandCenterOpen,
+      }),
+      domEvent: event,
+    });
+  });
+
   const handleKeyUp = useStableEvent((event: KeyboardEvent) => {
     const key = event.key ?? "";
     if (key === badgeModifierKey) {
@@ -385,6 +409,14 @@ export function useKeyboardShortcuts({
       browserFocusRestoreElement: getResidentBrowserWebview(input.browserId),
     });
   });
+
+  useEffect(() => {
+    if (!enabled || shortcutsAvailable || dispatchBindings.length === 0) return;
+    window.addEventListener("keydown", handleCompactKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", handleCompactKeyDown, true);
+    };
+  }, [dispatchBindings, enabled, handleCompactKeyDown, shortcutsAvailable]);
 
   useEffect(() => {
     if (!enabled) return;

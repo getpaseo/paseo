@@ -619,6 +619,16 @@ export const en = {
       fileUploaded: "File uploaded",
       pasteFileFailed: "Failed to paste file: {{reason}}",
       uploadingFile: "Uploading file…",
+      actions: {
+        uploadFile: "Upload file",
+        startDictation: "Start dictation",
+        stopDictation: "Stop and paste transcript",
+      },
+      dictation: {
+        updateHost: "Update the host to use dictation in terminals.",
+        unavailable: "Dictation is not available on this host.",
+        discard: "Discard recording",
+      },
     },
     sheet: {
       openAsTab: "Open as tab",
@@ -2714,6 +2724,7 @@ export const en = {
         cycleAgentMode: "Cycle agent mode",
         toggleVoiceMode: "Toggle voice mode",
         startStopDictation: "Start/stop dictation",
+        startStopTerminalDictation: "Start/stop dictation in terminal",
         interruptAgent: "Interrupt agent",
         sendMessage: "Send message",
         queueMessage: "Queue message",

@@ -5,18 +5,39 @@ import type {
   AudioPlaybackSource,
 } from "./audio-engine-types";
 
+import type * as TwoWayAudio from "@getpaseo/expo-two-way-audio";
 import { createAudioPlayer, setAudioModeAsync } from "expo-audio";
 import { File, Paths } from "expo-file-system";
+import { AttemptCancelledError } from "@/utils/attempt-guard";
 import { createPlaybackQueue } from "./playback";
 import { playFile } from "./file-playback";
 import { playPcm16 } from "./pcm";
 
+export interface NativeCaptureStartOptions {
+  /**
+   * Aborting cancels a start still waiting on microphone permission or native
+   * initialization: it rejects with AttemptCancelledError and never starts capture.
+   */
+  signal?: AbortSignal;
+}
+
+export interface NativeAudioEngine extends AudioEngine {
+  startCapture(options?: NativeCaptureStartOptions): Promise<void>;
+}
+
 export function createAudioEngine(
   callbacks: AudioEngineCallbacks,
   options?: AudioEngineOptions,
-): AudioEngine {
-  const native = require("@getpaseo/expo-two-way-audio");
+): NativeAudioEngine {
+  return createNativeAudioEngine(require("@getpaseo/expo-two-way-audio"), callbacks, options);
+}
 
+/** The engine over a given native module; tests pass a fake of the OS audio APIs. */
+export function createNativeAudioEngine(
+  native: typeof TwoWayAudio,
+  callbacks: AudioEngineCallbacks,
+  options?: AudioEngineOptions,
+): NativeAudioEngine {
   const refs: {
     initialized: boolean;
     captureActive: boolean;
@@ -72,6 +93,9 @@ export function createAudioEngine(
   );
 
   async function ensureInitialized(): Promise<void> {
+    if (refs.destroyed) {
+      throw new AttemptCancelledError("Audio engine was destroyed");
+    }
     if (refs.initialized) {
       return;
     }
@@ -79,7 +103,18 @@ export function createAudioEngine(
     if (!success) {
       throw new Error("expo-two-way-audio: native initialize() returned false");
     }
+    if (refs.destroyed) {
+      // Destroyed while initializing: destroy() saw nothing to tear down.
+      native.tearDown();
+      throw new AttemptCancelledError("Audio engine was destroyed");
+    }
     refs.initialized = true;
+  }
+
+  function throwIfStartCancelled(signal: AbortSignal | undefined): void {
+    if (refs.destroyed || signal?.aborted) {
+      throw new AttemptCancelledError("Audio capture start was cancelled");
+    }
   }
 
   /**
@@ -183,14 +218,20 @@ export function createAudioEngine(
       interruptionSubscription.remove();
     },
 
-    async startCapture() {
+    async startCapture(startOptions) {
       if (refs.captureActive) {
         return;
       }
+      const signal = startOptions?.signal;
 
       try {
+        // Permission and initialization can wait on the user or the OS; a destroy or
+        // an abort in that time must not leave capture running with no owner.
+        throwIfStartCancelled(signal);
         await ensureMicrophonePermission();
+        throwIfStartCancelled(signal);
         await ensureInitialized();
+        throwIfStartCancelled(signal);
         const isRecording =
           options?.captureMode === "dictation"
             ? native.startDictation()
@@ -202,6 +243,10 @@ export function createAudioEngine(
         }
         refs.captureActive = true;
       } catch (error) {
+        if (error instanceof AttemptCancelledError) {
+          releaseSessionIfIdle();
+          throw error;
+        }
         const wrapped = error instanceof Error ? error : new Error(String(error));
         callbacks.onError?.(wrapped);
         throw wrapped;
