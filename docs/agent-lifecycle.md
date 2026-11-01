@@ -55,7 +55,9 @@ started finishes. Re-enabling keeps the existing idle timestamps.
 Foreground runs, permissions and responses, queued deliveries, lifecycle operations, and working
 managed or native descendants prevent collection. Outstanding local or remote finish subscriptions
 also protect their caller, including registration, recovery and notification dispatch acknowledgment.
-An idle managed child can still own background work.
+A standing subscription protects its caller from the start of each child run until that run's
+notification is acknowledged. Between runs the caller is collected like any idle agent, and the next
+notification resumes it. An idle managed child can still own background work.
 
 The daemon baseline always applies. An optional provider `canStopRuntime()` adds a veto: false,
 errors and timeouts retain ownership, while true cannot override daemon blockers. Without a provider
@@ -141,7 +143,7 @@ Setup belongs to the workspace, including combined workspace-plus-agent creation
 
 Users can also detach an existing subagent from the subagents track. Detach is deliberately a manual lifecycle gesture, not an agent-facing MCP tool. It removes the parent and open-tab lifecycle labels: it does not stop, archive, move, or restart the agent. The agent keeps its current `cwd` and `workspaceId`, leaves the former parent's track, and behaves like a root agent for tab close, workspace activity, and future parent archive.
 
-`notifyOnFinish` defaults to `true` for agent-scoped creation and prompt follow-ups because most delegated work needs to report back to the creating agent. Set it to `false` for explicit reporting or no completion callback.
+`notifyOnFinish` defaults to `true` for agent-scoped creation and prompt follow-ups because most delegated work needs to report back to the creating agent. Set it to `false` for explicit reporting or no completion callback. `create_agent` also accepts `"every"`: the parent hears each run the child settles, including runs the user or another agent starts, until the child is archived, deleted or detached. `"every"` is rejected for a detached child, which has no parent, and for a child on another host, because remote observation does not report archive.
 
 Agent-originated messages and automatic notifications share a recipient-daemon delivery module. A queued receipt acknowledges admission before provider dispatch, allowing a child to report and finish in the same two-second quiet window. Human prompts dispatch directly. Conflicting explicit interruption or session-mode choices retain separate ordered dispatches.
 
@@ -151,11 +153,13 @@ acknowledgment, so a lost window never becomes a completed receipt. Completion w
 admission within their original timeout and cancellation scope.
 
 Finish notification intent has a separate daemon-owned lifetime. The finish-subscriptions module
-persists caller, child, host, and ownership policy through an injectable store; its JSON adapter uses
-`$PASEO_HOME/finish-subscriptions.json`. Registration must commit before creation or queued-prompt
-acknowledgment promises a notification. A pending replacement retains its predecessor until dispatch
-accepts; rejected dispatch removes only the candidate. Recovery coalesces registrations for the same
-caller, child, and host into one watch.
+persists caller, child, host, ownership policy and standing intent through an injectable store; its
+JSON adapter uses `$PASEO_HOME/finish-subscriptions.json`. Registration must commit before creation or
+queued-prompt acknowledgment promises a notification. A pending replacement retains its predecessor
+until dispatch accepts; rejected dispatch removes only the candidate. Accepted dispatch consumes the
+predecessor's one-shot intent and carries its standing intent over. Either way, an outcome the
+predecessor had not sent yet is dropped, and the parent hears the follow-up's run instead. Recovery
+coalesces registrations for the same caller, child, and host into one watch.
 
 Bootstrap restores these watches after repairing stale running records to `closed` and before opening
 ingress. Reading a closed child's result does not load its provider. A finish notification reports that
@@ -165,8 +169,12 @@ in between. Archived or deleted parents suppress delivery;
 parent-owned creation watches also stop
 reporting after detachment.
 
-Intent remains stored until the parent's notification dispatch is acknowledged. Dispatch failure
-retries the captured notification; it does not change the child's reported outcome. Remote host loss
+One-shot intent remains stored until the parent's notification dispatch is acknowledged. Standing
+intent stays. It is marked reported once that dispatch is acknowledged and unmarked when the next run
+starts, so a restart never repeats a run the parent already heard and still reports a run it
+interrupted. A stop in the moment between a run's start and that write leaves the interrupted run
+unreported, unless restart recovery resumes the child. Dispatch failure retries the captured
+notification; it does not change the child's reported outcome. Remote host loss
 follows the [connected-host observation policy](connected-hosts.md#delegating-agents). Shutdown stops observation before flushing message delivery, retaining
 outstanding intent. A crash after successful dispatch but before removal commits can repeat the
 notification. Clean shutdown can also flush an already queued callback while retaining its intent,
@@ -175,6 +183,7 @@ so that callback can repeat after restart. This is an at-least-once wakeup, with
 Permission requests are notification checkpoints, not the end of that subscription. The caller is notified again after a permission response when the child finishes, errors, or requests another permission.
 The permission notification includes the normalized request plus the child and request IDs, so the caller can inspect it and respond without fetching agent status.
 A watched child that closes before its finish event also notifies the caller so delegated work cannot disappear silently during archive or workspace teardown.
+A standing watch ends when its child is archived, deleted or detached. Closing the runtime does not end it: idle collection and a reload between runs report nothing, and a close or reload during a run reports the run it cut short. Archiving or deleting a running child reports that run, then ends the watch; between runs it ends the watch without a notification, because there is no run to report. Runs that settle while the previous notification still waits for dispatch are reported once, with the latest outcome.
 
 ## Provider-managed child agents
 
