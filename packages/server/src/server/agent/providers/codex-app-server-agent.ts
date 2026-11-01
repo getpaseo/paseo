@@ -3570,6 +3570,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.asyncQuestions = new CodexAsyncQuestions(resumeHandle?.metadata?.asyncQuestions);
     this.codexHome = deps.codexHome ?? resolveCodexHomeDir(process.env);
     this.config.thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
+    this.migrateLegacyFastMode();
     this.requestedServiceTier = readCodexServiceTier(this.providerOptions);
     this.planModeEnabled = this.providerOptions.plan_mode === true;
 
@@ -4671,6 +4672,23 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.requestedServiceTier = requestedTier;
     this.setPlanMode(next.plan_mode === true);
     this.cachedRuntimeInfo = null;
+  }
+
+  /**
+   * COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once saved Fast preferences have migrated.
+   * Records from before v0.10 hold Fast as `fast_mode: true`. The session reads it as the
+   * `service_tier: "fast"` alias and tells the daemon to store that shape instead.
+   */
+  private migrateLegacyFastMode(): void {
+    const { fast_mode: legacyFast, ...rest } = this.providerOptions;
+    if (legacyFast !== true || rest.service_tier !== undefined) return;
+    this.providerOptions = { ...rest, service_tier: "fast" };
+    this.startupEvents ??= [];
+    this.notifySubscribers({
+      type: "options_changed",
+      provider: CODEX_PROVIDER,
+      patch: { service_tier: "fast", fast_mode: null },
+    });
   }
 
   private isServiceTierAvailable(tier: string | null): boolean {

@@ -1,8 +1,14 @@
 import { featuresFromControls } from "../option-controls.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import pino from "pino";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
-import type { AgentSession, AgentSessionConfig } from "../agent-sdk-types.js";
+import { AgentManager } from "../agent-manager.js";
+import { toAgentPayload } from "../agent-projections.js";
+import { AgentStorage } from "../agent-storage.js";
+import type { AgentClient, AgentSession, AgentSessionConfig } from "../agent-sdk-types.js";
 import { CodexAppServerAgentSession } from "./codex-app-server-agent.js";
 import {
   createFakeCodexAppServer,
@@ -544,6 +550,88 @@ describe("Codex app-server provider controls", () => {
 
     await session.startTurn("hello");
     await expect(appServer.waitForTurnStart()).resolves.toMatchObject({ serviceTier: "priority" });
+  });
+
+  test("a pre-v0.10 fast_mode record shows Fast, is stored as service_tier, and can be turned off and on", async () => {
+    const appServer = createFakeCodexAppServer({
+      "collaborationMode/list": () => ({ data: TEST_COLLABORATION_MODES }),
+      "model/list": () => ({ data: TEST_SPEED_MODELS }),
+    });
+    const logger = createTestLogger();
+    const client: AgentClient = {
+      provider: CODEX_PROVIDER,
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: false,
+        supportsMcpServers: false,
+        supportsReasoningStream: false,
+        supportsToolInvocations: false,
+      },
+      isAvailable: async () => true,
+      fetchCatalog: async () => ({ models: [], modes: [] }),
+      resumeSession: async () => {
+        throw new Error("not used");
+      },
+      createSession: async (config) => {
+        const session = new CodexAppServerAgentSession(
+          { ...config, provider: CODEX_PROVIDER },
+          null,
+          logger,
+          async () => appServer.child,
+        );
+        await session.connect();
+        return session;
+      },
+    };
+    const turnStarts = () =>
+      appServer
+        .requests()
+        .filter((message) => message.method === "turn/start")
+        .map((message) => message.params);
+    const workdir = mkdtempSync(join(tmpdir(), "codex-legacy-fast-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+
+    const created = await manager.createAgent(
+      {
+        provider: CODEX_PROVIDER,
+        cwd: workdir,
+        model: "gpt-5.4",
+        providerOptions: { fast_mode: true },
+      },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const agent = manager.getAgent(created.id)!;
+
+    // The old boolean is stored in the new shape, and the control shows Fast.
+    expect(agent.config.providerOptions).toEqual({ service_tier: "fast" });
+    const payload = toAgentPayload(agent);
+    expect(payload.options).toMatchObject({ service_tier: "fast" });
+    expect(payload.options).not.toHaveProperty("fast_mode");
+    expect(payload.features?.find((feature) => feature.id === "service_tier")).toMatchObject({
+      value: "priority",
+    });
+    await manager.flush();
+    expect((await storage.get(created.id))?.config?.providerOptions).toEqual({
+      service_tier: "fast",
+    });
+
+    await manager.setAgentOptions(created.id, { service_tier: "default" });
+    expect(manager.getAgent(created.id)?.config.providerOptions).toEqual({
+      service_tier: "default",
+    });
+    await manager.getAgent(created.id)!.session!.startTurn("hello");
+    const normalTurn = await appServer.waitForTurnStart();
+    expect(normalTurn).toMatchObject({ serviceTier: "default" });
+    appServer.completeTurn({ threadId: String(normalTurn.threadId) });
+    await vi.waitFor(() => expect(manager.getAgent(created.id)?.lifecycle).toBe("idle"));
+
+    await manager.setAgentOptions(created.id, { service_tier: "priority" });
+    await manager.getAgent(created.id)!.session!.startTurn("hello again");
+    await vi.waitFor(() => expect(turnStarts()).toHaveLength(2));
+    expect(turnStarts()[1]).toMatchObject({ serviceTier: "priority" });
   });
 
   test("startTurn logs a sanitized turn/start summary for fast mode observability", async () => {
