@@ -176,7 +176,10 @@ export async function defaultUsageRunner(launch: ProviderLaunch, args: string[])
     [...safeArgs, "-p", "/usage", "--output-format", "json", ...args],
     {
       env: launch.env,
-      timeout: 15_000,
+      // agy boots its own language server before answering: measured 13.6 s on Linux with
+      // agy 1.4.12. The daemon caps a usage fetch at 20 s, so keep enough room for agy's own
+      // error to surface instead of the daemon's generic timeout.
+      timeout: 18_000,
     },
   );
   return result.stdout;
