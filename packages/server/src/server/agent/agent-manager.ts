@@ -7,6 +7,7 @@ import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
 import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
 import type { PluginSessionOpenRequest } from "@getpaseo/plugin/server";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { basename, resolve } from "node:path";
 import { stat } from "node:fs/promises";
 import {
@@ -102,6 +103,32 @@ import { withTimeout } from "../../utils/promise-timeout.js";
 import { extractAttention } from "../persistence-hooks.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
+
+interface SessionOpenContribution {
+  env: Record<string, string>;
+  tools: Array<{ pluginId: string; pluginInstanceId: string; name: string }>;
+  mcpServers: NonNullable<AgentSessionConfig["mcpServers"]>;
+}
+
+function sessionOpenContribution(input: {
+  purpose: PluginSessionOpenRequest["purpose"];
+  env: Record<string, string> | undefined;
+  tools: readonly AttachedAgentTool[];
+  mcpServers: AgentSessionConfig["mcpServers"];
+}): SessionOpenContribution {
+  const interactive = input.purpose === "interactive";
+  return {
+    env: { ...input.env },
+    tools: interactive
+      ? input.tools.map((tool) => ({
+          pluginId: tool.pluginId,
+          pluginInstanceId: tool.pluginInstanceId,
+          name: tool.name,
+        }))
+      : [],
+    mcpServers: interactive ? structuredClone(input.mcpServers ?? {}) : {},
+  };
+}
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
 const IMPORTABLE_SESSION_LIST_TIMEOUT_MS = 90_000;
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
@@ -780,6 +807,7 @@ export class AgentManager {
   private readonly mcpAuthToken: string | null;
   private sessionOpenGeneration = 0;
   private readonly sessionOpenGenerations = new Map<string, number>();
+  private readonly sessionOpenContributions = new Map<string, SessionOpenContribution>();
   private readonly attachedPluginTools = new Map<string, AttachedAgentTool[]>();
   private readonly pluginAgentTools: PluginAgentToolsRuntime | undefined;
   private paseoToolsEnabled = true;
@@ -913,7 +941,45 @@ export class AgentManager {
     await this.trackAgentRegistrationOperation(
       this.runLifecycleMutation(agentId, async () => {
         if (!this.needsPluginSessionReload(agentId)) return;
+        const generation = this.sessionOpenGeneration;
+        // A hook that only observes the open must not kill the provider process.
+        // Reload only when env, tools, or MCP servers would actually change.
+        const unchanged = await this.sessionOpenContributionUnchanged(agentId);
+        if (!this.needsPluginSessionReload(agentId)) return;
+        if (unchanged && this.sessionOpenGeneration === generation) {
+          this.sessionOpenGenerations.set(agentId, generation);
+          return;
+        }
         await this.reloadAgentSessionInternal(agentId);
+      }),
+    );
+  }
+
+  private async sessionOpenContributionUnchanged(agentId: string): Promise<boolean> {
+    const agent = this.getAgent(agentId);
+    const previous = this.sessionOpenContributions.get(agentId);
+    const client = agent ? this.clients.get(agent.provider) : undefined;
+    if (!agent || !previous || !client || !this.pluginLifecycle) return false;
+    const transformed = await this.pluginLifecycle.before("agent.open.before", {
+      agentId,
+      provider: client.provider,
+      cwd: agent.cwd,
+      workspaceId: agent.workspaceId ?? null,
+      reason: "refresh",
+      purpose: "interactive",
+      env: { ...agent.launchEnv },
+      title: await this.resolveInitialPersistedTitle(agentId, agent.config, null),
+      labels: agent.labels,
+      tools: [],
+      mcpServers: {},
+    });
+    return isDeepStrictEqual(
+      previous,
+      sessionOpenContribution({
+        purpose: "interactive",
+        env: transformed.env,
+        tools: transformed.tools as AttachedAgentTool[],
+        mcpServers: transformed.mcpServers,
       }),
     );
   }
@@ -957,6 +1023,7 @@ export class AgentManager {
   private detachPluginTools(agentId: string): void {
     this.attachedPluginTools.delete(agentId);
     this.sessionOpenGenerations.delete(agentId);
+    this.sessionOpenContributions.delete(agentId);
     this.pluginAgentTools?.detachTools(agentId);
   }
 
@@ -5584,6 +5651,13 @@ export class AgentManager {
     this.detachPluginTools(agentId);
     let mcpServers: AgentSessionConfig["mcpServers"];
     let mcpServerOwners: Record<string, string> | undefined;
+    const purpose = opening?.purpose ?? "interactive";
+    let contribution = sessionOpenContribution({
+      purpose,
+      env,
+      tools: [],
+      mcpServers: {},
+    });
     if (this.pluginLifecycle) {
       const request = {
         agentId,
@@ -5591,7 +5665,7 @@ export class AgentManager {
         cwd,
         workspaceId: opening?.workspaceId ?? null,
         reason: opening?.reason ?? "resume",
-        purpose: opening?.purpose ?? "interactive",
+        purpose,
         env: { ...env },
         title: opening?.title ?? null,
         labels: opening?.labels ?? {},
@@ -5600,11 +5674,18 @@ export class AgentManager {
       };
       const transformed = await this.pluginLifecycle.before("agent.open.before", request);
       env = transformed.env;
+      const tools = transformed.tools as AttachedAgentTool[];
       if (request.purpose === "interactive") {
-        this.attachedPluginTools.set(agentId, transformed.tools as AttachedAgentTool[]);
+        this.attachedPluginTools.set(agentId, tools);
         mcpServers = transformed.mcpServers;
         mcpServerOwners = transformed.mcpServerOwners;
       }
+      contribution = sessionOpenContribution({
+        purpose: request.purpose,
+        env,
+        tools,
+        mcpServers: transformed.mcpServers,
+      });
     }
     const context: AgentLaunchContext = {
       agentId,
@@ -5636,6 +5717,7 @@ export class AgentManager {
       }
     }
     this.sessionOpenGenerations.set(agentId, generation);
+    this.sessionOpenContributions.set(agentId, contribution);
     return context;
   }
 

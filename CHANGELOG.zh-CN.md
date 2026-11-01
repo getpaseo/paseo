@@ -77,6 +77,10 @@ worktree 初始化支持复制被忽略的文件，并在 Agent 启动前使用�
 - Agent 自动恢复默认开启，并发送 `Resume working.`；可在主机设置 → Agent 中修改提示词或关闭此功能
 - 降级到 0.14.0 前，请恢复备份的 `config.json`，或删除已保存的 Agent 恢复和用量查询设置
 
+修复：
+
+- 会话打开钩子重载后如果没有改变 env、工具或 MCP 服务器，就保持当前 provider 进程，不再为下一条消息关掉它 ([#8269](https://github.com/getpaseo/paseo/pull/8269))
+
 ## 0.14.0 - 2026-10-29
 
 插件现在可以为单个 Agent 添加工具，并在会话打开时配置其 MCP 服务器。
