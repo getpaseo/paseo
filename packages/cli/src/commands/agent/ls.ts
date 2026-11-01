@@ -33,6 +33,8 @@ export interface AgentListItem {
   provider: string;
   thinking: string;
   status: string;
+  archived: boolean;
+  archivedAt: string | null;
   cwd: string;
   created: string;
 }
@@ -84,6 +86,11 @@ export const agentLsSchema: OutputSchema<AgentListItem> = {
         return undefined;
       },
     },
+    {
+      header: "ARCHIVED",
+      field: (item) => (item.archived ? "yes" : "-"),
+      width: 8,
+    },
     { header: "CWD", field: "cwd", width: 30 },
     { header: "CREATED", field: "created", width: 15 },
   ],
@@ -99,6 +106,8 @@ function toListItem(agent: AgentSnapshotPayload): AgentListItem {
     provider: model ? `${agent.provider}/${model}` : agent.provider,
     thinking: agent.effectiveThinkingOptionId ?? "auto",
     status: agent.status,
+    archived: agent.archivedAt != null,
+    archivedAt: agent.archivedAt ?? null,
     cwd: shortenPath(agent.cwd),
     created: relativeTime(agent.createdAt),
   };
