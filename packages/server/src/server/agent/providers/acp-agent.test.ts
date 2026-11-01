@@ -4792,3 +4792,110 @@ describe("custom ACP provider with configured models", () => {
     expect((await created.getRuntimeInfo()).model).toBe("advertised-default");
   });
 });
+
+describe("ACP mode sources that disagree", () => {
+  // Regression: Junie advertises session modes brave-auto/on/off, but its `mode` config option only
+  // accepts default/plan and session/set_mode is unsupported. Trusting the advertised list made
+  // every mode switch fail, which aborted agent creation with an opaque error.
+  const junieModeConfigOption = (currentValue: string): SessionConfigOption => ({
+    id: "mode",
+    name: "Mode",
+    category: "mode",
+    type: "select",
+    currentValue,
+    options: [
+      { value: "default", name: "Default" },
+      { value: "plan", name: "Plan" },
+    ],
+  });
+
+  const junieBraveConfigOption = (currentValue: string): SessionConfigOption => ({
+    id: "brave_mode",
+    name: "Brave mode",
+    type: "select",
+    currentValue,
+    options: [
+      { value: "brave-auto", name: "Brave Auto" },
+      { value: "on", name: "Brave On" },
+      { value: "off", name: "Brave Off" },
+    ],
+  });
+
+  test("deriveModesFromACP prefers the mode config option when advertised modes are rejected by it", () => {
+    const result = deriveModesFromACP(
+      [],
+      {
+        availableModes: [
+          { id: "brave-auto", name: "Brave Auto" },
+          { id: "on", name: "Brave On" },
+          { id: "off", name: "Brave Off" },
+        ],
+        currentModeId: "on",
+      },
+      [junieModeConfigOption("default")],
+    );
+
+    expect(result).toEqual({
+      modes: [
+        { id: "default", label: "Default", description: undefined },
+        { id: "plan", label: "Plan", description: undefined },
+      ],
+      currentModeId: "default",
+    });
+  });
+
+  test("setMode falls back to the config option that lists the value when setSessionMode is rejected", async () => {
+    const setSessionMode = vi.fn(async () => {
+      throw new Error("session/set_mode is not supported; use session/set_config_option");
+    });
+    const setSessionConfigOption = vi.fn(async (input: { value: string }) => ({
+      configOptions: [junieBraveConfigOption(input.value)],
+    }));
+    const session = createSessionWithConfig({ provider: "junie" });
+    prepareConfiguredOverrideSession(session, {
+      currentMode: "brave-auto",
+      availableModes: [
+        { id: "brave-auto", label: "Brave Auto" },
+        { id: "on", label: "Brave On" },
+        { id: "off", label: "Brave Off" },
+      ],
+      // Advertised modes disagree with the mode option here, so the brave option is the fallback.
+      configOptions: [junieModeConfigOption("default"), junieBraveConfigOption("brave-auto")],
+      connection: { setSessionMode, setSessionConfigOption },
+    });
+
+    await expect(session.setMode("on")).resolves.toBeUndefined();
+
+    expect(setSessionMode).toHaveBeenCalledWith({ sessionId: "session-1", modeId: "on" });
+    expect(setSessionConfigOption).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      configId: "brave_mode",
+      value: "on",
+    });
+    await expect(session.getCurrentMode()).resolves.toBe("on");
+  });
+
+  test("setMode rethrows the setSessionMode error when no config option lists the value", async () => {
+    const setSessionMode = vi.fn(async () => {
+      throw new Error("mode_switch_not_supported");
+    });
+    const setSessionConfigOption = vi.fn(async () => ({
+      configOptions: [junieModeConfigOption("default")],
+    }));
+    const session = createSessionWithConfig({ provider: "junie" });
+    prepareConfiguredOverrideSession(session, {
+      currentMode: "default",
+      availableModes: [
+        { id: "default", label: "Default" },
+        { id: "experimental", label: "Experimental" },
+      ],
+      // "experimental" is advertised but appears on no config option, so there is nothing to fall
+      // back to.
+      configOptions: [junieModeConfigOption("default")],
+      connection: { setSessionMode, setSessionConfigOption },
+    });
+
+    await expect(session.setMode("experimental")).rejects.toThrow("mode_switch_not_supported");
+    expect(setSessionConfigOption).not.toHaveBeenCalled();
+  });
+});
