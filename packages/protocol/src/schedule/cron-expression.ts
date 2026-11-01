@@ -90,6 +90,9 @@ function parseField(source: string, bounds: CronFieldBounds): CronFieldMatcher {
     if (!/^\d+$/.test(base)) {
       throw new Error(`Invalid cron ${bounds.name} value`);
     }
+    // COMPAT(cronNumericSteps): added in v0.12.0, remove after 2027-04-17 once
+    // persisted numeric steps are migrated. Validation rejects new numeric steps;
+    // existing schedules retain their historical singleton match.
     const value = Number.parseInt(base, 10);
     if (!Number.isInteger(value) || value < bounds.min || value > bounds.max) {
       throw new Error(`Invalid cron ${bounds.name} value`);
@@ -122,6 +125,12 @@ export function parseCronExpression(expression: string): ParsedCronExpression {
 export function validateCronExpression(expression: string): string | null {
   try {
     parseCronExpression(expression);
+    const fields = expression.trim().split(/\s+/);
+    for (const [index, field] of fields.entries()) {
+      if (field.split(",").some((part) => /^\d+\//.test(part))) {
+        return `Invalid cron ${CRON_FIELD_BOUNDS[index].name} step: use * or a range before /`;
+      }
+    }
     return null;
   } catch (error) {
     return error instanceof Error ? error.message : "Invalid cron expression";

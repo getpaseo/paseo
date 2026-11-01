@@ -2114,6 +2114,81 @@ describe("ScheduleService", () => {
     });
   });
 
+  test("rejects numeric cron steps when creating or updating a schedule", async () => {
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+    });
+    const input = {
+      prompt: "Periodic check",
+      cadence: { type: "cron" as const, expression: "*/15 * * * *" },
+      target: {
+        type: "new-agent" as const,
+        config: { provider: "claude" as const, cwd: tempDir },
+      },
+      runOnCreate: false,
+    };
+
+    await expect(
+      service.create({ ...input, cadence: { type: "cron", expression: "0/15 * * * *" } }),
+    ).rejects.toThrow("Invalid cron minute step: use * or a range before /");
+    expect(await service.list()).toEqual([]);
+
+    const created = await service.create(input);
+    await expect(
+      service.update({ id: created.id, cadence: { type: "cron", expression: "0/15 * * * *" } }),
+    ).rejects.toThrow("Invalid cron minute step: use * or a range before /");
+    expect((await service.inspect(created.id)).cadence).toEqual(input.cadence);
+  });
+
+  test("recovers and runs numeric cron steps persisted by an older daemon", async () => {
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+    const created = await service.create({
+      prompt: "Periodic check",
+      cadence: { type: "cron", expression: "0 * * * *" },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", cwd: tempDir },
+      },
+      runOnCreate: false,
+    });
+    const store = new ScheduleStore(join(tempDir, "schedules"), createTestLogger());
+    await store.update(created.id, (schedule) => ({
+      ...schedule,
+      cadence: { type: "cron", expression: "0/15 * * * *" },
+    }));
+
+    now = new Date("2026-01-01T03:10:00.000Z");
+    try {
+      await service.start();
+      await service.stop();
+      expect((await service.inspect(created.id)).nextRunAt).toBe("2026-01-01T04:00:00.000Z");
+
+      now = new Date("2026-01-01T04:00:00.000Z");
+      await service.tick();
+      const inspected = await service.inspect(created.id);
+      expect(inspected.cadence).toEqual({ type: "cron", expression: "0/15 * * * *" });
+      expect(inspected.status).toBe("active");
+      expect(inspected.nextRunAt).toBe("2026-01-01T05:00:00.000Z");
+      expect(inspected.runs).toHaveLength(1);
+      expect(inspected.runs[0]).toMatchObject({ status: "succeeded", output: "ok" });
+    } finally {
+      await service.stop();
+    }
+  });
+
   test("advances stale nextRunAt on daemon restart", async () => {
     const service1 = createScheduleService({
       paseoHome: tempDir,
