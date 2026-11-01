@@ -192,6 +192,21 @@ describe("composer track panel", () => {
   });
 });
 
+function isRotation(animation: Animation): boolean {
+  const effect = animation.effect;
+  return (
+    effect instanceof KeyframeEffect &&
+    effect.getKeyframes().some((keyframe) => String(keyframe.transform).startsWith("rotate"))
+  );
+}
+
+/** The elements turning the ring's quarter: one per tone of the breathing mark. */
+function rotators(root: Element): Element[] {
+  return [...root.querySelectorAll("*")].filter((element) =>
+    element.getAnimations().some(isRotation),
+  );
+}
+
 describe("composer track pill status mark", () => {
   /** The mark is the glyph itself: the dot for a still state, the ring's carrier for running. */
   function mountMark(bucket: "running" | "failed"): { mark: HTMLElement; body: HTMLElement } {
@@ -214,13 +229,12 @@ describe("composer track pill status mark", () => {
 
   it("spins the shared ring while a child is running", () => {
     const { mark } = mountMark("running");
-    const animated = [...mark.querySelectorAll("*")].filter(
-      (element) => element.getAnimations().length > 0,
-    );
+    const turning = rotators(mark);
 
-    expect(animated).toHaveLength(1);
+    expect(turning).toHaveLength(2);
     // The rotation is on the carrier; the quarter arc it turns is the coloured top border inside.
-    const arc = animated[0]?.firstElementChild as HTMLElement;
+    // The running ink comes first, under the success copy that breathes over it.
+    const arc = turning[0]?.firstElementChild as HTMLElement;
     const arcStyle = getComputedStyle(arc);
     expect(arcStyle.borderTopColor).toBe("rgb(38, 138, 224)");
     expect(arcStyle.borderLeftColor).toBe("rgba(0, 0, 0, 0)");
@@ -242,8 +256,14 @@ describe("composer track pill status mark", () => {
     // looking correctly centred in the box nobody can see.
     for (const bucket of ["running", "failed"] as const) {
       const { mark, body } = mountMark(bucket);
-      // The dot is its own box; the ring is drawn by the rotator inside the frame's halo.
-      const glyph = bucket === "failed" ? mark : mark.firstElementChild?.firstElementChild;
+      // The breath scales the ring around its centre, so measure it at rest.
+      for (const animation of mark.getAnimations({ subtree: true })) {
+        animation.pause();
+        animation.currentTime = 0;
+      }
+      // The dot is its own box; the ring's track sits in the frame's halo inside the pulse carrier.
+      const glyph =
+        bucket === "failed" ? mark : mark.firstElementChild?.firstElementChild?.firstElementChild;
       if (!(glyph instanceof HTMLElement)) {
         throw new Error(`${bucket} mark did not render a glyph`);
       }
@@ -272,8 +292,11 @@ describe("composer track pill status mark", () => {
 
     const segments = [...container.querySelectorAll('[data-testid^="pill-segment-"]')];
     expect(segments.map((segment) => segment.textContent)).toEqual(["1 failed", "1 working"]);
-    // The ring is the only mark that animates, so its presence proves the second state survived.
-    const animated = segments[1]?.querySelectorAll("*") ?? [];
-    expect([...animated].filter((element) => element.getAnimations().length > 0)).toHaveLength(1);
+    // The ring is the only mark that turns, so its presence proves the second state survived.
+    const second = segments[1];
+    if (!second) {
+      throw new Error("pill did not render the running segment");
+    }
+    expect(rotators(second)).toHaveLength(2);
   });
 });

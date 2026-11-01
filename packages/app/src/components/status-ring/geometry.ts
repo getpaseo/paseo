@@ -37,6 +37,32 @@ export function getStatusRingRotation(nowMs: number): number {
   return ((nowMs % STATUS_RING_PERIOD_MS) / STATUS_RING_PERIOD_MS) * 360;
 }
 
+// The running mark also breathes: it swells and shifts from the running colour to the success
+// colour and back. One breath is a whole number of turns, so every peak lands on the same arc
+// position and the two motions read as one rhythm rather than drifting against each other. Three
+// turns keeps it slow enough to read as calm next to a ring that is already moving.
+export const STATUS_PULSE_PERIOD_MS = STATUS_RING_PERIOD_MS * 3;
+
+// Applied to the whole knockout frame, so the halo grows with the ring and the mark never closes
+// in on the icon it sits on. Transform only: the slot, the hit target and the layout stay put.
+export const STATUS_PULSE_PEAK_SCALE = 1.12;
+
+/**
+ * How far into the breath the mark is: 0 is the running colour at resting size, 1 the success
+ * colour at peak size. A raised cosine, so it eases at both ends instead of bouncing off them.
+ * Wall-clock based for the same reason as the rotation: marks mounted at different moments agree.
+ */
+export function getStatusPulseProgress(nowMs: number): number {
+  "worklet";
+  const phase = (nowMs % STATUS_PULSE_PERIOD_MS) / STATUS_PULSE_PERIOD_MS;
+  return (1 - Math.cos(phase * 2 * Math.PI)) / 2;
+}
+
+export function getStatusPulseScale(progress: number): number {
+  "worklet";
+  return 1 + (STATUS_PULSE_PEAK_SCALE - 1) * progress;
+}
+
 /**
  * Re-anchors a corner status dot's offset for the ring that replaces it.
  *
