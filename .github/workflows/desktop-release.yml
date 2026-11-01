@@ -135,32 +135,6 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Backport electron-builder#10172 to the pinned build tool only.
-      # Remove this step when app-builder-lib is upgraded to a release containing it.
-      - name: Repair temporary keychain password in signing tool
-        shell: bash
-        run: |
-          node <<'KEYCHAIN_FIX'
-          const fs = require('node:fs');
-          const path = require('node:path');
-          const manifestPath = require.resolve('app-builder-lib/package.json');
-          if (JSON.parse(fs.readFileSync(manifestPath, 'utf8')).version !== '26.8.1') {
-            throw new Error('Reassess/remove the signing backport for the new app-builder-lib version');
-          }
-          const sourcePath = path.join(path.dirname(manifestPath), 'out/codeSign/macCodeSign.js');
-          let source = fs.readFileSync(sourcePath, 'utf8');
-          const replacements = [
-            ['importCerts(keychainFile, certPaths, cscPasswords)', 'importCerts(keychainFile, certPaths, cscPasswords, keychainPassword)'],
-            ['importCerts(keychainFile, paths, keyPasswords)', 'importCerts(keychainFile, paths, keyPasswords, keychainPassword)'],
-            ['["set-key-partition-list", "-S", "apple-tool:,apple:", "-s", "-k", password, keychainFile]', '["set-key-partition-list", "-S", "apple-tool:,apple:", "-s", "-k", keychainPassword, keychainFile]'],
-          ];
-          for (const [before, after] of replacements) {
-            if (source.split(before).length !== 2) throw new Error('Unexpected signing tool source; refusing to patch');
-            source = source.replace(before, after);
-          }
-          fs.writeFileSync(sourcePath, source);
-          KEYCHAIN_FIX
-
       - name: Set desktop package version from tag
         shell: bash
         run: |
