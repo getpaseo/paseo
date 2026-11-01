@@ -67,9 +67,17 @@ export class GenericACPAgentClient extends ACPAgentClient {
   }
 
   protected override async resolveLaunchCommand(): Promise<{ command: string; args: string[] }> {
+    const launch = await this.resolveConfiguredLaunch();
+    const availability = await checkProviderLaunchAvailable(launch);
+    if (!availability.available) {
+      throw new Error(`acp command '${this.command[0]}' not found`);
+    }
     return {
-      command: this.command[0],
-      args: this.command.slice(1),
+      // Spawn the absolute path we verified. On Windows the daemon may have been
+      // started before the installer updated PATH, and Windows has no equivalent
+      // of a login-shell environment refresh.
+      command: availability.resolvedPath ?? launch.command,
+      args: launch.args,
     };
   }
 

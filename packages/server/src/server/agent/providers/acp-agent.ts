@@ -1675,7 +1675,10 @@ export class ACPAgentClient implements AgentClient {
       throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
     }
     return {
-      command: prefix.command,
+      // Use the path the resolver actually verified. PATH lookup may find a
+      // Windows install outside the daemon's inherited PATH (for example a
+      // Winget package or a directory added after the daemon started).
+      command: availability.resolvedPath ?? prefix.command,
       args: [...prefix.args, ...this.defaultCommand.slice(1)],
     };
   }
