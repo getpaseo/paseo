@@ -1,6 +1,14 @@
 import { describe, expect, test } from "vitest";
 import { convertLegacyOptions, foldHookFeatureValues } from "./option-controls.js";
 
+describe("convertLegacyOptions rejects a malformed Codex fast_mode", () => {
+  test.each(["false", 1, {}])("%j", (value) => {
+    expect(() =>
+      convertLegacyOptions({ provider: "codex", options: { fast_mode: value } }),
+    ).toThrow(/fast_mode must be true, false or null/);
+  });
+});
+
 describe("convertLegacyOptions", () => {
   test.each([
     { legacy: true, tier: "fast" },

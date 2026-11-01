@@ -499,12 +499,12 @@ function wrapClientProvider(
   const archiveNativeSession = inner.archiveNativeSession?.bind(inner);
   const unarchiveNativeSession = inner.unarchiveNativeSession?.bind(inner);
   const configuredModelIds = [...profileModels, ...additionalModels].map((model) => model.id);
-  const providerOptions = convertLegacyOptions({
-    provider: inner.provider,
-    options: configuredOptions,
-  });
+  // Converted where it is used, so a malformed configured default fails the call that reads it
+  // rather than the registry that holds every provider.
+  const configuredDefaults = () =>
+    convertLegacyOptions({ provider: inner.provider, options: configuredOptions });
   const withDefaults = (own: ProviderOptions | undefined) =>
-    mergeProviderOptions(providerOptions, own);
+    mergeProviderOptions(configuredDefaults(), own);
 
   return {
     provider,
@@ -543,7 +543,10 @@ function wrapClientProvider(
         ),
       ),
     fetchCatalog: async (options, context) => {
-      const catalog = await inner.fetchCatalog({ ...options, providerOptions }, context);
+      const catalog = await inner.fetchCatalog(
+        { ...options, providerOptions: configuredDefaults() },
+        context,
+      );
       return {
         ...catalog,
         models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
@@ -577,7 +580,8 @@ function wrapClientProvider(
           })
       : undefined,
     listImportableSessions: listImportableSessions
-      ? async (options) => await listImportableSessions({ ...options, providerOptions })
+      ? async (options) =>
+          await listImportableSessions({ ...options, providerOptions: configuredDefaults() })
       : undefined,
     importSession: importSession
       ? async (input, context) => {

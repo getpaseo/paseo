@@ -239,7 +239,7 @@ describe("DaemonConfigStore", () => {
     expect(store.get().agentProfiles).toEqual([
       { id: "p", name: "P", provider: "claude", options: { fast_mode: true } },
     ]);
-    expect(toWireDaemonConfig(store.get()).agentProfiles).toEqual([
+    expect(toWireDaemonConfig(store.get(), (_provider, options) => options).agentProfiles).toEqual([
       {
         id: "p",
         name: "P",
@@ -355,7 +355,7 @@ describe("DaemonConfigStore", () => {
       ]);
     });
 
-    test("converts a Codex profile's legacy fast_mode to service_tier", async () => {
+    test("keeps a profile's legacy fast_mode key; the agent manager renames it", async () => {
       const store = storeWithProfile();
 
       await store.patch({
@@ -369,7 +369,7 @@ describe("DaemonConfigStore", () => {
           id: "p",
           name: "P",
           provider: "codex",
-          options: { sandbox_mode: "read-only", plan_mode: false, service_tier: "fast" },
+          options: { sandbox_mode: "read-only", plan_mode: false, fast_mode: true },
         },
       ]);
     });
