@@ -1802,7 +1802,7 @@ describe("ACPAgentSession Zed parity", () => {
     ]);
   });
 
-  test("reports once, at subscribe, a select the provider opened differently from the options", async () => {
+  test("a select the provider opened differently from the options is the session's open patch, not an event", async () => {
     const setSessionConfigOption = vi.fn(async () => ({
       configOptions: [copilotAgentConfigOption("")],
     }));
@@ -1813,40 +1813,57 @@ describe("ACPAgentSession Zed parity", () => {
     });
     const emitted: AgentStreamEvent[] = [];
     session.subscribe((event) => emitted.push(event));
+
     await internals.applyConfiguredOverrides();
+
+    expect(session.openOptionsPatch).toEqual({ agent: "" });
     expect(emitted.filter((event) => event.type === "options_changed")).toEqual([]);
-
-    const first: AgentStreamEvent[] = [];
-    session.subscribe((event) => first.push(event));
-    const second: AgentStreamEvent[] = [];
-    session.subscribe((event) => second.push(event));
-
-    expect(first.filter((event) => event.type === "options_changed")).toEqual([
-      { type: "options_changed", provider: "copilot", patch: { agent: "" } },
-    ]);
-    expect(second.filter((event) => event.type === "options_changed")).toEqual([]);
   });
 
-  test("forwards a select the provider changes on its own, and applying a patch emits nothing", async () => {
+  test("applying a patch returns the selects that ended up different and emits nothing", async () => {
     const setSessionConfigOption = vi.fn(async () => ({
-      configOptions: [copilotAgentConfigOption("Probe Agent")],
+      configOptions: [copilotAgentConfigOption("")],
     }));
     const session = createCopilotSessionWithConfig();
-    const { internals } = prepareConfiguredOverrideSession(session, {
+    prepareConfiguredOverrideSession(session, {
       configOptions: [copilotAgentConfigOption("")],
       connection: { setSessionConfigOption },
     });
-    await internals.applyConfiguredOverrides();
     const emitted: AgentStreamEvent[] = [];
     session.subscribe((event) => emitted.push(event));
 
-    await session.applyOptions({ agent: "Probe Agent" });
+    await expect(session.applyOptions({ agent: "Probe Agent" })).resolves.toEqual({ agent: "" });
     expect(emitted.filter((event) => event.type === "options_changed")).toEqual([]);
+  });
+
+  test("a removal writes the select's empty choice and returns nothing when that took", async () => {
+    const setSessionConfigOption = vi.fn(async () => ({
+      configOptions: [copilotAgentConfigOption("")],
+    }));
+    const session = createCopilotSessionWithConfig();
+    prepareConfiguredOverrideSession(session, {
+      configOptions: [copilotAgentConfigOption("Probe Agent")],
+      connection: { setSessionConfigOption },
+    });
+
+    await expect(session.applyOptions({ agent: null })).resolves.toEqual({});
+    expect(setSessionConfigOption).toHaveBeenCalledWith(expect.objectContaining({ value: "" }));
+  });
+
+  test("forwards a select the provider changes on its own", async () => {
+    const session = createCopilotSessionWithConfig();
+    prepareConfiguredOverrideSession(session, {
+      configOptions: [copilotAgentConfigOption("Probe Agent")],
+      connection: { setSessionConfigOption: vi.fn() },
+    });
+    const emitted: AgentStreamEvent[] = [];
+    session.subscribe((event) => emitted.push(event));
 
     asInternals<ACPSessionInternals>(session).translateSessionUpdate({
       sessionUpdate: "config_option_update",
       configOptions: [copilotAgentConfigOption("")],
     });
+
     expect(emitted.filter((event) => event.type === "options_changed")).toEqual([
       { type: "options_changed", provider: "copilot", patch: { agent: "" } },
     ]);

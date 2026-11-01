@@ -1203,9 +1203,11 @@ class PluginAgentSession implements AgentSession {
   >();
   private readonly childSnapshots = new Map<string, Map<string, TimelineTextSnapshot>>();
   private unsubscribe: (() => void) | null = null;
-  /** How the opened session differs from the settings it was given; reported at first subscribe. */
-  private openOptionReport: Record<string, JsonValue> = {};
+  /** How the opened session differs from the settings it was given. */
+  readonly openOptionsPatch: Record<string, JsonValue>;
   private knownSettings: Record<string, JsonValue> = {};
+  /** While `applyOptions` waits on the plugin, its `session.config` answers that call. */
+  private applyingOptions = false;
   private currentTurnId: string | null = null;
   private closed = false;
   private replay: {
@@ -1229,7 +1231,7 @@ class PluginAgentSession implements AgentSession {
     givenSettings: Readonly<Record<string, JsonValue>>,
   ) {
     this.subagentIdsBySession.set(bridge.id, null);
-    this.openOptionReport = Object.fromEntries(
+    this.openOptionsPatch = Object.fromEntries(
       Object.entries(this.settingDifferences(givenSettings)).filter(([id]) => id in givenSettings),
     );
     this.knownSettings = this.currentSettings();
@@ -1337,10 +1339,6 @@ class PluginAgentSession implements AgentSession {
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
     this.listeners.add(callback);
-    if (Object.keys(this.openOptionReport).length > 0) {
-      callback({ type: "options_changed", provider: this.provider, patch: this.openOptionReport });
-      this.openOptionReport = {};
-    }
     return () => this.listeners.delete(callback);
   }
 
@@ -1437,17 +1435,25 @@ class PluginAgentSession implements AgentSession {
     await this.bridge.configure({ thinkingOption: thinkingOptionId });
   }
 
-  async applyOptions(options: ProviderOptions): Promise<void> {
+  async applyOptions(options: ProviderOptions): Promise<Record<string, JsonValue>> {
     this.assertReplayComplete();
+    const before = this.currentSettings();
     const settings: Record<string, JsonValue> = {};
     for (const setting of this.bridge.config.settings) {
       const value = options[setting.id];
       if (value === undefined) continue;
       settings[setting.id] = toJsonValue(value, `setting '${setting.id}'`);
     }
-    if (Object.keys(settings).length === 0) return;
-    Object.assign(this.knownSettings, settings);
-    await this.bridge.configure({ settings });
+    if (Object.keys(settings).length === 0) return {};
+    this.applyingOptions = true;
+    try {
+      await this.bridge.configure({ settings });
+    } finally {
+      this.applyingOptions = false;
+    }
+    const ended = this.settingDifferences({ ...before, ...settings });
+    this.knownSettings = this.currentSettings();
+    return ended;
   }
 
   async revertConversation(input: { messageId: string }): Promise<void> {
@@ -1647,6 +1653,7 @@ class PluginAgentSession implements AgentSession {
   }
 
   private reportSettingChanges(): AgentStreamEvent[] {
+    if (this.applyingOptions) return [];
     const patch = this.settingDifferences(this.knownSettings);
     if (Object.keys(patch).length === 0) return [];
     this.knownSettings = this.currentSettings();

@@ -433,8 +433,8 @@ export type AgentStreamEvent =
    * The provider changed options on its own: after `createSession`/`resumeSession` or
    * `applyOptions` it ended up different from what it was given, or later it changed a setting
    * itself. The daemon stores the patch and forwards it; it does not undo it. `null` removes the
-   * agent's own value. Emit it once, after the operation resolves and the daemon is subscribed
-   * (sessions typically emit the open report from `subscribe`), never while the operation runs.
+   * agent's own value. Only for changes that happen on the provider's own initiative: the result
+   * of opening goes in `openOptionsPatch` and the result of `applyOptions` is its return value.
    */
   | { type: "options_changed"; provider: AgentProvider; patch: Record<string, unknown> }
   | {
@@ -688,6 +688,12 @@ export interface AgentSession {
   readonly capabilities: AgentCapabilityFlags;
   /** Composer controls over top-level option keys. Values come from the agent's effective options. */
   readonly controls?: AgentOptionControl[];
+  /**
+   * How the session ended up different from the options it was opened with, as a patch (`null`
+   * removes a key). Set by the time `createSession`/`resumeSession` resolves; the daemon stores it
+   * before the agent is published.
+   */
+  readonly openOptionsPatch?: Record<string, unknown>;
   /** New provider-owned rows to commit on registration. streamHistory must also
    * replay them at their original timestamps; restored sessions omit old rows. */
   readonly initialTimeline?: ImportedTimelineEntry[];
@@ -723,14 +729,15 @@ export interface AgentSession {
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
   /**
-   * Apply the options a patch just set. `options` holds only those keys, resolved against the
-   * `config.json` defaults, never the agent's whole record. Leave every other setting alone.
-   * Removing an option sends nothing: the session keeps its current setting until the next open.
-   * Throw to reject a value; the daemon stores the patch only when this resolves, so the call is
-   * all-or-nothing. Emit nothing from here. If the result differs from what was asked for,
-   * report it afterwards as `options_changed`.
+   * Apply an options patch. `options` holds only the keys the patch touches, resolved against
+   * the `config.json` defaults; `null` means nothing is set for the key, so return it to the
+   * session's own default if that can be done. Leave every other setting alone. Throw to reject a
+   * value; the daemon stores the patch only when this resolves, so the call is all-or-nothing.
+   * Emit nothing from here. Return the options the session ended up with when they differ from
+   * the request (a patch, `null` removes a key), for example a value it kept because it could not
+   * be reverted; the daemon stores it together with the patch.
    */
-  applyOptions?(options: ProviderOptions): Promise<void>;
+  applyOptions?(options: ProviderOptions): Promise<Record<string, unknown> | void>;
   revertConversation?(input: { messageId: string }): Promise<void>;
   revertFiles?(input: { messageId: string }): Promise<void>;
   revertBoth?(input: { messageId: string }): Promise<void>;
@@ -781,16 +788,16 @@ export interface AgentClient {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
   /**
-   * Create the agent with `config.providerOptions` (defaults already merged in). Report nothing
-   * about options while creating. If the agent ended up different from the options, say so once,
-   * afterwards, as `options_changed`.
+   * Create the agent with `config.providerOptions` (defaults already merged in). Emit nothing
+   * about options while creating. If the agent ended up different from the options, say so in the
+   * session's `openOptionsPatch`.
    */
   createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession>;
-  /** Same contract as `createSession`: open with the options, report any difference once, afterwards. */
+  /** Same contract as `createSession`: open with the options, report any difference in `openOptionsPatch`. */
   resumeSession(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,

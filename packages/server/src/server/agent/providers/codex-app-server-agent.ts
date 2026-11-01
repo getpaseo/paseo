@@ -3455,7 +3455,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private startupEvents: AgentStreamEvent[] | null = null;
   /** How the opened session differs from the options it was given; reported at first subscribe. */
-  private openOptionReport: Record<string, unknown> = {};
+  openOptionsPatch: Record<string, unknown> = {};
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
@@ -3866,7 +3866,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   /**
    * COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once saved Fast
    * preferences have migrated. A saved `fast_mode: true` or `service_tier: "fast"` runs as the
-   * model's Fast tier; the session says so once, at subscribe, so the options and the control agree.
+   * model's Fast tier; the session says so in `openOptionsPatch`, so the options and the control agree.
    */
   private normalizeLegacySpeed(): void {
     const requested = this.requestedServiceTier;
@@ -3876,7 +3876,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     const { fast_mode: _legacy, ...rest } = this.providerOptions;
     this.providerOptions = { ...rest, service_tier: resolved };
     this.requestedServiceTier = resolved;
-    this.openOptionReport = { service_tier: resolved, fast_mode: null };
+    this.openOptionsPatch = { service_tier: resolved, fast_mode: null };
   }
 
   private get serviceTier(): string | null {
@@ -4595,10 +4595,6 @@ export class CodexAppServerAgentSession implements AgentSession {
     const startupEvents = this.startupEvents;
     this.startupEvents = null;
     for (const event of startupEvents ?? []) this.notifySubscribers(event);
-    if (Object.keys(this.openOptionReport).length > 0) {
-      callback({ type: "options_changed", provider: CODEX_PROVIDER, patch: this.openOptionReport });
-      this.openOptionReport = {};
-    }
     return () => {
       this.subscribers.delete(callback);
     };
@@ -4680,13 +4676,14 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   /** Applies only the options the patch sets; the rest of the running options stay as they are. */
-  async applyOptions(options: ProviderOptions): Promise<void> {
+  async applyOptions(options: ProviderOptions): Promise<Record<string, unknown>> {
     const { fast_mode: _legacyFast, ...running } = this.providerOptions;
-    const next =
-      validateProviderOptions("codex", CodexProviderOptionsSchema, {
-        ...running,
-        ...options,
-      }) ?? {};
+    const next: Record<string, unknown> = { ...running };
+    for (const [key, value] of Object.entries(options)) {
+      if (value === null) delete next[key];
+      else next[key] = value;
+    }
+    const valid = validateProviderOptions("codex", CodexProviderOptionsSchema, next) ?? {};
     let requestedTier = this.requestedServiceTier;
     if ("service_tier" in options || "fast_mode" in options) {
       // COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once clients use service_tier.
@@ -4700,29 +4697,22 @@ export class CodexAppServerAgentSession implements AgentSession {
         );
       }
     }
-    this.providerOptions = { ...next, ...(requestedTier ? { service_tier: requestedTier } : {}) };
+    this.providerOptions = { ...valid, ...(requestedTier ? { service_tier: requestedTier } : {}) };
     this.requestedServiceTier = requestedTier;
     if ("plan_mode" in options) this.setPlanMode(options.plan_mode === true);
     this.cachedRuntimeInfo = null;
     // COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once clients use service_tier.
-    if ("fast_mode" in options && !("service_tier" in options)) {
-      setImmediate(() => this.reportSpeed({ fast_mode: null }));
+    const tier = this.serviceTier;
+    if ("fast_mode" in options && !("service_tier" in options) && options.fast_mode !== null) {
+      return tier === null ? {} : { service_tier: tier, fast_mode: null };
     }
+    return {};
   }
 
   private requestedTierFrom(options: ProviderOptions): string | null {
     if ("service_tier" in options) return readCodexServiceTier(options);
+    if (options.fast_mode === null) return null;
     return options.fast_mode ? "fast" : "default";
-  }
-
-  private reportSpeed(extra: Record<string, unknown>): void {
-    const tier = this.serviceTier;
-    if (tier === null) return;
-    this.emitEvent({
-      type: "options_changed",
-      provider: CODEX_PROVIDER,
-      patch: { service_tier: tier, ...extra },
-    });
   }
 
   private isServiceTierAvailable(tier: string | null): boolean {

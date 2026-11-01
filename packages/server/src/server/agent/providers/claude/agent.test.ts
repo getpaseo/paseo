@@ -1521,10 +1521,31 @@ describe("ClaudeAgentSession features", () => {
     await session.applyOptions?.({ fast_mode: true });
     queryMock.applyFlagSettings.mockClear();
 
-    // Removing fast_mode, or setting another option, sends only the keys set: Fast stays on.
+    // Setting another option sends only the keys set: Fast stays on.
     await session.applyOptions?.({ allowedTools: ["Read"] });
 
     expect(queryMock.applyFlagSettings).not.toHaveBeenCalled();
+    await session.close();
+  });
+
+  test("removing fast_mode turns Fast off", async () => {
+    const { queryFactory, queryMock } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+    });
+    await (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
+    await session.applyOptions?.({ fast_mode: true });
+
+    await session.applyOptions?.({ fast_mode: null });
+
+    expect(queryMock.applyFlagSettings).toHaveBeenLastCalledWith({ fastMode: false });
     await session.close();
   });
 

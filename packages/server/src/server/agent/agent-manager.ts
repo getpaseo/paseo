@@ -2272,27 +2272,35 @@ export class AgentManager {
 
   /**
    * Applies an options patch to a running agent (see `AgentSession.applyOptions`). The provider
-   * gets only the keys the patch sets, each resolved against the `config.json` defaults; a
-   * removal sends it nothing and it keeps its current setting until the session is next opened.
-   * The patch is stored once the provider accepts it, over the options as they are at that
-   * moment, so concurrent writes to one agent resolve by arrival order.
+   * gets each key the patch touches, resolved against the `config.json` defaults, with `null`
+   * where nothing is set. The patch and whatever the provider says it ended up with are stored in
+   * one step once the provider accepts, over the options as they are at that moment, so concurrent
+   * writes to one agent resolve by arrival order.
    */
   async setAgentOptions(agentId: string, patch: ProviderOptionsPatch): Promise<void> {
     const agent = this.requireAgent(agentId);
-    const set = Object.fromEntries(
-      Object.entries(patch).filter(([, value]) => value !== null && value !== undefined),
-    );
-    if (agent.session.applyOptions && Object.keys(set).length > 0) {
+    let ended: ProviderOptionsPatch = {};
+    if (agent.session.applyOptions && Object.keys(patch).length > 0) {
+      const set = Object.fromEntries(Object.entries(patch).filter(([, value]) => value != null));
       const resolved = this.effectiveOptionsFor(agent.provider, set);
-      await agent.session.applyOptions(
-        Object.fromEntries(Object.keys(set).map((key) => [key, resolved[key]])),
-      );
+      ended =
+        (await agent.session.applyOptions(
+          Object.fromEntries(Object.keys(patch).map((key) => [key, resolved[key] ?? null])),
+        )) ?? {};
+      // Changes the provider made on its own while applying are older than its final answer.
+      await this.drainSessionEvents(agentId);
     }
-    this.storeOptionsPatch(agent, patch);
-    // Differences the provider reports after applying arrive now and are stored as reported.
-    await this.drainSessionEvents(agentId);
+    this.storeOptionsPatch(agent, { ...patch, ...ended });
     this.touchUpdatedAt(agent);
     this.emitState(agent);
+  }
+
+  /** The config as the opened session left it: its own difference from the options it was given. */
+  private withOpenedOptions(config: AgentSessionConfig, session: AgentSession): AgentSessionConfig {
+    const opened = session.openOptionsPatch;
+    if (!opened || Object.keys(opened).length === 0) return config;
+    const own = applyProviderOptionsPatch(config.providerOptions, opened);
+    return { ...config, providerOptions: Object.keys(own).length > 0 ? own : undefined };
   }
 
   private storeOptionsPatch(agent: ManagedAgent, patch: ProviderOptionsPatch): void {
@@ -3819,7 +3827,7 @@ export class AgentManager {
 
   private async registerSession(
     session: AgentSession,
-    config: AgentSessionConfig,
+    openedConfig: AgentSessionConfig,
     agentId: string,
     options?: {
       createdAt?: Date;
@@ -3850,6 +3858,7 @@ export class AgentManager {
     let registered = false;
     try {
       this.assertAcceptingAgentRegistrations();
+      const config = this.withOpenedOptions(openedConfig, session);
       const resolvedAgentId = validateAgentId(agentId, "registerSession");
       if (this.agents.has(resolvedAgentId)) {
         throw new Error(`Agent with id ${resolvedAgentId} already exists`);

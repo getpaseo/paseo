@@ -12715,16 +12715,21 @@ describe("agent options", () => {
     readonly applied: ProviderOptions[] = [];
     rejectWith: Error | null = null;
     applyGate: Promise<void> | null = null;
+    /** What the session says it ended up with after the next apply. */
+    ended: Record<string, unknown> = {};
+    openOptionsPatch: Record<string, unknown> = {};
 
-    async applyOptions(options: ProviderOptions): Promise<void> {
+    async applyOptions(options: ProviderOptions): Promise<Record<string, unknown>> {
       if (this.rejectWith) throw this.rejectWith;
       await this.applyGate;
       this.applied.push(options);
+      return this.ended;
     }
   }
 
   class OptionsClient extends TestAgentClient {
     session: OptionsSession | null = null;
+    openOptionsPatch: Record<string, unknown> = {};
 
     // Stands in for the `config.json` provider defaults the registry wrapper merges in.
     effectiveOptions(own: ProviderOptions | undefined): ProviderOptions {
@@ -12733,14 +12738,19 @@ describe("agent options", () => {
 
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
       this.session = new OptionsSession(config);
+      this.session.openOptionsPatch = this.openOptionsPatch;
       return this.session;
     }
   }
 
-  async function createOptionsAgent(providerOptions?: ProviderOptions) {
+  async function createOptionsAgent(
+    providerOptions?: ProviderOptions,
+    openOptionsPatch: Record<string, unknown> = {},
+  ) {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-options-"));
     const storage = new AgentStorage(join(workdir, "agents"), logger);
     const client = new OptionsClient();
+    client.openOptionsPatch = openOptionsPatch;
     const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
     const agent = await manager.createAgent(
       { provider: "codex", cwd: workdir, ...(providerOptions ? { providerOptions } : {}) },
@@ -12775,15 +12785,72 @@ describe("agent options", () => {
     });
   });
 
-  test("setAgentOptions removes a key with null and sends the provider nothing", async () => {
+  test("setAgentOptions sends a removal to the provider like any change, as the default it falls back to", async () => {
     const { manager, client, agentId } = await createOptionsAgent({ service_tier: "fast" });
 
     await manager.setAgentOptions(agentId, { service_tier: null });
 
-    expect(client.session?.applied).toEqual([]);
+    expect(client.session?.applied).toEqual([{ service_tier: "default" }]);
     const agent = manager.getAgent(agentId);
     expect(agent?.config.providerOptions).toBeUndefined();
     expect(agent?.effectiveOptions).toEqual({ service_tier: "default" });
+  });
+
+  test("a removal with no default is sent as null", async () => {
+    const { manager, client, agentId } = await createOptionsAgent({ fast_mode: true });
+
+    await manager.setAgentOptions(agentId, { fast_mode: null });
+
+    expect(client.session?.applied).toEqual([{ fast_mode: null }]);
+    expect(manager.getAgent(agentId)?.config.providerOptions).toBeUndefined();
+  });
+
+  test("a value the provider kept through a removal is stored", async () => {
+    const { manager, client, agentId } = await createOptionsAgent({ fast_mode: true });
+    client.session!.ended = { fast_mode: true };
+
+    await manager.setAgentOptions(agentId, { fast_mode: null });
+
+    const agent = manager.getAgent(agentId);
+    expect(agent?.config.providerOptions).toEqual({ fast_mode: true });
+    expect(agent?.effectiveOptions).toEqual({ service_tier: "default", fast_mode: true });
+  });
+
+  test("what the provider ended up with is stored together with the patch", async () => {
+    const { manager, client, agentId } = await createOptionsAgent();
+    client.session!.ended = { service_tier: "slow" };
+
+    await manager.setAgentOptions(agentId, { service_tier: "fast", plan_mode: true });
+
+    expect(manager.getAgent(agentId)?.config.providerOptions).toEqual({
+      service_tier: "slow",
+      plan_mode: true,
+    });
+  });
+
+  test("the difference a session opened with is stored before the agent is published", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-options-"));
+    const client = new OptionsClient();
+    client.openOptionsPatch = { service_tier: "slow", fast_mode: null };
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: new AgentStorage(join(workdir, "agents"), logger),
+      logger,
+    });
+    const published: Array<ProviderOptions | undefined> = [];
+    manager.subscribe((event) => {
+      if (event.type === "agent_state") published.push(event.agent.config.providerOptions);
+    });
+
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, providerOptions: { fast_mode: true } },
+      undefined,
+      { workspaceId: undefined },
+    );
+
+    expect(agent.config.providerOptions).toEqual({ service_tier: "slow" });
+    expect(published.length).toBeGreaterThan(0);
+    expect(published.every((options) => options?.service_tier === "slow")).toBe(true);
   });
 
   test("an option without a control is settable through the patch and readable in the snapshot", async () => {

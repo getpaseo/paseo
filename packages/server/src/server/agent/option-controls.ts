@@ -182,10 +182,7 @@ export function featuresFromControls(
   return (controls ?? []).map((control) => featureFromControl(control, effective));
 }
 
-/**
- * A recorded feature's value is the control's unset value: it is what the agent showed before
- * any option was stored, and an explicit effective option still wins over it.
- */
+/** A recorded feature's value is not carried over: controls hold no state, only `options` do. */
 function controlFromFeature(feature: AgentFeature): AgentOptionControl {
   const descriptor = {
     key: feature.id,
@@ -193,15 +190,14 @@ function controlFromFeature(feature: AgentFeature): AgentOptionControl {
     ...describe(feature),
   };
   if (feature.type === "toggle") {
-    return { type: "toggle", ...descriptor, defaultValue: feature.value };
+    return { type: "toggle", ...descriptor };
   }
   const defaultChoice = feature.options.find((option) => option.isDefault);
-  const unsetValue = feature.value ?? defaultChoice?.id;
   return {
     type: "select",
     ...descriptor,
     ...(feature.desktopTrigger ? { desktopTrigger: feature.desktopTrigger } : {}),
-    ...(unsetValue != null ? { defaultValue: unsetValue } : {}),
+    ...(defaultChoice ? { defaultValue: defaultChoice.id } : {}),
     choices: feature.options.map((option) => ({
       value: option.id,
       label: option.label,

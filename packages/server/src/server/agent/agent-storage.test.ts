@@ -252,12 +252,12 @@ describe("AgentStorage", () => {
     expect(persisted?.config).not.toHaveProperty("featureValues");
     expect(persisted).not.toHaveProperty("features");
     expect(persisted?.controls).toEqual([
-      { type: "toggle", key: "fast_mode", label: "Fast mode", defaultValue: true },
+      { type: "toggle", key: "fast_mode", label: "Fast mode" },
       {
         type: "select",
         key: "service_tier",
         label: "Speed",
-        defaultValue: "fast",
+        defaultValue: "default",
         choices: [
           { value: "default", label: "Normal" },
           { value: "fast", label: "Fast" },

@@ -360,8 +360,8 @@ export class OpenCodeV2Session implements AgentSession {
     this.emit({ type: "thinking_option_changed", provider: "opencode", thinkingOptionId: variant });
   }
   async applyOptions(options: ProviderOptions) {
-    const value = options["auto_accept"];
-    if (value === undefined) return;
+    if (!("auto_accept" in options)) return;
+    const value = options["auto_accept"] ?? false;
     if (typeof value !== "boolean") throw new Error("OpenCode auto_accept requires a boolean");
     this.config.providerOptions = { ...this.config.providerOptions, auto_accept: value };
     if (value && !this.config.toolPolicy)

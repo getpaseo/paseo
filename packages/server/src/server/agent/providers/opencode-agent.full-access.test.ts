@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
@@ -290,7 +290,7 @@ describe("OpenCode auto_accept feature", () => {
     await session.close();
   });
 
-  test("keeps auto-approving after auto_accept is removed from the options", async () => {
+  test("stops auto-approving once auto_accept is removed", async () => {
     const { openCodeClient, runtime } = mockOpenCodeClient({
       events: [toolPermissionEvent(), idleEvent()],
     });
@@ -305,12 +305,11 @@ describe("OpenCode auto_accept feature", () => {
       providerOptions: { auto_accept: true },
     });
 
-    // Removal sends the provider nothing: it keeps its current setting until next open.
-    await session.applyOptions?.({});
-    await session.run("Run verification");
+    await session.applyOptions?.({ auto_accept: null });
+    await session.startTurn("Run verification");
+    await vi.waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
 
-    expect(openCodeClient.calls.permissionReply).toHaveLength(1);
-    expect(session.getPendingPermissions()).toEqual([]);
+    expect(openCodeClient.calls.permissionReply).toHaveLength(0);
 
     await session.close();
   });
