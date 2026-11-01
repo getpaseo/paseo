@@ -177,11 +177,18 @@ function omitProvidersFromOverrides(
 function foldConfigProfiles<T extends { agentProfiles?: AgentProfile[] }>(
   config: T,
   source: "stored" | "client write",
+  held: AgentProfile[] = [],
 ): T {
   if (!config.agentProfiles) return config;
   return {
     ...config,
-    agentProfiles: config.agentProfiles.map((profile) => foldProfileFeatureValues(profile, source)),
+    agentProfiles: config.agentProfiles.map((profile) =>
+      foldProfileFeatureValues(
+        profile,
+        held.find((candidate) => candidate.id === profile.id)?.options,
+        source,
+      ),
+    ),
   };
 }
 
@@ -442,7 +449,7 @@ export class DaemonConfigStore {
       );
     }
     const { removeProviders = [], ...submittedPatch } = parsedPatch;
-    const patch = foldConfigProfiles(submittedPatch, "client write");
+    const patch = foldConfigProfiles(submittedPatch, "client write", this.current.agentProfiles);
     const { features: speechPatch, ...configPatch } = patch;
     const removedProviders = Array.from(new Set(removeProviders));
     const merged = deepMerge(this.current, configPatch);

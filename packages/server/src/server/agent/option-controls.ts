@@ -93,23 +93,28 @@ interface ProfileOptionFields {
 
 /**
  * COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
- * Profiles saved before options carry `featureValues`. When the profile comes from storage,
- * `options` wins over a stale `featureValues` key. When it comes from a client write, the
- * client that sent `featureValues` is the unchanged app, which only knows that field, so its
- * `featureValues` win over the `options` it received from the previous read.
+ * Profiles saved before options carry `featureValues`; when one comes from storage, `options`
+ * wins over a stale `featureValues` key.
+ *
+ * A profile written by the unchanged app is a patch: its form only knows the controls, so its
+ * `featureValues` are applied over the options already stored for that profile (`null`
+ * deletes), and options the form never shows, such as `sandbox_mode`, survive an edit.
  */
 export function foldProfileFeatureValues<T extends ProfileOptionFields>(
   profile: T,
+  stored: Record<string, unknown> | undefined,
   source: "stored" | "client write" = "stored",
 ): Omit<T, "featureValues"> {
   const { featureValues, ...rest } = profile;
-  if (!featureValues) return rest;
+  if (source === "stored") {
+    return featureValues ? { ...rest, options: { ...featureValues, ...rest.options } } : rest;
+  }
+  // The form sends no `featureValues` when no control is set, which is still an edit of a
+  // profile that may hold other options.
+  if (!featureValues && (rest.options || !stored)) return rest;
   return {
     ...rest,
-    options:
-      source === "stored"
-        ? { ...featureValues, ...rest.options }
-        : { ...rest.options, ...featureValues },
+    options: applyProviderOptionsPatch(stored ?? rest.options, featureValues ?? {}),
   };
 }
 
