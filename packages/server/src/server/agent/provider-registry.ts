@@ -474,7 +474,6 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     setModel: inner.setModel?.bind(inner),
     setThinkingOption: inner.setThinkingOption?.bind(inner),
     applyOptions: inner.applyOptions?.bind(inner),
-    displayOptions: inner.displayOptions?.bind(inner),
     revertConversation: inner.revertConversation?.bind(inner),
     revertFiles: inner.revertFiles?.bind(inner),
     revertBoth: inner.revertBoth?.bind(inner),

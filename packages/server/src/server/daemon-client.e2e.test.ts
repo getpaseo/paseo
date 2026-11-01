@@ -180,6 +180,56 @@ test("DaemonClient uploads file bytes to daemon temp storage", async () => {
   }
 });
 
+test("agent.config.apply sets an option that has no control and the next snapshot reports it", async () => {
+  const clients = createTestAgentClients();
+  const codex = clients.codex as AgentClient;
+  const applied: unknown[] = [];
+  // Records what reaches the provider session; behavior is the fake client's.
+  const recordingCodex: AgentClient = Object.create(codex, {
+    createSession: {
+      value: async (...args: Parameters<AgentClient["createSession"]>) => {
+        const session = await codex.createSession(...args);
+        const apply = session.applyOptions?.bind(session);
+        session.applyOptions = async (options) => {
+          applied.push(options);
+          await apply?.(options);
+        };
+        return session;
+      },
+    },
+  });
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { ...clients, codex: recordingCodex },
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.1.82",
+  });
+
+  try {
+    await client.connect();
+    await client.fetchAgents({ subscribe: {} });
+    const agent = await client.createAgent({
+      provider: "codex",
+      cwd: tmpCwd(),
+      title: "Options agent",
+      modeId: "full-access",
+      model: "gpt-5.4-mini",
+    });
+    expect(agent.options?.sandbox_mode).toBeUndefined();
+
+    await client.applyAgentConfig(agent.id, { options: { sandbox_mode: "read-only" } });
+
+    expect(applied).toEqual([expect.objectContaining({ sandbox_mode: "read-only" })]);
+    const next = await client.fetchAgent(agent.id);
+    expect(next?.agent.options).toMatchObject({ sandbox_mode: "read-only" });
+    expect(next?.agent.controls?.map((control) => control.key)).not.toContain("sandbox_mode");
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+});
+
 test("createAgent with background initialPrompt returns a running snapshot before turn completion", async () => {
   const daemon = await createTestPaseoDaemon();
   const client = new DaemonClient({

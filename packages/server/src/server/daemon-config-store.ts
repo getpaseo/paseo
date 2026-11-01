@@ -461,7 +461,16 @@ export class DaemonConfigStore {
     const configChanged = !isEqualValue(this.current, next);
 
     // A replaced API key leaves the speech view unchanged, so a speech patch always persists.
-    if (!configChanged && removedProviders.length === 0 && speechPatch === undefined) {
+    // Profiles held folded in memory may still be on disk with `featureValues`; saving them writes `options`.
+    const profilesStaleOnDisk =
+      patch.agentProfiles !== undefined &&
+      !isEqualValue(patch.agentProfiles, this.lastKnownPersisted.daemon?.agentProfiles);
+    if (
+      !configChanged &&
+      removedProviders.length === 0 &&
+      speechPatch === undefined &&
+      !profilesStaleOnDisk
+    ) {
       return this.current;
     }
 

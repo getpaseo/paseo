@@ -115,8 +115,11 @@ export function withLegacyProfileFeatureValues<T extends ProfileOptionFields>(pr
 
 function selectedChoice(control: AgentOptionSelectControl, options: ProviderOptions) {
   const value = options[control.key];
-  if (typeof value === "string" && control.choices.some((choice) => choice.value === value)) {
-    return value;
+  if (typeof value === "string") {
+    const choice = control.choices.find(
+      (candidate) => candidate.value === value || candidate.aliases?.includes(value),
+    );
+    if (choice) return choice.value;
   }
   return control.defaultValue ?? null;
 }

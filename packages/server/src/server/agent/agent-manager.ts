@@ -1301,10 +1301,7 @@ export class AgentManager {
 
     const session = await client.createSession(normalizedConfig);
     try {
-      return {
-        controls: session.controls ?? [],
-        options: session.displayOptions?.(options) ?? options,
-      };
+      return { controls: session.controls ?? [], options };
     } finally {
       try {
         await session.close();
@@ -5328,11 +5325,7 @@ export class AgentManager {
     if ("session" in agent && agent.session?.controls) {
       agent.controls = agent.session.controls;
     }
-    const effective = this.effectiveOptionsFor(agent.provider, agent.config.providerOptions);
-    agent.effectiveOptions =
-      "session" in agent && agent.session?.displayOptions
-        ? agent.session.displayOptions(effective)
-        : effective;
+    agent.effectiveOptions = this.effectiveOptionsFor(agent.provider, agent.config.providerOptions);
   }
 
   private checkAndSetAttention(agent: ManagedAgent): void {

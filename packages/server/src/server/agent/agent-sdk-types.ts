@@ -722,12 +722,6 @@ export interface AgentSession {
    * the daemon stores the patch only when this resolves.
    */
   applyOptions?(options: ProviderOptions): Promise<void>;
-  /**
-   * The effective options as this session honors them, for display. The daemon keeps the
-   * user's stored intent; a value the provider resolves differently (a renamed tier, an
-   * unavailable choice) is shown as the provider resolved it.
-   */
-  displayOptions?(options: ProviderOptions): ProviderOptions;
   revertConversation?(input: { messageId: string }): Promise<void>;
   revertFiles?(input: { messageId: string }): Promise<void>;
   revertBoth?(input: { messageId: string }): Promise<void>;

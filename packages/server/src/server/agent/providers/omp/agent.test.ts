@@ -638,6 +638,27 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
+  test("removing the fast_mode option restores the runtime's own setting", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const session = omp.requireSession();
+    expect(omp.runtime().state.fastModeEnabled).toBe(false);
+
+    omp.runtime().fastModeResult = { enabled: true, active: true };
+    await session.applyOptions?.({ fast_mode: true });
+    expect(omp.runtime().setFastModeRequests).toEqual([true]);
+
+    // `{ fast_mode: null }` with no config.json default reaches the provider as no key at all.
+    omp.runtime().fastModeResult = { enabled: false, active: false };
+    await session.applyOptions?.({});
+
+    expect(omp.runtime().setFastModeRequests).toEqual([true, false]);
+    expect(session.controls).toEqual([expect.objectContaining({ defaultValue: false })]);
+    // A later change to an unrelated option leaves the runtime alone.
+    await session.applyOptions?.({});
+    expect(omp.runtime().setFastModeRequests).toEqual([true, false]);
+  });
+
   test("shows Fast only when OMP reports its state fields", async () => {
     const omp = new OmpHarness();
     await omp.start();

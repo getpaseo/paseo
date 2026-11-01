@@ -23,7 +23,14 @@ function buildCodexSpeedControl(tiers: CodexServiceTier[]): AgentOptionControl[]
       defaultValue: "default",
       choices: [
         { value: "default", label: "Normal" },
-        ...tiers.map((tier) => ({ value: tier.id, label: tier.name })),
+        ...tiers.map((tier) => ({
+          value: tier.id,
+          label: tier.name,
+          // COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once saved Fast preferences have migrated.
+          ...(tier.id !== "fast" && tier.name.toLowerCase() === "fast"
+            ? { aliases: ["fast"] }
+            : {}),
+        })),
       ],
     },
   ];
