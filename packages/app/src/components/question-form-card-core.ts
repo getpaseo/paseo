@@ -135,6 +135,24 @@ export function buildQuestionFormAnswers(
   return answers;
 }
 
+/**
+ * Checked option indexes per question, keyed by header. Providers use these to recover
+ * multi-select choices whose labels contain ", ", which the joined answer text cannot express.
+ */
+export function buildQuestionFormSelectedOptionIndexes(
+  questions: QuestionFormQuestion[],
+  selections: QuestionSelections,
+): Record<string, number[]> {
+  const indexes: Record<string, number[]> = {};
+  questions.forEach((question, qIndex) => {
+    const selected = selections[qIndex];
+    if (selected && selected.size > 0) {
+      indexes[question.header] = Array.from(selected).sort((a, b) => a - b);
+    }
+  });
+  return indexes;
+}
+
 export function shouldSubmitEmptyOnDismiss(questions: QuestionFormQuestion[]): boolean {
   return (
     questions.length > 0 &&
