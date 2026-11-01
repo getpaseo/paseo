@@ -15,6 +15,8 @@ import {
 import { connectNewWorkspaceDaemonClient } from "./new-workspace";
 import { seedWorkspace } from "./seed-client";
 import { pluginRequirements } from "./plugin-fixture";
+import { getServerId } from "./server-id";
+import { switchWorkspaceViaSidebar } from "./workspace-ui";
 
 const PLUGIN_ID = "button-showcase";
 const WIDE = { width: 1440, height: 900 };
@@ -24,8 +26,17 @@ function clientSource(workspaceId: string, agentId: string): string {
   return `import React from "react";
 import { Text, View, Pressable } from "react-native";
 import { useWorkspace, useRpc, usePaseo } from "@getpaseo/plugin/client";
+import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { useQuery } from "@tanstack/react-query";
 import { summary } from "./shared/rpc";
+
+function HistoryScreen({ theme }) {
+  return <View style={{ flex: 1, padding: 24 }}><Text style={{ color: theme.colors.foreground }}>Deployment history body</Text></View>;
+}
+
+function HistoryItem({ currentScreen, openScreen }) {
+  return <SidebarRow icon="History" active={currentScreen?.screenId === "history"} onPress={() => openScreen({ screenId: "history" })} />;
+}
 
 function StatusIcon({ size, theme }) {
   return <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: theme.colors.statusSuccess }} />;
@@ -89,6 +100,8 @@ export default function contribute(client) {
   const review = pill("review", { title: "Run review", icon: "Scan", label: "Review", behavior: { kind: "action", async onPress() { await new Promise((resolve) => { finishReview = resolve; }); review.update({ label: "Reviewed" }); } } });
   const pillMenu = pill("checks", { title: "Composer checks", icon: "ListChecks", label: "Checks", behavior: menu });
   pill("usage", { title: "Composer status", icon: StatusIcon, label: "Status", behavior: { kind: "popover", Content: Details } });
+  client.addScreen({ id: "history", title: "Deployment history", Component: HistoryScreen });
+  client.addSidebarHeaderItem({ id: "history", title: "Deployment history", Component: HistoryItem });
   const command = (id, title, onSelect) => client.addCommandCenterItem({ id, title, icon: "Settings", context: "workspace", onSelect });
   command("finish", "Finish deployment", () => finish());
   command("finish-review", "Finish review", () => finishReview());
@@ -208,6 +221,22 @@ async function expectWorkspaceMenuClosed(page: Page) {
   await expect(compactWorkspaceMenu(page)).toBeHidden({ timeout: 10_000 });
 }
 
+/**
+ * Counts entries whose own style shows them. An entry left active inside a covered route is
+ * hidden only by an ancestor, so it still counts.
+ */
+async function expectOneActiveDeckEntry(page: Page, workspaceId: string) {
+  const entries = page.getByTestId(`workspace-deck-entry-${getServerId()}:${workspaceId}`);
+  await expect
+    .poll(() =>
+      entries.evaluateAll(
+        (elements) =>
+          elements.filter((element) => getComputedStyle(element).display !== "none").length,
+      ),
+    )
+    .toBe(1);
+}
+
 async function expectCompactDetails(page: Page) {
   const menu = compactWorkspaceMenu(page);
   await expect(menu.getByText("All systems operational", { exact: true })).toBeInViewport();
@@ -280,6 +309,7 @@ export async function withButtonShowcase(
     useCompactWorkspaceMenu(): Promise<void>;
     hideAndUnloadOpenButtons(): Promise<void>;
     verifyObservationLifetime(): Promise<void>;
+    openPopoverAfterAppWideHop(): Promise<void>;
   }) => Promise<void>,
 ) {
   const released = new Set<string>();
@@ -650,6 +680,30 @@ export async function withButtonShowcase(
           await expect(page.getByTestId("workspace-header-title")).toHaveText(
             "Healthy app after plugin unload",
           );
+        }),
+      openPopoverAfterAppWideHop: () =>
+        test.step("a plugin screen opened from History leaves one workspace showing popovers", async () => {
+          await page.locator('[data-testid="sidebar-sessions"]:visible').first().click();
+          await expect(page).toHaveURL(/\/sessions$/);
+          await page
+            .locator(`[data-testid="plugin-sidebar-${PLUGIN_ID}-history"]:visible`)
+            .first()
+            .click();
+          await expect(page.getByText("Deployment history body", { exact: true })).toBeVisible();
+          await switchWorkspaceViaSidebar({
+            page,
+            serverId: getServerId(),
+            workspaceId: workspace.workspaceId,
+          });
+          await press(page, "Composer status");
+          const details = page.getByText("All systems operational", { exact: true });
+          await expect(details.first()).toBeInViewport();
+          // Every active copy of the pill opens this popover; a copy in a covered route anchors it
+          // at the window corner.
+          await expect(details).toHaveCount(1);
+          await expectOneActiveDeckEntry(page, workspace.workspaceId);
+          await press(page, "Close deployment details");
+          await expect(details).toHaveCount(0);
         }),
     });
   } finally {

@@ -83,6 +83,12 @@ against the wrong deck and disappear offscreen. Follow the
 [retained panel measurement rules](coding-standards.md#retained-panel-measurements)
 for components that intentionally remain mounted while hidden.
 
+Other navigation, such as a plugin screen opened from History, can still push a
+second host route over the first. The workspace deck shows the pathname's
+workspace only while its own route is focused. A covered host route stays
+mounted and reads the same pathname, so without that check it renders the
+workspace a second time, and a plugin button opens its popover in both copies.
+
 Hidden host routes may keep their local params while an app-wide route is
 foregrounded. Active-workspace observers must prefer the current pathname and
 only use local param fallback during cold mount (`/` or empty pathname), or a
