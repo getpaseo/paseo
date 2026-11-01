@@ -1,14 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   AgentProvider,
   AgentSessionConfig,
   ProviderOptions,
 } from "@getpaseo/protocol/agent-types";
+import {
+  openDraftOptions,
+  ownDraftOptions,
+  viewDraftOptions,
+} from "@/agent-controls/draft-options-model";
 import type { ComposerOptionControls } from "@/agent-controls/option-controls";
 import { useFetchQuery } from "@/data/query";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { composeDraftOptions } from "./draft-provider-options";
 import { mergeProviderPreferences, useFormPreferences } from "./use-form-preferences";
 
 type DraftControlsConfig = Pick<
@@ -17,13 +21,8 @@ type DraftControlsConfig = Pick<
 >;
 
 /**
- * The options a draft agent would run with, and the controls that draw them. The daemon resolves
- * the values (config defaults, aliases such as a legacy Fast profile's `service_tier`); the draft
- * adds only what the user chose here or last time.
- *
- * - `seed`: options the draft starts from (a profile, a workspace setup). Sent to the daemon.
- * - `edits`: toggles made in this draft.
- * - persisted: last-used control values for the provider.
+ * Adapter between a draft's options model and the screen: it sends the model's complete options
+ * to the daemon, hands the answer back, and persists the user's toggles as last-used values.
  */
 export function useDraftProviderOptions(input: {
   serverId: string | null | undefined;
@@ -36,45 +35,40 @@ export function useDraftProviderOptions(input: {
 }) {
   const { t } = useTranslation();
   const { serverId, provider, cwd, modeId, modelId, thinkingOptionId, initialOptions } = input;
-  const [seed, setSeed] = useState<ProviderOptions>(() => initialOptions ?? {});
-  const [edits, setEdits] = useState<ProviderOptions>({});
+  const [model] = useState(() => openDraftOptions({ provider, seed: initialOptions }));
+  const state = useSyncExternalStore(model.subscribe, model.getState, model.getState);
   const client = useHostRuntimeClient(serverId ?? "");
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
   const { preferences, updatePreferences } = useFormPreferences();
   const normalizedCwd = cwd?.trim() || "";
-  const normalizedProvider = provider ?? null;
-  const previousProviderRef = useRef<AgentProvider | null>(normalizedProvider);
-  const persisted = useMemo(
-    () => (provider ? (preferences.providerPreferences?.[provider]?.options ?? {}) : {}),
-    [preferences.providerPreferences, provider],
-  );
+  const persisted = preferences.providerPreferences?.[provider ?? ""]?.options;
 
+  useEffect(() => model.observeProvider(provider), [model, provider]);
+  useEffect(() => model.setRemembered(persisted ?? {}), [model, persisted]);
+
+  const ownOptions = ownDraftOptions(state);
   const draftConfig = useMemo<DraftControlsConfig | null>(() => {
-    if (!normalizedProvider || !normalizedCwd) return null;
+    if (!provider || !normalizedCwd) return null;
     return {
-      provider: normalizedProvider,
+      provider,
       cwd: normalizedCwd,
       ...(modeId ? { modeId } : {}),
       ...(modelId ? { model: modelId } : {}),
       ...(thinkingOptionId ? { thinkingOptionId } : {}),
-      ...(Object.keys(seed).length > 0 ? { providerOptions: seed } : {}),
+      ...(ownOptions ? { providerOptions: ownOptions } : {}),
     };
-  }, [modeId, modelId, normalizedCwd, normalizedProvider, seed, thinkingOptionId]);
+  }, [modeId, modelId, normalizedCwd, ownOptions, provider, thinkingOptionId]);
+  const queryKey = useMemo(
+    () => ["providerControls", serverId ?? null, draftConfig],
+    [draftConfig, serverId],
+  );
+  const requestKey = JSON.stringify(queryKey);
 
-  const controlsQuery = useFetchQuery({
-    queryKey: [
-      "providerControls",
-      serverId ?? null,
-      normalizedProvider,
-      normalizedCwd || null,
-      modeId ?? null,
-      modelId ?? null,
-      thinkingOptionId ?? null,
-      seed,
-    ],
-    enabled: Boolean(serverId && client && isConnected && draftConfig),
+  const { data } = useFetchQuery({
+    queryKey,
     dataShape: "value",
     staleTimeMs: 5 * 60 * 1000,
+    enabled: Boolean(serverId && client && isConnected && draftConfig),
     queryFn: async () => {
       if (!client || !draftConfig) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
@@ -86,29 +80,14 @@ export function useDraftProviderOptions(input: {
       return { controls: payload.controls ?? [], options: payload.options ?? {} };
     },
   });
-  const controls = controlsQuery.data?.controls;
-  const resolved = controlsQuery.data?.options;
-
-  const { shown: options, own: ownOptions } = useMemo(
-    () => composeDraftOptions({ seed, persisted, edits, controls, resolved }),
-    [controls, edits, persisted, resolved, seed],
-  );
 
   useEffect(() => {
-    const previousProvider = previousProviderRef.current;
-    previousProviderRef.current = normalizedProvider;
-    if (previousProvider === null) return;
-    if (previousProvider !== normalizedProvider) {
-      setSeed({});
-      setEdits({});
-    }
-  }, [normalizedProvider]);
+    if (provider && data) model.applyResolved({ provider, requestKey, ...data });
+  }, [data, model, provider, requestKey]);
 
   const setOption = useCallback(
     (key: string, value: unknown) => {
-      setEdits((current) =>
-        Object.is(current[key], value) ? current : { ...current, [key]: value },
-      );
+      model.setOption(key, value);
       if (!provider) return;
       void updatePreferences((current) =>
         mergeProviderPreferences({
@@ -120,23 +99,19 @@ export function useDraftProviderOptions(input: {
         console.warn("[useDraftProviderOptions] persist option preference failed", error);
       });
     },
-    [provider, updatePreferences],
+    [model, provider, updatePreferences],
   );
 
-  const applyProfileOptions = useCallback((profileOptions: ProviderOptions) => {
-    setSeed(profileOptions);
-    setEdits({});
-  }, []);
-
+  const view = viewDraftOptions(state, { provider, requestKey });
+  const viewControls = view?.controls;
+  const viewOptions = view?.options;
   const optionControls = useMemo<ComposerOptionControls | undefined>(
-    () => (controls ? { controls, options, onSetOption: setOption } : undefined),
-    [controls, options, setOption],
+    () =>
+      viewControls && viewOptions
+        ? { controls: viewControls, options: viewOptions, onSetOption: setOption }
+        : undefined,
+    [setOption, viewControls, viewOptions],
   );
 
-  return {
-    optionControls,
-    options: ownOptions,
-    isLoading: controlsQuery.isLoading,
-    applyProfileOptions,
-  };
+  return { optionControls, options: ownOptions, applyProfile: model.applyProfile };
 }

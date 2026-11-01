@@ -9127,6 +9127,75 @@ describe("provider options across daemon versions", () => {
     });
   });
 
+  test("a cold legacy create lists the provider's features before routing its options", async () => {
+    const { client, sentMessages, mock } = await connect({});
+    void client
+      .createAgent({
+        config: {
+          provider: "claude",
+          cwd: "/repo",
+          providerOptions: { fast_mode: true, sandbox_mode: "read-only" },
+        },
+      })
+      .catch(() => {});
+    await vi.waitFor(() => expect(sentMessages()).toHaveLength(1));
+    const [listing] = sentMessages();
+    expect(listing).toMatchObject({
+      type: "list_provider_features_request",
+      draftConfig: { provider: "claude", cwd: "/repo" },
+    });
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "list_provider_features_response",
+        payload: {
+          provider: "claude",
+          features: [{ type: "toggle", id: "fast_mode", label: "Fast", value: false }],
+          error: null,
+          fetchedAt: "2026-04-30T00:00:00.000Z",
+          requestId: listing.requestId,
+        },
+      }),
+    );
+    await vi.waitFor(() => expect(sentMessages()).toHaveLength(2));
+    expect(sentMessages()[1].config).toMatchObject({
+      featureValues: { fast_mode: true },
+      providerOptions: { sandbox_mode: "read-only" },
+    });
+  });
+
+  test("a cold legacy workspace create routes its agent's options the same way", async () => {
+    const { client, sentMessages, mock } = await connect({ creationLifecycle: true });
+    void client
+      .createWorkspace({
+        source: { kind: "directory", path: "/repo" },
+        agent: {
+          config: { provider: "codex", cwd: "/repo", providerOptions: { service_tier: "fast" } },
+        },
+      } as never)
+      .catch(() => {});
+    await vi.waitFor(() => expect(sentMessages()).toHaveLength(1));
+    const [listing] = sentMessages();
+    expect(listing).toMatchObject({ type: "list_provider_features_request" });
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "list_provider_features_response",
+        payload: {
+          provider: "codex",
+          features: [speedFeature],
+          error: null,
+          fetchedAt: "2026-04-30T00:00:00.000Z",
+          requestId: listing.requestId,
+        },
+      }),
+    );
+    const sentTypes = () => sentMessages().map((message) => message.type);
+    await vi.waitFor(() => expect(sentTypes()).toContain("workspace.create.request"));
+    const created = sentMessages()[sentTypes().indexOf("workspace.create.request")];
+    expect(created).toMatchObject({
+      agent: { config: { featureValues: { service_tier: "fast" } } },
+    });
+  });
+
   test("a legacy daemon creates an agent with control keys as feature values", async () => {
     const { client, sentMessages, mock } = await connect({});
     mock.triggerMessage(
@@ -9144,6 +9213,7 @@ describe("provider options across daemon versions", () => {
         },
       })
       .catch(() => {});
+    await vi.waitFor(() => expect(sentMessages()).toHaveLength(1));
     const [request] = sentMessages();
     expect(request.config).toMatchObject({
       featureValues: { service_tier: "priority" },

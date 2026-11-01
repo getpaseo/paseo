@@ -3269,12 +3269,37 @@ export class DaemonClient {
       );
     }
     if (options.background !== undefined) this.requireBackgroundWorkspaces();
-    const result = await this.creations.createAgent({
-      ...options,
-      config: resolveAgentConfig(options),
-    });
+    const config = resolveAgentConfig(options);
+    // Awaited only when there is something to learn, so other creates still send synchronously.
+    const learning = this.learnLegacyControlKeys(config);
+    if (learning) await learning;
+    const result = await this.creations.createAgent({ ...options, config });
     if (result.error || !result.agent) throw new Error(result.error ?? "Agent creation failed");
     return result.agent;
+  }
+
+  /**
+   * A legacy daemon reads control options as `featureValues`, so routing a create's options needs
+   * the provider's feature ids. Callers never prime that: the first create for a provider lists
+   * them, and the answer is remembered with the snapshots and listings that also teach it.
+   */
+  private learnLegacyControlKeys(config: {
+    provider?: string;
+    cwd?: string;
+    providerOptions?: Record<string, unknown>;
+  }): Promise<void> | undefined {
+    const legacy = this.legacyProviderOptions();
+    const { provider, providerOptions } = config;
+    if (!legacy || !provider || !providerOptions || Object.keys(providerOptions).length === 0) {
+      return undefined;
+    }
+    if (legacy.knowsControlKeys(provider)) return undefined;
+    return this.listFeaturesOrThrow(provider, config.cwd || "~");
+  }
+
+  private async listFeaturesOrThrow(provider: string, cwd: string): Promise<void> {
+    const payload = await this.listProviderFeatures({ provider, cwd });
+    if (payload.error) throw new Error(payload.error);
   }
 
   private async createLegacyAgent(
@@ -5028,12 +5053,13 @@ export class DaemonClient {
     if (input.background !== undefined || input.callerAgentId) this.requireBackgroundWorkspaces();
     if (input.agent?.background !== undefined)
       throw new Error("Configure background on the workspace, not its initial agent.");
+    const agentConfig = input.agent ? resolveAgentConfig(input.agent) : undefined;
+    const learning = agentConfig ? this.learnLegacyControlKeys(agentConfig) : undefined;
+    if (learning) await learning;
     const result = await this.creations.createWorkspace({
       ...input,
       requestId: resolvedRequestId,
-      ...(input.agent
-        ? { agent: { ...input.agent, config: resolveAgentConfig(input.agent) } }
-        : {}),
+      ...(input.agent && agentConfig ? { agent: { ...input.agent, config: agentConfig } } : {}),
     });
     return {
       ...result,

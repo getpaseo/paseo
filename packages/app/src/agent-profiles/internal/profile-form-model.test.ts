@@ -461,6 +461,67 @@ describe("openAgentProfileForm", () => {
       expect(model.getState().submitValue?.options).toEqual({ service_tier: "fast" });
     });
 
+    it("sends an edit to the daemon with the stored options, and draws the answer", () => {
+      const model = openAgentProfileForm({
+        mode: "edit",
+        profile: {
+          id: "p1",
+          name: "Fast",
+          provider: "codex",
+          options: { service_tier: "fast", sandbox_mode: "read-only" },
+        },
+      });
+      model.applyProviderCatalog(ENTRIES);
+      const speed = {
+        controls: [
+          {
+            type: "select" as const,
+            key: "service_tier",
+            label: "Speed",
+            defaultValue: "default",
+            choices: [
+              { value: "default", label: "Standard" },
+              { value: "priority", label: "Fast" },
+            ],
+          },
+        ],
+        options: { service_tier: "priority", sandbox_mode: "read-only" },
+      };
+      model.applyControls(model.getState().controlsRequestKey ?? "", speed);
+
+      model.setOption("service_tier", "default");
+
+      // The controls stay up while the daemon answers, with the toggle laid over the last answer.
+      expect(model.getState().controls).toHaveLength(1);
+      expect(model.getState().controlOptions).toMatchObject({ service_tier: "default" });
+      // The request carries everything the profile would save, so the daemon resolves it.
+      expect(model.getState().controlsRequest?.providerOptions).toEqual({
+        service_tier: "default",
+        sandbox_mode: "read-only",
+      });
+      expect(model.getState().controlsResolution).toBe("pending");
+
+      model.applyControls(model.getState().controlsRequestKey ?? "", {
+        ...speed,
+        options: { service_tier: "default", sandbox_mode: "read-only" },
+      });
+      expect(model.getState().controlsResolution).toBe("complete");
+      expect(model.getState().controlOptions).toEqual({
+        service_tier: "default",
+        sandbox_mode: "read-only",
+      });
+    });
+
+    it("draws no controls for the previous model while another model's answer is pending", () => {
+      const model = openWithCatalog({ mode: "create" });
+      selectClaude(model);
+      model.applyControls(model.getState().controlsRequestKey ?? "", WEB_SEARCH_CONTROLS);
+
+      model.setModel("claude-haiku-4-5", { label: "Haiku 4.5" });
+
+      expect(model.getState().controls).toEqual([]);
+    });
+
     it("resolves an unavailable feature listing without showing the field", () => {
       const model = openWithCatalog({ mode: "create" });
       selectClaude(model);

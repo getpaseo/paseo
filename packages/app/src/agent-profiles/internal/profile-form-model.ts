@@ -328,18 +328,25 @@ function buildControlsRequest(state: AgentProfileFormState): AgentProfileControl
   if (!state.provider) {
     return null;
   }
+  const ownOptions = ownOptionsOf(state);
   return {
     provider: state.provider,
     ...(state.modelId ? { model: state.modelId } : {}),
     ...(state.modeId ? { modeId: state.modeId } : {}),
     ...(state.thinkingOptionId ? { thinkingOptionId: state.thinkingOptionId } : {}),
-    ...(Object.keys(state.options).length > 0 ? { providerOptions: state.options } : {}),
+    ...(Object.keys(ownOptions).length > 0 ? { providerOptions: ownOptions } : {}),
   };
 }
 
-export function buildControlsRequestKey(
-  request: AgentProfileControlsRequest | null,
-): string | null {
+/** Everything the profile would save as its options; the daemon resolves them for the form. */
+function ownOptionsOf(
+  state: Pick<AgentProfileFormState, "options" | "optionEdits">,
+): ProviderOptions {
+  return { ...state.options, ...state.optionEdits };
+}
+
+/** The part of a request that decides which controls exist; options only change their values. */
+function buildControlsScopeKey(request: AgentProfileControlsRequest | null): string | null {
   if (!request) {
     return null;
   }
@@ -351,13 +358,25 @@ export function buildControlsRequestKey(
   ].join("|");
 }
 
+export function buildControlsRequestKey(
+  request: AgentProfileControlsRequest | null,
+): string | null {
+  if (!request) {
+    return null;
+  }
+  const scope = buildControlsScopeKey(request);
+  return request.providerOptions
+    ? `${scope}|${JSON.stringify(Object.entries(request.providerOptions).sort(([a], [b]) => a.localeCompare(b)))}`
+    : scope;
+}
+
 function buildSubmitValue(state: AgentProfileFormState): AgentProfileValue | null {
   const name = state.name.trim();
   const notes = state.notes.trim();
   if (!name || !state.provider) {
     return null;
   }
-  const options = { ...state.options, ...state.optionEdits };
+  const options = ownOptionsOf(state);
   return {
     name,
     ...(state.icon ? { icon: state.icon } : {}),
@@ -441,6 +460,7 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
   let entries: readonly ProviderSnapshotEntry[] = [];
   let catalogResolution: AgentProfileResolutionStatus = "idle";
   let resolvedControlsKey: string | null = null;
+  let resolvedScopeKey: string | null = null;
   let resolvedControls: AgentOptionControl[] = [];
   let resolvedOptions: ProviderOptions = {};
   let listeners = new Set<() => void>();
@@ -457,12 +477,20 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
     const thinking = resolveThinkingOptions(entries, next.provider, next.modelId);
     const controlsRequest = buildControlsRequest(next);
     const controlsRequestKey = buildControlsRequestKey(controlsRequest);
+    const controlsScopeKey = buildControlsScopeKey(controlsRequest);
     const featuresAreCurrent =
       controlsRequestKey !== null && controlsRequestKey === resolvedControlsKey;
-    const controls = featuresAreCurrent ? resolvedControls : [];
-    const controlOptions = featuresAreCurrent
-      ? { ...resolvedOptions, ...next.optionEdits }
-      : next.options;
+    // A toggle changes only the options, so the controls stay up while the daemon answers and the
+    // toggle shows over the last answer. A change of provider, model, mode or thinking draws none
+    // until its own answer arrives.
+    const controlsApply = controlsScopeKey !== null && controlsScopeKey === resolvedScopeKey;
+    const controls = controlsApply ? resolvedControls : [];
+    let controlOptions: ProviderOptions = next.options;
+    if (controlsApply) {
+      controlOptions = featuresAreCurrent
+        ? resolvedOptions
+        : { ...resolvedOptions, ...next.optionEdits };
+    }
     const controlsResolution = resolveControlsStatus(controlsRequestKey, featuresAreCurrent);
 
     const withOptions: AgentProfileFormState = {
@@ -557,6 +585,7 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
         return;
       }
       resolvedControlsKey = requestKey;
+      resolvedScopeKey = buildControlsScopeKey(state.controlsRequest);
       resolvedControls = [...resolved.controls];
       resolvedOptions = resolved.options;
       publish((current) => current);
@@ -566,6 +595,7 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
         return;
       }
       resolvedControlsKey = requestKey;
+      resolvedScopeKey = buildControlsScopeKey(state.controlsRequest);
       resolvedControls = [];
       resolvedOptions = {};
       publish((current) => current);
