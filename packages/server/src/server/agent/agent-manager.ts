@@ -2284,6 +2284,7 @@ export class AgentManager {
   async setAgentOptions(agentId: string, patch: ProviderOptionsPatch): Promise<void> {
     const agent = this.requireAgent(agentId);
     let ended: ProviderOptionsPatch = {};
+    let resolvedForApply: ProviderOptions = {};
     if (Object.keys(patch).length > 0) {
       // A provider that cannot apply options to a running agent must not store them either.
       if (!agent.session.applyOptions) {
@@ -2297,6 +2298,7 @@ export class AgentManager {
       }
       const set = Object.fromEntries(Object.entries(patch).filter(([, value]) => value != null));
       const resolved = this.effectiveOptionsFor(agent.provider, set);
+      resolvedForApply = resolved;
       ended =
         (await agent.session.applyOptions(
           Object.fromEntries(Object.keys(patch).map((key) => [key, resolved[key] ?? null])),
@@ -2305,6 +2307,7 @@ export class AgentManager {
       await this.drainSessionEvents(agentId);
     }
     this.storeOptionsPatch(agent, { ...patch, ...ended });
+    this.updateEffectiveOptions(agent, { ...patch, ...ended }, resolvedForApply);
     this.touchUpdatedAt(agent);
     this.emitState(agent);
   }
@@ -2320,6 +2323,24 @@ export class AgentManager {
   private storeOptionsPatch(agent: ManagedAgent, patch: ProviderOptionsPatch): void {
     const own = applyProviderOptionsPatch({ options: agent.config.providerOptions, patch });
     agent.config.providerOptions = Object.keys(own).length > 0 ? own : undefined;
+  }
+
+  /**
+   * What the running session has: the options it opened with, moved only by an apply or a change
+   * the provider reports. A removal shows the default it fell back to, as the provider was told.
+   */
+  private updateEffectiveOptions(
+    agent: ManagedAgent,
+    patch: ProviderOptionsPatch,
+    fallbacks: ProviderOptions = {},
+  ): void {
+    const moved = Object.fromEntries(
+      Object.entries(patch).map(([key, value]) => [key, value ?? fallbacks[key] ?? null]),
+    );
+    agent.effectiveOptions = applyProviderOptionsPatch({
+      options: agent.effectiveOptions,
+      patch: moved,
+    });
   }
 
   private effectiveOptionsFor(
@@ -4068,6 +4089,8 @@ export class AgentManager {
       session,
       capabilities: session.capabilities,
       config,
+      // What the session opened with. Provider defaults edited later reach it when it next opens.
+      effectiveOptions: this.effectiveOptionsFor(config.provider, config.providerOptions),
       runtimeInfo: undefined,
       lifecycle: "initializing",
       createdAt: options?.createdAt ?? now,
@@ -4726,6 +4749,7 @@ export class AgentManager {
   }): void {
     const { agent, patch, flags } = params;
     this.storeOptionsPatch(agent, patch);
+    this.updateEffectiveOptions(agent, patch);
     flags.shouldDispatchEvent = false;
     this.emitState(agent);
   }
@@ -5285,7 +5309,6 @@ export class AgentManager {
     if ("session" in agent && agent.session?.controls) {
       agent.controls = agent.session.controls;
     }
-    agent.effectiveOptions = this.effectiveOptionsFor(agent.provider, agent.config.providerOptions);
   }
 
   private checkAndSetAttention(agent: ManagedAgent): void {

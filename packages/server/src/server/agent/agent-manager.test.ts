@@ -12939,6 +12939,22 @@ describe("agent options", () => {
     expect(states.at(-1)?.effectiveOptions).toEqual({ service_tier: "default", fast_mode: true });
   });
 
+  test("editing a provider default does not change the options of a loaded agent", async () => {
+    const { manager, client, agentId } = await createOptionsAgent({ fast_mode: true });
+    expect(manager.getAgent(agentId)?.effectiveOptions).toEqual({
+      service_tier: "default",
+      fast_mode: true,
+    });
+
+    // The user edits the default in config.json while the agent is running.
+    client.effectiveOptions = (own) => ({ service_tier: "fast", ...own });
+    await manager.markAgentUnread(agentId);
+
+    const agent = manager.getAgent(agentId);
+    expect(agent?.effectiveOptions).toEqual({ service_tier: "default", fast_mode: true });
+    expect(toAgentPayload(agent!).options).toEqual({ service_tier: "default", fast_mode: true });
+  });
+
   test("a provider that rejects an option leaves the stored options unchanged", async () => {
     const { manager, client, agentId } = await createOptionsAgent({ fast_mode: false });
     client.session!.rejectWith = new Error("fast mode unavailable");
