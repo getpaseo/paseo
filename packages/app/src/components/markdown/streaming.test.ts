@@ -22,6 +22,7 @@ describe("native streaming Markdown", () => {
     "- one\n  - nested\n\n    paragraph\n",
     "    indented code\n\n    still code\n",
     "| A | B |\n| --- | --- |\n| x | y |\n",
+    "> Verification\n> | A | B |\n> | --- | --- |\n> | x | y |\n",
     "```ts\nconst value = 1;\n```\n",
     "<div>\nbody\n\nmore\n</div>\n",
     "[label]\n\n[label]: /target\n",
@@ -48,6 +49,13 @@ describe("native streaming Markdown", () => {
         tail,
       });
     }
+  });
+  it("splits prose from a following table at the header line", () => {
+    const table = "| A | B |\n| --- | --- |\n| x | y |\n";
+    expect(splitStreamingMarkdown(`Verification\n${table}`, true)).toEqual({
+      head: "Verification\n",
+      tail: table,
+    });
   });
   it("keeps unresolved references and HTML in the tail even after later blocks", () => {
     for (const block of ["[label]", "[label]: /target", "<div>body</div>"]) {
