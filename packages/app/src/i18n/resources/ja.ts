@@ -483,6 +483,8 @@ export const ja: TranslationResources = {
       copyRelativePath: "相対パスをコピー",
       revealIn: "{{target}}で表示",
       download: "ダウンロード",
+      share: "共有",
+      openWith: "アプリで開く…",
       addToChat: "チャットに追加",
       moreActions: "その他のアクション",
       newFile: "新規ファイル",
@@ -1926,6 +1928,8 @@ export const ja: TranslationResources = {
     failed: "ファイルのダウンロードに失敗しました。",
     shareFile: "ファイルを共有",
     shareFileNamed: "{{fileName}}を共有",
+    noAppToOpen: "このデバイスには {{fileName}} を開けるアプリがありません。",
+    notificationChannel: "ダウンロード",
   },
   menu: {
     backdrop: "メニューの背景",

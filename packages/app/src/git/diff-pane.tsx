@@ -100,6 +100,7 @@ import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { openWorkspacePullRequest } from "@/workspace-tabs/open-supporting-view";
 import type { PullRequestOpenLocation } from "@/hooks/use-settings";
+import type { FileDelivery } from "@/downloads/cached-download";
 
 export type { GitActionId, GitAction, GitActions } from "@/git/policy";
 
@@ -1663,8 +1664,8 @@ export function ChangesSurface({
     [cwd, fileManagerTarget, t, toast],
   );
   const handleDownloadPath = useCallback(
-    (path: string) => {
-      downloadFile({ fileName: path.split("/").pop() ?? path, path });
+    (path: string, delivery: FileDelivery) => {
+      downloadFile({ fileName: path.split("/").pop() ?? path, path, delivery });
     },
     [downloadFile],
   );

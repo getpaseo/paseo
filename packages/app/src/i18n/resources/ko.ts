@@ -478,6 +478,8 @@ export const ko: TranslationResources = {
       copyRelativePath: "상대 경로 복사",
       revealIn: "{{target}}에서 보기",
       download: "다운로드",
+      share: "공유",
+      openWith: "다른 앱으로 열기…",
       addToChat: "채팅에 추가",
       moreActions: "추가 작업",
       newFile: "새 파일",
@@ -1917,6 +1919,8 @@ export const ko: TranslationResources = {
     failed: "파일을 다운로드하지 못했습니다.",
     shareFile: "파일 공유",
     shareFileNamed: "{{fileName}} 공유",
+    noAppToOpen: "이 기기에는 {{fileName}}을(를) 열 수 있는 앱이 없습니다.",
+    notificationChannel: "다운로드",
   },
   menu: {
     backdrop: "메뉴 배경",

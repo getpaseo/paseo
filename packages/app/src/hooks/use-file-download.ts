@@ -2,6 +2,13 @@ import { useCallback, useMemo } from "react";
 import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
 import { useDownloadStore } from "@/stores/download-store";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
+import type { FileDelivery } from "@/downloads/cached-download";
+
+interface FileDownloadRequest {
+  fileName: string;
+  path: string;
+  delivery: FileDelivery;
+}
 
 interface UseFileDownloadParams {
   serverId: string;
@@ -20,7 +27,7 @@ export function useFileDownload({
   serverId,
   workspaceId,
   workspaceRoot,
-}: UseFileDownloadParams): (input: { fileName: string; path: string }) => void {
+}: UseFileDownloadParams): (request: FileDownloadRequest) => void {
   const daemons = useHosts();
   const daemonProfile = useMemo(
     () => daemons.find((daemon) => daemon.serverId === serverId),
@@ -39,7 +46,7 @@ export function useFileDownload({
   const startDownload = useDownloadStore((state) => state.startDownload);
 
   return useCallback(
-    ({ fileName, path }) => {
+    ({ fileName, path, delivery }) => {
       if (!workspaceScopeId) {
         return;
       }
@@ -52,6 +59,7 @@ export function useFileDownload({
         activeConnectionId: getHostRuntimeStore().getSnapshot(serverId)?.activeConnectionId ?? null,
         requestFileDownloadToken: (targetPath) => requestFileDownloadToken(targetPath),
         readFile: requestFileBytes,
+        delivery,
       });
     },
     [

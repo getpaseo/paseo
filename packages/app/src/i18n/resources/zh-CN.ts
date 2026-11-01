@@ -477,6 +477,8 @@ export const zhCN: TranslationResources = {
       copyRelativePath: "复制相对路径",
       revealIn: "在 {{target}} 中显示",
       download: "下载",
+      share: "分享",
+      openWith: "打开方式…",
       addToChat: "添加到聊天",
       moreActions: "更多操作",
       newFile: "新建文件",
@@ -1885,6 +1887,8 @@ export const zhCN: TranslationResources = {
     failed: "下载文件失败。",
     shareFile: "共享文件",
     shareFileNamed: "共享 {{fileName}}",
+    noAppToOpen: "此设备上没有可以打开 {{fileName}} 的应用。",
+    notificationChannel: "下载",
   },
   menu: {
     backdrop: "菜单背景",

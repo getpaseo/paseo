@@ -1,6 +1,7 @@
 import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
 import type { InlineReviewActions } from "@/review";
 import type { ReviewableDiffTarget } from "@/utils/diff-layout";
+import type { FileDelivery } from "@/downloads/cached-download";
 
 interface DiffDocumentBaseProps {
   files: ParsedDiffFile[];
@@ -28,7 +29,7 @@ export interface WorkingDiffMode {
   onCopyRelativePath?: (path: string) => void;
   onReveal?: (path: string) => void;
   revealTargetName?: string;
-  onDownload?: (path: string) => void;
+  onDownload?: (path: string, delivery: FileDelivery) => void;
   onDuplicate?: (path: string) => void;
   onRevert?: (path: string, oldPath?: string) => void;
 }

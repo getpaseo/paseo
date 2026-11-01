@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { defaultHostAppearance } from "@/hosts/appearance";
 import { i18n } from "@/i18n/i18next";
+import type { CachedDownload, FileDelivery } from "@/downloads/cached-download";
 import {
   MAX_SESSION_DOWNLOAD_BYTES,
   useDownloadStore,
@@ -73,13 +74,29 @@ function createFileReader(read: () => Promise<{ bytes: Uint8Array; size: number 
   };
 }
 
-function createFileSaver() {
+function createFileSaver(savedUri: string | null = null) {
   const savedFiles: DownloadedBytes[] = [];
   return {
     savedFiles,
     save: async (file: DownloadedBytes) => {
       savedFiles.push(file);
-      return null;
+      return savedUri;
+    },
+  };
+}
+
+interface Delivered {
+  file: CachedDownload;
+  delivery: FileDelivery;
+}
+
+function createDeliverer(deliver: () => Promise<void> = async () => {}) {
+  const delivered: Delivered[] = [];
+  return {
+    delivered,
+    deliver: async (file: CachedDownload, delivery: FileDelivery) => {
+      delivered.push({ file, delivery });
+      await deliver();
     },
   };
 }
@@ -90,6 +107,8 @@ interface StartInput {
   token?: ReturnType<typeof createTokenRequest>;
   reader?: ReturnType<typeof createFileReader>;
   saver?: ReturnType<typeof createFileSaver>;
+  deliverer?: ReturnType<typeof createDeliverer>;
+  delivery?: FileDelivery;
 }
 
 async function startDownload(input: StartInput): Promise<Download | undefined> {
@@ -98,6 +117,7 @@ async function startDownload(input: StartInput): Promise<Download | undefined> {
     input.reader ??
     createFileReader(async () => ({ bytes: FILE_BYTES, size: FILE_BYTES.byteLength }));
   const saver = input.saver ?? createFileSaver();
+  const deliverer = input.deliverer ?? createDeliverer();
   await useDownloadStore.getState().startDownload({
     serverId: "srv_remote",
     scopeId: "workspace-1",
@@ -107,7 +127,9 @@ async function startDownload(input: StartInput): Promise<Download | undefined> {
     activeConnectionId: input.activeConnectionId,
     requestFileDownloadToken: token.request,
     readFile: reader.read,
+    delivery: input.delivery ?? "download",
     saveFile: saver.save,
+    deliverFile: deliverer.deliver,
   });
   const { activeDownloadId, downloads } = useDownloadStore.getState();
   return activeDownloadId ? downloads.get(activeDownloadId) : undefined;
@@ -157,6 +179,7 @@ describe("download store transport selection", () => {
         readRequests.push({ path, maxBytes });
         return { bytes: FILE_BYTES, size: FILE_BYTES.byteLength };
       },
+      delivery: "download",
       saveFile: saver.save,
     });
     expect(readRequests).toEqual([{ path: FILE_PATH, maxBytes: MAX_SESSION_DOWNLOAD_BYTES }]);
@@ -261,5 +284,49 @@ describe("download store transport selection", () => {
       message: "File transfer incomplete: expected 6 bytes, received 0.",
     });
     expect(saver.savedFiles).toEqual([]);
+  });
+});
+
+describe("download store delivery", () => {
+  const CACHED_URI = "file:///cache/données été.bin";
+
+  beforeEach(() => {
+    useDownloadStore.setState({ downloads: new Map(), activeDownloadId: null });
+  });
+
+  it("hands the cached file to the delivery the user picked", async () => {
+    const deliverer = createDeliverer();
+
+    const download = await startDownload({
+      profile: profileWith([relayConnection]),
+      activeConnectionId: relayConnection.id,
+      saver: createFileSaver(CACHED_URI),
+      deliverer,
+      delivery: "openWith",
+    });
+
+    expect(download).toMatchObject({ status: "complete" });
+    expect(deliverer.delivered).toEqual([
+      {
+        file: { uri: CACHED_URI, fileName: FILE_NAME, mimeType: MIME_TYPE },
+        delivery: "openWith",
+      },
+    ]);
+  });
+
+  it("fails the download when the platform cannot deliver the file", async () => {
+    const deliverer = createDeliverer(async () => {
+      throw new Error("No app can open it");
+    });
+
+    const download = await startDownload({
+      profile: profileWith([relayConnection]),
+      activeConnectionId: relayConnection.id,
+      saver: createFileSaver(CACHED_URI),
+      deliverer,
+      delivery: "openWith",
+    });
+
+    expect(download).toMatchObject({ status: "error", message: "No app can open it" });
   });
 });

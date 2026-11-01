@@ -482,6 +482,8 @@ export const ptBR: TranslationResources = {
       copyRelativePath: "Copiar caminho relativo",
       revealIn: "Mostrar no {{target}}",
       download: "Baixar",
+      share: "Compartilhar",
+      openWith: "Abrir com…",
       addToChat: "Adicionar ao chat",
       moreActions: "Mais ações",
       newFile: "Novo arquivo",
@@ -1940,6 +1942,8 @@ export const ptBR: TranslationResources = {
     failed: "Falha ao baixar arquivo.",
     shareFile: "Compartilhar arquivo",
     shareFileNamed: "Compartilhar {{fileName}}",
+    noAppToOpen: "Nenhum app neste dispositivo pode abrir {{fileName}}.",
+    notificationChannel: "Downloads",
   },
   menu: {
     backdrop: "Fundo do menu",
