@@ -63,6 +63,7 @@ import { isNative, isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { RenderProfile } from "@/utils/render-profiler";
+import { FILLED_FOCUS_RING_DATASET } from "@/styles/focus-ring";
 import { useComposerHeight } from "./height";
 import { ComposerInputPresentation } from "./presentation";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
@@ -745,6 +746,7 @@ function VoiceButtonTooltip({
   isDictationStartEnabled,
   voiceButtonAccessibilityLabel,
   voiceButtonStyle,
+  isDictating,
   renderVoiceButtonIcon,
   voiceTooltipText,
   isRealtimeVoiceForCurrentAgent,
@@ -754,6 +756,7 @@ function VoiceButtonTooltip({
   visible: boolean;
   onVoicePress: () => void;
   isDictationStartEnabled: boolean;
+  isDictating: boolean;
   voiceButtonAccessibilityLabel: string;
   voiceButtonStyle: React.ComponentProps<typeof TooltipTrigger>["style"];
   renderVoiceButtonIcon: (input: { hovered?: boolean }) => React.ReactElement;
@@ -771,6 +774,7 @@ function VoiceButtonTooltip({
         disabled={!isDictationStartEnabled}
         accessibilityRole="button"
         accessibilityLabel={voiceButtonAccessibilityLabel}
+        dataSet={isDictating ? FILLED_FOCUS_RING_DATASET : undefined}
         style={voiceButtonStyle}
       >
         {renderVoiceButtonIcon}
@@ -828,6 +832,7 @@ function SendButtonTooltip({
         accessibilityHint={submitAccessibilityHint}
         accessibilityRole="button"
         testID={submitButtonTestID}
+        dataSet={FILLED_FOCUS_RING_DATASET}
         style={sendButtonCombinedStyle}
       >
         <SendButtonContent
@@ -2139,6 +2144,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
               isDictationStartEnabled={isDictationStartEnabled}
               voiceButtonAccessibilityLabel={voiceButtonAccessibilityLabel}
               voiceButtonStyle={voiceButtonStyle}
+              isDictating={isDictating}
               renderVoiceButtonIcon={renderVoiceButtonIcon}
               voiceTooltipText={voiceTooltipText}
               isRealtimeVoiceForCurrentAgent={isRealtimeVoiceForCurrentAgent}
@@ -2165,6 +2171,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         isDictationStartEnabled,
         voiceButtonAccessibilityLabel,
         voiceButtonStyle,
+        isDictating,
         renderVoiceButtonIcon,
         voiceTooltipText,
         isRealtimeVoiceForCurrentAgent,

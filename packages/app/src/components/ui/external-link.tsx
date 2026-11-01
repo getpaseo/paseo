@@ -3,6 +3,7 @@ import { Pressable, Text } from "react-native";
 import { ArrowUpRight } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { OUTER_FOCUS_RING_DATASET } from "@/styles/focus-ring";
 import type { Theme } from "@/styles/theme";
 import { openExternalUrl } from "@/utils/open-external-url";
 
@@ -41,6 +42,7 @@ export function ExternalLink({
       accessibilityRole="link"
       accessibilityLabel={accessibilityLabel ?? label}
       testID={testID}
+      dataSet={OUTER_FOCUS_RING_DATASET}
       style={styles.trigger}
     >
       <Text style={styles.label}>{children ?? label}</Text>

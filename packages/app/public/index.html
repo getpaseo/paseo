@@ -85,9 +85,24 @@
       *:focus {
         outline: none;
       }
+      /* Draw the ring inside the control's own box. Toolbars, sidebar rows and
+         tab strips clip with overflow: hidden, and a ring drawn outside the
+         box loses its top and bottom edges there. */
       *:focus-visible {
         outline: 2px solid #20744a;
-        outline-offset: 2px;
+        outline-offset: -2px;
+      }
+      /* Text links and switches fill their box to the edge, so an inner ring
+         would cover them. */
+      [data-focus-ring="outer"]:focus-visible {
+        outline-offset: 0;
+      }
+      /* An inner ring sits on the control's own fill and vanishes against the
+         accent and destructive colors. Controls with that fill, and controls
+         on a surface with it, get a surface band between ring and fill. */
+      [data-focus-ring="filled"]:focus-visible,
+      [data-focus-ring="filled"] :focus-visible {
+        box-shadow: inset 0 0 0 4px var(--colors-surface0);
       }
     </style>
   </head>

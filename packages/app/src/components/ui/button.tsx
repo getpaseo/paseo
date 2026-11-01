@@ -24,6 +24,7 @@ import {
   createControlGeometry,
   type ButtonControlSize,
 } from "@/components/ui/control-geometry";
+import { FILLED_FOCUS_RING_DATASET } from "@/styles/focus-ring";
 import type { Theme } from "@/styles/theme";
 
 type ButtonVariant = "default" | "secondary" | "outline" | "ghost" | "destructive";
@@ -265,6 +266,9 @@ export function Button({
 
   return (
     <Pressable
+      dataSet={
+        variant === "default" || variant === "destructive" ? FILLED_FOCUS_RING_DATASET : undefined
+      }
       {...props}
       accessibilityRole={accessibilityRole ?? "button"}
       accessibilityState={accessibilityState}

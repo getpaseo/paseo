@@ -26,6 +26,7 @@ import { openExternalUrl } from "@/utils/open-external-url";
 import { isFdroidBuild } from "@/constants/build-profile";
 import { isWeb, isNative } from "@/constants/platform";
 import { isElectronRuntime } from "@/desktop/host";
+import { FILLED_FOCUS_RING_DATASET } from "@/styles/focus-ring";
 
 interface WelcomeAction {
   key: "scan-qr" | "direct-connection" | "remote-ssh" | "paste-pairing-link";
@@ -355,7 +356,12 @@ function WelcomeActionButton({ action }: WelcomeActionButtonProps) {
     [action.primary],
   );
   return (
-    <Pressable style={buttonStyle} onPress={action.onPress} testID={action.testID}>
+    <Pressable
+      style={buttonStyle}
+      onPress={action.onPress}
+      testID={action.testID}
+      dataSet={action.primary ? FILLED_FOCUS_RING_DATASET : undefined}
+    >
       <Icon
         size={18}
         color={action.primary ? theme.colors.accentForeground : theme.colors.foreground}
