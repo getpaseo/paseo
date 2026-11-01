@@ -201,7 +201,7 @@ describe("workspace agent activity index", () => {
     });
   });
 
-  it("treats a cross-workspace subagent as activity in its own workspace", () => {
+  it("rolls a cross-workspace running subagent up to ancestor workspaces", () => {
     const index = buildWorkspaceAgentActivityIndex(
       new Map([
         [
@@ -231,8 +231,8 @@ describe("workspace agent activity index", () => {
           "workspace-a",
           {
             agentId: "parent",
-            status: "done",
-            enteredAt: new Date("2026-06-01T10:00:00.000Z"),
+            status: "running",
+            enteredAt: new Date("2026-06-01T10:03:00.000Z"),
           },
         ],
         [
@@ -318,5 +318,78 @@ describe("workspace agent activity index", () => {
       status: "needs_input",
       enteredAt: new Date("2026-06-01T10:05:00.000Z"),
     });
+  });
+});
+
+describe("running descendant rollup", () => {
+  it("marks ancestor workspaces running for a same-workspace child", () => {
+    const agents = new Map<string, Agent>([
+      ["root", agent({ id: "root", workspaceId: "ws-a", updatedAt: "2026-01-01T00:00:00.000Z" })],
+      [
+        "child",
+        agent({
+          id: "child",
+          workspaceId: "ws-a",
+          status: "running",
+          parentAgentId: "root",
+          updatedAt: "2026-01-01T00:01:00.000Z",
+        }),
+      ],
+    ]);
+    expect(buildWorkspaceAgentActivityIndex(agents).get("ws-a")?.status).toBe("running");
+  });
+
+  it("marks ancestor workspaces running for a cross-workspace child", () => {
+    const agents = new Map<string, Agent>([
+      ["root", agent({ id: "root", workspaceId: "ws-a", updatedAt: "2026-01-01T00:00:00.000Z" })],
+      [
+        "child",
+        agent({
+          id: "child",
+          workspaceId: "ws-b",
+          status: "running",
+          parentAgentId: "root",
+          updatedAt: "2026-01-01T00:01:00.000Z",
+        }),
+      ],
+    ]);
+    const index = buildWorkspaceAgentActivityIndex(agents);
+    expect(index.get("ws-a")?.status).toBe("running");
+    expect(index.get("ws-b")?.status).toBe("running");
+  });
+
+  it("marks the parent workspace running for a running provider subagent", () => {
+    const agents = new Map<string, Agent>([
+      ["root", agent({ id: "root", workspaceId: "ws-a", updatedAt: "2026-01-01T00:00:00.000Z" })],
+    ]);
+    const index = buildWorkspaceAgentActivityIndex(agents, undefined, [
+      { parentAgentId: "root", status: "running", updatedAt: "2026-01-01T00:02:00.000Z" },
+    ]);
+    expect(index.get("ws-a")?.status).toBe("running");
+  });
+
+  it("does not override needs_input with a running descendant", () => {
+    const agents = new Map<string, Agent>([
+      [
+        "root",
+        agent({
+          id: "root",
+          workspaceId: "ws-a",
+          pendingPermissionCount: 1,
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        }),
+      ],
+      [
+        "child",
+        agent({
+          id: "child",
+          workspaceId: "ws-a",
+          status: "running",
+          parentAgentId: "root",
+          updatedAt: "2026-01-01T00:01:00.000Z",
+        }),
+      ],
+    ]);
+    expect(buildWorkspaceAgentActivityIndex(agents).get("ws-a")?.status).toBe("needs_input");
   });
 });
