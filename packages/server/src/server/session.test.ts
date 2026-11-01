@@ -67,7 +67,6 @@ import {
   createProviderSnapshot,
   createProviderSnapshotManagerStub,
 } from "./test-utils/session-stubs.js";
-import { createTestAgentMessages } from "./test-utils/agent-messages.js";
 import { isPlatform } from "../test-utils/platform.js";
 import {
   GitHubAuthenticationError,
@@ -313,7 +312,6 @@ interface SessionForTestOptions {
   permissions?: readonly DaemonPermission[];
   agentManager?: { [K in keyof SessionOptions["agentManager"]]?: unknown };
   agentStorage?: { [K in keyof SessionOptions["agentStorage"]]?: unknown };
-  agentMessages?: SessionOptions["agentMessages"];
   github?: Partial<ForgeService & GitHubService>;
   checkoutDiffManager?: { scheduleRefreshForCwd: ReturnType<typeof vi.fn> };
   workspaceGitService?: {
@@ -390,7 +388,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   const sessionOptions: SessionOptions = {
     workspaceRuntimeStore: options.workspaceRuntimeStore ?? createWorkspaceRuntimeStore(),
     messageReceipts: createMessageReceiptsStub(),
-    agentMessages: options.agentMessages ?? createAgentMessageDeliveryStub(),
+    agentMessages: createAgentMessageDeliveryStub(),
     creationService: createTestCreationService(),
     clientId: options.clientId ?? "test-client",
     onMessage: (message) => messages.push(message),
@@ -5676,71 +5674,6 @@ test("project.list returns every active project descriptor", async () => {
       },
     },
   ]);
-});
-
-describe("send_agent_message_request pending permissions", () => {
-  const recipientId = "22222222-2222-4222-8222-222222222222";
-  const senderId = "33333333-3333-4333-8333-333333333333";
-
-  function steerableRecipient() {
-    return {
-      getAgent: vi.fn((agentId: string) =>
-        agentId === recipientId
-          ? { id: recipientId, provider: "claude", lifecycle: "running" }
-          : null,
-      ),
-      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
-      tryRunOutOfBand: vi.fn().mockResolvedValue(false),
-      reloadStalePluginSession: vi.fn().mockResolvedValue(undefined),
-      steerOrReplaceActiveTurn: vi.fn().mockResolvedValue({ status: "steered" }),
-    };
-  }
-
-  test("an agent-sourced message steers without clearing the recipient's pending permissions", async () => {
-    const agentManager = steerableRecipient();
-    const agentMessages = createTestAgentMessages({
-      agentManager: asAgentManager(agentManager),
-      agentStorage: asAgentStorage({ get: vi.fn().mockResolvedValue(undefined) }),
-      logger: pino({ level: "silent" }),
-    });
-    const session = createSessionForTest({ agentManager, agentMessages });
-
-    await session.handleMessage({
-      type: "send_agent_message_request",
-      requestId: "agent-send",
-      agentId: recipientId,
-      text: "Status check: reply when done.",
-      sourceAgentId: senderId,
-      messageId: "agent-message",
-    });
-    await agentMessages.close();
-
-    expect(agentManager.steerOrReplaceActiveTurn).toHaveBeenCalledWith(
-      recipientId,
-      expect.anything(),
-      { clientMessageId: "agent-message" },
-    );
-  });
-
-  test("a sourceless steer still clears the recipient's pending permissions", async () => {
-    const agentManager = steerableRecipient();
-    const session = createSessionForTest({ agentManager });
-
-    await session.handleMessage({
-      type: "send_agent_message_request",
-      requestId: "sourceless-send",
-      agentId: recipientId,
-      text: "Status check: reply when done.",
-      messageId: "sourceless-message",
-      activeTurnBehavior: "steer",
-    });
-
-    expect(agentManager.steerOrReplaceActiveTurn).toHaveBeenCalledWith(
-      recipientId,
-      expect.anything(),
-      { clientMessageId: "sourceless-message", clearPendingPermissions: true },
-    );
-  });
 });
 
 describe("agent config setters", () => {
