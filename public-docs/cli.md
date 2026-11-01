@@ -340,6 +340,17 @@ paseo wait <id> --timeout 60   # 60 second timeout
 
 Useful in scripts or when one agent needs to wait for another.
 
+## Marking agents read
+
+Clear an agent's unread or failed state, as opening it in the app does:
+
+```bash
+paseo agent mark-read <id>          # One agent
+paseo agent mark-read <id> <id>     # Several at once
+```
+
+An agent that is already read is left alone; `--json` lists the agents that changed.
+
 ## Schedules
 
 Run an agent on a cron schedule. The CLI also accepts simple cadence presets and compiles them to cron. See [Schedules from the CLI](/docs/schedules-cli) for the full reference.

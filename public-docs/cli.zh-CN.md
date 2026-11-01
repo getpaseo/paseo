@@ -321,6 +321,17 @@ paseo wait <id> --timeout 60   # 60 second timeout
 
 适用于脚本中，或一个 Agent 需要等待另一个 Agent 的情况。
 
+## 标为已读 {#marking-agents-read}
+
+清除 Agent 的未读或失败状态，效果与在应用里打开它相同：
+
+```bash
+paseo agent mark-read <id>          # One agent
+paseo agent mark-read <id> <id>     # Several at once
+```
+
+已读的 Agent 不受影响；`--json` 会列出状态有变化的 Agent。
+
 ## 定时任务 {#schedules}
 
 按 cron 定时任务运行 Agent。CLI 也接受简单的节奏预设，并把它们编译为 cron。完整参考见[在 CLI 中使用定时任务](/docs/schedules-cli)。
