@@ -49,6 +49,22 @@ describe("paseo config schema", () => {
     });
   });
 
+  it("parses a workspace launch and its port block", () => {
+    expect(
+      PaseoConfigSchema.parse({
+        worktree: { servicePorts: { range: "20000-50000", blockSize: 100 } },
+        launches: { dev: { command: "./bin/dev" } },
+      }),
+    ).toEqual({
+      worktree: {
+        setup: [],
+        teardown: [],
+        servicePorts: { range: "20000-50000", blockSize: 100 },
+      },
+      launches: { dev: { command: "./bin/dev" } },
+    });
+  });
+
   it("rejects invalid service port ranges", () => {
     expect(() =>
       PaseoConfigRawSchema.parse({ worktree: { servicePorts: { range: "4000-3000" } } }),

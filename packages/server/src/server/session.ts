@@ -37,6 +37,9 @@ import {
   type WorkspaceScriptListRequest,
   type WorkspaceScriptStartRequest,
   type WorkspaceScriptStopRequest,
+  type WorkspaceLaunchListRequest,
+  type WorkspaceLaunchStartRequest,
+  type WorkspaceLaunchStopRequest,
   type CloseItemsRequest,
   type DirectorySuggestionsRequest,
   type ProjectPlacementPayload,
@@ -76,12 +79,15 @@ import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
+import type { WorkspaceRuntimeEnvironmentService } from "./workspace-runtime-environment.js";
+import type { WorkspaceLaunchContext, WorkspaceLaunchService } from "./workspace-launch-manager.js";
 import {
   createWorkspaceScriptsService,
   type WorkspaceScriptsService,
 } from "./session/workspace-scripts/workspace-scripts-service.js";
 import type { DaemonConfigStore } from "./daemon-config-store.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
+import { deriveProjectServiceSlug, deriveProjectSlug } from "./workspace-git-metadata.js";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
@@ -457,6 +463,7 @@ export interface SessionOptions {
   getConnectedHostBufferedAmount?: () => number | null;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   onWorkspaceRecovered?: (workspace: PersistedWorkspaceRecord) => Promise<void>;
+  emitWorkspaceUpdatesForExternalWorkspaceIds?: (workspaceIds: Iterable<string>) => Promise<void>;
   publishScriptStatusUpdate?: (message: ScriptStatusUpdateMessage) => void;
   logger: pino.Logger;
   downloadTokenStore: DownloadTokenStore;
@@ -539,6 +546,8 @@ export interface SessionOptions {
   hubRelationships?: HubRelationshipManagement;
   serviceProxy?: ServiceProxySubsystem;
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
+  workspaceRuntimeEnvironment?: WorkspaceRuntimeEnvironmentService;
+  workspaceLaunchManager?: WorkspaceLaunchService;
   workspaceSetupObservation?: WorkspaceSetupObservation;
   workspaceSetupRuntime?: WorkspaceSetupRuntime;
   onBranchChanged?: (
@@ -801,6 +810,8 @@ export class Session {
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private readonly serviceProxy: ServiceProxySubsystem | null;
   private readonly scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
+  private workspaceRuntimeEnvironment: WorkspaceRuntimeEnvironmentService | null = null;
+  private workspaceLaunches: WorkspaceLaunchService | null = null;
   private readonly getDaemonTcpPort: (() => number | null) | null;
   private readonly getDaemonTcpHost: (() => string | null) | null;
   private readonly serviceProxyPublicBaseUrl: string | null;
@@ -1078,6 +1089,16 @@ export class Session {
         emit: (msg) => this.emit(msg),
       },
       projectRegistry: this.projectRegistry,
+      onProjectConfigWritten: async (projectId) => {
+        const workspaceIds = (await this.workspaceRegistry.list())
+          .filter((workspace) => workspace.projectId === projectId && !workspace.archivedAt)
+          .map((workspace) => workspace.workspaceId);
+        if (options.emitWorkspaceUpdatesForExternalWorkspaceIds) {
+          await options.emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIds);
+          return;
+        }
+        await this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds);
+      },
       logger: this.sessionLogger,
     });
     this.daemonSession = new DaemonSession({
@@ -1198,6 +1219,7 @@ export class Session {
     this.providerSnapshotManager = providerSnapshotManager;
     this.serviceProxy = serviceProxy ?? null;
     this.scriptRuntimeStore = scriptRuntimeStore ?? null;
+    this.initializeWorkspaceLaunchServices(options);
     this.workspaceSetupObservation = workspaceSetupObservation ?? new WorkspaceSetupObservation();
     this.unsubscribeSetupObservation = this.workspaceSetupObservation.subscribe(
       (workspaceId, snapshot, statusChanged) => {
@@ -1237,6 +1259,7 @@ export class Session {
       assertAutomationAllowed: (workspaceId) =>
         assertWorkspaceAutomationAllowedForWorkspace(this.workspaceRegistry, workspaceId),
       getGlobalServicePorts: () => this.daemonConfigStore.readServicePorts(),
+      workspaceRuntimeEnvironment: this.workspaceRuntimeEnvironment,
     });
     this.workspaceDirectory = new WorkspaceDirectory({
       logger: this.sessionLogger,
@@ -1290,6 +1313,13 @@ export class Session {
     );
 
     this.sessionLogger.trace({}, "agent.session.lifecycle.created");
+  }
+
+  private initializeWorkspaceLaunchServices(
+    options: Pick<SessionOptions, "workspaceRuntimeEnvironment" | "workspaceLaunchManager">,
+  ): void {
+    this.workspaceRuntimeEnvironment = options.workspaceRuntimeEnvironment ?? null;
+    this.workspaceLaunches = options.workspaceLaunchManager ?? null;
   }
 
   updateAppVersion(appVersion: string | null): void {
@@ -3208,6 +3238,12 @@ export class Session {
         return this.handleWorkspaceScriptStartRequest(msg);
       case "workspace.script.stop.request":
         return this.handleWorkspaceScriptStopRequest(msg);
+      case "workspace.launch.list.request":
+        return this.handleWorkspaceLaunchListRequest(msg);
+      case "workspace.launch.start.request":
+        return this.handleWorkspaceLaunchStartRequest(msg);
+      case "workspace.launch.stop.request":
+        return this.handleWorkspaceLaunchStopRequest(msg);
       default:
         return this.terminalController.dispatch(msg, this.delivery);
     }
@@ -5714,6 +5750,7 @@ export class Session {
       createdAt: workspace.createdAt,
       diffStat,
       scripts: await this.buildWorkspaceScriptPayloadSnapshot(workspace, resolvedProjectRecord),
+      launches: await this.buildWorkspaceLaunchPayloadSnapshot(workspace, resolvedProjectRecord),
       ...(resolvedProjectRecord
         ? {
             project: await this.buildProjectPlacementForWorkspace(workspace, resolvedProjectRecord),
@@ -5812,6 +5849,7 @@ export class Session {
       lastUserMessageAt: null,
       diffStat: { additions: 0, deletions: 0 },
       scripts: [],
+      launches: [],
       gitRuntime: {
         currentBranch: result.worktree.branchName || null,
         remoteUrl: null,
@@ -6094,6 +6132,7 @@ export class Session {
   private async teardownArchivedWorkspace(workspaceId: string): Promise<void> {
     this.workspaceGitObserver.removeForWorkspaceId(workspaceId);
     this.scriptRuntimeStore?.removeForWorkspace(workspaceId);
+    await this.workspaceLaunches?.disposeWorkspace(workspaceId);
     releaseWorkspaceServicePortPlan(workspaceId);
   }
 
@@ -7311,6 +7350,46 @@ export class Session {
     return this.workspaceScripts.buildSnapshot(workspace, project);
   }
 
+  private buildWorkspaceLaunchPayloadSnapshot(
+    workspace: PersistedWorkspaceRecord,
+    project: PersistedProjectRecord | null,
+  ): Promise<WorkspaceDescriptorPayload["launches"]> {
+    if (!this.workspaceLaunches) {
+      return Promise.resolve([]);
+    }
+    return this.workspaceLaunches.buildSnapshot(
+      this.resolveWorkspaceLaunchContext(workspace, project),
+    );
+  }
+
+  private resolveWorkspaceLaunchContext(
+    workspace: PersistedWorkspaceRecord,
+    project: PersistedProjectRecord | null,
+  ): WorkspaceLaunchContext {
+    const snapshot = this.workspaceGitService.peekSnapshot(workspace.cwd);
+    const branchName = snapshot?.git.currentBranch ?? workspace.branch ?? null;
+    return {
+      workspaceId: workspace.workspaceId,
+      workspaceDirectory: workspace.cwd,
+      projectConfigDirectory: project?.rootPath ?? workspace.cwd,
+      projectSlug: project
+        ? deriveProjectServiceSlug(project)
+        : deriveProjectSlug(workspace.cwd, snapshot?.git.isGit ? snapshot.git.remoteUrl : null),
+      branchName,
+    };
+  }
+
+  private async resolveWorkspaceLaunchContextById(
+    workspaceId: string,
+  ): Promise<WorkspaceLaunchContext> {
+    const workspace = await this.workspaceRegistry.get(workspaceId);
+    if (!workspace || workspace.archivedAt) {
+      throw new Error(`Workspace not found: ${workspaceId}`);
+    }
+    const project = await this.projectRegistry.get(workspace.projectId);
+    return this.resolveWorkspaceLaunchContext(workspace, project);
+  }
+
   private handleStartWorkspaceScriptRequest(request: StartWorkspaceScriptRequest): Promise<void> {
     return this.workspaceScripts.start(request);
   }
@@ -7395,6 +7474,106 @@ export class Session {
           scriptName: request.scriptName,
           script: null,
           error: error instanceof Error ? error.message : "Failed to stop workspace script",
+        },
+      });
+    }
+  }
+
+  private async handleWorkspaceLaunchListRequest(
+    request: WorkspaceLaunchListRequest,
+  ): Promise<void> {
+    try {
+      if (!this.workspaceLaunches) {
+        throw new Error("Workspace launches are not available on this daemon");
+      }
+      const context = await this.resolveWorkspaceLaunchContextById(request.workspaceId);
+      this.emit({
+        type: "workspace.launch.list.response",
+        payload: {
+          requestId: request.requestId,
+          workspaceId: request.workspaceId,
+          launches: await this.workspaceLaunches.buildSnapshot(context),
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "workspace.launch.list.response",
+        payload: {
+          requestId: request.requestId,
+          workspaceId: request.workspaceId,
+          launches: [],
+          error: error instanceof Error ? error.message : "Failed to list workspace launches",
+        },
+      });
+    }
+  }
+
+  private async handleWorkspaceLaunchStartRequest(
+    request: WorkspaceLaunchStartRequest,
+  ): Promise<void> {
+    try {
+      if (!this.workspaceLaunches) {
+        throw new Error("Workspace launches are not available on this daemon");
+      }
+      const context = await this.resolveWorkspaceLaunchContextById(request.workspaceId);
+      await assertWorkspaceAutomationAllowedForWorkspace(
+        this.workspaceRegistry,
+        request.workspaceId,
+      );
+      const launch = await this.workspaceLaunches.start(context, request.launchName);
+      this.emit({
+        type: "workspace.launch.start.response",
+        payload: {
+          requestId: request.requestId,
+          workspaceId: request.workspaceId,
+          launchName: request.launchName,
+          launch,
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "workspace.launch.start.response",
+        payload: {
+          requestId: request.requestId,
+          workspaceId: request.workspaceId,
+          launchName: request.launchName,
+          launch: null,
+          error: error instanceof Error ? error.message : "Failed to start workspace launch",
+        },
+      });
+    }
+  }
+
+  private async handleWorkspaceLaunchStopRequest(
+    request: WorkspaceLaunchStopRequest,
+  ): Promise<void> {
+    try {
+      if (!this.workspaceLaunches) {
+        throw new Error("Workspace launches are not available on this daemon");
+      }
+      const context = await this.resolveWorkspaceLaunchContextById(request.workspaceId);
+      const launch = await this.workspaceLaunches.stop(context, request.launchName);
+      this.emit({
+        type: "workspace.launch.stop.response",
+        payload: {
+          requestId: request.requestId,
+          workspaceId: request.workspaceId,
+          launchName: request.launchName,
+          launch,
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "workspace.launch.stop.response",
+        payload: {
+          requestId: request.requestId,
+          workspaceId: request.workspaceId,
+          launchName: request.launchName,
+          launch: null,
+          error: error instanceof Error ? error.message : "Failed to stop workspace launch",
         },
       });
     }

@@ -5,6 +5,8 @@ import { connectSeedClient, seedWorkspace } from "../support/helpers/seed-client
 import {
   blockPaseoConfigWrites,
   bumpPaseoConfigOnDisk,
+  cancelNewProjectLaunch,
+  cancelProjectLaunchEdit,
   chooseProjectIconImage,
   clickReloadProjectSettings,
   clickRetryProjectSettingsSave,
@@ -21,6 +23,7 @@ import {
   expectProjectEditName,
   expectProjectEditSaved,
   expectProjectEditsSaveDisabled,
+  expectProjectLaunchesSaved,
   expectProjectSettingsError,
   expectProjectSettingsFormHidden,
   expectProjectSettingsFormVisible,
@@ -89,6 +92,11 @@ const initialPaseoConfig = {
       type: "server",
       port: 3000,
       customScriptField: "preserved",
+    },
+  },
+  launches: {
+    dev: {
+      command: "./bin/dev",
     },
   },
   customTopLevelField: "preserved",
@@ -262,6 +270,24 @@ test.describe("Projects settings", () => {
       await clickSaveProjectSettings(page);
       await expectNoUncommittedSetupWarning(page);
     });
+  });
+
+  test("canceling launch edits discards them before a later project save", async ({
+    page,
+    editableProject,
+  }) => {
+    await openProjects(page);
+    await openProjectSettings(page, editableProject.name);
+    await cancelProjectLaunchEdit(page, {
+      launchName: "dev",
+      nextName: "renamed",
+      nextCommand: "./bin/renamed",
+      originalCommand: "./bin/dev",
+    });
+    await cancelNewProjectLaunch(page, "partial");
+    await editWorktreeSetup(page, updatedSetup);
+    await clickSaveProjectSettings(page);
+    await expectProjectLaunchesSaved(editableProject.path, initialPaseoConfig.launches);
   });
 
   test("user edits worktree setup on a non-GitHub remote project", async ({
