@@ -755,6 +755,9 @@ export class OmpAgentSession implements AgentSession {
     this.config = options.config;
     this.state = options.initialState;
     this.openOptionsPatch = this.fastModeDifference(options.config.providerOptions?.fast_mode);
+    // A replacement runtime starts from the Fast this one opened with, not the one it was asked for.
+    if (typeof this.openOptionsPatch.fast_mode === "boolean")
+      this.rememberFastMode(this.openOptionsPatch.fast_mode);
     this.currentModeId = options.currentModeId ?? null;
     this.logger = options.logger;
     this.live = options.live ?? true;

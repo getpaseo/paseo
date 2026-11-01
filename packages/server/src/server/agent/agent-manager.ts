@@ -1258,7 +1258,7 @@ export class AgentManager {
     const client = this.requireClient(normalizedConfig.provider);
     const options = this.effectiveOptionsFor(
       normalizedConfig.provider,
-      this.convertLegacyOptions(normalizedConfig.provider, config.providerOptions),
+      normalizedConfig.providerOptions,
     );
     if (!normalizedConfig.model && !client.listControls) {
       return { controls: [], options };
@@ -5617,7 +5617,7 @@ export class AgentManager {
     config: AgentSessionConfig,
     options: NormalizeConfigOptions = {},
   ): Promise<AgentSessionConfig> {
-    const normalized: AgentSessionConfig = { ...config };
+    const normalized: AgentSessionConfig = { ...this.withConvertedOptions(config) };
 
     // Always resolve cwd to absolute path for consistent history file lookup
     if (normalized.cwd) {
@@ -5722,13 +5722,10 @@ export class AgentManager {
     agentId: string,
     options: { env?: Record<string, string>; purpose?: AgentResumePurpose } = {},
   ): Promise<PreparedSessionConfig> {
-    const storedConfig = await this.normalizeConfig(
-      this.withConvertedOptions(stripInternalPaseoMcpServer(config)),
-      {
-        env: options.env,
-        purpose: options.purpose,
-      },
-    );
+    const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config), {
+      env: options.env,
+      purpose: options.purpose,
+    });
     const paseoToolPolicy = this.paseoToolsEnabled
       ? this.resolvePaseoToolPolicy(storedConfig.provider)
       : { enabled: false };
