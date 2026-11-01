@@ -99,42 +99,6 @@ export function mergeProviderOptions(
   return merged;
 }
 
-// COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once saved Fast preferences have migrated.
-const LEGACY_OPTION_ALIASES: Record<
-  string,
-  Record<string, { canonical: string; value: (legacy: unknown) => unknown }>
-> = {
-  codex: {
-    fast_mode: { canonical: "service_tier", value: (legacy) => (legacy ? "fast" : "default") },
-  },
-};
-
-/**
- * The options a provider opens with: `defaults` from config.json under the agent's `own`
- * options. A legacy alias (a saved or configured `fast_mode`) stands for the key it aliases:
- * a configured alias supplies that key's default, and an agent's own alias replaces the default
- * of that key, so a configured `service_tier` does not override the agent's own Fast preference.
- */
-export function mergeDefaultsUnderOwn(input: {
-  provider: string;
-  defaults: ProviderOptions | undefined;
-  own: ProviderOptions | undefined;
-}): ProviderOptions | undefined {
-  const aliases = LEGACY_OPTION_ALIASES[input.provider];
-  if (!aliases || !input.defaults) return mergeProviderOptions(input.defaults, input.own);
-  const defaults = { ...input.defaults };
-  for (const [alias, { canonical, value }] of Object.entries(aliases)) {
-    const own = input.own ?? {};
-    if (own[alias] !== undefined && own[canonical] === undefined) {
-      delete defaults[canonical];
-    } else if (defaults[alias] != null && defaults[canonical] === undefined) {
-      defaults[canonical] = value(defaults[alias]);
-      delete defaults[alias];
-    }
-  }
-  return mergeProviderOptions(defaults, input.own);
-}
-
 function isPlainObject(value: unknown): value is ProviderOptions {
   if (value === null || typeof value !== "object") return false;
   const prototype = Object.getPrototypeOf(value);

@@ -326,7 +326,7 @@ describe("Codex app-server provider controls", () => {
     }
   });
 
-  test("a Fast chosen by alias is kept as the catalog's id, so a model with a different Fast id resets it", async () => {
+  test("a Fast chosen as `fast` is kept as the catalog's id, so a model with a different Fast id resets it", async () => {
     const { session, appServer } = await createConnectedSession(
       { model: "model-a" },
       {
@@ -346,9 +346,8 @@ describe("Codex app-server provider controls", () => {
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
     try {
-      await expect(session.applyOptions?.({ fast_mode: true })).resolves.toEqual({
+      await expect(session.applyOptions?.({ service_tier: "fast" })).resolves.toEqual({
         service_tier: "priority",
-        fast_mode: null,
       });
 
       await session.setModel("model-b");
@@ -364,21 +363,10 @@ describe("Codex app-server provider controls", () => {
     }
   });
 
-  test("a patch carrying both speed keys reports the folded alias, so removing the speed removes it everywhere", async () => {
-    const { session } = await createConnectedSession();
-    try {
-      await expect(
-        session.applyOptions?.({ service_tier: "priority", fast_mode: true }),
-      ).resolves.toEqual({ fast_mode: null });
-    } finally {
-      await session.close();
-    }
-  });
-
-  test("maps legacy Fast commands to the catalog's request id", async () => {
+  test("`fast` maps to the catalog's request id", async () => {
     const { session, appServer } = await createConnectedSession();
     try {
-      await session.applyOptions?.({ fast_mode: true });
+      await session.applyOptions?.({ service_tier: "fast" });
       await session.startTurn("hello");
       await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
         serviceTier: "priority",
@@ -433,12 +421,12 @@ describe("Codex app-server provider controls", () => {
   ])("does not expose or restore Fast for %s", async (model) => {
     const { session, appServer } = await createConnectedSession({
       model,
-      providerOptions: { fast_mode: true },
+      providerOptions: { service_tier: "fast" },
     });
     const fresh = await createConnectedSession({ model });
     try {
       expect(session.controls.map((control) => control.key)).toEqual(["plan_mode"]);
-      await expect(fresh.session.applyOptions?.({ fast_mode: true })).rejects.toThrow(
+      await expect(fresh.session.applyOptions?.({ service_tier: "fast" })).rejects.toThrow(
         `Codex speed 'fast' is not available for model '${model}'`,
       );
       await session.startTurn("hello");
@@ -454,7 +442,7 @@ describe("Codex app-server provider controls", () => {
   test("restores Fast on Astra and preserves it when switching supported models", async () => {
     const { session, appServer } = await createConnectedSession({
       model: "gpt-6-astra",
-      providerOptions: { fast_mode: true },
+      providerOptions: { service_tier: "fast" },
     });
     try {
       await session.setModel("gpt-5.6-sol");
@@ -492,7 +480,7 @@ describe("Codex app-server provider controls", () => {
   test("constructor ignores restored fast mode when model does not support it", async () => {
     const { session, appServer } = await createConnectedSession({
       model: "gpt-3.5-turbo",
-      providerOptions: { fast_mode: true },
+      providerOptions: { service_tier: "fast" },
     });
 
     expect(session.controls).toEqual([PLAN_CONTROL]);
@@ -514,12 +502,12 @@ describe("Codex app-server provider controls", () => {
     });
   });
 
-  test("legacy Fast off explicitly selects Normal", async () => {
+  test("selecting Normal after Fast explicitly selects Normal", async () => {
     const { session, appServer } = await createConnectedSession({
-      providerOptions: { fast_mode: true },
+      providerOptions: { service_tier: "fast" },
     });
 
-    await session.applyOptions?.({ fast_mode: false });
+    await session.applyOptions?.({ service_tier: "default" });
     await session.startTurn("hello");
 
     await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
@@ -527,10 +515,10 @@ describe("Codex app-server provider controls", () => {
     });
   });
 
-  test("applyOptions({ fast_mode: true }) rejects models that do not support fast mode", async () => {
+  test('applyOptions({ service_tier: "fast" }) rejects models that do not support fast mode', async () => {
     const { session } = await createConnectedSession({ model: "gpt-3.5-turbo" });
 
-    await expect(session.applyOptions?.({ fast_mode: true })).rejects.toThrow(
+    await expect(session.applyOptions?.({ service_tier: "fast" })).rejects.toThrow(
       "Codex speed 'fast' is not available for model 'gpt-3.5-turbo'",
     );
   });
@@ -551,14 +539,14 @@ describe("Codex app-server provider controls", () => {
 
   test("constructor restores composer options from config.providerOptions", async () => {
     const { session, appServer } = await createConnectedSession({
-      providerOptions: { fast_mode: true, plan_mode: true },
+      providerOptions: { service_tier: "fast", plan_mode: true },
     });
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
 
     expect(session.controls).toEqual([speedControl(), PLAN_CONTROL]);
-    // A saved pre-v0.10 Fast preference opens as the model's Fast tier, which the open patch says.
-    expect(session.openOptionsPatch).toEqual({ service_tier: "priority", fast_mode: null });
+    // A saved `fast` opens as the model's Fast tier, which the open patch says.
+    expect(session.openOptionsPatch).toEqual({ service_tier: "priority" });
     expect(events.filter((event) => event.type === "options_changed")).toEqual([]);
 
     await session.startTurn("hello");
@@ -570,22 +558,9 @@ describe("Codex app-server provider controls", () => {
     });
   });
 
-  test("removing the legacy Fast key after opening leaves the speed the session opened with", async () => {
-    const { session, appServer } = await createConnectedSession({
-      providerOptions: { fast_mode: true },
-    });
-    expect(session.openOptionsPatch).toEqual({ service_tier: "priority", fast_mode: null });
-
-    // The stored options now hold `service_tier`; `fast_mode` is an alias no longer in them.
-    await expect(session.applyOptions?.({ fast_mode: null })).resolves.toEqual({});
-
-    await session.startTurn("hello");
-    await expect(appServer.waitForTurnStart()).resolves.toMatchObject({ serviceTier: "priority" });
-  });
-
   test("a patch that sets another option keeps the running sandbox and an explicit speed", async () => {
     const { session, appServer } = await createConnectedSession({
-      providerOptions: { sandbox_mode: "read-only", service_tier: "default", fast_mode: true },
+      providerOptions: { sandbox_mode: "read-only", service_tier: "default" },
     });
 
     await session.applyOptions?.({ plan_mode: true });
@@ -629,7 +604,7 @@ describe("Codex app-server provider controls", () => {
       { models },
     );
 
-    expect(session.openOptionsPatch).toEqual({ service_tier: "default", fast_mode: null });
+    expect(session.openOptionsPatch).toEqual({ service_tier: "default" });
 
     await session.startTurn("hello");
     await expect(appServer.waitForTurnStart()).resolves.toMatchObject({ serviceTier: "default" });
@@ -640,7 +615,7 @@ describe("Codex app-server provider controls", () => {
       providerOptions: { service_tier: "fast" },
     });
 
-    expect(session.openOptionsPatch).toEqual({ service_tier: "priority", fast_mode: null });
+    expect(session.openOptionsPatch).toEqual({ service_tier: "priority" });
 
     await session.startTurn("hello");
     await expect(appServer.waitForTurnStart()).resolves.toMatchObject({ serviceTier: "priority" });
@@ -679,7 +654,7 @@ describe("Codex app-server provider controls", () => {
     await expect(appServer.waitForTurnStart()).resolves.toMatchObject({ serviceTier: "default" });
   });
 
-  describe("a pre-v0.10 fast_mode: true option", () => {
+  describe("Fast chosen as `fast`", () => {
     function createLegacyFastHarness(configDefaults: Record<string, unknown> = {}) {
       const appServer = createFakeCodexAppServer({
         "collaborationMode/list": () => ({ data: TEST_COLLABORATION_MODES }),
@@ -789,7 +764,7 @@ describe("Codex app-server provider controls", () => {
 
     test("opens as the model's Fast tier and is stored as that tier", async () => {
       const { manager, create, shownSpeed, runTurn } = createLegacyFastHarness();
-      const agentId = await create({ fast_mode: true });
+      const agentId = await create({ service_tier: "fast" });
       await manager.flush();
 
       expect(shownSpeed(agentId)).toMatchObject({
@@ -802,7 +777,7 @@ describe("Codex app-server provider controls", () => {
 
     test("is shown as Fast after a stored record is resumed", async () => {
       const { manager, resume, shownSpeed, runTurn } = createLegacyFastHarness();
-      const agentId = await resume({ fast_mode: true });
+      const agentId = await resume({ service_tier: "fast" });
       await manager.flush();
 
       expect(shownSpeed(agentId)).toMatchObject({ own: { service_tier: "priority" }, ...FAST });
@@ -810,19 +785,19 @@ describe("Codex app-server provider controls", () => {
     });
 
     test("from config.json defaults runs Fast and is shown as Fast", async () => {
-      const { create, shownSpeed, runTurn } = createLegacyFastHarness({ fast_mode: true });
+      const { create, shownSpeed, runTurn } = createLegacyFastHarness({ service_tier: "fast" });
       const agentId = await create();
 
       expect(shownSpeed(agentId)).toMatchObject(FAST);
       await runTurn(agentId, "priority");
     });
 
-    test("set live runs Fast at once, and a later service_tier replaces it", async () => {
+    test("an older client's fast_mode runs Fast at once, and a later service_tier replaces it", async () => {
       const { manager, create, shownSpeed, runTurn } = createLegacyFastHarness();
       const agentId = await create();
       expect(shownSpeed(agentId).selected).toBe("default");
 
-      await manager.setAgentOptions(agentId, { fast_mode: true });
+      await manager.setAgentFeatureValues(agentId, { fast_mode: true });
       expect(shownSpeed(agentId)).toMatchObject({ own: { service_tier: "priority" }, ...FAST });
       await runTurn(agentId, "priority");
 
@@ -837,6 +812,26 @@ describe("Codex app-server provider controls", () => {
       await manager.setAgentOptions(agentId, { service_tier: "priority" });
       expect(shownSpeed(agentId)).toMatchObject({ selected: "priority" });
       await runTurn(agentId, "priority");
+    });
+
+    test("a request carrying both speed keys follows service_tier", async () => {
+      const { manager, create, shownSpeed, runTurn } = createLegacyFastHarness();
+      const agentId = await create({ service_tier: "priority" });
+
+      await manager.setAgentFeatureValues(agentId, { service_tier: "default", fast_mode: true });
+
+      expect(shownSpeed(agentId)).toMatchObject({ own: { service_tier: "default" } });
+      await runTurn(agentId, "default");
+    });
+
+    test("an older client turning fast_mode off selects Normal", async () => {
+      const { manager, create, shownSpeed, runTurn } = createLegacyFastHarness();
+      const agentId = await create({ service_tier: "priority" });
+
+      await manager.setAgentFeatureValues(agentId, { fast_mode: false });
+
+      expect(shownSpeed(agentId)).toMatchObject({ own: { service_tier: "default" } });
+      await runTurn(agentId, "default");
     });
 
     test("removing the speed returns the agent to Normal", async () => {
@@ -854,7 +849,7 @@ describe("Codex app-server provider controls", () => {
     const capture = createCapturedLogger();
     const prompt = "secret prompt text should not be logged";
     const { session } = await createConnectedSession(
-      { providerOptions: { fast_mode: true } },
+      { providerOptions: { service_tier: "fast" } },
       { logger: capture.logger },
     );
 

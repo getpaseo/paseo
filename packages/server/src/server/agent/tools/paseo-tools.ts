@@ -18,7 +18,7 @@ import type { AgentMode, AgentProvider, AgentSessionConfig } from "../agent-sdk-
 import type { AgentManager } from "../agent-manager.js";
 import { ActiveTurnBehaviorSchema, AgentProfileSchema } from "@getpaseo/protocol/messages";
 import type { DaemonConfigStore } from "../../daemon-config-store.js";
-import { featuresFromControls } from "../option-controls.js";
+import { convertLegacyOptions, featuresFromControls } from "../option-controls.js";
 import {
   AgentFeatureSchema,
   AgentPermissionRequestPayloadSchema,
@@ -1636,7 +1636,11 @@ function createToolCatalog(
           cwd: resolvedArgs.cwd,
           workspaceId: resolvedArgs.workspaceId,
           thinking: parsedArgs.settings?.thinkingOptionId,
-          providerOptions: parsedArgs.settings?.features,
+          // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. `settings.features` is an options map.
+          providerOptions: convertLegacyOptions({
+            provider: selectedProvider,
+            options: parsedArgs.settings?.features,
+          }),
           labels: {
             ...parsedArgs.labels,
             ...(callerAgentId && !resolvedArgs.detached && options.serverId
@@ -2288,7 +2292,7 @@ function createToolCatalog(
         await agentManager.setAgentThinkingOption(agentId, settings.thinkingOptionId);
       }
       if (settings?.features) {
-        await agentManager.setAgentOptions(agentId, settings.features);
+        await agentManager.setAgentFeatureValues(agentId, settings.features);
       }
 
       await updateAgentCommand({ agentManager }, { agentId, name, labels });
@@ -3126,7 +3130,14 @@ function createToolCatalog(
         ...(settings?.modeId ? { modeId: settings.modeId } : {}),
         ...(selectedModel ? { model: selectedModel } : {}),
         ...(settings?.thinkingOptionId ? { thinkingOptionId: settings.thinkingOptionId } : {}),
-        ...(settings?.features ? { providerOptions: settings.features } : {}),
+        ...(settings?.features
+          ? {
+              providerOptions: convertLegacyOptions({
+                provider: providerId,
+                options: settings.features,
+              }),
+            }
+          : {}),
       });
       return {
         content: [],

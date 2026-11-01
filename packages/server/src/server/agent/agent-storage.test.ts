@@ -218,6 +218,20 @@ describe("AgentStorage", () => {
     });
   });
 
+  test("a Codex record stored with fast_mode loads as service_tier", async () => {
+    await storage.applySnapshot(
+      createManagedAgent({ id: "agent-codex-legacy", provider: "codex" }),
+    );
+    const file = findRecordFile(storagePath, "agent-codex-legacy");
+    const stored = JSON.parse(await fs.readFile(file, "utf8"));
+    stored.config.providerOptions = { fast_mode: true, plan_mode: false };
+    await fs.writeFile(file, JSON.stringify(stored));
+
+    const persisted = await new AgentStorage(storagePath, logger).get("agent-codex-legacy");
+
+    expect(persisted?.config?.providerOptions).toEqual({ service_tier: "fast", plan_mode: false });
+  });
+
   test("a record stored with featureValues loads them in providerOptions", async () => {
     await storage.applySnapshot(createManagedAgent({ id: "agent-legacy" }));
     const file = findRecordFile(storagePath, "agent-legacy");

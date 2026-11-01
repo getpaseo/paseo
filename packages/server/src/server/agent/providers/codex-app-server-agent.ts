@@ -3651,7 +3651,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
       this.speedModels =
         CodexModelListResponseSchema.parse(await client.request("model/list", {})).data ?? [];
-      this.normalizeLegacySpeed();
+      this.normalizeSpeed();
       await this.loadResolvedWorkspaceWrite();
       await this.loadCollaborationModes();
       await this.loadSkills();
@@ -3865,23 +3865,18 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   /**
-   * COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once saved Fast
-   * preferences have migrated. A saved `fast_mode: true` or `service_tier: "fast"` runs as the
-   * model's Fast tier; the session says so in `openOptionsPatch`, so the options and the control agree.
+   * A saved `service_tier: "fast"` runs as the model's Fast tier, and a tier the opening model
+   * lacks runs as Normal; the session says so in `openOptionsPatch`, so the options and the
+   * control agree (as when the model is switched later).
    */
-  private normalizeLegacySpeed(): void {
+  private normalizeSpeed(): void {
     const requested = this.requestedServiceTier;
     const resolved = this.resolveServiceTier(requested);
-    const legacy = this.providerOptions.fast_mode !== undefined || requested !== resolved;
-    if (!legacy) return;
-    // A tier the opening model lacks runs as Normal, and the options say so (as when the model
-    // is switched later).
-    const runs = resolved ?? (requested === null ? null : "default");
-    if (runs === null) return;
-    const { fast_mode: _legacy, ...rest } = this.providerOptions;
-    this.providerOptions = { ...rest, service_tier: runs };
+    if (requested === resolved) return;
+    const runs = resolved ?? "default";
+    this.providerOptions = { ...this.providerOptions, service_tier: runs };
     this.requestedServiceTier = runs;
-    this.openOptionsPatch = { service_tier: runs, fast_mode: null };
+    this.openOptionsPatch = { service_tier: runs };
   }
 
   private get serviceTier(): string | null {
@@ -3892,7 +3887,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     // Until the model list arrives there is nothing to check the request against.
     if (this.speedModels.length === 0 || requested === "default") return requested;
     const tiers = this.currentServiceTiers();
-    // COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once saved Fast preferences have migrated.
+    // `fast` names whichever tier the model calls Fast.
     if (requested === "fast" && !tiers.some((tier) => tier.id === "fast")) {
       return tiers.find((tier) => tier.name.toLowerCase() === "fast")?.id ?? null;
     }
@@ -4682,12 +4677,11 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (requested === null || this.speedModels.length === 0) return;
     if (this.isServiceTierAvailable(requested)) return;
     this.requestedServiceTier = "default";
-    const { fast_mode: legacyFast, ...running } = this.providerOptions;
-    this.providerOptions = { ...running, service_tier: "default" };
+    this.providerOptions = { ...this.providerOptions, service_tier: "default" };
     this.emitEvent({
       type: "options_changed",
       provider: CODEX_PROVIDER,
-      patch: { service_tier: "default", ...(legacyFast === undefined ? {} : { fast_mode: null }) },
+      patch: { service_tier: "default" },
     });
   }
 
@@ -4707,68 +4701,39 @@ export class CodexAppServerAgentSession implements AgentSession {
       provider: "codex",
       patch: options,
       current: this.providerOptions,
-      live: ["service_tier", "fast_mode", "plan_mode"],
+      live: ["service_tier", "plan_mode"],
     });
-    const { fast_mode: _legacyFast, ...running } = this.providerOptions;
     const valid =
       validateProviderOptions(
         "codex",
         CodexProviderOptionsSchema,
-        applyProviderOptionsPatch({ options: running, patch: options }),
+        applyProviderOptionsPatch({ options: this.providerOptions, patch: options }),
       ) ?? {};
-    let requestedTier = this.requestedServiceTier;
-    if ("service_tier" in options || "fast_mode" in options) {
-      // COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once clients use service_tier.
-      requestedTier = this.requestedTierFrom(options);
-      if (
-        requestedTier !== this.requestedServiceTier &&
-        !this.isServiceTierAvailable(requestedTier)
-      ) {
+    const requested = "service_tier" in options ? readCodexServiceTier(options) : null;
+    let accepted = this.requestedServiceTier;
+    if ("service_tier" in options) {
+      if (requested !== accepted && !this.isServiceTierAvailable(requested)) {
         throw new Error(
-          `Codex speed '${String(requestedTier)}' is not available for model '${this.config.model ?? "default"}'`,
+          `Codex speed '${String(requested)}' is not available for model '${this.config.model ?? "default"}'`,
         );
       }
+      // The session keeps the catalog's id for the tier, so a later model switch sees what runs.
+      accepted = requested && (this.resolveServiceTier(requested) ?? requested);
     }
-    // The session keeps the catalog's id for the tier, so a later model switch sees what runs.
-    const accepted = requestedTier && (this.resolveServiceTier(requestedTier) ?? requestedTier);
-    const { fast_mode: _folded, ...kept } = valid;
-    this.providerOptions = { ...kept, ...(accepted ? { service_tier: accepted } : {}) };
+    this.providerOptions = { ...valid, ...(accepted ? { service_tier: accepted } : {}) };
     this.requestedServiceTier = accepted || null;
     if ("plan_mode" in options) this.setPlanMode(options.plan_mode === true);
     this.cachedRuntimeInfo = null;
-    // COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once clients use service_tier.
-    const tier = this.serviceTier;
-    // `fast_mode` is folded into the speed, so the options no longer hold it.
-    const folded = options.fast_mode == null ? {} : { fast_mode: null };
-    if (options.fast_mode != null && !("service_tier" in options)) {
-      return tier === null ? folded : { service_tier: tier, ...folded };
-    }
     // The catalog may name the tier differently from the request (`fast` is the Fast tier's id).
-    if (
-      "service_tier" in options &&
-      tier !== null &&
-      requestedTier !== null &&
-      tier !== requestedTier
-    ) {
-      return { service_tier: tier, ...folded };
-    }
-    return folded;
-  }
-
-  private requestedTierFrom(options: ProviderOptions): string | null {
-    if ("service_tier" in options) return readCodexServiceTier(options);
-    // Opening moved a legacy Fast into `service_tier`, so removing the alias changes no speed.
-    if (options.fast_mode === null) return this.requestedServiceTier;
-    return options.fast_mode ? "fast" : "default";
+    const tier = this.serviceTier;
+    return tier !== null && requested !== null && tier !== requested ? { service_tier: tier } : {};
   }
 
   private isServiceTierAvailable(tier: string | null): boolean {
     if (tier === null || tier === "default") return true;
     const tiers = this.currentServiceTiers();
-    // COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once saved Fast preferences have migrated.
-    const legacyFast =
-      tier === "fast" && tiers.some((entry) => entry.name.toLowerCase() === "fast");
-    return legacyFast || tiers.some((entry) => entry.id === tier);
+    const namesFast = tier === "fast" && tiers.some((entry) => entry.name.toLowerCase() === "fast");
+    return namesFast || tiers.some((entry) => entry.id === tier);
   }
 
   private setPlanMode(enabled: boolean): void {
@@ -5494,12 +5459,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private buildCodexInnerConfig(): Record<string, unknown> | null {
     const innerConfig: Record<string, unknown> = {};
-    const {
-      service_tier: _tier,
-      plan_mode: _plan,
-      fast_mode: _fast,
-      ...codexConfig
-    } = this.providerOptions;
+    const { service_tier: _tier, plan_mode: _plan, ...codexConfig } = this.providerOptions;
     Object.assign(innerConfig, codexConfig);
     if (this.deps.customCodexConfig) {
       Object.assign(innerConfig, this.deps.customCodexConfig);

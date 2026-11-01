@@ -509,6 +509,7 @@ import {
   createAllClients,
 } from "./provider-registry.js";
 import { FakeOmp } from "./providers/omp/test-utils/fake-omp.js";
+import { foldFeatureValues } from "./option-controls.js";
 
 const logger = createTestLogger();
 
@@ -796,16 +797,13 @@ test("a saved legacy Codex Fast preference wins over a configured service_tier d
     providerOverrides: { codex: { options: { service_tier: "default", plan_mode: false } } },
   });
   const client = registry.codex.createClient(logger);
+  // A pre-v0.10 record is converted as it is read, before the defaults merge under it.
+  const { providerOptions: saved } = foldFeatureValues({
+    config: { providerOptions: { fast_mode: true } },
+    provider: "codex",
+  });
 
-  // Pre-v0.10 agents saved `fast_mode`; the agent's own preference beats the configured default.
-  expect(client.effectiveOptions?.({ fast_mode: true })).toEqual({
-    fast_mode: true,
-    plan_mode: false,
-  });
-  expect(client.effectiveOptions?.({ service_tier: "fast" })).toEqual({
-    service_tier: "fast",
-    plan_mode: false,
-  });
+  expect(client.effectiveOptions?.(saved)).toEqual({ service_tier: "fast", plan_mode: false });
   expect(client.effectiveOptions?.({})).toEqual({ service_tier: "default", plan_mode: false });
 });
 
@@ -820,7 +818,6 @@ test("a configured legacy Codex Fast default supplies the service_tier default",
   expect(client.effectiveOptions?.({ service_tier: "default" })).toEqual({
     service_tier: "default",
   });
-  expect(client.effectiveOptions?.({ fast_mode: false })).toEqual({ fast_mode: false });
 });
 
 test("cursor provider extending acp uses CursorACPAgentClient", () => {

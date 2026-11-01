@@ -65,6 +65,7 @@ import { toStoredAgentRecord } from "./agent-projections.js";
 import {
   applyProviderOptionsPatch,
   exposeFeatureValuesToHook,
+  convertLegacyOptions,
   foldHookFeatureValues,
   type ProviderOptionsPatch,
 } from "./option-controls.js";
@@ -2315,6 +2316,16 @@ export class AgentManager {
     this.updateEffectiveOptions({ agent, sent, reported: ended });
     this.touchUpdatedAt(agent);
     this.emitState(agent);
+  }
+
+  /**
+   * COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. An older client or the MCP
+   * `settings.features` sends composer values as `featureValues`; this is where they become an
+   * options patch for the agent's provider.
+   */
+  async setAgentFeatureValues(agentId: string, values: Record<string, unknown>): Promise<void> {
+    const provider = this.requireAgent(agentId).provider;
+    await this.setAgentOptions(agentId, convertLegacyOptions({ provider, options: values }));
   }
 
   /** The config as the opened session left it: its own difference from the options it was given. */

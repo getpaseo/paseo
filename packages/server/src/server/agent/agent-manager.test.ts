@@ -13093,7 +13093,7 @@ describe("agent options", () => {
         emit: () => {},
         before: async (_name, request) => ({
           ...request,
-          config: { ...request.config, featureValues: { fast_mode: true } },
+          config: { ...request.config, featureValues: { web_search: true } },
         }),
       },
     });
@@ -13102,7 +13102,7 @@ describe("agent options", () => {
       workspaceId: undefined,
     });
 
-    expect(manager.getAgent(created.id)?.config.providerOptions).toEqual({ fast_mode: true });
+    expect(manager.getAgent(created.id)?.config.providerOptions).toEqual({ web_search: true });
     expect(manager.getAgent(created.id)?.config).not.toHaveProperty("featureValues");
   });
 
@@ -13123,7 +13123,7 @@ describe("agent options", () => {
                 ...request,
                 config: {
                   ...request.config,
-                  featureValues: { ...request.config.featureValues, fast_mode: true },
+                  featureValues: { ...request.config.featureValues, web_search: true },
                 },
               }
             : request,
@@ -13131,13 +13131,13 @@ describe("agent options", () => {
     });
 
     const created = await manager.createAgent(
-      { provider: "codex", cwd: workdir, providerOptions: { fast_mode: false, plan_mode: true } },
+      { provider: "codex", cwd: workdir, providerOptions: { web_search: false, plan_mode: true } },
       undefined,
       { workspaceId: undefined },
     );
 
     expect(manager.getAgent(created.id)?.config.providerOptions).toEqual({
-      fast_mode: true,
+      web_search: true,
       plan_mode: true,
     });
   });
@@ -13166,13 +13166,13 @@ describe("agent options", () => {
     });
 
     const created = await manager.createAgent(
-      { provider: "codex", cwd: workdir, providerOptions: { fast_mode: false, plan_mode: true } },
+      { provider: "codex", cwd: workdir, providerOptions: { web_search: false, plan_mode: true } },
       undefined,
       { workspaceId: undefined },
     );
 
     expect(manager.getAgent(created.id)?.config.providerOptions).toEqual({
-      fast_mode: false,
+      web_search: false,
       plan_mode: false,
     });
   });
@@ -13181,7 +13181,7 @@ describe("agent options", () => {
     {
       name: "deletes a key",
       edit: (values: Record<string, unknown> | undefined) => {
-        const { fast_mode: _removed, ...rest } = values ?? {};
+        const { web_search: _removed, ...rest } = values ?? {};
         return { featureValues: rest };
       },
       expected: { plan_mode: true },
@@ -13216,7 +13216,7 @@ describe("agent options", () => {
       });
 
       const created = await manager.createAgent(
-        { provider: "codex", cwd: workdir, providerOptions: { fast_mode: true, plan_mode: true } },
+        { provider: "codex", cwd: workdir, providerOptions: { web_search: true, plan_mode: true } },
         undefined,
         { workspaceId: undefined },
       );

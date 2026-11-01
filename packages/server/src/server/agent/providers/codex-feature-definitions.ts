@@ -51,7 +51,5 @@ export function buildCodexControls(input: {
 
 export function readCodexServiceTier(options: Record<string, unknown> | undefined): string | null {
   const tier = options?.service_tier;
-  if (typeof tier === "string") return tier;
-  // COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once saved Fast preferences have migrated.
-  return options?.fast_mode ? "fast" : null;
+  return typeof tier === "string" ? tier : null;
 }

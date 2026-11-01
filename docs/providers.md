@@ -51,7 +51,7 @@ or without a control.
   rejected too, so a stored option always describes what runs. Claude reads most options when it
   starts its query, and replacing a started query would end its background work, so after the
   first prompt only Fast can change. Codex fixes its approval policy and sandbox when the thread
-  starts, so it applies only `service_tier`, `plan_mode` and `fast_mode` live. A session with no
+  starts, so it applies only `service_tier` and `plan_mode` live. A session with no
   `applyOptions` rejects every patch; the daemon enforces this. The provider returns the options
   it ended up with when they differ from the request. The daemon
   stores the patch and that result in one step after the call resolves, onto the agent's options
@@ -59,6 +59,13 @@ or without a control.
   none of it is stored. Emit nothing from inside the call. If the provider's own state moved
   before it refused, it reports the moved values once as `options_changed` after the call has
   ended, because the stored options must match what runs.
+- **Old data converts where it enters.** Codex used to take `fast_mode`; it takes
+  `service_tier` now. `convertLegacyOptions` (`option-controls.ts`) turns `fast_mode` into
+  `service_tier` as stored records, `config.json` defaults, profiles, older clients' requests,
+  MCP `settings.features` and plugin hooks come in (`true` is `"fast"`, `false` is `"default"`,
+  and a `service_tier` in the same input wins). Past that point nothing sees `fast_mode` for Codex.
+  Codex resolves `"fast"` to the model's Fast tier and reports the id it runs through
+  `openOptionsPatch` or the `applyOptions` result like any other value.
 - **Provider-initiated changes.** A setting the provider changes on its own is an
   `options_changed` event. The daemon stores and forwards it and does not push the old value back.
 
