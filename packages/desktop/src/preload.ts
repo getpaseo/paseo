@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
+import type { DesktopDeepLinkTarget } from "@getpaseo/protocol/agent-deep-link";
 import type { BrowserKeyboardPolicy } from "./features/browser-keyboard/index.js";
 import type { DesktopWindowChromeMode } from "./window/chrome.js";
 
@@ -38,10 +39,7 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     ipcRenderer.invoke("paseo:get-pending-open-project") as Promise<string | null>,
   agentNavigation: {
     ready: () =>
-      ipcRenderer.invoke("paseo:agent-navigation:ready") as Promise<{
-        serverId: string;
-        agentId: string;
-      } | null>,
+      ipcRenderer.invoke("paseo:agent-navigation:ready") as Promise<DesktopDeepLinkTarget | null>,
   },
   events: {
     on: (event: string, handler: EventHandler): Promise<() => void> => {
