@@ -10,6 +10,7 @@ import {
   type ProviderRegistration,
 } from "@getpaseo/plugin/server/provider";
 import { getCatalog, getStatus } from "./internal/catalog.js";
+import { listAntigravitySessions } from "./internal/history.js";
 import { Session } from "./internal/session.js";
 import { AntigravityError } from "./internal/wire.js";
 
@@ -17,6 +18,7 @@ const capabilities = [
   "prompt.message",
   "prompt.image",
   "session.configure",
+  "session.list",
   "session.persistence",
 ] as const;
 
@@ -27,6 +29,7 @@ export function createAntigravityProvider(): ProviderRegistration {
     icon: "icon.svg",
     command: ["agy"],
     description: "Antigravity CLI on your host",
+    capabilities,
     async status({ launch }) {
       if (!launch)
         return {
@@ -87,6 +90,17 @@ function createConnection(
           catalog: catalog(),
         });
         return;
+      case "sessions":
+        emit({
+          type: "sessions",
+          requestId: input.requestId,
+          sessions: listAntigravitySessions({
+            query: input.query,
+            cwd: input.cwd,
+            limit: input.limit,
+          }),
+        });
+        return;
       case "session.open": {
         if (sessions.has(input.sessionId))
           throw new AntigravityError(`Session already exists: ${input.sessionId}`);
@@ -95,6 +109,7 @@ function createConnection(
           id: input.sessionId,
           config: input.config,
           persistence: input.persistence,
+          history: input.history,
           catalog,
           launch,
           emit,
