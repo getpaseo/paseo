@@ -327,7 +327,7 @@ describe("CursorACPAgentClient session start", () => {
     );
   });
 
-  test("removing auto_accept sends nothing, so the session keeps answering permission requests", async () => {
+  test("removing auto_accept returns the session to asking for permission", async () => {
     const session = createCursorSession({ model: "composer-2.5" });
     await session.initializeNewSession();
     const request = {
@@ -337,12 +337,13 @@ describe("CursorACPAgentClient session start", () => {
     } as const;
 
     await session.applyOptions({ auto_accept: true });
-    // The patch for a removal carries no key; the session stays as it was until next open.
-    await session.applyOptions({});
-
     await expect(session.requestPermission({ ...request })).resolves.toEqual({
       outcome: { outcome: "selected", optionId: "allow-always" },
     });
+    await expect(session.applyOptions({ auto_accept: null })).resolves.toEqual({});
+
+    void session.requestPermission({ ...request });
+    await vi.waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
   });
 
   test("a rejected patch leaves auto_accept as it was", async () => {
