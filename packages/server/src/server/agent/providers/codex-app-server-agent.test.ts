@@ -2261,6 +2261,34 @@ describe("Codex app-server provider", () => {
     appServer.assertNoErrors();
   });
 
+  test("closes the resumed Codex session when imported history fails", async () => {
+    let resumeAttempts = 0;
+    const appServer = createFakeCodexAppServer({
+      "thread/resume": () => {
+        if (++resumeAttempts === 1) {
+          return Promise.reject(new Error(archivedThreadErrorMessage("archived-thread-id")));
+        }
+        return { thread: { id: "archived-thread-id" } };
+      },
+      "thread/unarchive": () => ({ thread: { id: "archived-thread-id" } }),
+      "thread/read": () => Promise.reject(new Error("thread history is unavailable")),
+    });
+    const killSpy = vi.spyOn(appServer.child, "kill");
+    const provider = createProviderWithFakeAppServer(appServer);
+    const config = { provider: "codex", cwd: "/tmp/codex-question-test" };
+
+    await expect(
+      provider.importSession(
+        { providerHandleId: "archived-thread-id", cwd: config.cwd },
+        { config, storedConfig: config },
+      ),
+    ).rejects.toThrow("thread history is unavailable");
+
+    expect(killSpy).toHaveBeenCalledWith("SIGTERM");
+    expect(appServer.requests().some((request) => request.method === "thread/archive")).toBe(false);
+    appServer.assertNoErrors();
+  });
+
   test("unarchives a persisted Codex thread through app-server", async () => {
     const threadRequests: Array<{ method: string; params: unknown }> = [];
     const appServer = createFakeCodexAppServer({
@@ -7285,9 +7313,11 @@ describe("Codex importable sessions", () => {
         cursor?: string;
         cwd?: string;
         sortKey?: string;
+        archived?: boolean;
       };
       const recencyKey = params.sortKey === "updated_at" ? "updatedAt" : "createdAt";
       const matching = threads
+        .filter((thread) => Boolean(thread.archived) === Boolean(params.archived))
         .filter((thread) => !params.cwd || thread.cwd === params.cwd)
         .sort((a, b) => Number(b[recencyKey]) - Number(a[recencyKey]));
       const offset = Number(params.cursor ?? 0);
@@ -7314,6 +7344,34 @@ describe("Codex importable sessions", () => {
       updatedAt: count - index,
     }));
   }
+
+  test("merges active and archived sessions by activity across Codex pages", async () => {
+    const archived = Array.from({ length: 130 }, (_, index) => ({
+      id: `archived-${index}`,
+      cwd: "/workspace/project-a",
+      archived: true,
+      updatedAt: 300 - index * 2,
+    }));
+    const active = Array.from({ length: 130 }, (_, index) => ({
+      id: `active-${index}`,
+      cwd: "/workspace/project-a",
+      updatedAt: 299 - index * 2,
+    }));
+    const appServer = createFakeCodexAppServer({
+      "thread/list": cappedThreadListHandler([...active, ...archived]),
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+
+    const sessions = await provider.listImportableSessions({
+      cwd: "/workspace/project-a",
+      limit: 220,
+    });
+
+    expect(sessions.map((session) => session.providerHandleId)).toEqual(
+      Array.from({ length: 110 }, (_, index) => [`archived-${index}`, `active-${index}`]).flat(),
+    );
+    appServer.assertNoErrors();
+  });
 
   test("fills the requested window across the pages Codex caps at 100 rows", async () => {
     const threads = threadsUsedInReverseCreationOrder(250);
@@ -7411,8 +7469,12 @@ describe("Codex importable sessions", () => {
   // list returns every provider, and a list returns only those providers.
   function providerFilteringThreadListHandler(threads: Array<Record<string, unknown>>) {
     return (input: unknown) => {
-      const { modelProviders } = (input ?? {}) as { modelProviders?: string[] };
+      const { modelProviders, archived } = (input ?? {}) as {
+        modelProviders?: string[];
+        archived?: boolean;
+      };
       const included = (thread: Record<string, unknown>) => {
+        if (Boolean(thread.archived) !== Boolean(archived)) return false;
         if (modelProviders === undefined) return thread.modelProvider === "openai";
         if (modelProviders.length === 0) return true;
         return modelProviders.includes(String(thread.modelProvider));
@@ -7436,6 +7498,13 @@ describe("Codex importable sessions", () => {
       modelProvider: "paseo-my-codex",
       updatedAt: 4,
     },
+    {
+      id: "archived-custom-thread",
+      cwd: "/workspace/project-a",
+      modelProvider: "my-codex",
+      archived: true,
+      updatedAt: 5,
+    },
   ];
 
   test("a custom Codex provider lists its old and namespaced threads without other providers", async () => {
@@ -7452,8 +7521,9 @@ describe("Codex importable sessions", () => {
     const sessions = await provider.listImportableSessions({ cwd: "/workspace/project-a" });
 
     expect(sessions.map((session) => session.providerHandleId)).toEqual([
-      "custom-thread",
+      "archived-custom-thread",
       "new-custom-thread",
+      "custom-thread",
     ]);
     appServer.assertNoErrors();
   });
@@ -7557,7 +7627,7 @@ describe("Codex importable sessions", () => {
       "thread-a2",
     ]);
     expect(sessions.every((session) => session.cwd === "/workspace/project-a")).toBe(true);
-    expect(sessions[0]).toEqual(
+    expect(sessions.find((session) => session.providerHandleId === "thread-a1")).toEqual(
       expect.objectContaining({
         providerHandleId: "thread-a1",
         title: "Named first A session",
@@ -7580,6 +7650,10 @@ describe("Codex importable sessions", () => {
       {
         method: "thread/list",
         params: { limit: 50, sortKey: "updated_at", cwd: "/workspace/project-a" },
+      },
+      {
+        method: "thread/list",
+        params: { limit: 50, sortKey: "updated_at", archived: true, cwd: "/workspace/project-a" },
       },
     ]);
   });

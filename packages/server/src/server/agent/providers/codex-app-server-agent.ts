@@ -1016,7 +1016,7 @@ const CodexModelListResponseSchema = z.object({
 async function readCodexThreadWindow(
   client: Pick<CodexAppServerClientLike, "request">,
   logger: Logger,
-  window: { limit: number; cwd?: string; modelProviders?: string[] },
+  window: { limit: number; cwd?: string; modelProviders?: string[]; archived?: boolean },
 ): Promise<Array<Record<string, unknown>>> {
   // A thread updated while the scan is paging moves under `updated_at` order
   // and can come back on a later page, so identify each one and keep it once.
@@ -1031,6 +1031,7 @@ async function readCodexThreadWindow(
         // which drops an old conversation that is still being worked in.
         // Older Codex builds ignore the unknown key and keep that order.
         sortKey: "updated_at",
+        ...(window.archived ? { archived: true } : {}),
         ...(window.cwd ? { cwd: window.cwd } : {}),
         ...(window.modelProviders ? { modelProviders: window.modelProviders } : {}),
         ...(cursor ? { cursor } : {}),
@@ -1074,6 +1075,14 @@ function filterCodexThreadsByCwd(
   const belongsToWorkspace = createPathEquivalenceMatcher(cwd);
   return threads.filter(
     (thread) => typeof thread.cwd === "string" && belongsToWorkspace(thread.cwd),
+  );
+}
+
+function codexThreadActivity(thread: Record<string, unknown>): number {
+  return (
+    (typeof thread.updatedAt === "number" ? thread.updatedAt : undefined) ??
+    (typeof thread.createdAt === "number" ? thread.createdAt : undefined) ??
+    0
   );
 }
 
@@ -7596,12 +7605,27 @@ export class CodexAppServerAgentClient implements AgentClient {
           modelProviders.push(this.deps.customProvider.id);
         }
       }
-      const allThreads = await readCodexThreadWindow(client, this.logger, {
+      const window = {
         limit: listLimit,
         cwd: options?.cwd,
         ...(modelProviders ? { modelProviders } : {}),
+      };
+      // Codex returns active and archived threads in separate lists. Scan both
+      // windows before applying the limit so older active threads cannot hide
+      // more recent archived conversations (or vice versa).
+      const active = await readCodexThreadWindow(client, this.logger, window);
+      const archived = await readCodexThreadWindow(client, this.logger, {
+        ...window,
+        archived: true,
       });
-      const threads = filterCodexThreadsByCwd(allThreads, options?.cwd);
+      const byId = new Map<unknown, Record<string, unknown>>();
+      for (const thread of [...active, ...archived].sort(
+        (a, b) => codexThreadActivity(b) - codexThreadActivity(a),
+      )) {
+        const identity = typeof thread.id === "string" ? thread.id : thread;
+        if (!byId.has(identity)) byId.set(identity, thread);
+      }
+      const threads = filterCodexThreadsByCwd([...byId.values()], options?.cwd);
       return threads.slice(0, limit).map((thread) => {
         const threadId = typeof thread.id === "string" ? thread.id : "";
         const cwd = typeof thread.cwd === "string" ? thread.cwd : process.cwd();
@@ -7614,11 +7638,7 @@ export class CodexAppServerAgentClient implements AgentClient {
           title,
           firstPromptPreview: preview,
           lastPromptPreview: preview,
-          lastActivityAt: new Date(
-            ((typeof thread.updatedAt === "number" ? thread.updatedAt : undefined) ??
-              (typeof thread.createdAt === "number" ? thread.createdAt : undefined) ??
-              0) * 1000,
-          ),
+          lastActivityAt: new Date(codexThreadActivity(thread) * 1000),
         };
       });
     } finally {
@@ -7632,6 +7652,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       request: input,
       context,
       resumeSession: this.resumeSession.bind(this),
+      closeOnHistoryFailure: true,
     });
   }
 
