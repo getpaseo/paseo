@@ -49,6 +49,7 @@ import {
   hasActiveSidebarLabelFilter,
   SIDEBAR_UNLABELLED_LABEL_KEY,
   type SidebarGroupMode,
+  type SidebarLabelFilter,
 } from "@/stores/sidebar-view-store";
 import { workspaceLabelKey, type WorkspaceLabelColor } from "@getpaseo/protocol/workspace-labels";
 import type { WorkspaceTitleSource } from "@/hooks/use-settings";
@@ -167,7 +168,8 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
   const hosts = useHosts();
   // `allProjects`, never `projects`: the model's `projects` is already filtered, so a picker fed
   // from it would lose the row that undoes the filter as soon as the filter narrowed to one.
-  const { allProjects, resolvedProjectFilters, workspaceSortSupported } = useSidebarModel();
+  const { allProjects, resolvedProjectFilters, resolvedLabelFilter, workspaceSortSupported } =
+    useSidebarModel();
   const { labels } = useWorkspaceLabelProjection();
   const [managerOpen, setManagerOpen] = useState(false);
   const openManager = useCallback(() => setManagerOpen(true), []);
@@ -187,7 +189,7 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
   // Nothing to filter by means no row at all. The active-filter half is not redundant: the merged
   // catalog only counts hosts that are online, so a host dropping off would otherwise take away
   // the only way back to a filter that is still hiding workspaces.
-  const showLabelFilter = labels.length > 0 || hasActiveSidebarLabelFilter(preferences.labelFilter);
+  const showLabelFilter = labels.length > 0 || hasActiveSidebarLabelFilter(resolvedLabelFilter);
 
   const pages = useMemo<MenuPageDefinition[]>(() => {
     const definitions: MenuPageDefinition[] = [
@@ -275,7 +277,12 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
         id: "labelFilter",
         title: t("workspaceLabels.title"),
         content: (
-          <LabelFilterPage labels={labels} preferences={preferences} onManage={openManager} />
+          <LabelFilterPage
+            labels={labels}
+            labelFilter={resolvedLabelFilter}
+            preferences={preferences}
+            onManage={openManager}
+          />
         ),
       });
     }
@@ -291,6 +298,7 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
     resolvedProjectFilters,
     showLabelFilter,
     labels,
+    resolvedLabelFilter,
     openManager,
   ]);
 
@@ -375,7 +383,7 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
               <MenuSeparator />
               <MenuSubTrigger
                 id="labelFilter"
-                indicator={hasActiveSidebarLabelFilter(preferences.labelFilter)}
+                indicator={hasActiveSidebarLabelFilter(resolvedLabelFilter)}
                 testID="sidebar-display-label-filter"
               >
                 {t("workspaceLabels.title")}
@@ -444,15 +452,17 @@ function SortPage({
  */
 function LabelFilterPage({
   labels,
+  labelFilter,
   preferences,
   onManage,
 }: {
   labels: ReturnType<typeof useWorkspaceLabelProjection>["labels"];
+  labelFilter: SidebarLabelFilter;
   preferences: Preferences;
   onManage: () => void;
 }): ReactElement {
   const { t } = useTranslation();
-  const selected = preferences.labelFilter.labels;
+  const selected = labelFilter.labels;
   return (
     <>
       {labels.map((label) => (
@@ -474,7 +484,7 @@ function LabelFilterPage({
         onToggle={preferences.toggleLabelFilter}
         testID="sidebar-label-filter-option-unlabelled"
       />
-      {hasActiveSidebarLabelFilter(preferences.labelFilter) ? (
+      {hasActiveSidebarLabelFilter(labelFilter) ? (
         <>
           <MenuSeparator />
           <MenuItem
