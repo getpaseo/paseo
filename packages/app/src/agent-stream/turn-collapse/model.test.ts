@@ -201,4 +201,20 @@ describe("collapseTurns", () => {
       tools: { commandCount: 3 },
     });
   });
+  it("recounts a closed turn's summary when one of its calls changes", () => {
+    const host = user("u1");
+    const running = { ...shell("c1"), id: "c1" };
+    const before = collapse([host, running, shell("c2"), reply("final")]);
+    const unchanged = collapse([host, running, shell("c2"), reply("final")]);
+    const grouped = collapse([host, running, shell("c2"), reply("final")], {
+      getGroupedCalls: (id) => (id === "c1" ? [running, shell("c3"), shell("c4")] : undefined),
+    });
+
+    expect(unchanged.turnsByHostId.get("u1")?.summary).toEqual(
+      before.turnsByHostId.get("u1")?.summary,
+    );
+    expect(grouped.turnsByHostId.get("u1")?.summary).not.toEqual(
+      before.turnsByHostId.get("u1")?.summary,
+    );
+  });
 });

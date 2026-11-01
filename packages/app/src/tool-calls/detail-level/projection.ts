@@ -43,6 +43,7 @@ export function prepareToolCallHistory(
   level: ToolCallDetailLevel,
   tail: StreamItem[],
   autoExpandReasoning = false,
+  previous: PreparedToolCallHistory | null = null,
 ): PreparedToolCallHistory | null {
   if (level === "detailed") {
     return null;
@@ -54,6 +55,7 @@ export function prepareToolCallHistory(
       tail: visibleToolCallItems(tail),
       buildGroup: buildOverviewGroup,
       autoExpandReasoning,
+      previous: previous?.grouped,
     }),
   };
 }
