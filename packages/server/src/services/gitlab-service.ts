@@ -985,7 +985,9 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
       candidates.find((mr) => mapMergeRequestState(mr.state) === "open") ??
       candidates.find(
         (mr) =>
-          mapMergeRequestState(mr.state) !== "open" && headSha !== undefined && mr.sha === headSha,
+          mapMergeRequestState(mr.state) === "merged" &&
+          headSha !== undefined &&
+          mr.sha === headSha,
       ) ??
       null;
     return match ? viewMergeRequest(cwd, String(match.iid)) : null;
