@@ -1,5 +1,5 @@
 import { usePaneContext } from "@/panels/pane-context";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { PluginFile, PluginTab } from "@getpaseo/plugin/client";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -7,9 +7,11 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useFileHandle, useFileHandleSnapshot } from "@/file-panels/file";
+import { filePanelBasename } from "@/file-panels/resolve";
 import { FilePanelLoading } from "@/file-panels/loading";
 import { FilePanelPicker, FilePanelView, useFilePanelChoice, type FilePanel } from "@/file-panels";
 import { resolveFilePreviewReadTarget } from "@/file-explorer/preview-target";
+import { useFileDownload } from "@/hooks/use-file-download";
 import { useAppActivelyVisible } from "@/hooks/use-app-visible";
 import { usePublishPanelInstanceAttributes } from "@/panels/panel-instance-attributes";
 import { useSessionStore } from "@/stores/session-store";
@@ -41,6 +43,10 @@ export function FilePane({
     () => (path ? resolveFilePreviewReadTarget({ path, workspaceRoot: root }) : null),
     [path, root],
   );
+  const downloadFile = useFileDownload({ serverId, workspaceRoot: target?.cwd ?? "" });
+  const handleDownload = useCallback(() => {
+    if (target) downloadFile({ fileName: filePanelBasename(target.path), path: target.path });
+  }, [downloadFile, target]);
   const absolutePath = useMemo(
     () => buildAbsoluteExplorerPath({ workspaceRoot: root, entryPath: path }),
     [path, root],
@@ -100,6 +106,9 @@ export function FilePane({
       <>
         <Text style={styles.mutedText}>{t("panels.file.binaryPreviewUnavailable")}</Text>
         <Text style={styles.mutedText}>{formatFileSize(snapshot.size)}</Text>
+        <Button variant="outline" size="sm" onPress={handleDownload}>
+          {t("workspace.fileActions.download")}
+        </Button>
       </>
     );
   } else {
