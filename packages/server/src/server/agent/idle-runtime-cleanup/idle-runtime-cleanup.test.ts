@@ -112,24 +112,81 @@ test.each(["foreground", "finish subscription"])(
   },
 );
 
-test.each(["veto", "error"])(
-  "a supported provider %s retains the runtime until a fresh idle hour passes",
-  async (decision) => {
-    const s = scenario();
-    s.runtime.probe = async () => {
-      if (decision === "error") throw new Error("Probe failed");
-      return false;
-    };
-    const blocked = await s.sweep(61);
-    expect(blocked.collected).toEqual([]);
-    expect(blocked.failures).toHaveLength(decision === "error" ? 1 : 0);
-    await s.sweep(119);
-    s.runtime.probe = async () => true;
-    expect((await s.sweep(120)).collected).toEqual([]);
-    expect((await s.sweep(179)).collected).toEqual([]);
-    expect((await s.sweep(180)).collected).toHaveLength(1);
-  },
-);
+test("a provider veto retains the runtime until a fresh idle hour passes", async () => {
+  const s = scenario();
+  s.runtime.probe = async () => false;
+  expect(await s.sweep(61)).toEqual({ collected: [], failures: [] });
+  await s.sweep(119);
+  s.runtime.probe = async () => true;
+  expect((await s.sweep(120)).collected).toEqual([]);
+  expect((await s.sweep(179)).collected).toEqual([]);
+  expect((await s.sweep(180)).collected).toHaveLength(1);
+});
+
+test("repeated provider errors retry without postponing an already idle runtime", async () => {
+  const s = scenario();
+  const error = new Error("Probe failed");
+  s.runtime.probe = async () => {
+    throw error;
+  };
+  expect(await s.sweep(61)).toEqual({ collected: [], failures: [{ agentId: "agent", error }] });
+  expect(await s.sweep(119)).toEqual({ collected: [], failures: [{ agentId: "agent", error }] });
+  expect(s.runtime.closed).toBe(false);
+  s.runtime.probe = async () => true;
+  expect((await s.sweep(120)).collected).toEqual([
+    { agentId: "agent", provider: "test", sessionId: "agent" },
+  ]);
+});
+
+test("a failed probe does not clear a genuine veto's idle clock", async () => {
+  const s = scenario();
+  s.runtime.probe = async () => false;
+  await s.sweep(61);
+  s.runtime.probe = async () => {
+    throw new Error("Probe failed");
+  };
+  expect((await s.sweep(62)).failures).toHaveLength(1);
+  s.runtime.probe = async () => true;
+  expect((await s.sweep(63)).collected).toEqual([]);
+  expect((await s.sweep(122)).collected).toEqual([]);
+  expect((await s.sweep(123)).collected).toHaveLength(1);
+});
+
+test("a failed probe does not bypass the original one-hour idle period", async () => {
+  const s = scenario();
+  s.runtime.probe = async () => {
+    throw new Error("Probe failed");
+  };
+  expect((await s.sweep(1)).failures).toHaveLength(1);
+  s.runtime.probe = async () => true;
+  expect((await s.sweep(59)).collected).toEqual([]);
+  expect((await s.sweep(60)).collected).toHaveLength(1);
+});
+
+test("a child's failed probe retains its family only until safety is established", async () => {
+  const s = scenario();
+  const child = new Runtime("child");
+  child.parentAgentId = s.runtime.id;
+  const error = new Error("Child probe failed");
+  child.probe = async () => {
+    throw error;
+  };
+  s.runtimes.push(child);
+  expect(await s.sweep(61)).toEqual({
+    collected: [],
+    failures: [
+      { agentId: "agent", error },
+      { agentId: "child", error },
+    ],
+  });
+  expect(s.runtime.closed).toBe(false);
+  expect(child.closed).toBe(false);
+  child.probe = async () => true;
+  expect((await s.sweep(62)).collected).toEqual([
+    { agentId: "agent", provider: "test", sessionId: "agent" },
+    { agentId: "child", provider: "test", sessionId: "child" },
+  ]);
+});
 
 test("an idle managed descendant with provider-held work vetoes its parent", async () => {
   const s = scenario();
@@ -157,7 +214,7 @@ test("new caller protection during an async provider probe prevents stale collec
   expect((await s.sweep(122)).collected).toHaveLength(1);
 });
 
-test("a supported provider timeout retains ownership even if it later returns true", async () => {
+test("a provider timeout retains ownership until a fresh probe succeeds without restarting idleness", async () => {
   const s = scenario();
   const probe = deferred<boolean>();
   s.runtime.probe = () => probe.promise;
@@ -165,8 +222,13 @@ test("a supported provider timeout retains ownership even if it later returns tr
   expect(result.collected).toEqual([]);
   expect(result.failures[0]?.error).toEqual(new Error("Runtime safety probe timed out for agent"));
   probe.resolve(true);
-  expect((await s.sweep(62)).collected).toEqual([]);
+  await probe.promise;
   expect(s.runtime.closed).toBe(false);
+  s.runtime.probe = async () => true;
+  expect((await s.sweep(62)).collected).toEqual([
+    { agentId: "agent", provider: "test", sessionId: "agent" },
+  ]);
+  expect(s.runtime.closed).toBe(true);
 }, 15_000);
 
 test("the host opt-out disables explicit sweeps and scheduled ticks", async () => {
