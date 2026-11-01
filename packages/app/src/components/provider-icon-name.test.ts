@@ -21,6 +21,7 @@ describe("resolveProviderIconName", () => {
     expect(resolveProviderIconName("gemini")).toEqual({ kind: "catalog", id: "gemini" });
     expect(resolveProviderIconName("gjc")).toEqual({ kind: "catalog", id: "gjc" });
     expect(resolveProviderIconName("hermes")).toEqual({ kind: "catalog", id: "hermes" });
+    expect(resolveProviderIconName("prime-agent")).toEqual({ kind: "catalog", id: "prime-agent" });
     expect(resolveProviderIconName("traecli")).toEqual({ kind: "catalog", id: "traecli" });
   });
 
