@@ -2569,6 +2569,20 @@ describe("createGiteaService", () => {
     );
   });
 
+  it("passes draft creation to tea", async () => {
+    const { service, calls } = makeService(() =>
+      ok("https://gitea.com/example-user/sample-repo/pulls/7"),
+    );
+    await service.createPullRequest({
+      cwd: "/repo",
+      title: "New feature",
+      head: "feature",
+      base: "main",
+      draft: true,
+    });
+    expect(calls[0]).toContain("--draft");
+  });
+
   it("merges a mergeable pull request with the requested style", async () => {
     const { service, calls } = makeService(() => ok(""));
 

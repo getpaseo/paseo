@@ -2330,6 +2330,7 @@ export const CheckoutPrCreateRequestSchema = z.object({
   cwd: z.string(),
   title: z.string().optional(),
   body: z.string().optional(),
+  draft: z.boolean().optional(),
   baseRef: z.string().optional(),
   requestId: z.string(),
 });
