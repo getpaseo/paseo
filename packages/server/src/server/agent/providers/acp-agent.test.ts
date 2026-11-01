@@ -3079,6 +3079,68 @@ describe("ACPAgentSession", () => {
     expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
   });
 
+  test("a turn that ends on a budget stop carries the reason so the UI can show it as truncated", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    let resolvePrompt!: (value: PromptResponse) => void;
+    const prompt = vi.fn(
+      () =>
+        new Promise<PromptResponse>((resolve) => {
+          resolvePrompt = resolve;
+        }),
+    );
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    const { turnId } = await session.startTurn("hello");
+
+    resolvePrompt({ stopReason: "max_turn_requests" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The turn_completed event must say why the provider stopped, so a budget stop reads
+    // as a truncated turn and not a normal completion.
+    expect(events.find((event) => event.type === "turn_completed")).toMatchObject({
+      type: "turn_completed",
+      turnId,
+      stopReason: "max_turn_requests",
+    });
+  });
+
+  test("an ordinary end_turn stop does not carry a stop reason", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    let resolvePrompt!: (value: PromptResponse) => void;
+    const prompt = vi.fn(
+      () =>
+        new Promise<PromptResponse>((resolve) => {
+          resolvePrompt = resolve;
+        }),
+    );
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    const { turnId } = await session.startTurn("hello");
+
+    resolvePrompt({ stopReason: "end_turn" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const completed = events.find((event) => event.type === "turn_completed");
+    expect(completed).toMatchObject({ type: "turn_completed", turnId });
+    expect(completed && "stopReason" in completed ? completed.stopReason : undefined).toBeUndefined();
+  });
+
   test("startTurn emits the submitted user message even when ACP does not echo it", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
