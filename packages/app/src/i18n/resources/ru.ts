@@ -1185,6 +1185,7 @@ export const ru: TranslationResources = {
     },
     display: {
       showBackground: "Показать фоновые пространства",
+      showEmptyProjects: "Показать пустые проекты",
       trigger: "Настройки отображения",
       heading: "Отображение",
       sort: {

@@ -19,7 +19,11 @@ import type { SidebarShortcutModel } from "@/utils/sidebar-shortcuts";
 import { buildSidebarProjection } from "./sidebar-projection";
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
 import { filterWorkspacesByLabels, type SidebarWorkspaceGroup } from "./sidebar-labels";
-import { filterWorkspacesByProjects, resolveActiveProjectFilters } from "./sidebar-project-filter";
+import {
+  filterEmptyProjects,
+  filterWorkspacesByProjects,
+  resolveActiveProjectFilters,
+} from "./sidebar-project-filter";
 import {
   hasAuthoritativeWorkspaceLabelCatalog,
   useWorkspaceLabelProjection,
@@ -58,6 +62,7 @@ export function SidebarModelProvider({
   const { t } = useTranslation();
   const list = useSidebarWorkspacesList({ enabled: active });
   const showBackground = useSidebarViewStore((state) => state.showBackground);
+  const showEmptyProjects = useSidebarViewStore((state) => state.showEmptyProjects);
   const groupMode = useSidebarViewStore((state) => state.groupMode);
   const labelFilter = useSidebarViewStore((state) => state.labelFilter);
   const projectFilters = useSidebarViewStore((state) => state.projectFilters);
@@ -124,6 +129,9 @@ export function SidebarModelProvider({
   // workspaces, so a project it empties has nothing left to show.
   const filteredProjects = useMemo(() => {
     let projects = list.projects;
+    if (!showEmptyProjects) {
+      projects = filterEmptyProjects({ projects, projectFilters: resolvedProjectFilters });
+    }
     if (hasActiveProjectFilter) {
       const included = new Set(resolvedProjectFilters);
       projects = projects.filter((project) => included.has(project.viewKey));
@@ -141,6 +149,7 @@ export function SidebarModelProvider({
     return projects;
   }, [
     showBackground,
+    showEmptyProjects,
     hasActiveLabelFilter,
     hasActiveProjectFilter,
     resolvedProjectFilters,

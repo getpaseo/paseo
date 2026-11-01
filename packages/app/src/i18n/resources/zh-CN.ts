@@ -1160,6 +1160,7 @@ export const zhCN: TranslationResources = {
     },
     display: {
       showBackground: "显示后台工作区",
+      showEmptyProjects: "显示空项目",
       trigger: "显示偏好",
       heading: "显示",
       sort: {

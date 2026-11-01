@@ -1181,6 +1181,7 @@ export const ja: TranslationResources = {
     },
     display: {
       showBackground: "バックグラウンドを表示",
+      showEmptyProjects: "空のプロジェクトを表示",
       trigger: "表示設定",
       heading: "表示",
       sort: {
