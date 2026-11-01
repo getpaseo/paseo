@@ -95,6 +95,53 @@ it("keeps the saved layout when the shell publishes its layout mode before hydra
   );
 });
 
+it("keeps every saved layout when a draft tab's setup carries a nested provider option", async () => {
+  const values = new Map<string, string>();
+  const storage: StateStorage = {
+    getItem: (name) => values.get(name) ?? null,
+    setItem: (name, value) => {
+      values.set(name, value);
+    },
+    removeItem: (name) => {
+      values.delete(name);
+    },
+  };
+  const store = createWorkspaceLayoutStore(undefined, storage);
+  await store.persist.rehydrate();
+  store.getState().openTab({
+    workspaceKey: "server:kept",
+    target: { kind: "agent", agentId: "agent-1" },
+    intent: "reveal",
+  });
+  store.getState().openTab({
+    workspaceKey: "server:forked",
+    target: {
+      kind: "draft",
+      draftId: "draft-1",
+      setup: {
+        provider: "codex",
+        cwd: "/repo",
+        modeId: null,
+        model: null,
+        thinkingOptionId: null,
+        providerOptions: { sandbox_workspace_write: { network_access: true }, max_turns: 3 },
+      },
+    },
+    intent: "reveal",
+  });
+
+  const restored = createWorkspaceLayoutStore(undefined, storage);
+  await restored.persist.rehydrate();
+
+  expect(Object.keys(restored.getState().layoutByWorkspace).sort()).toEqual([
+    "server:forked",
+    "server:kept",
+  ]);
+  expect(JSON.stringify(restored.getState().layoutByWorkspace["server:forked"])).toContain(
+    "network_access",
+  );
+});
+
 it.each([1, 2])(
   "restores the agent pane after parked focus in storage version %i",
   async (version) => {

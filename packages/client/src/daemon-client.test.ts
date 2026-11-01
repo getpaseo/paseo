@@ -8984,6 +8984,52 @@ describe("provider options across daemon versions", () => {
     return { mock, client, sentMessages };
   }
 
+  test("a legacy create and a timeline read return the agent with controls over options", async () => {
+    const { mock, client, sentMessages } = await connect({});
+    const legacyAgent = { ...agentSnapshot, features: [speedFeature] };
+    const answerLast = (reply: (requestId: string) => Record<string, unknown>) => {
+      const sent = sentMessages();
+      const requestId = String(sent[sent.length - 1].requestId);
+      mock.triggerMessage(wrapSessionMessage(reply(requestId) as never));
+    };
+
+    const creating = client.createAgent({ provider: "codex", cwd: "/repo" });
+    answerLast((requestId) => ({
+      type: "status",
+      payload: { status: "agent_created", requestId, agentId: "agent-1", agent: legacyAgent },
+    }));
+    const created = await creating;
+
+    const reading = client.fetchAgentTimeline("agent-1");
+    answerLast((requestId) => ({
+      type: "fetch_agent_timeline_response",
+      payload: {
+        requestId,
+        agentId: "agent-1",
+        agent: legacyAgent,
+        direction: "tail",
+        projection: "projected",
+        epoch: "epoch-1",
+        reset: false,
+        staleCursor: false,
+        gap: false,
+        window: { minSeq: 0, maxSeq: 0, nextSeq: 1 },
+        startCursor: null,
+        endCursor: null,
+        hasOlder: false,
+        hasNewer: false,
+        entries: [],
+        error: null,
+      },
+    }));
+    const timeline = await reading;
+
+    expect(created.options).toEqual({ service_tier: "priority" });
+    expect(created.controls).toEqual([expect.objectContaining({ key: "service_tier" })]);
+    expect(timeline.agent?.options).toEqual({ service_tier: "priority" });
+    expect(timeline.agent?.controls).toEqual([expect.objectContaining({ key: "service_tier" })]);
+  });
+
   test("a legacy daemon's features arrive as controls over options", async () => {
     const { mock, client } = await connect({});
     const received: Array<{ controls?: unknown; options?: unknown }> = [];

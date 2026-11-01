@@ -220,6 +220,17 @@ describe("create agent preferences", () => {
     });
   });
 
+  it("keeps options that are not booleans or strings, such as a profile's sandbox settings", () => {
+    const options = {
+      sandbox_workspace_write: { network_access: true, writable_roots: ["/tmp"] },
+      max_turns: 3,
+    };
+
+    expect(
+      parseFormPreferences({ provider: "codex", providerPreferences: { codex: { options } } }),
+    ).toEqual({ provider: "codex", providerPreferences: { codex: { options } } });
+  });
+
   it("rejects unknown persisted fields outside the explicit legacy shape", () => {
     expect(parseFormPreferences({ provider: "codex", surprise: true })).toEqual({});
   });

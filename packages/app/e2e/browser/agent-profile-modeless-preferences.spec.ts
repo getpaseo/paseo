@@ -181,7 +181,7 @@ test.describe("Agent profiles repair modeless provider preferences", () => {
       expect(createAgentRequest).toMatchObject({
         config: {
           provider: featureProviderId,
-          options: { fast_mode: true },
+          providerOptions: { fast_mode: true },
         },
       });
     } finally {

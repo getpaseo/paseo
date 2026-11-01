@@ -81,18 +81,34 @@ export class LegacyProviderOptions {
           ...message,
           payload: { ...message.payload, config: this.daemonConfig(message.payload.config) },
         };
-      case "status":
-        if (message.payload.status !== "daemon_config_changed") return message;
+      case "fetch_agent_timeline_response":
         return {
           ...message,
           payload: {
             ...message.payload,
-            config: this.daemonConfig(message.payload.config as MutableDaemonConfig),
+            agent: message.payload.agent && this.snapshot(message.payload.agent),
           },
-        } as SessionOutboundMessage;
+        };
+      case "status":
+        return this.status(message);
       default:
         return message;
     }
+  }
+
+  private status(
+    message: Extract<SessionOutboundMessage, { type: "status" }>,
+  ): SessionOutboundMessage {
+    const { payload } = message;
+    if (payload.status === "agent_created" || payload.status === "agent_resumed") {
+      const { agent } = payload as unknown as { agent: AgentSnapshotPayload };
+      return { ...message, payload: { ...payload, agent: this.snapshot(agent) } };
+    }
+    if (payload.status === "daemon_config_changed") {
+      const config = payload.config as MutableDaemonConfig;
+      return { ...message, payload: { ...payload, config: this.daemonConfig(config) } };
+    }
+    return message;
   }
 
   /**
