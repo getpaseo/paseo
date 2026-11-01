@@ -151,6 +151,16 @@ function isCodexAlreadyUnarchivedError(error: unknown, threadId: string): boolea
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
 const CODEX_PROVIDER = "codex" as const;
+// These native provider identities belong to Codex, not to an older custom
+// Paseo provider. Never include them in a custom provider's legacy import scan.
+const CODEX_BUILTIN_MODEL_PROVIDER_IDS = new Set([
+  "openai",
+  "ollama",
+  "lmstudio",
+  "amazon-bedrock",
+  "amazon-bedrock-runtime",
+  "gcp",
+]);
 // Codex treats most app-server client names as the model-request originator.
 // This reserved Codex name is non-originating, so requests keep Codex's default
 // CLI identity instead of showing up as Paseo in provider usage logs.
@@ -3368,10 +3378,14 @@ function buildCodexCustomProviderConfig(
     providerConfig.env_key = "OPENAI_API_KEY";
     providerConfig.requires_openai_auth = false;
   }
+  // Namespace Paseo ids so they cannot override Codex's built-ins. A colon is
+  // forbidden in Paseo ids, keeping these keys distinct from every legacy id
+  // when both generations are listed together.
+  const providerKey = `paseo:${customProvider.id}`;
   return {
-    model_provider: customProvider.id,
+    model_provider: providerKey,
     model_providers: {
-      [customProvider.id]: providerConfig,
+      [providerKey]: providerConfig,
     },
   };
 }
@@ -3421,6 +3435,9 @@ export class CodexAppServerAgentSession implements AgentSession {
   > | null = null;
   private resolvedSandboxPolicy: Record<string, unknown> | null = null;
   private currentThreadId: string | null = null;
+  // Codex writes a new thread's rollout at its first turn. Until then the thread exists only
+  // in this app-server, so no other app-server can resume it and it is not reported.
+  private savedThreadId: string | null = null;
   private currentTurnId: string | null = null;
   private pendingForegroundTurnIdentification: {
     foregroundTurnId: string;
@@ -3558,6 +3575,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
     if (this.resumeHandle?.sessionId) {
       this.currentThreadId = this.resumeHandle.sessionId;
+      this.savedThreadId = this.resumeHandle.sessionId;
       this.historyIndexed = false;
       // Resuming can start a goal before the caller receives the session.
       if (this.initialResumePurpose === "interactive") this.startupEvents = [];
@@ -4059,6 +4077,11 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (!this.client || !this.currentThreadId) return;
     // Paseo reads history only when it replays it; the resume response needs no turns.
     const params: Record<string, unknown> = { threadId: this.currentThreadId, excludeTurns: true };
+    if (this.deps.customCodexConfig) {
+      // Resume otherwise prefers the provider stored on the thread, including
+      // the unnamespaced key emitted by earlier Paseo versions.
+      params.modelProvider = this.deps.customCodexConfig.model_provider;
+    }
     const developerInstructions = composeSystemPromptParts(
       this.config.systemPrompt,
       this.config.daemonAppendSystemPrompt,
@@ -4586,7 +4609,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     const info: AgentRuntimeInfo = {
       provider: CODEX_PROVIDER,
-      sessionId: this.currentThreadId,
+      sessionId: this.savedCurrentThreadId(),
       model: this.config.model ?? null,
       thinkingOptionId: normalizeCodexThinkingOptionId(this.config.thinkingOptionId) ?? null,
       modeId: this.currentMode ?? null,
@@ -4917,17 +4940,18 @@ export class CodexAppServerAgentSession implements AgentSession {
     nativeHandle: string;
     metadata: Record<string, unknown>;
   } | null {
-    if (!this.currentThreadId) return null;
+    const threadId = this.savedCurrentThreadId();
+    if (!threadId) return null;
     const thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId) ?? null;
     return {
       provider: CODEX_PROVIDER,
-      sessionId: this.currentThreadId,
-      nativeHandle: this.currentThreadId,
+      sessionId: threadId,
+      nativeHandle: threadId,
       metadata: {
         provider: CODEX_PROVIDER,
         cwd: this.config.cwd,
         title: this.config.title ?? null,
-        threadId: this.currentThreadId,
+        threadId,
         modeId: this.config.modeId,
         model: this.config.model ?? null,
         thinkingOptionId,
@@ -4937,6 +4961,12 @@ export class CodexAppServerAgentSession implements AgentSession {
         asyncQuestions: this.asyncQuestions.serialize(),
       },
     };
+  }
+
+  private savedCurrentThreadId(): string | null {
+    return this.currentThreadId !== null && this.currentThreadId === this.savedThreadId
+      ? this.currentThreadId
+      : null;
   }
 
   async revertConversation(input: { messageId: string }): Promise<void> {
@@ -4963,6 +4993,8 @@ export class CodexAppServerAgentSession implements AgentSession {
       threadRollbackAvailable: this.threadRollbackAvailable,
       setThreadId: async (threadId) => {
         this.currentThreadId = threadId;
+        // Codex writes a forked thread's rollout when it forks it, even before any turn.
+        this.savedThreadId = threadId;
         this.cachedRuntimeInfo = null;
         this.stagedHistory = await this.readThreadHistory(this.client);
         this.reconcileAsyncQuestionsAfterRewind(this.stagedHistory.timeline);
@@ -6136,6 +6168,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.emitSubAgentActivityUpdate(subAgentCallId, "running", { reopen: true });
       return;
     }
+    this.markCurrentThreadSaved(parsed.threadId);
     this.currentTurnId = parsed.turnId;
     const pendingIdentification = this.pendingForegroundTurnIdentification;
     if (
@@ -6147,6 +6180,17 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     this.resetTurnTrackingState();
     this.emitEvent({ type: "turn_started", provider: CODEX_PROVIDER });
+  }
+
+  // Codex has written the rollout by the time it announces a thread's turn, including a
+  // goal's or a compaction's. From here on the thread can be reported and resumed.
+  private markCurrentThreadSaved(threadId: string | null): void {
+    const current = this.currentThreadId;
+    if (!current || (threadId !== null && threadId !== current)) return;
+    if (this.savedThreadId === current) return;
+    this.savedThreadId = current;
+    this.cachedRuntimeInfo = null;
+    this.emitEvent({ type: "thread_started", provider: CODEX_PROVIDER, sessionId: current });
   }
 
   private handleTurnCompletedNotification(
@@ -7373,12 +7417,19 @@ export class CodexAppServerAgentClient implements AgentClient {
       const listLimit = options?.cwd ? Math.max(scanLimit, 50) : scanLimit;
       // Codex records each thread under the model provider that ran it and,
       // unless told otherwise, lists only the provider its own config selects.
-      // A custom provider runs under its own id, so ask for exactly that one.
+      // Include legacy custom ids, but keep Codex built-in sessions separate.
       const customProviderConfig = this.customProviderConfig();
+      let modelProviders: string[] | undefined;
+      if (customProviderConfig && this.deps.customProvider) {
+        modelProviders = [customProviderConfig.model_provider];
+        if (!CODEX_BUILTIN_MODEL_PROVIDER_IDS.has(this.deps.customProvider.id)) {
+          modelProviders.push(this.deps.customProvider.id);
+        }
+      }
       const allThreads = await readCodexThreadWindow(client, this.logger, {
         limit: listLimit,
         cwd: options?.cwd,
-        ...(customProviderConfig ? { modelProviders: [customProviderConfig.model_provider] } : {}),
+        ...(modelProviders ? { modelProviders } : {}),
       });
       const threads = filterCodexThreadsByCwd(allThreads, options?.cwd);
       return threads.slice(0, limit).map((thread) => {

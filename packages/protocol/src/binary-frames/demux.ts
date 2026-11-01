@@ -1,4 +1,4 @@
-import { decodeTunnelFrame, TunnelOpcode, type TunnelFrame } from "./tunnel.js";
+import { decodeTunnelFrame, isTunnelOpcode, type TunnelFrame } from "./tunnel.js";
 import { HOST_ROUTE_OPCODE, decodeHostRouteFrame, type HostRouteFrame } from "./host-route.js";
 import {
   decodeFileTransferFrame,
@@ -27,6 +27,9 @@ export function decodeBinaryFrame(bytes: Uint8Array): BinaryFrame | null {
     case TerminalStreamOpcode.Input:
     case TerminalStreamOpcode.Resize:
     case TerminalStreamOpcode.Snapshot:
+    case TerminalStreamOpcode.ReplayBegin:
+    case TerminalStreamOpcode.ReplayData:
+    case TerminalStreamOpcode.ReplayEnd:
     case TerminalStreamOpcode.Restore: {
       const frame = decodeTerminalStreamFrame(bytes);
       return frame ? { kind: "terminal", frame } : null;
@@ -37,15 +40,11 @@ export function decodeBinaryFrame(bytes: Uint8Array): BinaryFrame | null {
       const frame = decodeFileTransferFrame(bytes);
       return frame ? { kind: "file_transfer", frame } : null;
     }
-    case TunnelOpcode.Open:
-    case TunnelOpcode.Connected:
-    case TunnelOpcode.Data:
-    case TunnelOpcode.Close:
-    case TunnelOpcode.WindowUpdate: {
+    default: {
+      // A predicate keeps the tunnel's opcode range out of this switch's case count.
+      if (!isTunnelOpcode(bytes[0])) return null;
       const frame = decodeTunnelFrame(bytes);
       return frame ? { kind: "tunnel", frame } : null;
     }
-    default:
-      return null;
   }
 }

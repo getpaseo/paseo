@@ -583,16 +583,21 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
       // the cold filter. Allocations made by the filter still count.
       global.gc();
       await tick();
-      // Unrelated callbacks must not consume the synchronous filter's budget.
+      await marker('FILTER_START');
+      // Schedule the control only after marker IO settles, so it cannot run
+      // and allocate garbage before the cold filter starts. No await may
+      // separate this scheduling from the synchronous measurement.
       const threadCpuUsage = Reflect.get(process, 'threadCpuUsage');
+      let unrelatedWorkStarted = false;
       const unrelatedWork = tick().then(() => {
+        unrelatedWorkStarted = true;
         const started = threadCpuUsage();
         while (true) {
           const cpu = threadCpuUsage(started);
           if (cpu.user + cpu.system >= 80000) break;
         }
       });
-      await marker('FILTER_START');
+      assert.equal(unrelatedWorkStarted, false, 'control work must not contaminate the cold filter');
       hook.enable();
       let blockingMs;
       try {
@@ -609,6 +614,7 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
         await marker('FILTER_END');
       }
       await unrelatedWork;
+      assert.equal(unrelatedWorkStarted, true, 'control work must run outside the filter span');
       assert.equal(fsCalls, 0, "filesystem calls");
       assert.equal(notifications, 0, "ignored event notification");
       assert.ok(blockingMs < 20, 'blocking filter work: ' + blockingMs);

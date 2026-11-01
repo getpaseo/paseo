@@ -14,13 +14,6 @@ export function applyTerminalRendererReadyChange(
   return currentReadyStreamKey === change.streamKey ? null : currentReadyStreamKey;
 }
 
-export function shouldReplayTerminalSnapshotForRenderer(input: {
-  change: TerminalRendererReadyChange;
-  terminalStreamKey: string;
-}): boolean {
-  return input.change.isReady && input.change.streamKey === input.terminalStreamKey;
-}
-
 export function resolveTerminalStreamTarget(input: {
   terminalId: string;
   terminalStreamKey: string;

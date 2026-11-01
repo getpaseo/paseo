@@ -635,6 +635,7 @@ export const ko: TranslationResources = {
     terminal: {
       hostDisconnected: "호스트가 연결되어 있지 않습니다",
       updateHost: "기본 터미널 렌더러를 사용하도록 호스트를 업데이트합니다.",
+      restoreRequiresUpdate: "터미널을 보려면 호스트를 업데이트하세요.",
       unableToSubscribe: "터미널을 구독할 수 없습니다",
       fileUploaded: "파일을 업로드했습니다",
       pasteFileFailed: "파일을 붙여넣지 못했습니다: {{reason}}",

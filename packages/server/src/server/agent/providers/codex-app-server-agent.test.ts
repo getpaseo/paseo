@@ -90,6 +90,7 @@ import {
   createFakeCodexAppServer,
   fakeCodexThreadHistory,
   type FakeCodexAppServer,
+  waitForNextEvent,
   waitForNextPermission,
   waitForNextTimelineItem,
   waitForProviderSubagent,
@@ -1287,6 +1288,9 @@ describe("Codex app-server provider", () => {
     );
     await firstSession.startTurn("first turn");
     await expect(beforeRestart.waitForTurnStart()).resolves.toMatchObject({ effort: "medium" });
+    const saved = waitForNextEvent(firstSession, "thread_started");
+    beforeRestart.startsTurn({ threadId: "thread-1" });
+    await saved;
     const handle = firstSession.describePersistence()!;
     await firstSession.close();
 
@@ -1319,8 +1323,60 @@ describe("Codex app-server provider", () => {
     try {
       await session.startTurn("persist the configured session");
       await appServer.waitForTurnStart();
+      const saved = waitForNextEvent(session, "thread_started");
+      appServer.startsTurn({ threadId: "thread-1" });
+      await saved;
       const handle = session.describePersistence()!;
       expect(handle.metadata).not.toHaveProperty("providerOptions");
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("reports a new thread only after Codex announces its first turn", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = await createProviderWithFakeAppServer(appServer).createSession(createConfig());
+    try {
+      // Codex has started the thread but writes its rollout at the first turn, so another
+      // app-server could not resume it yet.
+      await expect(session.getRuntimeInfo()).resolves.toMatchObject({ sessionId: null });
+      expect(session.describePersistence()).toBeNull();
+      expect(
+        appServer.requests().filter((request) => request.method === "thread/start"),
+      ).toHaveLength(1);
+
+      await session.startTurn("first prompt");
+      await appServer.waitForTurnStart();
+      expect(session.describePersistence()).toBeNull();
+
+      const saved = waitForNextEvent(session, "thread_started");
+      appServer.startsTurn({ threadId: "thread-1" });
+      await expect(saved).resolves.toMatchObject({
+        type: "thread_started",
+        provider: "codex",
+        sessionId: "thread-1",
+      });
+      expect(session.describePersistence()).toMatchObject({
+        sessionId: "thread-1",
+        nativeHandle: "thread-1",
+      });
+      await expect(session.getRuntimeInfo()).resolves.toMatchObject({ sessionId: "thread-1" });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("reports a resumed thread before its next turn", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = await createProviderWithFakeAppServer(appServer).resumeSession(
+      { provider: "codex", sessionId: "saved-thread" },
+      createConfig(),
+    );
+    try {
+      expect(session.describePersistence()).toMatchObject({ sessionId: "saved-thread" });
+      await expect(session.getRuntimeInfo()).resolves.toMatchObject({ sessionId: "saved-thread" });
       appServer.assertNoErrors();
     } finally {
       await session.close();
@@ -2604,7 +2660,12 @@ describe("Codex app-server provider", () => {
         clientMessageId: "client-message",
       },
     });
-    expect(events.slice(0, 2).map((event) => event.type)).toEqual(["turn_started", "timeline"]);
+    // The first turn of a new thread also reports the thread, now that Codex has saved it.
+    expect(events.slice(0, 3).map((event) => event.type)).toEqual([
+      "thread_started",
+      "turn_started",
+      "timeline",
+    ]);
     appServer.completeTurn();
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -2623,9 +2684,9 @@ describe("Codex app-server provider", () => {
       OPENAI_BASE_URL: "https://custom-relay.example.com",
     });
     expect(capturedThreadStartConfig(capturedRequests)).toEqual({
-      model_provider: "codex-iisb",
+      model_provider: "paseo:codex-iisb",
       model_providers: {
-        "codex-iisb": {
+        "paseo:codex-iisb": {
           name: "Custom Codex",
           base_url: "https://custom-relay.example.com/v1",
           env_key: "OPENAI_API_KEY",
@@ -2643,10 +2704,25 @@ describe("Codex app-server provider", () => {
     );
 
     expect(capturedThreadStartConfig(capturedRequests)).toEqual({
-      model_provider: "codex-custom",
+      model_provider: "paseo:codex-custom",
       model_providers: {
-        "codex-custom": expect.objectContaining({
+        "paseo:codex-custom": expect.objectContaining({
           base_url: "https://custom-relay.example.com/v1",
+        }),
+      },
+    });
+  });
+
+  test("namespaces provider ids that collide with Codex built-ins", async () => {
+    // `ollama` is a reserved Codex provider id: without namespacing, Codex rejects
+    // the generated config outright and the agent never starts.
+    const capturedRequests = await runCustomCodexProviderTurn("ollama", "https://ollama.com");
+
+    expect(capturedThreadStartConfig(capturedRequests)).toEqual({
+      model_provider: "paseo:ollama",
+      model_providers: {
+        "paseo:ollama": expect.objectContaining({
+          base_url: "https://ollama.com/v1",
         }),
       },
     });
@@ -7348,9 +7424,21 @@ describe("Codex importable sessions", () => {
   const threadsByModelProvider = [
     { id: "stock-thread", cwd: "/workspace/project-a", modelProvider: "openai", updatedAt: 2 },
     { id: "custom-thread", cwd: "/workspace/project-a", modelProvider: "my-codex", updatedAt: 1 },
+    {
+      id: "new-custom-thread",
+      cwd: "/workspace/project-a",
+      modelProvider: "paseo:my-codex",
+      updatedAt: 3,
+    },
+    {
+      id: "other-custom-thread",
+      cwd: "/workspace/project-a",
+      modelProvider: "paseo-my-codex",
+      updatedAt: 4,
+    },
   ];
 
-  test("a custom Codex provider lists the threads it created", async () => {
+  test("a custom Codex provider lists its old and namespaced threads without other providers", async () => {
     const appServer = createFakeCodexAppServer({
       "thread/list": providerFilteringThreadListHandler(threadsByModelProvider),
     });
@@ -7363,9 +7451,39 @@ describe("Codex importable sessions", () => {
 
     const sessions = await provider.listImportableSessions({ cwd: "/workspace/project-a" });
 
-    expect(sessions.map((session) => session.providerHandleId)).toEqual(["custom-thread"]);
+    expect(sessions.map((session) => session.providerHandleId)).toEqual([
+      "custom-thread",
+      "new-custom-thread",
+    ]);
     appServer.assertNoErrors();
   });
+
+  test.each(["openai", "ollama", "lmstudio", "amazon-bedrock", "amazon-bedrock-runtime", "gcp"])(
+    "a custom provider named %s excludes native built-in sessions",
+    async (providerId) => {
+      const appServer = createFakeCodexAppServer({
+        "thread/list": providerFilteringThreadListHandler([
+          { id: "native-thread", cwd: "/workspace/project-a", modelProvider: providerId },
+          {
+            id: "custom-thread",
+            cwd: "/workspace/project-a",
+            modelProvider: `paseo:${providerId}`,
+          },
+        ]),
+      });
+      const provider = createProviderWithFakeAppServer(appServer, {
+        runtimeSettings: {
+          env: { OPENAI_BASE_URL: "https://llm.example.test/v1", OPENAI_API_KEY: "test-key" },
+        },
+        customProvider: { id: providerId, label: "Custom Codex", extends: "codex" },
+      });
+
+      const sessions = await provider.listImportableSessions({ cwd: "/workspace/project-a" });
+
+      expect(sessions.map((session) => session.providerHandleId)).toEqual(["custom-thread"]);
+      appServer.assertNoErrors();
+    },
+  );
 
   test("stock Codex keeps listing only its own threads", async () => {
     const appServer = createFakeCodexAppServer({

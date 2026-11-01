@@ -1,3 +1,6 @@
+import assert from "node:assert/strict";
+import { createHook, executionAsyncResource } from "node:async_hooks";
+import { MessagePort } from "node:worker_threads";
 import path from "node:path";
 import { stat } from "node:fs/promises";
 import { setImmediate as nextTurn } from "node:timers/promises";
@@ -57,19 +60,33 @@ const service = new WorkspaceReconciliationService({
 // Initialize async filesystem support using the bundle, leaving every project
 // and workspace path untouched until the first reconciliation.
 await stat(process.argv[1]);
+// Collect fixture allocations before the measured run; allocations made by
+// reconciliation itself remain part of its budget.
+assert.ok(global.gc, "Launch the probe with --expose-gc");
+global.gc();
 await nextTurn();
+let workerMessages = 0;
+const activity = createHook({
+  before() {
+    if (executionAsyncResource() instanceof MessagePort) workerMessages++;
+  },
+}).enable();
 try {
   const measured = await measureMainThreadWork("workspace reconciliation main-thread work", () =>
     service.runOnce(),
   );
+  activity.disable();
   process.stdout.write(
     JSON.stringify({
       blockingMs: measured.blockingMs,
       filesystemRequests: measured.filesystemRequests,
+      yields: measured.yields,
+      workerMessages,
       changesApplied: measured.result.changesApplied.length,
       allArchived: [...workspaces.values()].every((workspace) => workspace.archivedAt !== null),
     }),
   );
 } finally {
+  activity.disable();
   service.dispose();
 }

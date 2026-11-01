@@ -1220,6 +1220,74 @@ test("orders buffered pre-steer output before an immediately accepted steer", as
   }
 });
 
+test("a steer the provider names without echoing it can be rewound to", async () => {
+  // Claude takes a steered message into the running turn without echoing it back as a user
+  // message, so the id it minted for the message reaches the manager only through the admission.
+  class SilentSteeringSession extends SteeringTestSession {
+    override readonly capabilities = {
+      ...TEST_CAPABILITIES,
+      supportsRewindFiles: true,
+    };
+    rewindMessageIds: string[] = [];
+
+    override async steerActiveTurn(
+      _prompt: AgentPromptInput,
+      options: import("./agent-sdk-types.js").SteerActiveTurnOptions,
+    ): Promise<import("./agent-sdk-types.js").SteerResult> {
+      if (options.expectedTurnId !== `active-turn-${this.startCount}`) {
+        return { status: "unavailable" };
+      }
+      return { status: "accepted", providerMessageId: `provider-${options.clientMessageId}` };
+    }
+
+    override async revertFiles({ messageId }: { messageId: string }): Promise<void> {
+      this.rewindMessageIds.push(messageId);
+    }
+  }
+  const session = new SilentSteeringSession({ provider: "codex", cwd: process.cwd() });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-steer-rewind-"));
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const run = manager.streamAgent(agent.id, "initial");
+    void (async () => {
+      for await (const _event of run) {
+      }
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+
+    await expect(
+      manager.steerAgentRun(agent.id, "steered", { clientMessageId: "steer-client" }),
+    ).resolves.toMatchObject({ status: "accepted" });
+    const row = manager
+      .fetchTimeline(agent.id, { limit: 0 })
+      .rows.find((candidate) => candidate.item.type === "user_message");
+    expect(row).toMatchObject({
+      providerMessageId: "provider-steer-client",
+      item: { text: "steered", clientMessageId: "steer-client" },
+    });
+
+    await manager.rewind(agent.id, "steer-client", "files");
+    expect(session.rewindMessageIds).toEqual(["provider-steer-client"]);
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("orders a concurrent replacement after a pending accepted steer", async () => {
   const entered = deferred<void>();
   const release = deferred<void>();

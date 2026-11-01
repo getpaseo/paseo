@@ -208,7 +208,11 @@ export interface AgentSteerOptions extends AgentRunOptions {
   clearPendingPermissions?: boolean;
 }
 
-export type SteerResult = { status: "accepted" } | { status: "unavailable" };
+// providerMessageId names the steered message in the provider's own history, when the provider
+// mints one. Rewinding to the message needs it.
+export type SteerResult =
+  | { status: "accepted"; providerMessageId?: string }
+  | { status: "unavailable" };
 
 export interface SteerActiveTurnOptions extends AgentSteerOptions {
   expectedTurnId: string;
@@ -693,6 +697,7 @@ export interface AgentSession {
     requestId: string,
     response: AgentPermissionResponse,
   ): Promise<AgentPermissionResult | void>;
+  /** Null until a new provider process could resume this session; see docs/providers.md. */
   describePersistence(): AgentPersistenceHandle | null;
   /**
    * Resolve once every foreground turn that predates this call can no longer run or become active.

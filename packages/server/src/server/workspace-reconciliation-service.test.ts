@@ -1,15 +1,15 @@
 import { execFile, execFileSync } from "node:child_process";
-import { promisify } from "node:util";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { build } from "esbuild";
 import {
   createTestRegistries,
   createTestLogger,
   deferred,
 } from "./test-fixtures/reconciliation-registries.js";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 import type pino from "pino";
 import { afterAll, beforeAll, afterEach, describe, expect, test } from "vitest";
@@ -535,30 +535,54 @@ describe("WorkspaceReconciliationService", () => {
   test("keeps the event loop responsive while inspecting 20000 real workspace paths", async () => {
     const rootPath = realpathSync(mkdtempSync(path.join(tmpdir(), "reconcile-many-")));
     tempDirs.push(rootPath);
-    // Unrelated runner work must not consume the reconciliation budget.
-    const unrelatedWork = new Promise<void>((resolve) => {
-      setImmediate(() => {
-        const cpu = Reflect.get(process, "threadCpuUsage") as typeof process.cpuUsage;
-        const start = cpu();
-        while (cpu(start).user + cpu(start).system < 80_000) {}
-        resolve();
-      });
-    });
-    const { stdout, stderr } = await promisify(execFile)(process.execPath, [probePath, rootPath], {
-      timeout: 25_000,
-    });
-    process.stderr.write(stderr);
-    const { changesApplied, blockingMs, filesystemRequests, allArchived } = JSON.parse(stdout) as {
-      changesApplied: number;
-      blockingMs: number;
-      filesystemRequests: number;
-      allArchived: boolean;
+    // This CPU belongs to the runner, not to reconciliation. Keep it present
+    // throughout the read so a later loop turn cannot contaminate the budget.
+    let running = true;
+    const unrelatedWork = () => {
+      const threadCpuUsage: (previous?: NodeJS.CpuUsage) => NodeJS.CpuUsage = Reflect.get(
+        process,
+        "threadCpuUsage",
+      );
+      const start = threadCpuUsage();
+      let elapsed: NodeJS.CpuUsage;
+      do {
+        elapsed = threadCpuUsage(start);
+      } while (elapsed.user + elapsed.system < 60_000);
+      if (running) unrelated = setImmediate(unrelatedWork);
     };
-    await unrelatedWork;
-    expect(blockingMs).toBeLessThan(20);
-    expect(filesystemRequests).toBe(20001);
-    expect(changesApplied).toBe(20000);
-    expect(allArchived).toBe(true);
+    let unrelated = setImmediate(unrelatedWork);
+    try {
+      const { stdout, stderr } = await promisify(execFile)(
+        process.execPath,
+        ["--expose-gc", probePath, rootPath],
+        { timeout: 25_000 },
+      );
+      process.stderr.write(stderr);
+      const {
+        changesApplied,
+        blockingMs,
+        filesystemRequests,
+        yields,
+        allArchived,
+        workerMessages,
+      } = JSON.parse(stdout) as {
+        changesApplied: number;
+        blockingMs: number;
+        filesystemRequests: number;
+        yields: number;
+        allArchived: boolean;
+        workerMessages: number;
+      };
+      expect(blockingMs).toBeLessThan(20);
+      expect(filesystemRequests).toBe(20001);
+      expect(changesApplied).toBe(20000);
+      expect(allArchived).toBe(true);
+      expect(yields).toBeGreaterThan(0);
+      expect(workerMessages).toBe(0);
+    } finally {
+      running = false;
+      clearImmediate(unrelated);
+    }
   }, 30000);
 
   test("preserves workspace archival that lands during boot reconciliation", async () => {

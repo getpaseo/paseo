@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { isPlatform } from "../test-utils/platform.js";
+import { classifyTerminalProgramProcess } from "./terminal-worker-ownership.js";
 import { currentBootId } from "../server/pid-lock.js";
 import {
   createTerminalWorkerProcessInspector,
@@ -260,15 +261,19 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
   it("leaves a program alive when its pid now belongs to a process with another birth time", async () => {
     const home = makeHome();
     const unrelated = spawnIdle();
+    const original = { id: "t1", pid: unrelated.pid!, startedAt: "Thu Jan  1 00:00:00 1970" };
     const recordPath = writeRecord(home, {
       pid: await goneProcessPid(),
-      terminals: [{ id: "t1", pid: unrelated.pid!, startedAt: "Thu Jan  1 00:00:00 1970" }],
+      terminals: [original],
     });
 
     await reapTerminalWorkers({ paseoHome: home, inspector, gracefulMs: 0 });
 
     expect(isAlive(unrelated.pid!)).toBe(true);
     expect(existsSync(recordPath)).toBe(false);
+    expect(
+      classifyTerminalProgramProcess(original, await inspector.inspect(original.pid)),
+    ).toMatchObject({ status: "unrelated" });
   });
 
   it("retires a record from an earlier boot without signaling anything it names", async () => {

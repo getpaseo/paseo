@@ -6,6 +6,12 @@ export const TunnelOpcode = {
   WindowUpdate: 0x24,
 } as const;
 
+const tunnelOpcodes: ReadonlySet<number> = new Set(Object.values(TunnelOpcode));
+
+export function isTunnelOpcode(value: number): boolean {
+  return tunnelOpcodes.has(value);
+}
+
 export const TunnelCloseReason = {
   Ok: 0,
   GeneralError: 1,
