@@ -54,6 +54,41 @@ describe("native terminal typed input", () => {
     expect(input.receiveTextChange("pwd")).toEqual({ data: "", shouldClear: false });
   });
 
+  it("does not duplicate printable keypresses when Android reports the text change first", () => {
+    const input = createTerminalTextInputState();
+    const emitted: string[] = [];
+
+    // Android soft keyboards dispatch the text change before onKeyPress, the
+    // reverse of the keypress-first tests above.
+    for (const [index, key] of Array.from("abc").entries()) {
+      emitted.push(input.receiveTextChange("abc".slice(0, index + 1)).data);
+      emitted.push(input.receiveKeyPress(key).data);
+    }
+
+    expect(emitted).toEqual(["a", "", "b", "", "c", ""]);
+  });
+
+  it("deletes once when Android reports Backspace before the clearing text change", () => {
+    const input = createTerminalTextInputState();
+
+    for (const [index, key] of Array.from("ab").entries()) {
+      input.receiveTextChange("ab".slice(0, index + 1));
+      input.receiveKeyPress(key);
+    }
+
+    expect(input.receiveKeyPress("Backspace")).toEqual({ data: "\x7f", shouldClear: false });
+    expect(input.receiveTextChange("a")).toEqual({ data: "", shouldClear: false });
+    expect(input.receiveTextChange("ab")).toEqual({ data: "b", shouldClear: false });
+    expect(input.receiveKeyPress("b")).toEqual({ data: "", shouldClear: false });
+  });
+
+  it("still emits a printable keypress that no text change reported", () => {
+    const input = createTerminalTextInputState();
+
+    expect(input.receiveTextChange("a")).toEqual({ data: "a", shouldClear: false });
+    expect(input.receiveKeyPress("b")).toEqual({ data: "b", shouldClear: false });
+  });
+
   it("keeps anticipated text aligned after software keyboard Backspace", () => {
     const input = createTerminalTextInputState();
 
