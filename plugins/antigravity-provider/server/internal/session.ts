@@ -26,6 +26,8 @@ interface Turn {
   usageSteps: Set<number>;
   tools: Map<string, Extract<ProviderTimelineItem, { type: "tool_call" }>>;
   usage: Required<Pick<ProviderUsage, "inputTokens" | "outputTokens" | "cachedInputTokens">>;
+  lastStep: number;
+  answered: boolean;
 }
 type State =
   | { type: "dormant" }
@@ -94,6 +96,8 @@ export class Session {
       usageSteps: new Set(),
       tools: new Map(),
       usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
+      lastStep: -1,
+      answered: false,
     };
     this.state = { type: "running", driver, turn };
     this.emit({
@@ -261,13 +265,49 @@ export class Session {
     }
     if (result.status === "ERROR") {
       const canceled = result.error === "interrupted";
-      this.finishTools(turn, canceled ? "canceled" : "failed");
+      if (canceled) {
+        this.finishTools(turn, "canceled");
+        this.retire(driver);
+        this.emit({
+          type: "session.turn",
+          sessionId: this.options.id,
+          turnId: turn.id,
+          state: "canceled",
+          error: { message: diagnostic(result.error) },
+        });
+        return;
+      }
+      const runningTools = Array.from(turn.tools.values()).some(
+        (item) => item.status === "running",
+      );
+      if (turn.answered && !runningTools) {
+        this.emit({
+          type: "session.notice",
+          sessionId: this.options.id,
+          notice: {
+            id: `${turn.id}:trajectory_error`,
+            severity: "warning",
+            title: "Antigravity reported a trajectory warning",
+            description: diagnostic(result.error),
+          },
+        });
+        this.finishTools(turn, "completed");
+        this.retire(driver);
+        this.emit({
+          type: "session.turn",
+          sessionId: this.options.id,
+          turnId: turn.id,
+          state: "completed",
+        });
+        return;
+      }
+      this.finishTools(turn, "failed");
       this.retire(driver);
       this.emit({
         type: "session.turn",
         sessionId: this.options.id,
         turnId: turn.id,
-        state: canceled ? "canceled" : "failed",
+        state: "failed",
         error: { message: diagnostic(result.error) },
       });
     } else {
@@ -305,6 +345,13 @@ export class Session {
       const item = toolItem(step, id);
       turn.tools.set(id, item);
       this.item(item);
+    }
+    if (step.step_index >= turn.lastStep) {
+      turn.lastStep = step.step_index;
+      turn.answered =
+        step.step_type === "agent_response" &&
+        step.state === "DONE" &&
+        Boolean(turn.text.get(step.step_index));
     }
   }
 
