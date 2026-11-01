@@ -1722,6 +1722,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return;
     }
     target.latestFacts = null;
+    target.folderMissing = false;
     await this.refreshWorkspaceTarget(target, {
       force: false,
       refreshStructure: true,
@@ -1731,10 +1732,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       queueIfBusy: true,
       movedRemoteRefs: new Set(),
     });
-    if (!this.isSuspendedWorkspaceTarget(target)) {
+    if (target.closed || this.workspaceTargets.get(target.cwd) !== target) {
       return;
     }
-    target.folderMissing = false;
     target.observationSetupComplete = false;
     if (target.observationReensureTimer) {
       clearTimeout(target.observationReensureTimer);
@@ -3183,6 +3183,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     target: WorkspaceGitTarget,
     request: WorkspaceGitRefreshRequest,
   ): Promise<WorkspaceGitRuntimeSnapshot> {
+    if (target.folderMissing) {
+      return Promise.resolve(target.latestSnapshot ?? buildNotGitSnapshot(target.cwd));
+    }
     if (target.refreshState.status === "in-flight") {
       const active = target.refreshState.request;
       const addsWork =
