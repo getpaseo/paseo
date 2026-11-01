@@ -37,6 +37,7 @@ function installed(): InstalledPlugin {
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    workspaceRowAccessories: [],
   };
 }
 

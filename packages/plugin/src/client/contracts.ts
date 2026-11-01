@@ -98,6 +98,47 @@ export type PluginIcon<Props extends PluginIconProps = PluginIconProps> =
   | PluginSerializableIcon
   | ComponentType<Props>;
 
+export interface PluginWorkspaceRowAccessoryProps {
+  serverId: string;
+  workspaceId: string;
+  workspaceKey: string;
+  theme: PluginTheme;
+  statusBucket: "needs_input" | "failed" | "running" | "attention" | "done";
+  isHovered: boolean;
+  isSelected: boolean;
+  /** Edge of the square slot in px: 16 for `status`, 40 for `large`. */
+  size: number;
+  /** A takeover is playing on this row: hide what the Overlay is acting. */
+  takeover: boolean;
+}
+
+export interface PluginWorkspaceRowTakeoverProps {
+  serverId: string;
+  workspaceId: string;
+  workspaceKey: string;
+  theme: PluginTheme;
+  reducedMotion: boolean;
+  data: unknown;
+  /** Edge of the leading slot in px; the Overlay fills the row's main line, slot at its left. */
+  slotSize: number;
+}
+
+export interface PluginWorkspaceRowTakeoverOptions {
+  /** At most 10 000 ms. */
+  durationMs: number;
+  data?: unknown;
+}
+
+export interface PluginWorkspaceRowAccessoryContribution {
+  id: string;
+  /** Replaces the row's status slot; the native status stays as a corner badge over it. */
+  Component: ComponentType<PluginWorkspaceRowAccessoryProps>;
+  /** `status` keeps the native slot; `large` reserves 40 px beside title and meta. */
+  size?: "status" | "large";
+  /** Drawn over the row while a takeover requested by this plugin plays. */
+  Overlay?: ComponentType<PluginWorkspaceRowTakeoverProps>;
+}
+
 export type PluginPanelLocation = "workspace" | "explorer";
 
 export interface PluginOpenPanelOptions {
@@ -181,6 +222,13 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   addScreen(contribution: PluginScreenContribution<PluginText>): PluginCleanup;
   addSidebarHeaderItem(contribution: PluginSidebarItemContribution<PluginText>): PluginCleanup;
   addSidebarFooterItem(contribution: PluginSidebarItemContribution<PluginText>): PluginCleanup;
+  /** Absent on hosts without row accessories: feature-detect. The latest registered one wins. */
+  addWorkspaceRowAccessory?(contribution: PluginWorkspaceRowAccessoryContribution): PluginCleanup;
+  /** Plays this plugin's accessory Overlay over a row; null while that row is taken over. */
+  requestRowTakeover?(
+    workspaceId: string,
+    options: PluginWorkspaceRowTakeoverOptions,
+  ): { cancel(): void; finished: Promise<"completed" | "cancelled"> } | null;
   addAgentPanel(contribution: PluginAgentPanelContribution<PluginText>): PluginCleanup;
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution<PluginText>): PluginCleanup;
   addCommandCenterItem(
