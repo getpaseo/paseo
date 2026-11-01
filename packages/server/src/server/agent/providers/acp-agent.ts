@@ -1761,6 +1761,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   openOptionsPatch: Record<string, unknown> = {};
   /** Selects the provider moves while Paseo is opening or applying options belong to that result, not to events. */
   private optionsTransactionDepth = 0;
+  private applying: Promise<unknown> = Promise.resolve();
   private cachedCommands: AgentSlashCommand[] = [];
   /** When the last command batch arrived; null while nothing has been published. */
   private commandsUpdatedAt: number | null = null;
@@ -2406,7 +2407,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
    * Provider notifications that arrive meanwhile are part of that result. When a write is
    * rejected, what the provider moved is reported as an event, since nothing is stored.
    */
-  async applyOptions(options: ProviderOptions): Promise<Record<string, unknown>> {
+  /** One apply at a time: each reconciles against the state the one before it left. */
+  applyOptions(options: ProviderOptions): Promise<Record<string, unknown>> {
+    const run = this.applying.then(() => this.applyOptionsNow(options));
+    this.applying = run.catch(() => undefined);
+    return run;
+  }
+
+  private async applyOptionsNow(options: ProviderOptions): Promise<Record<string, unknown>> {
     assertChangesAreLive({
       provider: this.config.provider,
       patch: options,
