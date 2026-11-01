@@ -33,6 +33,8 @@ import type {
 } from "../../agent-sdk-types.js";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import { buildAgentPrompt, renderPromptAttachmentAsText } from "../../prompt-attachments.js";
+import { applyProviderOptionsPatch } from "../../option-controls.js";
+import { mergeProviderOptions } from "../../provider-options.js";
 
 interface TestClaudeSession {
   translateMessageToEvents(message: SDKMessage): Promise<AgentStreamEvent[]>;
@@ -1547,9 +1549,14 @@ describe("ClaudeAgentSession features", () => {
     await session.setModel?.("claude-fable-5");
 
     expect(queryMock.applyFlagSettings).toHaveBeenLastCalledWith({ fastMode: false });
-    expect(events.filter((event) => event.type === "options_changed")).toEqual([
-      { type: "options_changed", provider: "claude", patch: { fast_mode: null } },
+    const reported = events.filter((event) => event.type === "options_changed");
+    expect(reported).toEqual([
+      { type: "options_changed", provider: "claude", patch: { fast_mode: false } },
     ]);
+    // With a `config.json` default of `fast_mode: true`, the agent's effective options must
+    // still read Fast as off: a removed key would let the default fill `true` back in.
+    const stored = applyProviderOptionsPatch({ fast_mode: true }, reported[0].patch);
+    expect(mergeProviderOptions({ fast_mode: true }, stored)).toEqual({ fast_mode: false });
     await expect(session.applyOptions?.({ allowedTools: ["Read"] })).resolves.toBeUndefined();
     await session.close();
   });

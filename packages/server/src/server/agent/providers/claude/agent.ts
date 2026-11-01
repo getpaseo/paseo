@@ -2747,10 +2747,14 @@ class ClaudeAgentSession implements AgentSession {
       const supported = claudeModelSupportsFastMode(this.config.model);
       await activeQuery.applyFlagSettings({ fastMode: supported });
       if (!supported) {
-        // Fast cannot run on this model, so the session drops the option and says so.
-        const { fast_mode: _fastMode, ...rest } = this.config.providerOptions;
-        this.config.providerOptions = rest;
-        this.pushEvent({ type: "options_changed", provider: "claude", patch: { fast_mode: null } });
+        // Fast cannot run on this model. Reporting it off rather than removed keeps a
+        // `config.json` default of `fast_mode: true` from filling it back in.
+        this.config.providerOptions = { ...this.config.providerOptions, fast_mode: false };
+        this.pushEvent({
+          type: "options_changed",
+          provider: "claude",
+          patch: { fast_mode: false },
+        });
       }
       this.cachedRuntimeInfo = null;
     }
