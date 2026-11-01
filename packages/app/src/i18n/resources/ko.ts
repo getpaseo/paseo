@@ -120,11 +120,11 @@ export const ko: TranslationResources = {
       desktop: "에이전트에게 메시지를 보내거나 @files 태그, /commands, /skills를 사용하세요",
       mobile: "메시지, @files, /commands",
       fallback: "메시지...",
-      terminal: "Prompt",
+      terminal: "프롬프트 입력",
     },
     input: {
       accessibilityLabel: "에이전트에게 메시지...",
-      terminalAccessibilityLabel: "Terminal prompt",
+      terminalAccessibilityLabel: "터미널 프롬프트",
       fullscreen: "전체 화면",
       exitFullscreen: "전체 화면 종료",
       focusHint: "{{shortcut}}로 포커스",
@@ -403,7 +403,7 @@ export const ko: TranslationResources = {
     },
   },
   importSession: {
-    chooseHostTitle: en.importSession.chooseHostTitle,
+    chooseHostTitle: "호스트에서 가져오기",
     title: "세션 가져오기",
     searchPlaceholder: "세션 검색...",
     scope: {
@@ -713,7 +713,7 @@ export const ko: TranslationResources = {
         closeWithoutSaving: "저장하지 않고 닫기",
         closePaneTitle: "창을 닫으시겠어요?",
         bulkUnsaved:
-          "{{count}} 탭에 저장되지 않은 변경 사항이 있습니다. 종료하면 해당 초안이 삭제됩니다.",
+          "탭 {{count}}개에 저장되지 않은 변경 사항이 있습니다. 탭을 닫으면 해당 초안이 삭제됩니다.",
         closeTerminalTitle: "터미널을 닫을까요?",
         closeTerminalMessage: "이 터미널에서 실행 중인 프로세스가 즉시 중지됩니다.",
         archiveRunningAgentTitle: "실행 중인 에이전트를 보관할까요?",
@@ -1369,11 +1369,11 @@ export const ko: TranslationResources = {
       selectModel: "모델을 선택하세요",
     },
     tooltips: {
-      project: "Choose the project",
-      host: "Choose the host",
-      isolation: "Choose the isolation level",
+      project: "프로젝트 선택",
+      host: "호스트 선택",
+      isolation: "격리 수준 선택",
       startingRef: "시작 위치를 선택하세요",
-      launch: "Choose what to launch",
+      launch: "실행할 항목 선택",
     },
     refPicker: {
       startingRef: "시작 ref",
@@ -1384,13 +1384,13 @@ export const ko: TranslationResources = {
       title: "시작 위치",
     },
     launch: {
-      title: "What to launch",
-      chat: "Chat",
-      terminal: "Terminal",
-      manageProfiles: "Manage profiles",
-      submit: "Launch",
-      promptPlaceholder: "Prompt {{name}}",
-      commandPlaceholder: "Run a command, or leave empty for a blank terminal",
+      title: "실행할 항목",
+      chat: "채팅",
+      terminal: "터미널",
+      manageProfiles: "프로필 관리",
+      submit: "실행",
+      promptPlaceholder: "{{name}}에게 프롬프트 입력",
+      commandPlaceholder: "명령을 실행하거나 비워 두어 빈 터미널을 여세요",
     },
   },
   desktop: {
@@ -1405,7 +1405,23 @@ export const ko: TranslationResources = {
       detail: "로컬 데몬을 중지하는 중입니다.",
     },
     daemon: {
-      lifecycle: en.desktop.daemon.lifecycle,
+      lifecycle: {
+        owned: "이 데스크톱 세션에서 시작됨",
+        attached: "기존 데몬에 연결됨",
+        ownedMessage: "이 데몬은 현재 데스크톱 세션에서 시작되었습니다.",
+        attachedMessage: "이 데몬은 현재 데스크톱 세션에서 시작되지 않았습니다.",
+        stopTitle: "로컬 데몬을 중지할까요?",
+        stopMessage:
+          "{{ownership}}\n홈: {{home}}\n슈퍼바이저 PID: {{pid}}\n실행 중인 에이전트 작업이 중단됩니다.",
+        stop: "데몬 중지",
+        stopping: "중지 중…",
+        stopFailed: "데몬을 중지할 수 없습니다",
+        pauseAttached: "자동 데몬 관리를 일시 중지할까요? 연결된 데몬은 계속 실행됩니다.",
+        pause: "관리 일시 중지",
+        workerUpdated: "워커가 {{version}} 버전으로 업데이트됨",
+        supervisorRefresh:
+          "실행 중인 슈퍼바이저는 기존 코드를 유지합니다. 슈퍼바이저를 갱신하려면 런처에서 중지한 후 다시 시작해야 합니다.",
+      },
       title: "데몬",
       status: {
         title: "상태",
@@ -1461,17 +1477,14 @@ export const ko: TranslationResources = {
         upToDate: "앱이 최신 상태입니다.",
         upToDateWithLastChecked: "최신 상태입니다. 마지막 확인: {{time}}.",
         pending: "업데이트가 준비되면 알려드리겠습니다.",
-        pendingWithLastChecked:
-          "업데이트가 준비되면 알려드리겠습니다. {{time}}에서 마지막으로 확인했습니다.",
+        pendingWithLastChecked: "업데이트가 준비되면 알려드리겠습니다. 마지막 확인: {{time}}.",
         pendingWithVersion: "업데이트 발견: {{version}}. 다운로드 중...",
         pendingWithVersionAndLastChecked:
-          "업데이트 발견: {{version}}. 다운로드 중... {{time}}에서 마지막으로 확인했습니다.",
+          "업데이트 발견: {{version}}. 다운로드 중... 마지막 확인: {{time}}.",
         availableWithVersion: "업데이트 준비됨: {{version}}",
-        availableWithVersionAndLastChecked:
-          "업데이트 준비됨: {{version}}. {{time}}에서 마지막으로 확인했습니다.",
+        availableWithVersionAndLastChecked: "업데이트 준비됨: {{version}}. 마지막 확인: {{time}}.",
         available: "설치할 앱 업데이트가 준비되었습니다.",
-        availableWithLastChecked:
-          "앱 업데이트를 설치할 준비가 되었습니다. {{time}}에서 마지막으로 확인했습니다.",
+        availableWithLastChecked: "앱 업데이트를 설치할 준비가 되었습니다. 마지막 확인: {{time}}.",
         installed: "앱 업데이트가 설치되었습니다. 재시작이 필요합니다.",
         failed: "앱을 업데이트하지 못했습니다.",
         idle: "업데이트 상태를 아직 확인하지 않았습니다.",
@@ -1979,7 +1992,7 @@ export const ko: TranslationResources = {
         preview: "미리보기",
         source: "소스",
         fileSize: "파일 크기 {{size}}",
-        lines: "{{count}} 라인",
+        lines: "{{count}}줄",
         editorStatus: "편집기 상태 {{status}}",
         unsavedChanges: "저장되지 않은 변경사항",
         saving: "저장 중...",
@@ -2036,12 +2049,12 @@ export const ko: TranslationResources = {
   toolCallGroup: {
     thought: "생각함",
     editedFiles: {
-      one: "{{count}} 파일을 편집했습니다.",
-      other: "{{count}} 파일을 편집했습니다.",
+      one: "파일 {{count}}개 편집",
+      other: "파일 {{count}}개 편집",
     },
     commands: {
-      one: "{{count}} 명령을 실행했습니다.",
-      other: "{{count}} 명령을 실행했습니다.",
+      one: "명령 {{count}}개 실행",
+      other: "명령 {{count}}개 실행",
     },
     readFiles: {
       one: "파일 {{count}}개 읽음",
@@ -2209,7 +2222,43 @@ export const ko: TranslationResources = {
       diagnostics: "진단",
       about: "정보",
     },
-    layout: en.settings.layout,
+    layout: {
+      openInSidePane: {
+        title: "열리는 위치",
+        destinations: {
+          main: "메인 패널",
+          side: "사이드 패널",
+          explorer: "탐색기 사이드바",
+        },
+        sources: {
+          explorerFiles: {
+            label: "탐색기 사이드바에서 파일을 클릭할 때",
+            description: "탐색기에서 선택한 파일을 작업 화면 옆에 엽니다",
+          },
+          diffs: {
+            label: "탐색기 사이드바나 채팅에서 변경 사항을 클릭할 때",
+            description: "탐색기와 에이전트 대화의 변경 사항을 작업 화면 옆에 엽니다",
+          },
+          chatFiles: {
+            label: "에이전트 채팅에서 파일을 클릭할 때",
+            description: "파일 링크와 도구 호출 파일을 대화 옆에 엽니다",
+          },
+          diffFiles: {
+            label: "변경 사항에서 파일을 클릭할 때",
+            description: "변경 사항에서 선택한 소스 파일을 그 옆에 엽니다",
+          },
+          subagents: {
+            label: "에이전트 채팅에서 하위 에이전트를 클릭할 때",
+            description: "하위 에이전트를 상위 에이전트 옆에 엽니다",
+          },
+          pullRequests: {
+            label: "탐색기 사이드바에서 PR을 클릭할 때",
+            description: "PR 상세 정보를 '변경 사항' 패널 옆에 엽니다",
+          },
+          serviceUrls: { label: "스크립트의 서비스 URL을 클릭할 때" },
+        },
+      },
+    },
     editor: {
       title: "편집기",
       vimKeybindings: "Vim 키 바인딩",
@@ -2251,7 +2300,18 @@ export const ko: TranslationResources = {
       plugins: "플러그인",
       host: "개요",
     },
-    plugins: pluginSettings.ko,
+    plugins: {
+      ...pluginSettings.ko,
+      logs: {
+        action: "로그",
+        title: "로그: {{id}}",
+        loading: "로그 불러오는 중…",
+        refresh: "새로 고침",
+        refreshing: "새로 고치는 중…",
+        errorTitle: "플러그인 로그를 불러올 수 없습니다",
+        empty: "아직 플러그인 출력이 없습니다",
+      },
+    },
     metadataGeneration: {
       title: "메타데이터 생성",
       description:
@@ -2701,6 +2761,10 @@ export const ko: TranslationResources = {
       },
       skills: {
         ...en.settings.host.skills,
+        docs: "스킬",
+        openDocs: "스킬 문서 열기",
+        unavailable: "오케스트레이션 스킬을 관리하려면 이 호스트에 연결하세요",
+        unsupported: "오케스트레이션 스킬을 관리하려면 이 호스트를 업데이트하세요",
         sectionTitle: "오케스트레이션 스킬",
         title: "오케스트레이션 스킬",
         description: "CLI를 통해 에이전트가 오케스트레이션하도록 가르칩니다",
