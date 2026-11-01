@@ -407,34 +407,86 @@ async function seedWholeTurnHistory() {
   return agent;
 }
 
-test("loads complete long turns and preserves expansion while revealing older history", async ({
-  page,
-}) => {
+async function expectInitialFillIsConcealed(page: Page) {
+  await expect(page.getByTestId("agent-initial-fill")).toBeVisible();
+  await expect(page.getByTestId("agent-chat-scroll")).toHaveCSS("opacity", "0");
+}
+
+async function expectFilledChatAtBottom(page: Page) {
+  await expect(page.getByTestId("agent-initial-fill")).toBeHidden();
+  const chat = page.getByTestId("agent-chat-scroll");
+  await expect(chat).toHaveCSS("opacity", "1");
+  await expect
+    .poll(() =>
+      chat.evaluate((element) => ({
+        hasOverflow: element.scrollHeight > element.clientHeight,
+        atBottom: Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop) <= 2,
+      })),
+    )
+    .toEqual({ hasOverflow: true, atBottom: true });
+}
+
+test("fills collapsed history before revealing a fresh chat", async ({ page }) => {
   test.setTimeout(120_000);
+  await page.setViewportSize({ width: 1280, height: 1000 });
   await useChatDisplay(page, "collapseTurns");
   const agent = await seedWholeTurnHistory();
   try {
     const history = await holdOlderHistoryPages(page, agent);
     await openAgentRoute(page, agent);
+    await history.expectRequestedPages(1);
+    await expectInitialFillIsConcealed(page);
+    history.releasePage(1);
+    await history.expectRequestedPages(2);
+    await expectInitialFillIsConcealed(page);
+    history.releasePage(2);
+    await expectFilledChatAtBottom(page);
+    await page.setViewportSize({ width: 1280, height: 8000 });
+    await history.expectRequestedPages(3);
+    await expect(page.getByTestId("agent-chat-scroll")).toHaveCSS("opacity", "1");
+    await expect(page.getByTestId("agent-initial-fill")).toBeHidden();
+    history.releasePage(3);
+    await history.expectSettledWithRequestedPages(3);
+    history.expectNoRepeatedEntries();
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("loads complete long turns and preserves expansion while revealing older history", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await useChatDisplay(page, "collapseTurns");
+  const agent = await seedWholeTurnHistory();
+  try {
+    const history = await holdOlderHistoryPages(page, agent);
+    await openAgentRoute(page, agent);
+    await history.expectRequestedPages(1);
+    history.releasePage(1);
+    await history.expectRequestedPages(2);
+    history.releasePage(2);
+    await expectFilledChatAtBottom(page);
     await expectComposerVisible(page);
     const latest = page
       .getByTestId("turn-summary")
       .getByRole("button", { name: "Ran 120 commands", exact: true });
     await expect(latest).toBeVisible();
-    await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
-    await latest.click();
-    await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(120);
-    await userScrollsTimelineToHistoryStart(page);
-    await history.expectRequestedPages(1);
-    history.releasePage(1);
     await expect(
       page
         .getByTestId("turn-summary")
         .getByRole("button", { name: "Ran 60 commands", exact: true }),
     ).toBeVisible();
+    await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
+    await latest.click();
+    await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(120);
+    await userScrollsTimelineToHistoryStart(page);
+    await history.expectRequestedPages(3);
+    history.releasePage(3);
+    await page.getByTestId("scroll-to-bottom-button").click();
     await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(120);
     history.expectNoRepeatedEntries();
-    await latest.scrollIntoViewIfNeeded();
     await latest.click();
     await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
   } finally {

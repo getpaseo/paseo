@@ -1022,6 +1022,10 @@ function ChatAgentContent({
       effectiveAgent={effectiveAgent}
       routeBottomAnchorRequest={routeBottomAnchorRequest}
       hasAppliedAuthoritativeHistory={hasAppliedAuthoritativeHistory}
+      shouldHoldInitialFill={
+        routeBottomAnchorRequest?.reason === "initial-entry" && replicaTimelineStatus !== "painted"
+      }
+      hasCachedHistory={replicaTimelineStatus === "painted"}
       toastApi={toastApi}
       toast={toastState}
       dismiss={dismissToast}
@@ -1052,6 +1056,8 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   effectiveAgent,
   routeBottomAnchorRequest,
   hasAppliedAuthoritativeHistory,
+  shouldHoldInitialFill,
+  hasCachedHistory,
   toastApi,
   toast,
   dismiss,
@@ -1078,6 +1084,8 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   effectiveAgent: AgentScreenAgent;
   routeBottomAnchorRequest: RouteBottomAnchorRequest;
   hasAppliedAuthoritativeHistory: boolean;
+  shouldHoldInitialFill: boolean;
+  hasCachedHistory: boolean;
   toastApi: ToastApi;
   toast: ToastState | null;
   dismiss: () => void;
@@ -1204,6 +1212,8 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
           agent={effectiveAgent}
           routeBottomAnchorRequest={routeBottomAnchorRequest}
           hasAppliedAuthoritativeHistory={hasAppliedAuthoritativeHistory}
+          isInitialHistoryLoading={shouldHoldInitialFill && !showHistorySyncError}
+          revealInitialHistory={hasCachedHistory || showHistorySyncError}
           hasActiveComposer={hasActiveComposer}
           hasVisibleAgentTracks={hasVisibleAgentTracks}
           toast={toastApi}
@@ -1372,6 +1382,8 @@ const AgentStreamSection = memo(function AgentStreamSection({
   agent,
   routeBottomAnchorRequest,
   hasAppliedAuthoritativeHistory,
+  isInitialHistoryLoading,
+  revealInitialHistory,
   hasActiveComposer,
   hasVisibleAgentTracks,
   toast,
@@ -1384,6 +1396,8 @@ const AgentStreamSection = memo(function AgentStreamSection({
   agent: AgentScreenAgent;
   routeBottomAnchorRequest: RouteBottomAnchorRequest;
   hasAppliedAuthoritativeHistory: boolean;
+  isInitialHistoryLoading: boolean;
+  revealInitialHistory: boolean;
   hasActiveComposer: boolean;
   hasVisibleAgentTracks: boolean;
   toast: ReturnType<typeof useToastHost>["api"];
@@ -1452,6 +1466,8 @@ const AgentStreamSection = memo(function AgentStreamSection({
       pendingPermissions={pendingPermissions}
       routeBottomAnchorRequest={routeBottomAnchorRequest}
       isAuthoritativeHistoryReady={hasAppliedAuthoritativeHistory}
+      isInitialHistoryLoading={isInitialHistoryLoading}
+      revealInitialHistory={revealInitialHistory}
       bottomOverlayTailClearance={bottomOverlayTailClearance}
       bottomOverlayControlClearance={bottomOverlayControlClearance}
       toast={toast}
