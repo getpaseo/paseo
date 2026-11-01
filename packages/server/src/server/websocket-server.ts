@@ -979,7 +979,7 @@ export class VoiceAssistantWebSocketServer {
   ): Promise<void> {
     // Header validation is asynchronous. Buffer frames until the socket has a
     // pending hello handler so an eager client cannot lose its first message.
-    ws.pause();
+    ws.pause?.();
     try {
       // COMPAT(headerAuth): added in v0.9.1, remove after 2027-03-24.
       const protocol = extractWsBearerProtocol(request.headers["sec-websocket-protocol"]);
@@ -1008,7 +1008,7 @@ export class VoiceAssistantWebSocketServer {
         hasHeaderCredential ? OWNER_SESSION_ADMISSION : null,
       );
     } finally {
-      ws.resume();
+      ws.resume?.();
     }
   }
 
