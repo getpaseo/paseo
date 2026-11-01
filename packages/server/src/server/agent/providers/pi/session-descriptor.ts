@@ -29,6 +29,7 @@ interface PiSessionDescriptorOptions extends ListImportableSessionsOptions {
   runtimeSettings?: ProviderRuntimeSettings;
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
+  reader?: PiSessionFileReader;
 }
 
 interface PiSessionHeader {
@@ -71,6 +72,12 @@ interface PiSessionFileReader {
   readTail(filePath: string): Promise<string>;
 }
 
+interface PiSessionDescriptorReadOptions {
+  filePath: string;
+  reader?: PiSessionFileReader;
+  matchesCwd?: ((cwd: string) => boolean) | null;
+}
+
 const sessionFileReader: PiSessionFileReader = { readHead: readHeadChunk, readTail };
 
 export interface PiImportSessionConfig {
@@ -80,7 +87,6 @@ export interface PiImportSessionConfig {
 
 export async function listPiImportableSessions(
   options: PiSessionDescriptorOptions = {},
-  reader: PiSessionFileReader = sessionFileReader,
 ): Promise<ImportableProviderSession[]> {
   const sessionsDir = await resolvePiSessionsDir(options);
   const files = await walkJsonlFiles(sessionsDir);
@@ -96,7 +102,11 @@ export async function listPiImportableSessions(
   const sessions: ImportableProviderSession[] = [];
 
   for (const entry of candidates) {
-    const session = await readPiImportableSession(entry.file, reader, matchesCwd);
+    const session = await readPiImportableSession({
+      filePath: entry.file,
+      reader: options.reader,
+      matchesCwd,
+    });
     if (!session) continue;
     sessions.push(session);
     if (sessions.length >= limit) {
@@ -163,7 +173,7 @@ async function readSessionFileStart(filePath: string, maxBytes: number): Promise
 }
 
 export async function readPiImportSessionConfig(filePath: string): Promise<PiImportSessionConfig> {
-  const descriptor = await readPiSessionDescriptor(filePath);
+  const descriptor = await readPiSessionDescriptor({ filePath });
   if (!descriptor) return {};
   return toPiImportSessionConfig(descriptor);
 }
@@ -277,15 +287,13 @@ async function rankSessionFilesByMtime(files: string[]): Promise<RankedSessionFi
 }
 
 async function readPiImportableSession(
-  filePath: string,
-  reader: PiSessionFileReader,
-  matchesCwd: ((cwd: string) => boolean) | null,
+  options: PiSessionDescriptorReadOptions,
 ): Promise<ImportableProviderSession | null> {
-  const descriptor = await readPiSessionDescriptor(filePath, reader, matchesCwd);
+  const descriptor = await readPiSessionDescriptor(options);
   if (!descriptor) return null;
 
   return {
-    providerHandleId: filePath,
+    providerHandleId: options.filePath,
     cwd: descriptor.cwd,
     title: descriptor.title,
     firstPromptPreview: normalizePromptPreview(descriptor.firstUserMessage),
@@ -296,11 +304,11 @@ async function readPiImportableSession(
   };
 }
 
-async function readPiSessionDescriptor(
-  filePath: string,
-  reader: PiSessionFileReader = sessionFileReader,
-  matchesCwd?: ((cwd: string) => boolean) | null,
-): Promise<PiSessionDescriptor | null> {
+async function readPiSessionDescriptor({
+  filePath,
+  reader = sessionFileReader,
+  matchesCwd,
+}: PiSessionDescriptorReadOptions): Promise<PiSessionDescriptor | null> {
   const headChunk = await reader.readHead(filePath);
   if (!headChunk) return null;
   const header = parseSessionHeader(headChunk.split(/\r?\n/u, 1)[0]?.trim() ?? "");

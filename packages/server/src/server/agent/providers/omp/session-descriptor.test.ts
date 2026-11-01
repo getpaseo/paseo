@@ -325,10 +325,12 @@ test("cwd filtering does not read unrelated session tails", async () => {
         return (await readFile(file)).subarray(-256 * 1024).toString("utf8");
       },
     };
-    const sessions = await listOmpImportableSessions(
-      { sessionDir: sessionsDir, cwd, limit: 1 },
+    const sessions = await listOmpImportableSessions({
+      sessionDir: sessionsDir,
+      cwd,
+      limit: 1,
       reader,
-    );
+    });
     expect(sessions).toEqual([
       expect.objectContaining({
         providerHandleId: requested,

@@ -29,6 +29,7 @@ export interface OmpSessionDescriptorOptions extends ListImportableSessionsOptio
   runtimeSettings?: ProviderRuntimeSettings;
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
+  reader?: OmpSessionFileReader;
 }
 
 interface OmpSessionHeader {
@@ -71,6 +72,12 @@ interface OmpSessionFileReader {
   readTail(filePath: string): Promise<string>;
 }
 
+interface OmpSessionDescriptorReadOptions {
+  filePath: string;
+  reader?: OmpSessionFileReader;
+  matchesCwd?: ((cwd: string) => boolean) | null;
+}
+
 const sessionFileReader: OmpSessionFileReader = { readHead: readHeadChunk, readTail };
 
 export interface OmpImportSessionConfig {
@@ -80,7 +87,6 @@ export interface OmpImportSessionConfig {
 
 export async function listOmpImportableSessions(
   options: OmpSessionDescriptorOptions = {},
-  reader: OmpSessionFileReader = sessionFileReader,
 ): Promise<ImportableProviderSession[]> {
   const sessionsDir = await resolveOmpSessionsDir(options);
   const files = await walkJsonlFiles(sessionsDir);
@@ -96,7 +102,11 @@ export async function listOmpImportableSessions(
   const sessions: ImportableProviderSession[] = [];
 
   for (const entry of candidates) {
-    const session = await readOmpImportableSession(entry.file, reader, matchesCwd);
+    const session = await readOmpImportableSession({
+      filePath: entry.file,
+      reader: options.reader,
+      matchesCwd,
+    });
     if (!session) continue;
     sessions.push(session);
     if (sessions.length >= limit) {
@@ -123,7 +133,7 @@ export async function readOmpImportSessionConfig(
 ): Promise<OmpImportSessionConfig> {
   const filePath = await resolveOmpSessionFile(handle, options);
   if (!filePath) return {};
-  const descriptor = await readOmpSessionDescriptor(filePath);
+  const descriptor = await readOmpSessionDescriptor({ filePath });
   if (!descriptor) return {};
   return toOmpImportSessionConfig(descriptor);
 }
@@ -310,15 +320,13 @@ async function rankSessionFilesByMtime(files: string[]): Promise<RankedSessionFi
 }
 
 async function readOmpImportableSession(
-  filePath: string,
-  reader: OmpSessionFileReader,
-  matchesCwd: ((cwd: string) => boolean) | null,
+  options: OmpSessionDescriptorReadOptions,
 ): Promise<ImportableProviderSession | null> {
-  const descriptor = await readOmpSessionDescriptor(filePath, reader, matchesCwd);
+  const descriptor = await readOmpSessionDescriptor(options);
   if (!descriptor) return null;
 
   return {
-    providerHandleId: filePath,
+    providerHandleId: options.filePath,
     cwd: descriptor.cwd,
     title: descriptor.title,
     firstPromptPreview: normalizePromptPreview(descriptor.firstUserMessage),
@@ -329,11 +337,11 @@ async function readOmpImportableSession(
   };
 }
 
-async function readOmpSessionDescriptor(
-  filePath: string,
-  reader: OmpSessionFileReader = sessionFileReader,
-  matchesCwd?: ((cwd: string) => boolean) | null,
-): Promise<OmpSessionDescriptor | null> {
+async function readOmpSessionDescriptor({
+  filePath,
+  reader = sessionFileReader,
+  matchesCwd,
+}: OmpSessionDescriptorReadOptions): Promise<OmpSessionDescriptor | null> {
   // OMP may emit title/session_info lines before the session header.
   const headChunk = await reader.readHead(filePath);
   if (!headChunk) return null;
