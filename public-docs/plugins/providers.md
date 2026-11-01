@@ -91,6 +91,12 @@ native session. This policy does not grant permission to stop the owning service
 Global startup-recovery disablement, archived workspaces, internal agents and
 daemon-owned agents retain their existing exclusions.
 
+When an approval is answered in another native client, emit
+`session.permission_resolved` with its optional `resolution` containing the actual
+answer. Hosts advertising `permission.resolution` preserve that outcome instead
+of inferring it from a Paseo-side reply. Native outcomes take precedence when two
+clients race. Omitted outcomes retain the existing provider-resolution behavior.
+
 ## Launch the provider CLI
 
 Use `spawnProcess` and `execCommand` from `@getpaseo/plugin/server` for process transports

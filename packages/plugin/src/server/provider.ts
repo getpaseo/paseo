@@ -21,6 +21,7 @@ export const PROVIDER_CAPABILITIES = [
   "session.subsession",
   "session.unarchive",
   "permission",
+  "permission.resolution",
   "permission.tool_policy",
   "timeline.plugin",
 ] as const;
@@ -602,7 +603,12 @@ export type ProviderEvent =
   | { type: "session.config"; sessionId: string; config: ProviderConfigState }
   | { type: "session.commands"; sessionId: string; commands: ProviderCommand[] }
   | { type: "session.permission"; sessionId: string; request: ProviderPermissionRequest }
-  | { type: "session.permission_resolved"; sessionId: string; permissionId: string }
+  | {
+      type: "session.permission_resolved";
+      sessionId: string;
+      permissionId: string;
+      resolution?: ProviderPermissionResponse;
+    }
   | { type: "session.notice"; sessionId: string; notice: ProviderNotice }
   | { type: "timeline.item"; sessionId: string; item: ProviderTimelineItem; timestamp?: string };
 
@@ -1422,6 +1428,7 @@ export const ProviderEventSchema: z.ZodType<ProviderEvent> = z.discriminatedUnio
       type: z.literal("session.permission_resolved"),
       sessionId: idSchema,
       permissionId: idSchema,
+      resolution: providerPermissionResponseSchema.optional(),
     })
     .strip(),
   z

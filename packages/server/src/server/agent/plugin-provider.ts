@@ -1524,10 +1524,11 @@ class PluginAgentSession implements AgentSession {
     event: Extract<ProviderEvent, { type: "session.permission_resolved" }>,
   ): AgentStreamEvent {
     this.pendingPermissions.delete(event.permissionId);
-    const resolution = this.permissionResponses.get(event.permissionId) ?? {
-      behavior: "deny" as const,
-      message: "Resolved by provider",
-    };
+    const resolution = event.resolution ??
+      this.permissionResponses.get(event.permissionId) ?? {
+        behavior: "deny" as const,
+        message: "Resolved by provider",
+      };
     this.permissionResponses.delete(event.permissionId);
     return {
       type: "permission_resolved",

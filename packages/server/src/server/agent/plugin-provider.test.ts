@@ -425,6 +425,38 @@ describe("PluginAgentClientRegistry", () => {
     await plugins.shutdown();
   });
 
+  test("keeps an externally resolved approval instead of inventing a denial", async () => {
+    const harness = createProviderHarness();
+    const plugins = new PluginAgentClientRegistry(createTestLogger());
+    plugins.replace([harness.registration]);
+    const client = plugins.clients()["plugin-direct"];
+    const session = await client.createSession({ provider: "plugin-direct", cwd: tmpdir() });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    harness.emit({
+      type: "session.permission",
+      sessionId: harness.inputs.find((input) => input.type === "session.open")!.sessionId,
+      request: { id: "external-approval", name: "shell", kind: "tool" },
+    });
+    harness.emit({
+      type: "session.permission_resolved",
+      sessionId: harness.inputs.find((input) => input.type === "session.open")!.sessionId,
+      permissionId: "external-approval",
+      resolution: { behavior: "allow", selectedActionId: "once" },
+    });
+    expect(events.filter((event) => event.type === "permission_resolved")).toEqual([
+      {
+        type: "permission_resolved",
+        provider: "plugin-direct",
+        requestId: "external-approval",
+        resolution: { behavior: "allow", selectedActionId: "once" },
+        turnId: undefined,
+      },
+    ]);
+    await session.close();
+    await plugins.shutdown();
+  });
+
   test("stores only agent options while the plugin receives merged defaults", async () => {
     const logger = createTestLogger();
     const harness = createProviderHarness();
