@@ -67,7 +67,8 @@ export function exposeFeatureValuesToHook<
 
 export function foldHookFeatureValues<
   T extends { providerOptions?: ProviderOptions | null; featureValues?: Record<string, unknown> },
->(returned: T, sent: T): Omit<T, "featureValues"> {
+>(input: { returned: T; sent: T }): Omit<T, "featureValues"> {
+  const { returned, sent } = input;
   const { featureValues, ...rest } = returned;
   const before = sent.featureValues;
   if (!before) {
@@ -104,11 +105,12 @@ interface ProfileOptionFields {
  * moved to another provider starts from no options, because the old provider's keys mean
  * nothing to the new one.
  */
-export function foldProfileFeatureValues<T extends ProfileOptionFields>(
-  profile: T,
-  stored: ProfileOptionFields | undefined,
-  source: "stored" | "client write" = "stored",
-): Omit<T, "featureValues"> {
+export function foldProfileFeatureValues<T extends ProfileOptionFields>(input: {
+  profile: T;
+  stored: ProfileOptionFields | undefined;
+  source: "stored" | "client write";
+}): Omit<T, "featureValues"> {
+  const { profile, stored, source } = input;
   const { featureValues, ...rest } = profile;
   if (source === "stored") {
     return featureValues ? { ...rest, options: { ...featureValues, ...rest.options } } : rest;

@@ -1377,7 +1377,10 @@ export class AgentManager {
       });
       // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. A plugin written
       // against the previous SDK edits `config.featureValues`.
-      config = { ...foldHookFeatureValues(request.config, sent), internal: config.internal };
+      config = {
+        ...foldHookFeatureValues({ returned: request.config, sent }),
+        internal: config.internal,
+      };
       options = { ...options, env: request.env };
     }
     await this.deleteAgentState(resolvedAgentId);
