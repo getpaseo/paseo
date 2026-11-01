@@ -63,6 +63,10 @@ function pause(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 20));
 }
 
+function controlKey(control: { key: string }): string {
+  return control.key;
+}
+
 function lastConfigure(inputs: ProviderInput[]): ProviderInput | undefined {
   return inputs.findLast((input) => input.type === "session.configure");
 }
@@ -1009,7 +1013,9 @@ describe("PluginAgentClientRegistry", () => {
     await agent.session?.close();
   });
 
-  describe("settings", () => {
+  // The same contract holds for a plugin that reports `controls` and `providerOptions` and for one
+  // still reporting `settings`.
+  describe.each(["controls", "settings"] as const)("options of a plugin reporting %s", (shape) => {
     // A plugin that keeps `voice` on "direct" whatever it is asked, and takes `loud` as given.
     async function openStubbornVoiceSession(
       given: Record<string, boolean | string>,
@@ -1020,19 +1026,46 @@ describe("PluginAgentClientRegistry", () => {
     ) {
       const state = { voice: "direct", loud: false };
       let openedSessionId = "";
-      const settings = () => [
-        {
-          type: "select" as const,
-          id: "voice",
-          label: "Voice",
-          value: state.voice,
-          options: [
-            { label: "Direct", value: "direct" },
-            { label: "Other", value: "other" },
-          ],
-        },
-        { type: "toggle" as const, id: "loud", label: "Loud", value: state.loud },
-      ];
+      const reported = () =>
+        shape === "controls"
+          ? {
+              controls: [
+                {
+                  type: "select" as const,
+                  key: "voice",
+                  label: "Voice",
+                  icon: "Mic",
+                  defaultValue: "direct",
+                  choices: [
+                    { label: "Direct", value: "direct" },
+                    { label: "Other", value: "other" },
+                  ],
+                },
+                {
+                  type: "toggle" as const,
+                  key: "loud",
+                  label: "Loud",
+                  icon: "Volume2",
+                  defaultValue: false,
+                },
+              ],
+              providerOptions: { voice: state.voice, loud: state.loud },
+            }
+          : {
+              settings: [
+                {
+                  type: "select" as const,
+                  id: "voice",
+                  label: "Voice",
+                  value: state.voice,
+                  options: [
+                    { label: "Direct", value: "direct" },
+                    { label: "Other", value: "other" },
+                  ],
+                },
+                { type: "toggle" as const, id: "loud", label: "Loud", value: state.loud },
+              ],
+            };
       const emitConfig = (emit: (event: ProviderEvent) => void, sessionId: string) =>
         emit({
           type: "session.config",
@@ -1043,7 +1076,7 @@ describe("PluginAgentClientRegistry", () => {
             models: [{ id: "plugin-model", label: "Plugin model" }],
             modes: [{ id: "build", label: "Build" }],
             thinkingOptions: [],
-            settings: settings(),
+            ...reported(),
           },
         });
       const harness = createProviderHarness({
@@ -1064,7 +1097,7 @@ describe("PluginAgentClientRegistry", () => {
             return true;
           }
           if (input.type === "session.configure") {
-            const loud = input.changes.settings?.loud;
+            const loud = input.changes.providerOptions?.loud;
             if (typeof loud === "boolean") state.loud = loud;
             emitConfig(emit, input.sessionId);
             // A change that has taken effect but whose request is still pending.
@@ -1159,10 +1192,12 @@ describe("PluginAgentClientRegistry", () => {
       await session.close();
     });
 
-    test("settings the plugin opened with that nobody set are in the open patch", async () => {
+    test("options the plugin opened with that nobody set are in the open patch, unless they are the control's default", async () => {
       const { session, events } = await openStubbornVoiceSession({});
 
-      expect(session.openOptionsPatch).toEqual({ voice: "direct", loud: false });
+      expect(session.openOptionsPatch).toEqual(
+        shape === "controls" ? {} : { voice: "direct", loud: false },
+      );
       expect(eventsOfType(events, "options_changed")).toEqual([]);
       await session.close();
     });
@@ -1173,10 +1208,42 @@ describe("PluginAgentClientRegistry", () => {
       await session.applyOptions?.({ loud: true });
 
       const configure = lastConfigure(harness.inputs);
-      expect(configure).toMatchObject({ changes: { settings: { loud: true } } });
-      expect(
-        Object.keys((configure as { changes: { settings: object } }).changes.settings),
-      ).toEqual(["loud"]);
+      // Only a plugin that reports `settings` is also sent them.
+      expect((configure as { changes: object }).changes).toEqual(
+        shape === "settings"
+          ? { providerOptions: { loud: true }, settings: { loud: true } }
+          : { providerOptions: { loud: true } },
+      );
+      await session.close();
+    });
+
+    test("a removal reaches the plugin as null", async () => {
+      const { harness, session } = await openStubbornVoiceSession({});
+
+      const ended = await session.applyOptions?.({ loud: null });
+
+      expect(lastConfigure(harness.inputs)).toMatchObject({
+        changes: { providerOptions: { loud: null } },
+      });
+      // It went back to its default; only a plugin without a declared default pins that value.
+      expect(ended).toEqual(shape === "controls" ? {} : { loud: false });
+      await session.close();
+    });
+
+    test("draws a control from what the plugin reports, with its icon and default", async () => {
+      const { session } = await openStubbornVoiceSession({});
+
+      expect((session.controls ?? []).map(controlKey)).toEqual(["voice", "loud"]);
+      if (shape === "controls") {
+        expect(session.controls?.[0]).toMatchObject({
+          icon: "Mic",
+          defaultValue: "direct",
+          choices: [
+            { label: "Direct", value: "direct" },
+            { label: "Other", value: "other" },
+          ],
+        });
+      }
       await session.close();
     });
 
@@ -1192,8 +1259,10 @@ describe("PluginAgentClientRegistry", () => {
 
       // The value it opened with is not a change, so a whole profile can be applied.
       await session.applyOptions?.({ loud: true, launch_key: "original" });
-      const configure = lastConfigure(harness.inputs) as { changes: { settings: object } };
-      expect(Object.keys(configure.changes.settings)).toEqual(["loud"]);
+      const configure = lastConfigure(harness.inputs) as {
+        changes: { providerOptions: object };
+      };
+      expect(Object.keys(configure.changes.providerOptions)).toEqual(["loud"]);
       await session.close();
     });
 

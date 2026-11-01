@@ -409,7 +409,7 @@ process, credential, and other machine-local work under `server/`. A plugin with
 ### Providers
 
 Follow [Build a provider plugin](/docs/plugins/providers) for direct and ACP implementations,
-session lifecycle, composer settings, timeline renderers, testing, and distribution.
+session lifecycle, option controls, timeline renderers, testing, and distribution.
 
 Call `server.registerProvider()` with a `ProviderRegistration` from
 `@getpaseo/plugin/server/provider`. Its connection accepts inputs with `send()` and emits complete state
@@ -420,10 +420,12 @@ Use the single `session.prompt` input for messages, structured commands, steerin
 effects. Repeat `clientMessageId` on the live user timeline item and publish exactly one matching
 `session.prompt_result`. Publish provider-created children as sessions with `parentSessionId`.
 
-Provider settings are toggle/select descriptors that Paseo renders in the composer. Keep
-provider-private options under `ProviderSessionConfig.providerOptions` on `session.open`.
-This record includes configured defaults and per-agent overrides; validate and apply it in your
-provider. See [Provider options](/docs/sdk/provider-options) for configuration and merge semantics.
+Provider options are one record, `ProviderSessionConfig.providerOptions` on `session.open`. It
+includes configured defaults and per-agent overrides; validate and apply it in your provider. Report
+`controls` in `session.config` for the top-level keys that get a toggle or select in the composer,
+with the values the session runs under `providerOptions`. A running-session change arrives as
+`session.configure` with `changes.providerOptions`. See [Provider options](/docs/sdk/provider-options)
+for configuration and merge semantics.
 Host tools arrive as MCP servers in the complete
 session config.
 

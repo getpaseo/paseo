@@ -184,6 +184,26 @@ For paced timeline text, replace `useRevealedText(text, phase)` and the surround
 `<StreamedText text={text} phase={phase} style={style} />` from `/client/ui`.
 Use `SettingsSection` for plugin settings headings; `SettingsGroup` is deprecated.
 
+### Provider options in v0.15
+
+A provider plugin has one configuration record, `providerOptions`, and describes which keys get a
+composer control. A provider that still reports `settings` keeps working through v0.15: Paseo reads each
+setting `id` as an option key and each `value` as that option, and sends changes in both
+`changes.providerOptions` and `changes.settings`. Remove `settings` before the shim is deleted after
+2027-05-01.
+
+| Previous API                                   | Replacement                                                                |
+| ---------------------------------------------- | -------------------------------------------------------------------------- |
+| `session.config` `settings: ProviderSetting[]` | `controls: ProviderOptionControl[]` plus `providerOptions`                 |
+| Setting `id`                                   | Control `key`                                                              |
+| Setting `value`                                | `providerOptions[key]`; the control holds no value                         |
+| Select setting `options: { label, value }[]`   | Select control `choices: { value, label, description? }[]`                 |
+| Setting with no icon or default                | Control `icon` (a Lucide name) and `defaultValue`                          |
+| `session.configure` `changes.settings`         | `changes.providerOptions`; `null` returns a key to its default             |
+| `session.open` `config.settings`               | `config.providerOptions`                                                   |
+| `ProviderSetting` type                         | `ProviderOptionControl`                                                    |
+| `agent.create.before` `config.featureValues`   | `config.providerOptions`; a returned `featureValues` edit is still applied |
+
 ## 5. Recognize half-migration errors
 
 | Compiler or load error                                                                                                     | Meaning and fix                                                                                                           |
