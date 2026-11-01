@@ -1013,6 +1013,24 @@ function applyCanonicalForwardUnit(params: {
   };
 }
 
+function projectedPageCoversAssistant(
+  item: StreamItem,
+  units: TimelineUnit[],
+  epoch: string,
+): boolean {
+  if (item.kind !== "assistant_message" || item.messageId === undefined) return false;
+  const cursor = item.timelineCursor;
+  if (cursor?.epoch !== epoch) return false;
+  return units.some((unit) => {
+    const event = unit.event;
+    if (event.type !== "timeline" || event.item.type !== "assistant_message") return false;
+    if (event.item.messageId !== item.messageId) return false;
+    return unit.sourceSeqRanges.some(
+      (range) => range.startSeq <= cursor.seq && cursor.seq <= range.endSeq,
+    );
+  });
+}
+
 function applyAcceptedForwardTimelineUnits(params: {
   units: TimelineUnit[];
   epoch: string;
@@ -1020,9 +1038,14 @@ function applyAcceptedForwardTimelineUnits(params: {
   currentHead: StreamItem[];
   currentEndSeq: number | undefined;
 }): { tail: StreamItem[]; head: StreamItem[]; acknowledgedClientMessageIds: string[] } {
+  // Replay earlier reasoning before its assistant. A covered live suffix must not
+  // be flushed into history first, where its id would hide the completed reply.
+  const uncoveredHead = params.currentHead.filter(
+    (item) => !projectedPageCoversAssistant(item, params.units, params.epoch),
+  );
   const reconciled = reconcileOverlappingProjectedStreamItems({
     tail: params.currentTail,
-    head: params.currentHead,
+    head: uncoveredHead,
     units: params.units,
     epoch: params.epoch,
     currentEndSeq: params.currentEndSeq,
