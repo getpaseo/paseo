@@ -1,5 +1,6 @@
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { ACPProviderOptionsSchema } from "./acp-options.js";
+import { applyProviderOptionsPatch } from "../option-controls.js";
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
@@ -1757,6 +1758,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private configOptions: SessionConfigOption[] = [];
   /** How the opened session differs from the options it was given. */
   openOptionsPatch: Record<string, unknown> = {};
+  /** Selects the provider moves while Paseo is opening or applying options belong to that result, not to events. */
+  private optionsTransactionDepth = 0;
   private cachedCommands: AgentSlashCommand[] = [];
   /** When the last command batch arrived; null while nothing has been published. */
   private commandsUpdatedAt: number | null = null;
@@ -2397,19 +2400,31 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     });
   }
 
-  /** Applies only the options the patch sets; returns the selects that ended up different. */
+  /**
+   * Applies only the options the patch sets; returns the selects that ended up different.
+   * Provider notifications that arrive meanwhile are part of that result. When a write is
+   * rejected, what the provider moved is reported as an event, since nothing is stored.
+   */
   async applyOptions(options: ProviderOptions): Promise<Record<string, unknown>> {
+    ACPProviderOptionsSchema.parse(applyProviderOptionsPatch(this.config.providerOptions, options));
     const before = this.featureValues();
     const requested: Record<string, unknown> = {};
-    for (const [id, value] of Object.entries(options)) {
-      const featureOption = this.configFeatureOptions.find((candidate) => candidate.id === id);
-      if (!featureOption) continue;
-      // A removal asks for the select's empty choice; a provider without one rejects it.
-      requested[id] = value ?? "";
-      const option = findSelectConfigFeatureOption(this.configOptions, featureOption);
-      if (!option || requested[id] !== option.currentValue) {
-        await this.setConfigFeature(id, value);
-      }
+    try {
+      await this.inOptionsTransaction(async () => {
+        for (const [id, value] of Object.entries(options)) {
+          const featureOption = this.configFeatureOptions.find((candidate) => candidate.id === id);
+          if (!featureOption) continue;
+          // A removal asks for the select's empty choice; a provider without one rejects it.
+          requested[id] = value ?? "";
+          const option = findSelectConfigFeatureOption(this.configOptions, featureOption);
+          if (!option || requested[id] !== option.currentValue) {
+            await this.setConfigFeature(id, value);
+          }
+        }
+      });
+    } catch (error) {
+      this.reportFeatureChanges(before);
+      throw error;
     }
     // Auto Accept is Paseo's own setting, so it changes only once every write has been accepted.
     if (ACP_AUTO_ACCEPT_FEATURE_ID in options) {
@@ -2419,6 +2434,15 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       };
     }
     return this.featureDifferences({ ...before, ...requested });
+  }
+
+  private async inOptionsTransaction<T>(run: () => Promise<T>): Promise<T> {
+    this.optionsTransactionDepth += 1;
+    try {
+      return await run();
+    } finally {
+      this.optionsTransactionDepth -= 1;
+    }
   }
 
   /** The selects as the provider reports them now. */
@@ -2445,6 +2469,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   /** Reports the selects the provider moved on its own, compared with their values `before`. */
   private reportFeatureChanges(before: Record<string, string>): void {
+    if (this.optionsTransactionDepth > 0) return;
     const patch = this.featureDifferences(before);
     if (Object.keys(patch).length > 0) {
       this.pushEvent({ type: "options_changed", provider: this.provider, patch });
@@ -3041,7 +3066,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return this.modeIdTransformer ? this.modeIdTransformer(modeId) : modeId;
   }
 
-  private async applyConfiguredOverrides(): Promise<void> {
+  private applyConfiguredOverrides(): Promise<void> {
+    return this.inOptionsTransaction(() => this.writeConfiguredOverrides());
+  }
+
+  private async writeConfiguredOverrides(): Promise<void> {
     const configuredModeId = this.config.modeId;
     if (configuredModeId && configuredModeId !== this.currentMode) {
       const selection = resolveACPModeSelection({

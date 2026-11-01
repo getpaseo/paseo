@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   AgentSideConnection,
@@ -301,6 +301,7 @@ function selectConfigOption(
 function createCopilotSessionWithConfig(
   modeId?: string | null,
   providerOptions?: Record<string, unknown>,
+  defaultCommand: string[] = ["copilot", "--acp"],
 ): ACPAgentSession {
   return new ACPAgentSession(
     {
@@ -312,7 +313,7 @@ function createCopilotSessionWithConfig(
     {
       provider: "copilot",
       logger: createTestLogger(),
-      defaultCommand: ["copilot", "--acp"],
+      defaultCommand,
       defaultModes: COPILOT_MODES,
       sessionResponseTransformer: transformCopilotSessionResponse,
       configOptionsTransformer: transformCopilotConfigOptions,
@@ -1802,73 +1803,6 @@ describe("ACPAgentSession Zed parity", () => {
     ]);
   });
 
-  test("a select the provider opened differently from the options is the session's open patch, not an event", async () => {
-    const setSessionConfigOption = vi.fn(async () => ({
-      configOptions: [copilotAgentConfigOption("")],
-    }));
-    const session = createCopilotSessionWithConfig(null, { agent: "Probe Agent" });
-    const { internals } = prepareConfiguredOverrideSession(session, {
-      configOptions: [copilotAgentConfigOption("")],
-      connection: { setSessionConfigOption },
-    });
-    const emitted: AgentStreamEvent[] = [];
-    session.subscribe((event) => emitted.push(event));
-
-    await internals.applyConfiguredOverrides();
-
-    expect(session.openOptionsPatch).toEqual({ agent: "" });
-    expect(emitted.filter((event) => event.type === "options_changed")).toEqual([]);
-  });
-
-  test("applying a patch returns the selects that ended up different and emits nothing", async () => {
-    const setSessionConfigOption = vi.fn(async () => ({
-      configOptions: [copilotAgentConfigOption("")],
-    }));
-    const session = createCopilotSessionWithConfig();
-    prepareConfiguredOverrideSession(session, {
-      configOptions: [copilotAgentConfigOption("")],
-      connection: { setSessionConfigOption },
-    });
-    const emitted: AgentStreamEvent[] = [];
-    session.subscribe((event) => emitted.push(event));
-
-    await expect(session.applyOptions({ agent: "Probe Agent" })).resolves.toEqual({ agent: "" });
-    expect(emitted.filter((event) => event.type === "options_changed")).toEqual([]);
-  });
-
-  test("a removal writes the select's empty choice and returns nothing when that took", async () => {
-    const setSessionConfigOption = vi.fn(async () => ({
-      configOptions: [copilotAgentConfigOption("")],
-    }));
-    const session = createCopilotSessionWithConfig();
-    prepareConfiguredOverrideSession(session, {
-      configOptions: [copilotAgentConfigOption("Probe Agent")],
-      connection: { setSessionConfigOption },
-    });
-
-    await expect(session.applyOptions({ agent: null })).resolves.toEqual({});
-    expect(setSessionConfigOption).toHaveBeenCalledWith(expect.objectContaining({ value: "" }));
-  });
-
-  test("forwards a select the provider changes on its own", async () => {
-    const session = createCopilotSessionWithConfig();
-    prepareConfiguredOverrideSession(session, {
-      configOptions: [copilotAgentConfigOption("Probe Agent")],
-      connection: { setSessionConfigOption: vi.fn() },
-    });
-    const emitted: AgentStreamEvent[] = [];
-    session.subscribe((event) => emitted.push(event));
-
-    asInternals<ACPSessionInternals>(session).translateSessionUpdate({
-      sessionUpdate: "config_option_update",
-      configOptions: [copilotAgentConfigOption("")],
-    });
-
-    expect(emitted.filter((event) => event.type === "options_changed")).toEqual([
-      { type: "options_changed", provider: "copilot", patch: { agent: "" } },
-    ]);
-  });
-
   test("sets Copilot custom agent through ACP config options", async () => {
     const setSessionConfigOption = vi.fn(async () => ({
       configOptions: [copilotAgentConfigOption("Probe Agent")],
@@ -1890,6 +1824,130 @@ describe("ACPAgentSession Zed parity", () => {
       expect.objectContaining({ key: "auto_accept" }),
       expect.objectContaining({ key: "agent" }),
     ]);
+  });
+});
+
+describe("ACPAgentSession options against an ACP agent", () => {
+  const fakeAgentPath = fileURLToPath(new URL("./test-utils/fake-acp-agent.mjs", import.meta.url));
+  const sessions: ACPAgentSession[] = [];
+
+  afterEach(async () => {
+    await Promise.all(sessions.splice(0).map((session) => session.close()));
+  });
+
+  function thoughtOption(currentValue: string): SessionConfigOption {
+    return {
+      id: "thought",
+      name: "Thinking",
+      category: "thought_level",
+      type: "select",
+      currentValue,
+      options: [
+        { value: "low", name: "Low" },
+        { value: "high", name: "High" },
+      ],
+    };
+  }
+
+  async function openSession(input: {
+    agent?: string;
+    scenario?: Record<string, unknown>;
+    providerOptions?: Record<string, unknown>;
+  }): Promise<{ session: ACPAgentSession; optionEvents: AgentStreamEvent[] }> {
+    const scenario = {
+      options: [copilotAgentConfigOption(input.agent ?? ""), thoughtOption("low")],
+      ...input.scenario,
+    };
+    await mkdir("/tmp/paseo-acp-test", { recursive: true });
+    const session = createCopilotSessionWithConfig(null, input.providerOptions, [
+      process.execPath,
+      fakeAgentPath,
+      JSON.stringify(scenario),
+    ]);
+    sessions.push(session);
+    const optionEvents: AgentStreamEvent[] = [];
+    session.subscribe((event) => {
+      if (event.type === "options_changed") optionEvents.push(event);
+    });
+    await session.initializeNewSession();
+    return { session, optionEvents };
+  }
+
+  test("a select the agent opened differently from the options is the open patch, not an event", async () => {
+    const { session, optionEvents } = await openSession({
+      providerOptions: { agent: "Probe Agent" },
+      scenario: { answers: { agent: "" } },
+    });
+
+    expect(session.openOptionsPatch).toEqual({ agent: "" });
+    expect(optionEvents).toEqual([]);
+  });
+
+  test("a notification that arrives before the open write is answered is not an event", async () => {
+    const { session, optionEvents } = await openSession({
+      providerOptions: { agent: "Probe Agent" },
+      scenario: { onWrite: "notify-first" },
+    });
+
+    expect(session.openOptionsPatch).toEqual({});
+    expect(optionEvents).toEqual([]);
+  });
+
+  test("applying a patch returns the selects that ended up different and emits nothing", async () => {
+    const { session, optionEvents } = await openSession({ scenario: { answers: { agent: "" } } });
+
+    await expect(session.applyOptions({ agent: "Probe Agent" })).resolves.toEqual({ agent: "" });
+    expect(optionEvents).toEqual([]);
+  });
+
+  test("a notification that arrives before the apply write is answered is not an event", async () => {
+    const { session, optionEvents } = await openSession({ scenario: { onWrite: "notify-first" } });
+
+    await expect(session.applyOptions({ agent: "Probe Agent" })).resolves.toEqual({});
+    expect(optionEvents).toEqual([]);
+  });
+
+  test("a rejected apply reports what the agent moved before refusing, since nothing is stored", async () => {
+    const { session, optionEvents } = await openSession({
+      scenario: { onWrite: "notify-then-reject" },
+    });
+
+    await expect(session.applyOptions({ agent: "Probe Agent" })).rejects.toThrow(/write refused/);
+    expect(optionEvents).toEqual([
+      { type: "options_changed", provider: "copilot", patch: { agent: "Probe Agent" } },
+    ]);
+  });
+
+  test("a removal writes the select's empty choice and returns nothing when that took", async () => {
+    const { session, optionEvents } = await openSession({ agent: "Probe Agent" });
+
+    await expect(session.applyOptions({ agent: null })).resolves.toEqual({});
+    expect(optionEvents).toEqual([]);
+  });
+
+  test("rejects a live auto_accept the creation schema would reject, and writes nothing", async () => {
+    const { session, optionEvents } = await openSession({
+      scenario: { onWrite: "notify-then-reject" },
+    });
+
+    await expect(
+      session.applyOptions({ auto_accept: "yes", agent: "Probe Agent" }),
+    ).rejects.toThrow(/auto_accept/);
+    expect(optionEvents).toEqual([]);
+  });
+
+  test("forwards a select the agent changes on its own", async () => {
+    const { session, optionEvents } = await openSession({
+      scenario: { moves: { thought: { agent: "Probe Agent" } } },
+    });
+
+    await session.setThinkingOption("high");
+
+    await vi.waitFor(() =>
+      expect(optionEvents).toEqual([
+        { type: "options_changed", provider: "copilot", patch: { agent: "Probe Agent" } },
+      ]),
+    );
   });
 });
 
