@@ -152,7 +152,10 @@ export function foldProfileFeatureValues<T extends ProfileOptionFields>(input: {
   source: "stored" | "client write";
 }): Omit<T, "featureValues"> {
   const { profile, stored, source } = input;
-  const { featureValues, ...rest } = profile;
+  const { featureValues: legacyValues, ...rest } = profile;
+  // The app reads a profile's speed from its controls, so the old key is converted here for the
+  // provider id the profile names; a profile on a custom provider is converted when it is applied.
+  const featureValues = convertLegacyOptions({ provider: profile.provider, options: legacyValues });
   if (source === "stored") {
     return featureValues ? { ...rest, options: { ...featureValues, ...rest.options } } : rest;
   }

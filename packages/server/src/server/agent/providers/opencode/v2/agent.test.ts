@@ -88,6 +88,47 @@ describe("OpenCode v2 session lifecycle", () => {
     }
   });
 
+  test("overlapping auto_accept applies do not undo each other when one fails", async () => {
+    const harness = new V2Harness();
+    const permissions = [
+      { id: "approval", sessionID: "session", action: "shell", resources: ["pwd"] },
+    ];
+    harness.api.permission.list = async () => permissions;
+    let failFirst!: () => void;
+    let calls = 0;
+    harness.api.permission.reply = async () => {
+      calls += 1;
+      if (calls > 1) return;
+      await new Promise<void>((_, reject) => {
+        failFirst = () => reject(new Error("upstream refused"));
+      });
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    try {
+      const first = session.applyOptions?.({ auto_accept: true });
+      const second = session.applyOptions?.({ auto_accept: true });
+      await expect.poll(() => calls).toBe(1);
+      failFirst();
+
+      await expect(first).rejects.toThrow("upstream refused");
+      await expect(second).resolves.toBeUndefined();
+
+      // The accepted second apply is in force: the next permission is approved, not asked.
+      const next = { id: "next", sessionID: "session", action: "shell", resources: ["ls"] };
+      permissions.push(next);
+      harness.push({ id: "asked", created: 2, type: "permission.asked", data: next });
+      await expect.poll(() => calls).toBeGreaterThan(2);
+      const pendingIds = () => session.getPendingPermissions().map(({ id }) => id);
+      expect(pendingIds()).not.toContain("next");
+    } finally {
+      await session.close();
+    }
+  });
+
   test("rejects a live permission change the running session cannot apply", async () => {
     const harness = new V2Harness();
     const client = new OpenCodeV2AgentClient({

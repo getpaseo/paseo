@@ -873,6 +873,23 @@ describe("Codex app-server provider controls", () => {
       await runTurn(agentId, "default");
     });
 
+    test.each([CODEX_PROVIDER, "my-codex"])(
+      "draft controls for %s accept a legacy fast_mode",
+      async (providerId) => {
+        const { manager } = createLegacyFastHarness({}, providerId);
+
+        const draft = await manager.listDraftControls({
+          provider: providerId,
+          cwd: tmpdir(),
+          model: "gpt-5.4",
+          providerOptions: { fast_mode: true },
+        });
+
+        expect(draft.options).toEqual({ service_tier: "fast" });
+        expect(draft.controls).toContainEqual(expect.objectContaining({ key: "service_tier" }));
+      },
+    );
+
     test("an older client turning fast_mode off selects Normal", async () => {
       const { manager, create, shownSpeed, runTurn } = createLegacyFastHarness();
       const agentId = await create({ service_tier: "priority" });

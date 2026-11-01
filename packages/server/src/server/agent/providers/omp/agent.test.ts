@@ -767,6 +767,19 @@ describe("OMP agent client and session", () => {
     expect(omp.runtime().setFastModeRequests).toEqual([]);
   });
 
+  test("a replacement runtime starts with the Fast the session opened with, not the one it was asked for", async () => {
+    const omp = new OmpHarness();
+    // The fake runtime answers the open-time Fast request with Fast off.
+    await omp.start({ modeId: "full", providerOptions: { fast_mode: true } });
+    expect(omp.requireSession().openOptionsPatch).toEqual({ fast_mode: false });
+    omp.runtime().fastModeResult = { enabled: true, active: true };
+
+    await omp.setMode("ask");
+
+    expect(omp.runtimeLaunches()).toHaveLength(2);
+    expect(omp.runtime().setFastModeRequests).toEqual([]);
+  });
+
   test("restores Fast from the initial OMP state on create and resume", async () => {
     const created = new OmpHarness();
     await created.start({ providerOptions: { fast_mode: true } });
