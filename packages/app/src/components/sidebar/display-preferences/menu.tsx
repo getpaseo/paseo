@@ -18,6 +18,7 @@ import {
   Diff,
   EyeOff,
   Folder,
+  FolderGit2,
   GitBranch,
   GitPullRequest,
   Globe,
@@ -101,6 +102,7 @@ const TITLE_SOURCE_ICONS: Record<WorkspaceTitleSource, OptionIcon> = {
 const ROW_ITEM_ICONS: Record<SidebarRowItem, OptionIcon> = {
   branch: withUnistyles(GitBranch),
   project: withUnistyles(Folder),
+  repository: withUnistyles(FolderGit2),
   host: withUnistyles(Server),
   changeRequest: withUnistyles(GitPullRequest),
   services: withUnistyles(Globe),
@@ -137,6 +139,7 @@ const TITLE_SOURCE_LABEL_KEYS: Record<WorkspaceTitleSource, string> = {
 const ROW_ITEM_LABEL_KEYS: Record<SidebarRowItem, string> = {
   branch: "sidebar.display.show.branch",
   project: "sidebar.display.show.project",
+  repository: "sidebar.display.show.repository",
   host: "sidebar.display.show.host",
   changeRequest: "sidebar.display.show.changeRequest",
   services: "sidebar.display.show.services",

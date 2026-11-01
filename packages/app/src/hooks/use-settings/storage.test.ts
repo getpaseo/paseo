@@ -142,6 +142,35 @@ describe("loadAppSettingsFromStorage", () => {
     expect((await loadAppSettingsFromStorage(deps)).sidebarRowItems.services).toBe(true);
   });
 
+  it("hides the repository row item when an old blob omits it", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          contentFontSize: 16,
+          sidebarRowItems: { host: false },
+        }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sidebarRowItems.host).toBe(false);
+    expect(result.sidebarRowItems.repository).toBe(false);
+  });
+
+  it("keeps an opted-in repository row item across save and load", async () => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+
+    await saveAppSettings({
+      queryClient,
+      updates: { sidebarRowItems: { ...DEFAULT_SIDEBAR_ROW_ITEMS, repository: true } },
+      deps,
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).sidebarRowItems.repository).toBe(true);
+  });
+
   it("keeps an interrupt the user picked after the migration ran", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({

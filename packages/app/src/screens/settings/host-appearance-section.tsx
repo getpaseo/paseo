@@ -232,6 +232,7 @@ function BadgePreview({
       <WorkspaceMetaRow
         currentBranch={null}
         projectName={null}
+        repositoryName={null}
         hostBadge={hostBadge}
         prHint={null}
         serviceSummary={null}
