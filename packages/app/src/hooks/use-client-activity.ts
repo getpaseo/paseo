@@ -4,6 +4,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { getIsElectron, isWeb, isNative } from "@/constants/platform";
 import { readDesktopSystemIdleTimeMs } from "@/desktop/electron/idle";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
+import { getIsAppActivelyVisible } from "@/utils/app-visibility";
 import {
   type ClientActivityTracker,
   createClientActivityTracker,
@@ -40,7 +41,7 @@ export function useClientActivity({
       deviceType: isWeb ? "web" : "mobile",
       initialFocusedAgentId: focusedAgentId,
       initialFocusedTerminalId: focusedTerminalId,
-      initialAppVisible: AppState.currentState === "active",
+      initialAppVisible: getIsAppActivelyVisible(),
       now: () => Date.now(),
       onAppResumed: (awayMs) => onAppResumedRef.current?.(awayMs),
     });
@@ -50,8 +51,8 @@ export function useClientActivity({
   // Track app visibility via AppState (native).
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
-      tracker.notifyAppVisibility(nextState === "active");
-      tracker.sendHeartbeat();
+      const { changed } = tracker.notifyAppVisibility(getIsAppActivelyVisible(nextState));
+      if (!changed) tracker.sendHeartbeat();
     });
     return () => subscription.remove();
   }, [tracker]);
@@ -67,15 +68,17 @@ export function useClientActivity({
     };
 
     const handleVisibilityChange = () => {
-      const visible = document.visibilityState === "visible";
-      const { changed } = tracker.notifyAppVisibility(visible);
-      if (changed && visible) {
-        tracker.maybeSendImmediateHeartbeat();
-      }
+      tracker.notifyAppVisibility(getIsAppActivelyVisible());
+    };
+
+    const handleWindowFocus = () => {
+      handleVisibilityChange();
+      handleUserActivity();
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("focus", handleUserActivity);
+    window.addEventListener("focus", handleWindowFocus);
+    window.addEventListener("blur", handleVisibilityChange);
     window.addEventListener("pointerdown", handleUserActivity, { passive: true });
     window.addEventListener("keydown", handleUserActivity);
     window.addEventListener("wheel", handleUserActivity, { passive: true });
@@ -83,7 +86,8 @@ export function useClientActivity({
 
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("focus", handleUserActivity);
+      window.removeEventListener("focus", handleWindowFocus);
+      window.removeEventListener("blur", handleVisibilityChange);
       window.removeEventListener("pointerdown", handleUserActivity);
       window.removeEventListener("keydown", handleUserActivity);
       window.removeEventListener("wheel", handleUserActivity);
