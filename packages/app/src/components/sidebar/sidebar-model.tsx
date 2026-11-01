@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import React, { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
+import React, { createContext, useContext, useMemo, type ReactNode } from "react";
 import {
   useSidebarWorkspacesList,
   type SidebarProjectEntry,
@@ -13,17 +13,19 @@ import {
   hasActiveSidebarLabelFilter,
   useSidebarViewStore,
   type SidebarGroupMode,
+  type SidebarLabelFilter,
 } from "@/stores/sidebar-view-store";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import type { SidebarShortcutModel } from "@/utils/sidebar-shortcuts";
 import { buildSidebarProjection } from "./sidebar-projection";
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
-import { filterWorkspacesByLabels, type SidebarWorkspaceGroup } from "./sidebar-labels";
-import { filterWorkspacesByProjects, resolveActiveProjectFilters } from "./sidebar-project-filter";
 import {
-  hasAuthoritativeWorkspaceLabelCatalog,
-  useWorkspaceLabelProjection,
-} from "@/workspace-labels";
+  filterWorkspacesByLabels,
+  resolveActiveLabelFilter,
+  type SidebarWorkspaceGroup,
+} from "./sidebar-labels";
+import { filterWorkspacesByProjects, resolveActiveProjectFilters } from "./sidebar-project-filter";
+import { useWorkspaceLabelProjection } from "@/workspace-labels";
 
 interface SidebarModel extends SidebarWorkspacesListResult {
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
@@ -36,6 +38,7 @@ interface SidebarModel extends SidebarWorkspacesListResult {
   allProjects: SidebarProjectEntry[];
   /** The project filter as it is actually being applied — see `resolveActiveProjectFilters`. */
   resolvedProjectFilters: readonly string[];
+  resolvedLabelFilter: SidebarLabelFilter;
   hasProjectsBeforeFilter: boolean;
   groupMode: SidebarGroupMode;
   workspaceGroups: SidebarWorkspaceGroup[];
@@ -61,7 +64,6 @@ export function SidebarModelProvider({
   const groupMode = useSidebarViewStore((state) => state.groupMode);
   const labelFilter = useSidebarViewStore((state) => state.labelFilter);
   const projectFilters = useSidebarViewStore((state) => state.projectFilters);
-  const reconcileLabelFilter = useSidebarViewStore((state) => state.reconcileLabelFilter);
   const { hosts: labelHosts } = useWorkspaceLabelProjection();
   const collapsedProjectKeys = useSidebarCollapsedSectionsStore(
     (state) => state.collapsedProjectKeys,
@@ -78,12 +80,6 @@ export function SidebarModelProvider({
     () => labelHosts.flatMap((host) => host.labels.map((label) => label.name)),
     [labelHosts],
   );
-  const hasAuthoritativeLabelCatalog = hasAuthoritativeWorkspaceLabelCatalog(labelHosts);
-  useEffect(() => {
-    if (!hasAuthoritativeLabelCatalog) return;
-    reconcileLabelFilter(availableLabelNames);
-  }, [availableLabelNames, hasAuthoritativeLabelCatalog, reconcileLabelFilter]);
-  const hasActiveLabelFilter = hasActiveSidebarLabelFilter(labelFilter);
   const resolvedProjectFilters = useMemo(
     () =>
       resolveActiveProjectFilters(
@@ -98,11 +94,21 @@ export function SidebarModelProvider({
   // anything; the label filter reads `labels`, which only exists on an entry. Hydration opens a
   // live session-store subscription over every workspace on every visible host, so widening this
   // for a filter that does not need it costs a retained-but-inactive sidebar real work.
-  const needsWorkspaceEntries = groupMode !== "project" || hasActiveLabelFilter;
+  const needsWorkspaceEntries = groupMode !== "project" || hasActiveSidebarLabelFilter(labelFilter);
   const workspaceEntriesByKey = useSidebarWorkspaceEntries(
     list.workspacePlacements,
     active !== false || needsWorkspaceEntries,
   );
+  const resolvedLabelFilter = useMemo(
+    () =>
+      resolveActiveLabelFilter({
+        filter: labelFilter,
+        catalogLabelNames: availableLabelNames,
+        workspaces: [...workspaceEntriesByKey.values()],
+      }),
+    [labelFilter, availableLabelNames, workspaceEntriesByKey],
+  );
+  const hasActiveLabelFilter = hasActiveSidebarLabelFilter(resolvedLabelFilter);
   const filteredWorkspaceEntriesByKey = useMemo(() => {
     const byProject = filterWorkspacesByProjects({
       workspaces: [...workspaceEntriesByKey.values()],
@@ -110,10 +116,10 @@ export function SidebarModelProvider({
     });
     const filtered = filterWorkspacesByLabels({
       workspaces: byProject.filter((workspace) => showBackground || !workspace.background),
-      ...labelFilter,
+      ...resolvedLabelFilter,
     });
     return new Map(filtered.map((workspace) => [workspace.workspaceKey, workspace]));
-  }, [showBackground, labelFilter, resolvedProjectFilters, workspaceEntriesByKey]);
+  }, [showBackground, resolvedLabelFilter, resolvedProjectFilters, workspaceEntriesByKey]);
   const visibleWorkspaceKeys = useMemo(
     () => new Set(filteredWorkspaceEntriesByKey.keys()),
     [filteredWorkspaceEntriesByKey],
@@ -181,6 +187,7 @@ export function SidebarModelProvider({
       projects: filteredProjects,
       allProjects: list.projects,
       resolvedProjectFilters,
+      resolvedLabelFilter,
       hasProjectsBeforeFilter: list.projects.length > 0,
       workspaceEntriesByKey: filteredWorkspaceEntriesByKey,
       groupMode,
@@ -193,6 +200,7 @@ export function SidebarModelProvider({
     }),
     [
       resolvedProjectFilters,
+      resolvedLabelFilter,
       collapsedProjectKeys,
       groupMode,
       list,
