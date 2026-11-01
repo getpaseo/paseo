@@ -3873,11 +3873,15 @@ export class CodexAppServerAgentSession implements AgentSession {
     const requested = this.requestedServiceTier;
     const resolved = this.resolveServiceTier(requested);
     const legacy = this.providerOptions.fast_mode !== undefined || requested !== resolved;
-    if (!legacy || resolved === null) return;
+    if (!legacy) return;
+    // A tier the opening model lacks runs as Normal, and the options say so (as when the model
+    // is switched later).
+    const runs = resolved ?? (requested === null ? null : "default");
+    if (runs === null) return;
     const { fast_mode: _legacy, ...rest } = this.providerOptions;
-    this.providerOptions = { ...rest, service_tier: resolved };
-    this.requestedServiceTier = resolved;
-    this.openOptionsPatch = { service_tier: resolved, fast_mode: null };
+    this.providerOptions = { ...rest, service_tier: runs };
+    this.requestedServiceTier = runs;
+    this.openOptionsPatch = { service_tier: runs, fast_mode: null };
   }
 
   private get serviceTier(): string | null {

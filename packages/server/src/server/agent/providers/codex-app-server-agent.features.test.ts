@@ -558,6 +558,21 @@ describe("Codex app-server provider controls", () => {
     });
   });
 
+  test("opening on a model without the saved tier runs Normal and the open patch says so", async () => {
+    const models = [
+      { id: "plain", isDefault: true, defaultReasoningEffort: "medium", serviceTiers: [] },
+    ];
+    const { session, appServer } = await createConnectedSession(
+      { model: "plain", providerOptions: { service_tier: "priority" } },
+      { models },
+    );
+
+    expect(session.openOptionsPatch).toEqual({ service_tier: "default", fast_mode: null });
+
+    await session.startTurn("hello");
+    await expect(appServer.waitForTurnStart()).resolves.toMatchObject({ serviceTier: "default" });
+  });
+
   test("a saved service_tier: fast runs as the model's Fast tier and the open patch names that tier", async () => {
     const { session, appServer } = await createConnectedSession({
       providerOptions: { service_tier: "fast" },
