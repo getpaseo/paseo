@@ -142,7 +142,13 @@ export class Session {
     const nativeId = response.session.sessionId;
     this.liveState = {
       nativeId,
-      children: new Children(this.host, this.options.id, this.config.cwd, this.options.emit),
+      children: new Children(
+        this.host,
+        this.options.id,
+        this.config.cwd,
+        this.options.emit,
+        this.options.capabilities.includes("session.subsession"),
+      ),
       timeline: new Timeline(
         this.host,
         nativeId,
