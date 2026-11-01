@@ -509,7 +509,6 @@ import {
   createAllClients,
 } from "./provider-registry.js";
 import { FakeOmp } from "./providers/omp/test-utils/fake-omp.js";
-import { foldFeatureValues } from "./option-controls.js";
 
 const logger = createTestLogger();
 
@@ -797,13 +796,12 @@ test("a saved legacy Codex Fast preference wins over a configured service_tier d
     providerOverrides: { codex: { options: { service_tier: "default", plan_mode: false } } },
   });
   const client = registry.codex.createClient(logger);
-  // A pre-v0.10 record is converted as it is read, before the defaults merge under it.
-  const { providerOptions: saved } = foldFeatureValues({
-    config: { providerOptions: { fast_mode: true } },
-    provider: "codex",
-  });
 
-  expect(client.effectiveOptions?.(saved)).toEqual({ service_tier: "fast", plan_mode: false });
+  // The manager hands the registry a pre-v0.10 record's `fast_mode` already converted.
+  expect(client.effectiveOptions?.({ service_tier: "fast" })).toEqual({
+    service_tier: "fast",
+    plan_mode: false,
+  });
   expect(client.effectiveOptions?.({})).toEqual({ service_tier: "default", plan_mode: false });
 });
 

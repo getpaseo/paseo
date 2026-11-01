@@ -1,9 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-  convertLegacyOptions,
-  foldFeatureValues,
-  foldHookFeatureValues,
-} from "./option-controls.js";
+import { convertLegacyOptions, foldHookFeatureValues } from "./option-controls.js";
 
 describe("convertLegacyOptions", () => {
   test.each([
@@ -31,34 +27,27 @@ describe("convertLegacyOptions", () => {
   });
 });
 
-describe("legacy Codex Fast at the other entry points", () => {
-  test("a stored record's fast_mode folds into service_tier", () => {
-    expect(
-      foldFeatureValues({
-        config: { featureValues: { fast_mode: true }, providerOptions: { plan_mode: false } },
-        provider: "codex",
-      }).providerOptions,
-    ).toEqual({ plan_mode: false, service_tier: "fast" });
-  });
+describe("foldHookFeatureValues", () => {
+  const convert = (options: Record<string, unknown>) =>
+    convertLegacyOptions({ provider: "codex", options });
 
-  test("a plugin hook that edits featureValues.fast_mode sets service_tier", () => {
-    const sent = { provider: "codex", providerOptions: {}, featureValues: {} };
-    const returned = { ...sent, featureValues: { fast_mode: true } };
+  test("a hook that edits featureValues.fast_mode sets service_tier", () => {
+    const sent = { providerOptions: {}, featureValues: {} };
+    const returned = { providerOptions: {}, featureValues: { fast_mode: true } };
 
-    expect(foldHookFeatureValues({ returned, sent }).providerOptions).toEqual({
+    expect(foldHookFeatureValues({ returned, sent, convert }).providerOptions).toEqual({
       service_tier: "fast",
     });
   });
 
   test("a hook that replaces the speed it was sent with fast_mode selects Fast", () => {
     const sent = {
-      provider: "codex",
       providerOptions: { service_tier: "default" },
       featureValues: { service_tier: "default" },
     };
     const returned = { ...sent, featureValues: { fast_mode: true } };
 
-    expect(foldHookFeatureValues({ returned, sent }).providerOptions).toEqual({
+    expect(foldHookFeatureValues({ returned, sent, convert }).providerOptions).toEqual({
       service_tier: "fast",
     });
   });

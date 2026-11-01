@@ -1099,7 +1099,7 @@ function buildScheduleAgentConfig(
     thinkingOptionId: config.thinkingOptionId,
     title: config.title,
     // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
-    providerOptions: foldFeatureValues({ config, provider: config.provider }).providerOptions,
+    providerOptions: foldFeatureValues(config).providerOptions,
     systemPrompt: config.systemPrompt,
     mcpServers: config.mcpServers as AgentSessionConfig["mcpServers"],
   };
