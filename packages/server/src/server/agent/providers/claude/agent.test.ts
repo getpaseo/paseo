@@ -1530,6 +1530,38 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
+  test("a patch that lands while Fast is being applied is not overwritten by it", async () => {
+    const { queryFactory, queryMock } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+    });
+    await (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
+    let finishFast!: () => void;
+    queryMock.applyFlagSettings.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFast = resolve;
+        }),
+    );
+
+    const fast = session.applyOptions?.({ fast_mode: true });
+    await session.applyOptions?.({ allowedTools: ["Read"] });
+    finishFast();
+    await fast;
+
+    expect(
+      (session as unknown as { config: { providerOptions: unknown } }).config.providerOptions,
+    ).toEqual({ fast_mode: true, allowedTools: ["Read"] });
+    await session.close();
+  });
+
   test("a patch before the first prompt keeps the restrictions the session opened with", async () => {
     const { queryFactory } = createQueryMock();
     const client = new ClaudeAgentClient({

@@ -2826,8 +2826,10 @@ class ClaudeAgentSession implements AgentSession {
       await this.query?.applyFlagSettings({ fastMode: providerOptions.fast_mode === true });
       this.cachedRuntimeInfo = null;
     }
-    // Held until the runtime accepts, so a rejected change is retried instead of skipped.
-    this.config.providerOptions = providerOptions;
+    // Held until the runtime accepts, so a rejected change is retried instead of skipped. Only
+    // this call's keys are applied, over the options as they are now: another patch may have
+    // landed while the runtime was answering.
+    this.config.providerOptions = applyProviderOptionsPatch(this.config.providerOptions, options);
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {
