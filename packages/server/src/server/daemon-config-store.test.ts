@@ -239,7 +239,7 @@ describe("DaemonConfigStore", () => {
     expect(store.get().agentProfiles).toEqual([
       { id: "p", name: "P", provider: "claude", options: { fast_mode: true } },
     ]);
-    expect(toWireDaemonConfig(store.get(), (_provider, options) => options).agentProfiles).toEqual([
+    expect(toWireDaemonConfig(store.get()).agentProfiles).toEqual([
       {
         id: "p",
         name: "P",
@@ -355,7 +355,7 @@ describe("DaemonConfigStore", () => {
       ]);
     });
 
-    test("keeps a profile's legacy fast_mode key; the agent manager renames it", async () => {
+    test("converts a Codex profile's legacy fast_mode to service_tier", async () => {
       const store = storeWithProfile();
 
       await store.patch({
@@ -369,7 +369,7 @@ describe("DaemonConfigStore", () => {
           id: "p",
           name: "P",
           provider: "codex",
-          options: { sandbox_mode: "read-only", plan_mode: false, fast_mode: true },
+          options: { sandbox_mode: "read-only", plan_mode: false, service_tier: "fast" },
         },
       ]);
     });
@@ -414,6 +414,81 @@ describe("DaemonConfigStore", () => {
     expect(store.get().agentProfiles).toEqual([
       { id: "legacy", name: "Legacy", provider: "codex", options: { service_tier: "fast" } },
     ]);
+  });
+
+  describe("a profile holding Codex's legacy fast_mode", () => {
+    const legacyProfiles = ["codex", "my-codex"].map((provider) => ({
+      id: provider,
+      name: provider,
+      provider,
+      options: { fast_mode: true },
+    }));
+
+    function storeWithLegacyProfiles(agentProfiles: unknown[] = legacyProfiles): DaemonConfigStore {
+      const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+      tempDirs.push(paseoHome);
+      return new DaemonConfigStore(paseoHome, {
+        relay: { enabled: false },
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: { "my-codex": { extends: "codex" } },
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+        agentProfiles,
+      } as MutableDaemonConfig);
+    }
+
+    test("reads the same for codex and a provider that extends it", () => {
+      const store = storeWithLegacyProfiles();
+
+      expect(store.get().agentProfiles).toEqual([
+        { id: "codex", name: "codex", provider: "codex", options: { service_tier: "fast" } },
+        {
+          id: "my-codex",
+          name: "my-codex",
+          provider: "my-codex",
+          options: { service_tier: "fast" },
+        },
+      ]);
+      expect(toWireDaemonConfig(store.get()).agentProfiles).toEqual([
+        expect.objectContaining({ featureValues: { service_tier: "fast" } }),
+        expect.objectContaining({ featureValues: { service_tier: "fast" } }),
+      ]);
+    });
+
+    test.each(["codex", "my-codex"])("resetting %s's speed removes what was shown", async (id) => {
+      const store = storeWithLegacyProfiles();
+
+      await store.patch({
+        agentProfiles: [{ id, name: id, provider: id, featureValues: { service_tier: null } }],
+      });
+
+      expect(store.get().agentProfiles).toEqual([{ id, name: id, provider: id, options: {} }]);
+    });
+
+    test("a malformed value rejects the write and leaves config reads working", async () => {
+      const store = storeWithLegacyProfiles();
+
+      await expect(
+        store.patch({
+          agentProfiles: [
+            { id: "p", name: "P", provider: "my-codex", options: { fast_mode: "false" } },
+          ],
+        }),
+      ).rejects.toThrow(/fast_mode must be true, false or null/);
+
+      expect(toWireDaemonConfig(store.get()).agentProfiles).toHaveLength(2);
+    });
+
+    test("a malformed value in a stored profile does not stop the config from loading", () => {
+      const store = storeWithLegacyProfiles([
+        { id: "p", name: "P", provider: "codex", options: { fast_mode: "false" } },
+      ]);
+
+      expect(store.get().agentProfiles?.[0]?.options).toEqual({ fast_mode: "false" });
+    });
   });
 
   test("patch replaces the whole agent profile list rather than merging entries", async () => {
