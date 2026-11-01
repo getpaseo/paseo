@@ -41,7 +41,9 @@ or without a control.
   differs from what it was given, including a setting nobody asked for (a native default such as
   Cursor opening with Fast on). It is set before `createSession`/`resumeSession` resolves and the
   daemon stores it before the agent is published. A reopened agent resumes that state, so a
-  native default the provider later changes does not follow.
+  native default the provider later changes does not follow. `options` on the snapshot is what
+  the session opened with, and afterwards it moves only through an apply or an `options_changed`.
+  Editing a provider default in `config.json` affects agents the next time they open.
 - **Live apply.** `applyOptions` receives the keys the patch touches, resolved against the
   `config.json` defaults. A removal arrives as the default the key falls back to, or `null` when
   there is none; the provider returns the setting to its own default if it can, or throws to
