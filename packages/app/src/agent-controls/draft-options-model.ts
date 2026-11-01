@@ -1,4 +1,8 @@
-import type { AgentOptionControl, ProviderOptions } from "@getpaseo/protocol/agent-types";
+import type {
+  AgentOptionControl,
+  AgentSessionConfig,
+  ProviderOptions,
+} from "@getpaseo/protocol/agent-types";
 
 /**
  * The options of one draft agent, as a plain model (see docs/forms.md). It owns which layers
@@ -107,6 +111,39 @@ export function ownDraftOptions(state: DraftOptionsState): ProviderOptions | und
   );
   const own = { ...state.seed, ...remembered, ...state.edits };
   return Object.keys(own).length > 0 ? own : undefined;
+}
+
+export type DraftControlsRequest = Pick<
+  AgentSessionConfig,
+  "provider" | "cwd" | "modeId" | "model" | "thinkingOptionId" | "providerOptions"
+>;
+
+/**
+ * The listing request for the draft's form, built from one snapshot of the model. The form
+ * reaches a new provider before the model has observed it, and the model still holds the
+ * previous provider's options until it does; that render has no request, so a request never
+ * pairs one provider with another's options.
+ */
+export function draftControlsRequest(
+  state: DraftOptionsState,
+  form: {
+    provider: string | null;
+    cwd: string;
+    modeId?: string | null;
+    modelId?: string | null;
+    thinkingOptionId?: string | null;
+  },
+): DraftControlsRequest | null {
+  if (!form.provider || !form.cwd || form.provider !== state.provider) return null;
+  const providerOptions = ownDraftOptions(state);
+  return {
+    provider: form.provider,
+    cwd: form.cwd,
+    ...(form.modeId ? { modeId: form.modeId } : {}),
+    ...(form.modelId ? { model: form.modelId } : {}),
+    ...(form.thinkingOptionId ? { thinkingOptionId: form.thinkingOptionId } : {}),
+    ...(providerOptions ? { providerOptions } : {}),
+  };
 }
 
 /**

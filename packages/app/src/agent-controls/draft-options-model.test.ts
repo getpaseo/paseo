@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { AgentOptionControl } from "@getpaseo/protocol/agent-types";
 import { isControlActive } from "./option-controls";
-import { openDraftOptions, ownDraftOptions, viewDraftOptions } from "./draft-options-model";
+import {
+  draftControlsRequest,
+  openDraftOptions,
+  ownDraftOptions,
+  viewDraftOptions,
+} from "./draft-options-model";
 
 const SPEED: AgentOptionControl = {
   type: "select",
@@ -63,6 +68,24 @@ describe("draft options model", () => {
 
     expect(ownDraftOptions(model.getState())).toBeUndefined();
     expect(model.getState().resolved).toBeNull();
+  });
+
+  it("never pairs a manually chosen provider with the previous provider's options", () => {
+    const model = openDraftOptions({ provider: "claude" });
+    model.applyResolved(answer("claude", "k1", { fast_mode: true }));
+    model.setOption("fast_mode", true);
+    const form = { provider: "claude", cwd: "/repo" };
+    expect(draftControlsRequest(model.getState(), form)).toMatchObject({
+      provider: "claude",
+      providerOptions: { fast_mode: true },
+    });
+
+    // The form shows OpenCode on its next render; the model has not observed it yet.
+    expect(draftControlsRequest(model.getState(), { ...form, provider: "opencode" })).toBeNull();
+
+    model.observeProvider("opencode");
+    const request = draftControlsRequest(model.getState(), { ...form, provider: "opencode" });
+    expect(request).toEqual({ provider: "opencode", cwd: "/repo" });
   });
 
   it("keeps a draft's seed when the first provider is chosen", () => {

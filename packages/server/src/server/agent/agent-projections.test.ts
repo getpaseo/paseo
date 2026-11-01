@@ -397,6 +397,50 @@ describe("toAgentPayload", () => {
     });
   });
 
+  it("projects a closed agent's stored controls and options", () => {
+    const controls: AgentOptionControl[] = [
+      {
+        type: "select",
+        key: "service_tier",
+        label: "Speed",
+        defaultValue: "default",
+        choices: [
+          { value: "default", label: "Normal" },
+          { value: "priority", label: "Fast" },
+        ],
+      },
+    ];
+    const record = toStoredAgentRecord(
+      createManagedAgent({
+        provider: "codex",
+        lifecycle: "closed",
+        controls,
+        config: {
+          provider: "codex",
+          providerOptions: { service_tier: "priority", sandbox_mode: "read-only" },
+        },
+      }),
+    );
+
+    const payload = buildStoredAgentPayload(record, ["codex"]);
+
+    expect(payload.status).toBe("closed");
+    expect(payload.controls).toEqual(controls);
+    expect(payload.options).toEqual({ service_tier: "priority", sandbox_mode: "read-only" });
+    expect(payload.features).toEqual([
+      {
+        type: "select",
+        id: "service_tier",
+        label: "Speed",
+        value: "priority",
+        options: [
+          { id: "default", label: "Normal", isDefault: true },
+          { id: "priority", label: "Fast" },
+        ],
+      },
+    ]);
+  });
+
   it("carries a stored lastError onto the payload", () => {
     const record = toStoredAgentRecord(
       createManagedAgent({ provider: "codex", config: { provider: "codex" }, lastError: "boom" }),
