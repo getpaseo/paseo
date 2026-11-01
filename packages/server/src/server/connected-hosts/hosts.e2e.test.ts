@@ -183,7 +183,7 @@ test("ordinary routed APIs isolate scopes and enforce one-hop, disable and origi
   await paseo.dispose();
 });
 
-test("routed authority is bounded by the caller, with isolated simultaneous sessions", async () => {
+test("routed authority isolates simultaneous sessions and preserves ordinary permission RPC errors", async () => {
   const b = await daemon();
   const a = await daemon();
   const owner = await api(a);
@@ -210,33 +210,16 @@ test("routed authority is bounded by the caller, with isolated simultaneous sess
     code: "permission_denied",
   });
   expect((await owner.paseo.hosts.list()).hosts).toHaveLength(1);
-  await remote.dispose();
-});
-
-test("SDK host clients preserve ordinary permission RPC errors", async () => {
-  const b = await daemon();
-  const a = await daemon();
-  const owner = await api(a);
-  await owner.paseo.hosts.add({ connection: `127.0.0.1:${b.port}` });
-  const serverId = (await online(owner.paseo)).hosts[0]!.serverId!;
-  const clients = [a, b].map((host) =>
-    createHostClient(`127.0.0.1:${host.port}`, {
-      clientId: crypto.randomUUID(),
-      sessionPermissions: ["daemon.read", "workspace.read"],
-      reconnect: { enabled: false },
-    }),
-  );
-  for (const client of clients) {
-    cleanup.push(() => client.close());
-    await client.connect();
-  }
-  const origin = createPaseoApi(clients[0]!);
-  const direct = createPaseoApi(clients[1]!);
-  const remote = await origin.hosts.client(serverId);
+  const directClient = createHostClient(`127.0.0.1:${b.port}`, {
+    clientId: crypto.randomUUID(),
+    sessionPermissions: ["daemon.read", "workspace.read"],
+    reconnect: { enabled: false },
+  });
+  await directClient.connect();
+  const direct = createPaseoApi(directClient);
   cleanup.push(async () => {
-    await remote.dispose();
     await direct.dispose();
-    await origin.dispose();
+    await directClient.close();
   });
   const input = { source: { kind: "directory" as const, path: b.staticDir } };
   const directError = (await direct.workspaces.create(input).catch((error: unknown) => error)) as {
@@ -247,6 +230,7 @@ test("SDK host clients preserve ordinary permission RPC errors", async () => {
   };
   expect(directError.code).toBe("access_denied");
   expect(remoteError.code).toBe(directError.code);
+  await remote.dispose();
 });
 
 test("distinct origin sessions cannot collide through a caller-selected route scope, including terminal binary output", async () => {
