@@ -2413,7 +2413,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       current: this.config.providerOptions,
       live: [ACP_AUTO_ACCEPT_FEATURE_ID, ...this.configFeatureOptions.map(({ id }) => id)],
     });
-    ACPProviderOptionsSchema.parse(applyProviderOptionsPatch(this.config.providerOptions, options));
+    ACPProviderOptionsSchema.parse(
+      applyProviderOptionsPatch({ options: this.config.providerOptions, patch: options }),
+    );
     const before = this.featureValues();
     const requested: Record<string, unknown> = {};
     try {

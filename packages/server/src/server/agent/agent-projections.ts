@@ -146,7 +146,7 @@ export function toAgentPayload(
     currentModeId: agent.currentModeId,
     availableModes: cloneAvailableModes(agent.availableModes),
     // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
-    features: featuresFromControls(agent.controls, agent.effectiveOptions),
+    features: featuresFromControls({ controls: agent.controls, options: agent.effectiveOptions }),
     ...(agent.effectiveOptions
       ? { options: sanitizeEffectiveOptions(agent.effectiveOptions) }
       : {}),

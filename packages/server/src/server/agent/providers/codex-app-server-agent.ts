@@ -4714,7 +4714,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       validateProviderOptions(
         "codex",
         CodexProviderOptionsSchema,
-        applyProviderOptionsPatch(running, options),
+        applyProviderOptionsPatch({ options: running, patch: options }),
       ) ?? {};
     let requestedTier = this.requestedServiceTier;
     if ("service_tier" in options || "fast_mode" in options) {

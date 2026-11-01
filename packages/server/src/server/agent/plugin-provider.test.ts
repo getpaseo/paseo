@@ -1145,6 +1145,11 @@ describe("PluginAgentClientRegistry", () => {
       );
 
       expect(lastConfigure(harness.inputs)).toBe(configureBefore);
+
+      // The value it opened with is not a change, so a whole profile can be applied.
+      await session.applyOptions?.({ loud: true, launch_key: "original" });
+      const configure = lastConfigure(harness.inputs) as { changes: { settings: object } };
+      expect(Object.keys(configure.changes.settings)).toEqual(["loud"]);
       await session.close();
     });
 

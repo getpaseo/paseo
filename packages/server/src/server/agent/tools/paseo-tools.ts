@@ -3138,7 +3138,7 @@ function createToolCatalog(
           status: summary.status,
           modes: summary.modes,
           selectedModel: selectedModel ?? null,
-          features: featuresFromControls(controls, effectiveOptions),
+          features: featuresFromControls({ controls, options: effectiveOptions }),
         }),
       };
     },

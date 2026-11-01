@@ -64,7 +64,7 @@ import {
   createProviderEnv,
   type ProviderRuntimeSettings,
 } from "./provider-launch-config.js";
-import { ProviderOptionsValidationError } from "./provider-options.js";
+import { assertChangesAreLive } from "./provider-options.js";
 import type { RegisteredProviderDefinition } from "./provider-registry.js";
 import { runProviderTurn } from "./providers/provider-runner.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
@@ -1229,7 +1229,7 @@ class PluginAgentSession implements AgentSession {
       state: ProviderConfigState,
     ) => Promise<ProviderRuntimeSession>,
     private readonly onBind: (bridge: ProviderRuntimeSession) => void,
-    givenSettings: Readonly<Record<string, JsonValue>>,
+    private readonly givenSettings: Readonly<Record<string, JsonValue>>,
   ) {
     this.subagentIdsBySession.set(bridge.id, null);
     // Every setting the session opened with that was not given, including ones nobody set.
@@ -1438,19 +1438,17 @@ class PluginAgentSession implements AgentSession {
   async applyOptions(options: ProviderOptions): Promise<Record<string, JsonValue>> {
     this.assertReplayComplete();
     const before = this.currentSettings();
-    // A key the plugin does not report as a setting is one it only reads when the session opens.
-    const unsupported = Object.keys(options).filter((key) => !(key in before));
-    if (unsupported.length > 0) {
-      throw new ProviderOptionsValidationError(
-        this.provider,
-        unsupported.map((key) => ({
-          path: [key],
-          message: "cannot change on a running session; it applies when the agent is opened",
-        })),
-      );
-    }
+    // A key the plugin does not report as a setting is one it only reads when the session opens;
+    // a value equal to the one it opened with is not a change.
+    assertChangesAreLive({
+      provider: this.provider,
+      patch: options,
+      current: this.givenSettings,
+      live: Object.keys(before),
+    });
     const settings: Record<string, JsonValue> = {};
     for (const [id, value] of Object.entries(options)) {
+      if (!(id in before)) continue;
       settings[id] = toJsonValue(value, `setting '${id}'`);
     }
     if (Object.keys(settings).length === 0) return {};

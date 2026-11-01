@@ -834,7 +834,7 @@ export class OmpAgentSession implements AgentSession {
     const next = validateProviderOptions(
       "omp",
       OmpProviderOptionsSchema,
-      applyProviderOptionsPatch(this.config.providerOptions, options),
+      applyProviderOptionsPatch({ options: this.config.providerOptions, patch: options }),
     );
     if (options.fast_mode === undefined) return {};
     const requested = next?.fast_mode ?? false;

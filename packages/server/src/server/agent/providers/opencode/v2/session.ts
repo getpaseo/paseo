@@ -372,7 +372,7 @@ export class OpenCodeV2Session implements AgentSession {
     const next = validateProviderOptions(
       "opencode",
       OpenCodeProviderOptionsSchema,
-      applyProviderOptionsPatch(this.config.providerOptions, options),
+      applyProviderOptionsPatch({ options: this.config.providerOptions, patch: options }),
     );
     if (!("auto_accept" in options)) return;
     const value = next?.auto_accept === true;

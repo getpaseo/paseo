@@ -2313,12 +2313,12 @@ export class AgentManager {
   private withOpenedOptions(config: AgentSessionConfig, session: AgentSession): AgentSessionConfig {
     const opened = session.openOptionsPatch;
     if (!opened || Object.keys(opened).length === 0) return config;
-    const own = applyProviderOptionsPatch(config.providerOptions, opened);
+    const own = applyProviderOptionsPatch({ options: config.providerOptions, patch: opened });
     return { ...config, providerOptions: Object.keys(own).length > 0 ? own : undefined };
   }
 
   private storeOptionsPatch(agent: ManagedAgent, patch: ProviderOptionsPatch): void {
-    const own = applyProviderOptionsPatch(agent.config.providerOptions, patch);
+    const own = applyProviderOptionsPatch({ options: agent.config.providerOptions, patch });
     agent.config.providerOptions = Object.keys(own).length > 0 ? own : undefined;
   }
 

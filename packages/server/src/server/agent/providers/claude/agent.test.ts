@@ -1629,7 +1629,10 @@ describe("ClaudeAgentSession features", () => {
     ]);
     // With a `config.json` default of `fast_mode: true`, the agent's effective options must
     // still read Fast as off: a removed key would let the default fill `true` back in.
-    const stored = applyProviderOptionsPatch({ fast_mode: true }, reported[0].patch);
+    const stored = applyProviderOptionsPatch({
+      options: { fast_mode: true },
+      patch: reported[0].patch,
+    });
     expect(mergeProviderOptions({ fast_mode: true }, stored)).toEqual({ fast_mode: false });
     await expect(session.applyOptions?.({ fast_mode: null })).resolves.toBeUndefined();
     await session.close();
