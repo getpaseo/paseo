@@ -29,7 +29,7 @@ describe("OpenCode reasoning dedup", () => {
   });
 
   afterAll(async () => {
-    await OpenCodeServerManager.getInstance(logger).shutdown();
+    await OpenCodeServerManager.getInstance({ logger }).shutdown();
   });
 
   test("reasoning content is not duplicated as assistant_message", async () => {

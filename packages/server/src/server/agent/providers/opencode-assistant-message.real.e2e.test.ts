@@ -29,7 +29,7 @@ describe("OpenCode assistant message", () => {
   });
 
   afterAll(async () => {
-    await OpenCodeServerManager.getInstance(logger).shutdown();
+    await OpenCodeServerManager.getInstance({ logger }).shutdown();
   });
 
   test("assistant_message appears in live stream", async () => {
