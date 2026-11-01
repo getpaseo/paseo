@@ -465,6 +465,18 @@ export class DaemonConfigStore {
     return this.enqueue(() => this.applySupportedPatch({ skills: { selection } }));
   }
 
+  private foldPatchProfiles<
+    T extends { agentProfiles?: AgentProfile[]; providers?: Record<string, ProviderOverride> },
+  >(submittedPatch: T): T {
+    return foldConfigProfiles({
+      config: submittedPatch,
+      // The provider graph this request will commit, so `extends` survives a partial edit.
+      providers: deepMerge(this.current.providers ?? {}, submittedPatch.providers ?? {}),
+      source: "client write",
+      held: this.current.agentProfiles,
+    });
+  }
+
   private async applySupportedPatch(
     parsedPatch: SupportedMutableConfigPatch,
   ): Promise<MutableDaemonConfig> {
@@ -474,12 +486,7 @@ export class DaemonConfigStore {
       );
     }
     const { removeProviders = [], ...submittedPatch } = parsedPatch;
-    const patch = foldConfigProfiles({
-      config: submittedPatch,
-      providers: { ...this.current.providers, ...submittedPatch.providers },
-      source: "client write",
-      held: this.current.agentProfiles,
-    });
+    const patch = this.foldPatchProfiles(submittedPatch);
     const { features: speechPatch, ...configPatch } = patch;
     const removedProviders = Array.from(new Set(removeProviders));
     const merged = deepMerge(this.current, configPatch);

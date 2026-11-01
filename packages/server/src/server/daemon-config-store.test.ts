@@ -468,6 +468,21 @@ describe("DaemonConfigStore", () => {
       expect(store.get().agentProfiles).toEqual([{ id, name: id, provider: id, options: {} }]);
     });
 
+    test("a provider edit in the same write does not hide which adapter a profile runs on", async () => {
+      const store = storeWithLegacyProfiles();
+
+      await store.patch({
+        providers: { "my-codex": { label: "Renamed" } },
+        agentProfiles: [
+          { id: "p", name: "P", provider: "my-codex", featureValues: { fast_mode: false } },
+        ],
+      });
+
+      expect(store.get().agentProfiles).toEqual([
+        { id: "p", name: "P", provider: "my-codex", options: { service_tier: "default" } },
+      ]);
+    });
+
     test("a malformed value rejects the write and leaves config reads working", async () => {
       const store = storeWithLegacyProfiles();
 
