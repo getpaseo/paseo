@@ -5,7 +5,7 @@ import {
 import { resolveRegistryPlugin, type RegistryOptions } from "./managed-source/registry.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, realpath, rename, rm } from "node:fs/promises";
+import { mkdir, readdir, realpath, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import compareVersions from "semver/functions/compare.js";
@@ -26,6 +26,9 @@ import { acquireNpm, isNpmSource, readNpmArtifact, resolveNpm } from "./managed-
 
 const GIT_TIMEOUT_MS = 120_000;
 const GIT_ENV = { GIT_TERMINAL_PROMPT: "0" } as const;
+/** A retired installation root keeps its version id and gains a timestamp: `<uuid>.old-<ms>`. */
+const RETIRED_VERSION_SUFFIX = ".old-";
+const RETIRED_VERSION_PATTERN = /\.old-\d+$/;
 // COMPAT(plugin-source-record): v0.8.0; accept and strip pre-correction selector/revision/root copies until daemon floor supports artifact-derived metadata.
 const ManagedPluginRecordSchema = z.union([
   z.object({
@@ -381,10 +384,27 @@ export class ManagedPluginSources {
   async discard(candidate: ManagedPluginCandidate): Promise<void> {
     await rm(candidate.versionRoot, { recursive: true, force: true });
   }
-  async removeVersion(pluginId: string, configuredPath: string): Promise<void> {
+  /**
+   * Keeps the outgoing installation root instead of deleting it, so a Git checkout's uncommitted
+   * files and unpushed commits survive an update. The copy from the previous update is reaped
+   * first, which leaves exactly one retired root beside the active one.
+   */
+  async retireVersion(pluginId: string, configuredPath: string): Promise<string> {
     const location = this.locate(pluginId, configuredPath);
-    await assertRealContainment(this.root, path.dirname(location.versionRoot));
-    await rm(location.versionRoot, { recursive: true, force: true });
+    const pluginRoot = path.dirname(location.versionRoot);
+    await assertRealContainment(this.root, pluginRoot);
+    await this.reapRetiredVersions(pluginRoot);
+    const retired = `${location.versionRoot}${RETIRED_VERSION_SUFFIX}${Date.now()}`;
+    await rename(location.versionRoot, retired);
+    return retired;
+  }
+  private async reapRetiredVersions(pluginRoot: string): Promise<void> {
+    for (const entry of await readdir(pluginRoot)) {
+      if (!RETIRED_VERSION_PATTERN.test(entry)) continue;
+      const retired = path.join(pluginRoot, entry);
+      await assertRealContainment(this.root, retired);
+      await rm(retired, { recursive: true, force: true });
+    }
   }
   async remove(pluginId: string): Promise<void> {
     if (!this.records[pluginId]) return;
