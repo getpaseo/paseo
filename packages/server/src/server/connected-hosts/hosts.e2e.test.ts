@@ -784,6 +784,64 @@ test("old capabilities fail before execution and authentication errors recover t
   expect((await online(paseo)).hosts[0]!.serverId).toBe(b.daemon.getServerId());
 });
 
+test("a destination updated past unsupported_capability comes online on its scheduled retry while identity errors stay terminal", async () => {
+  let features: { connectedHosts: boolean; hostMultiplexing: boolean } | undefined;
+  const http = createServer();
+  const ws = new WebSocketServer({ server: http });
+  ws.on("connection", (socket) =>
+    socket.on("message", (data) => {
+      const frame = JSON.parse(data.toString());
+      if (frame.type === "ping") socket.send(JSON.stringify({ type: "pong" }));
+      if (frame.type === "hello")
+        socket.send(
+          JSON.stringify({
+            type: "session",
+            message: {
+              type: "status",
+              payload: {
+                status: "server_info",
+                serverId: "srv_updated",
+                hostname: "updated",
+                version: "0.12.0",
+                ...(features ? { features } : {}),
+              },
+            },
+          }),
+        );
+    }),
+  );
+  http.listen(0, "127.0.0.1");
+  await once(http, "listening");
+  cleanup.push(async () => {
+    for (const socket of ws.clients) socket.terminate();
+    await new Promise<void>((resolve) => ws.close(() => resolve()));
+    await new Promise<void>((resolve) => http.close(() => resolve()));
+  });
+  const address = http.address();
+  if (!address || typeof address === "string") throw new Error("Missing destination port");
+  const a = await daemon();
+  const { paseo } = await api(a);
+  const host = await paseo.hosts.add({ connection: `127.0.0.1:${address.port}` });
+  await expect
+    .poll(async () => (await paseo.hosts.list()).hosts[0], { timeout: 5000 })
+    .toMatchObject({
+      status: "offline",
+      nextRetryAt: expect.any(String),
+      error: { code: "unsupported_capability" },
+    });
+  features = { connectedHosts: true, hostMultiplexing: true };
+  expect((await online(paseo)).hosts[0]).toMatchObject({
+    registrationId: host.registrationId,
+    serverId: "srv_updated",
+    nextRetryAt: null,
+    error: null,
+  });
+  await paseo.hosts.add({ connection: `ws://127.0.0.1:${address.port}/ws` });
+  await expect
+    .poll(async () => (await paseo.hosts.list()).hosts[1], { timeout: 5000 })
+    .toMatchObject({ status: "error", nextRetryAt: null, error: { code: "duplicate_host" } });
+});
+
 test("an unreachable saved target becomes online after its daemon starts without being added again", async () => {
   const reservation = createServer();
   reservation.listen(0, "127.0.0.1");

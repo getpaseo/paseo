@@ -235,9 +235,10 @@ export class ConnectedHosts {
       if (route.registrationId === id)
         route.close(code, "Host access was disabled, replaced or removed");
   }
-  private start(row: Saved): void {
+  private start(row: Saved, failures = 0): void {
     if (!row.enabled || this.closed) return;
     let stopped = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
     const client = createHostClient(
       row.connection,
       {
@@ -252,6 +253,7 @@ export class ConnectedHosts {
       accepted: false,
       stop: () => {
         stopped = true;
+        clearTimeout(retry);
         void client.close();
       },
     };
@@ -285,7 +287,7 @@ export class ConnectedHosts {
         if (info.features?.connectedHosts !== true || info.features?.hostMultiplexing !== true)
           throw new HostError(
             "unsupported_capability",
-            "Update the destination daemon to use connected hosts.",
+            "Update the destination daemon to use connected hosts; retrying automatically.",
           );
         // Pin and persist under the same writer as management to prevent discovery races.
         await this.mutate(async () => {
@@ -308,12 +310,22 @@ export class ConnectedHosts {
         });
       } catch (error) {
         if (stopped) return;
-        row.status = "error";
         row.error = connectionFailure(error, client.authFailureReason !== null) ?? {
           code: "host_offline",
           message: "Host connection failed",
         };
-        row.nextRetryAt = null;
+        if (terminalFailures.has(row.error.code)) {
+          row.status = "error";
+          row.nextRetryAt = null;
+        } else {
+          // The client resets its backoff on every server_info, so acceptance failures back off here.
+          const delay = Math.min(1500 * 2 ** failures, 30000);
+          stopped = true;
+          row.status = "offline";
+          row.nextRetryAt = new Date(Date.now() + delay).toISOString();
+          retry = setTimeout(() => this.start(row, failures + 1), delay);
+          retry.unref();
+        }
         this.changed();
         await client.close();
       }
@@ -530,6 +542,13 @@ export class ConnectedHosts {
     this.listeners.clear();
   }
 }
+
+const terminalFailures = new Set([
+  "server_id_mismatch",
+  "self_host",
+  "duplicate_host",
+  "authentication_failed",
+]);
 
 function connectionFailure(error: unknown, authenticationFailed: boolean): HostSummary["error"] {
   if (error instanceof HostError) return { code: error.code, message: error.message };
