@@ -13,10 +13,13 @@ import { SettingsSection } from "@/components/settings/headings/settings-section
 import {
   HOST_BADGE_DISPLAYS,
   HOST_COLORS,
+  HOST_ICONS,
   resolveHostBadgeDisplay,
   type HostBadgeDisplay,
   type HostColor,
+  type HostIcon,
 } from "@/hosts/appearance";
+import { THEMED_HOST_ICONS } from "@/hosts/host-icon";
 import { useLocalDaemonServerIdState } from "@/hooks/use-is-local-daemon";
 import { useHostMutations } from "@/runtime/host-runtime";
 import { identityColor } from "@/styles/identity-colors";
@@ -76,6 +79,10 @@ function colorLabel(t: TFunction, color: HostColor): string {
   return t(`settings.host.appearance.color.options.${color}`);
 }
 
+function iconLabel(t: TFunction, icon: HostIcon): string {
+  return t(`settings.host.appearance.icon.options.${icon}`);
+}
+
 function badgeDisplayLabel(t: TFunction, display: HostBadgeDisplay): string {
   return t(`settings.host.appearance.badge.options.${display}`);
 }
@@ -132,6 +139,70 @@ function ColorRow({ color, onChange }: { color: HostColor; onChange: (color: Hos
               key={option}
               color={option}
               selected={option === color}
+              onChange={onChange}
+            />
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </View>
+  );
+}
+
+function HostIconGlyph({ icon }: { icon: HostIcon }) {
+  const ThemedIcon = THEMED_HOST_ICONS[icon];
+  return <ThemedIcon size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
+}
+
+function IconMenuItem({
+  icon,
+  selected,
+  onChange,
+}: {
+  icon: HostIcon;
+  selected: boolean;
+  onChange: (icon: HostIcon) => void;
+}) {
+  const { t } = useTranslation();
+  const handleSelect = useCallback(() => onChange(icon), [icon, onChange]);
+  const leading = useMemo(() => <HostIconGlyph icon={icon} />, [icon]);
+  return (
+    <DropdownMenuItem
+      selected={selected}
+      onSelect={handleSelect}
+      leading={leading}
+      testID={`host-appearance-icon-option-${icon}`}
+    >
+      {iconLabel(t, icon)}
+    </DropdownMenuItem>
+  );
+}
+
+function IconRow({ icon, onChange }: { icon: HostIcon; onChange: (icon: HostIcon) => void }) {
+  const { t } = useTranslation();
+  const selectedLabel = iconLabel(t, icon);
+  const leading = useMemo(() => <HostIconGlyph icon={icon} />, [icon]);
+  return (
+    <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>{t("settings.host.appearance.icon.label")}</Text>
+      </View>
+      <DropdownMenu>
+        <DropdownTrigger
+          testID="host-appearance-icon"
+          accessibilityRole="button"
+          accessibilityLabel={t("settings.host.appearance.icon.accessibilityLabel", {
+            value: selectedLabel,
+          })}
+          leading={leading}
+        >
+          {selectedLabel}
+        </DropdownTrigger>
+        <DropdownMenuContent side="bottom" align="end" width={200}>
+          {HOST_ICONS.map((option) => (
+            <IconMenuItem
+              key={option}
+              icon={option}
+              selected={option === icon}
               onChange={onChange}
             />
           ))}
@@ -219,9 +290,10 @@ function BadgePreview({
             serverId: host.serverId,
             label: host.label,
             color: host.appearance.color,
+            icon: host.appearance.icon,
             showLabel: badgeDisplay === "name",
           },
-    [badgeDisplay, host.serverId, host.label, host.appearance.color],
+    [badgeDisplay, host.serverId, host.label, host.appearance.color, host.appearance.icon],
   );
   // The real sidebar row, so the preview can't drift from what the setting actually does.
   return (
@@ -243,7 +315,7 @@ function BadgePreview({
 export function HostAppearanceSection({ host }: { host: HostProfile }) {
   const { t } = useTranslation();
   const toast = useToast();
-  const { setHostColor, setHostBadgeDisplay } = useHostMutations();
+  const { setHostColor, setHostIcon, setHostBadgeDisplay } = useHostMutations();
   const localDaemon = useLocalDaemonServerIdState();
   const isLocalHost = localDaemon.status === "resolved" && localDaemon.serverId === host.serverId;
   const badgeDisplay = resolveHostBadgeDisplay({
@@ -261,6 +333,16 @@ export function HostAppearanceSection({ host }: { host: HostProfile }) {
       }
     },
     [host.serverId, setHostColor, t, toast],
+  );
+  const handleIconChange = useCallback(
+    async (icon: HostIcon) => {
+      try {
+        await setHostIcon(host.serverId, icon);
+      } catch {
+        toast.error(t("errors.unableToSave"));
+      }
+    },
+    [host.serverId, setHostIcon, t, toast],
   );
   const handleBadgeDisplayChange = useCallback(
     async (next: HostBadgeDisplay) => {
@@ -288,6 +370,7 @@ export function HostAppearanceSection({ host }: { host: HostProfile }) {
           </View>
         </View>
         <ColorRow color={host.appearance.color} onChange={handleColorChange} />
+        <IconRow icon={host.appearance.icon} onChange={handleIconChange} />
         {badgeDisplay === null ? null : (
           <>
             <BadgeDisplayRow badgeDisplay={badgeDisplay} onChange={handleBadgeDisplayChange} />

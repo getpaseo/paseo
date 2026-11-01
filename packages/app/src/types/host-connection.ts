@@ -16,7 +16,8 @@ import {
 import {
   type HostAppearance,
   defaultHostAppearance,
-  HostAppearanceSchema,
+  StoredHostAppearanceSchema,
+  hostAppearanceFromStored,
 } from "@/hosts/appearance";
 import { z } from "zod";
 
@@ -520,7 +521,7 @@ const StoredHostProfileSchema = z.strictObject({
   serverId: z.string().trim().min(1),
   password: z.string().optional(),
   label: z.string().optional(),
-  appearance: HostAppearanceSchema.optional(),
+  appearance: StoredHostAppearanceSchema.optional(),
   lifecycle: z.strictObject({}).optional(),
   connections: z.array(StoredHostConnectionSchema).min(1),
   preferredConnectionId: z.string().nullable().optional(),
@@ -623,7 +624,9 @@ export function normalizeStoredHostProfile(entry: unknown): HostProfile | null {
     serverId,
     ...(password ? { password } : {}),
     label,
-    appearance: record.appearance ?? defaultHostAppearance(),
+    appearance: record.appearance
+      ? hostAppearanceFromStored(record.appearance)
+      : defaultHostAppearance(),
     lifecycle: defaultLifecycle(),
     connections,
     preferredConnectionId,

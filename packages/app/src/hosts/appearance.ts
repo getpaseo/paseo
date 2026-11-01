@@ -10,6 +10,27 @@ export type HostBadgeDisplay = "name" | "icon" | "hidden";
 
 export const HOST_BADGE_DISPLAYS: readonly HostBadgeDisplay[] = ["name", "icon", "hidden"];
 
+/** The glyph a host draws with, so two machines read apart at a glance. */
+export const HOST_ICONS = [
+  "server",
+  "cloud",
+  "desktop",
+  "laptop",
+  "workstation",
+  "board",
+  "container",
+  "home",
+  "office",
+] as const;
+
+export type HostIcon = (typeof HOST_ICONS)[number];
+
+export const DEFAULT_HOST_ICON: HostIcon = "server";
+
+function isHostIcon(value: unknown): value is HostIcon {
+  return typeof value === "string" && (HOST_ICONS as readonly string[]).includes(value);
+}
+
 /**
  * Per-device host presentation. `badgeDisplay` is null while the user has not chosen,
  * because the default differs by host (local hides, remote shows) and local-ness is only
@@ -18,20 +39,37 @@ export const HOST_BADGE_DISPLAYS: readonly HostBadgeDisplay[] = ["name", "icon",
 export interface HostAppearance {
   color: HostColor;
   badgeDisplay: HostBadgeDisplay | null;
+  icon: HostIcon;
 }
 
-export const HostAppearanceSchema: z.ZodType<HostAppearance> = z.strictObject({
+/**
+ * The stored shape. `icon` is optional because registries written before it existed lack it,
+ * and a loose string because a newer build may store an icon this build doesn't know — that
+ * host falls back to the default glyph instead of failing the strict parse and being dropped.
+ */
+export const StoredHostAppearanceSchema = z.strictObject({
   color: z.enum(["none", ...IDENTITY_COLOR_NAMES]),
   badgeDisplay: z.enum(["name", "icon", "hidden"]).nullable(),
+  icon: z.string().optional(),
 });
 
+export type StoredHostAppearance = z.infer<typeof StoredHostAppearanceSchema>;
+
 export function defaultHostAppearance(): HostAppearance {
-  return { color: "none", badgeDisplay: null };
+  return { color: "none", badgeDisplay: null, icon: DEFAULT_HOST_ICON };
+}
+
+export function hostAppearanceFromStored(stored: StoredHostAppearance): HostAppearance {
+  return {
+    color: stored.color,
+    badgeDisplay: stored.badgeDisplay,
+    icon: isHostIcon(stored.icon) ? stored.icon : DEFAULT_HOST_ICON,
+  };
 }
 
 export function normalizeStoredHostAppearance(value: unknown): HostAppearance {
-  const result = HostAppearanceSchema.safeParse(value);
-  return result.success ? result.data : defaultHostAppearance();
+  const result = StoredHostAppearanceSchema.safeParse(value);
+  return result.success ? hostAppearanceFromStored(result.data) : defaultHostAppearance();
 }
 
 export function resolveHostBadgeDisplay(input: {
@@ -52,6 +90,7 @@ export interface HostBadgeModel {
   serverId: string;
   label: string;
   color: HostColor;
+  icon: HostIcon;
   showLabel: boolean;
 }
 
@@ -85,6 +124,7 @@ export function selectHostBadges(input: {
       serverId: host.serverId,
       label: host.label.trim() || host.serverId,
       color: host.appearance.color,
+      icon: host.appearance.icon,
       showLabel: display === "name",
     });
   }
