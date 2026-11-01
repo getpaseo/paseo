@@ -361,6 +361,39 @@ export const AgentFeatureSchema = z.discriminatedUnion("type", [
   AgentFeatureSelectSchema,
 ]);
 
+export const AgentOptionChoiceSchema = z.object({
+  value: z.string(),
+  label: z.string(),
+  description: z.string().optional(),
+});
+
+export const AgentOptionToggleControlSchema = z.object({
+  type: z.literal("toggle"),
+  key: z.string(),
+  label: z.string(),
+  description: z.string().optional(),
+  tooltip: z.string().optional(),
+  icon: z.string().optional(),
+  defaultValue: z.boolean().optional(),
+});
+
+export const AgentOptionSelectControlSchema = z.object({
+  type: z.literal("select"),
+  key: z.string(),
+  label: z.string(),
+  description: z.string().optional(),
+  tooltip: z.string().optional(),
+  icon: z.string().optional(),
+  desktopTrigger: z.enum(["icon", "label"]).optional(),
+  defaultValue: z.string().optional(),
+  choices: z.array(AgentOptionChoiceSchema),
+});
+
+export const AgentOptionControlSchema = z.discriminatedUnion("type", [
+  AgentOptionToggleControlSchema,
+  AgentOptionSelectControlSchema,
+]);
+
 const AgentModelDefinitionSchema = z.object({
   provider: AgentProviderSchema,
   id: z.string(),
@@ -490,6 +523,7 @@ const AgentSessionConfigSchema = z.object({
   modeId: z.string().optional(),
   model: z.string().optional(),
   thinkingOptionId: z.string().optional(),
+  // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. Folded into providerOptions.
   featureValues: z.record(z.string(), z.unknown()).optional(),
   title: z.string().trim().min(1).max(MAX_EXPLICIT_AGENT_TITLE_CHARS).optional().nullable(),
   providerOptions: ProviderOptionsSchema.optional(),
@@ -866,7 +900,11 @@ export const AgentSnapshotPayloadSchema = z.object({
   cwd: z.string(),
   workspaceId: z.string().optional(),
   model: z.string().nullable(),
+  // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. Built from controls + options.
   features: z.array(AgentFeatureSchema).optional(),
+  /** Effective provider options: `config.json` defaults deep-merged with the agent's own. */
+  options: ProviderOptionsSchema.optional(),
+  controls: z.array(AgentOptionControlSchema).optional(),
   thinkingOptionId: z.string().nullable().optional(),
   effectiveThinkingOptionId: z.string().nullable().optional(),
   createdAt: z.string(),
@@ -2055,7 +2093,10 @@ export const AgentConfigApplySchema = z.object({
   modelId: z.string().nullable().optional(),
   modeId: z.string().optional(),
   thinkingOptionId: z.string().nullable().optional(),
+  // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. Maps to an options patch.
   featureValues: z.record(z.string(), z.unknown()).optional(),
+  /** Patch of the agent's own options: replaces top-level keys; `null` removes the key. */
+  options: ProviderOptionsSchema.optional(),
 });
 
 export type AgentConfigApply = z.infer<typeof AgentConfigApplySchema>;
@@ -2971,11 +3012,19 @@ const ListCommandsDraftConfigSchema = z.object({
   modeId: z.string().optional(),
   model: z.string().optional(),
   thinkingOptionId: z.string().optional(),
+  // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. Folded into providerOptions.
   featureValues: z.record(z.string(), z.unknown()).optional(),
+  providerOptions: ProviderOptionsSchema.optional(),
 });
 
 export const ListProviderFeaturesRequestMessageSchema = z.object({
   type: z.literal("list_provider_features_request"),
+  draftConfig: ListCommandsDraftConfigSchema,
+  requestId: z.string(),
+});
+
+export const ProviderControlsListRequestMessageSchema = z.object({
+  type: z.literal("provider.controls.list.request"),
   draftConfig: ListCommandsDraftConfigSchema,
   requestId: z.string(),
 });
@@ -3157,6 +3206,7 @@ export const HubExecutionAgentCreateRequestSchema = z.object({
   model: z.string().optional(),
   modeId: z.string().optional(),
   thinkingOptionId: z.string().optional(),
+  // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. Folded into providerOptions.
   featureValues: z.record(z.string(), z.unknown()).optional(),
   providerOptions: ProviderOptionsSchema.optional(),
   toolPolicy: ToolPolicySchema.optional(),
@@ -3357,6 +3407,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ListProviderModelsRequestMessageSchema,
   ListProviderModesRequestMessageSchema,
   ListProviderFeaturesRequestMessageSchema,
+  ProviderControlsListRequestMessageSchema,
   ListAvailableProvidersRequestMessageSchema,
   GetProvidersSnapshotRequestMessageSchema,
   RefreshProvidersSnapshotRequestMessageSchema,
@@ -3836,6 +3887,7 @@ export const ServerInfoStatusPayloadSchema = z
         selectiveAgentTimeline: z.boolean().optional(),
         explicitEventSubscriptions: z.boolean().optional(),
         ownedSubscriptions: z.boolean().optional(),
+        providerOptionControls: z.boolean().optional(),
         binaryChunkingV1: z.boolean().optional(),
         workspaceSetupObservation: z.boolean().optional(),
         workspaceSortTimes: z.boolean().optional(),
@@ -6303,6 +6355,19 @@ export const ListProviderModesResponseMessageSchema = z.object({
   }),
 });
 
+export const ProviderControlsListResponseMessageSchema = z.object({
+  type: z.literal("provider.controls.list.response"),
+  payload: z.object({
+    provider: AgentProviderSchema,
+    controls: z.array(AgentOptionControlSchema).optional(),
+    /** Effective options for the draft: `config.json` defaults merged with the draft's own. */
+    options: ProviderOptionsSchema.optional(),
+    error: z.string().nullable().optional(),
+    fetchedAt: z.string(),
+    requestId: z.string(),
+  }),
+});
+
 export const ListProviderFeaturesResponseMessageSchema = z.object({
   type: z.literal("list_provider_features_response"),
   payload: z.object({
@@ -7195,6 +7260,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ListProviderModelsResponseMessageSchema,
   ListProviderModesResponseMessageSchema,
   ListProviderFeaturesResponseMessageSchema,
+  ProviderControlsListResponseMessageSchema,
   ListAvailableProvidersResponseSchema,
   GetProvidersSnapshotResponseMessageSchema,
   ProvidersSnapshotUpdateMessageSchema,
@@ -7449,6 +7515,12 @@ export type ListProviderModelsRequestMessage = z.infer<
   typeof ListProviderModelsRequestMessageSchema
 >;
 export type ListProviderModesRequestMessage = z.infer<typeof ListProviderModesRequestMessageSchema>;
+export type ProviderControlsListRequestMessage = z.infer<
+  typeof ProviderControlsListRequestMessageSchema
+>;
+export type ProviderControlsListResponseMessage = z.infer<
+  typeof ProviderControlsListResponseMessageSchema
+>;
 export type ListProviderFeaturesRequestMessage = z.infer<
   typeof ListProviderFeaturesRequestMessageSchema
 >;

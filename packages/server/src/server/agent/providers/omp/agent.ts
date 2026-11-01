@@ -1,3 +1,4 @@
+import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { mapCustomMessageToToolCall } from "../custom-message.js";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -9,7 +10,7 @@ import stripAnsi from "strip-ansi";
 import {
   type AgentCapabilityFlags,
   type AgentClient,
-  type AgentFeature,
+  type AgentOptionControl,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -66,9 +67,12 @@ import {
   resolveOmpLaunchMode,
   resolveOmpProviderOptions,
   OMP_MODES,
+  OmpProviderOptionsSchema,
   type OmpRuntimeOptions,
 } from "./provider-config.js";
 export { formatOmpVersionSupport, resolveOmpDiagnosticPaths } from "./provider-config.js";
+import { applyProviderOptionsPatch } from "../../option-controls.js";
+import { assertChangesAreLive, validateProviderOptions } from "../../provider-options.js";
 import { OmpSubagentCardTracker } from "./subagent-card-tracker.js";
 import { ompSkillPromptUserText, shouldDisplayOmpCustomMessage } from "./custom-message.js";
 import { getUserMessageText } from "./message-history.js";
@@ -750,6 +754,10 @@ export class OmpAgentSession implements AgentSession {
     this.restartRuntime = options.restartRuntime;
     this.config = options.config;
     this.state = options.initialState;
+    this.openOptionsPatch = this.fastModeDifference(options.config.providerOptions?.fast_mode);
+    // A replacement runtime starts from the Fast this one opened with, not the one it was asked for.
+    if (typeof this.openOptionsPatch.fast_mode === "boolean")
+      this.rememberFastMode(this.openOptionsPatch.fast_mode);
     this.currentModeId = options.currentModeId ?? null;
     this.logger = options.logger;
     this.live = options.live ?? true;
@@ -804,15 +812,14 @@ export class OmpAgentSession implements AgentSession {
     return this.state.sessionId;
   }
 
-  get features(): AgentFeature[] {
+  get controls(): AgentOptionControl[] {
     if (!hasOmpFastMode(this.state)) return [];
     return [
       {
         type: "toggle",
-        id: "fast_mode",
+        key: "fast_mode",
         label: "Fast",
         icon: "zap",
-        value: this.state.fastModeEnabled === true,
         ...(this.state.fastModeEnabled && !this.state.fastModeActive
           ? { description: OMP_FAST_INACTIVE_MESSAGE, tooltip: OMP_FAST_INACTIVE_MESSAGE }
           : {}),
@@ -820,18 +827,49 @@ export class OmpAgentSession implements AgentSession {
     ];
   }
 
-  async setFeature(featureId: string, value: unknown): Promise<void> {
-    if (featureId !== "fast_mode") throw new Error(`Unknown OMP feature: ${featureId}`);
-    if (typeof value !== "boolean") throw new Error("OMP fast mode requires a boolean");
+  async applyOptions(options: ProviderOptions): Promise<Record<string, unknown>> {
+    assertChangesAreLive({
+      provider: "omp",
+      patch: options,
+      current: this.config.providerOptions,
+      live: ["fast_mode"],
+    });
+    const next = validateProviderOptions(
+      "omp",
+      OmpProviderOptionsSchema,
+      applyProviderOptionsPatch({ options: this.config.providerOptions, patch: options }),
+    );
+    if (options.fast_mode === undefined) return {};
+    const requested = next?.fast_mode ?? false;
     if (!hasOmpFastMode(this.state)) throw new Error("OMP fast mode is unavailable");
-    const result = await this.runtimeSession.setFastMode(value);
-    this.state = {
-      ...this.state,
-      fastModeEnabled: result.enabled,
-      fastModeActive: result.active,
-    };
-    this.config.featureValues = { ...this.config.featureValues, fast_mode: result.enabled };
+    if (requested !== this.state.fastModeEnabled) {
+      const result = await this.runtimeSession.setFastMode(requested);
+      this.state = {
+        ...this.state,
+        fastModeEnabled: result.enabled,
+        fastModeActive: result.active,
+      };
+    }
+    if (typeof this.state.fastModeEnabled === "boolean") {
+      this.rememberFastMode(this.state.fastModeEnabled);
+    }
+    return this.fastModeDifference(requested);
   }
+
+  /** A replacement runtime starts from the Fast the session has now, not the one it opened with. */
+  private rememberFastMode(enabled: boolean): void {
+    this.config.providerOptions = { ...this.config.providerOptions, fast_mode: enabled };
+  }
+
+  /** The option patch when the runtime's fast mode is not what `given` stands for; unset is off. */
+  private fastModeDifference(given: unknown): Record<string, unknown> {
+    if (!hasOmpFastMode(this.state)) return {};
+    const enabled = this.state.fastModeEnabled === true;
+    return (given ?? false) === enabled ? {} : { fast_mode: enabled };
+  }
+
+  /** How the opened session differs from the options it was given. */
+  readonly openOptionsPatch: Record<string, unknown>;
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
     return runProviderTurn({
@@ -1072,7 +1110,7 @@ export class OmpAgentSession implements AgentSession {
         this.pendingPromptResults.clear();
         this.runtimeSession = next;
         this.hostTools = restarted.hostTools;
-        this.state = state;
+        this.installState(state);
         this.currentModeId = modeId;
         this.config.modeId = modeId;
         this.runtimeDead = false;
@@ -2210,7 +2248,7 @@ export class OmpAgentSession implements AgentSession {
       }
       try {
         const state = await this.runtimeSession.getState();
-        this.state = state;
+        this.installState(state);
         if (this.closed || !this.activeTurnStarted || this.currentTurnIdForEvent() !== turnId) {
           // An interrupt settled this turn while the state check was in flight.
           return;
@@ -2227,7 +2265,22 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private async refreshState(): Promise<void> {
-    this.state = await this.runtimeSession.getState();
+    this.installState(await this.runtimeSession.getState());
+  }
+
+  // The runtime owns Fast: whatever it reports is what the session now runs with, so every state
+  // read from the runtime is installed here and a difference is published once.
+  private installState(state: OmpSessionState): void {
+    const before = this.state.fastModeEnabled;
+    this.state = state;
+    if (this.state.fastModeEnabled !== before && typeof this.state.fastModeEnabled === "boolean") {
+      this.rememberFastMode(this.state.fastModeEnabled);
+      this.emit({
+        type: "options_changed",
+        provider: this.provider,
+        patch: { fast_mode: this.state.fastModeEnabled },
+      });
+    }
   }
 
   private async refreshAfterTurn(finalUsage: Promise<void>): Promise<void> {
@@ -2295,7 +2348,7 @@ export class OmpAgentClient implements AgentClient {
     config: AgentSessionConfig,
     state: OmpSessionState,
   ): Promise<OmpSessionState> {
-    const value = config.featureValues?.fast_mode;
+    const value = config.providerOptions?.fast_mode;
     if (typeof value !== "boolean" || !hasOmpFastMode(state) || value === state.fastModeEnabled)
       return state;
     const result = await runtimeSession.setFastMode(value);
@@ -2530,7 +2583,7 @@ export class OmpAgentClient implements AgentClient {
     }
   }
 
-  async listFeatures(_config: AgentSessionConfig): Promise<AgentFeature[]> {
+  async listControls(_config: AgentSessionConfig): Promise<AgentOptionControl[]> {
     return [];
   }
 

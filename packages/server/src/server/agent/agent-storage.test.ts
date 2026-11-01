@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import os from "node:os";
 import path from "node:path";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { promises as fs } from "node:fs";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
@@ -44,9 +44,6 @@ function buildManagedAgentConfig(
     systemPrompt: configOverrides.systemPrompt,
     mcpServers: configOverrides.mcpServers,
   };
-  if (Object.prototype.hasOwnProperty.call(configOverrides, "featureValues")) {
-    config.featureValues = configOverrides.featureValues;
-  }
   return config;
 }
 
@@ -132,6 +129,14 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
   };
 }
 
+function findRecordFile(baseDir: string, agentId: string): string {
+  for (const entry of readdirSync(baseDir, { withFileTypes: true })) {
+    const candidate = path.join(baseDir, entry.name, `${agentId}.json`);
+    if (entry.isDirectory() && existsSync(candidate)) return candidate;
+  }
+  throw new Error(`No stored record for ${agentId}`);
+}
+
 describe("AgentStorage", () => {
   let tmpDir: string;
   let storagePath: string;
@@ -195,60 +200,75 @@ describe("AgentStorage", () => {
     expect(persisted.config?.providerOptions).toEqual({ allowedTools: ["Read"] });
   });
 
-  test("applySnapshot stores and reloads featureValues when present", async () => {
+  test("applySnapshot stores and reloads composer values as providerOptions", async () => {
     await storage.applySnapshot(
       createManagedAgent({
-        id: "agent-feature-values",
-        config: {
-          featureValues: {
-            fast_mode: true,
-          },
-        },
-      }),
-    );
-
-    const record = await storage.get("agent-feature-values");
-    expect(record?.config?.featureValues).toEqual({ fast_mode: true });
-
-    const reloaded = new AgentStorage(storagePath, logger);
-    const persisted = await reloaded.get("agent-feature-values");
-    expect(persisted?.config?.featureValues).toEqual({ fast_mode: true });
-    expect(buildSessionConfig(persisted!).featureValues).toEqual({ fast_mode: true });
-  });
-
-  test("applySnapshot keeps featureValues absent when they were never set", async () => {
-    await storage.applySnapshot(
-      createManagedAgent({
-        id: "agent-no-feature-values",
+        id: "agent-provider-options",
+        config: { providerOptions: { fast_mode: true } },
       }),
     );
 
     const reloaded = new AgentStorage(storagePath, logger);
-    const persisted = await reloaded.get("agent-no-feature-values");
-    expect(persisted?.config?.featureValues).toBeUndefined();
-    expect(buildSessionConfig(persisted!).featureValues).toBeUndefined();
-  });
-
-  test("buildConfigOverrides includes featureValues when present in stored config", async () => {
-    await storage.applySnapshot(
-      createManagedAgent({
-        id: "agent-resume-overrides",
-        config: {
-          featureValues: {
-            fast_mode: true,
-          },
-        },
-      }),
-    );
-
-    const record = await storage.get("agent-resume-overrides");
-    expect(record).not.toBeNull();
-    expect(buildConfigOverrides(record!)).toMatchObject({
+    const persisted = await reloaded.get("agent-provider-options");
+    expect(persisted?.config?.providerOptions).toEqual({ fast_mode: true });
+    expect(buildSessionConfig(persisted!).providerOptions).toEqual({ fast_mode: true });
+    expect(buildConfigOverrides(persisted!)).toMatchObject({
       cwd: "/tmp/project",
-      featureValues: {
-        fast_mode: true,
-      },
+      providerOptions: { fast_mode: true },
     });
+  });
+
+  test("a record stored with featureValues loads them in providerOptions", async () => {
+    await storage.applySnapshot(createManagedAgent({ id: "agent-legacy" }));
+    const file = findRecordFile(storagePath, "agent-legacy");
+    const stored = JSON.parse(await fs.readFile(file, "utf8"));
+    stored.config.providerOptions = { allowedTools: ["Read"], fast_mode: false };
+    stored.config.featureValues = { fast_mode: true, service_tier: "fast" };
+    delete stored.controls;
+    stored.features = [
+      { type: "toggle", id: "fast_mode", label: "Fast mode", value: true },
+      {
+        type: "select",
+        id: "service_tier",
+        label: "Speed",
+        value: "fast",
+        options: [
+          { id: "default", label: "Normal", isDefault: true },
+          { id: "fast", label: "Fast" },
+        ],
+      },
+    ];
+    await fs.writeFile(file, JSON.stringify(stored));
+
+    const reloaded = new AgentStorage(storagePath, logger);
+    const persisted = await reloaded.get("agent-legacy");
+
+    // An explicit providerOptions key wins over the same featureValues key.
+    expect(persisted?.config?.providerOptions).toEqual({
+      allowedTools: ["Read"],
+      fast_mode: false,
+      service_tier: "fast",
+    });
+    expect(persisted?.config).not.toHaveProperty("featureValues");
+    expect(persisted).not.toHaveProperty("features");
+    expect(persisted?.controls).toEqual([
+      { type: "toggle", key: "fast_mode", label: "Fast mode" },
+      {
+        type: "select",
+        key: "service_tier",
+        label: "Speed",
+        defaultValue: "default",
+        choices: [
+          { value: "default", label: "Normal" },
+          { value: "fast", label: "Fast" },
+        ],
+      },
+    ]);
+
+    await reloaded.applySnapshot(createManagedAgent({ id: "agent-legacy" }));
+    const rewritten = JSON.parse(await fs.readFile(file, "utf8"));
+    expect(rewritten.config).not.toHaveProperty("featureValues");
+    expect(rewritten).not.toHaveProperty("features");
   });
 
   test("applySnapshot preserves original createdAt timestamp", async () => {

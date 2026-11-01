@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
@@ -108,33 +108,22 @@ describe("OpenCode auto_accept feature", () => {
     expect(modes).toEqual([]);
   });
 
-  test("lists auto accept as a provider feature", async () => {
+  test("lists auto accept as a provider control", async () => {
     const { runtime } = mockOpenCodeClient();
 
     const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
       serverManager: runtime,
       createClient: runtime.createClient,
     });
-    const enabledFeatures = await client.listFeatures({
+    const controls = await client.listControls({
       provider: "opencode",
       cwd: "/tmp/project",
-      featureValues: { auto_accept: true },
-    });
-    const legacyFeatures = await client.listFeatures({
-      provider: "opencode",
-      cwd: "/tmp/project",
-      modeId: "full-access",
+      providerOptions: { auto_accept: true },
     });
 
-    expect(enabledFeatures).toEqual([
-      expect.objectContaining({
-        type: "toggle",
-        id: "auto_accept",
-        label: "Auto Accept",
-        value: true,
-      }),
+    expect(controls).toEqual([
+      expect.objectContaining({ type: "toggle", key: "auto_accept", label: "Auto Accept" }),
     ]);
-    expect(legacyFeatures).toEqual([expect.objectContaining({ id: "auto_accept", value: true })]);
   });
 
   test("keeps legacy full-access as an alias for build plus auto accept", async () => {
@@ -151,7 +140,7 @@ describe("OpenCode auto_accept feature", () => {
     });
 
     expect(await session.getCurrentMode()).toBe("build");
-    expect(session.features).toEqual([expect.objectContaining({ id: "auto_accept", value: true })]);
+    expect(session.controls).toEqual([expect.objectContaining({ key: "auto_accept" })]);
 
     await session.run("Implement the change");
 
@@ -170,7 +159,7 @@ describe("OpenCode auto_accept feature", () => {
       client.resolveCreateConfig({
         provider: "opencode",
         requestedMode: "full-access",
-        featureValues: undefined,
+        providerOptions: undefined,
         parent: null,
         unattended: false,
         availableModes: [
@@ -178,7 +167,7 @@ describe("OpenCode auto_accept feature", () => {
           { id: "plan", label: "Plan" },
         ],
       }),
-    ).toEqual({ modeId: "build", featureValues: { auto_accept: true } });
+    ).toEqual({ modeId: "build", providerOptions: { auto_accept: true } });
   });
 
   test("inherits unattended callers as auto accept with OpenCode's default agent", () => {
@@ -191,7 +180,7 @@ describe("OpenCode auto_accept feature", () => {
       client.resolveCreateConfig({
         provider: "opencode",
         requestedMode: undefined,
-        featureValues: undefined,
+        providerOptions: undefined,
         parent: {
           provider: "claude",
           modeId: "bypassPermissions",
@@ -203,7 +192,7 @@ describe("OpenCode auto_accept feature", () => {
           { id: "plan", label: "Plan" },
         ],
       }),
-    ).toEqual({ modeId: undefined, featureValues: { auto_accept: true } });
+    ).toEqual({ modeId: undefined, providerOptions: { auto_accept: true } });
   });
 
   test("defaults unattended creation without a parent to auto accept with OpenCode's default agent", () => {
@@ -213,7 +202,7 @@ describe("OpenCode auto_accept feature", () => {
       client.resolveCreateConfig({
         provider: "opencode",
         requestedMode: undefined,
-        featureValues: undefined,
+        providerOptions: undefined,
         parent: null,
         unattended: true,
         availableModes: [
@@ -221,7 +210,7 @@ describe("OpenCode auto_accept feature", () => {
           { id: "plan", label: "Plan" },
         ],
       }),
-    ).toEqual({ modeId: undefined, featureValues: { auto_accept: true } });
+    ).toEqual({ modeId: undefined, providerOptions: { auto_accept: true } });
   });
 
   test("preserves the selected OpenCode agent when inheriting auto accept from an OpenCode parent", () => {
@@ -231,7 +220,7 @@ describe("OpenCode auto_accept feature", () => {
       client.resolveCreateConfig({
         provider: "opencode",
         requestedMode: undefined,
-        featureValues: undefined,
+        providerOptions: undefined,
         parent: {
           provider: "opencode",
           modeId: "paseo-custom",
@@ -244,7 +233,7 @@ describe("OpenCode auto_accept feature", () => {
           { id: "paseo-custom", label: "Paseo Custom" },
         ],
       }),
-    ).toEqual({ modeId: "paseo-custom", featureValues: { auto_accept: true } });
+    ).toEqual({ modeId: "paseo-custom", providerOptions: { auto_accept: true } });
   });
 
   test("inherits auto accept from an OpenCode parent when the child chooses a mode", () => {
@@ -254,7 +243,7 @@ describe("OpenCode auto_accept feature", () => {
       client.resolveCreateConfig({
         provider: "opencode",
         requestedMode: "base",
-        featureValues: undefined,
+        providerOptions: undefined,
         parent: {
           provider: "opencode",
           modeId: "orchestrator",
@@ -267,7 +256,7 @@ describe("OpenCode auto_accept feature", () => {
           { id: "orchestrator", label: "Orchestrator" },
         ],
       }),
-    ).toEqual({ modeId: "base", featureValues: { auto_accept: true } });
+    ).toEqual({ modeId: "base", providerOptions: { auto_accept: true } });
   });
 
   test("auto-approves tool permissions when auto accept is enabled", async () => {
@@ -283,7 +272,7 @@ describe("OpenCode auto_accept feature", () => {
     const session = await client.createSession({
       provider: "opencode",
       cwd: "/tmp/project",
-      featureValues: { auto_accept: true },
+      providerOptions: { auto_accept: true },
     });
     session.subscribe((event) => receivedEvents.push(event));
 
@@ -301,6 +290,72 @@ describe("OpenCode auto_accept feature", () => {
     await session.close();
   });
 
+  test("rejects a live auto_accept the creation schema would reject, and keeps approving", async () => {
+    const { openCodeClient, runtime } = mockOpenCodeClient({
+      events: [toolPermissionEvent(), idleEvent()],
+    });
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      providerOptions: { auto_accept: true },
+    });
+
+    await expect(session.applyOptions?.({ auto_accept: "yes" })).rejects.toThrow(/auto_accept/);
+    await session.run("Run verification");
+
+    expect(openCodeClient.calls.permissionReply).toHaveLength(1);
+    await session.close();
+  });
+
+  test("rejects a live permission change the running session cannot apply", async () => {
+    const { runtime } = mockOpenCodeClient({ events: [idleEvent()] });
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      providerOptions: { permission: "allow" },
+    });
+
+    await expect(session.applyOptions?.({ permission: "deny" })).rejects.toThrow(
+      /permission.*cannot change on a running session/,
+    );
+    await expect(
+      session.applyOptions?.({ permission: "allow", auto_accept: true }),
+    ).resolves.toBeUndefined();
+    await session.close();
+  });
+
+  test("stops auto-approving once auto_accept is removed", async () => {
+    const { openCodeClient, runtime } = mockOpenCodeClient({
+      events: [toolPermissionEvent(), idleEvent()],
+    });
+
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      providerOptions: { auto_accept: true },
+    });
+
+    await session.applyOptions?.({ auto_accept: null });
+    await session.startTurn("Run verification");
+    await vi.waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
+
+    expect(openCodeClient.calls.permissionReply).toHaveLength(0);
+
+    await session.close();
+  });
+
   test("keeps questions separate from auto accept tool approval", async () => {
     const { openCodeClient, runtime } = mockOpenCodeClient({
       events: [questionEvent(), idleEvent()],
@@ -314,7 +369,7 @@ describe("OpenCode auto_accept feature", () => {
     const session = await client.createSession({
       provider: "opencode",
       cwd: "/tmp/project",
-      featureValues: { auto_accept: true },
+      providerOptions: { auto_accept: true },
     });
     session.subscribe((event) => receivedEvents.push(event));
 

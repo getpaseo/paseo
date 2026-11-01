@@ -1,7 +1,7 @@
 import type {
-  AgentFeature,
-  AgentFeatureSelect,
-  AgentFeatureToggle,
+  AgentOptionControl,
+  AgentOptionSelectControl,
+  AgentOptionToggleControl,
   AgentProviderNotice,
   AgentTaskItem,
   JsonValue,
@@ -13,9 +13,9 @@ import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PaseoToolCatalog } from "./tools/types.js";
 
 export type {
-  AgentFeature,
-  AgentFeatureSelect,
-  AgentFeatureToggle,
+  AgentOptionControl,
+  AgentOptionSelectControl,
+  AgentOptionToggleControl,
   AgentProviderNotice,
   AgentTaskItem,
 };
@@ -148,7 +148,7 @@ export interface AgentCreateConfigParent {
 export interface ResolveAgentCreateConfigInput {
   provider: AgentProvider;
   requestedMode: string | undefined;
-  featureValues: Record<string, unknown> | undefined;
+  providerOptions: ProviderOptions | undefined;
   parent: AgentCreateConfigParent | null;
   unattended: boolean;
   availableModes: AgentMode[] | undefined;
@@ -156,13 +156,13 @@ export interface ResolveAgentCreateConfigInput {
 
 export interface ResolveAgentCreateConfigResult {
   modeId: string | undefined;
-  featureValues: Record<string, unknown> | undefined;
+  providerOptions: ProviderOptions | undefined;
 }
 
 export interface AgentCreateConfigUnattendedInput {
   modeId: string | null;
   config: AgentSessionConfig;
-  features?: AgentFeature[];
+  controls?: AgentOptionControl[];
   availableModes: AgentMode[];
 }
 
@@ -429,6 +429,14 @@ export type AgentStreamEvent =
       provider: AgentProvider;
       thinkingOptionId: string | null;
     }
+  /**
+   * The provider changed options on its own: after `createSession`/`resumeSession` or
+   * `applyOptions` it ended up different from what it was given, or later it changed a setting
+   * itself. The daemon stores the patch and forwards it; it does not undo it. `null` removes the
+   * agent's own value. Only for changes that happen on the provider's own initiative: the result
+   * of opening goes in `openOptionsPatch` and the result of `applyOptions` is its return value.
+   */
+  | { type: "options_changed"; provider: AgentProvider; patch: Record<string, unknown> }
   | {
       type: "turn_failed";
       provider: AgentProvider;
@@ -610,7 +618,6 @@ export interface AgentSessionConfig {
   modeId?: string;
   model?: string;
   thinkingOptionId?: string;
-  featureValues?: Record<string, unknown>;
   title?: string | null;
   providerOptions?: ProviderOptions;
   toolPolicy?: ToolPolicy;
@@ -679,7 +686,14 @@ export interface AgentSession {
   readonly provider: AgentProvider;
   readonly id: string | null;
   readonly capabilities: AgentCapabilityFlags;
-  readonly features?: AgentFeature[];
+  /** Composer controls over top-level option keys. Values come from the agent's effective options. */
+  readonly controls?: AgentOptionControl[];
+  /**
+   * How the session ended up different from the options it was opened with, as a patch (`null`
+   * removes a key). Set by the time `createSession`/`resumeSession` resolves; the daemon stores it
+   * before the agent is published.
+   */
+  readonly openOptionsPatch?: Record<string, unknown>;
   /** New provider-owned rows to commit on registration. streamHistory must also
    * replay them at their original timestamps; restored sessions omit old rows. */
   readonly initialTimeline?: ImportedTimelineEntry[];
@@ -714,7 +728,20 @@ export interface AgentSession {
   listCommands?(): Promise<AgentSlashCommand[]>;
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
-  setFeature?(featureId: string, value: unknown): Promise<void>;
+  /**
+   * Apply an options patch. `options` holds only the keys the patch touches, resolved against
+   * the `config.json` defaults; `null` means nothing is set for the key, so return it to the
+   * session's own default if that can be done. Leave every other setting alone. Throw to reject a
+   * value, or a key the running session cannot apply (one the provider reads only when it
+   * opens): the daemon stores the patch only when this resolves, so a stored option always
+   * describes what runs, and the call is all-or-nothing.
+   * Emit nothing from here. Return the options the session ended up with when they differ from
+   * the request (a patch, `null` removes a key), for example a value it kept because it could not
+   * be reverted; the daemon stores it together with the patch. When a throw leaves the session's
+   * state moved anyway, report the moved values once as `options_changed` after the call has
+   * ended, so the stored options still match what runs.
+   */
+  applyOptions?(options: ProviderOptions): Promise<Record<string, unknown> | void>;
   revertConversation?(input: { messageId: string }): Promise<void>;
   revertFiles?(input: { messageId: string }): Promise<void>;
   revertBoth?(input: { messageId: string }): Promise<void>;
@@ -764,11 +791,17 @@ export interface ResolveAgentDefaultModeInput {
 export interface AgentClient {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
+  /**
+   * Create the agent with `config.providerOptions` (defaults already merged in). Emit nothing
+   * about options while creating. If the agent ended up different from the options, say so in the
+   * session's `openOptionsPatch`.
+   */
   createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession>;
+  /** Same contract as `createSession`: open with the options, report any difference in `openOptionsPatch`. */
   resumeSession(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
@@ -797,7 +830,9 @@ export interface AgentClient {
   resolveCreateConfig?(input: ResolveAgentCreateConfigInput): ResolveAgentCreateConfigResult;
   isCreateConfigUnattended?(input: AgentCreateConfigUnattendedInput): boolean;
   listCommands?(config: AgentSessionConfig): Promise<AgentSlashCommand[]>;
-  listFeatures?(config: AgentSessionConfig): Promise<AgentFeature[]>;
+  listControls?(config: AgentSessionConfig): Promise<AgentOptionControl[]>;
+  /** Effective options: provider defaults from `config.json` deep-merged with the agent's own. */
+  effectiveOptions?(own: ProviderOptions | undefined): ProviderOptions;
   listImportableSessions?(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]>;

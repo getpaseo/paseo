@@ -10,7 +10,7 @@ import { z } from "zod";
 import {
   type AgentCapabilityFlags,
   type AgentClient,
-  type AgentFeature,
+  type AgentOptionControl,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -2828,7 +2828,7 @@ export class PiRpcAgentClient implements AgentClient {
     }
   }
 
-  async listFeatures(_config: AgentSessionConfig): Promise<AgentFeature[]> {
+  async listControls(_config: AgentSessionConfig): Promise<AgentOptionControl[]> {
     return [];
   }
 

@@ -10,7 +10,7 @@ import {
 } from "./agent-projections.js";
 import type { AgentSession } from "./agent-sdk-types.js";
 import type {
-  AgentFeature,
+  AgentOptionControl,
   ImportableProviderSession,
   AgentPermissionRequest,
   AgentPersistenceHandle,
@@ -126,16 +126,6 @@ function createPermission(overrides: Partial<AgentPermissionRequest> = {}): Agen
     metadata: { requestedAt: new Date("2025-02-01T12:00:00.000Z") },
   };
   return { ...base, ...overrides };
-}
-
-function createFeature(overrides: Partial<AgentFeature> = {}): AgentFeature {
-  return {
-    type: "toggle",
-    id: "fast_mode",
-    label: "Fast mode",
-    value: true,
-    ...overrides,
-  };
 }
 
 describe("toStoredAgentRecord", () => {
@@ -474,13 +464,44 @@ describe("toAgentPayload", () => {
     });
   });
 
-  it("includes features in the snapshot payload", () => {
-    const features = [createFeature()];
-    const agent = createManagedAgent({ features });
+  it("projects controls, effective options, and legacy features from the same source", () => {
+    const controls: AgentOptionControl[] = [
+      { type: "toggle", key: "fast_mode", label: "Fast mode" },
+      {
+        type: "select",
+        key: "service_tier",
+        label: "Speed",
+        defaultValue: "default",
+        choices: [
+          { value: "default", label: "Normal" },
+          { value: "fast", label: "Fast" },
+        ],
+      },
+    ];
+    // `config.json` supplies fast_mode; the agent itself sets nothing for service_tier.
+    // Options without a control are part of the snapshot too.
+    const agent = createManagedAgent({
+      controls,
+      effectiveOptions: { fast_mode: true, sandbox_mode: "workspace-write" },
+    });
 
     const payload = toAgentPayload(agent);
 
-    expect(payload.features).toEqual(features);
+    expect(payload.controls).toEqual(controls);
+    expect(payload.options).toEqual({ fast_mode: true, sandbox_mode: "workspace-write" });
+    expect(payload.features).toEqual([
+      { type: "toggle", id: "fast_mode", label: "Fast mode", value: true },
+      {
+        type: "select",
+        id: "service_tier",
+        label: "Speed",
+        value: "default",
+        options: [
+          { id: "default", label: "Normal", isDefault: true },
+          { id: "fast", label: "Fast" },
+        ],
+      },
+    ]);
   });
 });
 

@@ -1,3 +1,4 @@
+import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync, rmSync, readdirSync } from "node:fs";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
@@ -6,7 +7,7 @@ import path from "node:path";
 import type {
   AgentCapabilityFlags,
   AgentClient,
-  AgentFeature,
+  AgentOptionControl,
   AgentLaunchContext,
   AgentMode,
   AgentModelDefinition,
@@ -379,14 +380,13 @@ class FakeAgentSession implements AgentSession {
     return this.providerName;
   }
 
-  get features(): AgentFeature[] {
+  get controls(): AgentOptionControl[] {
     return [
       {
         type: "toggle",
-        id: TEST_FEATURE_ID,
+        key: TEST_FEATURE_ID,
         label: "Test feature",
         description: "Deterministic provider feature used by MCP integration tests.",
-        value: this.config.featureValues?.[TEST_FEATURE_ID] === true,
       },
     ];
   }
@@ -873,11 +873,8 @@ class FakeAgentSession implements AgentSession {
     this.config.modeId = modeId;
   }
 
-  async setFeature(featureId: string, value: unknown): Promise<void> {
-    this.config.featureValues = {
-      ...this.config.featureValues,
-      [featureId]: value,
-    };
+  async applyOptions(options: ProviderOptions): Promise<void> {
+    this.config.providerOptions = { ...this.config.providerOptions, ...options };
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {

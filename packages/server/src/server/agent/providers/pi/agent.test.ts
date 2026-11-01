@@ -2961,12 +2961,12 @@ describe("PiRpcAgentClient", () => {
     },
   );
 
-  test("lists no draft features without starting a Pi session", async () => {
+  test("lists no draft controls without starting a Pi session", async () => {
     const pi = new FakePi();
     const client = createClient(pi);
 
     await expect(
-      client.listFeatures(createConfig({ model: "openrouter/test/model" })),
+      client.listControls(createConfig({ model: "openrouter/test/model" })),
     ).resolves.toEqual([]);
 
     expect(pi.recordedLaunches).toHaveLength(0);

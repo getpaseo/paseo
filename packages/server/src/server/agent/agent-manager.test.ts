@@ -23,6 +23,7 @@ import { AgentStorage } from "./agent-storage.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import { toAgentPayload } from "./agent-projections.js";
+import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { startAgentRun } from "./agent-prompt.js";
@@ -38,7 +39,7 @@ import type {
 import type {
   AgentClient,
   AgentCreateSessionOptions,
-  AgentFeature,
+  AgentOptionControl,
   AgentLaunchContext,
   AgentPromptInput,
   AgentProvider,
@@ -57,6 +58,7 @@ import type {
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
+import { mergeProviderOptions } from "./provider-options.js";
 
 const DESKTOP_OPEN_AGENT_TAB_LABEL = getOpenAgentTabLabel("desktop-client");
 const MOBILE_OPEN_AGENT_TAB_LABEL = getOpenAgentTabLabel("mobile-client");
@@ -182,13 +184,8 @@ class RecordingTimelineStore implements AgentTimelineStore {
   }
 }
 
-function createFeature(args: { id: string; label: string; value: boolean }): AgentFeature {
-  return {
-    type: "toggle",
-    id: args.id,
-    label: args.label,
-    value: args.value,
-  };
+function createControl(args: { key: string; label: string }): AgentOptionControl {
+  return { type: "toggle", key: args.key, label: args.label };
 }
 
 function expectArchivedAgentRecord(
@@ -2332,7 +2329,7 @@ test("listDraftCommands uses explicit model config without default model fetchin
   ]);
 });
 
-test("listDraftFeatures does not start a fallback session without a model", async () => {
+test("listDraftControls does not start a fallback session without a model", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-draft-features-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -2365,18 +2362,21 @@ test("listDraftFeatures does not start a fallback session without a model", asyn
     logger,
   });
 
-  await expect(manager.listDraftFeatures({ provider: "codex", cwd: workdir })).resolves.toEqual([]);
+  await expect(manager.listDraftControls({ provider: "codex", cwd: workdir })).resolves.toEqual({
+    controls: [],
+    options: {},
+  });
 
   expect(client.fetchCatalogCalls).toBe(0);
   expect(client.createSessionCalls).toBe(0);
   expect(client.availabilityCalls).toBe(0);
 });
 
-test("listDraftFeatures uses client feature listing without a model", async () => {
+test("listDraftControls uses client feature listing without a model", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-draft-features-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
-  const draftFeature = createFeature({ id: "auto_accept", label: "Auto Accept", value: false });
+  const draftControl = createControl({ key: "auto_accept", label: "Auto Accept" });
   class DraftFeatureClient extends TestAgentClient {
     fetchCatalogCalls = 0;
     createSessionCalls = 0;
@@ -2398,9 +2398,9 @@ test("listDraftFeatures uses client feature listing without a model", async () =
       return await super.createSession(config);
     }
 
-    async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+    async listControls(config: AgentSessionConfig): Promise<AgentOptionControl[]> {
       this.featureConfigs.push(config);
-      return [draftFeature];
+      return [draftControl];
     }
   }
   const client = new DraftFeatureClient();
@@ -2412,9 +2412,13 @@ test("listDraftFeatures uses client feature listing without a model", async () =
     logger,
   });
 
-  await expect(manager.listDraftFeatures({ provider: "codex", cwd: workdir })).resolves.toEqual([
-    draftFeature,
-  ]);
+  await expect(
+    manager.listDraftControls({
+      provider: "codex",
+      cwd: workdir,
+      providerOptions: { auto_accept: true },
+    }),
+  ).resolves.toEqual({ controls: [draftControl], options: { auto_accept: true } });
 
   expect(client.fetchCatalogCalls).toBe(0);
   expect(client.createSessionCalls).toBe(0);
@@ -2423,15 +2427,28 @@ test("listDraftFeatures uses client feature listing without a model", async () =
     {
       provider: "codex",
       cwd: workdir,
+      providerOptions: { auto_accept: true },
     },
   ]);
+
+  // Options without a control come back too.
+  await expect(
+    manager.listDraftControls({
+      provider: "codex",
+      cwd: workdir,
+      providerOptions: { auto_accept: true, sandbox_mode: "workspace-write" },
+    }),
+  ).resolves.toEqual({
+    controls: [draftControl],
+    options: { auto_accept: true, sandbox_mode: "workspace-write" },
+  });
 });
 
-test("listDraftFeatures uses explicit model config without default model fetching", async () => {
+test("listDraftControls uses explicit model config without default model fetching", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-draft-features-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
-  const draftFeature = createFeature({ id: "fast_mode", label: "Fast mode", value: false });
+  const draftControl = createControl({ key: "web_search", label: "Fast mode" });
   class DraftFeatureClient extends TestAgentClient {
     fetchCatalogCalls = 0;
     createSessionCalls = 0;
@@ -2447,9 +2464,9 @@ test("listDraftFeatures uses explicit model config without default model fetchin
       return await super.createSession(config);
     }
 
-    async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+    async listControls(config: AgentSessionConfig): Promise<AgentOptionControl[]> {
       this.featureConfigs.push(config);
-      return [draftFeature];
+      return [draftControl];
     }
   }
   const client = new DraftFeatureClient();
@@ -2461,13 +2478,13 @@ test("listDraftFeatures uses explicit model config without default model fetchin
     logger,
   });
 
-  const features = await manager.listDraftFeatures({
+  const draft = await manager.listDraftControls({
     provider: "codex",
     cwd: workdir,
     model: "gpt-5.4",
   });
 
-  expect(features).toEqual([draftFeature]);
+  expect(draft).toEqual({ controls: [draftControl], options: {} });
   expect(client.fetchCatalogCalls).toBe(0);
   expect(client.createSessionCalls).toBe(0);
   expect(client.featureConfigs).toEqual([
@@ -4548,6 +4565,46 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
       PASEO_AGENT_CWD: workdir,
     },
   });
+});
+
+test("importProviderSession reports the defaults the session launched with, not defaults edited during the import", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-import-options-"));
+  let tier = "default";
+  class ImportClient extends TestAgentClient {
+    effectiveOptions(own: ProviderOptions | undefined): ProviderOptions {
+      return { service_tier: tier, ...own };
+    }
+
+    async importSession(input: ImportProviderSessionInput) {
+      // The user edits the default in config.json after the provider has launched.
+      tier = "fast";
+      return {
+        session: new TestAgentSession({ provider: "codex", cwd: workdir }),
+        config: { provider: "codex" as const, cwd: workdir },
+        persistence: {
+          provider: "codex" as const,
+          sessionId: input.providerHandleId,
+          nativeHandle: input.providerHandleId,
+          metadata: { provider: "codex", cwd: workdir },
+        },
+        timeline: [],
+      };
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new ImportClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+
+  const imported = await manager.importProviderSession({
+    provider: "codex",
+    providerHandleId: "thread-selected",
+    cwd: workdir,
+    workspaceId: "ws-imported",
+  });
+
+  expect(imported.effectiveOptions).toEqual({ service_tier: "default" });
 });
 
 test("importProviderSession imports the selected session without listing and publishes ready state", async () => {
@@ -9984,16 +10041,13 @@ test("respondToPermission updates currentModeId after plan approval", async () =
   expect(client.resumedModeId).toBe("acceptEdits");
 });
 
-test("respondToPermission refreshes features and runtime info after provider-managed plan approval", async () => {
+test("respondToPermission applies provider option changes and refreshes runtime info after provider-managed plan approval", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
 
   class RefreshingPermissionSession extends TestAgentSession {
-    private featureState: AgentFeature[] = [
-      createFeature({ id: "fast_mode", label: "Fast", value: true }),
-      createFeature({ id: "plan_mode", label: "Plan", value: true }),
-    ];
+    private planMode = true;
     private modeId = "auto";
     private pending = [
       {
@@ -10005,8 +10059,11 @@ test("respondToPermission refreshes features and runtime info after provider-man
       },
     ];
 
-    get features(): AgentFeature[] {
-      return this.featureState;
+    get controls(): AgentOptionControl[] {
+      return [
+        createControl({ key: "web_search", label: "Fast" }),
+        createControl({ key: "plan_mode", label: "Plan" }),
+      ];
     }
 
     override async getRuntimeInfo() {
@@ -10015,7 +10072,7 @@ test("respondToPermission refreshes features and runtime info after provider-man
         sessionId: this.id,
         model: "gpt-5.4",
         modeId: this.modeId,
-        extra: { collaborationMode: this.features[1]?.value ? "Plan" : "Code" },
+        extra: { collaborationMode: this.planMode ? "Plan" : "Code" },
       };
     }
 
@@ -10030,10 +10087,12 @@ test("respondToPermission refreshes features and runtime info after provider-man
     override async respondToPermission(): Promise<void> {
       this.modeId = "auto";
       this.pending = [];
-      this.featureState = [
-        createFeature({ id: "fast_mode", label: "Fast", value: true }),
-        createFeature({ id: "plan_mode", label: "Plan", value: false }),
-      ];
+      this.planMode = false;
+      this.pushEvent({
+        type: "options_changed",
+        provider: this.provider,
+        patch: { plan_mode: false },
+      });
     }
   }
 
@@ -10056,6 +10115,7 @@ test("respondToPermission refreshes features and runtime info after provider-man
     {
       provider: "codex",
       cwd: workdir,
+      providerOptions: { web_search: true, plan_mode: true },
     },
     undefined,
     { workspaceId: undefined },
@@ -10080,20 +10140,14 @@ test("respondToPermission refreshes features and runtime info after provider-man
 
   const updated = manager.getAgent(snapshot.id);
   expect(updated?.pendingPermissions.size).toBe(0);
-  expect(updated?.features).toEqual([
-    createFeature({ id: "fast_mode", label: "Fast", value: true }),
-    createFeature({ id: "plan_mode", label: "Plan", value: false }),
-  ]);
+  expect(updated?.effectiveOptions).toEqual({ web_search: true, plan_mode: false });
   expect(updated?.runtimeInfo).toMatchObject({
     model: "gpt-5.4",
     extra: { collaborationMode: "Code" },
   });
 
   const persisted = await storage.get(snapshot.id);
-  expect(persisted?.features).toEqual([
-    createFeature({ id: "fast_mode", label: "Fast", value: true }),
-    createFeature({ id: "plan_mode", label: "Plan", value: false }),
-  ]);
+  expect(persisted?.config?.providerOptions).toEqual({ web_search: true, plan_mode: false });
 });
 
 test("respondToPermission emits refreshed state before permission_resolved", async () => {
@@ -10102,9 +10156,6 @@ test("respondToPermission emits refreshed state before permission_resolved", asy
   const storage = new AgentStorage(storagePath, logger);
 
   class OrderedPermissionSession extends TestAgentSession {
-    private featureState: AgentFeature[] = [
-      createFeature({ id: "fast_mode", label: "Fast", value: true }),
-    ];
     private modeId = "plan";
     private pending = [
       {
@@ -10116,8 +10167,8 @@ test("respondToPermission emits refreshed state before permission_resolved", asy
       },
     ];
 
-    get features(): AgentFeature[] {
-      return this.featureState;
+    get controls(): AgentOptionControl[] {
+      return [createControl({ key: "web_search", label: "Fast" })];
     }
 
     override async getRuntimeInfo() {
@@ -10139,13 +10190,17 @@ test("respondToPermission emits refreshed state before permission_resolved", asy
 
     override async respondToPermission(): Promise<void> {
       this.pushEvent({
+        type: "options_changed",
+        provider: this.provider,
+        patch: { web_search: false },
+      });
+      this.pushEvent({
         type: "permission_resolved",
         provider: this.provider,
         requestId: "perm-order-1",
         resolution: { behavior: "allow" },
       });
       this.modeId = "acceptEdits";
-      this.featureState = [createFeature({ id: "fast_mode", label: "Fast", value: false })];
       this.pending = [];
     }
   }
@@ -10169,6 +10224,7 @@ test("respondToPermission emits refreshed state before permission_resolved", asy
     {
       provider: "codex",
       cwd: workdir,
+      providerOptions: { web_search: true },
     },
     undefined,
     { workspaceId: undefined },
@@ -10180,9 +10236,8 @@ test("respondToPermission emits refreshed state before permission_resolved", asy
       return;
     }
     if (event.type === "agent_state" && event.agent.id === snapshot.id) {
-      const fastMode = event.agent.features?.find((feature) => feature.id === "fast_mode");
       seen.push(
-        `state:${event.agent.currentModeId}:${String(fastMode?.type === "toggle" ? fastMode.value : null)}`,
+        `state:${event.agent.currentModeId}:${String(event.agent.effectiveOptions?.web_search)}`,
       );
       return;
     }
@@ -12694,4 +12749,479 @@ test("an out-of-band command racing idle cleanup waits for the resumed runtime",
   expect(await command).toEqual({ disposition: "out_of_band" });
   expect(h.commands).toEqual(["/maintenance"]);
   expect(h.prompts).toEqual([]);
+});
+
+describe("agent options", () => {
+  class OptionsSession extends TestAgentSession {
+    readonly applied: ProviderOptions[] = [];
+    rejectWith: Error | null = null;
+    applyGate: Promise<void> | null = null;
+    /** What the session says it ended up with after the next apply. */
+    ended: Record<string, unknown> = {};
+    openOptionsPatch: Record<string, unknown> = {};
+
+    async applyOptions(options: ProviderOptions): Promise<Record<string, unknown>> {
+      if (this.rejectWith) throw this.rejectWith;
+      await this.applyGate;
+      this.applied.push(options);
+      return this.ended;
+    }
+  }
+
+  class OptionsClient extends TestAgentClient {
+    session: OptionsSession | null = null;
+    openOptionsPatch: Record<string, unknown> = {};
+
+    // Stands in for the `config.json` provider defaults the registry wrapper merges in.
+    effectiveOptions(own: ProviderOptions | undefined): ProviderOptions {
+      return { service_tier: "default", ...own };
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.session = new OptionsSession(config);
+      this.session.openOptionsPatch = this.openOptionsPatch;
+      return this.session;
+    }
+  }
+
+  async function createOptionsAgent(
+    providerOptions?: ProviderOptions,
+    openOptionsPatch: Record<string, unknown> = {},
+  ) {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-options-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new OptionsClient();
+    client.openOptionsPatch = openOptionsPatch;
+    const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, ...(providerOptions ? { providerOptions } : {}) },
+      undefined,
+      { workspaceId: undefined },
+    );
+    return { manager, client, storage, agentId: agent.id };
+  }
+
+  test("config.json defaults show as effective options without entering the agent's own options", async () => {
+    const { manager, agentId } = await createOptionsAgent({ web_search: true });
+
+    const agent = manager.getAgent(agentId);
+    expect(agent?.config.providerOptions).toEqual({ web_search: true });
+    expect(agent?.effectiveOptions).toEqual({ service_tier: "default", web_search: true });
+    expect(toAgentPayload(agent!).options).toEqual({ service_tier: "default", web_search: true });
+  });
+
+  test("setAgentOptions hands the provider only the keys the patch sets", async () => {
+    const { manager, client, storage, agentId } = await createOptionsAgent({ web_search: true });
+
+    await manager.setAgentOptions(agentId, { service_tier: "fast" });
+
+    expect(client.session?.applied).toEqual([{ service_tier: "fast" }]);
+    const agent = manager.getAgent(agentId);
+    expect(agent?.config.providerOptions).toEqual({ web_search: true, service_tier: "fast" });
+    expect(agent?.effectiveOptions).toEqual({ service_tier: "fast", web_search: true });
+    await manager.flush();
+    expect((await storage.get(agentId))?.config?.providerOptions).toEqual({
+      web_search: true,
+      service_tier: "fast",
+    });
+  });
+
+  test("a patch key is resolved against the configured defaults, merging nested objects", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-options-"));
+    const client = new OptionsClient();
+    client.effectiveOptions = (own) =>
+      mergeProviderOptions({ sandbox: { enabled: true, failIfUnavailable: true } }, own) ?? {};
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: new AgentStorage(join(workdir, "agents"), logger),
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    await manager.setAgentOptions(agent.id, {
+      sandbox: { network: { allowedDomains: ["a.test"] } },
+    });
+
+    expect(client.session?.applied).toEqual([
+      {
+        sandbox: {
+          enabled: true,
+          failIfUnavailable: true,
+          network: { allowedDomains: ["a.test"] },
+        },
+      },
+    ]);
+    expect(manager.getAgent(agent.id)?.config.providerOptions).toEqual({
+      sandbox: { network: { allowedDomains: ["a.test"] } },
+    });
+    // The snapshot shows what the provider was given, defaults included, and keeps showing it.
+    await manager.markAgentUnread(agent.id);
+    expect(manager.getAgent(agent.id)?.effectiveOptions).toEqual({
+      sandbox: {
+        enabled: true,
+        failIfUnavailable: true,
+        network: { allowedDomains: ["a.test"] },
+      },
+    });
+  });
+
+  test("setAgentOptions sends a removal to the provider like any change, as the default it falls back to", async () => {
+    const { manager, client, agentId } = await createOptionsAgent({ service_tier: "fast" });
+
+    await manager.setAgentOptions(agentId, { service_tier: null });
+
+    expect(client.session?.applied).toEqual([{ service_tier: "default" }]);
+    const agent = manager.getAgent(agentId);
+    expect(agent?.config.providerOptions).toBeUndefined();
+    expect(agent?.effectiveOptions).toEqual({ service_tier: "default" });
+  });
+
+  test("a removal with no default is sent as null", async () => {
+    const { manager, client, agentId } = await createOptionsAgent({ web_search: true });
+
+    await manager.setAgentOptions(agentId, { web_search: null });
+
+    expect(client.session?.applied).toEqual([{ web_search: null }]);
+    expect(manager.getAgent(agentId)?.config.providerOptions).toBeUndefined();
+  });
+
+  test("a value the provider kept through a removal is stored", async () => {
+    const { manager, client, agentId } = await createOptionsAgent({ web_search: true });
+    client.session!.ended = { web_search: true };
+
+    await manager.setAgentOptions(agentId, { web_search: null });
+
+    const agent = manager.getAgent(agentId);
+    expect(agent?.config.providerOptions).toEqual({ web_search: true });
+    expect(agent?.effectiveOptions).toEqual({ service_tier: "default", web_search: true });
+  });
+
+  test("what the provider ended up with is stored together with the patch", async () => {
+    const { manager, client, agentId } = await createOptionsAgent();
+    client.session!.ended = { service_tier: "slow" };
+
+    await manager.setAgentOptions(agentId, { service_tier: "fast", plan_mode: true });
+
+    expect(manager.getAgent(agentId)?.config.providerOptions).toEqual({
+      service_tier: "slow",
+      plan_mode: true,
+    });
+  });
+
+  test("the difference a session opened with is stored before the agent is published", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-options-"));
+    const client = new OptionsClient();
+    client.openOptionsPatch = { service_tier: "slow", web_search: null };
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: new AgentStorage(join(workdir, "agents"), logger),
+      logger,
+    });
+    const published: Array<ProviderOptions | undefined> = [];
+    manager.subscribe((event) => {
+      if (event.type === "agent_state") published.push(event.agent.config.providerOptions);
+    });
+
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, providerOptions: { web_search: true } },
+      undefined,
+      { workspaceId: undefined },
+    );
+
+    expect(agent.config.providerOptions).toEqual({ service_tier: "slow" });
+    expect(published.length).toBeGreaterThan(0);
+    expect(published.every((options) => options?.service_tier === "slow")).toBe(true);
+  });
+
+  test("a default edited while the session is opening does not change the opening snapshot", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-options-"));
+    const client = new OptionsClient();
+    let tier = "default";
+    client.effectiveOptions = (own) => ({ service_tier: tier, ...own });
+    const open = client.createSession.bind(client);
+    client.createSession = async (config) => {
+      const session = await open(config);
+      // The user edits the default in config.json after the provider has launched.
+      tier = "fast";
+      return session;
+    };
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: new AgentStorage(join(workdir, "agents"), logger),
+      logger,
+    });
+
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    expect(agent.effectiveOptions).toEqual({ service_tier: "default" });
+  });
+
+  test("an option the session dropped when opening does not come back from a configured default", async () => {
+    const { manager, agentId } = await createOptionsAgent(undefined, { service_tier: null });
+
+    const agent = manager.getAgent(agentId);
+    expect(agent?.effectiveOptions).toEqual({});
+    await manager.markAgentUnread(agentId);
+    expect(toAgentPayload(manager.getAgent(agentId)!).options).toEqual({});
+  });
+
+  test("an option without a control is settable through the patch and readable in the snapshot", async () => {
+    const { manager, client, storage, agentId } = await createOptionsAgent();
+
+    await manager.setAgentOptions(agentId, { sandbox_mode: "read-only" });
+
+    expect(client.session?.applied).toEqual([{ sandbox_mode: "read-only" }]);
+    const agent = manager.getAgent(agentId);
+    expect(agent?.config.providerOptions).toEqual({ sandbox_mode: "read-only" });
+    expect(toAgentPayload(agent!).options).toEqual({
+      service_tier: "default",
+      sandbox_mode: "read-only",
+    });
+    await manager.flush();
+    expect((await storage.get(agentId))?.config?.providerOptions).toEqual({
+      sandbox_mode: "read-only",
+    });
+  });
+
+  test("concurrent patches both land: each is applied to the options as they are when its provider call resolves", async () => {
+    const { manager, client, agentId } = await createOptionsAgent();
+    let release!: () => void;
+    client.session!.applyGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const slow = manager.setAgentOptions(agentId, { sandbox_mode: "read-only" });
+    client.session!.applyGate = null;
+    await manager.setAgentOptions(agentId, { web_search: true });
+    release();
+    await slow;
+
+    expect(manager.getAgent(agentId)?.config.providerOptions).toEqual({
+      sandbox_mode: "read-only",
+      web_search: true,
+    });
+  });
+
+  test("a stored agent that is not loaded still reports its effective options", async () => {
+    const { manager, agentId } = await createOptionsAgent({ web_search: true });
+    await manager.closeAgent(agentId);
+    const states: ManagedAgent[] = [];
+    manager.subscribe(
+      (event) => {
+        if (event.type === "agent_state" && event.agent.id === agentId) states.push(event.agent);
+      },
+      { replayState: false },
+    );
+
+    await manager.markAgentUnread(agentId);
+
+    expect(states.at(-1)?.effectiveOptions).toEqual({ service_tier: "default", web_search: true });
+  });
+
+  test("editing a provider default does not change the options of a loaded agent", async () => {
+    const { manager, client, agentId } = await createOptionsAgent({ web_search: true });
+    expect(manager.getAgent(agentId)?.effectiveOptions).toEqual({
+      service_tier: "default",
+      web_search: true,
+    });
+
+    // The user edits the default in config.json while the agent is running.
+    client.effectiveOptions = (own) => ({ service_tier: "fast", ...own });
+    await manager.markAgentUnread(agentId);
+
+    const agent = manager.getAgent(agentId);
+    expect(agent?.effectiveOptions).toEqual({ service_tier: "default", web_search: true });
+    expect(toAgentPayload(agent!).options).toEqual({ service_tier: "default", web_search: true });
+  });
+
+  test("a provider that rejects an option leaves the stored options unchanged", async () => {
+    const { manager, client, agentId } = await createOptionsAgent({ web_search: false });
+    client.session!.rejectWith = new Error("fast mode unavailable");
+
+    await expect(manager.setAgentOptions(agentId, { web_search: true })).rejects.toThrow(
+      "fast mode unavailable",
+    );
+
+    expect(manager.getAgent(agentId)?.config.providerOptions).toEqual({ web_search: false });
+  });
+
+  test("a provider whose session cannot apply options rejects a patch and stores nothing", async () => {
+    // Like a provider with no live option support: the session has no `applyOptions`.
+    class NoOptionsSession extends TestAgentSession {
+      constructor(config: AgentSessionConfig) {
+        super(config);
+        Object.defineProperty(this, "applyOptions", { value: undefined });
+      }
+    }
+    class NoOptionsClient extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new NoOptionsSession(config);
+      }
+    }
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-no-options-"));
+    const manager = new AgentManager({
+      clients: { codex: new NoOptionsClient() },
+      registry: new AgentStorage(join(workdir, "agents"), logger),
+      logger,
+    });
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, providerOptions: { web_search: false } },
+      undefined,
+      { workspaceId: undefined },
+    );
+
+    await expect(manager.setAgentOptions(agent.id, { web_search: true })).rejects.toThrow(
+      /web_search.*cannot change on a running session/,
+    );
+
+    expect(manager.getAgent(agent.id)?.config.providerOptions).toEqual({ web_search: false });
+  });
+
+  test("agent.create.before hook featureValues fold into providerOptions", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hook-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new OptionsClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      pluginLifecycle: {
+        emit: () => {},
+        before: async (_name, request) => ({
+          ...request,
+          config: { ...request.config, featureValues: { web_search: true } },
+        }),
+      },
+    });
+
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    expect(manager.getAgent(created.id)?.config.providerOptions).toEqual({ web_search: true });
+    expect(manager.getAgent(created.id)?.config).not.toHaveProperty("featureValues");
+  });
+
+  test("agent.create.before hook featureValues edit overrides an option the create already set", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hook-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new OptionsClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      pluginLifecycle: {
+        emit: () => {},
+        // A plugin written against the previous SDK: flips one value, leaves the rest.
+        before: async (name, request) =>
+          name === "agent.create.before"
+            ? {
+                ...request,
+                config: {
+                  ...request.config,
+                  featureValues: { ...request.config.featureValues, web_search: true },
+                },
+              }
+            : request,
+      },
+    });
+
+    const created = await manager.createAgent(
+      { provider: "codex", cwd: workdir, providerOptions: { web_search: false, plan_mode: true } },
+      undefined,
+      { workspaceId: undefined },
+    );
+
+    expect(manager.getAgent(created.id)?.config.providerOptions).toEqual({
+      web_search: true,
+      plan_mode: true,
+    });
+  });
+
+  test("agent.create.before hook leaving featureValues untouched keeps providerOptions edits", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hook-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const client = new OptionsClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      pluginLifecycle: {
+        emit: () => {},
+        before: async (name, request) =>
+          name === "agent.create.before"
+            ? {
+                ...request,
+                config: {
+                  ...request.config,
+                  providerOptions: { ...request.config.providerOptions, plan_mode: false },
+                },
+              }
+            : request,
+      },
+    });
+
+    const created = await manager.createAgent(
+      { provider: "codex", cwd: workdir, providerOptions: { web_search: false, plan_mode: true } },
+      undefined,
+      { workspaceId: undefined },
+    );
+
+    expect(manager.getAgent(created.id)?.config.providerOptions).toEqual({
+      web_search: false,
+      plan_mode: false,
+    });
+  });
+
+  describe.each([
+    {
+      name: "deletes a key",
+      edit: (values: Record<string, unknown> | undefined) => {
+        const { web_search: _removed, ...rest } = values ?? {};
+        return { featureValues: rest };
+      },
+      expected: { plan_mode: true },
+    },
+    {
+      name: "empties featureValues",
+      edit: () => ({ featureValues: {} }),
+      expected: {},
+    },
+    {
+      name: "drops featureValues",
+      edit: () => ({ featureValues: undefined }),
+      expected: {},
+    },
+  ])("agent.create.before hook that $name", ({ edit, expected }) => {
+    test("removes those options from the new agent", async () => {
+      const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hook-"));
+      const manager = new AgentManager({
+        clients: { codex: new OptionsClient() },
+        registry: new AgentStorage(join(workdir, "agents"), logger),
+        logger,
+        pluginLifecycle: {
+          emit: () => {},
+          before: async (name, request) =>
+            name === "agent.create.before"
+              ? {
+                  ...request,
+                  config: { ...request.config, ...edit(request.config.featureValues) },
+                }
+              : request,
+        },
+      });
+
+      const created = await manager.createAgent(
+        { provider: "codex", cwd: workdir, providerOptions: { web_search: true, plan_mode: true } },
+        undefined,
+        { workspaceId: undefined },
+      );
+
+      expect(manager.getAgent(created.id)?.config.providerOptions).toEqual(expected);
+    });
+  });
 });

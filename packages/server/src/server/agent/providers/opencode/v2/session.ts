@@ -1,3 +1,7 @@
+import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
+import { applyProviderOptionsPatch } from "../../../option-controls.js";
+import { assertChangesAreLive, validateProviderOptions } from "../../../provider-options.js";
+import { OpenCodeProviderOptionsSchema } from "../options.js";
 import { SessionChildren } from "./children.js";
 import { SessionTurns } from "./turns.js";
 import { V2Timeline } from "./timeline.js";
@@ -31,7 +35,7 @@ import { type V2Connection } from "./runtime.js";
 import { modelRef, modesFromV2 } from "./mapping.js";
 
 import { V2_CAPABILITIES } from "./capabilities.js";
-import { features } from "./configuration.js";
+import { controls } from "./configuration.js";
 import { commands } from "./commands.js";
 import { messages } from "./history.js";
 import { SessionPermissions } from "./permissions.js";
@@ -118,8 +122,8 @@ export class OpenCodeV2Session implements AgentSession {
   get id() {
     return this.info.id;
   }
-  get features() {
-    return features(this.config);
+  get controls() {
+    return controls;
   }
   private get client() {
     return this.connection.client;
@@ -358,14 +362,39 @@ export class OpenCodeV2Session implements AgentSession {
     this.info = await this.client.session.get({ sessionID: this.id });
     this.emit({ type: "thinking_option_changed", provider: "opencode", thinkingOptionId: variant });
   }
-  async setFeature(id: string, value: unknown) {
-    if (id !== "auto_accept" || typeof value !== "boolean")
-      throw new Error("Unknown OpenCode feature");
-    this.config.featureValues = { ...this.config.featureValues, [id]: value };
-    if (value && !this.config.toolPolicy)
-      for (const request of this.permissions.list())
-        if (request.kind !== "question")
-          await this.respondToPermission(request.id, { behavior: "allow" });
+  /** Overlapping applies run one after another, so a failed one restores exactly what it changed. */
+  private applying: Promise<unknown> = Promise.resolve();
+  applyOptions(options: ProviderOptions): Promise<void> {
+    const run = this.applying.then(() => this.applyOptionsNow(options));
+    this.applying = run.catch(() => undefined);
+    return run;
+  }
+  private async applyOptionsNow(options: ProviderOptions): Promise<void> {
+    assertChangesAreLive({
+      provider: "opencode",
+      patch: options,
+      current: this.config.providerOptions,
+      live: ["auto_accept"],
+    });
+    const next = validateProviderOptions(
+      "opencode",
+      OpenCodeProviderOptionsSchema,
+      applyProviderOptionsPatch({ options: this.config.providerOptions, patch: options }),
+    );
+    if (!("auto_accept" in options)) return;
+    const value = next?.auto_accept === true;
+    const previous = this.config.providerOptions;
+    this.config.providerOptions = { ...previous, auto_accept: value };
+    try {
+      if (value && !this.config.toolPolicy)
+        for (const request of this.permissions.list())
+          if (request.kind !== "question")
+            await this.respondToPermission(request.id, { behavior: "allow" });
+    } catch (error) {
+      // A rejected apply stores nothing, so the running session keeps asking as it did.
+      this.config.providerOptions = previous;
+      throw error;
+    }
   }
   async listCommands() {
     await this.reconnectIfExited();

@@ -985,6 +985,45 @@ test("config changes require their own event demand and cannot escape to an idle
   }
 });
 
+test("a config change push carries profiles with the legacy featureValues the unchanged app reads", async () => {
+  const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+  const admin = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
+  let observer: SubscriptionPeer | undefined;
+  try {
+    await admin.connect();
+    await admin.patchDaemonConfig({
+      agentProfiles: [
+        { id: "p", name: "P", provider: "codex", options: {}, featureValues: { plan_mode: true } },
+      ],
+    });
+    observer = await SubscriptionPeer.connect(daemon.port, "config-push-session");
+    await observer.request({
+      type: "session.events.set_subscription.request",
+      requestId: "config-feed",
+      events: ["status.daemon_config_changed"],
+    });
+
+    await admin.patchDaemonConfig({ autoArchiveAfterMerge: true });
+
+    const peer = observer;
+    await expect
+      .poll(() =>
+        peer.frames.flatMap((frame) =>
+          frame.type === "session" &&
+          frame.message.type === "status" &&
+          frame.message.payload.status === "daemon_config_changed"
+            ? [frame.message.payload.config?.agentProfiles?.[0]?.featureValues]
+            : [],
+        ),
+      )
+      .toEqual([{ plan_mode: true }]);
+  } finally {
+    observer?.close();
+    await admin.close();
+    await daemon.close();
+  }
+});
+
 test("status-shaped operation replies use actual source request provenance", async () => {
   const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
   const peers: SubscriptionPeer[] = [];

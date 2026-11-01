@@ -440,7 +440,7 @@ type AcceptedCreate = Omit<
 
 const providerCatalog = {
   async resolveCreateConfig(input) {
-    return { modeId: input.requestedMode, featureValues: input.featureValues };
+    return { modeId: input.requestedMode, providerOptions: input.providerOptions };
   },
 } satisfies CreateAgentCommandDependencies["providerSnapshotManager"];
 

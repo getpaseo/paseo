@@ -21,7 +21,10 @@ export const AgentProfileSchema = z
     model: z.string().optional(),
     modeId: z.string().optional(),
     thinkingOptionId: z.string().optional(),
+    // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. Read as `options`.
     featureValues: z.record(z.string(), z.unknown()).optional(),
+    /** Provider options applied when the profile creates an agent. */
+    options: z.record(z.string(), z.unknown()).optional(),
     /** Free text, surfaced to orchestrating agents by the `list_profiles` MCP tool. */
     notes: z.string().optional(),
   })
