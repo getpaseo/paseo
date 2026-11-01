@@ -11,6 +11,7 @@ import {
   DESKTOP_IDLE_POLL_INTERVAL_MS,
   HEARTBEAT_INTERVAL_MS,
 } from "./client-activity-tracker";
+import { bindWebWindowActivity, createBrowserWindowPort } from "./web-window-activity";
 
 interface ClientActivityOptions {
   client: DaemonClient;
@@ -61,38 +62,7 @@ export function useClientActivity({
   useEffect(() => {
     if (isNative) return;
     if (typeof document === "undefined") return;
-
-    const handleUserActivity = () => {
-      tracker.recordUserActivity();
-      tracker.maybeSendImmediateHeartbeat();
-    };
-
-    const handleVisibilityChange = () => {
-      tracker.notifyAppVisibility(getIsAppActivelyVisible());
-    };
-
-    const handleWindowFocus = () => {
-      handleVisibilityChange();
-      handleUserActivity();
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("focus", handleWindowFocus);
-    window.addEventListener("blur", handleVisibilityChange);
-    window.addEventListener("pointerdown", handleUserActivity, { passive: true });
-    window.addEventListener("keydown", handleUserActivity);
-    window.addEventListener("wheel", handleUserActivity, { passive: true });
-    window.addEventListener("touchstart", handleUserActivity, { passive: true });
-
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("focus", handleWindowFocus);
-      window.removeEventListener("blur", handleVisibilityChange);
-      window.removeEventListener("pointerdown", handleUserActivity);
-      window.removeEventListener("keydown", handleUserActivity);
-      window.removeEventListener("wheel", handleUserActivity);
-      window.removeEventListener("touchstart", handleUserActivity);
-    };
+    return bindWebWindowActivity(tracker, createBrowserWindowPort());
   }, [tracker]);
 
   // Track OS-wide activity in Electron so backgrounded desktop windows still report presence.
