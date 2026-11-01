@@ -376,11 +376,18 @@ export class OpenCodeV2Session implements AgentSession {
     );
     if (!("auto_accept" in options)) return;
     const value = next?.auto_accept === true;
-    this.config.providerOptions = { ...this.config.providerOptions, auto_accept: value };
-    if (value && !this.config.toolPolicy)
-      for (const request of this.permissions.list())
-        if (request.kind !== "question")
-          await this.respondToPermission(request.id, { behavior: "allow" });
+    const previous = this.config.providerOptions;
+    this.config.providerOptions = { ...previous, auto_accept: value };
+    try {
+      if (value && !this.config.toolPolicy)
+        for (const request of this.permissions.list())
+          if (request.kind !== "question")
+            await this.respondToPermission(request.id, { behavior: "allow" });
+    } catch (error) {
+      // A rejected apply stores nothing, so the running session keeps asking as it did.
+      this.config.providerOptions = previous;
+      throw error;
+    }
   }
   async listCommands() {
     await this.reconnectIfExited();

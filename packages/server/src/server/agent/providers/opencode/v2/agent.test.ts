@@ -50,6 +50,44 @@ describe("OpenCode v2 session lifecycle", () => {
     await session.close();
   });
 
+  test("a rejected auto_accept leaves the running session asking for permission", async () => {
+    const harness = new V2Harness();
+    const permissions = [
+      { id: "approval", sessionID: "session", action: "shell", resources: ["pwd"] },
+    ];
+    harness.api.permission.list = async () => permissions;
+    const replies: string[] = [];
+    harness.api.permission.reply = async (input) => {
+      replies.push(input.requestID);
+      throw new Error("upstream refused");
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    try {
+      await expect(session.applyOptions?.({ auto_accept: true })).rejects.toThrow(
+        "upstream refused",
+      );
+
+      const next = {
+        id: "next",
+        sessionID: "session",
+        action: "shell",
+        resources: ["ls"],
+      };
+      permissions.push(next);
+      harness.push({ id: "asked", created: 2, type: "permission.asked", data: next });
+
+      const pendingIds = () => session.getPendingPermissions().map(({ id }) => id);
+      await expect.poll(pendingIds).toContain("next");
+      expect(replies).not.toContain("next");
+    } finally {
+      await session.close();
+    }
+  });
+
   test("rejects a live permission change the running session cannot apply", async () => {
     const harness = new V2Harness();
     const client = new OpenCodeV2AgentClient({
