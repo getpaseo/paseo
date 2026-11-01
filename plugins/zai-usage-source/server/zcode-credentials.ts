@@ -24,6 +24,20 @@ const CredentialsSchema = {
   zaiAccessTokenKey: "oauth:zai:access_token",
 } as const;
 
+/**
+ * The store keys an account's API key as
+ * `account-provider:<provider>:account:<account id>:api-key`. Only the
+ * `coding-plan` provider is the plan this source reports, so a key that belongs
+ * to any other provider is left alone: decrypting it and sending it to Z.ai
+ * would authenticate as an account the user did not ask about, and report the
+ * wrong quota.
+ */
+const CODING_PLAN_API_KEY_PREFIX = "account-provider:coding-plan:";
+
+function isCodingPlanApiKey(key: string): boolean {
+  return key.startsWith(CODING_PLAN_API_KEY_PREFIX) && key.endsWith(":api-key");
+}
+
 function deriveCipherKey(secret: string): Buffer {
   return createHash("sha256").update(secret).digest();
 }
@@ -98,7 +112,7 @@ export async function readZCodeApiKey(
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
 
   const entries = Object.entries(parsed as Record<string, string>);
-  const apiKeyEntry = entries.find(([key]) => key.includes("api-key"));
+  const apiKeyEntry = entries.find(([key]) => isCodingPlanApiKey(key));
   if (!apiKeyEntry) return undefined;
 
   try {

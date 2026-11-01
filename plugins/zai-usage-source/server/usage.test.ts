@@ -264,6 +264,47 @@ describe("zai usage source", () => {
     expect(authorization).toBe("zcode_api_key");
     expect(report).toMatchObject({ status: "available", planLabel: "GLM Coding Pro" });
   });
+
+  it("ignores an API key that belongs to a provider other than the coding plan", async () => {
+    const credentialsDir = join(homeDir, ".zcode", "v2");
+    mkdirSync(credentialsDir, { recursive: true });
+    writeFileSync(
+      join(credentialsDir, "credentials.json"),
+      JSON.stringify({
+        "account-provider:pay-as-you-go:account:123:api-key": "other_api_key",
+      }),
+    );
+
+    const accounts = await discover();
+
+    expect(accounts).toEqual([]);
+  });
+
+  it("uses the coding plan key when the store also holds another provider's key", async () => {
+    const credentialsDir = join(homeDir, ".zcode", "v2");
+    mkdirSync(credentialsDir, { recursive: true });
+    writeFileSync(
+      join(credentialsDir, "credentials.json"),
+      JSON.stringify({
+        "account-provider:pay-as-you-go:account:123:api-key": "other_api_key",
+        "account-provider:coding-plan:account:456:api-key": "coding_plan_key",
+      }),
+    );
+    let authorization: string | null = null;
+    fetchApi = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (url.toString() === QUOTA_URL) {
+        authorization =
+          (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+        return quotaResponse([]);
+      }
+      return jsonResponse({ data: [] });
+    }) as unknown as typeof fetch;
+
+    const accounts = await discover();
+    await fetchUsage(accounts[0]?.input as Parameters<typeof fetchUsage>[0], fetchApi);
+
+    expect(authorization).toBe("coding_plan_key");
+  });
 });
 
 describe("ZCode credential decryption", () => {
