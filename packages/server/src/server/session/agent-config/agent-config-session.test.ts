@@ -13,11 +13,6 @@ class FakeAgentConfigOperations implements AgentConfigOperations {
   readonly modeCalls: Array<{ agentId: string; modeId: string }> = [];
   readonly modelCalls: Array<{ agentId: string; modelId: string | null }> = [];
   readonly optionsCalls: Array<{ agentId: string; patch: Record<string, unknown> }> = [];
-  readonly featureValueCalls: Array<{
-    agentId: string;
-    values: Record<string, unknown>;
-    options?: Record<string, unknown>;
-  }> = [];
   readonly thinkingCalls: Array<{ agentId: string; thinkingOptionId: string | null }> = [];
   /** Cross-operation ordering, which the per-operation arrays above cannot show. */
   readonly callLog: string[] = [];
@@ -47,16 +42,6 @@ class FakeAgentConfigOperations implements AgentConfigOperations {
   async setOptions(agentId: string, patch: Record<string, unknown>): Promise<void> {
     this.optionsCalls.push({ agentId, patch });
     this.callLog.push("options");
-    if (this.failWith) throw this.failWith;
-  }
-
-  async setFeatureValues(input: {
-    agentId: string;
-    values: Record<string, unknown>;
-    options?: Record<string, unknown>;
-  }): Promise<void> {
-    this.featureValueCalls.push(input);
-    this.callLog.push("featureValues");
     if (this.failWith) throw this.failWith;
   }
 
@@ -232,9 +217,7 @@ describe("AgentConfigSession", () => {
       requestId: "req-1",
     });
 
-    expect(operations.featureValueCalls).toEqual([
-      { agentId: "agent-1", values: { web_search: true } },
-    ]);
+    expect(operations.optionsCalls).toEqual([{ agentId: "agent-1", patch: { web_search: true } }]);
     expect(emitted).toEqual([
       {
         type: "set_agent_feature_response",
@@ -374,7 +357,7 @@ describe("AgentConfigSession", () => {
     ]);
   });
 
-  test("apply: legacy featureValues and options go in one call, options winning", async () => {
+  test("apply: folds legacy featureValues into the options patch, options winning", async () => {
     const { subsystem, operations } = makeSubsystem();
 
     await subsystem.handleAgentConfigApplyRequest({
@@ -387,13 +370,8 @@ describe("AgentConfigSession", () => {
       requestId: "req-1",
     });
 
-    expect(operations.callLog).toEqual(["featureValues"]);
-    expect(operations.featureValueCalls).toEqual([
-      {
-        agentId: "agent-1",
-        values: { fast_mode: true, service_tier: "fast" },
-        options: { fast_mode: false },
-      },
+    expect(operations.optionsCalls).toEqual([
+      { agentId: "agent-1", patch: { fast_mode: false, service_tier: "fast" } },
     ]);
   });
 

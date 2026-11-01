@@ -59,13 +59,18 @@ or without a control.
   none of it is stored. Emit nothing from inside the call. If the provider's own state moved
   before it refused, it reports the moved values once as `options_changed` after the call has
   ended, because the stored options must match what runs.
-- **Old data converts where it enters.** Codex used to take `fast_mode`; it takes
-  `service_tier` now. `convertLegacyOptions` (`option-controls.ts`) turns `fast_mode` into
-  `service_tier` as stored records, `config.json` defaults, profiles, older clients' requests,
-  MCP `settings.features` and plugin hooks come in (`true` is `"fast"`, `false` is `"default"`,
-  and a `service_tier` in the same input wins). Past that point nothing sees `fast_mode` for Codex.
-  Codex resolves `"fast"` to the model's Fast tier and reports the id it runs through
-  `openOptionsPatch` or the `applyOptions` result like any other value.
+- **Old data converts in the agent manager.** Codex used to take `fast_mode`; it takes
+  `service_tier` now. `AgentManager` runs `convertLegacyOptions` (`option-controls.ts`) on an
+  agent's own options when it creates, resumes, imports, reloads or applies to it, and on draft
+  controls, before defaults merge and before anything is stored (`true` is `"fast"`, `false` is
+  `"default"`, and a `service_tier` in the same input wins). The manager converts for the adapter
+  behind the provider id, following `derivedFromProviderId`, so a custom provider with
+  `extends: "codex"` is converted too. Configured defaults convert in the provider registry. A
+  stored record keeps `fast_mode` until the agent is next opened or applied to, and is stored
+  converted from then on. Nothing past the manager sees `fast_mode` for Codex. Codex resolves
+  `"fast"` to the model's Fast tier and reports the id it runs through `openOptionsPatch` or the
+  `applyOptions` result like any other value. The `featureValues` to `options` fold is separate
+  and provider-agnostic; it stays at the protocol and legacy edges.
 - **Provider-initiated changes.** A setting the provider changes on its own is an
   `options_changed` event. The daemon stores and forwards it and does not push the old value back.
 

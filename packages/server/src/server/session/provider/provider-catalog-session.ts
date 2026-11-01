@@ -347,10 +347,7 @@ export class ProviderCatalogSession {
     providerOptions?: ProviderOptions;
   }): AgentSessionConfig {
     // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
-    const { providerOptions } = foldFeatureValues({
-      config: draftConfig,
-      provider: draftConfig.provider,
-    });
+    const { providerOptions } = foldFeatureValues(draftConfig);
     return {
       provider: draftConfig.provider,
       cwd: expandTilde(draftConfig.cwd),

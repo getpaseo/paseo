@@ -169,8 +169,7 @@ export class HubExecutionController {
         modeId: message.modeId,
         thinkingOptionId: message.thinkingOptionId,
         // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
-        providerOptions: foldFeatureValues({ config: message, provider: message.provider })
-          .providerOptions,
+        providerOptions: foldFeatureValues(message).providerOptions,
         toolPolicy: message.toolPolicy,
         env: message.env,
         mcpServers: message.mcpServers,

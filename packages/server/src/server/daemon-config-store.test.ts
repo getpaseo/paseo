@@ -268,7 +268,7 @@ describe("DaemonConfigStore", () => {
             id: "p",
             name: "P",
             provider: "codex",
-            options: { sandbox_mode: "read-only", plan_mode: false },
+            options: { sandbox_mode: "read-only", fast_mode: false },
           },
         ],
       });
@@ -279,7 +279,7 @@ describe("DaemonConfigStore", () => {
 
       await store.patch({
         agentProfiles: [
-          { id: "p", name: "Renamed", provider: "codex", featureValues: { plan_mode: true } },
+          { id: "p", name: "Renamed", provider: "codex", featureValues: { fast_mode: true } },
         ],
       });
 
@@ -288,7 +288,7 @@ describe("DaemonConfigStore", () => {
           id: "p",
           name: "Renamed",
           provider: "codex",
-          options: { sandbox_mode: "read-only", plan_mode: true },
+          options: { sandbox_mode: "read-only", fast_mode: true },
         },
       ]);
     });
@@ -303,7 +303,7 @@ describe("DaemonConfigStore", () => {
           id: "p",
           name: "Renamed",
           provider: "codex",
-          options: { sandbox_mode: "read-only", plan_mode: false },
+          options: { sandbox_mode: "read-only", fast_mode: false },
         },
       ]);
     });
@@ -340,7 +340,7 @@ describe("DaemonConfigStore", () => {
             name: "P",
             provider: "codex",
             options: { sandbox_mode: "workspace-write" },
-            featureValues: { plan_mode: true },
+            featureValues: { fast_mode: true },
           },
         ],
       });
@@ -350,26 +350,7 @@ describe("DaemonConfigStore", () => {
           id: "p",
           name: "P",
           provider: "codex",
-          options: { sandbox_mode: "workspace-write", plan_mode: true },
-        },
-      ]);
-    });
-
-    test("converts a Codex profile's legacy fast_mode to service_tier", async () => {
-      const store = storeWithProfile();
-
-      await store.patch({
-        agentProfiles: [
-          { id: "p", name: "P", provider: "codex", featureValues: { fast_mode: true } },
-        ],
-      });
-
-      expect(store.get().agentProfiles).toEqual([
-        {
-          id: "p",
-          name: "P",
-          provider: "codex",
-          options: { sandbox_mode: "read-only", plan_mode: false, service_tier: "fast" },
+          options: { sandbox_mode: "workspace-write", fast_mode: true },
         },
       ]);
     });
@@ -379,7 +360,7 @@ describe("DaemonConfigStore", () => {
 
       await store.patch({
         agentProfiles: [
-          { id: "p", name: "P", provider: "codex", featureValues: { plan_mode: null } },
+          { id: "p", name: "P", provider: "codex", featureValues: { fast_mode: null } },
         ],
       });
 

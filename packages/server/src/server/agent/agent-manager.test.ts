@@ -2448,7 +2448,7 @@ test("listDraftControls uses explicit model config without default model fetchin
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-draft-features-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
-  const draftControl = createControl({ key: "fast_mode", label: "Fast mode" });
+  const draftControl = createControl({ key: "web_search", label: "Fast mode" });
   class DraftFeatureClient extends TestAgentClient {
     fetchCatalogCalls = 0;
     createSessionCalls = 0;
@@ -10061,7 +10061,7 @@ test("respondToPermission applies provider option changes and refreshes runtime 
 
     get controls(): AgentOptionControl[] {
       return [
-        createControl({ key: "fast_mode", label: "Fast" }),
+        createControl({ key: "web_search", label: "Fast" }),
         createControl({ key: "plan_mode", label: "Plan" }),
       ];
     }
@@ -10115,7 +10115,7 @@ test("respondToPermission applies provider option changes and refreshes runtime 
     {
       provider: "codex",
       cwd: workdir,
-      providerOptions: { fast_mode: true, plan_mode: true },
+      providerOptions: { web_search: true, plan_mode: true },
     },
     undefined,
     { workspaceId: undefined },
@@ -10140,14 +10140,14 @@ test("respondToPermission applies provider option changes and refreshes runtime 
 
   const updated = manager.getAgent(snapshot.id);
   expect(updated?.pendingPermissions.size).toBe(0);
-  expect(updated?.effectiveOptions).toEqual({ fast_mode: true, plan_mode: false });
+  expect(updated?.effectiveOptions).toEqual({ web_search: true, plan_mode: false });
   expect(updated?.runtimeInfo).toMatchObject({
     model: "gpt-5.4",
     extra: { collaborationMode: "Code" },
   });
 
   const persisted = await storage.get(snapshot.id);
-  expect(persisted?.config?.providerOptions).toEqual({ fast_mode: true, plan_mode: false });
+  expect(persisted?.config?.providerOptions).toEqual({ web_search: true, plan_mode: false });
 });
 
 test("respondToPermission emits refreshed state before permission_resolved", async () => {
@@ -10168,7 +10168,7 @@ test("respondToPermission emits refreshed state before permission_resolved", asy
     ];
 
     get controls(): AgentOptionControl[] {
-      return [createControl({ key: "fast_mode", label: "Fast" })];
+      return [createControl({ key: "web_search", label: "Fast" })];
     }
 
     override async getRuntimeInfo() {
@@ -10192,7 +10192,7 @@ test("respondToPermission emits refreshed state before permission_resolved", asy
       this.pushEvent({
         type: "options_changed",
         provider: this.provider,
-        patch: { fast_mode: false },
+        patch: { web_search: false },
       });
       this.pushEvent({
         type: "permission_resolved",
@@ -10224,7 +10224,7 @@ test("respondToPermission emits refreshed state before permission_resolved", asy
     {
       provider: "codex",
       cwd: workdir,
-      providerOptions: { fast_mode: true },
+      providerOptions: { web_search: true },
     },
     undefined,
     { workspaceId: undefined },
@@ -10237,7 +10237,7 @@ test("respondToPermission emits refreshed state before permission_resolved", asy
     }
     if (event.type === "agent_state" && event.agent.id === snapshot.id) {
       seen.push(
-        `state:${event.agent.currentModeId}:${String(event.agent.effectiveOptions?.fast_mode)}`,
+        `state:${event.agent.currentModeId}:${String(event.agent.effectiveOptions?.web_search)}`,
       );
       return;
     }
@@ -12802,26 +12802,26 @@ describe("agent options", () => {
   }
 
   test("config.json defaults show as effective options without entering the agent's own options", async () => {
-    const { manager, agentId } = await createOptionsAgent({ fast_mode: true });
+    const { manager, agentId } = await createOptionsAgent({ web_search: true });
 
     const agent = manager.getAgent(agentId);
-    expect(agent?.config.providerOptions).toEqual({ fast_mode: true });
-    expect(agent?.effectiveOptions).toEqual({ service_tier: "default", fast_mode: true });
-    expect(toAgentPayload(agent!).options).toEqual({ service_tier: "default", fast_mode: true });
+    expect(agent?.config.providerOptions).toEqual({ web_search: true });
+    expect(agent?.effectiveOptions).toEqual({ service_tier: "default", web_search: true });
+    expect(toAgentPayload(agent!).options).toEqual({ service_tier: "default", web_search: true });
   });
 
   test("setAgentOptions hands the provider only the keys the patch sets", async () => {
-    const { manager, client, storage, agentId } = await createOptionsAgent({ fast_mode: true });
+    const { manager, client, storage, agentId } = await createOptionsAgent({ web_search: true });
 
     await manager.setAgentOptions(agentId, { service_tier: "fast" });
 
     expect(client.session?.applied).toEqual([{ service_tier: "fast" }]);
     const agent = manager.getAgent(agentId);
-    expect(agent?.config.providerOptions).toEqual({ fast_mode: true, service_tier: "fast" });
-    expect(agent?.effectiveOptions).toEqual({ service_tier: "fast", fast_mode: true });
+    expect(agent?.config.providerOptions).toEqual({ web_search: true, service_tier: "fast" });
+    expect(agent?.effectiveOptions).toEqual({ service_tier: "fast", web_search: true });
     await manager.flush();
     expect((await storage.get(agentId))?.config?.providerOptions).toEqual({
-      fast_mode: true,
+      web_search: true,
       service_tier: "fast",
     });
   });
@@ -12879,23 +12879,23 @@ describe("agent options", () => {
   });
 
   test("a removal with no default is sent as null", async () => {
-    const { manager, client, agentId } = await createOptionsAgent({ fast_mode: true });
+    const { manager, client, agentId } = await createOptionsAgent({ web_search: true });
 
-    await manager.setAgentOptions(agentId, { fast_mode: null });
+    await manager.setAgentOptions(agentId, { web_search: null });
 
-    expect(client.session?.applied).toEqual([{ fast_mode: null }]);
+    expect(client.session?.applied).toEqual([{ web_search: null }]);
     expect(manager.getAgent(agentId)?.config.providerOptions).toBeUndefined();
   });
 
   test("a value the provider kept through a removal is stored", async () => {
-    const { manager, client, agentId } = await createOptionsAgent({ fast_mode: true });
-    client.session!.ended = { fast_mode: true };
+    const { manager, client, agentId } = await createOptionsAgent({ web_search: true });
+    client.session!.ended = { web_search: true };
 
-    await manager.setAgentOptions(agentId, { fast_mode: null });
+    await manager.setAgentOptions(agentId, { web_search: null });
 
     const agent = manager.getAgent(agentId);
-    expect(agent?.config.providerOptions).toEqual({ fast_mode: true });
-    expect(agent?.effectiveOptions).toEqual({ service_tier: "default", fast_mode: true });
+    expect(agent?.config.providerOptions).toEqual({ web_search: true });
+    expect(agent?.effectiveOptions).toEqual({ service_tier: "default", web_search: true });
   });
 
   test("what the provider ended up with is stored together with the patch", async () => {
@@ -12913,7 +12913,7 @@ describe("agent options", () => {
   test("the difference a session opened with is stored before the agent is published", async () => {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-options-"));
     const client = new OptionsClient();
-    client.openOptionsPatch = { service_tier: "slow", fast_mode: null };
+    client.openOptionsPatch = { service_tier: "slow", web_search: null };
     const manager = new AgentManager({
       clients: { codex: client },
       registry: new AgentStorage(join(workdir, "agents"), logger),
@@ -12925,7 +12925,7 @@ describe("agent options", () => {
     });
 
     const agent = await manager.createAgent(
-      { provider: "codex", cwd: workdir, providerOptions: { fast_mode: true } },
+      { provider: "codex", cwd: workdir, providerOptions: { web_search: true } },
       undefined,
       { workspaceId: undefined },
     );
@@ -12996,18 +12996,18 @@ describe("agent options", () => {
 
     const slow = manager.setAgentOptions(agentId, { sandbox_mode: "read-only" });
     client.session!.applyGate = null;
-    await manager.setAgentOptions(agentId, { fast_mode: true });
+    await manager.setAgentOptions(agentId, { web_search: true });
     release();
     await slow;
 
     expect(manager.getAgent(agentId)?.config.providerOptions).toEqual({
       sandbox_mode: "read-only",
-      fast_mode: true,
+      web_search: true,
     });
   });
 
   test("a stored agent that is not loaded still reports its effective options", async () => {
-    const { manager, agentId } = await createOptionsAgent({ fast_mode: true });
+    const { manager, agentId } = await createOptionsAgent({ web_search: true });
     await manager.closeAgent(agentId);
     const states: ManagedAgent[] = [];
     manager.subscribe(
@@ -13019,14 +13019,14 @@ describe("agent options", () => {
 
     await manager.markAgentUnread(agentId);
 
-    expect(states.at(-1)?.effectiveOptions).toEqual({ service_tier: "default", fast_mode: true });
+    expect(states.at(-1)?.effectiveOptions).toEqual({ service_tier: "default", web_search: true });
   });
 
   test("editing a provider default does not change the options of a loaded agent", async () => {
-    const { manager, client, agentId } = await createOptionsAgent({ fast_mode: true });
+    const { manager, client, agentId } = await createOptionsAgent({ web_search: true });
     expect(manager.getAgent(agentId)?.effectiveOptions).toEqual({
       service_tier: "default",
-      fast_mode: true,
+      web_search: true,
     });
 
     // The user edits the default in config.json while the agent is running.
@@ -13034,19 +13034,19 @@ describe("agent options", () => {
     await manager.markAgentUnread(agentId);
 
     const agent = manager.getAgent(agentId);
-    expect(agent?.effectiveOptions).toEqual({ service_tier: "default", fast_mode: true });
-    expect(toAgentPayload(agent!).options).toEqual({ service_tier: "default", fast_mode: true });
+    expect(agent?.effectiveOptions).toEqual({ service_tier: "default", web_search: true });
+    expect(toAgentPayload(agent!).options).toEqual({ service_tier: "default", web_search: true });
   });
 
   test("a provider that rejects an option leaves the stored options unchanged", async () => {
-    const { manager, client, agentId } = await createOptionsAgent({ fast_mode: false });
+    const { manager, client, agentId } = await createOptionsAgent({ web_search: false });
     client.session!.rejectWith = new Error("fast mode unavailable");
 
-    await expect(manager.setAgentOptions(agentId, { fast_mode: true })).rejects.toThrow(
+    await expect(manager.setAgentOptions(agentId, { web_search: true })).rejects.toThrow(
       "fast mode unavailable",
     );
 
-    expect(manager.getAgent(agentId)?.config.providerOptions).toEqual({ fast_mode: false });
+    expect(manager.getAgent(agentId)?.config.providerOptions).toEqual({ web_search: false });
   });
 
   test("a provider whose session cannot apply options rejects a patch and stores nothing", async () => {
@@ -13069,16 +13069,16 @@ describe("agent options", () => {
       logger,
     });
     const agent = await manager.createAgent(
-      { provider: "codex", cwd: workdir, providerOptions: { fast_mode: false } },
+      { provider: "codex", cwd: workdir, providerOptions: { web_search: false } },
       undefined,
       { workspaceId: undefined },
     );
 
-    await expect(manager.setAgentOptions(agent.id, { fast_mode: true })).rejects.toThrow(
-      /fast_mode.*cannot change on a running session/,
+    await expect(manager.setAgentOptions(agent.id, { web_search: true })).rejects.toThrow(
+      /web_search.*cannot change on a running session/,
     );
 
-    expect(manager.getAgent(agent.id)?.config.providerOptions).toEqual({ fast_mode: false });
+    expect(manager.getAgent(agent.id)?.config.providerOptions).toEqual({ web_search: false });
   });
 
   test("agent.create.before hook featureValues fold into providerOptions", async () => {

@@ -1256,7 +1256,10 @@ export class AgentManager {
   ): Promise<{ controls: AgentOptionControl[]; options: ProviderOptions }> {
     const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
     const client = this.requireClient(normalizedConfig.provider);
-    const options = this.effectiveOptionsFor(normalizedConfig.provider, config.providerOptions);
+    const options = this.effectiveOptionsFor(
+      normalizedConfig.provider,
+      this.convertLegacyOptions(normalizedConfig.provider, config.providerOptions),
+    );
     if (!normalizedConfig.model && !client.listControls) {
       return { controls: [], options };
     }
@@ -1371,6 +1374,7 @@ export class AgentManager {
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
+    config = this.withConvertedOptions(config);
     if (this.pluginLifecycle && !config.internal) {
       const sent = exposeFeatureValuesToHook(config);
       const request = await this.pluginLifecycle.before("agent.create.before", {
@@ -1380,7 +1384,11 @@ export class AgentManager {
       // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. A plugin written
       // against the previous SDK edits `config.featureValues`.
       config = {
-        ...foldHookFeatureValues({ returned: request.config, sent }),
+        ...foldHookFeatureValues({
+          returned: request.config,
+          sent,
+          convert: (values) => this.convertLegacyOptions(request.config.provider, values),
+        }),
         internal: config.internal,
       };
       options = { ...options, env: request.env };
@@ -2290,8 +2298,9 @@ export class AgentManager {
    * one step once the provider accepts, over the options as they are at that moment, so concurrent
    * writes to one agent resolve by arrival order.
    */
-  async setAgentOptions(agentId: string, patch: ProviderOptionsPatch): Promise<void> {
+  async setAgentOptions(agentId: string, requested: ProviderOptionsPatch): Promise<void> {
     const agent = this.requireAgent(agentId);
+    const patch = this.convertLegacyOptions(agent.provider, requested);
     let ended: ProviderOptionsPatch = {};
     let sent: ProviderOptionsPatch = {};
     if (Object.keys(patch).length > 0) {
@@ -2316,25 +2325,6 @@ export class AgentManager {
     this.updateEffectiveOptions({ agent, sent, reported: ended });
     this.touchUpdatedAt(agent);
     this.emitState(agent);
-  }
-
-  /**
-   * COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. An older client or the MCP
-   * `settings.features` sends composer values as `featureValues`; this is where they become an
-   * options patch for the agent's provider.
-   */
-  async setAgentFeatureValues(input: {
-    agentId: string;
-    values: Record<string, unknown>;
-    /** Options sent with the values; they win over a value of the same name. */
-    options?: Record<string, unknown>;
-  }): Promise<void> {
-    const { agentId, values, options } = input;
-    const provider = this.requireAgent(agentId).provider;
-    await this.setAgentOptions(agentId, {
-      ...convertLegacyOptions({ provider, options: values }),
-      ...options,
-    });
   }
 
   /** The config as the opened session left it: its own difference from the options it was given. */
@@ -5699,15 +5689,46 @@ export class AgentManager {
     }
   }
 
+  /** The adapter a provider id runs on: a custom provider is named by the one it extends. */
+  private adapterOf(provider: AgentProvider): AgentProvider {
+    const seen = new Set<AgentProvider>();
+    let current = provider;
+    for (;;) {
+      seen.add(current);
+      const base = this.providerDefinitions.get(current)?.derivedFromProviderId;
+      if (!base || seen.has(base)) return current;
+      current = base;
+    }
+  }
+
+  /**
+   * Options older data carries are converted for the adapter the provider runs on, before
+   * defaults merge and before anything is stored; nothing past the manager sees the old keys.
+   */
+  private convertLegacyOptions<T extends ProviderOptions | undefined>(
+    provider: AgentProvider,
+    options: T,
+  ): T {
+    return convertLegacyOptions({ provider: this.adapterOf(provider), options }) as T;
+  }
+
+  private withConvertedOptions(config: AgentSessionConfig): AgentSessionConfig {
+    const providerOptions = this.convertLegacyOptions(config.provider, config.providerOptions);
+    return providerOptions === config.providerOptions ? config : { ...config, providerOptions };
+  }
+
   private async prepareSessionConfig(
     config: AgentSessionConfig,
     agentId: string,
     options: { env?: Record<string, string>; purpose?: AgentResumePurpose } = {},
   ): Promise<PreparedSessionConfig> {
-    const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config), {
-      env: options.env,
-      purpose: options.purpose,
-    });
+    const storedConfig = await this.normalizeConfig(
+      this.withConvertedOptions(stripInternalPaseoMcpServer(config)),
+      {
+        env: options.env,
+        purpose: options.purpose,
+      },
+    );
     const paseoToolPolicy = this.paseoToolsEnabled
       ? this.resolvePaseoToolPolicy(storedConfig.provider)
       : { enabled: false };

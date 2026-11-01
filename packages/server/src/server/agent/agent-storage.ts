@@ -107,7 +107,7 @@ function foldLegacyRecordFields(record: RawStoredAgentRecord): StoredAgentRecord
   const { features, config, controls, ...rest } = record;
   return {
     ...rest,
-    ...(config ? { config: foldFeatureValues({ config, provider: record.provider }) } : { config }),
+    ...(config ? { config: foldFeatureValues(config) } : { config }),
     ...((controls ?? features) ? { controls: controls ?? controlsFromFeatures(features) } : {}),
   };
 }

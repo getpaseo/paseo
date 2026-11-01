@@ -7,6 +7,7 @@ import { describe, expect, test, vi } from "vitest";
 import { AgentManager } from "../agent-manager.js";
 import { toAgentPayload } from "../agent-projections.js";
 import { AgentStorage } from "../agent-storage.js";
+import { convertLegacyOptions } from "../option-controls.js";
 import type {
   AgentClient,
   AgentSession,
@@ -654,8 +655,16 @@ describe("Codex app-server provider controls", () => {
     await expect(appServer.waitForTurnStart()).resolves.toMatchObject({ serviceTier: "default" });
   });
 
-  describe("Fast chosen as `fast`", () => {
-    function createLegacyFastHarness(configDefaults: Record<string, unknown> = {}) {
+  describe("legacy Fast (fast_mode) saved or requested before service_tier", () => {
+    function createLegacyFastHarness(
+      rawDefaults: Record<string, unknown> = {},
+      providerId = CODEX_PROVIDER,
+    ) {
+      // The provider registry converts configured defaults before it merges them.
+      const configDefaults = convertLegacyOptions({
+        provider: CODEX_PROVIDER,
+        options: rawDefaults,
+      });
       const appServer = createFakeCodexAppServer({
         "collaborationMode/list": () => ({ data: TEST_COLLABORATION_MODES }),
         "model/list": () => ({ data: TEST_SPEED_MODELS }),
@@ -680,7 +689,7 @@ describe("Codex app-server provider controls", () => {
         return session;
       };
       const client: AgentClient = {
-        provider: CODEX_PROVIDER,
+        provider: providerId,
         capabilities: {
           supportsStreaming: true,
           supportsSessionPersistence: true,
@@ -702,7 +711,16 @@ describe("Codex app-server provider controls", () => {
       };
       const workdir = mkdtempSync(join(tmpdir(), "codex-legacy-fast-"));
       const storage = new AgentStorage(join(workdir, "agents"), logger);
-      const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+      const manager = new AgentManager({
+        clients: { [providerId]: client },
+        // A custom provider that extends Codex runs on the Codex adapter.
+        providerDefinitions:
+          providerId === CODEX_PROVIDER
+            ? {}
+            : { [providerId]: { enabled: true, derivedFromProviderId: CODEX_PROVIDER } },
+        registry: storage,
+        logger,
+      });
       const turnStarts = () =>
         appServer
           .requests()
@@ -712,7 +730,7 @@ describe("Codex app-server provider controls", () => {
       async function create(providerOptions?: Record<string, unknown>) {
         const agent = await manager.createAgent(
           {
-            provider: CODEX_PROVIDER,
+            provider: providerId,
             cwd: workdir,
             model: "gpt-5.4",
             ...(providerOptions ? { providerOptions } : {}),
@@ -724,7 +742,7 @@ describe("Codex app-server provider controls", () => {
       }
       async function resume(providerOptions: Record<string, unknown>) {
         const agent = await manager.resumeAgentFromPersistence({
-          provider: CODEX_PROVIDER,
+          provider: providerId,
           sessionId: "thread-1",
           metadata: { cwd: workdir, model: "gpt-5.4", providerOptions },
         });
@@ -762,9 +780,9 @@ describe("Codex app-server provider controls", () => {
 
     const FAST = { selected: "priority", feature: "priority" };
 
-    test("opens as the model's Fast tier and is stored as that tier", async () => {
+    test("a saved fast_mode opens as the model's Fast tier and is stored as that tier", async () => {
       const { manager, create, shownSpeed, runTurn } = createLegacyFastHarness();
-      const agentId = await create({ service_tier: "fast" });
+      const agentId = await create({ fast_mode: true });
       await manager.flush();
 
       expect(shownSpeed(agentId)).toMatchObject({
@@ -777,7 +795,7 @@ describe("Codex app-server provider controls", () => {
 
     test("is shown as Fast after a stored record is resumed", async () => {
       const { manager, resume, shownSpeed, runTurn } = createLegacyFastHarness();
-      const agentId = await resume({ service_tier: "fast" });
+      const agentId = await resume({ fast_mode: true });
       await manager.flush();
 
       expect(shownSpeed(agentId)).toMatchObject({ own: { service_tier: "priority" }, ...FAST });
@@ -785,10 +803,41 @@ describe("Codex app-server provider controls", () => {
     });
 
     test("from config.json defaults runs Fast and is shown as Fast", async () => {
-      const { create, shownSpeed, runTurn } = createLegacyFastHarness({ service_tier: "fast" });
+      const { create, shownSpeed, runTurn } = createLegacyFastHarness({ fast_mode: true });
       const agentId = await create();
 
       expect(shownSpeed(agentId)).toMatchObject(FAST);
+      await runTurn(agentId, "priority");
+    });
+
+    test("a saved fast_mode beats a configured service_tier default", async () => {
+      const { manager, resume, shownSpeed, runTurn } = createLegacyFastHarness({
+        service_tier: "default",
+      });
+      const agentId = await resume({ fast_mode: true });
+      await manager.flush();
+
+      expect(shownSpeed(agentId)).toMatchObject({ own: { service_tier: "priority" }, ...FAST });
+      await runTurn(agentId, "priority");
+    });
+
+    test("a provider extending Codex opens a saved fast_mode as Fast", async () => {
+      const { manager, resume, shownSpeed, runTurn } = createLegacyFastHarness({}, "my-codex");
+      const agentId = await resume({ fast_mode: true });
+      await manager.flush();
+
+      expect(shownSpeed(agentId)).toMatchObject({ own: { service_tier: "priority" }, ...FAST });
+      await runTurn(agentId, "priority");
+    });
+
+    test("a provider extending Codex creates with a requested fast_mode and applies a later one", async () => {
+      const { manager, create, shownSpeed, runTurn } = createLegacyFastHarness({}, "my-codex");
+      const agentId = await create({ fast_mode: false });
+      expect(shownSpeed(agentId)).toMatchObject({ own: { service_tier: "default" } });
+
+      await manager.setAgentOptions(agentId, { fast_mode: true });
+
+      expect(shownSpeed(agentId)).toMatchObject({ own: { service_tier: "priority" }, ...FAST });
       await runTurn(agentId, "priority");
     });
 
@@ -797,7 +846,7 @@ describe("Codex app-server provider controls", () => {
       const agentId = await create();
       expect(shownSpeed(agentId).selected).toBe("default");
 
-      await manager.setAgentFeatureValues({ agentId, values: { fast_mode: true } });
+      await manager.setAgentOptions(agentId, { fast_mode: true });
       expect(shownSpeed(agentId)).toMatchObject({ own: { service_tier: "priority" }, ...FAST });
       await runTurn(agentId, "priority");
 
@@ -818,24 +867,7 @@ describe("Codex app-server provider controls", () => {
       const { manager, create, shownSpeed, runTurn } = createLegacyFastHarness();
       const agentId = await create({ service_tier: "priority" });
 
-      await manager.setAgentFeatureValues({
-        agentId,
-        values: { service_tier: "default", fast_mode: true },
-      });
-
-      expect(shownSpeed(agentId)).toMatchObject({ own: { service_tier: "default" } });
-      await runTurn(agentId, "default");
-    });
-
-    test("options sent with the older values replace them before anything is applied", async () => {
-      const { manager, create, shownSpeed, runTurn } = createLegacyFastHarness();
-      const agentId = await create({ service_tier: "priority" });
-
-      await manager.setAgentFeatureValues({
-        agentId,
-        values: { service_tier: "retired-tier" },
-        options: { service_tier: "default" },
-      });
+      await manager.setAgentOptions(agentId, { service_tier: "default", fast_mode: true });
 
       expect(shownSpeed(agentId)).toMatchObject({ own: { service_tier: "default" } });
       await runTurn(agentId, "default");
@@ -845,7 +877,7 @@ describe("Codex app-server provider controls", () => {
       const { manager, create, shownSpeed, runTurn } = createLegacyFastHarness();
       const agentId = await create({ service_tier: "priority" });
 
-      await manager.setAgentFeatureValues({ agentId, values: { fast_mode: false } });
+      await manager.setAgentOptions(agentId, { fast_mode: false });
 
       expect(shownSpeed(agentId)).toMatchObject({ own: { service_tier: "default" } });
       await runTurn(agentId, "default");

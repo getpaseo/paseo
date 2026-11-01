@@ -73,14 +73,10 @@ export function foldFeatureValues<
     providerOptions?: ProviderOptions | null;
     featureValues?: Record<string, unknown> | null;
   },
->(input: { config: T; provider: string | undefined }): Omit<T, "featureValues"> {
-  const { featureValues, ...rest } = input.config;
-  const merged =
-    featureValues && Object.keys(featureValues).length > 0
-      ? { ...featureValues, ...rest.providerOptions }
-      : (rest.providerOptions ?? undefined);
-  const providerOptions = convertLegacyOptions({ provider: input.provider, options: merged });
-  return providerOptions === rest.providerOptions ? rest : { ...rest, providerOptions };
+>(config: T): Omit<T, "featureValues"> {
+  const { featureValues, ...rest } = config;
+  if (!featureValues || Object.keys(featureValues).length === 0) return rest;
+  return { ...rest, providerOptions: { ...featureValues, ...rest.providerOptions } };
 }
 
 /**
@@ -99,21 +95,25 @@ export function exposeFeatureValuesToHook<
 
 export function foldHookFeatureValues<
   T extends {
-    provider?: string;
     providerOptions?: ProviderOptions | null;
     featureValues?: Record<string, unknown>;
   },
->(input: { returned: T; sent: T }): Omit<T, "featureValues"> {
-  const { returned, sent } = input;
+>(input: {
+  returned: T;
+  sent: T;
+  /** Brings what the hook returned to the form of the copy it was sent. */
+  convert: (options: Record<string, unknown>) => Record<string, unknown>;
+}): Omit<T, "featureValues"> {
+  const { returned, sent, convert } = input;
   const { featureValues, ...rest } = returned;
   const before = sent.featureValues;
   if (!before) {
     // No copy was sent, so everything the hook put in `featureValues` is new.
-    return foldFeatureValues({ config: returned, provider: returned.provider });
+    return foldFeatureValues(returned);
   }
-  // The copy the hook was sent is canonical; what it returns may name the old key, so both
-  // sides are compared in the same form and a replaced speed is not read as a deletion.
-  const after = convertLegacyOptions({ provider: returned.provider, options: featureValues ?? {} });
+  // A hook may return an older key where it was sent the current one; comparing in the same
+  // form keeps a replaced value from reading as a deletion.
+  const after = convert(featureValues ?? {});
   const patch: ProviderOptionsPatch = {};
   for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
     if (isDeepStrictEqual(after[key], before[key])) continue;
@@ -122,10 +122,7 @@ export function foldHookFeatureValues<
   return {
     ...rest,
     providerOptions: applyProviderOptionsPatch({
-      options: convertLegacyOptions({
-        provider: returned.provider,
-        options: rest.providerOptions ?? undefined,
-      }),
+      options: rest.providerOptions ?? undefined,
       patch,
     }),
   };
@@ -155,8 +152,7 @@ export function foldProfileFeatureValues<T extends ProfileOptionFields>(input: {
   source: "stored" | "client write";
 }): Omit<T, "featureValues"> {
   const { profile, stored, source } = input;
-  const { featureValues: legacyValues, ...rest } = profile;
-  const featureValues = convertLegacyOptions({ provider: profile.provider, options: legacyValues });
+  const { featureValues, ...rest } = profile;
   if (source === "stored") {
     return featureValues ? { ...rest, options: { ...featureValues, ...rest.options } } : rest;
   }

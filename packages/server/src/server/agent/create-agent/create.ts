@@ -221,10 +221,7 @@ async function resolveSessionCreateAgent(
   input: CreateAgentFromSessionInput,
 ): Promise<ResolvedCreateAgent> {
   const trimmedPrompt = input.initialPrompt?.trim();
-  const builtSessionConfig = foldFeatureValues({
-    config: input.config,
-    provider: input.config.provider,
-  });
+  const builtSessionConfig = foldFeatureValues(input.config);
   const resolvedCreateConfig = await dependencies.providerSnapshotManager.resolveCreateConfig({
     cwd: builtSessionConfig.cwd,
     provider: builtSessionConfig.provider,

@@ -258,7 +258,6 @@ function buildAgentManagerSpies() {
     setAgentModel: vi.fn().mockResolvedValue(undefined),
     setAgentThinkingOption: vi.fn().mockResolvedValue(undefined),
     setAgentOptions: vi.fn().mockResolvedValue(undefined),
-    setAgentFeatureValues: vi.fn().mockResolvedValue(undefined),
     setLabels: vi.fn().mockResolvedValue(undefined),
     setTitle: vi.fn().mockResolvedValue(undefined),
     updateAgentMetadata: vi.fn().mockResolvedValue(undefined),
@@ -1835,7 +1834,7 @@ describe("create_agent MCP tool", () => {
       expect.objectContaining({
         provider: "codex",
         model: "gpt-5.4",
-        providerOptions: { service_tier: "fast" },
+        providerOptions: { fast_mode: true },
       }),
       undefined,
       { workspaceId: "workspace-created" },
@@ -3073,7 +3072,7 @@ describe("create_agent MCP tool", () => {
       expect.objectContaining({
         provider: "codex",
         model: "gpt-5.4",
-        providerOptions: { service_tier: "fast" },
+        providerOptions: { fast_mode: true },
       }),
       undefined,
       {
@@ -4718,10 +4717,7 @@ describe("update_agent MCP tool", () => {
     expect(spies.agentManager.setAgentMode).toHaveBeenCalledWith("agent-1", "full-access");
     expect(spies.agentManager.setAgentModel).toHaveBeenCalledWith("agent-1", "gpt-5.4");
     expect(spies.agentManager.setAgentThinkingOption).toHaveBeenCalledWith("agent-1", "high");
-    expect(spies.agentManager.setAgentFeatureValues).toHaveBeenCalledWith({
-      agentId: "agent-1",
-      values: { fast_mode: true },
-    });
+    expect(spies.agentManager.setAgentOptions).toHaveBeenCalledWith("agent-1", { fast_mode: true });
     expect(spies.agentManager.updateAgentMetadata).toHaveBeenCalledWith("agent-1", {
       title: "Updated agent",
       labels: { role: "worker" },
@@ -4746,12 +4742,12 @@ describe("update_agent MCP tool", () => {
     expect(spies.agentManager.setAgentMode).not.toHaveBeenCalled();
     expect(spies.agentManager.setAgentModel).not.toHaveBeenCalled();
     expect(spies.agentManager.setAgentThinkingOption).not.toHaveBeenCalled();
-    expect(spies.agentManager.setAgentFeatureValues).not.toHaveBeenCalled();
+    expect(spies.agentManager.setAgentOptions).not.toHaveBeenCalled();
   });
 
   it("does not update metadata when runtime settings fail", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
-    spies.agentManager.setAgentFeatureValues.mockRejectedValue(new Error("unsupported feature"));
+    spies.agentManager.setAgentOptions.mockRejectedValue(new Error("unsupported feature"));
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
@@ -5994,7 +5990,7 @@ describe("provider MCP tools", () => {
       modeId: "full-access",
       model: "gpt-5.4",
       thinkingOptionId: "high",
-      providerOptions: { service_tier: "fast" },
+      providerOptions: { fast_mode: true },
     });
     expect(response.structuredContent).toEqual({
       provider: "codex",
