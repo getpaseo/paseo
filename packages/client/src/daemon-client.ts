@@ -5349,6 +5349,9 @@ export class DaemonClient {
         requestId: resolvedRequestId,
       },
       responseType: "file.upload.response",
+      // The default 60s deadline would cover every chunk too, so a large file on a slow link
+      // times out while bytes are still flowing. The deadline starts after FileEnd instead.
+      timeout: 0,
       options: { skipQueue: true },
     });
 
@@ -5413,7 +5416,20 @@ export class DaemonClient {
       throw error;
     }
 
-    return responsePromise;
+    const responseDeadline = setTimeout(() => {
+      this.rejectWaitersForRequestId(
+        resolvedRequestId,
+        new DaemonConnectionError(
+          `Timeout waiting for message (${DEFAULT_SESSION_RPC_TIMEOUT_MS}ms)`,
+          "DAEMON_REQUEST_TIMEOUT",
+        ),
+      );
+    }, DEFAULT_SESSION_RPC_TIMEOUT_MS);
+    try {
+      return await responsePromise;
+    } finally {
+      clearTimeout(responseDeadline);
+    }
   }
 
   async requestDownloadToken(

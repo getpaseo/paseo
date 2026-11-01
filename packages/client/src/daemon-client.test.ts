@@ -7742,6 +7742,95 @@ test("uploadFile stops sending chunks when the connection closes between sends",
   ).toBe(false);
 });
 
+async function connectUploadClient(clientId: string) {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId,
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connection = client.connect();
+  mock.triggerOpen();
+  await connection;
+  return { client, mock };
+}
+
+function uploadResponse(requestId: string) {
+  return wrapSessionMessage({
+    type: "file.upload.response",
+    payload: {
+      requestId,
+      file: {
+        type: "uploaded_file",
+        id: `upload_${requestId}`,
+        fileName: "slow.bin",
+        mimeType: "application/octet-stream",
+        size: 4,
+        path: `/tmp/paseo-uploads/upload_${requestId}/slow.bin`,
+      },
+      error: null,
+    },
+  });
+}
+
+test("uploadFile outlives the sixty second RPC default while chunks are still being sent", async () => {
+  useHeartbeatClock();
+  const { client, mock } = await connectUploadClient("upload-slow-link");
+
+  const upload = client.uploadFile({
+    fileName: "slow.bin",
+    mimeType: "application/octet-stream",
+    bytes: new Uint8Array(4),
+    requestId: "req-slow",
+    chunkSize: 1,
+  });
+  let failure: Error | null = null;
+  void upload.catch((error: Error) => {
+    failure = error;
+  });
+
+  const flushMicrotasks = async () => {
+    for (let turn = 0; turn < 20; turn += 1) await Promise.resolve();
+  };
+
+  // The sync advance fires only the pending pause between chunks, so each chunk costs 30s and
+  // the transfer takes two minutes.
+  await flushMicrotasks();
+  for (let chunk = 0; chunk < 4; chunk += 1) {
+    vi.advanceTimersByTime(30_000);
+    await flushMicrotasks();
+  }
+  expect(failure).toBeNull();
+  const frames = mock.sent
+    .filter((frame) => typeof frame !== "string")
+    .map(assertUint8Array)
+    .map(decodeFileTransferFrame);
+  expect(frames.at(-1)?.opcode).toBe(FileTransferOpcode.FileEnd);
+
+  mock.triggerMessage(uploadResponse("req-slow"));
+  await expect(upload).resolves.toMatchObject({ requestId: "req-slow", error: null });
+});
+
+test("uploadFile gives the daemon sixty seconds to answer after the last chunk", async () => {
+  useHeartbeatClock();
+  const { client } = await connectUploadClient("upload-no-answer");
+
+  const upload = client.uploadFile({
+    fileName: "slow.bin",
+    mimeType: "application/octet-stream",
+    bytes: new Uint8Array(4),
+    requestId: "req-no-answer",
+  });
+  const rejection = expect(upload).rejects.toThrow("Timeout waiting for message (60000ms)");
+
+  await vi.advanceTimersByTimeAsync(59_999);
+  await vi.advanceTimersByTimeAsync(1);
+  await rejection;
+});
+
 test("rejects source installation on an older host before sending a request", async () => {
   const transport = createMockTransport();
   const client = new DaemonClient({
