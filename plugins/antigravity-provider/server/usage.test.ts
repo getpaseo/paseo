@@ -1,4 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type { ProviderLaunch, ProviderRegistration } from "@getpaseo/plugin/server/provider";
 import type { UsageSourceRegistration } from "@getpaseo/plugin/server/usage";
 import contribute from "../index.server.js";
@@ -79,6 +82,12 @@ const sampleAgyUsageJson = JSON.stringify({
     },
   },
 });
+
+function antigravityConfigHome(): string {
+  const home = mkdtempSync(path.join(tmpdir(), "antigravity-usage-"));
+  mkdirSync(path.join(home, ".gemini", "antigravity-cli"), { recursive: true });
+  return home;
+}
 
 describe("Antigravity Usage", () => {
   test("accountKey derives stable hash from launch environment", () => {
@@ -180,27 +189,87 @@ describe("Antigravity Usage", () => {
     expect(registration.icon).toBe("icon.svg");
   });
 
-  test("Usage discovers accounts globally only after launch is remembered", async () => {
-    const usage = new Usage();
-    const source = usage.registration();
+  test("Usage falls back to a config-directory account in global discovery", async () => {
+    const home = antigravityConfigHome();
+    try {
+      const usage = new Usage(
+        async () => sampleAgyUsageJson,
+        () => ({ HOME: home }),
+      );
+      const source = usage.registration();
 
-    expect(await source.discover({ kind: "global" })).toEqual([]);
+      const key = accountKey({ HOME: home });
+      expect(await source.discover({ kind: "global" })).toEqual([
+        { key, label: "Antigravity", input: { account: key } },
+      ]);
 
-    const launch: ProviderLaunch = {
-      command: "agy",
-      args: [],
-      env: { HOME: "/home/testuser" },
-    };
-    const { account } = usage.remember(launch);
+      // The placeholder launch is fetchable before any provider snapshot has run.
+      const report = await source.fetch({ account: key });
+      expect(report.status).toBe("available");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 
-    const discovered = await source.discover({ kind: "global" });
-    expect(discovered).toEqual([
-      {
-        key: account,
-        label: "Antigravity",
-        input: { account },
-      },
-    ]);
+  test("Usage replaces the config-directory fallback once the provider launch is remembered", async () => {
+    const home = antigravityConfigHome();
+    try {
+      const usage = new Usage(undefined, () => ({ HOME: home }));
+      const source = usage.registration();
+
+      const fallbackKey = accountKey({ HOME: home });
+      expect((await source.discover({ kind: "global" })).map((account) => account.key)).toEqual([
+        fallbackKey,
+      ]);
+
+      const launch: ProviderLaunch = {
+        command: "/usr/local/bin/agy",
+        args: ["--profile", "work"],
+        env: { HOME: "/home/resolved-user" },
+      };
+      const { account } = usage.remember(launch);
+      expect(account).not.toBe(fallbackKey);
+
+      expect(await source.discover({ kind: "global" })).toEqual([
+        { key: account, label: "Antigravity", input: { account } },
+      ]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("Usage stops replacing the fallback key once the same account launch is remembered", async () => {
+    const home = antigravityConfigHome();
+    try {
+      const usage = new Usage(undefined, () => ({ HOME: home }));
+      const source = usage.registration();
+
+      // Engage the placeholder discovery, then remember real launches: first for the same
+      // default account, then an overridden one. Both real accounts must coexist instead of
+      // deleting each other.
+      await source.discover({ kind: "global" });
+      usage.remember({ command: "/usr/bin/agy", args: [], env: { HOME: home } });
+      const override = { HOME: home, ANTIGRAVITY_HOME: "/data/gemini/antigravity-cli" };
+      const { account: overrideAccount } = usage.remember({
+        command: "/usr/local/bin/agy",
+        args: [],
+        env: override,
+      });
+
+      const discovered = new Set(
+        (await source.discover({ kind: "global" })).map((entry) => entry.key),
+      );
+      expect(discovered.has(accountKey({ HOME: home }))).toBe(true);
+      expect(discovered.has(overrideAccount)).toBe(true);
+      expect(discovered.size).toBe(2);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("Usage discovers nothing globally without a launch or an Antigravity config", async () => {
+    const usage = new Usage(undefined, () => ({ HOME: "/home/no-antigravity-user" }));
+    expect(await usage.registration().discover({ kind: "global" })).toEqual([]);
   });
 
   test("Usage discovers accounts for session scope", async () => {
@@ -239,7 +308,7 @@ describe("Antigravity Usage", () => {
 
   test("Usage.fetch executes runner and returns available usage report", async () => {
     const runner = vi.fn(async (_launch: ProviderLaunch, _args: string[]) => sampleAgyUsageJson);
-    const usage = new Usage(runner);
+    const usage = new Usage(runner, () => ({ HOME: "/home/unused-fallback" }));
     const source = usage.registration();
 
     const launch: ProviderLaunch = {
@@ -363,7 +432,7 @@ describe("Antigravity Usage", () => {
         command: { name: "usage", data: { groups: [] } },
       }),
     );
-    const usage = new Usage(runner);
+    const usage = new Usage(runner, () => ({ HOME: "/home/unused-fallback" }));
     const source = usage.registration();
 
     const launch: ProviderLaunch = { command: "agy", args: [], env: {} };
@@ -408,7 +477,7 @@ describe("Antigravity Usage", () => {
   });
 
   test("createAntigravityProvider status() remembers launch in usage", async () => {
-    const usage = new Usage();
+    const usage = new Usage(undefined, () => ({ HOME: "/home/no-antigravity-user" }));
     const provider = createAntigravityProvider(usage);
 
     const launch: ProviderLaunch = {
