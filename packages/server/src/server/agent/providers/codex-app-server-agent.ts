@@ -4738,8 +4738,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.cachedRuntimeInfo = null;
     // COMPAT(codexFastPreference): added in v0.10.0, remove after 2027-03-29 once clients use service_tier.
     const tier = this.serviceTier;
-    if ("fast_mode" in options && !("service_tier" in options) && options.fast_mode !== null) {
-      return tier === null ? {} : { service_tier: tier, fast_mode: null };
+    // `fast_mode` is folded into the speed, so the options no longer hold it.
+    const folded = options.fast_mode == null ? {} : { fast_mode: null };
+    if (options.fast_mode != null && !("service_tier" in options)) {
+      return tier === null ? folded : { service_tier: tier, ...folded };
     }
     // The catalog may name the tier differently from the request (`fast` is the Fast tier's id).
     if (
@@ -4748,9 +4750,9 @@ export class CodexAppServerAgentSession implements AgentSession {
       requestedTier !== null &&
       tier !== requestedTier
     ) {
-      return { service_tier: tier };
+      return { service_tier: tier, ...folded };
     }
-    return {};
+    return folded;
   }
 
   private requestedTierFrom(options: ProviderOptions): string | null {

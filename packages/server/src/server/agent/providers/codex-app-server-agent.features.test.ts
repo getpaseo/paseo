@@ -364,6 +364,17 @@ describe("Codex app-server provider controls", () => {
     }
   });
 
+  test("a patch carrying both speed keys reports the folded alias, so removing the speed removes it everywhere", async () => {
+    const { session } = await createConnectedSession();
+    try {
+      await expect(
+        session.applyOptions?.({ service_tier: "priority", fast_mode: true }),
+      ).resolves.toEqual({ fast_mode: null });
+    } finally {
+      await session.close();
+    }
+  });
+
   test("maps legacy Fast commands to the catalog's request id", async () => {
     const { session, appServer } = await createConnectedSession();
     try {
