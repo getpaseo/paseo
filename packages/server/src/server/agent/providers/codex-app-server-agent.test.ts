@@ -227,6 +227,67 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+describe("Codex file-change approvals", () => {
+  test("file-change approval includes the matching started patch", async () => {
+    const appServer = createFakeCodexAppServer();
+    const { session } = await startPublicSteeringSession(appServer);
+    try {
+      for (const [id, filePath, diff] of [
+        ["file-alpha", "/workspace/project/alpha.txt", "@@ -1 +1 @@\n-blue\n+green\n"],
+        ["file-beta", "/workspace/project/beta.txt", "@@ -1 +1 @@\n-small\n+large\n"],
+      ]) {
+        const started = waitForTimelineToolCall(session, id);
+        appServer.child.stdout.write(
+          `${JSON.stringify({
+            method: "item/started",
+            params: {
+              threadId: "thread-1",
+              turnId: "native-A",
+              item: {
+                type: "fileChange",
+                id,
+                status: "inProgress",
+                changes: [{ path: filePath, kind: { type: "update", move_path: null }, diff }],
+              },
+            },
+          })}\n`,
+        );
+        await started;
+      }
+      const permission = waitForNextPermission(session);
+      appServer.requestFileChangeApproval({
+        itemId: "file-alpha",
+        threadId: "thread-1",
+        turnId: "native-A",
+        reason: "Apply the patch",
+      });
+
+      expect((await permission).request).toEqual({
+        id: "permission-file-alpha",
+        provider: "codex",
+        name: "CodexFileChange",
+        kind: "tool",
+        title: "Apply file changes",
+        description: "Apply the patch",
+        detail: {
+          type: "edit",
+          filePath: "alpha.txt",
+          unifiedDiff: "@@ -1 +1 @@\n-blue\n+green\n",
+        },
+        metadata: { itemId: "file-alpha", threadId: "thread-1", turnId: "native-A" },
+      });
+
+      await session.respondToPermission("permission-file-alpha", { behavior: "allow" });
+      await expect(appServer.waitForApprovalDecision("file-alpha")).resolves.toEqual({
+        decision: "accept",
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+});
+
 describe("Codex active-turn steering admission", () => {
   test("steers an accepted turn whose native id arrives after startTurn returns", async () => {
     const appServer = createFakeCodexAppServer({
