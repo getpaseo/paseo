@@ -440,10 +440,7 @@ function prepareConfiguredOverrideSession(
 }
 
 test("ACP setModel only uses config-option fallback when the matching select choice contains the model", async () => {
-  const logger = createTestLogger();
-  const childLogger = { trace: vi.fn(), warn: vi.fn() };
-  vi.spyOn(logger, "child").mockReturnValue(asInternals<typeof logger>(childLogger));
-  const session = createSessionWithConfig({}, logger);
+  const session = createSessionWithConfig({});
   const setSessionConfigOption = vi.fn(async () => ({
     configOptions: [
       {
@@ -480,10 +477,8 @@ test("ACP setModel only uses config-option fallback when the matching select cho
 
   setSessionConfigOption.mockClear();
 
-  await expect(session.setModel("new-provider-model")).resolves.toBeUndefined();
-  expect(childLogger.warn).toHaveBeenCalledWith(
-    { value: "new-provider-model" },
-    expect.stringContaining("is not a valid claude-acp model config option"),
+  await expect(session.setModel("new-provider-model")).rejects.toThrow(
+    "Model 'new-provider-model' is not a valid claude-acp model config option",
   );
   expect(setSessionConfigOption).not.toHaveBeenCalled();
 });
@@ -1044,7 +1039,7 @@ describe("ACP selection validity helpers", () => {
 });
 
 describe("ACPAgentSession Zed parity", () => {
-  test("applies valid stored mode/model values, routes current_mode_update, and skips invalid Cursor-style stored values with warnings", async () => {
+  test("applies valid stored values and mode updates, warns for invalid modes, and rejects invalid models", async () => {
     const validSession = createSessionWithConfig({ modeId: "plan", model: "sonnet" });
     const valid = prepareConfiguredOverrideSession(validSession, {
       currentMode: "default",
@@ -1100,16 +1095,14 @@ describe("ACPAgentSession Zed parity", () => {
       availableModels: [{ modelId: "sonnet", name: "Sonnet", description: null }],
     });
 
-    await expect(invalid.internals.applyConfiguredOverrides()).resolves.toBeUndefined();
+    await expect(invalid.internals.applyConfiguredOverrides()).rejects.toThrow(
+      "Model 'opus' is not a valid claude-acp model",
+    );
     expect(invalid.setSessionMode).not.toHaveBeenCalled();
     expect(invalid.unstableSetSessionModel).not.toHaveBeenCalled();
     expect(childLogger.warn).toHaveBeenCalledWith(
       { value: expect.stringContaining("acceptEdits") },
       expect.stringContaining("not valid"),
-    );
-    expect(childLogger.warn).toHaveBeenCalledWith(
-      { value: expect.stringContaining("opus") },
-      expect.stringContaining("not a valid"),
     );
   });
 
@@ -1129,14 +1122,8 @@ describe("ACPAgentSession Zed parity", () => {
     expect(setSessionConfigOption).not.toHaveBeenCalled();
   });
 
-  test("does not fail session start when configured model cannot be applied by ACP", async () => {
-    const logger = createTestLogger();
-    const childLogger = { trace: vi.fn(), warn: vi.fn() };
-    vi.spyOn(logger, "child").mockReturnValue(asInternals<typeof logger>(childLogger));
-    const session = createSessionWithConfig(
-      { provider: "deepseek-tui", model: "deepseek/v4" },
-      logger,
-    );
+  test("fails session start when configured model cannot be applied by ACP", async () => {
+    const session = createSessionWithConfig({ provider: "deepseek-tui", model: "deepseek/v4" });
     const { internals, setSessionConfigOption, unstableSetSessionModel } =
       prepareConfiguredOverrideSession(session, {
         currentModel: null,
@@ -1145,13 +1132,11 @@ describe("ACPAgentSession Zed parity", () => {
         connection: { unstable_setSessionModel: undefined },
       });
 
-    await expect(internals.applyConfiguredOverrides()).resolves.toBeUndefined();
+    await expect(internals.applyConfiguredOverrides()).rejects.toThrow(
+      "deepseek-tui does not expose ACP model selection",
+    );
     expect(unstableSetSessionModel).not.toHaveBeenCalled();
     expect(setSessionConfigOption).not.toHaveBeenCalled();
-    expect(childLogger.warn).toHaveBeenCalledWith(
-      { value: "deepseek/v4" },
-      "deepseek-tui does not expose ACP model selection; using provider default model",
-    );
   });
 
   test("routes config_option_update and refreshes derived mode, model, and thinking state", async () => {
@@ -4782,13 +4767,13 @@ describe("custom ACP provider with configured models", () => {
     expect((await session.getRuntimeInfo()).model).toBe("stealth/pixel-canary");
   });
 
-  test("keeps the agent's model when the requested model is neither advertised nor configured", async () => {
+  test("rejects creation when the requested model is neither advertised nor configured", async () => {
     const registry = buildRegistry({
       additionalModels: [{ id: "stealth/pixel-canary", label: "Pixel Canary" }],
     });
 
-    const created = await createSessionOnModel(registry, "stale/removed-model");
-
-    expect((await created.getRuntimeInfo()).model).toBe("advertised-default");
+    await expect(createSessionOnModel(registry, "stale/removed-model")).rejects.toThrow(
+      "Model 'stale/removed-model' is not a valid acp model",
+    );
   });
 });
