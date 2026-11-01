@@ -2460,7 +2460,7 @@ class ClaudeAgentSession implements AgentSession {
     const info: AgentRuntimeInfo = {
       provider: "claude",
       sessionId: this.claudeSessionId,
-      model: this.lastOptionsModel,
+      model: this.lastOptionsModel ?? this.config.model ?? null,
       modeId: this.currentMode ?? null,
       ...(this.lastRuntimeModel
         ? {
