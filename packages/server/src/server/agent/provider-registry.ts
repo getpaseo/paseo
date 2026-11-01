@@ -501,6 +501,9 @@ function wrapClientProvider(
     get capabilities() {
       return inner.capabilities;
     },
+    get startupRecovery() {
+      return inner.startupRecovery;
+    },
     shutdown: inner.shutdown?.bind(inner),
     createSession: async (config, launchContext, options) =>
       wrapSessionProvider(

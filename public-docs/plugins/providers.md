@@ -73,6 +73,30 @@ The connection has three operations:
 Keep the native SDK, process, and stream inside the connection implementation. Convert its output
 to `ProviderEvent` objects before publishing it.
 
+## Observe an externally owned runtime after startup
+
+Set `startupRecovery: "observe"` on the registration when your provider reconnects to
+a service whose execution outlives Paseo. Paseo restores observations of persisted,
+unarchived sessions after plugin registrations load, including sessions that were
+idle. It does not submit the daemon's resume prompt. Ordinary providers omit the
+field or select `"prompt"` to retain the existing running-session recovery behavior.
+
+Require `session.startup_observation` in `connect(request).capabilities` before
+borrowing a runtime. Older hosts do not advertise it; reject with an update
+instruction rather than silently accepting their automatic resume behavior.
+
+Your session-open implementation must restore current messages, permissions and
+activity without starting generation or creating a replacement for a missing
+native session. This policy does not grant permission to stop the owning service.
+Global startup-recovery disablement, archived workspaces, internal agents and
+daemon-owned agents retain their existing exclusions.
+
+When an approval is answered in another native client, emit
+`session.permission_resolved` with its optional `resolution` containing the actual
+answer. Hosts advertising `permission.resolution` preserve that outcome instead
+of inferring it from a Paseo-side reply. Native outcomes take precedence when two
+clients race. Omitted outcomes retain the existing provider-resolution behavior.
+
 ## Launch the provider CLI
 
 Use `spawnProcess` and `execCommand` from `@getpaseo/plugin/server` for process transports

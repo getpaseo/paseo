@@ -15,6 +15,7 @@ import {
 import { z } from "zod";
 
 export interface PluginProviderMetadata {
+  startupRecovery?: "prompt" | "observe";
   requiresConfiguration?: boolean;
   hasCatalogCacheKey?: boolean;
   hasStatus?: boolean;
@@ -118,6 +119,7 @@ const providerMetadataSchema = z
     description: z.string().optional(),
     iconPath: z.string().optional(),
     requiresConfiguration: z.boolean().optional(),
+    startupRecovery: z.enum(["prompt", "observe"]).optional(),
     hasCatalogCacheKey: z.boolean().optional(),
     hasStatus: z.boolean().optional(),
     command: z.tuple([z.string().min(1)], z.string()).optional(),

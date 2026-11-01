@@ -1,4 +1,5 @@
 import { createRestartRecovery } from "./agent/restart-recovery/index.js";
+import { ensureUnarchivedAgentLoaded } from "./agent/agent-loading.js";
 import { sendPromptToAgent } from "./agent/agent-prompt.js";
 import { createIdleRuntimeCleanup } from "./agent/idle-runtime-cleanup/index.js";
 import {
@@ -1052,6 +1053,17 @@ export async function createPaseoDaemon(
     }),
     eligible: async (record) =>
       !record.workspaceId || !(await workspaceRegistry?.get(record.workspaceId))?.archivedAt,
+    policy: (record) => agentManager.getStartupRecoveryPolicy(record.provider),
+    observe: async (agentId) => {
+      if (!(await agentStorage.get(agentId))?.persistence?.sessionId)
+        throw new Error(`Agent ${agentId} has no persisted runtime to observe`);
+      return ensureUnarchivedAgentLoaded(agentId, {
+        agentManager,
+        agentStorage,
+        logger,
+        broadcastTimeline: true,
+      });
+    },
     dispatch: (agentId, prompt) =>
       sendPromptToAgent({ agentId, prompt, agentManager, agentStorage, logger, unarchive: false }),
     report: (agentId, err) => logger.error({ agentId, err }, "Agent restart recovery failed"),
@@ -1890,7 +1902,9 @@ export async function createPaseoDaemon(
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();
             providerSnapshotManager.settlePluginProviders();
-            restartRecovery.resumePending();
+            void restartRecovery
+              .resumePending()
+              .catch((err) => logger.error({ err }, "Agent restart observation failed"));
             await finishSubscriptions.start();
             wsServer.beginAcceptingConnections();
             const relaySecurityLogger = logger.child({ module: "relay-security" });

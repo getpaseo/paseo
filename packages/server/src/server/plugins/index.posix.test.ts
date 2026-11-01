@@ -243,7 +243,7 @@ describe("PluginService", () => {
       const directory = await createPlugin(
         "provider-status",
         `export default function contribute(server) {
-      server.registerProvider({ id: "plugin-agent", label: "Plugin agent", command: ["agent", "serve"],
+      server.registerProvider({ id: "plugin-agent", label: "Plugin agent", command: ["agent", "serve"], startupRecovery: "observe",
         async status({ launch }) { return launch.env.LOGIN === "yes" ? { available: true } : { available: false, diagnostic: "Sign in" }; },
         async getCatalogCacheKey({ launch }) { return launch.command + ":" + launch.env.LOGIN; },
         async connect({ launch }) {
@@ -281,6 +281,7 @@ describe("PluginService", () => {
         expect(registration).toMatchObject({
           id: "plugin-agent",
           command: ["agent", "serve"],
+          startupRecovery: "observe",
           status: expect.any(Function),
         });
         const launch = { command: process.execPath, args: [], env: { LOGIN: "no" } };
