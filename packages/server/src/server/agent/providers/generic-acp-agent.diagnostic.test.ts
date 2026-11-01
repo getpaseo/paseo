@@ -290,6 +290,7 @@ describe("GenericACPAgentClient diagnostics", () => {
               writeTextFile: true,
             },
             terminal: true,
+            elicitation: { form: {} },
           },
         },
         {
@@ -299,6 +300,7 @@ describe("GenericACPAgentClient diagnostics", () => {
               writeTextFile: true,
             },
             terminal: true,
+            elicitation: { form: {} },
           },
         },
       ]);
