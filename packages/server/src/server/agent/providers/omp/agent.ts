@@ -1095,7 +1095,6 @@ export class OmpAgentSession implements AgentSession {
       const old = this.runtimeSession;
       const oldHostTools = this.hostTools;
       const previousSessionId = this.state.sessionId;
-      const fastModeBefore = this.state.fastModeEnabled;
       const restarted = await this.restartRuntime(
         this.config.internal ? null : (this.state.sessionFile ?? null),
         modeId,
@@ -1111,12 +1110,11 @@ export class OmpAgentSession implements AgentSession {
         this.pendingPromptResults.clear();
         this.runtimeSession = next;
         this.hostTools = restarted.hostTools;
-        this.state = state;
+        this.installState(state);
         this.currentModeId = modeId;
         this.config.modeId = modeId;
         this.runtimeDead = false;
         this.attachRuntime(next);
-        this.publishFastModeChange(fastModeBefore);
         this.subagentIndex.clear(old);
         await oldHostTools?.close();
         await old.close().catch(() => undefined);
@@ -2250,7 +2248,7 @@ export class OmpAgentSession implements AgentSession {
       }
       try {
         const state = await this.runtimeSession.getState();
-        this.state = state;
+        this.installState(state);
         if (this.closed || !this.activeTurnStarted || this.currentTurnIdForEvent() !== turnId) {
           // An interrupt settled this turn while the state check was in flight.
           return;
@@ -2267,13 +2265,14 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private async refreshState(): Promise<void> {
-    const before = this.state.fastModeEnabled;
-    this.state = await this.runtimeSession.getState();
-    this.publishFastModeChange(before);
+    this.installState(await this.runtimeSession.getState());
   }
 
-  // The runtime owns Fast: whatever it accepted is what the session now runs with.
-  private publishFastModeChange(before: boolean | undefined): void {
+  // The runtime owns Fast: whatever it reports is what the session now runs with, so every state
+  // read from the runtime is installed here and a difference is published once.
+  private installState(state: OmpSessionState): void {
+    const before = this.state.fastModeEnabled;
+    this.state = state;
     if (this.state.fastModeEnabled !== before && typeof this.state.fastModeEnabled === "boolean") {
       this.rememberFastMode(this.state.fastModeEnabled);
       this.emit({
