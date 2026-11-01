@@ -7,6 +7,11 @@ import { describe, expect, test, vi } from "vitest";
 import { AgentManager } from "../agent-manager.js";
 import { toAgentPayload } from "../agent-projections.js";
 import { AgentStorage } from "../agent-storage.js";
+import {
+  toWireDaemonConfig,
+  type ConvertProfileOptions,
+  type MutableDaemonConfig,
+} from "../../daemon-config-store.js";
 import { convertLegacyOptions } from "../option-controls.js";
 import type {
   AgentClient,
@@ -889,6 +894,40 @@ describe("Codex app-server provider controls", () => {
         expect(draft.controls).toContainEqual(expect.objectContaining({ key: "service_tier" }));
       },
     );
+
+    test.each(["codex", "my-codex"])(
+      "the config API shows a %s profile's legacy fast_mode as service_tier",
+      (providerId) => {
+        const { manager } = createLegacyFastHarness({}, providerId);
+        const stored: MutableDaemonConfig = {
+          agentProfiles: [
+            { id: "p", name: "P", provider: providerId, options: { fast_mode: true } },
+          ],
+        } as MutableDaemonConfig;
+
+        const convert: ConvertProfileOptions = (provider, options) =>
+          manager.convertLegacyOptions(provider, options);
+
+        const wire = toWireDaemonConfig(stored, convert);
+
+        expect(wire.agentProfiles?.[0]).toMatchObject({
+          options: { service_tier: "fast" },
+          featureValues: { service_tier: "fast" },
+        });
+      },
+    );
+
+    test.each([
+      ["a string", "false"],
+      ["a number", 1],
+    ])("a legacy fast_mode that is %s is rejected, not read as Fast", async (_name, value) => {
+      const { manager, create } = createLegacyFastHarness();
+      const agentId = await create({});
+
+      await expect(manager.setAgentOptions(agentId, { fast_mode: value })).rejects.toThrow(
+        /fast_mode must be true, false or null/,
+      );
+    });
 
     test("an older client turning fast_mode off selects Normal", async () => {
       const { manager, create, shownSpeed, runTurn } = createLegacyFastHarness();

@@ -57,6 +57,9 @@ export function convertLegacyOptions(
   const { provider, options } = input;
   if (provider !== "codex" || !options || !("fast_mode" in options)) return options;
   const { fast_mode: legacy, ...rest } = options;
+  if (legacy !== undefined && legacy !== null && typeof legacy !== "boolean") {
+    throw new Error("Codex fast_mode must be true, false or null");
+  }
   if ("service_tier" in rest || legacy === undefined) return rest;
   if (legacy === null) return { ...rest, service_tier: null };
   return { ...rest, service_tier: legacy ? "fast" : "default" };
@@ -153,9 +156,9 @@ export function foldProfileFeatureValues<T extends ProfileOptionFields>(input: {
 }): Omit<T, "featureValues"> {
   const { profile, stored, source } = input;
   const { featureValues: legacyValues, ...rest } = profile;
-  // The app reads a profile's speed from its controls, so the old key is converted here for the
-  // provider id the profile names; a profile on a custom provider is converted when it is applied.
-  const featureValues = convertLegacyOptions({ provider: profile.provider, options: legacyValues });
+  // Keys pass through unchanged: renaming an old key needs the adapter the provider runs on, which
+  // only the agent manager knows.
+  const featureValues = legacyValues;
   if (source === "stored") {
     return featureValues ? { ...rest, options: { ...featureValues, ...rest.options } } : rest;
   }

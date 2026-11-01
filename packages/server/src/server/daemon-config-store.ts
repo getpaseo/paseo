@@ -192,10 +192,30 @@ function foldConfigProfiles<T extends { agentProfiles?: AgentProfile[] }>(
   };
 }
 
-/** The config API boundary: the unchanged app reads profile options from `featureValues`. */
-export function toWireDaemonConfig(config: MutableDaemonConfig): MutableDaemonConfig {
+/** Renames old option keys for the adapter a provider runs on (the agent manager's conversion). */
+export type ConvertProfileOptions = (
+  provider: string,
+  options: Record<string, unknown> | undefined,
+) => Record<string, unknown> | undefined;
+
+/**
+ * The config API boundary: clients see each profile's options in their current keys, and the
+ * unchanged app reads them from `featureValues`.
+ */
+export function toWireDaemonConfig(
+  config: MutableDaemonConfig,
+  convertOptions: ConvertProfileOptions,
+): MutableDaemonConfig {
   if (!config.agentProfiles) return config;
-  return { ...config, agentProfiles: config.agentProfiles.map(withLegacyProfileFeatureValues) };
+  return {
+    ...config,
+    agentProfiles: config.agentProfiles.map((profile) =>
+      withLegacyProfileFeatureValues({
+        ...profile,
+        options: convertOptions(profile.provider, profile.options),
+      }),
+    ),
+  };
 }
 
 function getValueAtPath(config: MutableDaemonConfig, path: string): unknown {

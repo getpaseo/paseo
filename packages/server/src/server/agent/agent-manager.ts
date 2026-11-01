@@ -5705,7 +5705,7 @@ export class AgentManager {
    * Options older data carries are converted for the adapter the provider runs on, before
    * defaults merge and before anything is stored; nothing past the manager sees the old keys.
    */
-  private convertLegacyOptions<T extends ProviderOptions | undefined>(
+  convertLegacyOptions<T extends ProviderOptions | undefined>(
     provider: AgentProvider,
     options: T,
   ): T {
