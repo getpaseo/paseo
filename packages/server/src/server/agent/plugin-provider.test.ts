@@ -1007,6 +1007,7 @@ describe("PluginAgentClientRegistry", () => {
     // A plugin that keeps `voice` on "direct" whatever it is asked, and takes `loud` as given.
     async function openStubbornVoiceSession(given: Record<string, boolean | string>) {
       const state = { voice: "direct", loud: false };
+      let openedSessionId = "";
       const settings = () => [
         {
           type: "select" as const,
@@ -1036,6 +1037,7 @@ describe("PluginAgentClientRegistry", () => {
       const harness = createProviderHarness({
         async handleInput(input, emit) {
           if (input.type === "session.open") {
+            openedSessionId = input.sessionId;
             emit({
               type: "session.opened",
               requestId: input.requestId,
@@ -1068,8 +1070,25 @@ describe("PluginAgentClientRegistry", () => {
       });
       const events: AgentStreamEvent[] = [];
       session.subscribe((event) => events.push(event));
-      return { harness, session, events };
+      const changeOnItsOwn = (change: Partial<typeof state>) => {
+        Object.assign(state, change);
+        emitConfig(harness.emit, openedSessionId);
+      };
+      return { harness, session, events, changeOnItsOwn };
     }
+
+    test("forwards a setting the plugin changes on its own", async () => {
+      const { session, events, changeOnItsOwn } = await openStubbornVoiceSession({});
+
+      changeOnItsOwn({ loud: true });
+
+      await vi.waitFor(() =>
+        expect(eventsOfType(events, "options_changed")).toEqual([
+          { type: "options_changed", provider: "plugin-direct", patch: { loud: true } },
+        ]),
+      );
+      await session.close();
+    });
 
     test("a setting the plugin opened differently is the session's open patch, not an event", async () => {
       const { session, events } = await openStubbornVoiceSession({ voice: "other", loud: false });
