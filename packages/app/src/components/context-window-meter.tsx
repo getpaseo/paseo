@@ -112,8 +112,9 @@ const ContextWindowRing = withUnistyles(function ContextWindowRing({
       width={size}
       height={size}
       viewBox={`0 0 ${size} ${size}`}
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
+      {...(isNative
+        ? { accessibilityElementsHidden: true, importantForAccessibility: "no-hide-descendants" }
+        : { "aria-hidden": true })}
     >
       <Circle
         cx={center}

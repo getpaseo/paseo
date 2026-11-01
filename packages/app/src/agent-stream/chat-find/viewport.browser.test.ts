@@ -24,6 +24,7 @@ function viewport(root: HTMLElement, capture: Capture) {
   const handle: StreamViewportHandle = {
     scrollToBottom() {},
     prepareForViewportChange() {},
+    holdReadingPosition() {},
     scrollToMessage(_messageId, occurrence) {
       if (occurrence) capture.occurrence = occurrence;
     },

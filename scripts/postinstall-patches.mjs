@@ -8,16 +8,40 @@ import { join, relative } from "node:path";
 // workspace root live in their workspace's own node_modules, and patch-package resolves
 // the patch's node_modules/... paths relative to its working directory.
 const patchedPackages = [
+  // Backport for expo-modules-core 57.0.23: https://github.com/expo/expo/pull/49634.
+  // Remove when the installed Expo SDK includes the Activity recreation fix.
+  {
+    nodeModulesPath: "node_modules/expo-modules-core",
+    patchPrefix: "expo-modules-core+",
+  },
+  // Backport https://github.com/software-mansion/enriched-markdown/pull/924: preserve settled
+  // Android measurements across parent clones. Remove those hunks when upgrading past
+  // 1.2.0-nightly-20261019-926ef06f0; reconcile the other local patch hunks separately.
   {
     nodeModulesPath: "packages/app/node_modules/react-native-enriched-markdown",
     patchPrefix: "react-native-enriched-markdown+",
     cwd: "packages/app",
   },
-  // Remove after react-native-unistyles ships
+  // Registry cleanup: remove after react-native-unistyles ships
   // https://github.com/jpudysz/react-native-unistyles/pull/1203.
+  // Adaptive themes: keep until colorScheme reads no longer consume listener-owned media changes.
+  // withUnistyles: also keep the uniProps filter until upstream consumes its control prop.
+  // Android configuration: backport 3.5.3; remove the two NativePlatform hunks at >= 3.5.3.
+  // https://github.com/jpudysz/react-native-unistyles/compare/v3.5.2...v3.5.3
+  // Layout constraints: backport of https://github.com/jpudysz/react-native-unistyles/pull/1357
+  // (commit from the root the commit hands us, so a concurrent window-size commit is kept).
+  // Remove the ShadowTreeManager hunk when the installed release includes that PR.
   {
     nodeModulesPath: "node_modules/react-native-unistyles",
     patchPrefix: "react-native-unistyles+",
+  },
+  // Backport of https://github.com/software-mansion/react-native-reanimated/pull/10435
+  // (Reanimated 4.7.1): skip synchronous Android prop updates for unmounted view tags
+  // instead of throwing and printing a full stack trace on the UI thread per tag per event.
+  // Remove when the installed Reanimated is >= 4.7.1.
+  {
+    nodeModulesPath: "node_modules/react-native-reanimated",
+    patchPrefix: "react-native-reanimated+",
   },
   {
     nodeModulesPath: "node_modules/react-native-draggable-flatlist",
@@ -31,13 +55,19 @@ const patchedPackages = [
   // modal stack (see packages/app/src/components/ui/isolated-bottom-sheet-modal/host-scope.tsx), and
   // keeps a dismissing modal's status through its final onChange(-1), so a modal with
   // enableDismissOnClose=false that unmounts while presented still leaves the portal.
+  // Dimensions subscription cleanup: https://github.com/gorhom/react-native-bottom-sheet/issues/2734
+  // and https://github.com/gorhom/react-native-bottom-sheet/pull/2751. Remove the useAnimatedLayout
+  // hunks once an installed release includes the cleanup; retain the other local hunks.
   {
     nodeModulesPath: "node_modules/@gorhom/bottom-sheet",
     patchPrefix: "@gorhom+bottom-sheet+",
   },
+  // Android resize: retain until upstream clears descendant geometry when the SVG canvas resizes.
+  // The native pixel regression is included in the patch; preserve the separate transform hunks.
   {
-    nodeModulesPath: "node_modules/react-native-svg",
+    nodeModulesPath: "packages/app/node_modules/react-native-svg",
     patchPrefix: "react-native-svg+",
+    cwd: "packages/app",
   },
   {
     nodeModulesPath: "node_modules/@mattermost/react-native-paste-input",

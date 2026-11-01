@@ -1,3 +1,4 @@
+import type { PluginHookAgent } from "@getpaseo/plugin/server";
 import { UsageScopeSchema, type UsageScope } from "@getpaseo/plugin/server/usage";
 import type {
   ProviderConnectRequest,
@@ -31,6 +32,9 @@ export interface PluginUsageSourceMetadata {
 }
 
 export type PluginProcessRequest =
+  | { type: "tool.call"; requestId: string; agent: PluginHookAgent; name: string; input: unknown }
+  | { type: "tool.cancel"; requestId: string }
+  | { type: "tools.detach"; agentId: string }
   | {
       type: "provider.status";
       requestId: string;
@@ -51,7 +55,7 @@ export type PluginProcessRequest =
       providerId: string;
       options: ProviderCatalogOptions;
     }
-  | { type: "hook"; requestId: string; kind: "event" | "before"; name: string; input: unknown }
+  | { type: "hook"; requestId: string; name: string; input: unknown }
   | { type: "hook.cancel"; requestId: string }
   | { type: "usage.fetch"; requestId: string; sourceId: string; input: unknown }
   | { type: "usage.discover"; requestId: string; sourceId: string; scope: UsageScope }
@@ -75,13 +79,13 @@ export type PluginProcessRequest =
 
 export type PluginProcessMessage =
   | { type: "settings.changed"; settingsId: string }
-  | { type: "hooks.changed"; hooks: { events: string[]; before: string[] } }
+  | { type: "hooks.changed"; hooks: string[] }
   | {
       type: "ready";
       methods: string[];
       providers: PluginProviderMetadata[];
       usageSources?: PluginUsageSourceMetadata[];
-      hooks?: { events: string[]; before: string[] };
+      hooks?: string[];
     }
   | { type: "result"; requestId: string; output: unknown }
   | { type: "error"; requestId: string; error: string }
@@ -105,7 +109,7 @@ export type PluginProcessMessage =
   | { type: "paseo_frame"; data: string | Uint8Array; isBinary: boolean }
   | { type: "paseo_close" };
 
-const hooksSchema = z.object({ events: z.array(z.string()), before: z.array(z.string()) }).strict();
+const hooksSchema = z.array(z.string());
 
 const providerMetadataSchema = z
   .object({
@@ -141,6 +145,26 @@ const frameFields = {
 export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.discriminatedUnion(
   "type",
   [
+    z
+      .object({
+        type: z.literal("tool.call"),
+        requestId: z.string(),
+        agent: z
+          .object({
+            id: z.string(),
+            workspaceId: z.string().nullable(),
+            parentAgentId: z.string().nullable(),
+            provider: z.string(),
+            cwd: z.string(),
+            title: z.string().nullable(),
+          })
+          .strict(),
+        name: z.string(),
+        input: z.unknown(),
+      })
+      .strict(),
+    z.object({ type: z.literal("tool.cancel"), requestId: z.string() }).strict(),
+    z.object({ type: z.literal("tools.detach"), agentId: z.string() }).strict(),
     z
       .object({
         type: z.literal("provider.status"),
@@ -187,7 +211,6 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
       .object({
         type: z.literal("hook"),
         requestId: z.string(),
-        kind: z.enum(["event", "before"]),
         name: z.string(),
         input: z.unknown(),
       })

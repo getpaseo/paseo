@@ -1,3 +1,4 @@
+import { PluginTranslationRuntime } from "@getpaseo/plugin/client/host";
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import type { InstalledPlugin } from "./types";
@@ -20,6 +21,8 @@ function installation(
     serverId,
     clientBundle: serverId,
     lifetime: new AbortController(),
+    locale: "en",
+    i18n: new PluginTranslationRuntime({ getLocale: () => "en", subscribe: () => () => {} }),
     queryClient: new QueryClient(),
     paseo: {} as InstalledPlugin["paseo"],
     invoke: async () => undefined,
@@ -32,6 +35,7 @@ function installation(
       title: item.id,
       icon: "Blocks",
     })),
+    filePanels: [],
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
@@ -177,6 +181,8 @@ describe("parsePluginOpenScreenInput", () => {
 });
 
 describe("resolvePluginScreenTitle", () => {
+  const resolve = new PluginTranslationRuntime({ getLocale: () => "en", subscribe: () => () => {} })
+    .resolve;
   const Component = () => null;
   const botNames: Record<string, string> = { "bot-1": "Bot 1", "bot-2": "Bot 2" };
   const bot = {
@@ -186,18 +192,18 @@ describe("resolvePluginScreenTitle", () => {
   };
 
   it("uses a string title as is", () => {
-    expect(resolvePluginScreenTitle({ id: "deploys", title: "Deploys", Component }, null, {})).toBe(
-      "Deploys",
-    );
+    expect(
+      resolvePluginScreenTitle({ id: "deploys", title: "Deploys", Component }, null, {}, resolve),
+    ).toBe("Deploys");
   });
 
   it("derives a function title from the params it is given", () => {
-    expect(resolvePluginScreenTitle(bot, null, { botId: "bot-2" })).toBe("Bot 2");
-    expect(resolvePluginScreenTitle(bot, null, { botId: "bot-1" })).toBe("Bot 1");
+    expect(resolvePluginScreenTitle(bot, null, { botId: "bot-2" }, resolve)).toBe("Bot 2");
+    expect(resolvePluginScreenTitle(bot, null, { botId: "bot-1" }, resolve)).toBe("Bot 1");
   });
 
   it("falls back to the screen id when the function returns empty or throws", () => {
-    expect(resolvePluginScreenTitle(bot, null, { botId: "missing" })).toBe("bot");
+    expect(resolvePluginScreenTitle(bot, null, { botId: "missing" }, resolve)).toBe("bot");
     const throwing = {
       id: "bot",
       title: () => {
@@ -205,13 +211,13 @@ describe("resolvePluginScreenTitle", () => {
       },
       Component,
     };
-    expect(resolvePluginScreenTitle(throwing, null, {})).toBe("bot");
+    expect(resolvePluginScreenTitle(throwing, null, {}, resolve)).toBe("bot");
   });
 
   it("uses the title of a legacy item that points at the screen", () => {
     const legacy = { id: "entry", title: "Legacy entry", icon: "Server", surface: "main" };
-    expect(resolvePluginScreenTitle({ id: "main", title: "main", Component }, legacy, {})).toBe(
-      "Legacy entry",
-    );
+    expect(
+      resolvePluginScreenTitle({ id: "main", title: "main", Component }, legacy, {}, resolve),
+    ).toBe("Legacy entry");
   });
 });

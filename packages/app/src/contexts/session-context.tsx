@@ -56,10 +56,7 @@ export type { DraftInput } from "@/stores/draft-store";
 export type {
   Agent,
   ExplorerEntry,
-  ExplorerFile,
   ExplorerEntryKind,
-  ExplorerFileKind,
-  ExplorerEncoding,
   AgentFileExplorerState,
 } from "@/stores/session-store";
 
@@ -457,10 +454,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         getHostRuntimeStore().fetchAgentTimeline(serverId, agentId, planTimelineTailFetch()),
       reportError: (error) => {
         console.warn("[Session] viewed timeline synchronization failed", { serverId, error });
-      },
-      schedule: (task, delayMs) => {
-        const timeout = setTimeout(task, delayMs);
-        return () => clearTimeout(timeout);
       },
     });
     viewedTimelineSyncRef.current = sync;

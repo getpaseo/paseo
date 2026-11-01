@@ -1,5 +1,10 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "../support/fixtures";
+import {
+  expectTerminalCursor,
+  getTerminalBufferText,
+  waitForTerminalContent,
+} from "../support/helpers/terminal-perf";
 import { TerminalE2EHarness } from "../support/helpers/terminal-dsl";
 
 interface AttachOverlayProbeWindow extends Window {
@@ -59,4 +64,65 @@ test.describe("retained terminal tab streams", () => {
 
     expect(await terminalAttachOverlayWasSeen(page)).toBe(false);
   });
+
+  for (const { count, retainedMarker } of [
+    { count: 3000, retainedMarker: "history-0001界🙂" },
+    { count: 12050, retainedMarker: "history-3000界🙂" },
+  ]) {
+    test(`reattach restores retained styled Unicode history from ${count} lines`, async ({
+      page,
+    }) => {
+      await page.addInitScript(() => {
+        const key = "@paseo:app-settings";
+        const settings = JSON.parse(localStorage.getItem(key) ?? "{}");
+        localStorage.setItem(key, JSON.stringify({ ...settings, terminalScrollbackLines: 10000 }));
+      });
+      const terminal = await harness.createTerminal({
+        name: `history-${count}`,
+        command: "/bin/sh",
+        args: [
+          "-lc",
+          `i=1; while [ $i -le ${count} ]; do printf '\\033[31mhistory-%04d界🙂 payload-abcdefghijklmnopqrstuvwxyz0123456789\\033[0m\\n' $i; i=$((i+1)); done; sleep 120`,
+        ],
+      });
+      const last = `history-${String(count).padStart(4, "0")}界🙂`;
+      await harness.openTerminal(page, { terminalId: terminal.id });
+      await waitForTerminalContent(page, (text) => text.includes(last), 10000);
+      expect(await getTerminalBufferText(page)).toContain(retainedMarker);
+      await page.reload();
+      await waitForTerminalContent(page, (text) => text.includes(last), 10000);
+      const restored = await getTerminalBufferText(page);
+      expect(restored).toContain(retainedMarker);
+      expect(restored.match(/history-\d{4,5}/g)?.length).toBeGreaterThanOrEqual(
+        Math.min(count, 10000),
+      );
+      if (count > 10000) expect(restored).not.toContain("history-0001界🙂");
+    });
+  }
+  for (const input of [
+    { name: "client blinking bar", presentation: "", shape: "bar" as const, blinking: true },
+    {
+      name: "program blinking underline",
+      presentation: "\x1b[3 q",
+      shape: "underline" as const,
+      blinking: true,
+    },
+  ]) {
+    test(`reattach preserves the ${input.name} cursor`, async ({ page }) => {
+      const terminal = await harness.createTerminal({
+        name: "cursor-presentation",
+        command: process.execPath,
+        args: [
+          "-e",
+          `process.stdout.write(${JSON.stringify(input.presentation + "CURSOR-READY\r\n")});setInterval(()=>{},1000)`,
+        ],
+      });
+      await harness.openTerminal(page, { terminalId: terminal.id });
+      await waitForTerminalContent(page, (text) => text.includes("CURSOR-READY"), 10000);
+      await expectTerminalCursor(page, input);
+      await page.reload();
+      await waitForTerminalContent(page, (text) => text.includes("CURSOR-READY"), 10000);
+      await expectTerminalCursor(page, input);
+    });
+  }
 });

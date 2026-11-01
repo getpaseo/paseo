@@ -1,15 +1,19 @@
 import { readFileSync } from "node:fs";
-import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
 import {
   DaemonClient,
+  DaemonConnectionError,
   supportsUsageReports,
   type DaemonClientTrace,
   type CreateAgentRequestOptions,
   type DaemonTransport,
   type Logger,
+  type PluginClientBundle,
+  type PluginClientBundleStore,
 } from "./daemon-client";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import { ChunkedTransport } from "@getpaseo/protocol/chunked-transport";
 import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import {
   decodeFileTransferFrame,
@@ -200,38 +204,75 @@ test("traces WebSocket frames, message types, and JSON parse duration", async ()
   mock.triggerOpen({ preserveSent: true });
   await connectPromise;
 
-  expect(recorder.records).toEqual([
-    {
-      phase: "begin",
-      name: "paseo.ws.message.outbound",
-      args: { envelopeType: "hello", messageType: "hello" },
-    },
-    { phase: "end" },
-    {
-      phase: "begin",
-      name: "paseo.ws.frame.outbound",
-      args: { kind: "text", size: expect.any(String) },
-    },
-    { phase: "end" },
-    {
-      phase: "begin",
-      name: "paseo.ws.frame.inbound",
-      args: { kind: "text", size: expect.any(String) },
-    },
-    {
-      phase: "begin",
-      name: "paseo.ws.json.parse",
-      args: { size: expect.any(String) },
-    },
-    { phase: "end" },
-    {
-      phase: "begin",
-      name: "paseo.ws.message.inbound",
-      args: { envelopeType: "session", messageType: "status" },
-    },
-    { phase: "end" },
-    { phase: "end" },
-  ]);
+  const response = client.fetchAgents({ requestId: "diagnostic-request", scope: "active" });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "fetch_agents_response",
+      payload: {
+        requestId: "diagnostic-request",
+        entries: [],
+        pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
+      },
+    }),
+  );
+  await response;
+  const spans = recorder.records.filter((record) => record.phase === "begin");
+  expect(spans).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        name: "paseo.ws.frame.inbound",
+        args: {
+          kind: "text",
+          size: expect.any(String),
+          sizeUnit: "utf16-code-units",
+          connectionAttempt: "1",
+        },
+      }),
+      expect.objectContaining({ name: "paseo.ws.json.parse" }),
+      expect.objectContaining({ name: "paseo.ws.validate" }),
+      expect.objectContaining({
+        name: "paseo.ws.message.outbound",
+        args: {
+          envelopeType: "session",
+          messageType: "fetch_agents_request",
+          requestId: "diagnostic-request",
+          connectionAttempt: "1",
+        },
+      }),
+      expect.objectContaining({
+        name: "paseo.ws.message.inbound",
+        args: {
+          envelopeType: "session",
+          messageType: "fetch_agents_response",
+          requestId: "diagnostic-request",
+          connectionAttempt: "1",
+        },
+      }),
+      expect.objectContaining({
+        name: "paseo.ws.dispatch",
+        args: {
+          messageType: "fetch_agents_response",
+          requestId: "diagnostic-request",
+          connectionAttempt: "1",
+        },
+      }),
+    ]),
+  );
+  const stack: string[] = [];
+  const parentage: [string, string | undefined][] = [];
+  for (const record of recorder.records) {
+    if (record.phase === "begin") {
+      parentage.push([record.name, stack.at(-1)]);
+      stack.push(record.name);
+    } else {
+      expect(stack.length).toBeGreaterThan(0);
+      stack.pop();
+    }
+  }
+  expect(stack).toEqual([]);
+  expect(parentage).toContainEqual(["paseo.ws.frame.outbound", "paseo.ws.message.outbound"]);
+  expect(parentage).toContainEqual(["paseo.ws.dispatch", "paseo.ws.frame.inbound"]);
+  expect(JSON.stringify(recorder.records)).not.toContain("trace_unit_test");
 });
 
 test("does not infer browser automation capabilities from Electron runtime", async () => {
@@ -873,9 +914,35 @@ test("keeps relay upgrade credentials out of the socket request", async () => {
     },
   });
   clients.push(client);
-  void client.connect();
+  const connecting = client.connect();
+  void connecting.catch(() => {});
   await vi.waitFor(() => expect(requests).toHaveLength(1));
   expect(requests[0]).toEqual({ url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2" });
+  await client.close();
+  await expect(connecting).rejects.toThrow("Daemon client closed");
+});
+
+test("keeps relay upgrade credentials out of the socket request without E2EE", async () => {
+  const mock = createMockTransport();
+  const requests: Array<{ url: string; headers?: Record<string, string>; protocols?: string[] }> =
+    [];
+  const client = new DaemonClient({
+    url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2",
+    clientId: "clsk_relay_header_test",
+    authHeader: "Bearer synthetic-review-token",
+    reconnect: { enabled: false },
+    transportFactory: (request) => {
+      requests.push(request);
+      return mock.transport;
+    },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  void connecting.catch(() => {});
+  await vi.waitFor(() => expect(requests).toHaveLength(1));
+  expect(requests[0]).toEqual({ url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2" });
+  await client.close();
+  await expect(connecting).rejects.toThrow("Daemon client closed");
 });
 
 test("refuses relay password auth without an encrypted hello", async () => {
@@ -1028,6 +1095,7 @@ test("advertises client capabilities in hello", async () => {
       provider_snapshot_references: true,
       explicit_event_subscriptions: true,
       owned_subscriptions: true,
+      binary_chunking_v1: true,
       compact_provider_snapshots: true,
       custom_mode_icons: true,
       project_updates: true,
@@ -1035,6 +1103,7 @@ test("advertises client capabilities in hello", async () => {
       projected_subagent_timeline: true,
       reasoning_merge_enum: true,
       terminal_reflowable_snapshot: true,
+      terminal_chunked_replay: true,
       timeline_notifications: true,
       plugin_timeline_items: true,
       workspace_setup_blocked: true,
@@ -1576,6 +1645,77 @@ test("preserves legacy fetchAgent id overload", async () => {
   await expect(responsePromise).rejects.toThrow("legacy fetch sentinel");
 });
 
+test.each([undefined, false, true])(
+  "loads history with whole-turn support advertised as %s",
+  async (wholeTurnTimeline) => {
+    const transport = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "history-compatibility",
+      reconnect: { enabled: false },
+      transportFactory: () => transport.transport,
+    });
+    clients.push(client);
+    const connected = client.connect();
+    transport.triggerOpen({
+      features: wholeTurnTimeline === undefined ? {} : { wholeTurnTimeline },
+    });
+    await connected;
+
+    const requests = [
+      { direction: "tail" as const },
+      { direction: "before" as const, cursor: { epoch: "epoch-1", seq: 50 } },
+      { direction: "after" as const, cursor: { epoch: "epoch-1", seq: 50 } },
+      { direction: "before" as const, cursor: { epoch: "epoch-1", seq: 80 }, mergeWindow: true },
+    ];
+    for (const [index, request] of requests.entries()) {
+      const requestId = `history-${index}`;
+      const result = client.fetchAgentTimeline("agent-1", {
+        ...request,
+        requestId,
+        wholeTurns: true,
+        limit: 40,
+        projection: "projected",
+      });
+      // Attach immediately so the old rejection is captured by the regression.
+      const completed = expect(result).resolves.toMatchObject({ requestId, entries: [] });
+      expect(parseSentFrame(transport.sent.at(-1))).toEqual({
+        type: "fetch_agent_timeline_request",
+        agentId: "agent-1",
+        requestId,
+        ...request,
+        limit: 40,
+        projection: "projected",
+        ...(wholeTurnTimeline === true ? { wholeTurns: true } : {}),
+      });
+      transport.triggerMessage(
+        wrapSessionMessage({
+          type: "fetch_agent_timeline_response",
+          payload: {
+            requestId,
+            agentId: "agent-1",
+            agent: null,
+            direction: request.direction,
+            projection: "projected",
+            epoch: "epoch-1",
+            reset: false,
+            staleCursor: false,
+            gap: false,
+            window: { minSeq: 0, maxSeq: 0, nextSeq: 1 },
+            startCursor: null,
+            endCursor: null,
+            hasOlder: false,
+            hasNewer: false,
+            entries: [],
+            error: null,
+          },
+        }),
+      );
+      await completed;
+    }
+  },
+);
+
 test("honors explicit fetchAgentTimeline timeout below the session RPC default", async () => {
   useHeartbeatClock();
   const logger = createMockLogger();
@@ -1962,6 +2102,188 @@ test("gets a structured plugin log snapshot", async () => {
       message: "ready",
     },
   ]);
+});
+
+describe("plugin catalog", () => {
+  async function connectedClient(createStore?: (serverId: string) => PluginClientBundleStore) {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger: createMockLogger(),
+      createPluginClientBundleStore: createStore,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+    const connectPromise = client.connect();
+    mock.triggerOpen({ features: { plugins: true } });
+    await connectPromise;
+    return { client, mock };
+  }
+
+  async function fetchCatalog(
+    harness: Awaited<ReturnType<typeof connectedClient>>,
+    respond: (request: Record<string, unknown>) => Array<Record<string, unknown>>,
+  ) {
+    const before = harness.mock.sent.length;
+    const response = harness.client.getPluginCatalog();
+    await vi.waitFor(() => expect(harness.mock.sent.length).toBeGreaterThan(before));
+    const request = parseSentFrame(harness.mock.sent.at(-1));
+    harness.mock.triggerMessage(
+      wrapSessionMessage({
+        type: "plugin.catalog.get.response",
+        payload: { requestId: request.requestId, plugins: respond(request) },
+      }),
+    );
+    return { request, plugins: await response };
+  }
+
+  test("reuses retained client bundles the daemon leaves out", async () => {
+    const harness = await connectedClient();
+    const first = await fetchCatalog(harness, () => [
+      { id: "kept", clientBundle: "kept bundle", clientBundleHash: "hash-kept" },
+      { id: "changed", clientBundle: "old bundle", clientBundleHash: "hash-old" },
+    ]);
+    expect(first.request).not.toHaveProperty("cachedClientBundles");
+
+    const second = await fetchCatalog(harness, () => [
+      { id: "kept", clientBundleHash: "hash-kept" },
+      { id: "changed", clientBundle: "new bundle", clientBundleHash: "hash-new" },
+    ]);
+
+    expect(second.request.cachedClientBundles).toEqual([
+      { id: "kept", clientBundleHash: "hash-kept" },
+      { id: "changed", clientBundleHash: "hash-old" },
+    ]);
+    expect(second.plugins).toEqual([
+      { id: "kept", clientBundle: "kept bundle", clientBundleHash: "hash-kept" },
+      { id: "changed", clientBundle: "new bundle", clientBundleHash: "hash-new" },
+    ]);
+    const third = await fetchCatalog(harness, () => []);
+    expect(third.request.cachedClientBundles).toEqual([
+      { id: "kept", clientBundleHash: "hash-kept" },
+      { id: "changed", clientBundleHash: "hash-new" },
+    ]);
+    const fourth = await fetchCatalog(harness, () => []);
+    expect(fourth.request).not.toHaveProperty("cachedClientBundles");
+  });
+
+  test("keeps fetching every bundle from a daemon that sends no bundle hashes", async () => {
+    const harness = await connectedClient();
+    const legacyCatalog = () => [{ id: "legacy", clientBundle: "legacy bundle" }];
+    await fetchCatalog(harness, legacyCatalog);
+
+    const second = await fetchCatalog(harness, legacyCatalog);
+
+    expect(second.request).not.toHaveProperty("cachedClientBundles");
+    expect(second.plugins).toEqual([{ id: "legacy", clientBundle: "legacy bundle" }]);
+  });
+
+  test("a fresh client advertises persisted bundles on its first fetch and expands omitted code", async () => {
+    let persisted: PluginClientBundle[] = [];
+    let loads = 0;
+    const store: PluginClientBundleStore = {
+      async load() {
+        loads++;
+        return persisted;
+      },
+      async replace(bundles) {
+        persisted = bundles;
+      },
+    };
+    const createdFor: string[] = [];
+    const createStore = (serverId: string) => {
+      createdFor.push(serverId);
+      return store;
+    };
+    const bundle = { id: "kept", clientBundleHash: "hash-kept", clientBundle: "stored code" };
+    const warm = await connectedClient(createStore);
+    await fetchCatalog(warm, () => [bundle]);
+    const cold = await connectedClient(createStore);
+    const first = await fetchCatalog(cold, () => [{ id: "kept", clientBundleHash: "hash-kept" }]);
+    expect(first.request.cachedClientBundles).toEqual([
+      { id: "kept", clientBundleHash: "hash-kept" },
+    ]);
+    expect(first.plugins).toEqual([bundle]);
+    expect(loads).toBe(2);
+    await fetchCatalog(cold, () => []);
+    expect(loads).toBe(2);
+    expect(createdFor).toEqual([
+      warm.client.getLastServerInfoMessage()!.serverId,
+      cold.client.getLastServerInfoMessage()!.serverId,
+    ]);
+    expect(persisted).toEqual([]);
+  });
+
+  test.each(["missing", "unreadable"])(
+    "a %s persistent cache requests full bundles",
+    async (state) => {
+      const store: PluginClientBundleStore = {
+        async load() {
+          if (state === "unreadable") throw new Error("Storage unavailable");
+          return [];
+        },
+        async replace() {},
+      };
+      const bundle = { id: "full", clientBundleHash: "hash-full", clientBundle: "full code" };
+      const result = await fetchCatalog(await connectedClient(() => store), () => [bundle]);
+      expect(result.request).not.toHaveProperty("cachedClientBundles");
+      expect(result.plugins).toEqual([bundle]);
+    },
+  );
+
+  test("failed cache writes never fail plugin loading", async () => {
+    const store: PluginClientBundleStore = {
+      async load() {
+        return [];
+      },
+      async replace() {
+        throw new Error("Disk full");
+      },
+    };
+    const bundle = { id: "full", clientBundleHash: "hash-full", clientBundle: "full code" };
+    expect(
+      (await fetchCatalog(await connectedClient(() => store), () => [bundle])).plugins,
+    ).toEqual([bundle]);
+  });
+
+  test.each([false, true])(
+    "usable catalogs do not wait for storage; latest write survives a failed first write: %s",
+    async (failFirstWrite) => {
+      const writes: PluginClientBundle[][] = [];
+      let finishWrite = () => {};
+      const blockedWrite = new Promise<void>((resolve) => {
+        finishWrite = resolve;
+      });
+      const store: PluginClientBundleStore = {
+        async load() {
+          return [];
+        },
+        async replace(bundles) {
+          writes.push(bundles);
+          if (writes.length === 1) {
+            await blockedWrite;
+            if (failFirstWrite) throw new Error("Disk full");
+          }
+        },
+      };
+      const harness = await connectedClient(() => store);
+      const first = { id: "plugin", clientBundle: "old", clientBundleHash: "hash-old" };
+      const changed = { id: "plugin", clientBundle: "new", clientBundleHash: "hash-new" };
+      try {
+        expect((await fetchCatalog(harness, () => [first])).plugins).toEqual([first]);
+        await vi.waitFor(() => expect(writes).toEqual([[first]]));
+        expect((await fetchCatalog(harness, () => [changed])).plugins).toEqual([changed]);
+        expect((await fetchCatalog(harness, () => [])).plugins).toEqual([]);
+        expect(writes).toEqual([[first]]);
+        finishWrite();
+        await vi.waitFor(() => expect(writes).toEqual([[first], []]));
+      } finally {
+        finishWrite();
+      }
+    },
+  );
 });
 
 test("keeps a plugin reload pending past the session RPC deadline", async () => {
@@ -3335,62 +3657,6 @@ test("sends create_agent_request with workspace and caller identity", async () =
   await expect(createPromise).rejects.toThrow("compat test sentinel");
 });
 
-test("sends worktree target and autoArchive in create_agent_request", async () => {
-  const logger = createMockLogger();
-  const mock = createMockTransport();
-
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger,
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
-
-  const connectPromise = client.connect();
-  mock.triggerOpen();
-  await connectPromise;
-
-  const createPromise = client.createAgent({
-    provider: "codex",
-    cwd: "/tmp/project",
-    worktree: {
-      mode: "branch-off",
-      newBranch: "agent-lifecycle-dispatch",
-      base: "main",
-    },
-    autoArchive: true,
-  });
-
-  expect(mock.sent).toHaveLength(1);
-  const request = parseSentFrame(mock.sent[0]);
-  expect(request).toEqual(
-    expect.objectContaining({
-      type: "create_agent_request",
-      worktree: {
-        mode: "branch-off",
-        newBranch: "agent-lifecycle-dispatch",
-        base: "main",
-      },
-      autoArchive: true,
-    }),
-  );
-
-  mock.triggerMessage(
-    wrapSessionMessage({
-      type: "status",
-      payload: {
-        status: "agent_create_failed",
-        requestId: request.requestId,
-        error: "worktree auto archive sentinel",
-      },
-    }),
-  );
-
-  await expect(createPromise).rejects.toThrow("worktree auto archive sentinel");
-});
-
 test("sends internal in create_agent_request when the host advertises internal agents", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -3607,120 +3873,6 @@ test("sends structured attachments with create_agent_request", async () => {
   );
 
   await expect(createPromise).rejects.toThrow("attachment test sentinel");
-});
-
-test("sends worktree base-ref fields in create_agent_request git options", async () => {
-  const logger = createMockLogger();
-  const mock = createMockTransport();
-
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger,
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
-
-  const connectPromise = client.connect();
-  mock.triggerOpen();
-  await connectPromise;
-
-  const createPromise = client.createAgent({
-    provider: "codex",
-    cwd: "/tmp/project",
-    requestId: "req-agent-ref",
-    git: {
-      createWorktree: true,
-      worktreeSlug: "review-pr-123",
-      refName: "feature/worktree-base-ref",
-      action: "checkout",
-      githubPrNumber: 123,
-    },
-  });
-
-  expect(mock.sent).toHaveLength(1);
-  const request = parseSentFrame(mock.sent[0]);
-  expect(request.git).toEqual({
-    createWorktree: true,
-    worktreeSlug: "review-pr-123",
-    refName: "feature/worktree-base-ref",
-    action: "checkout",
-    githubPrNumber: 123,
-  });
-
-  mock.triggerMessage(
-    wrapSessionMessage({
-      type: "status",
-      payload: {
-        status: "agent_create_failed",
-        requestId: request.requestId,
-        error: "git ref fields sentinel",
-      },
-    }),
-  );
-
-  await expect(createPromise).rejects.toThrow("git ref fields sentinel");
-});
-
-test("omitting create_agent_request worktree base-ref fields preserves legacy wire shape", async () => {
-  const logger = createMockLogger();
-  const mock = createMockTransport();
-
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger,
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
-
-  const connectPromise = client.connect();
-  mock.triggerOpen();
-  await connectPromise;
-
-  const createPromise = client.createAgent({
-    provider: "codex",
-    cwd: "/tmp/project",
-    requestId: "req-agent-legacy",
-    git: {
-      createWorktree: true,
-      worktreeSlug: "feature-a",
-    },
-  });
-
-  expect(assertStr(mock.sent[0])).toBe(
-    JSON.stringify({
-      type: "session",
-      message: {
-        type: "create_agent_request",
-        config: {
-          provider: "codex",
-          cwd: "/tmp/project",
-        },
-        git: {
-          createWorktree: true,
-          worktreeSlug: "feature-a",
-        },
-        labels: {},
-        requestId: "req-agent-legacy",
-      },
-    }),
-  );
-
-  mock.triggerMessage(
-    wrapSessionMessage({
-      type: "status",
-      payload: {
-        status: "agent_create_failed",
-        requestId: "req-agent-legacy",
-        error: "legacy git shape sentinel",
-      },
-    }),
-  );
-
-  await expect(createPromise).rejects.toThrow("legacy git shape sentinel");
 });
 
 test("sends structured first-agent context attachments with create_paseo_worktree_request", async () => {
@@ -4411,6 +4563,40 @@ test("reconnects after relay close with replaced-by-new-connection reason", asyn
 
     second.triggerOpen();
     expect(client.getConnectionState().status).toBe("connected");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("stops reconnecting after the transport closes for an endpoint security failure", async () => {
+  const close = { code: 4002, reason: "legacy security below required minimum" };
+  const error = "Endpoint security handshake failed: legacy security below required minimum";
+  useHeartbeatClock();
+  try {
+    let attempts = 0;
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2",
+      clientId: "clsk_security_close_test",
+      e2ee: { enabled: true, daemonPublicKeyB64: "daemon-public-key" },
+      reconnect: { enabled: true, baseDelayMs: 1, maxDelayMs: 1 },
+      transportFactory: () => {
+        attempts += 1;
+        return mock.transport;
+      },
+    });
+    clients.push(client);
+
+    const connecting = client.connect();
+    void connecting.catch(() => {});
+    await vi.waitFor(() => expect(attempts).toBe(1));
+    mock.triggerClose(close);
+
+    await expect(connecting).rejects.toThrow(error);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(attempts).toBe(1);
+    expect(client.getConnectionState().status).toBe("disconnected");
+    expect(client.lastError).toContain(error);
   } finally {
     vi.useRealTimers();
   }
@@ -6204,66 +6390,80 @@ test("emits output events for the active terminal stream", async () => {
   unsubscribe();
 });
 
-test("emits snapshot events for the subscribed terminal stream", async () => {
-  const logger = createMockLogger();
-  const mock = createMockTransport();
+test.each([5, 500, 10000])(
+  "preserves explicit %s history demand on an old ANSI host and normalizes restore",
+  async (history) => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
 
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger,
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
 
-  const connectPromise = client.connect();
-  mock.triggerOpen();
-  await connectPromise;
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
 
-  const snapshots: unknown[] = [];
-  client.onTerminalStreamEvent((event) => {
-    if (event.type !== "snapshot") {
-      return;
-    }
-    snapshots.push(event.state);
-  });
+    const events: unknown[] = [];
+    const replayEvents: unknown[] = [];
+    client.onTerminalStreamEvent((event) => {
+      if (event.type === "replay") replayEvents.push(event.replay);
+      events.push(event);
+    });
 
-  const subscribePromise = client.subscribeTerminal("term-1", { requestId: "sub-2" });
-  await vi.waitFor(() =>
-    expect(parseSentFrame(mock.sent.at(-1)).type).toBe("subscribe_terminal_request"),
-  );
-  mock.triggerMessage(
-    wrapSessionMessage({
-      type: "subscribe_terminal_response",
-      payload: {
-        subscriptionId: "server-" + String(parseSentFrame(mock.sent.at(-1)).requestId),
-        terminalId: "term-1",
+    const subscribePromise = client.subscribeTerminal("term-1", {
+      requestId: "sub-2",
+      restore: { mode: "visible-snapshot", scrollbackLines: history },
+    });
+    await vi.waitFor(() =>
+      expect(parseSentFrame(mock.sent.at(-1)).type).toBe("subscribe_terminal_request"),
+    );
+    expect(parseSentFrame(mock.sent.at(-1)).restore).toEqual({
+      mode: "visible-snapshot",
+      scrollbackLines: history,
+    });
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "subscribe_terminal_response",
+        payload: {
+          subscriptionId: "server-" + String(parseSentFrame(mock.sent.at(-1)).requestId),
+          terminalId: "term-1",
+          slot: 12,
+          error: null,
+          requestId: "sub-2",
+        },
+      }),
+    );
+    await subscribePromise;
+
+    const state = {
+      rows: 1,
+      cols: 5,
+      grid: [[{ char: "h" }, { char: "e" }, { char: "l" }, { char: "l" }, { char: "o" }]],
+      scrollback: [],
+      cursor: { row: 0, col: 5 },
+    };
+    mock.triggerMessage(
+      encodeTerminalStreamFrame({
+        opcode: TerminalStreamOpcode.Snapshot,
         slot: 12,
-        error: null,
-        requestId: "sub-2",
-      },
-    }),
-  );
-  await subscribePromise;
+        payload: encodeTerminalSnapshotPayload(state),
+      }),
+    );
 
-  const state = {
-    rows: 1,
-    cols: 5,
-    grid: [[{ char: "h" }, { char: "e" }, { char: "l" }, { char: "l" }, { char: "o" }]],
-    scrollback: [],
-    cursor: { row: 0, col: 5 },
-  };
-  mock.triggerMessage(
-    encodeTerminalStreamFrame({
-      opcode: TerminalStreamOpcode.Snapshot,
-      slot: 12,
-      payload: encodeTerminalSnapshotPayload(state),
-    }),
-  );
-
-  expect(snapshots).toEqual([state]);
-});
+    expect(events).toEqual([]);
+    const data = new TextEncoder().encode("\x1b[31mold ANSI host界🙂");
+    mock.triggerMessage(
+      encodeTerminalStreamFrame({ opcode: TerminalStreamOpcode.Restore, slot: 12, payload: data }),
+    );
+    expect(replayEvents).toEqual([{ type: "begin" }, { type: "data", data }, { type: "end" }]);
+  },
+);
 
 test("sends explicit terminal input and resize commands", async () => {
   const logger = createMockLogger();
@@ -6634,91 +6834,101 @@ test("drops legacy agent_stream tool_call payloads and logs validation warning",
   expect(logger.warn).toHaveBeenCalled();
 });
 
-test("parses canonical fetch_agent_timeline_response payloads without crashing", async () => {
-  const logger = createMockLogger();
-  const mock = createMockTransport();
+test.each([false, true])(
+  "parses canonical timeline responses with chunking=%s",
+  async (chunked) => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
 
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger,
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
 
-  const connectPromise = client.connect();
-  mock.triggerOpen();
-  await connectPromise;
+    const connectPromise = client.connect();
+    mock.triggerOpen({ features: { ownedSubscriptions: true, binaryChunkingV1: chunked } });
+    await connectPromise;
 
-  const received: unknown[] = [];
-  const unsubscribe = client.on("fetch_agent_timeline_response", (msg) => {
-    received.push(msg);
-  });
+    const received: unknown[] = [];
+    const unsubscribe = client.on("fetch_agent_timeline_response", (msg) => {
+      received.push(msg);
+    });
 
-  mock.triggerMessage(
-    wrapSessionMessage({
-      type: "fetch_agent_timeline_response",
+    const command = chunked ? "x".repeat(50 * 1024 * 1024) : "pwd";
+    const sender = new ChunkedTransport({
+      frameBytes: 24 * 1024 * 1024,
+      send: (frame) => mock.triggerMessage(frame),
+      deliver: () => {},
+    });
+    sender.enabled = chunked;
+    await sender.send(
+      wrapSessionMessage({
+        type: "fetch_agent_timeline_response",
+        payload: {
+          requestId: "req-1",
+          agentId: "agent_cli",
+          agent: null,
+          direction: "tail",
+          projection: "projected",
+          epoch: "epoch-1",
+          reset: false,
+          staleCursor: false,
+          gap: false,
+          window: { minSeq: 1, maxSeq: 1, nextSeq: 2 },
+          startCursor: { epoch: "epoch-1", seq: 1 },
+          endCursor: { epoch: "epoch-1", seq: 1 },
+          hasOlder: false,
+          hasNewer: false,
+          entries: [
+            {
+              timestamp: "2026-02-08T20:20:00.000Z",
+              provider: "codex",
+              seqStart: 1,
+              seqEnd: 1,
+              sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }],
+              collapsed: [],
+              item: {
+                type: "tool_call",
+                callId: "call_cli_snapshot",
+                name: "shell",
+                status: "running",
+                detail: {
+                  type: "shell",
+                  command,
+                },
+                error: null,
+              },
+            },
+          ],
+          error: null,
+        },
+      }),
+    );
+
+    unsubscribe();
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({
       payload: {
-        requestId: "req-1",
-        agentId: "agent_cli",
-        agent: null,
-        direction: "tail",
-        projection: "projected",
-        epoch: "epoch-1",
-        reset: false,
-        staleCursor: false,
-        gap: false,
-        window: { minSeq: 1, maxSeq: 1, nextSeq: 2 },
-        startCursor: { epoch: "epoch-1", seq: 1 },
-        endCursor: { epoch: "epoch-1", seq: 1 },
-        hasOlder: false,
-        hasNewer: false,
         entries: [
           {
-            timestamp: "2026-02-08T20:20:00.000Z",
-            provider: "codex",
-            seqStart: 1,
-            seqEnd: 1,
-            sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }],
-            collapsed: [],
             item: {
               type: "tool_call",
-              callId: "call_cli_snapshot",
-              name: "shell",
               status: "running",
-              detail: {
-                type: "shell",
-                command: "pwd",
-              },
               error: null,
+              detail: { type: "shell", command },
             },
           },
         ],
-        error: null,
       },
-    }),
-  );
-
-  unsubscribe();
-
-  expect(received).toHaveLength(1);
-  expect(received[0]).toMatchObject({
-    payload: {
-      entries: [
-        {
-          item: {
-            type: "tool_call",
-            status: "running",
-            error: null,
-            detail: { type: "shell" },
-          },
-        },
-      ],
-    },
-  });
-  expect(logger.warn).not.toHaveBeenCalled();
-});
+    });
+    expect(logger.warn).not.toHaveBeenCalled();
+  },
+);
 
 test("rejects and logs a correlated response that violates the protocol schema", async () => {
   const mock = createMockTransport();
@@ -7843,4 +8053,874 @@ test("measures an outbound message in UTF-8 bytes against the daemon's message l
   );
   expect(mock.sent).toHaveLength(1);
   expect(client.getConnectionState().status).toBe("connected");
+});
+
+test("sends worktree target and autoArchive in create_agent_request", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const createPromise = client.createAgent({
+    provider: "codex",
+    cwd: "/tmp/project",
+    worktree: {
+      mode: "branch-off",
+      newBranch: "agent-lifecycle-dispatch",
+      base: "main",
+    },
+    autoArchive: true,
+  });
+
+  expect(mock.sent).toHaveLength(1);
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toEqual(
+    expect.objectContaining({
+      type: "create_agent_request",
+      worktree: {
+        mode: "branch-off",
+        newBranch: "agent-lifecycle-dispatch",
+        base: "main",
+      },
+      autoArchive: true,
+    }),
+  );
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_create_failed",
+        requestId: request.requestId,
+        error: "worktree auto archive sentinel",
+      },
+    }),
+  );
+
+  await expect(createPromise).rejects.toThrow("worktree auto archive sentinel");
+});
+
+test("ordinary lifecycle queues new calls, distinguishes submitted outcomes, and never resends lost requests", async () => {
+  const transports = [createMockTransport(), createMockTransport(), createMockTransport()];
+  let attempt = 0;
+  const client = new DaemonClient({
+    url: "ws://transport",
+    clientId: "ordinary-lifecycle",
+    reconnect: { enabled: false },
+    transportFactory: () => transports[attempt++]!.transport,
+  });
+  clients.push(client);
+  const first = transports[0]!;
+  const connecting = client.connect();
+  const initial = client.getDaemonConfig("initial").catch((error: unknown) => error);
+  expect(first.sent).toEqual([]);
+  first.triggerOpen();
+  await connecting;
+  expect(parseSentFrame(first.sent[0]).requestId).toBe("initial");
+  first.triggerMessage(
+    wrapSessionMessage({
+      type: "rpc_error",
+      payload: { requestId: "initial", error: "Denied", code: "access_denied" },
+    }),
+  );
+  expect(await initial).toMatchObject({ code: "access_denied", serverId: "srv_test_1" });
+  const submitted = client
+    .patchDaemonConfig({ pluginsEnabled: false }, "submitted")
+    .catch((error: unknown) => error);
+  first.triggerClose({ code: 1001, reason: "physical loss" });
+  const unknown = await submitted;
+  expect(unknown).toBeInstanceOf(DaemonConnectionError);
+  expect(unknown).toMatchObject({
+    code: "DAEMON_CONNECTION_LOST",
+    outcome: "unknown",
+    serverId: "srv_test_1",
+  });
+
+  expect(() => client.ensureConnected()).not.toThrow();
+  const second = transports[1]!;
+  const neverSent = client
+    .patchDaemonConfig({ pluginsEnabled: true }, "never-sent")
+    .catch((error: unknown) => error);
+  expect(second.sent).toEqual([]);
+  second.triggerClose({ code: 1001, reason: "handshake lost" });
+  const unavailable = await neverSent;
+  expect(unavailable).toBeInstanceOf(DaemonConnectionError);
+  expect(unavailable).toMatchObject({ code: "DAEMON_CONNECTION_LOST", serverId: "srv_test_1" });
+  expect((unavailable as DaemonConnectionError).outcome).toBeUndefined();
+
+  client.ensureConnected();
+  const third = transports[2]!;
+  const recovery = client.getDaemonConfig("recovery").catch((error: unknown) => error);
+  expect(third.sent).toEqual([]);
+  third.triggerOpen();
+  expect(third.sent.map(parseSentFrame).map((frame) => frame.requestId)).toEqual(["recovery"]);
+  third.triggerMessage(
+    wrapSessionMessage({
+      type: "rpc_error",
+      payload: { requestId: "recovery", error: "Denied", code: "access_denied" },
+    }),
+  );
+  expect(await recovery).toMatchObject({ code: "access_denied" });
+});
+
+test.each([false, true])(
+  "synchronous send rejection leaves no unknown outcome after close (close during handoff: %s)",
+  async (closeDuringSend) => {
+    const first = createMockTransport();
+    const second = createMockTransport();
+    const rejected = Object.assign(new Error("Transport rejected this send"), {
+      code: "resource_limit",
+    });
+    const originalSend = first.transport.send;
+    first.transport.send = (data) => {
+      if (typeof data === "string" && data.includes("set_daemon_config_request")) {
+        if (closeDuringSend) first.triggerClose({ code: 1001, reason: "closed during send" });
+        throw rejected;
+      }
+      originalSend(data);
+    };
+    let attempt = 0;
+    const client = new DaemonClient({
+      url: "ws://transport",
+      clientId: "rejected-send",
+      reconnect: { enabled: false },
+      transportFactory: () => [first, second][attempt++]!.transport,
+    });
+    clients.push(client);
+    const connected = client.connect();
+    first.triggerOpen();
+    await connected;
+    await expect(client.patchDaemonConfig({ pluginsEnabled: false }, "rejected")).rejects.toBe(
+      rejected,
+    );
+    first.triggerClose({ code: 1001, reason: "lost connection" });
+    client.ensureConnected();
+    const queued = client.getDaemonConfig("not-submitted").catch((error: unknown) => error);
+    second.triggerClose({ code: 1001, reason: "lost handshake" });
+    const failure = (await queued) as DaemonConnectionError;
+    expect(failure).toBeInstanceOf(DaemonConnectionError);
+    expect(failure.outcome).toBeUndefined();
+    expect((rejected as Error & { outcome?: string }).outcome).toBeUndefined();
+  },
+);
+
+test("initial acquisition preserves structured transport failures and ordinary offline errors retain their cause", async () => {
+  const transport = createMockTransport();
+  const failure = Object.assign(new Error("Destination identity changed"), {
+    code: "server_id_mismatch",
+    serverId: "srv_expected",
+  });
+  const client = new DaemonClient({
+    url: "ws://transport",
+    clientId: "structured-acquisition",
+    reconnect: { enabled: false },
+    transportFactory: () => transport.transport,
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  const rejected = expect(connecting).rejects.toBe(failure);
+  transport.triggerError(failure);
+  await rejected;
+  await expect(client.getDaemonConfig()).rejects.toMatchObject({
+    code: "DAEMON_CONNECTION_LOST",
+    cause: failure,
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Relay endpoint security through the real secure channel
+// ---------------------------------------------------------------------------
+
+import {
+  createDaemonChannel,
+  exportPublicKey,
+  generateKeyPair,
+  openDaemonSecureChannel,
+  type SecureChannel,
+  type Transport as RelayWire,
+} from "@getpaseo/relay/e2ee";
+
+/**
+ * An in-memory socket pair: the client side is a DaemonTransport, the daemon
+ * side is the relay Transport the daemon's secure channel runs over. Frames
+ * are delivered asynchronously like a real socket, and a close from either
+ * side reaches the other with its code, as the browser WebSocket does.
+ */
+function createRelayLink(options?: { toDaemon?: (text: string) => string }) {
+  const clientOpen = new Set<() => void>();
+  const clientClose = new Set<(event?: unknown) => void>();
+  const clientError = new Set<(event?: unknown) => void>();
+  const clientMessage = new Set<(data: unknown, isBinary: boolean) => void>();
+  let closed = false;
+  const wire: RelayWire = {
+    send: (data) => {
+      if (closed) throw new Error("socket closed");
+      const isBinary = typeof data !== "string";
+      setTimeout(() => {
+        for (const handler of clientMessage) handler(data, isBinary);
+      }, 0);
+    },
+    close: (code = 1005, reason = "") => shutdown(code, reason),
+    onmessage: null,
+    onclose: null,
+    onerror: null,
+  };
+  const shutdown = (code: number, reason: string) => {
+    if (closed) return;
+    closed = true;
+    setTimeout(() => {
+      wire.onclose?.(code, reason);
+      for (const handler of clientClose) handler({ code, reason });
+    }, 0);
+  };
+  const transport: DaemonTransport = {
+    send: (data) => {
+      if (closed) throw new Error("socket closed");
+      if (typeof data === "string") {
+        const text = options?.toDaemon ? options.toDaemon(data) : data;
+        setTimeout(() => wire.onmessage?.({ data: text, isBinary: false }), 0);
+        return;
+      }
+      const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
+      const copy = bytes.slice().buffer as ArrayBuffer;
+      setTimeout(() => wire.onmessage?.({ data: copy, isBinary: true }), 0);
+    },
+    close: (code = 1005, reason = "") => shutdown(code, reason),
+    onOpen: (handler) => {
+      clientOpen.add(handler);
+      return () => clientOpen.delete(handler);
+    },
+    onClose: (handler) => {
+      clientClose.add(handler);
+      return () => clientClose.delete(handler);
+    },
+    onError: (handler) => {
+      clientError.add(handler);
+      return () => clientError.delete(handler);
+    },
+    onMessage: (handler) => {
+      clientMessage.add(handler);
+      return () => clientMessage.delete(handler);
+    },
+  };
+  return {
+    transport,
+    wire,
+    open: () => {
+      for (const handler of clientOpen) handler();
+    },
+    isClosed: () => closed,
+  };
+}
+
+function serverInfoFrame(features: Record<string, boolean>): string {
+  return wrapSessionMessage({
+    type: "status",
+    payload: {
+      status: "server_info",
+      serverId: "srv_test",
+      hostname: null,
+      version: null,
+      features,
+    },
+  });
+}
+
+/** Opens the daemon side of a link and answers the application hello with the daemon's feature flags. */
+function serveProtectedDaemon(
+  link: ReturnType<typeof createRelayLink>,
+  keys: ReturnType<typeof generateKeyPair>,
+  features: Record<string, boolean>,
+  received: unknown[] = [],
+): void {
+  let channel: SecureChannel | null = null;
+  const pendingAnswers: string[] = [];
+  const opened = openDaemonSecureChannel(link.wire, {
+    daemonKeyPair: keys,
+    events: {
+      onmessage: (data) => {
+        received.push(data);
+        if (typeof data !== "string") return;
+        const frame = JSON.parse(data) as { type?: string };
+        if (frame.type !== "hello") return;
+        const answer = serverInfoFrame(features);
+        if (channel) void channel.send(answer);
+        else pendingAnswers.push(answer);
+      },
+    },
+  });
+  void (async () => {
+    try {
+      channel = await opened;
+      for (const answer of pendingAnswers.splice(0)) void channel.send(answer);
+    } catch {
+      // the test asserts on the client side
+    }
+  })();
+}
+
+test("connects in legacy mode to a daemon that only speaks the legacy construction", async () => {
+  const keys = generateKeyPair();
+  const modes: string[] = [];
+  const client = new DaemonClient({
+    url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2",
+    clientId: "clsk_security_legacy_daemon",
+    e2ee: {
+      enabled: true,
+      daemonPublicKeyB64: exportPublicKey(keys.publicKey),
+      onSecurityMode: (mode) => modes.push(mode),
+    },
+    reconnect: { enabled: false },
+    transportFactory: () => {
+      const link = createRelayLink();
+      const opened = createDaemonChannel(link.wire, keys, {
+        onmessage: (data) => {
+          if (typeof data !== "string") return;
+          if ((JSON.parse(data) as { type?: string }).type !== "hello") return;
+          void opened.then((ch) => ch.send(serverInfoFrame({ ownedSubscriptions: true })));
+        },
+      });
+      void opened.catch(() => {});
+      setTimeout(() => link.open(), 0);
+      return link.transport;
+    },
+  });
+  clients.push(client);
+
+  await client.connect();
+  expect(client.getConnectionState().status).toBe("connected");
+  expect(modes).toEqual(["legacy"]);
+});
+
+test("refuses legacy endpoint security on reconnect once the daemon negotiated protected", async () => {
+  const keys = generateKeyPair();
+  const modes: string[] = [];
+  const links: ReturnType<typeof createRelayLink>[] = [];
+  const legacyReceived: unknown[] = [];
+  const client = new DaemonClient({
+    url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2",
+    clientId: "clsk_security_latch",
+    e2ee: {
+      enabled: true,
+      daemonPublicKeyB64: exportPublicKey(keys.publicKey),
+      onSecurityMode: (mode) => modes.push(mode),
+    },
+    reconnect: { enabled: true, baseDelayMs: 1, maxDelayMs: 1 },
+    transportFactory: () => {
+      const link = createRelayLink();
+      links.push(link);
+      if (links.length === 1) {
+        serveProtectedDaemon(link, keys, { relayProtectedSecurity: true });
+      } else {
+        // A daemon that only speaks the legacy construction (older release).
+        void createDaemonChannel(link.wire, keys, {
+          onmessage: (data) => legacyReceived.push(data),
+        }).catch(() => {});
+      }
+      setTimeout(() => link.open(), 0);
+      return link.transport;
+    },
+  });
+  clients.push(client);
+
+  await client.connect();
+  expect(client.getConnectionState().status).toBe("connected");
+  expect(modes).toEqual(["protected"]);
+
+  // The relay drops the session; the client reconnects to a legacy-only daemon.
+  links[0].wire.close(1012, "Server disconnected");
+  await vi.waitFor(() => expect(links).toHaveLength(2));
+  await vi.waitFor(() => expect(links[1].isClosed()).toBe(true));
+  await vi.waitFor(() => expect(client.getConnectionState().status).toBe("disconnected"));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  expect(links).toHaveLength(2);
+  expect(modes).toEqual(["protected"]);
+  expect(legacyReceived).toEqual([]);
+  expect(client.lastError).toContain(
+    "Endpoint security handshake failed: daemon offered only legacy endpoint security",
+  );
+});
+
+test("closes before admission when a protected-capable daemon is reached in legacy mode", async () => {
+  const keys = generateKeyPair();
+  const daemonReceived: unknown[] = [];
+  let attempts = 0;
+  const client = new DaemonClient({
+    url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2",
+    clientId: "clsk_security_downgrade",
+    e2ee: { enabled: true, daemonPublicKeyB64: exportPublicKey(keys.publicKey) },
+    reconnect: { enabled: true, baseDelayMs: 1, maxDelayMs: 1 },
+    transportFactory: () => {
+      attempts += 1;
+      // A relay in the middle strips the protected offer from the client hello.
+      const link = createRelayLink({
+        toDaemon: (text) => {
+          if (!text.startsWith("{")) return text;
+          const parsed = JSON.parse(text) as Record<string, unknown>;
+          if (parsed.type !== "e2ee_hello") return text;
+          const { protected: _dropped, ...legacyHello } = parsed;
+          return JSON.stringify(legacyHello);
+        },
+      });
+      serveProtectedDaemon(link, keys, { relayProtectedSecurity: true }, daemonReceived);
+      setTimeout(() => link.open(), 0);
+      return link.transport;
+    },
+  });
+  clients.push(client);
+
+  const connecting = client.connect();
+  void connecting.catch(() => {});
+  const queued = client.ping({ timeoutMs: 10_000 });
+  void queued.catch(() => {});
+
+  await expect(connecting).rejects.toThrow(
+    "Endpoint security handshake failed: daemon requires protected endpoint security",
+  );
+  await expect(queued).rejects.toThrow();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  expect(attempts).toBe(1);
+  expect(client.getConnectionState().status).toBe("disconnected");
+  // Only the application hello reached the daemon; the queued command never did.
+  expect(daemonReceived).toHaveLength(1);
+  expect(JSON.parse(daemonReceived[0] as string)).toMatchObject({ type: "hello" });
+});
+
+test.each([
+  { chunked: false, transportChunked: false },
+  { chunked: true, transportChunked: false },
+  { chunked: false, transportChunked: true },
+  { chunked: true, transportChunked: true },
+])(
+  "default terminal observation requests ANSI replay (replay=$chunked, transport=$transportChunked)",
+  async ({ chunked, transportChunked }) => {
+    const transport = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      transportFactory: () => transport.transport,
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    transport.triggerOpen({
+      preserveSent: true,
+      features: {
+        ownedSubscriptions: true,
+        "terminal-restore-modes": true,
+        binaryChunkingV1: transportChunked,
+      },
+    });
+    await connecting;
+    const hello = JSON.parse(transport.sent[0] as string);
+    expect(hello.capabilities[CLIENT_CAPS.terminalChunkedReplay]).toBe(true);
+    expect(hello.capabilities[CLIENT_CAPS.binaryChunkingV1]).toBe(true);
+    const wire: Uint8Array[] = [];
+    const sender = new ChunkedTransport({
+      frameBytes: 17,
+      send: (frame) => {
+        if (typeof frame === "string") throw new Error("Expected binary terminal frame");
+        wire.push(frame);
+        transport.triggerMessage(frame);
+      },
+      deliver: () => {},
+    });
+    sender.enabled = transportChunked;
+    const events: import("./terminal-stream-router").TerminalStreamEvent[] = [];
+    const observation = client.observeTerminal("default-terminal", (event) => events.push(event));
+    await vi.waitFor(() =>
+      expect(parseSentFrame(transport.sent.at(-1)).type).toBe("subscribe_terminal_request"),
+    );
+    const request = parseSentFrame(transport.sent.at(-1));
+    expect(request.restore).toEqual({ mode: "full-snapshot" });
+    transport.triggerMessage(
+      wrapSessionMessage({
+        type: "subscribe_terminal_response",
+        payload: {
+          terminalId: "default-terminal",
+          requestId: request.requestId,
+          subscriptionId: "default-subscription",
+          slot: 2,
+          error: null,
+        },
+      }),
+    );
+    await observation.ready;
+    const data = new TextEncoder().encode("\x1b[31mretained 界🙂\x1b[0m");
+    const metadata = { rows: 24, cols: 80, retainedHistoryLines: 1000 };
+    if (chunked) {
+      await sender.send(
+        encodeTerminalStreamFrame({
+          opcode: TerminalStreamOpcode.ReplayBegin,
+          slot: 2,
+          payload: JSON.stringify(metadata),
+        }),
+      );
+      await sender.send(
+        encodeTerminalStreamFrame({
+          opcode: TerminalStreamOpcode.ReplayData,
+          slot: 2,
+          payload: data,
+        }),
+      );
+      await sender.send(
+        encodeTerminalStreamFrame({ opcode: TerminalStreamOpcode.ReplayEnd, slot: 2 }),
+      );
+    } else {
+      // An ANSI-era host selects its existing Restore path for this explicit request.
+      await sender.send(
+        encodeTerminalStreamFrame({ opcode: TerminalStreamOpcode.Restore, slot: 2, payload: data }),
+      );
+    }
+    if (transportChunked) {
+      expect(wire.length).toBeGreaterThan(chunked ? 3 : 1);
+      expect(wire.some((frame) => frame[0] === 0x31)).toBe(true);
+      expect(wire.every((frame) => frame.length <= 17)).toBe(true);
+    } else {
+      expect(wire.map((frame) => frame[0])).toEqual(chunked ? [6, 7, 8] : [5]);
+    }
+    expect(events).toEqual([
+      {
+        terminalId: "default-terminal",
+        subscriptionId: "default-subscription",
+        type: "replay",
+        replay: chunked ? { type: "begin", ...metadata } : { type: "begin" },
+      },
+      {
+        terminalId: "default-terminal",
+        subscriptionId: "default-subscription",
+        type: "replay",
+        replay: { type: "data", data },
+      },
+      {
+        terminalId: "default-terminal",
+        subscriptionId: "default-subscription",
+        type: "replay",
+        replay: { type: "end" },
+      },
+    ]);
+    const live = new TextEncoder().encode("live after replay 界🙂");
+    await sender.send(
+      encodeTerminalStreamFrame({ opcode: TerminalStreamOpcode.Output, slot: 2, payload: live }),
+    );
+    expect(events.at(-1)).toEqual({
+      terminalId: "default-terminal",
+      subscriptionId: "default-subscription",
+      type: "output",
+      data: live,
+    });
+  },
+);
+
+test("uses the frame budget selected by an asynchronously opened transport", async () => {
+  const mock = createMockTransport();
+  mock.transport.maxFrameBytes = 1024;
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "dynamic-budget",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.transport.maxFrameBytes = 16;
+  mock.triggerOpen({ features: { binaryChunkingV1: true } });
+  await connecting;
+  client.sendHostFrame("route", new Uint8Array(100));
+  await vi.waitFor(() => expect(mock.sent.length).toBeGreaterThan(1));
+  expect(mock.sent.every((frame) => typeof frame !== "string" && frame.byteLength <= 16)).toBe(
+    true,
+  );
+});
+
+test.each([false, true])("routed sends wait for origin drain (binary=%s)", async (binary) => {
+  const mock = createMockTransport();
+  let drain!: () => void;
+  let blocked = false;
+  const send = mock.transport.send;
+  mock.transport.send = (frame) => {
+    send(frame);
+    if (blocked)
+      return new Promise<void>((resolve) => {
+        drain = resolve;
+      });
+  };
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "routed-drain",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen({ features: { binaryChunkingV1: true } });
+  await connecting;
+  blocked = true;
+  let finished = false;
+  const write = Promise.resolve(
+    client.sendHostFrame("route", binary ? new Uint8Array([1]) : "hello"),
+  ).then(() => {
+    finished = true;
+    return undefined;
+  });
+  await Promise.resolve();
+  expect(finished).toBe(false);
+  drain();
+  await write;
+  expect(finished).toBe(true);
+});
+
+test("a queued admission failure rejects its RPC without closing the client", async () => {
+  const mock = createMockTransport();
+  const send = mock.transport.send;
+  let block = false;
+  let drain!: () => void;
+  mock.transport.send = (frame) => {
+    if (!block) return send(frame);
+    if (typeof frame !== "string")
+      return new Promise<void>((resolve) => {
+        drain = resolve;
+      });
+    throw new Error("capacity");
+  };
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "queued-admission",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen();
+  await connecting;
+  block = true;
+  const first = client.sendHostFrame("route", new Uint8Array([1]));
+  const ping = client.ping({ timeoutMs: 1000 });
+  void ping.catch(() => {});
+  drain();
+  await first;
+  await expect(ping).rejects.toThrow("capacity");
+  expect(client.isConnected).toBe(true);
+});
+
+test("RPC deadlines remain active while a preceding frame waits for drain", async () => {
+  const mock = createMockTransport();
+  const send = mock.transport.send;
+  let blocked = false;
+  let drain!: () => void;
+  mock.transport.send = (frame) => {
+    if (!blocked) return send(frame);
+    if (typeof frame !== "string")
+      return new Promise<void>((resolve) => {
+        drain = resolve;
+      });
+  };
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "drain-deadline",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen();
+  await connecting;
+  blocked = true;
+  const first = client.sendHostFrame("route", new Uint8Array([1]));
+  try {
+    await expect(client.ping({ timeoutMs: 20 })).rejects.toThrow("Timeout waiting for message");
+    expect(client.isConnected).toBe(true);
+  } finally {
+    drain();
+    await first;
+  }
+});
+
+test.each([false, true])(
+  "event listener errors do not close the transport (chunked=%s)",
+  async (chunked) => {
+    const mock = createMockTransport();
+    const closed = vi.fn();
+    mock.transport.close = closed;
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "listener-error",
+      transportFactory: () => mock.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    mock.triggerOpen({ features: { binaryChunkingV1: chunked } });
+    await connecting;
+    const unsubscribe = client.subscribe(() => {
+      throw new Error("listener failed");
+    });
+    const text = wrapSessionMessage({
+      type: "agent_deleted",
+      payload: { agentId: "agent-test", requestId: "listener-test" },
+    });
+    const payload = new TextEncoder().encode(text);
+    const frame = chunked ? new Uint8Array([0x31, 1, 0, 3, ...payload]) : text;
+    expect(() => mock.triggerMessage(frame)).toThrow("listener failed");
+    expect(closed).not.toHaveBeenCalled();
+    unsubscribe();
+    const events: string[] = [];
+    client.subscribe((event) => {
+      events.push(event.type);
+    });
+    mock.triggerMessage(frame);
+    expect(events).toEqual(["agent_deleted"]);
+    await client.sendHostFrame("route", "still connected");
+    expect(client.isConnected).toBe(true);
+  },
+);
+
+test("malformed chunk metadata still closes the client transport", async () => {
+  const mock = createMockTransport();
+  const closed = vi.fn();
+  mock.transport.close = closed;
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "malformed-chunk",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen({ features: { binaryChunkingV1: true } });
+  await connecting;
+  mock.triggerMessage(new Uint8Array([0x31, 2, 0, 3, 65]));
+  expect(closed).toHaveBeenCalledWith(4003, "Invalid chunked transport");
+});
+
+test.each([FileTransferOpcode.FileBegin, FileTransferOpcode.FileChunk, FileTransferOpcode.FileEnd])(
+  "upload stops at a queued pre-write rejection (opcode=%s)",
+  async (opcode) => {
+    const mock = createMockTransport();
+    const send = mock.transport.send;
+    let drain!: () => void;
+    let blocked = false;
+    const attempts: number[] = [];
+    mock.transport.send = (frame) => {
+      if (typeof frame !== "string") {
+        const decoded = decodeFileTransferFrame(assertUint8Array(frame));
+        if (decoded) {
+          attempts.push(decoded.opcode);
+          if (decoded.opcode === opcode) throw new Error("upload capacity");
+        } else if (blocked)
+          return new Promise<void>((resolve) => {
+            drain = resolve;
+          });
+      }
+      return send(frame);
+    };
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "upload-admission",
+      transportFactory: () => mock.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    mock.triggerOpen();
+    await connecting;
+    blocked = true;
+    const first = client.sendHostFrame("route", new Uint8Array([1]));
+    const upload = client.uploadFile({
+      fileName: "file.bin",
+      mimeType: "application/octet-stream",
+      bytes: new Uint8Array([1, 2]),
+      chunkSize: 1,
+    });
+    let rejected: unknown;
+    void upload.catch((error) => {
+      rejected = error;
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    drain();
+    await first;
+    await vi.waitFor(() => expect(rejected).toMatchObject({ message: "upload capacity" }), {
+      timeout: 500,
+    });
+    expect(attempts.at(-1)).toBe(opcode);
+    expect(client.isConnected).toBe(true);
+  },
+);
+
+test.each(["latency", "dictation start", "dictation finish"])(
+  "queued control send rejection reaches its caller (%s)",
+  async (operation) => {
+    const mock = createMockTransport();
+    const send = mock.transport.send;
+    let blocked = false;
+    let drain!: () => void;
+    mock.transport.send = (frame) => {
+      if (!blocked) return send(frame);
+      if (typeof frame !== "string")
+        return new Promise<void>((resolve) => {
+          drain = resolve;
+        });
+      throw new Error("control capacity");
+    };
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "control-admission",
+      transportFactory: () => mock.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    mock.triggerOpen();
+    await connecting;
+    blocked = true;
+    const first = client.sendHostFrame("route", new Uint8Array([1]));
+    let result: Promise<unknown>;
+    if (operation === "latency") result = client.measureLatency({ timeoutMs: 1000 });
+    else if (operation === "dictation start")
+      result = client.startDictationStream("dictation", "pcm");
+    else result = client.finishDictationStream("dictation", 0);
+    const rejected = expect(result).rejects.toThrow("control capacity");
+    drain();
+    await first;
+    await rejected;
+    expect(client.isConnected).toBe(true);
+  },
+);
+
+test("routed channels inherit an origin without drain support", async () => {
+  const { createHostChannelTransport } = await import("./hosts/index.js");
+  const mock = createMockTransport();
+  mock.transport.supportsDrain = false;
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "unpaced-route",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen();
+  await connecting;
+  const route = createHostChannelTransport(
+    client,
+    "srv_destination",
+    "scope",
+    "route",
+  )({ url: "ws://route" });
+  expect(route.supportsDrain).toBe(false);
+  route.close();
 });

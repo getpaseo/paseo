@@ -1,4 +1,13 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
+import type { ComponentProps } from "react";
+import type {
+  StreamedText,
+  StreamedTextProps,
+  Modal,
+  ModalProps,
+  SettingsSection,
+  SettingsSectionProps,
+} from "./ui.js";
 import { z } from "zod";
 import { defineAttachmentSource, defineRpc, type RpcInput, type RpcOutput } from "../index.js";
 import { callPluginRpc, searchPluginAttachments } from "./host.js";
@@ -105,5 +114,14 @@ describe("plugin attachment sources", () => {
     await expect(
       searchPluginAttachments(source, async () => ({ items: [{ id: "issue-1" }] }), "issue"),
     ).rejects.toBeInstanceOf(z.ZodError);
+  });
+});
+
+describe("plugin UI contracts", () => {
+  it("exposes presentation capabilities from the UI entry", () => {
+    expectTypeOf<ComponentProps<typeof StreamedText>>().toEqualTypeOf<StreamedTextProps>();
+    expectTypeOf<ComponentProps<typeof Modal>>().toEqualTypeOf<ModalProps>();
+    expectTypeOf<ComponentProps<typeof SettingsSection>>().toEqualTypeOf<SettingsSectionProps>();
+    expectTypeOf<StreamedTextProps["phase"]>().toEqualTypeOf<"streaming" | "complete">();
   });
 });

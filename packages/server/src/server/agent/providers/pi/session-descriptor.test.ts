@@ -1,9 +1,13 @@
 import { mkdtemp, mkdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { expect, test } from "vitest";
+import { expect, onTestFinished, test } from "vitest";
 
-import { listPiImportableSessions, readPiImportSessionConfig } from "./session-descriptor.js";
+import {
+  copyPiSessionFileWithCwd,
+  listPiImportableSessions,
+  readPiImportSessionConfig,
+} from "./session-descriptor.js";
 
 async function writeSession(root: string, lines: unknown[]): Promise<string> {
   const sessionsDir = path.join(root, "sessions", "project");
@@ -215,6 +219,100 @@ test("Pi import config preserves thinking before a later model in large sessions
     model: "openrouter/google/gemini-2.5-pro",
     thinkingOptionId: "low",
   });
+});
+
+test("a Pi session copy names the new cwd in its header and keeps every later byte", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-pi-session-copy-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const header = {
+    type: "session",
+    version: 3,
+    id: "pi-session-1",
+    timestamp: "2026-01-01T00:00:00.000Z",
+    cwd: path.join(root, "removed-worktree"),
+  };
+  const body = Buffer.from(
+    Array.from(
+      { length: 2_000 },
+      (_, index) =>
+        `${JSON.stringify({ type: "message", id: `entry-${index}`, message: { role: "user", content: `café ☕ ${index}` } })}\n`,
+    ).join(""),
+  );
+  expect(body.length).toBeGreaterThan(64 * 1024);
+  const sourceFile = path.join(root, "source.jsonl");
+  const targetFile = path.join(root, "copy.jsonl");
+  await writeFile(sourceFile, Buffer.concat([Buffer.from(`${JSON.stringify(header)}\n`), body]));
+
+  await copyPiSessionFileWithCwd({ sourceFile, targetFile, cwd: "/home/user" });
+
+  const copy = await readFile(targetFile);
+  const headerEnd = copy.indexOf(0x0a);
+  expect(JSON.parse(copy.subarray(0, headerEnd).toString("utf8"))).toEqual({
+    ...header,
+    cwd: "/home/user",
+  });
+  expect(copy.subarray(headerEnd + 1).equals(body)).toBe(true);
+});
+
+test("a Pi session copy refuses a file without a session header", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-pi-session-copy-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const sourceFile = path.join(root, "source.jsonl");
+  await writeFile(sourceFile, `${JSON.stringify({ type: "message", id: "entry-1" })}\n`);
+
+  await expect(
+    copyPiSessionFileWithCwd({ sourceFile, targetFile: path.join(root, "copy.jsonl"), cwd: "/" }),
+  ).rejects.toThrow(`Pi session file has no session header: ${sourceFile}`);
+});
+
+const COPY_BODY = [
+  { type: "message", id: "entry-1", message: { role: "user", content: "café ☕" } },
+  { type: "message", id: "entry-2", message: { role: "assistant", content: "Dans la cuisine." } },
+]
+  .map((entry) => `${JSON.stringify(entry)}\n`)
+  .join("");
+
+const COPY_HEADER = {
+  type: "session",
+  version: 3,
+  id: "pi-session-1",
+  timestamp: "2026-01-01T00:00:00.000Z",
+  cwd: "/removed-worktree",
+};
+
+async function copySessionContent(content: string): Promise<Buffer> {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-pi-session-copy-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const sourceFile = path.join(root, "source.jsonl");
+  const targetFile = path.join(root, "copy.jsonl");
+  await writeFile(sourceFile, content);
+  await copyPiSessionFileWithCwd({ sourceFile, targetFile, cwd: "/home/user" });
+  return readFile(targetFile);
+}
+
+test.each([
+  ["a header line longer than 64 KiB", "", { ...COPY_HEADER, padding: "x".repeat(70 * 1024) }],
+  ["a header with an empty cwd", "", { ...COPY_HEADER, cwd: "" }],
+  ["blank lines before the header", "\n\r\n", COPY_HEADER],
+])("a Pi session copy accepts %s", async (_headerShape, prefix, header) => {
+  const copy = await copySessionContent(`${prefix}${JSON.stringify(header)}\n${COPY_BODY}`);
+
+  const headerEnd = copy.indexOf(0x0a);
+  expect(JSON.parse(copy.subarray(0, headerEnd).toString("utf8"))).toEqual({
+    ...header,
+    cwd: "/home/user",
+  });
+  expect(copy.subarray(headerEnd + 1).equals(Buffer.from(COPY_BODY))).toBe(true);
+});
+
+test("a Pi session copy reports a missing session file", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-pi-session-copy-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const sourceFile = path.join(root, "missing.jsonl");
+
+  await expect(
+    copyPiSessionFileWithCwd({ sourceFile, targetFile: path.join(root, "copy.jsonl"), cwd: "/" }),
+  ).rejects.toThrow(`Pi session file is missing: ${sourceFile}`);
 });
 
 test("cwd filtering does not read unrelated session tails", async () => {

@@ -1,7 +1,8 @@
-import type { Dirent } from "node:fs";
-import { open, readdir, readFile, stat } from "node:fs/promises";
+import { createReadStream, createWriteStream, type Dirent } from "node:fs";
+import { open, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 
 import type {
   ImportableProviderSession,
@@ -18,6 +19,7 @@ const PI_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
 const HEAD_BYTES = 64 * 1024;
 const TAIL_BYTES = 256 * 1024;
 const FULL_SCAN_LINE_LIMIT = 2_000;
+const PI_SESSION_HEADER_SCAN_BYTES = 1024 * 1024;
 // Rank all discovered files cheaply, then parse only a bounded recent window.
 const IMPORT_CANDIDATE_OVERSCAN = 40;
 const IMPORT_CANDIDATE_MIN = 400;
@@ -105,6 +107,59 @@ export async function listPiImportableSessions(
   return sessions.sort(
     (left, right) => right.lastActivityAt.getTime() - left.lastActivityAt.getTime(),
   );
+}
+
+export async function copyPiSessionFileWithCwd(input: {
+  sourceFile: string;
+  targetFile: string;
+  cwd: string;
+}): Promise<void> {
+  const found = findSessionHeaderLine(
+    await readSessionFileStart(input.sourceFile, PI_SESSION_HEADER_SCAN_BYTES),
+  );
+  if (!found) {
+    throw new Error(`Pi session file has no session header: ${input.sourceFile}`);
+  }
+  await writeFile(input.targetFile, `${JSON.stringify({ ...found.header, cwd: input.cwd })}\n`, {
+    mode: 0o600,
+  });
+  await pipeline(
+    createReadStream(input.sourceFile, { start: found.bodyStart }),
+    createWriteStream(input.targetFile, { flags: "a" }),
+  );
+}
+
+function findSessionHeaderLine(
+  scanned: Buffer,
+): { header: Record<string, unknown>; bodyStart: number } | null {
+  let lineStart = 0;
+  while (lineStart < scanned.length) {
+    const newline = scanned.indexOf(0x0a, lineStart);
+    const bodyStart = newline === -1 ? scanned.length : newline + 1;
+    const line = scanned.subarray(lineStart, bodyStart).toString("utf8").trim();
+    if (line) {
+      const header = parseJsonRecord(line);
+      return header?.type === "session" ? { header, bodyStart } : null;
+    }
+    lineStart = bodyStart;
+  }
+  return null;
+}
+
+async function readSessionFileStart(filePath: string, maxBytes: number): Promise<Buffer> {
+  const handle = await open(filePath, "r").catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error(`Pi session file is missing: ${filePath}`);
+    }
+    throw error;
+  });
+  try {
+    const buffer = Buffer.alloc(maxBytes);
+    const { bytesRead } = await handle.read(buffer, 0, maxBytes, 0);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
 }
 
 export async function readPiImportSessionConfig(filePath: string): Promise<PiImportSessionConfig> {

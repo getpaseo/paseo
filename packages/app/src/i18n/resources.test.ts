@@ -369,9 +369,6 @@ describe("translation resources", () => {
 
   it("includes Settings expansion keys for the Batch 3A migration", () => {
     expect(en.settings.diagnostics.title).toBe("Diagnostics");
-    expect(en.settings.diagnostics.legacyTerminalRenderer.label).toBe(
-      "Use legacy terminal renderer",
-    );
     expect(en.settings.about.title).toBe("About");
     expect(en.settings.about.releaseChannel.label).toBe("Release channel");
     expect(en.settings.appearance.theme.title).toBe("Theme");
@@ -835,7 +832,6 @@ describe("translation resources", () => {
     expect(en.common.placeholders.search).toBe("Search...");
     expect(en.common.empty.noResults).toBe("No results found");
     expect(en.common.empty.noOptionsMatchSearch).toBe("No options match your search.");
-    expect(en.toolCallDetails.subAgentActivity).toBe("Sub-agent activity");
     expect(en.panels.file.failedToLoadPreview).toBe("Failed to load file preview");
   });
 

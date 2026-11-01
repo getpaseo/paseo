@@ -208,7 +208,11 @@ export interface AgentSteerOptions extends AgentRunOptions {
   clearPendingPermissions?: boolean;
 }
 
-export type SteerResult = { status: "accepted" } | { status: "unavailable" };
+// providerMessageId names the steered message in the provider's own history, when the provider
+// mints one. Rewinding to the message needs it.
+export type SteerResult =
+  | { status: "accepted"; providerMessageId?: string }
+  | { status: "unavailable" };
 
 export interface SteerActiveTurnOptions extends AgentSteerOptions {
   expectedTurnId: string;
@@ -313,7 +317,10 @@ export type ToolCallDetail =
       subAgentType?: string;
       description?: string;
       childSessionId?: string;
-      log: string;
+      // COMPAT(subagent-log): added in v0.14.1, remove after 2027-04-30. Apps before v0.14.1
+      // require `log`; every producer sends it empty and carries the same tag. Optional here because
+      // protocol timeline items, where `log` is optional, flow into this type.
+      log?: string;
       actions?: Array<{
         index: number;
         toolName: string;
@@ -616,6 +623,9 @@ export interface AgentSessionConfig {
 }
 
 export interface AgentLaunchContext {
+  /** Launch-only plugin MCP servers and their owners; never persisted. */
+  mcpServers?: Record<string, McpServerConfig>;
+  mcpServerOwners?: Record<string, string>;
   agentId?: string;
   env?: Record<string, string>;
   /**
@@ -687,6 +697,7 @@ export interface AgentSession {
     requestId: string,
     response: AgentPermissionResponse,
   ): Promise<AgentPermissionResult | void>;
+  /** Null until a new provider process could resume this session; see docs/providers.md. */
   describePersistence(): AgentPersistenceHandle | null;
   /**
    * Resolve once every foreground turn that predates this call can no longer run or become active.
@@ -694,6 +705,10 @@ export interface AgentSession {
    * still uncertain.
    */
   interrupt(): Promise<void>;
+  /** True only when releasing this runtime loses no background work or pending replies.
+   * An optional additional veto: missing methods use daemon baseline eligibility;
+   * implemented checks that reject or return false keep the runtime resident. */
+  canStopRuntime?(): Promise<boolean>;
   /** Release live runtime resources without archiving or deleting the durable native session. */
   close(): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;

@@ -82,7 +82,12 @@ export class WorkspaceDirectoryReplica {
   }
 
   acceptWorkspaces(workspaces: readonly WorkspaceDescriptor[]): DirectoryReplicaMutation[] {
-    return workspaces.flatMap((workspace) => this.upsertWorkspace(workspace));
+    // Creation responses and progress snapshots can arrive after live updates.
+    // They seed missing rows; the directory owns rows it has already received.
+    return workspaces.flatMap((workspace) => {
+      if (this.workspaces.has(workspace.id)) return [];
+      return this.upsertWorkspace(workspace);
+    });
   }
 
   acceptProject(project: ProjectDescriptor): DirectoryReplicaMutation[] {

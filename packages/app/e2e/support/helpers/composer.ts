@@ -87,6 +87,14 @@ export async function sendDraftToQueue(page: Page): Promise<void> {
   await composerInput(page).press("Control+Enter");
 }
 
+/** Long-press the Send button: the composer takes the draft while the pointer is still down. */
+export async function holdSendButton(page: Page, label: string): Promise<void> {
+  await page.getByRole("button", { name: label, exact: true }).hover();
+  await page.mouse.down();
+  await expect(composerInput(page)).toHaveValue("", { timeout: 5_000 });
+  await page.mouse.up();
+}
+
 export async function expectQueuedMessageButton(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: "Send queued message now" })).toBeVisible({
     timeout: 10_000,
@@ -363,10 +371,11 @@ export async function resizeComposerViewport(
   await page.setViewportSize(sizes[orientation]);
   // Before the app has loaded there is no layout to wait for.
   if (page.url() === "about:blank") return;
-  // Crossing the compact breakpoint remounts the shell and the editor. Anything that
-  // follows (a shortcut, a locator) belongs to the layout the new size implies, so
-  // wait for that layout before returning.
-  await expect(page.getByTestId("compact-shell")).toHaveCount(orientation === "landscape" ? 0 : 1);
+  // The shell and editor survive the breakpoint. Wait for the shell's layout
+  // marker to update before interacting with the resized composer.
+  await expect(
+    page.getByTestId(orientation === "landscape" ? "wide-shell" : "compact-shell"),
+  ).toBeVisible();
 }
 export async function selectComposerDraftRange(
   page: Page,
