@@ -120,6 +120,7 @@ import {
 } from "../provider-launch-config.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "./provider-runner.js";
+import { resolveResumeProcessCwd } from "./resume-process-cwd.js";
 import {
   buildStringCommandShellInvocation,
   createStringCommandShellEnvOverlay,
@@ -163,18 +164,6 @@ function rejectOnProcessFailure(child: ChildProcess, stderrChunks: string[]): Pr
       );
     });
   });
-}
-
-async function isDirectory(target: string): Promise<boolean> {
-  try {
-    return (await fs.stat(target)).isDirectory();
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "ENOTDIR") {
-      return false;
-    }
-    throw error;
-  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -2883,11 +2872,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   // Loading an archived agent's history runs nothing in its working directory, which
   // may have been removed with its worktree. session/load still names the original
   // directory; only the process starts from the home directory.
-  private async resolveProcessCwd(): Promise<string> {
-    if (this.resumePurpose !== "history" || (await isDirectory(this.config.cwd))) {
-      return this.config.cwd;
-    }
-    return homedir();
+  private resolveProcessCwd(): Promise<string> {
+    return resolveResumeProcessCwd(this.config.cwd, this.resumePurpose);
   }
 
   private async spawnProcess(): Promise<SpawnedACPProcess> {
