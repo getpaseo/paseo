@@ -1,8 +1,7 @@
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import pLimit from "p-limit";
 import { ZodError } from "zod";
+import { resolveWorkerEntrypoint } from "../../utils/worker-entrypoint.js";
 import type * as build from "./compiler-build.js";
 import type { PluginManifest } from "./manifest.js";
 import type { CompilerReply } from "./compiler-worker.js";
@@ -37,9 +36,7 @@ const workerUrl = new URL(
 );
 // Resolve the development loader once at module initialization, never during a
 // compile request. Packaged workers execute ordinary JavaScript without tsx.
-const workerEntrypoint = source
-  ? `import(${JSON.stringify(pathToFileURL(createRequire(import.meta.url).resolve("tsx/esm/api")).href)}).then(({ register }) => { register(); return import(${JSON.stringify(workerUrl.href)}); });`
-  : workerUrl;
+const compilerWorker = resolveWorkerEntrypoint(workerUrl);
 
 // Reuse the isolate during a build batch (notably daemon bootstrap), then release
 // TypeScript's heap when idle. Only this owner admits work or stops the worker.
@@ -74,7 +71,10 @@ class PluginCompiler {
   }
 
   private startWorker(): Worker {
-    const worker = new Worker(workerEntrypoint, { eval: source, execArgv: [] });
+    const worker = new Worker(compilerWorker.entrypoint, {
+      eval: compilerWorker.eval,
+      execArgv: [],
+    });
     this.worker = worker;
     // Keep error/exit ownership while idle too. The next caller gets a fresh
     // isolate after a crash; author build commands are never retried.
