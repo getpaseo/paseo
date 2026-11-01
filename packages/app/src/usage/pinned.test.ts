@@ -73,6 +73,27 @@ describe("choosePinnedUsageLayout", () => {
 });
 
 describe("resolvePinnedUsage", () => {
+  it("keeps sources and accounts alphabetical across refresh results", () => {
+    const work = { ...claude, id: "claude:work", account: { label: "work" } };
+    const cursor = report({
+      sourceId: "cursor",
+      sourceLabel: "Cursor",
+      windows: [{ id: "total", label: "Total", usedPct: 26 }],
+    });
+    const streamed = [cursor, work, codex, claude];
+    const completed = streamed.toReversed();
+
+    for (const reports of [streamed, completed]) {
+      Object.freeze(reports);
+      expect(resolvePinnedUsage(reports, preferences(null)).map((source) => source.key)).toEqual([
+        "claude:default",
+        "claude:work",
+        "codex:default",
+        "cursor:default",
+      ]);
+    }
+  });
+
   it("defaults to source-wide pins collected from each account", () => {
     const work = report({
       sourceId: "claude",
@@ -114,7 +135,7 @@ describe("resolvePinnedUsage", () => {
     ]);
   });
 
-  it("groups pinned windows by source in report order, not pin order", () => {
+  it("groups sources alphabetically and keeps windows in report order, not pin order", () => {
     const work = report({
       sourceId: "claude",
       sourceLabel: "Claude",
