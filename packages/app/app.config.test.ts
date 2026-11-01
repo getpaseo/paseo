@@ -15,7 +15,7 @@ interface ManifestEntry {
 
 const originalFdroidFlag = process.env.PASEO_FDROID_BUILD;
 
-async function resolveAndroidManifest() {
+async function resolveAndroidMods() {
   const { exp } = await getPrebuildConfigAsync(__dirname, { platforms: ["android"] });
   await compileModsAsync(exp, {
     projectRoot: __dirname,
@@ -23,7 +23,7 @@ async function resolveAndroidManifest() {
     platforms: ["android"],
     assertMissingModProviders: false,
   });
-  return exp._internal.modResults.android.manifest.manifest;
+  return exp._internal.modResults.android;
 }
 
 describe("Android app config", () => {
@@ -42,7 +42,7 @@ describe("Android app config", () => {
     "%s build installs on devices without a camera",
     async (_build, fdroidFlag) => {
       process.env.PASEO_FDROID_BUILD = fdroidFlag;
-      const manifest = await resolveAndroidManifest();
+      const manifest = (await resolveAndroidMods()).manifest.manifest;
       const permissions = (manifest["uses-permission"] ?? []).map(
         (entry: ManifestEntry) => entry.$["android:name"],
       );
@@ -58,10 +58,29 @@ describe("Android app config", () => {
     },
     30_000,
   );
+
+  it.each([
+    ["Google Play", "0"],
+    ["F-Droid", "1"],
+  ])(
+    "%s release enables code and resource shrinking through prebuild",
+    async (_build, fdroidFlag) => {
+      process.env.PASEO_FDROID_BUILD = fdroidFlag;
+      const android = await resolveAndroidMods();
+
+      expect(android.gradleProperties).toEqual(
+        expect.arrayContaining([
+          { type: "property", key: "android.enableMinifyInReleaseBuilds", value: "true" },
+          { type: "property", key: "android.enableShrinkResourcesInReleaseBuilds", value: "true" },
+        ]),
+      );
+    },
+    30_000,
+  );
 });
 
 it("follows system rotation on Android", async () => {
-  const manifest = await resolveAndroidManifest();
+  const manifest = (await resolveAndroidMods()).manifest.manifest;
   const activity = manifest.application[0].activity.find(
     (entry: ManifestEntry) => entry.$["android:name"] === ".MainActivity",
   );

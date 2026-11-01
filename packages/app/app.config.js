@@ -176,6 +176,8 @@ export default {
           android: {
             minSdkVersion: 29,
             kotlinVersion: "2.1.20",
+            enableMinifyInReleaseBuilds: true,
+            enableShrinkResourcesInReleaseBuilds: true,
             // Allow HTTP connections for local network hosts in release builds
             usesCleartextTraffic: true,
           },
