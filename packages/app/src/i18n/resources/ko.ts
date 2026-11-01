@@ -372,6 +372,11 @@ export const ko: TranslationResources = {
       insertAndSend: "전사 삽입 후 보내기",
       failed: "받아쓰기 실패: {{error}}",
       failedRetry: "받아쓰기에 실패했습니다. 다시 시도하려면 누르세요.",
+      empty: {
+        noAudio: "녹음된 오디오가 없습니다. 다른 앱이 마이크를 사용 중인가요?",
+        silentAudio: "무음만 녹음되었습니다. 마이크를 확인하세요.",
+        noSpeech: "음성이 인식되지 않았습니다. 다시 시도하려면 누르세요.",
+      },
     },
     question: {
       responseFailed: "응답을 보내지 못했습니다. 다시 시도해 주세요.",
@@ -2293,6 +2298,19 @@ export const ko: TranslationResources = {
         title: "받아쓰기",
         enabled: "받아쓰기",
         enabledHint: "입력하는 대신 메시지 상자에 말하세요",
+      },
+      recordings: {
+        title: "최근 받아쓰기",
+        info: "최근 받아쓰기 20개가 이 기기에 저장되므로, 실패했거나 비어 있는 받아쓰기를 다시 말하지 않고 다시 변환할 수 있습니다.",
+        empty: "아직 받아쓰기가 없습니다.",
+        loadError: "최근 받아쓰기를 불러오지 못했습니다",
+        pending: "아직 변환되지 않음",
+        retry: "다시 시도",
+        copy: "변환 텍스트 복사",
+        delete: "삭제",
+        deleteTitle: "이 녹음을 삭제할까요?",
+        deleteMessage: "오디오가 이 기기에서 삭제됩니다.",
+        audioMissing: "이 녹음의 오디오가 더 이상 이 기기에 없습니다.",
       },
       voiceMode: {
         title: "음성 모드",

@@ -376,6 +376,11 @@ export const ja: TranslationResources = {
       insertAndSend: "文字起こしを挿入して送信",
       failed: "音声入力に失敗しました: {{error}}",
       failedRetry: "音声入力に失敗しました。再試行をタップしてください。",
+      empty: {
+        noAudio: "音声が録音されませんでした。別のアプリがマイクを使用していませんか？",
+        silentAudio: "無音しか録音されませんでした。マイクを確認してください。",
+        noSpeech: "音声を認識できませんでした。再試行をタップしてください。",
+      },
     },
     question: {
       responseFailed: "回答を送信できませんでした。もう一度お試しください。",
@@ -2304,6 +2309,19 @@ export const ja: TranslationResources = {
         title: "音声入力",
         enabled: "音声入力",
         enabledHint: "入力する代わりにメッセージ欄に話しかけます",
+      },
+      recordings: {
+        title: "最近の音声入力",
+        info: "直近20件の音声入力はこの端末に保存されるため、失敗したものや空のものを話し直さずに再度文字起こしできます。",
+        empty: "音声入力はまだありません。",
+        loadError: "最近の音声入力を読み込めませんでした",
+        pending: "未文字起こし",
+        retry: "再試行",
+        copy: "文字起こしをコピー",
+        delete: "削除",
+        deleteTitle: "この録音を削除しますか？",
+        deleteMessage: "音声はこの端末から削除されます。",
+        audioMissing: "この録音の音声はこの端末にもうありません。",
       },
       voiceMode: {
         title: "ボイスモード",

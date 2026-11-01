@@ -2,6 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { DictationStreamSender } from "@/dictation/dictation-stream-sender";
+import {
+  resolveDictationEmptyReason,
+  type DictationEmptyReason,
+} from "@/dictation/empty-transcript-reason";
+import { pcm16PeakFromBase64 } from "@/dictation/pcm-level";
+import { getDictationRecordingStore, type DictationRecordingOutcome } from "@/dictation/recordings";
 import { useDictationAudioSource } from "@/hooks/use-dictation-audio-source";
 import { generateMessageId } from "@/types/stream";
 import { AttemptGuard } from "@/utils/attempt-guard";
@@ -33,7 +39,12 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<DictationStatus>("idle");
+  const [emptyReason, setEmptyReason] = useState<DictationEmptyReason | null>(null);
   const latestPartialTranscriptRef = useRef("");
+  // Loudest sample captured in the current recording; explains an empty transcript.
+  const recordingPeakRef = useRef(0);
+  // The saved copy of the current recording, so outcomes and retries update one entry.
+  const savedRecordingRef = useRef<{ id: string; saved: Promise<void> } | null>(null);
 
   const onTranscriptRef = useRef(onTranscript);
   useEffect(() => {
@@ -131,10 +142,41 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     [setError],
   );
 
+  // Saved once per recording, when its transcription is first attempted, so the audio
+  // survives a failure, an empty result or the app quitting mid-transcription.
+  const saveRecording = useCallback(() => {
+    const sender = senderRef.current;
+    if (savedRecordingRef.current || !sender?.hasSegments()) {
+      return;
+    }
+    const id = generateMessageId();
+    const saved = getDictationRecordingStore()
+      .save({ id, createdAt: Date.now(), segments: sender.getSegments() })
+      .catch((saveError: unknown) => {
+        console.error("[useDictation] Failed to save dictation recording", saveError);
+      });
+    savedRecordingRef.current = { id, saved };
+  }, []);
+
+  const recordOutcome = useCallback((outcome: DictationRecordingOutcome) => {
+    const recording = savedRecordingRef.current;
+    if (!recording) {
+      return;
+    }
+    void recording.saved
+      .then(() => getDictationRecordingStore().setOutcome(recording.id, outcome))
+      .catch((outcomeError: unknown) => {
+        console.error("[useDictation] Failed to update dictation recording", outcomeError);
+      });
+  }, []);
+
   const clearStreamingState = useCallback(() => {
     senderRef.current?.clearAll();
+    savedRecordingRef.current = null;
+    recordingPeakRef.current = 0;
     latestPartialTranscriptRef.current = "";
     setPartialTranscript("");
+    setEmptyReason(null);
   }, []);
 
   const startNewStream = useCallback(async (reason: string) => {
@@ -194,14 +236,23 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
 
       const transcriptText =
         text.trim().length > 0 ? text.trim() : latestPartialTranscriptRef.current.trim();
-      clearStreamingState();
 
       if (!transcriptText) {
+        // Keep the audio so the user can retry, and say why nothing came back.
+        const reason = resolveDictationEmptyReason({
+          segmentCount: senderRef.current?.getSegmentCount() ?? 0,
+          peak: recordingPeakRef.current,
+        });
+        setStatus("empty");
+        setEmptyReason(reason);
+        recordOutcome({ kind: "empty", reason });
         return;
       }
+      recordOutcome({ kind: "transcribed", text: transcriptText });
+      clearStreamingState();
       onTranscriptRef.current?.(transcriptText, { requestId });
     },
-    [clearStreamingState],
+    [clearStreamingState, recordOutcome],
   );
 
   const handleDictationFailure = useCallback(
@@ -216,6 +267,8 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
 
       if (senderRef.current?.hasSegments()) {
         setStatus("failed");
+        saveRecording();
+        recordOutcome({ kind: "failed", error: normalized.message });
         onPermanentFailureRef.current?.(normalized, { requestId: failureId });
       } else {
         setStatus("idle");
@@ -223,11 +276,12 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
 
       reportError(normalized, "Failed to complete dictation");
     },
-    [reportError, stopDurationTracking],
+    [recordOutcome, reportError, saveRecording, stopDurationTracking],
   );
 
   const audio = useDictationAudioSource({
     onPcmSegment: (audioData) => {
+      recordingPeakRef.current = Math.max(recordingPeakRef.current, pcm16PeakFromBase64(audioData));
       senderRef.current?.enqueueSegment(audioData);
     },
     onError: (err) => {
@@ -370,6 +424,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
         return;
       }
 
+      saveRecording();
       const transcriptText = await ensureFinalTranscript(finalSeq);
       attemptGuardRef.current.assertCurrent(attemptId);
       handleStreamingTranscriptionSuccess(transcriptText, generateMessageId());
@@ -386,6 +441,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     canConfirm,
     handleDictationFailure,
     handleStreamingTranscriptionSuccess,
+    saveRecording,
     stopDurationTracking,
     ensureFinalTranscript,
   ]);
@@ -395,6 +451,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       return;
     }
     setError(null);
+    setEmptyReason(null);
     setStatus("uploading");
     setIsProcessing(true);
     isProcessingRef.current = true;
@@ -462,6 +519,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     duration,
     error,
     status: status === "recording" && audio.isPaused ? "paused" : status,
+    emptyReason,
     startDictation,
     cancelDictation,
     confirmDictation,

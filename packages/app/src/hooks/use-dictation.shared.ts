@@ -1,6 +1,14 @@
+import type { DictationEmptyReason } from "@/dictation/empty-transcript-reason";
 import { i18n } from "@/i18n/i18next";
 
-export type DictationStatus = "idle" | "recording" | "paused" | "uploading" | "failed";
+export type DictationStatus =
+  | "idle"
+  | "recording"
+  | "paused"
+  | "uploading"
+  | "failed"
+  // Finished, but produced no text. `emptyReason` says why; the audio is kept for retry.
+  | "empty";
 
 export interface UseDictationOptions {
   client: import("@getpaseo/client/internal/daemon-client").DaemonClient | null;
@@ -22,6 +30,7 @@ export interface UseDictationResult {
   duration: number;
   error: string | null;
   status: DictationStatus;
+  emptyReason: DictationEmptyReason | null;
   startDictation: () => Promise<void>;
   cancelDictation: () => Promise<void>;
   confirmDictation: () => Promise<void>;

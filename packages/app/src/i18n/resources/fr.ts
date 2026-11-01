@@ -376,6 +376,11 @@ export const fr: TranslationResources = {
       insertAndSend: "Insérer la transcription et envoyer",
       failed: "Échec de la dictée : {{error}}",
       failedRetry: "La dictée a échoué. Appuyez sur Réessayer.",
+      empty: {
+        noAudio: "Aucun son n'a été enregistré. Une autre app utilise-t-elle le micro ?",
+        silentAudio: "Seul du silence a été enregistré. Vérifiez votre micro.",
+        noSpeech: "Aucune parole reconnue. Appuyez sur Réessayer pour recommencer.",
+      },
     },
     question: {
       responseFailed: "Impossible d’envoyer votre réponse. Réessayez.",
@@ -2331,6 +2336,19 @@ export const fr: TranslationResources = {
         title: "Dictée",
         enabled: "Dictée",
         enabledHint: "Parlez dans la zone de message au lieu de taper",
+      },
+      recordings: {
+        title: "Dictées récentes",
+        info: "Les 20 dernières dictées restent sur cet appareil : une dictée échouée ou vide peut être retranscrite sans la répéter.",
+        empty: "Aucune dictée pour l'instant.",
+        loadError: "Impossible de charger les dictées récentes",
+        pending: "Pas encore transcrite",
+        retry: "Réessayer",
+        copy: "Copier la transcription",
+        delete: "Supprimer",
+        deleteTitle: "Supprimer cet enregistrement ?",
+        deleteMessage: "Son audio est effacé de cet appareil.",
+        audioMissing: "L'audio de cet enregistrement n'est plus sur cet appareil.",
       },
       voiceMode: {
         title: "Mode vocal",
