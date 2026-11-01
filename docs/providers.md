@@ -71,6 +71,21 @@ or without a control.
   `"fast"` to the model's Fast tier and reports the id it runs through `openOptionsPatch` or the
   `applyOptions` result like any other value. The `featureValues` to `options` fold is separate
   and provider-agnostic; it stays at the protocol and legacy edges.
+- **Clients draw from the daemon's answer.** The app reads `controls` and `options` from the
+  agent snapshot for a running or closed agent. A draft and a profile form send everything they
+  would create with (seed, the provider's last-used control values once the provider has said it
+  still draws them, and the user's edits) in `provider.controls.list.request` and draw only what
+  comes back, so an alias such as a legacy Fast profile's `service_tier: "fast"` is resolved once,
+  by the daemon. A toggle shows over the last answer until its own answer arrives. The draft's
+  layers live in a plain model (`agent-controls/draft-options-model.ts`): applying a profile
+  replaces provider and options in one step, while choosing a provider by hand starts over. A
+  profile saves its stored options plus the form's edits, so options no control draws survive an
+  edit. A daemon without `server_info.features.providerOptionControls` sends `features` and
+  `featureValues`; `packages/client/src/compat/legacy-provider-options.ts` is the one place that
+  turns those into `controls` and `options` and back, so nothing in the app branches on it. A
+  create that carries options first lists the controls for its own provider, model, mode and
+  thinking level, since which options are controls differs by model, and sends those as
+  `featureValues`; callers do not prime anything.
 - **Provider-initiated changes.** A setting the provider changes on its own is an
   `options_changed` event. The daemon stores and forwards it and does not push the old value back.
 

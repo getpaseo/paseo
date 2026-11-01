@@ -27,7 +27,7 @@ export function useAgentProfileFormCatalog(input: {
   }, [entries, input.model]);
 }
 
-export function useAgentProfileFormFeatures(input: {
+export function useAgentProfileFormControls(input: {
   serverId: string;
   model: AgentProfileFormModel;
   state: AgentProfileFormState;
@@ -35,14 +35,14 @@ export function useAgentProfileFormFeatures(input: {
   const { t } = useTranslation();
   const client = useHostRuntimeClient(input.serverId);
   const isConnected = useHostRuntimeIsConnected(input.serverId);
-  const request = input.state.featureRequest;
-  const requestKey = input.state.featureRequestKey;
+  const request = input.state.controlsRequest;
+  const requestKey = input.state.controlsRequestKey;
 
   // `dataShape: "value"` and not `"list"`: a list shape keeps the previous
   // page's data while the next request is in flight, which would hand the
   // features of one provider/model combination to the key of another.
-  const featuresQuery = useFetchQuery({
-    queryKey: ["agentProfileFeatures", input.serverId, requestKey],
+  const controlsQuery = useFetchQuery({
+    queryKey: ["agentProfileControls", input.serverId, requestKey],
     dataShape: "value",
     staleTimeMs: 5 * 60 * 1000,
     enabled: Boolean(client && isConnected && request),
@@ -51,28 +51,28 @@ export function useAgentProfileFormFeatures(input: {
       if (!client || !request) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      const payload = await client.listProviderFeatures({ ...request, cwd: HOME_SCOPE_CWD });
+      const payload = await client.listProviderControls({ ...request, cwd: HOME_SCOPE_CWD });
       if (payload.error) {
         throw new Error(payload.error);
       }
-      return payload.features ?? [];
+      return { controls: payload.controls ?? [], options: payload.options ?? {} };
     },
   });
 
-  const { data, isError } = featuresQuery;
+  const { data, isError } = controlsQuery;
   const { model } = input;
 
   useEffect(() => {
     if (!requestKey || !data) {
       return;
     }
-    model.applyFeatures(requestKey, data);
+    model.applyControls(requestKey, data);
   }, [data, model, requestKey]);
 
   useEffect(() => {
     if (!requestKey || !isError) {
       return;
     }
-    model.applyFeaturesUnavailable(requestKey);
+    model.applyControlsUnavailable(requestKey);
   }, [isError, model, requestKey]);
 }

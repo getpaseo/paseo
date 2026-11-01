@@ -9,7 +9,8 @@ import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
 import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./agent-owner.js";
-import { controlsFromFeatures, foldFeatureValues } from "./option-controls.js";
+import { controlsFromFeatures } from "@getpaseo/protocol/option-controls";
+import { foldFeatureValues } from "./option-controls.js";
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
   .object({

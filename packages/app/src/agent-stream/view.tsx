@@ -1304,7 +1304,8 @@ function collectAgentSetupDiffs(left: AgentScreenAgent, right: AgentScreenAgent)
   if (left.runtimeInfo?.thinkingOptionId !== right.runtimeInfo?.thinkingOptionId) {
     reasons.push("agent.runtimeInfo.thinkingOptionId");
   }
-  if (left.features !== right.features) reasons.push("agent.features");
+  if (left.options !== right.options) reasons.push("agent.options");
+  if (left.controls !== right.controls) reasons.push("agent.controls");
   return reasons;
 }
 

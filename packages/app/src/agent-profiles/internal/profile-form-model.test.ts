@@ -1,7 +1,7 @@
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import { describe, expect, it } from "vitest";
 import {
-  buildFeatureRequestKey,
+  buildControlsRequestKey,
   openAgentProfileForm,
   type AgentProfileFormModel,
 } from "./profile-form-model";
@@ -173,7 +173,7 @@ describe("openAgentProfileForm", () => {
         model: "claude-opus-5",
         modeId: "plan",
         thinkingOptionId: "think-hard",
-        featureValues: { webSearch: true },
+        options: { webSearch: true },
         notes: "Visual work only.",
       },
     });
@@ -229,10 +229,11 @@ describe("openAgentProfileForm", () => {
       selectClaude(model);
       model.setModel("claude-opus-5", { label: "Opus 5" });
       model.setThinking("think-hard", { label: "Think hard" });
-      model.applyFeatures(model.getState().featureRequestKey ?? "", [
-        { type: "toggle", id: "webSearch", label: "Web search", value: false },
-      ]);
-      model.setFeatureValue("webSearch", true);
+      model.applyControls(model.getState().controlsRequestKey ?? "", {
+        controls: [{ type: "toggle", key: "webSearch", label: "Web search" }],
+        options: { webSearch: false },
+      });
+      model.setOption("webSearch", true);
 
       model.setProvider("codex", { label: "Codex" });
       const state = model.getState();
@@ -242,8 +243,9 @@ describe("openAgentProfileForm", () => {
       expect(state.modelDisplay).toEqual({ label: "GPT-5.2 Codex" });
       expect(state.thinkingOptionId).toBe("");
       expect(state.thinkingDisplay).toBeNull();
-      expect(state.featureValues).toEqual({});
-      expect(state.features).toEqual([]);
+      expect(state.options).toEqual({});
+      expect(state.optionEdits).toEqual({});
+      expect(state.controls).toEqual([]);
       expect(state.name).toBe("Test writer");
     });
 
@@ -334,23 +336,28 @@ describe("openAgentProfileForm", () => {
     });
   });
 
-  describe("features", () => {
-    it("asks for features per provider/model/mode/thinking combination", () => {
+  const WEB_SEARCH_CONTROLS = {
+    controls: [{ type: "toggle" as const, key: "webSearch", label: "Web search" }],
+    options: { webSearch: false },
+  };
+
+  describe("controls", () => {
+    it("asks for controls per provider/model/mode/thinking combination", () => {
       const model = openWithCatalog({ mode: "create" });
       selectClaude(model);
 
-      expect(model.getState().featureRequest).toEqual({
+      expect(model.getState().controlsRequest).toEqual({
         provider: "claude",
         model: "claude-opus-5",
         modeId: "plan",
         thinkingOptionId: "think",
       });
-      const firstKey = model.getState().featureRequestKey;
+      const firstKey = model.getState().controlsRequestKey;
 
       model.setModel("claude-haiku-4-5", { label: "Haiku 4.5" });
 
-      expect(model.getState().featureRequestKey).not.toBe(firstKey);
-      expect(model.getState().featureRequest).toEqual({
+      expect(model.getState().controlsRequestKey).not.toBe(firstKey);
+      expect(model.getState().controlsRequest).toEqual({
         provider: "claude",
         model: "claude-haiku-4-5",
         modeId: "plan",
@@ -361,77 +368,168 @@ describe("openAgentProfileForm", () => {
     it("moves from pending to complete only for the current request", () => {
       const model = openWithCatalog({ mode: "create" });
       selectClaude(model);
-      const key = model.getState().featureRequestKey ?? "";
-      expect(model.getState().featureResolution).toBe("pending");
+      const key = model.getState().controlsRequestKey ?? "";
+      expect(model.getState().controlsResolution).toBe("pending");
 
-      model.applyFeatures("stale-key", [
-        { type: "toggle", id: "webSearch", label: "Web search", value: false },
-      ]);
-      expect(model.getState().featureResolution).toBe("pending");
-      expect(model.getState().features).toEqual([]);
+      model.applyControls("stale-key", {
+        controls: [{ type: "toggle", key: "webSearch", label: "Web search" }],
+        options: { webSearch: false },
+      });
+      expect(model.getState().controlsResolution).toBe("pending");
+      expect(model.getState().controls).toEqual([]);
 
-      model.applyFeatures(key, [
-        { type: "toggle", id: "webSearch", label: "Web search", value: false },
-      ]);
-      expect(model.getState().featureResolution).toBe("complete");
-      expect(model.getState().disclosure.showFeaturesField).toBe(true);
+      model.applyControls(key, {
+        controls: [{ type: "toggle", key: "webSearch", label: "Web search" }],
+        options: { webSearch: false },
+      });
+      expect(model.getState().controlsResolution).toBe("complete");
+      expect(model.getState().disclosure.showControlsField).toBe(true);
     });
 
-    it("reflects a set feature value back into the rendered feature", () => {
+    it("reflects a set option back into the rendered controls", () => {
+      const model = openWithCatalog({ mode: "create" });
+      model.setName("Searcher");
+      selectClaude(model);
+      model.applyControls(model.getState().controlsRequestKey ?? "", WEB_SEARCH_CONTROLS);
+
+      model.setOption("webSearch", true);
+
+      expect(model.getState().controls[0]).toMatchObject({ key: "webSearch" });
+      expect(model.getState().controlOptions).toEqual({ webSearch: true });
+      expect(model.getState().submitValue?.options).toEqual({ webSearch: true });
+    });
+
+    it("keeps stored options while the controls are still pending", () => {
+      const model = openAgentProfileForm({
+        mode: "edit",
+        profile: { id: "p1", name: "UI work", provider: "claude", options: { webSearch: true } },
+      });
+      model.applyProviderCatalog(ENTRIES);
+
+      expect(model.getState().controlsResolution).toBe("pending");
+      expect(model.getState().submitValue?.options).toEqual({ webSearch: true });
+    });
+
+    it("keeps options no control draws, so editing a profile does not drop them", () => {
+      const model = openAgentProfileForm({
+        mode: "edit",
+        profile: {
+          id: "p1",
+          name: "UI work",
+          provider: "claude",
+          options: { webSearch: true, sandbox_mode: "read-only" },
+        },
+      });
+      model.applyProviderCatalog(ENTRIES);
+      model.applyControls(model.getState().controlsRequestKey ?? "", WEB_SEARCH_CONTROLS);
+      model.setOption("webSearch", false);
+
+      expect(model.getState().submitValue?.options).toEqual({
+        webSearch: false,
+        sandbox_mode: "read-only",
+      });
+    });
+
+    it("draws the options the daemon resolved from the stored ones, then the edits", () => {
+      const model = openAgentProfileForm({
+        mode: "edit",
+        profile: { id: "p1", name: "Fast", provider: "codex", options: { service_tier: "fast" } },
+      });
+      model.applyProviderCatalog(ENTRIES);
+
+      // The request carries the stored options so the daemon can resolve the legacy tier.
+      expect(model.getState().controlsRequest?.providerOptions).toEqual({ service_tier: "fast" });
+
+      model.applyControls(model.getState().controlsRequestKey ?? "", {
+        controls: [
+          {
+            type: "select",
+            key: "service_tier",
+            label: "Speed",
+            defaultValue: "default",
+            choices: [
+              { value: "default", label: "Standard" },
+              { value: "priority", label: "Fast" },
+            ],
+          },
+        ],
+        options: { service_tier: "priority" },
+      });
+
+      expect(model.getState().controlOptions).toEqual({ service_tier: "priority" });
+      // Nothing was edited, so the stored value is saved as it was.
+      expect(model.getState().submitValue?.options).toEqual({ service_tier: "fast" });
+    });
+
+    it("sends an edit to the daemon with the stored options, and draws the answer", () => {
+      const model = openAgentProfileForm({
+        mode: "edit",
+        profile: {
+          id: "p1",
+          name: "Fast",
+          provider: "codex",
+          options: { service_tier: "fast", sandbox_mode: "read-only" },
+        },
+      });
+      model.applyProviderCatalog(ENTRIES);
+      const speed = {
+        controls: [
+          {
+            type: "select" as const,
+            key: "service_tier",
+            label: "Speed",
+            defaultValue: "default",
+            choices: [
+              { value: "default", label: "Standard" },
+              { value: "priority", label: "Fast" },
+            ],
+          },
+        ],
+        options: { service_tier: "priority", sandbox_mode: "read-only" },
+      };
+      model.applyControls(model.getState().controlsRequestKey ?? "", speed);
+
+      model.setOption("service_tier", "default");
+
+      // The controls stay up while the daemon answers, with the toggle laid over the last answer.
+      expect(model.getState().controls).toHaveLength(1);
+      expect(model.getState().controlOptions).toMatchObject({ service_tier: "default" });
+      // The request carries everything the profile would save, so the daemon resolves it.
+      expect(model.getState().controlsRequest?.providerOptions).toEqual({
+        service_tier: "default",
+        sandbox_mode: "read-only",
+      });
+      expect(model.getState().controlsResolution).toBe("pending");
+
+      model.applyControls(model.getState().controlsRequestKey ?? "", {
+        ...speed,
+        options: { service_tier: "default", sandbox_mode: "read-only" },
+      });
+      expect(model.getState().controlsResolution).toBe("complete");
+      expect(model.getState().controlOptions).toEqual({
+        service_tier: "default",
+        sandbox_mode: "read-only",
+      });
+    });
+
+    it("draws no controls for the previous model while another model's answer is pending", () => {
       const model = openWithCatalog({ mode: "create" });
       selectClaude(model);
-      model.applyFeatures(model.getState().featureRequestKey ?? "", [
-        { type: "toggle", id: "webSearch", label: "Web search", value: false },
-      ]);
+      model.applyControls(model.getState().controlsRequestKey ?? "", WEB_SEARCH_CONTROLS);
 
-      model.setFeatureValue("webSearch", true);
+      model.setModel("claude-haiku-4-5", { label: "Haiku 4.5" });
 
-      expect(model.getState().features[0]).toMatchObject({ id: "webSearch", value: true });
-      expect(model.getState().featureValues).toEqual({ webSearch: true });
-    });
-
-    it("keeps stored feature values while the feature list is still pending", () => {
-      const model = openAgentProfileForm({
-        mode: "edit",
-        profile: {
-          id: "p1",
-          name: "UI work",
-          provider: "claude",
-          featureValues: { webSearch: true },
-        },
-      });
-      model.applyProviderCatalog(ENTRIES);
-
-      expect(model.getState().featureResolution).toBe("pending");
-      expect(model.getState().submitValue?.featureValues).toEqual({ webSearch: true });
-    });
-
-    it("prunes stored values the provider no longer reports", () => {
-      const model = openAgentProfileForm({
-        mode: "edit",
-        profile: {
-          id: "p1",
-          name: "UI work",
-          provider: "claude",
-          featureValues: { webSearch: true, retiredFlag: true },
-        },
-      });
-      model.applyProviderCatalog(ENTRIES);
-      model.applyFeatures(model.getState().featureRequestKey ?? "", [
-        { type: "toggle", id: "webSearch", label: "Web search", value: false },
-      ]);
-
-      expect(model.getState().featureValues).toEqual({ webSearch: true });
+      expect(model.getState().controls).toEqual([]);
     });
 
     it("resolves an unavailable feature listing without showing the field", () => {
       const model = openWithCatalog({ mode: "create" });
       selectClaude(model);
 
-      model.applyFeaturesUnavailable(model.getState().featureRequestKey ?? "");
+      model.applyControlsUnavailable(model.getState().controlsRequestKey ?? "");
 
-      expect(model.getState().featureResolution).toBe("complete");
-      expect(model.getState().disclosure.showFeaturesField).toBe(false);
+      expect(model.getState().controlsResolution).toBe("complete");
+      expect(model.getState().disclosure.showControlsField).toBe(false);
     });
   });
 
@@ -464,15 +562,15 @@ describe("openAgentProfileForm", () => {
   });
 });
 
-describe("buildFeatureRequestKey", () => {
+describe("buildControlsRequestKey", () => {
   it("is null without a provider", () => {
-    expect(buildFeatureRequestKey(null)).toBeNull();
+    expect(buildControlsRequestKey(null)).toBeNull();
   });
 
   it("separates the fields so a value cannot bleed across positions", () => {
-    expect(buildFeatureRequestKey({ provider: "claude", model: "a|b" })).toBe("claude|a|b||");
-    expect(buildFeatureRequestKey({ provider: "claude", modeId: "a" })).not.toBe(
-      buildFeatureRequestKey({ provider: "claude", model: "a" }),
+    expect(buildControlsRequestKey({ provider: "claude", model: "a|b" })).toBe("claude|a|b||");
+    expect(buildControlsRequestKey({ provider: "claude", modeId: "a" })).not.toBe(
+      buildControlsRequestKey({ provider: "claude", model: "a" }),
     );
   });
 });

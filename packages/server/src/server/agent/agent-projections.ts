@@ -20,7 +20,7 @@ import type {
 } from "./agent-sdk-types.js";
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import type { ManagedAgent } from "./agent-manager.js";
-import { featuresFromControls } from "./option-controls.js";
+import { featuresFromControls } from "@getpaseo/protocol/option-controls";
 import type { JsonValue } from "../json-utils.js";
 import {
   isStoredAgentProviderAvailable,
@@ -213,6 +213,21 @@ function buildStoredPersistenceHandle(
   return toAgentPersistenceHandle(validProviders, record.persistence);
 }
 
+function buildStoredOptionControls(
+  record: StoredAgentRecord,
+): Pick<AgentSnapshotPayload, "features" | "options" | "controls"> {
+  const controls = normalizeControls(record.controls);
+  const options = record.config?.providerOptions
+    ? sanitizeEffectiveOptions(record.config.providerOptions)
+    : undefined;
+  return {
+    // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
+    features: featuresFromControls({ controls, options }),
+    ...(options ? { options } : {}),
+    controls,
+  };
+}
+
 export function buildStoredAgentPayload(
   record: StoredAgentRecord,
   validProviders: Iterable<AgentProvider>,
@@ -234,6 +249,7 @@ export function buildStoredAgentPayload(
   const lastUserMessageAt = record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null;
 
   const runtimeInfo = buildStoredRuntimeInfo(record);
+  const optionControls = buildStoredOptionControls(record);
   const providerAvailable = isStoredAgentProviderAvailable(record, validProviders);
   const persistence = projectPersistenceHandleForWire(
     buildStoredPersistenceHandle(record, validProviders),
@@ -258,6 +274,7 @@ export function buildStoredAgentPayload(
     capabilities: defaultCapabilities,
     currentModeId: record.lastModeId ?? null,
     availableModes: [],
+    ...optionControls,
     pendingPermissions: [],
     persistence,
     title: record.title ?? null,
@@ -463,7 +480,7 @@ function normalizeControls(
   return Array.isArray(controls) ? controls.map((control) => ({ ...control })) : [];
 }
 
-function sanitizeEffectiveOptions(options: ProviderOptions): ProviderOptions {
+function sanitizeEffectiveOptions(options: Record<string, unknown>): ProviderOptions {
   const sanitized = sanitizeOptionalJson(options);
   return sanitized && isJsonObject(sanitized) ? sanitized : {};
 }
