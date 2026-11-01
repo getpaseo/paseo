@@ -735,7 +735,9 @@ export interface AgentSession {
    * value; the daemon stores the patch only when this resolves, so the call is all-or-nothing.
    * Emit nothing from here. Return the options the session ended up with when they differ from
    * the request (a patch, `null` removes a key), for example a value it kept because it could not
-   * be reverted; the daemon stores it together with the patch.
+   * be reverted; the daemon stores it together with the patch. When a throw leaves the session's
+   * state moved anyway, report the moved values once as `options_changed` after the call has
+   * ended, so the stored options still match what runs.
    */
   applyOptions?(options: ProviderOptions): Promise<Record<string, unknown> | void>;
   revertConversation?(input: { messageId: string }): Promise<void>;
