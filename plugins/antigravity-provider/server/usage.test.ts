@@ -56,7 +56,8 @@ const sampleAgyUsageJson = JSON.stringify({
               id: "3p-5h",
               name: "Five Hour Limit Remaining",
               window: "5h",
-              remaining_fraction: 0.5,
+              disabled: true,
+              remaining_fraction: 1,
               reset_time: "2026-10-26T02:28:07Z",
             },
           ],
@@ -141,17 +142,19 @@ describe("Antigravity Usage", () => {
       tone: "ok",
     });
 
+    // agy reports the Claude/GPT 5-hour window as disabled on plans it does not apply to; the
+    // card must carry that as a placeholder state, not as unused quota.
     const claude5h = windows.find((w) => w.id === "claude-gpt-oss-5h");
     expect(claude5h).toBeDefined();
     expect(claude5h?.summary).toBeUndefined();
     expect(claude5h).toMatchObject({
       id: "claude-gpt-oss-5h",
-      label: "Claude & GPT-OSS · 5h",
+      label: "Claude & GPT-OSS · 5h · Disabled",
       shortLabel: "Claude/OSS 5h",
-      usedPct: 50,
-      remainingPct: 50,
-      resetsAt: "2026-10-26T02:28:07Z",
-      tone: "ok",
+      usedPct: null,
+      remainingPct: null,
+      resetsAt: null,
+      tone: "default",
     });
 
     const argonWeekly = windows.find((w) => w.id === "gemini-argon-weekly");
@@ -247,17 +250,66 @@ describe("Antigravity Usage", () => {
     const { account } = usage.remember(launch);
 
     const report = await source.fetch({ account });
-    expect(report.status).toBe("available");
-    if (report.status === "available") {
-      expect(report.windows).toHaveLength(5);
-      expect(report.details).toEqual([
+    expect(report).toEqual({
+      status: "available",
+      windows: [
+        {
+          id: "gemini-weekly",
+          label: "Gemini · Weekly",
+          shortLabel: "Gemini wk",
+          summary: true,
+          usedPct: 2,
+          remainingPct: 98,
+          resetsAt: "2026-11-01T09:42:13Z",
+          tone: "ok",
+        },
+        {
+          id: "gemini-5h",
+          label: "Gemini · 5h",
+          shortLabel: "Gemini 5h",
+          usedPct: 10,
+          remainingPct: 90,
+          resetsAt: "2026-10-26T02:21:56Z",
+          tone: "ok",
+        },
+        {
+          id: "claude-gpt-oss-weekly",
+          label: "Claude & GPT-OSS · Weekly",
+          shortLabel: "Claude/OSS wk",
+          summary: true,
+          usedPct: 0,
+          remainingPct: 100,
+          resetsAt: "2026-11-01T21:28:07Z",
+          tone: "ok",
+        },
+        {
+          id: "claude-gpt-oss-5h",
+          label: "Claude & GPT-OSS · 5h · Disabled",
+          shortLabel: "Claude/OSS 5h",
+          usedPct: null,
+          remainingPct: null,
+          resetsAt: null,
+          tone: "default",
+        },
+        {
+          id: "gemini-argon-weekly",
+          label: "Gemini 4 Argon · Weekly",
+          shortLabel: "Argon wk",
+          summary: true,
+          usedPct: 100,
+          remainingPct: 0,
+          resetsAt: "2026-10-26T12:48:38Z",
+          tone: "danger",
+        },
+      ],
+      details: [
         {
           id: "observed",
           label: "Observed",
           value: expect.any(String),
         },
-      ]);
-    }
+      ],
+    });
 
     expect(runner).toHaveBeenCalledTimes(1);
     expect(runner).toHaveBeenCalledWith(launch, []);
