@@ -4,7 +4,7 @@ import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
 
 describe("ClaudeSidechainTracker", () => {
-  it("retains a background child's actions across the parent finishing", () => {
+  it("keeps a background child's card across the parent finishing", () => {
     const tracker = new ClaudeSidechainTracker({
       getToolInput: () => ({ subagent_type: "general-purpose", description: "List files" }),
       isDescriptorOwnedElsewhere: () => true,
@@ -15,27 +15,67 @@ describe("ClaudeSidechainTracker", () => {
         parent_tool_use_id: "task-1",
         message: { content: [{ type: "tool_use", id, name: "Bash", input: { command } }] },
       }) as unknown as SDKMessage;
-    tracker.handleMessage(action("ls", "ls -1"), "task-1");
+    const parentCards = (events: ReturnType<typeof tracker.handleMessage>) =>
+      events.filter((event) => event.type === "timeline");
+    const childCallIds = (events: ReturnType<typeof tracker.handleMessage>) =>
+      events.flatMap((event) =>
+        event.type === "provider_subagent" &&
+        event.event.type === "timeline" &&
+        event.event.item.type === "tool_call"
+          ? [event.event.item.callId]
+          : [],
+      );
+
+    expect(parentCards(tracker.handleMessage(action("ls", "ls -1"), "task-1"))).toHaveLength(1);
     expect(tracker.finishAll("completed")).toEqual([]);
-    const events = tracker.handleMessage(action("pwd", "pwd"), "task-1");
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        type: "timeline",
-        item: expect.objectContaining({
-          detail: expect.objectContaining({ log: "[Bash] ls -1\n[Bash] pwd" }),
-        }),
-      }),
-    );
+    const afterFinish = tracker.handleMessage(action("pwd", "pwd"), "task-1");
+    expect(parentCards(afterFinish)).toEqual([]);
+    expect(childCallIds(afterFinish)).toEqual(["pwd"]);
+
     tracker.delete("task-1");
     const next = tracker.handleMessage(action("next", "ls"), "task-1");
-    expect(next).toContainEqual(
-      expect.objectContaining({
-        type: "timeline",
-        item: expect.objectContaining({
-          detail: expect.objectContaining({ log: "[Bash] ls" }),
-        }),
-      }),
-    );
+    expect(parentCards(next)).toHaveLength(1);
+    expect(childCallIds(next)).toEqual(["next"]);
+  });
+
+  it("shows a streamed child tool call's input once the assistant message brings it", () => {
+    const tracker = new ClaudeSidechainTracker({ getToolInput: () => null });
+    const frames = [
+      {
+        type: "stream_event",
+        parent_tool_use_id: "task-1",
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "tool_use", id: "bash-1", name: "Bash", input: {} },
+        },
+      },
+      {
+        type: "assistant",
+        parent_tool_use_id: "task-1",
+        message: {
+          content: [
+            { type: "tool_use", id: "bash-1", name: "Bash", input: { command: "echo child" } },
+          ],
+        },
+      },
+    ] as unknown as SDKMessage[];
+
+    const childCards = frames
+      .flatMap((frame) => tracker.handleMessage(frame, "task-1"))
+      .flatMap((event) =>
+        event.type === "provider_subagent" &&
+        event.event.type === "timeline" &&
+        event.event.item.type === "tool_call"
+          ? [event.event.item]
+          : [],
+      );
+
+    expect(childCards.at(-1)).toMatchObject({
+      callId: "bash-1",
+      status: "running",
+      detail: { type: "shell", command: "echo child" },
+    });
   });
 
   it("uses Claude's native agent name for the provider subagent title", () => {

@@ -30,7 +30,7 @@ import {
   type ActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { density, densityIconBox } from "@/styles/density";
+import { density, densityIconBox, densityIconProps } from "@/styles/density";
 import type { Theme } from "@/styles/theme";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import { getSidebarRowBackdrop } from "@/components/sidebar/sidebar-row-backdrop";
@@ -99,6 +99,7 @@ import {
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
 import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
+import { createWorkspaceVisibilityPolicy } from "@/components/sidebar/sidebar-group-visibility";
 import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
 import {
   SidebarWorkspaceRowFrame,
@@ -462,12 +463,12 @@ const openInNewWindowLeadingIcon = (
   <ThemedExternalLink size={14} uniProps={foregroundMutedColorMapping} />
 );
 
+const kebabTriggerIconProps = densityIconProps("sm", foregroundMutedColorMapping);
+const kebabTriggerIconHoveredProps = densityIconProps("sm", foregroundColorMapping);
+
 function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }) {
   return (
-    <ThemedMoreVertical
-      size={14}
-      uniProps={hovered ? foregroundColorMapping : foregroundMutedColorMapping}
-    />
+    <ThemedMoreVertical uniProps={hovered ? kebabTriggerIconHoveredProps : kebabTriggerIconProps} />
   );
 }
 
@@ -1593,19 +1594,20 @@ function ProjectBlock({
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
   const visibilityPolicy = useMemo(
-    () => ({
-      kind: "workspaces" as const,
-      getStatusBucket: (workspace: SidebarWorkspacePlacement) =>
-        workspaceEntriesByKey.get(workspace.workspaceKey)!.statusBucket,
-    }),
+    () => createWorkspaceVisibilityPolicy<SidebarWorkspacePlacement>(workspaceEntriesByKey),
     [workspaceEntriesByKey],
   );
   const {
+    leadingItem: leadingWorkspace,
     visibleItems: visibleWorkspaces,
     expanded: workspacesExpanded,
     canToggle: canToggleWorkspaces,
     toggleExpanded: toggleWorkspacesExpanded,
-  } = useLimitedSidebarGroup(project.workspaces, visibilityPolicy);
+  } = useLimitedSidebarGroup({
+    items: project.workspaces,
+    selection: selectionEnabled ? activeWorkspaceSelection : null,
+    policy: visibilityPolicy,
+  });
   const activeServerId = activeWorkspaceSelection?.serverId ?? null;
   const activeHostStatus = useHostRuntimeConnectionStatus(activeServerId ?? "");
   const preferredServerId = activeHostStatus === "online" ? activeServerId : null;
@@ -1764,28 +1766,33 @@ function ProjectBlock({
   let projectChildren = null;
   if (!collapsed) {
     if (project.workspaces.length > 0) {
+      const leadingWorkspaceRow = leadingWorkspace ? renderWorkspaceRow(leadingWorkspace) : null;
       projectChildren = (
         <>
           {manualSort ? (
-            <DraggableList
-              testID={`sidebar-workspace-list-${project.viewKey}`}
-              data={visibleWorkspaces}
-              keyExtractor={workspaceKeyExtractor}
-              renderItem={renderWorkspace}
-              onDragEnd={handleWorkspaceDragEnd}
-              extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
-              scrollEnabled={false}
-              useDragHandle
-              nestable={useNestable}
-              simultaneousGestureRef={parentGestureRef}
-              gestureHostPresented={dragGestureHostActive}
-              containerStyle={styles.workspaceListContainer}
-            />
+            <>
+              {leadingWorkspaceRow}
+              <DraggableList
+                testID={`sidebar-workspace-list-${project.viewKey}`}
+                data={visibleWorkspaces}
+                keyExtractor={workspaceKeyExtractor}
+                renderItem={renderWorkspace}
+                onDragEnd={handleWorkspaceDragEnd}
+                extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
+                scrollEnabled={false}
+                useDragHandle
+                nestable={useNestable}
+                simultaneousGestureRef={parentGestureRef}
+                gestureHostPresented={dragGestureHostActive}
+                containerStyle={styles.workspaceListContainer}
+              />
+            </>
           ) : (
             <View
               testID={`sidebar-workspace-list-${project.viewKey}`}
               style={styles.workspaceListContainer}
             >
+              {leadingWorkspaceRow}
               {visibleWorkspaces.map((item) => renderWorkspaceRow(item))}
             </View>
           )}
@@ -2191,11 +2198,15 @@ function ProjectModeList({
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const { pinnedChats, unpinnedProjects } = pinnedGroups;
   const {
+    leadingItem: leadingPinnedChat,
     visibleItems: visiblePinnedChats,
     expanded: pinnedChatsExpanded,
     canToggle: canTogglePinnedChats,
     toggleExpanded: togglePinnedChatsExpanded,
-  } = useLimitedSidebarGroup(pinnedChats);
+  } = useLimitedSidebarGroup({
+    items: pinnedChats,
+    selection: selectionEnabled ? activeWorkspaceSelection : null,
+  });
   const nativeScrollGestureProps = useMemo(
     () =>
       parentGestureRef
@@ -2398,37 +2409,38 @@ function ProjectModeList({
     [renderProjectBlock],
   );
 
-  const renderPinnedChat = useCallback(
-    ({
-      item: workspace,
-      drag,
-      isActive,
-      dragHandleProps,
-    }: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => {
-      return (
-        <MemoWorkspaceRowItem
-          workspace={workspace}
-          workspaceEntry={workspaceEntriesByKey.get(workspace.workspaceKey) ?? null}
-          hostBadge={hostBadgeByServerId.get(workspace.serverId) ?? null}
-          leadingProjectName={workspace.projectName}
-          leadingProjectIconDataUri={
-            projectIconByProjectViewKey.get(workspace.projectViewKey) ?? null
-          }
-          shortcutNumber={shortcutIndexByWorkspaceKey.get(workspace.workspaceKey) ?? null}
-          showShortcutBadge={showShortcutBadges}
-          canCopyBranchName={workspace.projectKind === "git"}
-          canPin={supportsPinningByServerId.get(workspace.serverId) === true}
-          onToggleWorkspacePin={onToggleWorkspacePin}
-          isCreating={creatingWorkspaceIds.has(workspace.workspaceId)}
-          selectionEnabled={selectionEnabled}
-          activeWorkspaceSelection={activeWorkspaceSelection}
-          onWorkspacePress={onWorkspacePress}
-          drag={drag}
-          isDragging={isActive}
-          dragHandleProps={dragHandleProps}
-        />
-      );
-    },
+  const renderPinnedChatRow = useCallback(
+    (
+      workspace: SidebarWorkspacePlacement,
+      input?: {
+        drag?: () => void;
+        isDragging?: boolean;
+        dragHandleProps?: DraggableListDragHandleProps;
+      },
+    ) => (
+      <MemoWorkspaceRowItem
+        key={workspace.workspaceKey}
+        workspace={workspace}
+        workspaceEntry={workspaceEntriesByKey.get(workspace.workspaceKey) ?? null}
+        hostBadge={hostBadgeByServerId.get(workspace.serverId) ?? null}
+        leadingProjectName={workspace.projectName}
+        leadingProjectIconDataUri={
+          projectIconByProjectViewKey.get(workspace.projectViewKey) ?? null
+        }
+        shortcutNumber={shortcutIndexByWorkspaceKey.get(workspace.workspaceKey) ?? null}
+        showShortcutBadge={showShortcutBadges}
+        canCopyBranchName={workspace.projectKind === "git"}
+        canPin={supportsPinningByServerId.get(workspace.serverId) === true}
+        onToggleWorkspacePin={onToggleWorkspacePin}
+        isCreating={creatingWorkspaceIds.has(workspace.workspaceId)}
+        selectionEnabled={selectionEnabled}
+        activeWorkspaceSelection={activeWorkspaceSelection}
+        onWorkspacePress={onWorkspacePress}
+        drag={input?.drag}
+        isDragging={input?.isDragging}
+        dragHandleProps={input?.dragHandleProps}
+      />
+    ),
     [
       activeWorkspaceSelection,
       creatingWorkspaceIds,
@@ -2442,6 +2454,22 @@ function ProjectModeList({
       projectIconByProjectViewKey,
       workspaceEntriesByKey,
     ],
+  );
+
+  const renderPinnedChat = useCallback(
+    ({
+      item: workspace,
+      drag,
+      isActive,
+      dragHandleProps,
+    }: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => {
+      return renderPinnedChatRow(workspace, {
+        drag,
+        isDragging: isActive,
+        dragHandleProps,
+      });
+    },
+    [renderPinnedChatRow],
   );
 
   const projectBody =
@@ -2476,6 +2504,7 @@ function ProjectModeList({
           />
           {pinnedCollapsed ? null : (
             <>
+              {leadingPinnedChat ? renderPinnedChatRow(leadingPinnedChat) : null}
               <DraggableList
                 testID="sidebar-pinned-list"
                 data={visiblePinnedChats}
@@ -2708,8 +2737,12 @@ const styles = StyleSheet.create((theme) => ({
     marginRight: -6,
   },
   projectKebabButton: {
-    width: 24,
-    height: 24,
+    // Larger on compact so the kebab is an easy tap target. The negative margins keep its
+    // dots on the same rail as the 24px desktop box and the row at its 44px height.
+    width: { xs: 32, md: 24 },
+    height: { xs: 32, md: 24 },
+    marginRight: { xs: -4, md: 0 },
+    marginVertical: { xs: -4, md: 0 },
     borderRadius: theme.borderRadius.md,
     alignItems: "center",
     justifyContent: "center",

@@ -180,6 +180,11 @@ const test = daemonTest.extend<{
           localStorage.setItem("@paseo:daemon-registry", JSON.stringify([daemon, ...extraHosts]));
           localStorage.removeItem("@paseo:settings");
           localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(preferences));
+          // New installs collapse finished turns; specs assert on the rows inside them, so they
+          // start from the full chat unless they seed their own settings.
+          if (!localStorage.getItem("@paseo:app-settings")) {
+            localStorage.setItem("@paseo:app-settings", JSON.stringify({ chatDisplay: "full" }));
+          }
         },
         {
           daemon: testDaemon,

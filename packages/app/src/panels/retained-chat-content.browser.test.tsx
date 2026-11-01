@@ -1,11 +1,15 @@
 import React, {
   act,
+  Profiler,
   useCallback,
   useEffect,
   useLayoutEffect,
   useState,
   useSyncExternalStore,
 } from "react";
+import { useAgentStreamTail } from "@/agent-stream/use-agent-stream-tail";
+import { useSessionStore } from "@/stores/session-store";
+import type { StreamItem } from "@/types/stream";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { RetainedPanelActivity, useRetainedPanelActive } from "@/components/retained-panel";
@@ -30,11 +34,24 @@ import {
 import type { ContextBridge } from "@/components/ui/isolated-bottom-sheet-modal";
 
 import { render as renderEnvironment } from "@testing-library/react";
-import { useWorkspaceSheetEnvironment } from "@/screens/workspace/workspace-sheet-environment";
+import {
+  SheetPaneHostProvider,
+  useSheetPaneBridge,
+  type SheetPaneHost,
+} from "@/screens/workspace/sheet-pane";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useAssistantFileLinkActions, type InlinePathTarget } from "@/assistant-file-links";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+const SHEET_PANE_HOST: SheetPaneHost = {
+  workspaceKey: "host:workspace",
+  serverId: "host",
+  workspaceId: "workspace",
+  isWorkspaceFocused: true,
+  buildContent: () => {
+    throw new Error("The environment probe builds no pane content");
+  },
+};
 let root: Root;
 let container: HTMLDivElement;
 beforeEach(() => {
@@ -151,12 +168,19 @@ describe("workspace sheet environment", () => {
       }, [name]);
       return null;
     }
-    function Capture() {
-      bridge = useWorkspaceSheetEnvironment();
+    function CaptureBridge() {
+      bridge = useSheetPaneBridge();
       return (
         <ComposerEditingScope tabId="file" targetKey="file:a">
           <Probe name="pane" />
         </ComposerEditingScope>
+      );
+    }
+    function Capture() {
+      return (
+        <SheetPaneHostProvider value={SHEET_PANE_HOST}>
+          <CaptureBridge />
+        </SheetPaneHostProvider>
       );
     }
     function Source({ workspaceRoot, active }: { workspaceRoot: string; active: boolean }) {
@@ -220,3 +244,69 @@ describe("workspace sheet environment", () => {
     source.unmount();
   });
 });
+
+for (const [runtime, Chat] of [
+  ["native", NativeChat],
+  ["web", WebChat],
+] as const) {
+  it(`${runtime} ignores hidden stream chunks and reads the latest transcript on reveal`, async () => {
+    const serverId = `hidden-stream-${runtime}`;
+    const agentId = "background-agent";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null);
+    const profile = {
+      commits: 0,
+      onRender() {
+        profile.commits++;
+      },
+    };
+    const publish = (text: string) => {
+      const item: StreamItem = {
+        id: "message",
+        kind: "assistant_message",
+        text,
+        timestamp: new Date(),
+      };
+      store.setAgentStreamTail(serverId, new Map([[agentId, [item]]]));
+    };
+    function Content() {
+      const items = useAgentStreamTail(serverId, agentId);
+      const [draft] = useState("unsent draft");
+      return (
+        <span>
+          {draft}:{items?.[0]?.kind === "assistant_message" ? items[0].text : ""}
+        </span>
+      );
+    }
+    const show = (active: boolean) =>
+      act(() =>
+        root.render(
+          <Profiler id="workspace" onRender={profile.onRender}>
+            <RetainedPanelActivity active={active}>
+              <Chat>
+                <Content />
+              </Chat>
+            </RetainedPanelActivity>
+          </Profiler>,
+        ),
+      );
+    try {
+      publish("first chunk");
+      show(true);
+      expect(container.textContent).toBe("unsent draft:first chunk");
+      show(false);
+      const hiddenCommits = profile.commits;
+      for (let index = 0; index < 10; index++) {
+        await act(async () => publish(`chunk ${index}`));
+      }
+      expect(profile.commits).toBe(hiddenCommits);
+      show(true);
+      expect(container.textContent).toBe("unsent draft:chunk 9");
+      await act(async () => publish("live after reveal"));
+      expect(container.textContent).toBe("unsent draft:live after reveal");
+    } finally {
+      act(() => root.render(null));
+      store.clearSession(serverId);
+    }
+  });
+}

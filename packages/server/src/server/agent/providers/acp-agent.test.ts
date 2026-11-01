@@ -1,6 +1,6 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -35,6 +35,7 @@ import {
   resolveACPModelSelection,
   summarizeACPRequestError,
 } from "./acp-agent.js";
+import { createIdleRuntimeCleanup } from "../idle-runtime-cleanup/index.js";
 import type { ProcessTerminator, TreeKillTarget } from "../../../utils/tree-kill.js";
 import {
   COPILOT_AGENT_FEATURE_OPTION,
@@ -808,6 +809,46 @@ describe("ACPAgentSession terminal tools", () => {
     ).resolves.toMatchObject({
       output: "spawn missing-command ENOENT\n",
       truncated: false,
+    });
+  });
+
+  test("trims large terminal output without rescanning the retained suffix", async () => {
+    const session = createSession();
+    const terminal = await session.createTerminal({
+      sessionId: "session-1",
+      command: process.execPath,
+      args: ["-e", 'process.stdout.write("x".repeat(1024 * 1024))'],
+      cwd: process.cwd(),
+      outputByteLimit: 1024,
+    });
+    await session.waitForTerminalExit({ sessionId: "session-1", terminalId: terminal.terminalId });
+
+    await expect(
+      session.terminalOutput({ sessionId: "session-1", terminalId: terminal.terminalId }),
+    ).resolves.toEqual({
+      output: "x".repeat(1024),
+      truncated: true,
+      exitStatus: { exitCode: 0, signal: null },
+    });
+  }, 1000);
+
+  test("trims terminal output at a UTF-8 character boundary", async () => {
+    const session = createSession();
+    const terminal = await session.createTerminal({
+      sessionId: "session-1",
+      command: process.execPath,
+      args: ["-e", 'process.stdout.write("😀ab")'],
+      cwd: process.cwd(),
+      outputByteLimit: 3,
+    });
+    await session.waitForTerminalExit({ sessionId: "session-1", terminalId: terminal.terminalId });
+
+    await expect(
+      session.terminalOutput({ sessionId: "session-1", terminalId: terminal.terminalId }),
+    ).resolves.toEqual({
+      output: "ab",
+      truncated: true,
+      exitStatus: { exitCode: 0, signal: null },
     });
   });
 });
@@ -2592,6 +2633,72 @@ describe("ACPAgentSession slash commands", () => {
         kind: "command",
       },
     ]);
+  });
+
+  test("lists late command batches through the public ACP client", async () => {
+    const artifacts = path.resolve(".artifacts");
+    await mkdir(artifacts, { recursive: true });
+    const directory = await mkdtemp(path.join(artifacts, "acp-command-inventory-"));
+    const script = path.join(directory, "agent.mjs");
+    await writeFile(
+      script,
+      `
+import { createInterface } from "node:readline";
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+const help = { name: "help", description: "Show available commands" };
+const skill = { name: "xlsx", description: "Work with spreadsheets", input: { hint: "[instructions]" } };
+const publish = (commands) => send({
+  jsonrpc: "2.0", method: "session/update", params: {
+    sessionId: "inventory-session", update: {
+      sessionUpdate: "available_commands_update", availableCommands: commands,
+    },
+  },
+});
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.method === "initialize") {
+    send({ jsonrpc: "2.0", id: request.id, result: { protocolVersion: 1, agentCapabilities: {} } });
+  } else if (request.method === "session/new") {
+    // The first batch is already cached when createSession returns.
+    publish([help]);
+    send({ jsonrpc: "2.0", id: request.id, result: { sessionId: "inventory-session" } });
+    setTimeout(() => publish([help]), 100);
+    setTimeout(() => publish([help, skill]), 350);
+  } else if (request.id !== undefined) {
+    send({ jsonrpc: "2.0", id: request.id, error: { code: -32601, message: "Method not found" } });
+  }
+});
+`,
+    );
+    const client = new GenericACPAgentClient({
+      logger: createTestLogger(),
+      command: [process.execPath, script],
+    });
+    try {
+      const session = await client.createSession({ provider: "acp", cwd: directory });
+      try {
+        const commands = await session.listCommands!();
+        expect(commands).toEqual([
+          {
+            name: "help",
+            description: "Show available commands",
+            argumentHint: "",
+            kind: "command",
+          },
+          {
+            name: "xlsx",
+            description: "Work with spreadsheets",
+            argumentHint: "[instructions]",
+            kind: "command",
+          },
+        ]);
+        expect(await session.listCommands!()).toEqual(commands);
+      } finally {
+        await session.close();
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
 
@@ -4423,6 +4530,161 @@ new AgentSideConnection(
   ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin)),
 );
 `;
+
+describe("ACP idle runtime cleanup", () => {
+  test("pending permissions veto cleanup until answered", async () => {
+    const session = createSession();
+    try {
+      expect(await session.canStopRuntime()).toBe(true);
+      const permission = session.requestPermission({
+        sessionId: "session-1",
+        toolCall: { toolCallId: "tool-1", title: "Run command", status: "pending" },
+        options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+      });
+      expect(await session.canStopRuntime()).toBe(false);
+      await session.respondToPermission(session.getPendingPermissions()[0]!.id, {
+        behavior: "allow",
+      });
+      await permission;
+      expect(await session.canStopRuntime()).toBe(true);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("a failed terminal spawn does not pin the runtime or discard its diagnostic", async () => {
+    const session = createSession();
+    try {
+      const terminal = await session.createTerminal({
+        sessionId: "session-1",
+        command: path.join(tmpdir(), "paseo-no-such-command", "missing"),
+      });
+      await expect(
+        session.waitForTerminalExit({ sessionId: "session-1", ...terminal }),
+      ).rejects.toThrow("ENOENT");
+      expect(await session.canStopRuntime()).toBe(true);
+      expect(
+        (await session.terminalOutput({ sessionId: "session-1", ...terminal })).output,
+      ).toContain("ENOENT");
+      await session.releaseTerminal({ sessionId: "session-1", ...terminal });
+      expect(await session.canStopRuntime()).toBe(true);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("retains a quiet terminal after a finished turn, then waits a fresh idle hour after exit", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "paseo-acp-idle-"));
+    const agentScript = path.join(dir, "agent.mjs");
+    await writeFile(agentScript, PERMISSIVE_MODEL_ACP_AGENT);
+    const session = new ACPAgentSession(
+      { provider: "test-acp", cwd: dir },
+      {
+        provider: "test-acp",
+        logger: createTestLogger(),
+        defaultCommand: [process.execPath, agentScript],
+        defaultModes: [],
+        capabilities: { supportsStreaming: true, supportsSessionPersistence: true },
+        launchEnv: {
+          ACP_SDK_URL: pathToFileURL(
+            createRequire(import.meta.url).resolve("@agentclientprotocol/sdk"),
+          ).href,
+        },
+      },
+    );
+    const hour = 60 * 60_000;
+    let now = 0;
+    let closed = false;
+    const candidate = {
+      identity: session,
+      agentId: "test-agent",
+      parentAgentId: undefined,
+      provider: session.provider,
+      sessionId: "permissive-session",
+      lastActivityAt: 0,
+      isEligible: () => !closed,
+      canStopRuntime: (session as AgentSession).canStopRuntime?.bind(session),
+      async closeIfEligible(revalidate: () => boolean) {
+        if (!revalidate()) return false;
+        await session.close();
+        closed = true;
+        return true;
+      },
+    };
+    const cleanup = createIdleRuntimeCleanup({
+      enabled: true,
+      now: () => now,
+      runtimes: () => (closed ? [] : [candidate]),
+      schedule: () => () => {},
+      logger: createTestLogger(),
+    });
+    try {
+      await session.initializeNewSession();
+      const completed = new Promise<void>((resolve) =>
+        session.subscribe((event) => {
+          if (event.type === "turn_completed") resolve();
+        }),
+      );
+      let activeTurnSafety: Promise<boolean> | undefined;
+      session.subscribe((event) => {
+        if (event.type === "turn_started") activeTurnSafety = session.canStopRuntime();
+      });
+      await session.startTurn("Finish this foreground turn");
+      await expect(activeTurnSafety).resolves.toBe(false);
+      await completed;
+      expect(await session.canStopRuntime()).toBe(true);
+      await session.sessionUpdate({
+        sessionId: candidate.sessionId,
+        update: {
+          sessionUpdate: "user_message_chunk",
+          content: { type: "text", text: "buffered" },
+        },
+      });
+      expect(await session.canStopRuntime()).toBe(false);
+      await session.sessionUpdate({
+        sessionId: candidate.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "flush" },
+        },
+      });
+      expect(await session.canStopRuntime()).toBe(true);
+      const terminal = await session.createTerminal({
+        sessionId: candidate.sessionId,
+        command: process.execPath,
+        args: ["-e", "setInterval(() => {}, 1000)"],
+      });
+      now = 2 * hour;
+      expect((await cleanup.sweep()).collected).toEqual([]);
+      expect(closed).toBe(false);
+      expect(await session.terminalOutput({ sessionId: candidate.sessionId, ...terminal })).toEqual(
+        {
+          output: "",
+          truncated: false,
+          exitStatus: undefined,
+        },
+      );
+      await session.killTerminal({ sessionId: candidate.sessionId, ...terminal });
+      await session.waitForTerminalExit({ sessionId: candidate.sessionId, ...terminal });
+      expect((await cleanup.sweep()).collected).toEqual([]);
+      now += hour - 1;
+      expect((await cleanup.sweep()).collected).toEqual([]);
+      now += 1;
+      expect((await cleanup.sweep()).collected).toEqual([
+        {
+          agentId: candidate.agentId,
+          provider: candidate.provider,
+          sessionId: candidate.sessionId,
+        },
+      ]);
+      expect(closed).toBe(true);
+    } finally {
+      await cleanup.close();
+      await session.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("custom ACP provider with configured models", () => {
   let dir: string;

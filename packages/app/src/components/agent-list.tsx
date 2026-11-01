@@ -1,8 +1,8 @@
+import { Modal } from "@/components/ui/modal";
 import {
   View,
   Text,
   Pressable,
-  Modal,
   RefreshControl,
   FlatList,
   type ListRenderItem,

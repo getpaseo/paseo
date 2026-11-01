@@ -6,147 +6,61 @@ import type { STTConfig } from "./stt.js";
 import type { TTSConfig } from "./tts.js";
 
 export const DEFAULT_OPENAI_TTS_MODEL = "tts-1";
+export type OpenAiSttFeature = "dictation" | "voiceMode";
 
 export interface OpenAiSpeechProviderConfig {
-  stt?: Partial<STTConfig> & { apiKey?: string };
-  tts?: Partial<TTSConfig> & { apiKey?: string };
+  dictationStt?: Partial<STTConfig>;
+  stt?: Partial<STTConfig>;
+  tts?: Partial<TTSConfig>;
 }
 
-const NumberLikeSchema = z.union([z.number(), z.string().trim().min(1)]);
+const OptionalFiniteNumberSchema = z
+  .union([z.number(), z.string().trim().min(1)])
+  .pipe(z.coerce.number<string | number>().finite())
+  .optional();
 
-const OptionalFiniteNumberSchema = NumberLikeSchema.pipe(
-  z.coerce.number<string | number>().finite(),
-).optional();
-
-const OptionalTrimmedStringSchema = z
-  .string()
-  .trim()
-  .optional()
-  .transform((value) => (value && value.length > 0 ? value : undefined));
-
-// Endpoint credentials only — plain trimmed strings, so this never throws on a
-// malformed value. The STT/TTS option groups parse separately and only for the
-// endpoint that is actually configured, so a stale env var for an unused endpoint
-// (e.g. a leftover TTS_VOICE in an STT-only setup) can't break the other one.
-const OpenAiEndpointKeysSchema = z.object({
-  sttApiKey: OptionalTrimmedStringSchema,
-  sttBaseUrl: OptionalTrimmedStringSchema,
-  ttsApiKey: OptionalTrimmedStringSchema,
-  ttsBaseUrl: OptionalTrimmedStringSchema,
-});
-
-const OpenAiSttOptionsSchema = z.object({
-  sttConfidenceThreshold: OptionalFiniteNumberSchema,
-  sttModel: OptionalTrimmedStringSchema,
-});
-
-// Voice and model are free-form so a self-hosted server can use its own ids; the
-// OpenAI catalog is only the default. Both are sent as written, because the
-// server owns those ids and their case (rosters use ids like kokoro-v1:Q8_0).
-const OpenAiTtsOptionsSchema = z.object({
-  ttsVoice: z.string().trim().default("alloy"),
-  ttsModel: z.string().trim().default(DEFAULT_OPENAI_TTS_MODEL),
-});
-
-function isOpenAiProviderActive(provider: { enabled?: boolean; provider: string }): boolean {
-  return provider.enabled !== false && provider.provider === "openai";
+function firstString(...values: (string | undefined)[]): string | undefined {
+  return values.map((value) => value?.trim()).find((value) => Boolean(value));
 }
 
-function pickIfOpenAi<T>(
-  provider: { enabled?: boolean; provider: string },
-  value: T | undefined,
-): T | undefined {
-  return isOpenAiProviderActive(provider) ? value : undefined;
-}
+type Features = NonNullable<PersistedConfig["features"]>;
+type SttSite = NonNullable<NonNullable<Features["dictation"]>["stt"]>;
+type TtsSite = NonNullable<NonNullable<Features["voiceMode"]>["tts"]>;
 
-function firstDefined<T>(values: Array<T | null | undefined>): T | undefined {
-  for (const value of values) {
-    if (value === undefined || value === null) {
-      continue;
-    }
-    // Empty/whitespace env vars (e.g. a copied .env.example with OPENAI_STT_API_KEY=)
-    // must not shadow a later fallback such as OPENAI_API_KEY.
-    if (typeof value === "string" && value.trim().length === 0) {
-      continue;
-    }
-    return value;
-  }
-  return undefined;
-}
-
-function buildOpenAiSttInput(params: {
-  env: NodeJS.ProcessEnv;
-  persisted: PersistedConfig;
-  providers: RequestedSpeechProviders;
-}): Record<string, unknown> {
-  const { env, persisted, providers } = params;
+function resolveStt(
+  site: SttSite | undefined,
+  env: NodeJS.ProcessEnv,
+): Partial<STTConfig> | undefined {
+  const config = site?.provider === "openai" ? site : undefined;
+  const apiKey = firstString(config?.apiKey, env.OPENAI_STT_API_KEY, env.OPENAI_API_KEY);
+  if (!apiKey) return undefined;
+  const baseUrl = firstString(config?.baseUrl, env.OPENAI_STT_BASE_URL, env.OPENAI_BASE_URL);
+  const model = firstString(env.STT_MODEL, config?.model);
+  const confidenceThreshold = OptionalFiniteNumberSchema.parse(
+    firstString(env.STT_CONFIDENCE_THRESHOLD) ?? config?.confidenceThreshold,
+  );
   return {
-    sttConfidenceThreshold: firstDefined<string | number>([
-      env.STT_CONFIDENCE_THRESHOLD,
-      persisted.features?.dictation?.stt?.confidenceThreshold,
-    ]),
-    sttModel: firstDefined<string>([
-      env.STT_MODEL,
-      pickIfOpenAi(providers.voiceStt, persisted.features?.voiceMode?.stt?.model),
-      pickIfOpenAi(providers.dictationStt, persisted.features?.dictation?.stt?.model),
-    ]),
+    apiKey,
+    ...(baseUrl ? { baseUrl } : {}),
+    ...(model ? { model } : {}),
+    ...(confidenceThreshold !== undefined ? { confidenceThreshold } : {}),
   };
 }
 
-function buildOpenAiTtsInput(params: {
-  env: NodeJS.ProcessEnv;
-  persisted: PersistedConfig;
-  providers: RequestedSpeechProviders;
-}): Record<string, unknown> {
-  const { env, persisted, providers } = params;
+function resolveTts(
+  site: TtsSite | undefined,
+  env: NodeJS.ProcessEnv,
+): Partial<TTSConfig> | undefined {
+  const config = site?.provider === "openai" ? site : undefined;
+  const apiKey = firstString(config?.apiKey, env.OPENAI_TTS_API_KEY, env.OPENAI_API_KEY);
+  if (!apiKey) return undefined;
+  const baseUrl = firstString(config?.baseUrl, env.OPENAI_TTS_BASE_URL, env.OPENAI_BASE_URL);
   return {
-    ttsVoice: firstDefined<string>([
-      env.TTS_VOICE,
-      pickIfOpenAi(providers.voiceTts, persisted.features?.voiceMode?.tts?.voice),
-      "alloy",
-    ]),
-    ttsModel: firstDefined<string>([
-      env.TTS_MODEL,
-      pickIfOpenAi(providers.voiceTts, persisted.features?.voiceMode?.tts?.model),
-      DEFAULT_OPENAI_TTS_MODEL,
-    ]),
-  };
-}
-
-function buildOpenAiResolutionInput(params: {
-  env: NodeJS.ProcessEnv;
-  persisted: PersistedConfig;
-  providers: RequestedSpeechProviders;
-}): Record<string, unknown> {
-  const { env } = params;
-  const openai = params.persisted.providers?.openai;
-  return {
-    sttApiKey: firstDefined<string>([
-      openai?.stt?.apiKey,
-      env.OPENAI_STT_API_KEY,
-      openai?.apiKey,
-      env.OPENAI_API_KEY,
-    ]),
-    sttBaseUrl: firstDefined<string>([
-      openai?.stt?.baseUrl,
-      env.OPENAI_STT_BASE_URL,
-      openai?.baseUrl,
-      env.OPENAI_BASE_URL,
-    ]),
-    ttsApiKey: firstDefined<string>([
-      openai?.tts?.apiKey,
-      env.OPENAI_TTS_API_KEY,
-      openai?.apiKey,
-      env.OPENAI_API_KEY,
-    ]),
-    ttsBaseUrl: firstDefined<string>([
-      openai?.tts?.baseUrl,
-      env.OPENAI_TTS_BASE_URL,
-      openai?.baseUrl,
-      env.OPENAI_BASE_URL,
-    ]),
-    ...buildOpenAiSttInput(params),
-    ...buildOpenAiTtsInput(params),
+    apiKey,
+    ...(baseUrl ? { baseUrl } : {}),
+    model: firstString(env.TTS_MODEL, config?.model) ?? DEFAULT_OPENAI_TTS_MODEL,
+    voice: firstString(env.TTS_VOICE, config?.voice) ?? "alloy",
+    responseFormat: "pcm",
   };
 }
 
@@ -155,46 +69,14 @@ export function resolveOpenAiSpeechConfig(params: {
   persisted: PersistedConfig;
   providers: RequestedSpeechProviders;
 }): OpenAiSpeechProviderConfig | undefined {
-  const input = buildOpenAiResolutionInput(params);
-  const keys = OpenAiEndpointKeysSchema.parse(input);
-
-  if (!keys.sttApiKey && !keys.ttsApiKey) {
-    return undefined;
-  }
-
+  const { env, persisted } = params;
+  const dictationStt = resolveStt(persisted.features?.dictation?.stt, env);
+  const stt = resolveStt(persisted.features?.voiceMode?.stt, env);
+  const tts = resolveTts(persisted.features?.voiceMode?.tts, env);
+  if (!dictationStt && !stt && !tts) return undefined;
   return {
-    ...(keys.sttApiKey ? { stt: buildSttConfig(keys.sttApiKey, keys.sttBaseUrl, input) } : {}),
-    ...(keys.ttsApiKey ? { tts: buildTtsConfig(keys.ttsApiKey, keys.ttsBaseUrl, input) } : {}),
-  };
-}
-
-function buildSttConfig(
-  apiKey: string,
-  baseUrl: string | undefined,
-  input: Record<string, unknown>,
-): OpenAiSpeechProviderConfig["stt"] {
-  const options = OpenAiSttOptionsSchema.parse(input);
-  return {
-    apiKey,
-    ...(baseUrl ? { baseUrl } : {}),
-    ...(options.sttConfidenceThreshold !== undefined
-      ? { confidenceThreshold: options.sttConfidenceThreshold }
-      : {}),
-    ...(options.sttModel ? { model: options.sttModel } : {}),
-  };
-}
-
-function buildTtsConfig(
-  apiKey: string,
-  baseUrl: string | undefined,
-  input: Record<string, unknown>,
-): OpenAiSpeechProviderConfig["tts"] {
-  const options = OpenAiTtsOptionsSchema.parse(input);
-  return {
-    apiKey,
-    ...(baseUrl ? { baseUrl } : {}),
-    voice: options.ttsVoice,
-    model: options.ttsModel,
-    responseFormat: "pcm",
+    ...(dictationStt ? { dictationStt } : {}),
+    ...(stt ? { stt } : {}),
+    ...(tts ? { tts } : {}),
   };
 }
