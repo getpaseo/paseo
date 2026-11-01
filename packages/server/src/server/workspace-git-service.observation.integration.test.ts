@@ -1,3 +1,4 @@
+import { flushGitCommandTrace } from "../utils/git-command-trace.js";
 import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -583,16 +584,21 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
       // the cold filter. Allocations made by the filter still count.
       global.gc();
       await tick();
-      // Unrelated callbacks must not consume the synchronous filter's budget.
+      await marker('FILTER_START');
+      // Schedule the control only after marker IO settles, so it cannot run
+      // and allocate garbage before the cold filter starts. No await may
+      // separate this scheduling from the synchronous measurement.
       const threadCpuUsage = Reflect.get(process, 'threadCpuUsage');
+      let unrelatedWorkStarted = false;
       const unrelatedWork = tick().then(() => {
+        unrelatedWorkStarted = true;
         const started = threadCpuUsage();
         while (true) {
           const cpu = threadCpuUsage(started);
           if (cpu.user + cpu.system >= 80000) break;
         }
       });
-      await marker('FILTER_START');
+      assert.equal(unrelatedWorkStarted, false, 'control work must not contaminate the cold filter');
       hook.enable();
       let blockingMs;
       try {
@@ -609,6 +615,7 @@ test("Git refresh, command tracing and 10,000 ignored alias events do no synchro
         await marker('FILTER_END');
       }
       await unrelatedWork;
+      assert.equal(unrelatedWorkStarted, true, 'control work must run outside the filter span');
       assert.equal(fsCalls, 0, "filesystem calls");
       assert.equal(notifications, 0, "ignored event notification");
       assert.ok(blockingMs < 20, 'blocking filter work: ' + blockingMs);
@@ -724,3 +731,103 @@ test("Git event identity retains a symlink's literal target before canonicalizin
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test.skipIf(process.platform !== "linux")(
+  "missing folders stop degraded Git polling and explicit refreshes, then recover",
+  async () => {
+    const artifacts = path.resolve(".artifacts");
+    mkdirSync(artifacts, { recursive: true });
+    const root = mkdtempSync(path.join(artifacts, "workspace-git-missing-"));
+    const cwd = path.join(root, "repo");
+    const initializeRepo = (branch: string) => {
+      mkdirSync(cwd);
+      execFileSync("git", ["init", "-b", branch], { cwd, stdio: "pipe" });
+      writeFileSync(path.join(cwd, "README.md"), "fixture\n");
+      execFileSync("git", ["add", "."], { cwd, stdio: "pipe" });
+      execFileSync(
+        "git",
+        [
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@example.invalid",
+          "-c",
+          "commit.gpgsign=false",
+          "commit",
+          "-m",
+          "fixture",
+        ],
+        { cwd, stdio: "pipe" },
+      );
+    };
+    initializeRepo("main");
+    // Exceed the real Linux observer's directory limit to enter degraded polling.
+    // No watcher errors or Git responses are injected.
+    for (let index = 0; index < 5100; index++) {
+      mkdirSync(path.join(cwd, `generated-${index}`));
+    }
+    const trace = path.join(root, "git.jsonl");
+    writeFileSync(trace, "");
+    const previousTrace = process.env.PASEO_GIT_TRACE_FILE;
+    process.env.PASEO_GIT_TRACE_FILE = trace;
+    let degraded = false;
+    let suspended = false;
+    const logger = pino(
+      { level: "warn" },
+      {
+        write(line) {
+          const message = JSON.parse(line).msg;
+          if (message === "Failed to start working tree watcher; using degraded polling")
+            degraded = true;
+          if (
+            message ===
+            "Workspace folder no longer exists; suspended git observation until it is back"
+          )
+            suspended = true;
+        },
+      },
+    );
+    const service = new WorkspaceGitServiceImpl({ logger, paseoHome: path.join(root, "home") });
+    const subscription = service.registerWorkspace({ cwd }, () => {});
+    const commandCount = async () => {
+      await flushGitCommandTrace();
+      return readFileSync(trace, "utf8").trim().split("\n").filter(Boolean).length;
+    };
+    try {
+      await expect
+        .poll(() => degraded && service.getMetrics().workspaceRefreshInFlightCount === 0, {
+          timeout: 15_000,
+        })
+        .toBe(true);
+      rmSync(cwd, { recursive: true, force: true });
+      await expect.poll(() => suspended, { timeout: 15_000 }).toBe(true);
+      await expect.poll(() => service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
+      const commandsWhileMissing = await commandCount();
+      await service.getSnapshot(cwd, {
+        force: true,
+        includeForge: false,
+        reason: "refresh-button",
+      });
+      await service.refresh(cwd);
+      expect(await commandCount()).toBe(commandsWhileMissing);
+      await new Promise((resolve) => setTimeout(resolve, 16_000));
+      expect(await commandCount()).toBe(commandsWhileMissing);
+
+      initializeRepo("restored");
+      const snapshot = await service.getSnapshot(cwd, {
+        force: true,
+        includeForge: false,
+        reason: "refresh-button",
+      });
+      expect(snapshot.git).toMatchObject({ isGit: true, currentBranch: "restored" });
+      await expect.poll(() => service.getMetrics().repositoryWorkspaceLinkCount).toBe(1);
+    } finally {
+      subscription.unsubscribe();
+      await service.dispose();
+      if (previousTrace === undefined) delete process.env.PASEO_GIT_TRACE_FILE;
+      else process.env.PASEO_GIT_TRACE_FILE = previousTrace;
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  60_000,
+);

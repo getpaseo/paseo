@@ -84,16 +84,7 @@ Add `--forge <name>` when Paseo cannot infer the forge from the source checkout.
 
 ## Copy local files with .worktreeinclude
 
-Create `.worktreeinclude` at the root of your source checkout to copy selected gitignored files into new worktrees:
-
-```gitignore
-.env
-config/*.local.json
-```
-
-Patterns use gitignore syntax. A file must match `.worktreeinclude` and be gitignored to be copied. Tracked files are never copied, and existing destination files are never overwritten. Without `.worktreeinclude`, no local files are copied. Symlinked directories and nested repositories inside an included path cause the copy to fail and abort worktree creation.
-
-The built-in `worktree-include` plugin copies from the checkout you create the worktree from, including when that checkout is another worktree. Copying finishes before setup, terminals, and the first agent. A copy failure aborts creation and removes the new worktree. Copies use copy-on-write clones on APFS and btrfs when supported, with a regular copy elsewhere.
+Use [`.worktreeinclude`](/docs/worktrees/worktreeinclude) to copy selected gitignored files, such as `.env`, from your source checkout before setup runs.
 
 ## paseo.json
 

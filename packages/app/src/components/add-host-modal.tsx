@@ -476,6 +476,7 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
         accessibilityRole="checkbox"
         accessibilityLabel={t("pairing.direct.fields.useSsl")}
         accessibilityState={useTlsAccessibilityState}
+        aria-checked={useTls}
         testID="direct-ssl-toggle"
       >
         <View style={checkboxStyle}>

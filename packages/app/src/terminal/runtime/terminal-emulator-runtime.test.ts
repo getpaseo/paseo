@@ -36,6 +36,12 @@ vi.mock("@xterm/addon-unicode11", () => ({
   },
 }));
 
+vi.mock("@xterm/addon-unicode-graphemes", () => ({
+  UnicodeGraphemesAddon: class UnicodeGraphemesAddon {
+    dispose(): void {}
+  },
+}));
+
 vi.mock("@xterm/addon-web-links", () => ({
   WebLinksAddon: class WebLinksAddon {
     dispose(): void {}
