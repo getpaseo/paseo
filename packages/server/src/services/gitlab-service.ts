@@ -60,6 +60,7 @@ import {
 } from "@getpaseo/protocol/check-traits";
 import { GITLAB_ACTIVE_PIPELINE_STATUS_SET } from "@getpaseo/protocol/gitlab-pipeline";
 import { isGitLabStatusFacts, type GitLabStatusFacts } from "./gitlab-facts.js";
+import { buildForkLocalBranchName } from "../utils/change-request-checkout.js";
 
 const GLAB_ENV = {
   GIT_TERMINAL_PROMPT: "0",
@@ -144,6 +145,15 @@ const GitLabPipelineDetailsSchema = z
   })
   .passthrough();
 
+const GitLabAuthorSchema = z
+  .object({
+    username: z.string().optional(),
+    name: z.string().optional(),
+    web_url: z.string().nullable().optional(),
+    avatar_url: z.string().nullable().optional(),
+  })
+  .passthrough();
+
 const GitLabMergeRequestSchema = z
   .object({
     iid: z.number(),
@@ -155,6 +165,7 @@ const GitLabMergeRequestSchema = z
     sha: z.string().optional(),
     source_project_id: z.number().nullable().optional(),
     target_project_id: z.number().nullable().optional(),
+    author: GitLabAuthorSchema.nullable().optional(),
     draft: z.boolean().optional(),
     work_in_progress: z.boolean().optional(),
     has_conflicts: z.boolean().optional(),
@@ -186,14 +197,7 @@ const GitLabIssueSchema = z
   })
   .passthrough();
 
-const GitLabNoteAuthorSchema = z
-  .object({
-    username: z.string().optional(),
-    name: z.string().optional(),
-    web_url: z.string().nullable().optional(),
-    avatar_url: z.string().nullable().optional(),
-  })
-  .passthrough();
+const GitLabNoteAuthorSchema = GitLabAuthorSchema;
 
 const GitLabNoteLineRangeEndpointSchema = z
   .object({
@@ -1183,10 +1187,22 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
       return mr.source_branch;
     },
 
+    buildPrLocalBranchName({ headRef, checkoutTarget }) {
+      return buildForkLocalBranchName({ headRef, ...checkoutTarget });
+    },
+
     async getPullRequestCheckoutTarget(
       input: GetPullRequestOptions,
     ): Promise<PullRequestCheckoutTarget> {
       const mr = await viewMergeRequest(input.cwd, String(input.number));
+      const isCrossRepository =
+        mr.source_project_id !== undefined &&
+        mr.source_project_id !== null &&
+        mr.target_project_id !== undefined &&
+        mr.target_project_id !== null &&
+        mr.source_project_id !== mr.target_project_id;
+      const headOwnerLogin =
+        isCrossRepository && mr.author?.username?.trim() ? mr.author.username.trim() : null;
       return {
         number: mr.iid,
         baseRefName: mr.target_branch,
@@ -1195,15 +1211,10 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
           { remoteName: "origin", remoteRef: `refs/merge-requests/${mr.iid}/head` },
           { remoteName: "origin", remoteRef: `refs/heads/${mr.source_branch}` },
         ],
-        headOwnerLogin: null,
+        headOwnerLogin,
         headRepositorySshUrl: null,
         headRepositoryUrl: null,
-        isCrossRepository:
-          mr.source_project_id !== undefined &&
-          mr.source_project_id !== null &&
-          mr.target_project_id !== undefined &&
-          mr.target_project_id !== null &&
-          mr.source_project_id !== mr.target_project_id,
+        isCrossRepository,
         headRefKind: "branch",
       };
     },
