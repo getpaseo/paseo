@@ -1016,7 +1016,10 @@ describe("PluginAgentClientRegistry", () => {
       given: Record<string, boolean | string>,
       { refuseAfterChanging = false }: { refuseAfterChanging?: boolean } = {},
     ) {
-      const state = { voice: "direct", loud: false };
+      const state: { voice: string; loud: boolean; tokenBudget?: number } = {
+        voice: "direct",
+        loud: false,
+      };
       let openedSessionId = "";
       const reported = () =>
         shape === "controls"
@@ -1041,7 +1044,11 @@ describe("PluginAgentClientRegistry", () => {
                   defaultValue: false,
                 },
               ],
-              providerOptions: { voice: state.voice, loud: state.loud },
+              providerOptions: {
+                voice: state.voice,
+                loud: state.loud,
+                ...(state.tokenBudget === undefined ? {} : { token_budget: state.tokenBudget }),
+              },
             }
           : {
               settings: [
@@ -1089,8 +1096,18 @@ describe("PluginAgentClientRegistry", () => {
             return true;
           }
           if (input.type === "session.configure") {
-            const loud = input.changes.providerOptions?.loud;
+            const { loud, token_budget: tokenBudget } = input.changes.providerOptions ?? {};
+            // A plugin that takes `token_budget` live refuses the whole request on a bad value.
+            if (tokenBudget !== undefined && typeof tokenBudget !== "number") {
+              emit({
+                type: "request.failed",
+                requestId: input.requestId,
+                error: { message: "bad budget" },
+              });
+              return true;
+            }
             if (typeof loud === "boolean") state.loud = loud;
+            if (typeof tokenBudget === "number") state.tokenBudget = tokenBudget;
             emitConfig(emit, input.sessionId);
             emit(
               refuseAfterChanging
@@ -1201,24 +1218,47 @@ describe("PluginAgentClientRegistry", () => {
       await session.close();
     });
 
-    test("rejects a key the plugin does not report as a setting, and configures none of a mixed patch", async () => {
-      const { harness, session } = await openStubbornVoiceSession({ launch_key: "original" });
-      const configureBefore = lastConfigure(harness.inputs);
+    test.runIf(shape === "controls")(
+      "sends a live option that has no control, and the plugin's answer decides",
+      async () => {
+        const { harness, session, events } = await openStubbornVoiceSession({});
 
-      await expect(session.applyOptions?.({ loud: true, launch_key: "changed" })).rejects.toThrow(
-        /launch_key.*cannot change on a running session/,
-      );
+        await session.applyOptions?.({ token_budget: 2000 });
+        expect(lastConfigure(harness.inputs)).toMatchObject({
+          changes: { providerOptions: { token_budget: 2000 } },
+        });
 
-      expect(lastConfigure(harness.inputs)).toBe(configureBefore);
+        // The plugin refuses the request as a whole, so the other key it was given is not applied.
+        await expect(session.applyOptions?.({ loud: true, token_budget: "lots" })).rejects.toThrow(
+          "bad budget",
+        );
+        expect(eventsOfType(events, "options_changed")).toEqual([]);
+        expect(await session.applyOptions?.({ token_budget: 3000 })).toEqual({});
+        await session.close();
+      },
+    );
 
-      // The value it opened with is not a change, so a whole profile can be applied.
-      await session.applyOptions?.({ loud: true, launch_key: "original" });
-      const configure = lastConfigure(harness.inputs) as {
-        changes: { providerOptions: object };
-      };
-      expect(Object.keys(configure.changes.providerOptions)).toEqual(["loud"]);
-      await session.close();
-    });
+    test.runIf(shape === "settings")(
+      "rejects a key the plugin does not report as a setting, and configures none of a mixed patch",
+      async () => {
+        const { harness, session } = await openStubbornVoiceSession({ launch_key: "original" });
+        const configureBefore = lastConfigure(harness.inputs);
+
+        await expect(session.applyOptions?.({ loud: true, launch_key: "changed" })).rejects.toThrow(
+          /launch_key.*cannot change on a running session/,
+        );
+
+        expect(lastConfigure(harness.inputs)).toBe(configureBefore);
+
+        // The value it opened with is not a change, so a whole profile can be applied.
+        await session.applyOptions?.({ loud: true, launch_key: "original" });
+        const configure = lastConfigure(harness.inputs) as {
+          changes: { providerOptions: object };
+        };
+        expect(Object.keys(configure.changes.providerOptions)).toEqual(["loud"]);
+        await session.close();
+      },
+    );
 
     test("applying options returns the settings that ended up different, and emits nothing", async () => {
       const { session, events } = await openStubbornVoiceSession({});

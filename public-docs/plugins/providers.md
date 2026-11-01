@@ -275,9 +275,11 @@ at the default and values nobody set. The same controls appear in the New worksp
 tabs, and on running agents. Offer a control only for a key you can change on a running session.
 The provider may change its controls at runtime, including after a model change.
 
-A user change arrives as `session.configure` with `changes.providerOptions` holding only the keys
-that changed. Apply the change and publish the committed `session.config` before
-`request.completed`, or fail the request with `request.failed` and leave every key as it was. A
+A change arrives as `session.configure` with `changes.providerOptions` holding only the keys
+that changed, whether or not they have a control. Apply every key and publish the committed
+`session.config` before `request.completed`. Fail the request with `request.failed` and leave
+every key as it was when you cannot apply one, for example a key you read only when a session
+opens. A
 value of `null` returns that key to the provider's default. Publish what the session ended up
 with, not a copy of the request: Paseo stores your published values so the stored options match
 what runs.
@@ -286,8 +288,10 @@ If the provider changes an option on its own, for example a model switch turns F
 a new `session.config` with the new values. Paseo stores them and does not set the old ones
 back.
 
-Keys without a control are still delivered in `session.open` and stored. A provider-specific
-token budget, for example, belongs in `providerOptions` and is not a dedicated prompt field.
+Not every option needs a control. A provider-specific token budget, for example, belongs in
+`providerOptions` and is not a dedicated prompt field. It is delivered in `session.open`, a caller
+can change it on a running agent, and your `session.configure` handler decides whether it can
+apply it live. Report it in `providerOptions` so Paseo stores what runs.
 
 ## Add persistence and replay
 

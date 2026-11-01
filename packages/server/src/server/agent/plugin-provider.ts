@@ -1420,19 +1420,26 @@ class PluginAgentSession implements AgentSession {
     this.assertReplayComplete();
     const before = this.currentOptions();
     const { controls, legacySettings } = readPluginOptionState(this.bridge.config);
-    const live = controls.map((control) => control.key);
-    // A key the plugin has no control for is one it only reads when the session opens;
-    // a value equal to the one it opened with is not a change.
-    assertChangesAreLive({
-      provider: this.provider,
-      patch: options,
-      current: this.givenOptions,
-      live,
-    });
     const settings: Record<string, JsonValue> = {};
-    for (const [id, value] of Object.entries(options)) {
-      if (!live.includes(id)) continue;
-      settings[id] = toJsonValue(value, `option '${id}'`);
+    // COMPAT(plugin-provider-settings): added in v0.15.0, remove after 2027-05-01. A plugin
+    // reporting `settings` cannot refuse a key, so only its settings are sent and any other
+    // changed key is rejected here; a value equal to the one it opened with is not a change.
+    if (legacySettings) {
+      const live = controls.map((control) => control.key);
+      assertChangesAreLive({
+        provider: this.provider,
+        patch: options,
+        current: this.givenOptions,
+        live,
+      });
+      for (const [id, value] of Object.entries(options)) {
+        if (live.includes(id)) settings[id] = toJsonValue(value, `option '${id}'`);
+      }
+    } else {
+      // The plugin applies every key it is given or rejects the whole request.
+      for (const [id, value] of Object.entries(options)) {
+        settings[id] = toJsonValue(value, `option '${id}'`);
+      }
     }
     if (Object.keys(settings).length === 0) return {};
     this.applyingOptions = true;
