@@ -3,6 +3,8 @@
 //   answers: { [configId]: value } the agent ends up with instead of the requested value
 //   onWrite: "notify-first" sends config_option_update before answering the write;
 //            "notify-then-reject" does the same and then fails the write
+//            "slow-reject" moves the select and announces it for a non-empty value, then refuses
+//            after a delay; an empty value is refused without moving anything
 //   moves:   { [configId]: { [id]: value } } writes that also move another select, announced
 //            by a config_option_update after the write is answered
 //   adds:    { [configId]: option[] } writes that make more selects appear, announced the same way
@@ -28,12 +30,21 @@ export const connection = new AgentSideConnection(
       return { sessionId: "session-1", modes: null, models: null, configOptions: options };
     },
     async setSessionConfigOption({ sessionId, configId, value }) {
+      if (scenario.onWrite === "slow-reject" && !value) {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        throw new Error("write refused");
+      }
       set(configId, scenario.answers?.[configId] ?? value);
       const announce = () =>
         agentConnection.sessionUpdate({
           sessionId,
           update: { sessionUpdate: "config_option_update", configOptions: options },
         });
+      if (scenario.onWrite === "slow-reject") {
+        await announce();
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        throw new Error("write refused");
+      }
       if (scenario.onWrite === "notify-first" || scenario.onWrite === "notify-then-reject") {
         await announce();
         if (scenario.onWrite === "notify-then-reject") throw new Error("write refused");
