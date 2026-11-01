@@ -184,6 +184,7 @@ const AgentMetadataGenerationSchema = z
   .strict();
 
 const BUILTIN_PROVIDER_IDS = ["claude", "codex", "copilot", "opencode", "pi", "omp"] as const;
+const MINIMAX_CODE_PACKAGE = "@minimax-ai/code";
 
 function isLegacyProviderEntry(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -198,6 +199,69 @@ function isLegacyProviderEntry(value: unknown): boolean {
   return typeof (command as Record<string, unknown>).mode === "string";
 }
 
+// The first MiniMax Code catalog entry ran `npx -y @minimax-ai/code@<ver> acp`.
+// npx derives the executable name from the package name (`code`), but the
+// package publishes `mcode`, so npm exits before the ACP handshake. Catalog
+// fixes only affect providers added afterwards; repair commands already
+// persisted by an older client.
+function repairMinimaxCodeCommand(command: string[]): string[] {
+  const [launcher, ...args] = command;
+  if (!launcher) {
+    return command;
+  }
+  const normalizedLauncher = launcher.toLowerCase();
+  if (normalizedLauncher !== "npx" && normalizedLauncher !== "npx.cmd") {
+    return command;
+  }
+
+  const packageIndex = args.findIndex(
+    (arg) => arg === MINIMAX_CODE_PACKAGE || arg.startsWith(`${MINIMAX_CODE_PACKAGE}@`),
+  );
+  const packageSpec = args[packageIndex];
+  if (!packageSpec) {
+    return command;
+  }
+
+  const prefix = args.slice(0, packageIndex);
+  if (prefix.includes("-p") || prefix.includes("--package")) {
+    return command;
+  }
+
+  const suffix = args.slice(packageIndex + 1);
+  if (suffix.includes("mcode") || suffix.includes("mcode-tools")) {
+    return command;
+  }
+
+  return [launcher, ...prefix, "-p", packageSpec, "mcode", ...suffix];
+}
+
+function repairProviderCommand(providerId: string, value: unknown): unknown {
+  if (providerId !== "minimax-code" || !isConfigRecord(value)) {
+    return value;
+  }
+
+  const command = value.command;
+  if (!Array.isArray(command) || !command.every((arg) => typeof arg === "string")) {
+    return value;
+  }
+
+  const repaired = repairMinimaxCodeCommand(command);
+  return repaired === command ? value : { ...value, command: repaired };
+}
+
+function repairProviderCommands(value: Record<string, unknown>): Record<string, unknown> {
+  let changed = false;
+  const repaired: Record<string, unknown> = {};
+  for (const [providerId, entry] of Object.entries(value)) {
+    const next = repairProviderCommand(providerId, entry);
+    if (next !== entry) {
+      changed = true;
+    }
+    repaired[providerId] = next;
+  }
+  return changed ? repaired : value;
+}
+
 function normalizeAgentProviders(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return value;
@@ -208,7 +272,7 @@ function normalizeAgentProviders(value: unknown): unknown {
     isLegacyProviderEntry(entry),
   );
   if (!hasLegacyEntries) {
-    return value;
+    return repairProviderCommands(rawProviders);
   }
 
   const legacyEntries: Record<string, unknown> = {};
@@ -227,10 +291,10 @@ function normalizeAgentProviders(value: unknown): unknown {
     return value;
   }
 
-  return {
+  return repairProviderCommands({
     ...normalizedEntries,
     ...migrateProviderSettings(parsedLegacyEntries.data, [...BUILTIN_PROVIDER_IDS]),
-  };
+  });
 }
 
 export const PersistedConfigSchema = z
