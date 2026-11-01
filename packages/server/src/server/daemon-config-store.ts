@@ -185,7 +185,7 @@ function foldConfigProfiles<T extends { agentProfiles?: AgentProfile[] }>(
     agentProfiles: config.agentProfiles.map((profile) =>
       foldProfileFeatureValues(
         profile,
-        held.find((candidate) => candidate.id === profile.id)?.options,
+        held.find((candidate) => candidate.id === profile.id),
         source,
       ),
     ),
