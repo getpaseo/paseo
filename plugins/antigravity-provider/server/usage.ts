@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { execCommand } from "@getpaseo/plugin/server";
@@ -174,15 +175,52 @@ export async function defaultUsageRunner(launch: ProviderLaunch, args: string[])
 export class Usage {
   private readonly launches = new Map<string, ProviderLaunch>();
   private readonly runner: UsageRunner;
+  private readonly getEnvironment: () => NodeJS.ProcessEnv;
+  private fallbackKey: string | null = null;
 
-  constructor(runner: UsageRunner = defaultUsageRunner) {
+  constructor(
+    runner: UsageRunner = defaultUsageRunner,
+    getEnvironment: () => NodeJS.ProcessEnv = () => process.env,
+  ) {
     this.runner = runner;
+    this.getEnvironment = getEnvironment;
+  }
+
+  private environment(): Record<string, string> {
+    const record: Record<string, string> = {};
+    for (const [key, value] of Object.entries(this.getEnvironment()))
+      if (typeof value === "string") record[key] = value;
+    return record;
   }
 
   remember(launch: ProviderLaunch): { account: string } {
     const key = accountKey(launch.env);
     this.launches.set(key, launch);
+    // The daemon-resolved launch supersedes the placeholder. When the provider overrides keep
+    // the same account key the placeholder entry itself was replaced; otherwise the provider
+    // overrides changed the account key and the placeholder must not survive as a phantom
+    // card. Either way the launch remembered for that key is real and must never be deleted.
+    if (this.fallbackKey !== null) {
+      if (this.fallbackKey !== key) this.launches.delete(this.fallbackKey);
+      this.fallbackKey = null;
+    }
     return { account: key };
+  }
+
+  /**
+   * Global discovery runs before any provider snapshot on a fresh daemon, and the Antigravity
+   * card would stay hidden until the first status()/connect(). The CLI's config directory is
+   * the one launch-free signal that a login exists here, so a placeholder launch standing in
+   * for the daemon-resolved one keeps the card visible from the first `paseo usage`.
+   */
+  private rememberFallbackLaunch(): void {
+    const env = this.environment();
+    const home = env.HOME ?? homedir();
+    const configHome = env.ANTIGRAVITY_HOME ?? path.join(home, ".gemini", "antigravity-cli");
+    if (!existsSync(configHome)) return;
+    const account = accountKey(env);
+    this.launches.set(account, { command: "agy", args: [], env });
+    this.fallbackKey = account;
   }
 
   registration(): UsageSourceRegistration {
@@ -194,6 +232,7 @@ export class Usage {
       discover: async (scope) => {
         let accounts: string[];
         if (scope.kind === "global") {
+          if (this.launches.size === 0) this.rememberFallbackLaunch();
           accounts = [...this.launches.keys()];
         } else {
           if (scope.provider !== "antigravity") return [];
