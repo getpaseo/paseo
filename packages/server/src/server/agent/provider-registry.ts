@@ -495,6 +495,12 @@ function wrapClientProvider(
   const archiveNativeSession = inner.archiveNativeSession?.bind(inner);
   const unarchiveNativeSession = inner.unarchiveNativeSession?.bind(inner);
   const configuredModelIds = [...profileModels, ...additionalModels].map((model) => model.id);
+  const modelContextWindowMaxTokens = new Map<string, number>();
+  for (const model of [...profileModels, ...additionalModels]) {
+    if (typeof model.contextWindowMaxTokens === "number") {
+      modelContextWindowMaxTokens.set(model.id, model.contextWindowMaxTokens);
+    }
+  }
 
   return {
     provider,
@@ -512,7 +518,7 @@ function wrapClientProvider(
             providerOptions: mergeProviderOptions(providerOptions, config.providerOptions),
           },
           launchContext,
-          { ...options, configuredModelIds },
+          { ...options, configuredModelIds, modelContextWindowMaxTokens },
         ),
       ),
     resumeSession: async (handle, overrides, launchContext, options) =>
@@ -529,7 +535,7 @@ function wrapClientProvider(
             providerOptions: mergeProviderOptions(providerOptions, overrides?.providerOptions),
           },
           launchContext,
-          { ...options, configuredModelIds },
+          { ...options, configuredModelIds, modelContextWindowMaxTokens },
         ),
       ),
     fetchCatalog: async (options, context) => {

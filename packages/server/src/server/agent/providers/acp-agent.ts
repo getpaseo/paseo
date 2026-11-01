@@ -528,6 +528,7 @@ interface ACPAgentSessionOptions {
   handle?: AgentPersistenceHandle;
   resumePurpose?: AgentResumePurpose;
   configuredModelIds?: readonly string[];
+  modelContextWindowMaxTokens?: ReadonlyMap<string, number>;
   agentId?: string;
   launchEnv?: Record<string, string>;
   waitForInitialCommands?: boolean;
@@ -1028,6 +1029,7 @@ export class ACPAgentClient implements AgentClient {
             providerOptions.supportsMcpServers ?? this.capabilities.supportsMcpServers,
         },
         configuredModelIds: options?.configuredModelIds,
+        modelContextWindowMaxTokens: options?.modelContextWindowMaxTokens,
         agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
         extensionCommandsParser: this.extensionCommandsParser,
@@ -1088,6 +1090,7 @@ export class ACPAgentClient implements AgentClient {
       handle,
       resumePurpose: options?.purpose,
       configuredModelIds: options?.configuredModelIds,
+      modelContextWindowMaxTokens: options?.modelContextWindowMaxTokens,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
       extensionCommandsParser: this.extensionCommandsParser,
@@ -1717,6 +1720,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   ) => SessionConfigOption[];
   private readonly configFeatureOptions: ACPConfigFeatureOption[];
   private readonly configuredModelIds: ReadonlySet<string>;
+  private readonly modelContextWindowMaxTokens: ReadonlyMap<string, number>;
   private readonly clientCapabilities?: ACPClientCapabilities;
   private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
@@ -1791,6 +1795,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.configOptionsTransformer = options.configOptionsTransformer;
     this.configFeatureOptions = options.configFeatureOptions ?? [];
     this.configuredModelIds = new Set(options.configuredModelIds);
+    this.modelContextWindowMaxTokens =
+      options.modelContextWindowMaxTokens ?? new Map<string, number>();
     this.clientCapabilities = options.clientCapabilities;
     this.clientCapabilityMeta = options.clientCapabilityMeta;
     this.modeIdTransformer = options.modeIdTransformer;
@@ -3300,8 +3306,18 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   // turn usage this session already recorded. The guards match the meter's own
   // validity rules, so a provider cannot push a window the meter would reject.
   private handleUsageUpdate(update: UsageUpdate): void {
-    const contextWindowMaxTokens =
+    // An explicit `contextWindowMaxTokens` pin in provider configuration beats the
+    // window the provider reports. ACP agents advertise the model's raw window
+    // (Opus 5.5 reports 1M) even when their own compaction limit is much lower, so
+    // the reported size alone can make the meter's percentage meaningless.
+    let configuredContextWindowMaxTokens: number | undefined;
+    if (this.currentModel !== null) {
+      configuredContextWindowMaxTokens = this.modelContextWindowMaxTokens.get(this.currentModel);
+    }
+    const reportedContextWindowMaxTokens =
       Number.isFinite(update.size) && update.size > 0 ? update.size : undefined;
+    const contextWindowMaxTokens =
+      configuredContextWindowMaxTokens ?? reportedContextWindowMaxTokens;
     const contextWindowUsedTokens =
       Number.isFinite(update.used) && update.used >= 0 ? update.used : undefined;
     if (contextWindowMaxTokens === undefined || contextWindowUsedTokens === undefined) {

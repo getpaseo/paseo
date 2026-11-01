@@ -646,6 +646,13 @@ export interface AgentCreateSessionOptions {
    * Providers that validate against runtime-advertised models must accept these.
    */
   configuredModelIds?: readonly string[];
+  /**
+   * Context-window overrides declared by provider configuration
+   * (`models[].contextWindowMaxTokens`), keyed by model id. Providers that read a
+   * window out of their own transport (ACP `usage_update`, for example) should
+   * prefer this explicit pin over the window the provider reports.
+   */
+  modelContextWindowMaxTokens?: ReadonlyMap<string, number>;
 }
 
 /** What a resumed session is for: driving the agent, or reading what it already did. */
@@ -657,6 +664,8 @@ export interface AgentResumeSessionOptions {
   purpose?: AgentResumePurpose;
   /** See AgentCreateSessionOptions.configuredModelIds. */
   configuredModelIds?: readonly string[];
+  /** See AgentCreateSessionOptions.modelContextWindowMaxTokens. */
+  modelContextWindowMaxTokens?: ReadonlyMap<string, number>;
 }
 
 /**
