@@ -705,3 +705,59 @@ index a9c1804..f5a3c20 100644
  
          return Insets(
              this._insets.top / density,
+diff --git a/node_modules/react-native-unistyles/cxx/shadowTree/ShadowTreeManager.cpp b/node_modules/react-native-unistyles/cxx/shadowTree/ShadowTreeManager.cpp
+index 01026dc..3786ec4 100644
+--- a/node_modules/react-native-unistyles/cxx/shadowTree/ShadowTreeManager.cpp
++++ b/node_modules/react-native-unistyles/cxx/shadowTree/ShadowTreeManager.cpp
+@@ -17,13 +17,16 @@ void shadow::ShadowTreeManager::updateShadowTree(jsi::Runtime& rt) {
+         }
+ 
+ #if REACT_NATIVE_VERSION_MINOR >= 81
+-        std::unordered_map<Tag, folly::dynamic> tagToProps;
++        // Paseo backport of https://github.com/jpudysz/react-native-unistyles/pull/1357.
++        // UIManager::updateShadowTree commits a root cloned before the commit, so when a
++        // window-size commit (rotation, keyboard) lands in between, the retried Unistyles
++        // commit puts the previous layout constraints back and the app stays laid out for
++        // the old size. Commit here instead and clone from the root the commit hands us.
++        std::unordered_set<SurfaceId> affectedSurfaces;
+ 
+         for (const auto& [family, props] : updates) {
+             auto safeProps = props.isObject() ? props : folly::dynamic::object();
+ 
+-            tagToProps.insert({family->getTag(), safeProps});
+-
+             auto* mutableFamily = const_cast<ShadowNodeFamily*>(family);
+ 
+             if (mutableFamily->nativeProps_DEPRECATED && mutableFamily->nativeProps_DEPRECATED->isObject()) {
+@@ -31,9 +34,30 @@ void shadow::ShadowTreeManager::updateShadowTree(jsi::Runtime& rt) {
+             } else {
+                 mutableFamily->nativeProps_DEPRECATED = std::make_unique<folly::dynamic>(safeProps);
+             }
++
++            affectedSurfaces.insert(family->getSurfaceId());
+         }
+ 
+-        UIManagerBinding::getBinding(rt)->getUIManager().updateShadowTree(std::move(tagToProps));
++        const auto& shadowTreeRegistry = UIManagerBinding::getBinding(rt)->getUIManager().getShadowTreeRegistry();
++
++        shadowTreeRegistry.enumerate([&updates, &affectedSurfaces](const ShadowTree& shadowTree, bool&){
++            if (!affectedSurfaces.contains(shadowTree.getSurfaceId())) {
++                return;
++            }
++
++            auto transaction = [&updates](const RootShadowNode& oldRootShadowNode) -> RootShadowNode::Unshared {
++                auto affectedNodes = shadow::ShadowTreeManager::findAffectedNodes(oldRootShadowNode, updates);
++
++                return std::static_pointer_cast<RootShadowNode>(shadow::ShadowTreeManager::cloneShadowTree(
++                    oldRootShadowNode,
++                    updates,
++                    affectedNodes
++                ));
++            };
++
++            // mountSynchronously: this is an update from C++, not React
++            shadowTree.commit(transaction, {false, true});
++        });
+ #else
+         const auto& shadowTreeRegistry = UIManagerBinding::getBinding(rt)->getUIManager().getShadowTreeRegistry();
+ 

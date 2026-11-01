@@ -90,18 +90,16 @@ describe("native terminal frame", () => {
   test("keeps combining marks and joiners inside the cell xterm assigned them", async () => {
     const { frame } = await frameFor("éx̸ 각 क्ष 👩‍💻");
 
-    expect(cellLayout(frame.rows[0]).slice(0, 11)).toEqual([
+    expect(cellLayout(frame.rows[0]).slice(0, 9)).toEqual([
       { text: "é", col: 0, span: 1 },
       { text: "x̸", col: 1, span: 1 },
       { text: " ", col: 2, span: 1 },
       { text: "각", col: 3, span: 2 },
       { text: " ", col: 5, span: 1 },
-      { text: "क्", col: 6, span: 1 },
-      { text: "ष", col: 7, span: 1 },
-      { text: " ", col: 8, span: 1 },
-      { text: "👩‍", col: 9, span: 1 },
-      { text: "💻", col: 10, span: 1 },
-      { text: " ", col: 11, span: 1 },
+      { text: "क्ष", col: 6, span: 1 },
+      { text: " ", col: 7, span: 1 },
+      { text: "👩‍💻", col: 8, span: 2 },
+      { text: " ", col: 10, span: 1 },
     ]);
   });
 
@@ -237,7 +235,7 @@ test("builds native frames after replay commits at captured geometry and the lat
     expect(frame.columns).toBe(50);
     expect(frame.rows).toHaveLength(10);
     expect(frame.rows[0].text.trimEnd()).toBe("LIVE-界🙂");
-    expect(frame.rows[0].styles.slice(0, 4)).toEqual([8, RED, 0, 0]);
+    expect(frame.rows[0].styles.slice(0, 4)).toEqual([9, RED, 0, 0]);
     expect(encodeTerminalFrame(frame).rows[0]).toContain("LIVE-界🙂");
   } finally {
     drain.dispose();

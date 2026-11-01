@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
+import { streamSession } from "../test-utils/session-stream-adapter.js";
 import { ClaudeAgentClient } from "./agent.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 
@@ -75,6 +76,29 @@ function sidechainEntry(options: { agentId?: string; stopReason?: string | null 
       stop_reason: options.stopReason ?? null,
     },
   });
+}
+
+function buildQueryMock(events: unknown[]) {
+  let index = 0;
+  return {
+    next: vi.fn(async () => {
+      if (index >= events.length) return { done: true, value: undefined };
+      const value = events[index];
+      index += 1;
+      return { done: false, value };
+    }),
+    interrupt: vi.fn(async () => undefined),
+    return: vi.fn(async () => undefined),
+    close: vi.fn(() => undefined),
+    setPermissionMode: vi.fn(async () => undefined),
+    setModel: vi.fn(async () => undefined),
+    supportedModels: vi.fn(async () => []),
+    supportedCommands: vi.fn(async () => []),
+    rewindFiles: vi.fn(async () => ({ canRewind: true })),
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+  };
 }
 
 describe("ClaudeAgentSession persisted subagent replay", () => {
@@ -1312,5 +1336,107 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
       event.event.type === "timeline" ? [event.event.item] : [],
     );
     expect(items).toEqual([{ type: "assistant_message", text: report }]);
+  });
+
+  test("keeps a subagent resumed after the session reopens on the row its transcript restored", async () => {
+    // Verified on the wire (Claude Code 2.1.309): SendMessage resumes a finished subagent under its
+    // original task_id but a new tool_use_id, and the child's frames still name the original Task
+    // call as their parent. A reopened session only knows that child from its transcript.
+    writeSession({
+      parentLines: [taskToolUse(), taskToolResult()],
+      meta: JSON.stringify({ agentType: "general-purpose", toolUseId: TOOL_USE_ID }),
+      sidechainLines: [
+        JSON.stringify({
+          type: "assistant",
+          isSidechain: true,
+          agentId: AGENT_ID,
+          sessionId: "replay-session",
+          timestamp: "2026-07-26T06:27:50.000Z",
+          effort: "high",
+          message: {
+            role: "assistant",
+            model: "claude-sonnet-5",
+            content: [{ type: "text", text: "summary of the docs" }],
+            stop_reason: "end_turn",
+          },
+        }),
+      ],
+    });
+    const liveQuery = vi.fn(() =>
+      buildQueryMock([
+        {
+          type: "system",
+          subtype: "init",
+          session_id: "replay-session",
+          permissionMode: "default",
+        },
+        {
+          type: "system",
+          subtype: "task_started",
+          task_id: AGENT_ID,
+          tool_use_id: "toolu_send_message",
+          description: "Summarize the docs",
+          subagent_type: "general-purpose",
+          task_type: "local_agent",
+          is_backgrounded: true,
+          prompt: "Summarize them again",
+        },
+        {
+          type: "assistant",
+          parent_tool_use_id: TOOL_USE_ID,
+          session_id: "replay-session",
+          message: {
+            id: "msg_resumed_child",
+            role: "assistant",
+            model: "claude-opus-5",
+            content: [{ type: "text", text: "summary again" }],
+          },
+        },
+        {
+          type: "system",
+          subtype: "task_updated",
+          task_id: AGENT_ID,
+          patch: { status: "completed" },
+        },
+        {
+          type: "result",
+          subtype: "success",
+          usage: { input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 1 },
+          total_cost_usd: 0,
+        },
+      ]),
+    );
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory: liveQuery,
+      resolveVersion: async () => "2.1.309",
+      resolveBinary: async () => "/test/claude/bin",
+    }).resumeSession({ provider: "claude", sessionId: "replay-session" }, { cwd });
+    const events: AgentStreamEvent[] = [];
+    for await (const event of streamSession(session, "Ask it to summarize again")) {
+      events.push(event);
+      if (event.type === "turn_completed" || event.type === "turn_failed") break;
+    }
+    await session.close();
+
+    const live = events.flatMap((event) =>
+      event.type === "provider_subagent" ? [event.event] : [],
+    );
+    expect(new Set(live.map((event) => event.id))).toEqual(new Set([TOOL_USE_ID]));
+    expect(live).toContainEqual(
+      expect.objectContaining({
+        type: "upsert",
+        id: TOOL_USE_ID,
+        subtitle: "general-purpose · Opus 5 · High",
+      }),
+    );
+    expect(live).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        id: TOOL_USE_ID,
+        item: expect.objectContaining({ type: "assistant_message", text: "summary again" }),
+      }),
+    );
+    expect(live.at(-1)).toMatchObject({ type: "upsert", id: TOOL_USE_ID, status: "completed" });
   });
 });

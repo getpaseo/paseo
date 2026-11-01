@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  type AgentCommandsClient,
-  type DraftCommandConfig,
-  fetchAgentCommands,
-} from "./use-agent-commands-query";
+import { type AgentCommandsClient, type DraftCommandConfig, fetchAgentCommands } from "./use-query";
 
 type ListCommands = AgentCommandsClient["listCommands"];
 type ListCommandsResult = Awaited<ReturnType<ListCommands>>;
@@ -38,6 +34,12 @@ function commandsPayload(commands: ListCommandsResult["commands"]): ListCommands
 }
 
 describe("fetchAgentCommands", () => {
+  it("rejects a discovery error so a previous catalog is retained", async () => {
+    const client = createClient({ ...commandsPayload([]), error: "provider unavailable" });
+    await expect(fetchAgentCommands({ client, agentId: "agent-1" })).rejects.toThrow(
+      "provider unavailable",
+    );
+  });
   it("loads commands for a draft composer without an agent id", async () => {
     const client = createClient(
       commandsPayload([{ name: "compact", description: "Compact context", argumentHint: "" }]),
