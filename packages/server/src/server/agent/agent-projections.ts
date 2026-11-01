@@ -1,3 +1,4 @@
+import { usageRevision } from "./usage-revision.js";
 import { isSameOrDescendantPath } from "../path-utils.js";
 import type {
   AgentListItemPayload,
@@ -123,6 +124,7 @@ export function toAgentPayload(
 
   const payload: AgentSnapshotPayload = {
     id: agent.id,
+    usageRevision: usageRevision(agent.session?.usageSession?.() ?? null),
     provider: agent.provider,
     cwd: agent.cwd,
     ...(agent.workspaceId ? { workspaceId: agent.workspaceId } : {}),
@@ -234,6 +236,7 @@ export function buildStoredAgentPayload(
 
   return {
     id: record.id,
+    usageRevision: null,
     provider: record.provider,
     cwd: record.cwd,
     ...(record.workspaceId ? { workspaceId: record.workspaceId } : {}),

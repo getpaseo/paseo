@@ -102,6 +102,7 @@ See [background workspaces](./workspaces.md) for caller inheritance and inclusiv
 | `run(text, options?)`          | `PaseoAgentRunResult`             | Sends a prompt and waits for that turn. `timeoutMs` controls the wait; it defaults to 10 minutes.       |
 | `waitForFinish(timeoutMs?)`    | `PaseoAgentRunResult`             | Waits for the active turn, including an initial prompt. Default timeout: 10 minutes.                    |
 | `commands(options?)`           | `PaseoAgentCommandsResult`        | Asks the live session for its slash commands and skills, including built-in ones. Options: `requestId`. |
+| `listUsageReports(options?)` | `PaseoAgentUsageResult` | Reads current launch account quotas. Options: `requestId`, `forceRefresh`. Returns `reports` and `usageRevision`; see [agent usage](./agents#read-account-usage-for-an-agent). |
 | `subscribe(handler)`           | Unsubscribe function              | Filters agent-directory updates to this ID and refreshes the handle properties.                         |
 | `archive()`                    | `{ archivedAt }`                  | Soft-deletes the agent and closes its runtime.                                                          |
 | `detach()`                     | `Promise<void>`                   | Removes the parent relationship without stopping the agent.                                             |

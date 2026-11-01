@@ -38,6 +38,36 @@ test("lists reports from usage sources", async () => {
   ]);
 });
 
+test.each(["launch-revision", null])("returns the scoped usage revision %s", async (revision) => {
+  const emitted: SessionOutboundMessage[] = [];
+  const usage = new UsageSession({
+    isEnabled: () => true,
+    emit: (message) => emitted.push(message),
+    logger: pino({ level: "silent" }),
+    runtime: {
+      async listUsageReports(options) {
+        expect(options.agentId).toBe("agent");
+        options.onRevision?.(revision);
+        return [];
+      },
+      async listLegacyUsage() {
+        return { fetchedAt: "now", providers: [] };
+      },
+    },
+  });
+  await usage.handleListReports({
+    type: "usage.list_reports.request",
+    requestId: "scoped",
+    agentId: "agent",
+  });
+  expect(emitted).toEqual([
+    {
+      type: "usage.list_reports.response",
+      payload: { requestId: "scoped", error: null, usageRevision: revision },
+    },
+  ]);
+});
+
 test("surfaces a legacy usage-list failure as an rpc_error envelope", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const usage = new UsageSession({

@@ -64,6 +64,80 @@ function sessionMessage(message: object): string {
   });
 }
 
+test("agent usage returns native reports and their launch revision", async () => {
+  const { client, ws } = await connectClient({ usageSources: true, agentUsageRevision: true });
+  try {
+    const pending = client.agents
+      .ref("agent-a")
+      .listUsageReports({ requestId: "usage-a", forceRefresh: true });
+    expect(parseSentSessionMessage(ws.sent.at(-1))).toEqual({
+      type: "usage.list_reports.request",
+      requestId: "usage-a",
+      agentId: "agent-a",
+      forceRefresh: true,
+    });
+    const report = {
+      id: "codex:work",
+      account: { label: "Work" },
+      sourceId: "codex",
+      sourceLabel: "Codex",
+      fetchedAt: "2026-01-01T00:00:00.000Z",
+      report: { status: "available", windows: [] },
+    };
+    ws.message(
+      sessionMessage({
+        type: "usage.list_reports.update",
+        payload: { requestId: "usage-a", report },
+      }),
+    );
+    ws.message(
+      sessionMessage({
+        type: "usage.list_reports.response",
+        payload: { requestId: "usage-a", error: null, usageRevision: "launch-a" },
+      }),
+    );
+    await expect(pending).resolves.toEqual({
+      requestId: "usage-a",
+      reports: [report],
+      usageRevision: "launch-a",
+    });
+  } finally {
+    await client.close();
+  }
+});
+
+test("agent usage requires the capability without querying host-wide usage", async () => {
+  const { client, ws } = await connectClient({ usageSources: true });
+  try {
+    const sent = ws.sent.length;
+    await expect(client.agents.ref("agent-a").listUsageReports()).rejects.toThrow(
+      "Update the host",
+    );
+    expect(ws.sent).toHaveLength(sent);
+  } finally {
+    await client.close();
+  }
+});
+
+test("agent usage rejects reports fetched across a launch change", async () => {
+  const { client, ws } = await connectClient({ usageSources: true, agentUsageRevision: true });
+  try {
+    const pending = client.agents.ref("agent-a").listUsageReports({ requestId: "changed" });
+    ws.message(
+      sessionMessage({
+        type: "usage.list_reports.response",
+        payload: {
+          requestId: "changed",
+          error: "Agent usage attribution changed. Request its reports again.",
+        },
+      }),
+    );
+    await expect(pending).rejects.toThrow("Agent usage attribution changed");
+  } finally {
+    await client.close();
+  }
+});
+
 function parseSentSessionMessage(data: string | ArrayBuffer | Uint8Array | undefined): {
   type: string;
   requestId?: string;
