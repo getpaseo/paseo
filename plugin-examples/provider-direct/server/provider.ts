@@ -372,6 +372,19 @@ function configureSession(
 ): void {
   const session = requireSession(state, input.sessionId);
   const changes = input.changes;
+  // Work out everything first, so a refused request changes nothing.
+  let options: ExampleSession["options"];
+  try {
+    options = applyOptions(session.options, changes.providerOptions ?? {});
+  } catch (error) {
+    state.emit({
+      type: "request.failed",
+      requestId: input.requestId,
+      error: { message: error instanceof Error ? error.message : String(error) },
+    });
+    return;
+  }
+  session.options = options;
   session.config = {
     ...session.config,
     model: changes.model === null ? undefined : (changes.model ?? session.config.model),
@@ -381,16 +394,6 @@ function configureSession(
         ? undefined
         : (changes.thinkingOption ?? session.config.thinkingOption),
   };
-  try {
-    session.options = applyOptions(session.options, changes.providerOptions ?? {});
-  } catch (error) {
-    state.emit({
-      type: "request.failed",
-      requestId: input.requestId,
-      error: { message: error instanceof Error ? error.message : String(error) },
-    });
-    return;
-  }
   state.emit({ type: "session.config", sessionId: input.sessionId, config: configState(session) });
   state.emit({ type: "request.completed", requestId: input.requestId });
 }
