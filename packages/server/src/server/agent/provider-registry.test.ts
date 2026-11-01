@@ -809,6 +809,20 @@ test("a saved legacy Codex Fast preference wins over a configured service_tier d
   expect(client.effectiveOptions?.({})).toEqual({ service_tier: "default", plan_mode: false });
 });
 
+test("a configured legacy Codex Fast default supplies the service_tier default", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: { codex: { options: { fast_mode: true } } },
+  });
+  const client = registry.codex.createClient(logger);
+
+  // Removing an agent's own speed falls back to the configured Fast.
+  expect(client.effectiveOptions?.({})).toEqual({ service_tier: "fast" });
+  expect(client.effectiveOptions?.({ service_tier: "default" })).toEqual({
+    service_tier: "default",
+  });
+  expect(client.effectiveOptions?.({ fast_mode: false })).toEqual({ fast_mode: false });
+});
+
 test("cursor provider extending acp uses CursorACPAgentClient", () => {
   const registry = buildProviderRegistry(logger, {
     providerOverrides: {
