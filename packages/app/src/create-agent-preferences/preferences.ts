@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 
-const optionsSchema = z.record(z.string(), z.union([z.boolean(), z.string(), z.null()]));
+const optionsSchema = z.record(z.string(), z.json());
 
 export interface ProviderPreferences {
   model?: string;
