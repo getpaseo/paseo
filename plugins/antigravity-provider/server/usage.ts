@@ -23,6 +23,7 @@ export const agyBucketSchema = z.object({
   remainingFraction: z.number().nullish(),
   reset_time: z.string().nullish(),
   resetTime: z.string().nullish(),
+  disabled: z.boolean().nullish(),
   description: z.string().optional(),
 });
 
@@ -78,6 +79,26 @@ function getGroupInfo(name?: string): { prefix: string; short: string; id: strin
   };
 }
 
+function bucketWindowShape(
+  prefix: string,
+  short: string,
+  idPrefix: string,
+  bucket: z.infer<typeof agyBucketSchema>,
+): { id: string; label: string; shortLabel: string; isWeekly: boolean } {
+  const isWeekly =
+    /week/i.test(bucket.window ?? "") ||
+    /week/i.test(bucket.id ?? "") ||
+    /week/i.test(bucket.name ?? "");
+  const isWeeklyLabel = isWeekly ? "Weekly" : "5h";
+  const shortLabel = `${short} ${isWeekly ? "wk" : "5h"}`;
+  return {
+    id: isWeekly ? `${idPrefix}-weekly` : `${idPrefix}-5h`,
+    label: `${prefix} \u00b7 ${isWeeklyLabel}`,
+    shortLabel,
+    isWeekly,
+  };
+}
+
 export function buildSummaryWindows(groups: z.infer<typeof agyGroupSchema>[]): UsageWindow[] {
   const windows: UsageWindow[] = [];
 
@@ -86,31 +107,38 @@ export function buildSummaryWindows(groups: z.infer<typeof agyGroupSchema>[]): U
     const { prefix: groupPrefix, short: groupShort, id: idPrefix } = getGroupInfo(groupName);
 
     for (const bucket of group.buckets ?? []) {
+      const shape = bucketWindowShape(groupPrefix, groupShort, idPrefix, bucket);
+
+      // A limit agy marks disabled (e.g. the Claude/GPT 5h window on free plans) does not apply.
+      // It must not read as unused quota, so the percentages stay null and the label carries the
+      // state; the app renders a null-percentage window as "—".
+      if (bucket.disabled === true) {
+        windows.push(
+          windowFromUsedPct({
+            id: shape.id,
+            label: `${shape.label} \u00b7 Disabled`,
+            shortLabel: shape.shortLabel,
+            utilizationPct: null,
+            resetsAt: null,
+            tone: "default",
+          }),
+        );
+        continue;
+      }
+
       const remainingFraction = bucket.remaining_fraction ?? bucket.remainingFraction;
       if (remainingFraction == null) continue;
 
-      const bucketId = bucket.id ?? "";
-      const bucketName = bucket.name ?? "";
-      const windowStr = bucket.window ?? "";
-
-      const isWeekly =
-        /week/i.test(windowStr) || /week/i.test(bucketId) || /week/i.test(bucketName);
-      const windowId = isWeekly ? `${idPrefix}-weekly` : `${idPrefix}-5h`;
-      const label = `${groupPrefix} \u00b7 ${isWeekly ? "Weekly" : "5h"}`;
-      const shortLabel = `${groupShort} ${isWeekly ? "wk" : "5h"}`;
-      const summary = isWeekly;
-
       const utilizationPct = Math.max(0, Math.min(100, Math.round((1 - remainingFraction) * 100)));
-      const resetTime = bucket.reset_time ?? bucket.resetTime ?? null;
 
       windows.push(
         windowFromUsedPct({
-          id: windowId,
-          label,
-          shortLabel,
-          summary,
+          id: shape.id,
+          label: shape.label,
+          shortLabel: shape.shortLabel,
+          summary: shape.isWeekly,
           utilizationPct,
-          resetsAt: resetTime,
+          resetsAt: bucket.reset_time ?? bucket.resetTime ?? null,
           tone: toneFromUsedPct(utilizationPct),
         }),
       );
