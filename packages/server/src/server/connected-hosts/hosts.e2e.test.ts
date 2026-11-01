@@ -1841,7 +1841,7 @@ test(
     // A CLI process can take longer than the two-second quiet window to start.
     // Exercise each delivery across windows; delivery.test.ts owns batching with a clock.
     await expect.poll(() => parentPrompts, { timeout: 10000 }).toHaveLength(1);
-    expect(parentPrompts[0]).toContain("REMOTE_REPORT &lt;ready&gt;");
+    expect(parentPrompts[0]).toContain("REMOTE_REPORT <ready>");
 
     const cli = await promisify(execFile)(
       process.execPath,
