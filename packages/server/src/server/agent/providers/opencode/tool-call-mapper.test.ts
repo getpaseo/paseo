@@ -567,3 +567,24 @@ describe("opencode tool-call mapper", () => {
     expect(item).toBeNull();
   });
 });
+
+it("preserves question options and positional answers for transcript renderers", () => {
+  const questions = [
+    {
+      question: "Which platforms?",
+      header: "Platforms",
+      multiple: true,
+      options: [{ label: "iOS" }, { label: "Web" }],
+    },
+  ];
+  const item = mapOpencodeToolCall({
+    toolName: "question",
+    callId: "question-1",
+    status: "completed",
+    input: { questions },
+    output: "Answered",
+    metadata: { answers: [["iOS", "Web"]] },
+  });
+  expect(item?.metadata).toEqual({ questions, answers: [["iOS", "Web"]] });
+  expect(item?.detail).toEqual({ type: "unknown", input: { questions }, output: "Answered" });
+});

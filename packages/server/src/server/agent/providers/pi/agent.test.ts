@@ -3882,6 +3882,50 @@ describe("transformPiModels", () => {
   });
 });
 
+test("emits structured question metadata for live Pi asks", async () => {
+  const { pi, session, events } = await createSession();
+  onTestFinished(() => session.close());
+  const questions = [
+    {
+      question: "Pick?",
+      header: "Pick",
+      options: [
+        { label: "A", description: "First" },
+        { label: "B", description: "Second" },
+      ],
+    },
+  ];
+  const runtime = pi.latestSession();
+  runtime.emit({
+    type: "tool_execution_start",
+    toolCallId: "question-live",
+    toolName: "ask_user_question",
+    args: { questions },
+  });
+  expect(events.timelineItems().at(-1)).toMatchObject({
+    type: "tool_call",
+    status: "running",
+    metadata: { questions },
+  });
+  const details = {
+    answers: [{ question: "Pick?", kind: "option", answer: "B" }],
+    cancelled: false,
+  };
+  runtime.emit({
+    type: "tool_execution_end",
+    toolCallId: "question-live",
+    toolName: "ask_user_question",
+    result: { content: [{ type: "text", text: "Answered" }], details },
+    isError: false,
+  });
+  expect(events.timelineItems().at(-1)).toMatchObject({
+    type: "tool_call",
+    status: "completed",
+    detail: { type: "plain_text" },
+    metadata: { questions, questionResult: details },
+  });
+});
+
 test("pi runtime safety protects queued replies and runtime-owned activity", async () => {
   const runtime = new FakePi();
   const session = await createClient(runtime).createSession(createConfig());

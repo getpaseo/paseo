@@ -1,3 +1,4 @@
+import { questionToolMetadata } from "../question-metadata.js";
 import { mapCustomMessageToToolCall } from "../custom-message.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -2529,11 +2530,17 @@ export class PiRpcAgentSession implements AgentSession {
     if (!detail) {
       return false;
     }
+    const questionMetadata = questionToolMetadata({
+      toolName: toolCall.toolName,
+      args: toolCall.args,
+      result,
+    });
     const baseItem = {
       type: "tool_call" as const,
       callId: toolCallId,
       name: mapping?.name ?? toolCall.toolName,
       detail,
+      ...(questionMetadata ? { metadata: questionMetadata } : {}),
     };
     const item =
       status === "failed" ? { ...baseItem, status, error } : { ...baseItem, status, error: null };
