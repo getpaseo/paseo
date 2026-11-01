@@ -1,4 +1,4 @@
-import type { AgentFeature, AgentModelDefinition } from "@getpaseo/protocol/agent-types";
+import type { AgentModelDefinition } from "@getpaseo/protocol/agent-types";
 import { i18n } from "@/i18n/i18next";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import {
@@ -33,16 +33,6 @@ export function normalizeModelId(modelId: string | null | undefined): string | n
     return null;
   }
   return normalized;
-}
-
-export function getFeatureTooltip(feature: Pick<AgentFeature, "label" | "tooltip">): string {
-  return feature.tooltip ?? feature.label;
-}
-
-export function isFeatureActive(feature: AgentFeature): boolean {
-  if (feature.type === "toggle") return feature.value;
-  const selectedOption = feature.options.find((option) => option.id === feature.value);
-  return selectedOption !== undefined && !selectedOption.isDefault;
 }
 
 export function getFeatureHighlightColor(featureId: string): FeatureHighlightColor {

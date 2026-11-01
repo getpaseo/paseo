@@ -71,6 +71,15 @@ or without a control.
   `"fast"` to the model's Fast tier and reports the id it runs through `openOptionsPatch` or the
   `applyOptions` result like any other value. The `featureValues` to `options` fold is separate
   and provider-agnostic; it stays at the protocol and legacy edges.
+- **Clients draw from the daemon's answer.** The app reads `controls` and `options` from the
+  agent snapshot for a running or closed agent. A draft and a profile form ask
+  `provider.controls.list.request` with their `providerOptions` and draw what comes back, so an
+  alias such as a legacy Fast profile's `service_tier: "fast"` is resolved once, by the daemon.
+  A draft adds only what the user changed and each provider's last-used control values; a
+  profile saves its stored options plus the form's edits, so options no control draws survive an
+  edit. A daemon without `server_info.features.providerOptionControls` sends `features` and
+  `featureValues`; `packages/client/src/compat/legacy-provider-options.ts` is the one place that
+  turns those into `controls` and `options` and back, so nothing in the app branches on it.
 - **Provider-initiated changes.** A setting the provider changes on its own is an
   `options_changed` event. The daemon stores and forwards it and does not push the old value back.
 
