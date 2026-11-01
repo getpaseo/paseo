@@ -58,6 +58,7 @@ import type {
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
+import { mergeProviderOptions } from "./provider-options.js";
 
 import { OpenCodeV2AgentClient } from "./providers/opencode/v2/agent.js";
 import { V2Harness } from "./providers/opencode/test-utils/v2-harness.js";
@@ -13007,6 +13008,38 @@ describe("agent options", () => {
     expect((await storage.get(agentId))?.config?.providerOptions).toEqual({
       fast_mode: true,
       service_tier: "fast",
+    });
+  });
+
+  test("a patch key is resolved against the configured defaults, merging nested objects", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-options-"));
+    const client = new OptionsClient();
+    client.effectiveOptions = (own) =>
+      mergeProviderOptions({ sandbox: { enabled: true, failIfUnavailable: true } }, own) ?? {};
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: new AgentStorage(join(workdir, "agents"), logger),
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    await manager.setAgentOptions(agent.id, {
+      sandbox: { network: { allowedDomains: ["a.test"] } },
+    });
+
+    expect(client.session?.applied).toEqual([
+      {
+        sandbox: {
+          enabled: true,
+          failIfUnavailable: true,
+          network: { allowedDomains: ["a.test"] },
+        },
+      },
+    ]);
+    expect(manager.getAgent(agent.id)?.config.providerOptions).toEqual({
+      sandbox: { network: { allowedDomains: ["a.test"] } },
     });
   });
 
