@@ -67,9 +67,12 @@ import {
   resolveOmpLaunchMode,
   resolveOmpProviderOptions,
   OMP_MODES,
+  OmpProviderOptionsSchema,
   type OmpRuntimeOptions,
 } from "./provider-config.js";
 export { formatOmpVersionSupport, resolveOmpDiagnosticPaths } from "./provider-config.js";
+import { applyProviderOptionsPatch } from "../../option-controls.js";
+import { validateProviderOptions } from "../../provider-options.js";
 import { OmpSubagentCardTracker } from "./subagent-card-tracker.js";
 import { ompSkillPromptUserText, shouldDisplayOmpCustomMessage } from "./custom-message.js";
 import { getUserMessageText } from "./message-history.js";
@@ -822,9 +825,13 @@ export class OmpAgentSession implements AgentSession {
   }
 
   async applyOptions(options: ProviderOptions): Promise<Record<string, unknown>> {
+    const next = validateProviderOptions(
+      "omp",
+      OmpProviderOptionsSchema,
+      applyProviderOptionsPatch(this.config.providerOptions, options),
+    );
     if (options.fast_mode === undefined) return {};
-    const requested = options.fast_mode ?? false;
-    if (typeof requested !== "boolean") throw new Error("OMP fast mode requires a boolean");
+    const requested = next?.fast_mode ?? false;
     if (!hasOmpFastMode(this.state)) throw new Error("OMP fast mode is unavailable");
     if (requested !== this.state.fastModeEnabled) {
       const result = await this.runtimeSession.setFastMode(requested);
